@@ -5,3 +5,10 @@ version = 3
 [[package]]
 name = "iroh"
 version = "0.1.0"
+dependencies = [
+ "iroh-rpc",
+]
+
+[[package]]
+name = "iroh-rpc"
+version = "0.1.0"
