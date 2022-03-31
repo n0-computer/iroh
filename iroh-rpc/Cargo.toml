@@ -6,3 +6,9 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+rkyv = { version = "0.7.36", features = ["std", "alloc", "validation"] }
+libp2p = "0.43.0"
+tokio = { version = "1.17.0", features = ["full"] }
+futures = "0.3.21"
+async-trait = "0.1.53"
+bytecheck = "0.6.7"
