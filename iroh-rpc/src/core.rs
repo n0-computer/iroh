@@ -13,9 +13,14 @@ use futures::channel::{mpsc, oneshot};
 use futures::prelude::*;
 use futures::select;
 use libp2p::core::either::EitherError;
+use libp2p::core::transport::{MemoryTransport, Transport};
+use libp2p::core::{muxing, transport, upgrade};
+use libp2p::mplex;
 use libp2p::multiaddr::Protocol;
+use libp2p::noise;
 use libp2p::request_response::RequestResponseMessage;
 use libp2p::swarm::{ConnectionHandlerUpgrErr, SwarmBuilder, SwarmEvent};
+use libp2p::yamux;
 use libp2p::{Multiaddr, PeerId, Swarm};
 use log::{debug, error};
 use rand::Rng;
@@ -23,6 +28,11 @@ use std::error::Error;
 
 pub use libp2p::identity::Keypair;
 
+/// The Server manages the swarm, gets commands from the client & translates
+/// those into events to send over rpc to the correct recepient. It listens for
+/// events from the network to give to the client. It also tracks any pending
+/// requests we are still waiting on a response for and any active streams
+/// that we are still currently listening for.
 pub struct Server {
     swarm: Swarm<CoreBehaviour>,
     // commands received from the client aka user
@@ -67,6 +77,7 @@ impl Server {
         }
     }
 
+    /// handle commands from the client
     async fn handle_client_command(&mut self, command: OutCommand) {
         match command {
             OutCommand::StartListening { addr, sender } => match self.swarm.listen_on(addr) {
@@ -165,6 +176,7 @@ impl Server {
         }
     }
 
+    /// handle events from the network
     async fn handle_event(
         &mut self,
         event: SwarmEvent<
@@ -223,6 +235,7 @@ impl Server {
         }
     }
 
+    /// handle RequestResponseProtocol events
     async fn handle_request_response_events(&mut self, event: RequestResponseEvent) {
         match event {
             RequestResponseEvent::Message { message, .. } => match message {
@@ -279,6 +292,7 @@ impl Server {
         }
     }
 
+    /// handle StreamingProtocol events
     async fn handle_streaming_events(&mut self, event: StreamingEvent) {
         match event {
             StreamingEvent::Message { message, peer } => match message {
@@ -397,17 +411,22 @@ impl Server {
     }
 }
 
+/// An InboundEvent is translated from an event that comes over the network
+/// that the process needs to handle.
 pub struct InboundEvent {
     pub command: InCommand,
     pub channel: StreamingResponseChannel,
 }
 
-// eventually generalize, pass in config etc
+/// Build a swarm with an in memory transport.
+// TODO: eventually generalize, pass in config etc
 pub fn new_mem_swarm(id_keys: Keypair) -> Swarm<CoreBehaviour> {
     let peer_id = id_keys.public().to_peer_id();
     SwarmBuilder::new(mem_transport(id_keys), CoreBehaviour::new(), peer_id).build()
 }
 
+/// Build a swarm with a TCP transport
+// TODO: eventually generalize, pass in config etc
 pub async fn new_swarm(id_keys: Keypair) -> Result<Swarm<CoreBehaviour>, Box<dyn Error>> {
     let peer_id = id_keys.public().to_peer_id();
     Ok(SwarmBuilder::new(
@@ -418,12 +437,7 @@ pub async fn new_swarm(id_keys: Keypair) -> Result<Swarm<CoreBehaviour>, Box<dyn
     .build())
 }
 
-use libp2p::core::transport::{MemoryTransport, Transport};
-use libp2p::core::{muxing, transport, upgrade};
-use libp2p::mplex;
-use libp2p::noise;
-use libp2p::yamux;
-
+/// Build a mem transport
 pub fn mem_transport(keypair: Keypair) -> transport::Boxed<(PeerId, muxing::StreamMuxerBox)> {
     let noise_keys = noise::Keypair::<noise::X25519Spec>::new()
         .into_authentic(&keypair)
@@ -439,6 +453,7 @@ pub fn mem_transport(keypair: Keypair) -> transport::Boxed<(PeerId, muxing::Stre
         .boxed()
 }
 
+/// The Client sends commands to the server
 pub struct Client {
     out_sender: mpsc::Sender<OutCommand>,
 }
@@ -452,6 +467,7 @@ impl Client {
         self.out_sender.clone()
     }
 
+    /// Tells the server to start listening on a specific multiaddr
     pub async fn start_listening(
         &mut self,
         addr: Multiaddr,
@@ -468,6 +484,7 @@ impl Client {
         }
     }
 
+    /// Tells the server to connect to a specific peer
     pub async fn dial(
         &mut self,
         peer_id: PeerId,
@@ -489,6 +506,7 @@ impl Client {
         }
     }
 
+    /// Pings a peer & expects a pong in response
     pub async fn ping(&mut self, peer_id: PeerId) -> Result<(), Box<dyn Error + Send + Sync>> {
         let (sender, rec) = oneshot::channel();
         self.out_sender
@@ -502,6 +520,7 @@ impl Client {
         }
     }
 
+    /// Get your local peer id
     pub async fn peer_id(&mut self) -> PeerId {
         let (sender, rec) = oneshot::channel();
         self.out_sender
@@ -514,6 +533,7 @@ impl Client {
         }
     }
 
+    /// Requests a file & returns once the entire file is sent.
     pub async fn get_file(
         &mut self,
         peer_id: PeerId,
@@ -543,7 +563,7 @@ impl Client {
             }
         };
 
-        // can examine heade_ here and determine if we even want to
+        // can examine header here and determine if we even want to
         // accept this file
         // need some way of rejecting if we don't want it
         // ignoring this for now

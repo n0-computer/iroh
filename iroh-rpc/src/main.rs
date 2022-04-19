@@ -25,6 +25,8 @@ pub fn generate_keys(secret_key_seed: Option<u8>) -> identity::Keypair {
     }
 }
 
+/// Temporary struct we are using to build rpc clients and servers to test
+/// streaming connections
 struct IPCTestStruct {
     cli_client: core::Client,
     cli_addr: Multiaddr,
@@ -34,6 +36,7 @@ struct IPCTestStruct {
 }
 
 impl IPCTestStruct {
+    /// construct database and cli clients that communicate over TCP
     async fn new() -> Result<IPCTestStruct, Box<dyn Error>> {
         let cli_keys = generate_keys(None);
         let cli_client = cli_rpc::new(cli_keys).await?;
@@ -50,6 +53,7 @@ impl IPCTestStruct {
         })
     }
 
+    /// construct database and cli clients that communicate over an in memory transport
     fn new_mem() -> IPCTestStruct {
         let cli_keys = generate_keys(None);
         let cli_client = cli_rpc::new_mem(cli_keys);

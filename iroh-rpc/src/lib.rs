@@ -19,7 +19,8 @@ pub mod database_rpc {
 
     pub const CHUNK_SIZE: u64 = 8000;
 
-    // eventually this will be custom for a database process
+    /// Create a tcp transport database client and an inbound event receiver
+    // TODO: use config to create
     pub async fn new(
         id_keys: Keypair,
     ) -> Result<(core::Client, mpsc::Receiver<InboundEvent>), Box<dyn std::error::Error>> {
@@ -33,6 +34,8 @@ pub mod database_rpc {
         Ok((core::Client::new(out_sender), in_receiver))
     }
 
+    /// Create a mem transport database client and an inbound event receiver
+    // TODO: use config to create
     pub fn new_mem(id_keys: Keypair) -> (core::Client, mpsc::Receiver<InboundEvent>) {
         let swarm = core::new_mem_swarm(id_keys);
 
@@ -43,12 +46,9 @@ pub mod database_rpc {
         spawn(server.run());
         (core::Client::new(out_sender), in_receiver)
     }
-    // todo: not the right name
-    // listens for inbound events & handles InCommands
-    // should be specific for specific clients
-    // should we just have a way to respond to this in the server, rather than send the request
-    // to the client to take care of, the way that ping is currently working
-    // provide hooks for each InCommand?
+
+    /// Listens for inbound events & handles InCommands
+    // TODO: debate name
     pub async fn provide(
         out_sender: mpsc::Sender<OutCommand>,
         mut in_receiver: mpsc::Receiver<InboundEvent>,
@@ -68,9 +68,7 @@ pub mod database_rpc {
         }
     }
 
-    // So many ways to do this!
-    // right now, iterating over the file in chunks & sending each chunk
-    // not paying attention to if the packet was acknowledged
+    /// Handle inbound streaming requests
     async fn handle_data_request(
         id: u64,
         peer_id: PeerId,
@@ -120,7 +118,8 @@ pub mod cli_rpc {
     use futures::channel::mpsc;
     use tokio::task::spawn;
 
-    // eventually this will be custom for a cli process
+    /// Create a tcp transport database client and an inbound event receiver
+    // TODO: use config to create
     pub async fn new(id_keys: Keypair) -> Result<core::Client, Box<dyn std::error::Error>> {
         let swarm = core::new_swarm(id_keys).await?;
 
@@ -132,7 +131,8 @@ pub mod cli_rpc {
         Ok(core::Client::new(out_sender))
     }
 
-    // eventually this will be custom for a cli process
+    /// Create a mem transport database client and an inbound event receiver
+    // TODO: use config to create
     pub fn new_mem(id_keys: Keypair) -> core::Client {
         let swarm = core::new_mem_swarm(id_keys);
 

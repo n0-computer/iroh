@@ -9,7 +9,9 @@ use rkyv::{Archive, Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::BufRead;
 
-// TODO: add timeout & early cancel
+/// InStream coordinates a stream of packet data, allowing the user
+/// to receive the chunks of bytes in the correct order.
+// TODO: better name, add timeout, early cancel, and handle errors
 pub struct InStream {
     packet_receiver: StreamReceiver,
     out_sender: mpsc::Sender<OutCommand>,
@@ -35,6 +37,8 @@ impl InStream {
         }
     }
 
+    // TODO: this should implement `poll_next` & satisfy the `Stream` trait
+    // rather than directly implementing an async `next` method
     pub async fn next(
         &mut self,
     ) -> Option<Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>>> {
@@ -83,6 +87,8 @@ impl Drop for InStream {
     }
 }
 
+/// OutStream coordinates sending chunks of data over a stream
+// TODO: handle ack & errors, timeouts, & early cancel
 pub struct OutStream {
     header: Header,
     packet_sender: mpsc::Sender<OutCommand>,
@@ -109,12 +115,12 @@ impl OutStream {
     pub async fn send_packets(&mut self) {
         debug!(target: "db streaming", "Iterating over file");
         for index in 0..self.header.num_chunks {
-            // TODO: should this be allocated once and then reused & cleared?
-            // or is it better to just allocate each time & not worry about clearing it?
             let mut chunk_size = self.header.chunk_size as usize;
             if index == self.header.num_chunks - 1 {
                 chunk_size = self.header.size as usize % chunk_size;
             }
+            // TODO: should this be allocated once and then reused & cleared?
+            // or is it better to just allocate each time & not worry about clearing it?
             let mut buf = vec![0u8; chunk_size];
             debug!(target: "db streaming", "Reading file chunk {}", index);
             self.reader.read_exact(&mut buf)
@@ -125,7 +131,9 @@ impl OutStream {
                 data: buf,
                 last: index == self.header.num_chunks - 1,
             };
-            // TODO: ignoring errors and ack for now
+            // TODO: ignoring errors and ack for now. If we get a "channel full" error
+            // should trigger a slowdown, if we get some other error indicating a termination
+            // we should stop sending packets
             let (sender, _) = oneshot::channel();
             debug!(target: "db streaming", "Sending Packet {:?}", packet.index);
             self.packet_sender
