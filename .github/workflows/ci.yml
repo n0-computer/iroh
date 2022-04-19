@@ -1,0 +1,94 @@
+on: [push, pull_request]
+
+name: Continuous integration
+
+jobs:
+  check:
+    name: Check
+    strategy:
+      matrix:
+        rust:
+          - stable
+          - 1.59.0
+
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: ${{ matrix.rust }}
+          override: true
+      - uses: actions-rs/cargo@v1
+        with:
+          command: check
+
+  test:
+    name: Test Suite
+    strategy:
+      matrix:
+        os: [ubuntu-latest]
+        # Only linux is supported atm
+        #, macos-latest, windows-latest]
+        rust:
+          - stable
+          - 1.59.0
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: ${{ matrix.rust }}
+          override: true
+
+      - name: Run tests
+        run: |
+          cat << EOF > "run-gha-workflow.sh"
+          PATH=$PATH:/usr/share/rust/.cargo/bin
+          echo "`nproc` CPU(s) available"
+          cargo +${{ matrix.rust }} test -- --test-threads=`nproc`
+          EOF
+          sudo -E bash -c "ulimit -Sl 512 && ulimit -Hl 512 && bash run-gha-workflow.sh"
+
+  fmt:
+    name: Rustfmt
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        rust:
+          - stable
+          - 1.59.0
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: ${{ matrix.rust }}
+          override: true
+      - run: rustup component add rustfmt
+      - uses: actions-rs/cargo@v1
+        with:
+          command: fmt
+          args: --all -- --check
+
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        rust:
+          - stable
+          - 1.59.0
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: ${{ matrix.rust }}
+          override: true
+      - run: rustup component add clippy
+      - uses: actions-rs/cargo@v1
+        with:
+          command: clippy
+          args: --all --tests --benches -- -D warnings
