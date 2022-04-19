@@ -17,7 +17,6 @@ use libp2p::core::transport::{MemoryTransport, Transport};
 use libp2p::core::{muxing, transport, upgrade};
 use libp2p::mplex;
 use libp2p::multiaddr::Protocol;
-use libp2p::noise;
 use libp2p::request_response::RequestResponseMessage;
 use libp2p::swarm::{ConnectionHandlerUpgrErr, SwarmBuilder, SwarmEvent};
 use libp2p::yamux;
@@ -439,12 +438,11 @@ pub async fn new_swarm(id_keys: Keypair) -> Result<Swarm<CoreBehaviour>, Box<dyn
 
 /// Build a mem transport
 pub fn mem_transport(keypair: Keypair) -> transport::Boxed<(PeerId, muxing::StreamMuxerBox)> {
-    let noise_keys = noise::Keypair::<noise::X25519Spec>::new()
-        .into_authentic(&keypair)
-        .unwrap();
     MemoryTransport::default()
         .upgrade(upgrade::Version::V1)
-        .authenticate(noise::NoiseConfig::xx(noise_keys).into_authenticated())
+        .authenticate(libp2p::plaintext::PlainText2Config {
+            local_public_key: keypair.public(),
+        })
         .multiplex(upgrade::SelectUpgrade::new(
             yamux::YamuxConfig::default(),
             mplex::MplexConfig::default(),
