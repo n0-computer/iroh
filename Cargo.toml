@@ -2,5 +2,6 @@
 members = [
   "iroh",
   "iroh-rpc",
+  "iroh-gateway",
   "stores/*"
 ]
