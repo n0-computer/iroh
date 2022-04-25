@@ -125,14 +125,14 @@ impl Server {
                     .insert(PendingId::RequestId(request_id), sender);
             }
             OutCommand::DataRequest {
-                path,
+                resource_id,
                 id,
                 peer_id,
                 sender,
             } => {
                 let request_id = self.swarm.behaviour_mut().streaming.send_request(
                     &peer_id,
-                    StreamingRequest(StreamingRequestEvent::DataRequest { id, path }),
+                    StreamingRequest(StreamingRequestEvent::DataRequest { id, resource_id }),
                 );
                 self.pending_requests
                     .insert(PendingId::RequestId(request_id), sender);
@@ -298,13 +298,13 @@ impl Server {
                 RequestResponseMessage::Request {
                     request, channel, ..
                 } => match request.0 {
-                    StreamingRequestEvent::DataRequest { id, path } => {
-                        debug!(target: "inbound streaming", "Inbound data request for {} with id {}", path, id);
+                    StreamingRequestEvent::DataRequest { id, resource_id } => {
+                        debug!(target: "inbound streaming", "Inbound data request for {} with id {}", resource_id, id);
                         self.in_sender
                             .send(InboundEvent {
                                 command: InCommand::DataRequest {
                                     id,
-                                    path,
+                                    resource_id,
                                     peer_id: peer,
                                 },
                                 channel,
@@ -549,7 +549,7 @@ impl Client {
             .send(OutCommand::DataRequest {
                 peer_id,
                 id,
-                path,
+                resource_id: path,
                 sender,
             })
             .await

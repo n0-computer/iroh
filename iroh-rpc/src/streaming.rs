@@ -29,7 +29,7 @@ pub fn new_streaming_behaviour() -> Streaming {
 #[archive(compare(PartialEq))]
 #[archive_attr(derive(Debug, CheckBytes))]
 pub enum StreamingRequestEvent {
-    DataRequest { id: u64, path: String },
+    DataRequest { id: u64, resource_id: String },
     Packet(Packet),
 }
 

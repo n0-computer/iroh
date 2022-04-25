@@ -2,12 +2,16 @@ use crate::commands::OutCommand;
 use bytecheck::CheckBytes;
 use futures::channel::{mpsc, oneshot};
 use futures::prelude::*;
+use futures::stream::StreamExt;
+use futures::task::{Context, Poll};
 use libp2p::PeerId;
 use log::{debug, error};
 use rkyv;
 use rkyv::{Archive, Deserialize, Serialize};
 use std::collections::HashMap;
+use std::error::Error;
 use std::io::BufRead;
+use std::pin::Pin;
 
 /// InStream coordinates a stream of packet data, allowing the user
 /// to receive the chunks of bytes in the correct order.
@@ -76,6 +80,48 @@ impl InStream {
         // prematurely
         error!(target: "InStream", "TODO: HANDLE THIS ERROR");
         Some(Err("TODO: stream is no longer active, has not received an error, but we have not received all the expected data".into()))
+    }
+}
+
+impl Stream for InStream {
+    type Item = Result<Vec<u8>, Box<dyn Error>>;
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        // check if the stream has finished its task successfully
+        let num_chunks = self.num_chunks;
+        let next_chunk = self.next_chunk;
+        if next_chunk == num_chunks {
+            debug!(target: "InStream", "No more items in stream.");
+            return Poll::Ready(None);
+        }
+        // check if the chunk we are looking for is a chunk we already have
+        if let Some(c) = self.chunks.remove(&next_chunk) {
+            debug!(target: "InStream", "Returning already received chunk");
+            self.next_chunk += 1;
+            return Poll::Ready(Some(Ok(c)));
+        }
+        // otherwise, check the channel to see if we can get the next chunk
+        match self.packet_receiver.poll_next_unpin(cx) {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(res) => match res {
+                None => Poll::Ready(Some(Err(StreamError::NoLongerActive.into()))),
+                Some(p) => match p {
+                    StreamType::Packet(p) => {
+                        if next_chunk == p.index {
+                            self.next_chunk += 1;
+                            debug!(target: "InStream", "Returning just received chunk {}", p.index);
+                            return Poll::Ready(Some(Ok(p.data)));
+                        }
+                        debug!(target: "InStream", "Storing out of order chunk {}", p.index);
+                        self.chunks.insert(p.index, p.data);
+                        Poll::Pending
+                    }
+                    StreamType::Error(e) => {
+                        error!(target: "InStream", "Received error off of the stream: {:?}", e);
+                        Poll::Ready(Some(Err(e.into())))
+                    }
+                },
+            },
+        }
     }
 }
 

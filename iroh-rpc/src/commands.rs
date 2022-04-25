@@ -28,7 +28,7 @@ pub enum OutCommand {
     },
     DataRequest {
         id: u64,
-        path: String,
+        resource_id: String,
         peer_id: PeerId,
         sender: OneshotSender,
     },
@@ -54,7 +54,7 @@ pub enum InCommand {
     DataRequest {
         id: u64,
         peer_id: PeerId,
-        path: String,
+        resource_id: String,
     },
 }
 
