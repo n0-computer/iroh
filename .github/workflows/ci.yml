@@ -1,55 +1,49 @@
-on: [push, pull_request]
-
 name: Continuous integration
 
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - staging
+      - trying
+
 jobs:
-  check:
-    name: Check
-    strategy:
-      matrix:
-        rust:
-          - stable
-          - 1.59.0
-
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v2
-      - uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: ${{ matrix.rust }}
-          override: true
-      - uses: actions-rs/cargo@v1
-        with:
-          command: check
-
-  test:
-    name: Test Suite
-    strategy:
-      matrix:
-        os: [ubuntu-latest]
-        # Only linux is supported atm
-        #, macos-latest, windows-latest]
-        rust:
-          - stable
-          - 1.59.0
+  build_and_test:
+    name: Build and test
     runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v2
-      - uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: ${{ matrix.rust }}
-          override: true
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macOS-latest]
+        rust: [nightly, stable]
 
-      - name: Run tests
-        run: |
-          cat << EOF > "run-gha-workflow.sh"
-          PATH=$PATH:/usr/share/rust/.cargo/bin
-          echo "`nproc` CPU(s) available"
-          cargo +${{ matrix.rust }} test -- --test-threads=`nproc`
-          EOF
-          sudo -E bash -c "ulimit -Sl 512 && ulimit -Hl 512 && bash run-gha-workflow.sh"
+    steps:
+    - uses: actions/checkout@master
+
+    - name: Install ${{ matrix.rust }}
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: ${{ matrix.rust }}
+        override: true
+
+    - name: check
+      uses: actions-rs/cargo@v1
+      with:
+        command: check
+        args: --all --bins --tests --examples
+
+    - name: check bench
+      uses: actions-rs/cargo@v1
+      if: matrix.rust == 'nightly'
+      with:
+        command:  check
+        args: --benches
+
+    - name: tests
+      uses: actions-rs/cargo@v1
+      with:
+        command: test
+        args: --all
 
   fmt:
     name: Rustfmt
@@ -58,7 +52,7 @@ jobs:
       matrix:
         rust:
           - stable
-          - 1.59.0
+
     steps:
       - uses: actions/checkout@v2
       - uses: actions-rs/toolchain@v1
@@ -79,7 +73,7 @@ jobs:
       matrix:
         rust:
           - stable
-          - 1.59.0
+
     steps:
       - uses: actions/checkout@v2
       - uses: actions-rs/toolchain@v1
