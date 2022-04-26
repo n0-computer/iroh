@@ -1,4 +1,6 @@
-# iroh
+# FlatFS 
+
+> Implements the FlatFS storage structure based on [go-ds-flatfs](https://github.com/ipfs/go-ds-flatfs).
 
 
 ## License

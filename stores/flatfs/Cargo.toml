@@ -1,0 +1,20 @@
+[package]
+name = "flatfs-store"
+version = "0.1.0"
+edition = "2021"
+authors = ["Friedel Ziegelmayer <me@dignifiedquire.com>"]
+license = "Apache-2.0/MIT"
+repository = "https://github.com/n0-computer/iroh"
+description = "Implementation of FlatFS"
+
+[dependencies]
+backoff = "0.4.0"
+data-encoding = "2.3.2"
+eyre = "0.6.6"
+ignore = "0.4.18"
+
+[dev-dependencies]
+tempfile = "3.3.0"
+
+[features]
+default = []
