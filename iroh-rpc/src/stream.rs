@@ -1,4 +1,4 @@
-use crate::commands::OutCommand;
+use crate::commands::Command;
 use bytecheck::CheckBytes;
 use futures::channel::{mpsc, oneshot};
 use futures::prelude::*;
@@ -9,16 +9,17 @@ use log::{debug, error};
 use rkyv;
 use rkyv::{Archive, Deserialize, Serialize};
 use std::collections::HashMap;
-use std::error::Error;
 use std::io::BufRead;
 use std::pin::Pin;
+
+use crate::error::RPCError;
 
 /// InStream coordinates a stream of packet data, allowing the user
 /// to receive the chunks of bytes in the correct order.
 // TODO: better name, add timeout, early cancel, and handle errors
 pub struct InStream {
     packet_receiver: StreamReceiver,
-    out_sender: mpsc::Sender<OutCommand>,
+    out_sender: mpsc::Sender<Command>,
     chunks: HashMap<u64, Vec<u8>>,
     id: u64,
     next_chunk: u64,
@@ -29,7 +30,7 @@ impl InStream {
     pub fn new(
         header: Header,
         packet_receiver: StreamReceiver,
-        out_sender: mpsc::Sender<OutCommand>,
+        out_sender: mpsc::Sender<Command>,
     ) -> Self {
         InStream {
             packet_receiver,
@@ -69,9 +70,9 @@ impl InStream {
                     debug!(target: "InStream", "Storing out of order chunk {}", p.index);
                     self.chunks.insert(p.index, p.data);
                 }
-                StreamType::Error(e) => {
+                StreamType::RPCError(e) => {
                     error!(target: "InStream", "Received error off of the stream: {:?}", e);
-                    return Some(Err(e.into()));
+                    return Some(Err(Box::new(e)));
                 }
             }
         }
@@ -84,7 +85,7 @@ impl InStream {
 }
 
 impl Stream for InStream {
-    type Item = Result<Vec<u8>, Box<dyn Error>>;
+    type Item = Result<Vec<u8>, RPCError>;
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         // check if the stream has finished its task successfully
         let num_chunks = self.num_chunks;
@@ -103,7 +104,7 @@ impl Stream for InStream {
         match self.packet_receiver.poll_next_unpin(cx) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(res) => match res {
-                None => Poll::Ready(Some(Err(StreamError::NoLongerActive.into()))),
+                None => Poll::Ready(Some(Err(RPCError::StreamClosed.into()))),
                 Some(p) => match p {
                     StreamType::Packet(p) => {
                         if next_chunk == p.index {
@@ -115,7 +116,7 @@ impl Stream for InStream {
                         self.chunks.insert(p.index, p.data);
                         Poll::Pending
                     }
-                    StreamType::Error(e) => {
+                    StreamType::RPCError(e) => {
                         error!(target: "InStream", "Received error off of the stream: {:?}", e);
                         Poll::Ready(Some(Err(e.into())))
                     }
@@ -128,7 +129,7 @@ impl Stream for InStream {
 impl Drop for InStream {
     fn drop(&mut self) {
         self.out_sender
-            .try_send(OutCommand::CloseStream { id: self.id })
+            .try_send(Command::CloseStream { id: self.id })
             .expect("Out sender to still be active.");
     }
 }
@@ -137,8 +138,8 @@ impl Drop for InStream {
 // TODO: handle ack & errors, timeouts, & early cancel
 pub struct OutStream {
     header: Header,
-    packet_sender: mpsc::Sender<OutCommand>,
-    // early_close_receiver: oneshot::Sender<Box<dyn Error + Send + Sync>>,
+    packet_sender: mpsc::Sender<Command>,
+    // early_close_receiver: oneshot::Sender<Box<dyn RPCError + Send + Sync>>,
     reader: Box<dyn BufRead + Send + Sync>,
     peer_id: PeerId,
 }
@@ -147,7 +148,7 @@ impl OutStream {
     pub fn new(
         header: Header,
         peer_id: PeerId,
-        packet_sender: mpsc::Sender<OutCommand>,
+        packet_sender: mpsc::Sender<Command>,
         reader: Box<dyn BufRead + Send + Sync>,
     ) -> Self {
         OutStream {
@@ -170,7 +171,7 @@ impl OutStream {
             let mut buf = vec![0u8; chunk_size];
             debug!(target: "db streaming", "Reading file chunk {}", index);
             self.reader.read_exact(&mut buf)
-            .expect("TODO: handle reading error, and send an Error type letting the other end know there has been an error.");
+            .expect("TODO: handle reading error, and send an RPCError type letting the other end know there has been an error.");
             let packet = Packet {
                 id: self.header.id,
                 index,
@@ -183,7 +184,7 @@ impl OutStream {
             let (sender, _) = oneshot::channel();
             debug!(target: "db streaming", "Sending Packet {:?}", packet.index);
             self.packet_sender
-                .send(OutCommand::SendPacket {
+                .send(Command::SendPacket {
                     sender,
                     packet,
                     peer_id: self.peer_id,
@@ -200,30 +201,13 @@ pub type StreamSender = mpsc::Sender<StreamType>;
 #[derive(Debug)]
 pub enum StreamType {
     Packet(Packet),
-    Error(StreamError),
+    RPCError(RPCError),
 }
 
 #[derive(Archive, Serialize, Deserialize, Debug, PartialEq, Clone, Eq)]
 #[archive(compare(PartialEq))]
 #[archive_attr(derive(Debug, CheckBytes))]
-pub enum StreamError {
-    NoLongerActive,
-    TODO,
-}
-
-impl std::error::Error for StreamError {}
-impl std::fmt::Display for StreamError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            StreamError::NoLongerActive => write!(f, "Stream is not longer active"),
-            StreamError::TODO => write!(f, "TODO: split into more specific errors"),
-        }
-    }
-}
-
-#[derive(Archive, Serialize, Deserialize, Debug, PartialEq, Clone, Eq)]
-#[archive(compare(PartialEq))]
-#[archive_attr(derive(Debug, CheckBytes))]
+// #[derive(Serialize, Deserialize, Debug, PartialEq, Clone, Eq)]
 pub struct Packet {
     pub id: u64,
     pub index: u64,
@@ -234,6 +218,7 @@ pub struct Packet {
 #[derive(Archive, Serialize, Deserialize, Debug, PartialEq, Clone, Eq)]
 #[archive(compare(PartialEq))]
 #[archive_attr(derive(Debug, CheckBytes))]
+// #[derive(Serialize, Deserialize, Debug, PartialEq, Clone, Eq)]
 pub struct Header {
     pub id: u64,
     pub size: u64,

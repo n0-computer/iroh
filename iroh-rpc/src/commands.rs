@@ -4,15 +4,17 @@ use libp2p::request_response::RequestId;
 use libp2p::Multiaddr;
 use libp2p::PeerId;
 use std::collections::HashMap;
-use std::error::Error;
 
+use crate::behaviour::core::CoreResponseChannel;
+use crate::error::RPCError;
 use crate::stream::{Header, Packet, StreamType};
-use crate::streaming::StreamingResponseChannel;
 
-// OutCommands are commands from the Client going out to the server or network
+// Commands are commands from the Client going out to the server or network
 // They should include a sender on which the server will send the response from
 // the network to the client
-pub enum OutCommand {
+#[derive(Debug)]
+pub enum Command {
+    // Commands handled by CoreProtocol
     StartListening {
         addr: Multiaddr,
         sender: OneshotSender,
@@ -22,19 +24,36 @@ pub enum OutCommand {
         peer_addr: Multiaddr,
         sender: OneshotSender,
     },
-    Ping {
-        peer_id: PeerId,
+    PeerId {
         sender: OneshotSender,
     },
-    DataRequest {
-        id: u64,
-        resource_id: String,
+    SendRequest {
+        namespace: String,
+        method: String,
         peer_id: PeerId,
+        params: Vec<u8>,
+        sender: OneshotSender,
+    },
+    SendResponse {
+        payload: Vec<u8>,
+        channel: CoreResponseChannel,
+    },
+    ErrorResponse {
+        error: RPCError,
+        channel: CoreResponseChannel,
+    },
+
+    StreamRequest {
+        id: u64,
+        namespace: String,
+        method: String,
+        peer_id: PeerId,
+        params: Vec<u8>,
         sender: OneshotSender,
     },
     HeaderResponse {
         header: Header,
-        channel: StreamingResponseChannel,
+        channel: CoreResponseChannel,
     },
     SendPacket {
         peer_id: PeerId,
@@ -44,18 +63,7 @@ pub enum OutCommand {
     CloseStream {
         id: u64,
     },
-    PeerId {
-        sender: OneshotSender,
-    },
-}
-
-// InCommands are commands from the Network to the client, passed by the Server
-pub enum InCommand {
-    DataRequest {
-        id: u64,
-        peer_id: PeerId,
-        resource_id: String,
-    },
+    ShutDown,
 }
 
 pub type OneshotSender = oneshot::Sender<SenderType>;
@@ -70,7 +78,8 @@ pub enum SenderType {
         header: Header,
         stream: mpsc::Receiver<StreamType>,
     },
-    Error(Box<dyn Error + Send + Sync>),
+    Error(RPCError),
+    Res(Vec<u8>),
 }
 
 pub type PendingMap = HashMap<PendingId, OneshotSender>;
