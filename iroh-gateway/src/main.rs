@@ -1,5 +1,5 @@
 use clap::Parser;
-use iroh_gateway::{config::Config, core::Core};
+use iroh_gateway::{config::Config, core::Core, metrics};
 
 #[derive(Parser, Debug, Clone)]
 #[clap(author, version, about, long_about = None)]
@@ -22,6 +22,11 @@ async fn main() {
     config.set_default_headers();
     println!("{:#?}", config);
 
+    iroh_metrics::init(metrics::metrics_config()).expect("failed to initialize metrics");
+    metrics::register_counters();
+
     let handler = Core::new(config);
     handler.serve().await;
+
+    iroh_metrics::shutdown_tracing();
 }

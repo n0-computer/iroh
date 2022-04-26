@@ -8,6 +8,7 @@ use axum::{
     BoxError, Router,
 };
 use cid::Cid;
+use metrics::increment_counter;
 use serde::Deserialize;
 use std::{borrow::Cow, collections::HashMap, sync::Arc, time::Duration};
 use tower::ServiceBuilder;
@@ -17,6 +18,7 @@ use crate::{
     config::Config,
     constants::*,
     error::GatewayError,
+    metrics::METRICS_CNT_REQUESTS_TOTAL,
     response::{GatewayResponse, ResponseFormat},
 };
 
@@ -71,12 +73,14 @@ impl Core {
     }
 }
 
+#[tracing::instrument()]
 async fn get_ipfs(
     Extension(config): Extension<Arc<Config>>,
     Extension(client): Extension<Arc<Client>>,
     Path(params): Path<HashMap<String, String>>,
     Query(query_params): Query<GetParams>,
 ) -> Result<GatewayResponse, GatewayError> {
+    increment_counter!(METRICS_CNT_REQUESTS_TOTAL);
     // parse path params
     let cid_param = params.get("cid").unwrap();
     let cid = Cid::try_from(cid_param.clone());
@@ -128,6 +132,7 @@ async fn get_ipfs(
     }
 }
 
+#[tracing::instrument()]
 async fn serve_raw(
     req: &Request,
     client: Client,
@@ -153,6 +158,7 @@ async fn serve_raw(
     )
 }
 
+#[tracing::instrument()]
 async fn serve_car(
     req: &Request,
     client: Client,
@@ -177,6 +183,7 @@ async fn serve_car(
     )
 }
 
+#[tracing::instrument()]
 async fn serve_html(
     req: &Request,
     client: Client,
@@ -196,6 +203,7 @@ async fn serve_html(
     )
 }
 
+#[tracing::instrument()]
 async fn serve_fs(
     req: &Request,
     client: Client,
@@ -222,16 +230,19 @@ async fn serve_fs(
     )
 }
 
+#[tracing::instrument()]
 fn add_user_headers(headers: &mut HashMap<String, String>, user_headers: HashMap<String, String>) {
     headers.extend(user_headers.into_iter());
 }
 
+#[tracing::instrument()]
 fn add_content_type_headers(headers: &mut HashMap<String, String>, name: &str) {
     let guess = mime_guess::from_path(name);
     let content_type = guess.first_or_octet_stream().to_string();
     headers.insert(CONTENT_TYPE.to_string(), content_type);
 }
 
+#[tracing::instrument()]
 fn add_content_disposition_headers(
     headers: &mut HashMap<String, String>,
     filename: &str,
@@ -253,6 +264,7 @@ fn add_content_disposition_headers(
     name
 }
 
+#[tracing::instrument()]
 fn set_content_disposition_headers(
     headers: &mut HashMap<String, String>,
     filename: &str,
@@ -264,6 +276,7 @@ fn set_content_disposition_headers(
     );
 }
 
+#[tracing::instrument()]
 fn get_filename(content_path: &str) -> String {
     content_path
         .split('/')

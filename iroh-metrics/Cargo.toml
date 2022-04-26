@@ -1,0 +1,20 @@
+[package]
+name = "iroh-metrics"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0/MIT"
+readme = "README.md"
+description = "Iroh metrics"
+repository = "https://github.com/n0-computer/iroh"
+
+[dependencies]
+tracing = "0.1.33"
+tracing-futures = "0.2.5"
+tracing-subscriber = "0.3.9"
+tracing-opentelemetry = "0.17.2"
+opentelemetry = { version = "0.17.0", features = ["rt-tokio"] }
+opentelemetry-otlp = { version = "0.10.0", features = ["grpc-sys"] }
+metrics = "0.18.1"
+metrics-util = "0.12"
+metrics-exporter-prometheus = { version = "0.9", features = ["push-gateway"]}
+metrics-exporter-log = "0.4.0"
