@@ -1,0 +1,24 @@
+[package]
+name = "rocks-store"
+version = "0.1.0"
+edition = "2021"
+authors = ["Friedel Ziegelmayer <me@dignifiedquire.com>"]
+license = "Apache-2.0/MIT"
+repository = "https://github.com/n0-computer/iroh"
+description = "Implementation of RocksDB based Store"
+
+[dependencies]
+eyre = "0.6.6"
+rocksdb = { git = "https://github.com/dignifiedquire/rust-rocksdb", branch = "rocksdbv7" }
+flatfs-store = { path = "../flatfs", optional = true }
+
+[dev-dependencies]
+tempfile = "3.3.0"
+flatfs-store = { path = "../flatfs" }
+
+
+[features]
+default = []
+importer = ["flatfs-store"]
+
+
