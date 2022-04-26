@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use eyre::{eyre, Result};
-use rocksdb::{DBPinnableSlice, WriteBatch, DB, Cache};
+use rocksdb::{Cache, DBPinnableSlice, WriteBatch, DB};
 
 pub struct RocksFs {
     db: DB,
@@ -149,12 +149,14 @@ impl RocksFs {
 
     pub fn stats(&self) -> Result<String> {
         let stats = self.db.property_value(rocksdb::properties::STATS)?;
-	Ok(stats.unwrap_or_default())
+        Ok(stats.unwrap_or_default())
     }
 
     pub fn sst_files_size(&self) -> Result<u64> {
-        let size = self.db.property_int_value(rocksdb::properties::TOTAL_SST_FILES_SIZE)?;
-	Ok(size.unwrap_or_default() as u64)
+        let size = self
+            .db
+            .property_int_value(rocksdb::properties::TOTAL_SST_FILES_SIZE)?;
+        Ok(size.unwrap_or_default() as u64)
     }
 }
 
