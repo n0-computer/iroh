@@ -28,8 +28,10 @@ jobs:
       RUSTC_WRAPPER: sccache
       RUSTV: ${{ matrix.rust }}
       SCCACHE_CACHE_SIZE: 2G
-      SCCACHE_DIR: ${{ matrix.sccache-path }}
       # SCCACHE_RECACHE: 1 # Uncomment this to clear cache, then comment it back out
+    if: matrix.os != 'windows-latest'
+    env:
+      SCCACHE_DIR: ${{ matrix.sccache-path }}
     steps:
     - uses: actions/checkout@master
     - name: Install sccache (ubuntu-latest)
