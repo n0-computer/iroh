@@ -14,6 +14,7 @@ impl Client {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct Request {
     pub format: ResponseFormat,
     pub cid: String,
