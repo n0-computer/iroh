@@ -16,15 +16,77 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macOS-latest]
         rust: [nightly, stable]
-
+        include:
+          - os: ubuntu-latest
+            sccache-path: /home/runner/.cache/sccache
+          - os: macos-latest
+            sccache-path: /Users/runner/Library/Caches/Mozilla.sccache
+          - os: windows-latest
+            sccache-path: \%LOCALAPPDATA\%\\sccache
+    env:
+      RUST_BACKTRACE: full
+      RUSTC_WRAPPER: sccache
+      RUSTV: ${{ matrix.rust }}
+      SCCACHE_CACHE_SIZE: 2G
+      SCCACHE_DIR: ${{ matrix.sccache-path }}
+      # SCCACHE_RECACHE: 1 # Uncomment this to clear cache, then comment it back out
     steps:
     - uses: actions/checkout@master
-
+    - name: Install sccache (ubuntu-latest)
+      if: matrix.os == 'ubuntu-latest'
+      env:
+        LINK: https://github.com/mozilla/sccache/releases/download
+        SCCACHE_VERSION: v0.2.15
+      run: |
+        SCCACHE_FILE=sccache-$SCCACHE_VERSION-x86_64-unknown-linux-musl
+        mkdir -p $HOME/.local/bin
+        curl -L "$LINK/$SCCACHE_VERSION/$SCCACHE_FILE.tar.gz" | tar xz
+        mv -f $SCCACHE_FILE/sccache $HOME/.local/bin/sccache
+        chmod 755 $HOME/.local/bin/sccache
+        echo "$HOME/.local/bin" >> $GITHUB_PATH       
+    - name: Install scoop (windows-latest)
+      if: matrix.os == 'windows-latest'
+      shell: powershell
+      run: |
+        Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+        iwr -useb get.scoop.sh -outfile 'install.ps1'
+        .\\install.ps1 -RunAsAdmin
+        Join-Path (Resolve-Path ~).Path "scoop\shims" >> $Env:GITHUB_PATH
+    - name: Install sccache (windows-latest)
+      if: matrix.os == 'windows-latest'
+      shell: powershell
+      run: scoop install sccache
+    - name: Install sccache (macos-latest)
+      if: matrix.os == 'macos-latest'
+      run: |
+        brew update
+        brew install sccache          
     - name: Install ${{ matrix.rust }}
       uses: actions-rs/toolchain@v1
       with:
         toolchain: ${{ matrix.rust }}
         override: true
+    
+    - name: Cache cargo registry
+      uses: actions/cache@v2
+      continue-on-error: false
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git            
+        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |
+                      ${{ runner.os }}-cargo-
+    - name: Save sccache
+      uses: actions/cache@v2
+      continue-on-error: false
+      with:
+        path: ${{ matrix.sccache-path }}
+        key: ${{ runner.os }}-sccache-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |
+                      ${{ runner.os }}-sccache-
+    - name: Start sccache server
+      run: sccache --start-server
 
     - name: check
       uses: actions-rs/cargo@v1
@@ -44,6 +106,18 @@ jobs:
       with:
         command: test
         args: --all
+
+    - name: clipy
+      uses: actions-rs/cargo@v1
+      if: matrix.os == 'ubuntu-latest' && matrix.rust=='stable'
+      with:
+          command: clippy
+          args: --all --tests --benches -- -D warnings
+    
+    - name: Print sccache stats
+      run: sccache --show-stats
+    - name: Stop sccache server
+      run: sccache --stop-server || true
 
   fmt:
     name: Rustfmt
@@ -65,24 +139,3 @@ jobs:
         with:
           command: fmt
           args: --all -- --check
-
-  clippy:
-    name: Clippy
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        rust:
-          - stable
-
-    steps:
-      - uses: actions/checkout@v2
-      - uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: ${{ matrix.rust }}
-          override: true
-      - run: rustup component add clippy
-      - uses: actions-rs/cargo@v1
-        with:
-          command: clippy
-          args: --all --tests --benches -- -D warnings
