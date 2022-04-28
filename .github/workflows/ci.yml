@@ -72,8 +72,15 @@ jobs:
       continue-on-error: false
       with:
         path: |
-          ~/.cargo/registry
-          ~/.cargo/git            
+          ~/.cargo/registry          
+          ~/.cargo/bin
+          ~/.cargo/registry/index
+          ~/.cargo/registry/cache
+          ~/.cargo/git
+          ~/.cargo/.crates.toml
+          ~/.cargo/.crates2.json
+          ./target
+            
         key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
         restore-keys: |
                       ${{ runner.os }}-cargo-
