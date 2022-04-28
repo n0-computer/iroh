@@ -84,17 +84,17 @@ jobs:
           ~/.cargo/.crates2.json
           ./target
             
-        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+        key: ${{ runner.os }}-${{ matrix.rust }}-cargo-${{ hashFiles('**/Cargo.lock') }}
         restore-keys: |
-                      ${{ runner.os }}-cargo-
+                      ${{ runner.os }}-${{ matrix.rust }}-cargo-
     - name: Save sccache
       uses: actions/cache@v2
       continue-on-error: false
       with:
         path: ${{ matrix.sccache-path }}
-        key: ${{ runner.os }}-sccache-${{ hashFiles('**/Cargo.lock') }}
+        key: ${{ runner.os }}-${{ matrix.rust }}-sccache-${{ hashFiles('**/Cargo.lock') }}
         restore-keys: |
-                      ${{ runner.os }}-sccache-
+                      ${{ runner.os }}-${{ matrix.rust }}-sccache-
     - name: Start sccache server
       run: sccache --start-server
 
