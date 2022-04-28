@@ -29,11 +29,13 @@ jobs:
       RUSTV: ${{ matrix.rust }}
       SCCACHE_CACHE_SIZE: 2G
       # SCCACHE_RECACHE: 1 # Uncomment this to clear cache, then comment it back out
-    if: matrix.os != 'windows-latest'
-    env:
-      SCCACHE_DIR: ${{ matrix.sccache-path }}
     steps:
     - uses: actions/checkout@master
+    - name: Set sccache env path
+      run: |
+        if [[ ${{ matrix.os }} != windows-latest ]]; then
+          echo "SCCACHE_DIR=${{ matrix.sccache-path }}" >> $GITHUB_ENV
+        fi
     - name: Install sccache (ubuntu-latest)
       if: matrix.os == 'ubuntu-latest'
       env:
