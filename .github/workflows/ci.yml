@@ -32,10 +32,9 @@ jobs:
     steps:
     - uses: actions/checkout@master
     - name: Set sccache env path
+      if: matrix.os != 'windows-latest'
       run: |
-        if [[ ${{ matrix.os }} != windows-latest ]]; then
           echo "SCCACHE_DIR=${{ matrix.sccache-path }}" >> $GITHUB_ENV
-        fi
     - name: Install sccache (ubuntu-latest)
       if: matrix.os == 'ubuntu-latest'
       env:
