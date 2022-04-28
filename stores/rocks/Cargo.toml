@@ -9,7 +9,7 @@ description = "Implementation of RocksDB based Store"
 
 [dependencies]
 eyre = "0.6.6"
-rocksdb = { git = "https://github.com/dignifiedquire/rust-rocksdb", branch = "rocksdbv7" }
+rocksdb = { git = "https://github.com/rust-rocksdb/rust-rocksdb", branch = "master" }
 flatfs-store = { path = "../flatfs", optional = true }
 
 [dev-dependencies]
