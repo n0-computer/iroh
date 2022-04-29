@@ -1,5 +1,5 @@
 use git_version::git_version;
-use metrics::{describe_counter, Unit};
+use metrics::{describe_counter, describe_gauge, Unit};
 
 use opentelemetry::trace::{TraceContextExt, TraceId};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
@@ -18,12 +18,64 @@ pub fn metrics_config() -> iroh_metrics::Config {
 }
 
 pub const METRICS_CNT_REQUESTS_TOTAL: &str = "requests_total";
+pub const METRICS_TIME_TO_FETCH_FIRST_BLOCK: &str = "time_to_fetch_first_block";
+pub const METRICS_TIME_TO_FETCH_FULL_FILE: &str = "time_to_fetch_full_file";
+pub const METRICS_TIME_TO_SERVE_FIRST_BLOCK: &str = "time_to_serve_first_block";
+pub const METRICS_TIME_TO_SERVE_FULL_FILE: &str = "time_to_serve_full_file";
+pub const METRICS_CACHE_HIT: &str = "cache_hit";
+pub const METRICS_CACHE_MISS: &str = "cache_miss";
+pub const METRICS_BYTES_STREAMED: &str = "bytes_streamed";
+pub const METRICS_BYTES_FETCHED: &str = "bytes_fetched";
+pub const METRICS_BITRATE_IN: &str = "bitrate_in";
+pub const METRICS_BITRATE_OUT: &str = "bitrate_out";
 
 pub fn register_counters() {
     describe_counter!(
-        "requests_total",
+        METRICS_CNT_REQUESTS_TOTAL,
         Unit::Count,
         "Total number of requests received by the gateway"
+    );
+    describe_gauge!(
+        METRICS_TIME_TO_FETCH_FIRST_BLOCK,
+        Unit::Milliseconds,
+        "Time from start of request to fetching the first block"
+    );
+    describe_gauge!(
+        METRICS_TIME_TO_FETCH_FULL_FILE,
+        Unit::Milliseconds,
+        "Time from start of request to fetching the full file"
+    );
+    describe_gauge!(
+        METRICS_TIME_TO_SERVE_FIRST_BLOCK,
+        Unit::Milliseconds,
+        "Time from start of request to serving the first block"
+    );
+    describe_gauge!(
+        METRICS_TIME_TO_SERVE_FULL_FILE,
+        Unit::Milliseconds,
+        "Time from start of request to serving the full file"
+    );
+    describe_counter!(METRICS_CACHE_HIT, Unit::Count, "Number of cache hits");
+    describe_counter!(METRICS_CACHE_MISS, Unit::Count, "Number of cache misses");
+    describe_counter!(
+        METRICS_BYTES_STREAMED,
+        Unit::Bytes,
+        "Total number of bytes streamed"
+    );
+    describe_counter!(
+        METRICS_BYTES_FETCHED,
+        Unit::Bytes,
+        "Total number of bytes fetched"
+    );
+    describe_gauge!(
+        METRICS_BITRATE_IN,
+        Unit::KilobitsPerSecond,
+        "Bitrate of incoming stream"
+    );
+    describe_gauge!(
+        METRICS_BITRATE_OUT,
+        Unit::KilobitsPerSecond,
+        "Bitrate of outgoing stream"
     );
 }
 

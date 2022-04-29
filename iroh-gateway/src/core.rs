@@ -81,6 +81,7 @@ async fn get_ipfs(
     Query(query_params): Query<GetParams>,
 ) -> Result<GatewayResponse, GatewayError> {
     increment_counter!(METRICS_CNT_REQUESTS_TOTAL);
+    let start_time = std::time::Instant::now();
     // parse path params
     let cid_param = params.get("cid").unwrap();
     let cid = Cid::try_from(cid_param.clone());
@@ -125,10 +126,10 @@ async fn get_ipfs(
         download,
     };
     match req.format {
-        ResponseFormat::Raw => serve_raw(&req, *client, headers).await,
-        ResponseFormat::Car => serve_car(&req, *client, headers).await,
-        ResponseFormat::Html => serve_html(&req, *client, headers).await,
-        ResponseFormat::Fs => serve_fs(&req, *client, headers).await,
+        ResponseFormat::Raw => serve_raw(&req, *client, headers, start_time).await,
+        ResponseFormat::Car => serve_car(&req, *client, headers, start_time).await,
+        ResponseFormat::Html => serve_html(&req, *client, headers, start_time).await,
+        ResponseFormat::Fs => serve_fs(&req, *client, headers, start_time).await,
     }
 }
 
@@ -137,9 +138,10 @@ async fn serve_raw(
     req: &Request,
     client: Client,
     mut headers: HashMap<String, String>,
+    start_time: std::time::Instant,
 ) -> Result<GatewayResponse, GatewayError> {
     let body = client
-        .get_file_simulated(req.full_content_path.as_str())
+        .get_file_simulated(req.full_content_path.as_str(), start_time)
         .await;
     let body = match body {
         Ok(b) => b,
@@ -160,9 +162,10 @@ async fn serve_car(
     req: &Request,
     client: Client,
     mut headers: HashMap<String, String>,
+    start_time: std::time::Instant,
 ) -> Result<GatewayResponse, GatewayError> {
     let body = client
-        .get_file_simulated(req.full_content_path.as_str())
+        .get_file_simulated(req.full_content_path.as_str(), start_time)
         .await;
     let body = match body {
         Ok(b) => b,
@@ -183,9 +186,10 @@ async fn serve_html(
     req: &Request,
     client: Client,
     headers: HashMap<String, String>,
+    start_time: std::time::Instant,
 ) -> Result<GatewayResponse, GatewayError> {
     let body = client
-        .get_file_simulated(req.full_content_path.as_str())
+        .get_file_simulated(req.full_content_path.as_str(), start_time)
         .await;
     let body = match body {
         Ok(b) => b,
@@ -201,9 +205,10 @@ async fn serve_fs(
     req: &Request,
     client: Client,
     mut headers: HashMap<String, String>,
+    start_time: std::time::Instant,
 ) -> Result<GatewayResponse, GatewayError> {
     let body = client
-        .get_file_simulated(req.full_content_path.as_str())
+        .get_file_simulated(req.full_content_path.as_str(), start_time)
         .await;
     let body = match body {
         Ok(b) => b,
