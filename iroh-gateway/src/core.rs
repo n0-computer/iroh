@@ -1,5 +1,5 @@
 use axum::{
-    body::{self, Body, BoxBody},
+    body::{self, BoxBody},
     error_handling::HandleErrorLayer,
     extract::{Extension, Path, Query},
     http::{header::*, StatusCode},
@@ -138,24 +138,21 @@ async fn serve_raw(
     client: Client,
     mut headers: HashMap<String, String>,
 ) -> Result<GatewayResponse, GatewayError> {
-    let body = client.get_file(req.full_content_path.as_str()).await;
+    let body = client
+        .get_file_simulated(req.full_content_path.as_str())
+        .await;
     let body = match body {
         Ok(b) => b,
         Err(e) => {
             return error(StatusCode::INTERNAL_SERVER_ERROR, &e);
         }
     };
-
     set_content_disposition_headers(
         &mut headers,
         format!("{}.bin", req.cid).as_str(),
         DISPOSITION_ATTACHMENT,
     );
-    response(
-        StatusCode::OK,
-        body::boxed(Body::from(body)),
-        headers.clone(),
-    )
+    response(StatusCode::OK, body::boxed(body), headers.clone())
 }
 
 #[tracing::instrument()]
@@ -164,7 +161,9 @@ async fn serve_car(
     client: Client,
     mut headers: HashMap<String, String>,
 ) -> Result<GatewayResponse, GatewayError> {
-    let body = client.get_file(req.full_content_path.as_str()).await;
+    let body = client
+        .get_file_simulated(req.full_content_path.as_str())
+        .await;
     let body = match body {
         Ok(b) => b,
         Err(e) => {
@@ -176,11 +175,7 @@ async fn serve_car(
         format!("{}.car", req.cid).as_str(),
         DISPOSITION_ATTACHMENT,
     );
-    response(
-        StatusCode::OK,
-        body::boxed(Body::from(body)),
-        headers.clone(),
-    )
+    response(StatusCode::OK, body::boxed(body), headers.clone())
 }
 
 #[tracing::instrument()]
@@ -189,18 +184,16 @@ async fn serve_html(
     client: Client,
     headers: HashMap<String, String>,
 ) -> Result<GatewayResponse, GatewayError> {
-    let body = client.get_file(req.full_content_path.as_str()).await;
+    let body = client
+        .get_file_simulated(req.full_content_path.as_str())
+        .await;
     let body = match body {
         Ok(b) => b,
         Err(e) => {
             return error(StatusCode::INTERNAL_SERVER_ERROR, &e);
         }
     };
-    response(
-        StatusCode::OK,
-        body::boxed(Body::from(body)),
-        headers.clone(),
-    )
+    response(StatusCode::OK, body::boxed(body), headers.clone())
 }
 
 #[tracing::instrument()]
@@ -209,7 +202,9 @@ async fn serve_fs(
     client: Client,
     mut headers: HashMap<String, String>,
 ) -> Result<GatewayResponse, GatewayError> {
-    let body = client.get_file(req.full_content_path.as_str()).await;
+    let body = client
+        .get_file_simulated(req.full_content_path.as_str())
+        .await;
     let body = match body {
         Ok(b) => b,
         Err(e) => {
@@ -223,11 +218,7 @@ async fn serve_fs(
         req.download,
     );
     add_content_type_headers(&mut headers, &name);
-    response(
-        StatusCode::OK,
-        body::boxed(Body::from(body)),
-        headers.clone(),
-    )
+    response(StatusCode::OK, body::boxed(body), headers.clone())
 }
 
 #[tracing::instrument()]
