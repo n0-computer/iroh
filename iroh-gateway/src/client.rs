@@ -41,11 +41,7 @@ impl Client {
                 increment_counter!(METRICS_CACHE_HIT);
             }
 
-            loop {
-                let n = match file.read(&mut buf) {
-                    Ok(n) => n,
-                    Err(_) => break,
-                };
+            while let Ok(n) = file.read(&mut buf) {
                 if first_block {
                     gauge!(METRICS_TIME_TO_FETCH_FIRST_BLOCK, start_time.elapsed());
                 }
