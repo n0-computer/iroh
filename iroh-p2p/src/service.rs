@@ -18,6 +18,7 @@ use libp2p::swarm::{
     ConnectionHandler, ConnectionLimits, IntoConnectionHandler, NetworkBehaviour, SwarmBuilder,
     SwarmEvent,
 };
+use libp2p::yamux::WindowUpdateMode;
 use libp2p::{core, mplex, noise, yamux, PeerId, Swarm, Transport};
 use tokio::{select, time};
 use tracing::{debug, info, trace, warn};
@@ -80,11 +81,11 @@ impl Libp2pService {
         let transport = build_transport(net_keypair.clone()).await;
 
         let limits = ConnectionLimits::default()
-            .with_max_pending_incoming(Some(10))
-            .with_max_pending_outgoing(Some(30))
+            .with_max_pending_incoming(Some(10)) // TODO: configurable
+            .with_max_pending_outgoing(Some(30)) // TODO: configurable
             .with_max_established_incoming(Some(config.target_peer_count))
             .with_max_established_outgoing(Some(config.target_peer_count))
-            .with_max_established_per_peer(Some(5));
+            .with_max_established_per_peer(Some(5)); // TODO: configurable
 
         let mut swarm = SwarmBuilder::new(
             transport,
@@ -92,7 +93,7 @@ impl Libp2pService {
             peer_id,
         )
         .connection_limits(limits)
-        .notify_handler_buffer_size(std::num::NonZeroUsize::new(20).expect("Not zero"))
+        .notify_handler_buffer_size(std::num::NonZeroUsize::new(20).expect("Not zero")) // TODO: configurable
         .connection_event_buffer_size(64)
         .executor(Box::new(|fut| {
             tokio::spawn(fut);
@@ -106,8 +107,8 @@ impl Libp2pService {
             warn!("Failed to bootstrap with Kademlia: {}", e);
         }
 
-        let (network_sender_in, network_receiver_in) = channel(1_000);
-        let (network_sender_out, network_receiver_out) = channel(1_000);
+        let (network_sender_in, network_receiver_in) = channel(1_000); // TODO: configurable
+        let (network_sender_out, network_receiver_out) = channel(1_000); // TODO: configurable
 
         Libp2pService {
             swarm,
@@ -122,7 +123,7 @@ impl Libp2pService {
     /// Starts the libp2p service networking stack. This Future resolves when shutdown occurs.
     pub async fn run(&mut self) -> anyhow::Result<()> {
         info!("Local Peer ID: {}", self.swarm.local_peer_id());
-        let mut interval = time::interval(Duration::from_secs(15));
+        let mut interval = time::interval(Duration::from_secs(15)); // TODO: configurable
 
         loop {
             select! {
@@ -212,7 +213,7 @@ impl Libp2pService {
                                 Multihash::from_bytes(&peer_id.to_bytes()).unwrap(),
                             ));
                             Swarm::dial(&mut self.swarm, multiaddr.clone())
-                                .with_context(|| format!("Faild to dial peer: {}", multiaddr))?;
+                                .with_context(|| format!("Failed to dial peer: {}", multiaddr))?;
                         }
                     }
                 }
@@ -246,6 +247,7 @@ impl Libp2pService {
         Ok(())
     }
 
+    // TODO: actually use iroh-rpc
     async fn handle_jsonrpc_request(&mut self, method: NetRPCMethods) -> Result<()> {
         match method {
             NetRPCMethods::NetAddrsListen(response_channel) => {
@@ -310,6 +312,8 @@ impl Libp2pService {
 
 /// Builds the transport stack that LibP2P will communicate over.
 pub async fn build_transport(local_key: Keypair) -> Boxed<(PeerId, StreamMuxerBox)> {
+    // TODO: make transports configurable
+
     let transport = libp2p::tcp::TokioTcpConfig::new().nodelay(true);
     let transport = libp2p::websocket::WsConfig::new(transport.clone()).or_transport(transport);
     let transport = libp2p::dns::TokioDnsConfig::system(transport).unwrap();
@@ -326,9 +330,9 @@ pub async fn build_transport(local_key: Keypair) -> Boxed<(PeerId, StreamMuxerBo
         mplex_config.set_max_buffer_size(usize::MAX);
 
         let mut yamux_config = yamux::YamuxConfig::default();
-        yamux_config.set_max_buffer_size(16 * 1024 * 1024);
-        yamux_config.set_receive_window_size(16 * 1024 * 1024);
-        // yamux_config.set_window_update_mode(WindowUpdateMode::OnRead);
+        yamux_config.set_max_buffer_size(16 * 1024 * 1024); // TODO: configurable
+        yamux_config.set_receive_window_size(16 * 1024 * 1024); // TODO: configurable
+        yamux_config.set_window_update_mode(WindowUpdateMode::on_receive());
         core::upgrade::SelectUpgrade::new(yamux_config, mplex_config)
     };
 
@@ -336,6 +340,6 @@ pub async fn build_transport(local_key: Keypair) -> Boxed<(PeerId, StreamMuxerBo
         .upgrade(core::upgrade::Version::V1Lazy)
         .authenticate(auth_config)
         .multiplex(mplex_config)
-        .timeout(Duration::from_secs(20))
+        .timeout(Duration::from_secs(20)) // TODO: configurable
         .boxed()
 }
