@@ -1,8 +1,10 @@
 [workspace]
 members = [
   "iroh",
+  "iroh-bitswap",
   "iroh-rpc",
   "iroh-gateway",
   "iroh-metrics",
+  "iroh-p2p",
   "stores/*"
 ]
