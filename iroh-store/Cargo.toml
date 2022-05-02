@@ -1,0 +1,29 @@
+[package]
+name = "iroh-store"
+version = "0.1.0"
+edition = "2021"
+authors = ["Friedel Ziegelmayer <me@dignifiedquire.com>"]
+license = "Apache-2.0/MIT"
+repository = "https://github.com/n0-computer/iroh"
+description = "Implementation of the storage part of iroh"
+
+[dependencies]
+rocksdb = { git = "https://github.com/rust-rocksdb/rust-rocksdb", branch = "master" }
+eyre = "0.6.6"
+tokio = { version = "1.18.0", features = ["rt"] }
+cid = "0.8.4"
+rkyv = { version = "0.7.37", features = ["validation"] }
+bytecheck = "0.6.7"
+
+[dev-dependencies]
+criterion = { version = "0.3.5", features = ["async_tokio"] }
+tempfile = "3.3.0"
+tokio = { version = "1.18.0", features = ["rt", "macros", "rt-multi-thread"] }
+
+[features]
+default = []
+
+
+[[bench]]
+name = "store"
+harness = false
