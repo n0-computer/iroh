@@ -36,8 +36,8 @@ impl<T> Client<T> {
     }
 
     /// Run the event/command loop, should be spawned in an thread
-    pub fn run(&mut self) {
-        self.server.run();
+    pub async fn run(self) {
+        self.server.run().await;
     }
 
     /// Dial all known addresses associated with the given namespaces
@@ -312,7 +312,7 @@ mod test {
             .unwrap();
         let namespace = String::from("namespace");
         let keypair = Keypair::generate_ed25519();
-        let state = server::State(());
+        let state = server::State::new(());
         let server = server_from_config(
             ServerConfig::new()
                 .with_swarm(swarm::new_mem_swarm(keypair))

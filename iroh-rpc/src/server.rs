@@ -27,12 +27,12 @@ use std::sync::Arc;
 /// requests we are still waiting on a response for and any active streams
 /// that we are still currently listening for.
 pub struct Server<T> {
-    swarm: Swarm<Behaviour>,
-    command_rec: mpsc::Receiver<Command>,
-    pending_requests: PendingMap,
-    active_streams: ActiveStreams,
-    state: State<T>,
-    handlers: HashMap<String, Namespace<T>>,
+    pub(crate) swarm: Swarm<Behaviour>,
+    pub(crate) command_rec: mpsc::Receiver<Command>,
+    pub(crate) pending_requests: PendingMap,
+    pub(crate) active_streams: ActiveStreams,
+    pub(crate) state: State<T>,
+    pub(crate) handlers: HashMap<String, Namespace<T>>,
 }
 
 impl<T> Server<T> {
@@ -426,7 +426,12 @@ impl<T> Server<T> {
             None => return Err(RPCError::NamespaceNotFound),
         };
         namespace
-            .handle(method, &mut self.state, streaming_id, params)
+            .handle(
+                method,
+                State(Arc::clone(&self.state.0)),
+                streaming_id,
+                params,
+            )
             .await
     }
 }
@@ -495,7 +500,7 @@ impl<T> Namespace<T> {
     pub async fn handle(
         &mut self,
         method: String,
-        state: &mut State<T>,
+        state: State<T>,
         stream_id: Option<u64>,
         params: Vec<u8>,
     ) -> Result<Vec<u8>, RPCError> {
@@ -511,13 +516,27 @@ impl<T> Namespace<T> {
     }
 }
 
-pub struct State<T>(pub T);
+pub struct State<T>(pub Arc<T>);
+
+impl<T> State<T> {
+    pub fn new(t: T) -> Self {
+        State(Arc::new(t))
+    }
+}
+
+impl<T> std::ops::Deref for State<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &*self.0
+    }
+}
 
 #[async_trait::async_trait]
 pub trait Factory<T> {
     async fn handle(
         &self,
-        &mut state: State<T>,
+        state: State<T>,
         stream_id: Option<u64>,
         param: Vec<u8>,
     ) -> Result<Vec<u8>, RPCError>;
@@ -540,7 +559,7 @@ impl<T, F: Factory<T>> Handler<T, F> {
 pub struct BoxedHandler<T>(
     Box<
         dyn Fn(
-                &mut State<T>,
+                State<T>,
                 Option<u64>,
                 Vec<u8>,
             )
@@ -551,7 +570,11 @@ pub struct BoxedHandler<T>(
 );
 
 // TODO: fix
-impl<T, F: Factory<T>> From<Handler<T, F>> for BoxedHandler<T> {
+impl<T, F> From<Handler<T, F>> for BoxedHandler<T>
+where
+    T: Send + Sync + 'static,
+    F: Factory<T> + Send + Sync + 'static,
+{
     fn from(t: Handler<T, F>) -> BoxedHandler<T> {
         let hnd = Arc::new(t.hnd);
 
