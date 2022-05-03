@@ -2,6 +2,7 @@
 members = [
   "iroh",
   "iroh-bitswap",
+  "iroh-car",
   "iroh-rpc",
   "iroh-gateway",
   "iroh-metrics",
