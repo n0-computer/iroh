@@ -1,5 +1,4 @@
 /target
 /iroh_gateway/test_files/*
-/iroh-rpc/test_data/*
 .env
 Cargo.lock
