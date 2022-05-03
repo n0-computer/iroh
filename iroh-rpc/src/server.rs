@@ -18,6 +18,8 @@ use libp2p::swarm::{ConnectionHandlerUpgrErr, SwarmEvent};
 use libp2p::Swarm;
 use log::{debug, error, trace};
 use std::collections::HashMap;
+use std::marker::PhantomData;
+use std::sync::Arc;
 
 /// The Server manages the swarm, gets commands from the client & translates
 /// those into events to send over rpc to the correct recepient. It listens for
@@ -509,10 +511,31 @@ impl<T> Namespace<T> {
     }
 }
 
-pub struct State<T>(T);
+pub struct State<T>(pub T);
 
-#[derive(Deserialize, Serialize, Debug, Clone)]
-pub struct Params<T>(pub T);
+#[async_trait::async_trait]
+pub trait Factory<T> {
+    async fn handle(
+        &self,
+        &mut state: State<T>,
+        stream_id: Option<u64>,
+        param: Vec<u8>,
+    ) -> Result<Vec<u8>, RPCError>;
+}
+
+pub struct Handler<T, F: Factory<T>> {
+    hnd: F,
+    _t: PhantomData<T>,
+}
+
+impl<T, F: Factory<T>> Handler<T, F> {
+    fn new(hnd: F) -> Self {
+        Handler {
+            hnd,
+            _t: PhantomData,
+        }
+    }
+}
 
 pub struct BoxedHandler<T>(
     Box<
@@ -526,3 +549,20 @@ pub struct BoxedHandler<T>(
             + Sync,
     >,
 );
+
+// TODO: fix
+impl<T, F: Factory<T>> From<Handler<T, F>> for BoxedHandler<T> {
+    fn from(t: Handler<T, F>) -> BoxedHandler<T> {
+        let hnd = Arc::new(t.hnd);
+
+        let inner = move |state: State<T>, stream_id: Option<u64>, params: Vec<u8>| {
+            let hnd = Arc::clone(&hnd);
+            Box::pin(async move {
+                let out = { hnd.handle(state, stream_id, params).await? };
+                Ok(Vec::new())
+            })
+                as std::pin::Pin<Box<dyn Future<Output = Result<Vec<u8>, RPCError>> + Send>>
+        };
+        BoxedHandler(Box::new(inner))
+    }
+}

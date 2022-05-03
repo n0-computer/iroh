@@ -1,13 +1,16 @@
+use crate::behaviour::Behaviour;
 use crate::commands::{Command, SenderType};
 use crate::error::RPCError;
 use crate::serde::{deserialize_response, serialize_request, DeserializeOwned, Serialize};
-use crate::server::Server;
+use crate::server::{Namespace, Server, State};
 use crate::stream::InStream;
 
 use futures::channel::{mpsc, oneshot};
 use futures::prelude::*;
 use libp2p::Multiaddr;
 use libp2p::PeerId;
+use libp2p::Swarm;
+
 use rand::{thread_rng, Rng};
 use std::collections::HashMap;
 
@@ -23,18 +26,25 @@ pub struct Client<T> {
 
 impl<T> Client<T> {
     /// Create a new client
-    pub fn new(command_sender: mpsc::Sender<Command>) -> Client<T> {
+    // TODO: not correct yet
+    pub fn new(command_sender: mpsc::Sender<Command>, server: Server<T>) -> Client<T> {
         Client {
             command_sender,
             addresses: Default::default(),
+            server,
         }
+    }
+
+    /// Run the event/command loop, should be spawned in an thread
+    pub fn run(&mut self) {
+        self.server.run();
     }
 
     /// Dial all known addresses associated with the given namespaces
     pub async fn dial_all(&mut self) -> Result<(), RPCError> {
         let mut dials = Vec::new();
         for (_, (addr, peer_id)) in self.addresses.to_owned() {
-            let handle = tokio::spawn(Client::dial(self.command_sender.clone(), addr, peer_id));
+            let handle = tokio::spawn(dial(self.command_sender.clone(), addr, peer_id));
             dials.push(handle);
         }
         let outcomes = futures::future::join_all(dials).await;
@@ -61,28 +71,6 @@ impl<T> Client<T> {
         }
     }
 
-    /// Dial a single address
-    async fn dial(
-        mut command_sender: mpsc::Sender<Command>,
-        addr: Multiaddr,
-        peer_id: PeerId,
-    ) -> Result<(), RPCError> {
-        let (sender, receiver) = oneshot::channel();
-        command_sender
-            .send(Command::Dial {
-                peer_id,
-                peer_addr: addr,
-                sender,
-            })
-            .await
-            .expect("Receiver to not be dropped.");
-        match receiver.await.expect("Sender to not be dropped.") {
-            SenderType::Ack => Ok(()),
-            SenderType::Error(_) => Err(RPCError::TODO),
-            _ => Err(RPCError::TODO),
-        }
-    }
-
     /// Signal the RPC event loop to stop listening
     pub async fn shutdown(mut self) {
         self.command_sender
@@ -92,7 +80,7 @@ impl<T> Client<T> {
     }
 
     /// Add an address and peer id associated with a particular namespace
-    pub fn with_namespace(
+    pub fn with_connection_to(
         mut self,
         namespace: String,
         address: Multiaddr,
@@ -103,15 +91,15 @@ impl<T> Client<T> {
     }
 
     /// Send a single request and expects a single response
-    pub async fn call<T, U>(
+    pub async fn call<U, V>(
         &mut self,
         namespace: String,
         method: String,
-        params: T,
-    ) -> Result<U, RPCError>
+        params: U,
+    ) -> Result<V, RPCError>
     where
-        T: Serialize + Send + Sync,
-        U: DeserializeOwned + Send + Sync,
+        U: Serialize + Send + Sync,
+        V: DeserializeOwned + Send + Sync,
     {
         let v = serialize_request(params)?;
         let peer_id = self.get_peer_id(&namespace)?;
@@ -131,18 +119,18 @@ impl<T> Client<T> {
             SenderType::Error(_) => return Err(RPCError::TODO),
             _ => return Err(RPCError::TODO),
         };
-        deserialize_response::<U>(&res)
+        deserialize_response::<V>(&res)
     }
 
     /// Send a request & expects a stream of bytes as a response
-    pub async fn streaming_call<T>(
+    pub async fn streaming_call<U>(
         &mut self,
         namespace: String,
         method: String,
-        params: T,
+        params: U,
     ) -> Result<InStream, RPCError>
     where
-        T: Serialize + Send + Sync,
+        U: Serialize + Send + Sync,
     {
         let peer_id = self.get_peer_id(&namespace)?;
         let v = match serialize_request(params) {
@@ -194,10 +182,103 @@ impl<T> Client<T> {
     }
 }
 
+/// Dial a single address
+async fn dial(
+    mut command_sender: mpsc::Sender<Command>,
+    addr: Multiaddr,
+    peer_id: PeerId,
+) -> Result<(), RPCError> {
+    let (sender, receiver) = oneshot::channel();
+    command_sender
+        .send(Command::Dial {
+            peer_id,
+            peer_addr: addr,
+            sender,
+        })
+        .await
+        .expect("Receiver to not be dropped.");
+    match receiver.await.expect("Sender to not be dropped.") {
+        SenderType::Ack => Ok(()),
+        SenderType::Error(_) => Err(RPCError::TODO),
+        _ => Err(RPCError::TODO),
+    }
+}
+
+// TODO: stand-in for now, should be `client_from_config` & use a `ClientConfig` struct
+fn server_from_config<T>(config: ServerConfig<T>) -> Result<Server<T>, Box<dyn std::error::Error>> {
+    let swarm = match config.swarm {
+        Some(s) => s,
+        None => return Err("no swarm given".into()),
+    };
+    let command_rec = match config.commands_receiver {
+        Some(c) => c,
+        None => return Err("no command receiver specified".into()),
+    };
+    let state = match config.state {
+        Some(s) => s,
+        None => return Err("no server state specified".into()),
+    };
+    Ok(Server {
+        swarm,
+        command_rec,
+        state,
+        handlers: config.namespaces,
+        pending_requests: Default::default(),
+        active_streams: Default::default(),
+    })
+}
+
+// TODO: implement ClientConfig, that takes a ServerConfig
+pub struct ServerConfig<T> {
+    swarm: Option<Swarm<Behaviour>>,
+    commands_receiver: Option<mpsc::Receiver<Command>>,
+    state: Option<State<T>>,
+    namespaces: HashMap<String, Namespace<T>>,
+}
+
+impl<T> ServerConfig<T> {
+    pub fn new() -> Self {
+        ServerConfig {
+            swarm: None,
+            commands_receiver: None,
+            state: None,
+            namespaces: Default::default(),
+        }
+    }
+
+    pub fn with_swarm<I: Into<Swarm<Behaviour>>>(mut self, swarm: I) -> Self {
+        self.swarm = Some(swarm.into());
+        self
+    }
+
+    pub fn with_commands_receiver<I: Into<mpsc::Receiver<Command>>>(mut self, rec: I) -> Self {
+        self.commands_receiver = Some(rec.into());
+        self
+    }
+
+    pub fn with_state<I: Into<State<T>>>(mut self, state: I) -> Self {
+        self.state = Some(state.into());
+        self
+    }
+
+    pub fn with_namespace<F>(mut self, name: String, with_methods: F) -> Self
+    where
+        F: FnOnce(Namespace<T>) -> Namespace<T>,
+    {
+        let n = Namespace::new(name.clone());
+        let n = with_methods(n);
+        self.namespaces.insert(name, n);
+        self
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
     use crate::serde::Deserialize;
+    use crate::server;
+    use crate::swarm;
+    use libp2p::identity::Keypair;
 
     #[derive(Serialize, Debug, Clone)]
     struct Params {
@@ -211,6 +292,17 @@ mod test {
         active: bool,
     }
 
+    type State = server::State<()>;
+
+    struct Get {}
+    async fn params_handler(
+        state: State,
+        stream_id: Option<u64>,
+        params: Vec<u8>,
+    ) -> Result<Vec<u8>, RPCError> {
+        Ok(Vec::new())
+    }
+
     #[tokio::test]
     async fn client_example() {
         let (sender, receiver) = mpsc::channel(0);
@@ -219,8 +311,20 @@ mod test {
             .parse()
             .unwrap();
         let namespace = String::from("namespace");
-        let mut client =
-            Client::new(sender).with_namespace(namespace.clone(), multiaddr.clone(), peer_id);
+        let keypair = Keypair::generate_ed25519();
+        let state = server::State(());
+        let server = server_from_config(
+            ServerConfig::new()
+                .with_swarm(swarm::new_mem_swarm(keypair))
+                .with_state(state),
+        )
+        .expect("Server to be created");
+
+        let mut client = Client::new(sender, server).with_connection_to(
+            namespace.clone(),
+            multiaddr.clone(),
+            peer_id,
+        );
         let got_multiaddr = client
             .get_multiaddr(&namespace)
             .expect("Namespace to exist.");

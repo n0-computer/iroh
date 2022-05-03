@@ -5,3 +5,4 @@ mod error;
 mod serde;
 mod server;
 mod stream;
+mod swarm;
