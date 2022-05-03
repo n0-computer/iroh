@@ -1,4 +1,4 @@
 /target
 /iroh_gateway/test_files/*
 .env
-Cargo.lock
+**/Cargo.lock
