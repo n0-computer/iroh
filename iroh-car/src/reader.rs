@@ -1,3 +1,4 @@
+use cid::Cid;
 use futures::Stream;
 use tokio::io::AsyncRead;
 
@@ -5,7 +6,6 @@ use crate::{
     error::Error,
     header::CarHeader,
     util::{ld_read, read_node},
-    Block,
 };
 
 /// Reads CAR files that are in a BufReader
@@ -44,11 +44,11 @@ where
     }
 
     /// Returns the next IPLD Block in the buffer
-    pub async fn next_block(&mut self) -> Result<Option<Block>, Error> {
+    pub async fn next_block(&mut self) -> Result<Option<(Cid, Vec<u8>)>, Error> {
         read_node(&mut self.reader, &mut self.buffer).await
     }
 
-    pub fn stream(self) -> impl Stream<Item = Result<Block, Error>> {
+    pub fn stream(self) -> impl Stream<Item = Result<(Cid, Vec<u8>), Error>> {
         futures::stream::try_unfold(self, |mut this| async move {
             let maybe_block = read_node(&mut this.reader, &mut this.buffer).await?;
             Ok(maybe_block.map(|b| (b, this)))
@@ -87,12 +87,12 @@ mod tests {
 
         let reader = Cursor::new(&buffer);
         let car_reader = CarReader::new(reader).await.unwrap();
-        let files: Vec<Block> = car_reader.stream().try_collect().await.unwrap();
+        let files: Vec<_> = car_reader.stream().try_collect().await.unwrap();
 
         assert_eq!(files.len(), 2);
-        assert_eq!(files[0].cid, cid_test);
-        assert_eq!(files[0].data, b"test");
-        assert_eq!(files[1].cid, cid_foo);
-        assert_eq!(files[1].data, b"foo");
+        assert_eq!(files[0].0, cid_test);
+        assert_eq!(files[0].1, b"test");
+        assert_eq!(files[1].0, cid_foo);
+        assert_eq!(files[1].1, b"foo");
     }
 }

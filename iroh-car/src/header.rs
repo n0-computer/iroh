@@ -5,7 +5,7 @@ use ipld_cbor::DagCborCodec;
 use crate::error::Error;
 
 /// A car header.
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum CarHeader {
     V1(CarHeaderV1),
@@ -53,7 +53,7 @@ impl CarHeader {
 }
 
 /// CAR file header version 1.
-#[derive(Debug, Default, ipld::DagCbor, PartialEq)]
+#[derive(Debug, Clone, Default, ipld::DagCbor, PartialEq)]
 pub struct CarHeaderV1 {
     #[ipld]
     pub roots: Vec<Cid>,

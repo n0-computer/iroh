@@ -1,24 +1,36 @@
 use futures::TryStreamExt;
 use iroh_car::*;
-use tokio::fs::File;
+use tokio::fs::{self, File};
 use tokio::io::BufReader;
 
 #[tokio::test]
-async fn read_carv1_test_file() {
+async fn roundtrip_carv1_test_file() {
     let file = File::open("tests/testv1.car").await.unwrap();
     let buf_reader = BufReader::new(file);
 
     let car_reader = CarReader::new(buf_reader).await.unwrap();
+    let header = car_reader.header().clone();
     let files: Vec<_> = car_reader.stream().try_collect().await.unwrap();
     assert_eq!(files.len(), 35);
+
+    let mut buffer = Vec::new();
+    let mut writer = CarWriter::new(header, &mut buffer);
+    for (cid, data) in &files {
+        writer.write(*cid, data).await.unwrap();
+    }
+    writer.finish().await.unwrap();
+
+    let file = fs::read("tests/testv1.car").await.unwrap();
+    assert_eq!(file, buffer);
 }
 
 #[tokio::test]
-async fn read_carv1_basic_fixtures_file() {
+async fn roundtrip_carv1_basic_fixtures_file() {
     let file = File::open("tests/carv1_basic.car").await.unwrap();
     let buf_reader = BufReader::new(file);
 
     let car_reader = CarReader::new(buf_reader).await.unwrap();
+    let header = car_reader.header().clone();
 
     assert_eq!(
         car_reader.header().roots(),
@@ -46,7 +58,17 @@ async fn read_carv1_basic_fixtures_file() {
         "bafyreidj5idub6mapiupjwjsyyxhyhedxycv4vihfsicm2vt46o7morwlm",
     ];
 
-    for (cid, file) in cids.iter().zip(files) {
-        assert_eq!(file.cid, cid.parse().unwrap());
+    for (expected_cid, (cid, _)) in cids.iter().zip(&files) {
+        assert_eq!(*cid, expected_cid.parse().unwrap());
     }
+
+    let mut buffer = Vec::new();
+    let mut writer = CarWriter::new(header, &mut buffer);
+    for (cid, data) in &files {
+        writer.write(*cid, data).await.unwrap();
+    }
+    writer.finish().await.unwrap();
+
+    let file = fs::read("tests/carv1_basic.car").await.unwrap();
+    assert_eq!(file, buffer);
 }

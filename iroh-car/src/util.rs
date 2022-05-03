@@ -3,8 +3,6 @@ use integer_encoding::VarIntAsyncReader;
 use tokio::io::{AsyncRead, AsyncReadExt};
 
 use super::error::Error;
-use crate::Block;
-
 pub(crate) async fn ld_read<R>(mut reader: R, buf: &mut Vec<u8>) -> Result<bool, Error>
 where
     R: AsyncRead + Send + Unpin,
@@ -31,7 +29,7 @@ where
 pub(crate) async fn read_node<R>(
     buf_reader: &mut R,
     buf: &mut Vec<u8>,
-) -> Result<Option<Block>, Error>
+) -> Result<Option<(Cid, Vec<u8>)>, Error>
 where
     R: AsyncRead + Send + Unpin,
 {
@@ -40,10 +38,7 @@ where
         let c = Cid::read_bytes(&mut cursor)?;
         let pos = cursor.position() as usize;
 
-        return Ok(Some(Block {
-            cid: c,
-            data: buf[pos..].to_vec(),
-        }));
+        return Ok(Some((c, buf[pos..].to_vec())));
     }
     Ok(None)
 }
