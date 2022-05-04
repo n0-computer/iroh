@@ -47,10 +47,12 @@ impl<T> RpcConfig<T> {
         self
     }
 
-    pub fn with_namespace<F>(mut self, name: String, with_methods: F) -> Self
+    pub fn with_namespace<S, F>(mut self, name: S, with_methods: F) -> Self
     where
+        S: Into<String>,
         F: FnOnce(Namespace<T>) -> Namespace<T>,
     {
+        let name = name.into();
         let n = Namespace::new(name.clone());
         let n = with_methods(n);
         self.server.namespaces.insert(name, n);

@@ -243,7 +243,7 @@ mod test {
     use crate::serde::{deserialize_request, serialize_response, Deserialize};
     use crate::swarm;
 
-    #[derive(Serialize, Debug, Clone)]
+    #[derive(Deserialize, Serialize, Debug, Clone)]
     struct GetParams {
         resource_id: String,
     }
@@ -268,23 +268,20 @@ mod test {
     // is a String in this case, is there a way to connect the State concrete type with the
     // implementation of Get?
     // anyway, would love some imput!
-    #[async_trait::async_trait]
-    impl<T> handler::Factory<T> for Get {
-        async fn handle(
-            &self,
-            state: handler::State<T>,
-            stream_id: Option<u64>,
-            param: Vec<u8>,
-        ) -> Result<Vec<u8>, RpcError> {
-            // not sure where to include that param needs to have DeserializeOwned trait. I keep
-            // googling in circles, which makes me think I'm coming from it at the wrong angle,
-            // would love some guidance.
-            let req: GetParams = deserialize_request(&param)?;
-            // This just makes a clone of the Arc, how do I properly get the String to make a clone
-            // of it?
-            let res = Arc::clone(&state.0);
-            serialize_response(GetPayload { response: res })
-        }
+    async fn get(
+        state: handler::State<String>,
+        stream_id: Option<u64>,
+        param: Vec<u8>,
+    ) -> Result<Vec<u8>, RpcError> {
+        // not sure where to include that param needs to have DeserializeOwned trait. I keep
+        // googling in circles, which makes me think I'm coming from it at the wrong angle,
+        // would love some guidance.
+        let req: GetParams = deserialize_request(&param)?;
+
+        let bytes = serialize_response(GetPayload {
+            response: state.clone(),
+        })?;
+        Ok(bytes)
     }
 
     #[tokio::test]
@@ -300,8 +297,8 @@ mod test {
         let mut client = Client::rpc_from_config(
             RpcConfig::new()
                 .with_swarm(swarm::new_mem_swarm(keypair))
-                .with_state(state),
-            // .with_namespace("a", Get)
+                .with_state(state)
+                .with_namespace("a", |n| n.with_method("get", get)),
         )
         .expect("rpc client to be created");
 

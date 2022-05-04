@@ -19,8 +19,13 @@ impl<T> Namespace<T> {
         }
     }
 
-    pub fn with_method(mut self, method: String, handler: BoxedHandler<T>) -> Self {
-        self.handlers.insert(method, handler);
+    pub fn with_method<S: Into<String>, H>(mut self, method: S, handler: H) -> Self
+    where
+        H: Factory<T> + Send + Sync + 'static,
+        T: Send + Sync + 'static,
+    {
+        self.handlers
+            .insert(method.into(), Handler::new(handler).into());
         self
     }
 
@@ -79,6 +84,23 @@ impl<T, F: Factory<T>> Handler<T, F> {
             hnd,
             _t: PhantomData,
         }
+    }
+}
+
+#[async_trait::async_trait]
+impl<FN, I, T> Factory<T> for FN
+where
+    I: Future<Output = Result<Vec<u8>, RpcError>> + Send + 'static,
+    FN: Fn(State<T>, Option<u64>, Vec<u8>) -> I + Sync,
+    T: Send + Sync + 'static,
+{
+    async fn handle(
+        &self,
+        state: State<T>,
+        stream_id: Option<u64>,
+        param: Vec<u8>,
+    ) -> Result<Vec<u8>, RpcError> {
+        (self)(state, stream_id, param).await
     }
 }
 
