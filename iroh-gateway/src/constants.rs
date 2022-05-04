@@ -1,6 +1,7 @@
 // Headers
 pub const HEADER_X_IPFS_PATH: &str = "X-Ipfs-Path";
 pub const HEADER_X_CONTENT_TYPE_OPTIONS: &str = "X-Content-Type-Options";
+pub const HEADER_X_TRACE_ID: &str = "X-Trace-Id";
 
 // Common Header Values
 pub const VALUE_XCTO_NOSNIFF: &str = "nosniff";

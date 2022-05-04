@@ -1,6 +1,9 @@
 use git_version::git_version;
 use metrics::{describe_counter, Unit};
 
+use opentelemetry::trace::{TraceContextExt, TraceId};
+use tracing_opentelemetry::OpenTelemetrySpanExt;
+
 pub fn metrics_config() -> iroh_metrics::Config {
     // compile time configuration
     let service_name = env!("CARGO_PKG_NAME").to_string();
@@ -22,4 +25,12 @@ pub fn register_counters() {
         Unit::Count,
         "Total number of requests received by the gateway"
     );
+}
+
+pub fn get_current_trace_id() -> TraceId {
+    tracing::Span::current()
+        .context()
+        .span()
+        .span_context()
+        .trace_id()
 }
