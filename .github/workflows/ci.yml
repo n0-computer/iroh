@@ -138,26 +138,24 @@ jobs:
       uses: dante-signal31/rust-app-version@v1.0.0
       with:
          cargo_toml_folder: iroh-gateway/
-    
+
     - name: push release
-      uses: shallwefootball/s3-upload-action@master
+      uses: prewk/s3-cp-action@v2
       if: matrix.os == 'ubuntu-latest' && matrix.rust=='stable'
       with:
-        aws_key_id: ${{ secrets.S3_ACCESS_KEY_ID }}
-        aws_secret_access_key: ${{ secrets.S3_ACCESS_KEY}}
-        aws_bucket: ${{ secrets.IROH_BINS_BUCKET }}
-        source_dir: 'target/release/iroh-gateway'
-        destination_dir: 'iroh-gateway-linux-amd64-${{ steps.ig_version.outputs.app_version }}-${GITHUB_SHA::7}'
-    
+        aws_access_key_id: ${{ secrets.S3_ACCESS_KEY_ID }}
+        aws_secret_access_key: ${{ secrets.S3_ACCESS_KEY }}
+        source: './target/release/iroh-gateway'
+        dest: 's3://vorc/iroh-gateway-linux-amd64-${{ steps.ig_version.outputs.app_version }}-${GITHUB_SHA::7}'
+
     - name: push release - latest
-      uses: shallwefootball/s3-upload-action@master
+      uses: prewk/s3-cp-action@v2
       if: matrix.os == 'ubuntu-latest' && matrix.rust=='stable'
       with:
-        aws_key_id: ${{ secrets.S3_ACCESS_KEY_ID }}
-        aws_secret_access_key: ${{ secrets.S3_ACCESS_KEY}}
-        aws_bucket: ${{ secrets.IROH_BINS_BUCKET }}
-        source_dir: 'target/release/iroh-gateway'
-        destination_dir: 'iroh-gateway-linux-amd64-latest'
+        aws_access_key_id: ${{ secrets.S3_ACCESS_KEY_ID }}
+        aws_secret_access_key: ${{ secrets.S3_ACCESS_KEY }}
+        source: './target/release/iroh-gateway'
+        dest: 's3://vorc/iroh-gateway-linux-amd64-latest'
     
     - name: Print sccache stats
       run: sccache --show-stats
