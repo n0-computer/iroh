@@ -295,7 +295,7 @@ fn response(
         status_code,
         body,
         headers,
-        trace_id: get_current_trace_id(),
+        trace_id: get_current_trace_id().to_string(),
     })
 }
 
@@ -303,7 +303,7 @@ fn error(status_code: StatusCode, message: &str) -> Result<GatewayResponse, Gate
     Err(GatewayError {
         status_code,
         message: message.to_string(),
-        trace_id: get_current_trace_id(),
+        trace_id: get_current_trace_id().to_string(),
     })
 }
 
