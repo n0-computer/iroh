@@ -1,18 +1,19 @@
-pub mod core;
 use libp2p::NetworkBehaviour;
 
-use crate::behaviour::core::{new_core_behaviour, CoreBehaviour, CoreEvent};
+pub mod rpc;
+
+use crate::behaviour::rpc::{new_behaviour, RpcBehaviour, RpcEvent};
 
 #[derive(NetworkBehaviour)]
 #[behaviour(out_event = "Event")]
 pub struct Behaviour {
-    pub core: CoreBehaviour,
+    pub rpc: RpcBehaviour,
 }
 
 impl Behaviour {
     pub fn new() -> Self {
         Behaviour {
-            core: new_core_behaviour(),
+            rpc: new_behaviour(),
         }
     }
 }
@@ -25,11 +26,11 @@ impl Default for Behaviour {
 
 #[derive(Debug)]
 pub enum Event {
-    Core(CoreEvent),
+    Rpc(RpcEvent),
 }
 
-impl From<CoreEvent> for Event {
-    fn from(event: CoreEvent) -> Self {
-        Event::Core(event)
+impl From<RpcEvent> for Event {
+    fn from(event: RpcEvent) -> Self {
+        Event::Rpc(event)
     }
 }

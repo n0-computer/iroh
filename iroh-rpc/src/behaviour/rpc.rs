@@ -1,3 +1,5 @@
+use std::iter;
+
 use async_trait::async_trait;
 use bytecheck::CheckBytes;
 use futures::prelude::*;
@@ -7,20 +9,19 @@ use libp2p::request_response::{
 };
 use rkyv;
 use rkyv::{Archive, Deserialize, Serialize};
-use std::iter;
 use tokio::io;
 
-use crate::error::RPCError;
+use crate::error::RpcError;
 use crate::stream::{Header, Packet};
 
-pub type CoreBehaviour = RequestResponse<CoreCodec>;
-pub type CoreEvent = RequestResponseEvent<CoreRequest, CoreResponse>;
-pub type CoreResponseChannel = ResponseChannel<CoreResponse>;
+pub type RpcBehaviour = RequestResponse<RpcCodec>;
+pub type RpcEvent = RequestResponseEvent<RpcRequest, RpcResponse>;
+pub type RpcResponseChannel = ResponseChannel<RpcResponse>;
 
-pub fn new_core_behaviour() -> CoreBehaviour {
+pub fn new_behaviour() -> RpcBehaviour {
     RequestResponse::new(
-        CoreCodec(),
-        iter::once((CoreProtocol(), ProtocolSupport::Full)),
+        RpcCodec(),
+        iter::once((RpcProtocol(), ProtocolSupport::Full)),
         Default::default(),
     )
 }
@@ -29,7 +30,7 @@ pub fn new_core_behaviour() -> CoreBehaviour {
 #[derive(Archive, Serialize, Deserialize, Debug, PartialEq, Clone, Eq)]
 #[archive(compare(PartialEq))]
 #[archive_attr(derive(Debug, CheckBytes))]
-pub enum CoreRequestEvent {
+pub enum RpcRequestEvent {
     Request {
         // When Some(u64), the stream_id is used to coordinate future incoming packets
         stream_id: Option<u64>,
@@ -43,37 +44,37 @@ pub enum CoreRequestEvent {
 #[derive(Archive, Serialize, Deserialize, Debug, PartialEq, Clone, Eq)]
 #[archive(compare(PartialEq))]
 #[archive_attr(derive(Debug, CheckBytes))]
-pub enum CoreResponseEvent {
-    RPCError(RPCError),
+pub enum RpcResponseEvent {
+    RpcError(RpcError),
     Payload(Vec<u8>),
     Header(Header),
     Ack,
 }
 
 #[derive(Debug, Clone)]
-pub struct CoreProtocol();
+pub struct RpcProtocol();
 #[derive(Clone)]
-pub struct CoreCodec();
+pub struct RpcCodec();
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CoreRequest(pub CoreRequestEvent);
+pub struct RpcRequest(pub RpcRequestEvent);
 #[derive(Debug)]
-pub struct CoreResponse(pub CoreResponseEvent);
+pub struct RpcResponse(pub RpcResponseEvent);
 
-impl ProtocolName for CoreProtocol {
+impl ProtocolName for RpcProtocol {
     fn protocol_name(&self) -> &[u8] {
-        "/iroh/v1/core/v1".as_bytes()
+        "/iroh/rpc/1.0.0".as_bytes()
     }
 }
 
 const CHUNK_SIZE: usize = 8192;
 
 #[async_trait]
-impl RequestResponseCodec for CoreCodec {
-    type Protocol = CoreProtocol;
-    type Request = CoreRequest;
-    type Response = CoreResponse;
+impl RequestResponseCodec for RpcCodec {
+    type Protocol = RpcProtocol;
+    type Request = RpcRequest;
+    type Response = RpcResponse;
 
-    async fn read_request<T>(&mut self, _: &CoreProtocol, io: &mut T) -> io::Result<Self::Request>
+    async fn read_request<T>(&mut self, _: &RpcProtocol, io: &mut T) -> io::Result<Self::Request>
     where
         T: AsyncRead + Unpin + Send,
     {
@@ -81,37 +82,40 @@ impl RequestResponseCodec for CoreCodec {
         let vec = read_length_prefixed(io, CHUNK_SIZE).await?;
         // Need to better understand rkyv and our options to make serializing & deserializing
         // more specific and efficient
-        let event = rkyv::check_archived_root::<CoreRequestEvent>(&vec)
-            .expect("RPCError converting bytes to archived CoreRequest")
+        let event = rkyv::check_archived_root::<RpcRequestEvent>(&vec)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?;
+        let event = event
             .deserialize(&mut rkyv::Infallible)
-            .expect("RPCError deserializing CoreResponse.");
-        Ok(CoreRequest(event))
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        Ok(RpcRequest(event))
     }
 
-    async fn read_response<T>(&mut self, _: &CoreProtocol, io: &mut T) -> io::Result<Self::Response>
+    async fn read_response<T>(&mut self, _: &RpcProtocol, io: &mut T) -> io::Result<Self::Response>
     where
         T: AsyncRead + Unpin + Send,
     {
         let vec = read_length_prefixed(io, CHUNK_SIZE).await?;
-        let event = rkyv::check_archived_root::<CoreResponseEvent>(&vec)
-            .expect("Error converting read bytes to archived ResponseEvent")
+        let event = rkyv::check_archived_root::<RpcResponseEvent>(&vec)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?;
+        let event = event
             .deserialize(&mut rkyv::Infallible)
-            .expect("Error deserializing Response");
-        Ok(CoreResponse(event))
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        Ok(RpcResponse(event))
     }
 
     async fn write_request<T>(
         &mut self,
-        _: &CoreProtocol,
+        _: &RpcProtocol,
         io: &mut T,
-        CoreRequest(data): CoreRequest,
+        RpcRequest(data): RpcRequest,
     ) -> io::Result<()>
     where
         T: AsyncWrite + Unpin + Send,
     {
         // Need to better understand rkyv and our options to make serializing & deserializing
         // more specific and efficient
-        let vec = rkyv::to_bytes::<_, 1024>(&data).expect("Error serializing Request.");
+        let vec = rkyv::to_bytes::<_, 1024>(&data)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
         write_length_prefixed(io, vec).await?;
         io.close().await?;
         Ok(())
@@ -119,16 +123,17 @@ impl RequestResponseCodec for CoreCodec {
 
     async fn write_response<T>(
         &mut self,
-        _: &CoreProtocol,
+        _: &RpcProtocol,
         io: &mut T,
-        CoreResponse(data): CoreResponse,
+        RpcResponse(data): RpcResponse,
     ) -> io::Result<()>
     where
         T: AsyncWrite + Unpin + Send,
     {
         // Need to better understand rkyv and our options to make serializing & deserializing
         // more specific and efficient
-        let vec = rkyv::to_bytes::<_, 1024>(&data).expect("Error serializing Response.");
+        let vec = rkyv::to_bytes::<_, 1024>(&data)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
         write_length_prefixed(io, vec).await?;
         io.close().await?;
         Ok(())

@@ -6,33 +6,33 @@ pub use serde::de::DeserializeOwned;
 pub use serde::{Deserialize, Serialize};
 use serde_json;
 
-use crate::error::RPCError;
+use crate::error::RpcError;
 
-pub fn serialize_request<T: Serialize>(params: T) -> Result<Vec<u8>, RPCError> {
+pub fn serialize_request<T: Serialize>(params: T) -> Result<Vec<u8>, RpcError> {
     match serde_json::to_vec(&params) {
         Ok(b) => Ok(b),
-        Err(_) => Err(RPCError::BadRequest),
+        Err(_) => Err(RpcError::BadRequest),
     }
 }
 
-pub fn deserialize_request<T: DeserializeOwned>(data: &Vec<u8>) -> Result<T, RPCError> {
+pub fn deserialize_request<T: DeserializeOwned>(data: &Vec<u8>) -> Result<T, RpcError> {
     match serde_json::from_slice(data) {
         Ok(r) => Ok(r),
-        Err(_) => Err(RPCError::BadRequest),
+        Err(_) => Err(RpcError::BadRequest),
     }
 }
 
-pub fn serialize_response<T: Serialize>(params: T) -> Result<Vec<u8>, RPCError> {
+pub fn serialize_response<T: Serialize>(params: T) -> Result<Vec<u8>, RpcError> {
     match serde_json::to_vec(&params) {
         Ok(b) => Ok(b),
-        Err(_) => Err(RPCError::BadResponse),
+        Err(_) => Err(RpcError::BadResponse),
     }
 }
 
-pub fn deserialize_response<T: DeserializeOwned>(data: &Vec<u8>) -> Result<T, RPCError> {
+pub fn deserialize_response<T: DeserializeOwned>(data: &Vec<u8>) -> Result<T, RpcError> {
     match serde_json::from_slice(data) {
         Ok(r) => Ok(r),
-        Err(_) => Err(RPCError::BadResponse),
+        Err(_) => Err(RpcError::BadResponse),
     }
 }
 
@@ -70,11 +70,11 @@ mod test {
     fn expected_errors() {
         let v = Vec::new();
         let got_err = deserialize_request::<Cat>(&v).unwrap_err();
-        let expected_error = RPCError::BadRequest;
+        let expected_error = RpcError::BadRequest;
         assert_eq!(expected_error, got_err);
         let v = Vec::new();
         let got_err = deserialize_response::<Cat>(&v).unwrap_err();
-        let expected_error = RPCError::BadResponse;
+        let expected_error = RpcError::BadResponse;
         assert_eq!(expected_error, got_err);
     }
 }

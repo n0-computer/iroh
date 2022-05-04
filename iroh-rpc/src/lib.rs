@@ -1,8 +1,11 @@
 mod behaviour;
-mod client;
 mod commands;
-mod error;
 mod serde;
 mod server;
 mod stream;
 mod swarm;
+
+pub mod client;
+pub mod config;
+pub mod error;
+pub mod handler;

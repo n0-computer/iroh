@@ -1,18 +1,19 @@
-use crate::commands::Command;
+use std::collections::HashMap;
+use std::io::BufRead;
+use std::pin::Pin;
+
 use bytecheck::CheckBytes;
 use futures::channel::{mpsc, oneshot};
 use futures::prelude::*;
 use futures::stream::StreamExt;
 use futures::task::{Context, Poll};
 use libp2p::PeerId;
-use log::{debug, error};
 use rkyv;
 use rkyv::{Archive, Deserialize, Serialize};
-use std::collections::HashMap;
-use std::io::BufRead;
-use std::pin::Pin;
+use tracing::{debug, error};
 
-use crate::error::RPCError;
+use crate::commands::Command;
+use crate::error::RpcError;
 
 /// InStream coordinates a stream of packet data, allowing the user
 /// to receive the chunks of bytes in the correct order.
@@ -41,51 +42,10 @@ impl InStream {
             chunks: HashMap::new(),
         }
     }
-
-    // TODO: this should implement `poll_next` & satisfy the `Stream` trait
-    // rather than directly implementing an async `next` method
-    pub async fn next(
-        &mut self,
-    ) -> Option<Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>>> {
-        // check if the stream has finished its task successfully
-        if self.next_chunk == self.num_chunks {
-            debug!(target: "InStream", "No more items in stream.");
-            return None;
-        }
-        // check if the chunk we are looking for is a chunk we already have
-        if let Some(c) = self.chunks.remove(&self.next_chunk) {
-            debug!(target: "InStream", "Returning already received chunk");
-            self.next_chunk += 1;
-            return Some(Ok(c));
-        }
-        // otherwise, check the channel to see if we can get the next chunk
-        while let Some(p) = self.packet_receiver.next().await {
-            match p {
-                StreamType::Packet(p) => {
-                    if self.next_chunk == p.index {
-                        self.next_chunk += 1;
-                        debug!(target: "InStream", "Returning just received chunk {}", p.index);
-                        return Some(Ok(p.data));
-                    }
-                    debug!(target: "InStream", "Storing out of order chunk {}", p.index);
-                    self.chunks.insert(p.index, p.data);
-                }
-                StreamType::RPCError(e) => {
-                    error!(target: "InStream", "Received error off of the stream: {:?}", e);
-                    return Some(Err(Box::new(e)));
-                }
-            }
-        }
-        // We would only get here if the stream is no longer active, but we
-        // haven't received an error saying why the stream was cut off
-        // prematurely
-        error!(target: "InStream", "TODO: HANDLE THIS ERROR");
-        Some(Err("TODO: stream is no longer active, has not received an error, but we have not received all the expected data".into()))
-    }
 }
 
 impl Stream for InStream {
-    type Item = Result<Vec<u8>, RPCError>;
+    type Item = Result<Vec<u8>, RpcError>;
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         // check if the stream has finished its task successfully
         let num_chunks = self.num_chunks;
@@ -104,7 +64,7 @@ impl Stream for InStream {
         match self.packet_receiver.poll_next_unpin(cx) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(res) => match res {
-                None => Poll::Ready(Some(Err(RPCError::StreamClosed.into()))),
+                None => Poll::Ready(Some(Err(RpcError::StreamClosed.into()))),
                 Some(p) => match p {
                     StreamType::Packet(p) => {
                         if next_chunk == p.index {
@@ -116,7 +76,7 @@ impl Stream for InStream {
                         self.chunks.insert(p.index, p.data);
                         Poll::Pending
                     }
-                    StreamType::RPCError(e) => {
+                    StreamType::RpcError(e) => {
                         error!(target: "InStream", "Received error off of the stream: {:?}", e);
                         Poll::Ready(Some(Err(e.into())))
                     }
@@ -139,7 +99,7 @@ impl Drop for InStream {
 pub struct OutStream {
     header: Header,
     packet_sender: mpsc::Sender<Command>,
-    // early_close_receiver: oneshot::Sender<Box<dyn RPCError + Send + Sync>>,
+    // early_close_receiver: oneshot::Sender<Box<dyn RpcError + Send + Sync>>,
     reader: Box<dyn BufRead + Send + Sync>,
     peer_id: PeerId,
 }
@@ -171,7 +131,7 @@ impl OutStream {
             let mut buf = vec![0u8; chunk_size];
             debug!(target: "db streaming", "Reading file chunk {}", index);
             self.reader.read_exact(&mut buf)
-            .expect("TODO: handle reading error, and send an RPCError type letting the other end know there has been an error.");
+            .expect("TODO: handle reading error, and send an RpcError type letting the other end know there has been an error.");
             let packet = Packet {
                 id: self.header.id,
                 index,
@@ -201,7 +161,7 @@ pub type StreamSender = mpsc::Sender<StreamType>;
 #[derive(Debug)]
 pub enum StreamType {
     Packet(Packet),
-    RPCError(RPCError),
+    RpcError(RpcError),
 }
 
 #[derive(Archive, Serialize, Deserialize, Debug, PartialEq, Clone, Eq)]

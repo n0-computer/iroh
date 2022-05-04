@@ -1,4 +1,4 @@
-use crate::behaviour::Behaviour;
+use std::error::Error;
 
 use libp2p::core::{
     muxing, transport,
@@ -10,7 +10,8 @@ use libp2p::swarm::SwarmBuilder;
 use libp2p::PeerId;
 use libp2p::Swarm;
 use libp2p::{mplex, yamux};
-use std::error::Error;
+
+use crate::behaviour::Behaviour;
 
 /// Build a swarm with an in memory transport.
 // TODO: eventually generalize, pass in config etc

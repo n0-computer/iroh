@@ -1,30 +1,23 @@
 use bytecheck::CheckBytes;
 use rkyv::{Archive, Deserialize, Serialize};
-use std::fmt;
+use thiserror::Error;
 
-#[derive(Archive, Serialize, Deserialize, Debug, PartialEq, Clone, Eq)]
+#[derive(Archive, Serialize, Deserialize, Error, Debug, PartialEq, Clone, Eq)]
 #[archive(compare(PartialEq))]
 #[archive_attr(derive(Debug, CheckBytes))]
-pub enum RPCError {
+pub enum RpcError {
+    #[error("TODO: Implement error")]
     TODO,
-    MethodNotFound,
-    NamespaceNotFound,
+    #[error("Method `{0}` not found")]
+    MethodNotFound(String),
+    #[error("Namespace `{0}` not found")]
+    NamespaceNotFound(String),
+    #[error("Bad Request")]
     BadRequest,
+    #[error("Bad Response")]
     BadResponse,
+    #[error("Stream Closed")]
     StreamClosed,
+    #[error("Bad config: `{0}`")]
+    BadConfig(String),
 }
-
-impl fmt::Display for RPCError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match *self {
-            RPCError::TODO => write!(f, "TODO: Implement error"),
-            RPCError::MethodNotFound => write!(f, "Method Not Found"),
-            RPCError::NamespaceNotFound => write!(f, "Namespace Not Found"),
-            RPCError::BadRequest => write!(f, "Bad Request"),
-            RPCError::BadResponse => write!(f, "Bad Response"),
-            RPCError::StreamClosed => write!(f, "Stream Closed"),
-        }
-    }
-}
-
-impl std::error::Error for RPCError {}

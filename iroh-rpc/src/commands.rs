@@ -1,12 +1,13 @@
+use std::collections::HashMap;
+
 use futures::channel::{mpsc, oneshot};
 use libp2p::core::connection::ListenerId;
 use libp2p::request_response::RequestId;
 use libp2p::Multiaddr;
 use libp2p::PeerId;
-use std::collections::HashMap;
 
-use crate::behaviour::core::CoreResponseChannel;
-use crate::error::RPCError;
+use crate::behaviour::rpc::RpcResponseChannel;
+use crate::error::RpcError;
 use crate::stream::{Header, Packet, StreamType};
 
 // Commands are commands from the Client going out to the server or network
@@ -14,7 +15,7 @@ use crate::stream::{Header, Packet, StreamType};
 // the network to the client
 #[derive(Debug)]
 pub enum Command {
-    // Commands handled by CoreProtocol
+    // Commands handled by RpcProtocol
     StartListening {
         addr: Multiaddr,
         sender: OneshotSender,
@@ -36,11 +37,11 @@ pub enum Command {
     },
     SendResponse {
         payload: Vec<u8>,
-        channel: CoreResponseChannel,
+        channel: RpcResponseChannel,
     },
     ErrorResponse {
-        error: RPCError,
-        channel: CoreResponseChannel,
+        error: RpcError,
+        channel: RpcResponseChannel,
     },
 
     StreamRequest {
@@ -53,7 +54,7 @@ pub enum Command {
     },
     HeaderResponse {
         header: Header,
-        channel: CoreResponseChannel,
+        channel: RpcResponseChannel,
     },
     SendPacket {
         peer_id: PeerId,
@@ -78,7 +79,7 @@ pub enum SenderType {
         header: Header,
         stream: mpsc::Receiver<StreamType>,
     },
-    Error(RPCError),
+    Error(RpcError),
     Res(Vec<u8>),
 }
 

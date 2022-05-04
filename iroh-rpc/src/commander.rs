@@ -1,16 +1,17 @@
-use crate::commands::{Command, SenderType};
-use crate::error::RPCError;
-use crate::serde::{deserialize_response, serialize_request, DeserializeOwned, Serialize};
-use crate::stream::InStream;
+use std::collections::HashMap;
 
 use futures::channel::{mpsc, oneshot};
 use futures::prelude::*;
 use libp2p::Multiaddr;
 use libp2p::PeerId;
 use rand::{thread_rng, Rng};
-use std::collections::HashMap;
 
-/// The RPC Commander is the half of the RPC client that
+use crate::commands::{Command, SenderType};
+use crate::error::RpcError;
+use crate::serde::{deserialize_response, serialize_request, DeserializeOwned, Serialize};
+use crate::stream::InStream;
+
+/// The Rpc Commander is the half of the Rpc client that
 /// knows how to communicate to different iroh processes.
 /// The Commander knows how to translate from strings and params to
 /// events that gets sent over libp2p
@@ -29,7 +30,7 @@ impl Commander {
     }
 
     /// Dial all known addresses associated with the given namespaces
-    pub async fn dial_all(&mut self) -> Result<(), RPCError> {
+    pub async fn dial_all(&mut self) -> Result<(), RpcError> {
         let mut dials = Vec::new();
         for (_, (addr, peer_id)) in self.addresses.to_owned() {
             let handle = tokio::spawn(Commander::dial(self.out_sender.clone(), addr, peer_id));
@@ -40,13 +41,13 @@ impl Commander {
             Ok(_) => false,
             Err(_) => true,
         }) {
-            return Err(RPCError::TODO);
+            return Err(RpcError::TODO);
         };
         Ok(())
     }
 
     /// Listen on a particular multiaddress
-    pub async fn listen(&mut self, addr: Multiaddr) -> Result<(), RPCError> {
+    pub async fn listen(&mut self, addr: Multiaddr) -> Result<(), RpcError> {
         let (sender, receiver) = oneshot::channel();
         self.out_sender
             .send(Command::StartListening { sender, addr })
@@ -54,8 +55,8 @@ impl Commander {
             .expect("Receiver to not be dropped.");
         match receiver.await.expect("Sender to not be dropped") {
             SenderType::Ack => Ok(()),
-            SenderType::Error(_) => Err(RPCError::TODO),
-            _ => Err(RPCError::TODO),
+            SenderType::Error(_) => Err(RpcError::TODO),
+            _ => Err(RpcError::TODO),
         }
     }
 
@@ -64,7 +65,7 @@ impl Commander {
         mut out_sender: mpsc::Sender<Command>,
         addr: Multiaddr,
         peer_id: PeerId,
-    ) -> Result<(), RPCError> {
+    ) -> Result<(), RpcError> {
         let (sender, receiver) = oneshot::channel();
         out_sender
             .send(Command::Dial {
@@ -76,12 +77,12 @@ impl Commander {
             .expect("Receiver to not be dropped.");
         match receiver.await.expect("Sender to not be dropped.") {
             SenderType::Ack => Ok(()),
-            SenderType::Error(_) => Err(RPCError::TODO),
-            _ => Err(RPCError::TODO),
+            SenderType::Error(_) => Err(RpcError::TODO),
+            _ => Err(RpcError::TODO),
         }
     }
 
-    /// Signal the RPC event loop to stop listening
+    /// Signal the Rpc event loop to stop listening
     pub async fn shutdown(mut self) {
         self.out_sender
             .send(Command::ShutDown)
@@ -106,7 +107,7 @@ impl Commander {
         namespace: String,
         method: String,
         params: T,
-    ) -> Result<U, RPCError>
+    ) -> Result<U, RpcError>
     where
         T: Serialize + Send + Sync,
         U: DeserializeOwned + Send + Sync,
@@ -126,8 +127,8 @@ impl Commander {
             .expect("Receiver not to be dropped.");
         let res = match receiver.await.expect("Sender not to be dropped.") {
             SenderType::Res(res) => res,
-            SenderType::Error(_) => return Err(RPCError::TODO),
-            _ => return Err(RPCError::TODO),
+            SenderType::Error(_) => return Err(RpcError::TODO),
+            _ => return Err(RpcError::TODO),
         };
         deserialize_response::<U>(&res)
     }
@@ -138,14 +139,14 @@ impl Commander {
         namespace: String,
         method: String,
         params: T,
-    ) -> Result<InStream, RPCError>
+    ) -> Result<InStream, RpcError>
     where
         T: Serialize + Send + Sync,
     {
         let peer_id = self.get_peer_id(&namespace)?;
         let v = match serialize_request(params) {
             Ok(v) => v,
-            Err(_) => return Err(RPCError::BadRequest),
+            Err(_) => return Err(RpcError::BadRequest),
         };
 
         let (sender, receiver) = oneshot::channel();
@@ -169,25 +170,25 @@ impl Commander {
         let (header, stream) = match receiver.await.expect("Sender not to be dropped.") {
             SenderType::Stream { header, stream } => (header, stream),
             SenderType::Error(e) => return Err(e),
-            _ => return Err(RPCError::TODO),
+            _ => return Err(RpcError::TODO),
         };
         // examine header here and determine if we want to accept file
         Ok(InStream::new(header, stream, self.out_sender.clone()))
     }
 
     /// Get the peer id from the Commander's address book, based on the namespace
-    fn get_peer_id(&self, namespace: &str) -> Result<PeerId, RPCError> {
+    fn get_peer_id(&self, namespace: &str) -> Result<PeerId, RpcError> {
         match self.addresses.get(namespace) {
             Some((_, id)) => Ok(*id),
-            None => Err(RPCError::NamespaceNotFound),
+            None => Err(RpcError::NamespaceNotFound(namespace.into())),
         }
     }
 
     /// Get the multiaddr from the Commander's address book, based on the namespace
-    fn get_multiaddr(&self, namespace: &str) -> Result<Multiaddr, RPCError> {
+    fn get_multiaddr(&self, namespace: &str) -> Result<Multiaddr, RpcError> {
         match self.addresses.get(namespace) {
             Some((addr, _)) => Ok(addr.clone()),
-            None => Err(RPCError::NamespaceNotFound),
+            None => Err(RpcError::NamespaceNotFound(namespace.into())),
         }
     }
 }

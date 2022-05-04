@@ -1,25 +1,23 @@
-use crate::behaviour::core::{
-    CoreEvent, CoreRequest, CoreRequestEvent, CoreResponse, CoreResponseEvent,
-};
-use crate::behaviour::{Behaviour, Event};
-use crate::commands::{ActiveStreams, Command, PendingId, PendingMap, SenderType};
-use crate::error::RPCError;
-use crate::serde::{Deserialize, Serialize};
-use crate::stream::StreamType;
+use std::collections::HashMap;
+use std::sync::Arc;
 
 use futures::channel::mpsc;
 use futures::prelude::*;
 use futures::select;
-use futures::Future;
 pub use libp2p::identity::Keypair;
 use libp2p::multiaddr::Protocol;
 use libp2p::request_response::RequestResponseMessage;
 use libp2p::swarm::{ConnectionHandlerUpgrErr, SwarmEvent};
 use libp2p::Swarm;
-use log::{debug, error, trace};
-use std::collections::HashMap;
-use std::marker::PhantomData;
-use std::sync::Arc;
+use tracing::{debug, error, trace};
+
+use crate::behaviour::rpc::{RpcEvent, RpcRequest, RpcRequestEvent, RpcResponse, RpcResponseEvent};
+use crate::behaviour::{Behaviour, Event};
+use crate::commands::{ActiveStreams, Command, PendingId, PendingMap, SenderType};
+use crate::config::ServerConfig;
+use crate::error::RpcError;
+use crate::handler::{Namespace, State};
+use crate::stream::StreamType;
 
 /// The Server manages the swarm, gets commands from the client & translates
 /// those into events to send over rpc to the correct recepient. It listens for
@@ -36,22 +34,19 @@ pub struct Server<T> {
 }
 
 impl<T> Server<T> {
-    pub fn server_from_config(config: ServerConfig<T>) -> Result<Self, Box<dyn std::error::Error>> {
-        let swarm = match config.swarm {
-            Some(s) => s,
-            None => return Err("no swarm given".into()),
-        };
-        let command_rec = match config.commands_receiver {
-            Some(c) => c,
-            None => return Err("no command receiver specified".into()),
-        };
-        let state = match config.state {
-            Some(s) => s,
-            None => return Err("no server state specified".into()),
-        };
+    pub fn server_from_config(
+        command_receiver: mpsc::Receiver<Command>,
+        config: ServerConfig<T>,
+    ) -> Result<Self, RpcError> {
+        let swarm = config
+            .swarm
+            .ok_or_else(|| RpcError::BadConfig("no swarm given".into()))?;
+        let state = config
+            .state
+            .ok_or_else(|| RpcError::BadConfig("no server state specified".into()))?;
         Ok(Server {
             swarm,
-            command_rec,
+            command_rec: command_receiver,
             state,
             handlers: config.namespaces,
             pending_requests: Default::default(),
@@ -59,9 +54,6 @@ impl<T> Server<T> {
         })
     }
 
-    // TODO: should each `self.handle_event` and `self.handle_command`
-    // be spawned in their own thread? Or does it make sense to handle each command or event
-    // iteratively?
     pub async fn run(mut self) {
         loop {
             select! {
@@ -73,7 +65,7 @@ impl<T> Server<T> {
                     Some(c) => self.handle_command(c).await,
                     // channel has been closed
                     None => {
-                        println!("{} shutting down", self.swarm.local_peer_id());
+                        debug!("{} shutting down", self.swarm.local_peer_id());
                         return;
                     }
                 }
@@ -104,7 +96,7 @@ impl<T> Server<T> {
             SwarmEvent::ConnectionEstablished {
                 peer_id, endpoint, ..
             } => {
-                println!("Connection with {:?} established", peer_id);
+                debug!("Connection with {:?} established", peer_id);
                 if endpoint.is_dialer() {
                     if let Some(sender) = self.pending_requests.remove(&PendingId::PeerId(peer_id))
                     {
@@ -119,20 +111,20 @@ impl<T> Server<T> {
                     {
                         // TODO: add error for connection failure, that contains the actual
                         // connection error
-                        let _ = sender.send(SenderType::Error(RPCError::TODO));
+                        let _ = sender.send(SenderType::Error(RpcError::TODO));
                     }
                 }
             }
             SwarmEvent::IncomingConnectionError { .. } => {}
             SwarmEvent::Dialing(peer_id) => {
-                println!("{} - Dialing {}", self.swarm.local_peer_id(), peer_id)
+                debug!("{} - Dialing {}", self.swarm.local_peer_id(), peer_id)
             }
-            SwarmEvent::Behaviour(Event::Core(e)) => match e {
-                CoreEvent::Message { message, .. } => match message {
+            SwarmEvent::Behaviour(Event::Rpc(e)) => match e {
+                RpcEvent::Message { message, .. } => match message {
                     RequestResponseMessage::Request {
                         request, channel, ..
                     } => match request.0 {
-                        CoreRequestEvent::Request {
+                        RpcRequestEvent::Request {
                             namespace,
                             method,
                             params,
@@ -145,31 +137,27 @@ impl<T> Server<T> {
                                 Ok(res) => {
                                     self.swarm
                                         .behaviour_mut()
-                                        .core
+                                        .rpc
                                         .send_response(
                                             channel,
-                                            CoreResponse(CoreResponseEvent::Payload(res)),
+                                            RpcResponse(RpcResponseEvent::Payload(res)),
                                         )
                                         .expect("Connection to peer to still be open.");
                                 }
                                 Err(e) => {
                                     self.swarm
                                         .behaviour_mut()
-                                        .core
+                                        .rpc
                                         .send_response(
                                             channel,
-                                            // TODO: is BadRequest the right error? The idea is
-                                            // that the requester made an error in requesting that
-                                            // particular action from the server. Could be a new
-                                            // error `RPCError::HandlerNotFound`, but not sure if
-                                            CoreResponse(CoreResponseEvent::RPCError(e)),
+                                            RpcResponse(RpcResponseEvent::RpcError(e)),
                                         )
                                         .expect("Connection to peer to still be open.");
                                     return;
                                 }
                             };
                         }
-                        CoreRequestEvent::Packet(packet) => {
+                        RpcRequestEvent::Packet(packet) => {
                             let stream_id = packet.id;
                             let index = packet.index;
                             debug!(target: "inbound streaming", "Received Packet {} for stream {}", index, stream_id);
@@ -179,11 +167,11 @@ impl<T> Server<T> {
                                     error!(target: "inbound streaming", "Packet {} could not be delievered because stream {} no longer in active stream list", index, stream_id);
                                     self.swarm
                                         .behaviour_mut()
-                                        .core
+                                        .rpc
                                         .send_response(
                                             channel,
-                                            CoreResponse(CoreResponseEvent::RPCError(
-                                                RPCError::StreamClosed,
+                                            RpcResponse(RpcResponseEvent::RpcError(
+                                                RpcError::StreamClosed,
                                             )),
                                         )
                                         .expect("Connection to peer to still be open.");
@@ -201,73 +189,60 @@ impl<T> Server<T> {
                             debug!(target: "inbound streaming", "Acknowledging Packet {} from stream {}", index, stream_id);
                             self.swarm
                                 .behaviour_mut()
-                                .core
-                                .send_response(channel, CoreResponse(CoreResponseEvent::Ack))
+                                .rpc
+                                .send_response(channel, RpcResponse(RpcResponseEvent::Ack))
                                 .expect("Connection to peer to still be open.");
                         }
                     },
                     RequestResponseMessage::Response {
                         request_id,
                         response,
-                    } => match response.0 {
-                        CoreResponseEvent::Payload(payload) => {
-                            let _ = self
-                                .pending_requests
-                                .remove(&PendingId::RequestId(request_id))
-                                .expect("Request to still be pending.")
-                                .send(SenderType::Res(payload));
+                    } => {
+                        let sender = self
+                            .pending_requests
+                            .remove(&PendingId::RequestId(request_id))
+                            .expect("Request to still be pending.");
+                        match response.0 {
+                            RpcResponseEvent::Payload(payload) => {
+                                let _ = sender.send(SenderType::Res(payload));
+                            }
+                            RpcResponseEvent::RpcError(error) => {
+                                let _ = sender.send(SenderType::Error(error));
+                            }
+                            RpcResponseEvent::Header(header) => {
+                                let (s, r) = mpsc::channel(1000);
+                                debug!(target: "inbound streaming", "Received header: Adding active stream {}", header.id);
+                                self.active_streams.insert(header.id, s);
+                                debug!(target: "inbound streaming", "Sending stream receiver to client");
+                                let _ = sender.send(SenderType::Stream { header, stream: r });
+                            }
+                            RpcResponseEvent::Ack => {
+                                debug!(target: "inbound streaming", "Received Ack for request {}", request_id);
+                                let _ = sender.send(SenderType::Ack);
+                            }
                         }
-                        CoreResponseEvent::RPCError(error) => {
-                            let _ = self
-                                .pending_requests
-                                .remove(&PendingId::RequestId(request_id))
-                                .expect("Request to still be pending.")
-                                .send(SenderType::Error(error));
-                        }
-                        CoreResponseEvent::Header(header) => {
-                            let (sender, receiver) = mpsc::channel(1000);
-                            debug!(target: "inbound streaming", "Received header: Adding active stream {}", header.id);
-                            self.active_streams.insert(header.id, sender);
-                            debug!(target: "inbound streaming", "Sending stream receiver to client");
-                            let _ = self
-                                .pending_requests
-                                .remove(&PendingId::RequestId(request_id))
-                                .expect("Request to still be pending.")
-                                .send(SenderType::Stream {
-                                    header,
-                                    stream: receiver,
-                                });
-                        }
-                        CoreResponseEvent::Ack => {
-                            debug!(target: "inbound streaming", "Received Ack for request {}", request_id);
-                            let _ = self
-                                .pending_requests
-                                .remove(&PendingId::RequestId(request_id))
-                                .expect("Request to still be pending.")
-                                .send(SenderType::Ack);
-                        }
-                    },
+                    }
                 },
-                CoreEvent::OutboundFailure { request_id, .. } => {
+                RpcEvent::OutboundFailure { request_id, .. } => {
                     let _ = self
                         .pending_requests
                         .remove(&PendingId::RequestId(request_id))
                         .expect("Request to still be pending.")
                         // TODO: add error for outbound failure containing the outbound failure
                         // error
-                        .send(SenderType::Error(RPCError::TODO));
+                        .send(SenderType::Error(RpcError::TODO));
                 }
-                CoreEvent::InboundFailure {
+                RpcEvent::InboundFailure {
                     peer,
                     request_id,
                     error,
                 } => {
                     debug!(
-                        "CoreEvent::InboundFailure:\npeer_id: {}\nrequest_id: {}\nerror: {}",
+                        "RpcEvent::InboundFailure:\npeer_id: {}\nrequest_id: {}\nerror: {}",
                         peer, request_id, error
                     );
                 }
-                CoreEvent::ResponseSent { peer, request_id } => {
+                RpcEvent::ResponseSent { peer, request_id } => {
                     trace!("Response for request {} sent to peer {}", request_id, peer);
                 }
             },
@@ -284,7 +259,7 @@ impl<T> Server<T> {
                 }
                 Err(_e) => {
                     // TODO: add listening error
-                    let _ = sender.send(SenderType::Error(RPCError::TODO));
+                    let _ = sender.send(SenderType::Error(RpcError::TODO));
                 }
             },
             Command::Dial {
@@ -297,7 +272,7 @@ impl<T> Server<T> {
                 {
                     self.swarm
                         .behaviour_mut()
-                        .core
+                        .rpc
                         .add_address(&peer_id, peer_addr.clone());
 
                     match self
@@ -310,7 +285,7 @@ impl<T> Server<T> {
                         }
                         Err(_e) => {
                             // TODO: add dial error
-                            let _ = sender.send(SenderType::Error(RPCError::TODO));
+                            let _ = sender.send(SenderType::Error(RpcError::TODO));
                         }
                     }
                 }
@@ -325,9 +300,9 @@ impl<T> Server<T> {
                 params,
                 sender,
             } => {
-                let request_id = self.swarm.behaviour_mut().core.send_request(
+                let request_id = self.swarm.behaviour_mut().rpc.send_request(
                     &peer_id,
-                    CoreRequest(CoreRequestEvent::Request {
+                    RpcRequest(RpcRequestEvent::Request {
                         stream_id: None,
                         namespace,
                         method,
@@ -341,16 +316,16 @@ impl<T> Server<T> {
             Command::SendResponse { payload, channel } => {
                 self.swarm
                     .behaviour_mut()
-                    .core
-                    .send_response(channel, CoreResponse(CoreResponseEvent::Payload(payload)))
+                    .rpc
+                    .send_response(channel, RpcResponse(RpcResponseEvent::Payload(payload)))
                     .expect("Connection to peer to still be open.");
                 debug!(target: "outbound response", "Sent Payload response");
             }
             Command::ErrorResponse { error, channel } => {
                 self.swarm
                     .behaviour_mut()
-                    .core
-                    .send_response(channel, CoreResponse(CoreResponseEvent::RPCError(error)))
+                    .rpc
+                    .send_response(channel, RpcResponse(RpcResponseEvent::RpcError(error)))
                     .expect("Connection to peer to still be open.");
                 debug!(target: "outbound response", "Sent Error response");
             }
@@ -363,9 +338,9 @@ impl<T> Server<T> {
                 params,
                 sender,
             } => {
-                let request_id = self.swarm.behaviour_mut().core.send_request(
+                let request_id = self.swarm.behaviour_mut().rpc.send_request(
                     &peer_id,
-                    CoreRequest(CoreRequestEvent::Request {
+                    RpcRequest(RpcRequestEvent::Request {
                         stream_id: Some(id),
                         namespace,
                         method,
@@ -379,10 +354,10 @@ impl<T> Server<T> {
             Command::HeaderResponse { header, channel } => {
                 self.swarm
                     .behaviour_mut()
-                    .core
+                    .rpc
                     .send_response(
                         channel,
-                        CoreResponse(CoreResponseEvent::Header(header.clone())),
+                        RpcResponse(RpcResponseEvent::Header(header.clone())),
                     )
                     .expect("Connection to peer to still be open.");
                 debug!(target: "outbound streaming", "Sent HeaderResponse {:?}", header);
@@ -396,8 +371,8 @@ impl<T> Server<T> {
                 let request_id = self
                     .swarm
                     .behaviour_mut()
-                    .core
-                    .send_request(&peer_id, CoreRequest(CoreRequestEvent::Packet(packet)));
+                    .rpc
+                    .send_request(&peer_id, RpcRequest(RpcRequestEvent::Packet(packet)));
                 self.pending_requests
                     .insert(PendingId::RequestId(request_id), sender);
                 debug!(target: "outbound streaming", "Sent packet {} with request_id {}", index, request_id);
@@ -420,10 +395,10 @@ impl<T> Server<T> {
         method: String,
         streaming_id: Option<u64>,
         params: Vec<u8>,
-    ) -> Result<Vec<u8>, RPCError> {
+    ) -> Result<Vec<u8>, RpcError> {
         let namespace = match self.handlers.get_mut(&name) {
             Some(n) => n,
-            None => return Err(RPCError::NamespaceNotFound),
+            None => return Err(RpcError::NamespaceNotFound(name)),
         };
         namespace
             .handle(
@@ -433,159 +408,5 @@ impl<T> Server<T> {
                 params,
             )
             .await
-    }
-}
-
-pub struct ServerConfig<T> {
-    swarm: Option<Swarm<Behaviour>>,
-    commands_receiver: Option<mpsc::Receiver<Command>>,
-    state: Option<State<T>>,
-    namespaces: HashMap<String, Namespace<T>>,
-}
-
-impl<T> ServerConfig<T> {
-    pub fn new() -> Self {
-        ServerConfig {
-            swarm: None,
-            commands_receiver: None,
-            state: None,
-            namespaces: Default::default(),
-        }
-    }
-
-    pub fn with_swarm<I: Into<Swarm<Behaviour>>>(mut self, swarm: I) -> Self {
-        self.swarm = Some(swarm.into());
-        self
-    }
-
-    pub fn with_commands_receiver<I: Into<mpsc::Receiver<Command>>>(mut self, rec: I) -> Self {
-        self.commands_receiver = Some(rec.into());
-        self
-    }
-
-    pub fn with_state<I: Into<State<T>>>(mut self, state: I) -> Self {
-        self.state = Some(state.into());
-        self
-    }
-
-    pub fn with_namespace<F>(mut self, name: String, with_methods: F) -> Self
-    where
-        F: FnOnce(Namespace<T>) -> Namespace<T>,
-    {
-        let n = Namespace::new(name.clone());
-        let n = with_methods(n);
-        self.namespaces.insert(name, n);
-        self
-    }
-}
-
-pub struct Namespace<T> {
-    name: String,
-    handlers: HashMap<String, BoxedHandler<T>>,
-}
-
-impl<T> Namespace<T> {
-    pub fn new(name: String) -> Self {
-        Self {
-            name,
-            handlers: Default::default(),
-        }
-    }
-
-    pub fn with_method(mut self, method: String, handler: BoxedHandler<T>) -> Self {
-        self.handlers.insert(method, handler);
-        self
-    }
-
-    pub async fn handle(
-        &mut self,
-        method: String,
-        state: State<T>,
-        stream_id: Option<u64>,
-        params: Vec<u8>,
-    ) -> Result<Vec<u8>, RPCError> {
-        let handler = match self.handlers.get(&method) {
-            Some(h) => &h.0,
-            None => return Err(RPCError::MethodNotFound),
-        };
-        handler(state, stream_id, params).await
-    }
-
-    pub fn name(&self) -> String {
-        self.name.clone()
-    }
-}
-
-pub struct State<T>(pub Arc<T>);
-
-impl<T> State<T> {
-    pub fn new(t: T) -> Self {
-        State(Arc::new(t))
-    }
-}
-
-impl<T> std::ops::Deref for State<T> {
-    type Target = T;
-
-    fn deref(&self) -> &Self::Target {
-        &*self.0
-    }
-}
-
-#[async_trait::async_trait]
-pub trait Factory<T> {
-    async fn handle(
-        &self,
-        state: State<T>,
-        stream_id: Option<u64>,
-        param: Vec<u8>,
-    ) -> Result<Vec<u8>, RPCError>;
-}
-
-pub struct Handler<T, F: Factory<T>> {
-    hnd: F,
-    _t: PhantomData<T>,
-}
-
-impl<T, F: Factory<T>> Handler<T, F> {
-    fn new(hnd: F) -> Self {
-        Handler {
-            hnd,
-            _t: PhantomData,
-        }
-    }
-}
-
-pub struct BoxedHandler<T>(
-    Box<
-        dyn Fn(
-                State<T>,
-                Option<u64>,
-                Vec<u8>,
-            )
-                -> std::pin::Pin<Box<dyn Future<Output = Result<Vec<u8>, RPCError>> + Send>>
-            + Send
-            + Sync,
-    >,
-);
-
-// TODO: fix
-impl<T, F> From<Handler<T, F>> for BoxedHandler<T>
-where
-    T: Send + Sync + 'static,
-    F: Factory<T> + Send + Sync + 'static,
-{
-    fn from(t: Handler<T, F>) -> BoxedHandler<T> {
-        let hnd = Arc::new(t.hnd);
-
-        let inner = move |state: State<T>, stream_id: Option<u64>, params: Vec<u8>| {
-            let hnd = Arc::clone(&hnd);
-            Box::pin(async move {
-                let out = { hnd.handle(state, stream_id, params).await? };
-                Ok(Vec::new())
-            })
-                as std::pin::Pin<Box<dyn Future<Output = Result<Vec<u8>, RPCError>> + Send>>
-        };
-        BoxedHandler(Box::new(inner))
     }
 }
