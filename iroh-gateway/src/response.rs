@@ -67,6 +67,7 @@ pub struct GatewayResponse {
     pub status_code: StatusCode,
     pub body: BoxBody,
     pub headers: HashMap<String, String>,
+    pub trace_id: String,
 }
 
 impl IntoResponse for GatewayResponse {
@@ -77,6 +78,10 @@ impl IntoResponse for GatewayResponse {
             let header_name = HeaderName::from_str(key).unwrap();
             headers.insert(header_name, HeaderValue::from_str(value).unwrap());
         }
+        headers.insert(
+            HEADER_X_TRACE_ID,
+            HeaderValue::from_str(&self.trace_id).unwrap(),
+        );
         rb.body(self.body).unwrap()
     }
 }

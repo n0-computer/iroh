@@ -18,7 +18,7 @@ use crate::{
     config::Config,
     constants::*,
     error::GatewayError,
-    metrics::METRICS_CNT_REQUESTS_TOTAL,
+    metrics::{get_current_trace_id, METRICS_CNT_REQUESTS_TOTAL},
     response::{GatewayResponse, ResponseFormat},
 };
 
@@ -295,6 +295,7 @@ fn response(
         status_code,
         body,
         headers,
+        trace_id: get_current_trace_id(),
     })
 }
 
@@ -302,6 +303,7 @@ fn error(status_code: StatusCode, message: &str) -> Result<GatewayResponse, Gate
     Err(GatewayError {
         status_code,
         message: message.to_string(),
+        trace_id: get_current_trace_id(),
     })
 }
 

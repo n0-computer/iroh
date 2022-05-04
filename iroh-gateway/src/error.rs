@@ -8,6 +8,7 @@ use serde_json::json;
 pub struct GatewayError {
     pub status_code: StatusCode,
     pub message: String,
+    pub trace_id: String,
 }
 
 impl IntoResponse for GatewayError {
@@ -16,9 +17,9 @@ impl IntoResponse for GatewayError {
             "code": self.status_code.as_u16(),
             "success": false,
             "message": self.message,
-            "trace_id": "some_trace_id",
+            "trace_id": self.trace_id,
         }));
-
+        // todo(arqu): add headers
         (self.status_code, body).into_response()
     }
 }

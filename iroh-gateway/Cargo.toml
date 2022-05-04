@@ -21,6 +21,8 @@ tracing = "0.1.33"
 metrics = "0.18.1"
 names = { version = "0.13.0", default-features = false }
 git-version = "0.3.5"
+tracing-opentelemetry = "0.17.2"
+opentelemetry = { version = "0.17.0", features = ["rt-tokio"] }
 
 [dev-dependencies]
 axum-macros = "0.2.0" # use #[axum_macros::debug_handler] for better error messages on handlers
