@@ -28,6 +28,7 @@ jobs:
       RUSTC_WRAPPER: sccache
       RUSTV: ${{ matrix.rust }}
       SCCACHE_CACHE_SIZE: 2G
+
       # SCCACHE_RECACHE: 1 # Uncomment this to clear cache, then comment it back out
     steps:
     - uses: actions/checkout@master
@@ -123,6 +124,38 @@ jobs:
       with:
           command: clippy
           args: --all --tests --benches -- -D warnings
+
+    - name: build release
+      uses: actions-rs/cargo@v1
+      if: matrix.os == 'ubuntu-latest' && matrix.rust=='stable' && github.ref_name=='main'
+      with:
+        command: build
+        args: --release
+    
+    - name: Get current iroh-gateway version
+      id: ig_version
+      if: matrix.os == 'ubuntu-latest' && matrix.rust=='stable' && github.ref_name=='main'
+      uses: dante-signal31/rust-app-version@v1.0.0
+      with:
+         cargo_toml_folder: iroh-gateway/
+
+    - name: push release
+      uses: prewk/s3-cp-action@v2
+      if: matrix.os == 'ubuntu-latest' && matrix.rust=='stable' && github.ref_name=='main'
+      with:
+        aws_access_key_id: ${{ secrets.S3_ACCESS_KEY_ID }}
+        aws_secret_access_key: ${{ secrets.S3_ACCESS_KEY }}
+        source: './target/release/iroh-gateway'
+        dest: 's3://vorc/iroh-gateway-linux-amd64-${{ steps.ig_version.outputs.app_version }}-${GITHUB_SHA::7}'
+
+    - name: push release - latest
+      uses: prewk/s3-cp-action@v2
+      if: matrix.os == 'ubuntu-latest' && matrix.rust=='stable' && github.ref_name=='main'
+      with:
+        aws_access_key_id: ${{ secrets.S3_ACCESS_KEY_ID }}
+        aws_secret_access_key: ${{ secrets.S3_ACCESS_KEY }}
+        source: './target/release/iroh-gateway'
+        dest: 's3://vorc/iroh-gateway-linux-amd64-latest'
     
     - name: Print sccache stats
       run: sccache --show-stats
