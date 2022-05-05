@@ -105,13 +105,12 @@ impl<T> Server<T> {
                 }
             }
             SwarmEvent::ConnectionClosed { .. } => {}
-            SwarmEvent::OutgoingConnectionError { peer_id, .. } => {
+            SwarmEvent::OutgoingConnectionError { peer_id, error, .. } => {
                 if let Some(peer_id) = peer_id {
                     if let Some(sender) = self.pending_requests.remove(&PendingId::PeerId(peer_id))
                     {
-                        // TODO: add error for connection failure, that contains the actual
-                        // connection error
-                        let _ = sender.send(SenderType::Error(RpcError::TODO));
+                        let _ =
+                            sender.send(SenderType::Error(RpcError::DialError(error.to_string())));
                     }
                 }
             }
@@ -223,14 +222,16 @@ impl<T> Server<T> {
                         }
                     }
                 },
-                RpcEvent::OutboundFailure { request_id, .. } => {
+                RpcEvent::OutboundFailure {
+                    request_id, error, ..
+                } => {
                     let _ = self
                         .pending_requests
                         .remove(&PendingId::RequestId(request_id))
                         .expect("Request to still be pending.")
-                        // TODO: add error for outbound failure containing the outbound failure
-                        // error
-                        .send(SenderType::Error(RpcError::TODO));
+                        .send(SenderType::Error(RpcError::OutboundFailure(
+                            error.to_string(),
+                        )));
                 }
                 RpcEvent::InboundFailure {
                     peer,
@@ -257,9 +258,8 @@ impl<T> Server<T> {
                     self.pending_requests
                         .insert(PendingId::ListenerId(listener_id), sender);
                 }
-                Err(_e) => {
-                    // TODO: add listening error
-                    let _ = sender.send(SenderType::Error(RpcError::TODO));
+                Err(e) => {
+                    let _ = sender.send(SenderType::Error(RpcError::TransportError(e.to_string())));
                 }
             },
             Command::Dial {
@@ -283,9 +283,9 @@ impl<T> Server<T> {
                             self.pending_requests
                                 .insert(PendingId::PeerId(peer_id), sender);
                         }
-                        Err(_e) => {
-                            // TODO: add dial error
-                            let _ = sender.send(SenderType::Error(RpcError::TODO));
+                        Err(e) => {
+                            let _ =
+                                sender.send(SenderType::Error(RpcError::DialError(e.to_string())));
                         }
                     }
                 }

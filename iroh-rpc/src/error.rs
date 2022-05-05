@@ -20,4 +20,12 @@ pub enum RpcError {
     StreamClosed,
     #[error("Bad config: `{0}`")]
     BadConfig(String),
+    #[error("Unexpected response type")]
+    UnexpectedResponseType,
+    #[error("DialError: `{0}`")]
+    DialError(String),
+    #[error("OutboundFailure: `{0}`")]
+    OutboundFailure(String),
+    #[error("TransportError: `{0}`")]
+    TransportError(String),
 }

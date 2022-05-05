@@ -60,8 +60,11 @@ impl<T> RpcConfig<T> {
     }
 
     // TODO: should be a list of possible addrs `with_addrs`
-    pub fn with_addr(mut self, name: String, addr: Multiaddr, peer_id: PeerId) -> Self {
-        self.client.addrs.insert(name, (addr, peer_id));
+    pub fn with_addr<S>(mut self, name: S, addr: Multiaddr, peer_id: PeerId) -> Self
+    where
+        S: Into<String>,
+    {
+        self.client.addrs.insert(name.into(), (addr, peer_id));
         self
     }
 }
