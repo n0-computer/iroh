@@ -28,4 +28,6 @@ pub enum RpcError {
     OutboundFailure(String),
     #[error("TransportError: `{0}`")]
     TransportError(String),
+    #[error("JoinError: `{0}`")]
+    JoinError(String),
 }

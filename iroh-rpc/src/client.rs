@@ -31,16 +31,23 @@ impl Client {
     }
 
     /// Dial all known addresses associated with the given namespaces
+    /// Returns the first error it finds
     pub async fn dial_all(&mut self) -> Result<(), RpcError> {
         let mut dials = Vec::new();
-        for (_, (addr, peer_id)) in self.addresses.iter().clone() {
-            let handle = tokio::spawn(dial(self.command_sender.clone(), addr.to_owned(), *peer_id));
+        for (_, (addr, peer_id)) in self.addresses.clone().into_iter() {
+            let handle = tokio::spawn(dial(self.command_sender.clone(), addr, peer_id));
             dials.push(handle);
         }
         let outcomes = futures::future::join_all(dials).await;
-        if outcomes.iter().any(|o| o.is_err()) {
-            return Err(RpcError::TODO);
-        };
+        for outcome in outcomes.into_iter() {
+            match outcome {
+                Ok(res) => match res {
+                    Ok(_) => (),
+                    Err(err) => return Err(err),
+                },
+                Err(join_err) => return Err(RpcError::JoinError(join_err.to_string())),
+            }
+        }
 
         Ok(())
     }
@@ -267,7 +274,7 @@ mod test {
 
     // TODO: next improvement should be that the serialization and deserialization happen
     // for you in the rpc library, rather than having to do it yourself in the handler function
-    async fn pong(
+    async fn ping(
         _state: handler::State<()>,
         _stream_id: Option<u64>,
         param: Vec<u8>,
@@ -340,7 +347,7 @@ mod test {
         let (mut a_client, a_server) = RpcBuilder::new()
             .with_swarm(a.swarm)
             .with_state(a_state)
-            .with_namespace("a", |n| n.with_method("ping", pong))
+            .with_namespace("a", |n| n.with_method("ping", ping))
             .build()
             .expect("failed to build rpc");
         let (mut b_client, b_server) = RpcBuilder::new()
