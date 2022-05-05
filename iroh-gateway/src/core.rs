@@ -1,5 +1,5 @@
 use axum::{
-    body::{self, Body, BoxBody},
+    body::{self, BoxBody},
     error_handling::HandleErrorLayer,
     extract::{Extension, Path, Query},
     http::{header::*, StatusCode},
@@ -81,6 +81,7 @@ async fn get_ipfs(
     Query(query_params): Query<GetParams>,
 ) -> Result<GatewayResponse, GatewayError> {
     increment_counter!(METRICS_CNT_REQUESTS_TOTAL);
+    let start_time = std::time::Instant::now();
     // parse path params
     let cid_param = params.get("cid").unwrap();
     let cid = Cid::try_from(cid_param.clone());
@@ -125,10 +126,10 @@ async fn get_ipfs(
         download,
     };
     match req.format {
-        ResponseFormat::Raw => serve_raw(&req, *client, headers).await,
-        ResponseFormat::Car => serve_car(&req, *client, headers).await,
-        ResponseFormat::Html => serve_html(&req, *client, headers).await,
-        ResponseFormat::Fs => serve_fs(&req, *client, headers).await,
+        ResponseFormat::Raw => serve_raw(&req, *client, headers, start_time).await,
+        ResponseFormat::Car => serve_car(&req, *client, headers, start_time).await,
+        ResponseFormat::Html => serve_html(&req, *client, headers, start_time).await,
+        ResponseFormat::Fs => serve_fs(&req, *client, headers, start_time).await,
     }
 }
 
@@ -137,25 +138,23 @@ async fn serve_raw(
     req: &Request,
     client: Client,
     mut headers: HashMap<String, String>,
+    start_time: std::time::Instant,
 ) -> Result<GatewayResponse, GatewayError> {
-    let body = client.get_file(req.full_content_path.as_str()).await;
+    let body = client
+        .get_file_simulated(req.full_content_path.as_str(), start_time)
+        .await;
     let body = match body {
         Ok(b) => b,
         Err(e) => {
             return error(StatusCode::INTERNAL_SERVER_ERROR, &e);
         }
     };
-
     set_content_disposition_headers(
         &mut headers,
         format!("{}.bin", req.cid).as_str(),
         DISPOSITION_ATTACHMENT,
     );
-    response(
-        StatusCode::OK,
-        body::boxed(Body::from(body)),
-        headers.clone(),
-    )
+    response(StatusCode::OK, body::boxed(body), headers.clone())
 }
 
 #[tracing::instrument()]
@@ -163,8 +162,11 @@ async fn serve_car(
     req: &Request,
     client: Client,
     mut headers: HashMap<String, String>,
+    start_time: std::time::Instant,
 ) -> Result<GatewayResponse, GatewayError> {
-    let body = client.get_file(req.full_content_path.as_str()).await;
+    let body = client
+        .get_file_simulated(req.full_content_path.as_str(), start_time)
+        .await;
     let body = match body {
         Ok(b) => b,
         Err(e) => {
@@ -176,11 +178,7 @@ async fn serve_car(
         format!("{}.car", req.cid).as_str(),
         DISPOSITION_ATTACHMENT,
     );
-    response(
-        StatusCode::OK,
-        body::boxed(Body::from(body)),
-        headers.clone(),
-    )
+    response(StatusCode::OK, body::boxed(body), headers.clone())
 }
 
 #[tracing::instrument()]
@@ -188,19 +186,18 @@ async fn serve_html(
     req: &Request,
     client: Client,
     headers: HashMap<String, String>,
+    start_time: std::time::Instant,
 ) -> Result<GatewayResponse, GatewayError> {
-    let body = client.get_file(req.full_content_path.as_str()).await;
+    let body = client
+        .get_file_simulated(req.full_content_path.as_str(), start_time)
+        .await;
     let body = match body {
         Ok(b) => b,
         Err(e) => {
             return error(StatusCode::INTERNAL_SERVER_ERROR, &e);
         }
     };
-    response(
-        StatusCode::OK,
-        body::boxed(Body::from(body)),
-        headers.clone(),
-    )
+    response(StatusCode::OK, body::boxed(body), headers.clone())
 }
 
 #[tracing::instrument()]
@@ -208,8 +205,11 @@ async fn serve_fs(
     req: &Request,
     client: Client,
     mut headers: HashMap<String, String>,
+    start_time: std::time::Instant,
 ) -> Result<GatewayResponse, GatewayError> {
-    let body = client.get_file(req.full_content_path.as_str()).await;
+    let body = client
+        .get_file_simulated(req.full_content_path.as_str(), start_time)
+        .await;
     let body = match body {
         Ok(b) => b,
         Err(e) => {
@@ -223,11 +223,7 @@ async fn serve_fs(
         req.download,
     );
     add_content_type_headers(&mut headers, &name);
-    response(
-        StatusCode::OK,
-        body::boxed(Body::from(body)),
-        headers.clone(),
-    )
+    response(StatusCode::OK, body::boxed(body), headers.clone())
 }
 
 #[tracing::instrument()]
