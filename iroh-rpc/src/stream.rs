@@ -64,7 +64,7 @@ impl Stream for InStream {
         match self.packet_receiver.poll_next_unpin(cx) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(res) => match res {
-                None => Poll::Ready(Some(Err(RpcError::StreamClosed.into()))),
+                None => Poll::Ready(Some(Err(RpcError::StreamClosed))),
                 Some(p) => match p {
                     StreamType::Packet(p) => {
                         if next_chunk == p.index {
@@ -78,7 +78,7 @@ impl Stream for InStream {
                     }
                     StreamType::RpcError(e) => {
                         error!(target: "InStream", "Received error off of the stream: {:?}", e);
-                        Poll::Ready(Some(Err(e.into())))
+                        Poll::Ready(Some(Err(e)))
                     }
                 },
             },

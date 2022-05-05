@@ -15,7 +15,7 @@ pub fn serialize_request<T: Serialize>(params: T) -> Result<Vec<u8>, RpcError> {
     }
 }
 
-pub fn deserialize_request<T: DeserializeOwned>(data: &Vec<u8>) -> Result<T, RpcError> {
+pub fn deserialize_request<T: DeserializeOwned>(data: &[u8]) -> Result<T, RpcError> {
     match serde_json::from_slice(data) {
         Ok(r) => Ok(r),
         Err(_) => Err(RpcError::BadRequest),
@@ -29,7 +29,7 @@ pub fn serialize_response<T: Serialize>(params: T) -> Result<Vec<u8>, RpcError> 
     }
 }
 
-pub fn deserialize_response<T: DeserializeOwned>(data: &Vec<u8>) -> Result<T, RpcError> {
+pub fn deserialize_response<T: DeserializeOwned>(data: &[u8]) -> Result<T, RpcError> {
     match serde_json::from_slice(data) {
         Ok(r) => Ok(r),
         Err(_) => Err(RpcError::BadResponse),

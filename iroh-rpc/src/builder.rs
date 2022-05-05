@@ -1,13 +1,17 @@
 use std::collections::HashMap;
 
+use futures::channel::mpsc;
 use libp2p::swarm::Swarm;
 use libp2p::Multiaddr;
 use libp2p::PeerId;
 
 use crate::behaviour::Behaviour;
+use crate::client::Client;
+use crate::error::RpcError;
 use crate::handler::{Namespace, State};
+use crate::server::Server;
 
-pub struct RpcConfig<T> {
+pub struct RpcBuilder<T> {
     pub(crate) client: ClientConfig,
     pub(crate) server: ServerConfig<T>,
 }
@@ -23,9 +27,9 @@ pub struct ServerConfig<T> {
     pub(crate) namespaces: HashMap<String, Namespace<T>>,
 }
 
-impl<T> RpcConfig<T> {
+impl<T> RpcBuilder<T> {
     pub fn new() -> Self {
-        RpcConfig {
+        RpcBuilder {
             client: ClientConfig {
                 addrs: Default::default(),
             },
@@ -66,5 +70,21 @@ impl<T> RpcConfig<T> {
     {
         self.client.addrs.insert(name.into(), (addr, peer_id));
         self
+    }
+
+    pub fn build(self) -> Result<(Client, Server<T>), RpcError> {
+        let (sender, receiver) = mpsc::channel(0);
+        let server = Server::server_from_config(receiver, self.server)?;
+        let mut client = Client::new(sender);
+        for (namespace, addrs) in self.client.addrs.iter() {
+            client.with_addrs(namespace.to_owned(), addrs.0.clone(), addrs.1);
+        }
+        Ok((client, server))
+    }
+}
+
+impl<T> Default for RpcBuilder<T> {
+    fn default() -> Self {
+        Self::new()
     }
 }

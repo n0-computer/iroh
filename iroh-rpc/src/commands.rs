@@ -87,9 +87,9 @@ pub type PendingMap = HashMap<PendingId, OneshotSender>;
 
 #[derive(PartialEq, Eq, Hash)]
 pub enum PendingId {
-    PeerId(PeerId),
-    RequestId(RequestId),
-    ListenerId(ListenerId),
+    Peer(PeerId),
+    Request(RequestId),
+    Listener(ListenerId),
 }
 
 pub type ActiveStreams = HashMap<u64, mpsc::Sender<StreamType>>;

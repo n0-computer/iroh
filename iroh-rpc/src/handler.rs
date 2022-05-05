@@ -104,6 +104,8 @@ where
     }
 }
 
+// TODO: refactor for less complexity
+#[allow(clippy::type_complexity)]
 pub struct BoxedHandler<T>(
     Box<
         dyn Fn(

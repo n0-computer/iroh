@@ -33,15 +33,12 @@ impl Client {
     /// Dial all known addresses associated with the given namespaces
     pub async fn dial_all(&mut self) -> Result<(), RpcError> {
         let mut dials = Vec::new();
-        for (_, (addr, peer_id)) in self.addresses.to_owned() {
-            let handle = tokio::spawn(dial(self.command_sender.clone(), addr, peer_id));
+        for (_, (addr, peer_id)) in self.addresses.iter().clone() {
+            let handle = tokio::spawn(dial(self.command_sender.clone(), addr.to_owned(), *peer_id));
             dials.push(handle);
         }
         let outcomes = futures::future::join_all(dials).await;
-        if outcomes.iter().any(|o| match o {
-            Ok(_) => false,
-            Err(_) => true,
-        }) {
+        if outcomes.iter().any(|o| o.is_err()) {
             return Err(RpcError::TODO);
         };
 
@@ -83,8 +80,13 @@ impl Client {
 
     // with_addrs is a private helper function that add a namespace/address association
     // without taking ownership
-    pub(crate) fn with_addrs(&mut self, namespace: String, address: Multiaddr, peer_id: PeerId) {
-        self.addresses.insert(namespace, (address, peer_id));
+    pub(crate) fn with_addrs<I: Into<String>>(
+        &mut self,
+        namespace: I,
+        address: Multiaddr,
+        peer_id: PeerId,
+    ) {
+        self.addresses.insert(namespace.into(), (address, peer_id));
     }
 
     /// Send a single request and expects a single response
@@ -224,10 +226,11 @@ mod test {
     use super::*;
 
     use libp2p::identity::Keypair;
+    use libp2p::swarm::Swarm;
 
-    use crate::config::RpcConfig;
+    use crate::behaviour::Behaviour;
+    use crate::builder::RpcBuilder;
     use crate::handler;
-    use crate::rpc_from_config;
     use crate::serde::{deserialize_request, serialize_response, Deserialize};
     use crate::swarm;
 
@@ -241,6 +244,8 @@ mod test {
         response: String,
     }
 
+    // TODO: next improvement should be that the serialization and deserialization happen
+    // for you in the rpc library, rather than having to do it yourself in the handler function
     async fn get(
         state: handler::State<String>,
         _stream_id: Option<u64>,
@@ -254,59 +259,122 @@ mod test {
         Ok(bytes)
     }
 
-    #[tokio::test]
-    async fn client_example() {
-        let a_state = handler::State::new(());
-        let a_keypair = Keypair::generate_ed25519();
-        let a_peer_id = a_keypair.public().to_peer_id();
-        let a_addr: Multiaddr = "/memory/1234".parse().unwrap();
+    #[derive(Deserialize, Serialize, Debug, Clone)]
+    struct Ping;
 
-        let b_state = handler::State::new("Wooo!".to_string());
+    #[derive(Deserialize, Serialize, Debug, Clone, PartialEq)]
+    struct Pong;
+
+    // TODO: next improvement should be that the serialization and deserialization happen
+    // for you in the rpc library, rather than having to do it yourself in the handler function
+    async fn pong(
+        _state: handler::State<()>,
+        _stream_id: Option<u64>,
+        param: Vec<u8>,
+    ) -> Result<Vec<u8>, RpcError> {
+        let _: Pong = deserialize_request(&param)?;
+
+        let bytes = serialize_response(Pong)?;
+        Ok(bytes)
+    }
+
+    struct TestConfig {
+        addr: Multiaddr,
+        peer_id: PeerId,
+        swarm: Swarm<Behaviour>,
+    }
+
+    #[tokio::test]
+    async fn mem_client_example() {
+        let a_addr: Multiaddr = "/memory/1234".parse().unwrap();
         let b_addr: Multiaddr = "/memory/4321".parse().unwrap();
         let b_keypair = Keypair::generate_ed25519();
         let b_peer_id = b_keypair.public().to_peer_id();
+        let a_keypair = Keypair::generate_ed25519();
+        let a_peer_id = a_keypair.public().to_peer_id();
+        client_example(
+            TestConfig {
+                addr: a_addr,
+                peer_id: a_peer_id,
+                swarm: swarm::new_mem_swarm(a_keypair),
+            },
+            TestConfig {
+                addr: b_addr,
+                peer_id: b_peer_id,
+                swarm: swarm::new_mem_swarm(b_keypair),
+            },
+        )
+        .await;
+    }
 
-        let (mut a_client, a_server) = rpc_from_config(
-            RpcConfig::new()
-                .with_swarm(swarm::new_mem_swarm(a_keypair))
-                .with_state(a_state)
-                // can add the addrs here, or after the client has already
-                // been constructed
-                .with_addr("b", b_addr.clone(), b_peer_id),
+    #[tokio::test]
+    async fn tcp_client_example() {
+        let addr: Multiaddr = "/ip4/0.0.0.0/tcp/0".parse().unwrap();
+        let b_keypair = Keypair::generate_ed25519();
+        let b_peer_id = b_keypair.public().to_peer_id();
+        let a_keypair = Keypair::generate_ed25519();
+        let a_peer_id = a_keypair.public().to_peer_id();
+        client_example(
+            TestConfig {
+                addr: addr.clone(),
+                peer_id: a_peer_id,
+                swarm: swarm::new_swarm(a_keypair)
+                    .await
+                    .expect("swarm build failed"),
+            },
+            TestConfig {
+                addr,
+                peer_id: b_peer_id,
+                swarm: swarm::new_swarm(b_keypair)
+                    .await
+                    .expect("swarm build failed"),
+            },
         )
-        .expect("rpc client to be created");
-        let (mut b_client, b_server) = rpc_from_config(
-            RpcConfig::new()
-                .with_swarm(swarm::new_mem_swarm(b_keypair))
-                .with_state(b_state)
-                .with_namespace("b", |n| n.with_method("get", get))
-                // can add the addrs here, or after the client has already
-                // been constructed
-                .with_addr("a", a_addr.clone(), a_peer_id),
-        )
-        .expect("rpc client to be created");
+        .await;
+    }
+
+    async fn client_example(a: TestConfig, b: TestConfig) {
+        let a_state = handler::State::new(());
+        let b_state = handler::State::new("Wooo!".to_string());
+
+        let (mut a_client, a_server) = RpcBuilder::new()
+            .with_swarm(a.swarm)
+            .with_state(a_state)
+            .with_namespace("a", |n| n.with_method("ping", pong))
+            .build()
+            .expect("failed to build rpc");
+        let (mut b_client, b_server) = RpcBuilder::new()
+            .with_swarm(b.swarm)
+            .with_state(b_state)
+            .with_namespace("b", |n| n.with_method("get", get))
+            .build()
+            .expect("failed to build rpc");
 
         // run server
-        let a_thread_handle = tokio::spawn(async move {
+        let a_task_handle = tokio::spawn(async move {
             a_server.run().await;
         });
-        let b_thread_handle = tokio::spawn(async move {
+        let b_task_handle = tokio::spawn(async move {
             b_server.run().await;
         });
 
         // listen on addr
-        a_client.listen(a_addr).await.expect("unsuccessful dial");
-        b_client.listen(b_addr).await.expect("unsuccessful dial");
+        let a_addr = a_client.listen(a.addr).await.expect("unsuccessful dial");
+        let b_addr = b_client.listen(b.addr).await.expect("unsuccessful dial");
+
+        // add addresses
+        a_client.with_addrs("b", b_addr, b.peer_id);
+        b_client.with_addrs("a", a_addr, a.peer_id);
 
         // dial all addrs
         a_client
             .dial_all()
             .await
-            .expect("to dial all namespace addrs");
+            .expect("dial all namespace addrs failed");
         b_client
             .dial_all()
             .await
-            .expect("to dial all namespace addrs");
+            .expect("dial all namespace addrs failed");
 
         // make request
         let res: GetResponse = a_client
@@ -318,14 +386,25 @@ mod test {
                 },
             )
             .await
-            .expect("call to client b to function");
+            .expect("call to client b failed");
 
-        assert_eq!(res.response, "Wooo!".to_string());
+        assert_eq!("Wooo!".to_string(), res.response);
+
+        let _: Pong = b_client
+            .call("a", "ping", Ping)
+            .await
+            .expect("call to client a failed");
+
+        let err = a_client
+            .call::<_, Pong, _, _>("b", "ping", Ping)
+            .await
+            .unwrap_err();
+        assert_eq!(RpcError::MethodNotFound("ping".into()), err);
 
         // shutdown client
         a_client.shutdown().await;
         b_client.shutdown().await;
-        a_thread_handle.await.unwrap();
-        b_thread_handle.await.unwrap();
+        a_task_handle.await.unwrap();
+        b_task_handle.await.unwrap();
     }
 }

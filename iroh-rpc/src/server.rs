@@ -13,8 +13,8 @@ use tracing::{debug, error, trace};
 
 use crate::behaviour::rpc::{RpcEvent, RpcRequest, RpcRequestEvent, RpcResponse, RpcResponseEvent};
 use crate::behaviour::{Behaviour, Event};
+use crate::builder::ServerConfig;
 use crate::commands::{ActiveStreams, Command, PendingId, PendingMap, SenderType};
-use crate::config::ServerConfig;
 use crate::error::RpcError;
 use crate::handler::{Namespace, State};
 use crate::stream::StreamType;
@@ -85,7 +85,7 @@ impl<T> Server<T> {
                 let local_peer_id = *self.swarm.local_peer_id();
                 if let Some(sender) = self
                     .pending_requests
-                    .remove(&PendingId::ListenerId(listener_id))
+                    .remove(&PendingId::Listener(listener_id))
                 {
                     let _ = sender.send(SenderType::Multiaddr(
                         address.with(Protocol::P2p(local_peer_id.into())),
@@ -98,8 +98,7 @@ impl<T> Server<T> {
             } => {
                 debug!("Connection with {:?} established", peer_id);
                 if endpoint.is_dialer() {
-                    if let Some(sender) = self.pending_requests.remove(&PendingId::PeerId(peer_id))
-                    {
+                    if let Some(sender) = self.pending_requests.remove(&PendingId::Peer(peer_id)) {
                         let _ = sender.send(SenderType::Ack);
                     }
                 }
@@ -107,8 +106,7 @@ impl<T> Server<T> {
             SwarmEvent::ConnectionClosed { .. } => {}
             SwarmEvent::OutgoingConnectionError { peer_id, error, .. } => {
                 if let Some(peer_id) = peer_id {
-                    if let Some(sender) = self.pending_requests.remove(&PendingId::PeerId(peer_id))
-                    {
+                    if let Some(sender) = self.pending_requests.remove(&PendingId::Peer(peer_id)) {
                         let _ =
                             sender.send(SenderType::Error(RpcError::DialError(error.to_string())));
                     }
@@ -152,7 +150,6 @@ impl<T> Server<T> {
                                             RpcResponse(RpcResponseEvent::RpcError(e)),
                                         )
                                         .expect("Connection to peer to still be open.");
-                                    return;
                                 }
                             };
                         }
@@ -199,7 +196,7 @@ impl<T> Server<T> {
                     } => {
                         let sender = self
                             .pending_requests
-                            .remove(&PendingId::RequestId(request_id))
+                            .remove(&PendingId::Request(request_id))
                             .expect("Request to still be pending.");
                         match response.0 {
                             RpcResponseEvent::Payload(payload) => {
@@ -227,7 +224,7 @@ impl<T> Server<T> {
                 } => {
                     let _ = self
                         .pending_requests
-                        .remove(&PendingId::RequestId(request_id))
+                        .remove(&PendingId::Request(request_id))
                         .expect("Request to still be pending.")
                         .send(SenderType::Error(RpcError::OutboundFailure(
                             error.to_string(),
@@ -256,7 +253,7 @@ impl<T> Server<T> {
             Command::StartListening { addr, sender } => match self.swarm.listen_on(addr) {
                 Ok(listener_id) => {
                     self.pending_requests
-                        .insert(PendingId::ListenerId(listener_id), sender);
+                        .insert(PendingId::Listener(listener_id), sender);
                 }
                 Err(e) => {
                     let _ = sender.send(SenderType::Error(RpcError::TransportError(e.to_string())));
@@ -268,7 +265,7 @@ impl<T> Server<T> {
                 sender,
             } => {
                 if let std::collections::hash_map::Entry::Vacant(_e) =
-                    self.pending_requests.entry(PendingId::PeerId(peer_id))
+                    self.pending_requests.entry(PendingId::Peer(peer_id))
                 {
                     self.swarm
                         .behaviour_mut()
@@ -281,7 +278,7 @@ impl<T> Server<T> {
                     {
                         Ok(()) => {
                             self.pending_requests
-                                .insert(PendingId::PeerId(peer_id), sender);
+                                .insert(PendingId::Peer(peer_id), sender);
                         }
                         Err(e) => {
                             let _ =
@@ -310,7 +307,7 @@ impl<T> Server<T> {
                     }),
                 );
                 self.pending_requests
-                    .insert(PendingId::RequestId(request_id), sender);
+                    .insert(PendingId::Request(request_id), sender);
                 debug!(target: "outbound request", "Sent SendRequest {} to peer {}", request_id, peer_id);
             }
             Command::SendResponse { payload, channel } => {
@@ -348,7 +345,7 @@ impl<T> Server<T> {
                     }),
                 );
                 self.pending_requests
-                    .insert(PendingId::RequestId(request_id), sender);
+                    .insert(PendingId::Request(request_id), sender);
                 debug!(target: "outbound streaming", "Sent StreamRequest {} to peer {}", request_id, peer_id);
             }
             Command::HeaderResponse { header, channel } => {
@@ -374,7 +371,7 @@ impl<T> Server<T> {
                     .rpc
                     .send_request(&peer_id, RpcRequest(RpcRequestEvent::Packet(packet)));
                 self.pending_requests
-                    .insert(PendingId::RequestId(request_id), sender);
+                    .insert(PendingId::Request(request_id), sender);
                 debug!(target: "outbound streaming", "Sent packet {} with request_id {}", index, request_id);
             }
             Command::CloseStream { id } => match self.active_streams.remove(&id) {
