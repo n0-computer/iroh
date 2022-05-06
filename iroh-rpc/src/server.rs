@@ -31,6 +31,7 @@ pub struct Server<T> {
     pub(crate) active_streams: ActiveStreams,
     pub(crate) state: State<T>,
     pub(crate) handlers: HashMap<String, Namespace<T>>,
+    pub(crate) stream_capacity: usize,
 }
 
 impl<T> Server<T> {
@@ -51,6 +52,7 @@ impl<T> Server<T> {
             handlers: config.namespaces,
             pending_requests: Default::default(),
             active_streams: Default::default(),
+            stream_capacity: config.stream_capacity,
         })
     }
 
@@ -206,7 +208,7 @@ impl<T> Server<T> {
                                 let _ = sender.send(SenderType::Error(error));
                             }
                             RpcResponseEvent::Header(header) => {
-                                let (s, r) = mpsc::channel(1000);
+                                let (s, r) = mpsc::channel(self.stream_capacity);
                                 debug!(target: "inbound streaming", "Received header: Adding active stream {}", header.id);
                                 self.active_streams.insert(header.id, s);
                                 debug!(target: "inbound streaming", "Sending stream receiver to client");

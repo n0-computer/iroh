@@ -348,12 +348,14 @@ mod test {
             .with_swarm(a.swarm)
             .with_state(a_state)
             .with_namespace("a", |n| n.with_method("ping", ping))
+            .with_capacity(2)
             .build()
             .expect("failed to build rpc");
         let (mut b_client, b_server) = RpcBuilder::new()
             .with_swarm(b.swarm)
             .with_state(b_state)
             .with_namespace("b", |n| n.with_method("get", get))
+            .with_capacity(2)
             .build()
             .expect("failed to build rpc");
 

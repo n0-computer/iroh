@@ -25,6 +25,10 @@ pub struct ServerConfig<T> {
     pub(crate) swarm: Option<Swarm<Behaviour>>,
     pub(crate) state: Option<State<T>>,
     pub(crate) namespaces: HashMap<String, Namespace<T>>,
+    // default 64
+    pub(crate) capacity: usize,
+    // default 64
+    pub(crate) stream_capacity: usize,
 }
 
 impl<T> RpcBuilder<T> {
@@ -37,6 +41,8 @@ impl<T> RpcBuilder<T> {
                 swarm: None,
                 state: None,
                 namespaces: Default::default(),
+                capacity: 64,
+                stream_capacity: 64,
             },
         }
     }
@@ -72,8 +78,20 @@ impl<T> RpcBuilder<T> {
         self
     }
 
+    /// Set the capacity of the event loop channel. Default is 64
+    pub fn with_capacity(mut self, capacity: usize) -> Self {
+        self.server.capacity = capacity;
+        self
+    }
+
+    /// Set the capacity of the stream channel. Default is 64
+    pub fn with_stream_capacity(mut self, capacity: usize) -> Self {
+        self.server.stream_capacity = capacity;
+        self
+    }
+
     pub fn build(self) -> Result<(Client, Server<T>), RpcError> {
-        let (sender, receiver) = mpsc::channel(0);
+        let (sender, receiver) = mpsc::channel(self.server.capacity);
         let server = Server::server_from_config(receiver, self.server)?;
         let mut client = Client::new(sender);
         for (namespace, addrs) in self.client.addrs.iter() {
