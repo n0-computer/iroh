@@ -27,6 +27,7 @@ struct InnerStore {
 
 impl Store {
     /// Creates a new database.
+    #[tracing::instrument]
     pub async fn create(config: Config) -> Result<Self> {
         let mut options = Options::default();
         options.create_if_missing(true);
@@ -68,6 +69,7 @@ impl Store {
     }
 
     /// Opens an existing database.
+    #[tracing::instrument]
     pub async fn open(config: Config) -> Result<Self> {
         let mut options = Options::default();
         options.create_if_missing(false);
@@ -112,6 +114,7 @@ impl Store {
         })
     }
 
+    #[tracing::instrument(skip(self, links, blob))]
     pub async fn put<T: AsRef<[u8]>, L>(&self, cid: Cid, blob: T, links: L) -> Result<()>
     where
         L: IntoIterator<Item = Cid>,
@@ -162,6 +165,7 @@ impl Store {
         Ok(())
     }
 
+    #[tracing::instrument(skip(self))]
     pub async fn get(&self, cid: &Cid) -> Result<Option<DBPinnableSlice<'_>>> {
         match self.get_id(cid).await? {
             Some(id) => {
@@ -172,6 +176,7 @@ impl Store {
         }
     }
 
+    #[tracing::instrument(skip(self))]
     pub async fn get_links(&self, cid: &Cid) -> Result<Option<Vec<Cid>>> {
         match self.get_id(cid).await? {
             Some(id) => {
