@@ -16,3 +16,11 @@ A rust implementation of an IPFS gateway.
 
 - `IROH_INSTANCE_ID` - unique instance identifier, preferably some name than hard id (default: generated lower & snake case name)
 - `IROH_ENV` - indicates the service environment (default: `dev`)
+
+## Endpoints
+
+| Endpoint                          | Flag                                       | Description                                                                             |
+|-----------------------------------|--------------------------------------------|-----------------------------------------------------------------------------------------|
+| `/ipfs/:cid` & `/ipfs/:cid/:path` | `?format={"", "fs", "raw", "car", "html"}` | Specifies the serving format & content-type                                             |
+|                                   | `?filename=DESIRED_FILE_NAME`              | Specifies a filename for the attachment                                                 |
+|                                   | `?download={true, false}`                  | Sets content-disposition to attachment, browser prompts to save file instead of loading |
