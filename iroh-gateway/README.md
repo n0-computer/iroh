@@ -19,8 +19,8 @@ A rust implementation of an IPFS gateway.
 
 ## Endpoints
 
-| Endpoint                          | Flag                                       | Description                                                                             |
-|-----------------------------------|--------------------------------------------|-----------------------------------------------------------------------------------------|
-| `/ipfs/:cid` & `/ipfs/:cid/:path` | `?format={"", "fs", "raw", "car", "html"}` | Specifies the serving format & content-type                                             |
-|                                   | `?filename=DESIRED_FILE_NAME`              | Specifies a filename for the attachment                                                 |
-|                                   | `?download={true, false}`                  | Sets content-disposition to attachment, browser prompts to save file instead of loading |
+| Endpoint                          | Flag                                       | Description                                                                             | Default    |
+|-----------------------------------|--------------------------------------------|-----------------------------------------------------------------------------------------|------------|
+| `/ipfs/:cid` & `/ipfs/:cid/:path` | `?format={"", "fs", "raw", "car", "html"}` | Specifies the serving format & content-type                                             | `""/fs`    |
+|                                   | `?filename=DESIRED_FILE_NAME`              | Specifies a filename for the attachment                                                 | `{cid}.bin` |
+|                                   | `?download={true, false}`                  | Sets content-disposition to attachment, browser prompts to save file instead of loading | `false`    |
