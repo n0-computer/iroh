@@ -282,6 +282,7 @@ fn get_filename(content_path: &str) -> String {
         .unwrap_or_default()
 }
 
+#[tracing::instrument()]
 fn response(
     status_code: StatusCode,
     body: BoxBody,
@@ -295,6 +296,7 @@ fn response(
     })
 }
 
+#[tracing::instrument()]
 fn error(status_code: StatusCode, message: &str) -> Result<GatewayResponse, GatewayError> {
     Err(GatewayError {
         status_code,

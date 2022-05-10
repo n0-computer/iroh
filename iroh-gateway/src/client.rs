@@ -17,6 +17,7 @@ impl Client {
         Self {}
     }
 
+    #[tracing::instrument()]
     pub async fn get_file_simulated(
         &self,
         _path: &str,
