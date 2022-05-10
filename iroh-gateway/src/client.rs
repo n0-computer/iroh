@@ -26,7 +26,7 @@ impl Client {
         let mut rng: StdRng = SeedableRng::from_entropy();
 
         // some random latency
-        tokio::time::sleep(Duration::from_millis(rng.gen_range(0..150))).await;
+        tokio::time::sleep(Duration::from_millis(rng.gen_range(0..650))).await;
 
         tokio::spawn(async move {
             let test_path = Path::new("test_files/test_big.txt");
@@ -74,7 +74,7 @@ impl Client {
                     f_size / start_time.elapsed().as_secs_f64()
                 );
                 counter!(METRICS_BYTES_STREAMED, n as u64);
-                tokio::time::sleep(Duration::from_millis(rng.gen_range(0..150))).await;
+                tokio::time::sleep(Duration::from_millis(rng.gen_range(0..250))).await;
             }
         });
 
