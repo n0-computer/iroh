@@ -1,5 +1,5 @@
 use git_version::git_version;
-use metrics::{describe_counter, describe_gauge, Unit};
+use metrics::{describe_counter, describe_gauge, describe_histogram, Unit};
 
 use opentelemetry::trace::{TraceContextExt, TraceId};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
@@ -28,6 +28,10 @@ pub const METRICS_BYTES_STREAMED: &str = "bytes_streamed";
 pub const METRICS_BYTES_FETCHED: &str = "bytes_fetched";
 pub const METRICS_BITRATE_IN: &str = "bitrate_in";
 pub const METRICS_BITRATE_OUT: &str = "bitrate_out";
+pub const METRICS_HIST_TTFB: &str = "hist_time_to_fetch_first_block";
+pub const METRICS_HIST_TTSERVE: &str = "hist_time_to_serve_full_file";
+pub const METRICS_ERROR: &str = "error_count";
+pub const METRICS_FAIL: &str = "fail_count";
 
 pub fn register_counters() {
     describe_counter!(
@@ -76,6 +80,14 @@ pub fn register_counters() {
         METRICS_BITRATE_OUT,
         Unit::KilobitsPerSecond,
         "Bitrate of outgoing stream"
+    );
+    describe_counter!(METRICS_ERROR, Unit::Count, "Number of errors");
+    describe_counter!(METRICS_FAIL, Unit::Count, "Number of failed requests");
+    describe_histogram!(METRICS_HIST_TTFB, Unit::Milliseconds, "Histogram of TTFB");
+    describe_histogram!(
+        METRICS_HIST_TTSERVE,
+        Unit::Milliseconds,
+        "Histogram of TTSERVE"
     );
 }
 
