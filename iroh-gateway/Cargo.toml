@@ -24,6 +24,7 @@ git-version = "0.3.5"
 rand = "0.8.5"
 tracing-opentelemetry = "0.17.2"
 opentelemetry = { version = "0.17.0", features = ["rt-tokio"] }
+chrono = "0.4.19"
 
 [dev-dependencies]
 axum-macros = "0.2.0" # use #[axum_macros::debug_handler] for better error messages on handlers

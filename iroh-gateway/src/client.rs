@@ -3,6 +3,7 @@
 use crate::metrics::*;
 use crate::response::ResponseFormat;
 use axum::body::Body;
+use cid::Cid;
 use metrics::{counter, gauge, histogram, increment_counter};
 use rand::{prelude::StdRng, Rng, SeedableRng};
 use std::{fs::File, io::Read, path::Path, time::Duration};
@@ -86,7 +87,7 @@ impl Client {
 #[derive(Debug, Clone)]
 pub struct Request {
     pub format: ResponseFormat,
-    pub cid: String,
+    pub cid: Cid,
     pub full_content_path: String,
     pub query_file_name: String,
     pub content_path: String,
