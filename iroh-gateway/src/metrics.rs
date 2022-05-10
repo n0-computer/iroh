@@ -17,21 +17,21 @@ pub fn metrics_config() -> iroh_metrics::Config {
     iroh_metrics::Config::new(service_name, instance_id, build, version, service_env)
 }
 
-pub const METRICS_CNT_REQUESTS_TOTAL: &str = "requests_total";
-pub const METRICS_TIME_TO_FETCH_FIRST_BLOCK: &str = "time_to_fetch_first_block";
-pub const METRICS_TIME_TO_FETCH_FULL_FILE: &str = "time_to_fetch_full_file";
-pub const METRICS_TIME_TO_SERVE_FIRST_BLOCK: &str = "time_to_serve_first_block";
-pub const METRICS_TIME_TO_SERVE_FULL_FILE: &str = "time_to_serve_full_file";
-pub const METRICS_CACHE_HIT: &str = "cache_hit";
-pub const METRICS_CACHE_MISS: &str = "cache_miss";
-pub const METRICS_BYTES_STREAMED: &str = "bytes_streamed";
-pub const METRICS_BYTES_FETCHED: &str = "bytes_fetched";
-pub const METRICS_BITRATE_IN: &str = "bitrate_in";
-pub const METRICS_BITRATE_OUT: &str = "bitrate_out";
-pub const METRICS_HIST_TTFB: &str = "hist_time_to_fetch_first_block";
-pub const METRICS_HIST_TTSERVE: &str = "hist_time_to_serve_full_file";
-pub const METRICS_ERROR: &str = "error_count";
-pub const METRICS_FAIL: &str = "fail_count";
+pub const METRICS_CNT_REQUESTS_TOTAL: &str = "gw_requests_total";
+pub const METRICS_TIME_TO_FETCH_FIRST_BLOCK: &str = "gw_time_to_fetch_first_block";
+pub const METRICS_TIME_TO_FETCH_FULL_FILE: &str = "gw_time_to_fetch_full_file";
+pub const METRICS_TIME_TO_SERVE_FIRST_BLOCK: &str = "gw_time_to_serve_first_block";
+pub const METRICS_TIME_TO_SERVE_FULL_FILE: &str = "gw_time_to_serve_full_file";
+pub const METRICS_CACHE_HIT: &str = "gw_cache_hit";
+pub const METRICS_CACHE_MISS: &str = "gw_cache_miss";
+pub const METRICS_BYTES_STREAMED: &str = "gw_bytes_streamed";
+pub const METRICS_BYTES_FETCHED: &str = "gw_bytes_fetched";
+pub const METRICS_BITRATE_IN: &str = "gw_bitrate_in";
+pub const METRICS_BITRATE_OUT: &str = "gw_bitrate_out";
+pub const METRICS_HIST_TTFB: &str = "gw_hist_time_to_fetch_first_block";
+pub const METRICS_HIST_TTSERVE: &str = "gw_hist_time_to_serve_full_file";
+pub const METRICS_ERROR: &str = "gw_error_count";
+pub const METRICS_FAIL: &str = "gw_fail_count";
 
 pub fn register_counters() {
     describe_counter!(
