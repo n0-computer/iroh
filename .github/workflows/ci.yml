@@ -36,6 +36,18 @@ jobs:
       if: matrix.os != 'windows-latest'
       run: |
           echo "SCCACHE_DIR=${{ matrix.sccache-path }}" >> $GITHUB_ENV
+    - name: Set windows arch
+      if: matrix.os == 'windows-latest'
+      run: |
+          echo "RELEASE_ARCH=windows" >> $GITHUB_ENV
+    - name: Set linux arch
+      if: matrix.os == 'ubuntu-latest'
+      run: |
+          echo "RELEASE_ARCH=linux" >> $GITHUB_ENV
+    - name: Set macOS arch
+      if: matrix.os == 'macos-latest'
+      run: |
+          echo "RELEASE_ARCH=darwin" >> $GITHUB_ENV
     - name: Install sccache (ubuntu-latest)
       if: matrix.os == 'ubuntu-latest'
       env:
@@ -127,35 +139,35 @@ jobs:
 
     - name: build release
       uses: actions-rs/cargo@v1
-      if: matrix.os == 'ubuntu-latest' && matrix.rust=='stable' && github.ref_name=='main'
+      if: matrix.os != 'windows-latest' && matrix.rust=='stable' && github.ref_name=='main'
       with:
         command: build
         args: --release
     
     - name: Get current iroh-gateway version
       id: ig_version
-      if: matrix.os == 'ubuntu-latest' && matrix.rust=='stable' && github.ref_name=='main'
+      if: matrix.os != 'windows-latest' && matrix.rust=='stable' && github.ref_name=='main'
       uses: dante-signal31/rust-app-version@v1.0.0
       with:
          cargo_toml_folder: iroh-gateway/
 
-    - name: push release
+    - name: push release iroh-gateway
       uses: prewk/s3-cp-action@v2
-      if: matrix.os == 'ubuntu-latest' && matrix.rust=='stable' && github.ref_name=='main'
+      if: matrix.os != 'windows-latest' && matrix.rust=='stable' && github.ref_name=='main'
       with:
         aws_access_key_id: ${{ secrets.S3_ACCESS_KEY_ID }}
         aws_secret_access_key: ${{ secrets.S3_ACCESS_KEY }}
         source: './target/release/iroh-gateway'
-        dest: 's3://vorc/iroh-gateway-linux-amd64-${{ steps.ig_version.outputs.app_version }}-${GITHUB_SHA::7}'
+        dest: 's3://vorc/iroh-gateway-${RELEASE_ARCH}-amd64-${{ steps.ig_version.outputs.app_version }}-${GITHUB_SHA::7}'
 
     - name: push release - latest
       uses: prewk/s3-cp-action@v2
-      if: matrix.os == 'ubuntu-latest' && matrix.rust=='stable' && github.ref_name=='main'
+      if: matrix.os != 'windows-latest' && matrix.rust=='stable' && github.ref_name=='main'
       with:
         aws_access_key_id: ${{ secrets.S3_ACCESS_KEY_ID }}
         aws_secret_access_key: ${{ secrets.S3_ACCESS_KEY }}
         source: './target/release/iroh-gateway'
-        dest: 's3://vorc/iroh-gateway-linux-amd64-latest'
+        dest: 's3://vorc/iroh-gateway-${RELEASE_ARCH}-amd64-latest'
     
     - name: Print sccache stats
       run: sccache --show-stats
