@@ -5,6 +5,7 @@ use std::sync::Arc;
 use futures::Future;
 
 use crate::error::RpcError;
+use crate::stream::StreamConfig;
 
 pub struct Namespace<T> {
     name: String,
@@ -33,14 +34,14 @@ impl<T> Namespace<T> {
         &mut self,
         method: String,
         state: State<T>,
-        stream_id: Option<u64>,
+        stream: Option<StreamConfig>,
         params: Vec<u8>,
     ) -> Result<Vec<u8>, RpcError> {
         let handler = match self.handlers.get(&method) {
             Some(h) => &h.0,
             None => return Err(RpcError::MethodNotFound(method)),
         };
-        handler(state, stream_id, params).await
+        handler(state, stream, params).await
     }
 
     pub fn name(&self) -> String {
@@ -68,7 +69,7 @@ pub trait Factory<T> {
     async fn handle(
         &self,
         state: State<T>,
-        stream_id: Option<u64>,
+        stream_cfg: Option<StreamConfig>,
         param: Vec<u8>,
     ) -> Result<Vec<u8>, RpcError>;
 }
@@ -91,13 +92,13 @@ impl<T, F: Factory<T>> Handler<T, F> {
 impl<FN, I, T> Factory<T> for FN
 where
     I: Future<Output = Result<Vec<u8>, RpcError>> + Send + 'static,
-    FN: Fn(State<T>, Option<u64>, Vec<u8>) -> I + Sync,
+    FN: Fn(State<T>, Option<StreamConfig>, Vec<u8>) -> I + Sync,
     T: Send + Sync + 'static,
 {
     async fn handle(
         &self,
         state: State<T>,
-        stream_id: Option<u64>,
+        stream_id: Option<StreamConfig>,
         param: Vec<u8>,
     ) -> Result<Vec<u8>, RpcError> {
         (self)(state, stream_id, param).await
@@ -110,7 +111,7 @@ pub struct BoxedHandler<T>(
     Box<
         dyn Fn(
                 State<T>,
-                Option<u64>,
+                Option<StreamConfig>,
                 Vec<u8>,
             )
                 -> std::pin::Pin<Box<dyn Future<Output = Result<Vec<u8>, RpcError>> + Send>>
@@ -127,10 +128,10 @@ where
     fn from(t: Handler<T, F>) -> BoxedHandler<T> {
         let hnd = Arc::new(t.hnd);
 
-        let inner = move |state: State<T>, stream_id: Option<u64>, params: Vec<u8>| {
+        let inner = move |state: State<T>, stream: Option<StreamConfig>, params: Vec<u8>| {
             let hnd = Arc::clone(&hnd);
             Box::pin(async move {
-                let out = { hnd.handle(state, stream_id, params).await? };
+                let out = { hnd.handle(state, stream, params).await? };
                 Ok(out)
             })
                 as std::pin::Pin<Box<dyn Future<Output = Result<Vec<u8>, RpcError>> + Send>>

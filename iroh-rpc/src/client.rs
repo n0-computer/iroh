@@ -8,7 +8,7 @@ use libp2p::PeerId;
 use crate::commands::{Command, SenderType};
 use crate::error::RpcError;
 use crate::serde::{deserialize_response, serialize_request, DeserializeOwned, Serialize};
-use crate::stream::InStream;
+use crate::stream::OrderedStream;
 
 /// The Rpc Client manages outgoing and incoming calls over rpc
 /// It knows how to reach the different Iroh processes, and knows
@@ -35,20 +35,16 @@ impl Client {
     pub async fn dial_all(&mut self) -> Result<(), RpcError> {
         let mut dials = Vec::new();
         for (_, (addr, peer_id)) in self.addresses.clone().into_iter() {
-            let handle = tokio::spawn(dial(self.command_sender.clone(), addr, peer_id));
+            let handle = dial(self.command_sender.clone(), addr, peer_id);
             dials.push(handle);
         }
         let outcomes = futures::future::join_all(dials).await;
         for outcome in outcomes.into_iter() {
             match outcome {
-                Ok(res) => match res {
-                    Ok(_) => (),
-                    Err(err) => return Err(err),
-                },
-                Err(join_err) => return Err(RpcError::JoinError(join_err.to_string())),
+                Ok(_) => {}
+                Err(err) => return Err(err),
             }
         }
-
         Ok(())
     }
 
@@ -62,7 +58,7 @@ impl Client {
         match receiver.await.expect("Sender to not be dropped") {
             SenderType::Multiaddr(m) => Ok(m),
             SenderType::Error(e) => Err(e),
-            _ => Err(RpcError::UnexpectedResponseType),
+            s => Err(RpcError::UnexpectedResponseType(s.to_string())),
         }
     }
 
@@ -126,21 +122,25 @@ impl Client {
         let res = match receiver.await.expect("Sender not to be dropped.") {
             SenderType::Res(res) => res,
             SenderType::Error(e) => return Err(e),
-            _ => return Err(RpcError::UnexpectedResponseType),
+            s => return Err(RpcError::UnexpectedResponseType(s.to_string())),
         };
         deserialize_response::<V>(&res)
     }
 
     /// Send a request & expects a stream of bytes as a response
-    pub async fn streaming_call<U>(
+    pub async fn streaming_call<U, N, M>(
         &mut self,
-        namespace: String,
-        method: String,
+        namespace: N,
+        method: M,
         params: U,
-    ) -> Result<InStream, RpcError>
+    ) -> Result<OrderedStream, RpcError>
     where
         U: Serialize + Send + Sync,
+        N: Into<String>,
+        M: Into<String>,
     {
+        let namespace = namespace.into();
+        let method = method.into();
         let peer_id = self.get_peer_id(&namespace)?;
         let v = match serialize_request(params) {
             Ok(v) => v,
@@ -165,10 +165,14 @@ impl Client {
         let (header, stream) = match receiver.await.expect("Sender not to be dropped.") {
             SenderType::Stream { header, stream } => (header, stream),
             SenderType::Error(e) => return Err(e),
-            _ => return Err(RpcError::UnexpectedResponseType),
+            s => return Err(RpcError::UnexpectedResponseType(s.to_string())),
         };
         // examine header here and determine if we want to accept file
-        Ok(InStream::new(header, stream, self.command_sender.clone()))
+        Ok(OrderedStream::new(
+            header,
+            stream,
+            self.command_sender.clone(),
+        ))
     }
 
     /// Get the peer id from the Client's address book, based on the namespace
@@ -224,7 +228,7 @@ async fn dial(
     match receiver.await.expect("Sender to not be dropped.") {
         SenderType::Ack => Ok(()),
         SenderType::Error(e) => Err(e),
-        _ => Err(RpcError::UnexpectedResponseType),
+        s => Err(RpcError::UnexpectedResponseType(s.to_string())),
     }
 }
 
@@ -234,36 +238,93 @@ mod test {
 
     use libp2p::identity::Keypair;
     use libp2p::swarm::Swarm;
+    use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
     use crate::behaviour::Behaviour;
     use crate::builder::RpcBuilder;
     use crate::handler;
     use crate::serde::{deserialize_request, serialize_response, Deserialize};
+    use crate::stream::{Header, OutStream, StreamConfig};
     use crate::swarm;
 
     #[derive(Deserialize, Serialize, Debug, Clone)]
-    struct GetRequest {
-        resource_id: String,
+    struct StreamRequest {
+        size: u64,
+        chunk_size: u64,
     }
 
-    #[derive(Deserialize, Serialize, Debug, Clone, PartialEq)]
-    struct GetResponse {
-        response: String,
+    struct TestReader {
+        chunk_size: usize,
+        num_chunks: usize,
+    }
+
+    impl std::io::Read for TestReader {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            if self.num_chunks == 0 {
+                return Ok(0);
+            };
+            let len = self.chunk_size;
+            let new_data = vec![0xf; len];
+            buf[..len].copy_from_slice(&new_data);
+            self.num_chunks -= 1;
+            Ok(len)
+        }
     }
 
     // TODO: next improvement should be that the serialization and deserialization happen
     // for you in the rpc library, rather than having to do it yourself in the handler function
-    async fn get(
-        state: handler::State<String>,
-        _stream_id: Option<u64>,
+    async fn stream_bytes(
+        _state: handler::State<String>,
+        cfg: Option<StreamConfig>,
         param: Vec<u8>,
     ) -> Result<Vec<u8>, RpcError> {
-        let _: GetRequest = deserialize_request(&param)?;
+        let req: StreamRequest = deserialize_request(&param)?;
+        let size = req.size;
+        let chunk_size = req.chunk_size;
 
-        let bytes = serialize_response(GetResponse {
-            response: state.clone(),
-        })?;
-        Ok(bytes)
+        // get config
+        let cfg = match cfg {
+            Some(c) => c,
+            None => return Err(RpcError::NoStreamConfig),
+        };
+
+        // typically this is where you would load the content,
+        // determine the size of the content & specify what
+        // chunk sizes you are sending back
+        // then, construct a header based on these specifications
+        // in this example, we are pulling the size & chunk_size
+        // from the request
+        let header = Header::new(cfg.id, size, chunk_size);
+
+        // construct BufReader from the loaded content
+        let r = TestReader {
+            num_chunks: {
+                let mut num_chunks = 0;
+                if size % chunk_size != 0 {
+                    num_chunks += 1;
+                };
+                num_chunks + (size / chunk_size) as usize
+            },
+            chunk_size: chunk_size as usize,
+        };
+        let r = std::io::BufReader::new(r);
+
+        // construct stream
+        let mut stream = OutStream::new(cfg, header.clone(), Box::new(r));
+
+        // send packets in a different task, so you don't block
+        // the event loop
+        // TODO: handle task handler, should keep track of it (based on stream id?) and make sure
+        // it is closed when we close down the server
+        let _ = tokio::spawn(async move {
+            stream.send_packets().await;
+        });
+
+        // TODO: serializing should happen outside of the handler
+        // also, we may want 2 different kinds of handlers, one for a normal
+        // request response and one for streaming
+        let header = rkyv::to_bytes::<_, 1024>(&header).expect("header to serialize");
+        Ok(header.to_vec())
     }
 
     #[derive(Deserialize, Serialize, Debug, Clone)]
@@ -276,7 +337,7 @@ mod test {
     // for you in the rpc library, rather than having to do it yourself in the handler function
     async fn ping(
         _state: handler::State<()>,
-        _stream_id: Option<u64>,
+        _cfg: Option<StreamConfig>,
         param: Vec<u8>,
     ) -> Result<Vec<u8>, RpcError> {
         let _: Pong = deserialize_request(&param)?;
@@ -293,6 +354,10 @@ mod test {
 
     #[tokio::test]
     async fn mem_client_example() {
+        tracing_subscriber::registry()
+            .with(fmt::layer().pretty())
+            .with(EnvFilter::from_default_env())
+            .init();
         let a_addr: Multiaddr = "/memory/1234".parse().unwrap();
         let b_addr: Multiaddr = "/memory/4321".parse().unwrap();
         let b_keypair = Keypair::generate_ed25519();
@@ -316,6 +381,10 @@ mod test {
 
     #[tokio::test]
     async fn tcp_client_example() {
+        tracing_subscriber::registry()
+            .with(fmt::layer().pretty())
+            .with(EnvFilter::from_default_env())
+            .init();
         let addr: Multiaddr = "/ip4/0.0.0.0/tcp/0".parse().unwrap();
         let b_keypair = Keypair::generate_ed25519();
         let b_peer_id = b_keypair.public().to_peer_id();
@@ -354,7 +423,7 @@ mod test {
         let (mut b_client, b_server) = RpcBuilder::new()
             .with_swarm(b.swarm)
             .with_state(b_state)
-            .with_namespace("b", |n| n.with_method("get", get))
+            .with_namespace("b", |n| n.with_method("stream", stream_bytes))
             .with_capacity(2)
             .build()
             .expect("failed to build rpc");
@@ -386,18 +455,34 @@ mod test {
             .expect("dial all namespace addrs failed");
 
         // make request
-        let res: GetResponse = a_client
-            .call(
+        let mut s = a_client
+            .streaming_call(
                 "b",
-                "get",
-                GetRequest {
-                    resource_id: "test".into(),
+                "stream",
+                StreamRequest {
+                    size: 4048,
+                    chunk_size: 1024,
                 },
             )
             .await
             .expect("call to client b failed");
 
-        assert_eq!("Wooo!".to_string(), res.response);
+        let mut res = Vec::new();
+
+        let mut num_chunks = 0;
+        while let Some(r) = s.next().await {
+            match r {
+                Ok(d) => {
+                    num_chunks += 1;
+                    res.extend(d);
+                }
+                Err(e) => panic!("unexpected error {}", e),
+            }
+        }
+
+        assert_eq!(num_chunks, 4);
+        assert_eq!(res.len(), 4048);
+        s.close().await;
 
         let _: Pong = b_client
             .call("a", "ping", Ping)

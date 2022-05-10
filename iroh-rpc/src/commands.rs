@@ -83,6 +83,20 @@ pub enum SenderType {
     Res(Vec<u8>),
 }
 
+impl std::fmt::Display for SenderType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+        match self {
+            SenderType::Ack => write!(f, "SenderType::Ack"),
+            SenderType::Error(e) => write!(f, "SenderType::Error: {}", e),
+            SenderType::File(_) => write!(f, "SenderType::File"),
+            SenderType::Multiaddr(m) => write!(f, "SenderType::Multiaddr: {}", m),
+            SenderType::PeerId(p) => write!(f, "SenderType::PeerId: {}", p),
+            SenderType::Res(_) => write!(f, "SenderType::Res"),
+            SenderType::Stream { header, .. } => write!(f, "SenderType::Stream: {}", header.id),
+        }
+    }
+}
+
 pub type PendingMap = HashMap<PendingId, OneshotSender>;
 
 #[derive(PartialEq, Eq, Hash)]

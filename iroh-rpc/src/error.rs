@@ -18,10 +18,14 @@ pub enum RpcError {
     BadResponse,
     #[error("Stream Closed")]
     StreamClosed,
+    #[error("No Stream Configuration")]
+    NoStreamConfig,
+    #[error("Stream Closed Early")]
+    StreamClosedEarly,
     #[error("Bad config: `{0}`")]
     BadConfig(String),
-    #[error("Unexpected response type")]
-    UnexpectedResponseType,
+    #[error("Unexpected response type `{0}`")]
+    UnexpectedResponseType(String),
     #[error("DialError: `{0}`")]
     DialError(String),
     #[error("OutboundFailure: `{0}`")]
@@ -30,4 +34,8 @@ pub enum RpcError {
     TransportError(String),
     #[error("JoinError: `{0}`")]
     JoinError(String),
+    #[error("SerializeError: `{0}`")]
+    SerializeError(String),
+    #[error("DeserializeError: `{0}`")]
+    DeserializeError(String),
 }

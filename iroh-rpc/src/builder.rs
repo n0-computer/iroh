@@ -92,7 +92,7 @@ impl<T> RpcBuilder<T> {
 
     pub fn build(self) -> Result<(Client, Server<T>), RpcError> {
         let (sender, receiver) = mpsc::channel(self.server.capacity);
-        let server = Server::server_from_config(receiver, self.server)?;
+        let server = Server::server_from_config(sender.clone(), receiver, self.server)?;
         let mut client = Client::new(sender);
         for (namespace, addrs) in self.client.addrs.iter() {
             client.with_addrs(namespace.to_owned(), addrs.0.clone(), addrs.1);

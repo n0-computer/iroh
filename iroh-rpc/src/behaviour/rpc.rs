@@ -12,7 +12,7 @@ use rkyv::{Archive, Deserialize, Serialize};
 use tokio::io;
 
 use crate::error::RpcError;
-use crate::stream::{Header, Packet};
+use crate::stream::Packet;
 
 pub type RpcBehaviour = RequestResponse<RpcCodec>;
 pub type RpcEvent = RequestResponseEvent<RpcRequest, RpcResponse>;
@@ -47,7 +47,7 @@ pub enum RpcRequestEvent {
 pub enum RpcResponseEvent {
     RpcError(RpcError),
     Payload(Vec<u8>),
-    Header(Header),
+    Header(Vec<u8>),
     Ack,
 }
 

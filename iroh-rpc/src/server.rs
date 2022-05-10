@@ -9,6 +9,7 @@ use libp2p::multiaddr::Protocol;
 use libp2p::request_response::RequestResponseMessage;
 use libp2p::swarm::{ConnectionHandlerUpgrErr, SwarmEvent};
 use libp2p::Swarm;
+use rkyv::Deserialize;
 use tracing::{debug, error, trace};
 
 use crate::behaviour::rpc::{RpcEvent, RpcRequest, RpcRequestEvent, RpcResponse, RpcResponseEvent};
@@ -17,7 +18,7 @@ use crate::builder::ServerConfig;
 use crate::commands::{ActiveStreams, Command, PendingId, PendingMap, SenderType};
 use crate::error::RpcError;
 use crate::handler::{Namespace, State};
-use crate::stream::StreamType;
+use crate::stream::{Header, StreamConfig, StreamType};
 
 /// The Server manages the swarm, gets commands from the client & translates
 /// those into events to send over rpc to the correct recepient. It listens for
@@ -26,6 +27,7 @@ use crate::stream::StreamType;
 /// that we are still currently listening for.
 pub struct Server<T> {
     pub(crate) swarm: Swarm<Behaviour>,
+    pub(crate) command_sender: mpsc::Sender<Command>,
     pub(crate) command_rec: mpsc::Receiver<Command>,
     pub(crate) pending_requests: PendingMap,
     pub(crate) active_streams: ActiveStreams,
@@ -36,6 +38,7 @@ pub struct Server<T> {
 
 impl<T> Server<T> {
     pub fn server_from_config(
+        command_sender: mpsc::Sender<Command>,
         command_receiver: mpsc::Receiver<Command>,
         config: ServerConfig<T>,
     ) -> Result<Self, RpcError> {
@@ -47,6 +50,7 @@ impl<T> Server<T> {
             .ok_or_else(|| RpcError::BadConfig("no server state specified".into()))?;
         Ok(Server {
             swarm,
+            command_sender,
             command_rec: command_receiver,
             state,
             handlers: config.namespaces,
@@ -119,7 +123,7 @@ impl<T> Server<T> {
                 debug!("{} - Dialing {}", self.swarm.local_peer_id(), peer_id)
             }
             SwarmEvent::Behaviour(Event::Rpc(e)) => match e {
-                RpcEvent::Message { message, .. } => match message {
+                RpcEvent::Message { message, peer, .. } => match message {
                     RequestResponseMessage::Request {
                         request, channel, ..
                     } => match request.0 {
@@ -129,18 +133,24 @@ impl<T> Server<T> {
                             params,
                             stream_id,
                         } => {
-                            match self
-                                .handle_request(namespace, method, stream_id, params)
-                                .await
-                            {
+                            let cfg = match stream_id {
+                                None => None,
+                                Some(id) => Some(StreamConfig {
+                                    id,
+                                    peer_id: peer,
+                                    channel: self.command_sender.clone(),
+                                }),
+                            };
+                            match self.handle_request(namespace, method, cfg, params).await {
                                 Ok(res) => {
+                                    let event = match stream_id {
+                                        None => RpcResponseEvent::Payload(res),
+                                        Some(_) => RpcResponseEvent::Header(res),
+                                    };
                                     self.swarm
                                         .behaviour_mut()
                                         .rpc
-                                        .send_response(
-                                            channel,
-                                            RpcResponse(RpcResponseEvent::Payload(res)),
-                                        )
+                                        .send_response(channel, RpcResponse(event))
                                         .expect("Connection to peer to still be open.");
                                 }
                                 Err(e) => {
@@ -208,6 +218,26 @@ impl<T> Server<T> {
                                 let _ = sender.send(SenderType::Error(error));
                             }
                             RpcResponseEvent::Header(header) => {
+                                let header = match rkyv::check_archived_root::<Header>(&header) {
+                                    Ok(h) => h,
+                                    Err(e) => {
+                                        let _ = sender.send(SenderType::Error(
+                                            RpcError::SerializeError(e.to_string()),
+                                        ));
+                                        return;
+                                    }
+                                };
+                                let header: Header = match header.deserialize(&mut rkyv::Infallible)
+                                {
+                                    Ok(h) => h,
+                                    Err(e) => {
+                                        let _ = sender.send(SenderType::Error(
+                                            RpcError::SerializeError(e.to_string()),
+                                        ));
+                                        return;
+                                    }
+                                };
+
                                 let (s, r) = mpsc::channel(self.stream_capacity);
                                 debug!(target: "inbound streaming", "Received header: Adding active stream {}", header.id);
                                 self.active_streams.insert(header.id, s);
@@ -351,12 +381,13 @@ impl<T> Server<T> {
                 debug!(target: "outbound streaming", "Sent StreamRequest {} to peer {}", request_id, peer_id);
             }
             Command::HeaderResponse { header, channel } => {
+                let header = rkyv::to_bytes::<_, 1024>(&header).expect("header to serialize");
                 self.swarm
                     .behaviour_mut()
                     .rpc
                     .send_response(
                         channel,
-                        RpcResponse(RpcResponseEvent::Header(header.clone())),
+                        RpcResponse(RpcResponseEvent::Header(header.to_vec())),
                     )
                     .expect("Connection to peer to still be open.");
                 debug!(target: "outbound streaming", "Sent HeaderResponse {:?}", header);
@@ -392,7 +423,7 @@ impl<T> Server<T> {
         &mut self,
         name: String,
         method: String,
-        streaming_id: Option<u64>,
+        stream_cfg: Option<StreamConfig>,
         params: Vec<u8>,
     ) -> Result<Vec<u8>, RpcError> {
         let namespace = match self.handlers.get_mut(&name) {
@@ -400,12 +431,7 @@ impl<T> Server<T> {
             None => return Err(RpcError::NamespaceNotFound(name)),
         };
         namespace
-            .handle(
-                method,
-                State(Arc::clone(&self.state.0)),
-                streaming_id,
-                params,
-            )
+            .handle(method, State(Arc::clone(&self.state.0)), stream_cfg, params)
             .await
     }
 }
