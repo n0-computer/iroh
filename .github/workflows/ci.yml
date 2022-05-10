@@ -151,23 +151,43 @@ jobs:
       with:
          cargo_toml_folder: iroh-gateway/
 
-    - name: push release iroh-gateway
+    - name: Setup awscli on mac
+      if: matrix.os == 'macos-latest' && matrix.rust=='stable' && github.ref_name=='main'
+      run: |
+        curl "https://awscli.amazonaws.com/AWSCLIV2.pkg" -o "AWSCLIV2.pkg"
+        sudo installer -pkg AWSCLIV2.pkg -target /
+
+    - name: Set aws credentials
+      if: matrix.os != 'windows-latest'
+      run: |
+          echo "AWS_ACCESS_KEY_ID=${{secrets.S3_ACCESS_KEY_ID}}" >> $GITHUB_ENV
+          echo "AWS_SECRET_ACCESS_KEY=${{secrets.S3_ACCESS_KEY}}" >> $GITHUB_ENV
+
+    - name: push release iroh-gateway linux
       uses: prewk/s3-cp-action@v2
-      if: matrix.os != 'windows-latest' && matrix.rust=='stable' && github.ref_name=='main'
+      if: matrix.os == 'ubuntu-latest' && matrix.rust=='stable' && github.ref_name=='main'
       with:
         aws_access_key_id: ${{ secrets.S3_ACCESS_KEY_ID }}
         aws_secret_access_key: ${{ secrets.S3_ACCESS_KEY }}
         source: './target/release/iroh-gateway'
         dest: 's3://vorc/iroh-gateway-${RELEASE_ARCH}-amd64-${{ steps.ig_version.outputs.app_version }}-${GITHUB_SHA::7}'
 
-    - name: push release - latest
+    - name: push release iroh-gateway latest linux
       uses: prewk/s3-cp-action@v2
-      if: matrix.os != 'windows-latest' && matrix.rust=='stable' && github.ref_name=='main'
+      if: matrix.os == 'ubuntu-latest' && matrix.rust=='stable' && github.ref_name=='main'
       with:
         aws_access_key_id: ${{ secrets.S3_ACCESS_KEY_ID }}
         aws_secret_access_key: ${{ secrets.S3_ACCESS_KEY }}
         source: './target/release/iroh-gateway'
         dest: 's3://vorc/iroh-gateway-${RELEASE_ARCH}-amd64-latest'
+
+    - name: push release iroh-gateway macos
+      if: matrix.os == 'macos-latest' && matrix.rust=='stable' && github.ref_name=='main'
+      run: aws s3 cp ./target/release/iroh-gateway s3://vorc/iroh-gateway-${RELEASE_ARCH}-x86_64-${{ steps.ig_version.outputs.app_version }}-${GITHUB_SHA::7} --no-progress
+    
+    - name: push release iroh-gateway latest macos
+      if: matrix.os == 'macos-latest' && matrix.rust=='stable' && github.ref_name=='main'
+      run: aws s3 cp ./target/release/iroh-gateway s3://vorc/iroh-gateway-${RELEASE_ARCH}-x86_64-latest --no-progress
     
     - name: Print sccache stats
       run: sccache --show-stats
