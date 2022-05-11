@@ -74,21 +74,22 @@ impl OutStream {
 
     pub async fn send_packets(&mut self) {
         debug!("Iterating over file");
+        let mut chunk_size = self.header.chunk_size as usize;
+
+        let mut buf = vec![0u8; chunk_size];
         for index in 0..self.header.num_chunks {
-            let mut chunk_size = self.header.chunk_size as usize;
             if index == self.header.num_chunks - 1 {
                 chunk_size = self.header.size as usize % chunk_size;
+                buf = vec![0u8; chunk_size];
+                println!("sending new chunk_size {}", chunk_size);
             }
-            // TODO: should this be allocated once and then reused & cleared?
-            // or is it better to just allocate each time & not worry about clearing it?
-            let mut buf = vec![0u8; chunk_size];
             debug!("Reading file chunk {}", index);
             self.reader.read_exact(&mut buf)
             .expect("TODO: handle reading error, and send an RpcError type letting the other end know there has been an error.");
             let packet = Packet {
                 id: self.header.id,
                 index,
-                data: buf,
+                data: buf[..].to_vec(),
                 last: index == self.header.num_chunks - 1,
             };
             // TODO: ignoring errors and ack for now. If we get a "channel full" error
@@ -104,6 +105,8 @@ impl OutStream {
                 })
                 .await
                 .expect("Sender to not be closed.");
+            buf.clear();
+            buf.resize(chunk_size, 0u8);
         }
     }
 }
@@ -120,7 +123,6 @@ pub enum StreamType {
 #[derive(Archive, Serialize, Deserialize, Debug, PartialEq, Clone, Eq)]
 #[archive(compare(PartialEq))]
 #[archive_attr(derive(Debug, CheckBytes))]
-// #[derive(Serialize, Deserialize, Debug, PartialEq, Clone, Eq)]
 pub struct Packet {
     pub id: u64,
     pub index: u64,
@@ -131,7 +133,6 @@ pub struct Packet {
 #[derive(Archive, Serialize, Deserialize, Debug, PartialEq, Clone, Eq)]
 #[archive(compare(PartialEq))]
 #[archive_attr(derive(Debug, CheckBytes))]
-// #[derive(Serialize, Deserialize, Debug, PartialEq, Clone, Eq)]
 pub struct Header {
     pub id: u64,
     pub size: u64,
