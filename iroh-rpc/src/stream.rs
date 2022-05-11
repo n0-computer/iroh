@@ -28,8 +28,12 @@ pub fn make_order(
                     if next_chunk == p.index {
                         next_chunk += 1;
                         yield Ok(p.data);
+                        while let Some(chunk) = chunks.remove(&next_chunk) {
+                            next_chunk += 1;
+                            yield Ok(chunk);
+                        }
                     } else {
-                        if let Some(chunk) = chunks.remove(&next_chunk) {
+                        while let Some(chunk) = chunks.remove(&next_chunk) {
                             next_chunk += 1;
                             yield Ok(chunk);
                         }
@@ -44,17 +48,6 @@ pub fn make_order(
                    yield Err(e);
                 },
             }
-        }
-
-        // iterate over the chunks we received out of order
-        while chunks.len() != 0 {
-           if let Some(chunk) = chunks.remove(&next_chunk) {
-                next_chunk += 1;
-                yield Ok(chunk);
-                continue;
-           }
-           // TODO: potentially request chunk from sender
-            yield Err(RpcError::MissingPacket(next_chunk));
         }
     }
 }
