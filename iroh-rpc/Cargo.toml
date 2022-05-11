@@ -9,6 +9,7 @@ description = "IPC/RPC client so different processes can communicate"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+async-stream = "0.3.3"
 rkyv = { version = "0.7.37", features = ["std", "alloc", "validation"] }
 libp2p = "0.44.0"
 tokio = { version = "1.17.0", features = ["full"] }

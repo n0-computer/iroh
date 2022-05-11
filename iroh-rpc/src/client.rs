@@ -8,7 +8,7 @@ use libp2p::PeerId;
 use crate::commands::{Command, SenderType};
 use crate::error::RpcError;
 use crate::serde::{deserialize_response, serialize_request, DeserializeOwned, Serialize};
-use crate::stream::OrderedStream;
+use crate::stream;
 
 /// The Rpc Client manages outgoing and incoming calls over rpc
 /// It knows how to reach the different Iroh processes, and knows
@@ -133,7 +133,7 @@ impl Client {
         namespace: N,
         method: M,
         params: U,
-    ) -> Result<OrderedStream, RpcError>
+    ) -> Result<impl Stream<Item = Result<Vec<u8>, RpcError>>, RpcError>
     where
         U: Serialize + Send + Sync,
         N: Into<String>,
@@ -162,17 +162,17 @@ impl Client {
             .await
             .expect("Command receiver not to be dropped");
 
-        let (header, stream) = match receiver.await.expect("Sender not to be dropped.") {
+        let (_, packet_receiver) = match receiver.await.expect("Sender not to be dropped.") {
             SenderType::Stream { header, stream } => (header, stream),
             SenderType::Error(e) => return Err(e),
             s => return Err(RpcError::UnexpectedResponseType(s.to_string())),
         };
-        // examine header here and determine if we want to accept file
-        Ok(OrderedStream::new(
-            header,
-            stream,
-            self.command_sender.clone(),
-        ))
+        //
+        // possibly examine header here and determine if we want to accept file before creating the
+        // stream
+        //
+        let s = stream::make_order(packet_receiver);
+        Ok(s)
     }
 
     /// Get the peer id from the Client's address book, based on the namespace
@@ -236,6 +236,7 @@ async fn dial(
 mod test {
     use super::*;
 
+    use futures::pin_mut;
     use libp2p::identity::Keypair;
     use libp2p::swarm::Swarm;
 
@@ -442,7 +443,7 @@ mod test {
         let size = 4_048;
         let chunk_size = 1_024;
         // make request
-        let mut s = a_client
+        let s = a_client
             .streaming_call("b", "stream", StreamRequest { size, chunk_size })
             .await
             .expect("call to client b failed");
@@ -450,6 +451,7 @@ mod test {
         let mut res = Vec::new();
 
         let mut num_chunks = 0;
+        pin_mut!(s);
         while let Some(r) = s.next().await {
             match r {
                 Ok(d) => {
@@ -462,7 +464,6 @@ mod test {
 
         assert_eq!(num_chunks, (size as f64 / chunk_size as f64).ceil() as i32);
         assert_eq!(res.len(), size as usize);
-        s.close().await;
 
         let _: Pong = b_client
             .call("a", "ping", Ping)

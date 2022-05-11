@@ -20,8 +20,10 @@ pub enum RpcError {
     StreamClosed,
     #[error("No Stream Configuration")]
     NoStreamConfig,
-    #[error("Stream Closed Early")]
-    StreamClosedEarly,
+    #[error("Reached Buffer Max")]
+    BufferMax,
+    #[error("MissingPacket `{0}`")]
+    MissingPacket(u64),
     #[error("Bad config: `{0}`")]
     BadConfig(String),
     #[error("Unexpected response type `{0}`")]

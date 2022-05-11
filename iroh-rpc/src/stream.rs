@@ -1,191 +1,61 @@
 use std::collections::HashMap;
 use std::io::BufRead;
-use std::pin::Pin;
-use std::sync::{Arc, Mutex};
 
+use async_stream::stream;
 use bytecheck::CheckBytes;
 use futures::channel::{mpsc, oneshot};
 use futures::prelude::*;
-use futures::select;
-use futures::stream::StreamExt;
-use futures::task::{AtomicWaker, Context, Poll};
+use futures::Stream;
 use libp2p::PeerId;
 use rkyv;
 use rkyv::{Archive, Deserialize, Serialize};
-use tokio::task::JoinHandle;
 use tracing::{debug, error};
 
 use crate::commands::Command;
 use crate::error::RpcError;
 
-/// to receive the chunks of bytes in the correct order.
-// TODO: better name, add timeout, early cancel, and handle errors
-pub struct OrderedStream {
-    out_sender: mpsc::Sender<Command>,
-    error_receiver: mpsc::Receiver<RpcError>,
-    chunks: Arc<Mutex<HashMap<u64, Vec<u8>>>>,
-    id: u64,
-    next_chunk: u64,
-    num_chunks: u64,
-    // Handle to the stream's task
-    task: Arc<Mutex<AtomicWaker>>,
-    // Handle to the poll receiver task
-    handle: JoinHandle<()>,
-    // shutdown receiver loop
-    early_shutdown: Option<oneshot::Sender<()>>,
-}
+pub fn make_order(
+    packet_receiver: StreamReceiver,
+) -> impl Stream<Item = Result<Vec<u8>, RpcError>> {
+    let max = 1024;
+    let mut chunks = HashMap::with_capacity(max);
+    let mut next_chunk = 0;
 
-impl OrderedStream {
-    pub fn new(
-        header: Header,
-        packet_receiver: StreamReceiver,
-        out_sender: mpsc::Sender<Command>,
-    ) -> Self {
-        let (error_sender, error_receiver) = mpsc::channel(8);
-
-        let (shutdown_sender, shutdown_receiver) = oneshot::channel();
-        let chunks = Arc::new(Mutex::new(HashMap::new()));
-        let task = Arc::new(Mutex::new(AtomicWaker::new()));
-        OrderedStream {
-            out_sender,
-            error_receiver,
-            next_chunk: 0,
-            id: header.id,
-            num_chunks: header.num_chunks,
-            chunks: Arc::clone(&chunks),
-            task: Arc::clone(&task),
-            handle: {
-                tokio::spawn(async move {
-                    OrderedStream::gather_packets(
-                        packet_receiver,
-                        chunks,
-                        task,
-                        error_sender,
-                        shutdown_receiver,
-                    )
-                    .await
-                })
-            },
-            early_shutdown: Some(shutdown_sender),
-        }
-    }
-
-    // we have loop that is taking in packets and ordering them. If there is an
-    // error, send the error to the main stream
-    async fn gather_packets(
-        mut packet_receiver: StreamReceiver,
-        chunks: Arc<Mutex<HashMap<u64, Vec<u8>>>>,
-        task: Arc<Mutex<AtomicWaker>>,
-        mut error_sender: mpsc::Sender<RpcError>,
-        mut shutdown: oneshot::Receiver<()>,
-    ) {
-        loop {
-            select! {
-              res = packet_receiver.next() => {
-                if let Some(r) = res {
-                  match r {
-                    StreamType::Packet(p) => {
-                      {
-                        let mut chunks = chunks.lock().expect("failed to lock stream chunk mutex");
-                        chunks.insert(p.index, p.data);
-                      }
-                      debug!(target="OrderedStream", "Stream received chunk {}", p.index);
-                  },
-                    StreamType::RpcError(e) => {
-                      error!(target="OrderedStream", "stream received error {}", e);
-                      error_sender
-                          .send(e)
-                          .await
-                          .expect("failed to send on error sender");
-                    },
-                  }
-                  // notify poll_next that we have a message we want them to
-                  // process
-                  {
-                    let task = task.lock().expect("failed to lock task");
-                    task.wake();
-                  }
-                  continue;
-                }
-                // if res == None, then the packet_receiver stream has closed
-                    debug!(target="OrderedStream", "Packet receiver closed, done gathering packets");
-                      return;
-                                },
-              _ = shutdown => {
-                debug!(target="OrderedStream", "Shutdown triggered, no longer gathering packets");
-                return;
-              }
+    stream! {
+        for await packet in packet_receiver {
+            match packet {
+                StreamType::Packet(p) => {
+                    if next_chunk == p.index {
+                        next_chunk += 1;
+                        yield Ok(p.data);
+                    } else {
+                        if let Some(chunk) = chunks.remove(&next_chunk) {
+                            next_chunk += 1;
+                            yield Ok(chunk);
+                        }
+                        if chunks.len() > max {
+                            yield Err(RpcError::BufferMax);
+                        } else {
+                            chunks.insert(p.index, p.data);
+                        }
+                    }
+                },
+                StreamType::RpcError(e) => {
+                   yield Err(e);
+                },
             }
         }
-    }
 
-    /// close cleans up the stream. MUST BE CALLED AFTER YOU ARE FINISHED WITH THE STREAM.
-    pub async fn close(mut self) {
-        self.out_sender
-            .try_send(Command::CloseStream { id: self.id })
-            .expect("Out sender to still be active.");
-        if let Some(sender) = self.early_shutdown.take() {
-            debug!(target = "OrderedStream", "closing stream");
-            let _ = sender
-                .send(())
-                .expect("shutdown receiver should still be open");
-            return;
-        } else {
-            debug!(target = "OrderedStream", "stream already closed");
+        // iterate over the chunks we received out of order
+        while chunks.len() != 0 {
+           if let Some(chunk) = chunks.remove(&next_chunk) {
+                next_chunk += 1;
+                yield Ok(chunk);
+                continue;
+           }
+           // TODO: potentially request chunk from sender
+            yield Err(RpcError::MissingPacket(next_chunk));
         }
-        match self.handle.await {
-            Ok(()) => {
-                debug!("stream closed gracefully");
-            }
-            Err(e) => {
-                error!(
-                    target = "OrderedStream",
-                    "error in `gather_packets` handle {}", e
-                );
-            }
-        };
-    }
-}
-
-impl Stream for OrderedStream {
-    type Item = Result<Vec<u8>, RpcError>;
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        // check if the stream has already finished its task successfully
-        let num_chunks = self.num_chunks;
-        let next_chunk = self.next_chunk;
-        if next_chunk == num_chunks {
-            debug!(target: "OrderedStream", "No more items in stream.");
-
-            return Poll::Ready(None);
-        }
-
-        // check if there are errors we should be returning
-        if let Ok(Some(e)) = self.error_receiver.try_next() {
-            error!(target = "OrderedStream", "stream error {}", e);
-            return Poll::Ready(Some(Err(e)));
-        }
-
-        {
-            // check if the chunk we are looking for is a chunk we already have
-            let chunks = Arc::clone(&self.chunks);
-            let mut chunks = chunks.lock().unwrap();
-            if let Some(c) = chunks.remove(&next_chunk) {
-                debug!(target: "OrderedStream", "Returning an already received chunk");
-                self.next_chunk += 1;
-                return Poll::Ready(Some(Ok(c)));
-            }
-        }
-        // otherwise, we don't have the chunk, so let's wait until the next
-        // message
-        debug!(
-            target = "OrderedStream",
-            "Pausing task until next packet comes in"
-        );
-        {
-            let task = self.task.lock().expect("failed to lock task mutex");
-            task.register(cx.waker());
-        }
-        Poll::Pending
     }
 }
 
@@ -210,7 +80,7 @@ impl OutStream {
     }
 
     pub async fn send_packets(&mut self) {
-        debug!(target: "OrderedStream", "Iterating over file");
+        debug!("Iterating over file");
         for index in 0..self.header.num_chunks {
             let mut chunk_size = self.header.chunk_size as usize;
             if index == self.header.num_chunks - 1 {
@@ -219,7 +89,7 @@ impl OutStream {
             // TODO: should this be allocated once and then reused & cleared?
             // or is it better to just allocate each time & not worry about clearing it?
             let mut buf = vec![0u8; chunk_size];
-            debug!(target: "OrderedStream", "Reading file chunk {}", index);
+            debug!("Reading file chunk {}", index);
             self.reader.read_exact(&mut buf)
             .expect("TODO: handle reading error, and send an RpcError type letting the other end know there has been an error.");
             let packet = Packet {
@@ -232,7 +102,7 @@ impl OutStream {
             // should trigger a slowdown, if we get some other error indicating a termination
             // we should stop sending packets
             let (sender, _) = oneshot::channel();
-            debug!(target: "OrderedStream", "Sending Packet {:?}", packet.index);
+            debug!("Sending Packet {:?}", packet.index);
             self.packet_sender
                 .send(Command::SendPacket {
                     sender,
@@ -291,4 +161,86 @@ pub struct StreamConfig {
     pub id: u64,
     pub peer_id: PeerId,
     pub channel: mpsc::Sender<Command>,
+}
+
+pub struct ActiveStreams(HashMap<u64, ActiveStream>);
+
+impl ActiveStreams {
+    pub fn new() -> Self {
+        ActiveStreams(Default::default())
+    }
+
+    pub fn insert(&mut self, header: Header, sender: mpsc::Sender<StreamType>) {
+        self.0.insert(header.id, ActiveStream::new(header, sender));
+    }
+
+    pub fn update_stream(&mut self, packet: Packet) -> Result<(), RpcError> {
+        let id = packet.id;
+        let in_stream = match self.0.get_mut(&id) {
+            Some(s) => s,
+            None => {
+                return Err(RpcError::StreamClosed);
+            }
+        };
+        in_stream.received_chunks += 1;
+        // send the packet to the stream
+        if let Err(e) = in_stream.sender.try_send(StreamType::Packet(packet)) {
+            error!("Error sending packet from network to stream {}: {}", id, e);
+            // TODO: recover from error rather than just closing the stream
+            // this is most likely an error indicating that the channel is full
+            // and so the sender should back off
+            let _ = self.0.remove(&id);
+            return Err(RpcError::TODO);
+        }
+        // we've received all the packet for this stream
+        if in_stream.received_chunks == in_stream.size {
+            let _ = self.0.remove(&id);
+        }
+        Ok(())
+    }
+
+    pub fn send_error(&mut self, id: u64, error: RpcError) -> Result<(), RpcError> {
+        match self.0.get_mut(&id) {
+            Some(s) => {
+                if let Err(e) = s.sender.try_send(StreamType::RpcError(error)) {
+                    error!("Error sending message from network to stream {}: {}", id, e);
+                    // TODO: recover from error rather than just closing the stream
+                    // this is most likely an error indicating that the channel is full
+                    // and so the sender should back off
+                    let _ = self.0.remove(&id);
+                    return Err(RpcError::TODO);
+                }
+            }
+            None => {
+                return Err(RpcError::StreamClosed);
+            }
+        };
+        Ok(())
+    }
+
+    pub fn remove(&mut self, id: u64) {
+        let _ = self.0.remove(&id);
+    }
+}
+
+impl Default for ActiveStreams {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+pub struct ActiveStream {
+    size: u64,
+    received_chunks: u64,
+    sender: mpsc::Sender<StreamType>,
+}
+
+impl ActiveStream {
+    pub fn new(header: Header, sender: mpsc::Sender<StreamType>) -> Self {
+        ActiveStream {
+            size: header.num_chunks,
+            received_chunks: 0,
+            sender,
+        }
+    }
 }

@@ -61,6 +61,7 @@ pub enum Command {
         packet: Packet,
         sender: OneshotSender,
     },
+
     CloseStream {
         id: u64,
     },
@@ -105,5 +106,3 @@ pub enum PendingId {
     Request(RequestId),
     Listener(ListenerId),
 }
-
-pub type ActiveStreams = HashMap<u64, mpsc::Sender<StreamType>>;

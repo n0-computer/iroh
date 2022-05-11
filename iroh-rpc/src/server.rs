@@ -15,10 +15,10 @@ use tracing::{debug, error, trace};
 use crate::behaviour::rpc::{RpcEvent, RpcRequest, RpcRequestEvent, RpcResponse, RpcResponseEvent};
 use crate::behaviour::{Behaviour, Event};
 use crate::builder::ServerConfig;
-use crate::commands::{ActiveStreams, Command, PendingId, PendingMap, SenderType};
+use crate::commands::{Command, PendingId, PendingMap, SenderType};
 use crate::error::RpcError;
 use crate::handler::{Namespace, State};
-use crate::stream::{Header, StreamConfig, StreamType};
+use crate::stream::{ActiveStreams, Header, StreamConfig};
 
 /// The Server manages the swarm, gets commands from the client & translates
 /// those into events to send over rpc to the correct recepient. It listens for
@@ -168,33 +168,45 @@ impl<T> Server<T> {
                         RpcRequestEvent::Packet(packet) => {
                             let stream_id = packet.id;
                             let index = packet.index;
-                            debug!(target: "inbound streaming", "Received Packet {} for stream {}", index, stream_id);
-                            let sender = match self.active_streams.get_mut(&stream_id) {
-                                Some(s) => s,
-                                None => {
-                                    error!(target: "inbound streaming", "Packet {} could not be delievered because stream {} no longer in active stream list", index, stream_id);
-                                    self.swarm
-                                        .behaviour_mut()
-                                        .rpc
-                                        .send_response(
-                                            channel,
-                                            RpcResponse(RpcResponseEvent::RpcError(
-                                                RpcError::StreamClosed,
-                                            )),
-                                        )
-                                        .expect("Connection to peer to still be open.");
-                                    return;
-                                }
+                            debug!("Received Packet {} for stream {}", index, stream_id);
+                            if let Err(e) = self.active_streams.update_stream(packet) {
+                                error!("Packet {} could not be delievered because stream {} no longer in active stream list", index, stream_id);
+                                self.swarm
+                                    .behaviour_mut()
+                                    .rpc
+                                    .send_response(
+                                        channel,
+                                        RpcResponse(RpcResponseEvent::RpcError(e)),
+                                    )
+                                    .expect("Connection to peer to still be open.");
+                                return;
                             };
 
-                            if let Err(e) = sender.try_send(StreamType::Packet(packet)) {
-                                // TODO: recover from error
-                                // send error back instead of panicing
-                                error!(target: "inbound streaming", "Error sending packet from wire to stream {}: {}", stream_id, e);
-                                panic!("Error sending packet off the wire to stream {}", stream_id);
-                            }
                             // only ack for now, send back error if we cannot send to stream
-                            debug!(target: "inbound streaming", "Acknowledging Packet {} from stream {}", index, stream_id);
+                            debug!("Acknowledging Packet {} from stream {}", index, stream_id);
+                            self.swarm
+                                .behaviour_mut()
+                                .rpc
+                                .send_response(channel, RpcResponse(RpcResponseEvent::Ack))
+                                .expect("Connection to peer to still be open.");
+                        }
+                        RpcRequestEvent::StreamError { stream_id, error } => {
+                            debug!("Received StreamError for stream {}", stream_id);
+                            if let Err(e) = self.active_streams.send_error(stream_id, error) {
+                                error!("StreamError could not be delievered because stream {} no longer in active stream list", stream_id);
+                                self.swarm
+                                    .behaviour_mut()
+                                    .rpc
+                                    .send_response(
+                                        channel,
+                                        RpcResponse(RpcResponseEvent::RpcError(e)),
+                                    )
+                                    .expect("Connection to peer to still be open.");
+                                return;
+                            }
+                            // TODO: this is odd, but we need to send back a response
+                            // only ack for now, send back error if we cannot send to stream
+                            debug!("Acknowledging StreamError from stream {}", stream_id);
                             self.swarm
                                 .behaviour_mut()
                                 .rpc
@@ -239,13 +251,13 @@ impl<T> Server<T> {
                                 };
 
                                 let (s, r) = mpsc::channel(self.stream_capacity);
-                                debug!(target: "inbound streaming", "Received header: Adding active stream {}", header.id);
-                                self.active_streams.insert(header.id, s);
-                                debug!(target: "inbound streaming", "Sending stream receiver to client");
+                                debug!("Received header: Adding active stream {}", header.id);
+                                self.active_streams.insert(header.clone(), s);
+                                debug!("Sending stream receiver to client");
                                 let _ = sender.send(SenderType::Stream { header, stream: r });
                             }
                             RpcResponseEvent::Ack => {
-                                debug!(target: "inbound streaming", "Received Ack for request {}", request_id);
+                                debug!("Received Ack for request {}", request_id);
                                 let _ = sender.send(SenderType::Ack);
                             }
                         }
@@ -340,7 +352,7 @@ impl<T> Server<T> {
                 );
                 self.pending_requests
                     .insert(PendingId::Request(request_id), sender);
-                debug!(target: "outbound request", "Sent SendRequest {} to peer {}", request_id, peer_id);
+                debug!("Sent SendRequest {} to peer {}", request_id, peer_id);
             }
             Command::SendResponse { payload, channel } => {
                 self.swarm
@@ -348,7 +360,7 @@ impl<T> Server<T> {
                     .rpc
                     .send_response(channel, RpcResponse(RpcResponseEvent::Payload(payload)))
                     .expect("Connection to peer to still be open.");
-                debug!(target: "outbound response", "Sent Payload response");
+                debug!("Sent Payload response");
             }
             Command::ErrorResponse { error, channel } => {
                 self.swarm
@@ -356,7 +368,7 @@ impl<T> Server<T> {
                     .rpc
                     .send_response(channel, RpcResponse(RpcResponseEvent::RpcError(error)))
                     .expect("Connection to peer to still be open.");
-                debug!(target: "outbound response", "Sent Error response");
+                debug!("Sent Error response");
             }
 
             Command::StreamRequest {
@@ -378,7 +390,7 @@ impl<T> Server<T> {
                 );
                 self.pending_requests
                     .insert(PendingId::Request(request_id), sender);
-                debug!(target: "outbound streaming", "Sent StreamRequest {} to peer {}", request_id, peer_id);
+                debug!("Sent StreamRequest {} to peer {}", request_id, peer_id);
             }
             Command::HeaderResponse { header, channel } => {
                 let header = rkyv::to_bytes::<_, 1024>(&header).expect("header to serialize");
@@ -390,7 +402,7 @@ impl<T> Server<T> {
                         RpcResponse(RpcResponseEvent::Header(header.to_vec())),
                     )
                     .expect("Connection to peer to still be open.");
-                debug!(target: "outbound streaming", "Sent HeaderResponse {:?}", header);
+                debug!("Sent HeaderResponse {:?}", header);
             }
             Command::SendPacket {
                 peer_id,
@@ -405,14 +417,9 @@ impl<T> Server<T> {
                     .send_request(&peer_id, RpcRequest(RpcRequestEvent::Packet(packet)));
                 self.pending_requests
                     .insert(PendingId::Request(request_id), sender);
-                debug!(target: "outbound streaming", "Sent packet {} with request_id {}", index, request_id);
+                debug!("Sent packet {} with request_id {}", index, request_id);
             }
-            Command::CloseStream { id } => match self.active_streams.remove(&id) {
-                Some(_) => debug!(target: "inbound streaming", "Closing Stream {}", id),
-                None => {
-                    error!(target: "inbound streaming", "Expected stream {} to still exist, has already been removed", id)
-                }
-            },
+            Command::CloseStream { id } => self.active_streams.remove(id),
             Command::ShutDown => {
                 self.command_rec.close();
             }

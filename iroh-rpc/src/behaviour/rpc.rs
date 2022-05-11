@@ -39,6 +39,10 @@ pub enum RpcRequestEvent {
         params: Vec<u8>,
     },
     Packet(Packet),
+    StreamError {
+        stream_id: u64,
+        error: RpcError,
+    },
 }
 
 #[derive(Archive, Serialize, Deserialize, Debug, PartialEq, Clone, Eq)]
