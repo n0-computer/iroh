@@ -80,7 +80,7 @@ impl OutStream {
         for index in 0..self.header.num_chunks {
             if index == self.header.num_chunks - 1 {
                 chunk_size = self.header.size as usize % chunk_size;
-                buf = vec![0u8; chunk_size];
+                buf.resize(chunk_size, 0u8);
                 println!("sending new chunk_size {}", chunk_size);
             }
             debug!("Reading file chunk {}", index);
@@ -89,7 +89,7 @@ impl OutStream {
             let packet = Packet {
                 id: self.header.id,
                 index,
-                data: buf[..].to_vec(),
+                data: buf.clone(),
                 last: index == self.header.num_chunks - 1,
             };
             // TODO: ignoring errors and ack for now. If we get a "channel full" error
