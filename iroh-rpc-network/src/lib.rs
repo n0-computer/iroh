@@ -1,3 +1,46 @@
+use async_channel::Sender;
+use futures::channel::oneshot;
+use libp2p::{Multiaddr, PeerId};
+
+use iroh_p2p::{NetRPCMethods, NetworkMessage};
+use iroh_rpc::handler;
+use iroh_rpc::serde::{serialize_response, Deserialize, Serialize};
+use iroh_rpc::stream::StreamConfig;
+use iroh_rpc::RpcError;
+
+#[derive(Deserialize, Serialize, Debug, Clone)]
+pub enum NetRPCResponses {
+    NetAddrsListen {
+        peer_id: PeerId,
+        listeners: Vec<Multiaddr>,
+    },
+    // NetPeers,
+    // NetConnect,
+    // NetDisconnect,
+}
+
+pub async fn handle_addrs_listen(
+    state: handler::State<Sender<NetworkMessage>>,
+    _cfg: Option<StreamConfig>,
+    _param: Vec<u8>,
+) -> Result<Vec<u8>, RpcError> {
+    let (s, r) = oneshot::channel();
+    state
+        .0
+        .send(NetworkMessage::RpcRequest {
+            method: NetRPCMethods::NetAddrsListen(s),
+        })
+        .await
+        .unwrap();
+    let res = r.recv().unwrap();
+    let res = NetRPCResponses::NetAddrsListen {
+        peer_id: res.0,
+        listeners: res.1,
+    };
+    let res = serialize_response(res)?;
+    Ok(res)
+}
+
 #[cfg(test)]
 mod tests {
     #[test]

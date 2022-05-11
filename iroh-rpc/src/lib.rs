@@ -14,6 +14,7 @@ pub use crate::behaviour::Behaviour;
 pub use crate::builder::RpcBuilder;
 pub use crate::client::Client;
 pub use crate::error::RpcError;
+pub use crate::handler::State;
 pub use crate::server::Server;
 pub use crate::swarm::{new_mem_swarm, new_swarm};
 

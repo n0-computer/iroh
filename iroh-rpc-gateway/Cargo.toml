@@ -8,3 +8,4 @@ edition = "2021"
 [dependencies]
 iroh-rpc = { path = "../iroh-rpc" }
 libp2p = "0.44.0" 
+cid = "0.8.4"

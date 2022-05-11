@@ -71,13 +71,13 @@ impl Client {
     }
 
     /// Add an address and peer id associated with a particular namespace
-    pub fn with_connection_to(
+    pub fn with_connection_to<I: Into<String>>(
         mut self,
-        namespace: String,
+        namespace: I,
         address: Multiaddr,
         peer_id: PeerId,
     ) -> Self {
-        self.with_addrs(namespace, address, peer_id);
+        self.with_addrs(namespace.into(), address, peer_id);
         self
     }
 
