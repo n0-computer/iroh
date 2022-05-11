@@ -85,9 +85,11 @@ impl OrderedStream {
                 if let Some(r) = res {
                   match r {
                     StreamType::Packet(p) => {
-                      let mut chunks = chunks.lock().expect("failed to lock stream chunk mutex");
-                      chunks.insert(p.index, p.data);
-                      debug!(target="OrderedStream", "stream received chunk {}", p.index);
+                      {
+                        let mut chunks = chunks.lock().expect("failed to lock stream chunk mutex");
+                        chunks.insert(p.index, p.data);
+                      }
+                      debug!(target="OrderedStream", "Stream received chunk {}", p.index);
                   },
                     StreamType::RpcError(e) => {
                       error!(target="OrderedStream", "stream received error {}", e);
@@ -99,22 +101,18 @@ impl OrderedStream {
                   }
                   // notify poll_next that we have a message we want them to
                   // process
-                  let task = task.lock().expect("failed to lock task");
-                  task.wake();
+                  {
+                    let task = task.lock().expect("failed to lock task");
+                    task.wake();
+                  }
                   continue;
                 }
                 // if res == None, then the packet_receiver stream has closed
-                    debug!(target="OrderedStream", "packet receiver closed, done
-                      gathering packets");
+                    debug!(target="OrderedStream", "Packet receiver closed, done gathering packets");
                       return;
                                 },
               _ = shutdown => {
-                debug!(target="OrderedStream", "early shutdown triggered, no longer
-                  gathering packets");
-                error_sender.send(RpcError::StreamClosedEarly).await.expect("failed to send on
-                  error_sender");
-                let task = task.lock().expect("failed to lock task");
-                task.wake();
+                debug!(target="OrderedStream", "Shutdown triggered, no longer gathering packets");
                 return;
               }
             }
@@ -128,7 +126,6 @@ impl OrderedStream {
             .expect("Out sender to still be active.");
         if let Some(sender) = self.early_shutdown.take() {
             debug!(target = "OrderedStream", "closing stream");
-            self.early_shutdown = None;
             let _ = sender
                 .send(())
                 .expect("shutdown receiver should still be open");
@@ -168,13 +165,15 @@ impl Stream for OrderedStream {
             return Poll::Ready(Some(Err(e)));
         }
 
-        // check if the chunk we are looking for is a chunk we already have
-        let chunks = Arc::clone(&self.chunks);
-        let mut chunks = chunks.lock().unwrap();
-        if let Some(c) = chunks.remove(&next_chunk) {
-            debug!(target: "OrderedStream", "Returning an already received chunk");
-            self.next_chunk += 1;
-            return Poll::Ready(Some(Ok(c)));
+        {
+            // check if the chunk we are looking for is a chunk we already have
+            let chunks = Arc::clone(&self.chunks);
+            let mut chunks = chunks.lock().unwrap();
+            if let Some(c) = chunks.remove(&next_chunk) {
+                debug!(target: "OrderedStream", "Returning an already received chunk");
+                self.next_chunk += 1;
+                return Poll::Ready(Some(Ok(c)));
+            }
         }
         // otherwise, we don't have the chunk, so let's wait until the next
         // message
@@ -182,8 +181,10 @@ impl Stream for OrderedStream {
             target = "OrderedStream",
             "Pausing task until next packet comes in"
         );
-        let task = self.task.lock().expect("failed to lock task mutex");
-        task.register(cx.waker());
+        {
+            let task = self.task.lock().expect("failed to lock task mutex");
+            task.register(cx.waker());
+        }
         Poll::Pending
     }
 }
@@ -277,18 +278,11 @@ pub struct Header {
 
 impl Header {
     pub fn new(id: u64, size: u64, chunk_size: u64) -> Self {
-        let num_chunks = {
-            let mut num_chunks = 0;
-            if size % chunk_size != 0 {
-                num_chunks += 1;
-            };
-            num_chunks + (size / chunk_size)
-        };
         Header {
             id,
             size,
             chunk_size,
-            num_chunks,
+            num_chunks: (size as f64 / chunk_size as f64).ceil() as u64,
         }
     }
 }

@@ -297,13 +297,7 @@ mod test {
 
         // construct BufReader from the loaded content
         let r = TestReader {
-            num_chunks: {
-                let mut num_chunks = 0;
-                if size % chunk_size != 0 {
-                    num_chunks += 1;
-                };
-                num_chunks + (size / chunk_size) as usize
-            },
+            num_chunks: (size as f64 / chunk_size as f64).ceil() as usize,
             chunk_size: chunk_size as usize,
         };
         let r = std::io::BufReader::new(r);
@@ -445,16 +439,11 @@ mod test {
             .await
             .expect("dial all namespace addrs failed");
 
+        let size = 4_048;
+        let chunk_size = 1_024;
         // make request
         let mut s = a_client
-            .streaming_call(
-                "b",
-                "stream",
-                StreamRequest {
-                    size: 4048,
-                    chunk_size: 1024,
-                },
-            )
+            .streaming_call("b", "stream", StreamRequest { size, chunk_size })
             .await
             .expect("call to client b failed");
 
@@ -471,8 +460,8 @@ mod test {
             }
         }
 
-        assert_eq!(num_chunks, 4);
-        assert_eq!(res.len(), 4048);
+        assert_eq!(num_chunks, (size as f64 / chunk_size as f64).ceil() as i32);
+        assert_eq!(res.len(), size as usize);
         s.close().await;
 
         let _: Pong = b_client
