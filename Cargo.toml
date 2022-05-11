@@ -4,6 +4,7 @@ members = [
   "iroh-bitswap",
   "iroh-car",
   "iroh-rpc",
+  "iroh-rpc-client",
   "iroh-rpc-gateway",
   "iroh-rpc-network",
   "iroh-gateway",

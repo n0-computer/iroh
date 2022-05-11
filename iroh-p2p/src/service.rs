@@ -45,7 +45,7 @@ pub enum NetworkMessage {
         response_channels: Vec<OneShotSender<()>>,
         providers: Option<HashSet<PeerId>>,
     },
-    JSONRPCRequest {
+    RpcRequest {
         method: NetRPCMethods,
     },
     ProviderRequest {
@@ -239,16 +239,15 @@ impl Libp2pService {
             } => {
                 self.swarm.behaviour_mut().providers(key, response_channel);
             }
-            NetworkMessage::JSONRPCRequest { method } => {
-                self.handle_jsonrpc_request(method).await?;
+            NetworkMessage::RpcRequest { method } => {
+                self.handle_rpc_request(method).await?;
             }
         }
 
         Ok(())
     }
 
-    // TODO: actually use iroh-rpc
-    async fn handle_jsonrpc_request(&mut self, method: NetRPCMethods) -> Result<()> {
+    async fn handle_rpc_request(&mut self, method: NetRPCMethods) -> Result<()> {
         match method {
             NetRPCMethods::NetAddrsListen(response_channel) => {
                 let listeners: Vec<_> = Swarm::listeners(&self.swarm).cloned().collect();
