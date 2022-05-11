@@ -238,7 +238,6 @@ mod test {
 
     use libp2p::identity::Keypair;
     use libp2p::swarm::Swarm;
-    use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
     use crate::behaviour::Behaviour;
     use crate::builder::RpcBuilder;
@@ -354,10 +353,6 @@ mod test {
 
     #[tokio::test]
     async fn mem_client_example() {
-        tracing_subscriber::registry()
-            .with(fmt::layer().pretty())
-            .with(EnvFilter::from_default_env())
-            .init();
         let a_addr: Multiaddr = "/memory/1234".parse().unwrap();
         let b_addr: Multiaddr = "/memory/4321".parse().unwrap();
         let b_keypair = Keypair::generate_ed25519();
@@ -381,10 +376,6 @@ mod test {
 
     #[tokio::test]
     async fn tcp_client_example() {
-        tracing_subscriber::registry()
-            .with(fmt::layer().pretty())
-            .with(EnvFilter::from_default_env())
-            .init();
         let addr: Multiaddr = "/ip4/0.0.0.0/tcp/0".parse().unwrap();
         let b_keypair = Keypair::generate_ed25519();
         let b_peer_id = b_keypair.public().to_peer_id();
