@@ -105,8 +105,6 @@ impl OutStream {
                 })
                 .await
                 .expect("Sender to not be closed.");
-            buf.clear();
-            buf.resize(chunk_size, 0u8);
         }
     }
 }
