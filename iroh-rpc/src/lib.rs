@@ -1,12 +1,11 @@
-pub fn hello_world() -> &'static str {
-    "hello world"
-}
+mod behaviour;
+mod commands;
+mod server;
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn it_works() {
-        let result = 2 + 2;
-        assert_eq!(result, 4);
-    }
-}
+pub mod builder;
+pub mod client;
+pub mod error;
+pub mod handler;
+pub mod serde;
+pub mod stream;
+pub mod swarm;
