@@ -103,6 +103,44 @@ impl ResponseFormat {
     }
 }
 
+#[tracing::instrument()]
+pub fn get_response_format(
+    request_headers: &HeaderMap,
+    query_format: Option<String>,
+) -> Result<ResponseFormat, String> {
+    let format = if let Some(format) = query_format {
+        if format.is_empty() {
+            match ResponseFormat::try_from_headers(request_headers) {
+                Ok(format) => format,
+                Err(_) => {
+                    return Err("invalid format".to_string());
+                }
+            }
+        } else {
+            match ResponseFormat::try_from(format.as_str()) {
+                Ok(format) => format,
+                Err(_) => {
+                    match ResponseFormat::try_from_headers(request_headers) {
+                        Ok(format) => format,
+                        Err(_) => {
+                            return Err("invalid format".to_string());
+                        }
+                    };
+                    return Err("invalid format".to_string());
+                }
+            }
+        }
+    } else {
+        match ResponseFormat::try_from_headers(request_headers) {
+            Ok(format) => format,
+            Err(_) => {
+                return Err("invalid format".to_string());
+            }
+        }
+    };
+    Ok(format)
+}
+
 #[derive(Debug)]
 pub struct GatewayResponse {
     pub status_code: StatusCode,
