@@ -22,6 +22,7 @@ lazy_static = "1.4"
 ipld = { package = "libipld", version = "0.13" }
 ipld-cbor = { package = "libipld-cbor", version = "0.13" }
 iroh-bitswap = { path = "../iroh-bitswap" }
+iroh-rpc-commands = { path = "../iroh-rpc-commands" }
 tokio = { version = "1.0", features = ["time", "sync", "macros"] }
 ahash = "0.7.6"
 tracing = "0.1.34"

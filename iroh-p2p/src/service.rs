@@ -6,6 +6,7 @@ use async_channel::{bounded as channel, Receiver, Sender};
 use cid::Cid;
 use futures::channel::oneshot::Sender as OneShotSender;
 use futures_util::stream::StreamExt;
+use iroh_rpc_commands::p2p::{NetRPCMethods, NetworkBehaviour, NetworkEvent};
 use libp2p::core::muxing::StreamMuxerBox;
 use libp2p::core::transport::Boxed;
 use libp2p::core::Multiaddr;
@@ -27,41 +28,6 @@ use super::{
     behaviour::{NodeBehaviour, NodeBehaviourEvent},
     Libp2pConfig,
 };
-
-/// Events emitted by this Service.
-#[allow(clippy::large_enum_variant)]
-#[derive(Debug)]
-pub enum NetworkEvent {
-    PeerConnected(PeerId),
-    PeerDisconnected(PeerId),
-    BitswapBlock { cid: Cid },
-}
-
-/// Messages into the service to handle.
-#[derive(Debug)]
-pub enum NetworkMessage {
-    BitswapRequest {
-        cids: Vec<Cid>,
-        response_channels: Vec<OneShotSender<()>>,
-        providers: Option<HashSet<PeerId>>,
-    },
-    RpcRequest {
-        method: NetRPCMethods,
-    },
-    ProviderRequest {
-        key: Key,
-        response_channel: OneShotSender<Option<Result<HashSet<PeerId>, String>>>,
-    },
-}
-
-/// Network RPC API methods used to gather data from libp2p node.
-#[derive(Debug)]
-pub enum NetRPCMethods {
-    NetAddrsListen(OneShotSender<(PeerId, Vec<Multiaddr>)>),
-    NetPeers(OneShotSender<HashMap<PeerId, Vec<Multiaddr>>>),
-    NetConnect(OneShotSender<bool>, PeerId, Vec<Multiaddr>),
-    NetDisconnect(OneShotSender<()>, PeerId),
-}
 
 /// The Libp2pService listens to events from the Libp2p swarm.
 pub struct Libp2pService {
