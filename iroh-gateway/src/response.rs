@@ -1,5 +1,3 @@
-use std::{collections::HashMap, str::FromStr};
-
 use axum::{
     body::BoxBody,
     http::{header::*, HeaderValue, StatusCode},
@@ -37,32 +35,20 @@ impl std::convert::TryFrom<&str> for ResponseFormat {
 }
 
 impl ResponseFormat {
-    pub fn write_headers(&self, headers: &mut HashMap<String, String>) {
+    pub fn write_headers(&self, headers: &mut HeaderMap) {
         match self {
             ResponseFormat::Raw => {
-                headers.insert(CONTENT_TYPE.to_string(), CONTENT_TYPE_IPLD_RAW.to_string());
-                headers.insert(
-                    HEADER_X_CONTENT_TYPE_OPTIONS.to_string(),
-                    VALUE_XCTO_NOSNIFF.to_string(),
-                );
+                headers.insert(CONTENT_TYPE, CONTENT_TYPE_IPLD_RAW.clone());
+                headers.insert(&HEADER_X_CONTENT_TYPE_OPTIONS, VALUE_XCTO_NOSNIFF.clone());
             }
             ResponseFormat::Car => {
-                headers.insert(CONTENT_TYPE.to_string(), CONTENT_TYPE_IPLD_CAR.to_string());
-                headers.insert(
-                    HEADER_X_CONTENT_TYPE_OPTIONS.to_string(),
-                    VALUE_XCTO_NOSNIFF.to_string(),
-                );
-                headers.insert(ACCEPT_RANGES.to_string(), "none".to_string());
-                headers.insert(
-                    CACHE_CONTROL.to_string(),
-                    "no-cache, no-transform".to_string(),
-                );
+                headers.insert(CONTENT_TYPE, CONTENT_TYPE_IPLD_CAR.clone());
+                headers.insert(&HEADER_X_CONTENT_TYPE_OPTIONS, VALUE_XCTO_NOSNIFF.clone());
+                headers.insert(ACCEPT_RANGES, VALUE_NONE.clone());
+                headers.insert(CACHE_CONTROL, VALUE_NO_CACHE_NO_TRANSFORM.clone());
             }
             ResponseFormat::Fs(_) => {
-                headers.insert(
-                    CONTENT_TYPE.to_string(),
-                    CONTENT_TYPE_OCTET_STREAM.to_string(),
-                );
+                headers.insert(CONTENT_TYPE, CONTENT_TYPE_OCTET_STREAM.clone());
             }
         }
     }
@@ -145,22 +131,19 @@ pub fn get_response_format(
 pub struct GatewayResponse {
     pub status_code: StatusCode,
     pub body: BoxBody,
-    pub headers: HashMap<String, String>,
+    pub headers: HeaderMap,
     pub trace_id: String,
 }
 
 impl IntoResponse for GatewayResponse {
-    fn into_response(self) -> Response {
+    fn into_response(mut self) -> Response {
         let mut rb = Response::builder().status(self.status_code);
-        let headers = rb.headers_mut().unwrap();
-        for (key, value) in &self.headers {
-            let header_name = HeaderName::from_str(key).unwrap();
-            headers.insert(header_name, HeaderValue::from_str(value).unwrap());
-        }
-        headers.insert(
-            HEADER_X_TRACE_ID,
+        self.headers.insert(
+            &HEADER_X_TRACE_ID,
             HeaderValue::from_str(&self.trace_id).unwrap(),
         );
+        let rh = rb.headers_mut().unwrap();
+        rh.extend(self.headers);
         rb.body(self.body).unwrap()
     }
 }
@@ -168,7 +151,6 @@ impl IntoResponse for GatewayResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
 
     #[test]
     fn response_format_try_from() {
@@ -191,42 +173,32 @@ mod tests {
     #[test]
     fn response_format_write_headers() {
         let rf = ResponseFormat::try_from("raw").unwrap();
-        let mut headers = HashMap::new();
+        let mut headers = HeaderMap::new();
         rf.write_headers(&mut headers);
         assert_eq!(headers.len(), 2);
+        assert_eq!(headers.get(&CONTENT_TYPE).unwrap(), &CONTENT_TYPE_IPLD_RAW);
         assert_eq!(
-            headers.get(&CONTENT_TYPE.to_string()).unwrap(),
-            &CONTENT_TYPE_IPLD_RAW.to_string()
-        );
-        assert_eq!(
-            headers
-                .get(&HEADER_X_CONTENT_TYPE_OPTIONS.to_string())
-                .unwrap(),
-            &VALUE_XCTO_NOSNIFF.to_string()
+            headers.get(&HEADER_X_CONTENT_TYPE_OPTIONS).unwrap(),
+            &VALUE_XCTO_NOSNIFF
         );
 
         let rf = ResponseFormat::try_from("car").unwrap();
-        let mut headers = HashMap::new();
+        let mut headers = HeaderMap::new();
         rf.write_headers(&mut headers);
         assert_eq!(headers.len(), 4);
+        assert_eq!(headers.get(&CONTENT_TYPE).unwrap(), &CONTENT_TYPE_IPLD_CAR);
         assert_eq!(
-            headers.get(&CONTENT_TYPE.to_string()).unwrap(),
-            &CONTENT_TYPE_IPLD_CAR.to_string()
-        );
-        assert_eq!(
-            headers
-                .get(&HEADER_X_CONTENT_TYPE_OPTIONS.to_string())
-                .unwrap(),
-            &VALUE_XCTO_NOSNIFF.to_string()
+            headers.get(&HEADER_X_CONTENT_TYPE_OPTIONS).unwrap(),
+            &VALUE_XCTO_NOSNIFF
         );
 
         let rf = ResponseFormat::try_from("fs").unwrap();
-        let mut headers = HashMap::new();
+        let mut headers = HeaderMap::new();
         rf.write_headers(&mut headers);
         assert_eq!(headers.len(), 1);
         assert_eq!(
-            headers.get(&CONTENT_TYPE.to_string()).unwrap(),
-            &CONTENT_TYPE_OCTET_STREAM.to_string()
+            headers.get(&CONTENT_TYPE).unwrap(),
+            &CONTENT_TYPE_OCTET_STREAM
         );
     }
 }

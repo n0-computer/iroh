@@ -141,13 +141,13 @@ async fn get_ipfs(
     let cpath = "".to_string();
     let cpath = params.get("cpath").unwrap_or(&cpath);
 
-    if request_headers.contains_key(HEADER_SERVICE_WORKER) {
-        let sw = request_headers.get(HEADER_SERVICE_WORKER).unwrap();
+    if request_headers.contains_key(&HEADER_SERVICE_WORKER) {
+        let sw = request_headers.get(&HEADER_SERVICE_WORKER).unwrap();
         if sw.to_str().unwrap() == "script" && cpath.is_empty() {
             return error(StatusCode::BAD_REQUEST, "Service Worker not supported");
         }
     }
-    if request_headers.contains_key(HEADER_X_IPFS_GATEWAY_PREFIX) {
+    if request_headers.contains_key(&HEADER_X_IPFS_GATEWAY_PREFIX) {
         return error(StatusCode::BAD_REQUEST, "Unsupported HTTP header");
     }
 
@@ -174,7 +174,7 @@ async fn get_ipfs(
     let query_file_name = query_params.filename.unwrap_or_default();
     let download = query_params.download.unwrap_or_default();
 
-    let mut headers = HashMap::new();
+    let mut headers = HeaderMap::new();
 
     if request_headers.contains_key("If-None-Match") {
         // todo(arqu): handle dir etags
@@ -192,7 +192,10 @@ async fn get_ipfs(
     // init headers
     format.write_headers(&mut headers);
     add_user_headers(&mut headers, config.headers.clone());
-    headers.insert(HEADER_X_IPFS_PATH.to_string(), full_content_path.clone());
+    headers.insert(
+        &HEADER_X_IPFS_PATH,
+        HeaderValue::from_str(&full_content_path).unwrap(),
+    );
     // todo(arqu): add X-Ipfs-Roots
 
     // handle request and fetch data
@@ -221,7 +224,7 @@ async fn resolve_cid(cid: &Cid) -> Result<Cid, String> {
 async fn serve_raw(
     req: &Request,
     client: Client,
-    mut headers: HashMap<String, String>,
+    mut headers: HeaderMap,
     start_time: std::time::Instant,
 ) -> Result<GatewayResponse, GatewayError> {
     let body = client
@@ -247,7 +250,7 @@ async fn serve_raw(
 async fn serve_car(
     req: &Request,
     client: Client,
-    mut headers: HashMap<String, String>,
+    mut headers: HeaderMap,
     start_time: std::time::Instant,
 ) -> Result<GatewayResponse, GatewayError> {
     let body = client
@@ -275,7 +278,7 @@ async fn serve_car(
 async fn serve_fs(
     req: &Request,
     client: Client,
-    mut headers: HashMap<String, String>,
+    mut headers: HeaderMap,
     start_time: std::time::Instant,
 ) -> Result<GatewayResponse, GatewayError> {
     let body = client
@@ -303,7 +306,7 @@ async fn serve_fs(
 fn response(
     status_code: StatusCode,
     body: BoxBody,
-    headers: HashMap<String, String>,
+    headers: HeaderMap,
 ) -> Result<GatewayResponse, GatewayError> {
     Ok(GatewayResponse {
         status_code,

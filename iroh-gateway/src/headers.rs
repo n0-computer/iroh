@@ -2,26 +2,22 @@ use crate::{constants::*, response::ResponseFormat};
 use axum::http::header::*;
 use chrono::prelude::Utc;
 use cid::Cid;
-use std::collections::HashMap;
 
 #[tracing::instrument()]
-pub fn add_user_headers(
-    headers: &mut HashMap<String, String>,
-    user_headers: HashMap<String, String>,
-) {
+pub fn add_user_headers(headers: &mut HeaderMap, user_headers: HeaderMap) {
     headers.extend(user_headers.into_iter());
 }
 
 #[tracing::instrument()]
-pub fn add_content_type_headers(headers: &mut HashMap<String, String>, name: &str) {
+pub fn add_content_type_headers(headers: &mut HeaderMap, name: &str) {
     let guess = mime_guess::from_path(name);
     let content_type = guess.first_or_octet_stream().to_string();
-    headers.insert(CONTENT_TYPE.to_string(), content_type);
+    headers.insert(CONTENT_TYPE, HeaderValue::from_str(&content_type).unwrap());
 }
 
 #[tracing::instrument()]
 pub fn add_content_disposition_headers(
-    headers: &mut HashMap<String, String>,
+    headers: &mut HeaderMap,
     filename: &str,
     content_path: &str,
     should_download: bool,
@@ -42,40 +38,42 @@ pub fn add_content_disposition_headers(
 }
 
 #[tracing::instrument()]
-pub fn set_content_disposition_headers(
-    headers: &mut HashMap<String, String>,
-    filename: &str,
-    disposition: &str,
-) {
+pub fn set_content_disposition_headers(headers: &mut HeaderMap, filename: &str, disposition: &str) {
     headers.insert(
-        CONTENT_DISPOSITION.to_string(),
-        format!("{}; filename={}", disposition, filename),
+        CONTENT_DISPOSITION,
+        HeaderValue::from_str(&format!("{}; filename={}", disposition, filename)).unwrap(),
     );
 }
 
 #[tracing::instrument()]
-pub fn add_cache_control_headers(headers: &mut HashMap<String, String>, content_path: String) {
+pub fn add_cache_control_headers(headers: &mut HeaderMap, content_path: String) {
     if true {
         // todo(arqu): work out if cpath is mutable
         // now we just treat everything as mutable
         // should also utilize the cache flag on config
-        headers.insert(LAST_MODIFIED.to_string(), Utc::now().to_string());
+        headers.insert(
+            LAST_MODIFIED,
+            HeaderValue::from_str(&Utc::now().to_string()).unwrap(),
+        );
     } else {
-        headers.insert(LAST_MODIFIED.to_string(), 0.to_string());
-        headers.insert(CACHE_CONTROL.to_string(), VAL_IMMUTABLE_MAX_AGE.to_string());
+        headers.insert(LAST_MODIFIED, HeaderValue::from_str("0").unwrap());
+        headers.insert(CACHE_CONTROL, VAL_IMMUTABLE_MAX_AGE.clone());
     }
 }
 
 #[tracing::instrument()]
-pub fn set_etag_headers(headers: &mut HashMap<String, String>, etag: String) {
-    headers.insert(ETAG.to_string(), etag);
+pub fn set_etag_headers(headers: &mut HeaderMap, etag: String) {
+    headers.insert(ETAG, HeaderValue::from_str(&etag).unwrap());
 }
 
 #[tracing::instrument()]
 pub fn get_etag(cid: &Cid, response_format: Option<ResponseFormat>) -> String {
     let mut suffix = "".to_string();
     if let Some(fmt) = response_format {
-        suffix = format!(".{}", fmt.get_extenstion());
+        let ext = fmt.get_extenstion();
+        if !ext.is_empty() {
+            suffix = format!(".{}", ext);
+        }
     }
     format!("\"{}{}\"", cid, suffix)
 }
@@ -150,70 +148,75 @@ mod tests {
 
     #[test]
     fn add_user_headers_test() {
-        let mut headers = HashMap::new();
-        let user_headers = HashMap::from_iter(vec![
-            (HEADER_X_IPFS_PATH.to_string(), "QmHeaderPath1".to_string()),
-            (HEADER_X_IPFS_PATH.to_string(), "QmHeaderPath2".to_string()),
-        ]);
+        let mut headers = HeaderMap::new();
+        let mut user_headers = HeaderMap::new();
+        user_headers.insert(
+            &HEADER_X_IPFS_PATH,
+            HeaderValue::from_str("QmHeaderPath1").unwrap(),
+        );
+        user_headers.insert(
+            &HEADER_X_IPFS_PATH,
+            HeaderValue::from_str("QmHeaderPath2").unwrap(),
+        );
         add_user_headers(&mut headers, user_headers);
         assert_eq!(headers.len(), 1);
         assert_eq!(
-            headers.get(&HEADER_X_IPFS_PATH.to_string()).unwrap(),
+            headers.get(&HEADER_X_IPFS_PATH).unwrap(),
             &"QmHeaderPath2".to_string()
         );
     }
 
     #[test]
     fn add_content_type_headers_test() {
-        let mut headers = HashMap::new();
+        let mut headers = HeaderMap::new();
         let name = "test.txt";
         add_content_type_headers(&mut headers, name);
         assert_eq!(headers.len(), 1);
         assert_eq!(
-            headers.get(&CONTENT_TYPE.to_string()).unwrap(),
+            headers.get(&CONTENT_TYPE).unwrap(),
             &"text/plain".to_string()
         );
 
-        let mut headers = HashMap::new();
+        let mut headers = HeaderMap::new();
         let name = "test.RAND_EXT";
         add_content_type_headers(&mut headers, name);
         assert_eq!(headers.len(), 1);
         assert_eq!(
-            headers.get(&CONTENT_TYPE.to_string()).unwrap(),
-            &CONTENT_TYPE_OCTET_STREAM.to_string()
+            headers.get(&CONTENT_TYPE).unwrap(),
+            &CONTENT_TYPE_OCTET_STREAM
         );
     }
 
     #[test]
     fn add_content_disposition_headers_test() {
         // inline
-        let mut headers = HashMap::new();
+        let mut headers = HeaderMap::new();
         let filename = "test.txt";
         let content_path = "QmSomeCid";
         let download = false;
         let name = add_content_disposition_headers(&mut headers, filename, content_path, download);
         assert_eq!(headers.len(), 1);
         assert_eq!(
-            headers.get(&CONTENT_DISPOSITION.to_string()).unwrap(),
+            headers.get(&CONTENT_DISPOSITION).unwrap(),
             &"inline; filename=test.txt".to_string()
         );
         assert_eq!(name, "test.txt");
 
         // attachment
-        let mut headers = HashMap::new();
+        let mut headers = HeaderMap::new();
         let filename = "test.txt";
         let content_path = "QmSomeCid";
         let download = true;
         let name = add_content_disposition_headers(&mut headers, filename, content_path, download);
         assert_eq!(headers.len(), 1);
         assert_eq!(
-            headers.get(&CONTENT_DISPOSITION.to_string()).unwrap(),
+            headers.get(&CONTENT_DISPOSITION).unwrap(),
             &"attachment; filename=test.txt".to_string()
         );
         assert_eq!(name, "test.txt");
 
         // no filename & no content path filename
-        let mut headers = HashMap::new();
+        let mut headers = HeaderMap::new();
         let filename = "";
         let content_path = "QmSomeCid";
         let download = true;
@@ -222,7 +225,7 @@ mod tests {
         assert_eq!(name, "QmSomeCid");
 
         // no filename & with content path filename
-        let mut headers = HashMap::new();
+        let mut headers = HeaderMap::new();
         let filename = "";
         let content_path = "QmSomeCid/folder/test.txt";
         let download = true;
@@ -233,21 +236,21 @@ mod tests {
 
     #[test]
     fn set_content_disposition_headers_test() {
-        let mut headers = HashMap::new();
+        let mut headers = HeaderMap::new();
         let filename = "test_inline.txt";
         set_content_disposition_headers(&mut headers, filename, DISPOSITION_INLINE);
         assert_eq!(headers.len(), 1);
         assert_eq!(
-            headers.get(&CONTENT_DISPOSITION.to_string()).unwrap(),
+            headers.get(&CONTENT_DISPOSITION).unwrap(),
             &"inline; filename=test_inline.txt".to_string()
         );
 
-        let mut headers = HashMap::new();
+        let mut headers = HeaderMap::new();
         let filename = "test_attachment.txt";
         set_content_disposition_headers(&mut headers, filename, DISPOSITION_ATTACHMENT);
         assert_eq!(headers.len(), 1);
         assert_eq!(
-            headers.get(&CONTENT_DISPOSITION.to_string()).unwrap(),
+            headers.get(&CONTENT_DISPOSITION).unwrap(),
             &"attachment; filename=test_attachment.txt".to_string()
         );
     }

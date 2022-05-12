@@ -23,7 +23,6 @@ impl IntoResponse for GatewayError {
             "message": self.message,
             "trace_id": self.trace_id,
         }));
-        // todo(arqu): add headers
         (self.status_code, body).into_response()
     }
 }

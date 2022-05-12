@@ -1,21 +1,31 @@
+use axum::http::{header::HeaderName, HeaderValue};
+
 // Headers
-pub const HEADER_X_IPFS_PATH: &str = "X-Ipfs-Path";
-pub const HEADER_X_CONTENT_TYPE_OPTIONS: &str = "X-Content-Type-Options";
-pub const HEADER_X_TRACE_ID: &str = "X-Trace-Id";
-pub const HEADER_X_IPFS_GATEWAY_PREFIX: &str = "X-Ipfs-Gateway-Prefix";
-pub const HEADER_SERVICE_WORKER: &str = "Service-Worker";
+pub static HEADER_X_IPFS_PATH: HeaderName = HeaderName::from_static("x-ipfs-path");
+pub static HEADER_X_CONTENT_TYPE_OPTIONS: HeaderName =
+    HeaderName::from_static("x-content-type-options");
+pub static HEADER_X_TRACE_ID: HeaderName = HeaderName::from_static("x-trace-id");
+pub static HEADER_X_IPFS_GATEWAY_PREFIX: HeaderName =
+    HeaderName::from_static("x-ipfs-gateway-prefix");
+pub static HEADER_SERVICE_WORKER: HeaderName = HeaderName::from_static("service-worker");
 
 // Common Header Values
-pub const VALUE_XCTO_NOSNIFF: &str = "nosniff";
+pub static VALUE_XCTO_NOSNIFF: HeaderValue = HeaderValue::from_static("nosniff");
+pub static VALUE_STAR: HeaderValue = HeaderValue::from_static("*");
+pub static VALUE_NONE: HeaderValue = HeaderValue::from_static("none");
+pub static VALUE_NO_CACHE_NO_TRANSFORM: HeaderValue =
+    HeaderValue::from_static("no-cache, no-transform");
+pub static VAL_IMMUTABLE_MAX_AGE: HeaderValue =
+    HeaderValue::from_static("public, max-age=31536000, immutable");
 
 // Dispositions
-pub const DISPOSITION_ATTACHMENT: &str = "attachment";
-pub const DISPOSITION_INLINE: &str = "inline";
+pub static DISPOSITION_ATTACHMENT: &str = "attachment";
+pub static DISPOSITION_INLINE: &str = "inline";
 
 // Content Types
-pub const CONTENT_TYPE_IPLD_RAW: &str = "application/vnd.ipld.raw";
-pub const CONTENT_TYPE_IPLD_CAR: &str = "application/vnd.ipld.car; version=1";
-pub const CONTENT_TYPE_OCTET_STREAM: &str = "application/octet-stream";
-
-// Values
-pub const VAL_IMMUTABLE_MAX_AGE: &str = "public, max-age=31536000, immutable";
+pub static CONTENT_TYPE_IPLD_RAW: HeaderValue =
+    HeaderValue::from_static("application/vnd.ipld.raw");
+pub static CONTENT_TYPE_IPLD_CAR: HeaderValue =
+    HeaderValue::from_static("application/vnd.ipld.car; version=1");
+pub static CONTENT_TYPE_OCTET_STREAM: HeaderValue =
+    HeaderValue::from_static("application/octet-stream");
