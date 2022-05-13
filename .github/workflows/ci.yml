@@ -14,14 +14,14 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest, macOS-latest]
+        os: [ubuntu-latest, windows-2019, macOS-latest]
         rust: [nightly, stable]
         include:
           - os: ubuntu-latest
             sccache-path: /home/runner/.cache/sccache
           - os: macos-latest
             sccache-path: /Users/runner/Library/Caches/Mozilla.sccache
-          - os: windows-latest
+          - os: windows-2019
             sccache-path: "%LOCALAPPDATA%\\sccache"
     env:
       RUST_BACKTRACE: full
@@ -33,11 +33,11 @@ jobs:
     steps:
     - uses: actions/checkout@master
     - name: Set sccache env path
-      if: matrix.os != 'windows-latest'
+      if: matrix.os != 'windows-2019'
       run: |
           echo "SCCACHE_DIR=${{ matrix.sccache-path }}" >> $GITHUB_ENV
     - name: Set windows arch
-      if: matrix.os == 'windows-latest'
+      if: matrix.os == 'windows-2019'
       run: |
           echo "RELEASE_ARCH=windows" >> $GITHUB_ENV
     - name: Set linux arch
@@ -60,25 +60,25 @@ jobs:
         mv -f $SCCACHE_FILE/sccache $HOME/.local/bin/sccache
         chmod 755 $HOME/.local/bin/sccache
         echo "$HOME/.local/bin" >> $GITHUB_PATH  
-    - name: Install LLVM and Clang # required for bindgen to work, see https://github.com/rust-lang/rust-bindgen/issues/1797
-      uses: KyleMayes/install-llvm-action@32c4866ebb71e0949e8833eb49beeebed48532bd
-      if: matrix.os == 'windows-latest'
-      with:
-        version: "11.0"
-        directory: ${{ runner.temp }}/llvm
-    - name: Set LIBCLANG_PATH
-      run: echo "LIBCLANG_PATH=$((gcm clang).source -replace "clang.exe")" >> $env:GITHUB_ENV
-      if: matrix.os == 'windows-latest'     
-    - name: Install scoop (windows-latest)
-      if: matrix.os == 'windows-latest'
+    # - name: Install LLVM and Clang # required for bindgen to work, see https://github.com/rust-lang/rust-bindgen/issues/1797
+    #   uses: KyleMayes/install-llvm-action@32c4866ebb71e0949e8833eb49beeebed48532bd
+    #   if: matrix.os == 'windows-2019'
+    #   with:
+    #     version: "11.0"
+    #     directory: ${{ runner.temp }}/llvm
+    # - name: Set LIBCLANG_PATH
+    #   run: echo "LIBCLANG_PATH=$((gcm clang).source -replace "clang.exe")" >> $env:GITHUB_ENV
+    #   if: matrix.os == 'windows-2019'     
+    - name: Install scoop (windows-2019)
+      if: matrix.os == 'windows-2019'
       shell: powershell
       run: |
         Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
         iwr -useb get.scoop.sh -outfile 'install.ps1'
         .\\install.ps1 -RunAsAdmin
         Join-Path (Resolve-Path ~).Path "scoop\shims" >> $Env:GITHUB_PATH
-    - name: Install sccache (windows-latest)
-      if: matrix.os == 'windows-latest'
+    - name: Install sccache (windows-2019)
+      if: matrix.os == 'windows-2019'
       shell: powershell
       run: scoop install sccache
     - name: Install sccache (macos-latest)
@@ -120,12 +120,12 @@ jobs:
     - name: Start sccache server
       run: sccache --start-server
 
-    - name: Install Protoc
-      uses: arduino/setup-protoc@v1
+    # - name: Install Protoc
+    #   uses: arduino/setup-protoc@v1
 
-    - name: configure windows 
-      uses: ilammy/msvc-dev-cmd@v1.4.1
-      if: matrix.os == 'windows-latest'
+    # - name: configure windows 
+    #   uses: ilammy/msvc-dev-cmd@v1.4.1
+    #   if: matrix.os == 'windows-2019'
 
     - name: check
       uses: actions-rs/cargo@v1
@@ -155,14 +155,14 @@ jobs:
 
     - name: build release
       uses: actions-rs/cargo@v1
-      if: matrix.os != 'windows-latest' && matrix.rust=='stable' && github.ref_name=='main'
+      if: matrix.os != 'windows-2019' && matrix.rust=='stable' && github.ref_name=='main'
       with:
         command: build
         args: --release
     
     - name: Get current iroh-gateway version
       id: ig_version
-      if: matrix.os != 'windows-latest' && matrix.rust=='stable' && github.ref_name=='main'
+      if: matrix.os != 'windows-2019' && matrix.rust=='stable' && github.ref_name=='main'
       uses: dante-signal31/rust-app-version@v1.0.0
       with:
          cargo_toml_folder: iroh-gateway/
@@ -174,7 +174,7 @@ jobs:
         sudo installer -pkg AWSCLIV2.pkg -target /
 
     - name: Set aws credentials
-      if: matrix.os != 'windows-latest'
+      if: matrix.os != 'windows-2019'
       run: |
           echo "AWS_ACCESS_KEY_ID=${{secrets.S3_ACCESS_KEY_ID}}" >> $GITHUB_ENV
           echo "AWS_SECRET_ACCESS_KEY=${{secrets.S3_ACCESS_KEY}}" >> $GITHUB_ENV
