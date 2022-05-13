@@ -24,11 +24,11 @@ use tracing::{debug, info, trace, warn};
 
 use iroh_bitswap::Block;
 use iroh_rpc_client::Client;
-use iroh_rpc_network::tcp_p2p_rpc;
 use iroh_rpc_types::p2p::RpcMessage;
 
-use super::{
+use crate::{
     behaviour::{NodeBehaviour, NodeBehaviourEvent},
+    rpc::tcp_p2p_rpc,
     Libp2pConfig,
 };
 
