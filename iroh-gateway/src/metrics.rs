@@ -4,7 +4,7 @@ use metrics::{describe_counter, describe_gauge, describe_histogram, Unit};
 use opentelemetry::trace::{TraceContextExt, TraceId};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
-pub fn metrics_config() -> iroh_metrics::Config {
+pub fn metrics_config(logger_only: bool) -> iroh_metrics::Config {
     // compile time configuration
     let service_name = env!("CARGO_PKG_NAME").to_string();
     let build = git_version!().to_string();
@@ -14,7 +14,14 @@ pub fn metrics_config() -> iroh_metrics::Config {
     let instance_id = std::env::var("IROH_INSTANCE_ID")
         .unwrap_or_else(|_| names::Generator::default().next().unwrap());
     let service_env = std::env::var("IROH_ENV").unwrap_or_else(|_| "dev".to_string());
-    iroh_metrics::Config::new(service_name, instance_id, build, version, service_env)
+    iroh_metrics::Config::new(
+        service_name,
+        instance_id,
+        build,
+        version,
+        service_env,
+        logger_only,
+    )
 }
 
 pub const METRICS_CNT_REQUESTS_TOTAL: &str = "gw_requests_total";

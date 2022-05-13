@@ -3,7 +3,7 @@ use opentelemetry::sdk::{trace, Resource};
 use opentelemetry_otlp::WithExportConfig;
 use std::env::consts::{ARCH, OS};
 use std::time::Duration;
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer};
 
 /// Initialize the tracing and metrics subsystems.
 pub fn init(cfg: Config) -> Result<(), Box<dyn std::error::Error>> {
@@ -27,14 +27,11 @@ pub fn init_metrics(cfg: Config) -> Result<(), Box<dyn std::error::Error>> {
 
 /// Initialize the tracing subsystem.
 pub fn init_tracer(cfg: Config) -> Result<(), Box<dyn std::error::Error>> {
+    let log_subscriber = fmt::layer()
+        .pretty()
+        .with_filter(EnvFilter::from_default_env());
     if cfg.debug {
-        tracing_subscriber::fmt()
-            .pretty()
-            .with_thread_names(true)
-            // enable everything
-            .with_max_level(tracing::Level::TRACE)
-            // sets this to be the default, global collector for this application.
-            .init();
+        tracing_subscriber::registry().with(log_subscriber).init();
     } else {
         let tracer = opentelemetry_otlp::new_pipeline()
             .tracing()
@@ -57,10 +54,10 @@ pub fn init_tracer(cfg: Config) -> Result<(), Box<dyn std::error::Error>> {
 
         let opentelemetry = tracing_opentelemetry::layer().with_tracer(tracer);
         tracing_subscriber::registry()
+            .with(log_subscriber)
             .with(opentelemetry)
             .try_init()?;
     }
-
     Ok(())
 }
 
@@ -96,9 +93,10 @@ impl Config {
         build: String,
         version: String,
         service_env: String,
+        debug: bool,
     ) -> Self {
         let debug =
-            std::env::var("IROH_METRICS_DEBUG").unwrap_or_else(|_| "false".to_string()) == "true";
+            std::env::var("IROH_METRICS_DEBUG").unwrap_or_else(|_| debug.to_string()) == "true";
         let collector_endpoint = std::env::var("IROH_METRICS_COLLECTOR_ENDPOINT")
             .unwrap_or_else(|_| "http://localhost:4317".to_string());
         let prometheus_gateway_endpoint = std::env::var("IROH_METRICS_PROM_GATEWAY_ENDPOINT")
