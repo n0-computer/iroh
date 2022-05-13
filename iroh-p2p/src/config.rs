@@ -28,6 +28,7 @@ pub const DEFAULT_BOOTSTRAP: &[&str] = &[
     "/ip4/104.131.131.82/tcp/4001/p2p/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ", // mars.i.ipfs.io
 ];
 // no udp support yet
+
 // "/ip4/104.131.131.82/udp/4001/quic/p2p/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ", // mars.i.ipfs.io
 
 impl Default for Libp2pConfig {
@@ -43,7 +44,7 @@ impl Default for Libp2pConfig {
             mdns: false,
             kademlia: true,
             target_peer_count: 75,
-            rpc_multiaddr: "/memory/1".parse().unwrap(), // TODO: figure out better way to tell rpc client to listen on particular addr
+            rpc_multiaddr: "/ip4/0.0.0.0/tcp/4401".parse().unwrap(), // TODO: figure out better way to tell rpc client to listen on particular addr
         }
     }
 }

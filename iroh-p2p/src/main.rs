@@ -1,11 +1,7 @@
-use std::cell::RefCell;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
-
 use futures::pin_mut;
 use futures::prelude::*;
 use iroh_p2p::Libp2pService;
-use iroh_rpc_gateway::mem_gateway_rpc;
+use iroh_rpc_gateway::tcp_gateway_rpc;
 use libp2p::identity::{ed25519, Keypair};
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
@@ -63,16 +59,23 @@ async fn main() -> anyhow::Result<()> {
         // TODO: Save Ed25519 keypair to file
         Keypair::Ed25519(gen_keypair)
     };
-    let (mut ctr_rpc_client, ctr_rpc_server) = mem_gateway_rpc(ctr_rpc_keypair).unwrap();
+    let (ctr_rpc_client, ctr_rpc_server) = tcp_gateway_rpc(ctr_rpc_keypair).await?;
 
     let ctr_rpc_task = tokio::spawn(async move { ctr_rpc_server.run().await });
 
-    if let Err(e) = ctr_rpc_client.listen("/memory/0".parse().unwrap()).await {
+    if let Err(e) = ctr_rpc_client
+        .listen(&"/ip4/0.0.0.0/tcp/4499".parse().unwrap())
+        .await
+    {
         error!("error ctr rpc failed trying to listen: {:?}", e);
     }
 
     if let Err(e) = ctr_rpc_client
-        .dial("p2p", "/memory/1".parse().unwrap(), rpc_peer_id)
+        .dial(
+            "p2p",
+            "/ip4/127.0.0.1/tcp/4401".parse().unwrap(),
+            rpc_peer_id,
+        )
         .await
     {
         error!("error dialing from ctr rpc to p2p rpc: {:?}", e);
@@ -108,34 +111,11 @@ async fn main() -> anyhow::Result<()> {
         ),
     }
 
-    block_until_sigint().await;
+    iroh_util::block_until_sigint().await;
 
     // Cancel all async services
     p2p_task.abort();
     ctr_rpc_task.abort();
 
     Ok(())
-}
-
-/// Blocks current thread until ctrl-c is received
-async fn block_until_sigint() {
-    let (ctrlc_send, ctrlc_oneshot) = futures::channel::oneshot::channel();
-    let ctrlc_send_c = RefCell::new(Some(ctrlc_send));
-
-    let running = Arc::new(AtomicUsize::new(0));
-    ctrlc::set_handler(move || {
-        let prev = running.fetch_add(1, Ordering::SeqCst);
-        if prev == 0 {
-            println!("Got interrupt, shutting down...");
-            // Send sig int in channel to blocking task
-            if let Some(ctrlc_send) = ctrlc_send_c.try_borrow_mut().unwrap().take() {
-                ctrlc_send.send(()).expect("Error sending ctrl-c message");
-            }
-        } else {
-            std::process::exit(0);
-        }
-    })
-    .expect("Error setting Ctrl-C handler");
-
-    ctrlc_oneshot.await.unwrap();
 }

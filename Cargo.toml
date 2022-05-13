@@ -12,5 +12,6 @@ members = [
   "iroh-metrics",
   "iroh-p2p",
   "iroh-store",
+  "iroh-util",
   "stores/*"
 ]

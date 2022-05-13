@@ -3,7 +3,6 @@ name = "iroh-rpc-client"
 version = "0.1.0"
 edition = "2021"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
 iroh-rpc = { path = "../iroh-rpc" }
@@ -11,3 +10,4 @@ iroh-rpc-types = { path = "../iroh-rpc-types" }
 libp2p = "0.44.0" 
 cid = "0.8.0"
 futures = "0.3.21"
+tokio = { version = "1.0", features = ["sync"] }

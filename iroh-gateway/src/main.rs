@@ -1,5 +1,11 @@
+use anyhow::Result;
 use clap::Parser;
-use iroh_gateway::{config::Config, core::Core, metrics};
+use iroh_gateway::{
+    config::{Config, RpcConfig},
+    core::Core,
+    metrics,
+};
+use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
 #[derive(Parser, Debug, Clone)]
 #[clap(author, version, about, long_about = None)]
@@ -14,13 +20,28 @@ struct Args {
     cache: bool,
     #[clap(long = "no-metrics")]
     no_metrics: bool,
+    #[clap(long)]
+    store: String,
 }
 
-#[tokio::main]
-async fn main() {
+#[tokio::main(flavor = "multi_thread")]
+async fn main() -> Result<()> {
+    tracing_subscriber::registry()
+        .with(fmt::layer().pretty())
+        .with(EnvFilter::from_default_env())
+        .init();
+
     let args = Args::parse();
 
-    let mut config = Config::new(args.writeable, args.fetch, args.cache, args.port);
+    // TODO: configurable
+    let rpc_config = RpcConfig::default();
+    let mut config = Config::new(
+        args.writeable,
+        args.fetch,
+        args.cache,
+        args.port,
+        rpc_config,
+    );
     config.set_default_headers();
     println!("{:#?}", config);
 
@@ -28,8 +49,15 @@ async fn main() {
         .expect("failed to initialize metrics");
     metrics::register_counters();
 
-    let handler = Core::new(config);
-    handler.serve().await;
+    let store_id = args.store.parse().unwrap();
+    let handler = Core::new(config, store_id).await?;
+    let core_task = tokio::spawn(async move {
+        handler.serve().await;
+    });
+
+    iroh_util::block_until_sigint().await;
+    core_task.abort();
 
     iroh_metrics::shutdown_tracing();
+    Ok(())
 }
