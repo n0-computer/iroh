@@ -1,10 +1,11 @@
 use std::collections::HashMap;
 
-use futures::channel::{mpsc, oneshot};
+use futures::channel::oneshot;
 use libp2p::core::connection::ListenerId;
 use libp2p::request_response::RequestId;
 use libp2p::Multiaddr;
 use libp2p::PeerId;
+use tokio::sync::mpsc;
 
 use crate::behaviour::rpc::RpcResponseChannel;
 use crate::error::RpcError;

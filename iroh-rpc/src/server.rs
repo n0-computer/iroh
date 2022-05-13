@@ -2,16 +2,16 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use bytecheck::CheckBytes;
-use futures::channel::{mpsc, oneshot};
+use futures::channel::oneshot;
 use futures::prelude::*;
-use futures::select;
 pub use libp2p::identity::Keypair;
 use libp2p::multiaddr::Protocol;
-use libp2p::request_response::RequestResponseMessage;
+use libp2p::request_response::{RequestResponseMessage, ResponseChannel};
 use libp2p::swarm::{ConnectionHandlerUpgrErr, SwarmEvent};
 use libp2p::{Multiaddr, PeerId, Swarm};
 use rkyv::{Archive, Deserialize, Serialize};
-use tracing::{debug, error, info, trace};
+use tokio::{select, sync::mpsc};
+use tracing::{debug, error, info, trace, warn};
 
 use crate::behaviour::rpc::{RpcEvent, RpcRequest, RpcRequestEvent, RpcResponse, RpcResponseEvent};
 use crate::behaviour::{Behaviour, Event};
@@ -72,7 +72,7 @@ impl<T> Server<T> {
                     let event = event.expect("Swarm stream to be infinite.");
                     self.handle_event(event).await
                 }
-                command = self.command_rec.next() => match command {
+                command = self.command_rec.recv() => match command {
                     Some(c) => self.handle_command(c).await,
                     // channel has been closed
                     None => {
@@ -84,6 +84,16 @@ impl<T> Server<T> {
         }
     }
 
+    fn send_response(&mut self, channel: ResponseChannel<RpcResponse>, msg: RpcResponseEvent) {
+        if let Err(e) = self
+            .swarm
+            .behaviour_mut()
+            .rpc
+            .send_response(channel, RpcResponse(msg))
+        {
+            warn!("Connection to peer is already closed {:?}", e);
+        }
+    }
     pub async fn handle_event(
         &mut self,
         event: SwarmEvent<Event, ConnectionHandlerUpgrErr<std::io::Error>>,
@@ -148,29 +158,16 @@ impl<T> Server<T> {
                                     channel: self.command_sender.clone(),
                                 }),
                             };
-                            match self.handle_request(namespace, method, cfg, params).await {
-                                Ok(res) => {
-                                    let event = match stream_id {
+                            let msg =
+                                match self.handle_request(namespace, method, cfg, params).await {
+                                    Ok(res) => match stream_id {
                                         None => RpcResponseEvent::Payload(res),
                                         Some(_) => RpcResponseEvent::Header(res),
-                                    };
-                                    self.swarm
-                                        .behaviour_mut()
-                                        .rpc
-                                        .send_response(channel, RpcResponse(event))
-                                        .expect("Connection to peer to still be open.");
-                                }
-                                Err(e) => {
-                                    self.swarm
-                                        .behaviour_mut()
-                                        .rpc
-                                        .send_response(
-                                            channel,
-                                            RpcResponse(RpcResponseEvent::RpcError(e)),
-                                        )
-                                        .expect("Connection to peer to still be open.");
-                                }
-                            };
+                                    },
+                                    Err(e) => RpcResponseEvent::RpcError(e),
+                                };
+
+                            self.send_response(channel, msg);
                         }
                         RpcRequestEvent::Packet(packet) => {
                             let stream_id = packet.id;
@@ -178,47 +175,27 @@ impl<T> Server<T> {
                             debug!("Received Packet {} for stream {}", index, stream_id);
                             if let Err(e) = self.active_streams.update_stream(packet) {
                                 error!("Packet {} could not be delievered because stream {} no longer in active stream list", index, stream_id);
-                                self.swarm
-                                    .behaviour_mut()
-                                    .rpc
-                                    .send_response(
-                                        channel,
-                                        RpcResponse(RpcResponseEvent::RpcError(e)),
-                                    )
-                                    .expect("Connection to peer to still be open.");
+                                self.send_response(channel, RpcResponseEvent::RpcError(e));
+
                                 return;
                             };
 
                             // only ack for now, send back error if we cannot send to stream
                             debug!("Acknowledging Packet {} from stream {}", index, stream_id);
-                            self.swarm
-                                .behaviour_mut()
-                                .rpc
-                                .send_response(channel, RpcResponse(RpcResponseEvent::Ack))
-                                .expect("Connection to peer to still be open.");
+                            self.send_response(channel, RpcResponseEvent::Ack);
                         }
                         RpcRequestEvent::StreamError { stream_id, error } => {
                             debug!("Received StreamError for stream {}", stream_id);
                             if let Err(e) = self.active_streams.send_error(stream_id, error) {
                                 error!("StreamError could not be delivered because stream {} no longer in active stream list", stream_id);
-                                self.swarm
-                                    .behaviour_mut()
-                                    .rpc
-                                    .send_response(
-                                        channel,
-                                        RpcResponse(RpcResponseEvent::RpcError(e)),
-                                    )
-                                    .expect("Connection to peer to still be open.");
+                                self.send_response(channel, RpcResponseEvent::RpcError(e));
                                 return;
                             }
+
                             // TODO: this is odd, but we need to send back a response
                             // only ack for now, send back error if we cannot send to stream
                             debug!("Acknowledging StreamError from stream {}", stream_id);
-                            self.swarm
-                                .behaviour_mut()
-                                .rpc
-                                .send_response(channel, RpcResponse(RpcResponseEvent::Ack))
-                                .expect("Connection to peer to still be open.");
+                            self.send_response(channel, RpcResponseEvent::Ack);
                         }
                         RpcRequestEvent::AddressBook(address_book) => {
                             let sender = self.command_sender.clone();
@@ -230,10 +207,10 @@ impl<T> Server<T> {
                                 let address: Multiaddr = addrs.addrs[0].parse().unwrap();
                                 let peer_id: PeerId = addrs.peer_id.parse().unwrap();
                                 if !self.addresses.exists(namespace.clone()) {
-                                    let mut sender = sender.clone();
+                                    let sender = sender.clone();
                                     tokio::spawn(async move {
                                         let (s, r) = oneshot::channel();
-                                        sender
+                                        if let Err(e) = sender
                                             .send(Command::Dial {
                                                 namespace,
                                                 address,
@@ -241,20 +218,24 @@ impl<T> Server<T> {
                                                 sender: s,
                                             })
                                             .await
-                                            .expect("Receiver to still be active.");
-                                        match r.await.expect("Sender dropped.") {
-                                        SenderType::Ack => (),
-                                        SenderType::Error(e) => error!("Error connecting to namespaces in address book: {}", e),
-                                        s => error!("Error, unexpected response type when trying to connect to namespaces is address book: {}", s) 
-                                    };
+                                        {
+                                            warn!("receiver dropped {:?}", e);
+                                        }
+
+                                        match r.await {
+                                            Ok(SenderType::Ack) => (),
+                                            Ok(SenderType::Error(e)) => error!("Error connecting to namespaces in address book: {}", e),
+                                            Ok(s) => {
+                                                error!("Error, unexpected response type when trying to connect to namespaces is address book: {}", s) ;
+                                            },
+                                            Err(e) => {
+                                                warn!("sender dropped {:?}", e);
+                                            },
+                                        };
                                     });
                                 }
                             }
-                            let _ = self
-                                .swarm
-                                .behaviour_mut()
-                                .rpc
-                                .send_response(channel, RpcResponse(RpcResponseEvent::Ack));
+                            self.send_response(channel, RpcResponseEvent::Ack);
                         }
                     },
                     RequestResponseMessage::Response {
@@ -309,13 +290,18 @@ impl<T> Server<T> {
                 RpcEvent::OutboundFailure {
                     request_id, error, ..
                 } => {
-                    let _ = self
+                    if let Some(sender) = self
                         .pending_requests
                         .remove(&PendingId::Request(request_id))
-                        .expect("Request to still be pending.")
-                        .send(SenderType::Error(RpcError::OutboundFailure(
+                    {
+                        if let Err(e) = sender.send(SenderType::Error(RpcError::OutboundFailure(
                             error.to_string(),
-                        )));
+                        ))) {
+                            warn!("failed to send error {}: {:?}", error, e);
+                        }
+                    } else {
+                        warn!("missing sender for request {}", request_id);
+                    }
                 }
                 RpcEvent::InboundFailure {
                     peer,
@@ -429,19 +415,11 @@ impl<T> Server<T> {
                 debug!("Sent SendRequest {} to peer {}", request_id, peer_id);
             }
             Command::SendResponse { payload, channel } => {
-                self.swarm
-                    .behaviour_mut()
-                    .rpc
-                    .send_response(channel, RpcResponse(RpcResponseEvent::Payload(payload)))
-                    .expect("Connection to peer to still be open.");
+                self.send_response(channel, RpcResponseEvent::Payload(payload));
                 debug!("Sent Payload response");
             }
             Command::ErrorResponse { error, channel } => {
-                self.swarm
-                    .behaviour_mut()
-                    .rpc
-                    .send_response(channel, RpcResponse(RpcResponseEvent::RpcError(error)))
-                    .expect("Connection to peer to still be open.");
+                self.send_response(channel, RpcResponseEvent::RpcError(error));
                 debug!("Sent Error response");
             }
 
@@ -475,14 +453,7 @@ impl<T> Server<T> {
             }
             Command::HeaderResponse { header, channel } => {
                 let header = rkyv::to_bytes::<_, 1024>(&header).expect("header to serialize");
-                self.swarm
-                    .behaviour_mut()
-                    .rpc
-                    .send_response(
-                        channel,
-                        RpcResponse(RpcResponseEvent::Header(header.to_vec())),
-                    )
-                    .expect("Connection to peer to still be open.");
+                self.send_response(channel, RpcResponseEvent::Header(header.to_vec()));
                 debug!("Sent HeaderResponse {:?}", header);
             }
             Command::SendPacket {
@@ -536,7 +507,7 @@ impl AddressBook {
         self.0.insert(namespace, (addrs, peer_id));
     }
 
-    pub fn remove(&mut self, namespace: &String) {
+    pub fn remove(&mut self, namespace: &str) {
         self.0.remove(namespace);
     }
 
@@ -551,7 +522,7 @@ impl AddressBook {
         self.0.remove(&namespace);
     }
 
-    pub fn get(&self, namespace: &String) -> Option<&(Vec<Multiaddr>, PeerId)> {
+    pub fn get(&self, namespace: &str) -> Option<&(Vec<Multiaddr>, PeerId)> {
         self.0.get(namespace)
     }
 
