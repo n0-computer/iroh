@@ -220,9 +220,11 @@ impl<T> Server<T> {
                                 .expect("Connection to peer to still be open.");
                         }
                         RpcRequestEvent::AddressBook(address_book) => {
-                            // TODO: this is dumb. figure out how to Archive external crate types
                             let sender = self.command_sender.clone();
                             for addrs in address_book.0 {
+                                if addrs.namespace == self.my_namespace {
+                                    continue;
+                                };
                                 let namespace = addrs.namespace;
                                 let address: Multiaddr = addrs.addrs[0].parse().unwrap();
                                 let peer_id: PeerId = addrs.peer_id.parse().unwrap();

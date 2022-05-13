@@ -42,7 +42,7 @@ impl Default for Libp2pConfig {
             mdns: false,
             kademlia: true,
             target_peer_count: 75,
-            rpc_multiaddr: "/memory/1".parse().unwrap(),
+            rpc_multiaddr: "/memory/1".parse().unwrap(), // TODO: figure out better way to tell rpc client to listen on particular addr
         }
     }
 }

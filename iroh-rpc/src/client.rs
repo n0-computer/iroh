@@ -74,6 +74,7 @@ impl Client {
     /// send this rpc client's address book to all of it's connected peers
     /// will cause it's peer's to add any unknown namespaces to their own
     /// address book
+    // TODO: very untested
     pub async fn send_address_book<I: Into<String>>(
         &mut self,
         namespace: I,
