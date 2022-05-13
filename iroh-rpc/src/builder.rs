@@ -9,20 +9,19 @@ use crate::behaviour::Behaviour;
 use crate::client::Client;
 use crate::error::RpcError;
 use crate::handler::{Namespace, State};
-use crate::server::Server;
+use crate::server::{AddressBook, Server};
 
 pub struct RpcBuilder<T> {
-    pub(crate) client: ClientConfig,
+    pub(crate) _client: ClientConfig,
     pub(crate) server: ServerConfig<T>,
 }
 
-pub struct ClientConfig {
-    // TODO: should be refactored to accept a list of multiaddrs
-    pub(crate) addrs: HashMap<String, (Multiaddr, PeerId)>,
-}
+pub struct ClientConfig {}
 
 pub struct ServerConfig<T> {
     pub(crate) swarm: Option<Swarm<Behaviour>>,
+    pub(crate) my_namespace: String,
+    pub(crate) addresses: AddressBook,
     pub(crate) state: Option<State<T>>,
     pub(crate) namespaces: HashMap<String, Namespace<T>>,
     // default 64
@@ -32,13 +31,13 @@ pub struct ServerConfig<T> {
 }
 
 impl<T> RpcBuilder<T> {
-    pub fn new() -> Self {
+    pub fn new<I: Into<String>>(namespace: I) -> Self {
         RpcBuilder {
-            client: ClientConfig {
-                addrs: Default::default(),
-            },
+            _client: ClientConfig {},
             server: ServerConfig {
                 swarm: None,
+                my_namespace: namespace.into(),
+                addresses: Default::default(),
                 state: None,
                 namespaces: Default::default(),
                 capacity: 64,
@@ -47,8 +46,8 @@ impl<T> RpcBuilder<T> {
         }
     }
 
-    pub fn with_swarm<I: Into<Swarm<Behaviour>>>(mut self, swarm: I) -> Self {
-        self.server.swarm = Some(swarm.into());
+    pub fn with_swarm(mut self, swarm: Swarm<Behaviour>) -> Self {
+        self.server.swarm = Some(swarm);
         self
     }
 
@@ -69,12 +68,11 @@ impl<T> RpcBuilder<T> {
         self
     }
 
-    // TODO: should be a list of possible addrs `with_addrs`
-    pub fn with_addr<S>(mut self, name: S, addr: Multiaddr, peer_id: PeerId) -> Self
+    pub fn with_addr<S>(mut self, name: S, addr: Vec<Multiaddr>, peer_id: PeerId) -> Self
     where
         S: Into<String>,
     {
-        self.client.addrs.insert(name.into(), (addr, peer_id));
+        self.server.addresses.insert(name.into(), addr, peer_id);
         self
     }
 
@@ -93,16 +91,6 @@ impl<T> RpcBuilder<T> {
     pub fn build(self) -> Result<(Client, Server<T>), RpcError> {
         let (sender, receiver) = mpsc::channel(self.server.capacity);
         let server = Server::server_from_config(sender.clone(), receiver, self.server)?;
-        let mut client = Client::new(sender);
-        for (namespace, addrs) in self.client.addrs.iter() {
-            client.with_addrs(namespace.to_owned(), addrs.0.clone(), addrs.1);
-        }
-        Ok((client, server))
-    }
-}
-
-impl<T> Default for RpcBuilder<T> {
-    fn default() -> Self {
-        Self::new()
+        Ok((Client::new(sender), server))
     }
 }

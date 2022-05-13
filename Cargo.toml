@@ -5,7 +5,7 @@ members = [
   "iroh-car",
   "iroh-rpc",
   "iroh-rpc-client",
-  "iroh-rpc-commands",
+  "iroh-rpc-types",
   "iroh-rpc-gateway",
   "iroh-rpc-network",
   "iroh-gateway",

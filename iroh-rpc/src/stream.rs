@@ -14,6 +14,8 @@ use tracing::{debug, error};
 use crate::commands::Command;
 use crate::error::RpcError;
 
+pub const DEFAULT_CHUNK_SIZE: u64 = 8096;
+
 pub fn make_order(
     packet_receiver: StreamReceiver,
 ) -> impl Stream<Item = Result<Vec<u8>, RpcError>> {
@@ -81,7 +83,6 @@ impl OutStream {
             if index == self.header.num_chunks - 1 {
                 chunk_size = self.header.size as usize % chunk_size;
                 buf.resize(chunk_size, 0u8);
-                println!("sending new chunk_size {}", chunk_size);
             }
             debug!("Reading file chunk {}", index);
             self.reader.read_exact(&mut buf)

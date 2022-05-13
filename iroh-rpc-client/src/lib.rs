@@ -1,51 +1,60 @@
-use cid::Cid;
-use libp2p::identity::Keypair;
+mod network;
+
+use std::sync::{Arc, Mutex};
+
 use libp2p::{Multiaddr, PeerId};
 
-use iroh_rpc::{
-    new_mem_swarm, new_swarm, Behaviour, Client, RpcBuilder, RpcError, Server, State,
-    DEFAULT_RPC_CAPACITY,
-};
+use iroh_rpc::{Client as RpcClient, RpcError};
 
-pub fn rpc(keypair: Keypair) -> Result<(RpcClient, Server<()>), RpcError> {
-    let (client, server) = RpcBuilder::new()
-        .with_swarm(new_mem_swarm(keypair))
-        .with_state(State::new(()))
-        .with_capacity(DEFAULT_RPC_CAPACITY)
-        .build()?;
-    Ok((RpcClient(client), server))
+use crate::network::P2pClient;
+
+pub struct Client {
+    // TODO: this is wrong
+    client: Arc<Mutex<RpcClient>>,
+    pub network: P2pClient,
 }
 
-pub struct RpcClient(Client);
+impl Client {
+    pub fn new(client: Arc<Mutex<RpcClient>>) -> Self {
+        Client {
+            client: Arc::clone(&client),
+            network: P2pClient::new(client),
+        }
+    }
 
-impl RpcClient {
-    pub async fn dial_all(&mut self) -> Result<(), RpcError> {
-        self.0.dial_all().await
+    pub async fn dial<I: Into<String>>(
+        &mut self,
+        namespace: I,
+        addr: Multiaddr,
+        peer_id: PeerId,
+    ) -> Result<(), RpcError> {
+        self.client
+            .lock()
+            .unwrap()
+            .dial(namespace, addr, peer_id)
+            .await
     }
 
     pub async fn listen(&mut self, addr: Multiaddr) -> Result<Multiaddr, RpcError> {
-        self.0.listen(addr).await
+        self.client.lock().unwrap().listen(addr).await
     }
 
     pub async fn shutdown(self) {
-        self.0.shutdown().await
+        self.client.lock().unwrap().shutdown().await
     }
 
-    pub async fn with_connection_to<I: Into<String>>(
-        mut self,
+    pub async fn send_address_book<I: Into<String>>(
+        &mut self,
         namespace: I,
-        address: Multiaddr,
-        peer_id: PeerId,
-    ) -> RpcClient {
-        self.0 = self.0.with_connection_to(namespace, address, peer_id);
-        self
-    }
-
-    // TODO: what should this return?
-    pub async fn fetch(cid: Cid) {
-        self.0.streaming_call()
+    ) -> Result<(), RpcError> {
+        self.client
+            .lock()
+            .unwrap()
+            .send_address_book(namespace)
+            .await
     }
 }
+
 #[cfg(test)]
 mod tests {
     #[test]
