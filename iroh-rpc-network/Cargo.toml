@@ -7,8 +7,8 @@ edition = "2021"
 
 [dependencies]
 iroh-rpc = { path = "../iroh-rpc" }
-iroh-p2p = { path = "../iroh-p2p" }
 iroh-rpc-types = { path = "../iroh-rpc-types" }
+iroh-rpc-client = { path = "../iroh-rpc-client" }
 libp2p = "0.44.0" 
 async-channel = "1.6.1"
 futures = "0.3.21"

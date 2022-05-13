@@ -15,6 +15,8 @@ pub struct Libp2pConfig {
     pub kademlia: bool,
     /// Target peer count.
     pub target_peer_count: u32,
+    /// Rpc listening addr
+    pub rpc_multiaddr: Multiaddr,
 }
 
 // Based on https://github.com/ipfs/go-ipfs-config/blob/master/bootstrap_peers.go#L17.
@@ -40,6 +42,7 @@ impl Default for Libp2pConfig {
             mdns: false,
             kademlia: true,
             target_peer_count: 75,
+            rpc_multiaddr: "/memory/1".parse().unwrap(),
         }
     }
 }

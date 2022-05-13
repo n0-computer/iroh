@@ -15,7 +15,8 @@ pub struct Client {
 }
 
 impl Client {
-    pub fn new(client: Arc<Mutex<RpcClient>>) -> Self {
+    pub fn new(client: RpcClient) -> Self {
+        let client = Arc::new(Mutex::new(client));
         Client {
             client: Arc::clone(&client),
             network: P2pClient::new(client),
@@ -37,10 +38,6 @@ impl Client {
 
     pub async fn listen(&mut self, addr: Multiaddr) -> Result<Multiaddr, RpcError> {
         self.client.lock().unwrap().listen(addr).await
-    }
-
-    pub async fn shutdown(self) {
-        self.client.lock().unwrap().shutdown().await
     }
 
     pub async fn send_address_book<I: Into<String>>(

@@ -1,5 +1,3 @@
-use std::error::Error;
-
 use libp2p::core::{
     muxing, transport,
     transport::{MemoryTransport, Transport},
@@ -12,6 +10,7 @@ use libp2p::Swarm;
 use libp2p::{mplex, yamux};
 
 use crate::behaviour::Behaviour;
+use crate::RpcError;
 
 /// Build a swarm with an in memory transport.
 // TODO: eventually generalize, pass in config etc
@@ -26,17 +25,16 @@ pub fn new_mem_swarm(id_keys: Keypair) -> Swarm<Behaviour> {
 
 /// Build a swarm with a TCP transport
 // TODO: eventually generalize, pass in config etc
-pub async fn new_swarm(id_keys: Keypair) -> Result<Swarm<Behaviour>, Box<dyn Error>> {
+pub async fn new_tcp_swarm(id_keys: Keypair) -> Result<Swarm<Behaviour>, RpcError> {
     let peer_id = id_keys.public().to_peer_id();
-    Ok(SwarmBuilder::new(
-        libp2p::development_transport(id_keys).await?,
-        Behaviour::new(),
-        peer_id,
-    )
-    .executor(Box::new(|fut| {
-        tokio::spawn(fut);
-    }))
-    .build())
+    let transport = libp2p::development_transport(id_keys)
+        .await
+        .map_err(|e| RpcError::TransportError(e.to_string()))?;
+    Ok(SwarmBuilder::new(transport, Behaviour::new(), peer_id)
+        .executor(Box::new(|fut| {
+            tokio::spawn(fut);
+        }))
+        .build())
 }
 
 /// Build a mem transport
