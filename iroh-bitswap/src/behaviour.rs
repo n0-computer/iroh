@@ -31,6 +31,7 @@ pub enum BitswapEvent {
 }
 
 /// Network behaviour that handles sending and receiving IPFS blocks.
+#[derive(Default)]
 pub struct Bitswap {
     /// Queue of events to report to the user.
     events: VecDeque<
@@ -45,17 +46,6 @@ pub struct Bitswap {
     connected_peers: HashMap<PeerId, Ledger>,
     /// Wanted blocks
     wanted_blocks: AHashMap<Cid, Priority>,
-}
-
-impl Default for Bitswap {
-    fn default() -> Self {
-        Self {
-            events: Default::default(),
-            target_peers: Default::default(),
-            connected_peers: Default::default(),
-            wanted_blocks: Default::default(),
-        }
-    }
 }
 
 impl Bitswap {
@@ -167,7 +157,7 @@ impl Bitswap {
         } else {
             self.wanted_blocks
                 .iter()
-                .map(|(cid, priority)| (cid.clone(), *priority))
+                .map(|(cid, priority)| (*cid, *priority))
                 .collect()
         }
     }
@@ -258,7 +248,7 @@ impl NetworkBehaviour for Bitswap {
             }
             // Cancel the block.
             self.cancel_block(&cid);
-            let event = BitswapEvent::ReceivedBlock(peer_id.clone(), cid, data);
+            let event = BitswapEvent::ReceivedBlock(peer_id, cid, data);
             self.events
                 .push_back(NetworkBehaviourAction::GenerateEvent(event));
         }

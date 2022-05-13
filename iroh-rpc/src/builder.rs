@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 
-use futures::channel::mpsc;
 use libp2p::swarm::Swarm;
 use libp2p::Multiaddr;
 use libp2p::PeerId;
+use tokio::sync::mpsc;
 
 use crate::behaviour::Behaviour;
 use crate::client::Client;

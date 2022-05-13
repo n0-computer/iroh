@@ -14,7 +14,6 @@ use serde::Deserialize;
 use std::{borrow::Cow, collections::HashMap, sync::Arc, time::Duration};
 use tokio::task::JoinHandle;
 use tower::ServiceBuilder;
-use tracing::info;
 
 use crate::{
     client::{Client, Request},

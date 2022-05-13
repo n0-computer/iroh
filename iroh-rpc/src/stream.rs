@@ -3,12 +3,12 @@ use std::io::BufRead;
 
 use async_stream::stream;
 use bytecheck::CheckBytes;
-use futures::channel::{mpsc, oneshot};
-use futures::prelude::*;
+use futures::channel::oneshot;
 use futures::Stream;
 use libp2p::PeerId;
 use rkyv;
 use rkyv::{Archive, Deserialize, Serialize};
+use tokio::sync::mpsc;
 use tracing::{debug, error};
 
 use crate::commands::Command;
@@ -17,14 +17,14 @@ use crate::error::RpcError;
 pub const DEFAULT_CHUNK_SIZE: u64 = 8096;
 
 pub fn make_order(
-    packet_receiver: StreamReceiver,
+    mut packet_receiver: StreamReceiver,
 ) -> impl Stream<Item = Result<Vec<u8>, RpcError>> {
     let max = 1024;
     let mut chunks = HashMap::with_capacity(max);
     let mut next_chunk = 0;
 
     stream! {
-        for await packet in packet_receiver {
+        while let Some(packet) = packet_receiver.recv().await {
             match packet {
                 StreamType::Packet(p) => {
                     if next_chunk == p.index {

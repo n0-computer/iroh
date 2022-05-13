@@ -1,7 +1,11 @@
-use futures::channel::{mpsc, oneshot};
+use std::sync::atomic::AtomicU64;
+
+use futures::channel::oneshot;
 use futures::prelude::*;
 use libp2p::Multiaddr;
 use libp2p::PeerId;
+use tokio::sync::mpsc;
+use tracing::warn;
 
 use crate::commands::{Command, SenderType};
 use crate::error::RpcError;
@@ -14,7 +18,7 @@ use crate::stream;
 #[derive(Debug)]
 pub struct Client {
     command_sender: mpsc::Sender<Command>,
-    next_id: Iter,
+    next_id: AtomicU64,
 }
 
 impl Client {
@@ -22,55 +26,72 @@ impl Client {
     pub fn new(command_sender: mpsc::Sender<Command>) -> Client {
         Client {
             command_sender,
-            next_id: Iter::new(),
+            next_id: 0.into(),
         }
     }
 
     /// Listen on a particular multiaddress
-    pub async fn listen(&mut self, addr: &Multiaddr) -> Result<Multiaddr, RpcError> {
-        let (sender, receiver) = oneshot::channel();
-        self.command_sender
-            .send(Command::StartListening {
+    pub async fn listen(&self, addr: &Multiaddr) -> Result<Multiaddr, RpcError> {
+        let res = self
+            .cmd_with_oneshot(|sender| Command::StartListening {
                 sender,
                 addr: addr.clone(),
             })
-            .await
-            .expect("Receiver to not be dropped.");
-        match receiver.await.expect("Sender to not be dropped") {
+            .await?;
+
+        match res {
             SenderType::Multiaddr(m) => Ok(m),
-            SenderType::Error(e) => Err(e),
             s => Err(RpcError::UnexpectedResponseType(s.to_string())),
         }
     }
 
     /// Signal the Rpc event loop to stop listening
-    pub async fn shutdown(&mut self) {
-        self.command_sender
-            .send(Command::ShutDown)
-            .await
-            .expect("Receiver to still be active.");
+    pub async fn shutdown(&self) {
+        self.send_cmd(Command::ShutDown).await;
+    }
+
+    async fn cmd_with_oneshot<F>(&self, create_cmd: F) -> Result<SenderType, RpcError>
+    where
+        F: FnOnce(oneshot::Sender<SenderType>) -> Command,
+    {
+        let (s, r) = oneshot::channel();
+        let cmd = create_cmd(s);
+        self.send_cmd(cmd).await;
+
+        match r.await {
+            Ok(SenderType::Error(e)) => Err(e),
+            Ok(t) => Ok(t),
+            Err(e) => {
+                warn!("receiver dropped too early: {:?}", e);
+                Err(RpcError::BadResponse)
+            }
+        }
+    }
+
+    async fn send_cmd(&self, cmd: Command) {
+        if let Err(e) = self.command_sender.send(cmd).await {
+            warn!("failed to send command already dropped: {:?}", e);
+        }
     }
 
     /// dial dials a namespace & adds that namespace into the address book
     pub async fn dial<I: Into<String>>(
-        &mut self,
+        &self,
         namespace: I,
         address: Multiaddr,
         peer_id: PeerId,
     ) -> Result<(), RpcError> {
-        let (s, r) = oneshot::channel();
-        self.command_sender
-            .send(Command::Dial {
+        let res = self
+            .cmd_with_oneshot(|sender| Command::Dial {
                 namespace: namespace.into(),
                 address,
                 peer_id,
-                sender: s,
+                sender,
             })
-            .await
-            .expect("Receiver to still be active");
-        match r.await.expect("Sender dropped.") {
+            .await?;
+
+        match res {
             SenderType::Ack => Ok(()),
-            SenderType::Error(e) => Err(e),
             s => Err(RpcError::UnexpectedResponseType(s.to_string())),
         }
     }
@@ -79,33 +100,22 @@ impl Client {
     /// will cause it's peer's to add any unknown namespaces to their own
     /// address book
     // TODO: very untested
-    pub async fn send_address_book<I: Into<String>>(
-        &mut self,
-        namespace: I,
-    ) -> Result<(), RpcError> {
-        let (s, r) = oneshot::channel();
-        self.command_sender
-            .send(Command::SendAddressBook {
+    pub async fn send_address_book<I: Into<String>>(&self, namespace: I) -> Result<(), RpcError> {
+        let res = self
+            .cmd_with_oneshot(|sender| Command::SendAddressBook {
                 namespace: namespace.into(),
-                sender: s,
+                sender,
             })
-            .await
-            .expect("Receiver to still be active.");
+            .await?;
 
-        match r.await.expect("Sender dropped.") {
+        match res {
             SenderType::Ack => Ok(()),
-            SenderType::Error(e) => Err(e),
             s => Err(RpcError::UnexpectedResponseType(s.to_string())),
         }
     }
 
     /// Send a single request and expects a single response
-    pub async fn call<U, V, S, I>(
-        &mut self,
-        namespace: S,
-        method: I,
-        params: U,
-    ) -> Result<V, RpcError>
+    pub async fn call<U, V, S, I>(&self, namespace: S, method: I, params: U) -> Result<V, RpcError>
     where
         U: Serialize + Send + Sync,
         V: DeserializeOwned + Send + Sync,
@@ -114,19 +124,18 @@ impl Client {
     {
         let v = serialize_request(params)?;
         let n: String = namespace.into();
-        let (sender, receiver) = oneshot::channel();
-        self.command_sender
-            .send(Command::SendRequest {
+
+        let res = self
+            .cmd_with_oneshot(|sender| Command::SendRequest {
                 namespace: n,
                 method: method.into(),
                 params: v,
                 sender,
             })
-            .await
-            .expect("Receiver not to be dropped.");
-        let res = match receiver.await.expect("Sender not to be dropped.") {
+            .await?;
+
+        let res = match res {
             SenderType::Res(res) => res,
-            SenderType::Error(e) => return Err(e),
             s => return Err(RpcError::UnexpectedResponseType(s.to_string())),
         };
         deserialize_response::<V>(&res)
@@ -134,7 +143,7 @@ impl Client {
 
     /// Send a request & expects a stream of bytes as a response
     pub async fn streaming_call<U, N, M>(
-        &mut self,
+        &self,
         namespace: N,
         method: M,
         params: U,
@@ -151,23 +160,22 @@ impl Client {
             Err(_) => return Err(RpcError::BadRequest),
         };
 
-        let (sender, receiver) = oneshot::channel();
-        let id = self.next_id.next().unwrap();
+        let id = self
+            .next_id
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
 
-        self.command_sender
-            .send(Command::StreamRequest {
+        let res = self
+            .cmd_with_oneshot(|sender| Command::StreamRequest {
                 namespace,
                 method,
                 id,
                 params: v,
                 sender,
             })
-            .await
-            .expect("Command receiver not to be dropped");
+            .await?;
 
-        let (_, packet_receiver) = match receiver.await.expect("Sender not to be dropped.") {
+        let (_, packet_receiver) = match res {
             SenderType::Stream { header, stream } => (header, stream),
-            SenderType::Error(e) => return Err(e),
             s => return Err(RpcError::UnexpectedResponseType(s.to_string())),
         };
         //
@@ -176,25 +184,6 @@ impl Client {
         //
         let s = stream::make_order(packet_receiver);
         Ok(s)
-    }
-}
-
-#[derive(Debug)]
-struct Iter {
-    num: u64,
-}
-
-impl Iter {
-    fn new() -> Self {
-        Iter { num: 0 }
-    }
-}
-
-impl Iterator for Iter {
-    type Item = u64;
-    fn next(&mut self) -> Option<Self::Item> {
-        self.num += 1;
-        Some(self.num)
     }
 }
 
@@ -365,14 +354,14 @@ mod test {
         let a_state = handler::State::new(());
         let b_state = handler::State::new("Wooo!".to_string());
 
-        let (mut a_client, a_server) = RpcBuilder::new("a")
+        let (a_client, a_server) = RpcBuilder::new("a")
             .with_swarm(a.swarm)
             .with_state(a_state)
             .with_namespace("a", |n| n.with_method("ping", ping))
             .with_capacity(2)
             .build()
             .expect("failed to build rpc");
-        let (mut b_client, b_server) = RpcBuilder::new("b")
+        let (b_client, b_server) = RpcBuilder::new("b")
             .with_swarm(b.swarm)
             .with_state(b_state)
             .with_namespace("b", |n| n.with_method("stream", stream_bytes))
