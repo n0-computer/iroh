@@ -114,6 +114,10 @@ jobs:
     - name: Install Protoc
       uses: arduino/setup-protoc@v1
 
+    - name: configure windows 
+      if: matirx.os == 'windows-latest'
+      uses: ilammy/msvc-dev-cmd@v1.4.1
+
     - name: check
       uses: actions-rs/cargo@v1
       with:
