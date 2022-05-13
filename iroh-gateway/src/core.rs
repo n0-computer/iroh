@@ -248,7 +248,7 @@ async fn serve_raw(
     // FIXME: we currently only retrieve full cids
     let body = state
         .client
-        .get_file_by_cid(req.cid, &state.rpc_client, start_time)
+        .get_file(&req.full_content_path, &state.rpc_client, start_time)
         .await
         .unwrap();
     // .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
@@ -273,7 +273,7 @@ async fn serve_car(
     // FIXME: we currently only retrieve full cids
     let body = state
         .client
-        .get_file_by_cid(req.cid, &state.rpc_client, start_time)
+        .get_file(&req.full_content_path, &state.rpc_client, start_time)
         .await
         .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
 
@@ -282,11 +282,12 @@ async fn serve_car(
         format!("{}.car", req.cid).as_str(),
         DISPOSITION_ATTACHMENT,
     );
+
     // todo(arqu): this should be root cid
     let etag = format!("W/{}", get_etag(&req.cid, Some(req.format.clone())));
     set_etag_headers(&mut headers, etag);
     // todo(arqu): check if etag matches for root cid
-    response(StatusCode::OK, body::boxed(body), headers.clone())
+    response(StatusCode::OK, body::boxed(body), headers)
 }
 
 #[tracing::instrument()]
@@ -299,7 +300,7 @@ async fn serve_fs(
     // FIXME: we currently only retrieve full cids
     let body = state
         .client
-        .get_file_by_cid(req.cid, &state.rpc_client, start_time)
+        .get_file(&req.full_content_path, &state.rpc_client, start_time)
         .await
         .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
 

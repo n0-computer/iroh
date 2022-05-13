@@ -21,6 +21,47 @@ impl Client {
     }
 
     #[tracing::instrument()]
+    pub async fn get_file(
+        &self,
+        path: &str,
+        rpc_client: &iroh_rpc_client::Client,
+        start_time: std::time::Instant,
+    ) -> Result<Body, String> {
+        info!("get file {}", path);
+        let p: iroh_resolver::resolver::Path =
+            path.parse().map_err(|e: anyhow::Error| e.to_string())?;
+        // TODO: reuse
+        let resolver = iroh_resolver::resolver::Resolver::new(rpc_client.clone());
+        let (mut sender, body) = Body::channel();
+        let path = path.to_string();
+
+        tokio::spawn(async move {
+            match resolver.resolve(p).await {
+                Ok(res) => {
+                    info!("resolved: {}", path);
+                    match res.pretty() {
+                        Ok(res) => {
+                            if let Err(e) = sender.send_data(res.into()).await {
+                                error!("failed to send stream data: {:?}", e);
+                            }
+                        }
+                        Err(e) => {
+                            error!("failed to print {:?}", e);
+                            sender.abort();
+                        }
+                    }
+                }
+                Err(e) => {
+                    error!("failed to resolve {}: {:?}", path, e);
+                    sender.abort();
+                }
+            }
+        });
+
+        Ok(body)
+    }
+
+    #[tracing::instrument()]
     pub async fn get_file_by_cid(
         &self,
         c: Cid,

@@ -1,6 +1,6 @@
+use anyhow::{anyhow, bail, Result};
 use bytes::{Buf, Bytes};
 use cid::Cid;
-use eyre::{eyre, Result};
 use prost::Message;
 
 mod unixfs_pb {
@@ -52,6 +52,7 @@ pub struct Link {
     pub tsize: Option<u64>,
 }
 
+#[derive(Debug)]
 pub struct UnixfsNode {
     outer: dag_pb::PbNode,
     inner: unixfs_pb::Data,
@@ -64,7 +65,7 @@ impl UnixfsNode {
             .data
             .as_ref()
             .cloned()
-            .ok_or_else(|| eyre!("missing data"))?;
+            .ok_or_else(|| anyhow!("missing data"))?;
         let inner = unixfs_pb::Data::decode(inner_data)?;
         // ensure correct unixfs type
         let _typ: DataType = inner.r#type.try_into()?;
@@ -78,5 +79,19 @@ impl UnixfsNode {
 
     pub async fn get_link_by_name<S: AsRef<str>>(&self, link: S) -> Result<Option<Link>> {
         todo!()
+    }
+
+    pub fn pretty(&self) -> Result<Bytes> {
+        match self.typ() {
+            DataType::File => {
+                if self.outer.links.is_empty() {
+                    // simplest case just one file
+                    Ok(self.inner.data.as_ref().cloned().unwrap_or_default())
+                } else {
+                    bail!("not implemented")
+                }
+            }
+            _ => bail!("not implemented"),
+        }
     }
 }

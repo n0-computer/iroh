@@ -6,14 +6,14 @@ use iroh_rpc_client::Client;
 
 pub async fn tcp_rpc(keys: Keypair) -> Result<(Client, Server<()>), RpcError> {
     let swarm = new_tcp_swarm(keys).await?;
-    new_gateway_rpc(swarm)
+    new_rpc(swarm)
 }
 
 pub async fn mem_rpc(keys: Keypair) -> Result<(Client, Server<()>), RpcError> {
-    new_gateway_rpc(new_mem_swarm(keys))
+    new_rpc(new_mem_swarm(keys))
 }
 
-fn new_gateway_rpc(swarm: Swarm<Behaviour>) -> Result<(Client, Server<()>), RpcError> {
+fn new_rpc(swarm: Swarm<Behaviour>) -> Result<(Client, Server<()>), RpcError> {
     let (client, server) = RpcBuilder::new("gateway")
         .with_swarm(swarm)
         .with_state(State::new(()))
