@@ -35,10 +35,7 @@ impl P2pClient {
             .await
     }
 
-    pub async fn fetch_provider(
-        &mut self,
-        key: Key,
-    ) -> Result<Option<Result<HashSet<PeerId>, String>>, RpcError> {
+    pub async fn fetch_provider(&mut self, key: Key) -> Result<HashSet<PeerId>, RpcError> {
         let req = Requests::FetchProvider { key };
         self.0
             .lock()

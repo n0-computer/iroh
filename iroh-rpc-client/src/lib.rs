@@ -1,10 +1,9 @@
-mod network;
-
 use std::sync::{Arc, Mutex};
 
+use iroh_rpc::{Client as RpcClient, RpcError};
 use libp2p::{Multiaddr, PeerId};
 
-use iroh_rpc::{Client as RpcClient, RpcError};
+mod network;
 
 use crate::network::P2pClient;
 
@@ -49,14 +48,5 @@ impl Client {
             .unwrap()
             .send_address_book(namespace)
             .await
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn it_works() {
-        let result = 2 + 2;
-        assert_eq!(result, 4);
     }
 }
