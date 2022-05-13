@@ -12,6 +12,7 @@ use rkyv::{Archive, Deserialize, Serialize};
 use tokio::io;
 
 use crate::error::RpcError;
+use crate::server::ArchivableAddressBook;
 use crate::stream::Packet;
 
 pub type RpcBehaviour = RequestResponse<RpcCodec>;
@@ -43,6 +44,8 @@ pub enum RpcRequestEvent {
         stream_id: u64,
         error: RpcError,
     },
+    // TODO: this is stupid, figure out how to use archive w/ external crate types
+    AddressBook(ArchivableAddressBook),
 }
 
 #[derive(Archive, Serialize, Deserialize, Debug, PartialEq, Clone, Eq)]

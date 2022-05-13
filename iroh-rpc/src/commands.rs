@@ -21,8 +21,13 @@ pub enum Command {
         sender: OneshotSender,
     },
     Dial {
+        namespace: String,
         peer_id: PeerId,
-        peer_addr: Multiaddr,
+        address: Multiaddr,
+        sender: OneshotSender,
+    },
+    SendAddressBook {
+        namespace: String,
         sender: OneshotSender,
     },
     PeerId {
@@ -31,7 +36,6 @@ pub enum Command {
     SendRequest {
         namespace: String,
         method: String,
-        peer_id: PeerId,
         params: Vec<u8>,
         sender: OneshotSender,
     },
@@ -43,12 +47,10 @@ pub enum Command {
         error: RpcError,
         channel: RpcResponseChannel,
     },
-
     StreamRequest {
         id: u64,
         namespace: String,
         method: String,
-        peer_id: PeerId,
         params: Vec<u8>,
         sender: OneshotSender,
     },
@@ -61,7 +63,6 @@ pub enum Command {
         packet: Packet,
         sender: OneshotSender,
     },
-
     CloseStream {
         id: u64,
     },

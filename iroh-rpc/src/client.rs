@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use futures::channel::{mpsc, oneshot};
 use futures::prelude::*;
 use libp2p::Multiaddr;
@@ -15,8 +13,6 @@ use crate::stream;
 /// how to handle incoming requests
 pub struct Client {
     command_sender: mpsc::Sender<Command>,
-    // TODO: should be a list of addrs per namespace (not just one)
-    addresses: HashMap<String, (Multiaddr, PeerId)>,
     next_id: Iter,
 }
 
@@ -25,27 +21,8 @@ impl Client {
     pub fn new(command_sender: mpsc::Sender<Command>) -> Client {
         Client {
             command_sender,
-            addresses: Default::default(),
             next_id: Iter::new(),
         }
-    }
-
-    /// Dial all known addresses associated with the given namespaces
-    /// Returns the first error it finds
-    pub async fn dial_all(&mut self) -> Result<(), RpcError> {
-        let mut dials = Vec::new();
-        for (_, (addr, peer_id)) in self.addresses.clone().into_iter() {
-            let handle = dial(self.command_sender.clone(), addr, peer_id);
-            dials.push(handle);
-        }
-        let outcomes = futures::future::join_all(dials).await;
-        for outcome in outcomes.into_iter() {
-            match outcome {
-                Ok(_) => {}
-                Err(err) => return Err(err),
-            }
-        }
-        Ok(())
     }
 
     /// Listen on a particular multiaddress
@@ -63,33 +40,58 @@ impl Client {
     }
 
     /// Signal the Rpc event loop to stop listening
-    pub async fn shutdown(mut self) {
+    pub async fn shutdown(&mut self) {
         self.command_sender
             .send(Command::ShutDown)
             .await
             .expect("Receiver to still be active.");
     }
 
-    /// Add an address and peer id associated with a particular namespace
-    pub fn with_connection_to<I: Into<String>>(
-        mut self,
-        namespace: I,
-        address: Multiaddr,
-        peer_id: PeerId,
-    ) -> Self {
-        self.with_addrs(namespace.into(), address, peer_id);
-        self
-    }
-
-    // with_addrs is a private helper function that add a namespace/address association
-    // without taking ownership
-    pub(crate) fn with_addrs<I: Into<String>>(
+    /// dial dials a namespace & adds that namespace into the address book
+    pub async fn dial<I: Into<String>>(
         &mut self,
         namespace: I,
         address: Multiaddr,
         peer_id: PeerId,
-    ) {
-        self.addresses.insert(namespace.into(), (address, peer_id));
+    ) -> Result<(), RpcError> {
+        let (s, r) = oneshot::channel();
+        self.command_sender
+            .send(Command::Dial {
+                namespace: namespace.into(),
+                address,
+                peer_id,
+                sender: s,
+            })
+            .await
+            .expect("Receiver to still be active");
+        match r.await.expect("Sender dropped.") {
+            SenderType::Ack => Ok(()),
+            SenderType::Error(e) => Err(e),
+            s => Err(RpcError::UnexpectedResponseType(s.to_string())),
+        }
+    }
+
+    /// send this rpc client's address book to all of it's connected peers
+    /// will cause it's peer's to add any unknown namespaces to their own
+    /// address book
+    pub async fn send_address_book<I: Into<String>>(
+        &mut self,
+        namespace: I,
+    ) -> Result<(), RpcError> {
+        let (s, r) = oneshot::channel();
+        self.command_sender
+            .send(Command::SendAddressBook {
+                namespace: namespace.into(),
+                sender: s,
+            })
+            .await
+            .expect("Receiver to still be active.");
+
+        match r.await.expect("Sender dropped.") {
+            SenderType::Ack => Ok(()),
+            SenderType::Error(e) => Err(e),
+            s => Err(RpcError::UnexpectedResponseType(s.to_string())),
+        }
     }
 
     /// Send a single request and expects a single response
@@ -107,13 +109,11 @@ impl Client {
     {
         let v = serialize_request(params)?;
         let n: String = namespace.into();
-        let peer_id = self.get_peer_id(&n)?;
         let (sender, receiver) = oneshot::channel();
         self.command_sender
             .send(Command::SendRequest {
                 namespace: n,
                 method: method.into(),
-                peer_id,
                 params: v,
                 sender,
             })
@@ -141,7 +141,6 @@ impl Client {
     {
         let namespace = namespace.into();
         let method = method.into();
-        let peer_id = self.get_peer_id(&namespace)?;
         let v = match serialize_request(params) {
             Ok(v) => v,
             Err(_) => return Err(RpcError::BadRequest),
@@ -155,7 +154,6 @@ impl Client {
                 namespace,
                 method,
                 id,
-                peer_id,
                 params: v,
                 sender,
             })
@@ -174,22 +172,6 @@ impl Client {
         let s = stream::make_order(packet_receiver);
         Ok(s)
     }
-
-    /// Get the peer id from the Client's address book, based on the namespace
-    pub fn get_peer_id(&self, namespace: &str) -> Result<PeerId, RpcError> {
-        match self.addresses.get(namespace) {
-            Some((_, id)) => Ok(*id),
-            None => Err(RpcError::NamespaceNotFound(namespace.into())),
-        }
-    }
-
-    /// Get the multiaddr from the Client's address book, based on the namespace
-    pub fn get_multiaddr(&self, namespace: &str) -> Result<Multiaddr, RpcError> {
-        match self.addresses.get(namespace) {
-            Some((addr, _)) => Ok(addr.clone()),
-            None => Err(RpcError::NamespaceNotFound(namespace.into())),
-        }
-    }
 }
 
 struct Iter {
@@ -207,28 +189,6 @@ impl Iterator for Iter {
     fn next(&mut self) -> Option<Self::Item> {
         self.num += 1;
         Some(self.num)
-    }
-}
-
-/// Dial a single address
-async fn dial(
-    mut command_sender: mpsc::Sender<Command>,
-    addr: Multiaddr,
-    peer_id: PeerId,
-) -> Result<(), RpcError> {
-    let (sender, receiver) = oneshot::channel();
-    command_sender
-        .send(Command::Dial {
-            peer_id,
-            peer_addr: addr,
-            sender,
-        })
-        .await
-        .expect("Receiver to not be dropped.");
-    match receiver.await.expect("Sender to not be dropped.") {
-        SenderType::Ack => Ok(()),
-        SenderType::Error(e) => Err(e),
-        s => Err(RpcError::UnexpectedResponseType(s.to_string())),
     }
 }
 
@@ -399,14 +359,14 @@ mod test {
         let a_state = handler::State::new(());
         let b_state = handler::State::new("Wooo!".to_string());
 
-        let (mut a_client, a_server) = RpcBuilder::new()
+        let (mut a_client, a_server) = RpcBuilder::new("a")
             .with_swarm(a.swarm)
             .with_state(a_state)
             .with_namespace("a", |n| n.with_method("ping", ping))
             .with_capacity(2)
             .build()
             .expect("failed to build rpc");
-        let (mut b_client, b_server) = RpcBuilder::new()
+        let (mut b_client, b_server) = RpcBuilder::new("b")
             .with_swarm(b.swarm)
             .with_state(b_state)
             .with_namespace("b", |n| n.with_method("stream", stream_bytes))
@@ -427,18 +387,8 @@ mod test {
         let b_addr = b_client.listen(b.addr).await.expect("unsuccessful dial");
 
         // add addresses
-        a_client.with_addrs("b", b_addr, b.peer_id);
-        b_client.with_addrs("a", a_addr, a.peer_id);
-
-        // dial all addrs
-        a_client
-            .dial_all()
-            .await
-            .expect("dial all namespace addrs failed");
-        b_client
-            .dial_all()
-            .await
-            .expect("dial all namespace addrs failed");
+        a_client.dial("b", b_addr, b.peer_id);
+        b_client.dial("a", a_addr, a.peer_id);
 
         let size = 4_048;
         let chunk_size = 1_024;

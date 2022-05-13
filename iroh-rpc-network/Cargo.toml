@@ -8,7 +8,11 @@ edition = "2021"
 [dependencies]
 iroh-rpc = { path = "../iroh-rpc" }
 iroh-p2p = { path = "../iroh-p2p" }
+iroh-rpc-types = { path = "../iroh-rpc-types" }
 libp2p = "0.44.0" 
 async-channel = "1.6.1"
 futures = "0.3.21"
 cid = "0.8.4"
+tokio = { version = "1.17.0", features = ["full"] }
+rkyv = { version = "0.7.37", features = ["std", "alloc", "validation"] }
+bytes = "1.1.0"

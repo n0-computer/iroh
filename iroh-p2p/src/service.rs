@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
@@ -6,13 +6,11 @@ use async_channel::{bounded as channel, Receiver, Sender};
 use cid::Cid;
 use futures::channel::oneshot::Sender as OneShotSender;
 use futures_util::stream::StreamExt;
-use iroh_rpc_commands::p2p::{NetRPCMethods, NetworkBehaviour, NetworkEvent};
 use libp2p::core::muxing::StreamMuxerBox;
 use libp2p::core::transport::Boxed;
 use libp2p::core::Multiaddr;
 pub use libp2p::gossipsub::{IdentTopic, Topic};
 use libp2p::identity::Keypair;
-use libp2p::kad::record::Key;
 use libp2p::multiaddr::Protocol;
 use libp2p::multihash::Multihash;
 use libp2p::swarm::{
@@ -24,20 +22,32 @@ use libp2p::{core, mplex, noise, yamux, PeerId, Swarm, Transport};
 use tokio::{select, time};
 use tracing::{debug, info, trace, warn};
 
+use iroh_bitswap::Block;
+use iroh_rpc_types::p2p::RpcMessage;
+
 use super::{
     behaviour::{NodeBehaviour, NodeBehaviourEvent},
     Libp2pConfig,
 };
 
+/// Events emitted by this Service.
+#[allow(clippy::large_enum_variant)]
+#[derive(Debug)]
+pub enum NetworkEvent {
+    PeerConnected(PeerId),
+    PeerDisconnected(PeerId),
+    BitswapBlock { cid: Cid },
+}
+
 /// The Libp2pService listens to events from the Libp2p swarm.
 pub struct Libp2pService {
     swarm: Swarm<NodeBehaviour>,
 
-    net_receiver_in: Receiver<NetworkMessage>,
-    net_sender_in: Sender<NetworkMessage>,
+    net_receiver_in: Receiver<RpcMessage>,
+    net_sender_in: Sender<RpcMessage>,
     net_receiver_out: Receiver<NetworkEvent>,
     net_sender_out: Sender<NetworkEvent>,
-    bitswap_response_channels: HashMap<Cid, Vec<OneShotSender<()>>>,
+    bitswap_response_channels: HashMap<Cid, Vec<OneShotSender<Block>>>,
 }
 
 impl Libp2pService {
@@ -136,13 +146,14 @@ impl Libp2pService {
                     .send(NetworkEvent::PeerDisconnected(peer_id))
                     .await?;
             }
-            NodeBehaviourEvent::BitswapReceivedBlock(_peer_id, cid, _block) => {
+            NodeBehaviourEvent::BitswapReceivedBlock(_peer_id, cid, block) => {
                 // TODO: verify cid hash
-                // TODO: process data in the storage node
 
+                let b = Block::new(block, cid);
                 if let Some(chans) = self.bitswap_response_channels.remove(&cid) {
                     for chan in chans.into_iter() {
-                        if chan.send(()).is_err() {
+                        // TODO: send cid and block
+                        if chan.send(b.clone()).is_err() {
                             debug!("Bitswap response channel send failed");
                         }
                         trace!("Saved Bitswap block with cid {:?}", cid);
@@ -150,12 +161,10 @@ impl Libp2pService {
                 } else {
                     debug!("Received Bitswap response, but response channel cannot be found");
                 }
-                self.net_sender_out
-                    .send(NetworkEvent::BitswapBlock { cid })
-                    .await?;
             }
             NodeBehaviourEvent::BitswapReceivedWant(_peer_id, cid) => {
                 // TODO: try to load data from the storage node
+                // rpc_client.call("storage", "get", cid)
                 trace!("Don't have data for: {}", cid);
             }
         }
@@ -163,10 +172,10 @@ impl Libp2pService {
         Ok(())
     }
 
-    async fn handle_rpc_message(&mut self, message: NetworkMessage) -> Result<()> {
+    async fn handle_rpc_message(&mut self, message: RpcMessage) -> Result<()> {
         // Inbound messages
         match message {
-            NetworkMessage::BitswapRequest {
+            RpcMessage::BitswapRequest {
                 cids,
                 response_channels,
                 providers,
@@ -199,23 +208,13 @@ impl Libp2pService {
                     }
                 }
             }
-            NetworkMessage::ProviderRequest {
+            RpcMessage::ProviderRequest {
                 key,
                 response_channel,
             } => {
                 self.swarm.behaviour_mut().providers(key, response_channel);
             }
-            NetworkMessage::RpcRequest { method } => {
-                self.handle_rpc_request(method).await?;
-            }
-        }
-
-        Ok(())
-    }
-
-    async fn handle_rpc_request(&mut self, method: NetRPCMethods) -> Result<()> {
-        match method {
-            NetRPCMethods::NetAddrsListen(response_channel) => {
+            RpcMessage::NetAddrsListen(response_channel) => {
                 let listeners: Vec<_> = Swarm::listeners(&self.swarm).cloned().collect();
                 let peer_id = Swarm::local_peer_id(&self.swarm);
 
@@ -223,7 +222,7 @@ impl Libp2pService {
                     .send((*peer_id, listeners))
                     .map_err(|_| anyhow!("Failed to get Libp2p listeners"))?;
             }
-            NetRPCMethods::NetPeers(response_channel) => {
+            RpcMessage::NetPeers(response_channel) => {
                 let peer_addresses: &HashMap<PeerId, Vec<Multiaddr>> =
                     self.swarm.behaviour_mut().peer_addresses();
 
@@ -231,7 +230,7 @@ impl Libp2pService {
                     .send(peer_addresses.to_owned())
                     .map_err(|_| anyhow!("Failed to get Libp2p peers"))?;
             }
-            NetRPCMethods::NetConnect(response_channel, peer_id, mut addresses) => {
+            RpcMessage::NetConnect(response_channel, peer_id, mut addresses) => {
                 let mut success = false;
 
                 for multiaddr in addresses.iter_mut() {
@@ -252,7 +251,7 @@ impl Libp2pService {
                     .send(success)
                     .map_err(|_| anyhow!("Failed to connect to a peer"))?;
             }
-            NetRPCMethods::NetDisconnect(response_channel, _peer_id) => {
+            RpcMessage::NetDisconnect(response_channel, _peer_id) => {
                 warn!("NetDisconnect API not yet implmeneted"); // TODO: implement NetDisconnect - See #1181
 
                 response_channel
@@ -265,7 +264,7 @@ impl Libp2pService {
     }
 
     /// Returns a sender which allows sending messages to the libp2p service.
-    pub fn network_sender(&self) -> Sender<NetworkMessage> {
+    pub fn network_sender(&self) -> Sender<RpcMessage> {
         self.net_sender_in.clone()
     }
 

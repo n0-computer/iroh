@@ -1,15 +1,16 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use futures::channel::mpsc;
+use bytecheck::CheckBytes;
+use futures::channel::{mpsc, oneshot};
 use futures::prelude::*;
 use futures::select;
 pub use libp2p::identity::Keypair;
 use libp2p::multiaddr::Protocol;
 use libp2p::request_response::RequestResponseMessage;
 use libp2p::swarm::{ConnectionHandlerUpgrErr, SwarmEvent};
-use libp2p::Swarm;
-use rkyv::Deserialize;
+use libp2p::{Multiaddr, PeerId, Swarm};
+use rkyv::{Archive, Deserialize, Serialize};
 use tracing::{debug, error, trace};
 
 use crate::behaviour::rpc::{RpcEvent, RpcRequest, RpcRequestEvent, RpcResponse, RpcResponseEvent};
@@ -27,6 +28,8 @@ use crate::stream::{ActiveStreams, Header, StreamConfig};
 /// that we are still currently listening for.
 pub struct Server<T> {
     pub(crate) swarm: Swarm<Behaviour>,
+    pub(crate) my_namespace: String,
+    pub(crate) addresses: AddressBook,
     pub(crate) command_sender: mpsc::Sender<Command>,
     pub(crate) command_rec: mpsc::Receiver<Command>,
     pub(crate) pending_requests: PendingMap,
@@ -50,6 +53,7 @@ impl<T> Server<T> {
             .ok_or_else(|| RpcError::BadConfig("no server state specified".into()))?;
         Ok(Server {
             swarm,
+            my_namespace: config.my_namespace,
             command_sender,
             command_rec: command_receiver,
             state,
@@ -57,6 +61,7 @@ impl<T> Server<T> {
             pending_requests: Default::default(),
             active_streams: Default::default(),
             stream_capacity: config.stream_capacity,
+            addresses: config.addresses,
         })
     }
 
@@ -113,6 +118,7 @@ impl<T> Server<T> {
             SwarmEvent::OutgoingConnectionError { peer_id, error, .. } => {
                 if let Some(peer_id) = peer_id {
                     if let Some(sender) = self.pending_requests.remove(&PendingId::Peer(peer_id)) {
+                        let _ = self.addresses.remove_by_peer_id(peer_id);
                         let _ =
                             sender.send(SenderType::Error(RpcError::DialError(error.to_string())));
                     }
@@ -193,7 +199,7 @@ impl<T> Server<T> {
                         RpcRequestEvent::StreamError { stream_id, error } => {
                             debug!("Received StreamError for stream {}", stream_id);
                             if let Err(e) = self.active_streams.send_error(stream_id, error) {
-                                error!("StreamError could not be delievered because stream {} no longer in active stream list", stream_id);
+                                error!("StreamError could not be delivered because stream {} no longer in active stream list", stream_id);
                                 self.swarm
                                     .behaviour_mut()
                                     .rpc
@@ -212,6 +218,40 @@ impl<T> Server<T> {
                                 .rpc
                                 .send_response(channel, RpcResponse(RpcResponseEvent::Ack))
                                 .expect("Connection to peer to still be open.");
+                        }
+                        RpcRequestEvent::AddressBook(address_book) => {
+                            // TODO: this is dumb. figure out how to Archive external crate types
+                            let sender = self.command_sender.clone();
+                            for addrs in address_book.0 {
+                                let namespace = addrs.namespace;
+                                let address: Multiaddr = addrs.addrs[0].parse().unwrap();
+                                let peer_id: PeerId = addrs.peer_id.parse().unwrap();
+                                if !self.addresses.exists(namespace.clone()) {
+                                    let mut sender = sender.clone();
+                                    tokio::spawn(async move {
+                                        let (s, r) = oneshot::channel();
+                                        sender
+                                            .send(Command::Dial {
+                                                namespace,
+                                                address,
+                                                peer_id,
+                                                sender: s,
+                                            })
+                                            .await
+                                            .expect("Receiver to still be active.");
+                                        match r.await.expect("Sender dropped.") {
+                                        SenderType::Ack => (),
+                                        SenderType::Error(e) => error!("Error connecting to namespaces in address book: {}", e),
+                                        s => error!("Error, unexpected response type when trying to connect to namespaces is address book: {}", s) 
+                                    };
+                                    });
+                                }
+                            }
+                            let _ = self
+                                .swarm
+                                .behaviour_mut()
+                                .rpc
+                                .send_response(channel, RpcResponse(RpcResponseEvent::Ack));
                         }
                     },
                     RequestResponseMessage::Response {
@@ -304,8 +344,9 @@ impl<T> Server<T> {
                 }
             },
             Command::Dial {
+                namespace,
                 peer_id,
-                peer_addr,
+                address,
                 sender,
             } => {
                 if let std::collections::hash_map::Entry::Vacant(_e) =
@@ -314,12 +355,12 @@ impl<T> Server<T> {
                     self.swarm
                         .behaviour_mut()
                         .rpc
-                        .add_address(&peer_id, peer_addr.clone());
+                        .add_address(&peer_id, address.clone());
 
-                    match self
-                        .swarm
-                        .dial(peer_addr.with(Protocol::P2p(peer_id.into())))
-                    {
+                    self.addresses
+                        .insert(namespace, vec![address.clone()], peer_id);
+
+                    match self.swarm.dial(address.with(Protocol::P2p(peer_id.into()))) {
                         Ok(()) => {
                             self.pending_requests
                                 .insert(PendingId::Peer(peer_id), sender);
@@ -331,18 +372,48 @@ impl<T> Server<T> {
                     }
                 }
             }
+            Command::SendAddressBook { sender, namespace } => {
+                let (_, peer_id) = match self.addresses.get(&namespace) {
+                    None => {
+                        let _ =
+                            sender.send(SenderType::Error(RpcError::NoNamespacePeerId(namespace)));
+                        return;
+                    }
+                    Some(val) => val,
+                };
+                let mut address_book: ArchivableAddressBook = self.addresses.clone().into();
+                address_book.0.push(ArchivableAddress::new(
+                    self.my_namespace.clone(),
+                    self.swarm.listeners().cloned().collect(),
+                    self.swarm.local_peer_id(),
+                ));
+                let request_id = self.swarm.behaviour_mut().rpc.send_request(
+                    peer_id,
+                    RpcRequest(RpcRequestEvent::AddressBook(address_book)),
+                );
+                self.pending_requests
+                    .insert(PendingId::Request(request_id), sender);
+                debug!("Sent SendRequest {} to peer {}", request_id, peer_id);
+            }
             Command::PeerId { sender } => {
                 let _ = sender.send(SenderType::PeerId(*self.swarm.local_peer_id()));
             }
             Command::SendRequest {
                 namespace,
                 method,
-                peer_id,
                 params,
                 sender,
             } => {
+                let (_, peer_id) = match self.addresses.get(&namespace) {
+                    None => {
+                        let _ =
+                            sender.send(SenderType::Error(RpcError::NoNamespacePeerId(namespace)));
+                        return;
+                    }
+                    Some(val) => val,
+                };
                 let request_id = self.swarm.behaviour_mut().rpc.send_request(
-                    &peer_id,
+                    peer_id,
                     RpcRequest(RpcRequestEvent::Request {
                         stream_id: None,
                         namespace,
@@ -375,12 +446,19 @@ impl<T> Server<T> {
                 id,
                 namespace,
                 method,
-                peer_id,
                 params,
                 sender,
             } => {
+                let (_, peer_id) = match self.addresses.get(&namespace) {
+                    None => {
+                        let _ =
+                            sender.send(SenderType::Error(RpcError::NoNamespacePeerId(namespace)));
+                        return;
+                    }
+                    Some(val) => val,
+                };
                 let request_id = self.swarm.behaviour_mut().rpc.send_request(
-                    &peer_id,
+                    peer_id,
                     RpcRequest(RpcRequestEvent::Request {
                         stream_id: Some(id),
                         namespace,
@@ -440,5 +518,103 @@ impl<T> Server<T> {
         namespace
             .handle(method, State(Arc::clone(&self.state.0)), stream_cfg, params)
             .await
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct AddressBook(HashMap<String, (Vec<Multiaddr>, PeerId)>);
+
+impl AddressBook {
+    pub fn new() -> Self {
+        AddressBook(Default::default())
+    }
+
+    pub fn insert(&mut self, namespace: String, addrs: Vec<Multiaddr>, peer_id: PeerId) {
+        self.0.insert(namespace, (addrs, peer_id));
+    }
+
+    pub fn remove(&mut self, namespace: &String) {
+        self.0.remove(namespace);
+    }
+
+    pub fn remove_by_peer_id(&mut self, peer_id: PeerId) {
+        let mut namespace = String::new();
+        for (n, (_, pid)) in self.0.iter() {
+            if peer_id == *pid {
+                namespace = n.clone();
+                break;
+            }
+        }
+        self.0.remove(&namespace);
+    }
+
+    pub fn get(&self, namespace: &String) -> Option<&(Vec<Multiaddr>, PeerId)> {
+        self.0.get(namespace)
+    }
+
+    pub fn exists(&mut self, namespace: String) -> bool {
+        if let std::collections::hash_map::Entry::Vacant(_e) = self.0.entry(namespace) {
+            return false;
+        }
+        true
+    }
+}
+
+impl From<ArchivableAddressBook> for AddressBook {
+    fn from(arc: ArchivableAddressBook) -> Self {
+        let mut addresses = AddressBook(Default::default());
+        for a in arc.0 {
+            addresses.insert(
+                a.namespace,
+                a.addrs.iter().map(|a| a.parse().unwrap()).collect(),
+                a.peer_id.parse().unwrap(),
+            );
+        }
+        addresses
+    }
+}
+
+impl Default for AddressBook {
+    fn default() -> Self {
+        AddressBook::new()
+    }
+}
+
+// TODO: more serialization bs
+#[derive(Archive, Serialize, Deserialize, Debug, PartialEq, Clone, Eq)]
+#[archive(compare(PartialEq))]
+#[archive_attr(derive(Debug, CheckBytes))]
+pub struct ArchivableAddressBook(Vec<ArchivableAddress>);
+
+impl From<AddressBook> for ArchivableAddressBook {
+    fn from(a: AddressBook) -> Self {
+        let mut s = ArchivableAddressBook(Default::default());
+        for (namespace, (addrs, peer_id)) in a.0.iter() {
+            s.0.push(ArchivableAddress::new(
+                namespace.to_string(),
+                addrs.to_owned(),
+                peer_id,
+            ));
+        }
+        s
+    }
+}
+
+#[derive(Archive, Serialize, Deserialize, Debug, PartialEq, Clone, Eq)]
+#[archive(compare(PartialEq))]
+#[archive_attr(derive(Debug, CheckBytes))]
+pub struct ArchivableAddress {
+    namespace: String,
+    addrs: Vec<String>,
+    peer_id: String,
+}
+
+impl ArchivableAddress {
+    fn new(namespace: String, addrs: Vec<Multiaddr>, peer_id: &PeerId) -> Self {
+        Self {
+            namespace,
+            addrs: addrs.iter().map(|a| a.to_string()).collect(),
+            peer_id: peer_id.to_string(),
+        }
     }
 }
