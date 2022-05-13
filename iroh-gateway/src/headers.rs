@@ -1,7 +1,8 @@
 use crate::{constants::*, response::ResponseFormat};
+use ::time::OffsetDateTime;
 use axum::http::header::*;
-use chrono::prelude::Utc;
 use cid::Cid;
+use std::time;
 
 #[tracing::instrument()]
 pub fn add_user_headers(headers: &mut HeaderMap, user_headers: HeaderMap) {
@@ -51,9 +52,10 @@ pub fn add_cache_control_headers(headers: &mut HeaderMap, content_path: String) 
         // todo(arqu): work out if cpath is mutable
         // now we just treat everything as mutable
         // should also utilize the cache flag on config
+        let lmdt: OffsetDateTime = time::SystemTime::now().into();
         headers.insert(
             LAST_MODIFIED,
-            HeaderValue::from_str(&Utc::now().to_string()).unwrap(),
+            HeaderValue::from_str(&lmdt.to_string()).unwrap(),
         );
     } else {
         headers.insert(LAST_MODIFIED, HeaderValue::from_str("0").unwrap());

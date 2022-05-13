@@ -1,6 +1,5 @@
 use crate::constants::*;
 use axum::http::header::*;
-
 pub const DEFAULT_PORT: u16 = 9050;
 
 #[derive(Debug, Clone)]

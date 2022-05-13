@@ -9,7 +9,8 @@ use axum::{
 };
 use cid::Cid;
 use metrics::increment_counter;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use serde_qs;
 use std::{
     borrow::Cow,
     collections::HashMap,
@@ -34,7 +35,7 @@ pub struct Core {
     client: Arc<Client>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct GetParams {
     // todo(arqu): swap this for ResponseFormat
     /// specifies the expected format of the response
@@ -47,26 +48,11 @@ pub struct GetParams {
 
 impl GetParams {
     pub fn to_query_string(&self) -> String {
-        let mut query = String::new();
-        if let Some(format) = &self.format {
-            query.push_str(&format!("format={}", format));
-        }
-        if let Some(filename) = &self.filename {
-            if !query.is_empty() {
-                query.push('&');
-            }
-            query.push_str(&format!("filename={}", filename));
-        }
-        if let Some(download) = &self.download {
-            if !query.is_empty() {
-                query.push('&');
-            }
-            query.push_str(&format!("download={}", download));
-        }
-        if query.is_empty() {
-            "".to_string()
+        let q = serde_qs::to_string(self).unwrap();
+        if q.is_empty() {
+            q
         } else {
-            format!("?{}", query)
+            format!("?{}", q)
         }
     }
 }

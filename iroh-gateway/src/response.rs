@@ -69,19 +69,20 @@ impl ResponseFormat {
 
     pub fn try_from_headers(headers: &HeaderMap) -> Result<Self, String> {
         if headers.contains_key("Accept") {
-            let h_values = headers.get("Accept").unwrap().to_str().unwrap();
-            let h_values = h_values.split(',').collect::<Vec<&str>>();
-            for h_value in h_values {
-                let h_value = h_value.trim();
-                if h_value.starts_with("application/vnd.ipld.") {
-                    // if valid media type use it, otherwise return error
-                    // todo(arqu): add support for better media type detection
-                    if h_value != "application/vnd.ipld.raw"
-                        && h_value != "application/vnd.ipld.car"
-                    {
-                        return Err(format!("{}: {}", ERR_UNSUPPORTED_FORMAT, h_value));
+            if let Some(h_values) = headers.get("Accept") {
+                let h_values = h_values.to_str().unwrap().split(',');
+                for h_value in h_values {
+                    let h_value = h_value.trim();
+                    if h_value.starts_with("application/vnd.ipld.") {
+                        // if valid media type use it, otherwise return error
+                        // todo(arqu): add support for better media type detection
+                        if h_value != "application/vnd.ipld.raw"
+                            && h_value != "application/vnd.ipld.car"
+                        {
+                            return Err(format!("{}: {}", ERR_UNSUPPORTED_FORMAT, h_value));
+                        }
+                        return ResponseFormat::try_from(h_value);
                     }
-                    return ResponseFormat::try_from(h_value);
                 }
             }
         }
