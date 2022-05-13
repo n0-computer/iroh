@@ -78,12 +78,15 @@ async fn main() -> anyhow::Result<()> {
         error!("error dialing from ctr rpc to p2p rpc: {:?}", e);
     }
 
-    //     if let Err(e) = ctr_rpc_client.send_address_book("p2p").await {
-    //         error!(
-    //             "error sharing address book from ctr rpc to p2p rpc: {:?}",
-    //             e
-    //         );
-    //     }
+    // bootstrapping the network should be better thought out
+    // the idea here is: if we are in a situation where one node knows all the addrs (for example,
+    // the irohctl node), it can just send it's addressbook to everyone else
+    if let Err(e) = ctr_rpc_client.send_address_book("p2p").await {
+        error!(
+            "error sharing address book from ctr rpc to p2p rpc: {:?}",
+            e
+        );
+    }
 
     match ctr_rpc_client
         .network
