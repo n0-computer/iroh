@@ -171,7 +171,7 @@ async fn serve_raw(
     // FIXME: we currently only retrieve full cids
     let body = state
         .client
-        .get_file_by_cid(req.cid, &state.rpc_client, start_time)
+        .get_file(&req.full_content_path, &state.rpc_client, start_time)
         .await
         .unwrap();
     // .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
@@ -194,7 +194,7 @@ async fn serve_car(
     // FIXME: we currently only retrieve full cids
     let body = state
         .client
-        .get_file_by_cid(req.cid, &state.rpc_client, start_time)
+        .get_file(&req.full_content_path, &state.rpc_client, start_time)
         .await
         .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
 
@@ -216,7 +216,7 @@ async fn serve_html(
     // FIXME: we currently only retrieve full cids
     let body = state
         .client
-        .get_file_by_cid(req.cid, &state.rpc_client, start_time)
+        .get_file(&req.full_content_path, &state.rpc_client, start_time)
         .await
         .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
 
@@ -233,7 +233,7 @@ async fn serve_fs(
     // FIXME: we currently only retrieve full cids
     let body = state
         .client
-        .get_file_by_cid(req.cid, &state.rpc_client, start_time)
+        .get_file(&req.full_content_path, &state.rpc_client, start_time)
         .await
         .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
 

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use iroh_rpc::{Client as RpcClient, RpcError};
-use libp2p::{Multiaddr, PeerId};
+use iroh_rpc::{new_mem_swarm, Client as RpcClient, RpcBuilder, RpcError, State};
+use libp2p::{identity::Keypair, Multiaddr, PeerId};
 
 mod network;
 
@@ -20,6 +20,18 @@ impl Client {
             client: client.clone(),
             network: P2pClient::new(client),
         }
+    }
+
+    /// Dummy client for testing purposes
+    pub fn dummy() -> Self {
+        let keypair = Keypair::generate_ed25519();
+        let (client, _server) = RpcBuilder::new("dummy")
+            .with_swarm(new_mem_swarm(keypair))
+            .with_state(State::new(()))
+            .build()
+            .unwrap();
+
+        Self::new(client)
     }
 
     pub async fn dial<I: Into<String>>(

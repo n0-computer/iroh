@@ -1,11 +1,14 @@
 use std::fmt::{self, Display, Formatter};
 use std::str::FromStr;
 
+use anyhow::{anyhow, bail, ensure, Context, Result};
 use bytes::Bytes;
 use cid::Cid;
-use eyre::{bail, ensure, eyre, Context, Result};
+use futures::stream::StreamExt;
+use iroh_rpc_client::Client;
+use libipld::codec::Encode;
 use libipld::prelude::Codec as _;
-use libipld::Ipld;
+use libipld::{Ipld, IpldCodec};
 
 use crate::codecs::Codec;
 use crate::unixfs::{DataType, UnixfsNode};
@@ -63,14 +66,14 @@ impl PathType {
 }
 
 impl FromStr for Path {
-    type Err = eyre::Error;
+    type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let mut parts = s.split(&['/', '\\']).filter(|s| !s.is_empty());
 
-        let first_part = parts.next().ok_or_else(|| eyre!("path too short"))?;
+        let first_part = parts.next().ok_or_else(|| anyhow!("path too short"))?;
         let (typ, root) = if first_part.eq_ignore_ascii_case("ipns") {
-            let root = parts.next().ok_or_else(|| eyre!("path too short"))?;
+            let root = parts.next().ok_or_else(|| anyhow!("path too short"))?;
             let root = if let Ok(c) = Cid::from_str(root) {
                 CidOrDomain::Cid(c)
             } else {
@@ -81,7 +84,7 @@ impl FromStr for Path {
             (PathType::Ipns, root)
         } else {
             let root = if first_part.eq_ignore_ascii_case("ipfs") {
-                parts.next().ok_or_else(|| eyre!("path too short"))?
+                parts.next().ok_or_else(|| anyhow!("path too short"))?
             } else {
                 first_part
             };
@@ -97,20 +100,7 @@ impl FromStr for Path {
     }
 }
 
-/// Resolves through a given path, returning the [`Cid`] and raw bytes of the final leaf.
-pub async fn resolve(path: Path) -> Result<Out> {
-    // Resolve the root block.
-    let (root_cid, root_bytes) = resolve_root(path.typ, &path.root).await?;
-
-    let codec = Codec::try_from(root_cid.codec()).context("unknown codec")?;
-    match codec {
-        Codec::DagPb => resolve_dag_pb_or_unixfs(root_cid, root_bytes, path.tail).await,
-        Codec::DagCbor => resolve_dag_cbor(root_cid, root_bytes, path.tail).await,
-        Codec::DagJson => resolve_dag_json(root_cid, root_bytes, path.tail).await,
-        _ => bail!("unsupported codec {:?}", codec),
-    }
-}
-
+#[derive(Debug)]
 pub enum Out {
     DagPb(Ipld),
     Unixfs(UnixfsNode),
@@ -118,127 +108,197 @@ pub enum Out {
     DagJson(Ipld),
 }
 
-/// Resolves through both DagPb and nested UnixFs DAGs.
-async fn resolve_dag_pb_or_unixfs(cid: Cid, bytes: Bytes, path: Vec<String>) -> Result<Out> {
-    if let Ok(node) = UnixfsNode::decode(bytes.clone()) {
-        let mut current = node;
+impl Out {
+    pub fn pretty(&self) -> Result<Bytes> {
+        match self {
+            Out::DagPb(i) => {
+                todo!()
+            }
+            Out::Unixfs(node) => node.pretty(),
+            Out::DagCbor(i) => {
+                todo!()
+            }
+            Out::DagJson(i) => {
+                let mut bytes = Vec::new();
+                i.encode(IpldCodec::DagJson, &mut bytes)?;
+                Ok(bytes.into())
+            }
+        }
+    }
+}
 
-        // TODO: handle if `path` is now empty
-        for part in path {
-            match current.typ() {
-                DataType::Directory => {
-                    let next_link = current
-                        .get_link_by_name(&part)
-                        .await?
-                        .ok_or_else(|| eyre!("link {} not found", part))?;
-                    let next_bytes = load_cid(&next_link.cid).await?;
-                    let next_node = UnixfsNode::decode(next_bytes)?;
+#[derive(Debug)]
+pub struct Resolver {
+    rpc: Client,
+}
 
-                    current = next_node;
+impl Resolver {
+    pub fn new(rpc: Client) -> Self {
+        Resolver { rpc }
+    }
+
+    /// Resolves through a given path, returning the [`Cid`] and raw bytes of the final leaf.
+    pub async fn resolve(&self, path: Path) -> Result<Out> {
+        // Resolve the root block.
+        let (root_cid, root_bytes) = self.resolve_root(path.typ, &path.root).await?;
+
+        let codec = Codec::try_from(root_cid.codec()).context("unknown codec")?;
+        match codec {
+            Codec::DagPb => {
+                self.resolve_dag_pb_or_unixfs(root_cid, root_bytes, path.tail)
+                    .await
+            }
+            Codec::DagCbor => self.resolve_dag_cbor(root_cid, root_bytes, path.tail).await,
+            Codec::DagJson => self.resolve_dag_json(root_cid, root_bytes, path.tail).await,
+            _ => bail!("unsupported codec {:?}", codec),
+        }
+    }
+
+    /// Resolves through both DagPb and nested UnixFs DAGs.
+    async fn resolve_dag_pb_or_unixfs(
+        &self,
+        cid: Cid,
+        bytes: Bytes,
+        path: Vec<String>,
+    ) -> Result<Out> {
+        if let Ok(node) = UnixfsNode::decode(bytes.clone()) {
+            let mut current = node;
+
+            // TODO: handle if `path` is now empty
+            for part in path {
+                match current.typ() {
+                    DataType::Directory => {
+                        let next_link = current
+                            .get_link_by_name(&part)
+                            .await?
+                            .ok_or_else(|| anyhow!("link {} not found", part))?;
+                        let next_bytes = self.load_cid(&next_link.cid).await?;
+                        let next_node = UnixfsNode::decode(next_bytes)?;
+
+                        current = next_node;
+                    }
+                    _ => todo!(),
                 }
-                _ => todo!(),
             }
-        }
 
-        Ok(Out::Unixfs(current))
-    } else {
-        resolve_dag_pb(cid, bytes, path).await
-    }
-}
-
-async fn resolve_dag_pb(cid: Cid, bytes: Bytes, path: Vec<String>) -> Result<Out> {
-    let ipld: libipld::Ipld = libipld::IpldCodec::DagPb
-        .decode(&bytes)
-        .map_err(|e| eyre!("invalid dag cbor: {:?}", e))?;
-
-    let out = resolve_ipld(cid, libipld::IpldCodec::DagPb, ipld, path).await?;
-    Ok(Out::DagPb(out))
-}
-
-async fn resolve_dag_cbor(cid: Cid, bytes: Bytes, path: Vec<String>) -> Result<Out> {
-    let ipld: libipld::Ipld = libipld::IpldCodec::DagCbor
-        .decode(&bytes)
-        .map_err(|e| eyre!("invalid dag cbor: {:?}", e))?;
-
-    let out = resolve_ipld(cid, libipld::IpldCodec::DagCbor, ipld, path).await?;
-    Ok(Out::DagCbor(out))
-}
-
-async fn resolve_dag_json(cid: Cid, bytes: Bytes, path: Vec<String>) -> Result<Out> {
-    let ipld: libipld::Ipld = libipld::IpldCodec::DagJson
-        .decode(&bytes)
-        .map_err(|e| eyre!("invalid dag json: {:?}", e))?;
-
-    let out = resolve_ipld(cid, libipld::IpldCodec::DagJson, ipld, path).await?;
-    Ok(Out::DagJson(out))
-}
-
-async fn resolve_ipld(
-    _cid: Cid,
-    codec: libipld::IpldCodec,
-    root: Ipld,
-    path: Vec<String>,
-) -> Result<Ipld> {
-    let mut root = root;
-    let mut current = &root;
-
-    for part in path {
-        if let libipld::Ipld::Link(c) = current {
-            let c = *c;
-            let new_codec: libipld::IpldCodec = c.codec().try_into()?;
-            ensure!(
-                new_codec == codec,
-                "can only resolve the same codec {:?} != {:?}",
-                new_codec,
-                codec
-            );
-
-            // resolve link and update if we have encountered a link
-            let bytes = load_cid(&c).await?;
-            root = codec
-                .decode(&bytes)
-                .map_err(|e| eyre!("invalid dag json: {:?}", e))?;
-            current = &root;
-        }
-
-        let index: libipld::ipld::IpldIndex = if let Ok(i) = part.parse::<usize>() {
-            i.into()
+            Ok(Out::Unixfs(current))
         } else {
-            part.into()
-        };
-
-        current = current.get(index)?;
+            self.resolve_dag_pb(cid, bytes, path).await
+        }
     }
 
-    // TODO: can we avoid this clone?
+    async fn resolve_dag_pb(&self, cid: Cid, bytes: Bytes, path: Vec<String>) -> Result<Out> {
+        let ipld: libipld::Ipld = libipld::IpldCodec::DagPb
+            .decode(&bytes)
+            .map_err(|e| anyhow!("invalid dag cbor: {:?}", e))?;
 
-    Ok(current.clone())
-}
+        let out = self
+            .resolve_ipld(cid, libipld::IpldCodec::DagPb, ipld, path)
+            .await?;
+        Ok(Out::DagPb(out))
+    }
 
-async fn resolve_root(typ: PathType, root: &CidOrDomain) -> Result<(Cid, Bytes)> {
-    match typ {
-        PathType::Ipfs => match root {
-            CidOrDomain::Cid(ref c) => Ok((*c, load_cid(c).await?)),
-            CidOrDomain::Domain(_) => bail!("invalid domain encountered"),
-        },
-        PathType::Ipns => match root {
-            CidOrDomain::Cid(ref c) => Ok((*c, load_cid(c).await?)),
-            CidOrDomain::Domain(ref domain) => {
-                let c = resolve_dnslink(domain).await?;
-                Ok((c, load_cid(&c).await?))
+    async fn resolve_dag_cbor(&self, cid: Cid, bytes: Bytes, path: Vec<String>) -> Result<Out> {
+        let ipld: libipld::Ipld = libipld::IpldCodec::DagCbor
+            .decode(&bytes)
+            .map_err(|e| anyhow!("invalid dag cbor: {:?}", e))?;
+
+        let out = self
+            .resolve_ipld(cid, libipld::IpldCodec::DagCbor, ipld, path)
+            .await?;
+        Ok(Out::DagCbor(out))
+    }
+
+    async fn resolve_dag_json(&self, cid: Cid, bytes: Bytes, path: Vec<String>) -> Result<Out> {
+        let ipld: libipld::Ipld = libipld::IpldCodec::DagJson
+            .decode(&bytes)
+            .map_err(|e| anyhow!("invalid dag json: {:?}", e))?;
+
+        let out = self
+            .resolve_ipld(cid, libipld::IpldCodec::DagJson, ipld, path)
+            .await?;
+        Ok(Out::DagJson(out))
+    }
+
+    async fn resolve_ipld(
+        &self,
+        _cid: Cid,
+        codec: libipld::IpldCodec,
+        root: Ipld,
+        path: Vec<String>,
+    ) -> Result<Ipld> {
+        let mut root = root;
+        let mut current = &root;
+
+        for part in path {
+            if let libipld::Ipld::Link(c) = current {
+                let c = *c;
+                let new_codec: libipld::IpldCodec = c.codec().try_into()?;
+                ensure!(
+                    new_codec == codec,
+                    "can only resolve the same codec {:?} != {:?}",
+                    new_codec,
+                    codec
+                );
+
+                // resolve link and update if we have encountered a link
+                let bytes = self.load_cid(&c).await?;
+                root = codec
+                    .decode(&bytes)
+                    .map_err(|e| anyhow!("invalid dag json: {:?}", e))?;
+                current = &root;
             }
-        },
+
+            let index: libipld::ipld::IpldIndex = if let Ok(i) = part.parse::<usize>() {
+                i.into()
+            } else {
+                part.into()
+            };
+
+            current = current.get(index)?;
+        }
+
+        // TODO: can we avoid this clone?
+
+        Ok(current.clone())
     }
-}
 
-/// Loads the actual content of a given cid.
-async fn load_cid(_cid: &Cid) -> Result<Bytes> {
-    todo!()
-}
+    async fn resolve_root(&self, typ: PathType, root: &CidOrDomain) -> Result<(Cid, Bytes)> {
+        match typ {
+            PathType::Ipfs => match root {
+                CidOrDomain::Cid(ref c) => Ok((*c, self.load_cid(c).await?)),
+                CidOrDomain::Domain(_) => bail!("invalid domain encountered"),
+            },
+            PathType::Ipns => match root {
+                CidOrDomain::Cid(ref c) => Ok((*c, self.load_cid(c).await?)),
+                CidOrDomain::Domain(ref domain) => {
+                    let c = self.resolve_dnslink(domain).await?;
+                    Ok((c, self.load_cid(&c).await?))
+                }
+            },
+        }
+    }
 
-/// Resolves a dnslink at the given domain.
-async fn resolve_dnslink(_domain: &str) -> Result<Cid> {
-    todo!()
+    /// Loads the actual content of a given cid.
+    async fn load_cid(&self, cid: &Cid) -> Result<Bytes> {
+        // TODO: better strategies
+        let providers = None;
+        let stream = self.rpc.network.fetch_bitswap(*cid, providers).await?;
+        tokio::pin!(stream);
+
+        let mut out = Vec::new();
+        while let Some(b) = stream.next().await {
+            let b = b?;
+            out.extend(b);
+        }
+
+        Ok(out.into())
+    }
+
+    /// Resolves a dnslink at the given domain.
+    async fn resolve_dnslink(&self, _domain: &str) -> Result<Cid> {
+        todo!()
+    }
 }
 
 #[cfg(test)]
@@ -306,22 +366,27 @@ mod tests {
             let digest = Code::Blake3_256.digest(&bytes);
             let c = Cid::new_v1(codec.into(), digest);
 
+            let client = Client::dummy();
+            let resolver = Resolver::new(client);
+
             {
-                let new_ipld = resolve_ipld(c, codec, ipld.clone(), vec!["name".to_string()])
+                let new_ipld = resolver
+                    .resolve_ipld(c, codec, ipld.clone(), vec!["name".to_string()])
                     .await
                     .unwrap();
 
                 assert_eq!(new_ipld, Ipld::String("Foo".to_string()));
             }
             {
-                let new_ipld = resolve_ipld(
-                    c,
-                    codec,
-                    ipld.clone(),
-                    vec!["details".to_string(), "0".to_string()],
-                )
-                .await
-                .unwrap();
+                let new_ipld = resolver
+                    .resolve_ipld(
+                        c,
+                        codec,
+                        ipld.clone(),
+                        vec!["details".to_string(), "0".to_string()],
+                    )
+                    .await
+                    .unwrap();
                 assert_eq!(new_ipld, Ipld::Integer(1));
             }
         }

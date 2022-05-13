@@ -8,17 +8,21 @@ repository = "https://github.com/n0-computer/iroh"
 description = "Implementation of path resolution for iroh"
 
 [dependencies]
-eyre = "0.6.6"
+anyhow = "1"
 cid = "0.8.4"
 libipld = "0.13.1"
 num_enum = "0.5.7"
 prost = "0.10"
 bytes = "1.1.0"
+iroh-rpc-client = { path = "../iroh-rpc-client" }
+tokio = { version = "1.18.0" }
+futures = "0.3.5"
 
 [dev-dependencies]
 criterion = { version = "0.3.5", features = ["async_tokio"] }
 tempfile = "3.3.0"
 tokio = { version = "1.18.0", features = ["rt", "macros", "rt-multi-thread"] }
+iroh-rpc = { path = "../iroh-rpc" }
 
 [build-dependencies]
 prost-build = "0.10"
