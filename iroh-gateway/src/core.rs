@@ -14,6 +14,7 @@ use serde::Deserialize;
 use std::{borrow::Cow, collections::HashMap, sync::Arc, time::Duration};
 use tokio::task::JoinHandle;
 use tower::ServiceBuilder;
+use tracing::info;
 
 use crate::{
     client::{Client, Request},
@@ -89,6 +90,8 @@ impl Core {
             );
         // todo(arqu): make configurable
         let addr = format!("0.0.0.0:{}", self.state.config.port);
+
+        info!("listening on {}", addr);
         axum::Server::bind(&addr.parse().unwrap())
             .http1_preserve_header_case(true)
             .http1_title_case_headers(true)

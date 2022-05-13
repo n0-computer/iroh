@@ -118,14 +118,26 @@ impl<T> Server<T> {
             SwarmEvent::ConnectionEstablished {
                 peer_id, endpoint, ..
             } => {
-                debug!("Connection with {:?} established", peer_id);
+                info!("Connection with {:?} established", peer_id);
                 if endpoint.is_dialer() {
                     if let Some(sender) = self.pending_requests.remove(&PendingId::Peer(peer_id)) {
                         let _ = sender.send(SenderType::Ack);
                     }
                 }
             }
-            SwarmEvent::ConnectionClosed { .. } => {}
+            SwarmEvent::ConnectionClosed {
+                peer_id,
+                num_established,
+                ..
+            } => {
+                info!("Connection with {:?} closed ({})", peer_id, num_established);
+                if num_established < 1 {
+                    if let Some(sender) = self.pending_requests.remove(&PendingId::Peer(peer_id)) {
+                        let _ = self.addresses.remove_by_peer_id(peer_id);
+                        let _ = sender.send(SenderType::Error(RpcError::StreamClosed));
+                    }
+                }
+            }
             SwarmEvent::OutgoingConnectionError { peer_id, error, .. } => {
                 if let Some(peer_id) = peer_id {
                     if let Some(sender) = self.pending_requests.remove(&PendingId::Peer(peer_id)) {
