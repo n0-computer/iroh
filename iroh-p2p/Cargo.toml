@@ -29,7 +29,10 @@ tracing = "0.1.34"
 clap = "3.1.14"
 ctrlc = "3.2.2"
 tracing-subscriber = { version = "0.3.11", features = ["env-filter"] }
-
+iroh-rpc-network = { path = "../iroh-rpc-network" }
+iroh-rpc-client = { path = "../iroh-rpc-client" }
+iroh-rpc-gateway = { path = "../iroh-rpc-gateway" }
+ 
 [dependencies.libp2p]
 version = "0.44"
 default-features = false
@@ -46,6 +49,7 @@ features = [
   "mplex",
   "request-response",
   "websocket",
+  "serde",
 ] 
 
 [dependencies.multihash]

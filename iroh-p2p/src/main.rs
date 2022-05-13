@@ -1,8 +1,13 @@
 use std::cell::RefCell;
+use std::fs::File;
+use std::io::prelude::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
+use futures::pin_mut;
+use futures::prelude::*;
 use iroh_p2p::Libp2pService;
+use iroh_rpc_gateway::mem_gateway_rpc;
 use libp2p::identity::{ed25519, Keypair};
 use tokio::task;
 use tracing::error;
@@ -29,9 +34,19 @@ async fn main() -> anyhow::Result<()> {
         Keypair::Ed25519(gen_keypair)
     };
 
+    // TODO: read keypair for disk
+    // TODO: configurable keypair
+    let rpc_keypair = {
+        // Keypair not found, generate and save generated keypair
+        let gen_keypair = ed25519::Keypair::generate();
+        // TODO: Save Ed25519 keypair to file
+        Keypair::Ed25519(gen_keypair)
+    };
+    let rpc_peer_id = rpc_keypair.public().to_peer_id();
+
     // TODO: configurable network
     let network_config = iroh_p2p::Libp2pConfig::default();
-    let mut p2p_service = Libp2pService::new(network_config, net_keypair).await;
+    let mut p2p_service = Libp2pService::new(network_config, net_keypair, rpc_keypair).await;
 
     // Start services
     let p2p_task = task::spawn(async move {
@@ -40,10 +55,66 @@ async fn main() -> anyhow::Result<()> {
         }
     });
 
+    // TODO: using `iroh_rpc_gateway` as a stand in for
+    // some irohctl
+    let ctr_rpc_keypair = {
+        // Keypair not found, generate and save generated keypair
+        let gen_keypair = ed25519::Keypair::generate();
+        // TODO: Save Ed25519 keypair to file
+        Keypair::Ed25519(gen_keypair)
+    };
+    let (mut ctr_rpc_client, ctr_rpc_server) = mem_gateway_rpc(ctr_rpc_keypair).unwrap();
+
+    let ctr_rpc_task = tokio::spawn(async move { ctr_rpc_server.run().await });
+
+    if let Err(e) = ctr_rpc_client.listen("/memory/0".parse().unwrap()).await {
+        error!("error ctr rpc failed trying to listen: {:?}", e);
+    }
+
+    if let Err(e) = ctr_rpc_client
+        .dial("p2p", "/memory/1".parse().unwrap(), rpc_peer_id)
+        .await
+    {
+        error!("error dialing from ctr rpc to p2p rpc: {:?}", e);
+    }
+
+    //     if let Err(e) = ctr_rpc_client.send_address_book("p2p").await {
+    //         error!(
+    //             "error sharing address book from ctr rpc to p2p rpc: {:?}",
+    //             e
+    //         );
+    //     }
+
+    match ctr_rpc_client
+        .network
+        .fetch_bitswap(
+            "QmbWqxBEKC3P8tqsKc98xmWNzrzDtRLMiMPL8wBuTGsMnR"
+                .parse()
+                .unwrap(),
+            None,
+        )
+        .await
+    {
+        Ok(stream) => {
+            let mut v = Vec::new();
+            pin_mut!(stream);
+            while let Some(b) = stream.next().await {
+                v.extend(b.unwrap());
+            }
+            let mut f = File::create("gremlin.jpeg").unwrap();
+            f.write_all(&v).unwrap();
+        }
+        Err(e) => error!(
+            "error fetching block from bitswap (command from ctl rpc to p2p rpc): {:?}",
+            e
+        ),
+    }
+
     block_until_sigint().await;
 
     // Cancel all async services
     p2p_task.abort();
+    ctr_rpc_task.abort();
 
     Ok(())
 }

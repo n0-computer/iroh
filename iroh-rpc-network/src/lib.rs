@@ -1,14 +1,52 @@
 use async_channel::Sender;
 use bytes::Buf;
 use futures::channel::oneshot;
+use libp2p::identity::Keypair;
+use libp2p::Swarm;
 
 use iroh_rpc::handler;
 use iroh_rpc::serde::{deserialize_request, serialize_response};
 use iroh_rpc::stream::{Header, OutStream, StreamConfig, DEFAULT_CHUNK_SIZE};
-use iroh_rpc::RpcError;
-use iroh_rpc_types::p2p::{Requests, Responses, RpcMessage};
+use iroh_rpc::{new_mem_swarm, new_tcp_swarm, Behaviour, RpcBuilder, RpcError, Server, State};
+use iroh_rpc_client::Client;
+use iroh_rpc_types::p2p::{Methods, Namespace, Requests, Responses, RpcMessage};
 
-pub async fn handle_listening_addrs(
+pub async fn tcp_p2p_rpc(
+    keys: Keypair,
+    sender: Sender<RpcMessage>,
+) -> Result<(Client, Server<Sender<RpcMessage>>), RpcError> {
+    let swarm = new_tcp_swarm(keys).await?;
+    new_p2p_rpc(swarm, sender)
+}
+
+pub fn mem_p2p_rpc(
+    keys: Keypair,
+    sender: Sender<RpcMessage>,
+) -> Result<(Client, Server<Sender<RpcMessage>>), RpcError> {
+    new_p2p_rpc(new_mem_swarm(keys), sender)
+}
+
+fn new_p2p_rpc(
+    swarm: Swarm<Behaviour>,
+    sender: Sender<RpcMessage>,
+) -> Result<(Client, Server<Sender<RpcMessage>>), RpcError> {
+    let (client, server) = RpcBuilder::new(Namespace)
+        .with_swarm(swarm)
+        .with_state(State::new(sender))
+        .with_namespace(Namespace, |n| {
+            n.with_method(Methods::FetchBitswap, handle_fetch_bitswap)
+                .with_method(Methods::FetchProvider, handle_fetch_provider)
+                .with_method(Methods::GetListeningAddrs, handle_get_listening_addrs)
+                .with_method(Methods::GetPeers, handle_get_peers)
+                .with_method(Methods::Connect, handle_connect)
+                .with_method(Methods::Disconnect, handle_disconnect)
+        })
+        .build()?;
+    let client = Client::new(client);
+    Ok((client, server))
+}
+
+pub async fn handle_get_listening_addrs(
     state: handler::State<Sender<RpcMessage>>,
     _cfg: Option<StreamConfig>,
     _params: Vec<u8>,
@@ -29,7 +67,7 @@ pub async fn handle_listening_addrs(
     Ok(res)
 }
 
-pub async fn handle_net_peers(
+pub async fn handle_get_peers(
     state: handler::State<Sender<RpcMessage>>,
     _cfg: Option<StreamConfig>,
     _params: Vec<u8>,
@@ -47,7 +85,7 @@ pub async fn handle_net_peers(
     Ok(res)
 }
 
-pub async fn handle_net_connect(
+pub async fn handle_connect(
     state: handler::State<Sender<RpcMessage>>,
     _cfg: Option<StreamConfig>,
     params: Vec<u8>,
@@ -70,7 +108,7 @@ pub async fn handle_net_connect(
     Ok(res)
 }
 
-pub async fn handle_net_disconnect(
+pub async fn handle_disconnect(
     state: handler::State<Sender<RpcMessage>>,
     _cfg: Option<StreamConfig>,
     params: Vec<u8>,
