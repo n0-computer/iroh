@@ -116,7 +116,7 @@ jobs:
 
     - name: configure windows 
       uses: ilammy/msvc-dev-cmd@v1.4.1
-      if: matirx.os == 'windows-2019'
+      if: matrix.os == 'windows-2019'
 
     - name: check
       uses: actions-rs/cargo@v1
