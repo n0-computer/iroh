@@ -111,6 +111,9 @@ jobs:
     - name: Start sccache server
       run: sccache --start-server
 
+    - name: Install Protoc
+      uses: arduino/setup-protoc@v1
+
     - name: check
       uses: actions-rs/cargo@v1
       with:
