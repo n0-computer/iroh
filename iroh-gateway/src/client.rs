@@ -31,7 +31,18 @@ impl Client {
         let (mut sender, body) = Body::channel();
         let rpc_client = rpc_client.clone();
         tokio::spawn(async move {
-            match rpc_client.network.fetch_bitswap(c, None).await {
+            // fetch some providers
+            // TODO
+            // let providers = match rpc_client.network.fetch_provider(c.to_bytes().into()).await {
+            //     Ok(providers) => Some(providers),
+            //     Err(e) => {
+            //         error!("failed to fetch providers {:?}", e);
+            //         None
+            //     }
+            // };
+            let providers = None;
+
+            match rpc_client.network.fetch_bitswap(c, providers).await {
                 Ok(stream) => {
                     tokio::pin!(stream);
 
