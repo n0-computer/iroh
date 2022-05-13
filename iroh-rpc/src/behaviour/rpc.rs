@@ -1,11 +1,13 @@
 use std::iter;
+use std::time::Duration;
 
 use async_trait::async_trait;
 use bytecheck::CheckBytes;
 use futures::prelude::*;
 use libp2p::core::upgrade::{read_length_prefixed, write_length_prefixed, ProtocolName};
 use libp2p::request_response::{
-    ProtocolSupport, RequestResponse, RequestResponseCodec, RequestResponseEvent, ResponseChannel,
+    ProtocolSupport, RequestResponse, RequestResponseCodec, RequestResponseConfig,
+    RequestResponseEvent, ResponseChannel,
 };
 use rkyv;
 use rkyv::{Archive, Deserialize, Serialize};
@@ -20,10 +22,12 @@ pub type RpcEvent = RequestResponseEvent<RpcRequest, RpcResponse>;
 pub type RpcResponseChannel = ResponseChannel<RpcResponse>;
 
 pub fn new_behaviour() -> RpcBehaviour {
+    let mut config = RequestResponseConfig::default();
+    config.set_request_timeout(Duration::from_secs(60));
     RequestResponse::new(
         RpcCodec(),
         iter::once((RpcProtocol(), ProtocolSupport::Full)),
-        Default::default(),
+        config,
     )
 }
 

@@ -1,6 +1,4 @@
 use std::cell::RefCell;
-use std::fs::File;
-use std::io::prelude::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
@@ -9,8 +7,10 @@ use futures::prelude::*;
 use iroh_p2p::Libp2pService;
 use iroh_rpc_gateway::mem_gateway_rpc;
 use libp2p::identity::{ed25519, Keypair};
+use tokio::fs::File;
+use tokio::io::AsyncWriteExt;
 use tokio::task;
-use tracing::error;
+use tracing::{error, info};
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
 /// Starts daemon process
@@ -88,24 +88,19 @@ async fn main() -> anyhow::Result<()> {
         );
     }
 
-    match ctr_rpc_client
-        .network
-        .fetch_bitswap(
-            "QmbWqxBEKC3P8tqsKc98xmWNzrzDtRLMiMPL8wBuTGsMnR"
-                .parse()
-                .unwrap(),
-            None,
-        )
-        .await
-    {
+    let c: cid::Cid = "QmbWqxBEKC3P8tqsKc98xmWNzrzDtRLMiMPL8wBuTGsMnR"
+        .parse()
+        .unwrap();
+    let providers = None;
+    match ctr_rpc_client.network.fetch_bitswap(c, providers).await {
         Ok(stream) => {
-            let mut v = Vec::new();
+            info!("download starting");
             pin_mut!(stream);
+            let mut f = File::create("gremlin.jpeg").await?;
             while let Some(b) = stream.next().await {
-                v.extend(b.unwrap());
+                f.write_all(&b?).await?;
             }
-            let mut f = File::create("gremlin.jpeg").unwrap();
-            f.write_all(&v).unwrap();
+            info!("download done :tada:");
         }
         Err(e) => error!(
             "error fetching block from bitswap (command from ctl rpc to p2p rpc): {:?}",
