@@ -1,6 +1,10 @@
 use std::collections::HashMap;
 
 use axum::http::header::*;
+use libp2p::{
+    identity::{ed25519, Keypair},
+    Multiaddr,
+};
 
 pub const DEFAULT_PORT: u16 = 9050;
 
@@ -16,16 +20,37 @@ pub struct Config {
     pub headers: HashMap<String, String>, //todo(arqu): convert to use axum::http::header
     /// default port to listen on
     pub port: u16,
+    pub rpc: RpcConfig,
+}
+
+#[derive(Debug, Clone)]
+pub struct RpcConfig {
+    pub keypair: Keypair,
+    /// Address on which to listen,
+    pub listen_addr: Multiaddr,
+}
+
+impl Default for RpcConfig {
+    fn default() -> Self {
+        let gen_keypair = ed25519::Keypair::generate();
+        let keypair = Keypair::Ed25519(gen_keypair);
+
+        RpcConfig {
+            keypair,
+            listen_addr: "/ip4/0.0.0.0/tcp/4400".parse().unwrap(),
+        }
+    }
 }
 
 impl Config {
-    pub fn new(writeable: bool, fetch: bool, cache: bool, port: u16) -> Self {
+    pub fn new(writeable: bool, fetch: bool, cache: bool, port: u16, rpc: RpcConfig) -> Self {
         Self {
             writeable,
             fetch,
             cache,
             headers: HashMap::new(),
             port,
+            rpc,
         }
     }
 
@@ -51,6 +76,7 @@ impl Default for Config {
             cache: false,
             headers: HashMap::new(),
             port: DEFAULT_PORT,
+            rpc: Default::default(),
         };
         t.set_default_headers();
         t
@@ -63,7 +89,7 @@ mod tests {
 
     #[test]
     fn default_headers() {
-        let mut config = Config::new(false, false, false, 9050);
+        let mut config = Config::new(false, false, false, 9050, Default::default());
         config.set_default_headers();
         assert_eq!(config.headers.len(), 5);
         assert_eq!(

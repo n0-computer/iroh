@@ -8,10 +8,13 @@ use axum::{
     BoxError, Router,
 };
 use cid::Cid;
+use libp2p::PeerId;
 use metrics::increment_counter;
 use serde::Deserialize;
 use std::{borrow::Cow, collections::HashMap, sync::Arc, time::Duration};
+use tokio::task::JoinHandle;
 use tower::ServiceBuilder;
+use tracing::info;
 
 use crate::{
     client::{Client, Request},
@@ -20,12 +23,20 @@ use crate::{
     error::GatewayError,
     metrics::{get_current_trace_id, METRICS_CNT_REQUESTS_TOTAL},
     response::{GatewayResponse, ResponseFormat},
+    rpc,
 };
 
 #[derive(Debug)]
 pub struct Core {
-    pub config: Arc<Config>,
-    client: Arc<Client>,
+    state: Arc<State>,
+    _rpc_task: JoinHandle<()>,
+}
+
+#[derive(Debug)]
+pub(crate) struct State {
+    config: Config,
+    client: Client,
+    rpc_client: iroh_rpc_client::Client,
 }
 
 #[derive(Debug, Deserialize)]
@@ -40,19 +51,34 @@ pub struct GetParams {
 }
 
 impl Core {
-    pub fn new(config: Config) -> Self {
-        Self {
-            config: Arc::new(config),
-            client: Arc::new(Client::new()),
-        }
+    pub async fn new(config: Config, store_id: PeerId) -> anyhow::Result<Self> {
+        let (rpc_client, rpc_server) = rpc::tcp_rpc(config.rpc.keypair.clone()).await?;
+
+        let rpc_task = tokio::spawn(async move {
+            rpc_server.run().await;
+        });
+        rpc_client.listen(&config.rpc.listen_addr).await?;
+
+        // dial the p2p node
+        rpc_client
+            .dial("p2p", "/ip4/127.0.0.1/tcp/4401".parse().unwrap(), store_id)
+            .await?;
+
+        Ok(Self {
+            state: Arc::new(State {
+                config,
+                client: Client::new(),
+                rpc_client,
+            }),
+            _rpc_task: rpc_task,
+        })
     }
 
     pub async fn serve(self) {
         let app = Router::new()
             .route("/ipfs/:cid", get(get_ipfs))
             .route("/ipfs/:cid/*cpath", get(get_ipfs))
-            .layer(Extension(Arc::clone(&self.config)))
-            .layer(Extension(Arc::clone(&self.client)))
+            .layer(Extension(Arc::clone(&self.state)))
             .layer(
                 ServiceBuilder::new()
                     // Handle errors from middleware
@@ -63,7 +89,7 @@ impl Core {
                     .into_inner(),
             );
         // todo(arqu): make configurable
-        let addr = format!("0.0.0.0:{}", self.config.port);
+        let addr = format!("0.0.0.0:{}", self.state.config.port);
         axum::Server::bind(&addr.parse().unwrap())
             .http1_preserve_header_case(true)
             .http1_title_case_headers(true)
@@ -75,8 +101,7 @@ impl Core {
 
 #[tracing::instrument()]
 async fn get_ipfs(
-    Extension(config): Extension<Arc<Config>>,
-    Extension(client): Extension<Arc<Client>>,
+    Extension(state): Extension<Arc<State>>,
     Path(params): Path<HashMap<String, String>>,
     Query(query_params): Query<GetParams>,
 ) -> Result<GatewayResponse, GatewayError> {
@@ -89,7 +114,7 @@ async fn get_ipfs(
         Ok(cid) => cid,
         Err(_) => {
             // todo (arqu): improve error handling if possible https://github.com/dignifiedquire/iroh/pull/4#pullrequestreview-953147597
-            return error(StatusCode::BAD_REQUEST, "invalid cid");
+            return Err(error(StatusCode::BAD_REQUEST, "invalid cid"));
         }
     };
 
@@ -101,7 +126,7 @@ async fn get_ipfs(
         match ResponseFormat::try_from(format.as_str()) {
             Ok(format) => format,
             Err(err) => {
-                return error(StatusCode::BAD_REQUEST, &err);
+                return Err(error(StatusCode::BAD_REQUEST, &err));
             }
         }
     } else {
@@ -114,108 +139,102 @@ async fn get_ipfs(
     let mut headers = HashMap::new();
     format.write_headers(&mut headers);
     headers.insert(HEADER_X_IPFS_PATH.to_string(), full_content_path.clone());
-    add_user_headers(&mut headers, config.headers.clone());
+    add_user_headers(&mut headers, state.config.headers.clone());
 
     // handle request and fetch data
     let req = Request {
         format,
-        cid: cid.to_string(),
+        cid,
         full_content_path,
         query_file_name,
         content_path: cpath.to_string(),
         download,
     };
+
     match req.format {
-        ResponseFormat::Raw => serve_raw(&req, *client, headers, start_time).await,
-        ResponseFormat::Car => serve_car(&req, *client, headers, start_time).await,
-        ResponseFormat::Html => serve_html(&req, *client, headers, start_time).await,
-        ResponseFormat::Fs => serve_fs(&req, *client, headers, start_time).await,
+        ResponseFormat::Raw => serve_raw(&req, &state, headers, start_time).await,
+        ResponseFormat::Car => serve_car(&req, &state, headers, start_time).await,
+        ResponseFormat::Html => serve_html(&req, &state, headers, start_time).await,
+        ResponseFormat::Fs => serve_fs(&req, &state, headers, start_time).await,
     }
 }
 
 #[tracing::instrument()]
 async fn serve_raw(
     req: &Request,
-    client: Client,
+    state: &State,
     mut headers: HashMap<String, String>,
     start_time: std::time::Instant,
 ) -> Result<GatewayResponse, GatewayError> {
-    let body = client
-        .get_file_simulated(req.full_content_path.as_str(), start_time)
-        .await;
-    let body = match body {
-        Ok(b) => b,
-        Err(e) => {
-            return error(StatusCode::INTERNAL_SERVER_ERROR, &e);
-        }
-    };
+    // FIXME: we currently only retrieve full cids
+    let body = state
+        .client
+        .get_file_by_cid(req.cid, &state.rpc_client, start_time)
+        .await
+        .unwrap();
+    // .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
+
     set_content_disposition_headers(
         &mut headers,
         format!("{}.bin", req.cid).as_str(),
         DISPOSITION_ATTACHMENT,
     );
-    response(StatusCode::OK, body::boxed(body), headers.clone())
+    response(StatusCode::OK, body::boxed(body), headers)
 }
 
 #[tracing::instrument()]
 async fn serve_car(
     req: &Request,
-    client: Client,
+    state: &State,
     mut headers: HashMap<String, String>,
     start_time: std::time::Instant,
 ) -> Result<GatewayResponse, GatewayError> {
-    let body = client
-        .get_file_simulated(req.full_content_path.as_str(), start_time)
-        .await;
-    let body = match body {
-        Ok(b) => b,
-        Err(e) => {
-            return error(StatusCode::INTERNAL_SERVER_ERROR, &e);
-        }
-    };
+    // FIXME: we currently only retrieve full cids
+    let body = state
+        .client
+        .get_file_by_cid(req.cid, &state.rpc_client, start_time)
+        .await
+        .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
+
     set_content_disposition_headers(
         &mut headers,
         format!("{}.car", req.cid).as_str(),
         DISPOSITION_ATTACHMENT,
     );
-    response(StatusCode::OK, body::boxed(body), headers.clone())
+    response(StatusCode::OK, body::boxed(body), headers)
 }
 
 #[tracing::instrument()]
 async fn serve_html(
     req: &Request,
-    client: Client,
+    state: &State,
     headers: HashMap<String, String>,
     start_time: std::time::Instant,
 ) -> Result<GatewayResponse, GatewayError> {
-    let body = client
-        .get_file_simulated(req.full_content_path.as_str(), start_time)
-        .await;
-    let body = match body {
-        Ok(b) => b,
-        Err(e) => {
-            return error(StatusCode::INTERNAL_SERVER_ERROR, &e);
-        }
-    };
-    response(StatusCode::OK, body::boxed(body), headers.clone())
+    // FIXME: we currently only retrieve full cids
+    let body = state
+        .client
+        .get_file_by_cid(req.cid, &state.rpc_client, start_time)
+        .await
+        .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
+
+    response(StatusCode::OK, body::boxed(body), headers)
 }
 
 #[tracing::instrument()]
 async fn serve_fs(
     req: &Request,
-    client: Client,
+    state: &State,
     mut headers: HashMap<String, String>,
     start_time: std::time::Instant,
 ) -> Result<GatewayResponse, GatewayError> {
-    let body = client
-        .get_file_simulated(req.full_content_path.as_str(), start_time)
-        .await;
-    let body = match body {
-        Ok(b) => b,
-        Err(e) => {
-            return error(StatusCode::INTERNAL_SERVER_ERROR, &e);
-        }
-    };
+    // FIXME: we currently only retrieve full cids
+    let body = state
+        .client
+        .get_file_by_cid(req.cid, &state.rpc_client, start_time)
+        .await
+        .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
+
     let name = add_content_disposition_headers(
         &mut headers,
         &req.query_file_name,
@@ -223,7 +242,7 @@ async fn serve_fs(
         req.download,
     );
     add_content_type_headers(&mut headers, &name);
-    response(StatusCode::OK, body::boxed(body), headers.clone())
+    response(StatusCode::OK, body::boxed(body), headers)
 }
 
 #[tracing::instrument()]
@@ -297,12 +316,12 @@ fn response(
 }
 
 #[tracing::instrument()]
-fn error(status_code: StatusCode, message: &str) -> Result<GatewayResponse, GatewayError> {
-    Err(GatewayError {
+fn error(status_code: StatusCode, message: &str) -> GatewayError {
+    GatewayError {
         status_code,
         message: message.to_string(),
         trace_id: get_current_trace_id().to_string(),
-    })
+    }
 }
 
 async fn middleware_error_handler(error: BoxError) -> impl IntoResponse {

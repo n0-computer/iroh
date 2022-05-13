@@ -11,7 +11,7 @@ use libp2p::request_response::RequestResponseMessage;
 use libp2p::swarm::{ConnectionHandlerUpgrErr, SwarmEvent};
 use libp2p::{Multiaddr, PeerId, Swarm};
 use rkyv::{Archive, Deserialize, Serialize};
-use tracing::{debug, error, trace};
+use tracing::{debug, error, info, trace};
 
 use crate::behaviour::rpc::{RpcEvent, RpcRequest, RpcRequestEvent, RpcResponse, RpcResponseEvent};
 use crate::behaviour::{Behaviour, Event};
@@ -94,6 +94,7 @@ impl<T> Server<T> {
                 listener_id,
             } => {
                 let local_peer_id = *self.swarm.local_peer_id();
+                info!("listening on {} - {}", address, local_peer_id);
                 if let Some(sender) = self
                     .pending_requests
                     .remove(&PendingId::Listener(listener_id))

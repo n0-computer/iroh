@@ -1,11 +1,14 @@
-// this is just a stub for future integration with iroh-gateway
+use std::{fs::File, io::Read, path::Path, time::Duration};
+
+use axum::body::Body;
+use cid::Cid;
+use futures::stream::StreamExt;
+use metrics::{counter, gauge, histogram, increment_counter};
+use rand::{prelude::StdRng, Rng, SeedableRng};
+use tracing::info;
 
 use crate::metrics::*;
 use crate::response::ResponseFormat;
-use axum::body::Body;
-use metrics::{counter, gauge, histogram, increment_counter};
-use rand::{prelude::StdRng, Rng, SeedableRng};
-use std::{fs::File, io::Read, path::Path, time::Duration};
 
 #[derive(Debug, Clone, Copy)]
 pub struct Client {}
@@ -15,6 +18,53 @@ pub const CHUNK_SIZE: usize = 1024;
 impl Client {
     pub fn new() -> Self {
         Self {}
+    }
+
+    #[tracing::instrument()]
+    pub async fn get_file_by_cid(
+        &self,
+        c: Cid,
+        rpc_client: &iroh_rpc_client::Client,
+        start_time: std::time::Instant,
+    ) -> Result<Body, String> {
+        info!("get file {}", c);
+        let (mut sender, body) = Body::channel();
+        let rpc_client = rpc_client.clone();
+        tokio::spawn(async move {
+            let stream = rpc_client.network.fetch_bitswap(c, None).await.unwrap();
+            tokio::pin!(stream);
+
+            let mut first = true;
+            let mut f_size = 0.;
+
+            while let Some(b) = stream.next().await {
+                if first {
+                    gauge!(METRICS_TIME_TO_FETCH_FIRST_BLOCK, start_time.elapsed());
+                    histogram!(METRICS_HIST_TTFB, start_time.elapsed());
+                    first = false;
+                } else {
+                }
+
+                // TODO: error handling
+                let b = b.unwrap();
+                let n = b.len();
+
+                counter!(METRICS_BYTES_FETCHED, n as u64);
+                f_size += n as f64;
+                gauge!(
+                    METRICS_BITRATE_IN,
+                    f_size / start_time.elapsed().as_secs_f64()
+                );
+
+                sender.send_data(b.into()).await.unwrap();
+            }
+            // finished file
+            gauge!(METRICS_TIME_TO_FETCH_FULL_FILE, start_time.elapsed());
+            gauge!(METRICS_TIME_TO_SERVE_FULL_FILE, start_time.elapsed());
+            histogram!(METRICS_HIST_TTSERVE, start_time.elapsed());
+        });
+
+        Ok(body)
     }
 
     #[tracing::instrument()]
@@ -86,7 +136,7 @@ impl Client {
 #[derive(Debug, Clone)]
 pub struct Request {
     pub format: ResponseFormat,
-    pub cid: String,
+    pub cid: Cid,
     pub full_content_path: String,
     pub query_file_name: String,
     pub content_path: String,

@@ -5,3 +5,4 @@ pub mod core;
 mod error;
 pub mod metrics;
 mod response;
+pub mod rpc;

@@ -1,12 +1,14 @@
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use iroh_rpc::{Client as RpcClient, RpcError};
 use libp2p::{Multiaddr, PeerId};
+use tokio::sync::Mutex;
 
 mod network;
 
 use crate::network::P2pClient;
 
+#[derive(Debug, Clone)]
 pub struct Client {
     // TODO: this is wrong
     client: Arc<Mutex<RpcClient>>,
@@ -23,30 +25,23 @@ impl Client {
     }
 
     pub async fn dial<I: Into<String>>(
-        &mut self,
+        &self,
         namespace: I,
         addr: Multiaddr,
         peer_id: PeerId,
     ) -> Result<(), RpcError> {
         self.client
             .lock()
-            .unwrap()
+            .await
             .dial(namespace, addr, peer_id)
             .await
     }
 
-    pub async fn listen(&mut self, addr: Multiaddr) -> Result<Multiaddr, RpcError> {
-        self.client.lock().unwrap().listen(addr).await
+    pub async fn listen(&self, addr: &Multiaddr) -> Result<Multiaddr, RpcError> {
+        self.client.lock().await.listen(addr).await
     }
 
-    pub async fn send_address_book<I: Into<String>>(
-        &mut self,
-        namespace: I,
-    ) -> Result<(), RpcError> {
-        self.client
-            .lock()
-            .unwrap()
-            .send_address_book(namespace)
-            .await
+    pub async fn send_address_book<I: Into<String>>(&self, namespace: I) -> Result<(), RpcError> {
+        self.client.lock().await.send_address_book(namespace).await
     }
 }

@@ -24,7 +24,7 @@ use tracing::{debug, info, trace, warn};
 
 use iroh_bitswap::Block;
 use iroh_rpc_client::Client;
-use iroh_rpc_network::mem_p2p_rpc;
+use iroh_rpc_network::tcp_p2p_rpc;
 use iroh_rpc_types::p2p::RpcMessage;
 
 use super::{
@@ -90,12 +90,14 @@ impl Libp2pService {
         let (network_sender_out, network_receiver_out) = channel(1_000); // TODO: configurable
 
         // TODO: handle error
-        let (mut client, server) = mem_p2p_rpc(rpc_keypair, network_sender_in.clone()).unwrap();
+        let (client, server) = tcp_p2p_rpc(rpc_keypair, network_sender_in.clone())
+            .await
+            .unwrap();
 
         tokio::spawn(async move {
             server.run().await;
         });
-        if let Err(e) = client.listen(config.rpc_multiaddr).await {
+        if let Err(e) = client.listen(&config.rpc_multiaddr).await {
             warn!(
                 "p2p rpc client was unable to listen for incoming messages: {}",
                 e
@@ -190,6 +192,7 @@ impl Libp2pService {
     }
 
     async fn handle_rpc_message(&mut self, message: RpcMessage) -> Result<()> {
+        info!("rpc message {:?}", message);
         // Inbound messages
         match message {
             RpcMessage::BitswapRequest {

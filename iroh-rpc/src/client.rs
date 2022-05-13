@@ -11,6 +11,7 @@ use crate::stream;
 /// The Rpc Client manages outgoing and incoming calls over rpc
 /// It knows how to reach the different Iroh processes, and knows
 /// how to handle incoming requests
+#[derive(Debug)]
 pub struct Client {
     command_sender: mpsc::Sender<Command>,
     next_id: Iter,
@@ -26,10 +27,13 @@ impl Client {
     }
 
     /// Listen on a particular multiaddress
-    pub async fn listen(&mut self, addr: Multiaddr) -> Result<Multiaddr, RpcError> {
+    pub async fn listen(&mut self, addr: &Multiaddr) -> Result<Multiaddr, RpcError> {
         let (sender, receiver) = oneshot::channel();
         self.command_sender
-            .send(Command::StartListening { sender, addr })
+            .send(Command::StartListening {
+                sender,
+                addr: addr.clone(),
+            })
             .await
             .expect("Receiver to not be dropped.");
         match receiver.await.expect("Sender to not be dropped") {
@@ -175,6 +179,7 @@ impl Client {
     }
 }
 
+#[derive(Debug)]
 struct Iter {
     num: u64,
 }
@@ -341,14 +346,14 @@ mod test {
             TestConfig {
                 addr: addr.clone(),
                 peer_id: a_peer_id,
-                swarm: swarm::new_swarm(a_keypair)
+                swarm: swarm::new_tcp_swarm(a_keypair)
                     .await
                     .expect("swarm build failed"),
             },
             TestConfig {
                 addr,
                 peer_id: b_peer_id,
-                swarm: swarm::new_swarm(b_keypair)
+                swarm: swarm::new_tcp_swarm(b_keypair)
                     .await
                     .expect("swarm build failed"),
             },
@@ -384,12 +389,12 @@ mod test {
         });
 
         // listen on addr
-        let a_addr = a_client.listen(a.addr).await.expect("unsuccessful dial");
-        let b_addr = b_client.listen(b.addr).await.expect("unsuccessful dial");
+        let a_addr = a_client.listen(&a.addr).await.expect("unsuccessful dial");
+        let b_addr = b_client.listen(&b.addr).await.expect("unsuccessful dial");
 
         // add addresses
-        a_client.dial("b", b_addr, b.peer_id);
-        b_client.dial("a", a_addr, a.peer_id);
+        a_client.dial("b", b_addr, b.peer_id).await.unwrap();
+        b_client.dial("a", a_addr, a.peer_id).await.unwrap();
 
         let size = 4_048;
         let chunk_size = 1_024;
