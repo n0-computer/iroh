@@ -153,6 +153,7 @@ impl Libp2pService {
                     .await?;
             }
             NodeBehaviourEvent::BitswapReceivedBlock(_peer_id, cid, block) => {
+                info!("got block {}", cid);
                 // TODO: verify cid hash
 
                 let b = Block::new(block, cid);

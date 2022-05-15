@@ -27,7 +27,6 @@ pub struct Config {
 
 #[derive(Debug, Clone)]
 pub struct RpcConfig {
-    pub keypair: Keypair,
     /// Address on which to listen,
     pub listen_addr: Multiaddr,
     pub p2p_addr: String,
@@ -35,11 +34,7 @@ pub struct RpcConfig {
 
 impl Default for RpcConfig {
     fn default() -> Self {
-        let gen_keypair = ed25519::Keypair::generate();
-        let keypair = Keypair::Ed25519(gen_keypair);
-
         RpcConfig {
-            keypair,
             listen_addr: "/ip4/0.0.0.0/tcp/4400".parse().unwrap(),
             p2p_addr: "http://localhost:4401".into(),
         }

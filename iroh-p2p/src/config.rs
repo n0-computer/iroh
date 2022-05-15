@@ -46,7 +46,7 @@ impl Default for Libp2pConfig {
             mdns: false,
             kademlia: true,
             target_peer_count: 75,
-            rpc_addr: "http://0.0.0.0:4401".parse().unwrap(),
+            rpc_addr: "0.0.0.0:4401".parse().unwrap(),
         }
     }
 }

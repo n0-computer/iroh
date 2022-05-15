@@ -19,7 +19,7 @@ impl Client {
         Self {}
     }
 
-    #[tracing::instrument()]
+    #[tracing::instrument(skip(rpc_client))]
     pub async fn get_file(
         &self,
         path: &str,

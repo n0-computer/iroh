@@ -20,8 +20,6 @@ struct Args {
     cache: bool,
     #[clap(long = "no-metrics")]
     no_metrics: bool,
-    #[clap(long)]
-    store: String,
 }
 
 #[tokio::main(flavor = "multi_thread")]
@@ -49,8 +47,7 @@ async fn main() -> Result<()> {
         .expect("failed to initialize metrics");
     metrics::register_counters();
 
-    let store_id = args.store.parse().unwrap();
-    let handler = Core::new(config, store_id).await?;
+    let handler = Core::new(config).await?;
     let core_task = tokio::spawn(async move {
         handler.serve().await;
     });

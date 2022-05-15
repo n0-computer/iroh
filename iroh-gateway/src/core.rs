@@ -68,7 +68,7 @@ impl GetParams {
 }
 
 impl Core {
-    pub async fn new(config: Config, store_id: PeerId) -> anyhow::Result<Self> {
+    pub async fn new(config: Config) -> anyhow::Result<Self> {
         let rpc_client = RpcClient::new(&config.rpc.p2p_addr).await?;
 
         Ok(Self {
