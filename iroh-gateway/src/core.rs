@@ -8,6 +8,7 @@ use axum::{
     BoxError, Router,
 };
 use cid::Cid;
+use iroh_rpc_client::Client as RpcClient;
 use libp2p::PeerId;
 use metrics::increment_counter;
 use serde::{Deserialize, Serialize};
@@ -30,13 +31,11 @@ use crate::{
     headers::*,
     metrics::{get_current_trace_id, METRICS_CNT_REQUESTS_TOTAL},
     response::{get_response_format, GatewayResponse, ResponseFormat},
-    rpc,
 };
 
 #[derive(Debug)]
 pub struct Core {
     state: Arc<State>,
-    _rpc_task: JoinHandle<()>,
 }
 
 #[derive(Debug)]
@@ -70,17 +69,7 @@ impl GetParams {
 
 impl Core {
     pub async fn new(config: Config, store_id: PeerId) -> anyhow::Result<Self> {
-        let (rpc_client, rpc_server) = rpc::tcp_rpc(config.rpc.keypair.clone()).await?;
-
-        let rpc_task = tokio::spawn(async move {
-            rpc_server.run().await;
-        });
-        rpc_client.listen(&config.rpc.listen_addr).await?;
-
-        // dial the p2p node
-        rpc_client
-            .dial("p2p", "/ip4/127.0.0.1/tcp/4401".parse().unwrap(), store_id)
-            .await?;
+        let rpc_client = RpcClient::new(&config.rpc.p2p_addr).await?;
 
         Ok(Self {
             state: Arc::new(State {
@@ -88,7 +77,6 @@ impl Core {
                 client: Client::new(),
                 rpc_client,
             }),
-            _rpc_task: rpc_task,
         })
     }
 

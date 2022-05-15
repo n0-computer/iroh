@@ -6,9 +6,12 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-iroh-rpc = { path = "../iroh-rpc" }
-serde = { version = "1.0", features = ["rc", "derive"] }
-iroh-bitswap  = { path = "../iroh-bitswap" } 
 libp2p = { version = "0.44.0", features = ["serde"] }
 cid = { version = "0.8.0", features = ["serde-codec"] }
 futures = "0.3.5"
+tonic = "0.7.2"
+prost = "0.10.3"
+
+[build-dependencies]
+prost-build = "0.10.3"
+tonic-build = { version = "0.7.2", features = ["prost"] }

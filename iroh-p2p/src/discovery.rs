@@ -182,7 +182,7 @@ pub struct DiscoveryBehaviour {
 }
 
 enum QueryChannel {
-    GetProviders(oneshot::Sender<Option<Result<HashSet<PeerId>, String>>>),
+    GetProviders(oneshot::Sender<Result<HashSet<PeerId>, String>>),
 }
 
 impl DiscoveryBehaviour {
@@ -209,14 +209,14 @@ impl DiscoveryBehaviour {
     pub fn providers(
         &mut self,
         key: Key,
-        response_channel: oneshot::Sender<Option<Result<HashSet<PeerId>, String>>>,
+        response_channel: oneshot::Sender<Result<HashSet<PeerId>, String>>,
     ) {
         if let Some(kad) = self.kademlia.as_mut() {
             let id = kad.get_providers(key);
             self.queries
                 .insert(id, QueryChannel::GetProviders(response_channel));
         } else {
-            response_channel.send(None).ok();
+            response_channel.send(Ok(Default::default())).ok();
         }
     }
 }
@@ -392,13 +392,13 @@ impl NetworkBehaviour for DiscoveryBehaviour {
                     KademliaEvent::OutboundQueryCompleted { id, result, .. } => match result {
                         QueryResult::GetProviders(Ok(GetProvidersOk { providers, .. })) => {
                             if let Some(QueryChannel::GetProviders(ch)) = self.queries.remove(&id) {
-                                ch.send(Some(Ok(providers))).ok();
+                                ch.send(Ok(providers)).ok();
                             }
                         }
                         QueryResult::GetProviders(Err(err)) => {
                             trace!("{:?}", err);
                             if let Some(QueryChannel::GetProviders(ch)) = self.queries.remove(&id) {
-                                ch.send(Some(Err(err.to_string()))).ok();
+                                ch.send(Err(err.to_string())).ok();
                             }
                         }
                         other => {

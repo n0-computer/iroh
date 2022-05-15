@@ -30,6 +30,7 @@ pub struct RpcConfig {
     pub keypair: Keypair,
     /// Address on which to listen,
     pub listen_addr: Multiaddr,
+    pub p2p_addr: String,
 }
 
 impl Default for RpcConfig {
@@ -40,6 +41,7 @@ impl Default for RpcConfig {
         RpcConfig {
             keypair,
             listen_addr: "/ip4/0.0.0.0/tcp/4400".parse().unwrap(),
+            p2p_addr: "http://localhost:4401".into(),
         }
     }
 }

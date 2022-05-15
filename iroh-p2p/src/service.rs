@@ -23,12 +23,10 @@ use tokio::{select, time};
 use tracing::{debug, info, trace, warn};
 
 use iroh_bitswap::Block;
-use iroh_rpc_client::Client;
-use iroh_rpc_types::p2p::RpcMessage;
 
 use crate::{
     behaviour::{NodeBehaviour, NodeBehaviourEvent},
-    rpc::tcp_p2p_rpc,
+    rpc::{self, RpcMessage},
     Libp2pConfig,
 };
 
@@ -50,11 +48,10 @@ pub struct Libp2pService {
     net_receiver_out: Receiver<NetworkEvent>,
     net_sender_out: Sender<NetworkEvent>,
     bitswap_response_channels: HashMap<Cid, Vec<OneShotSender<Block>>>,
-    pub rpc_client: Client,
 }
 
 impl Libp2pService {
-    pub async fn new(config: Libp2pConfig, net_keypair: Keypair, rpc_keypair: Keypair) -> Self {
+    pub async fn new(config: Libp2pConfig, net_keypair: Keypair) -> Self {
         let peer_id = PeerId::from(net_keypair.public());
 
         let transport = build_transport(net_keypair.clone()).await;
@@ -89,20 +86,11 @@ impl Libp2pService {
         let (network_sender_in, network_receiver_in) = channel(1_000); // TODO: configurable
         let (network_sender_out, network_receiver_out) = channel(1_000); // TODO: configurable
 
-        // TODO: handle error
-        let (client, server) = tcp_p2p_rpc(rpc_keypair, network_sender_in.clone())
-            .await
-            .unwrap();
-
+        let nsi = network_sender_in.clone();
         tokio::spawn(async move {
-            server.run().await;
+            // TODO: handle error
+            rpc::new(config.rpc_addr, nsi).await.unwrap()
         });
-        if let Err(e) = client.listen(&config.rpc_multiaddr).await {
-            warn!(
-                "p2p rpc client was unable to listen for incoming messages: {}",
-                e
-            );
-        }
 
         Libp2pService {
             swarm,
@@ -111,7 +99,6 @@ impl Libp2pService {
             net_receiver_out: network_receiver_out,
             net_sender_out: network_sender_out,
             bitswap_response_channels: Default::default(),
-            rpc_client: client,
         }
     }
 

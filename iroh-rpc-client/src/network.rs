@@ -1,21 +1,21 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+use anyhow::Result;
+use bytes::Bytes;
 use cid::Cid;
-use futures::Stream;
-use libp2p::kad::record::Key;
+use iroh_rpc_types::p2p;
 use libp2p::{Multiaddr, PeerId};
-
-use iroh_rpc::Client as RpcClient;
-use iroh_rpc::RpcError;
-use iroh_rpc_types::p2p::{Methods, Namespace, Requests};
+use tokio::sync::Mutex;
 
 #[derive(Debug, Clone)]
-pub struct P2pClient(Arc<RpcClient>);
+pub struct P2pClient(Arc<Mutex<p2p::p2p_client::P2pClient<tonic::transport::Channel>>>);
 
 impl P2pClient {
-    pub fn new(client: Arc<RpcClient>) -> Self {
-        P2pClient(Arc::clone(&client))
+    pub async fn new(addr: &str) -> Result<Self> {
+        let client = p2p::p2p_client::P2pClient::connect(addr.to_string()).await?;
+
+        Ok(P2pClient(Arc::new(Mutex::new(client))))
     }
 
     // fetch a block directly from the network
@@ -26,47 +26,43 @@ impl P2pClient {
         &self,
         cid: Cid,
         providers: Option<HashSet<PeerId>>,
-    ) -> Result<impl Stream<Item = Result<Vec<u8>, RpcError>>, RpcError> {
-        let req = Requests::FetchBitswap { cid, providers };
-        self.0
-            .streaming_call(Namespace, Methods::FetchBitswap, req)
-            .await
+    ) -> Result<Bytes> {
+        let providers = providers.map(|p| {
+            let list = p.into_iter().map(|id| id.to_bytes()).collect::<Vec<_>>();
+            p2p::Providers { providers: list }
+        });
+
+        let req = p2p::BitswapRequest {
+            cid: cid.to_bytes(),
+            providers,
+        };
+        let res = self.0.lock().await.fetch_bitswap(req).await?;
+        Ok(res.into_inner().data)
     }
 
-    pub async fn fetch_provider(&self, key: Key) -> Result<HashSet<PeerId>, RpcError> {
-        let req = Requests::FetchProvider { key };
-        self.0.call(Namespace, Methods::FetchProvider, req).await
+    pub async fn fetch_provider(&self, key: &[u8]) -> Result<HashSet<PeerId>> {
+        // let req = Requests::FetchProvider { key };
+        // self.0.call(Namespace, Methods::FetchProvider, req).await
+        todo!()
     }
 
-    pub async fn get_listening_addrs(&self) -> Result<(), RpcError> {
-        self.0.call(Namespace, Methods::GetListeningAddrs, ()).await
+    pub async fn get_listening_addrs(&self) -> Result<()> {
+        todo!()
     }
 
-    pub async fn get_peers(&self) -> Result<HashMap<PeerId, Vec<Multiaddr>>, RpcError> {
-        self.0.call(Namespace, Methods::GetPeers, ()).await
+    pub async fn get_peers(&self) -> Result<HashMap<PeerId, Vec<Multiaddr>>> {
+        todo!()
     }
 
     pub async fn connect(
         &self,
         peer_id: PeerId,
         addrs: Vec<Multiaddr>,
-    ) -> Result<HashMap<PeerId, Vec<Multiaddr>>, RpcError> {
-        self.0
-            .call(
-                Namespace,
-                Methods::Connect,
-                Requests::NetConnect { peer_id, addrs },
-            )
-            .await
+    ) -> Result<HashMap<PeerId, Vec<Multiaddr>>> {
+        todo!()
     }
 
-    pub async fn disconnect(&self, peer_id: PeerId) -> Result<(), RpcError> {
-        self.0
-            .call(
-                Namespace,
-                Methods::Disconnect,
-                Requests::NetDisconnect(peer_id),
-            )
-            .await
+    pub async fn disconnect(&self, peer_id: PeerId) -> Result<()> {
+        todo!()
     }
 }

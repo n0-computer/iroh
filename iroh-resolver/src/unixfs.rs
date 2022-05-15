@@ -77,7 +77,7 @@ impl UnixfsNode {
         self.inner.r#type.try_into().expect("invalid data type")
     }
 
-    pub async fn get_link_by_name<S: AsRef<str>>(&self, link: S) -> Result<Option<Link>> {
+    pub async fn get_link_by_name<S: AsRef<str>>(&self, _link: S) -> Result<Option<Link>> {
         todo!()
     }
 

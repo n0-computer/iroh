@@ -27,7 +27,6 @@ tracing-opentelemetry = "0.17.2"
 opentelemetry = { version = "0.17.0", features = ["rt-tokio"] }
 time = "0.3.9"
 headers = "0.3.7"
-iroh-rpc = { path = "../iroh-rpc" }
 iroh-rpc-client = { path = "../iroh-rpc-client" }
 libp2p = "0.44.0"
 iroh-util = { path = "../iroh-util" }

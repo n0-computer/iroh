@@ -25,18 +25,9 @@ async fn main() -> anyhow::Result<()> {
         Keypair::Ed25519(gen_keypair)
     };
 
-    // TODO: read keypair for disk
-    // TODO: configurable keypair
-    let rpc_keypair = {
-        // Keypair not found, generate and save generated keypair
-        let gen_keypair = ed25519::Keypair::generate();
-        // TODO: Save Ed25519 keypair to file
-        Keypair::Ed25519(gen_keypair)
-    };
-
     // TODO: configurable network
     let network_config = iroh_p2p::Libp2pConfig::default();
-    let mut p2p_service = Libp2pService::new(network_config, net_keypair, rpc_keypair).await;
+    let mut p2p_service = Libp2pService::new(network_config, net_keypair).await;
 
     // Start services
     let p2p_task = task::spawn(async move {

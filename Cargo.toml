@@ -3,7 +3,6 @@ members = [
   "iroh",
   "iroh-bitswap",
   "iroh-car",
-  "iroh-rpc",
   "iroh-rpc-client",
   "iroh-rpc-types",
   "iroh-gateway",

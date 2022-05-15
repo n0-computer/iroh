@@ -4,7 +4,6 @@ use std::str::FromStr;
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use bytes::Bytes;
 use cid::Cid;
-use futures::stream::StreamExt;
 use iroh_rpc_client::Client;
 use libipld::codec::Encode;
 use libipld::prelude::Codec as _;
@@ -111,11 +110,11 @@ pub enum Out {
 impl Out {
     pub fn pretty(&self) -> Result<Bytes> {
         match self {
-            Out::DagPb(i) => {
+            Out::DagPb(_i) => {
                 todo!()
             }
             Out::Unixfs(node) => node.pretty(),
-            Out::DagCbor(i) => {
+            Out::DagCbor(_i) => {
                 todo!()
             }
             Out::DagJson(i) => {
@@ -283,16 +282,8 @@ impl Resolver {
     async fn load_cid(&self, cid: &Cid) -> Result<Bytes> {
         // TODO: better strategies
         let providers = None;
-        let stream = self.rpc.network.fetch_bitswap(*cid, providers).await?;
-        tokio::pin!(stream);
-
-        let mut out = Vec::new();
-        while let Some(b) = stream.next().await {
-            let b = b?;
-            out.extend(b);
-        }
-
-        Ok(out.into())
+        let res = self.rpc.p2p.fetch_bitswap(*cid, providers).await?;
+        Ok(res)
     }
 
     /// Resolves a dnslink at the given domain.
@@ -366,7 +357,7 @@ mod tests {
             let digest = Code::Blake3_256.digest(&bytes);
             let c = Cid::new_v1(codec.into(), digest);
 
-            let client = Client::dummy();
+            let client = Client::new("http://localhost:5900").await.unwrap();
             let resolver = Resolver::new(client);
 
             {
