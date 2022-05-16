@@ -122,7 +122,7 @@ jobs:
     - name: Install Protoc linux
       if: matrix.os == 'ubuntu-latest'
       run: |
-        apt install -y protobuf-compiler
+        sudo apt install -y protobuf-compiler
         # PROTOC_VERSION=3.20.0
         # PROTOC_ZIP=protoc-$PROTOC_VERSION-linux-x86_64.zip
         # curl -OL https://github.com/protocolbuffers/protobuf/releases/download/v$PROTOC_VERSION/$PROTOC_ZIP
