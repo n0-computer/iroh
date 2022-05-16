@@ -45,19 +45,23 @@ impl Config {
             .into_iter()
             .collect::<AccessControlAllowMethods>(),
         );
-        headers.typed_insert(AccessControlAllowHeaders::from_iter(vec![
-            CONTENT_TYPE,
-            CONTENT_DISPOSITION,
-            LAST_MODIFIED,
-            CACHE_CONTROL,
-            ACCEPT_RANGES,
-            ETAG,
-            HEADER_SERVICE_WORKER.clone(),
-            HEADER_X_IPFS_GATEWAY_PREFIX.clone(),
-            HEADER_X_TRACE_ID.clone(),
-            HEADER_X_CONTENT_TYPE_OPTIONS.clone(),
-            HEADER_X_IPFS_PATH.clone(),
-        ]));
+        headers.typed_insert(
+            [
+                CONTENT_TYPE,
+                CONTENT_DISPOSITION,
+                LAST_MODIFIED,
+                CACHE_CONTROL,
+                ACCEPT_RANGES,
+                ETAG,
+                HEADER_SERVICE_WORKER.clone(),
+                HEADER_X_IPFS_GATEWAY_PREFIX.clone(),
+                HEADER_X_TRACE_ID.clone(),
+                HEADER_X_CONTENT_TYPE_OPTIONS.clone(),
+                HEADER_X_IPFS_PATH.clone(),
+            ]
+            .into_iter()
+            .collect::<AccessControlAllowHeaders>(),
+        );
         // todo(arqu): remove these once propperly implmented
         headers.insert(CACHE_CONTROL, VALUE_NO_CACHE_NO_TRANSFORM.clone());
         headers.insert(ACCEPT_RANGES, VALUE_NONE.clone());
