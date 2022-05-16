@@ -20,7 +20,7 @@ pub type Priority = i32;
 #[derive(Default, Clone, PartialEq)]
 pub struct BitswapMessage {
     /// Wanted blocks.
-    want: HashMap<Cid, Priority>,
+    pub(crate) want: HashMap<Cid, Priority>,
     /// Blocks to cancel.
     cancel: HashSet<Cid>,
     /// Wheather it is the full list of wanted blocks.

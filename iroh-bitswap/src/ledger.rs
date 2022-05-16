@@ -1,6 +1,7 @@
 use ahash::AHashMap;
 
 use cid::Cid;
+use tracing::info;
 
 use crate::block::Block;
 use crate::message::{BitswapMessage, Priority};
@@ -46,6 +47,8 @@ impl Ledger {
         if self.message.is_empty() {
             return None;
         }
+        info!("sending {} wants", self.message.want.len());
+
         for cid in self.message.cancel() {
             self.sent_want_list.remove(cid);
         }

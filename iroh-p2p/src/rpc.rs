@@ -8,6 +8,7 @@ use libp2p::PeerId;
 
 use iroh_rpc_types::p2p::{BitswapRequest, BitswapResponse, Providers};
 use tonic::Status;
+use tracing::info;
 
 use std::collections::{HashMap, HashSet};
 use std::io;
@@ -47,6 +48,22 @@ impl p2p_server::P2p for P2p {
                     .collect::<Result<_, Status>>()
             })
             .transpose()?;
+
+        let providers = if providers.is_none() {
+            let (s, r) = oneshot::channel();
+            self.sender
+                .send(RpcMessage::ProviderRequest {
+                    key: cid.to_bytes().into(),
+                    response_channel: s,
+                })
+                .await
+                .unwrap();
+            Some(r.await.unwrap().unwrap())
+        } else {
+            providers
+        };
+
+        info!("found providers: {:?}", providers);
 
         let (s, r) = oneshot::channel();
         let msg = RpcMessage::BitswapRequest {

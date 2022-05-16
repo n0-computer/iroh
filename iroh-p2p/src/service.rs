@@ -70,7 +70,7 @@ impl Libp2pService {
         )
         .connection_limits(limits)
         .notify_handler_buffer_size(std::num::NonZeroUsize::new(20).expect("Not zero")) // TODO: configurable
-        .connection_event_buffer_size(64)
+        .connection_event_buffer_size(128)
         .executor(Box::new(|fut| {
             tokio::spawn(fut);
         }))
@@ -195,8 +195,9 @@ impl Libp2pService {
                             multiaddr.push(Protocol::P2p(
                                 Multihash::from_bytes(&peer_id.to_bytes()).unwrap(),
                             ));
-                            Swarm::dial(&mut self.swarm, multiaddr.clone())
-                                .with_context(|| format!("Failed to dial peer: {}", multiaddr))?;
+                            if let Err(e) = Swarm::dial(&mut self.swarm, multiaddr.clone()) {
+                                trace!("failed to dial peer {}: {:?}", multiaddr, e);
+                            }
                         }
                     }
                 }

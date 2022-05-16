@@ -16,7 +16,7 @@ use libp2p::swarm::handler::OneShotHandler;
 use libp2p::swarm::{
     IntoConnectionHandler, NetworkBehaviour, NetworkBehaviourAction, NotifyHandler, PollParameters,
 };
-use tracing::{debug, instrument, trace};
+use tracing::{debug, info, instrument, trace};
 
 use crate::block::Block;
 use crate::ledger::Ledger;
@@ -118,7 +118,7 @@ impl Bitswap {
 
     #[instrument(skip(self))]
     pub async fn want_blocks(&mut self, cids: Vec<Cid>, priority: Priority) {
-        debug!(
+        info!(
             "want_blocks from {} peers: {:?}",
             self.connected_peers.len(),
             cids

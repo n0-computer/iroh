@@ -13,7 +13,11 @@ pub struct P2pClient(Arc<Mutex<p2p::p2p_client::P2pClient<tonic::transport::Chan
 
 impl P2pClient {
     pub async fn new(addr: &str) -> Result<Self> {
-        let client = p2p::p2p_client::P2pClient::connect(addr.to_string()).await?;
+        let conn = tonic::transport::Endpoint::new(addr.to_string())?
+            .keep_alive_while_idle(true)
+            .connect_lazy();
+
+        let client = p2p::p2p_client::P2pClient::new(conn);
 
         Ok(P2pClient(Arc::new(Mutex::new(client))))
     }

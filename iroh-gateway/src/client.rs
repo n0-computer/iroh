@@ -31,33 +31,15 @@ impl Client {
             path.parse().map_err(|e: anyhow::Error| e.to_string())?;
         // TODO: reuse
         let resolver = iroh_resolver::resolver::Resolver::new(rpc_client.clone());
-        let (mut sender, body) = Body::channel();
         let path = path.to_string();
 
-        tokio::spawn(async move {
-            match resolver.resolve(p).await {
-                Ok(res) => {
-                    info!("resolved: {}", path);
-                    match res.pretty() {
-                        Ok(res) => {
-                            if let Err(e) = sender.send_data(res.into()).await {
-                                error!("failed to send stream data: {:?}", e);
-                            }
-                        }
-                        Err(e) => {
-                            error!("failed to print {:?}", e);
-                            sender.abort();
-                        }
-                    }
-                }
-                Err(e) => {
-                    error!("failed to resolve {}: {:?}", path, e);
-                    sender.abort();
-                }
-            }
-        });
-
-        Ok(body)
+        let res = resolver
+            .resolve(p)
+            .await
+            .and_then(|r| r.pretty())
+            .map_err(|e| e.to_string())?;
+        info!("resolved: {}", path);
+        Ok(res.into())
     }
 
     #[tracing::instrument()]
