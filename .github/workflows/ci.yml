@@ -14,15 +14,15 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest, macOS-latest]
+        os: [ubuntu-latest, macOS-latest]
         rust: [nightly, stable]
         include:
           - os: ubuntu-latest
             sccache-path: /home/runner/.cache/sccache
           - os: macos-latest
             sccache-path: /Users/runner/Library/Caches/Mozilla.sccache
-          - os: windows-latest
-            sccache-path: "%LOCALAPPDATA%\\sccache"
+          # - os: windows-latest
+          #   sccache-path: "%LOCALAPPDATA%\\sccache"
     env:
       RUST_BACKTRACE: full
       RUSTC_WRAPPER: sccache
