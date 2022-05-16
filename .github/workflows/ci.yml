@@ -115,8 +115,29 @@ jobs:
     - name: Start sccache server
       run: sccache --start-server
 
-    - name: Install Protoc
+    - name: Install Protoc windows
+      if: matrix.os == 'windows-latest'
       uses: arduino/setup-protoc@v1
+
+    - name: Install Protoc linux
+      if: matrix.os == 'ubuntu-latest'
+      run: |
+        PROTOC_VERSION=3.20.0
+        PROTOC_ZIP=protoc-$PROTOC_VERSION-linux-x86_64.zip
+        curl -OL https://github.com/protocolbuffers/protobuf/releases/download/v$PROTOC_VERSION/$PROTOC_ZIP
+        sudo unzip -o $PROTOC_ZIP -d /usr/local bin/protoc
+        sudo unzip -o $PROTOC_ZIP -d /usr/local 'include/*'
+        rm -f $PROTOC_ZIP
+    
+    - name: Install Protoc macOS
+      if: matrix.os == 'macOS-latest'
+      run: |
+        PROTOC_VERSION=3.20.0
+        PROTOC_ZIP=protoc-$PROTOC_VERSION-osx-x86_64.zip
+        curl -OL https://github.com/protocolbuffers/protobuf/releases/download/v$PROTOC_VERSION/$PROTOC_ZIP
+        sudo unzip -o $PROTOC_ZIP -d /usr/local bin/protoc
+        sudo unzip -o $PROTOC_ZIP -d /usr/local 'include/*'
+        rm -f $PROTOC_ZIP
 
     - name: check
       uses: actions-rs/cargo@v1
