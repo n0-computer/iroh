@@ -1,7 +1,8 @@
-use std::collections::HashMap;
-
-use axum::http::header::*;
-
+use crate::constants::*;
+use axum::http::{header::*, Method};
+use headers::{
+    AccessControlAllowHeaders, AccessControlAllowMethods, AccessControlAllowOrigin, HeaderMapExt,
+};
 pub const DEFAULT_PORT: u16 = 9050;
 
 #[derive(Debug, Clone)]
@@ -13,7 +14,7 @@ pub struct Config {
     /// flag to toggle whether the gateway enables/utilizes caching
     pub cache: bool,
     /// set of user provided headers to attach to all responses
-    pub headers: HashMap<String, String>, //todo(arqu): convert to use axum::http::header
+    pub headers: HeaderMap,
     /// default port to listen on
     pub port: u16,
 }
@@ -24,21 +25,46 @@ impl Config {
             writeable,
             fetch,
             cache,
-            headers: HashMap::new(),
+            headers: HeaderMap::new(),
             port,
         }
     }
 
     pub fn set_default_headers(&mut self) {
-        let mut headers = HashMap::new();
-        headers.insert(ACCESS_CONTROL_ALLOW_ORIGIN.to_string(), "*".to_string());
-        headers.insert(ACCESS_CONTROL_ALLOW_HEADERS.to_string(), "*".to_string());
-        headers.insert(ACCESS_CONTROL_ALLOW_METHODS.to_string(), "*".to_string());
-        headers.insert(
-            CACHE_CONTROL.to_string(),
-            "no-cache, no-transform".to_string(),
+        let mut headers = HeaderMap::new();
+        headers.typed_insert(AccessControlAllowOrigin::ANY);
+        headers.typed_insert(
+            [
+                Method::GET,
+                Method::PUT,
+                Method::POST,
+                Method::DELETE,
+                Method::HEAD,
+                Method::OPTIONS,
+            ]
+            .into_iter()
+            .collect::<AccessControlAllowMethods>(),
         );
-        headers.insert(ACCEPT_RANGES.to_string(), "none".to_string());
+        headers.typed_insert(
+            [
+                CONTENT_TYPE,
+                CONTENT_DISPOSITION,
+                LAST_MODIFIED,
+                CACHE_CONTROL,
+                ACCEPT_RANGES,
+                ETAG,
+                HEADER_SERVICE_WORKER.clone(),
+                HEADER_X_IPFS_GATEWAY_PREFIX.clone(),
+                HEADER_X_TRACE_ID.clone(),
+                HEADER_X_CONTENT_TYPE_OPTIONS.clone(),
+                HEADER_X_IPFS_PATH.clone(),
+            ]
+            .into_iter()
+            .collect::<AccessControlAllowHeaders>(),
+        );
+        // todo(arqu): remove these once propperly implmented
+        headers.insert(CACHE_CONTROL, VALUE_NO_CACHE_NO_TRANSFORM.clone());
+        headers.insert(ACCEPT_RANGES, VALUE_NONE.clone());
         self.headers = headers;
     }
 }
@@ -49,7 +75,7 @@ impl Default for Config {
             writeable: false,
             fetch: false,
             cache: false,
-            headers: HashMap::new(),
+            headers: HeaderMap::new(),
             port: DEFAULT_PORT,
         };
         t.set_default_headers();
@@ -66,10 +92,8 @@ mod tests {
         let mut config = Config::new(false, false, false, 9050);
         config.set_default_headers();
         assert_eq!(config.headers.len(), 5);
-        assert_eq!(
-            config.headers.get(&ACCESS_CONTROL_ALLOW_ORIGIN.to_string()),
-            Some(&"*".to_string())
-        );
+        let h = config.headers.get(&ACCESS_CONTROL_ALLOW_ORIGIN).unwrap();
+        assert_eq!(h, "*");
     }
 
     #[test]

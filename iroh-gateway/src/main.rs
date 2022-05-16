@@ -12,6 +12,8 @@ struct Args {
     fetch: bool,
     #[clap(short, long)]
     cache: bool,
+    #[clap(long = "no-metrics")]
+    no_metrics: bool,
 }
 
 #[tokio::main]
@@ -22,7 +24,8 @@ async fn main() {
     config.set_default_headers();
     println!("{:#?}", config);
 
-    iroh_metrics::init(metrics::metrics_config()).expect("failed to initialize metrics");
+    iroh_metrics::init(metrics::metrics_config(args.no_metrics))
+        .expect("failed to initialize metrics");
     metrics::register_counters();
 
     let handler = Core::new(config);

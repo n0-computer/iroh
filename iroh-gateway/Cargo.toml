@@ -14,6 +14,7 @@ axum = "0.5.1"
 clap = { version = "3.1.8", features = ["derive"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0.78"
+serde_qs = "0.9.2"
 tower = { version = "0.4", features = ["util", "timeout", "load-shed", "limit"] }
 mime_guess = "2.0.4"
 iroh-metrics = { path = "../iroh-metrics" }
@@ -24,6 +25,8 @@ git-version = "0.3.5"
 rand = "0.8.5"
 tracing-opentelemetry = "0.17.2"
 opentelemetry = { version = "0.17.0", features = ["rt-tokio"] }
+time = "0.3.9"
+headers = "0.3.7"
 
 [dev-dependencies]
 axum-macros = "0.2.0" # use #[axum_macros::debug_handler] for better error messages on handlers
