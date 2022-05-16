@@ -44,7 +44,7 @@ impl P2pClient {
         Ok(res.into_inner().data)
     }
 
-    pub async fn fetch_provider(&self, key: &[u8]) -> Result<HashSet<PeerId>> {
+    pub async fn fetch_provider(&self, _key: &[u8]) -> Result<HashSet<PeerId>> {
         // let req = Requests::FetchProvider { key };
         // self.0.call(Namespace, Methods::FetchProvider, req).await
         todo!()
@@ -60,13 +60,13 @@ impl P2pClient {
 
     pub async fn connect(
         &self,
-        peer_id: PeerId,
-        addrs: Vec<Multiaddr>,
+        _peer_id: PeerId,
+        _addrs: Vec<Multiaddr>,
     ) -> Result<HashMap<PeerId, Vec<Multiaddr>>> {
         todo!()
     }
 
-    pub async fn disconnect(&self, peer_id: PeerId) -> Result<()> {
+    pub async fn disconnect(&self, _peer_id: PeerId) -> Result<()> {
         todo!()
     }
 }

@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Result};
 use async_channel::{bounded as channel, Receiver, Sender};
 use cid::Cid;
 use futures::channel::oneshot::Sender as OneShotSender;

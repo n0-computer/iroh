@@ -9,7 +9,6 @@ use axum::{
 };
 use cid::Cid;
 use iroh_rpc_client::Client as RpcClient;
-use libp2p::PeerId;
 use metrics::increment_counter;
 use serde::{Deserialize, Serialize};
 use serde_qs;
@@ -19,7 +18,6 @@ use std::{
     sync::Arc,
     time::{self, Duration},
 };
-use tokio::task::JoinHandle;
 use tower::ServiceBuilder;
 use tracing::info;
 

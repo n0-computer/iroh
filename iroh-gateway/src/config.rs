@@ -3,10 +3,7 @@ use axum::http::{header::*, Method};
 use headers::{
     AccessControlAllowHeaders, AccessControlAllowMethods, AccessControlAllowOrigin, HeaderMapExt,
 };
-use libp2p::{
-    identity::{ed25519, Keypair},
-    Multiaddr,
-};
+use libp2p::Multiaddr;
 
 pub const DEFAULT_PORT: u16 = 9050;
 

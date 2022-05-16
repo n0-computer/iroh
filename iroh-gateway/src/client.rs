@@ -12,7 +12,7 @@ use crate::response::ResponseFormat;
 #[derive(Debug, Clone, Copy)]
 pub struct Client {}
 
-pub const CHUNK_SIZE: usize = 1024;
+const CHUNK_SIZE: usize = 1024;
 
 impl Client {
     pub fn new() -> Self {
@@ -66,7 +66,7 @@ impl Client {
 
             match rpc_client.p2p.fetch_bitswap(c, providers).await {
                 Ok(res) => {
-                    if let Err(e) = sender.send_data(res.into()).await {
+                    if let Err(e) = sender.send_data(res).await {
                         error!("failed to send data: {:?}", e);
                     }
                 }
