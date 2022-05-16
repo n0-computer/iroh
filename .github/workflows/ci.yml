@@ -15,7 +15,7 @@ jobs:
     continue-on-error: ${{ matrix.experimental }}
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest, macOS-latest]
+        os: [ubuntu-latest, macOS-latest]
         rust: [nightly, stable]
         experimental: [false]
         include:
@@ -24,6 +24,7 @@ jobs:
           - os: macos-latest
             sccache-path: /Users/runner/Library/Caches/Mozilla.sccache
           - os: windows-latest
+            rust: stable
             sccache-path: "%LOCALAPPDATA%\\sccache"
             experimental: true
     env:
