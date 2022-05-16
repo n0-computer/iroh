@@ -1,5 +1,8 @@
 use crate::constants::*;
-use axum::http::header::*;
+use axum::http::{header::*, Method};
+use headers::{
+    AccessControlAllowHeaders, AccessControlAllowMethods, AccessControlAllowOrigin, HeaderMapExt,
+};
 pub const DEFAULT_PORT: u16 = 9050;
 
 #[derive(Debug, Clone)]
@@ -29,9 +32,32 @@ impl Config {
 
     pub fn set_default_headers(&mut self) {
         let mut headers = HeaderMap::new();
-        headers.insert(ACCESS_CONTROL_ALLOW_ORIGIN, VALUE_STAR.clone());
-        headers.insert(ACCESS_CONTROL_ALLOW_HEADERS, VALUE_STAR.clone());
-        headers.insert(ACCESS_CONTROL_ALLOW_METHODS, VALUE_STAR.clone());
+        headers.typed_insert(AccessControlAllowOrigin::ANY);
+        headers.typed_insert(
+            [
+                Method::GET,
+                Method::PUT,
+                Method::POST,
+                Method::DELETE,
+                Method::HEAD,
+                Method::OPTIONS,
+            ]
+            .into_iter()
+            .collect::<AccessControlAllowMethods>(),
+        );
+        headers.typed_insert(AccessControlAllowHeaders::from_iter(vec![
+            CONTENT_TYPE,
+            CONTENT_DISPOSITION,
+            LAST_MODIFIED,
+            CACHE_CONTROL,
+            ACCEPT_RANGES,
+            ETAG,
+            HEADER_SERVICE_WORKER.clone(),
+            HEADER_X_IPFS_GATEWAY_PREFIX.clone(),
+            HEADER_X_TRACE_ID.clone(),
+            HEADER_X_CONTENT_TYPE_OPTIONS.clone(),
+            HEADER_X_IPFS_PATH.clone(),
+        ]));
         // todo(arqu): remove these once propperly implmented
         headers.insert(CACHE_CONTROL, VALUE_NO_CACHE_NO_TRANSFORM.clone());
         headers.insert(ACCEPT_RANGES, VALUE_NONE.clone());
@@ -62,10 +88,8 @@ mod tests {
         let mut config = Config::new(false, false, false, 9050);
         config.set_default_headers();
         assert_eq!(config.headers.len(), 5);
-        assert_eq!(
-            config.headers.get(&ACCESS_CONTROL_ALLOW_ORIGIN),
-            Some(&VALUE_STAR)
-        );
+        let h = config.headers.get(&ACCESS_CONTROL_ALLOW_ORIGIN).unwrap();
+        assert_eq!(h, "*");
     }
 
     #[test]

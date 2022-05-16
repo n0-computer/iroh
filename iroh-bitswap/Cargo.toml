@@ -18,7 +18,6 @@ futures = "0.3.5"
 libp2p = { version = "0.44", default-features = false }
 multihash = "0.16.0"
 prost = "0.10"
-prost-build = "0.10"
 thiserror = "1.0.20"
 unsigned-varint = "0.7.0"
 ahash = "0.7.6"

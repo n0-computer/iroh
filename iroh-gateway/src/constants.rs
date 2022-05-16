@@ -11,7 +11,6 @@ pub static HEADER_SERVICE_WORKER: HeaderName = HeaderName::from_static("service-
 
 // Common Header Values
 pub static VALUE_XCTO_NOSNIFF: HeaderValue = HeaderValue::from_static("nosniff");
-pub static VALUE_STAR: HeaderValue = HeaderValue::from_static("*");
 pub static VALUE_NONE: HeaderValue = HeaderValue::from_static("none");
 pub static VALUE_NO_CACHE_NO_TRANSFORM: HeaderValue =
     HeaderValue::from_static("no-cache, no-transform");
