@@ -33,7 +33,7 @@ jobs:
       RUSTV: ${{ matrix.rust }}
       SCCACHE_CACHE_SIZE: 2G
 
-      SCCACHE_RECACHE: 1 # Uncomment this to clear cache, then comment it back out
+      # SCCACHE_RECACHE: 1 # Uncomment this to clear cache, then comment it back out
     steps:
     - uses: actions/checkout@master
     - name: Set sccache env path
