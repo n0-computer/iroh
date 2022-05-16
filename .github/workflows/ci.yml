@@ -69,6 +69,12 @@ jobs:
     - name: Set LIBCLANG_PATH
       run: echo "LIBCLANG_PATH=$((gcm clang).source -replace "clang.exe")" >> $env:GITHUB_ENV
       if: matrix.os == 'windows-latest'     
+    - name: Configure CMAGE windows
+      if: matrix.os == 'windows.latest'
+      run: |
+        echo "CMAKE_C_COMPILER=C:/Program Files/Microsoft Visual Studio/2022/Enterprise/VC/Tools/MSVC/14.32.31326/bin/Hostx64/x64/cl.exe" >> $env:GITHUB_ENV
+        echo "CMAKE_CXX_COMPILER=C:/Program Files/Microsoft Visual Studio/2022/Enterprise/VC/Tools/MSVC/14.32.31326/bin/Hostx64/x64/cl.exe" >> $env:GITHUB_ENV
+    
     - name: Install scoop (windows-latest)
       if: matrix.os == 'windows-latest'
       shell: powershell
