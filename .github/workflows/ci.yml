@@ -123,6 +123,9 @@ jobs:
       if: matrix.os == 'ubuntu-latest'
       run: |
         sudo apt install -y protobuf-compiler
+        echo $PROTOC
+        echo $PROTOC_INCLUDE
+        protoc --help
         # PROTOC_VERSION=3.20.0
         # PROTOC_ZIP=protoc-$PROTOC_VERSION-linux-x86_64.zip
         # curl -OL https://github.com/protocolbuffers/protobuf/releases/download/v$PROTOC_VERSION/$PROTOC_ZIP
