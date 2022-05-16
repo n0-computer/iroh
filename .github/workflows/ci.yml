@@ -21,37 +21,32 @@ jobs:
         include:
           - os: ubuntu-latest
             sccache-path: /home/runner/.cache/sccache
+            release-arch: linux
           - os: macos-latest
             sccache-path: /Users/runner/Library/Caches/Mozilla.sccache
+            release-arch: darwin
           - os: windows-latest
             rust: stable
             sccache-path: "%LOCALAPPDATA%\\sccache"
+            release-arch: windows
             experimental: true
     env:
       RUST_BACKTRACE: full
       RUSTC_WRAPPER: sccache
       RUSTV: ${{ matrix.rust }}
       SCCACHE_CACHE_SIZE: 2G
-
       # SCCACHE_RECACHE: 1 # Uncomment this to clear cache, then comment it back out
     steps:
     - uses: actions/checkout@master
+
     - name: Set sccache env path
       if: matrix.os != 'windows-latest'
       run: |
           echo "SCCACHE_DIR=${{ matrix.sccache-path }}" >> $GITHUB_ENV
-    - name: Set windows arch
-      if: matrix.os == 'windows-latest'
+    - name: Set build arch
       run: |
-          echo "RELEASE_ARCH=windows" >> $GITHUB_ENV
-    - name: Set linux arch
-      if: matrix.os == 'ubuntu-latest'
-      run: |
-          echo "RELEASE_ARCH=linux" >> $GITHUB_ENV
-    - name: Set macOS arch
-      if: matrix.os == 'macos-latest'
-      run: |
-          echo "RELEASE_ARCH=darwin" >> $GITHUB_ENV
+        echo "RELEASE_ARCH=${{ matrix.release-arch }}" >> $GITHUB_ENV
+    
     - name: Install sccache (ubuntu-latest)
       if: matrix.os == 'ubuntu-latest'
       env:
@@ -64,6 +59,7 @@ jobs:
         mv -f $SCCACHE_FILE/sccache $HOME/.local/bin/sccache
         chmod 755 $HOME/.local/bin/sccache
         echo "$HOME/.local/bin" >> $GITHUB_PATH  
+    
     - name: Install scoop (windows-latest)
       if: matrix.os == 'windows-latest'
       shell: powershell
@@ -72,15 +68,18 @@ jobs:
         iwr -useb get.scoop.sh -outfile 'install.ps1'
         .\\install.ps1 -RunAsAdmin
         Join-Path (Resolve-Path ~).Path "scoop\shims" >> $Env:GITHUB_PATH
+    
     - name: Install sccache (windows-latest)
       if: matrix.os == 'windows-latest'
       shell: powershell
       run: scoop install sccache
+    
     - name: Install sccache (macos-latest)
       if: matrix.os == 'macos-latest'
       run: |
         brew update
         brew install sccache          
+    
     - name: Install ${{ matrix.rust }}
       uses: actions-rs/toolchain@v1
       with:
@@ -123,28 +122,13 @@ jobs:
       if: matrix.os == 'ubuntu-latest'
       run: |
         sudo apt install -y protobuf-compiler
-        echo $PROTOC
-        echo $PROTOC_INCLUDE
-        protoc --help
         echo "PROTOC=/usr/bin/protoc" >> $GITHUB_ENV
         echo "PROTOC_INCLUDE=/usr/include" >> $GITHUB_ENV
-        # PROTOC_VERSION=3.20.0
-        # PROTOC_ZIP=protoc-$PROTOC_VERSION-linux-x86_64.zip
-        # curl -OL https://github.com/protocolbuffers/protobuf/releases/download/v$PROTOC_VERSION/$PROTOC_ZIP
-        # sudo unzip -o $PROTOC_ZIP -d /usr/local bin/protoc
-        # sudo unzip -o $PROTOC_ZIP -d /usr/local 'include/*'
-        # rm -f $PROTOC_ZIP
     
     - name: Install Protoc macOS
       if: matrix.os == 'macOS-latest'
       run: |
         brew install protobuf
-        # PROTOC_VERSION=3.20.0
-        # PROTOC_ZIP=protoc-$PROTOC_VERSION-osx-x86_64.zip
-        # curl -OL https://github.com/protocolbuffers/protobuf/releases/download/v$PROTOC_VERSION/$PROTOC_ZIP
-        # sudo unzip -o $PROTOC_ZIP -d /usr/local bin/protoc
-        # sudo unzip -o $PROTOC_ZIP -d /usr/local 'include/*'
-        # rm -f $PROTOC_ZIP
 
     - name: check
       uses: actions-rs/cargo@v1
