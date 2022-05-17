@@ -2,8 +2,11 @@
 name = "iroh-rpc-types"
 version = "0.1.0"
 edition = "2021"
+authors = ["Friedel Ziegelmayer <me@dignifiedquire.com>", "ramfox"]
+license = "Apache-2.0/MIT"
+repository = "https://github.com/n0-computer/iroh"
+description = "RPC type definitions for iroh"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
 libp2p = { version = "0.44.0", features = ["serde"] }
