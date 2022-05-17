@@ -58,7 +58,11 @@ impl p2p_server::P2p for P2p {
                 })
                 .await
                 .unwrap();
-            Some(r.await.unwrap().unwrap())
+            Some(
+                r.await
+                    .expect("sender dropped")
+                    .map_err(|e| Status::internal(format!("failed to get providers: {:?}", e)))?,
+            )
         } else {
             providers
         };

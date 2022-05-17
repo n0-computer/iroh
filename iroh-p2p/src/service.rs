@@ -1,16 +1,19 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
+use ahash::AHashMap;
 use anyhow::{anyhow, Result};
-use async_channel::{bounded as channel, Receiver, Sender};
+use async_channel::{bounded as channel, Receiver};
 use cid::Cid;
-use futures::channel::oneshot::Sender as OneShotSender;
+use futures::channel::oneshot::{self, Sender as OneShotSender};
 use futures_util::stream::StreamExt;
 use libp2p::core::muxing::StreamMuxerBox;
 use libp2p::core::transport::Boxed;
 use libp2p::core::Multiaddr;
 pub use libp2p::gossipsub::{IdentTopic, Topic};
+use libp2p::identify::{IdentifyEvent, IdentifyInfo};
 use libp2p::identity::Keypair;
+use libp2p::kad::{self, GetProvidersError, GetProvidersOk, KademliaEvent, QueryId, QueryResult};
 use libp2p::multiaddr::Protocol;
 use libp2p::multihash::Multihash;
 use libp2p::swarm::{
@@ -22,10 +25,10 @@ use libp2p::{core, mplex, noise, yamux, PeerId, Swarm, Transport};
 use tokio::{select, time};
 use tracing::{debug, info, trace, warn};
 
-use iroh_bitswap::Block;
+use iroh_bitswap::{BitswapEvent, Block};
 
 use crate::{
-    behaviour::{NodeBehaviour, NodeBehaviourEvent},
+    behaviour::{Event, NodeBehaviour},
     rpc::{self, RpcMessage},
     Libp2pConfig,
 };
@@ -42,16 +45,17 @@ pub enum NetworkEvent {
 /// The Libp2pService listens to events from the Libp2p swarm.
 pub struct Libp2pService {
     swarm: Swarm<NodeBehaviour>,
-
     net_receiver_in: Receiver<RpcMessage>,
-    net_sender_in: Sender<RpcMessage>,
-    net_receiver_out: Receiver<NetworkEvent>,
-    net_sender_out: Sender<NetworkEvent>,
     bitswap_response_channels: HashMap<Cid, Vec<OneShotSender<Block>>>,
+    kad_queries: AHashMap<QueryId, QueryChannel>,
+}
+
+enum QueryChannel {
+    GetProviders(oneshot::Sender<Result<HashSet<PeerId>, String>>),
 }
 
 impl Libp2pService {
-    pub async fn new(config: Libp2pConfig, net_keypair: Keypair) -> Self {
+    pub async fn new(config: Libp2pConfig, net_keypair: Keypair) -> Result<Self> {
         let peer_id = PeerId::from(net_keypair.public());
 
         let transport = build_transport(net_keypair.clone()).await;
@@ -63,49 +67,39 @@ impl Libp2pService {
             .with_max_established_outgoing(Some(config.target_peer_count))
             .with_max_established_per_peer(Some(5)); // TODO: configurable
 
-        let mut swarm = SwarmBuilder::new(
-            transport,
-            NodeBehaviour::new(&net_keypair, &config).await,
-            peer_id,
-        )
-        .connection_limits(limits)
-        .notify_handler_buffer_size(std::num::NonZeroUsize::new(20).expect("Not zero")) // TODO: configurable
-        .connection_event_buffer_size(128)
-        .executor(Box::new(|fut| {
-            tokio::spawn(fut);
-        }))
-        .build();
+        let node = NodeBehaviour::new(&net_keypair, &config).await?;
+        let mut swarm = SwarmBuilder::new(transport, node, peer_id)
+            .connection_limits(limits)
+            .notify_handler_buffer_size(std::num::NonZeroUsize::new(20).expect("Not zero")) // TODO: configurable
+            .connection_event_buffer_size(128)
+            .executor(Box::new(|fut| {
+                tokio::spawn(fut);
+            }))
+            .build();
 
         Swarm::listen_on(&mut swarm, config.listening_multiaddr).unwrap();
 
-        // Bootstrap with Kademlia
-        if let Err(e) = swarm.behaviour_mut().bootstrap() {
-            warn!("Failed to bootstrap with Kademlia: {}", e);
-        }
-
         let (network_sender_in, network_receiver_in) = channel(1_000); // TODO: configurable
-        let (network_sender_out, network_receiver_out) = channel(1_000); // TODO: configurable
 
-        let nsi = network_sender_in.clone();
         tokio::spawn(async move {
             // TODO: handle error
-            rpc::new(config.rpc_addr, nsi).await.unwrap()
+            rpc::new(config.rpc_addr, network_sender_in).await.unwrap()
         });
 
-        Libp2pService {
+        Ok(Libp2pService {
             swarm,
             net_receiver_in: network_receiver_in,
-            net_sender_in: network_sender_in,
-            net_receiver_out: network_receiver_out,
-            net_sender_out: network_sender_out,
             bitswap_response_channels: Default::default(),
-        }
+            kad_queries: Default::default(),
+        })
     }
 
     /// Starts the libp2p service networking stack. This Future resolves when shutdown occurs.
     pub async fn run(&mut self) -> anyhow::Result<()> {
         info!("Local Peer ID: {}", self.swarm.local_peer_id());
         let mut interval = time::interval(Duration::from_secs(15)); // TODO: configurable
+
+        // TODO: add kad random queries if necessary
 
         loop {
             select! {
@@ -121,7 +115,7 @@ impl Libp2pService {
                 }
                 _interval_event = interval.tick() => {
                     // Print peer count on an interval.
-                    info!("Peers connected: {}", self.swarm.behaviour_mut().peer_addresses().len());
+                    info!("Peers connected: {:?}", self.swarm.connected_peers().count());
                 }
             }
         }
@@ -135,24 +129,14 @@ impl Libp2pService {
     ) -> Result<()> {
         match event {
             // outbound events
-            SwarmEvent::Behaviour(event) => self.handle_node_behaviour_event(event).await,
+            SwarmEvent::Behaviour(event) => self.handle_node_event(event).await,
             _ => Ok(()),
         }
     }
 
-    async fn handle_node_behaviour_event(&mut self, event: NodeBehaviourEvent) -> Result<()> {
+    async fn handle_node_event(&mut self, event: Event) -> Result<()> {
         match event {
-            NodeBehaviourEvent::PeerConnected(peer_id) => {
-                self.net_sender_out
-                    .send(NetworkEvent::PeerConnected(peer_id))
-                    .await?;
-            }
-            NodeBehaviourEvent::PeerDisconnected(peer_id) => {
-                self.net_sender_out
-                    .send(NetworkEvent::PeerDisconnected(peer_id))
-                    .await?;
-            }
-            NodeBehaviourEvent::BitswapReceivedBlock(_peer_id, cid, block) => {
+            Event::Bitswap(BitswapEvent::ReceivedBlock(_peer_id, cid, block)) => {
                 info!("got block {}", cid);
                 // TODO: verify cid hash
 
@@ -169,10 +153,62 @@ impl Libp2pService {
                     debug!("Received Bitswap response, but response channel cannot be found");
                 }
             }
-            NodeBehaviourEvent::BitswapReceivedWant(_peer_id, cid) => {
+            Event::Bitswap(BitswapEvent::ReceivedWant(_peer_id, cid, _prio)) => {
                 // TODO: try to load data from the storage node
                 // rpc_client.call("storage", "get", cid)
                 trace!("Don't have data for: {}", cid);
+            }
+            Event::Kademlia(KademliaEvent::OutboundQueryCompleted { id, result, .. }) => {
+                info!("kad: {:?}", result);
+                match result {
+                    QueryResult::GetProviders(Ok(GetProvidersOk { providers, .. })) => {
+                        if let Some(QueryChannel::GetProviders(ch)) = self.kad_queries.remove(&id) {
+                            ch.send(Ok(providers)).ok();
+                        }
+                    }
+                    QueryResult::GetProviders(Err(err)) => {
+                        if let Some(QueryChannel::GetProviders(ch)) = self.kad_queries.remove(&id) {
+                            match err {
+                                GetProvidersError::Timeout { key, providers, .. } => {
+                                    debug!("GetProviders timeout {:?}", key);
+                                    ch.send(Ok(providers)).ok();
+                                }
+                            }
+                        }
+                    }
+                    other => {
+                        debug!("Libp2p => Unhandled Kademlia query result: {:?}", other)
+                    }
+                }
+            }
+            Event::Identify(e) => {
+                if let IdentifyEvent::Received {
+                    peer_id,
+                    info:
+                        IdentifyInfo {
+                            listen_addrs,
+                            protocols,
+                            ..
+                        },
+                } = *e
+                {
+                    // Inform kademlia about identified peers
+                    if protocols
+                        .iter()
+                        .any(|p| p.as_bytes() == kad::protocol::DEFAULT_PROTO_NAME)
+                    {
+                        for addr in listen_addrs {
+                            self.swarm
+                                .behaviour_mut()
+                                .kad
+                                .as_mut()
+                                .map(|k| k.add_address(&peer_id, addr));
+                        }
+                    }
+                }
+            }
+            _ => {
+                // TODO: check all important events are handled
             }
         }
 
@@ -221,7 +257,13 @@ impl Libp2pService {
                 key,
                 response_channel,
             } => {
-                self.swarm.behaviour_mut().providers(key, response_channel);
+                if let Some(kad) = self.swarm.behaviour_mut().kad.as_mut() {
+                    let id = kad.get_providers(key);
+                    self.kad_queries
+                        .insert(id, QueryChannel::GetProviders(response_channel));
+                } else {
+                    response_channel.send(Ok(Default::default())).ok();
+                }
             }
             RpcMessage::NetAddrsListen(response_channel) => {
                 let listeners: Vec<_> = Swarm::listeners(&self.swarm).cloned().collect();
@@ -232,11 +274,15 @@ impl Libp2pService {
                     .map_err(|_| anyhow!("Failed to get Libp2p listeners"))?;
             }
             RpcMessage::NetPeers(response_channel) => {
-                let peer_addresses: &HashMap<PeerId, Vec<Multiaddr>> =
-                    self.swarm.behaviour_mut().peer_addresses();
+                #[allow(clippy::needless_collect)]
+                let peers = self.swarm.connected_peers().copied().collect::<Vec<_>>();
+                let peer_addresses: HashMap<PeerId, Vec<Multiaddr>> = peers
+                    .into_iter()
+                    .map(|pid| (pid, self.swarm.behaviour_mut().addresses_of_peer(&pid)))
+                    .collect();
 
                 response_channel
-                    .send(peer_addresses.to_owned())
+                    .send(peer_addresses)
                     .map_err(|_| anyhow!("Failed to get Libp2p peers"))?;
             }
             RpcMessage::NetConnect(response_channel, peer_id, mut addresses) => {
@@ -270,16 +316,6 @@ impl Libp2pService {
         }
 
         Ok(())
-    }
-
-    /// Returns a sender which allows sending messages to the libp2p service.
-    pub fn network_sender(&self) -> Sender<RpcMessage> {
-        self.net_sender_in.clone()
-    }
-
-    /// Returns a receiver to listen to network events emitted from the service.
-    pub fn network_receiver(&self) -> Receiver<NetworkEvent> {
-        self.net_receiver_out.clone()
     }
 }
 
