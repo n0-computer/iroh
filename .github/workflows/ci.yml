@@ -139,7 +139,7 @@ jobs:
         sudo unzip -o $PROTOC_ZIP -d /usr/local bin/protoc
         sudo unzip -o $PROTOC_ZIP -d /usr/local 'include/*'
         rm -f $PROTOC_ZIP
-        echo "PROTOC=/usr/bin/protoc" >> $GITHUB_ENV
+        echo "PROTOC=/usr/local/bin/protoc" >> $GITHUB_ENV
         echo "PROTOC_INCLUDE=/usr/local/include" >> $GITHUB_ENV
     
     - name: Install Protoc macOS
@@ -151,7 +151,7 @@ jobs:
         sudo unzip -o $PROTOC_ZIP -d /usr/local bin/protoc
         sudo unzip -o $PROTOC_ZIP -d /usr/local 'include/*'
         rm -f $PROTOC_ZIP
-        echo "PROTOC=/usr/bin/protoc" >> $GITHUB_ENV
+        echo "PROTOC=/usr/local/bin/protoc" >> $GITHUB_ENV
         echo "PROTOC_INCLUDE=/usr/local/include" >> $GITHUB_ENV
 
     - name: check
