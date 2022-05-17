@@ -118,17 +118,41 @@ jobs:
       if: matrix.os == 'windows-latest'
       uses: arduino/setup-protoc@v1
 
+    # - name: Install Protoc linux
+    #   if: matrix.os == 'ubuntu-latest'
+    #   run: |
+    #     sudo apt install -y protobuf-compiler
+    #     echo "PROTOC=/usr/bin/protoc" >> $GITHUB_ENV
+    #     echo "PROTOC_INCLUDE=/usr/include" >> $GITHUB_ENV
+    
+    # - name: Install Protoc macOS
+    #   if: matrix.os == 'macOS-latest'
+    #   run: |
+    #     brew install protobuf
+
     - name: Install Protoc linux
       if: matrix.os == 'ubuntu-latest'
       run: |
-        sudo apt install -y protobuf-compiler
+        PROTOC_VERSION=3.20.1
+        PROTOC_ZIP=protoc-$PROTOC_VERSION-linux-x86_64.zip
+        curl -OL https://github.com/protocolbuffers/protobuf/releases/download/v$PROTOC_VERSION/$PROTOC_ZIP
+        sudo unzip -o $PROTOC_ZIP -d /usr/local bin/protoc
+        sudo unzip -o $PROTOC_ZIP -d /usr/local 'include/*'
+        rm -f $PROTOC_ZIP
         echo "PROTOC=/usr/bin/protoc" >> $GITHUB_ENV
-        echo "PROTOC_INCLUDE=/usr/include" >> $GITHUB_ENV
+        echo "PROTOC_INCLUDE=/usr/local/include" >> $GITHUB_ENV
     
     - name: Install Protoc macOS
       if: matrix.os == 'macOS-latest'
       run: |
-        brew install protobuf
+        PROTOC_VERSION=3.20.1
+        PROTOC_ZIP=protoc-$PROTOC_VERSION-osx-x86_64.zip
+        curl -OL https://github.com/protocolbuffers/protobuf/releases/download/v$PROTOC_VERSION/$PROTOC_ZIP
+        sudo unzip -o $PROTOC_ZIP -d /usr/local bin/protoc
+        sudo unzip -o $PROTOC_ZIP -d /usr/local 'include/*'
+        rm -f $PROTOC_ZIP
+        echo "PROTOC=/usr/bin/protoc" >> $GITHUB_ENV
+        echo "PROTOC_INCLUDE=/usr/local/include" >> $GITHUB_ENV
 
     - name: check
       uses: actions-rs/cargo@v1
