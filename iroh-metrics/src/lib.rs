@@ -13,15 +13,16 @@ pub fn init(cfg: Config) -> Result<(), Box<dyn std::error::Error>> {
 
 /// Initialize the metrics subsystem.
 pub fn init_metrics(cfg: Config) -> Result<(), Box<dyn std::error::Error>> {
-    let builder = PrometheusBuilder::new().with_push_gateway(
-        format!(
-            "{}/metrics/job/{}/instance/{}",
-            cfg.prometheus_gateway_endpoint, cfg.service_name, cfg.instance_id
-        ),
-        Duration::from_secs(5),
-    )?;
-    builder.install()?;
-
+    if !cfg.debug {
+        let builder = PrometheusBuilder::new().with_push_gateway(
+            format!(
+                "{}/metrics/job/{}/instance/{}",
+                cfg.prometheus_gateway_endpoint, cfg.service_name, cfg.instance_id
+            ),
+            Duration::from_secs(5),
+        )?;
+        builder.install()?;
+    }
     Ok(())
 }
 
