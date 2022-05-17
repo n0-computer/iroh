@@ -12,8 +12,6 @@ use crate::response::ResponseFormat;
 #[derive(Debug, Clone, Copy)]
 pub struct Client {}
 
-const CHUNK_SIZE: usize = 1024;
-
 impl Client {
     pub fn new() -> Self {
         Self {}
@@ -95,7 +93,7 @@ impl Client {
         tokio::spawn(async move {
             let test_path = Path::new("test_files/test_big.txt");
             let mut file = File::open(test_path).unwrap();
-            let mut buf = [0u8; CHUNK_SIZE];
+            let mut buf = [0u8; 1024];
             let mut first_block = true;
             if rng.gen_range(0..250) < 200 {
                 // simulate a cache miss
