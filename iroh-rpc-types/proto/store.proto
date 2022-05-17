@@ -1,0 +1,43 @@
+syntax = "proto3";
+
+package store;
+
+service Store {
+  rpc Put(PutRequest) returns (PutResponse) {}
+  rpc Get(GetRequest) returns (GetResponse) {}
+  rpc GetLinks(GetLinksRequest) returns(GetLinksResponse) {}
+}
+
+message PutRequest {
+  // Serialized CID of the given block.
+  bytes cid = 1;
+  // blob of data
+  bytes blob = 2;
+  // list of CIDs
+  repeated bytes links = 3;
+}
+
+// TODO: is there a better way to do an Ack?
+message PutResponse {}
+
+message GetRequest {
+  // Serialized CID of the requested block.
+  bytes cid = 1;
+}
+
+message GetResponse {
+  // TODO: best way to represent a pinnable slice?
+  optional bytes data = 1;
+}
+
+message GetLinksRequest {
+  // Serialized root CID of the requested links.
+  bytes cid = 1;
+}
+
+message GetLinksResponse {
+  // list of CIDs
+  optional repeated bytes links = 1;
+}
+
+
