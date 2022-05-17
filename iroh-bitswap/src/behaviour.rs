@@ -6,7 +6,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::task::{Context, Poll};
 
-use ahash::AHashSet;
+use ahash::{AHashMap, AHashSet};
 use bytes::Bytes;
 use cid::Cid;
 use libp2p::core::connection::ConnectionId;
@@ -16,8 +16,7 @@ use libp2p::swarm::handler::OneShotHandler;
 use libp2p::swarm::{
     IntoConnectionHandler, NetworkBehaviour, NetworkBehaviourAction, NotifyHandler, PollParameters,
 };
-use tokio::sync::mpsc;
-use tracing::{instrument, trace};
+use tracing::{debug, info, instrument, trace};
 
 use crate::block::Block;
 use crate::ledger::Ledger;
@@ -31,13 +30,8 @@ pub enum BitswapEvent {
     ReceivedCancel(PeerId, Cid),
 }
 
-#[derive(Clone, Debug, PartialEq)]
-enum Want {
-    Block(Cid, Priority),
-    Cancel(Cid),
-}
-
 /// Network behaviour that handles sending and receiving IPFS blocks.
+#[derive(Default)]
 pub struct Bitswap {
     /// Queue of events to report to the user.
     events: VecDeque<
@@ -51,24 +45,7 @@ pub struct Bitswap {
     /// Ledger
     connected_peers: HashMap<PeerId, Ledger>,
     /// Wanted blocks
-    wanted_blocks_rx: mpsc::Receiver<Want>,
-    wanted_blocks_tx: mpsc::Sender<Want>,
-}
-
-const DEFAULT_CHANNEL_SIZE: usize = 1024;
-
-impl Default for Bitswap {
-    fn default() -> Self {
-        let (wanted_blocks_tx, wanted_blocks_rx) = mpsc::channel(DEFAULT_CHANNEL_SIZE);
-
-        Self {
-            events: Default::default(),
-            target_peers: Default::default(),
-            connected_peers: Default::default(),
-            wanted_blocks_rx,
-            wanted_blocks_tx,
-        }
-    }
+    wanted_blocks: AHashMap<Cid, Priority>,
 }
 
 impl Bitswap {
@@ -118,20 +95,13 @@ impl Bitswap {
     /// Sends the wantlist to the peer.
     #[instrument(skip(self))]
     fn send_want_list(&mut self, peer_id: &PeerId) {
+        debug!("sending wantlist to {}", peer_id);
+        if self.wanted_blocks.is_empty() {
+            return;
+        }
         let ledger = self.connected_peers.get_mut(peer_id).unwrap();
-
-        let mut counter = 0;
-        while let Ok(want) = self.wanted_blocks_rx.try_recv() {
-            match want {
-                Want::Block(cid, priority) => ledger.want(&cid, priority),
-                Want::Cancel(cid) => ledger.cancel(&cid),
-            }
-
-            counter += 1;
-            // only process at most 100 requests at once
-            if counter > 100 {
-                break;
-            }
+        for (cid, priority) in &self.wanted_blocks {
+            ledger.want(cid, *priority);
         }
     }
 
@@ -143,22 +113,21 @@ impl Bitswap {
         for (_peer_id, ledger) in self.connected_peers.iter_mut() {
             ledger.want(&cid, priority);
         }
-        self.wanted_blocks_tx
-            .send(Want::Block(cid, priority))
-            .await
-            .unwrap();
+        self.wanted_blocks.insert(cid, priority);
     }
 
     #[instrument(skip(self))]
     pub async fn want_blocks(&mut self, cids: Vec<Cid>, priority: Priority) {
+        info!(
+            "want_blocks from {} peers: {:?}",
+            self.connected_peers.len(),
+            cids
+        );
         for (_peer_id, ledger) in self.connected_peers.iter_mut() {
             ledger.want_many(&cids, priority);
         }
         for cid in cids.into_iter() {
-            self.wanted_blocks_tx
-                .send(Want::Block(cid, priority))
-                .await
-                .unwrap();
+            self.wanted_blocks.insert(cid, priority);
         }
     }
 
@@ -166,22 +135,11 @@ impl Bitswap {
     ///
     /// Can be either a user request or be called when the block was received.
     #[instrument(skip(self))]
-    pub async fn cancel_block(&mut self, cid: &Cid) {
+    pub fn cancel_block(&mut self, cid: &Cid) {
         for (_peer_id, ledger) in self.connected_peers.iter_mut() {
             ledger.cancel(cid);
         }
-        self.wanted_blocks_tx
-            .send(Want::Cancel(*cid))
-            .await
-            .unwrap();
-    }
-
-    #[instrument(skip(self))]
-    fn try_cancel_block(&mut self, cid: &Cid) {
-        for (_peer_id, ledger) in self.connected_peers.iter_mut() {
-            ledger.cancel(cid);
-        }
-        let _ = self.wanted_blocks_tx.try_send(Want::Cancel(*cid));
+        self.wanted_blocks.remove(cid);
     }
 
     /// Retrieves the want list of a peer.
@@ -197,12 +155,10 @@ impl Bitswap {
                 })
                 .unwrap_or_default()
         } else {
-            // FIXME: needs to be implemented now that the wantlist is a channel
-            Vec::new()
-            // self.wanted_blocks
-            //     .iter()
-            //     .map(|(cid, priority)| (cid.clone(), *priority))
-            //     .collect()
+            self.wanted_blocks
+                .iter()
+                .map(|(cid, priority)| (*cid, *priority))
+                .collect()
         }
     }
 
@@ -246,6 +202,7 @@ impl NetworkBehaviour for Bitswap {
         _failed_addresses: Option<&Vec<Multiaddr>>,
         other_established: usize,
     ) {
+        debug!("connected {} ({})", peer_id, other_established);
         if other_established > 0 {
             return;
         }
@@ -265,6 +222,7 @@ impl NetworkBehaviour for Bitswap {
         _handler: <Self::ConnectionHandler as IntoConnectionHandler>::Handler,
         remaining_established: usize,
     ) {
+        debug!("disconnected {} ({})", peer_id, remaining_established);
         if remaining_established > 0 {
             return;
         }
@@ -284,13 +242,12 @@ impl NetworkBehaviour for Bitswap {
 
         // Process incoming messages.
         while let Some(Block { cid, data }) = message.pop_block() {
-            // FIXME: implement now that wanted_blocks are a channel
-            // if !self.wanted_blocks.contains_key(&cid) {
-            //     log::info!("dropping block {}", cid.to_string());
-            //     continue;
-            // }
+            if !self.wanted_blocks.contains_key(&cid) {
+                debug!("dropping block {}", cid.to_string());
+                continue;
+            }
             // Cancel the block.
-            self.try_cancel_block(&cid);
+            self.cancel_block(&cid);
             let event = BitswapEvent::ReceivedBlock(peer_id, cid, data);
             self.events
                 .push_back(NetworkBehaviourAction::GenerateEvent(event));

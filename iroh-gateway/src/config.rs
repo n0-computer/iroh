@@ -3,6 +3,8 @@ use axum::http::{header::*, Method};
 use headers::{
     AccessControlAllowHeaders, AccessControlAllowMethods, AccessControlAllowOrigin, HeaderMapExt,
 };
+use libp2p::Multiaddr;
+
 pub const DEFAULT_PORT: u16 = 9050;
 
 #[derive(Debug, Clone)]
@@ -17,16 +19,34 @@ pub struct Config {
     pub headers: HeaderMap,
     /// default port to listen on
     pub port: u16,
+    pub rpc: RpcConfig,
+}
+
+#[derive(Debug, Clone)]
+pub struct RpcConfig {
+    /// Address on which to listen,
+    pub listen_addr: Multiaddr,
+    pub p2p_addr: String,
+}
+
+impl Default for RpcConfig {
+    fn default() -> Self {
+        RpcConfig {
+            listen_addr: "/ip4/0.0.0.0/tcp/4400".parse().unwrap(),
+            p2p_addr: "http://localhost:4401".into(),
+        }
+    }
 }
 
 impl Config {
-    pub fn new(writeable: bool, fetch: bool, cache: bool, port: u16) -> Self {
+    pub fn new(writeable: bool, fetch: bool, cache: bool, port: u16, rpc: RpcConfig) -> Self {
         Self {
             writeable,
             fetch,
             cache,
             headers: HeaderMap::new(),
             port,
+            rpc,
         }
     }
 
@@ -77,6 +97,7 @@ impl Default for Config {
             cache: false,
             headers: HeaderMap::new(),
             port: DEFAULT_PORT,
+            rpc: Default::default(),
         };
         t.set_default_headers();
         t
@@ -89,7 +110,7 @@ mod tests {
 
     #[test]
     fn default_headers() {
-        let mut config = Config::new(false, false, false, 9050);
+        let mut config = Config::new(false, false, false, 9050, Default::default());
         config.set_default_headers();
         assert_eq!(config.headers.len(), 5);
         let h = config.headers.get(&ACCESS_CONTROL_ALLOW_ORIGIN).unwrap();

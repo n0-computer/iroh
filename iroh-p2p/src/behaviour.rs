@@ -231,7 +231,7 @@ impl NodeBehaviour {
     pub fn providers(
         &mut self,
         key: Key,
-        response_channel: oneshot::Sender<Option<Result<HashSet<PeerId>, String>>>,
+        response_channel: oneshot::Sender<Result<HashSet<PeerId>, String>>,
     ) {
         self.discovery.providers(key, response_channel)
     }

@@ -1,0 +1,19 @@
+[package]
+name = "iroh-rpc-client"
+version = "0.1.0"
+edition = "2021"
+authors = ["Friedel Ziegelmayer <me@dignifiedquire.com>", "ramfox"]
+license = "Apache-2.0/MIT"
+repository = "https://github.com/n0-computer/iroh"
+description = "RPC type client for iroh"
+
+[dependencies]
+iroh-rpc-types = { path = "../iroh-rpc-types" }
+cid = "0.8.0"
+futures = "0.3.21"
+tokio = { version = "1.0", features = ["sync"] }
+tonic = "0.7.2"
+prost = "0.10.3"
+anyhow = "1.0.57"
+bytes = "1.1.0"
+libp2p = "0.44.0"

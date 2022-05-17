@@ -1,0 +1,29 @@
+syntax = "proto3";
+
+package p2p;
+
+service P2p {
+  rpc FetchBitswap(BitswapRequest) returns (BitswapResponse) {}
+  rpc FetchProvider(Key) returns (Providers) {}
+}
+
+message BitswapRequest {
+  // Serialized CID of the requested block.
+  bytes cid = 1;
+  optional Providers providers = 2;
+}
+
+message BitswapResponse {
+  bytes data = 1;
+}
+
+message Providers {
+  // List of providers. Serialized PeerIds
+  repeated bytes providers = 1;
+}
+
+message Key {
+  bytes key = 1;
+}
+
+

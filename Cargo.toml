@@ -3,10 +3,13 @@ members = [
   "iroh",
   "iroh-bitswap",
   "iroh-car",
-  "iroh-rpc",
+  "iroh-rpc-client",
+  "iroh-rpc-types",
   "iroh-gateway",
   "iroh-metrics",
   "iroh-p2p",
+  "iroh-resolver",
   "iroh-store",
+  "iroh-util",
   "stores/*"
 ]
