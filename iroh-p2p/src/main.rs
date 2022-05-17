@@ -40,7 +40,6 @@ async fn main() -> anyhow::Result<()> {
 
     // Cancel all async services
     p2p_task.abort();
-    // ctr_rpc_task.abort();
 
     Ok(())
 }

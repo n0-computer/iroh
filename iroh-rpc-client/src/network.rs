@@ -22,10 +22,7 @@ impl P2pClient {
         Ok(P2pClient(Arc::new(Mutex::new(client))))
     }
 
-    // fetch a block directly from the network
-    // returns a stream of bytes of block data
-    // TODO: current set up does not allow us to examine the header to
-    // determine if we actually want to receive the block data
+    // Fetches a block directly from the network.
     pub async fn fetch_bitswap(
         &self,
         cid: Cid,

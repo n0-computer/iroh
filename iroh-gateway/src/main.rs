@@ -5,7 +5,6 @@ use iroh_gateway::{
     core::Core,
     metrics,
 };
-use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
 #[derive(Parser, Debug, Clone)]
 #[clap(author, version, about, long_about = None)]
@@ -24,11 +23,6 @@ struct Args {
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<()> {
-    tracing_subscriber::registry()
-        .with(fmt::layer().pretty())
-        .with(EnvFilter::from_default_env())
-        .init();
-
     let args = Args::parse();
 
     // TODO: configurable

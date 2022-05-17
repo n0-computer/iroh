@@ -1,10 +1,9 @@
-syntax = "proto2";
+syntax = "proto3";
 
 package merkledag_pb;
 
 // An IPFS MerkleDAG Link
 message PBLink {
-
   // multihash of the target object
   optional bytes Hash = 1;
 

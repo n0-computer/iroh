@@ -1,3 +1,4 @@
+/// Multicodecs, as defined in https://github.com/multiformats/multicodec/blob/master/table.csv.
 #[derive(
     Debug, Clone, PartialEq, Eq, num_enum::IntoPrimitive, num_enum::TryFromPrimitive, Hash,
 )]
