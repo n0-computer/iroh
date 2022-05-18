@@ -9,6 +9,7 @@ use std::{
 
 use clap::Parser;
 use iroh_store::{Config, Store};
+use iroh_util::block_until_sigint;
 use tracing::info;
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
@@ -31,9 +32,7 @@ async fn main() -> eyre::Result<()> {
     println!("Starting iroh-store, version {version}");
 
     let args = Args::parse();
-    let config = Config {
-        path: args.path.clone(),
-    };
+    let config = Config::new(args.path.clone());
 
     let _store = if config.path.exists() {
         info!("Opening store at {}", config.path.display());
@@ -48,28 +47,4 @@ async fn main() -> eyre::Result<()> {
     block_until_sigint().await;
 
     Ok(())
-}
-
-// TODO: share code with iroh-p2p
-/// Blocks current thread until ctrl-c is received
-async fn block_until_sigint() {
-    let (ctrlc_send, ctrlc_oneshot) = futures::channel::oneshot::channel();
-    let ctrlc_send_c = RefCell::new(Some(ctrlc_send));
-
-    let running = Arc::new(AtomicUsize::new(0));
-    ctrlc::set_handler(move || {
-        let prev = running.fetch_add(1, Ordering::SeqCst);
-        if prev == 0 {
-            println!("Got interrupt, shutting down...");
-            // Send sig int in channel to blocking task
-            if let Some(ctrlc_send) = ctrlc_send_c.try_borrow_mut().unwrap().take() {
-                ctrlc_send.send(()).expect("Error sending ctrl-c message");
-            }
-        } else {
-            std::process::exit(0);
-        }
-    })
-    .expect("Error setting Ctrl-C handler");
-
-    ctrlc_oneshot.await.unwrap();
 }

@@ -1,22 +1,20 @@
-use async_channel::Sender;
-use cid::Cid;
-use futures::channel::oneshot;
-use iroh_bitswap::Block;
-use libp2p::kad::record::Key;
-use libp2p::Multiaddr;
-use libp2p::PeerId;
-
-use iroh_rpc_types::p2p::{BitswapRequest, BitswapResponse, Providers};
-use tonic::Status;
-use tracing::info;
-
 use std::collections::{HashMap, HashSet};
 use std::io;
 use std::net::SocketAddr;
 
 use anyhow::Result;
+use async_channel::Sender;
+use cid::Cid;
+use futures::channel::oneshot;
+use libp2p::kad::record::Key;
+use libp2p::Multiaddr;
+use libp2p::PeerId;
+use tonic::{transport::Server as TonicServer, Request, Response, Status};
+use tracing::info;
+
+use iroh_bitswap::Block;
 use iroh_rpc_types::p2p::p2p_server;
-use tonic::{transport::Server as TonicServer, Request, Response};
+use iroh_rpc_types::p2p::{BitswapRequest, BitswapResponse, Providers};
 
 struct P2p {
     sender: Sender<RpcMessage>,

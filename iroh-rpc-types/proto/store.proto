@@ -2,8 +2,10 @@ syntax = "proto3";
 
 package store;
 
+import "google/protobuf/empty.proto";
+
 service Store {
-  rpc Put(PutRequest) returns (PutResponse) {}
+  rpc Put(PutRequest) returns (google.protobuf.Empty) {}
   rpc Get(GetRequest) returns (GetResponse) {}
   rpc GetLinks(GetLinksRequest) returns(GetLinksResponse) {}
 }
@@ -11,14 +13,11 @@ service Store {
 message PutRequest {
   // Serialized CID of the given block.
   bytes cid = 1;
-  // blob of data
+  // bytes of data
   bytes blob = 2;
   // list of CIDs
   repeated bytes links = 3;
 }
-
-// TODO: is there a better way to do an Ack?
-message PutResponse {}
 
 message GetRequest {
   // Serialized CID of the requested block.
@@ -26,7 +25,7 @@ message GetRequest {
 }
 
 message GetResponse {
-  // TODO: best way to represent a pinnable slice?
+  // bytes of data
   optional bytes data = 1;
 }
 
@@ -37,7 +36,6 @@ message GetLinksRequest {
 
 message GetLinksResponse {
   // list of CIDs
-  optional repeated bytes links = 1;
+  repeated bytes links = 1;
 }
-
 
