@@ -18,3 +18,4 @@ metrics = "0.18.1"
 metrics-util = "0.12"
 metrics-exporter-prometheus = { version = "0.9", features = ["push-gateway"]}
 metrics-exporter-log = "0.4.0"
+tonic = "0.7.2"
