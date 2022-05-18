@@ -33,10 +33,10 @@ impl P2pClient {
             p2p::Providers { providers: list }
         });
 
-        let req = p2p::BitswapRequest {
+        let req = iroh_metrics::req::trace_req(p2p::BitswapRequest {
             cid: cid.to_bytes(),
             providers,
-        };
+        });
         let res = self.0.lock().await.fetch_bitswap(req).await?;
         Ok(res.into_inner().data)
     }

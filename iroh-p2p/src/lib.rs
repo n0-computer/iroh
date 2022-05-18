@@ -1,5 +1,6 @@
 mod behaviour;
 mod config;
+pub mod metrics;
 pub mod rpc;
 mod service;
 

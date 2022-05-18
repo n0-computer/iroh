@@ -17,3 +17,4 @@ prost = "0.10.3"
 anyhow = "1.0.57"
 bytes = "1.1.0"
 libp2p = "0.44.0"
+iroh-metrics = { path = "../iroh-metrics" }
