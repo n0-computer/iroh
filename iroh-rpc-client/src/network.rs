@@ -2,10 +2,12 @@ use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use bytes::Bytes;
 use cid::Cid;
-use iroh_rpc_types::p2p;
+use iroh_rpc_types::p2p::{
+    self, BitswapRequest, ConnectRequest, DisconnectRequest, Empty, Key, Providers,
+};
 use libp2p::{Multiaddr, PeerId};
 use tokio::sync::Mutex;
 
@@ -32,10 +34,10 @@ impl P2pClient {
     ) -> Result<Bytes> {
         let providers = providers.map(|p| {
             let list = p.into_iter().map(|id| id.to_bytes()).collect::<Vec<_>>();
-            p2p::Providers { providers: list }
+            Providers { providers: list }
         });
 
-        let req = iroh_metrics::req::trace_tonic_req(p2p::BitswapRequest {
+        let req = iroh_metrics::req::trace_tonic_req(BitswapRequest {
             cid: cid.to_bytes(),
             providers,
         });
@@ -44,33 +46,74 @@ impl P2pClient {
     }
 
     #[tracing::instrument(skip(self))]
-    pub async fn fetch_provider(&self, _key: &[u8]) -> Result<HashSet<PeerId>> {
-        // let req = Requests::FetchProvider { key };
-        // self.0.call(Namespace, Methods::FetchProvider, req).await
-        todo!()
+    pub async fn fetch_provider(&self, key: &[u8]) -> Result<HashSet<PeerId>> {
+        let req = Key { key: key.into() };
+        let res = self.0.lock().await.fetch_provider(req).await?;
+        let mut providers = HashSet::new();
+        for provider in res.into_inner().providers.into_iter() {
+            providers.insert(PeerId::from_bytes(&provider[..])?);
+        }
+        Ok(providers)
     }
 
     #[tracing::instrument(skip(self))]
-    pub async fn get_listening_addrs(&self) -> Result<()> {
-        todo!()
+    pub async fn get_listening_addrs(&self) -> Result<(PeerId, Vec<Multiaddr>)> {
+        let res = self
+            .0
+            .lock()
+            .await
+            .get_listening_addrs(Empty {})
+            .await?
+            .into_inner();
+        let peer_id = PeerId::from_bytes(&res.peer_id[..])?;
+        let addrs = addrs_from_bytes(res.addrs)?;
+        Ok((peer_id, addrs))
     }
 
     #[tracing::instrument(skip(self))]
     pub async fn get_peers(&self) -> Result<HashMap<PeerId, Vec<Multiaddr>>> {
-        todo!()
+        let peers = self
+            .0
+            .lock()
+            .await
+            .get_peers(Empty {})
+            .await?
+            .into_inner()
+            .peers;
+        let mut peers_map = HashMap::new();
+        for (peer, addrs) in peers.into_iter() {
+            let peer = peer.parse()?;
+            let addrs = addrs_from_bytes(addrs.addrs)?;
+            peers_map.insert(peer, addrs);
+        }
+        Ok(peers_map)
     }
 
     #[tracing::instrument(skip(self))]
-    pub async fn connect(
-        &self,
-        _peer_id: PeerId,
-        _addrs: Vec<Multiaddr>,
-    ) -> Result<HashMap<PeerId, Vec<Multiaddr>>> {
-        todo!()
+    pub async fn connect(&self, peer_id: PeerId, addrs: Vec<Multiaddr>) -> Result<bool> {
+        let req = ConnectRequest {
+            peer_id: peer_id.to_bytes(),
+            addrs: addrs.iter().map(|a| a.to_vec()).collect(),
+        };
+        let res = self.0.lock().await.peer_connect(req).await?.into_inner();
+        Ok(res.success)
     }
 
     #[tracing::instrument(skip(self))]
-    pub async fn disconnect(&self, _peer_id: PeerId) -> Result<()> {
-        todo!()
+    pub async fn disconnect(&self, peer_id: PeerId) -> Result<()> {
+        // TODO: implement NetDisconnect in p2p node - See #1181
+        let req = DisconnectRequest {
+            peer_id: peer_id.to_bytes(),
+        };
+        let res = self.0.lock().await.peer_disconnect(req).await?.into_inner();
+        Ok(res)
     }
+}
+
+fn addr_from_bytes(m: Vec<u8>) -> Result<Multiaddr> {
+    Multiaddr::try_from(m).context("invalid multiaddr")
+}
+
+fn addrs_from_bytes(a: Vec<Vec<u8>>) -> Result<Vec<Multiaddr>> {
+    a.into_iter().map(addr_from_bytes).collect()
 }

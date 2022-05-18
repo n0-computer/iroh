@@ -265,7 +265,7 @@ impl Libp2pService {
                     response_channel.send(Ok(Default::default())).ok();
                 }
             }
-            RpcMessage::NetAddrsListen(response_channel) => {
+            RpcMessage::NetListeningAddrs(response_channel) => {
                 let listeners: Vec<_> = Swarm::listeners(&self.swarm).cloned().collect();
                 let peer_id = Swarm::local_peer_id(&self.swarm);
 
@@ -307,7 +307,7 @@ impl Libp2pService {
                     .map_err(|_| anyhow!("Failed to connect to a peer"))?;
             }
             RpcMessage::NetDisconnect(response_channel, _peer_id) => {
-                warn!("NetDisconnect API not yet implmeneted"); // TODO: implement NetDisconnect - See #1181
+                warn!("NetDisconnect API not yet implemented"); // TODO: implement NetDisconnect - See #1181
 
                 response_channel
                     .send(())
