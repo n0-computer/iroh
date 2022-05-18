@@ -5,7 +5,7 @@ use opentelemetry::{
 use tonic::Request;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
-pub fn trace_req<T>(req: T) -> Request<T> {
+pub fn trace_tonic_req<T>(req: T) -> Request<T> {
     let mut req = Request::new(req);
 
     global::get_text_map_propagator(|propagator| {

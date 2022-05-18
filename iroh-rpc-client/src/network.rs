@@ -34,7 +34,7 @@ impl P2pClient {
             p2p::Providers { providers: list }
         });
 
-        let req = iroh_metrics::req::trace_req(p2p::BitswapRequest {
+        let req = iroh_metrics::req::trace_tonic_req(p2p::BitswapRequest {
             cid: cid.to_bytes(),
             providers,
         });

@@ -27,8 +27,10 @@ impl Config {
         service_env: String,
         debug: bool,
     ) -> Self {
-        let debug =
-            std::env::var("IROH_METRICS_DEBUG").unwrap_or_else(|_| debug.to_string()) == "true";
+        let debug: bool = std::env::var("IROH_METRICS_DEBUG")
+            .unwrap_or_else(|_| debug.to_string())
+            .parse()
+            .unwrap_or_default();
         let collector_endpoint = std::env::var("IROH_METRICS_COLLECTOR_ENDPOINT")
             .unwrap_or_else(|_| "http://localhost:4317".to_string());
         let prometheus_gateway_endpoint = std::env::var("IROH_METRICS_PROM_GATEWAY_ENDPOINT")
