@@ -8,7 +8,7 @@ repository = "https://github.com/n0-computer/iroh"
 description = "Implementation of RocksDB based Store"
 
 [dependencies]
-eyre = "0.6.6"
+anyhow = "1.0.57"
 rocksdb = { git = "https://github.com/rust-rocksdb/rust-rocksdb", branch = "master" }
 flatfs-store = { path = "../flatfs", optional = true }
 

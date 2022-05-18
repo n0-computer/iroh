@@ -1,6 +1,6 @@
 use std::env;
 
-use eyre::Result;
+use anyhow::Result;
 use flatfs_store::Flatfs;
 
 fn main() -> Result<()> {

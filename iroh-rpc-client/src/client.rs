@@ -1,6 +1,6 @@
 use std::net::SocketAddr;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 
 use crate::network::P2pClient;
 use crate::store::StoreClient;
@@ -13,8 +13,12 @@ pub struct Client {
 
 impl Client {
     pub async fn new(cfg: &RpcClientConfig) -> Result<Self> {
-        let p2p = P2pClient::new(cfg.p2p_addr).await?;
-        let store = StoreClient::new(cfg.store_addr).await?;
+        let p2p = P2pClient::new(cfg.p2p_addr)
+            .await
+            .context("Could not create p2p rpc client")?;
+        let store = StoreClient::new(cfg.store_addr)
+            .await
+            .context("Could not create store rpc client")?;
 
         Ok(Client { p2p, store })
     }

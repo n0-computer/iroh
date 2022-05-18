@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use eyre::{eyre, Result};
+use anyhow::{anyhow, Result};
 use rocksdb::{Cache, DBPinnableSlice, WriteBatch, DB};
 
 pub struct RocksFs {
@@ -105,7 +105,7 @@ impl RocksFs {
         let res = self
             .db
             .get_pinned(key)?
-            .ok_or_else(|| eyre!("key not found"))?;
+            .ok_or_else(|| anyhow!("key not found"))?;
         Ok(res)
     }
 
@@ -116,7 +116,7 @@ impl RocksFs {
         let res = self
             .db
             .get_pinned(key)?
-            .ok_or_else(|| eyre!("key not found"))?;
+            .ok_or_else(|| anyhow!("key not found"))?;
         Ok(res.len())
     }
 

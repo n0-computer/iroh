@@ -2,8 +2,8 @@ use std::io::Cursor;
 use std::net::SocketAddr;
 
 // use bytes::Bytes;
+use anyhow::Result;
 use cid::Cid;
-use eyre::Result;
 use iroh_rpc_types::store::store_server;
 use iroh_rpc_types::store::{
     GetLinksRequest, GetLinksResponse, GetRequest, GetResponse, PutRequest,

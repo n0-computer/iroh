@@ -9,7 +9,7 @@ description = "Implementation of the storage part of iroh"
 
 [dependencies]
 rocksdb = { git = "https://github.com/rust-rocksdb/rust-rocksdb", branch = "master" }
-eyre = "0.6.6"
+anyhow = "1.0.57"
 tokio = { version = "1.18.0", features = ["rt"] }
 cid = "0.8.4"
 rkyv = { version = "0.7.37", features = ["validation"] }

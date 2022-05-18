@@ -1,9 +1,9 @@
 use std::fmt::{self, Display, Formatter};
 use std::str::FromStr;
 
+use anyhow::{anyhow, bail, ensure, Context, Result};
 use bytes::Bytes;
 use cid::Cid;
-use eyre::{bail, ensure, eyre, Context, Result};
 use libipld::prelude::Codec as _;
 use libipld::Ipld;
 
@@ -63,14 +63,14 @@ impl PathType {
 }
 
 impl FromStr for Path {
-    type Err = eyre::Error;
+    type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let mut parts = s.split(&['/', '\\']).filter(|s| !s.is_empty());
 
-        let first_part = parts.next().ok_or_else(|| eyre!("path too short"))?;
+        let first_part = parts.next().ok_or_else(|| anyhow!("path too short"))?;
         let (typ, root) = if first_part.eq_ignore_ascii_case("ipns") {
-            let root = parts.next().ok_or_else(|| eyre!("path too short"))?;
+            let root = parts.next().ok_or_else(|| anyhow!("path too short"))?;
             let root = if let Ok(c) = Cid::from_str(root) {
                 CidOrDomain::Cid(c)
             } else {
@@ -81,7 +81,7 @@ impl FromStr for Path {
             (PathType::Ipns, root)
         } else {
             let root = if first_part.eq_ignore_ascii_case("ipfs") {
-                parts.next().ok_or_else(|| eyre!("path too short"))?
+                parts.next().ok_or_else(|| anyhow!("path too short"))?
             } else {
                 first_part
             };
@@ -130,7 +130,7 @@ async fn resolve_dag_pb_or_unixfs(cid: Cid, bytes: Bytes, path: Vec<String>) -> 
                     let next_link = current
                         .get_link_by_name(&part)
                         .await?
-                        .ok_or_else(|| eyre!("link {} not found", part))?;
+                        .ok_or_else(|| anyhow!("link {} not found", part))?;
                     let next_bytes = load_cid(&next_link.cid).await?;
                     let next_node = UnixfsNode::decode(next_bytes)?;
 
@@ -149,7 +149,7 @@ async fn resolve_dag_pb_or_unixfs(cid: Cid, bytes: Bytes, path: Vec<String>) -> 
 async fn resolve_dag_pb(cid: Cid, bytes: Bytes, path: Vec<String>) -> Result<Out> {
     let ipld: libipld::Ipld = libipld::IpldCodec::DagPb
         .decode(&bytes)
-        .map_err(|e| eyre!("invalid dag cbor: {:?}", e))?;
+        .map_err(|e| anyhow!("invalid dag cbor: {:?}", e))?;
 
     let out = resolve_ipld(cid, libipld::IpldCodec::DagPb, ipld, path).await?;
     Ok(Out::DagPb(out))
@@ -158,7 +158,7 @@ async fn resolve_dag_pb(cid: Cid, bytes: Bytes, path: Vec<String>) -> Result<Out
 async fn resolve_dag_cbor(cid: Cid, bytes: Bytes, path: Vec<String>) -> Result<Out> {
     let ipld: libipld::Ipld = libipld::IpldCodec::DagCbor
         .decode(&bytes)
-        .map_err(|e| eyre!("invalid dag cbor: {:?}", e))?;
+        .map_err(|e| anyhow!("invalid dag cbor: {:?}", e))?;
 
     let out = resolve_ipld(cid, libipld::IpldCodec::DagCbor, ipld, path).await?;
     Ok(Out::DagCbor(out))
@@ -167,7 +167,7 @@ async fn resolve_dag_cbor(cid: Cid, bytes: Bytes, path: Vec<String>) -> Result<O
 async fn resolve_dag_json(cid: Cid, bytes: Bytes, path: Vec<String>) -> Result<Out> {
     let ipld: libipld::Ipld = libipld::IpldCodec::DagJson
         .decode(&bytes)
-        .map_err(|e| eyre!("invalid dag json: {:?}", e))?;
+        .map_err(|e| anyhow!("invalid dag json: {:?}", e))?;
 
     let out = resolve_ipld(cid, libipld::IpldCodec::DagJson, ipld, path).await?;
     Ok(Out::DagJson(out))
@@ -198,7 +198,7 @@ async fn resolve_ipld(
             let bytes = load_cid(&c).await?;
             root = codec
                 .decode(&bytes)
-                .map_err(|e| eyre!("invalid dag json: {:?}", e))?;
+                .map_err(|e| anyhow!("invalid dag json: {:?}", e))?;
             root_cid = c;
             current = &root;
         }

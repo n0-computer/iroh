@@ -5,7 +5,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-use eyre::{eyre, Result, WrapErr};
+use anyhow::{anyhow, Context, Result};
 
 use crate::shard::{self, Shard};
 
@@ -55,7 +55,7 @@ impl Flatfs {
                 // Directory got already created, that's fine.
                 if err.kind() != io::ErrorKind::AlreadyExists {
                     return Err(err)
-                        .wrap_err_with(|| format!("Failed to create {:?}", filepath.parent()));
+                        .with_context(|| format!("Failed to create {:?}", filepath.parent()));
                 }
             }
         }
@@ -64,12 +64,11 @@ impl Flatfs {
         let temp_filepath = filepath.with_extension(".temp");
         let value = value.as_ref();
         retry(|| fs::write(&temp_filepath, value))
-            .wrap_err_with(|| format!("Failed to write {:?}", temp_filepath))?;
+            .with_context(|| format!("Failed to write {:?}", temp_filepath))?;
 
         // Rename after successfull write
-        retry(|| fs::rename(&temp_filepath, &filepath)).wrap_err_with(|| {
-            format!("Failed to reaname: {:?} -> {:?}", temp_filepath, filepath)
-        })?;
+        retry(|| fs::rename(&temp_filepath, &filepath))
+            .with_context(|| format!("Failed to reaname: {:?} -> {:?}", temp_filepath, filepath))?;
 
         self.disk_usage
             .fetch_add(value.len() as u64, Ordering::SeqCst);
@@ -83,7 +82,7 @@ impl Flatfs {
         let filepath = self.as_path(key);
 
         let value = retry(|| fs::read(&filepath))
-            .wrap_err_with(|| format!("Failed to read {:?}", filepath))?;
+            .with_context(|| format!("Failed to read {:?}", filepath))?;
 
         Ok(value)
     }
@@ -95,7 +94,7 @@ impl Flatfs {
 
         let metadata = filepath
             .metadata()
-            .wrap_err_with(|| format!("Failed to read metadata for {:?}", filepath))?;
+            .with_context(|| format!("Failed to read metadata for {:?}", filepath))?;
 
         Ok(metadata.len())
     }
@@ -107,11 +106,11 @@ impl Flatfs {
 
         let metadata = filepath
             .metadata()
-            .wrap_err_with(|| format!("Failed to read metadata for {:?}", filepath))?;
+            .with_context(|| format!("Failed to read metadata for {:?}", filepath))?;
         let filesize = metadata.len();
 
         retry(|| fs::remove_file(&filepath))
-            .wrap_err_with(|| format!("Failed to remove {:?}", filepath))?;
+            .with_context(|| format!("Failed to remove {:?}", filepath))?;
 
         self.disk_usage.fetch_sub(filesize, Ordering::SeqCst);
 
@@ -120,11 +119,11 @@ impl Flatfs {
 
     fn create<P: AsRef<Path>>(path: P, shard: Shard) -> Result<Self> {
         fs::create_dir_all(&path)
-            .wrap_err_with(|| format!("Failed to create {:?}", path.as_ref()))?;
+            .with_context(|| format!("Failed to create {:?}", path.as_ref()))?;
 
         shard
             .write_to_file(&path)
-            .wrap_err("Failed to write shard to file")?;
+            .context("Failed to write shard to file")?;
 
         Self::open(path, shard)
     }
@@ -132,7 +131,7 @@ impl Flatfs {
     fn open<P: AsRef<Path>>(path: P, shard: Shard) -> Result<Self> {
         let existing_shard = Shard::from_file(&path)?;
         if shard != existing_shard {
-            return Err(eyre!(
+            return Err(anyhow!(
                 "Tried to open store with {:?}, found {:?}",
                 shard,
                 existing_shard
@@ -267,18 +266,18 @@ impl KvStats {
 fn key_from_path(path: &Path) -> Result<String> {
     let filename = path
         .file_name()
-        .ok_or_else(|| eyre!("No filename"))?
+        .ok_or_else(|| anyhow!("No filename"))?
         .to_str()
-        .ok_or_else(|| eyre!("Invalid keyname"))?;
+        .ok_or_else(|| anyhow!("Invalid keyname"))?;
     let key = filename
         .strip_suffix(EXTENSION_WITH_DOT)
-        .ok_or_else(|| eyre!("Invalid key: {}", filename))?;
+        .ok_or_else(|| anyhow!("Invalid key: {}", filename))?;
     Ok(key.to_string())
 }
 
 fn ensure_valid_key(key: &str) -> Result<()> {
     if key.len() < 2 || !key.is_ascii() || key.contains('/') {
-        return Err(eyre!("Invalid key: {:?}", key));
+        return Err(anyhow!("Invalid key: {:?}", key));
     }
 
     Ok(())
@@ -321,7 +320,7 @@ impl Drop for Flatfs {
 fn write_disk_usage<P: AsRef<Path>>(path: P, usage: u64) -> Result<()> {
     let disk_usage_path = path.as_ref().join(DISK_USAGE_CACHE);
     fs::write(&disk_usage_path, &usage.to_string()[..])
-        .wrap_err_with(|| format!("Failed to write to {:?}", disk_usage_path))?;
+        .with_context(|| format!("Failed to write to {:?}", disk_usage_path))?;
     Ok(())
 }
 
@@ -330,7 +329,7 @@ fn calculate_disk_usage<P: AsRef<Path>>(path: P) -> Result<u64> {
     let disk_usage_path = path.as_ref().join(DISK_USAGE_CACHE);
     if disk_usage_path.exists() {
         let usage: u64 = fs::read_to_string(&disk_usage_path)
-            .wrap_err_with(|| format!("Failed to read {:?}", disk_usage_path))?
+            .with_context(|| format!("Failed to read {:?}", disk_usage_path))?
             .parse()?;
         return Ok(usage);
     }

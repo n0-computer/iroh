@@ -1,6 +1,6 @@
 use std::env;
 
-use eyre::Result;
+use anyhow::Result;
 use flatfs_store::Flatfs;
 use rocks_store::RocksFs;
 

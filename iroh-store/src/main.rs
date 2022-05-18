@@ -15,7 +15,7 @@ struct Args {
 }
 
 #[tokio::main(flavor = "multi_thread")]
-async fn main() -> eyre::Result<()> {
+async fn main() -> anyhow::Result<()> {
     tracing_subscriber::registry()
         .with(fmt::layer().pretty())
         .with(EnvFilter::from_default_env())

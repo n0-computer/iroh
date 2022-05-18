@@ -3,7 +3,7 @@ use std::{
     io::{stdout, Write},
 };
 
-use eyre::{eyre, Result};
+use anyhow::{anyhow, Result};
 use flatfs_store::Flatfs;
 
 fn main() -> Result<()> {
@@ -44,7 +44,7 @@ fn main() -> Result<()> {
                 stdout.write_all(&value)?;
             }
         }
-        _ => return Err(eyre!("Unsupported action: {}", iter)),
+        _ => return Err(anyhow!("Unsupported action: {}", iter)),
     }
 
     Ok(())
