@@ -1,8 +1,8 @@
 use std::io::Cursor;
 use std::net::SocketAddr;
 
-// use bytes::Bytes;
 use anyhow::Result;
+use bytes::BytesMut;
 use cid::Cid;
 use iroh_rpc_types::store::store_server;
 use iroh_rpc_types::store::{
@@ -45,10 +45,9 @@ impl store_server::Store for Rpc {
             .await
             .map_err(|e| Status::internal(format!("{:?}", e)))?
         {
-            todo!("return DBPinnableSlice as Bytes")
-            // Ok(Response::new(GetResponse {
-            //     data: Some(Bytes::from(res)),
-            // }))
+            Ok(Response::new(GetResponse {
+                data: Some(BytesMut::from(&res[..]).freeze()),
+            }))
         } else {
             Ok(Response::new(GetResponse { data: None }))
         }

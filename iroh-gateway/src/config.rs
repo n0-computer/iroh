@@ -1,10 +1,11 @@
+use std::net::SocketAddr;
+
 use crate::constants::*;
 use axum::http::{header::*, Method};
 use headers::{
     AccessControlAllowHeaders, AccessControlAllowMethods, AccessControlAllowOrigin, HeaderMapExt,
 };
 use iroh_rpc_client::RpcClientConfig;
-use libp2p::Multiaddr;
 
 pub const DEFAULT_PORT: u16 = 9050;
 
@@ -26,7 +27,7 @@ pub struct Config {
 #[derive(Debug, Clone)]
 pub struct RpcConfig {
     /// Address on which to listen,
-    pub listen_addr: Multiaddr,
+    pub listen_addr: SocketAddr,
     pub client_config: RpcClientConfig,
 }
 
@@ -34,7 +35,7 @@ impl Default for RpcConfig {
     fn default() -> Self {
         let client_config = RpcClientConfig::default();
         RpcConfig {
-            listen_addr: client_config.gateway_addr.clone(),
+            listen_addr: client_config.gateway_addr,
             client_config,
         }
     }
