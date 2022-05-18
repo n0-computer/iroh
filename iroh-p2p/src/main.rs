@@ -27,7 +27,7 @@ async fn main() -> anyhow::Result<()> {
 
     // TODO: configurable network
     let network_config = iroh_p2p::Libp2pConfig::default();
-    let mut p2p_service = Libp2pService::new(network_config, net_keypair).await;
+    let mut p2p_service = Libp2pService::new(network_config, net_keypair).await?;
 
     // Start services
     let p2p_task = task::spawn(async move {
