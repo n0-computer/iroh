@@ -307,6 +307,7 @@ mod tests {
 
     use super::*;
     use cid::multihash::{Code, MultihashDigest};
+    use iroh_rpc_client::RpcClientConfig;
     use libipld::{codec::Encode, Ipld, IpldCodec};
 
     #[test]
@@ -366,7 +367,7 @@ mod tests {
             let digest = Code::Blake3_256.digest(&bytes);
             let c = Cid::new_v1(codec.into(), digest);
 
-            let client = Client::new("http://localhost:5900").await.unwrap();
+            let client = Client::new(&RpcClientConfig::default()).await.unwrap();
             let resolver = Resolver::new(client);
 
             {

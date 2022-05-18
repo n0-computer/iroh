@@ -1,3 +1,5 @@
+use std::net::SocketAddr;
+
 use anyhow::Result;
 
 use crate::network::P2pClient;
@@ -11,8 +13,8 @@ pub struct Client {
 
 impl Client {
     pub async fn new(cfg: &RpcClientConfig) -> Result<Self> {
-        let p2p = P2pClient::new(&cfg.p2p_addr).await?;
-        let store = StoreClient::new(&cfg.store_addr).await?;
+        let p2p = P2pClient::new(cfg.p2p_addr).await?;
+        let store = StoreClient::new(cfg.store_addr).await?;
 
         Ok(Client { p2p, store })
     }
@@ -22,19 +24,19 @@ impl Client {
 // Config for the rpc Client
 pub struct RpcClientConfig {
     // gateway rpc address
-    pub gateway_addr: String,
+    pub gateway_addr: SocketAddr,
     // p2p rpc address
-    pub p2p_addr: String,
+    pub p2p_addr: SocketAddr,
     // store rpc address
-    pub store_addr: String,
+    pub store_addr: SocketAddr,
 }
 
 impl Default for RpcClientConfig {
     fn default() -> Self {
         Self {
-            gateway_addr: "http://localhost:4400".into(),
-            p2p_addr: "http://localhost:4401".into(),
-            store_addr: "http:://localhost:4402".into(),
+            gateway_addr: "0.0.0.0:4400".parse().unwrap(),
+            p2p_addr: "0.0.0.0:4401".parse().unwrap(),
+            store_addr: "0.0.0.0:4402".parse().unwrap(),
         }
     }
 }

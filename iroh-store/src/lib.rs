@@ -1,6 +1,6 @@
 mod cf;
 mod config;
-mod rpc;
+pub mod rpc;
 mod store;
 
 pub use crate::config::Config;

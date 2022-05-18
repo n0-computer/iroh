@@ -1,14 +1,7 @@
-use std::{
-    cell::RefCell,
-    path::PathBuf,
-    sync::{
-        atomic::{AtomicUsize, Ordering},
-        Arc,
-    },
-};
+use std::path::PathBuf;
 
 use clap::Parser;
-use iroh_store::{Config, Store};
+use iroh_store::{rpc, Config, Store};
 use iroh_util::block_until_sigint;
 use tracing::info;
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
@@ -33,8 +26,9 @@ async fn main() -> eyre::Result<()> {
 
     let args = Args::parse();
     let config = Config::new(args.path.clone());
+    let rpc_addr = config.rpc.store_addr;
 
-    let _store = if config.path.exists() {
+    let store = if config.path.exists() {
         info!("Opening store at {}", config.path.display());
         Store::open(config).await?
     } else {
@@ -42,6 +36,10 @@ async fn main() -> eyre::Result<()> {
         Store::create(config).await?
     };
 
+    tokio::spawn(async move {
+        // TODO: handle error
+        rpc::new(rpc_addr, store).await.unwrap()
+    });
     // TODO: receive commands and do things
 
     block_until_sigint().await;

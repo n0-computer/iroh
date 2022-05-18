@@ -34,7 +34,7 @@ impl Default for RpcConfig {
     fn default() -> Self {
         let client_config = RpcClientConfig::default();
         RpcConfig {
-            listen_addr: client_config.gateway_addr.parse().unwrap(),
+            listen_addr: client_config.gateway_addr.clone(),
             client_config,
         }
     }

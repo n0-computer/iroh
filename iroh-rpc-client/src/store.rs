@@ -1,4 +1,5 @@
 use std::io::Cursor;
+use std::net::SocketAddr;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
@@ -11,7 +12,7 @@ use tokio::sync::Mutex;
 pub struct StoreClient(Arc<Mutex<store::store_client::StoreClient<tonic::transport::Channel>>>);
 
 impl StoreClient {
-    pub async fn new(addr: &str) -> Result<Self> {
+    pub async fn new(addr: SocketAddr) -> Result<Self> {
         let conn = tonic::transport::Endpoint::new(addr.to_string())?
             .keep_alive_while_idle(true)
             .connect_lazy();

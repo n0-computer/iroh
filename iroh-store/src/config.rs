@@ -1,4 +1,3 @@
-use std::net::SocketAddr;
 use std::path::PathBuf;
 
 use iroh_rpc_client::RpcClientConfig;
@@ -8,30 +7,14 @@ use iroh_rpc_client::RpcClientConfig;
 pub struct Config {
     /// The location of the content database.
     pub path: PathBuf,
-    pub rpc: RpcConfig,
+    pub rpc: RpcClientConfig,
 }
 
 impl Config {
     pub fn new(path: PathBuf) -> Self {
         Self {
             path,
-            rpc: RpcConfig::default(),
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct RpcConfig {
-    pub listen_addr: SocketAddr,
-    pub client_config: RpcClientConfig,
-}
-
-impl Default for RpcConfig {
-    fn default() -> Self {
-        let client_config = RpcClientConfig::default();
-        Self {
-            listen_addr: client_config.store_addr.parse().unwrap(),
-            client_config,
+            rpc: RpcClientConfig::default(),
         }
     }
 }

@@ -5,27 +5,26 @@ use std::sync::{
 
 use cid::Cid;
 use eyre::{bail, Result};
-use futures::lock::Mutex;
+use iroh_rpc_client::Client as RpcClient;
 use rocksdb::{DBPinnableSlice, IteratorMode, Options, WriteBatch, DB as RocksDb};
 use tokio::task;
 
 use crate::cf::{
     GraphV0, MetadataV0, Versioned, CF_BLOBS_V0, CF_GRAPH_V0, CF_ID_V0, CF_METADATA_V0,
 };
-use crate::rpc;
 use crate::Config;
 
 #[derive(Debug, Clone)]
 pub struct Store {
-    inner: Arc<Mutex<InnerStore>>,
+    inner: Arc<InnerStore>,
 }
-
 #[derive(Debug)]
-pub(crate) struct InnerStore {
+struct InnerStore {
     content: RocksDb,
     #[allow(dead_code)]
     config: Config,
     next_id: AtomicU64,
+    _rpc_client: RpcClient,
 }
 
 impl Store {
@@ -62,12 +61,19 @@ impl Store {
         })
         .await??;
 
+        let _rpc_client = RpcClient::new(&config.rpc)
+            .await
+            // TODO: first conflict between `anyhow` & `eyre`
+            // .map_err(|e| e.context("Error creating rpc client for store"))?;
+            .map_err(|e| eyre::eyre!("Error creating rpc client for store: {:?}", e))?;
+
         Ok(Store {
-            inner: Arc::new(Mutex::new(InnerStore {
+            inner: Arc::new(InnerStore {
                 content: db,
                 config,
                 next_id: 1.into(),
-            })),
+                _rpc_client,
+            }),
         })
     }
 
@@ -108,44 +114,22 @@ impl Store {
         })
         .await??;
 
-        let rpc_addr = config.rpc.listen_addr;
+        let _rpc_client = RpcClient::new(&config.rpc)
+            .await
+            // TODO: first conflict between `anyhow` & `eyre`
+            // .map_err(|e| e.context("Error creating rpc client for store"))?;
+            .map_err(|e| eyre::eyre!("Error creating rpc client for store: {:?}", e))?;
 
-        let inner = Arc::new(Mutex::new(InnerStore {
-            content: db,
-            config,
-            next_id: next_id.into(),
-        }));
-
-        let inner_cl = Arc::clone(&inner);
-        tokio::spawn(async move {
-            // TODO: handle error
-            rpc::new(rpc_addr, inner_cl).await.unwrap()
-        });
-        Ok(Store { inner })
+        Ok(Store {
+            inner: Arc::new(InnerStore {
+                content: db,
+                config,
+                next_id: next_id.into(),
+                _rpc_client,
+            }),
+        })
     }
 
-    #[tracing::instrument(skip(self, links, blob))]
-    pub async fn put<T: AsRef<[u8]>, L>(&self, cid: Cid, blob: T, links: L) -> Result<()>
-    where
-        L: IntoIterator<Item = Cid>,
-    {
-        self.inner.lock().await.put(cid, blob, links).await
-    }
-
-    #[tracing::instrument(skip(self))]
-    pub async fn get(&self, cid: &Cid) -> Result<Option<DBPinnableSlice<'_>>> {
-        let store = self.inner.lock().await;
-        // store.get(cid).await
-        todo!("implement store.get")
-    }
-
-    #[tracing::instrument(skip(self))]
-    pub async fn get_links(&self, cid: &Cid) -> Result<Option<Vec<Cid>>> {
-        self.inner.lock().await.get_links(cid).await
-    }
-}
-
-impl InnerStore {
     #[tracing::instrument(skip(self, links, blob))]
     pub async fn put<T: AsRef<[u8]>, L>(&self, cid: Cid, blob: T, links: L) -> Result<()>
     where
@@ -167,18 +151,22 @@ impl InnerStore {
         let graph_bytes = rkyv::to_bytes::<_, 1024>(&graph)?; // TODO: is 64 bytes the write amount of scratch space?
 
         let cf_id = self
+            .inner
             .content
             .cf_handle(CF_ID_V0)
             .ok_or_else(|| eyre::eyre!("missing column family: id"))?;
         let cf_blobs = self
+            .inner
             .content
             .cf_handle(CF_BLOBS_V0)
             .ok_or_else(|| eyre::eyre!("missing column family: blobs"))?;
         let cf_meta = self
+            .inner
             .content
             .cf_handle(CF_METADATA_V0)
             .ok_or_else(|| eyre::eyre!("missing column family: metadata"))?;
         let cf_graph = self
+            .inner
             .content
             .cf_handle(CF_GRAPH_V0)
             .ok_or_else(|| eyre::eyre!("missing column family: metadata"))?;
@@ -188,7 +176,7 @@ impl InnerStore {
         batch.put_cf(cf_blobs, &id_bytes, blob);
         batch.put_cf(cf_meta, &id_bytes, metadata_bytes);
         batch.put_cf(cf_graph, &id_bytes, graph_bytes);
-        self.content.write(batch)?;
+        self.inner.content.write(batch)?;
 
         Ok(())
     }
@@ -217,11 +205,12 @@ impl InnerStore {
 
     async fn get_id(&self, cid: &Cid) -> Result<Option<u64>> {
         let cf_id = self
+            .inner
             .content
             .cf_handle(CF_ID_V0)
             .ok_or_else(|| eyre::eyre!("missing column family: id"))?;
         let multihash = cid.hash().to_bytes();
-        let maybe_id_bytes = self.content.get_pinned_cf(cf_id, multihash)?;
+        let maybe_id_bytes = self.inner.content.get_pinned_cf(cf_id, multihash)?;
         match maybe_id_bytes {
             Some(bytes) => {
                 let arr = bytes[..8].try_into().map_err(|e| eyre::eyre!("{:?}", e))?;
@@ -233,24 +222,30 @@ impl InnerStore {
 
     async fn get_by_id(&self, id: u64) -> Result<Option<DBPinnableSlice<'_>>> {
         let cf_blobs = self
+            .inner
             .content
             .cf_handle(CF_BLOBS_V0)
             .ok_or_else(|| eyre::eyre!("missing column family: blobs"))?;
-        let maybe_blob = self.content.get_pinned_cf(cf_blobs, id.to_be_bytes())?;
+        let maybe_blob = self
+            .inner
+            .content
+            .get_pinned_cf(cf_blobs, id.to_be_bytes())?;
 
         Ok(maybe_blob)
     }
 
     async fn get_links_by_id(&self, id: u64) -> Result<Option<Vec<Cid>>> {
         let cf_graph = self
+            .inner
             .content
             .cf_handle(CF_GRAPH_V0)
             .ok_or_else(|| eyre::eyre!("missing column family: graph"))?;
         let id_bytes = id.to_be_bytes();
         // FIXME: can't use pinned because otherwise this can trigger alignment issues :/
-        match self.content.get_cf(cf_graph, &id_bytes)? {
+        match self.inner.content.get_cf(cf_graph, &id_bytes)? {
             Some(links_id) => {
                 let cf_meta = self
+                    .inner
                     .content
                     .cf_handle(CF_METADATA_V0)
                     .ok_or_else(|| eyre::eyre!("missing column family: metadata"))?;
@@ -262,7 +257,7 @@ impl InnerStore {
                     .children
                     .iter()
                     .map(|id| (&cf_meta, id.to_be_bytes()));
-                let meta = self.content.multi_get_cf(keys);
+                let meta = self.inner.content.multi_get_cf(keys);
                 let mut links = Vec::with_capacity(meta.len());
                 for (i, meta) in meta.into_iter().enumerate() {
                     match meta? {
@@ -291,11 +286,13 @@ impl InnerStore {
         I: IntoIterator<Item = Cid>,
     {
         let cf_id = self
+            .inner
             .content
             .cf_handle(CF_ID_V0)
             .ok_or_else(|| eyre::eyre!("missing column family: id"))?;
 
         let cf_meta = self
+            .inner
             .content
             .cf_handle(CF_METADATA_V0)
             .ok_or_else(|| eyre::eyre!("missing column family: metadata"))?;
@@ -318,13 +315,13 @@ impl InnerStore {
             batch.put_cf(&cf_meta, &id_bytes, metadata_bytes);
             ids.push(id);
         }
-        self.content.write(batch)?;
+        self.inner.content.write(batch)?;
 
         Ok(ids)
     }
 
     fn next_id(&self) -> u64 {
-        let id = self.next_id.fetch_add(1, Ordering::SeqCst);
+        let id = self.inner.next_id.fetch_add(1, Ordering::SeqCst);
         // TODO: better handling
         assert!(id > 0, "this store is full");
         id
@@ -335,13 +332,18 @@ impl InnerStore {
 mod tests {
     use super::*;
 
+    use iroh_rpc_client::RpcClientConfig;
+
     use cid::multihash::{Code, MultihashDigest};
     const RAW: u64 = 0x55;
 
     #[tokio::test]
     async fn test_basics() {
         let dir = tempfile::tempdir().unwrap();
-        let config = Config::new(dir.path().into());
+        let config = Config {
+            path: dir.path().into(),
+            rpc: RpcClientConfig::default(),
+        };
 
         let store = Store::create(config).await.unwrap();
 
@@ -374,7 +376,10 @@ mod tests {
     #[tokio::test]
     async fn test_reopen() {
         let dir = tempfile::tempdir().unwrap();
-        let config = Config::new(dir.path().into());
+        let config = Config {
+            path: dir.path().into(),
+            rpc: RpcClientConfig::default(),
+        };
 
         let store = Store::create(config.clone()).await.unwrap();
 

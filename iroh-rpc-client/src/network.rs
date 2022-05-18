@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::net::SocketAddr;
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -12,7 +13,7 @@ use tokio::sync::Mutex;
 pub struct P2pClient(Arc<Mutex<p2p::p2p_client::P2pClient<tonic::transport::Channel>>>);
 
 impl P2pClient {
-    pub async fn new(addr: &str) -> Result<Self> {
+    pub async fn new(addr: SocketAddr) -> Result<Self> {
         let conn = tonic::transport::Endpoint::new(addr.to_string())?
             .keep_alive_while_idle(true)
             .connect_lazy();

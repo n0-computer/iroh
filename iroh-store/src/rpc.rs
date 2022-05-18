@@ -1,11 +1,9 @@
 use std::io::Cursor;
 use std::net::SocketAddr;
-use std::sync::Arc;
 
 // use bytes::Bytes;
 use cid::Cid;
 use eyre::Result;
-use futures::lock::Mutex;
 use iroh_rpc_types::store::store_server;
 use iroh_rpc_types::store::{
     GetLinksRequest, GetLinksResponse, GetRequest, GetResponse, PutRequest,
@@ -13,10 +11,10 @@ use iroh_rpc_types::store::{
 use tonic::{transport::Server as TonicServer, Request, Response, Status};
 use tracing::info;
 
-use crate::store::InnerStore;
+use crate::store::Store;
 
 struct Rpc {
-    store: Arc<Mutex<InnerStore>>,
+    store: Store,
 }
 
 #[tonic::async_trait]
@@ -27,8 +25,6 @@ impl store_server::Store for Rpc {
         let links = links_from_bytes(req.links)?;
         let res = self
             .store
-            .lock()
-            .await
             .put(cid, req.blob, links)
             .await
             .map_err(|e| Status::internal(format!("{:?}", e)))?;
@@ -45,8 +41,6 @@ impl store_server::Store for Rpc {
         let cid = cid_from_bytes(req.cid)?;
         if let Some(res) = self
             .store
-            .lock()
-            .await
             .get(&cid)
             .await
             .map_err(|e| Status::internal(format!("{:?}", e)))?
@@ -68,8 +62,6 @@ impl store_server::Store for Rpc {
         let cid = cid_from_bytes(req.cid)?;
         if let Some(res) = self
             .store
-            .lock()
-            .await
             .get_links(&cid)
             .await
             .map_err(|e| Status::internal(format!("{:?}", e)))?
@@ -82,7 +74,7 @@ impl store_server::Store for Rpc {
     }
 }
 
-pub(crate) async fn new(addr: SocketAddr, store: Arc<Mutex<InnerStore>>) -> Result<()> {
+pub async fn new(addr: SocketAddr, store: Store) -> Result<()> {
     let rpc = Rpc { store };
     TonicServer::builder()
         .add_service(store_server::StoreServer::new(rpc))
