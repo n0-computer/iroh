@@ -141,13 +141,13 @@ impl Store {
             codec: cid.codec(),
             multihash: cid.hash().to_bytes(),
         });
-        let metadata_bytes = rkyv::to_bytes::<_, 1024>(&metadata)?; // TODO: is this the write amount of scratch space?
+        let metadata_bytes = rkyv::to_bytes::<_, 1024>(&metadata)?; // TODO: is this the right amount of scratch space?
         let multihash = &metadata.0.multihash;
 
         let children = self.ensure_id_many(links.into_iter()).await?;
 
         let graph = Versioned(GraphV0 { children });
-        let graph_bytes = rkyv::to_bytes::<_, 1024>(&graph)?; // TODO: is this the write amount of scratch space?
+        let graph_bytes = rkyv::to_bytes::<_, 1024>(&graph)?; // TODO: is this the right amount of scratch space?
 
         let cf_id = self
             .inner
@@ -306,7 +306,7 @@ impl Store {
                 codec: cid.codec(),
                 multihash: cid.hash().to_bytes(),
             });
-            let metadata_bytes = rkyv::to_bytes::<_, 1024>(&metadata)?; // TODO: is 64 bytes the write amount of scratch space?
+            let metadata_bytes = rkyv::to_bytes::<_, 1024>(&metadata)?; // TODO: is this the right amount of scratch space?
 
             let multihash = &metadata.0.multihash;
             // TODO: is it worth to check for existence instead of just writing?
