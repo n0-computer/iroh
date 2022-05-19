@@ -1,7 +1,16 @@
+use std::fmt;
+
 use git_version::git_version;
-use metrics::{describe_counter, describe_gauge, describe_histogram, Unit};
 
 use opentelemetry::trace::{TraceContextExt, TraceId};
+use prometheus_client::{
+    metrics::{
+        counter::Counter,
+        gauge::Gauge,
+        histogram::{linear_buckets, Histogram},
+    },
+    registry::Registry,
+};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 pub fn metrics_config(logger_only: bool) -> iroh_metrics::config::Config {
@@ -24,79 +33,174 @@ pub fn metrics_config(logger_only: bool) -> iroh_metrics::config::Config {
     )
 }
 
-pub const METRICS_CNT_REQUESTS_TOTAL: &str = "gw_requests_total";
-pub const METRICS_TIME_TO_FETCH_FIRST_BLOCK: &str = "gw_time_to_fetch_first_block";
-pub const METRICS_TIME_TO_FETCH_FULL_FILE: &str = "gw_time_to_fetch_full_file";
-pub const METRICS_TIME_TO_SERVE_FIRST_BLOCK: &str = "gw_time_to_serve_first_block";
-pub const METRICS_TIME_TO_SERVE_FULL_FILE: &str = "gw_time_to_serve_full_file";
-pub const METRICS_CACHE_HIT: &str = "gw_cache_hit";
-pub const METRICS_CACHE_MISS: &str = "gw_cache_miss";
-pub const METRICS_BYTES_STREAMED: &str = "gw_bytes_streamed";
-pub const METRICS_BYTES_FETCHED: &str = "gw_bytes_fetched";
-pub const METRICS_BITRATE_IN: &str = "gw_bitrate_in";
-pub const METRICS_BITRATE_OUT: &str = "gw_bitrate_out";
-pub const METRICS_HIST_TTFB: &str = "gw_hist_time_to_fetch_first_block";
-pub const METRICS_HIST_TTSERVE: &str = "gw_hist_time_to_serve_full_file";
-pub const METRICS_ERROR: &str = "gw_error_count";
-pub const METRICS_FAIL: &str = "gw_fail_count";
-
-pub fn register_counters() {
-    describe_counter!(
-        METRICS_CNT_REQUESTS_TOTAL,
-        Unit::Count,
-        "Total number of requests received by the gateway"
-    );
-    describe_gauge!(
-        METRICS_TIME_TO_FETCH_FIRST_BLOCK,
-        Unit::Milliseconds,
-        "Time from start of request to fetching the first block"
-    );
-    describe_gauge!(
-        METRICS_TIME_TO_FETCH_FULL_FILE,
-        Unit::Milliseconds,
-        "Time from start of request to fetching the full file"
-    );
-    describe_gauge!(
-        METRICS_TIME_TO_SERVE_FIRST_BLOCK,
-        Unit::Milliseconds,
-        "Time from start of request to serving the first block"
-    );
-    describe_gauge!(
-        METRICS_TIME_TO_SERVE_FULL_FILE,
-        Unit::Milliseconds,
-        "Time from start of request to serving the full file"
-    );
-    describe_counter!(METRICS_CACHE_HIT, Unit::Count, "Number of cache hits");
-    describe_counter!(METRICS_CACHE_MISS, Unit::Count, "Number of cache misses");
-    describe_counter!(
-        METRICS_BYTES_STREAMED,
-        Unit::Bytes,
-        "Total number of bytes streamed"
-    );
-    describe_counter!(
-        METRICS_BYTES_FETCHED,
-        Unit::Bytes,
-        "Total number of bytes fetched"
-    );
-    describe_gauge!(
-        METRICS_BITRATE_IN,
-        Unit::KilobitsPerSecond,
-        "Bitrate of incoming stream"
-    );
-    describe_gauge!(
-        METRICS_BITRATE_OUT,
-        Unit::KilobitsPerSecond,
-        "Bitrate of outgoing stream"
-    );
-    describe_counter!(METRICS_ERROR, Unit::Count, "Number of errors");
-    describe_counter!(METRICS_FAIL, Unit::Count, "Number of failed requests");
-    describe_histogram!(METRICS_HIST_TTFB, Unit::Milliseconds, "Histogram of TTFB");
-    describe_histogram!(
-        METRICS_HIST_TTSERVE,
-        Unit::Milliseconds,
-        "Histogram of TTSERVE"
-    );
+pub struct Metrics {
+    pub requests_total: Counter,
+    pub ttf_block: Gauge,
+    pub ttf_file: Gauge,
+    pub tts_block: Gauge,
+    pub tts_file: Gauge,
+    pub cache_hit: Counter,
+    pub cache_miss: Counter,
+    pub bytes_streamed: Counter,
+    pub bytes_fetched: Counter,
+    pub bitrate_in: Gauge,
+    pub bitrate_out: Gauge,
+    pub error_count: Counter,
+    pub fail_count: Counter,
+    pub hist_ttfb: Histogram,
+    pub hist_ttsf: Histogram,
 }
+
+impl fmt::Debug for Metrics {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Gateway Metrics").finish()
+    }
+}
+
+impl Metrics {
+    pub fn new(registry: &mut Registry) -> Self {
+        let sub_registry = registry.sub_registry_with_prefix("gateway");
+        let requests_total = Counter::default();
+        sub_registry.register(
+            METRICS_CNT_REQUESTS_TOTAL,
+            "Total number of requests received by the gateway",
+            Box::new(requests_total.clone()),
+        );
+
+        let ttf_block = Gauge::default();
+        sub_registry.register(
+            METRICS_TIME_TO_FETCH_FIRST_BLOCK,
+            "Time from start of request to fetching the first block",
+            Box::new(ttf_block.clone()),
+        );
+
+        let ttf_file = Gauge::default();
+        sub_registry.register(
+            METRICS_TIME_TO_FETCH_FULL_FILE,
+            "Time from start of request to fetching the full file",
+            Box::new(ttf_file.clone()),
+        );
+
+        let tts_block = Gauge::default();
+        sub_registry.register(
+            METRICS_TIME_TO_SERVE_FIRST_BLOCK,
+            "Time from start of request to serving the first block",
+            Box::new(tts_block.clone()),
+        );
+
+        let tts_file = Gauge::default();
+        sub_registry.register(
+            METRICS_TIME_TO_SERVE_FULL_FILE,
+            "Time from start of request to serving the full file",
+            Box::new(tts_file.clone()),
+        );
+
+        let cache_hit = Counter::default();
+        sub_registry.register(
+            METRICS_CACHE_HIT,
+            "Number of cache hits",
+            Box::new(cache_hit.clone()),
+        );
+
+        let cache_miss = Counter::default();
+        sub_registry.register(
+            METRICS_CACHE_MISS,
+            "Number of cache misses",
+            Box::new(cache_miss.clone()),
+        );
+
+        let bytes_streamed = Counter::default();
+        sub_registry.register(
+            METRICS_BYTES_STREAMED,
+            "Total number of bytes streamed",
+            Box::new(bytes_streamed.clone()),
+        );
+
+        let bytes_fetched = Counter::default();
+        sub_registry.register(
+            METRICS_BYTES_FETCHED,
+            "Total number of bytes fetched",
+            Box::new(bytes_fetched.clone()),
+        );
+
+        let bitrate_in = Gauge::default();
+        sub_registry.register(
+            METRICS_BITRATE_IN,
+            "Bitrate of incoming stream",
+            Box::new(bitrate_in.clone()),
+        );
+
+        let bitrate_out = Gauge::default();
+        sub_registry.register(
+            METRICS_BITRATE_OUT,
+            "Bitrate of outgoing stream",
+            Box::new(bitrate_out.clone()),
+        );
+
+        let error_count = Counter::default();
+        sub_registry.register(
+            METRICS_ERROR,
+            "Number of errors",
+            Box::new(error_count.clone()),
+        );
+
+        let fail_count = Counter::default();
+        sub_registry.register(
+            METRICS_FAIL,
+            "Number of failed requests",
+            Box::new(fail_count.clone()),
+        );
+
+        // let hist_ttfb = Histogram::default();
+        let hist_ttfb = Histogram::new(linear_buckets(0.0, 500.0, 240));
+        sub_registry.register(
+            METRICS_HIST_TTFB,
+            "Histogram of TTFB",
+            Box::new(hist_ttfb.clone()),
+        );
+
+        let hist_ttsf = Histogram::new(linear_buckets(0.0, 500.0, 240));
+        sub_registry.register(
+            METRICS_HIST_TTSERVE,
+            "Histogram of TTSERVE",
+            Box::new(hist_ttsf.clone()),
+        );
+
+        Self {
+            requests_total,
+            ttf_block,
+            ttf_file,
+            tts_block,
+            tts_file,
+            cache_hit,
+            cache_miss,
+            bytes_streamed,
+            bytes_fetched,
+            bitrate_in,
+            bitrate_out,
+            error_count,
+            fail_count,
+            hist_ttfb,
+            hist_ttsf,
+        }
+    }
+}
+
+pub const METRICS_CNT_REQUESTS_TOTAL: &str = "requests";
+pub const METRICS_TIME_TO_FETCH_FIRST_BLOCK: &str = "time_to_fetch_first_block";
+pub const METRICS_TIME_TO_FETCH_FULL_FILE: &str = "time_to_fetch_full_file";
+pub const METRICS_TIME_TO_SERVE_FIRST_BLOCK: &str = "time_to_serve_first_block";
+pub const METRICS_TIME_TO_SERVE_FULL_FILE: &str = "time_to_serve_full_file";
+pub const METRICS_CACHE_HIT: &str = "cache_hit";
+pub const METRICS_CACHE_MISS: &str = "cache_miss";
+pub const METRICS_BYTES_STREAMED: &str = "bytes_streamed";
+pub const METRICS_BYTES_FETCHED: &str = "bytes_fetched";
+pub const METRICS_BITRATE_IN: &str = "bitrate_in";
+pub const METRICS_BITRATE_OUT: &str = "bitrate_out";
+pub const METRICS_HIST_TTFB: &str = "hist_time_to_fetch_first_block";
+pub const METRICS_HIST_TTSERVE: &str = "hist_time_to_serve_full_file";
+pub const METRICS_ERROR: &str = "error_count";
+pub const METRICS_FAIL: &str = "fail_count";
 
 pub fn get_current_trace_id() -> TraceId {
     tracing::Span::current()
