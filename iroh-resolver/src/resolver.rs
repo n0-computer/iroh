@@ -3,12 +3,13 @@ use std::str::FromStr;
 
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use bytes::Bytes;
+use cid::multihash::{Code, MultihashDigest};
 use cid::Cid;
 use iroh_rpc_client::Client;
-use libipld::codec::Encode;
+use libipld::codec::{Decode, Encode};
 use libipld::prelude::Codec as _;
 use libipld::{Ipld, IpldCodec};
-use tracing::{debug, warn};
+use tracing::{debug, trace, warn};
 
 use crate::codecs::Codec;
 use crate::unixfs::{DataType, UnixfsNode};
@@ -289,35 +290,72 @@ impl Resolver {
     /// Loads the actual content of a given cid.
     #[tracing::instrument(skip(self))]
     async fn load_cid(&self, cid: &Cid) -> Result<Bytes> {
+        trace!("loading cid");
         // TODO: better strategy
 
-        match self.rpc.store.get(*cid).await {
-            Ok(Some(data)) => return Ok(data),
+        let cid = *cid;
+        match self.rpc.store.get(cid).await {
+            Ok(Some(data)) => {
+                trace!("retrieved from store");
+                return Ok(data);
+            }
             Ok(None) => {}
             Err(err) => {
                 warn!("failed to fetch data from store {}: {:?}", cid, err);
             }
         }
 
-        let providers = self.rpc.p2p.fetch_providers(cid).await?;
-        let bytes = self.rpc.p2p.fetch_bitswap(*cid, Some(providers)).await?;
+        let providers = self.rpc.p2p.fetch_providers(&cid).await?;
+        let bytes = self.rpc.p2p.fetch_bitswap(cid, Some(providers)).await?;
 
-        // TODO: when does cid verification happen?
+        // TODO: is this the right place?
+        // verify cid
+        match Code::try_from(cid.hash().code()) {
+            Ok(code) => {
+                let bytes = bytes.clone();
+                tokio::task::spawn_blocking(move || {
+                    let calculated_hash = code.digest(&bytes);
+                    if &calculated_hash != cid.hash() {
+                        bail!(
+                            "invalid data returned {:?} != {:?}",
+                            calculated_hash,
+                            cid.hash()
+                        );
+                    }
+                    Ok(())
+                })
+                .await??;
+            }
+            Err(_) => {
+                warn!(
+                    "unable to verify hash, unknown hash function {} for {}",
+                    cid.hash().code(),
+                    cid
+                );
+            }
+        }
 
         // trigger storage in the background
         let cloned = bytes.clone();
-        let cid = *cid;
         let rpc = self.rpc.clone();
         tokio::spawn(async move {
-            // TODO: parse links
+            let clone2 = cloned.clone();
+            let links =
+                tokio::task::spawn_blocking(move || parse_links(&cid, &clone2).unwrap_or_default())
+                    .await
+                    .unwrap_or_default();
+
             let len = cloned.len();
-            match rpc.store.put(cid, cloned, vec![]).await {
-                Ok(_) => debug!("stored {} ({}bytes)", cid, len),
+            let links_len = links.len();
+            match rpc.store.put(cid, cloned, links).await {
+                Ok(_) => debug!("stored {} ({}bytes, {}links)", cid, len, links_len),
                 Err(err) => {
                     warn!("failed to store {}: {:?}", cid, err);
                 }
             }
         });
+
+        trace!("retrieved from p2p");
 
         Ok(bytes)
     }
@@ -327,6 +365,22 @@ impl Resolver {
     async fn resolve_dnslink(&self, _domain: &str) -> Result<Cid> {
         todo!()
     }
+}
+
+fn parse_links(cid: &Cid, bytes: &[u8]) -> Result<Vec<Cid>> {
+    let codec = Codec::try_from(cid.codec()).context("unknown codec")?;
+    let codec = match codec {
+        Codec::DagPb => IpldCodec::DagPb,
+        Codec::DagCbor => IpldCodec::DagCbor,
+        Codec::DagJson => IpldCodec::DagJson,
+        _ => bail!("unsupported codec {:?}", codec),
+    };
+
+    let decoded: Ipld = Ipld::decode(codec, &mut std::io::Cursor::new(bytes))?;
+    let mut links = Vec::new();
+    decoded.references(&mut links);
+
+    Ok(links)
 }
 
 #[cfg(test)]
@@ -381,8 +435,35 @@ mod tests {
         let mut map = BTreeMap::new();
         map.insert("name".to_string(), Ipld::String("Foo".to_string()));
         map.insert("details".to_string(), Ipld::List(vec![Ipld::Integer(1)]));
+        map.insert(
+            "my-link".to_string(),
+            Ipld::Link(
+                "bafkreigh2akiscaildcqabsyg3dfr6chu3fgpregiymsck7e7aqa4s52zy"
+                    .parse()
+                    .unwrap(),
+            ),
+        );
 
         Ipld::Map(map)
+    }
+
+    #[test]
+    fn test_parse_links() {
+        for codec in [IpldCodec::DagCbor, IpldCodec::DagJson] {
+            let ipld = make_ipld();
+
+            let mut bytes = Vec::new();
+            ipld.encode(codec, &mut bytes).unwrap();
+            let digest = Code::Blake3_256.digest(&bytes);
+            let c = Cid::new_v1(codec.into(), digest);
+
+            let links = parse_links(&c, &bytes).unwrap();
+            assert_eq!(links.len(), 1);
+            assert_eq!(
+                links[0].to_string(),
+                "bafkreigh2akiscaildcqabsyg3dfr6chu3fgpregiymsck7e7aqa4s52zy"
+            );
+        }
     }
 
     #[tokio::test]
