@@ -6,7 +6,7 @@ use tracing::error;
 /// Starts daemon process
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> anyhow::Result<()> {
-    iroh_metrics::init(metrics::metrics_config(false)).expect("failed to initialize metrics");
+    iroh_metrics::init(metrics::metrics_config(true)).expect("failed to initialize metrics");
 
     let version = option_env!("IROH_VERSION").unwrap_or(env!("CARGO_PKG_VERSION"));
 
