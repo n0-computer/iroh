@@ -221,6 +221,7 @@ pub enum RpcMessage {
         providers: Option<HashSet<PeerId>>,
     },
     ProviderRequest {
+        // TODO: potentially change this to Cid, as that is the only key we use for providers
         key: Key,
         response_channel: oneshot::Sender<Result<HashSet<PeerId>, String>>,
     },
