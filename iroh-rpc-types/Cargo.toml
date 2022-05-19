@@ -9,7 +9,7 @@ description = "RPC type definitions for iroh"
 
 
 [dependencies]
-libp2p = { version = "0.44.0", features = ["serde"] }
+libp2p = { version = "0.45.0", features = ["serde"] }
 cid = { version = "0.8.0", features = ["serde-codec"] }
 futures = "0.3.5"
 tonic = "0.7.2"
