@@ -17,6 +17,7 @@ bytes = "1.1.0"
 iroh-rpc-client = { path = "../iroh-rpc-client" }
 tokio = { version = "1.18.0" }
 futures = "0.3.5"
+tracing = "0.1.34"
 
 [dev-dependencies]
 criterion = { version = "0.3.5", features = ["async_tokio"] }

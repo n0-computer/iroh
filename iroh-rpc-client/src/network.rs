@@ -23,6 +23,7 @@ impl P2pClient {
     }
 
     // Fetches a block directly from the network.
+    #[tracing::instrument(skip(self))]
     pub async fn fetch_bitswap(
         &self,
         cid: Cid,
@@ -33,28 +34,32 @@ impl P2pClient {
             p2p::Providers { providers: list }
         });
 
-        let req = p2p::BitswapRequest {
+        let req = iroh_metrics::req::trace_tonic_req(p2p::BitswapRequest {
             cid: cid.to_bytes(),
             providers,
-        };
+        });
         let res = self.0.lock().await.fetch_bitswap(req).await?;
         Ok(res.into_inner().data)
     }
 
+    #[tracing::instrument(skip(self))]
     pub async fn fetch_provider(&self, _key: &[u8]) -> Result<HashSet<PeerId>> {
         // let req = Requests::FetchProvider { key };
         // self.0.call(Namespace, Methods::FetchProvider, req).await
         todo!()
     }
 
+    #[tracing::instrument(skip(self))]
     pub async fn get_listening_addrs(&self) -> Result<()> {
         todo!()
     }
 
+    #[tracing::instrument(skip(self))]
     pub async fn get_peers(&self) -> Result<HashMap<PeerId, Vec<Multiaddr>>> {
         todo!()
     }
 
+    #[tracing::instrument(skip(self))]
     pub async fn connect(
         &self,
         _peer_id: PeerId,
@@ -63,6 +68,7 @@ impl P2pClient {
         todo!()
     }
 
+    #[tracing::instrument(skip(self))]
     pub async fn disconnect(&self, _peer_id: PeerId) -> Result<()> {
         todo!()
     }

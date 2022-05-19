@@ -137,6 +137,7 @@ impl Resolver {
     }
 
     /// Resolves through a given path, returning the [`Cid`] and raw bytes of the final leaf.
+    #[tracing::instrument(skip(self))]
     pub async fn resolve(&self, path: Path) -> Result<Out> {
         // Resolve the root block.
         let (root_cid, root_bytes) = self.resolve_root(path.typ, &path.root).await?;
@@ -154,6 +155,7 @@ impl Resolver {
     }
 
     /// Resolves through both DagPb and nested UnixFs DAGs.
+    #[tracing::instrument(skip(self, bytes))]
     async fn resolve_dag_pb_or_unixfs(
         &self,
         cid: Cid,
@@ -186,6 +188,7 @@ impl Resolver {
         }
     }
 
+    #[tracing::instrument(skip(self, bytes))]
     async fn resolve_dag_pb(&self, cid: Cid, bytes: Bytes, path: Vec<String>) -> Result<Out> {
         let ipld: libipld::Ipld = libipld::IpldCodec::DagPb
             .decode(&bytes)
@@ -197,6 +200,7 @@ impl Resolver {
         Ok(Out::DagPb(out))
     }
 
+    #[tracing::instrument(skip(self, bytes))]
     async fn resolve_dag_cbor(&self, cid: Cid, bytes: Bytes, path: Vec<String>) -> Result<Out> {
         let ipld: libipld::Ipld = libipld::IpldCodec::DagCbor
             .decode(&bytes)
@@ -208,6 +212,7 @@ impl Resolver {
         Ok(Out::DagCbor(out))
     }
 
+    #[tracing::instrument(skip(self, bytes))]
     async fn resolve_dag_json(&self, cid: Cid, bytes: Bytes, path: Vec<String>) -> Result<Out> {
         let ipld: libipld::Ipld = libipld::IpldCodec::DagJson
             .decode(&bytes)
@@ -219,6 +224,7 @@ impl Resolver {
         Ok(Out::DagJson(out))
     }
 
+    #[tracing::instrument(skip(self))]
     async fn resolve_ipld(
         &self,
         _cid: Cid,
@@ -262,6 +268,7 @@ impl Resolver {
         Ok(current.clone())
     }
 
+    #[tracing::instrument(skip(self))]
     async fn resolve_root(&self, typ: PathType, root: &CidOrDomain) -> Result<(Cid, Bytes)> {
         match typ {
             PathType::Ipfs => match root {
@@ -279,6 +286,7 @@ impl Resolver {
     }
 
     /// Loads the actual content of a given cid.
+    #[tracing::instrument(skip(self))]
     async fn load_cid(&self, cid: &Cid) -> Result<Bytes> {
         // TODO: better strategies
         let providers = None;
@@ -287,6 +295,7 @@ impl Resolver {
     }
 
     /// Resolves a dnslink at the given domain.
+    #[tracing::instrument(skip(self))]
     async fn resolve_dnslink(&self, _domain: &str) -> Result<Cid> {
         todo!()
     }

@@ -1,5 +1,12 @@
+pub mod config;
+pub mod req;
+
+use config::Config;
 use metrics_exporter_prometheus::PrometheusBuilder;
-use opentelemetry::sdk::{trace, Resource};
+use opentelemetry::{
+    global,
+    sdk::{propagation::TraceContextPropagator, trace, Resource},
+};
 use opentelemetry_otlp::WithExportConfig;
 use std::env::consts::{ARCH, OS};
 use std::time::Duration;
@@ -34,6 +41,7 @@ pub fn init_tracer(cfg: Config) -> Result<(), Box<dyn std::error::Error>> {
     if cfg.debug {
         tracing_subscriber::registry().with(log_subscriber).init();
     } else {
+        global::set_text_map_propagator(TraceContextPropagator::new());
         let tracer = opentelemetry_otlp::new_pipeline()
             .tracing()
             .with_exporter(
@@ -65,53 +73,4 @@ pub fn init_tracer(cfg: Config) -> Result<(), Box<dyn std::error::Error>> {
 /// Shutdown the tracing and metrics subsystems.
 pub fn shutdown_tracing() {
     opentelemetry::global::shutdown_tracer_provider();
-}
-
-#[derive(Debug, Clone)]
-pub struct Config {
-    /// The name of the service. Should be the same as the Cargo package name.
-    pub service_name: String,
-    /// A unique identifier for this instance of the service.
-    pub instance_id: String,
-    /// The build version of the service (commit hash).
-    pub build: String,
-    /// The version of the service. Should be the same as the Cargo package version.
-    pub version: String,
-    /// The environment of the service.
-    pub service_env: String,
-    /// Flag to enable debug mode.
-    pub debug: bool,
-    /// The endpoint of the trace collector.
-    pub collector_endpoint: String,
-    /// The endpoint of the prometheus push gateway.
-    pub prometheus_gateway_endpoint: String,
-}
-
-impl Config {
-    pub fn new(
-        service_name: String,
-        instance_id: String,
-        build: String,
-        version: String,
-        service_env: String,
-        debug: bool,
-    ) -> Self {
-        let debug =
-            std::env::var("IROH_METRICS_DEBUG").unwrap_or_else(|_| debug.to_string()) == "true";
-        let collector_endpoint = std::env::var("IROH_METRICS_COLLECTOR_ENDPOINT")
-            .unwrap_or_else(|_| "http://localhost:4317".to_string());
-        let prometheus_gateway_endpoint = std::env::var("IROH_METRICS_PROM_GATEWAY_ENDPOINT")
-            .unwrap_or_else(|_| "http://localhost:9091".to_string());
-
-        Config {
-            service_name,
-            instance_id,
-            build,
-            version,
-            service_env,
-            debug,
-            collector_endpoint,
-            prometheus_gateway_endpoint,
-        }
-    }
 }

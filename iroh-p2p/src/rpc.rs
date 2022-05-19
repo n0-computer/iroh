@@ -26,10 +26,12 @@ struct P2p {
 impl p2p_server::P2p for P2p {
     // TODO: expand to handle multiple cids at once. Probably not a tough fix, just want to push
     // forward right now
+    #[tracing::instrument(skip(self, request))]
     async fn fetch_bitswap(
         &self,
         request: Request<BitswapRequest>,
     ) -> Result<Response<BitswapResponse>, tonic::Status> {
+        iroh_metrics::req::set_trace_ctx(&request);
         let req = request.into_inner();
         let cid = Cid::read_bytes(io::Cursor::new(req.cid))
             .map_err(|e| Status::invalid_argument(format!("invalid cid: {:?}", e)))?;
@@ -85,10 +87,12 @@ impl p2p_server::P2p for P2p {
         Ok(Response::new(BitswapResponse { data: block.data }))
     }
 
+    #[tracing::instrument(skip(self, request))]
     async fn fetch_provider(
         &self,
         request: Request<iroh_rpc_types::p2p::Key>,
     ) -> Result<Response<Providers>, tonic::Status> {
+        iroh_metrics::req::set_trace_ctx(&request);
         let req = request.into_inner();
         let (s, r) = oneshot::channel();
         let msg = RpcMessage::ProviderRequest {
