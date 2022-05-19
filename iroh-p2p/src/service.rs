@@ -307,7 +307,7 @@ impl Libp2pService {
                     .map_err(|_| anyhow!("Failed to connect to a peer"))?;
             }
             RpcMessage::NetDisconnect(response_channel, _peer_id) => {
-                warn!("NetDisconnect API not yet implemented"); // TODO: implement NetDisconnect - See #1181
+                warn!("NetDisconnect API not yet implemented"); // TODO: implement NetDisconnect
 
                 response_channel
                     .send(())

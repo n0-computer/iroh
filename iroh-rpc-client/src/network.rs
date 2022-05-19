@@ -10,6 +10,7 @@ use iroh_rpc_types::p2p::{
 };
 use libp2p::{Multiaddr, PeerId};
 use tokio::sync::Mutex;
+use tracing::warn;
 
 #[derive(Debug, Clone)]
 pub struct P2pClient(Arc<Mutex<p2p::p2p_client::P2pClient<tonic::transport::Channel>>>);
@@ -47,7 +48,7 @@ impl P2pClient {
 
     #[tracing::instrument(skip(self))]
     pub async fn fetch_provider(&self, key: &[u8]) -> Result<HashSet<PeerId>> {
-        let req = Key { key: key.into() };
+        let req = iroh_metrics::req::trace_tonic_req(Key { key: key.into() });
         let res = self.0.lock().await.fetch_provider(req).await?;
         let mut providers = HashSet::new();
         for provider in res.into_inner().providers.into_iter() {
@@ -58,11 +59,12 @@ impl P2pClient {
 
     #[tracing::instrument(skip(self))]
     pub async fn get_listening_addrs(&self) -> Result<(PeerId, Vec<Multiaddr>)> {
+        let req = iroh_metrics::req::trace_tonic_req(Empty {});
         let res = self
             .0
             .lock()
             .await
-            .get_listening_addrs(Empty {})
+            .get_listening_addrs(req)
             .await?
             .into_inner();
         let peer_id = PeerId::from_bytes(&res.peer_id[..])?;
@@ -72,14 +74,8 @@ impl P2pClient {
 
     #[tracing::instrument(skip(self))]
     pub async fn get_peers(&self) -> Result<HashMap<PeerId, Vec<Multiaddr>>> {
-        let peers = self
-            .0
-            .lock()
-            .await
-            .get_peers(Empty {})
-            .await?
-            .into_inner()
-            .peers;
+        let req = iroh_metrics::req::trace_tonic_req(Empty {});
+        let peers = self.0.lock().await.get_peers(req).await?.into_inner().peers;
         let mut peers_map = HashMap::new();
         for (peer, addrs) in peers.into_iter() {
             let peer = peer.parse()?;
@@ -91,20 +87,20 @@ impl P2pClient {
 
     #[tracing::instrument(skip(self))]
     pub async fn connect(&self, peer_id: PeerId, addrs: Vec<Multiaddr>) -> Result<bool> {
-        let req = ConnectRequest {
+        let req = iroh_metrics::req::trace_tonic_req(ConnectRequest {
             peer_id: peer_id.to_bytes(),
             addrs: addrs.iter().map(|a| a.to_vec()).collect(),
-        };
+        });
         let res = self.0.lock().await.peer_connect(req).await?.into_inner();
         Ok(res.success)
     }
 
     #[tracing::instrument(skip(self))]
     pub async fn disconnect(&self, peer_id: PeerId) -> Result<()> {
-        // TODO: implement NetDisconnect in p2p node - See #1181
-        let req = DisconnectRequest {
+        warn!("NetDisconnect not yet implemented on p2p node");
+        let req = iroh_metrics::req::trace_tonic_req(DisconnectRequest {
             peer_id: peer_id.to_bytes(),
-        };
+        });
         let res = self.0.lock().await.peer_disconnect(req).await?.into_inner();
         Ok(res)
     }
