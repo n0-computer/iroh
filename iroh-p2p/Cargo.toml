@@ -37,7 +37,7 @@ names = { version = "0.13.0", default-features = false }
 git-version = "0.3.5"
  
 [dependencies.libp2p]
-version = "0.44"
+version = "0.45"
 default-features = false
 features = [
   "gossipsub",
