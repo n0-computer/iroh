@@ -27,7 +27,9 @@ pub fn criterion_benchmark(c: &mut Criterion) {
         let block0 = create_test_block(Bytes::from(vec![0; 1024 * 1024]));
         let block1 = create_test_block(Bytes::from(vec![1; 1024 * 1024]));
 
-        message.want_block(block0.cid(), Priority::default());
+        message
+            .wantlist_mut()
+            .want_block(block0.cid(), Priority::default());
 
         let packet = message.to_bytes();
 
@@ -86,7 +88,9 @@ pub fn criterion_benchmark(c: &mut Criterion) {
             let block0 = create_test_block(Bytes::from(vec![i; 1024 * 1024]));
             let block1 = create_test_block(Bytes::from(vec![i + 1; 1024 * 1024]));
 
-            message.want_block(block0.cid(), Priority::default());
+            message
+                .wantlist_mut()
+                .want_block(block0.cid(), Priority::default());
             message.add_block(block1);
         }
 

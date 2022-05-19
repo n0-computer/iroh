@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::error::Error;
 use std::time::Duration;
 
@@ -5,7 +6,7 @@ use crate::config::Libp2pConfig;
 use anyhow::Result;
 use bytes::Bytes;
 use cid::Cid;
-use iroh_bitswap::{Bitswap, BitswapEvent, Priority};
+use iroh_bitswap::{Bitswap, BitswapConfig, BitswapEvent, Priority};
 use libp2p::core::identity::Keypair;
 use libp2p::core::PeerId;
 use libp2p::identify::{Identify, IdentifyConfig, IdentifyEvent};
@@ -76,7 +77,8 @@ impl From<BitswapEvent> for Event {
 
 impl NodeBehaviour {
     pub async fn new(local_key: &Keypair, config: &Libp2pConfig) -> Result<Self> {
-        let bitswap = Bitswap::new();
+        let bs_config = BitswapConfig::default();
+        let bitswap = Bitswap::new(bs_config);
 
         let mdns = if config.mdns {
             Some(Mdns::new(Default::default()).await?)
@@ -135,18 +137,13 @@ impl NodeBehaviour {
     }
 
     /// Send a request for data over bitswap
-    #[allow(dead_code)]
-    pub async fn want_block(&mut self, cid: Cid, priority: Priority) -> Result<(), Box<dyn Error>> {
-        self.bitswap.want_block(cid, priority).await;
-        Ok(())
-    }
-
-    pub async fn want_blocks(
+    pub fn want_block(
         &mut self,
-        cids: Vec<Cid>,
+        cid: Cid,
         priority: Priority,
+        providers: HashSet<PeerId>,
     ) -> Result<(), Box<dyn Error>> {
-        self.bitswap.want_blocks(cids, priority).await;
+        self.bitswap.want_block(cid, priority, providers);
         Ok(())
     }
 

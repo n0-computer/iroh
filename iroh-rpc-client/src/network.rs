@@ -17,7 +17,7 @@ pub struct P2pClient(Arc<Mutex<p2p::p2p_client::P2pClient<tonic::transport::Chan
 
 impl P2pClient {
     pub async fn new(addr: SocketAddr) -> Result<Self> {
-        let conn = tonic::transport::Endpoint::new(addr.to_string())?
+        let conn = tonic::transport::Endpoint::new(format!("http://{}", addr))?
             .keep_alive_while_idle(true)
             .connect_lazy();
 

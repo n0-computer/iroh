@@ -13,7 +13,7 @@ pub struct StoreClient(Arc<Mutex<store::store_client::StoreClient<tonic::transpo
 
 impl StoreClient {
     pub async fn new(addr: SocketAddr) -> Result<Self> {
-        let conn = tonic::transport::Endpoint::new(addr.to_string())?
+        let conn = tonic::transport::Endpoint::new(format!("http://{}", addr))?
             .keep_alive_while_idle(true)
             .connect_lazy();
 

@@ -52,22 +52,22 @@ impl p2p_server::P2p for P2p {
             })
             .transpose()?;
 
-        let providers = if providers.is_none() {
-            let (s, r) = oneshot::channel();
-            self.sender
-                .send(RpcMessage::ProviderRequest {
-                    key: cid.to_bytes().into(),
-                    response_channel: s,
-                })
-                .await
-                .unwrap();
-            Some(
+        let providers = match providers {
+            Some(p) => p,
+            None => {
+                let (s, r) = oneshot::channel();
+                self.sender
+                    .send(RpcMessage::ProviderRequest {
+                        key: cid.to_bytes().into(),
+                        response_channel: s,
+                    })
+                    .await
+                    .unwrap();
+
                 r.await
                     .expect("sender dropped")
-                    .map_err(|e| Status::internal(format!("failed to get providers: {:?}", e)))?,
-            )
-        } else {
-            providers
+                    .map_err(|e| Status::internal(format!("failed to get providers: {:?}", e)))?
+            }
         };
 
         info!("found providers: {:?}", providers);
@@ -218,7 +218,7 @@ pub enum RpcMessage {
     BitswapRequest {
         cids: Vec<Cid>,
         response_channels: Vec<oneshot::Sender<Block>>,
-        providers: Option<HashSet<PeerId>>,
+        providers: HashSet<PeerId>,
     },
     ProviderRequest {
         // TODO: potentially change this to Cid, as that is the only key we use for providers

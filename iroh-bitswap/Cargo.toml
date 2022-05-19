@@ -22,6 +22,7 @@ thiserror = "1.0.20"
 unsigned-varint = "0.7.0"
 ahash = "0.7.6"
 tracing = "0.1.34"
+num_enum = "0.5.7"
 
 [dev-dependencies]
 criterion = "0.3.5"
