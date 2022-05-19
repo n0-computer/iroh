@@ -21,14 +21,17 @@ jobs:
         include:
           - os: ubuntu-latest
             sccache-path: /home/runner/.cache/sccache
-            release-arch: linux
+            release-os: linux
+            release-arch: amd64
           - os: macos-latest
             sccache-path: /Users/runner/Library/Caches/Mozilla.sccache
-            release-arch: darwin
+            release-os: darwin
+            release-arch: x86_64
           - os: windows-latest
             rust: stable
             sccache-path: "%LOCALAPPDATA%\\sccache"
-            release-arch: windows
+            release-os: windows
+            release-arch: amd64
             experimental: true
     env:
       RUST_BACKTRACE: full
@@ -46,6 +49,7 @@ jobs:
     - name: Set build arch
       run: |
         echo "RELEASE_ARCH=${{ matrix.release-arch }}" >> $GITHUB_ENV
+        echo "RELEASE_OS=${{ matrix.release-os }}" >> $GITHUB_ENV
     
     - name: Install sccache (ubuntu-latest)
       if: matrix.os == 'ubuntu-latest'
@@ -118,18 +122,6 @@ jobs:
       if: matrix.os == 'windows-latest'
       uses: arduino/setup-protoc@v1
 
-    # - name: Install Protoc linux
-    #   if: matrix.os == 'ubuntu-latest'
-    #   run: |
-    #     sudo apt install -y protobuf-compiler
-    #     echo "PROTOC=/usr/bin/protoc" >> $GITHUB_ENV
-    #     echo "PROTOC_INCLUDE=/usr/include" >> $GITHUB_ENV
-    
-    # - name: Install Protoc macOS
-    #   if: matrix.os == 'macOS-latest'
-    #   run: |
-    #     brew install protobuf
-
     - name: Install Protoc linux
       if: matrix.os == 'ubuntu-latest'
       run: |
@@ -193,6 +185,20 @@ jobs:
       uses: dante-signal31/rust-app-version@v1.0.0
       with:
          cargo_toml_folder: iroh-gateway/
+    
+    - name: Get current iroh-p2p version
+      id: ip2p_version
+      if: matrix.os != 'windows-latest' && matrix.rust=='stable' && github.ref_name=='main'
+      uses: dante-signal31/rust-app-version@v1.0.0
+      with:
+         cargo_toml_folder: iroh-p2p/
+    
+    - name: Get current iroh-store version
+      id: istore_version
+      if: matrix.os != 'windows-latest' && matrix.rust=='stable' && github.ref_name=='main'
+      uses: dante-signal31/rust-app-version@v1.0.0
+      with:
+         cargo_toml_folder: iroh-store/
 
     - name: Setup awscli on mac
       if: matrix.os == 'macos-latest' && matrix.rust=='stable' && github.ref_name=='main'
@@ -200,37 +206,33 @@ jobs:
         curl "https://awscli.amazonaws.com/AWSCLIV2.pkg" -o "AWSCLIV2.pkg"
         sudo installer -pkg AWSCLIV2.pkg -target /
 
+    - name: Setup awscli on linux
+      if: matrix.os == 'ubuntu-latest' && matrix.rust=='stable' && github.ref_name=='main'
+      run: |
+        curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+        unzip awscliv2.zip
+        sudo ./aws/install --update
+
     - name: Set aws credentials
       if: matrix.os != 'windows-latest'
       run: |
           echo "AWS_ACCESS_KEY_ID=${{secrets.S3_ACCESS_KEY_ID}}" >> $GITHUB_ENV
           echo "AWS_SECRET_ACCESS_KEY=${{secrets.S3_ACCESS_KEY}}" >> $GITHUB_ENV
+          echo "AWS_DEFAULT_REGION=us-west-2" >> $GITHUB_ENV
 
-    - name: push release iroh-gateway linux
-      uses: prewk/s3-cp-action@v2
-      if: matrix.os == 'ubuntu-latest' && matrix.rust=='stable' && github.ref_name=='main'
-      with:
-        aws_access_key_id: ${{ secrets.S3_ACCESS_KEY_ID }}
-        aws_secret_access_key: ${{ secrets.S3_ACCESS_KEY }}
-        source: './target/release/iroh-gateway'
-        dest: 's3://vorc/iroh-gateway-${RELEASE_ARCH}-amd64-${{ steps.ig_version.outputs.app_version }}-${GITHUB_SHA::7}'
+    - name: push release
+      if: matrix.os != 'windows-latest' && matrix.rust=='stable' && github.ref_name=='main'
+      run: |
+        aws s3 cp ./target/release/iroh-gateway s3://vorc/iroh-gateway-${RELEASE_OS}-${RELEASE_ARCH}-${{ steps.ig_version.outputs.app_version }}-${GITHUB_SHA::7} --no-progress
+        aws s3 cp ./target/release/iroh-p2p s3://vorc/iroh-p2p-${RELEASE_OS}-${RELEASE_ARCH}-${{ steps.ip2p_version.outputs.app_version }}-${GITHUB_SHA::7} --no-progress
+        aws s3 cp ./target/release/iroh-store s3://vorc/iroh-store-${RELEASE_OS}-${RELEASE_ARCH}-${{ steps.istore_version.outputs.app_version }}-${GITHUB_SHA::7} --no-progress
 
-    - name: push release iroh-gateway latest linux
-      uses: prewk/s3-cp-action@v2
-      if: matrix.os == 'ubuntu-latest' && matrix.rust=='stable' && github.ref_name=='main'
-      with:
-        aws_access_key_id: ${{ secrets.S3_ACCESS_KEY_ID }}
-        aws_secret_access_key: ${{ secrets.S3_ACCESS_KEY }}
-        source: './target/release/iroh-gateway'
-        dest: 's3://vorc/iroh-gateway-${RELEASE_ARCH}-amd64-latest'
-
-    - name: push release iroh-gateway macos
-      if: matrix.os == 'macos-latest' && matrix.rust=='stable' && github.ref_name=='main'
-      run: aws s3 cp ./target/release/iroh-gateway s3://vorc/iroh-gateway-${RELEASE_ARCH}-x86_64-${{ steps.ig_version.outputs.app_version }}-${GITHUB_SHA::7} --no-progress
-    
-    - name: push release iroh-gateway latest macos
-      if: matrix.os == 'macos-latest' && matrix.rust=='stable' && github.ref_name=='main'
-      run: aws s3 cp ./target/release/iroh-gateway s3://vorc/iroh-gateway-${RELEASE_ARCH}-x86_64-latest --no-progress
+    - name: push release latest
+      if: matrix.os != 'windows-latest' && matrix.rust=='stable' && github.ref_name=='main'
+      run: |
+        aws s3 cp ./target/release/iroh-gateway s3://vorc/iroh-gateway-${RELEASE_OS}-${RELEASE_ARCH}-latest --no-progress
+        aws s3 cp ./target/release/iroh-p2p s3://vorc/iroh-p2p-${RELEASE_OS}-${RELEASE_ARCH}-latest --no-progress
+        aws s3 cp ./target/release/iroh-store s3://vorc/iroh-store-${RELEASE_OS}-${RELEASE_ARCH}-latest --no-progress
     
     - name: Print sccache stats
       run: sccache --show-stats
