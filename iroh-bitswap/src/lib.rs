@@ -3,12 +3,12 @@
 mod behaviour;
 mod block;
 mod error;
-mod ledger;
 mod message;
 mod prefix;
 mod protocol;
+mod query;
 
-pub use crate::behaviour::{Bitswap, BitswapEvent};
+pub use crate::behaviour::{Bitswap, BitswapConfig, BitswapEvent};
 pub use crate::block::tests::create_block as create_test_block;
 pub use crate::block::Block;
 pub use crate::error::BitswapError;

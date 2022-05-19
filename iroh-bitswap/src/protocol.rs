@@ -12,29 +12,23 @@ use tracing::trace;
 use crate::error::BitswapError;
 use crate::message::BitswapMessage;
 
-const MAX_BUF_SIZE: usize = 512 * 1024;
+const MAX_BUF_SIZE: usize = 1024 * 1024;
 
-const PROTOCOLS: [&[u8]; 3] = [
-    b"/ipfs/bitswap/1.0.0",
-    // TODO: add all behaviours for this version
-    b"/ipfs/bitswap/1.1.0",
-    // TODO: add all behaviours for this version
-    b"/ipfs/bitswap/1.2.0",
-];
+const PROTOCOLS: [&[u8]; 2] = [b"/ipfs/bitswap/1.1.0", b"/ipfs/bitswap/1.2.0"];
 
 #[derive(Default, Clone, Debug)]
-pub struct BitswapConfig {}
+pub struct BitswapProtocol;
 
-impl UpgradeInfo for BitswapConfig {
+impl UpgradeInfo for BitswapProtocol {
     type Info = &'static [u8];
-    type InfoIter = core::array::IntoIter<Self::Info, 3>;
+    type InfoIter = core::array::IntoIter<Self::Info, 2>;
 
     fn protocol_info(&self) -> Self::InfoIter {
         PROTOCOLS.into_iter()
     }
 }
 
-impl<TSocket> InboundUpgrade<TSocket> for BitswapConfig
+impl<TSocket> InboundUpgrade<TSocket> for BitswapProtocol
 where
     TSocket: AsyncRead + AsyncWrite + Send + Unpin + 'static,
 {
@@ -57,7 +51,7 @@ where
                 len,
                 now.elapsed().as_millis(),
                 message.blocks().len(),
-                message.want().count(),
+                message.wantlist().blocks().count(),
                 reading.as_millis(),
             );
             socket.close().await?;
@@ -91,7 +85,7 @@ pub async fn read_length_prefixed(
 
 impl UpgradeInfo for BitswapMessage {
     type Info = &'static [u8];
-    type InfoIter = core::array::IntoIter<Self::Info, 3>;
+    type InfoIter = core::array::IntoIter<Self::Info, 2>;
 
     fn protocol_info(&self) -> Self::InfoIter {
         PROTOCOLS.into_iter()
@@ -138,7 +132,7 @@ mod tests {
         let server = async move {
             let (incoming, _) = listener.accept().await.unwrap();
             let incoming = incoming.compat();
-            upgrade::apply_inbound(incoming, BitswapConfig::default())
+            upgrade::apply_inbound(incoming, BitswapProtocol::default())
                 .await
                 .unwrap();
         };

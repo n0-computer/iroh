@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::num::NonZeroU8;
 use std::time::Duration;
 
 use ahash::AHashMap;
@@ -72,6 +73,7 @@ impl Libp2pService {
             .connection_limits(limits)
             .notify_handler_buffer_size(std::num::NonZeroUsize::new(20).expect("Not zero")) // TODO: configurable
             .connection_event_buffer_size(128)
+            .dial_concurrency_factor(NonZeroU8::new(16).unwrap())
             .executor(Box::new(|fut| {
                 tokio::spawn(fut);
             }))
@@ -224,25 +226,12 @@ impl Libp2pService {
                 response_channels,
                 providers,
             } => {
-                if let Some(providers) = providers {
-                    for peer_id in providers.into_iter() {
-                        let mut addrs = self.swarm.behaviour_mut().addresses_of_peer(&peer_id);
-                        for multiaddr in addrs.iter_mut() {
-                            multiaddr.push(Protocol::P2p(
-                                Multihash::from_bytes(&peer_id.to_bytes()).unwrap(),
-                            ));
-                            if let Err(e) = Swarm::dial(&mut self.swarm, multiaddr.clone()) {
-                                trace!("failed to dial peer {}: {:?}", multiaddr, e);
-                            }
-                        }
-                    }
+                for cid in &cids {
+                    self.swarm
+                        .behaviour_mut()
+                        .want_block(*cid, 1000, providers.clone()) // TODO: priority?
+                        .map_err(|err| anyhow!("Failed to send a bitswap want_block: {:?}", err))?;
                 }
-
-                self.swarm
-                    .behaviour_mut()
-                    .want_blocks(cids.clone(), 1000) // TODO: priority?
-                    .await
-                    .map_err(|err| anyhow!("Failed to send a bitswap want_block: {:?}", err))?;
 
                 for (cid, response_channel) in cids.into_iter().zip(response_channels.into_iter()) {
                     if let Some(chans) = self.bitswap_response_channels.get_mut(&cid) {
