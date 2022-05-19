@@ -9,7 +9,7 @@ description = "Implementation of the storage part of iroh"
 
 [dependencies]
 rocksdb = { git = "https://github.com/rust-rocksdb/rust-rocksdb", branch = "master" }
-eyre = "0.6.6"
+anyhow = "1.0.57"
 tokio = { version = "1.18.0", features = ["rt"] }
 cid = "0.8.4"
 rkyv = { version = "0.7.37", features = ["validation"] }
@@ -19,6 +19,11 @@ clap = { version = "3.1.15", features = ["derive"] }
 ctrlc = "3.2.2"
 futures = "0.3.5"
 tracing = "0.1.34"
+iroh-rpc-types = { path = "../iroh-rpc-types" }
+iroh-rpc-client = { path = "../iroh-rpc-client" }
+iroh-util = { path = "../iroh-util" }
+tonic = "0.7.2"
+bytes = "1.1.0"
 
 [dev-dependencies]
 criterion = { version = "0.3.5", features = ["async_tokio"] }

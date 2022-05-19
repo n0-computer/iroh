@@ -3,8 +3,9 @@ use std::sync::{
     Arc,
 };
 
+use anyhow::{bail, Context, Result};
 use cid::Cid;
-use eyre::{bail, Result};
+use iroh_rpc_client::Client as RpcClient;
 use rocksdb::{DBPinnableSlice, IteratorMode, Options, WriteBatch, DB as RocksDb};
 use tokio::task;
 
@@ -17,12 +18,14 @@ use crate::Config;
 pub struct Store {
     inner: Arc<InnerStore>,
 }
+
 #[derive(Debug)]
 struct InnerStore {
     content: RocksDb,
     #[allow(dead_code)]
     config: Config,
     next_id: AtomicU64,
+    _rpc_client: RpcClient,
 }
 
 impl Store {
@@ -59,11 +62,16 @@ impl Store {
         })
         .await??;
 
+        let _rpc_client = RpcClient::new(&config.rpc)
+            .await
+            .context("Error creating rpc client for store")?;
+
         Ok(Store {
             inner: Arc::new(InnerStore {
                 content: db,
                 config,
                 next_id: 1.into(),
+                _rpc_client,
             }),
         })
     }
@@ -89,7 +97,7 @@ impl Store {
             let next_id = {
                 let cf_meta = db
                     .cf_handle(CF_METADATA_V0)
-                    .ok_or_else(|| eyre::eyre!("missing column family: metadata"))?;
+                    .ok_or_else(|| anyhow::anyhow!("missing column family: metadata"))?;
 
                 let mut iter = db.full_iterator_cf(&cf_meta, IteratorMode::End);
                 let last_id = iter
@@ -105,11 +113,18 @@ impl Store {
         })
         .await??;
 
+        let _rpc_client = RpcClient::new(&config.rpc)
+            .await
+            // TODO: first conflict between `anyhow` & `anyhow`
+            // .map_err(|e| e.context("Error creating rpc client for store"))?;
+            .map_err(|e| anyhow::anyhow!("Error creating rpc client for store: {:?}", e))?;
+
         Ok(Store {
             inner: Arc::new(InnerStore {
                 content: db,
                 config,
                 next_id: next_id.into(),
+                _rpc_client,
             }),
         })
     }
@@ -138,22 +153,22 @@ impl Store {
             .inner
             .content
             .cf_handle(CF_ID_V0)
-            .ok_or_else(|| eyre::eyre!("missing column family: id"))?;
+            .ok_or_else(|| anyhow::anyhow!("missing column family: id"))?;
         let cf_blobs = self
             .inner
             .content
             .cf_handle(CF_BLOBS_V0)
-            .ok_or_else(|| eyre::eyre!("missing column family: blobs"))?;
+            .ok_or_else(|| anyhow::anyhow!("missing column family: blobs"))?;
         let cf_meta = self
             .inner
             .content
             .cf_handle(CF_METADATA_V0)
-            .ok_or_else(|| eyre::eyre!("missing column family: metadata"))?;
+            .ok_or_else(|| anyhow::anyhow!("missing column family: metadata"))?;
         let cf_graph = self
             .inner
             .content
             .cf_handle(CF_GRAPH_V0)
-            .ok_or_else(|| eyre::eyre!("missing column family: metadata"))?;
+            .ok_or_else(|| anyhow::anyhow!("missing column family: metadata"))?;
 
         let mut batch = WriteBatch::default();
         batch.put_cf(cf_id, multihash, &id_bytes);
@@ -192,12 +207,14 @@ impl Store {
             .inner
             .content
             .cf_handle(CF_ID_V0)
-            .ok_or_else(|| eyre::eyre!("missing column family: id"))?;
+            .ok_or_else(|| anyhow::anyhow!("missing column family: id"))?;
         let multihash = cid.hash().to_bytes();
         let maybe_id_bytes = self.inner.content.get_pinned_cf(cf_id, multihash)?;
         match maybe_id_bytes {
             Some(bytes) => {
-                let arr = bytes[..8].try_into().map_err(|e| eyre::eyre!("{:?}", e))?;
+                let arr = bytes[..8]
+                    .try_into()
+                    .map_err(|e| anyhow::anyhow!("{:?}", e))?;
                 Ok(Some(u64::from_be_bytes(arr)))
             }
             None => Ok(None),
@@ -209,7 +226,7 @@ impl Store {
             .inner
             .content
             .cf_handle(CF_BLOBS_V0)
-            .ok_or_else(|| eyre::eyre!("missing column family: blobs"))?;
+            .ok_or_else(|| anyhow::anyhow!("missing column family: blobs"))?;
         let maybe_blob = self
             .inner
             .content
@@ -223,7 +240,7 @@ impl Store {
             .inner
             .content
             .cf_handle(CF_GRAPH_V0)
-            .ok_or_else(|| eyre::eyre!("missing column family: graph"))?;
+            .ok_or_else(|| anyhow::anyhow!("missing column family: graph"))?;
         let id_bytes = id.to_be_bytes();
         // FIXME: can't use pinned because otherwise this can trigger alignment issues :/
         match self.inner.content.get_cf(cf_graph, &id_bytes)? {
@@ -232,10 +249,10 @@ impl Store {
                     .inner
                     .content
                     .cf_handle(CF_METADATA_V0)
-                    .ok_or_else(|| eyre::eyre!("missing column family: metadata"))?;
+                    .ok_or_else(|| anyhow::anyhow!("missing column family: metadata"))?;
 
                 let graph = rkyv::check_archived_root::<Versioned<GraphV0>>(&links_id)
-                    .map_err(|e| eyre::eyre!("{:?}", e))?;
+                    .map_err(|e| anyhow::anyhow!("{:?}", e))?;
                 let keys = graph
                     .0
                     .children
@@ -247,7 +264,7 @@ impl Store {
                     match meta? {
                         Some(meta) => {
                             let meta = rkyv::check_archived_root::<Versioned<MetadataV0>>(&meta)
-                                .map_err(|e| eyre::eyre!("{:?}", e))?;
+                                .map_err(|e| anyhow::anyhow!("{:?}", e))?;
                             let multihash =
                                 cid::multihash::Multihash::from_bytes(&meta.0.multihash)?;
                             let c = cid::Cid::new_v1(meta.0.codec, multihash);
@@ -273,13 +290,13 @@ impl Store {
             .inner
             .content
             .cf_handle(CF_ID_V0)
-            .ok_or_else(|| eyre::eyre!("missing column family: id"))?;
+            .ok_or_else(|| anyhow::anyhow!("missing column family: id"))?;
 
         let cf_meta = self
             .inner
             .content
             .cf_handle(CF_METADATA_V0)
-            .ok_or_else(|| eyre::eyre!("missing column family: metadata"))?;
+            .ok_or_else(|| anyhow::anyhow!("missing column family: metadata"))?;
 
         let mut ids = Vec::new();
         let mut batch = WriteBatch::default();
@@ -316,6 +333,8 @@ impl Store {
 mod tests {
     use super::*;
 
+    use iroh_rpc_client::RpcClientConfig;
+
     use cid::multihash::{Code, MultihashDigest};
     const RAW: u64 = 0x55;
 
@@ -324,6 +343,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let config = Config {
             path: dir.path().into(),
+            rpc: RpcClientConfig::default(),
         };
 
         let store = Store::create(config).await.unwrap();
@@ -359,6 +379,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let config = Config {
             path: dir.path().into(),
+            rpc: RpcClientConfig::default(),
         };
 
         let store = Store::create(config.clone()).await.unwrap();

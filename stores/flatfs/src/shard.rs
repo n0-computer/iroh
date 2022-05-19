@@ -7,7 +7,7 @@ use std::{
     str::FromStr,
 };
 
-use eyre::{Result, WrapErr};
+use anyhow::{Context, Result};
 
 const PREFIX: &str = "/repo/flatfs/shard/";
 pub const FILE_NAME: &str = "SHARDING";
@@ -32,13 +32,13 @@ impl Shard {
         let content = self.to_string();
         let path = path.as_ref().join(FILE_NAME);
         fs::write(&path, content)
-            .wrap_err_with(|| format!("Failed to write shard to {:?}", path))?;
+            .with_context(|| format!("Failed to write shard to {:?}", path))?;
         Ok(())
     }
 
     pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
         let path = path.as_ref().join(FILE_NAME);
-        let file = File::open(&path).wrap_err_with(|| format!("Failed to open file {:?}", path))?;
+        let file = File::open(&path).with_context(|| format!("Failed to open file {:?}", path))?;
         let mut content = String::with_capacity(50);
 
         // Protect agains invalid files and unknown formats.

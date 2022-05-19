@@ -1,22 +1,23 @@
-use async_channel::Sender;
-use cid::Cid;
-use futures::channel::oneshot;
-use iroh_bitswap::Block;
-use libp2p::kad::record::Key;
-use libp2p::Multiaddr;
-use libp2p::PeerId;
-
-use iroh_rpc_types::p2p::{BitswapRequest, BitswapResponse, Providers};
-use tonic::Status;
-use tracing::info;
-
 use std::collections::{HashMap, HashSet};
 use std::io;
 use std::net::SocketAddr;
 
 use anyhow::Result;
+use async_channel::Sender;
+use cid::Cid;
+use futures::channel::oneshot;
+use libp2p::kad::record::Key;
+use libp2p::Multiaddr;
+use libp2p::PeerId;
+use tonic::{transport::Server as TonicServer, Request, Response, Status};
+use tracing::info;
+
+use iroh_bitswap::Block;
 use iroh_rpc_types::p2p::p2p_server;
-use tonic::{transport::Server as TonicServer, Request, Response};
+use iroh_rpc_types::p2p::{
+    BitswapRequest, BitswapResponse, ConnectRequest, ConnectResponse, DisconnectRequest, Empty,
+    GetListeningAddrsResponse, GetPeersResponse, Key as ProviderKey, Multiaddrs, Providers,
+};
 
 struct P2p {
     sender: Sender<RpcMessage>,
@@ -90,7 +91,7 @@ impl p2p_server::P2p for P2p {
     #[tracing::instrument(skip(self, request))]
     async fn fetch_provider(
         &self,
-        request: Request<iroh_rpc_types::p2p::Key>,
+        request: Request<ProviderKey>,
     ) -> Result<Response<Providers>, tonic::Status> {
         iroh_metrics::req::set_trace_ctx(&request);
         let req = request.into_inner();
@@ -112,6 +113,82 @@ impl p2p_server::P2p for P2p {
         let providers = providers.into_iter().map(|p| p.to_bytes()).collect();
         Ok(Response::new(Providers { providers }))
     }
+
+    async fn get_listening_addrs(
+        &self,
+        _request: Request<Empty>,
+    ) -> Result<Response<GetListeningAddrsResponse>, tonic::Status> {
+        let (s, r) = oneshot::channel();
+        let msg = RpcMessage::NetListeningAddrs(s);
+        self.sender
+            .send(msg)
+            .await
+            .map_err(|_| Status::internal("receiver dropped"))?;
+
+        let (peer_id, addrs) = r.await.map_err(|_| Status::internal("sender dropped"))?;
+        Ok(Response::new(GetListeningAddrsResponse {
+            peer_id: peer_id.to_bytes(),
+            addrs: addrs.into_iter().map(|addr| addr.to_vec()).collect(),
+        }))
+    }
+
+    async fn get_peers(
+        &self,
+        _request: Request<Empty>,
+    ) -> Result<Response<GetPeersResponse>, tonic::Status> {
+        let (s, r) = oneshot::channel();
+        let msg = RpcMessage::NetPeers(s);
+        self.sender
+            .send(msg)
+            .await
+            .map_err(|_| Status::internal("receiver dropped"))?;
+
+        let peers = r.await.map_err(|_| Status::internal("sender dropped"))?;
+        let mut p: HashMap<String, Multiaddrs> = Default::default();
+        for (id, addrs) in peers.into_iter() {
+            p.insert(
+                id.to_string(),
+                Multiaddrs {
+                    addrs: addrs.into_iter().map(|addr| addr.to_vec()).collect(),
+                },
+            );
+        }
+        Ok(Response::new(GetPeersResponse { peers: p }))
+    }
+
+    async fn peer_connect(
+        &self,
+        request: Request<ConnectRequest>,
+    ) -> Result<Response<ConnectResponse>, tonic::Status> {
+        let req = request.into_inner();
+        let peer_id = peer_id_from_bytes(req.peer_id)?;
+        let addrs = addrs_from_bytes(req.addrs)?;
+        let (s, r) = oneshot::channel();
+        let msg = RpcMessage::NetConnect(s, peer_id, addrs);
+        self.sender
+            .send(msg)
+            .await
+            .map_err(|_| Status::internal("receiver dropped"))?;
+
+        let success = r.await.map_err(|_| Status::internal("sender dropped"))?;
+        Ok(Response::new(ConnectResponse { success }))
+    }
+
+    async fn peer_disconnect(
+        &self,
+        request: Request<DisconnectRequest>,
+    ) -> Result<Response<()>, tonic::Status> {
+        let req = request.into_inner();
+        let peer_id = peer_id_from_bytes(req.peer_id)?;
+        let (s, r) = oneshot::channel();
+        let msg = RpcMessage::NetDisconnect(s, peer_id);
+        self.sender
+            .send(msg)
+            .await
+            .map_err(|_| Status::internal("receiver dropped"))?;
+        let ack = r.await.map_err(|_| Status::internal("sender dropped"))?;
+        Ok(Response::new(ack))
+    }
 }
 
 pub async fn new(addr: SocketAddr, sender: Sender<RpcMessage>) -> Result<()> {
@@ -123,6 +200,18 @@ pub async fn new(addr: SocketAddr, sender: Sender<RpcMessage>) -> Result<()> {
     Ok(())
 }
 
+fn peer_id_from_bytes(p: Vec<u8>) -> Result<PeerId, tonic::Status> {
+    PeerId::from_bytes(&p[..]).map_err(|e| Status::internal(format!("invalid peer_id: {:?}", e)))
+}
+
+fn addr_from_bytes(m: Vec<u8>) -> Result<Multiaddr, tonic::Status> {
+    Multiaddr::try_from(m).map_err(|e| Status::internal(format!("invalid multiaddr: {:?}", e)))
+}
+
+fn addrs_from_bytes(a: Vec<Vec<u8>>) -> Result<Vec<Multiaddr>, tonic::Status> {
+    a.into_iter().map(addr_from_bytes).collect()
+}
+
 /// Rpc specific messages handled by the p2p node
 #[derive(Debug)]
 pub enum RpcMessage {
@@ -132,99 +221,12 @@ pub enum RpcMessage {
         providers: Option<HashSet<PeerId>>,
     },
     ProviderRequest {
+        // TODO: potentially change this to Cid, as that is the only key we use for providers
         key: Key,
         response_channel: oneshot::Sender<Result<HashSet<PeerId>, String>>,
     },
-    NetAddrsListen(oneshot::Sender<(PeerId, Vec<Multiaddr>)>),
+    NetListeningAddrs(oneshot::Sender<(PeerId, Vec<Multiaddr>)>),
     NetPeers(oneshot::Sender<HashMap<PeerId, Vec<Multiaddr>>>),
     NetConnect(oneshot::Sender<bool>, PeerId, Vec<Multiaddr>),
     NetDisconnect(oneshot::Sender<()>, PeerId),
 }
-
-// pub async fn handle_get_listening_addrs(
-//     state: handler::State<Sender<RpcMessage>>,
-//     _cfg: Option<StreamConfig>,
-//     _params: Vec<u8>,
-// ) -> Result<Vec<u8>, RpcError> {
-//     let (s, r) = oneshot::channel();
-//     state
-//         .0
-//         .send(RpcMessage::NetAddrsListen(s))
-//         .await
-//         .expect("P2p network message receiver closed.");
-//     let res = r.await.expect("Sender dropped.");
-//     let res = Responses::NetAddrsListen {
-//         peer_id: res.0,
-//         listeners: res.1,
-//     };
-//     // TODO: serde should happen in rpc
-//     let res = serialize_response(res)?;
-//     Ok(res)
-// }
-
-// pub async fn handle_get_peers(
-//     state: handler::State<Sender<RpcMessage>>,
-//     _cfg: Option<StreamConfig>,
-//     _params: Vec<u8>,
-// ) -> Result<Vec<u8>, RpcError> {
-//     let (s, r) = oneshot::channel();
-//     state
-//         .0
-//         .send(RpcMessage::NetPeers(s))
-//         .await
-//         .expect("P2p network message receiver closed.");
-//     let res = r.await.expect("Sender dropped.");
-//     let res = Responses::NetPeers(res);
-//     // TODO: serde should happen in rpc
-//     let res = serialize_response(res)?;
-//     Ok(res)
-// }
-
-// pub async fn handle_connect(
-//     state: handler::State<Sender<RpcMessage>>,
-//     _cfg: Option<StreamConfig>,
-//     params: Vec<u8>,
-// ) -> Result<Vec<u8>, RpcError> {
-//     let req = deserialize_request::<Requests>(&params)?;
-//     let (peer_id, addrs) = match req {
-//         Requests::NetConnect { peer_id, addrs } => (peer_id, addrs),
-//         r => return Err(RpcError::UnexpectedRequestType(r.to_string())),
-//     };
-//     let (s, r) = oneshot::channel();
-//     state
-//         .0
-//         .send(RpcMessage::NetConnect(s, peer_id, addrs))
-//         .await
-//         .expect("P2p network message receiver closed.");
-//     let res = r.await.expect("Sender dropped.");
-//     let res = Responses::NetConnect(res);
-//     // TODO: serde should happen in rpc
-//     let res = serialize_response(res)?;
-//     Ok(res)
-// }
-
-// pub async fn handle_disconnect(
-//     state: handler::State<Sender<RpcMessage>>,
-//     _cfg: Option<StreamConfig>,
-//     params: Vec<u8>,
-// ) -> Result<Vec<u8>, RpcError> {
-//     // TODO: serde should happen in rpc
-//     let req = deserialize_request::<Requests>(&params)?;
-//     let id = match req {
-//         Requests::NetDisconnect(id) => id,
-//         r => return Err(RpcError::UnexpectedRequestType(r.to_string())),
-//     };
-
-//     let (s, r) = oneshot::channel();
-
-//     state
-//         .0
-//         .send(RpcMessage::NetDisconnect(s, id))
-//         .await
-//         .expect("P2p network message receiver closed.");
-//     let res = r.await.expect("Sender dropped.");
-//     let res = Responses::NetDisconnect(res);
-//     // TODO: serde should happen in rpc
-//     let res = serialize_response(res)?;
-//     Ok(res)
-// }

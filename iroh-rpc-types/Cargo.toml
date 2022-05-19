@@ -14,6 +14,7 @@ cid = { version = "0.8.0", features = ["serde-codec"] }
 futures = "0.3.5"
 tonic = "0.7.2"
 prost = "0.10.3"
+prost-types = "0.10.1"
 
 [build-dependencies]
 prost-build = "0.10.3"
