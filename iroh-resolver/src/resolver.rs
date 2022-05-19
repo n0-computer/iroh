@@ -8,6 +8,7 @@ use iroh_rpc_client::Client;
 use libipld::codec::Encode;
 use libipld::prelude::Codec as _;
 use libipld::{Ipld, IpldCodec};
+use tracing::{debug, warn};
 
 use crate::codecs::Codec;
 use crate::unixfs::{DataType, UnixfsNode};
@@ -288,10 +289,37 @@ impl Resolver {
     /// Loads the actual content of a given cid.
     #[tracing::instrument(skip(self))]
     async fn load_cid(&self, cid: &Cid) -> Result<Bytes> {
-        // TODO: better strategies
-        let providers = None;
-        let res = self.rpc.p2p.fetch_bitswap(*cid, providers).await?;
-        Ok(res)
+        // TODO: better strategy
+
+        match self.rpc.store.get(*cid).await {
+            Ok(Some(data)) => return Ok(data),
+            Ok(None) => {}
+            Err(err) => {
+                warn!("failed to fetch data from store {}: {:?}", cid, err);
+            }
+        }
+
+        let providers = self.rpc.p2p.fetch_providers(cid).await?;
+        let bytes = self.rpc.p2p.fetch_bitswap(*cid, Some(providers)).await?;
+
+        // TODO: when does cid verification happen?
+
+        // trigger storage in the background
+        let cloned = bytes.clone();
+        let cid = *cid;
+        let rpc = self.rpc.clone();
+        tokio::spawn(async move {
+            // TODO: parse links
+            let len = cloned.len();
+            match rpc.store.put(cid, cloned, vec![]).await {
+                Ok(_) => debug!("stored {} ({}bytes)", cid, len),
+                Err(err) => {
+                    warn!("failed to store {}: {:?}", cid, err);
+                }
+            }
+        });
+
+        Ok(bytes)
     }
 
     /// Resolves a dnslink at the given domain.
