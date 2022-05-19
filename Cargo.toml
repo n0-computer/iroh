@@ -16,6 +16,4 @@ members = [
 
 [patch.crates-io]
 # TODO: switch to crates.io once 0.45 is released
-# libp2p = { git = "https://github.com/libp2p/rust-libp2p", branch = "master" }
-# TODO: switch to master once the PR gets merged
-libp2p = { git = "https://github.com/dignifiedquire/rust-libp2p", branch = "fix-dns-clone" }
+libp2p = { git = "https://github.com/libp2p/rust-libp2p", branch = "master" }
