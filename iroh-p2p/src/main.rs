@@ -1,3 +1,4 @@
+use clap::Parser;
 use iroh_p2p::{metrics, Libp2pService};
 use libp2p::identity::{ed25519, Keypair};
 use libp2p::metrics::Metrics;
@@ -5,13 +6,22 @@ use prometheus_client::registry::Registry;
 use tokio::task;
 use tracing::error;
 
+#[derive(Parser, Debug, Clone)]
+#[clap(author, version, about, long_about = None)]
+struct Args {
+    #[clap(long = "no-metrics")]
+    no_metrics: bool,
+}
+
 /// Starts daemon process
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> anyhow::Result<()> {
+    let args = Args::parse();
+
     let mut prom_registry = Registry::default();
     let metrics = Metrics::new(&mut prom_registry);
     let metrics_handle =
-        iroh_metrics::init_with_registry(metrics::metrics_config(true), prom_registry)
+        iroh_metrics::init_with_registry(metrics::metrics_config(args.no_metrics), prom_registry)
             .await
             .expect("failed to initialize metrics");
 
