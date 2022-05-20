@@ -15,6 +15,7 @@ pub use libp2p::gossipsub::{IdentTopic, Topic};
 use libp2p::identify::{IdentifyEvent, IdentifyInfo};
 use libp2p::identity::Keypair;
 use libp2p::kad::{self, GetProvidersError, GetProvidersOk, KademliaEvent, QueryId, QueryResult};
+use libp2p::metrics::{Metrics, Recorder};
 use libp2p::multiaddr::Protocol;
 use libp2p::multihash::Multihash;
 use libp2p::swarm::{
@@ -49,6 +50,7 @@ pub struct Libp2pService {
     net_receiver_in: Receiver<RpcMessage>,
     bitswap_response_channels: HashMap<Cid, Vec<OneShotSender<Block>>>,
     kad_queries: AHashMap<QueryId, QueryChannel>,
+    metrics: Metrics,
 }
 
 enum QueryChannel {
@@ -56,7 +58,7 @@ enum QueryChannel {
 }
 
 impl Libp2pService {
-    pub async fn new(config: Libp2pConfig, net_keypair: Keypair) -> Result<Self> {
+    pub async fn new(config: Libp2pConfig, net_keypair: Keypair, metrics: Metrics) -> Result<Self> {
         let peer_id = PeerId::from(net_keypair.public());
 
         let transport = build_transport(net_keypair.clone()).await;
@@ -93,6 +95,7 @@ impl Libp2pService {
             net_receiver_in: network_receiver_in,
             bitswap_response_channels: Default::default(),
             kad_queries: Default::default(),
+            metrics,
         })
     }
 
@@ -129,6 +132,7 @@ impl Libp2pService {
             <NodeBehaviour as NetworkBehaviour>::OutEvent,
             <<<NodeBehaviour as NetworkBehaviour>::ConnectionHandler as IntoConnectionHandler>::Handler as ConnectionHandler>::Error>,
     ) -> Result<()> {
+        self.metrics.record(&event);
         match event {
             // outbound events
             SwarmEvent::Behaviour(event) => self.handle_node_event(event).await,

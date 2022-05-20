@@ -35,7 +35,6 @@ impl Config {
             .unwrap_or_else(|_| "http://localhost:4317".to_string());
         let prometheus_gateway_endpoint = std::env::var("IROH_METRICS_PROM_GATEWAY_ENDPOINT")
             .unwrap_or_else(|_| "http://localhost:9091".to_string());
-
         Config {
             service_name,
             instance_id,

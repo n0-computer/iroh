@@ -1,12 +1,12 @@
+use std::sync::Arc;
 use std::{fs::File, io::Read, path::Path, time::Duration};
 
 use axum::body::Body;
 use cid::Cid;
-use metrics::{counter, gauge, histogram, increment_counter};
 use rand::{prelude::StdRng, Rng, SeedableRng};
 use tracing::{error, info};
 
-use crate::metrics::*;
+use crate::core::State;
 use crate::response::ResponseFormat;
 
 #[derive(Debug, Clone, Copy)]
@@ -23,8 +23,10 @@ impl Client {
         path: &str,
         rpc_client: &iroh_rpc_client::Client,
         start_time: std::time::Instant,
+        state: Arc<State>,
     ) -> Result<Body, String> {
         info!("get file {}", path);
+        state.metrics.cache_miss.inc();
         let p: iroh_resolver::resolver::Path =
             path.parse().map_err(|e: anyhow::Error| e.to_string())?;
         // TODO: reuse
@@ -37,6 +39,10 @@ impl Client {
             .and_then(|r| r.pretty())
             .map_err(|e| e.to_string())?;
         info!("resolved: {}", path);
+        state
+            .metrics
+            .tts_file
+            .set(start_time.elapsed().as_millis() as u64);
         Ok(res.into())
     }
 
@@ -83,6 +89,7 @@ impl Client {
         &self,
         _path: &str,
         start_time: std::time::Instant,
+        state: Arc<State>,
     ) -> Result<Body, String> {
         let (mut sender, body) = Body::channel();
         let mut rng: StdRng = SeedableRng::from_entropy();
@@ -97,29 +104,44 @@ impl Client {
             let mut first_block = true;
             if rng.gen_range(0..250) < 200 {
                 // simulate a cache miss
-                increment_counter!(METRICS_CACHE_MISS);
+                state.metrics.cache_miss.inc();
             } else {
                 // simulate a cache hit
-                increment_counter!(METRICS_CACHE_HIT);
+                state.metrics.cache_hit.inc();
             }
 
-            let mut f_size: f64 = 0.0;
+            let mut f_size: u64 = 0;
 
             while let Ok(n) = file.read(&mut buf) {
                 if first_block {
-                    gauge!(METRICS_TIME_TO_FETCH_FIRST_BLOCK, start_time.elapsed());
-                    histogram!(METRICS_HIST_TTFB, start_time.elapsed());
+                    state
+                        .metrics
+                        .ttf_block
+                        .set(start_time.elapsed().as_millis() as u64);
+                    state
+                        .metrics
+                        .hist_ttfb
+                        .observe(start_time.elapsed().as_millis() as f64);
                 }
-                counter!(METRICS_BYTES_FETCHED, n as u64);
-                f_size += n as f64;
-                gauge!(
-                    METRICS_BITRATE_IN,
-                    f_size / start_time.elapsed().as_secs_f64()
-                );
+                state.metrics.bytes_fetched.inc_by(n as u64);
+                f_size += n as u64;
+                state
+                    .metrics
+                    .bitrate_in
+                    .set(f_size / start_time.elapsed().as_secs());
                 if n == 0 {
-                    gauge!(METRICS_TIME_TO_FETCH_FULL_FILE, start_time.elapsed());
-                    gauge!(METRICS_TIME_TO_SERVE_FULL_FILE, start_time.elapsed());
-                    histogram!(METRICS_HIST_TTSERVE, start_time.elapsed());
+                    state
+                        .metrics
+                        .ttf_file
+                        .set(start_time.elapsed().as_millis() as u64);
+                    state
+                        .metrics
+                        .tts_file
+                        .set(start_time.elapsed().as_millis() as u64);
+                    state
+                        .metrics
+                        .hist_ttsf
+                        .observe(start_time.elapsed().as_millis() as f64);
                     break;
                 }
                 sender
@@ -129,13 +151,16 @@ impl Client {
                 // todo(arqu): handle sender error
                 if first_block {
                     first_block = false;
-                    gauge!(METRICS_TIME_TO_SERVE_FIRST_BLOCK, start_time.elapsed());
+                    state
+                        .metrics
+                        .tts_block
+                        .set(start_time.elapsed().as_millis() as u64);
                 }
-                gauge!(
-                    METRICS_BITRATE_OUT,
-                    f_size / start_time.elapsed().as_secs_f64()
-                );
-                counter!(METRICS_BYTES_STREAMED, n as u64);
+                state
+                    .metrics
+                    .bitrate_out
+                    .set(f_size / start_time.elapsed().as_secs());
+                state.metrics.bytes_streamed.inc_by(n as u64);
                 tokio::time::sleep(Duration::from_millis(rng.gen_range(0..250))).await;
             }
         });

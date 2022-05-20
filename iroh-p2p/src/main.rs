@@ -1,12 +1,19 @@
 use iroh_p2p::{metrics, Libp2pService};
 use libp2p::identity::{ed25519, Keypair};
+use libp2p::metrics::Metrics;
+use prometheus_client::registry::Registry;
 use tokio::task;
 use tracing::error;
 
 /// Starts daemon process
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> anyhow::Result<()> {
-    iroh_metrics::init(metrics::metrics_config(true)).expect("failed to initialize metrics");
+    let mut prom_registry = Registry::default();
+    let metrics = Metrics::new(&mut prom_registry);
+    let metrics_handle =
+        iroh_metrics::init_with_registry(metrics::metrics_config(true), prom_registry)
+            .await
+            .expect("failed to initialize metrics");
 
     let version = option_env!("IROH_VERSION").unwrap_or(env!("CARGO_PKG_VERSION"));
 
@@ -23,7 +30,7 @@ async fn main() -> anyhow::Result<()> {
 
     // TODO: configurable network
     let network_config = iroh_p2p::Libp2pConfig::default();
-    let mut p2p_service = Libp2pService::new(network_config, net_keypair).await?;
+    let mut p2p_service = Libp2pService::new(network_config, net_keypair, metrics).await?;
 
     // Start services
     let p2p_task = task::spawn(async move {
@@ -37,6 +44,6 @@ async fn main() -> anyhow::Result<()> {
     // Cancel all async services
     p2p_task.abort();
 
-    iroh_metrics::shutdown_tracing();
+    metrics_handle.shutdown();
     Ok(())
 }

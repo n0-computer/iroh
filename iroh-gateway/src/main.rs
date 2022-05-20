@@ -5,6 +5,7 @@ use iroh_gateway::{
     core::Core,
     metrics,
 };
+use prometheus_client::registry::Registry;
 
 #[derive(Parser, Debug, Clone)]
 #[clap(author, version, about, long_about = None)]
@@ -37,11 +38,14 @@ async fn main() -> Result<()> {
     config.set_default_headers();
     println!("{:#?}", config);
 
-    iroh_metrics::init(metrics::metrics_config(args.no_metrics))
-        .expect("failed to initialize metrics");
-    metrics::register_counters();
+    let mut prom_registry = Registry::default();
+    let gw_metrics = metrics::Metrics::new(&mut prom_registry);
+    let metrics_handle =
+        iroh_metrics::init_with_registry(metrics::metrics_config(args.no_metrics), prom_registry)
+            .await
+            .expect("failed to initialize metrics");
 
-    let handler = Core::new(config).await?;
+    let handler = Core::new(config, gw_metrics).await?;
     let core_task = tokio::spawn(async move {
         handler.serve().await;
     });
@@ -49,6 +53,6 @@ async fn main() -> Result<()> {
     iroh_util::block_until_sigint().await;
     core_task.abort();
 
-    iroh_metrics::shutdown_tracing();
+    metrics_handle.shutdown();
     Ok(())
 }

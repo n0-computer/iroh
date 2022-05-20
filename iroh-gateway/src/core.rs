@@ -9,7 +9,6 @@ use axum::{
 };
 use cid::Cid;
 use iroh_rpc_client::Client as RpcClient;
-use metrics::increment_counter;
 use serde::{Deserialize, Serialize};
 use serde_qs;
 use std::{
@@ -27,7 +26,7 @@ use crate::{
     constants::*,
     error::GatewayError,
     headers::*,
-    metrics::{get_current_trace_id, METRICS_CNT_REQUESTS_TOTAL},
+    metrics::{get_current_trace_id, Metrics},
     response::{get_response_format, GatewayResponse, ResponseFormat},
 };
 
@@ -37,10 +36,11 @@ pub struct Core {
 }
 
 #[derive(Debug)]
-pub(crate) struct State {
+pub struct State {
     config: Config,
     client: Client,
     rpc_client: iroh_rpc_client::Client,
+    pub metrics: Metrics,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -66,7 +66,7 @@ impl GetParams {
 }
 
 impl Core {
-    pub async fn new(config: Config) -> anyhow::Result<Self> {
+    pub async fn new(config: Config, metrics: Metrics) -> anyhow::Result<Self> {
         let rpc_client = RpcClient::new(&config.rpc.client_config).await?;
 
         Ok(Self {
@@ -74,6 +74,7 @@ impl Core {
                 config,
                 client: Client::new(),
                 rpc_client,
+                metrics,
             }),
         })
     }
@@ -132,7 +133,7 @@ async fn get_ipfs(
     Query(query_params): Query<GetParams>,
     request_headers: HeaderMap,
 ) -> Result<GatewayResponse, GatewayError> {
-    increment_counter!(METRICS_CNT_REQUESTS_TOTAL);
+    state.metrics.requests_total.inc();
     let start_time = time::Instant::now();
     // parse path params
     let cid_param = params.get("cid").unwrap();
@@ -146,18 +147,23 @@ async fn get_ipfs(
             return Err(error(
                 StatusCode::BAD_REQUEST,
                 "Service Worker not supported",
+                &state,
             ));
         }
     }
     if request_headers.contains_key(&HEADER_X_IPFS_GATEWAY_PREFIX) {
-        return Err(error(StatusCode::BAD_REQUEST, "Unsupported HTTP header"));
+        return Err(error(
+            StatusCode::BAD_REQUEST,
+            "Unsupported HTTP header",
+            &state,
+        ));
     }
 
     let cid = match cid {
         Ok(cid) => cid,
         Err(_) => {
             // todo (arqu): improve error handling if possible https://github.com/dignifiedquire/iroh/pull/4#pullrequestreview-953147597
-            return Err(error(StatusCode::BAD_REQUEST, "invalid cid"));
+            return Err(error(StatusCode::BAD_REQUEST, "invalid cid", &state));
         }
     };
     let full_content_path = format!("/ipfs/{}{}", cid, cpath);
@@ -169,7 +175,7 @@ async fn get_ipfs(
     let format = match get_response_format(&request_headers, query_params.format) {
         Ok(format) => format,
         Err(err) => {
-            return Err(error(StatusCode::BAD_REQUEST, &err));
+            return Err(error(StatusCode::BAD_REQUEST, &err, &state));
         }
     };
 
@@ -211,9 +217,9 @@ async fn get_ipfs(
     };
 
     match req.format {
-        ResponseFormat::Raw => serve_raw(&req, &state, headers, start_time).await,
-        ResponseFormat::Car => serve_car(&req, &state, headers, start_time).await,
-        ResponseFormat::Fs(_) => serve_fs(&req, &state, headers, start_time).await,
+        ResponseFormat::Raw => serve_raw(&req, state, headers, start_time).await,
+        ResponseFormat::Car => serve_car(&req, state, headers, start_time).await,
+        ResponseFormat::Fs(_) => serve_fs(&req, state, headers, start_time).await,
     }
 }
 
@@ -226,15 +232,19 @@ async fn resolve_cid(cid: &Cid) -> Result<Cid, String> {
 #[tracing::instrument()]
 async fn serve_raw(
     req: &Request,
-
-    state: &State,
+    state: Arc<State>,
     mut headers: HeaderMap,
     start_time: std::time::Instant,
 ) -> Result<GatewayResponse, GatewayError> {
     // FIXME: we currently only retrieve full cids
     let body = state
         .client
-        .get_file(&req.full_content_path, &state.rpc_client, start_time)
+        .get_file(
+            &req.full_content_path,
+            &state.rpc_client,
+            start_time,
+            Arc::clone(&state),
+        )
         .await
         .unwrap();
     // .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
@@ -252,16 +262,21 @@ async fn serve_raw(
 #[tracing::instrument()]
 async fn serve_car(
     req: &Request,
-    state: &State,
+    state: Arc<State>,
     mut headers: HeaderMap,
     start_time: std::time::Instant,
 ) -> Result<GatewayResponse, GatewayError> {
     // FIXME: we currently only retrieve full cids
     let body = state
         .client
-        .get_file(&req.full_content_path, &state.rpc_client, start_time)
+        .get_file(
+            &req.full_content_path,
+            &state.rpc_client,
+            start_time,
+            Arc::clone(&state),
+        )
         .await
-        .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
+        .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, &e, &state))?;
 
     set_content_disposition_headers(
         &mut headers,
@@ -279,16 +294,21 @@ async fn serve_car(
 #[tracing::instrument()]
 async fn serve_fs(
     req: &Request,
-    state: &State,
+    state: Arc<State>,
     mut headers: HeaderMap,
     start_time: std::time::Instant,
 ) -> Result<GatewayResponse, GatewayError> {
     // FIXME: we currently only retrieve full cids
     let body = state
         .client
-        .get_file(&req.full_content_path, &state.rpc_client, start_time)
+        .get_file(
+            &req.full_content_path,
+            &state.rpc_client,
+            start_time,
+            Arc::clone(&state),
+        )
         .await
-        .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
+        .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, &e, &state))?;
 
     let name = add_content_disposition_headers(
         &mut headers,
@@ -317,7 +337,9 @@ fn response(
 }
 
 #[tracing::instrument()]
-fn error(status_code: StatusCode, message: &str) -> GatewayError {
+fn error(status_code: StatusCode, message: &str, state: &State) -> GatewayError {
+    // increment_counter!(METRICS_FAIL, "code" => self.status_code.as_u16().to_string());
+    state.metrics.error_count.inc();
     GatewayError {
         status_code,
         message: message.to_string(),
