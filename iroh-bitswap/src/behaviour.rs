@@ -6,7 +6,6 @@ use std::collections::{HashSet, VecDeque};
 use std::num::NonZeroU8;
 use std::task::{Context, Poll};
 
-use ahash::AHashMap;
 use bytes::Bytes;
 use cid::Cid;
 use libp2p::core::connection::ConnectionId;
@@ -20,7 +19,8 @@ use tracing::{debug, instrument, trace, warn};
 
 use crate::message::{BitswapMessage, Priority};
 use crate::protocol::BitswapProtocol;
-use crate::query::{Query, QueryState};
+use crate::query::{Query, QueryManager, QueryState};
+use crate::session::{SessionManager, SessionState};
 use crate::Block;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -37,22 +37,9 @@ type BitswapHandler = OneShotHandler<BitswapProtocol, BitswapMessage, HandlerEve
 pub struct Bitswap {
     /// Queue of events to report to the user.
     events: VecDeque<NetworkBehaviourAction<BitswapEvent, BitswapHandler>>,
-    // TODO: limit size
-    queries: VecDeque<Query>,
-    // TODO: limit size
-    sessions: AHashMap<PeerId, Session>,
+    queries: QueryManager,
+    sessions: SessionManager,
     config: BitswapConfig,
-}
-
-#[derive(Debug)]
-enum Session {
-    /// Connected, but not used in a query.
-    Available,
-    /// Requested in a query, but not connected.
-    New(usize),
-    Dialing(usize),
-    Connected(usize),
-    // Disconnected will be removed from the list
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -86,10 +73,10 @@ impl Bitswap {
     pub fn want_block<'a>(&mut self, cid: Cid, priority: Priority, providers: HashSet<PeerId>) {
         debug!("want_block: {}", cid);
         for provider in providers.iter() {
-            self.create_session(provider);
+            self.sessions.create_session(provider);
         }
 
-        self.queries.push_back(Query::Get {
+        self.queries.new_query(Query::Get {
             providers: providers.into_iter().collect(),
             cid,
             priority,
@@ -99,28 +86,13 @@ impl Bitswap {
 
     #[instrument(skip(self))]
     pub fn send_block(&mut self, peer_id: &PeerId, cid: Cid, data: Bytes) {
-        self.create_session(peer_id);
+        self.sessions.create_session(peer_id);
 
-        self.queries.push_back(Query::Send {
+        self.queries.new_query(Query::Send {
             receiver: *peer_id,
             block: Block { cid, data },
             state: QueryState::New,
         });
-    }
-
-    fn create_session(&mut self, peer_id: &PeerId) {
-        let session = self.sessions.entry(*peer_id).or_insert(Session::New(1));
-        match session {
-            Session::Available => {
-                // already connected
-                trace!("already connected to {}", peer_id);
-                *session = Session::Connected(1);
-            }
-            Session::Connected(count) => {
-                *count += 1;
-            }
-            _ => {}
-        }
     }
 
     /// Removes the block from our want list and updates all peers.
@@ -129,7 +101,7 @@ impl Bitswap {
     #[instrument(skip(self))]
     pub fn cancel_block(&mut self, cid: &Cid) {
         debug!("cancel_block: {}", cid);
-        let mut cancels = VecDeque::new();
+        let mut cancels = Vec::new();
         self.queries.retain(|query| match query {
             Query::Get {
                 providers: _,
@@ -141,11 +113,7 @@ impl Bitswap {
                 if to_remove {
                     if let QueryState::Sent(providers) = state {
                         // send out cancels to the providers
-                        cancels.push_back(Query::Cancel {
-                            providers: providers.clone(),
-                            cid: *cid,
-                            state: QueryState::New,
-                        });
+                        cancels.push((providers.clone(), *cid));
                     }
                 }
                 !to_remove
@@ -154,7 +122,13 @@ impl Bitswap {
             Query::Send { .. } => true,
         });
 
-        self.queries.extend(cancels);
+        for (providers, cid) in cancels.into_iter() {
+            self.queries.new_query(Query::Cancel {
+                providers,
+                cid,
+                state: QueryState::New,
+            });
+        }
     }
 }
 
@@ -198,12 +172,8 @@ impl NetworkBehaviour for Bitswap {
         _failed_addresses: Option<&Vec<Multiaddr>>,
         other_established: usize,
     ) {
-        let session = self.sessions.entry(*peer_id).or_insert(Session::Available);
-        match session {
-            Session::Dialing(count) | Session::New(count) => {
-                *session = Session::Connected(*count);
-            }
-            _ => {}
+        if other_established == 0 {
+            self.sessions.unconfirmed_connection(peer_id);
         }
     }
 
@@ -216,10 +186,9 @@ impl NetworkBehaviour for Bitswap {
         _handler: <Self::ConnectionHandler as IntoConnectionHandler>::Handler,
         remaining_established: usize,
     ) {
-        if remaining_established > 0 {
-            return;
+        if remaining_established == 0 {
+            self.sessions.disconnected(peer_id);
         }
-        self.sessions.remove(peer_id);
     }
 
     #[instrument(skip(self))]
@@ -228,7 +197,7 @@ impl NetworkBehaviour for Bitswap {
             HandlerEvent::Void => {}
             HandlerEvent::Bitswap(mut message) => {
                 // Process incoming message.
-                let mut cancels = VecDeque::new();
+                let mut cancels = Vec::new();
                 while let Some(block) = message.pop_block() {
                     let mut wanted_block = false;
                     self.queries.retain(|query| {
@@ -242,7 +211,7 @@ impl NetworkBehaviour for Bitswap {
                                 if &block.cid == cid {
                                     wanted_block = true;
                                     for provider in providers {
-                                        destroy_session(&mut self.sessions, provider);
+                                        self.sessions.destroy_session(provider);
                                     }
 
                                     if let QueryState::Sent(providers) = state {
@@ -250,11 +219,7 @@ impl NetworkBehaviour for Bitswap {
                                         let mut providers = providers.clone();
                                         providers.remove(&peer_id);
                                         if !providers.is_empty() {
-                                            cancels.push_back(Query::Cancel {
-                                                providers,
-                                                cid: block.cid,
-                                                state: QueryState::New,
-                                            });
+                                            cancels.push((providers, block.cid));
                                         }
                                     }
                                     false
@@ -273,7 +238,13 @@ impl NetworkBehaviour for Bitswap {
                     }
                 }
 
-                self.queries.extend(cancels);
+                for (providers, cid) in cancels.into_iter() {
+                    self.queries.new_query(Query::Cancel {
+                        providers,
+                        cid,
+                        state: QueryState::New,
+                    });
+                }
 
                 // Propagate Want Events
                 for (cid, priority) in message.wantlist().blocks() {
@@ -307,19 +278,19 @@ impl NetworkBehaviour for Bitswap {
         // process sessions
 
         // limit parallel dials
-        let skip_dialing = current_dials(&self.sessions)
+        let skip_dialing = self.sessions.current_dials()
             >= self.config.dial_concurrency_factor_providers.get() as _;
 
-        for (peer_id, session) in &mut self.sessions {
-            match session {
-                Session::New(count) => {
+        for (peer_id, session) in self.sessions.iter_mut() {
+            match session.state {
+                SessionState::New(count) => {
                     if skip_dialing {
                         // no dialing this round
                         continue;
                     }
                     trace!("Dialing {}", peer_id);
                     let handler = Self::ConnectionHandler::default();
-                    *session = Session::Dialing(*count);
+                    session.state = SessionState::Dialing(count);
                     return Poll::Ready(NetworkBehaviourAction::Dial {
                         opts: DialOpts::peer_id(*peer_id)
                             .condition(PeerCondition::Always)
@@ -330,12 +301,12 @@ impl NetworkBehaviour for Bitswap {
                         handler,
                     });
                 }
-                Session::Dialing(_) | Session::Available => {
+                SessionState::Dialing(_) | SessionState::Available => {
                     // Nothing to do yet
                 }
-                Session::Connected(_) => {
+                SessionState::Connected(_) => {
                     if self.queries.is_empty() {
-                        *session = Session::Available;
+                        session.state = SessionState::Available;
                         continue;
                     }
 
@@ -414,7 +385,7 @@ impl NetworkBehaviour for Bitswap {
                     }
 
                     if !provider_has_queries {
-                        *session = Session::Available;
+                        session.state = SessionState::Available;
                     } else if !msg.is_empty() {
                         trace!("sending message to {} {:?}", peer_id, msg,);
                         return Poll::Ready(NetworkBehaviourAction::NotifyHandler {
@@ -427,27 +398,6 @@ impl NetworkBehaviour for Bitswap {
             }
         }
         Poll::Pending
-    }
-}
-
-fn current_dials(sessions: &AHashMap<PeerId, Session>) -> usize {
-    sessions
-        .values()
-        .filter(|s| matches!(s, Session::Dialing(_)))
-        .count()
-}
-
-fn destroy_session(sessions: &mut AHashMap<PeerId, Session>, peer_id: &PeerId) {
-    if let Some(session) = sessions.get_mut(peer_id) {
-        match session {
-            Session::Connected(count) | Session::New(count) | Session::Dialing(count) => {
-                *count -= 1;
-                if *count == 0 {
-                    *session = Session::Available;
-                }
-            }
-            _ => {}
-        }
     }
 }
 

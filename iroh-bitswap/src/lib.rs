@@ -7,6 +7,7 @@ mod message;
 mod prefix;
 mod protocol;
 mod query;
+mod session;
 
 pub use crate::behaviour::{Bitswap, BitswapConfig, BitswapEvent};
 pub use crate::block::tests::create_block as create_test_block;
