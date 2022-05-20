@@ -10,7 +10,7 @@ use libp2p::kad::record::Key;
 use libp2p::Multiaddr;
 use libp2p::PeerId;
 use tonic::{transport::Server as TonicServer, Request, Response, Status};
-use tracing::debug;
+use tracing::trace;
 
 use iroh_bitswap::Block;
 use iroh_rpc_types::p2p::p2p_server;
@@ -37,7 +37,7 @@ impl p2p_server::P2p for P2p {
         let cid = Cid::read_bytes(io::Cursor::new(req.cid))
             .map_err(|e| Status::invalid_argument(format!("invalid cid: {:?}", e)))?;
 
-        debug!("received BitswapRequest: {:?}", cid);
+        trace!("received BitswapRequest: {:?}", cid);
         let providers = req
             .providers
             .map(|providers| {
@@ -56,7 +56,7 @@ impl p2p_server::P2p for P2p {
         let providers = match providers {
             Some(p) => p,
             None => {
-                debug!("looking for providers for {:?}", cid);
+                trace!("looking for providers for {:?}", cid);
                 let (s, r) = oneshot::channel();
                 self.sender
                     .send(RpcMessage::ProviderRequest {
@@ -70,7 +70,7 @@ impl p2p_server::P2p for P2p {
                     .await
                     .expect("sender dropped")
                     .map_err(|e| Status::internal(format!("failed to get providers: {:?}", e)))?;
-                debug!("found providers: {:?}", providers);
+                trace!("found providers: {:?}", providers);
                 p
             }
         };
@@ -81,7 +81,7 @@ impl p2p_server::P2p for P2p {
             providers,
             response_channels: vec![s],
         };
-        debug!("making bitswap request for {:?}", cid);
+        trace!("making bitswap request for {:?}", cid);
         self.sender
             .send(msg)
             .await
@@ -89,7 +89,7 @@ impl p2p_server::P2p for P2p {
 
         let block = r.await.map_err(|_| Status::internal("sender dropped"))?;
 
-        debug!("bitswap response for {:?}", cid);
+        trace!("bitswap response for {:?}", cid);
         Ok(Response::new(BitswapResponse { data: block.data }))
     }
 
@@ -100,7 +100,7 @@ impl p2p_server::P2p for P2p {
     ) -> Result<Response<Providers>, tonic::Status> {
         iroh_metrics::req::set_trace_ctx(&request);
         let req = request.into_inner();
-        debug!("received ProviderRequest: {:?}", req.key);
+        trace!("received ProviderRequest: {:?}", req.key);
         let (s, r) = oneshot::channel();
         let msg = RpcMessage::ProviderRequest {
             key: req.key.into(),

@@ -51,12 +51,17 @@ pub struct Libp2pService {
     swarm: Swarm<NodeBehaviour>,
     net_receiver_in: Receiver<RpcMessage>,
     bitswap_response_channels: HashMap<Cid, Vec<OneShotSender<Block>>>,
-    kad_queries: AHashMap<Key, QueryChannel>,
+    kad_queries: AHashMap<QueryKey, QueryChannel>,
     metrics: Metrics,
 }
 
 enum QueryChannel {
     GetProviders(Vec<oneshot::Sender<Result<HashSet<PeerId>, String>>>),
+}
+
+#[derive(Debug, Hash, PartialEq, Eq)]
+enum QueryKey {
+    ProviderKey(Key),
 }
 
 impl Libp2pService {
@@ -171,22 +176,24 @@ impl Libp2pService {
                 match result {
                     QueryResult::GetProviders(Ok(GetProvidersOk { providers, key, .. })) => {
                         if let Some(QueryChannel::GetProviders(chans)) =
-                            self.kad_queries.remove(&key)
+                            self.kad_queries.remove(&QueryKey::ProviderKey(key.clone()))
                         {
                             for chan in chans.into_iter() {
                                 debug!("Sending providers for {:?}", key);
                                 chan.send(Ok(providers.clone())).ok();
                             }
+                        } else {
+                            debug!("No listeners");
                         }
                     }
                     QueryResult::GetProviders(Err(err)) => {
                         let (key, providers) = match err {
                             GetProvidersError::Timeout { key, providers, .. } => (key, providers),
                         };
+                        debug!("GetProviders timeout {:?}", key);
                         if let Some(QueryChannel::GetProviders(chans)) =
-                            self.kad_queries.remove(&key)
+                            self.kad_queries.remove(&QueryKey::ProviderKey(key.clone()))
                         {
-                            debug!("GetProviders timeout {:?}", key);
                             for chan in chans.into_iter() {
                                 debug!("Sending providers for {:?}", key);
                                 chan.send(Ok(providers.clone())).ok();
@@ -262,11 +269,13 @@ impl Libp2pService {
                 response_channel,
             } => {
                 if let Some(kad) = self.swarm.behaviour_mut().kad.as_mut() {
-                    if let Some(QueryChannel::GetProviders(chans)) = self.kad_queries.get_mut(&key)
+                    if let Some(QueryChannel::GetProviders(chans)) = self
+                        .kad_queries
+                        .get_mut(&QueryKey::ProviderKey(key.clone()))
                     {
                         debug!(
                             "RpcMessage::ProviderRequest: already fetching providers for {:?}",
-                            key.clone()
+                            key
                         );
                         chans.push(response_channel);
                     } else {
@@ -275,8 +284,10 @@ impl Libp2pService {
                             key
                         );
                         let _ = kad.get_providers(key.clone());
-                        self.kad_queries
-                            .insert(key, QueryChannel::GetProviders(vec![response_channel]));
+                        self.kad_queries.insert(
+                            QueryKey::ProviderKey(key),
+                            QueryChannel::GetProviders(vec![response_channel]),
+                        );
                     }
                 } else {
                     response_channel.send(Ok(Default::default())).ok();
