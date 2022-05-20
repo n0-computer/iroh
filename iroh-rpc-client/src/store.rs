@@ -1,15 +1,13 @@
 use std::io::Cursor;
 use std::net::SocketAddr;
-use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use bytes::Bytes;
 use cid::Cid;
 use iroh_rpc_types::store::{self, GetLinksRequest, GetRequest, PutRequest};
-use tokio::sync::Mutex;
 
 #[derive(Debug, Clone)]
-pub struct StoreClient(Arc<Mutex<store::store_client::StoreClient<tonic::transport::Channel>>>);
+pub struct StoreClient(store::store_client::StoreClient<tonic::transport::Channel>);
 
 impl StoreClient {
     pub async fn new(addr: SocketAddr) -> Result<Self> {
@@ -19,7 +17,7 @@ impl StoreClient {
 
         let client = store::store_client::StoreClient::new(conn);
 
-        Ok(StoreClient(Arc::new(Mutex::new(client))))
+        Ok(StoreClient(client))
     }
 
     pub async fn put(&self, cid: Cid, blob: Bytes, links: Vec<Cid>) -> Result<()> {
@@ -28,7 +26,7 @@ impl StoreClient {
             blob,
             links: links.iter().map(|l| l.to_bytes()).collect(),
         });
-        let _ = self.0.lock().await.put(req).await?;
+        self.0.clone().put(req).await?;
         Ok(())
     }
 
@@ -36,7 +34,7 @@ impl StoreClient {
         let req = iroh_metrics::req::trace_tonic_req(GetRequest {
             cid: cid.to_bytes(),
         });
-        let res = self.0.lock().await.get(req).await?;
+        let res = self.0.clone().get(req).await?;
         Ok(res.into_inner().data)
     }
 
@@ -44,7 +42,7 @@ impl StoreClient {
         let req = iroh_metrics::req::trace_tonic_req(GetLinksRequest {
             cid: cid.to_bytes(),
         });
-        let links = self.0.lock().await.get_links(req).await?.into_inner().links;
+        let links = self.0.clone().get_links(req).await?.into_inner().links;
         if links.is_empty() {
             Ok(None)
         } else {
