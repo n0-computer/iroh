@@ -14,7 +14,9 @@ use libp2p::core::Multiaddr;
 pub use libp2p::gossipsub::{IdentTopic, Topic};
 use libp2p::identify::{IdentifyEvent, IdentifyInfo};
 use libp2p::identity::Keypair;
-use libp2p::kad::{self, GetProvidersError, GetProvidersOk, KademliaEvent, QueryId, QueryResult};
+use libp2p::kad::{
+    self, record::Key, GetProvidersError, GetProvidersOk, KademliaEvent, QueryResult,
+};
 use libp2p::metrics::{Metrics, Recorder};
 use libp2p::multiaddr::Protocol;
 use libp2p::multihash::Multihash;
@@ -49,12 +51,12 @@ pub struct Libp2pService {
     swarm: Swarm<NodeBehaviour>,
     net_receiver_in: Receiver<RpcMessage>,
     bitswap_response_channels: HashMap<Cid, Vec<OneShotSender<Block>>>,
-    kad_queries: AHashMap<QueryId, QueryChannel>,
+    kad_queries: AHashMap<Key, QueryChannel>,
     metrics: Metrics,
 }
 
 enum QueryChannel {
-    GetProviders(oneshot::Sender<Result<HashSet<PeerId>, String>>),
+    GetProviders(Vec<oneshot::Sender<Result<HashSet<PeerId>, String>>>),
 }
 
 impl Libp2pService {
@@ -164,21 +166,30 @@ impl Libp2pService {
                 // rpc_client.call("storage", "get", cid)
                 trace!("Don't have data for: {}", cid);
             }
-            Event::Kademlia(KademliaEvent::OutboundQueryCompleted { id, result, .. }) => {
+            Event::Kademlia(KademliaEvent::OutboundQueryCompleted { result, .. }) => {
                 info!("kad: {:?}", result);
                 match result {
-                    QueryResult::GetProviders(Ok(GetProvidersOk { providers, .. })) => {
-                        if let Some(QueryChannel::GetProviders(ch)) = self.kad_queries.remove(&id) {
-                            ch.send(Ok(providers)).ok();
+                    QueryResult::GetProviders(Ok(GetProvidersOk { providers, key, .. })) => {
+                        if let Some(QueryChannel::GetProviders(chans)) =
+                            self.kad_queries.remove(&key)
+                        {
+                            for chan in chans.into_iter() {
+                                debug!("Sending providers for {:?}", key);
+                                chan.send(Ok(providers.clone())).ok();
+                            }
                         }
                     }
                     QueryResult::GetProviders(Err(err)) => {
-                        if let Some(QueryChannel::GetProviders(ch)) = self.kad_queries.remove(&id) {
-                            match err {
-                                GetProvidersError::Timeout { key, providers, .. } => {
-                                    debug!("GetProviders timeout {:?}", key);
-                                    ch.send(Ok(providers)).ok();
-                                }
+                        let (key, providers) = match err {
+                            GetProvidersError::Timeout { key, providers, .. } => (key, providers),
+                        };
+                        if let Some(QueryChannel::GetProviders(chans)) =
+                            self.kad_queries.remove(&key)
+                        {
+                            debug!("GetProviders timeout {:?}", key);
+                            for chan in chans.into_iter() {
+                                debug!("Sending providers for {:?}", key);
+                                chan.send(Ok(providers.clone())).ok();
                             }
                         }
                     }
@@ -251,9 +262,22 @@ impl Libp2pService {
                 response_channel,
             } => {
                 if let Some(kad) = self.swarm.behaviour_mut().kad.as_mut() {
-                    let id = kad.get_providers(key);
-                    self.kad_queries
-                        .insert(id, QueryChannel::GetProviders(response_channel));
+                    if let Some(QueryChannel::GetProviders(chans)) = self.kad_queries.get_mut(&key)
+                    {
+                        debug!(
+                            "RpcMessage::ProviderRequest: already fetching providers for {:?}",
+                            key.clone()
+                        );
+                        chans.push(response_channel);
+                    } else {
+                        debug!(
+                            "RpcMessage::ProviderRequest: getting providers for {:?}",
+                            key
+                        );
+                        let _ = kad.get_providers(key.clone());
+                        self.kad_queries
+                            .insert(key, QueryChannel::GetProviders(vec![response_channel]));
+                    }
                 } else {
                     response_channel.send(Ok(Default::default())).ok();
                 }
