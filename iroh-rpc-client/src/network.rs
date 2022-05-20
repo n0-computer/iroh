@@ -49,7 +49,7 @@ impl P2pClient {
     #[tracing::instrument(skip(self))]
     pub async fn fetch_providers(&self, key: &Cid) -> Result<HashSet<PeerId>> {
         let req = iroh_metrics::req::trace_tonic_req(Key {
-            key: key.to_bytes(),
+            key: key.hash().to_bytes(),
         });
         let res = self.0.lock().await.fetch_provider(req).await?;
         let mut providers = HashSet::new();

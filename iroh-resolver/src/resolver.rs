@@ -107,6 +107,7 @@ pub enum Out {
     Unixfs(UnixfsNode),
     DagCbor(Ipld),
     DagJson(Ipld),
+    Raw(Ipld),
 }
 
 impl Out {
@@ -122,6 +123,11 @@ impl Out {
             Out::DagJson(i) => {
                 let mut bytes = Vec::new();
                 i.encode(IpldCodec::DagJson, &mut bytes)?;
+                Ok(bytes.into())
+            }
+            Out::Raw(i) => {
+                let mut bytes = Vec::new();
+                i.encode(IpldCodec::Raw, &mut bytes)?;
                 Ok(bytes.into())
             }
         }
@@ -152,6 +158,7 @@ impl Resolver {
             }
             Codec::DagCbor => self.resolve_dag_cbor(root_cid, root_bytes, path.tail).await,
             Codec::DagJson => self.resolve_dag_json(root_cid, root_bytes, path.tail).await,
+            Codec::Raw => self.resolve_raw(root_cid, root_bytes, path.tail).await,
             _ => bail!("unsupported codec {:?}", codec),
         }
     }
@@ -224,6 +231,18 @@ impl Resolver {
             .resolve_ipld(cid, libipld::IpldCodec::DagJson, ipld, path)
             .await?;
         Ok(Out::DagJson(out))
+    }
+
+    #[tracing::instrument(skip(self, bytes))]
+    async fn resolve_raw(&self, cid: Cid, bytes: Bytes, path: Vec<String>) -> Result<Out> {
+        let ipld: libipld::Ipld = libipld::IpldCodec::Raw
+            .decode(&bytes)
+            .map_err(|e| anyhow!("invalid raw: {:?}", e))?;
+
+        let out = self
+            .resolve_ipld(cid, libipld::IpldCodec::Raw, ipld, path)
+            .await?;
+        Ok(Out::Raw(out))
     }
 
     #[tracing::instrument(skip(self))]
@@ -373,6 +392,7 @@ fn parse_links(cid: &Cid, bytes: &[u8]) -> Result<Vec<Cid>> {
         Codec::DagPb => IpldCodec::DagPb,
         Codec::DagCbor => IpldCodec::DagCbor,
         Codec::DagJson => IpldCodec::DagJson,
+        Codec::Raw => IpldCodec::Raw,
         _ => bail!("unsupported codec {:?}", codec),
     };
 
