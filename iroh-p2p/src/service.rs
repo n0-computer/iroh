@@ -171,41 +171,49 @@ impl Libp2pService {
                 // rpc_client.call("storage", "get", cid)
                 trace!("Don't have data for: {}", cid);
             }
-            Event::Kademlia(KademliaEvent::OutboundQueryCompleted { result, .. }) => {
-                info!("kad: {:?}", result);
-                match result {
-                    QueryResult::GetProviders(Ok(GetProvidersOk { providers, key, .. })) => {
-                        if let Some(QueryChannel::GetProviders(chans)) =
-                            self.kad_queries.remove(&QueryKey::ProviderKey(key.clone()))
-                        {
-                            for chan in chans.into_iter() {
-                                debug!("Sending providers for {:?}", key);
-                                chan.send(Ok(providers.clone())).ok();
-                            }
-                        } else {
-                            debug!("No listeners");
-                        }
-                    }
-                    QueryResult::GetProviders(Err(err)) => {
-                        let (key, providers) = match err {
-                            GetProvidersError::Timeout { key, providers, .. } => (key, providers),
-                        };
-                        debug!("GetProviders timeout {:?}", key);
-                        if let Some(QueryChannel::GetProviders(chans)) =
-                            self.kad_queries.remove(&QueryKey::ProviderKey(key.clone()))
-                        {
-                            for chan in chans.into_iter() {
-                                debug!("Sending providers for {:?}", key);
-                                chan.send(Ok(providers.clone())).ok();
+            Event::Kademlia(e) => {
+                self.metrics.record(&e);
+                if let KademliaEvent::OutboundQueryCompleted { result, .. } = e {
+                    debug!("kad: {:?}", result);
+                    match result {
+                        QueryResult::GetProviders(Ok(GetProvidersOk {
+                            providers, key, ..
+                        })) => {
+                            if let Some(QueryChannel::GetProviders(chans)) =
+                                self.kad_queries.remove(&QueryKey::ProviderKey(key.clone()))
+                            {
+                                for chan in chans.into_iter() {
+                                    debug!("Sending providers for {:?}", key);
+                                    chan.send(Ok(providers.clone())).ok();
+                                }
+                            } else {
+                                debug!("No listeners");
                             }
                         }
-                    }
-                    other => {
-                        debug!("Libp2p => Unhandled Kademlia query result: {:?}", other)
+                        QueryResult::GetProviders(Err(err)) => {
+                            let (key, providers) = match err {
+                                GetProvidersError::Timeout { key, providers, .. } => {
+                                    (key, providers)
+                                }
+                            };
+                            debug!("GetProviders timeout {:?}", key);
+                            if let Some(QueryChannel::GetProviders(chans)) =
+                                self.kad_queries.remove(&QueryKey::ProviderKey(key.clone()))
+                            {
+                                for chan in chans.into_iter() {
+                                    debug!("Sending providers for {:?}", key);
+                                    chan.send(Ok(providers.clone())).ok();
+                                }
+                            }
+                        }
+                        other => {
+                            debug!("Libp2p => Unhandled Kademlia query result: {:?}", other)
+                        }
                     }
                 }
             }
             Event::Identify(e) => {
+                self.metrics.record(&*e);
                 if let IdentifyEvent::Received {
                     peer_id,
                     info:
@@ -230,6 +238,9 @@ impl Libp2pService {
                         }
                     }
                 }
+            }
+            Event::Ping(e) => {
+                self.metrics.record(&e);
             }
             _ => {
                 // TODO: check all important events are handled
