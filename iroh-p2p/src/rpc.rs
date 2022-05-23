@@ -12,7 +12,7 @@ use libp2p::PeerId;
 use tonic::{transport::Server as TonicServer, Request, Response, Status};
 use tracing::trace;
 
-use iroh_bitswap::Block;
+use iroh_bitswap::{Block, QueryError};
 use iroh_rpc_types::p2p::p2p_server;
 use iroh_rpc_types::p2p::{
     BitswapRequest, BitswapResponse, ConnectRequest, ConnectResponse, DisconnectRequest, Empty,
@@ -87,7 +87,10 @@ impl p2p_server::P2p for P2p {
             .await
             .map_err(|_| Status::internal("receiver dropped"))?;
 
-        let block = r.await.map_err(|_| Status::internal("sender dropped"))?;
+        let block = r
+            .await
+            .map_err(|_| Status::internal("sender dropped"))?
+            .map_err(|e| Status::deadline_exceeded(format!("bitswap failed: {}", e)))?;
 
         trace!("bitswap response for {:?}", cid);
         Ok(Response::new(BitswapResponse { data: block.data }))
@@ -223,7 +226,7 @@ fn addrs_from_bytes(a: Vec<Vec<u8>>) -> Result<Vec<Multiaddr>, tonic::Status> {
 pub enum RpcMessage {
     BitswapRequest {
         cids: Vec<Cid>,
-        response_channels: Vec<oneshot::Sender<Block>>,
+        response_channels: Vec<oneshot::Sender<Result<Block, QueryError>>>,
         providers: HashSet<PeerId>,
     },
     ProviderRequest {

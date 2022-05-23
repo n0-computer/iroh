@@ -1,10 +1,17 @@
 use ahash::{AHashMap, AHashSet};
 use bytes::Bytes;
 use cid::Cid;
-use libp2p::PeerId;
+use libp2p::{
+    swarm::{NetworkBehaviourAction, NotifyHandler},
+    PeerId,
+};
 use tracing::{error, trace};
 
-use crate::{BitswapMessage, Block, Priority};
+use crate::{
+    behaviour::{BitswapHandler, QueryError},
+    BitswapEvent, BitswapMessage, Block, CancelResult, Priority, QueryResult, SendResult,
+    WantResult,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct QueryId(usize);
@@ -18,7 +25,7 @@ pub struct QueryManager {
 impl QueryManager {
     fn new_query(&mut self, query: Query) -> QueryId {
         let id = QueryId(self.next_id);
-        self.next_id += 1;
+        self.next_id = self.next_id.wrapping_add(1);
         self.queries.insert(id, query);
         id
     }
@@ -131,7 +138,146 @@ impl QueryManager {
         (unused_providers, query_id)
     }
 
-    pub fn poll(&mut self, peer_id: &PeerId) -> Option<BitswapMessage> {
+    /// Handle disconnection of the endpoint
+    pub fn disconnected(&mut self, peer_id: &PeerId) {
+        for (_, query) in self
+            .queries
+            .iter_mut()
+            .filter(move |(_, query)| match query {
+                Query::Get {
+                    providers, state, ..
+                }
+                | Query::Cancel {
+                    providers, state, ..
+                } => {
+                    if providers.contains(peer_id) {
+                        return true;
+                    }
+                    if let State::Sent(p) = state {
+                        return p.contains(peer_id);
+                    }
+                    false
+                }
+                Query::Send { receiver, .. } => receiver == peer_id,
+            })
+        {
+            match query {
+                Query::Get { state, .. } => {
+                    if let State::Sent(used_providers) = state {
+                        used_providers.remove(peer_id);
+                    }
+                }
+                Query::Send { state, .. } => {
+                    if let State::Sent(used_providers) = state {
+                        used_providers.remove(peer_id);
+                    }
+                }
+                Query::Cancel { state, .. } => {
+                    if let State::Sent(used_providers) = state {
+                        used_providers.remove(peer_id);
+                    }
+                }
+            }
+        }
+    }
+
+    fn queries_for_peer(
+        &mut self,
+        peer_id: PeerId,
+    ) -> impl Iterator<Item = (&QueryId, &mut Query)> {
+        self.queries
+            .iter_mut()
+            .filter(move |(_, query)| match query {
+                Query::Get { providers, .. } | Query::Cancel { providers, .. } => {
+                    providers.contains(&peer_id)
+                }
+                Query::Send { receiver, .. } => receiver == &peer_id,
+            })
+    }
+
+    fn next_finished_query(&mut self) -> Option<(QueryId, Query)> {
+        let mut next_query = None;
+        for (query_id, query) in &self.queries {
+            match query {
+                Query::Get {
+                    providers, state, ..
+                } => {
+                    if providers.is_empty() {
+                        if let State::Sent(used_providers) = state {
+                            if used_providers.is_empty() {
+                                next_query = Some(query_id);
+                                break;
+                            }
+                        }
+                    }
+                }
+                Query::Send { state, .. } => {
+                    if let State::Sent(providers) = state {
+                        if providers.is_empty() {
+                            next_query = Some(query_id);
+                            break;
+                        }
+                    }
+                }
+                Query::Cancel {
+                    providers, state, ..
+                } => {
+                    if providers.is_empty() {
+                        if let State::Sent(used_providers) = state {
+                            if used_providers.is_empty() {
+                                next_query = Some(query_id);
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if let Some(id) = next_query {
+            let id = *id;
+            return Some((id, self.queries.remove(&id).unwrap()));
+        }
+
+        None
+    }
+
+    pub fn poll_all(&mut self) -> Option<NetworkBehaviourAction<BitswapEvent, BitswapHandler>> {
+        // cleanups
+        match self.next_finished_query() {
+            Some((id, Query::Send { .. })) => {
+                return Some(NetworkBehaviourAction::GenerateEvent(
+                    BitswapEvent::OutboundQueryCompleted {
+                        id,
+                        result: QueryResult::Send(SendResult::Err(QueryError::Timeout)),
+                    },
+                ))
+            }
+            Some((id, Query::Get { .. })) => {
+                return Some(NetworkBehaviourAction::GenerateEvent(
+                    BitswapEvent::OutboundQueryCompleted {
+                        id,
+                        result: QueryResult::Want(WantResult::Err(QueryError::Timeout)),
+                    },
+                ))
+            }
+            Some((id, Query::Cancel { .. })) => {
+                return Some(NetworkBehaviourAction::GenerateEvent(
+                    BitswapEvent::OutboundQueryCompleted {
+                        id,
+                        result: QueryResult::Cancel(CancelResult::Err(QueryError::Timeout)),
+                    },
+                ))
+            }
+            None => {}
+        }
+        None
+    }
+
+    pub fn poll_peer(
+        &mut self,
+        peer_id: &PeerId,
+    ) -> Option<NetworkBehaviourAction<BitswapEvent, BitswapHandler>> {
         if self.is_empty() {
             return None;
         }
@@ -143,12 +289,7 @@ impl QueryManager {
         let mut num_queries = 0;
         let mut finished_queries = Vec::new();
 
-        for (query_id, query) in self.queries.iter_mut().filter(|(_, query)| match query {
-            Query::Get { providers, .. } | Query::Cancel { providers, .. } => {
-                providers.contains(peer_id)
-            }
-            Query::Send { receiver, .. } => receiver == peer_id,
-        }) {
+        for (query_id, query) in self.queries_for_peer(*peer_id) {
             num_queries += 1;
             match query {
                 Query::Get {
@@ -177,7 +318,6 @@ impl QueryManager {
                     state,
                 } => {
                     msg.wantlist_mut().cancel_block(cid);
-
                     providers.remove(peer_id);
 
                     // update state
@@ -187,9 +327,6 @@ impl QueryManager {
                         }
                         State::Sent(sent_providers) => {
                             sent_providers.insert(*peer_id);
-                            if providers.is_empty() {
-                                finished_queries.push(*query_id);
-                            }
                         }
                     }
                 }
@@ -221,7 +358,11 @@ impl QueryManager {
                 error!("{} queries, but message is empty: {:?}", num_queries, msg);
             } else {
                 trace!("sending message to {} {:?}", peer_id, msg);
-                return Some(msg);
+                return Some(NetworkBehaviourAction::NotifyHandler {
+                    peer_id: *peer_id,
+                    handler: NotifyHandler::Any,
+                    event: msg,
+                });
             }
         }
 
@@ -256,4 +397,105 @@ enum Query {
 enum State {
     New,
     Sent(AHashSet<PeerId>),
+}
+
+#[cfg(test)]
+mod tests {
+    use libp2p::identity::Keypair;
+
+    use super::*;
+    use crate::block::tests::create_block;
+
+    #[test]
+    fn test_want_success() {
+        let mut queries = QueryManager::default();
+
+        let provider_key_1 = Keypair::generate_ed25519();
+        let provider_id_1 = provider_key_1.public().to_peer_id();
+        let provider_key_2 = Keypair::generate_ed25519();
+        let provider_id_2 = provider_key_2.public().to_peer_id();
+
+        assert!(queries.poll_peer(&provider_id_1).is_none());
+
+        let Block { cid, data } = create_block(&b"hello world"[..]);
+        let query_id = queries.get(
+            cid,
+            100,
+            [provider_id_1, provider_id_2].into_iter().collect(),
+        );
+
+        // sent wantlist
+        let q = queries.poll_peer(&provider_id_1).unwrap();
+        if let NetworkBehaviourAction::NotifyHandler { peer_id, event, .. } = q {
+            assert_eq!(peer_id, provider_id_1);
+            assert_eq!(
+                event.wantlist().blocks().collect::<Vec<_>>(),
+                &[(&cid, 100)]
+            );
+        } else {
+            panic!("invalid poll result");
+        }
+
+        // inject received block
+        let (unused_providers, qid) = queries.process_block(&provider_id_1, &Block { cid, data });
+        assert_eq!(unused_providers, &[provider_id_2]);
+        assert_eq!(qid, Some(query_id));
+    }
+
+    #[test]
+    fn test_want_fail() {
+        let mut queries = QueryManager::default();
+
+        let provider_key_1 = Keypair::generate_ed25519();
+        let provider_id_1 = provider_key_1.public().to_peer_id();
+        let provider_key_2 = Keypair::generate_ed25519();
+        let provider_id_2 = provider_key_2.public().to_peer_id();
+
+        assert!(queries.poll_peer(&provider_id_1).is_none());
+
+        let Block { cid, data: _ } = create_block(&b"hello world"[..]);
+        let query_id = queries.get(
+            cid,
+            100,
+            [provider_id_1, provider_id_2].into_iter().collect(),
+        );
+
+        // send wantlist
+        let q = queries.poll_peer(&provider_id_1).unwrap();
+        if let NetworkBehaviourAction::NotifyHandler { peer_id, event, .. } = q {
+            assert_eq!(peer_id, provider_id_1);
+            assert_eq!(
+                event.wantlist().blocks().collect::<Vec<_>>(),
+                &[(&cid, 100)]
+            );
+        } else {
+            panic!("invalid poll result");
+        }
+
+        let q = queries.poll_peer(&provider_id_2).unwrap();
+        if let NetworkBehaviourAction::NotifyHandler { peer_id, event, .. } = q {
+            assert_eq!(peer_id, provider_id_2);
+            assert_eq!(
+                event.wantlist().blocks().collect::<Vec<_>>(),
+                &[(&cid, 100)]
+            );
+        } else {
+            panic!("invalid poll result");
+        }
+
+        // inject disconnects
+        queries.disconnected(&provider_id_1);
+        queries.disconnected(&provider_id_2);
+
+        let q = queries.poll_all().unwrap();
+        if let NetworkBehaviourAction::GenerateEvent(BitswapEvent::OutboundQueryCompleted {
+            id,
+            ..
+        }) = q
+        {
+            assert_eq!(id, query_id);
+        } else {
+            panic!("invalid poll result");
+        }
+    }
 }

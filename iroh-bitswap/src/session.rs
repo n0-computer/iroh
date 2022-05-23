@@ -4,7 +4,7 @@ use ahash::AHashMap;
 use libp2p::{
     swarm::{
         dial_opts::{DialOpts, PeerCondition},
-        NetworkBehaviourAction, NotifyHandler,
+        NetworkBehaviourAction,
     },
     PeerId,
 };
@@ -100,6 +100,10 @@ impl SessionManager {
         let skip_dialing =
             self.current_dials() >= self.config.dial_concurrency_factor_providers.get() as _;
 
+        if let Some(ev) = queries.poll_all() {
+            return Some(ev);
+        }
+
         for (peer_id, session) in self.sessions.iter_mut() {
             match session.state {
                 State::New => {
@@ -124,12 +128,8 @@ impl SessionManager {
                     // Nothing to do yet
                 }
                 State::Connected => {
-                    if let Some(event) = queries.poll(peer_id) {
-                        return Some(NetworkBehaviourAction::NotifyHandler {
-                            peer_id: *peer_id,
-                            handler: NotifyHandler::Any,
-                            event,
-                        });
+                    if let Some(event) = queries.poll_peer(peer_id) {
+                        return Some(event);
                     }
                 }
             }

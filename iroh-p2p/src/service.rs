@@ -31,8 +31,8 @@ use tokio::{select, time};
 use tracing::{debug, info, trace, warn};
 
 use iroh_bitswap::{
-    BitswapEvent, Block, InboundRequest, QueryId as BitswapQueryId,
-    QueryResult as BitswapQueryResult,
+    BitswapEvent, Block, InboundRequest, QueryError, QueryId as BitswapQueryId,
+    QueryResult as BitswapQueryResult, WantResult,
 };
 
 use crate::{
@@ -54,7 +54,7 @@ pub enum NetworkEvent {
 pub struct Libp2pService {
     swarm: Swarm<NodeBehaviour>,
     net_receiver_in: Receiver<RpcMessage>,
-    bitswap_response_channels: AHashMap<BitswapQueryId, Vec<OneShotSender<Block>>>,
+    bitswap_queries: AHashMap<BitswapQueryId, OneShotSender<Result<Block, QueryError>>>,
     kad_queries: AHashMap<QueryKey, QueryChannel>,
     metrics: Metrics,
 }
@@ -109,7 +109,7 @@ impl Libp2pService {
         Ok(Libp2pService {
             swarm,
             net_receiver_in: network_receiver_in,
-            bitswap_response_channels: Default::default(),
+            bitswap_queries: Default::default(),
             kad_queries: Default::default(),
             metrics,
         })
@@ -171,23 +171,31 @@ impl Libp2pService {
                         }
                     },
                     BitswapEvent::OutboundQueryCompleted { id, result } => match result {
-                        BitswapQueryResult::Want { sender, cid, data } => {
+                        BitswapQueryResult::Want(WantResult::Ok { sender, cid, data }) => {
                             info!("got block {} from {}", cid, sender);
                             // TODO: verify cid hash
                             let b = Block::new(data, cid);
-                            if let Some(chans) = self.bitswap_response_channels.remove(&id) {
-                                for chan in chans.into_iter() {
-                                    // TODO: send cid and block
-                                    if chan.send(b.clone()).is_err() {
-                                        debug!("Bitswap response channel send failed");
-                                    }
-                                    trace!("Saved Bitswap block with cid {:?}", cid);
+                            if let Some(chan) = self.bitswap_queries.remove(&id) {
+                                // TODO: send cid and block
+                                if chan.send(Ok(b)).is_err() {
+                                    debug!("Bitswap response channel send failed");
                                 }
+                                trace!("Saved Bitswap block with cid {:?}", cid);
                             } else {
                                 debug!("Received Bitswap response, but response channel cannot be found");
                             }
                         }
-                        BitswapQueryResult::Cancel => {
+                        BitswapQueryResult::Want(WantResult::Err(e)) => {
+                            if let Some(chan) = self.bitswap_queries.remove(&id) {
+                                if chan.send(Err(e)).is_err() {
+                                    debug!("Bitswap response channel send failed");
+                                }
+                            }
+                        }
+                        BitswapQueryResult::Send(_) => {
+                            // Nothing to do yet
+                        }
+                        BitswapQueryResult::Cancel(_) => {
                             // Nothing to do yet
                         }
                     },
@@ -288,11 +296,7 @@ impl Libp2pService {
                         .want_block(cid, 1000, providers.clone()) // TODO: priority?
                         .map_err(|err| anyhow!("Failed to send a bitswap want_block: {:?}", err))?;
 
-                    let chans = self
-                        .bitswap_response_channels
-                        .entry(query_id)
-                        .or_insert(Vec::new());
-                    chans.push(response_channel);
+                    self.bitswap_queries.insert(query_id, response_channel);
                 }
             }
             RpcMessage::ProviderRequest {

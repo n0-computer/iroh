@@ -31,12 +31,38 @@ pub enum BitswapEvent {
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[allow(clippy::large_enum_variant)]
 pub enum QueryResult {
-    Want {
+    Want(WantResult),
+    Send(SendResult),
+    Cancel(CancelResult),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[allow(clippy::large_enum_variant)]
+pub enum WantResult {
+    Ok {
         sender: PeerId,
         cid: Cid,
         data: Bytes,
     },
-    Cancel,
+    Err(QueryError),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum SendResult {
+    Ok,
+    Err(QueryError),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CancelResult {
+    Ok,
+    Err(QueryError),
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, thiserror::Error)]
+pub enum QueryError {
+    #[error("timeout")]
+    Timeout,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -176,6 +202,7 @@ impl NetworkBehaviour for Bitswap {
     ) {
         if remaining_established == 0 {
             self.sessions.disconnected(peer_id);
+            self.queries.disconnected(peer_id);
         }
     }
 
@@ -199,11 +226,11 @@ impl NetworkBehaviour for Bitswap {
                     if let Some(query_id) = query_id {
                         let event = BitswapEvent::OutboundQueryCompleted {
                             id: query_id,
-                            result: QueryResult::Want {
+                            result: QueryResult::Want(WantResult::Ok {
                                 sender: peer_id,
                                 cid: block.cid,
                                 data: block.data,
-                            },
+                            }),
                         };
 
                         self.events
@@ -375,7 +402,7 @@ mod tests {
                 match swarm2.next().await {
                     Some(SwarmEvent::Behaviour(BitswapEvent::OutboundQueryCompleted {
                         id,
-                        result: QueryResult::Want { sender, cid, data },
+                        result: QueryResult::Want(WantResult::Ok { sender, cid, data }),
                     })) => {
                         assert_eq!(orig_id, id);
                         assert_eq!(sender, peer1_id);
