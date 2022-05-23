@@ -18,6 +18,7 @@ use libp2p::ping::{Ping, PingEvent};
 use libp2p::request_response::RequestResponseConfig;
 use libp2p::swarm::behaviour::toggle::Toggle;
 use libp2p::{Multiaddr, NetworkBehaviour};
+use prometheus_client::registry::Registry;
 use tracing::warn;
 
 lazy_static::lazy_static! {
@@ -76,9 +77,13 @@ impl From<BitswapEvent> for Event {
 }
 
 impl NodeBehaviour {
-    pub async fn new(local_key: &Keypair, config: &Libp2pConfig) -> Result<Self> {
+    pub async fn new(
+        local_key: &Keypair,
+        config: &Libp2pConfig,
+        registry: &mut Registry,
+    ) -> Result<Self> {
         let bs_config = BitswapConfig::default();
-        let bitswap = Bitswap::new(bs_config);
+        let bitswap = Bitswap::new(bs_config, registry);
 
         let mdns = if config.mdns {
             Some(Mdns::new(Default::default()).await?)

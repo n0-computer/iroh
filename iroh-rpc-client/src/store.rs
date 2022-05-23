@@ -20,6 +20,7 @@ impl StoreClient {
         Ok(StoreClient(client))
     }
 
+    #[tracing::instrument(skip(self))]
     pub async fn put(&self, cid: Cid, blob: Bytes, links: Vec<Cid>) -> Result<()> {
         let req = iroh_metrics::req::trace_tonic_req(PutRequest {
             cid: cid.to_bytes(),
@@ -30,6 +31,7 @@ impl StoreClient {
         Ok(())
     }
 
+    #[tracing::instrument(skip(self))]
     pub async fn get(&self, cid: Cid) -> Result<Option<Bytes>> {
         let req = iroh_metrics::req::trace_tonic_req(GetRequest {
             cid: cid.to_bytes(),
@@ -38,6 +40,7 @@ impl StoreClient {
         Ok(res.into_inner().data)
     }
 
+    #[tracing::instrument(skip(self))]
     pub async fn get_links(&self, cid: Cid) -> Result<Option<Vec<Cid>>> {
         let req = iroh_metrics::req::trace_tonic_req(GetLinksRequest {
             cid: cid.to_bytes(),

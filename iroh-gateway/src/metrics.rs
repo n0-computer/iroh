@@ -43,8 +43,8 @@ pub struct Metrics {
     pub cache_miss: Counter,
     pub bytes_streamed: Counter,
     pub bytes_fetched: Counter,
-    pub bitrate_in: Gauge,
-    pub bitrate_out: Gauge,
+    pub bytes_per_sec_in: Gauge,
+    pub bytes_per_sec_out: Gauge,
     pub error_count: Counter,
     pub fail_count: Counter,
     pub hist_ttfb: Histogram,
@@ -125,14 +125,14 @@ impl Metrics {
 
         let bitrate_in = Gauge::default();
         sub_registry.register(
-            METRICS_BITRATE_IN,
+            METRICS_BYTES_PER_SEC_IN,
             "Bitrate of incoming stream",
             Box::new(bitrate_in.clone()),
         );
 
         let bitrate_out = Gauge::default();
         sub_registry.register(
-            METRICS_BITRATE_OUT,
+            METRICS_BYTES_PER_SEC_OUT,
             "Bitrate of outgoing stream",
             Box::new(bitrate_out.clone()),
         );
@@ -176,8 +176,8 @@ impl Metrics {
             cache_miss,
             bytes_streamed,
             bytes_fetched,
-            bitrate_in,
-            bitrate_out,
+            bytes_per_sec_in: bitrate_in,
+            bytes_per_sec_out: bitrate_out,
             error_count,
             fail_count,
             hist_ttfb,
@@ -195,8 +195,8 @@ pub const METRICS_CACHE_HIT: &str = "cache_hit";
 pub const METRICS_CACHE_MISS: &str = "cache_miss";
 pub const METRICS_BYTES_STREAMED: &str = "bytes_streamed";
 pub const METRICS_BYTES_FETCHED: &str = "bytes_fetched";
-pub const METRICS_BITRATE_IN: &str = "bitrate_in";
-pub const METRICS_BITRATE_OUT: &str = "bitrate_out";
+pub const METRICS_BYTES_PER_SEC_IN: &str = "bytes_per_sec_in";
+pub const METRICS_BYTES_PER_SEC_OUT: &str = "bytes_per_sec_out";
 pub const METRICS_HIST_TTFB: &str = "hist_time_to_fetch_first_block";
 pub const METRICS_HIST_TTSERVE: &str = "hist_time_to_serve_full_file";
 pub const METRICS_ERROR: &str = "error_count";

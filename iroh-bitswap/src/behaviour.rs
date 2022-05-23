@@ -15,6 +15,7 @@ use libp2p::swarm::handler::OneShotHandler;
 use libp2p::swarm::{
     IntoConnectionHandler, NetworkBehaviour, NetworkBehaviourAction, NotifyHandler, PollParameters,
 };
+use prometheus_client::registry::Registry;
 use tracing::{debug, instrument, trace, warn};
 
 use crate::message::{BitswapMessage, Priority};
@@ -22,6 +23,7 @@ use crate::protocol::BitswapProtocol;
 use crate::query::{Query, QueryManager, QueryState};
 use crate::session::{SessionManager, SessionState};
 use crate::Block;
+use crate::Metrics;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum BitswapEvent {
@@ -40,6 +42,7 @@ pub struct Bitswap {
     queries: QueryManager,
     sessions: SessionManager,
     config: BitswapConfig,
+    metrics: Metrics,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -61,9 +64,10 @@ impl Default for BitswapConfig {
 
 impl Bitswap {
     /// Create a new `Bitswap`.
-    pub fn new(config: BitswapConfig) -> Self {
+    pub fn new(config: BitswapConfig, registry: &mut Registry) -> Self {
         Bitswap {
             config,
+            metrics: Metrics::new(registry),
             ..Default::default()
         }
     }
@@ -75,7 +79,7 @@ impl Bitswap {
         for provider in providers.iter() {
             self.sessions.create_session(provider);
         }
-
+        self.metrics.providers_total.inc_by(providers.len() as u64);
         self.queries.new_query(Query::Get {
             providers: providers.into_iter().collect(),
             cid,
@@ -333,6 +337,7 @@ impl NetworkBehaviour for Bitswap {
                                 priority,
                                 state,
                             } => {
+                                self.metrics.requests_total.inc();
                                 msg.wantlist_mut().want_block(cid, *priority);
 
                                 providers.remove(peer_id);
@@ -352,6 +357,7 @@ impl NetworkBehaviour for Bitswap {
                                 cid,
                                 state,
                             } => {
+                                self.metrics.canceled_total.inc();
                                 msg.wantlist_mut().cancel_block(cid);
 
                                 providers.remove(peer_id);
@@ -372,6 +378,12 @@ impl NetworkBehaviour for Bitswap {
                                 receiver,
                             } => match state {
                                 QueryState::New => {
+                                    self.metrics
+                                        .received_block_bytes
+                                        .inc_by(block.data().len() as u64);
+                                    self.metrics
+                                        .sent_block_bytes
+                                        .inc_by(block.data().len() as u64);
                                     msg.add_block(block.clone());
                                     *state = QueryState::Sent([*receiver].into_iter().collect());
                                 }

@@ -19,6 +19,7 @@ struct Rpc {
 
 #[tonic::async_trait]
 impl store_server::Store for Rpc {
+    #[tracing::instrument(skip(self))]
     async fn put(&self, request: Request<PutRequest>) -> Result<Response<()>, tonic::Status> {
         let req = request.into_inner();
         let cid = cid_from_bytes(req.cid)?;
@@ -33,6 +34,7 @@ impl store_server::Store for Rpc {
         Ok(Response::new(res))
     }
 
+    #[tracing::instrument(skip(self))]
     async fn get(
         &self,
         request: Request<GetRequest>,
@@ -53,6 +55,7 @@ impl store_server::Store for Rpc {
         }
     }
 
+    #[tracing::instrument(skip(self))]
     async fn get_links(
         &self,
         request: Request<GetLinksRequest>,
@@ -73,6 +76,7 @@ impl store_server::Store for Rpc {
     }
 }
 
+#[tracing::instrument]
 pub async fn new(addr: SocketAddr, store: Store) -> Result<()> {
     let rpc = Rpc { store };
     TonicServer::builder()
@@ -82,11 +86,13 @@ pub async fn new(addr: SocketAddr, store: Store) -> Result<()> {
     Ok(())
 }
 
+#[tracing::instrument]
 fn cid_from_bytes(b: Vec<u8>) -> Result<Cid, tonic::Status> {
     Cid::read_bytes(Cursor::new(b))
         .map_err(|e| Status::invalid_argument(format!("invalid cid: {:?}", e)))
 }
 
+#[tracing::instrument]
 fn links_from_bytes(l: Vec<Vec<u8>>) -> Result<Vec<Cid>, tonic::Status> {
     l.into_iter().map(cid_from_bytes).collect()
 }

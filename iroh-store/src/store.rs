@@ -9,14 +9,16 @@ use iroh_rpc_client::Client as RpcClient;
 use rocksdb::{DBPinnableSlice, IteratorMode, Options, WriteBatch, DB as RocksDb};
 use tokio::task;
 
-use crate::cf::{
-    GraphV0, MetadataV0, Versioned, CF_BLOBS_V0, CF_GRAPH_V0, CF_ID_V0, CF_METADATA_V0,
-};
 use crate::Config;
+use crate::{
+    cf::{GraphV0, MetadataV0, Versioned, CF_BLOBS_V0, CF_GRAPH_V0, CF_ID_V0, CF_METADATA_V0},
+    metrics::Metrics,
+};
 
 #[derive(Debug, Clone)]
 pub struct Store {
     inner: Arc<InnerStore>,
+    metrics: Metrics,
 }
 
 #[derive(Debug)]
@@ -31,7 +33,7 @@ struct InnerStore {
 impl Store {
     /// Creates a new database.
     #[tracing::instrument]
-    pub async fn create(config: Config) -> Result<Self> {
+    pub async fn create(config: Config, metrics: Metrics) -> Result<Self> {
         let mut options = Options::default();
         options.create_if_missing(true);
         // TODO: more options
@@ -73,12 +75,13 @@ impl Store {
                 next_id: 1.into(),
                 _rpc_client,
             }),
+            metrics,
         })
     }
 
     /// Opens an existing database.
     #[tracing::instrument]
-    pub async fn open(config: Config) -> Result<Self> {
+    pub async fn open(config: Config, metrics: Metrics) -> Result<Self> {
         let mut options = Options::default();
         options.create_if_missing(false);
         // TODO: more options
@@ -126,6 +129,7 @@ impl Store {
                 next_id: next_id.into(),
                 _rpc_client,
             }),
+            metrics,
         })
     }
 
@@ -135,6 +139,8 @@ impl Store {
         L: IntoIterator<Item = Cid>,
     {
         let id = self.next_id();
+        self.metrics.put_requests_total.inc();
+        let start = std::time::Instant::now();
 
         let id_bytes = id.to_be_bytes();
         let metadata = Versioned(MetadataV0 {
@@ -170,38 +176,68 @@ impl Store {
             .cf_handle(CF_GRAPH_V0)
             .ok_or_else(|| anyhow!("missing column family: metadata"))?;
 
+        let blob_size = blob.as_ref().len();
+
         let mut batch = WriteBatch::default();
         batch.put_cf(cf_id, multihash, &id_bytes);
         batch.put_cf(cf_blobs, &id_bytes, blob);
         batch.put_cf(cf_meta, &id_bytes, metadata_bytes);
         batch.put_cf(cf_graph, &id_bytes, graph_bytes);
         self.inner.content.write(batch)?;
+        self.metrics
+            .put_request_time
+            .observe(start.elapsed().as_secs_f64());
+        self.metrics.put_bytes.inc_by(blob_size as u64);
 
         Ok(())
     }
 
     #[tracing::instrument(skip(self))]
     pub async fn get(&self, cid: &Cid) -> Result<Option<DBPinnableSlice<'_>>> {
-        match self.get_id(cid).await? {
+        self.metrics.get_requests_total.inc();
+        let start = std::time::Instant::now();
+        let res = match self.get_id(cid).await? {
             Some(id) => {
                 let maybe_blob = self.get_by_id(id).await?;
+                self.metrics.get_store_hit.inc();
+                self.metrics
+                    .get_bytes
+                    .inc_by(maybe_blob.as_ref().map(|b| b.len()).unwrap_or(0) as u64);
                 Ok(maybe_blob)
             }
-            None => Ok(None),
-        }
+            None => {
+                self.metrics.get_store_miss.inc();
+                Ok(None)
+            }
+        };
+        self.metrics
+            .get_request_time
+            .observe(start.elapsed().as_secs_f64());
+        res
     }
 
     #[tracing::instrument(skip(self))]
     pub async fn get_links(&self, cid: &Cid) -> Result<Option<Vec<Cid>>> {
-        match self.get_id(cid).await? {
+        self.metrics.get_links_requests_total.inc();
+        let start = std::time::Instant::now();
+        let res = match self.get_id(cid).await? {
             Some(id) => {
                 let maybe_links = self.get_links_by_id(id).await?;
+                self.metrics.get_links_hit.inc();
                 Ok(maybe_links)
             }
-            None => Ok(None),
-        }
+            None => {
+                self.metrics.get_links_miss.inc();
+                Ok(None)
+            }
+        };
+        self.metrics
+            .get_links_request_time
+            .observe(start.elapsed().as_secs_f64());
+        res
     }
 
+    #[tracing::instrument(skip(self))]
     async fn get_id(&self, cid: &Cid) -> Result<Option<u64>> {
         let cf_id = self
             .inner
@@ -219,6 +255,7 @@ impl Store {
         }
     }
 
+    #[tracing::instrument(skip(self))]
     async fn get_by_id(&self, id: u64) -> Result<Option<DBPinnableSlice<'_>>> {
         let cf_blobs = self
             .inner
@@ -233,6 +270,7 @@ impl Store {
         Ok(maybe_blob)
     }
 
+    #[tracing::instrument(skip(self))]
     async fn get_links_by_id(&self, id: u64) -> Result<Option<Vec<Cid>>> {
         let cf_graph = self
             .inner
@@ -280,6 +318,7 @@ impl Store {
     }
 
     /// Takes a list of cids and gives them ids, which are boths stored and then returned.
+    #[tracing::instrument(skip(self, cids))]
     async fn ensure_id_many<I>(&self, cids: I) -> Result<Vec<u64>>
     where
         I: IntoIterator<Item = Cid>,
@@ -319,6 +358,7 @@ impl Store {
         Ok(ids)
     }
 
+    #[tracing::instrument(skip(self))]
     fn next_id(&self) -> u64 {
         let id = self.inner.next_id.fetch_add(1, Ordering::SeqCst);
         // TODO: better handling
@@ -329,6 +369,8 @@ impl Store {
 
 #[cfg(test)]
 mod tests {
+    use crate::metrics;
+
     use super::*;
 
     use iroh_rpc_client::RpcClientConfig;
@@ -344,7 +386,8 @@ mod tests {
             rpc: RpcClientConfig::default(),
         };
 
-        let store = Store::create(config).await.unwrap();
+        let metrics = metrics::Metrics::default();
+        let store = Store::create(config, metrics).await.unwrap();
 
         let mut values = Vec::new();
 
@@ -380,7 +423,8 @@ mod tests {
             rpc: RpcClientConfig::default(),
         };
 
-        let store = Store::create(config.clone()).await.unwrap();
+        let metrics = metrics::Metrics::default();
+        let store = Store::create(config.clone(), metrics).await.unwrap();
 
         let mut values = Vec::new();
 
@@ -408,7 +452,8 @@ mod tests {
 
         drop(store);
 
-        let store = Store::open(config).await.unwrap();
+        let metrics = metrics::Metrics::default();
+        let store = Store::open(config, metrics).await.unwrap();
         for (c, expected_data, expected_links) in values.iter() {
             let data = store.get(c).await.unwrap().unwrap();
             assert_eq!(expected_data, &data[..]);

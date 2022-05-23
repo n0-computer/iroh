@@ -26,6 +26,7 @@ use libp2p::swarm::{
 };
 use libp2p::yamux::WindowUpdateMode;
 use libp2p::{core, mplex, noise, yamux, PeerId, Swarm, Transport};
+use prometheus_client::registry::Registry;
 use tokio::{select, time};
 use tracing::{debug, info, trace, warn};
 
@@ -65,7 +66,12 @@ enum QueryKey {
 }
 
 impl Libp2pService {
-    pub async fn new(config: Libp2pConfig, net_keypair: Keypair, metrics: Metrics) -> Result<Self> {
+    pub async fn new(
+        config: Libp2pConfig,
+        net_keypair: Keypair,
+        registry: &mut Registry,
+        metrics: Metrics,
+    ) -> Result<Self> {
         let peer_id = PeerId::from(net_keypair.public());
 
         let transport = build_transport(net_keypair.clone()).await;
@@ -77,7 +83,7 @@ impl Libp2pService {
             .with_max_established_outgoing(Some(config.target_peer_count))
             .with_max_established_per_peer(Some(5)); // TODO: configurable
 
-        let node = NodeBehaviour::new(&net_keypair, &config).await?;
+        let node = NodeBehaviour::new(&net_keypair, &config, registry).await?;
         let mut swarm = SwarmBuilder::new(transport, node, peer_id)
             .connection_limits(limits)
             .notify_handler_buffer_size(std::num::NonZeroUsize::new(20).expect("Not zero")) // TODO: configurable
