@@ -173,48 +173,43 @@ impl Libp2pService {
             }
             Event::Kademlia(e) => {
                 self.metrics.record(&e);
-                match e {
-                    KademliaEvent::OutboundQueryCompleted { result, .. } => {
-                        info!("kad: {:?}", result);
-                        match result {
-                            QueryResult::GetProviders(Ok(GetProvidersOk {
-                                providers,
-                                key,
-                                ..
-                            })) => {
-                                if let Some(QueryChannel::GetProviders(chans)) =
-                                    self.kad_queries.remove(&QueryKey::ProviderKey(key.clone()))
-                                {
-                                    for chan in chans.into_iter() {
-                                        debug!("Sending providers for {:?}", key);
-                                        chan.send(Ok(providers.clone())).ok();
-                                    }
-                                } else {
-                                    debug!("No listeners");
+                if let KademliaEvent::OutboundQueryCompleted { result, .. } = e {
+                    debug!("kad: {:?}", result);
+                    match result {
+                        QueryResult::GetProviders(Ok(GetProvidersOk {
+                            providers, key, ..
+                        })) => {
+                            if let Some(QueryChannel::GetProviders(chans)) =
+                                self.kad_queries.remove(&QueryKey::ProviderKey(key.clone()))
+                            {
+                                for chan in chans.into_iter() {
+                                    debug!("Sending providers for {:?}", key);
+                                    chan.send(Ok(providers.clone())).ok();
                                 }
-                            }
-                            QueryResult::GetProviders(Err(err)) => {
-                                let (key, providers) = match err {
-                                    GetProvidersError::Timeout { key, providers, .. } => {
-                                        (key, providers)
-                                    }
-                                };
-                                debug!("GetProviders timeout {:?}", key);
-                                if let Some(QueryChannel::GetProviders(chans)) =
-                                    self.kad_queries.remove(&QueryKey::ProviderKey(key.clone()))
-                                {
-                                    for chan in chans.into_iter() {
-                                        debug!("Sending providers for {:?}", key);
-                                        chan.send(Ok(providers.clone())).ok();
-                                    }
-                                }
-                            }
-                            other => {
-                                debug!("Libp2p => Unhandled Kademlia query result: {:?}", other)
+                            } else {
+                                debug!("No listeners");
                             }
                         }
+                        QueryResult::GetProviders(Err(err)) => {
+                            let (key, providers) = match err {
+                                GetProvidersError::Timeout { key, providers, .. } => {
+                                    (key, providers)
+                                }
+                            };
+                            debug!("GetProviders timeout {:?}", key);
+                            if let Some(QueryChannel::GetProviders(chans)) =
+                                self.kad_queries.remove(&QueryKey::ProviderKey(key.clone()))
+                            {
+                                for chan in chans.into_iter() {
+                                    debug!("Sending providers for {:?}", key);
+                                    chan.send(Ok(providers.clone())).ok();
+                                }
+                            }
+                        }
+                        other => {
+                            debug!("Libp2p => Unhandled Kademlia query result: {:?}", other)
+                        }
                     }
-                    _ => {}
                 }
             }
             Event::Identify(e) => {
