@@ -18,15 +18,38 @@ use tracing::{debug, instrument, warn};
 
 use crate::message::{BitswapMessage, Priority};
 use crate::protocol::{BitswapProtocol, Upgrade};
-use crate::query::QueryManager;
+use crate::query::{QueryId, QueryManager};
 use crate::session::{Config as SessionConfig, SessionManager};
 use crate::Metrics;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum BitswapEvent {
-    ReceivedBlock(PeerId, Cid, Bytes),
-    ReceivedWant(PeerId, Cid, Priority),
-    ReceivedCancel(PeerId, Cid),
+    OutboundQueryCompleted { id: QueryId, result: QueryResult },
+    InboundRequest { request: InboundRequest },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[allow(clippy::large_enum_variant)]
+pub enum QueryResult {
+    Want {
+        sender: PeerId,
+        cid: Cid,
+        data: Bytes,
+    },
+    Cancel,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum InboundRequest {
+    Want {
+        sender: PeerId,
+        cid: Cid,
+        priority: Priority,
+    },
+    Cancel {
+        sender: PeerId,
+        cid: Cid,
+    },
 }
 
 pub type BitswapHandler = OneShotHandler<BitswapProtocol, BitswapMessage, HandlerEvent>;
@@ -62,7 +85,12 @@ impl Bitswap {
 
     /// Request the given block from the list of providers.
     #[instrument(skip(self))]
-    pub fn want_block<'a>(&mut self, cid: Cid, priority: Priority, providers: HashSet<PeerId>) {
+    pub fn want_block<'a>(
+        &mut self,
+        cid: Cid,
+        priority: Priority,
+        providers: HashSet<PeerId>,
+    ) -> QueryId {
         debug!("want_block: {}", cid);
         for provider in providers.iter() {
             self.sessions.create_session(provider);
@@ -70,25 +98,25 @@ impl Bitswap {
 
         self.metrics.providers_total.inc_by(providers.len() as u64);
         self.queries
-            .get(cid, priority, providers.into_iter().collect());
+            .get(cid, priority, providers.into_iter().collect())
     }
 
     #[instrument(skip(self))]
-    pub fn send_block(&mut self, peer_id: &PeerId, cid: Cid, data: Bytes) {
+    pub fn send_block(&mut self, peer_id: &PeerId, cid: Cid, data: Bytes) -> QueryId {
         debug!("send_block: {}", cid);
 
         self.metrics.sent_block_bytes.inc_by(data.len() as u64);
         self.sessions.create_session(peer_id);
-        self.queries.send(*peer_id, cid, data);
+        self.queries.send(*peer_id, cid, data)
     }
 
     /// Removes the block from our want list and updates all peers.
     ///
     /// Can be either a user request or be called when the block was received.
     #[instrument(skip(self))]
-    pub fn cancel_block(&mut self, cid: &Cid) {
+    pub fn cancel_block(&mut self, cid: &Cid) -> Option<QueryId> {
         debug!("cancel_block: {}", cid);
-        self.queries.cancel(cid);
+        self.queries.cancel(cid)
     }
 }
 
@@ -166,11 +194,18 @@ impl NetworkBehaviour for Bitswap {
                         .received_block_bytes
                         .inc_by(block.data().len() as u64);
 
-                    let (unused_providers, wanted_block) =
-                        self.queries.process_block(&peer_id, &block);
+                    let (unused_providers, query_id) = self.queries.process_block(&peer_id, &block);
 
-                    if wanted_block {
-                        let event = BitswapEvent::ReceivedBlock(peer_id, block.cid, block.data);
+                    if let Some(query_id) = query_id {
+                        let event = BitswapEvent::OutboundQueryCompleted {
+                            id: query_id,
+                            result: QueryResult::Want {
+                                sender: peer_id,
+                                cid: block.cid,
+                                data: block.data,
+                            },
+                        };
+
                         self.events
                             .push_back(NetworkBehaviourAction::GenerateEvent(event));
                     }
@@ -181,7 +216,13 @@ impl NetworkBehaviour for Bitswap {
 
                 // Propagate Want Events
                 for (cid, priority) in message.wantlist().blocks() {
-                    let event = BitswapEvent::ReceivedWant(peer_id, *cid, priority);
+                    let event = BitswapEvent::InboundRequest {
+                        request: InboundRequest::Want {
+                            sender: peer_id,
+                            cid: *cid,
+                            priority,
+                        },
+                    };
                     self.events
                         .push_back(NetworkBehaviourAction::GenerateEvent(event));
                 }
@@ -191,8 +232,13 @@ impl NetworkBehaviour for Bitswap {
                 // Propagate Cancel Events
                 for cid in message.wantlist().cancels() {
                     self.metrics.canceled_total.inc();
+                    let event = BitswapEvent::InboundRequest {
+                        request: InboundRequest::Cancel {
+                            sender: peer_id,
+                            cid: *cid,
+                        },
+                    };
 
-                    let event = BitswapEvent::ReceivedCancel(peer_id, *cid);
                     self.events
                         .push_back(NetworkBehaviourAction::GenerateEvent(event));
                 }
@@ -304,13 +350,13 @@ mod tests {
 
             loop {
                 match swarm1.next().await {
-                    Some(SwarmEvent::Behaviour(BitswapEvent::ReceivedWant(peer_id, cid, _))) => {
+                    Some(SwarmEvent::Behaviour(BitswapEvent::InboundRequest {
+                        request: InboundRequest::Want { sender, cid, .. },
+                    })) => {
                         if cid == cid_orig {
-                            swarm1.behaviour_mut().send_block(
-                                &peer_id,
-                                cid_orig,
-                                data_orig.clone(),
-                            );
+                            swarm1
+                                .behaviour_mut()
+                                .send_block(&sender, cid_orig, data_orig.clone());
                         }
                     }
                     ev => trace!("peer1: {:?}", ev),
@@ -320,14 +366,21 @@ mod tests {
 
         let peer2 = async move {
             Swarm::dial(&mut swarm2, rx.next().await.unwrap()).unwrap();
-            swarm2
-                .behaviour_mut()
-                .want_block(cid, 1000, [peer1_id].into_iter().collect());
-
+            let orig_id =
+                swarm2
+                    .behaviour_mut()
+                    .want_block(cid, 1000, [peer1_id].into_iter().collect());
+            let orig_cid = cid;
             loop {
                 match swarm2.next().await {
-                    Some(SwarmEvent::Behaviour(BitswapEvent::ReceivedBlock(_, _, data))) => {
-                        return data
+                    Some(SwarmEvent::Behaviour(BitswapEvent::OutboundQueryCompleted {
+                        id,
+                        result: QueryResult::Want { sender, cid, data },
+                    })) => {
+                        assert_eq!(orig_id, id);
+                        assert_eq!(sender, peer1_id);
+                        assert_eq!(orig_cid, cid);
+                        return data;
                     }
                     ev => trace!("peer2: {:?}", ev),
                 }

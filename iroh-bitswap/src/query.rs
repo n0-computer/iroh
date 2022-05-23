@@ -1,4 +1,4 @@
-use ahash::AHashSet;
+use ahash::{AHashMap, AHashSet};
 use bytes::Bytes;
 use cid::Cid;
 use libp2p::PeerId;
@@ -6,14 +6,21 @@ use tracing::{error, trace};
 
 use crate::{BitswapMessage, Block, Priority};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct QueryId(usize);
+
 #[derive(Default, Debug)]
 pub struct QueryManager {
-    queries: Vec<Query>,
+    queries: AHashMap<QueryId, Query>,
+    next_id: usize,
 }
 
 impl QueryManager {
-    fn new_query(&mut self, query: Query) {
-        self.queries.push(query);
+    fn new_query(&mut self, query: Query) -> QueryId {
+        let id = QueryId(self.next_id);
+        self.next_id += 1;
+        self.queries.insert(id, query);
+        id
     }
 
     pub fn is_empty(&self) -> bool {
@@ -24,26 +31,26 @@ impl QueryManager {
         self.queries.len()
     }
 
-    pub fn get(&mut self, cid: Cid, priority: Priority, providers: AHashSet<PeerId>) {
+    pub fn get(&mut self, cid: Cid, priority: Priority, providers: AHashSet<PeerId>) -> QueryId {
         self.new_query(Query::Get {
             providers,
             cid,
             priority,
             state: State::New,
-        });
+        })
     }
 
-    pub fn send(&mut self, receiver: PeerId, cid: Cid, data: Bytes) {
+    pub fn send(&mut self, receiver: PeerId, cid: Cid, data: Bytes) -> QueryId {
         self.new_query(Query::Send {
             receiver,
             block: Block { cid, data },
             state: State::New,
-        });
+        })
     }
 
-    pub fn cancel(&mut self, cid: &Cid) {
-        let mut cancels = Vec::new();
-        self.queries.retain(|query| match query {
+    pub fn cancel(&mut self, cid: &Cid) -> Option<QueryId> {
+        let mut cancel = None;
+        self.queries.retain(|_, query| match query {
             Query::Get {
                 providers: _,
                 cid: c,
@@ -54,7 +61,7 @@ impl QueryManager {
                 if to_remove {
                     if let State::Sent(providers) = state {
                         // send out cancels to the providers
-                        cancels.push((providers.clone(), *cid));
+                        cancel = Some((providers.clone(), *cid));
                     }
                 }
                 !to_remove
@@ -63,21 +70,25 @@ impl QueryManager {
             Query::Send { .. } => true,
         });
 
-        for (providers, cid) in cancels.into_iter() {
+        cancel.map(|(providers, cid)| {
             self.new_query(Query::Cancel {
                 providers,
                 cid,
                 state: State::New,
-            });
-        }
+            })
+        })
     }
 
-    pub fn process_block(&mut self, sender: &PeerId, block: &Block) -> (Vec<PeerId>, bool) {
+    pub fn process_block(
+        &mut self,
+        sender: &PeerId,
+        block: &Block,
+    ) -> (Vec<PeerId>, Option<QueryId>) {
         let mut cancels = Vec::new();
         let mut unused_providers = Vec::new();
-        let mut wanted_block = false;
+        let mut query_id = None;
 
-        self.queries.retain(|query| {
+        self.queries.retain(|id, query| {
             match query {
                 Query::Get {
                     providers,
@@ -86,8 +97,8 @@ impl QueryManager {
                     state,
                 } => {
                     if &block.cid == cid {
-                        wanted_block = true;
-                        for provider in providers {
+                        query_id = Some(*id);
+                        for provider in providers.iter() {
                             unused_providers.push(*provider);
                         }
 
@@ -117,7 +128,7 @@ impl QueryManager {
             });
         }
 
-        (unused_providers, wanted_block)
+        (unused_providers, query_id)
     }
 
     pub fn poll(&mut self, peer_id: &PeerId) -> Option<BitswapMessage> {
@@ -130,7 +141,9 @@ impl QueryManager {
 
         trace!("connected {}, looking for queries: {}", peer_id, self.len());
         let mut num_queries = 0;
-        for query in self.queries.iter_mut().filter(|query| match query {
+        let mut finished_queries = Vec::new();
+
+        for (query_id, query) in self.queries.iter_mut().filter(|(_, query)| match query {
             Query::Get { providers, .. } | Query::Cancel { providers, .. } => {
                 providers.contains(peer_id)
             }
@@ -174,6 +187,9 @@ impl QueryManager {
                         }
                         State::Sent(sent_providers) => {
                             sent_providers.insert(*peer_id);
+                            if providers.is_empty() {
+                                finished_queries.push(*query_id);
+                            }
                         }
                     }
                 }
@@ -189,9 +205,15 @@ impl QueryManager {
                     State::Sent(_) => {
                         // nothing to do anymore
                         num_queries -= 1;
+                        finished_queries.push(*query_id);
                     }
                 },
             }
+        }
+
+        // remove finished queries
+        for id in finished_queries {
+            self.queries.remove(&id);
         }
 
         if num_queries > 0 {
