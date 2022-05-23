@@ -53,7 +53,7 @@ impl Client {
         let n = res.len() as u64;
         state
             .metrics
-            .bitrate_out
+            .bytes_per_sec_out
             .set(n / start_time.elapsed().as_secs());
         state.metrics.bytes_streamed.inc_by(n);
         Ok(res.into())
