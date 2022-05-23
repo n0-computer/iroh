@@ -1,11 +1,10 @@
 use std::net::SocketAddr;
 
+use iroh_rpc_client::RpcClientConfig;
 use libp2p::Multiaddr;
-use serde::Deserialize;
 
 /// Libp2p config for the node.
-#[derive(Debug, Deserialize)]
-#[serde(default)]
+#[derive(Debug)]
 pub struct Libp2pConfig {
     /// Local address.
     pub listening_multiaddr: Multiaddr,
@@ -19,6 +18,7 @@ pub struct Libp2pConfig {
     pub target_peer_count: u32,
     /// Rpc listening addr
     pub rpc_addr: SocketAddr,
+    pub rpc_client: RpcClientConfig,
 }
 
 // Based on https://github.com/ipfs/go-ipfs-config/blob/master/bootstrap_peers.go#L17.
@@ -47,6 +47,7 @@ impl Default for Libp2pConfig {
             kademlia: true,
             target_peer_count: 75,
             rpc_addr: "0.0.0.0:4401".parse().unwrap(),
+            rpc_client: RpcClientConfig::default(),
         }
     }
 }

@@ -3,11 +3,12 @@ use std::num::NonZeroU8;
 use std::time::Duration;
 
 use ahash::AHashMap;
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use async_channel::{bounded as channel, Receiver};
 use cid::Cid;
 use futures::channel::oneshot::{self, Sender as OneShotSender};
 use futures_util::stream::StreamExt;
+use iroh_rpc_client::Client as RpcClient;
 use libp2p::core::muxing::StreamMuxerBox;
 use libp2p::core::transport::Boxed;
 use libp2p::core::Multiaddr;
@@ -57,6 +58,7 @@ pub struct Libp2pService {
     bitswap_queries: AHashMap<BitswapQueryId, OneShotSender<Result<Block, QueryError>>>,
     kad_queries: AHashMap<QueryKey, QueryChannel>,
     metrics: Metrics,
+    rpc_client: RpcClient,
 }
 
 enum QueryChannel {
@@ -106,12 +108,17 @@ impl Libp2pService {
             rpc::new(config.rpc_addr, network_sender_in).await.unwrap()
         });
 
+        let rpc_client = RpcClient::new(&config.rpc_client)
+            .await
+            .context("failed to create rpc client")?;
+
         Ok(Libp2pService {
             swarm,
             net_receiver_in: network_receiver_in,
             bitswap_queries: Default::default(),
             kad_queries: Default::default(),
             metrics,
+            rpc_client,
         })
     }
 
@@ -161,10 +168,20 @@ impl Libp2pService {
             Event::Bitswap(e) => {
                 match e {
                     BitswapEvent::InboundRequest { request } => match request {
-                        InboundRequest::Want { cid, .. } => {
-                            // TODO: try to load data from the storage node
-                            // rpc_client.call("storage", "get", cid)
-                            trace!("Don't have data for: {}", cid);
+                        InboundRequest::Want { cid, sender, .. } => {
+                            if let Ok(Some(data)) = self.rpc_client.store.get(cid).await {
+                                trace!("Found data for: {}", cid);
+                                if let Err(e) =
+                                    self.swarm.behaviour_mut().send_block(&sender, cid, data)
+                                {
+                                    warn!(
+                                        "failed to send block for {} to {}: {:?}",
+                                        cid, sender, e
+                                    );
+                                }
+                            } else {
+                                trace!("Don't have data for: {}", cid);
+                            }
                         }
                         InboundRequest::Cancel { .. } => {
                             // nothing to do atm
