@@ -34,12 +34,29 @@ impl QueryManager {
         self.queries.is_empty()
     }
 
-    pub fn len(&self) -> usize {
-        self.queries.len()
+    fn cancel_len(&self) -> usize {
+        self.queries
+            .values()
+            .filter(|q| matches!(q, Query::Cancel { .. }))
+            .count()
     }
 
-    pub fn get(&mut self, cid: Cid, priority: Priority, providers: AHashSet<PeerId>) -> QueryId {
-        self.new_query(Query::Get {
+    fn want_len(&self) -> usize {
+        self.queries
+            .values()
+            .filter(|q| matches!(q, Query::Want { .. }))
+            .count()
+    }
+
+    fn send_len(&self) -> usize {
+        self.queries
+            .values()
+            .filter(|q| matches!(q, Query::Send { .. }))
+            .count()
+    }
+
+    pub fn want(&mut self, cid: Cid, priority: Priority, providers: AHashSet<PeerId>) -> QueryId {
+        self.new_query(Query::Want {
             providers,
             cid,
             priority,
@@ -58,7 +75,7 @@ impl QueryManager {
     pub fn cancel(&mut self, cid: &Cid) -> Option<QueryId> {
         let mut cancel = None;
         self.queries.retain(|_, query| match query {
-            Query::Get {
+            Query::Want {
                 providers: _,
                 cid: c,
                 priority: _,
@@ -97,7 +114,7 @@ impl QueryManager {
 
         self.queries.retain(|id, query| {
             match query {
-                Query::Get {
+                Query::Want {
                     providers,
                     cid,
                     priority: _,
@@ -143,26 +160,10 @@ impl QueryManager {
         for (_, query) in self
             .queries
             .iter_mut()
-            .filter(move |(_, query)| match query {
-                Query::Get {
-                    providers, state, ..
-                }
-                | Query::Cancel {
-                    providers, state, ..
-                } => {
-                    if providers.contains(peer_id) {
-                        return true;
-                    }
-                    if let State::Sent(p) = state {
-                        return p.contains(peer_id);
-                    }
-                    false
-                }
-                Query::Send { receiver, .. } => receiver == peer_id,
-            })
+            .filter(|(_, query)| query.contains_provider(peer_id))
         {
             match query {
-                Query::Get { state, .. } => {
+                Query::Want { state, .. } => {
                     if let State::Sent(used_providers) = state {
                         used_providers.remove(peer_id);
                     }
@@ -181,25 +182,11 @@ impl QueryManager {
         }
     }
 
-    fn queries_for_peer(
-        &mut self,
-        peer_id: PeerId,
-    ) -> impl Iterator<Item = (&QueryId, &mut Query)> {
-        self.queries
-            .iter_mut()
-            .filter(move |(_, query)| match query {
-                Query::Get { providers, .. } | Query::Cancel { providers, .. } => {
-                    providers.contains(&peer_id)
-                }
-                Query::Send { receiver, .. } => receiver == &peer_id,
-            })
-    }
-
     fn next_finished_query(&mut self) -> Option<(QueryId, Query)> {
         let mut next_query = None;
         for (query_id, query) in &self.queries {
             match query {
-                Query::Get {
+                Query::Want {
                     providers, state, ..
                 } => {
                     if providers.is_empty() {
@@ -243,35 +230,21 @@ impl QueryManager {
     }
 
     pub fn poll_all(&mut self) -> Option<NetworkBehaviourAction<BitswapEvent, BitswapHandler>> {
-        // cleanups
-        match self.next_finished_query() {
-            Some((id, Query::Send { .. })) => {
-                return Some(NetworkBehaviourAction::GenerateEvent(
-                    BitswapEvent::OutboundQueryCompleted {
-                        id,
-                        result: QueryResult::Send(SendResult::Err(QueryError::Timeout)),
-                    },
-                ))
-            }
-            Some((id, Query::Get { .. })) => {
-                return Some(NetworkBehaviourAction::GenerateEvent(
-                    BitswapEvent::OutboundQueryCompleted {
-                        id,
-                        result: QueryResult::Want(WantResult::Err(QueryError::Timeout)),
-                    },
-                ))
-            }
-            Some((id, Query::Cancel { .. })) => {
-                return Some(NetworkBehaviourAction::GenerateEvent(
-                    BitswapEvent::OutboundQueryCompleted {
-                        id,
-                        result: QueryResult::Cancel(CancelResult::Err(QueryError::Timeout)),
-                    },
-                ))
-            }
-            None => {}
-        }
-        None
+        self.next_finished_query()
+            .map(|(id, query)| match query {
+                Query::Send { .. } => (id, QueryResult::Send(SendResult::Err(QueryError::Timeout))),
+                Query::Want { .. } => (id, QueryResult::Want(WantResult::Err(QueryError::Timeout))),
+                Query::Cancel { .. } => (
+                    id,
+                    QueryResult::Cancel(CancelResult::Err(QueryError::Timeout)),
+                ),
+            })
+            .map(|(id, result)| {
+                NetworkBehaviourAction::GenerateEvent(BitswapEvent::OutboundQueryCompleted {
+                    id,
+                    result,
+                })
+            })
     }
 
     pub fn poll_peer(
@@ -285,14 +258,24 @@ impl QueryManager {
         // Aggregate all queries for this peer
         let mut msg = BitswapMessage::default();
 
-        trace!("connected {}, looking for queries: {}", peer_id, self.len());
+        trace!(
+            "connected {}, looking for queries: {}want, {}cancel, {}send",
+            peer_id,
+            self.want_len(),
+            self.cancel_len(),
+            self.send_len()
+        );
         let mut num_queries = 0;
         let mut finished_queries = Vec::new();
 
-        for (query_id, query) in self.queries_for_peer(*peer_id) {
+        for (query_id, query) in self
+            .queries
+            .iter_mut()
+            .filter(|(_, query)| query.contains_unused_provider(peer_id))
+        {
             num_queries += 1;
             match query {
-                Query::Get {
+                Query::Want {
                     providers,
                     cid,
                     priority,
@@ -373,7 +356,7 @@ impl QueryManager {
 #[derive(Debug)]
 enum Query {
     /// Fetch a single CID.
-    Get {
+    Want {
         providers: AHashSet<PeerId>,
         cid: Cid,
         priority: Priority,
@@ -391,6 +374,47 @@ enum Query {
         block: Block,
         state: State,
     },
+}
+
+impl Query {
+    fn contains_unused_provider(&self, peer_id: &PeerId) -> bool {
+        match self {
+            Query::Want { providers, .. } | Query::Cancel { providers, .. } => {
+                providers.contains(peer_id)
+            }
+            Query::Send { receiver, .. } => receiver == peer_id,
+        }
+    }
+
+    fn contains_provider(&self, peer_id: &PeerId) -> bool {
+        match self {
+            Query::Want {
+                providers, state, ..
+            }
+            | Query::Cancel {
+                providers, state, ..
+            } => {
+                if providers.contains(peer_id) {
+                    return true;
+                }
+                if let State::Sent(p) = state {
+                    return p.contains(peer_id);
+                }
+                false
+            }
+            Query::Send {
+                receiver, state, ..
+            } => {
+                if receiver == peer_id {
+                    return true;
+                }
+                if let State::Sent(p) = state {
+                    return p.contains(peer_id);
+                }
+                false
+            }
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -418,7 +442,7 @@ mod tests {
         assert!(queries.poll_peer(&provider_id_1).is_none());
 
         let Block { cid, data } = create_block(&b"hello world"[..]);
-        let query_id = queries.get(
+        let query_id = queries.want(
             cid,
             100,
             [provider_id_1, provider_id_2].into_iter().collect(),
@@ -454,7 +478,7 @@ mod tests {
         assert!(queries.poll_peer(&provider_id_1).is_none());
 
         let Block { cid, data: _ } = create_block(&b"hello world"[..]);
-        let query_id = queries.get(
+        let query_id = queries.want(
             cid,
             100,
             [provider_id_1, provider_id_2].into_iter().collect(),

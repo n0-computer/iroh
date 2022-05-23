@@ -1,4 +1,7 @@
-use std::num::NonZeroU8;
+use std::{
+    num::NonZeroU8,
+    time::{Duration, Instant},
+};
 
 use ahash::AHashMap;
 use libp2p::{
@@ -8,7 +11,7 @@ use libp2p::{
     },
     PeerId,
 };
-use tracing::trace;
+use tracing::{debug, trace};
 
 use crate::{behaviour::BitswapHandler, query::QueryManager, BitswapEvent};
 
@@ -24,6 +27,8 @@ pub struct Config {
     pub dial_concurrency_factor_providers: NonZeroU8,
     /// Limit of how many dials are done per provider peer.
     pub dial_concurrency_factor_peer: NonZeroU8,
+    /// Maximum delay for a dial
+    pub dial_timeout: Duration,
 }
 
 impl Default for Config {
@@ -31,6 +36,7 @@ impl Default for Config {
         Self {
             dial_concurrency_factor_providers: 32.try_into().unwrap(),
             dial_concurrency_factor_peer: 32.try_into().unwrap(),
+            dial_timeout: Duration::from_secs(1),
         }
     }
 }
@@ -56,7 +62,7 @@ impl SessionManager {
         });
 
         match session.state {
-            State::Dialing | State::New => {
+            State::Dialing(_) | State::New => {
                 session.state = State::Connected;
             }
             _ => {}
@@ -78,17 +84,13 @@ impl SessionManager {
     pub fn current_dials(&self) -> usize {
         self.sessions
             .values()
-            .filter(|s| matches!(s.state, State::Dialing))
+            .filter(|s| matches!(s.state, State::Dialing(_)))
             .count()
     }
 
     pub fn destroy_session(&mut self, peer_id: &PeerId) {
         if let Some(session) = self.sessions.get_mut(peer_id) {
-            match session.state {
-                State::Connected | State::New | State::Dialing => {
-                    session.query_count -= 1;
-                }
-            }
+            session.query_count -= 1;
         }
     }
 
@@ -96,6 +98,10 @@ impl SessionManager {
         &mut self,
         queries: &mut QueryManager,
     ) -> Option<NetworkBehaviourAction<BitswapEvent, BitswapHandler>> {
+        // cleanup disconnects
+        self.sessions
+            .retain(|_, s| !matches!(s.state, State::Disconnected));
+
         // limit parallel dials
         let skip_dialing =
             self.current_dials() >= self.config.dial_concurrency_factor_providers.get() as _;
@@ -113,7 +119,8 @@ impl SessionManager {
                     }
                     trace!("Dialing {}", peer_id);
                     let handler = Default::default();
-                    session.state = State::Dialing;
+                    session.state = State::Dialing(Instant::now());
+
                     return Some(NetworkBehaviourAction::Dial {
                         opts: DialOpts::peer_id(*peer_id)
                             .condition(PeerCondition::Always)
@@ -124,14 +131,20 @@ impl SessionManager {
                         handler,
                     });
                 }
-                State::Dialing => {
-                    // Nothing to do yet
+                State::Dialing(start) => {
+                    // check for dial timeouts
+                    if start.elapsed() >= self.config.dial_timeout {
+                        debug!("dialing {}: timed out", peer_id);
+                        queries.disconnected(peer_id);
+                        session.state = State::Disconnected;
+                    }
                 }
                 State::Connected => {
                     if let Some(event) = queries.poll_peer(peer_id) {
                         return Some(event);
                     }
                 }
+                State::Disconnected => {}
             }
         }
 
@@ -144,8 +157,8 @@ enum State {
     /// Requested in a query, but not connected.
     New,
     /// Currently Dialing
-    Dialing,
+    Dialing(Instant),
     /// Connected
     Connected,
-    // Disconnected will be removed from the list
+    Disconnected,
 }

@@ -124,7 +124,7 @@ impl Bitswap {
 
         self.metrics.providers_total.inc_by(providers.len() as u64);
         self.queries
-            .get(cid, priority, providers.into_iter().collect())
+            .want(cid, priority, providers.into_iter().collect())
     }
 
     #[instrument(skip(self))]
@@ -283,7 +283,7 @@ impl NetworkBehaviour for Bitswap {
             return Poll::Ready(event);
         }
 
-        // process sessions
+        // process sessions & queries
         if let Some(action) = self.sessions.poll(&mut self.queries) {
             return Poll::Ready(action);
         }
