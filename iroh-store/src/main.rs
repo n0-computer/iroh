@@ -1,10 +1,10 @@
 use std::path::PathBuf;
 
 use clap::Parser;
-use iroh_store::{rpc, Config, Store};
+use iroh_store::{metrics, rpc, Config, Store};
 use iroh_util::block_until_sigint;
+use prometheus_client::registry::Registry;
 use tracing::info;
-use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
 #[derive(Parser, Debug)]
 #[clap(author, version, about)]
@@ -16,10 +16,12 @@ struct Args {
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::registry()
-        .with(fmt::layer().pretty())
-        .with(EnvFilter::from_default_env())
-        .init();
+    let mut prom_registry = Registry::default();
+    let store_metrics = metrics::Metrics::new(&mut prom_registry);
+    let metrics_handle =
+        iroh_metrics::init_with_registry(metrics::metrics_config(false), prom_registry)
+            .await
+            .expect("failed to initialize metrics");
 
     let version = env!("CARGO_PKG_VERSION");
     println!("Starting iroh-store, version {version}");
@@ -30,16 +32,17 @@ async fn main() -> anyhow::Result<()> {
 
     let store = if config.path.exists() {
         info!("Opening store at {}", config.path.display());
-        Store::open(config).await?
+        Store::open(config, store_metrics).await?
     } else {
         info!("Creating store at {}", config.path.display());
-        Store::create(config).await?
+        Store::create(config, store_metrics).await?
     };
 
     let rpc_task = tokio::spawn(async move { rpc::new(rpc_addr, store).await.unwrap() });
 
     block_until_sigint().await;
     rpc_task.abort();
+    metrics_handle.shutdown();
 
     Ok(())
 }
