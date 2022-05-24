@@ -92,11 +92,13 @@ impl UpgradeInfo for BitswapMessage {
     }
 }
 
+pub struct Upgrade;
+
 impl<TSocket> OutboundUpgrade<TSocket> for BitswapMessage
 where
     TSocket: AsyncRead + AsyncWrite + Send + Unpin + 'static,
 {
-    type Output = ();
+    type Output = Upgrade;
     type Error = io::Error;
     #[allow(clippy::type_complexity)]
     type Future = Pin<Box<dyn Future<Output = Result<Self::Output, Self::Error>> + Send>>;
@@ -110,7 +112,8 @@ where
             upgrade::write_length_prefixed(&mut socket, bytes).await?;
             trace!("upgrade_outbound_done {}", l);
             socket.close().await?;
-            Ok(())
+
+            Ok(Upgrade)
         })
     }
 }

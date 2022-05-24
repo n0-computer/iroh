@@ -3,11 +3,12 @@ use std::num::NonZeroU8;
 use std::time::Duration;
 
 use ahash::AHashMap;
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use async_channel::{bounded as channel, Receiver};
 use cid::Cid;
 use futures::channel::oneshot::{self, Sender as OneShotSender};
 use futures_util::stream::StreamExt;
+use iroh_rpc_client::Client as RpcClient;
 use libp2p::core::muxing::StreamMuxerBox;
 use libp2p::core::transport::Boxed;
 use libp2p::core::Multiaddr;
@@ -30,7 +31,10 @@ use prometheus_client::registry::Registry;
 use tokio::{select, time};
 use tracing::{debug, info, trace, warn};
 
-use iroh_bitswap::{BitswapEvent, Block};
+use iroh_bitswap::{
+    BitswapEvent, Block, InboundRequest, QueryError, QueryId as BitswapQueryId,
+    QueryResult as BitswapQueryResult, WantResult,
+};
 
 use crate::{
     behaviour::{Event, NodeBehaviour},
@@ -51,9 +55,10 @@ pub enum NetworkEvent {
 pub struct Libp2pService {
     swarm: Swarm<NodeBehaviour>,
     net_receiver_in: Receiver<RpcMessage>,
-    bitswap_response_channels: HashMap<Cid, Vec<OneShotSender<Block>>>,
+    bitswap_queries: AHashMap<BitswapQueryId, OneShotSender<Result<Block, QueryError>>>,
     kad_queries: AHashMap<QueryKey, QueryChannel>,
     metrics: Metrics,
+    rpc_client: RpcClient,
 }
 
 enum QueryChannel {
@@ -103,12 +108,17 @@ impl Libp2pService {
             rpc::new(config.rpc_addr, network_sender_in).await.unwrap()
         });
 
+        let rpc_client = RpcClient::new(&config.rpc_client)
+            .await
+            .context("failed to create rpc client")?;
+
         Ok(Libp2pService {
             swarm,
             net_receiver_in: network_receiver_in,
-            bitswap_response_channels: Default::default(),
+            bitswap_queries: Default::default(),
             kad_queries: Default::default(),
             metrics,
+            rpc_client,
         })
     }
 
@@ -155,27 +165,58 @@ impl Libp2pService {
 
     async fn handle_node_event(&mut self, event: Event) -> Result<()> {
         match event {
-            Event::Bitswap(BitswapEvent::ReceivedBlock(_peer_id, cid, block)) => {
-                info!("got block {}", cid);
-                // TODO: verify cid hash
-
-                let b = Block::new(block, cid);
-                if let Some(chans) = self.bitswap_response_channels.remove(&cid) {
-                    for chan in chans.into_iter() {
-                        // TODO: send cid and block
-                        if chan.send(b.clone()).is_err() {
-                            debug!("Bitswap response channel send failed");
+            Event::Bitswap(e) => {
+                match e {
+                    BitswapEvent::InboundRequest { request } => match request {
+                        InboundRequest::Want { cid, sender, .. } => {
+                            if let Ok(Some(data)) = self.rpc_client.store.get(cid).await {
+                                trace!("Found data for: {}", cid);
+                                if let Err(e) =
+                                    self.swarm.behaviour_mut().send_block(&sender, cid, data)
+                                {
+                                    warn!(
+                                        "failed to send block for {} to {}: {:?}",
+                                        cid, sender, e
+                                    );
+                                }
+                            } else {
+                                trace!("Don't have data for: {}", cid);
+                            }
                         }
-                        trace!("Saved Bitswap block with cid {:?}", cid);
-                    }
-                } else {
-                    debug!("Received Bitswap response, but response channel cannot be found");
+                        InboundRequest::Cancel { .. } => {
+                            // nothing to do atm
+                        }
+                    },
+                    BitswapEvent::OutboundQueryCompleted { id, result } => match result {
+                        BitswapQueryResult::Want(WantResult::Ok { sender, cid, data }) => {
+                            info!("got block {} from {}", cid, sender);
+                            // TODO: verify cid hash
+                            let b = Block::new(data, cid);
+                            if let Some(chan) = self.bitswap_queries.remove(&id) {
+                                // TODO: send cid and block
+                                if chan.send(Ok(b)).is_err() {
+                                    debug!("Bitswap response channel send failed");
+                                }
+                                trace!("Saved Bitswap block with cid {:?}", cid);
+                            } else {
+                                debug!("Received Bitswap response, but response channel cannot be found");
+                            }
+                        }
+                        BitswapQueryResult::Want(WantResult::Err(e)) => {
+                            if let Some(chan) = self.bitswap_queries.remove(&id) {
+                                if chan.send(Err(e)).is_err() {
+                                    debug!("Bitswap response channel send failed");
+                                }
+                            }
+                        }
+                        BitswapQueryResult::Send(_) => {
+                            // Nothing to do yet
+                        }
+                        BitswapQueryResult::Cancel(_) => {
+                            // Nothing to do yet
+                        }
+                    },
                 }
-            }
-            Event::Bitswap(BitswapEvent::ReceivedWant(_peer_id, cid, _prio)) => {
-                // TODO: try to load data from the storage node
-                // rpc_client.call("storage", "get", cid)
-                trace!("Don't have data for: {}", cid);
             }
             Event::Kademlia(e) => {
                 self.metrics.record(&e);
@@ -265,20 +306,14 @@ impl Libp2pService {
                 response_channels,
                 providers,
             } => {
-                for cid in &cids {
-                    self.swarm
-                        .behaviour_mut()
-                        .want_block(*cid, 1000, providers.clone()) // TODO: priority?
-                        .map_err(|err| anyhow!("Failed to send a bitswap want_block: {:?}", err))?;
-                }
-
                 for (cid, response_channel) in cids.into_iter().zip(response_channels.into_iter()) {
-                    if let Some(chans) = self.bitswap_response_channels.get_mut(&cid) {
-                        chans.push(response_channel);
-                    } else {
-                        self.bitswap_response_channels
-                            .insert(cid, vec![response_channel]);
-                    }
+                    let query_id = self
+                        .swarm
+                        .behaviour_mut()
+                        .want_block(cid, 1000, providers.clone()) // TODO: priority?
+                        .map_err(|err| anyhow!("Failed to send a bitswap want_block: {:?}", err))?;
+
+                    self.bitswap_queries.insert(query_id, response_channel);
                 }
             }
             RpcMessage::ProviderRequest {

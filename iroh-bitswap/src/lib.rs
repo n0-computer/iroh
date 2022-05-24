@@ -10,9 +10,13 @@ mod protocol;
 mod query;
 mod session;
 
-pub use crate::behaviour::{Bitswap, BitswapConfig, BitswapEvent};
+pub use crate::behaviour::{
+    Bitswap, BitswapConfig, BitswapEvent, CancelResult, InboundRequest, QueryError, QueryResult,
+    SendResult, WantResult,
+};
 pub use crate::block::tests::create_block as create_test_block;
 pub use crate::block::Block;
 pub use crate::error::BitswapError;
 pub use crate::message::{BitswapMessage, Priority};
 pub use crate::metrics::*;
+pub use crate::query::QueryId;

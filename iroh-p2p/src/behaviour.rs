@@ -6,7 +6,7 @@ use crate::config::Libp2pConfig;
 use anyhow::Result;
 use bytes::Bytes;
 use cid::Cid;
-use iroh_bitswap::{Bitswap, BitswapConfig, BitswapEvent, Priority};
+use iroh_bitswap::{Bitswap, BitswapConfig, BitswapEvent, Priority, QueryId};
 use libp2p::core::identity::Keypair;
 use libp2p::core::PeerId;
 use libp2p::identify::{Identify, IdentifyConfig, IdentifyEvent};
@@ -147,9 +147,9 @@ impl NodeBehaviour {
         cid: Cid,
         priority: Priority,
         providers: HashSet<PeerId>,
-    ) -> Result<(), Box<dyn Error>> {
-        self.bitswap.want_block(cid, priority, providers);
-        Ok(())
+    ) -> Result<QueryId, Box<dyn Error>> {
+        let id = self.bitswap.want_block(cid, priority, providers);
+        Ok(id)
     }
 
     pub fn add_address(&mut self, peer: &PeerId, addr: Multiaddr) {
