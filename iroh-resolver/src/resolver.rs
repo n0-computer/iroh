@@ -325,7 +325,7 @@ impl Resolver {
         }
 
         let providers = self.rpc.p2p.fetch_providers(&cid).await?;
-        let bytes = self.rpc.p2p.fetch_bitswap(cid, Some(providers)).await?;
+        let bytes = self.rpc.p2p.fetch_bitswap(cid, providers).await?;
 
         // TODO: is this the right place?
         // verify cid

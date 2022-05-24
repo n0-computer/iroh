@@ -26,20 +26,15 @@ impl P2pClient {
 
     // Fetches a block directly from the network.
     #[tracing::instrument(skip(self))]
-    pub async fn fetch_bitswap(
-        &self,
-        cid: Cid,
-        providers: Option<HashSet<PeerId>>,
-    ) -> Result<Bytes> {
+    pub async fn fetch_bitswap(&self, cid: Cid, providers: HashSet<PeerId>) -> Result<Bytes> {
         debug!("rpc p2p client fetch_bitswap: {:?}", cid);
-        let providers = providers.map(|p| {
-            let list = p.into_iter().map(|id| id.to_bytes()).collect::<Vec<_>>();
-            Providers { providers: list }
-        });
+        let providers = Providers {
+            providers: providers.into_iter().map(|id| id.to_bytes()).collect(),
+        };
 
         let req = iroh_metrics::req::trace_tonic_req(BitswapRequest {
             cid: cid.to_bytes(),
-            providers,
+            providers: Some(providers),
         });
         let res = self.0.clone().fetch_bitswap(req).await?;
         Ok(res.into_inner().data)

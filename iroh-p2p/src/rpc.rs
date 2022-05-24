@@ -40,40 +40,20 @@ impl p2p_server::P2p for P2p {
         trace!("received BitswapRequest: {:?}", cid);
         let providers = req
             .providers
-            .map(|providers| {
-                providers
-                    .providers
-                    .into_iter()
-                    .map(|p| {
-                        PeerId::from_bytes(&p).map_err(|e| {
-                            Status::invalid_argument(format!("invalid provider: {:?}", e))
-                        })
-                    })
-                    .collect::<Result<_, Status>>()
+            .ok_or_else(|| Status::invalid_argument("missing providers"))?;
+
+        let providers: HashSet<PeerId> = providers
+            .providers
+            .into_iter()
+            .map(|p| {
+                PeerId::from_bytes(&p)
+                    .map_err(|e| Status::invalid_argument(format!("invalid provider: {:?}", e)))
             })
-            .transpose()?;
+            .collect::<Result<_, Status>>()?;
 
-        let providers = match providers {
-            Some(p) => p,
-            None => {
-                trace!("looking for providers for {:?}", cid);
-                let (s, r) = oneshot::channel();
-                self.sender
-                    .send(RpcMessage::ProviderRequest {
-                        key: cid.to_bytes().into(),
-                        response_channel: s,
-                    })
-                    .await
-                    .unwrap();
-
-                let p = r
-                    .await
-                    .expect("sender dropped")
-                    .map_err(|e| Status::internal(format!("failed to get providers: {:?}", e)))?;
-                trace!("found providers: {:?}", providers);
-                p
-            }
-        };
+        if providers.is_empty() {
+            return Err(Status::invalid_argument("missing providers"));
+        }
 
         let (s, r) = oneshot::channel();
         let msg = RpcMessage::BitswapRequest {

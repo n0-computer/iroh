@@ -18,7 +18,7 @@ message Empty {}
 message BitswapRequest {
   // Serialized CID of the requested block.
   bytes cid = 1;
-  optional Providers providers = 2;
+  Providers providers = 2;
 }
 
 message BitswapResponse {
