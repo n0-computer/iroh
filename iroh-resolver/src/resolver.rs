@@ -2,6 +2,7 @@ use std::fmt::{self, Display, Formatter};
 use std::str::FromStr;
 
 use anyhow::{anyhow, bail, ensure, Context, Result};
+use async_trait::async_trait;
 use bytes::Bytes;
 use cid::multihash::{Code, MultihashDigest};
 use cid::Cid;
@@ -136,12 +137,94 @@ impl Out {
 
 #[derive(Debug)]
 pub struct Resolver {
-    rpc: Client,
+    loader: Box<dyn ContentLoader + 'static>,
+}
+
+#[async_trait]
+pub trait ContentLoader: Sync + Send + std::fmt::Debug {
+    /// Loads the actual content of a given cid.
+    async fn load_cid(&self, cid: &Cid) -> Result<Bytes>;
+}
+
+#[async_trait]
+impl ContentLoader for Client {
+    async fn load_cid(&self, cid: &Cid) -> Result<Bytes> {
+        trace!("loading cid");
+        // TODO: better strategy
+
+        let cid = *cid;
+        match self.store.get(cid).await {
+            Ok(Some(data)) => {
+                trace!("retrieved from store");
+                return Ok(data);
+            }
+            Ok(None) => {}
+            Err(err) => {
+                warn!("failed to fetch data from store {}: {:?}", cid, err);
+            }
+        }
+
+        let providers = self.p2p.fetch_providers(&cid).await?;
+        let bytes = self.p2p.fetch_bitswap(cid, providers).await?;
+
+        // TODO: is this the right place?
+        // verify cid
+        match Code::try_from(cid.hash().code()) {
+            Ok(code) => {
+                let bytes = bytes.clone();
+                tokio::task::spawn_blocking(move || {
+                    let calculated_hash = code.digest(&bytes);
+                    if &calculated_hash != cid.hash() {
+                        bail!(
+                            "invalid data returned {:?} != {:?}",
+                            calculated_hash,
+                            cid.hash()
+                        );
+                    }
+                    Ok(())
+                })
+                .await??;
+            }
+            Err(_) => {
+                warn!(
+                    "unable to verify hash, unknown hash function {} for {}",
+                    cid.hash().code(),
+                    cid
+                );
+            }
+        }
+
+        // trigger storage in the background
+        let cloned = bytes.clone();
+        let rpc = self.clone();
+        tokio::spawn(async move {
+            let clone2 = cloned.clone();
+            let links =
+                tokio::task::spawn_blocking(move || parse_links(&cid, &clone2).unwrap_or_default())
+                    .await
+                    .unwrap_or_default();
+
+            let len = cloned.len();
+            let links_len = links.len();
+            match rpc.store.put(cid, cloned, links).await {
+                Ok(_) => debug!("stored {} ({}bytes, {}links)", cid, len, links_len),
+                Err(err) => {
+                    warn!("failed to store {}: {:?}", cid, err);
+                }
+            }
+        });
+
+        trace!("retrieved from p2p");
+
+        Ok(bytes)
+    }
 }
 
 impl Resolver {
-    pub fn new(rpc: Client) -> Self {
-        Resolver { rpc }
+    pub fn new<T: ContentLoader + 'static>(loader: T) -> Self {
+        Resolver {
+            loader: Box::new(loader),
+        }
     }
 
     /// Resolves through a given path, returning the [`Cid`] and raw bytes of the final leaf.
@@ -306,77 +389,9 @@ impl Resolver {
         }
     }
 
-    /// Loads the actual content of a given cid.
     #[tracing::instrument(skip(self))]
     async fn load_cid(&self, cid: &Cid) -> Result<Bytes> {
-        trace!("loading cid");
-        // TODO: better strategy
-
-        let cid = *cid;
-        match self.rpc.store.get(cid).await {
-            Ok(Some(data)) => {
-                trace!("retrieved from store");
-                return Ok(data);
-            }
-            Ok(None) => {}
-            Err(err) => {
-                warn!("failed to fetch data from store {}: {:?}", cid, err);
-            }
-        }
-
-        let providers = self.rpc.p2p.fetch_providers(&cid).await?;
-        let bytes = self.rpc.p2p.fetch_bitswap(cid, providers).await?;
-
-        // TODO: is this the right place?
-        // verify cid
-        match Code::try_from(cid.hash().code()) {
-            Ok(code) => {
-                let bytes = bytes.clone();
-                tokio::task::spawn_blocking(move || {
-                    let calculated_hash = code.digest(&bytes);
-                    if &calculated_hash != cid.hash() {
-                        bail!(
-                            "invalid data returned {:?} != {:?}",
-                            calculated_hash,
-                            cid.hash()
-                        );
-                    }
-                    Ok(())
-                })
-                .await??;
-            }
-            Err(_) => {
-                warn!(
-                    "unable to verify hash, unknown hash function {} for {}",
-                    cid.hash().code(),
-                    cid
-                );
-            }
-        }
-
-        // trigger storage in the background
-        let cloned = bytes.clone();
-        let rpc = self.rpc.clone();
-        tokio::spawn(async move {
-            let clone2 = cloned.clone();
-            let links =
-                tokio::task::spawn_blocking(move || parse_links(&cid, &clone2).unwrap_or_default())
-                    .await
-                    .unwrap_or_default();
-
-            let len = cloned.len();
-            let links_len = links.len();
-            match rpc.store.put(cid, cloned, links).await {
-                Ok(_) => debug!("stored {} ({}bytes, {}links)", cid, len, links_len),
-                Err(err) => {
-                    warn!("failed to store {}: {:?}", cid, err);
-                }
-            }
-        });
-
-        trace!("retrieved from p2p");
-
-        Ok(bytes)
+        self.loader.load_cid(cid).await
     }
 
     /// Resolves a dnslink at the given domain.
@@ -405,11 +420,10 @@ fn parse_links(cid: &Cid, bytes: &[u8]) -> Result<Vec<Cid>> {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, HashMap};
 
     use super::*;
     use cid::multihash::{Code, MultihashDigest};
-    use iroh_rpc_client::RpcClientConfig;
     use libipld::{codec::Encode, Ipld, IpldCodec};
 
     #[test]
@@ -496,8 +510,8 @@ mod tests {
             let digest = Code::Blake3_256.digest(&bytes);
             let c = Cid::new_v1(codec.into(), digest);
 
-            let client = Client::new(&RpcClientConfig::default()).await.unwrap();
-            let resolver = Resolver::new(client);
+            let loader = HashMap::new();
+            let resolver = Resolver::new(loader);
 
             {
                 let new_ipld = resolver
@@ -520,5 +534,129 @@ mod tests {
                 assert_eq!(new_ipld, Ipld::Integer(1));
             }
         }
+    }
+
+    #[tokio::test]
+    async fn test_unixfs_basics() {
+        // Test content
+        // ------------
+        // QmaRGe7bVmVaLmxbrMiVNXqW4pRNNp3xq7hFtyRKA3mtJL foo/bar/bar.txt
+        //   contains: "world"
+        // QmZULkCELmmk5XNfCgTnCyFgAVxBRBXyDHGGMVoLFLiXEN foo/hello.txt
+        //   contains: "hello"
+        // QmcHTZfwWWYG2Gbv9wR6bWZBvAgpFV5BcDoLrC2XMCkggn foo/bar
+        // QmdkGfDx42RNdAZFALHn5hjHqUq7L9o6Ef4zLnFEu3Y4Go foo
+
+        let bar_txt_cid_str = "QmaRGe7bVmVaLmxbrMiVNXqW4pRNNp3xq7hFtyRKA3mtJL";
+        let bar_txt_block_bytes = load_fixture(bar_txt_cid_str).await;
+
+        let bar_cid_str = "QmcHTZfwWWYG2Gbv9wR6bWZBvAgpFV5BcDoLrC2XMCkggn";
+        let bar_block_bytes = load_fixture(bar_cid_str).await;
+
+        let hello_txt_cid_str = "QmZULkCELmmk5XNfCgTnCyFgAVxBRBXyDHGGMVoLFLiXEN";
+        let hello_txt_block_bytes = load_fixture(hello_txt_cid_str).await;
+
+        // read root
+        let root_cid_str = "QmdkGfDx42RNdAZFALHn5hjHqUq7L9o6Ef4zLnFEu3Y4Go";
+        let root_cid: Cid = root_cid_str.parse().unwrap();
+        let root_block_bytes = load_fixture(root_cid_str).await;
+        let root_block = UnixfsNode::decode(root_block_bytes.clone()).unwrap();
+
+        let links: Vec<_> = root_block.links().collect::<Result<_>>().unwrap();
+        assert_eq!(links.len(), 2);
+
+        assert_eq!(links[0].cid, bar_cid_str.parse().unwrap());
+        assert_eq!(links[0].name.unwrap(), "bar");
+
+        assert_eq!(links[1].cid, hello_txt_cid_str.parse().unwrap());
+        assert_eq!(links[1].name.unwrap(), "hello.txt");
+
+        let loader: HashMap<Cid, Bytes> = [
+            (root_cid, root_block_bytes.clone()),
+            (hello_txt_cid_str.parse().unwrap(), hello_txt_block_bytes),
+            (bar_cid_str.parse().unwrap(), bar_block_bytes),
+            (bar_txt_cid_str.parse().unwrap(), bar_txt_block_bytes),
+        ]
+        .into_iter()
+        .collect();
+        let resolver = Resolver::new(loader);
+
+        {
+            let ipld_foo = resolver
+                .resolve(root_cid_str.parse().unwrap())
+                .await
+                .unwrap();
+
+            if let Out::Unixfs(node) = ipld_foo {
+                assert_eq!(
+                    std::str::from_utf8(&node.pretty().unwrap()).unwrap(),
+                    "bar\nhello.txt\n"
+                );
+            } else {
+                panic!("invalid result: {:?}", ipld_foo);
+            }
+        }
+
+        {
+            let ipld_hello_txt = resolver
+                .resolve(format!("{root_cid_str}/hello.txt").parse().unwrap())
+                .await
+                .unwrap();
+
+            if let Out::Unixfs(node) = ipld_hello_txt {
+                assert_eq!(
+                    std::str::from_utf8(&node.pretty().unwrap()).unwrap(),
+                    "hello\n"
+                );
+            } else {
+                panic!("invalid result: {:?}", ipld_hello_txt);
+            }
+        }
+
+        {
+            let ipld_bar = resolver
+                .resolve(format!("{root_cid_str}/bar").parse().unwrap())
+                .await
+                .unwrap();
+
+            if let Out::Unixfs(node) = ipld_bar {
+                assert_eq!(
+                    std::str::from_utf8(&node.pretty().unwrap()).unwrap(),
+                    "bar.txt\n"
+                );
+            } else {
+                panic!("invalid result: {:?}", ipld_bar);
+            }
+        }
+
+        {
+            let ipld_bar_txt = resolver
+                .resolve(format!("{root_cid_str}/bar/bar.txt").parse().unwrap())
+                .await
+                .unwrap();
+
+            if let Out::Unixfs(node) = ipld_bar_txt {
+                assert_eq!(
+                    std::str::from_utf8(&node.pretty().unwrap()).unwrap(),
+                    "world\n"
+                );
+            } else {
+                panic!("invalid result: {:?}", ipld_bar_txt);
+            }
+        }
+    }
+
+    #[async_trait]
+    impl ContentLoader for HashMap<Cid, Bytes> {
+        async fn load_cid(&self, cid: &Cid) -> Result<Bytes> {
+            match self.get(cid) {
+                Some(b) => Ok(b.clone()),
+                None => bail!("not found"),
+            }
+        }
+    }
+
+    async fn load_fixture(p: &str) -> Bytes {
+        Bytes::from(tokio::fs::read(format!("./fixtures/{p}")).await.unwrap())
     }
 }
