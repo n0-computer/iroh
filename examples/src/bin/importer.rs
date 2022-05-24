@@ -1,6 +1,6 @@
 use std::{path::PathBuf, time::Instant};
 
-use anyhow::Result;
+use anyhow::{bail, Result};
 use bytes::Bytes;
 use clap::Parser;
 use futures::{stream::TryStreamExt, StreamExt};
@@ -48,9 +48,13 @@ async fn main() -> Result<()> {
     let pb_clone = pb.clone();
 
     let res: Vec<_> = stream
+        .map_err(anyhow::Error::from)
         .try_par_map_unordered(None, move |(cid, data)| {
             move || {
                 let data = Bytes::from(data);
+                if iroh_resolver::verify_hash(&cid, &data) == Some(false) {
+                    bail!("invalid hash {:?}", cid);
+                }
                 let links = iroh_resolver::parse_links(&cid, &data).unwrap_or_default();
                 Ok((cid, data, links))
             }

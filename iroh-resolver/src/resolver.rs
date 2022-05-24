@@ -169,23 +169,15 @@ impl ContentLoader for Client {
 
         // TODO: is this the right place?
         // verify cid
-        match Code::try_from(cid.hash().code()) {
-            Ok(code) => {
-                let bytes = bytes.clone();
-                tokio::task::spawn_blocking(move || {
-                    let calculated_hash = code.digest(&bytes);
-                    if &calculated_hash != cid.hash() {
-                        bail!(
-                            "invalid data returned {:?} != {:?}",
-                            calculated_hash,
-                            cid.hash()
-                        );
-                    }
-                    Ok(())
-                })
-                .await??;
+        let bytes_clone = bytes.clone();
+        match tokio::task::spawn_blocking(move || verify_hash(&cid, &bytes_clone)).await? {
+            Some(true) => {
+                // all good
             }
-            Err(_) => {
+            Some(false) => {
+                bail!("invalid hash {:?}", cid.hash());
+            }
+            None => {
                 warn!(
                     "unable to verify hash, unknown hash function {} for {}",
                     cid.hash().code(),
@@ -419,6 +411,14 @@ pub fn parse_links(cid: &Cid, bytes: &[u8]) -> Result<Vec<Cid>> {
     Ok(links)
 }
 
+/// Verifies that the provided bytes hash to the given multihash.
+pub fn verify_hash(cid: &Cid, bytes: &[u8]) -> Option<bool> {
+    Code::try_from(cid.hash().code()).ok().map(|code| {
+        let calculated_hash = code.digest(bytes);
+        &calculated_hash == cid.hash()
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::{BTreeMap, HashMap};
@@ -480,6 +480,20 @@ mod tests {
         );
 
         Ipld::Map(map)
+    }
+
+    #[test]
+    fn test_verify_hash() {
+        for codec in [IpldCodec::DagCbor, IpldCodec::DagJson] {
+            let ipld = make_ipld();
+
+            let mut bytes = Vec::new();
+            ipld.encode(codec, &mut bytes).unwrap();
+            let digest = Code::Blake3_256.digest(&bytes);
+            let c = Cid::new_v1(codec.into(), digest);
+
+            assert_eq!(verify_hash(&c, &bytes), Some(true));
+        }
     }
 
     #[test]
