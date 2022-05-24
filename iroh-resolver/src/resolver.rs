@@ -254,19 +254,19 @@ impl Resolver {
         bytes: Bytes,
         path: Vec<String>,
     ) -> Result<Out> {
-        if let Ok(node) = UnixfsNode::decode(bytes.clone()) {
+        if let Ok(node) = UnixfsNode::decode(&cid, bytes.clone()) {
             let mut current = node;
 
             // TODO: handle if `path` is now empty
             for part in path {
                 match current.typ() {
-                    DataType::Directory => {
+                    Some(DataType::Directory) => {
                         let next_link = current
                             .get_link_by_name(&part)
                             .await?
                             .ok_or_else(|| anyhow!("link {} not found", part))?;
                         let next_bytes = self.load_cid(&next_link.cid).await?;
-                        let next_node = UnixfsNode::decode(next_bytes)?;
+                        let next_node = UnixfsNode::decode(&next_link.cid, next_bytes)?;
 
                         current = next_node;
                     }
@@ -537,7 +537,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_unixfs_basics() {
+    async fn test_unixfs_basics_cid_v0() {
         // Test content
         // ------------
         // QmaRGe7bVmVaLmxbrMiVNXqW4pRNNp3xq7hFtyRKA3mtJL foo/bar/bar.txt
@@ -560,7 +560,119 @@ mod tests {
         let root_cid_str = "QmdkGfDx42RNdAZFALHn5hjHqUq7L9o6Ef4zLnFEu3Y4Go";
         let root_cid: Cid = root_cid_str.parse().unwrap();
         let root_block_bytes = load_fixture(root_cid_str).await;
-        let root_block = UnixfsNode::decode(root_block_bytes.clone()).unwrap();
+        let root_block = UnixfsNode::decode(&root_cid, root_block_bytes.clone()).unwrap();
+
+        let links: Vec<_> = root_block.links().collect::<Result<_>>().unwrap();
+        assert_eq!(links.len(), 2);
+
+        assert_eq!(links[0].cid, bar_cid_str.parse().unwrap());
+        assert_eq!(links[0].name.unwrap(), "bar");
+
+        assert_eq!(links[1].cid, hello_txt_cid_str.parse().unwrap());
+        assert_eq!(links[1].name.unwrap(), "hello.txt");
+
+        let loader: HashMap<Cid, Bytes> = [
+            (root_cid, root_block_bytes.clone()),
+            (hello_txt_cid_str.parse().unwrap(), hello_txt_block_bytes),
+            (bar_cid_str.parse().unwrap(), bar_block_bytes),
+            (bar_txt_cid_str.parse().unwrap(), bar_txt_block_bytes),
+        ]
+        .into_iter()
+        .collect();
+        let resolver = Resolver::new(loader);
+
+        {
+            let ipld_foo = resolver
+                .resolve(root_cid_str.parse().unwrap())
+                .await
+                .unwrap();
+
+            if let Out::Unixfs(node) = ipld_foo {
+                assert_eq!(
+                    std::str::from_utf8(&node.pretty().unwrap()).unwrap(),
+                    "bar\nhello.txt\n"
+                );
+            } else {
+                panic!("invalid result: {:?}", ipld_foo);
+            }
+        }
+
+        {
+            let ipld_hello_txt = resolver
+                .resolve(format!("{root_cid_str}/hello.txt").parse().unwrap())
+                .await
+                .unwrap();
+
+            if let Out::Unixfs(node) = ipld_hello_txt {
+                assert_eq!(
+                    std::str::from_utf8(&node.pretty().unwrap()).unwrap(),
+                    "hello\n"
+                );
+            } else {
+                panic!("invalid result: {:?}", ipld_hello_txt);
+            }
+        }
+
+        {
+            let ipld_bar = resolver
+                .resolve(format!("{root_cid_str}/bar").parse().unwrap())
+                .await
+                .unwrap();
+
+            if let Out::Unixfs(node) = ipld_bar {
+                assert_eq!(
+                    std::str::from_utf8(&node.pretty().unwrap()).unwrap(),
+                    "bar.txt\n"
+                );
+            } else {
+                panic!("invalid result: {:?}", ipld_bar);
+            }
+        }
+
+        {
+            let ipld_bar_txt = resolver
+                .resolve(format!("{root_cid_str}/bar/bar.txt").parse().unwrap())
+                .await
+                .unwrap();
+
+            if let Out::Unixfs(node) = ipld_bar_txt {
+                assert_eq!(
+                    std::str::from_utf8(&node.pretty().unwrap()).unwrap(),
+                    "world\n"
+                );
+            } else {
+                panic!("invalid result: {:?}", ipld_bar_txt);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_unixfs_basics_cid_v1() {
+        // uses raw leaves
+
+        // Test content
+        // ------------
+        // bafkreihcldjer7njjrrxknqh67cestxa7s7jf4nhnp62y6k4twcbahvtc4 foo/bar/bar.txt
+        //   contains: "world"
+        // bafkreicysg23kiwv34eg2d7qweipxwosdo2py4ldv42nbauguluen5v6am foo/hello.txt
+        //   contains: "hello"
+        // bafybeihmgpuwcdrfi47gfxisll7kmurvi6kd7rht5hlq2ed5omxobfip3a foo/bar
+        // bafybeietod5kx72jgbngoontthoax6nva4edkjnieghwqfzenstg4gil5i foo
+
+        let bar_txt_cid_str = "bafkreihcldjer7njjrrxknqh67cestxa7s7jf4nhnp62y6k4twcbahvtc4";
+        let bar_txt_block_bytes = load_fixture(bar_txt_cid_str).await;
+
+        let bar_cid_str = "bafybeihmgpuwcdrfi47gfxisll7kmurvi6kd7rht5hlq2ed5omxobfip3a";
+        let bar_block_bytes = load_fixture(bar_cid_str).await;
+
+        let hello_txt_cid_str = "bafkreicysg23kiwv34eg2d7qweipxwosdo2py4ldv42nbauguluen5v6am";
+        let hello_txt_block_bytes = load_fixture(hello_txt_cid_str).await;
+
+        // read root
+        let root_cid_str = "bafybeietod5kx72jgbngoontthoax6nva4edkjnieghwqfzenstg4gil5i";
+        let root_cid: Cid = root_cid_str.parse().unwrap();
+        let root_block_bytes = load_fixture(root_cid_str).await;
+        let root_block = UnixfsNode::decode(&root_cid, root_block_bytes.clone()).unwrap();
 
         let links: Vec<_> = root_block.links().collect::<Result<_>>().unwrap();
         assert_eq!(links.len(), 2);

@@ -5,6 +5,8 @@ use bytes::{Buf, Bytes};
 use cid::Cid;
 use prost::Message;
 
+use crate::codecs::Codec;
+
 mod unixfs_pb {
     include!(concat!(env!("OUT_DIR"), "/unixfs_pb.rs"));
 }
@@ -62,40 +64,50 @@ pub struct LinkRef<'a> {
 }
 
 #[derive(Debug)]
-pub struct UnixfsNode {
-    outer: dag_pb::PbNode,
-    inner: unixfs_pb::Data,
+pub enum UnixfsNode {
+    Raw {
+        data: Bytes,
+    },
+    Pb {
+        outer: dag_pb::PbNode,
+        inner: unixfs_pb::Data,
+    },
 }
 
 impl UnixfsNode {
-    pub fn decode<B: Buf>(buf: B) -> Result<Self> {
-        let outer = dag_pb::PbNode::decode(buf)?;
-        let inner_data = outer
-            .data
-            .as_ref()
-            .cloned()
-            .ok_or_else(|| anyhow!("missing data"))?;
-        let inner = unixfs_pb::Data::decode(inner_data)?;
-        // ensure correct unixfs type
-        let _typ: DataType = inner.r#type.try_into()?;
+    pub fn decode(cid: &Cid, buf: Bytes) -> Result<Self> {
+        match cid.codec() {
+            c if c == Codec::Raw as u64 => Ok(UnixfsNode::Raw { data: buf }),
+            _ => {
+                let outer = dag_pb::PbNode::decode(buf)?;
+                let inner_data = outer
+                    .data
+                    .as_ref()
+                    .cloned()
+                    .ok_or_else(|| anyhow!("missing data"))?;
+                let inner = unixfs_pb::Data::decode(inner_data)?;
+                // ensure correct unixfs type
+                let _typ: DataType = inner.r#type.try_into()?;
 
-        Ok(Self { outer, inner })
+                Ok(UnixfsNode::Pb { outer, inner })
+            }
+        }
     }
 
-    pub fn typ(&self) -> DataType {
-        self.inner.r#type.try_into().expect("invalid data type")
+    pub fn typ(&self) -> Option<DataType> {
+        match self {
+            UnixfsNode::Raw { .. } => None,
+            UnixfsNode::Pb { inner, .. } => {
+                Some(inner.r#type.try_into().expect("invalid data type"))
+            }
+        }
     }
 
-    pub fn links(&self) -> impl Iterator<Item = Result<LinkRef<'_>>> {
-        self.outer.links.iter().map(|l| {
-            let c = l.hash.as_ref().ok_or_else(|| anyhow!("missing link"))?;
-
-            Ok(LinkRef {
-                cid: Cid::read_bytes(Cursor::new(c))?,
-                name: l.name.as_deref(),
-                tsize: l.tsize,
-            })
-        })
+    pub fn links(&self) -> Links {
+        match self {
+            UnixfsNode::Raw { .. } => Links::Raw,
+            UnixfsNode::Pb { outer, .. } => Links::Pb { i: 0, outer },
+        }
     }
 
     pub async fn get_link_by_name<S: AsRef<str>>(
@@ -112,27 +124,77 @@ impl UnixfsNode {
     }
 
     pub fn pretty(&self) -> Result<Bytes> {
-        match self.typ() {
-            DataType::File => {
-                if self.outer.links.is_empty() {
-                    // simplest case just one file
-                    Ok(self.inner.data.as_ref().cloned().unwrap_or_default())
-                } else {
-                    bail!("not implemented: files with multiple blocks")
+        match self {
+            UnixfsNode::Raw { data } => Ok(data.clone()),
+            UnixfsNode::Pb { outer, inner } => {
+                match self.typ().unwrap() {
+                    DataType::File => {
+                        if outer.links.is_empty() {
+                            // simplest case just one file
+                            Ok(inner.data.as_ref().cloned().unwrap_or_default())
+                        } else {
+                            bail!("not implemented: files with multiple blocks")
+                        }
+                    }
+                    DataType::Directory => {
+                        let mut res = String::new();
+                        for link in &outer.links {
+                            if let Some(ref name) = link.name {
+                                res += name;
+                            }
+                            res += "\n";
+                        }
+
+                        Ok(Bytes::from(res))
+                    }
+                    _ => bail!("not implemented: {:?}", self.typ()),
                 }
             }
-            DataType::Directory => {
-                let mut res = String::new();
-                for link in &self.outer.links {
-                    if let Some(ref name) = link.name {
-                        res += name;
-                    }
-                    res += "\n";
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum Links<'a> {
+    Raw,
+    Pb { i: usize, outer: &'a dag_pb::PbNode },
+}
+
+impl<'a> Iterator for Links<'a> {
+    type Item = Result<LinkRef<'a>>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            Links::Raw => None,
+            Links::Pb { i, outer } => {
+                if *i == outer.links.len() {
+                    return None;
                 }
 
-                Ok(Bytes::from(res))
+                let l = &outer.links[*i];
+                *i += 1;
+
+                let res = l
+                    .hash
+                    .as_ref()
+                    .ok_or_else(|| anyhow!("missing link"))
+                    .and_then(|c| {
+                        Ok(LinkRef {
+                            cid: Cid::read_bytes(Cursor::new(c))?,
+                            name: l.name.as_deref(),
+                            tsize: l.tsize,
+                        })
+                    });
+
+                Some(res)
             }
-            _ => bail!("not implemented: {:?}", self.typ()),
+        }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        match self {
+            Links::Raw => (0, Some(0)),
+            Links::Pb { outer, .. } => (outer.links.len(), Some(outer.links.len())),
         }
     }
 }
