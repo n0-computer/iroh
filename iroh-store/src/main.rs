@@ -12,21 +12,24 @@ struct Args {
     /// Path to the store
     #[clap(long, short)]
     path: PathBuf,
+    #[clap(long = "no-metrics")]
+    no_metrics: bool,
 }
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> anyhow::Result<()> {
+    let args = Args::parse();
+
     let mut prom_registry = Registry::default();
     let store_metrics = metrics::Metrics::new(&mut prom_registry);
     let metrics_handle =
-        iroh_metrics::init_with_registry(metrics::metrics_config(false), prom_registry)
+        iroh_metrics::init_with_registry(metrics::metrics_config(args.no_metrics), prom_registry)
             .await
             .expect("failed to initialize metrics");
 
     let version = env!("CARGO_PKG_VERSION");
     println!("Starting iroh-store, version {version}");
 
-    let args = Args::parse();
     let config = Config::new(args.path.clone());
     let rpc_addr = config.rpc.store_addr;
 
