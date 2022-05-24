@@ -4,7 +4,7 @@ use std::net::SocketAddr;
 use anyhow::{Context, Result};
 use bytes::Bytes;
 use cid::Cid;
-use iroh_rpc_types::store::{self, GetLinksRequest, GetRequest, PutRequest};
+use iroh_rpc_types::store::{self, GetLinksRequest, GetRequest, HasRequest, PutRequest};
 
 #[derive(Debug, Clone)]
 pub struct StoreClient(store::store_client::StoreClient<tonic::transport::Channel>);
@@ -20,7 +20,7 @@ impl StoreClient {
         Ok(StoreClient(client))
     }
 
-    #[tracing::instrument(skip(self))]
+    #[tracing::instrument(skip(self, blob))]
     pub async fn put(&self, cid: Cid, blob: Bytes, links: Vec<Cid>) -> Result<()> {
         let req = iroh_metrics::req::trace_tonic_req(PutRequest {
             cid: cid.to_bytes(),
@@ -38,6 +38,15 @@ impl StoreClient {
         });
         let res = self.0.clone().get(req).await?;
         Ok(res.into_inner().data)
+    }
+
+    #[tracing::instrument(skip(self))]
+    pub async fn has(&self, cid: Cid) -> Result<bool> {
+        let req = iroh_metrics::req::trace_tonic_req(HasRequest {
+            cid: cid.to_bytes(),
+        });
+        let res = self.0.clone().has(req).await?;
+        Ok(res.into_inner().has)
     }
 
     #[tracing::instrument(skip(self))]

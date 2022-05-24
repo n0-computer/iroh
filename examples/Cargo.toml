@@ -1,0 +1,28 @@
+[package]
+name = "iroh-examples"
+version = "0.1.0"
+edition = "2021"
+authors = ["Friedel Ziegelmayer <me@dignifiedquire.com>"]
+license = "Apache-2.0/MIT"
+repository = "https://github.com/n0-computer/iroh"
+description = "Examples"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "3.1.18", features = ["derive"] }
+iroh-rpc-client = { path = "../iroh-rpc-client" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+iroh-car = { path = "../iroh-car" }
+futures = "0.3.21"
+iroh-resolver = { path = "../iroh-resolver" }
+bytes = "1.1.0"
+bytesize = "1.1.0"
+par-stream = { version = "0.10.2", default-features = false, features = ["runtime-tokio"] }
+indicatif = "0.16.2"
+
+[features]
+default = []
+
+
+[[bin]]
+name = "importer"

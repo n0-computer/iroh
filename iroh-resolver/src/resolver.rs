@@ -401,7 +401,8 @@ impl Resolver {
     }
 }
 
-fn parse_links(cid: &Cid, bytes: &[u8]) -> Result<Vec<Cid>> {
+/// Extract links from the given content.
+pub fn parse_links(cid: &Cid, bytes: &[u8]) -> Result<Vec<Cid>> {
     let codec = Codec::try_from(cid.codec()).context("unknown codec")?;
     let codec = match codec {
         Codec::DagPb => IpldCodec::DagPb,

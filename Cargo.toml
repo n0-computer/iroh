@@ -11,7 +11,8 @@ members = [
   "iroh-resolver",
   "iroh-store",
   "iroh-util",
-  "stores/*"
+  "stores/*",
+  "examples"
 ]
 
 [patch.crates-io]

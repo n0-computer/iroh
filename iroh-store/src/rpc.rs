@@ -6,7 +6,7 @@ use bytes::BytesMut;
 use cid::Cid;
 use iroh_rpc_types::store::store_server;
 use iroh_rpc_types::store::{
-    GetLinksRequest, GetLinksResponse, GetRequest, GetResponse, PutRequest,
+    GetLinksRequest, GetLinksResponse, GetRequest, GetResponse, HasRequest, HasResponse, PutRequest,
 };
 use tonic::{transport::Server as TonicServer, Request, Response, Status};
 use tracing::info;
@@ -19,7 +19,7 @@ struct Rpc {
 
 #[tonic::async_trait]
 impl store_server::Store for Rpc {
-    #[tracing::instrument(skip(self))]
+    #[tracing::instrument(skip(self, request))]
     async fn put(&self, request: Request<PutRequest>) -> Result<Response<()>, tonic::Status> {
         let req = request.into_inner();
         let cid = cid_from_bytes(req.cid)?;
@@ -56,6 +56,22 @@ impl store_server::Store for Rpc {
     }
 
     #[tracing::instrument(skip(self))]
+    async fn has(
+        &self,
+        request: Request<HasRequest>,
+    ) -> Result<Response<HasResponse>, tonic::Status> {
+        let req = request.into_inner();
+        let cid = cid_from_bytes(req.cid)?;
+        let has = self
+            .store
+            .has(&cid)
+            .await
+            .map_err(|e| Status::internal(format!("{:?}", e)))?;
+
+        Ok(Response::new(HasResponse { has }))
+    }
+
+    #[tracing::instrument(skip(self))]
     async fn get_links(
         &self,
         request: Request<GetLinksRequest>,
@@ -76,7 +92,7 @@ impl store_server::Store for Rpc {
     }
 }
 
-#[tracing::instrument]
+#[tracing::instrument(skip(store))]
 pub async fn new(addr: SocketAddr, store: Store) -> Result<()> {
     let rpc = Rpc { store };
     TonicServer::builder()
