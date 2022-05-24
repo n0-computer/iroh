@@ -54,7 +54,7 @@ impl Client {
         state
             .metrics
             .bytes_per_sec_out
-            .set(n / start_time.elapsed().as_secs());
+            .set(n / start_time.elapsed().as_secs().max(1));
         state.metrics.bytes_streamed.inc_by(n);
         Ok(res.into())
     }
