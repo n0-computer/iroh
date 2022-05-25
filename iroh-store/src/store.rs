@@ -1,12 +1,17 @@
-use std::sync::{
-    atomic::{AtomicU64, Ordering},
-    Arc,
+use std::{
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
+    thread::available_parallelism,
 };
 
 use anyhow::{anyhow, bail, Context, Result};
 use cid::Cid;
 use iroh_rpc_client::Client as RpcClient;
-use rocksdb::{DBPinnableSlice, IteratorMode, Options, WriteBatch, DB as RocksDb};
+use rocksdb::{
+    BlockBasedOptions, Cache, DBPinnableSlice, IteratorMode, Options, WriteBatch, DB as RocksDb,
+};
 use tokio::task;
 
 use crate::Config;
@@ -15,36 +20,67 @@ use crate::{
     metrics::Metrics,
 };
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Store {
     inner: Arc<InnerStore>,
     metrics: Metrics,
 }
 
-#[derive(Debug)]
 struct InnerStore {
     content: RocksDb,
     #[allow(dead_code)]
     config: Config,
     next_id: AtomicU64,
+    _cache: Cache,
     _rpc_client: RpcClient,
+}
+
+/// Creates the default rocksdb options
+fn default_options() -> (Options, Cache) {
+    let mut opts = Options::default();
+    opts.set_write_buffer_size(512 * 1024 * 1024);
+    opts.optimize_for_point_lookup(64 * 1024 * 1024);
+    let par = (available_parallelism().map(|s| s.get()).unwrap_or(2) / 4).min(2);
+    opts.increase_parallelism(par as _);
+    opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
+    opts.set_bottommost_compression_type(rocksdb::DBCompressionType::Zstd);
+    opts.set_blob_compression_type(rocksdb::DBCompressionType::Lz4);
+    opts.set_bytes_per_sync(1_048_576);
+    opts.set_blob_file_size(512 * 1024 * 1024);
+
+    let cache = Cache::new_lru_cache(128 * 1024 * 1024).unwrap();
+    let mut bopts = BlockBasedOptions::default();
+    // all our data is longer lived, so ribbon filters make sense
+    bopts.set_ribbon_filter(10.0);
+    bopts.set_block_cache(&cache);
+    bopts.set_block_size(6 * 1024);
+    bopts.set_cache_index_and_filter_blocks(true);
+    bopts.set_pin_l0_filter_and_index_blocks_in_cache(true);
+    opts.set_block_based_table_factory(&bopts);
+
+    (opts, cache)
+}
+
+fn default_blob_opts() -> Options {
+    let mut opts = Options::default();
+    opts.set_enable_blob_files(true);
+    opts.set_min_blob_size(5 * 1024);
+
+    opts
 }
 
 impl Store {
     /// Creates a new database.
     #[tracing::instrument]
     pub async fn create(config: Config, metrics: Metrics) -> Result<Self> {
-        let mut options = Options::default();
+        let (mut options, cache) = default_options();
         options.create_if_missing(true);
-        // TODO: more options
 
         let path = config.path.clone();
         let db = task::spawn_blocking(move || -> Result<_> {
             let mut db = RocksDb::open(&options, path)?;
             {
-                let mut opts = Options::default();
-                opts.set_enable_blob_files(true);
-                opts.set_blob_file_size(1024);
+                let opts = default_blob_opts();
                 db.create_cf(CF_BLOBS_V0, &opts)?;
             }
             {
@@ -73,6 +109,7 @@ impl Store {
                 content: db,
                 config,
                 next_id: 1.into(),
+                _cache: cache,
                 _rpc_client,
             }),
             metrics,
@@ -82,10 +119,8 @@ impl Store {
     /// Opens an existing database.
     #[tracing::instrument]
     pub async fn open(config: Config, metrics: Metrics) -> Result<Self> {
-        let mut options = Options::default();
+        let (mut options, cache) = default_options();
         options.create_if_missing(false);
-        // TODO: more options
-
         // TODO: find a way to read existing options
 
         let path = config.path.clone();
@@ -127,6 +162,7 @@ impl Store {
                 content: db,
                 config,
                 next_id: next_id.into(),
+                _cache: cache,
                 _rpc_client,
             }),
             metrics,
@@ -138,11 +174,20 @@ impl Store {
     where
         L: IntoIterator<Item = Cid>,
     {
-        let id = self.next_id();
         self.metrics.put_requests_total.inc();
+
+        if self.has(&cid).await? {
+            return Ok(());
+        }
+
+        let id = self.next_id();
+
         let start = std::time::Instant::now();
 
         let id_bytes = id.to_be_bytes();
+
+        // guranteed that the key does not exists, so we want to store it
+
         let metadata = Versioned(MetadataV0 {
             codec: cid.codec(),
             multihash: cid.hash().to_bytes(),
@@ -160,6 +205,7 @@ impl Store {
             .content
             .cf_handle(CF_ID_V0)
             .ok_or_else(|| anyhow!("missing column family: id"))?;
+
         let cf_blobs = self
             .inner
             .content
@@ -214,6 +260,26 @@ impl Store {
             .get_request_time
             .observe(start.elapsed().as_secs_f64());
         res
+    }
+
+    #[tracing::instrument(skip(self))]
+    pub async fn has(&self, cid: &Cid) -> Result<bool> {
+        match self.get_id(cid).await? {
+            Some(id) => {
+                let cf_blobs = self
+                    .inner
+                    .content
+                    .cf_handle(CF_BLOBS_V0)
+                    .ok_or_else(|| anyhow!("missing column family: blobs"))?;
+                let exists = self
+                    .inner
+                    .content
+                    .get_pinned_cf(cf_blobs, id.to_be_bytes())?
+                    .is_some();
+                Ok(exists)
+            }
+            None => Ok(false),
+        }
     }
 
     #[tracing::instrument(skip(self))]
@@ -407,6 +473,7 @@ mod tests {
 
         for (i, (c, expected_data, expected_links)) in values.iter().enumerate() {
             dbg!(i);
+            assert!(store.has(c).await.unwrap());
             let data = store.get(c).await.unwrap().unwrap();
             assert_eq!(expected_data, &data[..]);
 

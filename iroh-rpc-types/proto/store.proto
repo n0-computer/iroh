@@ -7,6 +7,7 @@ import "google/protobuf/empty.proto";
 service Store {
   rpc Put(PutRequest) returns (google.protobuf.Empty) {}
   rpc Get(GetRequest) returns (GetResponse) {}
+  rpc Has(HasRequest) returns (HasResponse) {}
   rpc GetLinks(GetLinksRequest) returns(GetLinksResponse) {}
 }
 
@@ -22,6 +23,15 @@ message PutRequest {
 message GetRequest {
   // Serialized CID of the requested block.
   bytes cid = 1;
+}
+
+message HasRequest {
+  // Serialized CID of the requested block.
+  bytes cid = 1;
+}
+
+message HasResponse {
+  bool has = 1;
 }
 
 message GetResponse {
