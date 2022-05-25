@@ -40,11 +40,9 @@ impl Client {
             .metrics
             .hist_ttfb
             .observe(start_time.elapsed().as_millis() as f64);
-        let res = resolver
-            .resolve(p)
-            .await
-            .and_then(|r| r.pretty())
-            .map_err(|e| e.to_string())?;
+        let res = resolver.resolve(p).await.map_err(|e| e.to_string())?;
+        let res = res.pretty(rpc_client).await.map_err(|e| e.to_string())?;
+
         info!("resolved: {}", path);
         state
             .metrics

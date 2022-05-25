@@ -1,5 +1,6 @@
 use std::fmt::{self, Display, Formatter};
 use std::str::FromStr;
+use std::sync::Arc;
 
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use async_trait::async_trait;
@@ -112,12 +113,12 @@ pub enum Out {
 }
 
 impl Out {
-    pub fn pretty(&self) -> Result<Bytes> {
+    pub async fn pretty(&self, loader: &dyn ContentLoader) -> Result<Bytes> {
         match self {
             Out::DagPb(_i) => {
                 todo!()
             }
-            Out::Unixfs(node) => node.pretty(),
+            Out::Unixfs(node) => node.pretty(loader).await,
             Out::DagCbor(_i) => {
                 todo!()
             }
@@ -144,6 +145,13 @@ pub struct Resolver {
 pub trait ContentLoader: Sync + Send + std::fmt::Debug {
     /// Loads the actual content of a given cid.
     async fn load_cid(&self, cid: &Cid) -> Result<Bytes>;
+}
+
+#[async_trait]
+impl<T: ContentLoader> ContentLoader for Arc<T> {
+    async fn load_cid(&self, cid: &Cid) -> Result<Bytes> {
+        self.as_ref().load_cid(cid).await
+    }
 }
 
 #[async_trait]
@@ -421,7 +429,10 @@ pub fn verify_hash(cid: &Cid, bytes: &[u8]) -> Option<bool> {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::{BTreeMap, HashMap};
+    use std::{
+        collections::{BTreeMap, HashMap},
+        sync::Arc,
+    };
 
     use super::*;
     use cid::multihash::{Code, MultihashDigest};
@@ -525,8 +536,8 @@ mod tests {
             let digest = Code::Blake3_256.digest(&bytes);
             let c = Cid::new_v1(codec.into(), digest);
 
-            let loader = HashMap::new();
-            let resolver = Resolver::new(loader);
+            let loader = Arc::new(HashMap::new());
+            let resolver = Resolver::new(loader.clone());
 
             {
                 let new_ipld = resolver
@@ -594,7 +605,8 @@ mod tests {
         ]
         .into_iter()
         .collect();
-        let resolver = Resolver::new(loader);
+        let loader = Arc::new(loader);
+        let resolver = Resolver::new(loader.clone());
 
         {
             let ipld_foo = resolver
@@ -604,7 +616,7 @@ mod tests {
 
             if let Out::Unixfs(node) = ipld_foo {
                 assert_eq!(
-                    std::str::from_utf8(&node.pretty().unwrap()).unwrap(),
+                    std::str::from_utf8(&node.pretty(&loader).await.unwrap()).unwrap(),
                     "bar\nhello.txt\n"
                 );
             } else {
@@ -620,7 +632,7 @@ mod tests {
 
             if let Out::Unixfs(node) = ipld_hello_txt {
                 assert_eq!(
-                    std::str::from_utf8(&node.pretty().unwrap()).unwrap(),
+                    std::str::from_utf8(&node.pretty(&loader).await.unwrap()).unwrap(),
                     "hello\n"
                 );
             } else {
@@ -636,7 +648,7 @@ mod tests {
 
             if let Out::Unixfs(node) = ipld_bar {
                 assert_eq!(
-                    std::str::from_utf8(&node.pretty().unwrap()).unwrap(),
+                    std::str::from_utf8(&node.pretty(&loader).await.unwrap()).unwrap(),
                     "bar.txt\n"
                 );
             } else {
@@ -652,7 +664,7 @@ mod tests {
 
             if let Out::Unixfs(node) = ipld_bar_txt {
                 assert_eq!(
-                    std::str::from_utf8(&node.pretty().unwrap()).unwrap(),
+                    std::str::from_utf8(&node.pretty(&loader).await.unwrap()).unwrap(),
                     "world\n"
                 );
             } else {
@@ -706,7 +718,8 @@ mod tests {
         ]
         .into_iter()
         .collect();
-        let resolver = Resolver::new(loader);
+        let loader = Arc::new(loader);
+        let resolver = Resolver::new(loader.clone());
 
         {
             let ipld_foo = resolver
@@ -716,7 +729,7 @@ mod tests {
 
             if let Out::Unixfs(node) = ipld_foo {
                 assert_eq!(
-                    std::str::from_utf8(&node.pretty().unwrap()).unwrap(),
+                    std::str::from_utf8(&node.pretty(&loader).await.unwrap()).unwrap(),
                     "bar\nhello.txt\n"
                 );
             } else {
@@ -732,7 +745,7 @@ mod tests {
 
             if let Out::Unixfs(node) = ipld_hello_txt {
                 assert_eq!(
-                    std::str::from_utf8(&node.pretty().unwrap()).unwrap(),
+                    std::str::from_utf8(&node.pretty(&loader).await.unwrap()).unwrap(),
                     "hello\n"
                 );
             } else {
@@ -748,7 +761,7 @@ mod tests {
 
             if let Out::Unixfs(node) = ipld_bar {
                 assert_eq!(
-                    std::str::from_utf8(&node.pretty().unwrap()).unwrap(),
+                    std::str::from_utf8(&node.pretty(&loader).await.unwrap()).unwrap(),
                     "bar.txt\n"
                 );
             } else {
@@ -764,11 +777,66 @@ mod tests {
 
             if let Out::Unixfs(node) = ipld_bar_txt {
                 assert_eq!(
-                    std::str::from_utf8(&node.pretty().unwrap()).unwrap(),
+                    std::str::from_utf8(&node.pretty(&loader).await.unwrap()).unwrap(),
                     "world\n"
                 );
             } else {
                 panic!("invalid result: {:?}", ipld_bar_txt);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_unixfs_split_file() {
+        // Test content
+        // ------------
+        // QmUr9cs4mhWxabKqm9PYPSQQ6AQGbHJBtyrNmxtKgxqUx9 README.md
+        //
+        // imported with `go-ipfs add --chunker size-100`
+
+        let pieces_cid_str = [
+            "QmccJ8pV5hG7DEbq66ih1ZtowxgvqVS6imt98Ku62J2WRw",
+            "QmUajVwSkEp9JvdW914Qh1BCMRSUf2ztiQa6jqy1aWhwJv",
+            "QmNyLad1dWGS6mv2zno4iEviBSYSUR2SrQ8JoZNDz1UHYy",
+            "QmcXoBdCgmFMoNbASaQCNVswRuuuqbw4VvA7e5GtHbhRNp",
+            "QmP9yKRwuji5i7RTgrevwJwXp7uqQu1prv88nxq9uj99rW",
+        ];
+
+        // read root
+        let root_cid_str = "QmUr9cs4mhWxabKqm9PYPSQQ6AQGbHJBtyrNmxtKgxqUx9";
+        let root_cid: Cid = root_cid_str.parse().unwrap();
+        let root_block_bytes = load_fixture(root_cid_str).await;
+        let root_block = UnixfsNode::decode(&root_cid, root_block_bytes.clone()).unwrap();
+
+        let links: Vec<_> = root_block.links().collect::<Result<_>>().unwrap();
+        assert_eq!(links.len(), 5);
+
+        let mut loader: HashMap<Cid, Bytes> =
+            [(root_cid, root_block_bytes.clone())].into_iter().collect();
+
+        for c in &pieces_cid_str {
+            let bytes = load_fixture(c).await;
+            loader.insert(c.parse().unwrap(), bytes);
+        }
+
+        let loader = Arc::new(loader);
+        let resolver = Resolver::new(loader.clone());
+
+        {
+            let ipld_readme = resolver
+                .resolve(root_cid_str.parse().unwrap())
+                .await
+                .unwrap();
+
+            if let Out::Unixfs(node) = ipld_readme {
+                let raw = node.pretty(&loader).await.unwrap();
+                let content = std::str::from_utf8(&raw).unwrap();
+                print!("{}", content);
+                assert_eq!(content.len(), 852);
+                assert!(content.starts_with("# iroh"));
+                assert!(content.ends_with("</sub>\n\n"));
+            } else {
+                panic!("invalid result: {:?}", ipld_readme);
             }
         }
     }
