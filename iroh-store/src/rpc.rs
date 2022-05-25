@@ -95,7 +95,13 @@ impl store_server::Store for Rpc {
 #[tracing::instrument(skip(store))]
 pub async fn new(addr: SocketAddr, store: Store) -> Result<()> {
     let rpc = Rpc { store };
+    let (mut health_reporter, health_service) = tonic_health::server::health_reporter();
+    health_reporter
+        .set_serving::<store_server::StoreServer<Rpc>>()
+        .await;
+
     TonicServer::builder()
+        .add_service(health_service)
         .add_service(store_server::StoreServer::new(rpc))
         .serve(addr)
         .await?;
