@@ -1,0 +1,16 @@
+name = "iroh-ctl"
+version = "0.1.0"
+edition = "2021"
+authors = ["Friedel Ziegelmayer <me@dignifiedquire.com>"]
+license = "Apache-2.0/MIT"
+repository = "https://github.com/n0-computer/iroh"
+description = "Client for interacting with running iroh processes."
+
+[dependencies]
+anyhow = "1.0"
+async-trait = "0.1"
+futures = "0.3.5"
+tokio = "1.0"
+tracing = "0.1.35"
+clap = { version = "3.1.14", features = ["derive"] }
+tonic = "0.7.2"
