@@ -1,9 +1,17 @@
-use std::io::Cursor;
+use std::{
+    collections::VecDeque,
+    fmt::Debug,
+    io::Cursor,
+    pin::Pin,
+    task::{Context, Poll},
+};
 
-use anyhow::{anyhow, bail, Result};
-use bytes::{Buf, BufMut, Bytes, BytesMut};
+use anyhow::{anyhow, Result};
+use bytes::{Buf, Bytes};
 use cid::Cid;
+use futures::{future::BoxFuture, FutureExt};
 use prost::Message;
+use tokio::io::AsyncRead;
 
 use crate::{codecs::Codec, resolver::ContentLoader};
 
@@ -123,71 +131,273 @@ impl UnixfsNode {
             .transpose()
     }
 
-    pub async fn pretty(&self, loader: &dyn ContentLoader) -> Result<Bytes> {
+    fn cid_links(&self) -> VecDeque<Cid> {
         match self {
-            UnixfsNode::Raw { data } => Ok(data.clone()),
-            UnixfsNode::Pb { outer, inner } => match self.typ().unwrap() {
-                DataType::File => read_file(outer, inner, loader).await,
+            UnixfsNode::Pb { outer, .. } => {
+                outer
+                    .links
+                    .iter()
+                    .map(|h| {
+                        // TODO: error handling
+                        Cid::read_bytes(Cursor::new(h.hash.as_deref().unwrap())).unwrap()
+                    })
+                    .collect()
+            }
+            UnixfsNode::Raw { .. } => Default::default(),
+        }
+    }
+
+    pub fn pretty<T: ContentLoader>(self, loader: T) -> UnixfsReader<T> {
+        let current_links = vec![self.cid_links()];
+
+        UnixfsReader {
+            root_node: self,
+            pos: 0,
+            current_node: CurrentNodeState::Outer,
+            current_links,
+            loader,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct UnixfsReader<T: ContentLoader> {
+    root_node: UnixfsNode,
+    /// Absolute position in bytes
+    pos: usize,
+    /// Current node being operated on, only used for nested nodes (not the root).
+    current_node: CurrentNodeState,
+    /// Stack of links left to traverse.
+    current_links: Vec<VecDeque<Cid>>,
+    loader: T,
+}
+
+impl<T: ContentLoader + Unpin + 'static> AsyncRead for UnixfsReader<T> {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        let typ = self.root_node.typ();
+        let Self {
+            root_node,
+            current_node,
+            current_links,
+            pos,
+            loader,
+        } = &mut *self;
+        match root_node {
+            UnixfsNode::Raw { data } => {
+                let res = poll_read_buf_at_pos(pos, data, buf);
+                Poll::Ready(res)
+            }
+            UnixfsNode::Pb { outer, inner } => match typ.unwrap() {
+                DataType::File => poll_read_file_at(
+                    cx,
+                    outer,
+                    inner,
+                    loader.clone(),
+                    pos,
+                    buf,
+                    current_links,
+                    current_node,
+                ),
                 DataType::Directory => {
-                    let mut res = String::new();
+                    // TODO: cache
+                    let mut res = Vec::new();
                     for link in &outer.links {
                         if let Some(ref name) = link.name {
-                            res += name;
+                            res.extend_from_slice(name.as_bytes());
                         }
-                        res += "\n";
+                        res.extend_from_slice(b"\n");
                     }
+                    let res = poll_read_buf_at_pos(pos, &res, buf);
 
-                    Ok(Bytes::from(res))
+                    Poll::Ready(res)
                 }
-                _ => bail!("not implemented: {:?}", self.typ()),
+                _ => {
+                    todo!("{:?}", self.root_node.typ())
+                }
             },
         }
     }
 }
 
-#[async_recursion::async_recursion]
-async fn read_file(
-    outer: &dag_pb::PbNode,
-    inner: &unixfs_pb::Data,
-    loader: &dyn ContentLoader,
-) -> Result<Bytes> {
-    if outer.links.is_empty() {
-        // simplest case just one file
-        Ok(inner.data.as_ref().cloned().unwrap_or_default())
-    } else {
-        let mut out = BytesMut::new();
-        if let Some(data) = inner.data.as_ref() {
-            out.put(&data[..]);
+pub fn poll_read_buf_at_pos(
+    pos: &mut usize,
+    data: &[u8],
+    buf: &mut tokio::io::ReadBuf<'_>,
+) -> std::io::Result<()> {
+    if *pos >= data.len() {
+        return Ok(());
+    }
+    let data_len = data.len() - *pos;
+    let amt = std::cmp::min(data_len, buf.remaining());
+    buf.put_slice(&data[*pos..*pos + amt]);
+    *pos += amt;
+
+    Ok(())
+}
+
+enum CurrentNodeState {
+    Outer,
+    None,
+    Loaded(usize, UnixfsNode),
+    Loading(BoxFuture<'static, Result<UnixfsNode>>),
+}
+
+impl Debug for CurrentNodeState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CurrentNodeState::Outer => write!(f, "CurrentNodeState::Outer"),
+            CurrentNodeState::None => write!(f, "CurrentNodeState::None"),
+            CurrentNodeState::Loaded(pos, n) => {
+                write!(f, "CurrentNodeState::Loaded({:?}, {:?})", pos, n)
+            }
+            CurrentNodeState::Loading(_) => write!(f, "CurrentNodeState::Loading(Fut)"),
         }
+    }
+}
 
-        for link in &outer.links {
-            let cid_raw = link.hash.as_ref().ok_or_else(|| anyhow!("missing cid"))?;
-            let cid = Cid::read_bytes(Cursor::new(cid_raw))?;
+fn load_next_node<T: ContentLoader + 'static>(
+    current_node: &mut CurrentNodeState,
+    current_links: &mut Vec<VecDeque<Cid>>,
+    loader: T,
+) -> bool {
+    // Load next node
+    if current_links.is_empty() {
+        // no links left we are done
+        return true;
+    }
+    if current_links.last().unwrap().is_empty() {
+        // remove emtpy
+        current_links.pop();
+    }
 
-            let raw_next = loader.load_cid(&cid).await?;
-            let node_next = UnixfsNode::decode(&cid, raw_next)?;
-            let ty = node_next.typ();
+    let links = current_links.last_mut().unwrap();
+    if links.is_empty() {
+        return true;
+    }
 
-            match node_next {
-                UnixfsNode::Raw { data } => {
-                    out.put(&data[..]);
+    let link = links.pop_front().unwrap();
+
+    println!("load cid {}", link);
+    let fut = async move {
+        let bytes = loader.load_cid(&link).await?;
+        let node = UnixfsNode::decode(&link, bytes)?;
+        Ok(node)
+    }
+    .boxed();
+    *current_node = CurrentNodeState::Loading(fut);
+    false
+}
+
+#[allow(clippy::too_many_arguments)]
+fn poll_read_file_at<T: ContentLoader + 'static>(
+    cx: &mut Context<'_>,
+    root_outer: &dag_pb::PbNode,
+    root_inner: &unixfs_pb::Data,
+    loader: T,
+    pos: &mut usize,
+    buf: &mut tokio::io::ReadBuf<'_>,
+    current_links: &mut Vec<VecDeque<Cid>>,
+    current_node: &mut CurrentNodeState,
+) -> Poll<std::io::Result<()>> {
+    loop {
+        match current_node {
+            CurrentNodeState::Outer => {
+                // check for links
+                if root_outer.links.is_empty() {
+                    // simplest case just one file
+                    let data = root_inner.data.as_deref().unwrap_or(&[][..]);
+                    let res = poll_read_buf_at_pos(pos, data, buf);
+                    return Poll::Ready(res);
                 }
-                UnixfsNode::Pb { outer, inner } => {
-                    if ty == Some(DataType::File) || ty == Some(DataType::Raw) {
-                        if let Some(data) = inner.data.as_ref() {
-                            out.put(&data[..]);
-                        }
 
-                        let bytes = read_file(&outer, &inner, loader).await?;
-                        out.put(&bytes[..]);
-                    } else {
-                        bail!("invalid type nested in chunked file: {:?}", ty);
+                // read root local data
+                if let Some(ref data) = root_inner.data {
+                    if *pos < data.len() {
+                        let res = poll_read_buf_at_pos(pos, data, buf);
+                        return Poll::Ready(res);
+                    }
+                }
+                *current_node = CurrentNodeState::None;
+                if load_next_node(current_node, current_links, loader.clone()) {
+                    return Poll::Ready(Ok(()));
+                }
+            }
+            CurrentNodeState::None => {
+                if load_next_node(current_node, current_links, loader.clone()) {
+                    return Poll::Ready(Ok(()));
+                }
+            }
+            CurrentNodeState::Loading(fut) => {
+                // Already loading the next node, just wait
+                match fut.poll_unpin(cx) {
+                    Poll::Pending => {
+                        return Poll::Pending;
+                    }
+                    Poll::Ready(Ok(node)) => {
+                        current_links.push(node.cid_links());
+                        *current_node = CurrentNodeState::Loaded(0, node);
+
+                        // TODO: do one read
+                    }
+                    Poll::Ready(Err(e)) => {
+                        *current_node = CurrentNodeState::None;
+                        return Poll::Ready(Err(std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            e.to_string(),
+                        )));
+                    }
+                }
+            }
+            CurrentNodeState::Loaded(ref mut node_pos, ref mut current_node_inner) => {
+                // already loaded
+                let ty = current_node_inner.typ();
+                match current_node_inner {
+                    UnixfsNode::Raw { data } => {
+                        let old = *node_pos;
+                        let res = poll_read_buf_at_pos(node_pos, data, buf);
+                        // advance global pos
+                        let amt_read = *node_pos - old;
+                        *pos += amt_read;
+                        if amt_read > 0 {
+                            return Poll::Ready(res);
+                        } else if *node_pos == data.len() {
+                            // finished reading this node
+                            if load_next_node(current_node, current_links, loader.clone()) {
+                                return Poll::Ready(Ok(()));
+                            }
+                        }
+                    }
+                    UnixfsNode::Pb { inner, .. } => {
+                        if ty == Some(DataType::File) || ty == Some(DataType::Raw) {
+                            // read direct node data
+                            if let Some(ref data) = inner.data {
+                                let old = *node_pos;
+                                let res = poll_read_buf_at_pos(node_pos, data, buf);
+                                let amt_read = *node_pos - old;
+                                *pos += amt_read;
+                                if amt_read > 0 {
+                                    return Poll::Ready(res);
+                                }
+                            }
+
+                            // follow links
+                            if load_next_node(current_node, current_links, loader.clone()) {
+                                return Poll::Ready(Ok(()));
+                            }
+                        } else {
+                            return Poll::Ready(Err(std::io::Error::new(
+                                std::io::ErrorKind::InvalidData,
+                                format!("invalid type nested in chunked file: {:?}", ty),
+                            )));
+                        }
                     }
                 }
             }
         }
-
-        Ok(out.freeze())
     }
 }
 

@@ -1,5 +1,5 @@
 use axum::{
-    body::{self, BoxBody},
+    body::{self, BoxBody, HttpBody},
     error_handling::HandleErrorLayer,
     extract::{Extension, Path, Query},
     http::{header::*, StatusCode},
@@ -7,6 +7,7 @@ use axum::{
     routing::get,
     BoxError, Router,
 };
+use bytes::Bytes;
 use cid::Cid;
 use iroh_rpc_client::Client as RpcClient;
 use serde::{Deserialize, Serialize};
@@ -14,6 +15,7 @@ use serde_qs;
 use std::{
     borrow::Cow,
     collections::HashMap,
+    error::Error,
     sync::Arc,
     time::{self, Duration},
 };
@@ -72,7 +74,7 @@ impl Core {
         Ok(Self {
             state: Arc::new(State {
                 config,
-                client: Client::new(),
+                client: Client::new(&rpc_client),
                 rpc_client,
                 metrics,
             }),
@@ -193,7 +195,7 @@ async fn get_ipfs(
             .to_str()
             .unwrap();
         if etag_matches(inm, &cid_etag) {
-            return response(StatusCode::NOT_MODIFIED, body::BoxBody::default(), headers);
+            return response(StatusCode::NOT_MODIFIED, BoxBody::default(), headers);
         }
     }
 
@@ -256,7 +258,7 @@ async fn serve_raw(
     );
     set_etag_headers(&mut headers, get_etag(&req.cid, Some(req.format.clone())));
     add_cache_control_headers(&mut headers, req.full_content_path.to_string());
-    response(StatusCode::OK, body::boxed(body), headers)
+    response(StatusCode::OK, body, headers)
 }
 
 #[tracing::instrument()]
@@ -288,7 +290,7 @@ async fn serve_car(
     let etag = format!("W/{}", get_etag(&req.cid, Some(req.format.clone())));
     set_etag_headers(&mut headers, etag);
     // todo(arqu): check if etag matches for root cid
-    response(StatusCode::OK, body::boxed(body), headers)
+    response(StatusCode::OK, body, headers)
 }
 
 #[tracing::instrument()]
@@ -319,18 +321,22 @@ async fn serve_fs(
     set_etag_headers(&mut headers, get_etag(&req.cid, Some(req.format.clone())));
     add_cache_control_headers(&mut headers, req.full_content_path.to_string());
     add_content_type_headers(&mut headers, &name);
-    response(StatusCode::OK, body::boxed(body), headers)
+    response(StatusCode::OK, body, headers)
 }
 
-#[tracing::instrument()]
-fn response(
+#[tracing::instrument(skip(body))]
+fn response<B>(
     status_code: StatusCode,
-    body: BoxBody,
+    body: B,
     headers: HeaderMap,
-) -> Result<GatewayResponse, GatewayError> {
+) -> Result<GatewayResponse, GatewayError>
+where
+    B: 'static + HttpBody<Data = Bytes> + Send,
+    <B as HttpBody>::Error: Into<Box<dyn Error + Send + Sync + 'static>>,
+{
     Ok(GatewayResponse {
         status_code,
-        body,
+        body: body::boxed(body),
         headers,
         trace_id: get_current_trace_id().to_string(),
     })

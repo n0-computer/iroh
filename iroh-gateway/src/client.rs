@@ -1,18 +1,27 @@
 use std::sync::Arc;
 
-use axum::body::Body;
+use axum::body::StreamBody;
 use cid::Cid;
+use iroh_resolver::resolver::OutPrettyReader;
+use iroh_resolver::resolver::Resolver;
+use tokio_util::io::ReaderStream;
 use tracing::info;
 
 use crate::core::State;
 use crate::response::ResponseFormat;
 
-#[derive(Debug, Clone, Copy)]
-pub struct Client {}
+#[derive(Debug)]
+pub struct Client {
+    resolver: Resolver<iroh_rpc_client::Client>,
+}
+
+pub type PrettyStreamBody = StreamBody<ReaderStream<OutPrettyReader<iroh_rpc_client::Client>>>;
 
 impl Client {
-    pub fn new() -> Self {
-        Self {}
+    pub fn new(rpc_client: &iroh_rpc_client::Client) -> Self {
+        Self {
+            resolver: Resolver::new(rpc_client.clone()),
+        }
     }
 
     #[tracing::instrument(skip(rpc_client))]
@@ -22,13 +31,12 @@ impl Client {
         rpc_client: &iroh_rpc_client::Client,
         start_time: std::time::Instant,
         state: Arc<State>,
-    ) -> Result<Body, String> {
+    ) -> Result<PrettyStreamBody, String> {
         info!("get file {}", path);
         state.metrics.cache_miss.inc();
         let p: iroh_resolver::resolver::Path =
             path.parse().map_err(|e: anyhow::Error| e.to_string())?;
         // TODO: reuse
-        let resolver = iroh_resolver::resolver::Resolver::new(rpc_client.clone());
         let path = path.to_string();
 
         // todo(arqu): this is wrong but currently don't have access to the data stream
@@ -40,21 +48,23 @@ impl Client {
             .metrics
             .hist_ttfb
             .observe(start_time.elapsed().as_millis() as f64);
-        let res = resolver.resolve(p).await.map_err(|e| e.to_string())?;
-        let res = res.pretty(rpc_client).await.map_err(|e| e.to_string())?;
+        let res = self.resolver.resolve(p).await.map_err(|e| e.to_string())?;
+        let reader = res.pretty(rpc_client.clone());
+        let stream = ReaderStream::new(reader);
+        let body = StreamBody::new(stream);
 
         info!("resolved: {}", path);
         state
             .metrics
             .tts_file
             .set(start_time.elapsed().as_millis() as u64);
-        let n = res.len() as u64;
-        state
-            .metrics
-            .bytes_per_sec_out
-            .set(n / start_time.elapsed().as_secs().max(1));
-        state.metrics.bytes_streamed.inc_by(n);
-        Ok(res.into())
+        // let n = res.len() as u64;
+        // state
+        //     .metrics
+        //     .bytes_per_sec_out
+        //     .set(n / start_time.elapsed().as_secs().max(1));
+        // state.metrics.bytes_streamed.inc_by(n);
+        Ok(body)
     }
 }
 
