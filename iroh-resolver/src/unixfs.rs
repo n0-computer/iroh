@@ -1,11 +1,11 @@
 use std::io::Cursor;
 
 use anyhow::{anyhow, bail, Result};
-use bytes::{Buf, Bytes};
+use bytes::{Buf, BufMut, Bytes, BytesMut};
 use cid::Cid;
 use prost::Message;
 
-use crate::codecs::Codec;
+use crate::{codecs::Codec, resolver::ContentLoader};
 
 mod unixfs_pb {
     include!(concat!(env!("OUT_DIR"), "/unixfs_pb.rs"));
@@ -123,34 +123,71 @@ impl UnixfsNode {
             .transpose()
     }
 
-    pub fn pretty(&self) -> Result<Bytes> {
+    pub async fn pretty(&self, loader: &dyn ContentLoader) -> Result<Bytes> {
         match self {
             UnixfsNode::Raw { data } => Ok(data.clone()),
-            UnixfsNode::Pb { outer, inner } => {
-                match self.typ().unwrap() {
-                    DataType::File => {
-                        if outer.links.is_empty() {
-                            // simplest case just one file
-                            Ok(inner.data.as_ref().cloned().unwrap_or_default())
-                        } else {
-                            bail!("not implemented: files with multiple blocks")
+            UnixfsNode::Pb { outer, inner } => match self.typ().unwrap() {
+                DataType::File => read_file(outer, inner, loader).await,
+                DataType::Directory => {
+                    let mut res = String::new();
+                    for link in &outer.links {
+                        if let Some(ref name) = link.name {
+                            res += name;
                         }
+                        res += "\n";
                     }
-                    DataType::Directory => {
-                        let mut res = String::new();
-                        for link in &outer.links {
-                            if let Some(ref name) = link.name {
-                                res += name;
-                            }
-                            res += "\n";
+
+                    Ok(Bytes::from(res))
+                }
+                _ => bail!("not implemented: {:?}", self.typ()),
+            },
+        }
+    }
+}
+
+#[async_recursion::async_recursion]
+async fn read_file(
+    outer: &dag_pb::PbNode,
+    inner: &unixfs_pb::Data,
+    loader: &dyn ContentLoader,
+) -> Result<Bytes> {
+    if outer.links.is_empty() {
+        // simplest case just one file
+        Ok(inner.data.as_ref().cloned().unwrap_or_default())
+    } else {
+        let mut out = BytesMut::new();
+        if let Some(data) = inner.data.as_ref() {
+            out.put(&data[..]);
+        }
+
+        for link in &outer.links {
+            let cid_raw = link.hash.as_ref().ok_or_else(|| anyhow!("missing cid"))?;
+            let cid = Cid::read_bytes(Cursor::new(cid_raw))?;
+
+            let raw_next = loader.load_cid(&cid).await?;
+            let node_next = UnixfsNode::decode(&cid, raw_next)?;
+            let ty = node_next.typ();
+
+            match node_next {
+                UnixfsNode::Raw { data } => {
+                    out.put(&data[..]);
+                }
+                UnixfsNode::Pb { outer, inner } => {
+                    if ty == Some(DataType::File) || ty == Some(DataType::Raw) {
+                        if let Some(data) = inner.data.as_ref() {
+                            out.put(&data[..]);
                         }
 
-                        Ok(Bytes::from(res))
+                        let bytes = read_file(&outer, &inner, loader).await?;
+                        out.put(&bytes[..]);
+                    } else {
+                        bail!("invalid type nested in chunked file: {:?}", ty);
                     }
-                    _ => bail!("not implemented: {:?}", self.typ()),
                 }
             }
         }
+
+        Ok(out.freeze())
     }
 }
 
