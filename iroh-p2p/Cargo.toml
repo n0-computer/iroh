@@ -32,6 +32,7 @@ iroh-rpc-client = { path = "../iroh-rpc-client" }
 iroh-util = { path = "../iroh-util" }
 rkyv = { version = "0.7.37", features = ["std", "alloc", "validation"] }
 tonic = "0.7.2"
+# tonic-health = { path = "../../tonic/tonic-health" }
 tonic-health = "0.6.0"
 iroh-metrics = { path = "../iroh-metrics" }
 names = { version = "0.13.0", default-features = false }

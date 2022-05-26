@@ -186,10 +186,11 @@ pub async fn new(addr: SocketAddr, sender: Sender<RpcMessage>) -> Result<()> {
     health_reporter
         .set_serving::<p2p_server::P2pServer<P2p>>()
         .await;
+    let p2p_service = p2p_server::P2pServer::new(p2p);
 
     TonicServer::builder()
         .add_service(health_service)
-        .add_service(p2p_server::P2pServer::new(p2p))
+        .add_service(p2p_service)
         .serve(addr)
         .await?;
     Ok(())

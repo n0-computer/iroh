@@ -4,20 +4,16 @@ use std::net::SocketAddr;
 use anyhow::{Context, Result};
 use bytes::Bytes;
 use cid::Cid;
+use futures::Stream;
 use iroh_rpc_types::p2p::{
     self, BitswapRequest, ConnectRequest, DisconnectRequest, Empty, Key, Providers,
 };
 use libp2p::{Multiaddr, PeerId};
-use tonic::{
-    codec::Streaming,
-    transport::{Channel, Endpoint},
-};
-
-use tonic_health::proto::{
-    health_check_response::ServingStatus, health_client::HealthClient, HealthCheckRequest,
-    HealthCheckResponse,
-};
+use tonic::transport::{Channel, Endpoint};
+use tonic_health::proto::health_client::HealthClient;
 use tracing::{debug, warn};
+
+use crate::status::{self, ServiceStatus};
 
 #[derive(Debug, Clone)]
 pub struct P2pClient {
@@ -117,17 +113,13 @@ impl P2pClient {
     }
 
     #[tracing::instrument(skip(self))]
-    pub async fn check(&self) -> Result<ServingStatus> {
-        let req = iroh_metrics::req::trace_tonic_req(HealthCheckRequest { service: "".into() });
-        let res = self.health.clone().check(req).await?.into_inner();
-        Ok(res.status())
+    pub async fn check(&self) -> ServiceStatus {
+        status::check(self.health.clone(), "p2p.P2p".into()).await
     }
 
     #[tracing::instrument(skip(self))]
-    pub async fn watch(&self) -> Result<Streaming<HealthCheckResponse>> {
-        let req = iroh_metrics::req::trace_tonic_req(HealthCheckRequest { service: "".into() });
-        let res = self.health.clone().watch(req).await?.into_inner();
-        Ok(res)
+    pub async fn watch(&self) -> impl Stream<Item = ServiceStatus> {
+        status::watch(self.health.clone(), "p2p.P2p".into()).await
     }
 }
 

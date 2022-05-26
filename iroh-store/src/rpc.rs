@@ -8,7 +8,10 @@ use iroh_rpc_types::store::store_server;
 use iroh_rpc_types::store::{
     GetLinksRequest, GetLinksResponse, GetRequest, GetResponse, HasRequest, HasResponse, PutRequest,
 };
-use tonic::{transport::Server as TonicServer, Request, Response, Status};
+use tonic::{
+    transport::{NamedService, Server as TonicServer},
+    Request, Response, Status,
+};
 use tracing::info;
 
 use crate::store::Store;
@@ -90,6 +93,10 @@ impl store_server::Store for Rpc {
             Ok(Response::new(GetLinksResponse { links: Vec::new() }))
         }
     }
+}
+
+impl NamedService for Rpc {
+    const NAME: &'static str = "store";
 }
 
 #[tracing::instrument(skip(store))]
