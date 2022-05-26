@@ -9,7 +9,11 @@ fn main() {
     tonic_build::configure()
         .compile_with_config(
             config,
-            &["proto/p2p.proto", "proto/store.proto"],
+            &[
+                "proto/p2p.proto",
+                "proto/store.proto",
+                "proto/gateway.proto",
+            ],
             &["proto"],
         )
         .unwrap();

@@ -6,3 +6,4 @@ mod error;
 mod headers;
 pub mod metrics;
 mod response;
+mod rpc;
