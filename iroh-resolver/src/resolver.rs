@@ -1,20 +1,23 @@
 use std::fmt::{self, Display, Formatter};
+use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::Arc;
+use std::task::{Context, Poll};
 
-use anyhow::{anyhow, bail, ensure, Context, Result};
+use anyhow::{anyhow, bail, ensure, Context as _, Result};
 use async_trait::async_trait;
 use bytes::Bytes;
 use cid::multihash::{Code, MultihashDigest};
 use cid::Cid;
 use iroh_rpc_client::Client;
-use libipld::codec::{Decode, Encode};
+use libipld::codec::Decode;
 use libipld::prelude::Codec as _;
 use libipld::{Ipld, IpldCodec};
+use tokio::io::AsyncRead;
 use tracing::{debug, trace, warn};
 
 use crate::codecs::Codec;
-use crate::unixfs::{DataType, UnixfsNode};
+use crate::unixfs::{poll_read_buf_at_pos, DataType, UnixfsNode, UnixfsReader};
 
 /// Represents an ipfs path.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -105,44 +108,60 @@ impl FromStr for Path {
 
 #[derive(Debug)]
 pub enum Out {
-    DagPb(Ipld),
+    DagPb(Ipld, Bytes),
     Unixfs(UnixfsNode),
-    DagCbor(Ipld),
-    DagJson(Ipld),
-    Raw(Ipld),
+    DagCbor(Ipld, Bytes),
+    DagJson(Ipld, Bytes),
+    Raw(Ipld, Bytes),
+}
+
+pub enum OutPrettyReader<T: ContentLoader> {
+    DagPb(usize, Bytes),
+    Unixfs(UnixfsReader<T>),
+    DagCbor(usize, Bytes),
+    DagJson(usize, Bytes),
+    Raw(usize, Bytes),
 }
 
 impl Out {
-    pub async fn pretty(&self, loader: &dyn ContentLoader) -> Result<Bytes> {
+    pub fn pretty<T: ContentLoader>(self, loader: T) -> OutPrettyReader<T> {
+        let pos = 0;
         match self {
-            Out::DagPb(_i) => {
-                todo!()
+            Out::DagPb(_, bytes) => OutPrettyReader::DagPb(pos, bytes),
+            Out::DagCbor(_, bytes) => OutPrettyReader::DagCbor(pos, bytes),
+            Out::DagJson(_, bytes) => OutPrettyReader::DagJson(pos, bytes),
+            Out::Raw(_, bytes) => OutPrettyReader::Raw(pos, bytes),
+            Out::Unixfs(node) => OutPrettyReader::Unixfs(node.pretty(loader)),
+        }
+    }
+}
+
+impl<T: ContentLoader + Unpin + 'static> AsyncRead for OutPrettyReader<T> {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        match &mut *self {
+            OutPrettyReader::DagPb(pos, content)
+            | OutPrettyReader::DagCbor(pos, content)
+            | OutPrettyReader::DagJson(pos, content)
+            | OutPrettyReader::Raw(pos, content) => {
+                let res = poll_read_buf_at_pos(pos, content, buf);
+                Poll::Ready(res)
             }
-            Out::Unixfs(node) => node.pretty(loader).await,
-            Out::DagCbor(_i) => {
-                todo!()
-            }
-            Out::DagJson(i) => {
-                let mut bytes = Vec::new();
-                i.encode(IpldCodec::DagJson, &mut bytes)?;
-                Ok(bytes.into())
-            }
-            Out::Raw(i) => {
-                let mut bytes = Vec::new();
-                i.encode(IpldCodec::Raw, &mut bytes)?;
-                Ok(bytes.into())
-            }
+            OutPrettyReader::Unixfs(r) => Pin::new(&mut *r).poll_read(cx, buf),
         }
     }
 }
 
 #[derive(Debug)]
-pub struct Resolver {
-    loader: Box<dyn ContentLoader + 'static>,
+pub struct Resolver<T: ContentLoader> {
+    loader: T,
 }
 
 #[async_trait]
-pub trait ContentLoader: Sync + Send + std::fmt::Debug {
+pub trait ContentLoader: Sync + Send + std::fmt::Debug + Clone {
     /// Loads the actual content of a given cid.
     async fn load_cid(&self, cid: &Cid) -> Result<Bytes>;
 }
@@ -151,6 +170,13 @@ pub trait ContentLoader: Sync + Send + std::fmt::Debug {
 impl<T: ContentLoader> ContentLoader for Arc<T> {
     async fn load_cid(&self, cid: &Cid) -> Result<Bytes> {
         self.as_ref().load_cid(cid).await
+    }
+}
+
+#[async_trait]
+impl<'a, T: ContentLoader> ContentLoader for &'a T {
+    async fn load_cid(&self, cid: &Cid) -> Result<Bytes> {
+        (*self).load_cid(cid).await
     }
 }
 
@@ -220,11 +246,9 @@ impl ContentLoader for Client {
     }
 }
 
-impl Resolver {
-    pub fn new<T: ContentLoader + 'static>(loader: T) -> Self {
-        Resolver {
-            loader: Box::new(loader),
-        }
+impl<T: ContentLoader> Resolver<T> {
+    pub fn new(loader: T) -> Self {
+        Resolver { loader }
     }
 
     /// Resolves through a given path, returning the [`Cid`] and raw bytes of the final leaf.
@@ -289,7 +313,7 @@ impl Resolver {
         let out = self
             .resolve_ipld(cid, libipld::IpldCodec::DagPb, ipld, path)
             .await?;
-        Ok(Out::DagPb(out))
+        Ok(Out::DagPb(out, bytes))
     }
 
     #[tracing::instrument(skip(self, bytes))]
@@ -301,7 +325,7 @@ impl Resolver {
         let out = self
             .resolve_ipld(cid, libipld::IpldCodec::DagCbor, ipld, path)
             .await?;
-        Ok(Out::DagCbor(out))
+        Ok(Out::DagCbor(out, bytes))
     }
 
     #[tracing::instrument(skip(self, bytes))]
@@ -313,7 +337,7 @@ impl Resolver {
         let out = self
             .resolve_ipld(cid, libipld::IpldCodec::DagJson, ipld, path)
             .await?;
-        Ok(Out::DagJson(out))
+        Ok(Out::DagJson(out, bytes))
     }
 
     #[tracing::instrument(skip(self, bytes))]
@@ -325,7 +349,7 @@ impl Resolver {
         let out = self
             .resolve_ipld(cid, libipld::IpldCodec::Raw, ipld, path)
             .await?;
-        Ok(Out::Raw(out))
+        Ok(Out::Raw(out, bytes))
     }
 
     #[tracing::instrument(skip(self))]
@@ -437,6 +461,7 @@ mod tests {
     use super::*;
     use cid::multihash::{Code, MultihashDigest};
     use libipld::{codec::Encode, Ipld, IpldCodec};
+    use tokio::io::AsyncReadExt;
 
     #[test]
     fn test_paths() {
@@ -616,7 +641,7 @@ mod tests {
 
             if let Out::Unixfs(node) = ipld_foo {
                 assert_eq!(
-                    std::str::from_utf8(&node.pretty(&loader).await.unwrap()).unwrap(),
+                    read_to_string(node.pretty(loader.clone())).await,
                     "bar\nhello.txt\n"
                 );
             } else {
@@ -631,10 +656,7 @@ mod tests {
                 .unwrap();
 
             if let Out::Unixfs(node) = ipld_hello_txt {
-                assert_eq!(
-                    std::str::from_utf8(&node.pretty(&loader).await.unwrap()).unwrap(),
-                    "hello\n"
-                );
+                assert_eq!(read_to_string(node.pretty(loader.clone())).await, "hello\n");
             } else {
                 panic!("invalid result: {:?}", ipld_hello_txt);
             }
@@ -648,7 +670,7 @@ mod tests {
 
             if let Out::Unixfs(node) = ipld_bar {
                 assert_eq!(
-                    std::str::from_utf8(&node.pretty(&loader).await.unwrap()).unwrap(),
+                    read_to_string(node.pretty(loader.clone())).await,
                     "bar.txt\n"
                 );
             } else {
@@ -663,10 +685,7 @@ mod tests {
                 .unwrap();
 
             if let Out::Unixfs(node) = ipld_bar_txt {
-                assert_eq!(
-                    std::str::from_utf8(&node.pretty(&loader).await.unwrap()).unwrap(),
-                    "world\n"
-                );
+                assert_eq!(read_to_string(node.pretty(loader.clone())).await, "world\n");
             } else {
                 panic!("invalid result: {:?}", ipld_bar_txt);
             }
@@ -729,7 +748,7 @@ mod tests {
 
             if let Out::Unixfs(node) = ipld_foo {
                 assert_eq!(
-                    std::str::from_utf8(&node.pretty(&loader).await.unwrap()).unwrap(),
+                    read_to_string(node.pretty(loader.clone())).await,
                     "bar\nhello.txt\n"
                 );
             } else {
@@ -744,10 +763,7 @@ mod tests {
                 .unwrap();
 
             if let Out::Unixfs(node) = ipld_hello_txt {
-                assert_eq!(
-                    std::str::from_utf8(&node.pretty(&loader).await.unwrap()).unwrap(),
-                    "hello\n"
-                );
+                assert_eq!(read_to_string(node.pretty(loader.clone())).await, "hello\n");
             } else {
                 panic!("invalid result: {:?}", ipld_hello_txt);
             }
@@ -761,7 +777,7 @@ mod tests {
 
             if let Out::Unixfs(node) = ipld_bar {
                 assert_eq!(
-                    std::str::from_utf8(&node.pretty(&loader).await.unwrap()).unwrap(),
+                    read_to_string(node.pretty(loader.clone())).await,
                     "bar.txt\n"
                 );
             } else {
@@ -776,10 +792,7 @@ mod tests {
                 .unwrap();
 
             if let Out::Unixfs(node) = ipld_bar_txt {
-                assert_eq!(
-                    std::str::from_utf8(&node.pretty(&loader).await.unwrap()).unwrap(),
-                    "world\n"
-                );
+                assert_eq!(read_to_string(node.pretty(loader.clone())).await, "world\n");
             } else {
                 panic!("invalid result: {:?}", ipld_bar_txt);
             }
@@ -829,10 +842,9 @@ mod tests {
                 .unwrap();
 
             if let Out::Unixfs(node) = ipld_readme {
-                let raw = node.pretty(&loader).await.unwrap();
-                let content = std::str::from_utf8(&raw).unwrap();
+                let content = read_to_string(node.pretty(loader.clone())).await;
                 print!("{}", content);
-                assert_eq!(content.len(), 852);
+                assert_eq!(content.len(), 426);
                 assert!(content.starts_with("# iroh"));
                 assert!(content.ends_with("</sub>\n\n"));
             } else {
@@ -853,5 +865,14 @@ mod tests {
 
     async fn load_fixture(p: &str) -> Bytes {
         Bytes::from(tokio::fs::read(format!("./fixtures/{p}")).await.unwrap())
+    }
+
+    async fn read_to_vec<T: AsyncRead + Unpin>(mut reader: T) -> Vec<u8> {
+        let mut out = Vec::new();
+        reader.read_to_end(&mut out).await.unwrap();
+        out
+    }
+    async fn read_to_string<T: AsyncRead + Unpin>(reader: T) -> String {
+        String::from_utf8(read_to_vec(reader).await).unwrap()
     }
 }
