@@ -36,9 +36,6 @@ impl Client {
         state.metrics.cache_miss.inc();
         let p: iroh_resolver::resolver::Path =
             path.parse().map_err(|e: anyhow::Error| e.to_string())?;
-        // TODO: reuse
-        let path = path.to_string();
-
         // todo(arqu): this is wrong but currently don't have access to the data stream
         state
             .metrics
@@ -53,17 +50,6 @@ impl Client {
         let stream = ReaderStream::new(reader);
         let body = StreamBody::new(stream);
 
-        info!("resolved: {}", path);
-        state
-            .metrics
-            .tts_file
-            .set(start_time.elapsed().as_millis() as u64);
-        // let n = res.len() as u64;
-        // state
-        //     .metrics
-        //     .bytes_per_sec_out
-        //     .set(n / start_time.elapsed().as_secs().max(1));
-        // state.metrics.bytes_streamed.inc_by(n);
         Ok(body)
     }
 }

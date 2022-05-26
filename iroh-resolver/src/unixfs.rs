@@ -215,9 +215,10 @@ impl<T: ContentLoader + Unpin + 'static> AsyncRead for UnixfsReader<T> {
 
                     Poll::Ready(res)
                 }
-                _ => {
-                    todo!("{:?}", self.root_node.typ())
-                }
+                _ => Poll::Ready(Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("unsupported Unixfs type: {:?} ", typ),
+                ))),
             },
         }
     }
