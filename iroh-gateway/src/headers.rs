@@ -1,7 +1,7 @@
 use crate::{constants::*, response::ResponseFormat};
 use ::time::OffsetDateTime;
 use axum::http::header::*;
-use cid::Cid;
+use iroh_resolver::resolver::CidOrDomain;
 use std::time;
 
 #[tracing::instrument()]
@@ -69,15 +69,23 @@ pub fn set_etag_headers(headers: &mut HeaderMap, etag: String) {
 }
 
 #[tracing::instrument()]
-pub fn get_etag(cid: &Cid, response_format: Option<ResponseFormat>) -> String {
-    let mut suffix = "".to_string();
-    if let Some(fmt) = response_format {
-        let ext = fmt.get_extenstion();
-        if !ext.is_empty() {
-            suffix = format!(".{}", ext);
+pub fn get_etag(cid: &CidOrDomain, response_format: Option<ResponseFormat>) -> String {
+    match cid {
+        CidOrDomain::Cid(cid) => {
+            let mut suffix = "".to_string();
+            if let Some(fmt) = response_format {
+                let ext = fmt.get_extenstion();
+                if !ext.is_empty() {
+                    suffix = format!(".{}", ext);
+                }
+            }
+            format!("\"{}{}\"", cid, suffix)
+        }
+        CidOrDomain::Domain(_) => {
+            // TODO:
+            String::new()
         }
     }
-    format!("\"{}{}\"", cid, suffix)
 }
 
 #[tracing::instrument()]
@@ -146,6 +154,8 @@ fn get_filename(content_path: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use cid::Cid;
+
     use super::*;
 
     #[test]
@@ -269,12 +279,18 @@ mod tests {
     fn etag_test() {
         let any_etag = "*";
         let etag = get_etag(
-            &Cid::try_from("bafkreigh2akiscaildcqabsyg3dfr6chu3fgpregiymsck7e7aqa4s52zy").unwrap(),
+            &CidOrDomain::Cid(
+                Cid::try_from("bafkreigh2akiscaildcqabsyg3dfr6chu3fgpregiymsck7e7aqa4s52zy")
+                    .unwrap(),
+            ),
             Some(ResponseFormat::Raw),
         );
         let wetag = format!("W/{}", etag);
         let other_etag = get_etag(
-            &Cid::try_from("bafkreigh2akiscaildcqabsyg3dfr6chu3fgpregiymsck7e7aqa4aaaaa").unwrap(),
+            &CidOrDomain::Cid(
+                Cid::try_from("bafkreigh2akiscaildcqabsyg3dfr6chu3fgpregiymsck7e7aqa4aaaaa")
+                    .unwrap(),
+            ),
             Some(ResponseFormat::Raw),
         );
         let other_wetag = format!("W/{}", other_etag);

@@ -27,8 +27,30 @@ pub struct Path {
     tail: Vec<String>,
 }
 
+impl Path {
+    pub fn from_cid(cid: Cid) -> Self {
+        Path {
+            typ: PathType::Ipfs,
+            root: CidOrDomain::Cid(cid),
+            tail: Vec::new(),
+        }
+    }
+
+    pub fn typ(&self) -> PathType {
+        self.typ
+    }
+
+    pub fn root(&self) -> &CidOrDomain {
+        &self.root
+    }
+
+    pub fn tail(&self) -> &[String] {
+        &self.tail
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum CidOrDomain {
+pub enum CidOrDomain {
     Cid(Cid),
     Domain(String),
 }
@@ -323,7 +345,7 @@ impl<T: ContentLoader> Resolver<T> {
     #[tracing::instrument(skip(self))]
     pub async fn resolve(&self, path: Path) -> Result<Out> {
         // Resolve the root block.
-        let (root_cid, root_bytes) = self.resolve_root(path.typ, &path.root).await?;
+        let (root_cid, root_bytes) = self.resolve_root(&path).await?;
 
         let codec = Codec::try_from(root_cid.codec()).context("unknown codec")?;
         match codec {
@@ -564,20 +586,35 @@ impl<T: ContentLoader> Resolver<T> {
     }
 
     #[tracing::instrument(skip(self))]
-    async fn resolve_root(&self, typ: PathType, root: &CidOrDomain) -> Result<(Cid, Bytes)> {
-        match typ {
-            PathType::Ipfs => match root {
-                CidOrDomain::Cid(ref c) => Ok((*c, self.load_cid(c).await?)),
-                CidOrDomain::Domain(_) => bail!("invalid domain encountered"),
-            },
-            PathType::Ipns => match root {
-                CidOrDomain::Cid(ref c) => Ok((*c, self.load_cid(c).await?)),
-                CidOrDomain::Domain(ref domain) => {
-                    let c = self.resolve_dnslink(domain).await?;
-                    Ok((c, self.load_cid(&c).await?))
-                }
-            },
+    async fn resolve_root(&self, root: &Path) -> Result<(Cid, Bytes)> {
+        let mut current = root.clone();
+
+        // maximum cursion of ipns lookups
+        const MAX_LOOKUPS: usize = 16;
+
+        for _ in 0..MAX_LOOKUPS {
+            match current.typ {
+                PathType::Ipfs => match current.root {
+                    CidOrDomain::Cid(ref c) => return Ok((*c, self.load_cid(c).await?)),
+                    CidOrDomain::Domain(_) => bail!("invalid domain encountered"),
+                },
+                PathType::Ipns => match current.root {
+                    CidOrDomain::Cid(ref c) => {
+                        let c = self.load_ipns_record(c).await?;
+                        current = Path::from_cid(c);
+                    }
+                    CidOrDomain::Domain(ref domain) => {
+                        let mut records = resolve_dnslink(domain).await?;
+                        if records.is_empty() {
+                            bail!("no valid dnslink records found for {}", domain);
+                        }
+                        current = records.remove(0);
+                    }
+                },
+            }
         }
+
+        bail!("cannot resolve {}, too many recursive lookups", root);
     }
 
     #[tracing::instrument(skip(self))]
@@ -585,9 +622,8 @@ impl<T: ContentLoader> Resolver<T> {
         self.loader.load_cid(cid).await
     }
 
-    /// Resolves a dnslink at the given domain.
     #[tracing::instrument(skip(self))]
-    async fn resolve_dnslink(&self, _domain: &str) -> Result<Cid> {
+    async fn load_ipns_record(&self, cid: &Cid) -> Result<Cid> {
         todo!()
     }
 }
@@ -616,6 +652,34 @@ pub fn verify_hash(cid: &Cid, bytes: &[u8]) -> Option<bool> {
         let calculated_hash = code.digest(bytes);
         &calculated_hash == cid.hash()
     })
+}
+
+#[tracing::instrument]
+async fn resolve_dnslink(url: &str) -> Result<Vec<Path>> {
+    let url = format!("_dnslink.{}.", url);
+    let records = resolve_txt_record(&url).await?;
+    let records = records
+        .into_iter()
+        .filter(|r| r.starts_with("dnslink="))
+        .map(|r| {
+            let p = r.trim_start_matches("dnslink=").trim();
+            p.parse()
+        })
+        .collect::<Result<_>>()?;
+    Ok(records)
+}
+
+async fn resolve_txt_record(url: &str) -> Result<Vec<String>> {
+    use trust_dns_resolver::config::*;
+    use trust_dns_resolver::AsyncResolver;
+
+    // Construct a new Resolver with default configuration options
+    let resolver = AsyncResolver::tokio(ResolverConfig::default(), ResolverOpts::default())?;
+
+    let txt_response = resolver.txt_lookup(url).await?;
+
+    let out = txt_response.into_iter().map(|r| r.to_string()).collect();
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -1120,5 +1184,29 @@ mod tests {
     }
     async fn read_to_string<T: AsyncRead + Unpin>(reader: T) -> String {
         String::from_utf8(read_to_vec(reader).await).unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_resolve_txt_record() {
+        let result = resolve_txt_record("_dnslink.ipfs.io.").await.unwrap();
+        assert!(!result.is_empty());
+        assert_eq!(result[0], "dnslink=/ipns/website.ipfs.io");
+
+        let result = resolve_txt_record("_dnslink.website.ipfs.io.")
+            .await
+            .unwrap();
+        assert!(!result.is_empty());
+        assert!(&result[0].starts_with("dnslink=/ipfs"));
+    }
+
+    #[tokio::test]
+    async fn test_resolve_dnslink() {
+        let result = resolve_dnslink("ipfs.io").await.unwrap();
+        assert!(!result.is_empty());
+        assert_eq!(result[0], "/ipns/website.ipfs.io".parse().unwrap());
+
+        let result = resolve_dnslink("website.ipfs.io").await.unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].typ(), PathType::Ipfs);
     }
 }

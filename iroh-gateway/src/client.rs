@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use axum::body::StreamBody;
-use cid::Cid;
+use iroh_resolver::resolver::CidOrDomain;
 use iroh_resolver::resolver::OutPrettyReader;
 use iroh_resolver::resolver::Resolver;
 use tokio_util::io::ReaderStream;
@@ -57,7 +57,7 @@ impl Client {
 #[derive(Debug, Clone)]
 pub struct Request {
     pub format: ResponseFormat,
-    pub cid: Cid,
+    pub cid: CidOrDomain,
     pub full_content_path: String,
     pub query_file_name: String,
     pub content_path: String,
