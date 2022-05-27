@@ -111,6 +111,21 @@ impl UnixfsNode {
         }
     }
 
+    /// Returns the size in bytes of the underlying data.
+    /// Available only for `Raw` and `File` which are a single block with no links.
+    pub fn size(&self) -> Option<usize> {
+        match self {
+            UnixfsNode::Raw { data } => Some(data.len()),
+            UnixfsNode::Pb { outer, inner } => {
+                if outer.links.is_empty() {
+                    return Some(inner.data.as_ref().map(|d| d.len()).unwrap_or_default());
+                }
+
+                None
+            }
+        }
+    }
+
     pub fn links(&self) -> Links {
         match self {
             UnixfsNode::Raw { .. } => Links::Raw,
