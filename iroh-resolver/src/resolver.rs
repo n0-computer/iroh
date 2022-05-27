@@ -10,14 +10,14 @@ use bytes::Bytes;
 use cid::multihash::{Code, MultihashDigest};
 use cid::Cid;
 use iroh_rpc_client::Client;
-use libipld::codec::Decode;
+use libipld::codec::{Decode, Encode};
 use libipld::prelude::Codec as _;
 use libipld::{Ipld, IpldCodec};
 use tokio::io::AsyncRead;
 use tracing::{debug, trace, warn};
 
 use crate::codecs::Codec;
-use crate::unixfs::{poll_read_buf_at_pos, DataType, UnixfsNode, UnixfsReader};
+use crate::unixfs::{poll_read_buf_at_pos, DataType, LinkRef, UnixfsNode, UnixfsReader};
 
 /// Represents an ipfs path.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -27,8 +27,30 @@ pub struct Path {
     tail: Vec<String>,
 }
 
+impl Path {
+    pub fn from_cid(cid: Cid) -> Self {
+        Path {
+            typ: PathType::Ipfs,
+            root: CidOrDomain::Cid(cid),
+            tail: Vec::new(),
+        }
+    }
+
+    pub fn typ(&self) -> PathType {
+        self.typ
+    }
+
+    pub fn root(&self) -> &CidOrDomain {
+        &self.root
+    }
+
+    pub fn tail(&self) -> &[String] {
+        &self.tail
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum CidOrDomain {
+pub enum CidOrDomain {
     Cid(Cid),
     Domain(String),
 }
@@ -107,12 +129,95 @@ impl FromStr for Path {
 }
 
 #[derive(Debug)]
-pub enum Out {
+pub struct Out {
+    metadata: Metadata,
+    content: OutContent,
+}
+
+impl Out {
+    pub fn metadata(&self) -> &Metadata {
+        &self.metadata
+    }
+
+    /// Is this content mutable?
+    ///
+    /// Returns `true` if the underlying root is an IPNS entry.
+    pub fn is_mutable(&self) -> bool {
+        matches!(self.metadata.path.typ, PathType::Ipns)
+    }
+
+    /// What kind of content this is this.
+    pub fn typ(&self) -> OutType {
+        self.content.typ()
+    }
+
+    /// Returns an iterator over the content of this directory.
+    /// Only if this is of type `unixfs` and a directory.
+    pub fn unixfs_read_dir(&self) -> Option<impl Iterator<Item = Result<LinkRef<'_>>>> {
+        match self.content {
+            OutContent::Unixfs(ref node) => {
+                if node.is_dir() {
+                    Some(node.links())
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug)]
+enum OutContent {
     DagPb(Ipld, Bytes),
     Unixfs(UnixfsNode),
     DagCbor(Ipld, Bytes),
     DagJson(Ipld, Bytes),
     Raw(Ipld, Bytes),
+}
+
+impl OutContent {
+    fn typ(&self) -> OutType {
+        match self {
+            OutContent::DagPb(_, _) => OutType::DagPb,
+            OutContent::Unixfs(_) => OutType::Unixfs,
+            OutContent::DagCbor(_, _) => OutType::DagCbor,
+            OutContent::DagJson(_, _) => OutType::DagJson,
+            OutContent::Raw(_, _) => OutType::Raw,
+        }
+    }
+}
+
+/// Metadata for the reolution result.
+#[derive(Debug, Clone)]
+pub struct Metadata {
+    /// The original path for that was resolved.
+    pub path: Path,
+    /// Size in bytes.
+    pub size: Option<usize>,
+    pub typ: OutType,
+    pub unixfs_type: Option<UnixfsType>,
+    /// List of mappings "path part" -> Cid.
+    ///
+    /// Only contains the "top level cids", and only path segments that actually map
+    /// to a block.
+    pub resolved_path: Vec<(String, Cid)>,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum OutType {
+    DagPb,
+    Unixfs,
+    DagCbor,
+    DagJson,
+    Raw,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum UnixfsType {
+    Dir,
+    File,
+    Symlink,
 }
 
 pub enum OutPrettyReader<T: ContentLoader> {
@@ -126,12 +231,12 @@ pub enum OutPrettyReader<T: ContentLoader> {
 impl Out {
     pub fn pretty<T: ContentLoader>(self, loader: T) -> OutPrettyReader<T> {
         let pos = 0;
-        match self {
-            Out::DagPb(_, bytes) => OutPrettyReader::DagPb(pos, bytes),
-            Out::DagCbor(_, bytes) => OutPrettyReader::DagCbor(pos, bytes),
-            Out::DagJson(_, bytes) => OutPrettyReader::DagJson(pos, bytes),
-            Out::Raw(_, bytes) => OutPrettyReader::Raw(pos, bytes),
-            Out::Unixfs(node) => OutPrettyReader::Unixfs(node.pretty(loader)),
+        match self.content {
+            OutContent::DagPb(_, bytes) => OutPrettyReader::DagPb(pos, bytes),
+            OutContent::DagCbor(_, bytes) => OutPrettyReader::DagCbor(pos, bytes),
+            OutContent::DagJson(_, bytes) => OutPrettyReader::DagJson(pos, bytes),
+            OutContent::Raw(_, bytes) => OutPrettyReader::Raw(pos, bytes),
+            OutContent::Unixfs(node) => OutPrettyReader::Unixfs(node.pretty(loader)),
         }
     }
 }
@@ -255,101 +360,204 @@ impl<T: ContentLoader> Resolver<T> {
     #[tracing::instrument(skip(self))]
     pub async fn resolve(&self, path: Path) -> Result<Out> {
         // Resolve the root block.
-        let (root_cid, root_bytes) = self.resolve_root(path.typ, &path.root).await?;
+        let (root_cid, root_bytes) = self.resolve_root(&path).await?;
 
         let codec = Codec::try_from(root_cid.codec()).context("unknown codec")?;
         match codec {
             Codec::DagPb => {
-                self.resolve_dag_pb_or_unixfs(root_cid, root_bytes, path.tail)
+                self.resolve_dag_pb_or_unixfs(path, root_cid, root_bytes)
                     .await
             }
-            Codec::DagCbor => self.resolve_dag_cbor(root_cid, root_bytes, path.tail).await,
-            Codec::DagJson => self.resolve_dag_json(root_cid, root_bytes, path.tail).await,
-            Codec::Raw => self.resolve_raw(root_cid, root_bytes, path.tail).await,
+            Codec::DagCbor => self.resolve_dag_cbor(path, root_cid, root_bytes).await,
+            Codec::DagJson => self.resolve_dag_json(path, root_cid, root_bytes).await,
+            Codec::Raw => self.resolve_raw(path, root_cid, root_bytes).await,
             _ => bail!("unsupported codec {:?}", codec),
         }
+    }
+
+    async fn inner_resolve(
+        &self,
+        current: &mut UnixfsNode,
+        resolved_path: &mut Vec<(String, Cid)>,
+        part: &str,
+    ) -> Result<()> {
+        match current.typ() {
+            Some(DataType::Directory) => {
+                let next_link = current
+                    .get_link_by_name(&part)
+                    .await?
+                    .ok_or_else(|| anyhow!("link {} not found", part))?;
+                let next_bytes = self.load_cid(&next_link.cid).await?;
+                let next_node = UnixfsNode::decode(&next_link.cid, next_bytes)?;
+                resolved_path.push((part.to_string(), next_link.cid));
+
+                *current = next_node;
+            }
+            ty => {
+                bail!("unexpected unixfs type {:?}", ty);
+            }
+        }
+
+        Ok(())
     }
 
     /// Resolves through both DagPb and nested UnixFs DAGs.
     #[tracing::instrument(skip(self, bytes))]
     async fn resolve_dag_pb_or_unixfs(
         &self,
+        root_path: Path,
         cid: Cid,
         bytes: Bytes,
-        path: Vec<String>,
     ) -> Result<Out> {
         if let Ok(node) = UnixfsNode::decode(&cid, bytes.clone()) {
+            let tail = &root_path.tail;
             let mut current = node;
+            let mut resolved_path = vec![(root_path.root.to_string(), cid)];
 
-            // TODO: handle if `path` is now empty
-            for part in path {
-                match current.typ() {
-                    Some(DataType::Directory) => {
-                        let next_link = current
-                            .get_link_by_name(&part)
-                            .await?
-                            .ok_or_else(|| anyhow!("link {} not found", part))?;
-                        let next_bytes = self.load_cid(&next_link.cid).await?;
-                        let next_node = UnixfsNode::decode(&next_link.cid, next_bytes)?;
-
-                        current = next_node;
-                    }
-                    _ => todo!(),
-                }
+            for part in tail {
+                self.inner_resolve(&mut current, &mut resolved_path, part)
+                    .await?;
             }
 
-            Ok(Out::Unixfs(current))
+            let unixfs_type = current.typ().and_then(|t| match t {
+                DataType::Directory => Some(UnixfsType::Dir),
+                DataType::File | DataType::Raw => Some(UnixfsType::File),
+                DataType::Symlink => Some(UnixfsType::Symlink),
+                _ => None,
+            });
+            let metadata = Metadata {
+                path: root_path,
+                size: current.size(),
+                typ: OutType::Unixfs,
+                unixfs_type,
+                resolved_path,
+            };
+            Ok(Out {
+                metadata,
+                content: OutContent::Unixfs(current),
+            })
         } else {
-            self.resolve_dag_pb(cid, bytes, path).await
+            self.resolve_dag_pb(root_path, cid, bytes).await
         }
     }
 
     #[tracing::instrument(skip(self, bytes))]
-    async fn resolve_dag_pb(&self, cid: Cid, bytes: Bytes, path: Vec<String>) -> Result<Out> {
+    async fn resolve_dag_pb(&self, root_path: Path, cid: Cid, bytes: Bytes) -> Result<Out> {
         let ipld: libipld::Ipld = libipld::IpldCodec::DagPb
             .decode(&bytes)
             .map_err(|e| anyhow!("invalid dag cbor: {:?}", e))?;
 
         let out = self
-            .resolve_ipld(cid, libipld::IpldCodec::DagPb, ipld, path)
+            .resolve_ipld(cid, libipld::IpldCodec::DagPb, ipld, &root_path.tail)
             .await?;
-        Ok(Out::DagPb(out, bytes))
+
+        // reencode if we only return part of the original
+        let bytes = if root_path.tail.is_empty() {
+            bytes
+        } else {
+            let mut bytes = Vec::new();
+            out.encode(libipld::IpldCodec::DagCbor, &mut bytes)?;
+            bytes.into()
+        };
+
+        let metadata = Metadata {
+            path: root_path,
+            size: Some(bytes.len()),
+            typ: OutType::DagPb,
+            unixfs_type: None,
+            resolved_path: vec![(cid.to_string(), cid)],
+        };
+        Ok(Out {
+            metadata,
+            content: OutContent::DagPb(out, bytes),
+        })
     }
 
     #[tracing::instrument(skip(self, bytes))]
-    async fn resolve_dag_cbor(&self, cid: Cid, bytes: Bytes, path: Vec<String>) -> Result<Out> {
+    async fn resolve_dag_cbor(&self, root_path: Path, cid: Cid, bytes: Bytes) -> Result<Out> {
         let ipld: libipld::Ipld = libipld::IpldCodec::DagCbor
             .decode(&bytes)
             .map_err(|e| anyhow!("invalid dag cbor: {:?}", e))?;
 
         let out = self
-            .resolve_ipld(cid, libipld::IpldCodec::DagCbor, ipld, path)
+            .resolve_ipld(cid, libipld::IpldCodec::DagCbor, ipld, &root_path.tail)
             .await?;
-        Ok(Out::DagCbor(out, bytes))
+
+        // reencode if we only return part of the original
+        let bytes = if root_path.tail.is_empty() {
+            bytes
+        } else {
+            let mut bytes = Vec::new();
+            out.encode(libipld::IpldCodec::DagCbor, &mut bytes)?;
+            bytes.into()
+        };
+
+        let metadata = Metadata {
+            path: root_path,
+            size: Some(bytes.len()),
+            typ: OutType::DagCbor,
+            unixfs_type: None,
+            resolved_path: vec![(cid.to_string(), cid)],
+        };
+        Ok(Out {
+            metadata,
+            content: OutContent::DagCbor(out, bytes),
+        })
     }
 
     #[tracing::instrument(skip(self, bytes))]
-    async fn resolve_dag_json(&self, cid: Cid, bytes: Bytes, path: Vec<String>) -> Result<Out> {
+    async fn resolve_dag_json(&self, root_path: Path, cid: Cid, bytes: Bytes) -> Result<Out> {
         let ipld: libipld::Ipld = libipld::IpldCodec::DagJson
             .decode(&bytes)
             .map_err(|e| anyhow!("invalid dag json: {:?}", e))?;
 
         let out = self
-            .resolve_ipld(cid, libipld::IpldCodec::DagJson, ipld, path)
+            .resolve_ipld(cid, libipld::IpldCodec::DagJson, ipld, &root_path.tail)
             .await?;
-        Ok(Out::DagJson(out, bytes))
+
+        // reencode if we only return part of the original
+        let bytes = if root_path.tail.is_empty() {
+            bytes
+        } else {
+            let mut bytes = Vec::new();
+            out.encode(libipld::IpldCodec::DagJson, &mut bytes)?;
+            bytes.into()
+        };
+
+        let metadata = Metadata {
+            path: root_path,
+            size: Some(bytes.len()),
+            typ: OutType::DagJson,
+            unixfs_type: None,
+            resolved_path: vec![(cid.to_string(), cid)],
+        };
+        Ok(Out {
+            metadata,
+            content: OutContent::DagJson(out, bytes),
+        })
     }
 
     #[tracing::instrument(skip(self, bytes))]
-    async fn resolve_raw(&self, cid: Cid, bytes: Bytes, path: Vec<String>) -> Result<Out> {
+    async fn resolve_raw(&self, root_path: Path, cid: Cid, bytes: Bytes) -> Result<Out> {
         let ipld: libipld::Ipld = libipld::IpldCodec::Raw
             .decode(&bytes)
             .map_err(|e| anyhow!("invalid raw: {:?}", e))?;
 
         let out = self
-            .resolve_ipld(cid, libipld::IpldCodec::Raw, ipld, path)
+            .resolve_ipld(cid, libipld::IpldCodec::Raw, ipld, &root_path.tail)
             .await?;
-        Ok(Out::Raw(out, bytes))
+
+        let metadata = Metadata {
+            path: root_path,
+            size: Some(bytes.len()),
+            typ: OutType::Raw,
+            unixfs_type: None,
+            resolved_path: vec![(cid.to_string(), cid)],
+        };
+        Ok(Out {
+            metadata,
+            content: OutContent::Raw(out, bytes),
+        })
     }
 
     #[tracing::instrument(skip(self))]
@@ -358,7 +566,7 @@ impl<T: ContentLoader> Resolver<T> {
         _cid: Cid,
         codec: libipld::IpldCodec,
         root: Ipld,
-        path: Vec<String>,
+        path: &[String],
     ) -> Result<Ipld> {
         let mut root = root;
         let mut current = &root;
@@ -385,7 +593,7 @@ impl<T: ContentLoader> Resolver<T> {
             let index: libipld::ipld::IpldIndex = if let Ok(i) = part.parse::<usize>() {
                 i.into()
             } else {
-                part.into()
+                part.clone().into()
             };
 
             current = current.get(index)?;
@@ -397,20 +605,35 @@ impl<T: ContentLoader> Resolver<T> {
     }
 
     #[tracing::instrument(skip(self))]
-    async fn resolve_root(&self, typ: PathType, root: &CidOrDomain) -> Result<(Cid, Bytes)> {
-        match typ {
-            PathType::Ipfs => match root {
-                CidOrDomain::Cid(ref c) => Ok((*c, self.load_cid(c).await?)),
-                CidOrDomain::Domain(_) => bail!("invalid domain encountered"),
-            },
-            PathType::Ipns => match root {
-                CidOrDomain::Cid(ref c) => Ok((*c, self.load_cid(c).await?)),
-                CidOrDomain::Domain(ref domain) => {
-                    let c = self.resolve_dnslink(domain).await?;
-                    Ok((c, self.load_cid(&c).await?))
-                }
-            },
+    async fn resolve_root(&self, root: &Path) -> Result<(Cid, Bytes)> {
+        let mut current = root.clone();
+
+        // maximum cursion of ipns lookups
+        const MAX_LOOKUPS: usize = 16;
+
+        for _ in 0..MAX_LOOKUPS {
+            match current.typ {
+                PathType::Ipfs => match current.root {
+                    CidOrDomain::Cid(ref c) => return Ok((*c, self.load_cid(c).await?)),
+                    CidOrDomain::Domain(_) => bail!("invalid domain encountered"),
+                },
+                PathType::Ipns => match current.root {
+                    CidOrDomain::Cid(ref c) => {
+                        let c = self.load_ipns_record(c).await?;
+                        current = Path::from_cid(c);
+                    }
+                    CidOrDomain::Domain(ref domain) => {
+                        let mut records = resolve_dnslink(domain).await?;
+                        if records.is_empty() {
+                            bail!("no valid dnslink records found for {}", domain);
+                        }
+                        current = records.remove(0);
+                    }
+                },
+            }
         }
+
+        bail!("cannot resolve {}, too many recursive lookups", root);
     }
 
     #[tracing::instrument(skip(self))]
@@ -418,9 +641,8 @@ impl<T: ContentLoader> Resolver<T> {
         self.loader.load_cid(cid).await
     }
 
-    /// Resolves a dnslink at the given domain.
     #[tracing::instrument(skip(self))]
-    async fn resolve_dnslink(&self, _domain: &str) -> Result<Cid> {
+    async fn load_ipns_record(&self, cid: &Cid) -> Result<Cid> {
         todo!()
     }
 }
@@ -451,6 +673,34 @@ pub fn verify_hash(cid: &Cid, bytes: &[u8]) -> Option<bool> {
     })
 }
 
+#[tracing::instrument]
+async fn resolve_dnslink(url: &str) -> Result<Vec<Path>> {
+    let url = format!("_dnslink.{}.", url);
+    let records = resolve_txt_record(&url).await?;
+    let records = records
+        .into_iter()
+        .filter(|r| r.starts_with("dnslink="))
+        .map(|r| {
+            let p = r.trim_start_matches("dnslink=").trim();
+            p.parse()
+        })
+        .collect::<Result<_>>()?;
+    Ok(records)
+}
+
+async fn resolve_txt_record(url: &str) -> Result<Vec<String>> {
+    use trust_dns_resolver::config::*;
+    use trust_dns_resolver::AsyncResolver;
+
+    // Construct a new Resolver with default configuration options
+    let resolver = AsyncResolver::tokio(ResolverConfig::default(), ResolverOpts::default())?;
+
+    let txt_response = resolver.txt_lookup(url).await?;
+
+    let out = txt_response.into_iter().map(|r| r.to_string()).collect();
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use std::{
@@ -462,6 +712,29 @@ mod tests {
     use cid::multihash::{Code, MultihashDigest};
     use libipld::{codec::Encode, Ipld, IpldCodec};
     use tokio::io::AsyncReadExt;
+
+    #[async_trait]
+    impl ContentLoader for HashMap<Cid, Bytes> {
+        async fn load_cid(&self, cid: &Cid) -> Result<Bytes> {
+            match self.get(cid) {
+                Some(b) => Ok(b.clone()),
+                None => bail!("not found"),
+            }
+        }
+    }
+
+    async fn load_fixture(p: &str) -> Bytes {
+        Bytes::from(tokio::fs::read(format!("./fixtures/{p}")).await.unwrap())
+    }
+
+    async fn read_to_vec<T: AsyncRead + Unpin>(mut reader: T) -> Vec<u8> {
+        let mut out = Vec::new();
+        reader.read_to_end(&mut out).await.unwrap();
+        out
+    }
+    async fn read_to_string<T: AsyncRead + Unpin>(reader: T) -> String {
+        String::from_utf8(read_to_vec(reader).await).unwrap()
+    }
 
     #[test]
     fn test_paths() {
@@ -560,29 +833,56 @@ mod tests {
             ipld.encode(codec, &mut bytes).unwrap();
             let digest = Code::Blake3_256.digest(&bytes);
             let c = Cid::new_v1(codec.into(), digest);
+            let bytes = Bytes::from(bytes);
 
-            let loader = Arc::new(HashMap::new());
+            let loader: Arc<HashMap<_, _>> = Arc::new([(c, bytes)].into_iter().collect());
             let resolver = Resolver::new(loader.clone());
 
             {
-                let new_ipld = resolver
-                    .resolve_ipld(c, codec, ipld.clone(), vec!["name".to_string()])
-                    .await
-                    .unwrap();
+                let path = format!("/ipfs/{c}/name");
+                let new_ipld = resolver.resolve(path.parse().unwrap()).await.unwrap();
+                let m = new_ipld.metadata().clone();
 
-                assert_eq!(new_ipld, Ipld::String("Foo".to_string()));
+                let out_bytes = read_to_vec(new_ipld.pretty(loader.clone())).await;
+                let out_ipld: Ipld = codec.decode(&out_bytes).unwrap();
+                assert_eq!(out_ipld, Ipld::String("Foo".to_string()));
+
+                assert_eq!(m.unixfs_type, None);
+                assert_eq!(m.path.to_string(), path);
+                match codec {
+                    IpldCodec::DagCbor => {
+                        assert_eq!(m.typ, OutType::DagCbor);
+                    }
+                    IpldCodec::DagJson => {
+                        assert_eq!(m.typ, OutType::DagJson);
+                    }
+                    _ => unreachable!(),
+                }
+                assert_eq!(m.size, Some(out_bytes.len()));
+                assert_eq!(m.resolved_path, vec![(c.to_string(), c)]);
             }
             {
-                let new_ipld = resolver
-                    .resolve_ipld(
-                        c,
-                        codec,
-                        ipld.clone(),
-                        vec!["details".to_string(), "0".to_string()],
-                    )
-                    .await
-                    .unwrap();
-                assert_eq!(new_ipld, Ipld::Integer(1));
+                let path = format!("/ipfs/{c}/details/0");
+                let new_ipld = resolver.resolve(path.parse().unwrap()).await.unwrap();
+                let m = new_ipld.metadata().clone();
+
+                let out_bytes = read_to_vec(new_ipld.pretty(loader.clone())).await;
+                let out_ipld: Ipld = codec.decode(&out_bytes).unwrap();
+                assert_eq!(out_ipld, Ipld::Integer(1));
+
+                assert_eq!(m.unixfs_type, None);
+                assert_eq!(m.path.to_string(), path);
+                match codec {
+                    IpldCodec::DagCbor => {
+                        assert_eq!(m.typ, OutType::DagCbor);
+                    }
+                    IpldCodec::DagJson => {
+                        assert_eq!(m.typ, OutType::DagJson);
+                    }
+                    _ => unreachable!(),
+                }
+                assert_eq!(m.size, Some(out_bytes.len()));
+                assert_eq!(m.resolved_path, vec![(c.to_string(), c)]);
             }
         }
     }
@@ -634,12 +934,29 @@ mod tests {
         let resolver = Resolver::new(loader.clone());
 
         {
-            let ipld_foo = resolver
-                .resolve(root_cid_str.parse().unwrap())
-                .await
-                .unwrap();
+            let path = format!("/ipfs/{root_cid_str}");
+            let ipld_foo = resolver.resolve(path.parse().unwrap()).await.unwrap();
 
-            if let Out::Unixfs(node) = ipld_foo {
+            let ls = ipld_foo
+                .unixfs_read_dir()
+                .unwrap()
+                .collect::<Result<Vec<_>>>()
+                .unwrap();
+            assert_eq!(ls.len(), 2);
+            assert_eq!(ls[0].name.unwrap(), "bar");
+            assert_eq!(ls[1].name.unwrap(), "hello.txt");
+
+            let m = ipld_foo.metadata();
+            assert_eq!(m.unixfs_type, Some(UnixfsType::Dir));
+            assert_eq!(m.path.to_string(), path);
+            assert_eq!(m.typ, OutType::Unixfs);
+            assert_eq!(m.size, None);
+            assert_eq!(
+                m.resolved_path,
+                vec![(root_cid_str.to_string(), root_cid_str.parse().unwrap())]
+            );
+
+            if let OutContent::Unixfs(node) = ipld_foo.content {
                 assert_eq!(
                     read_to_string(node.pretty(loader.clone())).await,
                     "bar\nhello.txt\n"
@@ -650,12 +967,25 @@ mod tests {
         }
 
         {
-            let ipld_hello_txt = resolver
-                .resolve(format!("{root_cid_str}/hello.txt").parse().unwrap())
-                .await
-                .unwrap();
+            let path = format!("/ipfs/{root_cid_str}/hello.txt");
+            let ipld_hello_txt = resolver.resolve(path.parse().unwrap()).await.unwrap();
 
-            if let Out::Unixfs(node) = ipld_hello_txt {
+            assert!(ipld_hello_txt.unixfs_read_dir().is_none());
+
+            let m = ipld_hello_txt.metadata();
+            assert_eq!(m.unixfs_type, Some(UnixfsType::File));
+            assert_eq!(m.path.to_string(), path);
+            assert_eq!(m.typ, OutType::Unixfs);
+            assert_eq!(m.size, Some(6));
+            assert_eq!(
+                m.resolved_path,
+                vec![
+                    (root_cid_str.to_string(), root_cid_str.parse().unwrap()),
+                    ("hello.txt".to_string(), hello_txt_cid_str.parse().unwrap()),
+                ]
+            );
+
+            if let OutContent::Unixfs(node) = ipld_hello_txt.content {
                 assert_eq!(read_to_string(node.pretty(loader.clone())).await, "hello\n");
             } else {
                 panic!("invalid result: {:?}", ipld_hello_txt);
@@ -663,12 +993,57 @@ mod tests {
         }
 
         {
-            let ipld_bar = resolver
-                .resolve(format!("{root_cid_str}/bar").parse().unwrap())
-                .await
-                .unwrap();
+            let path = format!("/ipfs/{hello_txt_cid_str}");
+            let ipld_hello_txt = resolver.resolve(path.parse().unwrap()).await.unwrap();
 
-            if let Out::Unixfs(node) = ipld_bar {
+            assert!(ipld_hello_txt.unixfs_read_dir().is_none());
+
+            let m = ipld_hello_txt.metadata();
+            assert_eq!(m.unixfs_type, Some(UnixfsType::File));
+            assert_eq!(m.path.to_string(), path);
+            assert_eq!(m.typ, OutType::Unixfs);
+            assert_eq!(m.size, Some(6));
+            assert_eq!(
+                m.resolved_path,
+                vec![(
+                    hello_txt_cid_str.to_string(),
+                    hello_txt_cid_str.parse().unwrap()
+                )]
+            );
+
+            if let OutContent::Unixfs(node) = ipld_hello_txt.content {
+                assert_eq!(read_to_string(node.pretty(loader.clone())).await, "hello\n");
+            } else {
+                panic!("invalid result: {:?}", ipld_hello_txt);
+            }
+        }
+
+        {
+            let path = format!("/ipfs/{root_cid_str}/bar");
+            let ipld_bar = resolver.resolve(path.parse().unwrap()).await.unwrap();
+
+            let ls = ipld_bar
+                .unixfs_read_dir()
+                .unwrap()
+                .collect::<Result<Vec<_>>>()
+                .unwrap();
+            assert_eq!(ls.len(), 1);
+            assert_eq!(ls[0].name.unwrap(), "bar.txt");
+
+            let m = ipld_bar.metadata();
+            assert_eq!(m.unixfs_type, Some(UnixfsType::Dir));
+            assert_eq!(m.path.to_string(), path);
+            assert_eq!(m.typ, OutType::Unixfs);
+            assert_eq!(m.size, None);
+            assert_eq!(
+                m.resolved_path,
+                vec![
+                    (root_cid_str.to_string(), root_cid_str.parse().unwrap()),
+                    ("bar".to_string(), bar_cid_str.parse().unwrap()),
+                ]
+            );
+
+            if let OutContent::Unixfs(node) = ipld_bar.content {
                 assert_eq!(
                     read_to_string(node.pretty(loader.clone())).await,
                     "bar.txt\n"
@@ -679,12 +1054,24 @@ mod tests {
         }
 
         {
-            let ipld_bar_txt = resolver
-                .resolve(format!("{root_cid_str}/bar/bar.txt").parse().unwrap())
-                .await
-                .unwrap();
+            let path = format!("/ipfs/{root_cid_str}/bar/bar.txt");
+            let ipld_bar_txt = resolver.resolve(path.parse().unwrap()).await.unwrap();
 
-            if let Out::Unixfs(node) = ipld_bar_txt {
+            let m = ipld_bar_txt.metadata();
+            assert_eq!(m.unixfs_type, Some(UnixfsType::File));
+            assert_eq!(m.path.to_string(), path);
+            assert_eq!(m.typ, OutType::Unixfs);
+            assert_eq!(m.size, Some(6));
+            assert_eq!(
+                m.resolved_path,
+                vec![
+                    (root_cid_str.to_string(), root_cid_str.parse().unwrap()),
+                    ("bar".to_string(), bar_cid_str.parse().unwrap()),
+                    ("bar.txt".to_string(), bar_txt_cid_str.parse().unwrap()),
+                ]
+            );
+
+            if let OutContent::Unixfs(node) = ipld_bar_txt.content {
                 assert_eq!(read_to_string(node.pretty(loader.clone())).await, "world\n");
             } else {
                 panic!("invalid result: {:?}", ipld_bar_txt);
@@ -746,7 +1133,16 @@ mod tests {
                 .await
                 .unwrap();
 
-            if let Out::Unixfs(node) = ipld_foo {
+            let ls = ipld_foo
+                .unixfs_read_dir()
+                .unwrap()
+                .collect::<Result<Vec<_>>>()
+                .unwrap();
+            assert_eq!(ls.len(), 2);
+            assert_eq!(ls[0].name.unwrap(), "bar");
+            assert_eq!(ls[1].name.unwrap(), "hello.txt");
+
+            if let OutContent::Unixfs(node) = ipld_foo.content {
                 assert_eq!(
                     read_to_string(node.pretty(loader.clone())).await,
                     "bar\nhello.txt\n"
@@ -762,7 +1158,7 @@ mod tests {
                 .await
                 .unwrap();
 
-            if let Out::Unixfs(node) = ipld_hello_txt {
+            if let OutContent::Unixfs(node) = ipld_hello_txt.content {
                 assert_eq!(read_to_string(node.pretty(loader.clone())).await, "hello\n");
             } else {
                 panic!("invalid result: {:?}", ipld_hello_txt);
@@ -775,7 +1171,15 @@ mod tests {
                 .await
                 .unwrap();
 
-            if let Out::Unixfs(node) = ipld_bar {
+            let ls = ipld_bar
+                .unixfs_read_dir()
+                .unwrap()
+                .collect::<Result<Vec<_>>>()
+                .unwrap();
+            assert_eq!(ls.len(), 1);
+            assert_eq!(ls[0].name.unwrap(), "bar.txt");
+
+            if let OutContent::Unixfs(node) = ipld_bar.content {
                 assert_eq!(
                     read_to_string(node.pretty(loader.clone())).await,
                     "bar.txt\n"
@@ -791,7 +1195,7 @@ mod tests {
                 .await
                 .unwrap();
 
-            if let Out::Unixfs(node) = ipld_bar_txt {
+            if let OutContent::Unixfs(node) = ipld_bar_txt.content {
                 assert_eq!(read_to_string(node.pretty(loader.clone())).await, "world\n");
             } else {
                 panic!("invalid result: {:?}", ipld_bar_txt);
@@ -836,12 +1240,20 @@ mod tests {
         let resolver = Resolver::new(loader.clone());
 
         {
-            let ipld_readme = resolver
-                .resolve(root_cid_str.parse().unwrap())
-                .await
-                .unwrap();
+            let path = format!("/ipfs/{root_cid_str}");
+            let ipld_readme = resolver.resolve(path.parse().unwrap()).await.unwrap();
 
-            if let Out::Unixfs(node) = ipld_readme {
+            let m = ipld_readme.metadata();
+            assert_eq!(m.unixfs_type, Some(UnixfsType::File));
+            assert_eq!(m.path.to_string(), path);
+            assert_eq!(m.typ, OutType::Unixfs);
+            assert_eq!(m.size, None); // multipart file, we don't know the size ahead of time
+            assert_eq!(
+                m.resolved_path,
+                vec![(root_cid_str.to_string(), root_cid_str.parse().unwrap()),]
+            );
+
+            if let OutContent::Unixfs(node) = ipld_readme.content {
                 let content = read_to_string(node.pretty(loader.clone())).await;
                 print!("{}", content);
                 assert_eq!(content.len(), 426);
@@ -852,27 +1264,282 @@ mod tests {
             }
         }
     }
+    #[tokio::test]
+    async fn test_unixfs_symlink() {
+        // Test content
+        // ------------
+        // QmaRGe7bVmVaLmxbrMiVNXqW4pRNNp3xq7hFtyRKA3mtJL foo/bar/bar.txt
+        //   contains: "world"
+        // QmTh6zphkkZXhLimR5hfy1QnWrzf6EwP15r5aQqSzhUCYz foo/bar/my-symlink-local.txt
+        //   contains: ./bar.txt
+        // QmZSCBhytmu1Mr5gVrsXsB6D8S2XMQXSoofHdPxtPGrZBj foo/bar/my-symlink-outer.txt
+        //   contains: ../../hello.txt (out of bounds)
+        // QmRZQMR6cpczdJAF4xXtisda3DbvFrHxuwi5nF2NJKZvzC foo/bar/my-symlink.txt
+        //   contains: ../hello.txt
+        // QmZULkCELmmk5XNfCgTnCyFgAVxBRBXyDHGGMVoLFLiXEN foo/hello.txt
+        // QmT7qkMZnZNDACJ8CT4PnVkxXKJfcKNVggkygzRcvZE72B foo/bar
+        // QmfTVUNatSpmZUERu62hwSEuLHEUNuY8FFuzFL5n187yGq foo
 
-    #[async_trait]
-    impl ContentLoader for HashMap<Cid, Bytes> {
-        async fn load_cid(&self, cid: &Cid) -> Result<Bytes> {
-            match self.get(cid) {
-                Some(b) => Ok(b.clone()),
-                None => bail!("not found"),
+        let bar_txt_cid_str = "QmaRGe7bVmVaLmxbrMiVNXqW4pRNNp3xq7hFtyRKA3mtJL";
+        let bar_txt_block_bytes = load_fixture(bar_txt_cid_str).await;
+
+        let my_symlink_local_cid_str = "QmTh6zphkkZXhLimR5hfy1QnWrzf6EwP15r5aQqSzhUCYz";
+        let my_symlink_local_block_bytes = load_fixture(my_symlink_local_cid_str).await;
+
+        let my_symlink_cid_str = "QmRZQMR6cpczdJAF4xXtisda3DbvFrHxuwi5nF2NJKZvzC";
+        let my_symlink_block_bytes = load_fixture(my_symlink_cid_str).await;
+
+        let my_symlink_outer_cid_str = "QmZSCBhytmu1Mr5gVrsXsB6D8S2XMQXSoofHdPxtPGrZBj";
+        let my_symlink_outer_block_bytes = load_fixture(my_symlink_outer_cid_str).await;
+
+        let bar_cid_str = "QmT7qkMZnZNDACJ8CT4PnVkxXKJfcKNVggkygzRcvZE72B";
+        let bar_block_bytes = load_fixture(bar_cid_str).await;
+
+        let hello_txt_cid_str = "QmZULkCELmmk5XNfCgTnCyFgAVxBRBXyDHGGMVoLFLiXEN";
+        let hello_txt_block_bytes = load_fixture(hello_txt_cid_str).await;
+
+        // read root
+        let root_cid_str = "QmfTVUNatSpmZUERu62hwSEuLHEUNuY8FFuzFL5n187yGq";
+        let root_cid: Cid = root_cid_str.parse().unwrap();
+        let root_block_bytes = load_fixture(root_cid_str).await;
+        let root_block = UnixfsNode::decode(&root_cid, root_block_bytes.clone()).unwrap();
+
+        let links: Vec<_> = root_block.links().collect::<Result<_>>().unwrap();
+        assert_eq!(links.len(), 2);
+
+        assert_eq!(links[0].cid, bar_cid_str.parse().unwrap());
+        assert_eq!(links[0].name.unwrap(), "bar");
+
+        assert_eq!(links[1].cid, hello_txt_cid_str.parse().unwrap());
+        assert_eq!(links[1].name.unwrap(), "hello.txt");
+
+        let loader: HashMap<Cid, Bytes> = [
+            (root_cid, root_block_bytes.clone()),
+            (hello_txt_cid_str.parse().unwrap(), hello_txt_block_bytes),
+            (bar_cid_str.parse().unwrap(), bar_block_bytes),
+            (bar_txt_cid_str.parse().unwrap(), bar_txt_block_bytes),
+            (my_symlink_cid_str.parse().unwrap(), my_symlink_block_bytes),
+            (
+                my_symlink_local_cid_str.parse().unwrap(),
+                my_symlink_local_block_bytes,
+            ),
+            (
+                my_symlink_outer_cid_str.parse().unwrap(),
+                my_symlink_outer_block_bytes,
+            ),
+        ]
+        .into_iter()
+        .collect();
+        let loader = Arc::new(loader);
+        let resolver = Resolver::new(loader.clone());
+
+        {
+            let path = format!("/ipfs/{root_cid_str}/hello.txt");
+            let ipld_hello_txt = resolver.resolve(path.parse().unwrap()).await.unwrap();
+
+            assert!(ipld_hello_txt.unixfs_read_dir().is_none());
+
+            let m = ipld_hello_txt.metadata();
+            assert_eq!(m.unixfs_type, Some(UnixfsType::File));
+            assert_eq!(m.path.to_string(), path);
+            assert_eq!(m.typ, OutType::Unixfs);
+            assert_eq!(m.size, Some(6));
+            assert_eq!(
+                m.resolved_path,
+                vec![
+                    (root_cid_str.to_string(), root_cid_str.parse().unwrap()),
+                    ("hello.txt".to_string(), hello_txt_cid_str.parse().unwrap()),
+                ]
+            );
+
+            if let OutContent::Unixfs(node) = ipld_hello_txt.content {
+                assert_eq!(read_to_string(node.pretty(loader.clone())).await, "hello\n");
+            } else {
+                panic!("invalid result: {:?}", ipld_hello_txt);
+            }
+        }
+
+        {
+            let path = format!("/ipfs/{root_cid_str}/bar");
+            let ipld_bar = resolver.resolve(path.parse().unwrap()).await.unwrap();
+
+            let ls = ipld_bar
+                .unixfs_read_dir()
+                .unwrap()
+                .collect::<Result<Vec<_>>>()
+                .unwrap();
+            assert_eq!(ls.len(), 4);
+            assert_eq!(ls[0].name.unwrap(), "bar.txt");
+            assert_eq!(ls[1].name.unwrap(), "my-symlink-local.txt");
+            assert_eq!(ls[2].name.unwrap(), "my-symlink-outer.txt");
+            assert_eq!(ls[3].name.unwrap(), "my-symlink.txt");
+        }
+
+        // regular file
+        {
+            let path = format!("/ipfs/{root_cid_str}/bar/bar.txt");
+            let ipld_bar_txt = resolver.resolve(path.parse().unwrap()).await.unwrap();
+
+            let m = ipld_bar_txt.metadata();
+            assert_eq!(m.unixfs_type, Some(UnixfsType::File));
+            assert_eq!(m.path.to_string(), path);
+            assert_eq!(m.typ, OutType::Unixfs);
+            assert_eq!(m.size, Some(6));
+            assert_eq!(
+                m.resolved_path,
+                vec![
+                    (root_cid_str.to_string(), root_cid_str.parse().unwrap()),
+                    ("bar".to_string(), bar_cid_str.parse().unwrap()),
+                    ("bar.txt".to_string(), bar_txt_cid_str.parse().unwrap()),
+                ]
+            );
+
+            if let OutContent::Unixfs(node) = ipld_bar_txt.content {
+                assert_eq!(read_to_string(node.pretty(loader.clone())).await, "world\n");
+            } else {
+                panic!("invalid result: {:?}", ipld_bar_txt);
+            }
+        }
+
+        // symlink local file
+        {
+            let path = format!("/ipfs/{root_cid_str}/bar/my-symlink-local.txt");
+            let ipld_bar_txt = resolver.resolve(path.parse().unwrap()).await.unwrap();
+
+            let m = ipld_bar_txt.metadata();
+            assert_eq!(m.unixfs_type, Some(UnixfsType::Symlink));
+            assert_eq!(m.path.to_string(), path);
+            assert_eq!(m.typ, OutType::Unixfs);
+            assert_eq!(
+                m.resolved_path,
+                vec![
+                    (root_cid_str.to_string(), root_cid_str.parse().unwrap()),
+                    ("bar".to_string(), bar_cid_str.parse().unwrap()),
+                    (
+                        "my-symlink-local.txt".to_string(),
+                        my_symlink_local_cid_str.parse().unwrap()
+                    ),
+                ]
+            );
+
+            if let OutContent::Unixfs(node) = ipld_bar_txt.content {
+                assert_eq!(
+                    read_to_string(node.pretty(loader.clone())).await,
+                    "./bar.txt"
+                );
+            } else {
+                panic!("invalid result: {:?}", ipld_bar_txt);
+            }
+        }
+
+        // symlink outside
+        {
+            let path = format!("/ipfs/{root_cid_str}/bar/my-symlink-outer.txt");
+            let ipld_bar_txt = resolver.resolve(path.parse().unwrap()).await.unwrap();
+
+            let m = ipld_bar_txt.metadata();
+            assert_eq!(m.unixfs_type, Some(UnixfsType::Symlink));
+            assert_eq!(m.path.to_string(), path);
+            assert_eq!(m.typ, OutType::Unixfs);
+            assert_eq!(
+                m.resolved_path,
+                vec![
+                    (root_cid_str.to_string(), root_cid_str.parse().unwrap()),
+                    ("bar".to_string(), bar_cid_str.parse().unwrap()),
+                    (
+                        "my-symlink-outer.txt".to_string(),
+                        my_symlink_outer_cid_str.parse().unwrap()
+                    ),
+                ]
+            );
+
+            if let OutContent::Unixfs(node) = ipld_bar_txt.content {
+                assert_eq!(
+                    read_to_string(node.pretty(loader.clone())).await,
+                    "../../hello.txt"
+                );
+            } else {
+                panic!("invalid result: {:?}", ipld_bar_txt);
+            }
+        }
+
+        // symlink file
+        {
+            let path = format!("/ipfs/{root_cid_str}/bar/my-symlink.txt");
+            let ipld_bar_txt = resolver.resolve(path.parse().unwrap()).await.unwrap();
+
+            let m = ipld_bar_txt.metadata();
+            assert_eq!(m.unixfs_type, Some(UnixfsType::Symlink));
+            assert_eq!(m.path.to_string(), path);
+            assert_eq!(m.typ, OutType::Unixfs);
+            assert_eq!(
+                m.resolved_path,
+                vec![
+                    (root_cid_str.to_string(), root_cid_str.parse().unwrap()),
+                    ("bar".to_string(), bar_cid_str.parse().unwrap()),
+                    (
+                        "my-symlink.txt".to_string(),
+                        my_symlink_cid_str.parse().unwrap()
+                    ),
+                ]
+            );
+
+            if let OutContent::Unixfs(node) = ipld_bar_txt.content {
+                assert_eq!(
+                    read_to_string(node.pretty(loader.clone())).await,
+                    "../hello.txt"
+                );
+            } else {
+                panic!("invalid result: {:?}", ipld_bar_txt);
+            }
+
+            let path = format!("/ipfs/{my_symlink_cid_str}");
+            let ipld_bar_txt = resolver.resolve(path.parse().unwrap()).await.unwrap();
+
+            let m = ipld_bar_txt.metadata();
+            assert_eq!(m.unixfs_type, Some(UnixfsType::Symlink));
+            assert_eq!(m.path.to_string(), path);
+            assert_eq!(m.typ, OutType::Unixfs);
+            assert_eq!(
+                m.resolved_path,
+                vec![(
+                    my_symlink_cid_str.to_string(),
+                    my_symlink_cid_str.parse().unwrap()
+                ),]
+            );
+
+            if let OutContent::Unixfs(node) = ipld_bar_txt.content {
+                assert_eq!(
+                    read_to_string(node.pretty(loader.clone())).await,
+                    "../hello.txt"
+                );
+            } else {
+                panic!("invalid result: {:?}", ipld_bar_txt);
             }
         }
     }
 
-    async fn load_fixture(p: &str) -> Bytes {
-        Bytes::from(tokio::fs::read(format!("./fixtures/{p}")).await.unwrap())
+    #[tokio::test]
+    async fn test_resolve_txt_record() {
+        let result = resolve_txt_record("_dnslink.ipfs.io.").await.unwrap();
+        assert!(!result.is_empty());
+        assert_eq!(result[0], "dnslink=/ipns/website.ipfs.io");
+
+        let result = resolve_txt_record("_dnslink.website.ipfs.io.")
+            .await
+            .unwrap();
+        assert!(!result.is_empty());
+        assert!(&result[0].starts_with("dnslink=/ipfs"));
     }
 
-    async fn read_to_vec<T: AsyncRead + Unpin>(mut reader: T) -> Vec<u8> {
-        let mut out = Vec::new();
-        reader.read_to_end(&mut out).await.unwrap();
-        out
-    }
-    async fn read_to_string<T: AsyncRead + Unpin>(reader: T) -> String {
-        String::from_utf8(read_to_vec(reader).await).unwrap()
+    #[tokio::test]
+    async fn test_resolve_dnslink() {
+        let result = resolve_dnslink("ipfs.io").await.unwrap();
+        assert!(!result.is_empty());
+        assert_eq!(result[0], "/ipns/website.ipfs.io".parse().unwrap());
+
+        let result = resolve_dnslink("website.ipfs.io").await.unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].typ(), PathType::Ipfs);
     }
 }

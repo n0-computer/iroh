@@ -9,6 +9,7 @@ use axum::{
 };
 use bytes::Bytes;
 use cid::Cid;
+use iroh_resolver::resolver::CidOrDomain;
 use iroh_rpc_client::Client as RpcClient;
 use serde::{Deserialize, Serialize};
 use serde_qs;
@@ -86,6 +87,8 @@ impl Core {
         let app = Router::new()
             .route("/ipfs/:cid", get(get_ipfs))
             .route("/ipfs/:cid/*cpath", get(get_ipfs))
+            .route("/ipns/:cid", get(get_ipns))
+            .route("/ipns/:cid/*cpath", get(get_ipns))
             .route("/ipfs/ipfs/:cid", get(redundant_ipfs))
             .route("/ipfs/ipfs/:cid/*cpath", get(redundant_ipfs))
             .layer(Extension(Arc::clone(&self.state)))
@@ -182,7 +185,7 @@ async fn get_ipfs(
     let full_content_path = format!("/ipfs/{}{}", cid, cpath);
 
     // todo(arqu): actually plug in a resolver
-    let resolved_cid = resolve_cid(&cid).await.unwrap();
+    let resolved_cid = CidOrDomain::Cid(resolve_cid(&cid).await.unwrap());
 
     // parse query params
     let format = match get_response_format(&request_headers, query_params.format) {
@@ -222,7 +225,86 @@ async fn get_ipfs(
     // handle request and fetch data
     let req = Request {
         format,
-        cid,
+        cid: CidOrDomain::Cid(cid),
+        full_content_path,
+        query_file_name,
+        content_path: cpath.to_string(),
+        download,
+    };
+
+    match req.format {
+        ResponseFormat::Raw => serve_raw(&req, state, headers, start_time).await,
+        ResponseFormat::Car => serve_car(&req, state, headers, start_time).await,
+        ResponseFormat::Fs(_) => serve_fs(&req, state, headers, start_time).await,
+    }
+}
+
+#[tracing::instrument()]
+async fn get_ipns(
+    Extension(state): Extension<Arc<State>>,
+    Path(params): Path<HashMap<String, String>>,
+    Query(query_params): Query<GetParams>,
+    request_headers: HeaderMap,
+) -> Result<GatewayResponse, GatewayError> {
+    state.metrics.requests_total.inc();
+    let start_time = time::Instant::now();
+    // parse path params
+    let cid_param = params.get("cid").unwrap();
+    let cid = cid_param.clone();
+    let cpath = "".to_string();
+    let cpath = params.get("cpath").unwrap_or(&cpath);
+
+    if request_headers.contains_key(&HEADER_SERVICE_WORKER) {
+        let sw = request_headers.get(&HEADER_SERVICE_WORKER).unwrap();
+        if sw.to_str().unwrap() == "script" && cpath.is_empty() {
+            return Err(error(
+                StatusCode::BAD_REQUEST,
+                "Service Worker not supported",
+                &state,
+            ));
+        }
+    }
+    if request_headers.contains_key(&HEADER_X_IPFS_GATEWAY_PREFIX) {
+        return Err(error(
+            StatusCode::BAD_REQUEST,
+            "Unsupported HTTP header",
+            &state,
+        ));
+    }
+
+    // TODO: better path validation
+    let full_content_path = format!("/ipns/{}{}", cid, cpath);
+
+    // parse query params
+    let format = match get_response_format(&request_headers, query_params.format) {
+        Ok(format) => format,
+        Err(err) => {
+            return Err(error(StatusCode::BAD_REQUEST, &err, &state));
+        }
+    };
+
+    let query_file_name = query_params.filename.unwrap_or_default();
+    let download = query_params.download.unwrap_or_default();
+
+    let mut headers = HeaderMap::new();
+
+    if request_headers.contains_key("If-None-Match") {
+        // TODO: etags
+    }
+
+    // init headers
+    format.write_headers(&mut headers);
+    add_user_headers(&mut headers, state.config.headers.clone());
+    headers.insert(
+        &HEADER_X_IPFS_PATH,
+        HeaderValue::from_str(&full_content_path).unwrap(),
+    );
+    // todo(arqu): add X-Ipfs-Roots
+
+    // handle request and fetch data
+    let req = Request {
+        format,
+        cid: CidOrDomain::Domain(cid),
         full_content_path,
         query_file_name,
         content_path: cpath.to_string(),

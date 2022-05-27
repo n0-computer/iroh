@@ -111,11 +111,30 @@ impl UnixfsNode {
         }
     }
 
+    /// Returns the size in bytes of the underlying data.
+    /// Available only for `Raw` and `File` which are a single block with no links.
+    pub fn size(&self) -> Option<usize> {
+        match self {
+            UnixfsNode::Raw { data } => Some(data.len()),
+            UnixfsNode::Pb { outer, inner } => {
+                if outer.links.is_empty() {
+                    return Some(inner.data.as_ref().map(|d| d.len()).unwrap_or_default());
+                }
+
+                None
+            }
+        }
+    }
+
     pub fn links(&self) -> Links {
         match self {
             UnixfsNode::Raw { .. } => Links::Raw,
             UnixfsNode::Pb { outer, .. } => Links::Pb { i: 0, outer },
         }
+    }
+
+    pub fn is_dir(&self) -> bool {
+        matches!(self.typ(), Some(DataType::Directory))
     }
 
     pub async fn get_link_by_name<S: AsRef<str>>(
@@ -144,6 +163,20 @@ impl UnixfsNode {
                     .collect()
             }
             UnixfsNode::Raw { .. } => Default::default(),
+        }
+    }
+
+    pub fn symlink(&self) -> Result<Option<&str>> {
+        if self.typ() == Some(DataType::Symlink) {
+            match self {
+                UnixfsNode::Pb { inner, .. } => {
+                    let link = std::str::from_utf8(inner.data.as_deref().unwrap_or_default())?;
+                    Ok(Some(link))
+                }
+                _ => Ok(None),
+            }
+        } else {
+            Ok(None)
         }
     }
 
@@ -202,6 +235,11 @@ impl<T: ContentLoader + Unpin + 'static> AsyncRead for UnixfsReader<T> {
                     current_links,
                     current_node,
                 ),
+                DataType::Symlink => {
+                    let data = inner.data.as_deref().unwrap_or_default();
+                    let res = poll_read_buf_at_pos(pos, data, buf);
+                    Poll::Ready(res)
+                }
                 DataType::Directory => {
                     // TODO: cache
                     let mut res = Vec::new();
@@ -282,7 +320,6 @@ fn load_next_node<T: ContentLoader + 'static>(
 
     let link = links.pop_front().unwrap();
 
-    println!("load cid {}", link);
     let fut = async move {
         let bytes = loader.load_cid(&link).await?;
         let node = UnixfsNode::decode(&link, bytes)?;
