@@ -66,8 +66,6 @@ impl std::convert::From<HealthCheckResponse> for ServiceStatus {
 pub enum ServiceStatus {
     ///  Indicates rpc server is in an unknown state
     Unknown,
-    ///  Indicates service is being created but isn't ready to serve
-    Pending,
     /// Indicates service is serving data
     Serving,
     /// Indicates service is not serving data, but the rpc server is not down
@@ -86,38 +84,9 @@ impl std::clone::Clone for ServiceStatus {
                 ServiceStatus::Down(tonic::Status::new(status.code(), status.message()))
             }
             ServiceStatus::Unknown => ServiceStatus::Unknown,
-            ServiceStatus::Pending => ServiceStatus::Pending,
             ServiceStatus::Serving => ServiceStatus::Serving,
             ServiceStatus::NotServing => ServiceStatus::NotServing,
             ServiceStatus::ServiceUnknown => ServiceStatus::ServiceUnknown,
         }
     }
 }
-
-// struct WatchStreamResult(std::result::Result<tonic::Response<HealthCheckResponse>, tonic::Status>);
-// struct ServiceStatusResult(Result<ServiceStatus>);
-
-// impl std::convert::From<WatchStreamResult> for ServiceStatusResult {
-//     fn from(res: WatchStreamResult) -> Self {
-//         match res.0 {
-//             Ok(res) => match res.into_inner().status() {
-//                 tonic_health::proto::health_check_response::ServingStatus::Unknown => {
-//                     ServiceStatusResult(Ok(ServiceStatus::Unknown))
-//                 }
-//                 tonic_health::proto::health_check_response::ServingStatus::Serving => {
-//                     ServiceStatusResult(Ok(ServiceStatus::Serving))
-//                 }
-//                 tonic_health::proto::health_check_response::ServingStatus::NotServing => {
-//                     ServiceStatusResult(Ok(ServiceStatus::NotServing))
-//                 }
-//                 tonic_health::proto::health_check_response::ServingStatus::ServiceUnknown => {
-//                     ServiceStatusResult(Err(anyhow!("service unknown")))
-//                 }
-//             },
-//             Err(s) => match s.code() {
-//                 tonic::Code::Unavailable => ServiceStatusResult(Ok(ServiceStatus::Down)),
-//                 _ => ServiceStatusResult(Err(anyhow!("unexpected rpc status {:?}", s))),
-//             },
-//         }
-//     }
-// }

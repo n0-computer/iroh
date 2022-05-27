@@ -57,7 +57,7 @@ impl StoreClient {
         let req = iroh_metrics::req::trace_tonic_req(HasRequest {
             cid: cid.to_bytes(),
         });
-        let res = self.0.clone().has(req).await?;
+        let res = self.store.clone().has(req).await?;
         Ok(res.into_inner().has)
     }
 
