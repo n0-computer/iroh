@@ -133,6 +133,10 @@ impl UnixfsNode {
         }
     }
 
+    pub fn is_dir(&self) -> bool {
+        matches!(self.typ(), Some(DataType::Directory))
+    }
+
     pub async fn get_link_by_name<S: AsRef<str>>(
         &self,
         link_name: S,

@@ -17,7 +17,7 @@ use tokio::io::AsyncRead;
 use tracing::{debug, trace, warn};
 
 use crate::codecs::Codec;
-use crate::unixfs::{poll_read_buf_at_pos, DataType, UnixfsNode, UnixfsReader};
+use crate::unixfs::{poll_read_buf_at_pos, DataType, LinkRef, UnixfsNode, UnixfsReader};
 
 /// Represents an ipfs path.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -149,6 +149,21 @@ impl Out {
     /// What kind of content this is this.
     pub fn typ(&self) -> OutType {
         self.content.typ()
+    }
+
+    /// Returns an iterator over the content of this directory.
+    /// Only if this is of type `unixfs` and a directory.
+    pub fn unixfs_read_dir(&self) -> Option<impl Iterator<Item = Result<LinkRef<'_>>>> {
+        match self.content {
+            OutContent::Unixfs(ref node) => {
+                if node.is_dir() {
+                    Some(node.links())
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
     }
 }
 
@@ -892,14 +907,21 @@ mod tests {
         let resolver = Resolver::new(loader.clone());
 
         {
-            let ipld_foo = resolver
-                .resolve(root_cid_str.parse().unwrap())
-                .await
+            let path = format!("/ipfs/{root_cid_str}");
+            let ipld_foo = resolver.resolve(path.parse().unwrap()).await.unwrap();
+
+            let ls = ipld_foo
+                .unixfs_read_dir()
+                .unwrap()
+                .collect::<Result<Vec<_>>>()
                 .unwrap();
+            assert_eq!(ls.len(), 2);
+            assert_eq!(ls[0].name.unwrap(), "bar");
+            assert_eq!(ls[1].name.unwrap(), "hello.txt");
 
             let m = ipld_foo.metadata();
             assert_eq!(m.unixfs_type, Some(UnixfsType::Dir));
-            assert_eq!(m.path.to_string(), format!("/ipfs/{root_cid_str}"));
+            assert_eq!(m.path.to_string(), path);
             assert_eq!(m.typ, OutType::Unixfs);
             assert_eq!(m.size, None);
             assert_eq!(
@@ -920,6 +942,8 @@ mod tests {
         {
             let path = format!("/ipfs/{root_cid_str}/hello.txt");
             let ipld_hello_txt = resolver.resolve(path.parse().unwrap()).await.unwrap();
+
+            assert!(ipld_hello_txt.unixfs_read_dir().is_none());
 
             let m = ipld_hello_txt.metadata();
             assert_eq!(m.unixfs_type, Some(UnixfsType::File));
@@ -944,6 +968,14 @@ mod tests {
         {
             let path = format!("/ipfs/{root_cid_str}/bar");
             let ipld_bar = resolver.resolve(path.parse().unwrap()).await.unwrap();
+
+            let ls = ipld_bar
+                .unixfs_read_dir()
+                .unwrap()
+                .collect::<Result<Vec<_>>>()
+                .unwrap();
+            assert_eq!(ls.len(), 1);
+            assert_eq!(ls[0].name.unwrap(), "bar.txt");
 
             let m = ipld_bar.metadata();
             assert_eq!(m.unixfs_type, Some(UnixfsType::Dir));
@@ -1048,6 +1080,15 @@ mod tests {
                 .await
                 .unwrap();
 
+            let ls = ipld_foo
+                .unixfs_read_dir()
+                .unwrap()
+                .collect::<Result<Vec<_>>>()
+                .unwrap();
+            assert_eq!(ls.len(), 2);
+            assert_eq!(ls[0].name.unwrap(), "bar");
+            assert_eq!(ls[1].name.unwrap(), "hello.txt");
+
             if let OutContent::Unixfs(node) = ipld_foo.content {
                 assert_eq!(
                     read_to_string(node.pretty(loader.clone())).await,
@@ -1076,6 +1117,14 @@ mod tests {
                 .resolve(format!("{root_cid_str}/bar").parse().unwrap())
                 .await
                 .unwrap();
+
+            let ls = ipld_bar
+                .unixfs_read_dir()
+                .unwrap()
+                .collect::<Result<Vec<_>>>()
+                .unwrap();
+            assert_eq!(ls.len(), 1);
+            assert_eq!(ls[0].name.unwrap(), "bar.txt");
 
             if let OutContent::Unixfs(node) = ipld_bar.content {
                 assert_eq!(
