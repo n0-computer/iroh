@@ -1,5 +1,5 @@
 use axum::{
-    body::{self, BoxBody, HttpBody},
+    body::{self, Body, BoxBody, HttpBody},
     error_handling::HandleErrorLayer,
     extract::{Extension, Path, Query},
     http::{header::*, StatusCode},
@@ -13,14 +13,14 @@ use iroh_rpc_client::Client as RpcClient;
 use serde::{Deserialize, Serialize};
 use serde_qs;
 use std::{
-    borrow::Cow,
     collections::HashMap,
     error::Error,
     sync::Arc,
     time::{self, Duration},
 };
 use tower::ServiceBuilder;
-use tracing::info;
+use tower_http::trace::TraceLayer;
+use tracing::{info, info_span};
 
 use crate::{
     client::{Client, Request},
@@ -92,11 +92,22 @@ impl Core {
             .layer(
                 ServiceBuilder::new()
                     // Handle errors from middleware
+                    .layer(Extension(Arc::clone(&self.state)))
                     .layer(HandleErrorLayer::new(middleware_error_handler))
                     .load_shed()
                     .concurrency_limit(1024)
                     .timeout(Duration::from_secs(120))
                     .into_inner(),
+            )
+            .layer(
+                // Tracing span for each request
+                TraceLayer::new_for_http().make_span_with(|request: &http::Request<Body>| {
+                    info_span!(
+                        "request",
+                        method = %request.method(),
+                        uri = %request.uri(),
+                    )
+                }),
             );
         // todo(arqu): make configurable
         let addr = format!("0.0.0.0:{}", self.state.config.port);
@@ -344,7 +355,6 @@ where
 
 #[tracing::instrument()]
 fn error(status_code: StatusCode, message: &str, state: &State) -> GatewayError {
-    // increment_counter!(METRICS_FAIL, "code" => self.status_code.as_u16().to_string());
     state.metrics.error_count.inc();
     GatewayError {
         status_code,
@@ -353,20 +363,27 @@ fn error(status_code: StatusCode, message: &str, state: &State) -> GatewayError 
     }
 }
 
-async fn middleware_error_handler(error: BoxError) -> impl IntoResponse {
-    if error.is::<tower::timeout::error::Elapsed>() {
-        return (StatusCode::REQUEST_TIMEOUT, Cow::from("request timed out"));
+#[tracing::instrument()]
+async fn middleware_error_handler(
+    Extension(state): Extension<Arc<State>>,
+    err: BoxError,
+) -> impl IntoResponse {
+    state.metrics.fail_count.inc();
+    if err.is::<tower::timeout::error::Elapsed>() {
+        return error(StatusCode::REQUEST_TIMEOUT, "request timed out", &state);
     }
 
-    if error.is::<tower::load_shed::error::Overloaded>() {
-        return (
+    if err.is::<tower::load_shed::error::Overloaded>() {
+        return error(
             StatusCode::SERVICE_UNAVAILABLE,
-            Cow::from("service is overloaded, try again later"),
+            "service is overloaded, try again later",
+            &state,
         );
     }
 
-    (
+    return error(
         StatusCode::INTERNAL_SERVER_ERROR,
-        Cow::from(format!("unhandled internal error: {}", error)),
-    )
+        format!("unhandled internal error: {}", err).as_str(),
+        &state,
+    );
 }
