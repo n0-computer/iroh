@@ -375,6 +375,32 @@ impl<T: ContentLoader> Resolver<T> {
         }
     }
 
+    async fn inner_resolve(
+        &self,
+        current: &mut UnixfsNode,
+        resolved_path: &mut Vec<(String, Cid)>,
+        part: &str,
+    ) -> Result<()> {
+        match current.typ() {
+            Some(DataType::Directory) => {
+                let next_link = current
+                    .get_link_by_name(&part)
+                    .await?
+                    .ok_or_else(|| anyhow!("link {} not found", part))?;
+                let next_bytes = self.load_cid(&next_link.cid).await?;
+                let next_node = UnixfsNode::decode(&next_link.cid, next_bytes)?;
+                resolved_path.push((part.to_string(), next_link.cid));
+
+                *current = next_node;
+            }
+            ty => {
+                bail!("unexpected unixfs type {:?}", ty);
+            }
+        }
+
+        Ok(())
+    }
+
     /// Resolves through both DagPb and nested UnixFs DAGs.
     #[tracing::instrument(skip(self, bytes))]
     async fn resolve_dag_pb_or_unixfs(
@@ -384,34 +410,13 @@ impl<T: ContentLoader> Resolver<T> {
         bytes: Bytes,
     ) -> Result<Out> {
         if let Ok(node) = UnixfsNode::decode(&cid, bytes.clone()) {
-            let path = &root_path.tail;
+            let tail = &root_path.tail;
             let mut current = node;
             let mut resolved_path = vec![(root_path.root.to_string(), cid)];
 
-            for part in path {
-                match current.typ() {
-                    Some(DataType::Directory) => {
-                        let next_link = current
-                            .get_link_by_name(&part)
-                            .await?
-                            .ok_or_else(|| anyhow!("link {} not found", part))?;
-                        let next_bytes = self.load_cid(&next_link.cid).await?;
-                        let next_node = UnixfsNode::decode(&next_link.cid, next_bytes)?;
-                        resolved_path.push((part.to_string(), next_link.cid));
-
-                        current = next_node;
-                    }
-                    Some(DataType::File) | Some(DataType::Raw) => {}
-                    Some(DataType::Symlink) => {}
-                    _ => {
-                        warn!(
-                            "unhandled unixfs type {:?} for {}",
-                            current.typ(),
-                            root_path
-                        );
-                        break;
-                    }
-                }
+            for part in tail {
+                self.inner_resolve(&mut current, &mut resolved_path, part)
+                    .await?;
             }
 
             let unixfs_type = current.typ().and_then(|t| match t {
@@ -567,7 +572,6 @@ impl<T: ContentLoader> Resolver<T> {
         let mut current = &root;
 
         for part in path {
-            dbg!(part, current, path);
             if let libipld::Ipld::Link(c) = current {
                 let c = *c;
                 let new_codec: libipld::IpldCodec = c.codec().try_into()?;
@@ -592,7 +596,7 @@ impl<T: ContentLoader> Resolver<T> {
                 part.clone().into()
             };
 
-            current = dbg!(current.get(index))?;
+            current = current.get(index)?;
         }
 
         // TODO: can we avoid this clone?
@@ -708,6 +712,29 @@ mod tests {
     use cid::multihash::{Code, MultihashDigest};
     use libipld::{codec::Encode, Ipld, IpldCodec};
     use tokio::io::AsyncReadExt;
+
+    #[async_trait]
+    impl ContentLoader for HashMap<Cid, Bytes> {
+        async fn load_cid(&self, cid: &Cid) -> Result<Bytes> {
+            match self.get(cid) {
+                Some(b) => Ok(b.clone()),
+                None => bail!("not found"),
+            }
+        }
+    }
+
+    async fn load_fixture(p: &str) -> Bytes {
+        Bytes::from(tokio::fs::read(format!("./fixtures/{p}")).await.unwrap())
+    }
+
+    async fn read_to_vec<T: AsyncRead + Unpin>(mut reader: T) -> Vec<u8> {
+        let mut out = Vec::new();
+        reader.read_to_end(&mut out).await.unwrap();
+        out
+    }
+    async fn read_to_string<T: AsyncRead + Unpin>(reader: T) -> String {
+        String::from_utf8(read_to_vec(reader).await).unwrap()
+    }
 
     #[test]
     fn test_paths() {
@@ -966,6 +993,32 @@ mod tests {
         }
 
         {
+            let path = format!("/ipfs/{hello_txt_cid_str}");
+            let ipld_hello_txt = resolver.resolve(path.parse().unwrap()).await.unwrap();
+
+            assert!(ipld_hello_txt.unixfs_read_dir().is_none());
+
+            let m = ipld_hello_txt.metadata();
+            assert_eq!(m.unixfs_type, Some(UnixfsType::File));
+            assert_eq!(m.path.to_string(), path);
+            assert_eq!(m.typ, OutType::Unixfs);
+            assert_eq!(m.size, Some(6));
+            assert_eq!(
+                m.resolved_path,
+                vec![(
+                    hello_txt_cid_str.to_string(),
+                    hello_txt_cid_str.parse().unwrap()
+                )]
+            );
+
+            if let OutContent::Unixfs(node) = ipld_hello_txt.content {
+                assert_eq!(read_to_string(node.pretty(loader.clone())).await, "hello\n");
+            } else {
+                panic!("invalid result: {:?}", ipld_hello_txt);
+            }
+        }
+
+        {
             let path = format!("/ipfs/{root_cid_str}/bar");
             let ipld_bar = resolver.resolve(path.parse().unwrap()).await.unwrap();
 
@@ -1211,28 +1264,259 @@ mod tests {
             }
         }
     }
+    #[tokio::test]
+    async fn test_unixfs_symlink() {
+        // Test content
+        // ------------
+        // QmaRGe7bVmVaLmxbrMiVNXqW4pRNNp3xq7hFtyRKA3mtJL foo/bar/bar.txt
+        //   contains: "world"
+        // QmTh6zphkkZXhLimR5hfy1QnWrzf6EwP15r5aQqSzhUCYz foo/bar/my-symlink-local.txt
+        //   contains: ./bar.txt
+        // QmZSCBhytmu1Mr5gVrsXsB6D8S2XMQXSoofHdPxtPGrZBj foo/bar/my-symlink-outer.txt
+        //   contains: ../../hello.txt (out of bounds)
+        // QmRZQMR6cpczdJAF4xXtisda3DbvFrHxuwi5nF2NJKZvzC foo/bar/my-symlink.txt
+        //   contains: ../hello.txt
+        // QmZULkCELmmk5XNfCgTnCyFgAVxBRBXyDHGGMVoLFLiXEN foo/hello.txt
+        // QmT7qkMZnZNDACJ8CT4PnVkxXKJfcKNVggkygzRcvZE72B foo/bar
+        // QmfTVUNatSpmZUERu62hwSEuLHEUNuY8FFuzFL5n187yGq foo
 
-    #[async_trait]
-    impl ContentLoader for HashMap<Cid, Bytes> {
-        async fn load_cid(&self, cid: &Cid) -> Result<Bytes> {
-            match self.get(cid) {
-                Some(b) => Ok(b.clone()),
-                None => bail!("not found"),
+        let bar_txt_cid_str = "QmaRGe7bVmVaLmxbrMiVNXqW4pRNNp3xq7hFtyRKA3mtJL";
+        let bar_txt_block_bytes = load_fixture(bar_txt_cid_str).await;
+
+        let my_symlink_local_cid_str = "QmTh6zphkkZXhLimR5hfy1QnWrzf6EwP15r5aQqSzhUCYz";
+        let my_symlink_local_block_bytes = load_fixture(my_symlink_local_cid_str).await;
+
+        let my_symlink_cid_str = "QmRZQMR6cpczdJAF4xXtisda3DbvFrHxuwi5nF2NJKZvzC";
+        let my_symlink_block_bytes = load_fixture(my_symlink_cid_str).await;
+
+        let my_symlink_outer_cid_str = "QmZSCBhytmu1Mr5gVrsXsB6D8S2XMQXSoofHdPxtPGrZBj";
+        let my_symlink_outer_block_bytes = load_fixture(my_symlink_outer_cid_str).await;
+
+        let bar_cid_str = "QmT7qkMZnZNDACJ8CT4PnVkxXKJfcKNVggkygzRcvZE72B";
+        let bar_block_bytes = load_fixture(bar_cid_str).await;
+
+        let hello_txt_cid_str = "QmZULkCELmmk5XNfCgTnCyFgAVxBRBXyDHGGMVoLFLiXEN";
+        let hello_txt_block_bytes = load_fixture(hello_txt_cid_str).await;
+
+        // read root
+        let root_cid_str = "QmfTVUNatSpmZUERu62hwSEuLHEUNuY8FFuzFL5n187yGq";
+        let root_cid: Cid = root_cid_str.parse().unwrap();
+        let root_block_bytes = load_fixture(root_cid_str).await;
+        let root_block = UnixfsNode::decode(&root_cid, root_block_bytes.clone()).unwrap();
+
+        let links: Vec<_> = root_block.links().collect::<Result<_>>().unwrap();
+        assert_eq!(links.len(), 2);
+
+        assert_eq!(links[0].cid, bar_cid_str.parse().unwrap());
+        assert_eq!(links[0].name.unwrap(), "bar");
+
+        assert_eq!(links[1].cid, hello_txt_cid_str.parse().unwrap());
+        assert_eq!(links[1].name.unwrap(), "hello.txt");
+
+        let loader: HashMap<Cid, Bytes> = [
+            (root_cid, root_block_bytes.clone()),
+            (hello_txt_cid_str.parse().unwrap(), hello_txt_block_bytes),
+            (bar_cid_str.parse().unwrap(), bar_block_bytes),
+            (bar_txt_cid_str.parse().unwrap(), bar_txt_block_bytes),
+            (my_symlink_cid_str.parse().unwrap(), my_symlink_block_bytes),
+            (
+                my_symlink_local_cid_str.parse().unwrap(),
+                my_symlink_local_block_bytes,
+            ),
+            (
+                my_symlink_outer_cid_str.parse().unwrap(),
+                my_symlink_outer_block_bytes,
+            ),
+        ]
+        .into_iter()
+        .collect();
+        let loader = Arc::new(loader);
+        let resolver = Resolver::new(loader.clone());
+
+        {
+            let path = format!("/ipfs/{root_cid_str}/hello.txt");
+            let ipld_hello_txt = resolver.resolve(path.parse().unwrap()).await.unwrap();
+
+            assert!(ipld_hello_txt.unixfs_read_dir().is_none());
+
+            let m = ipld_hello_txt.metadata();
+            assert_eq!(m.unixfs_type, Some(UnixfsType::File));
+            assert_eq!(m.path.to_string(), path);
+            assert_eq!(m.typ, OutType::Unixfs);
+            assert_eq!(m.size, Some(6));
+            assert_eq!(
+                m.resolved_path,
+                vec![
+                    (root_cid_str.to_string(), root_cid_str.parse().unwrap()),
+                    ("hello.txt".to_string(), hello_txt_cid_str.parse().unwrap()),
+                ]
+            );
+
+            if let OutContent::Unixfs(node) = ipld_hello_txt.content {
+                assert_eq!(read_to_string(node.pretty(loader.clone())).await, "hello\n");
+            } else {
+                panic!("invalid result: {:?}", ipld_hello_txt);
             }
         }
-    }
 
-    async fn load_fixture(p: &str) -> Bytes {
-        Bytes::from(tokio::fs::read(format!("./fixtures/{p}")).await.unwrap())
-    }
+        {
+            let path = format!("/ipfs/{root_cid_str}/bar");
+            let ipld_bar = resolver.resolve(path.parse().unwrap()).await.unwrap();
 
-    async fn read_to_vec<T: AsyncRead + Unpin>(mut reader: T) -> Vec<u8> {
-        let mut out = Vec::new();
-        reader.read_to_end(&mut out).await.unwrap();
-        out
-    }
-    async fn read_to_string<T: AsyncRead + Unpin>(reader: T) -> String {
-        String::from_utf8(read_to_vec(reader).await).unwrap()
+            let ls = ipld_bar
+                .unixfs_read_dir()
+                .unwrap()
+                .collect::<Result<Vec<_>>>()
+                .unwrap();
+            assert_eq!(ls.len(), 4);
+            assert_eq!(ls[0].name.unwrap(), "bar.txt");
+            assert_eq!(ls[1].name.unwrap(), "my-symlink-local.txt");
+            assert_eq!(ls[2].name.unwrap(), "my-symlink-outer.txt");
+            assert_eq!(ls[3].name.unwrap(), "my-symlink.txt");
+        }
+
+        // regular file
+        {
+            let path = format!("/ipfs/{root_cid_str}/bar/bar.txt");
+            let ipld_bar_txt = resolver.resolve(path.parse().unwrap()).await.unwrap();
+
+            let m = ipld_bar_txt.metadata();
+            assert_eq!(m.unixfs_type, Some(UnixfsType::File));
+            assert_eq!(m.path.to_string(), path);
+            assert_eq!(m.typ, OutType::Unixfs);
+            assert_eq!(m.size, Some(6));
+            assert_eq!(
+                m.resolved_path,
+                vec![
+                    (root_cid_str.to_string(), root_cid_str.parse().unwrap()),
+                    ("bar".to_string(), bar_cid_str.parse().unwrap()),
+                    ("bar.txt".to_string(), bar_txt_cid_str.parse().unwrap()),
+                ]
+            );
+
+            if let OutContent::Unixfs(node) = ipld_bar_txt.content {
+                assert_eq!(read_to_string(node.pretty(loader.clone())).await, "world\n");
+            } else {
+                panic!("invalid result: {:?}", ipld_bar_txt);
+            }
+        }
+
+        // symlink local file
+        {
+            let path = format!("/ipfs/{root_cid_str}/bar/my-symlink-local.txt");
+            let ipld_bar_txt = resolver.resolve(path.parse().unwrap()).await.unwrap();
+
+            let m = ipld_bar_txt.metadata();
+            assert_eq!(m.unixfs_type, Some(UnixfsType::Symlink));
+            assert_eq!(m.path.to_string(), path);
+            assert_eq!(m.typ, OutType::Unixfs);
+            assert_eq!(
+                m.resolved_path,
+                vec![
+                    (root_cid_str.to_string(), root_cid_str.parse().unwrap()),
+                    ("bar".to_string(), bar_cid_str.parse().unwrap()),
+                    (
+                        "my-symlink-local.txt".to_string(),
+                        my_symlink_local_cid_str.parse().unwrap()
+                    ),
+                ]
+            );
+
+            if let OutContent::Unixfs(node) = ipld_bar_txt.content {
+                assert_eq!(
+                    read_to_string(node.pretty(loader.clone())).await,
+                    "./bar.txt"
+                );
+            } else {
+                panic!("invalid result: {:?}", ipld_bar_txt);
+            }
+        }
+
+        // symlink outside
+        {
+            let path = format!("/ipfs/{root_cid_str}/bar/my-symlink-outer.txt");
+            let ipld_bar_txt = resolver.resolve(path.parse().unwrap()).await.unwrap();
+
+            let m = ipld_bar_txt.metadata();
+            assert_eq!(m.unixfs_type, Some(UnixfsType::Symlink));
+            assert_eq!(m.path.to_string(), path);
+            assert_eq!(m.typ, OutType::Unixfs);
+            assert_eq!(
+                m.resolved_path,
+                vec![
+                    (root_cid_str.to_string(), root_cid_str.parse().unwrap()),
+                    ("bar".to_string(), bar_cid_str.parse().unwrap()),
+                    (
+                        "my-symlink-outer.txt".to_string(),
+                        my_symlink_outer_cid_str.parse().unwrap()
+                    ),
+                ]
+            );
+
+            if let OutContent::Unixfs(node) = ipld_bar_txt.content {
+                assert_eq!(
+                    read_to_string(node.pretty(loader.clone())).await,
+                    "../../hello.txt"
+                );
+            } else {
+                panic!("invalid result: {:?}", ipld_bar_txt);
+            }
+        }
+
+        // symlink file
+        {
+            let path = format!("/ipfs/{root_cid_str}/bar/my-symlink.txt");
+            let ipld_bar_txt = resolver.resolve(path.parse().unwrap()).await.unwrap();
+
+            let m = ipld_bar_txt.metadata();
+            assert_eq!(m.unixfs_type, Some(UnixfsType::Symlink));
+            assert_eq!(m.path.to_string(), path);
+            assert_eq!(m.typ, OutType::Unixfs);
+            assert_eq!(
+                m.resolved_path,
+                vec![
+                    (root_cid_str.to_string(), root_cid_str.parse().unwrap()),
+                    ("bar".to_string(), bar_cid_str.parse().unwrap()),
+                    (
+                        "my-symlink.txt".to_string(),
+                        my_symlink_cid_str.parse().unwrap()
+                    ),
+                ]
+            );
+
+            if let OutContent::Unixfs(node) = ipld_bar_txt.content {
+                assert_eq!(
+                    read_to_string(node.pretty(loader.clone())).await,
+                    "../hello.txt"
+                );
+            } else {
+                panic!("invalid result: {:?}", ipld_bar_txt);
+            }
+
+            let path = format!("/ipfs/{my_symlink_cid_str}");
+            let ipld_bar_txt = resolver.resolve(path.parse().unwrap()).await.unwrap();
+
+            let m = ipld_bar_txt.metadata();
+            assert_eq!(m.unixfs_type, Some(UnixfsType::Symlink));
+            assert_eq!(m.path.to_string(), path);
+            assert_eq!(m.typ, OutType::Unixfs);
+            assert_eq!(
+                m.resolved_path,
+                vec![(
+                    my_symlink_cid_str.to_string(),
+                    my_symlink_cid_str.parse().unwrap()
+                ),]
+            );
+
+            if let OutContent::Unixfs(node) = ipld_bar_txt.content {
+                assert_eq!(
+                    read_to_string(node.pretty(loader.clone())).await,
+                    "../hello.txt"
+                );
+            } else {
+                panic!("invalid result: {:?}", ipld_bar_txt);
+            }
+        }
     }
 
     #[tokio::test]

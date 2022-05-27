@@ -166,6 +166,20 @@ impl UnixfsNode {
         }
     }
 
+    pub fn symlink(&self) -> Result<Option<&str>> {
+        if self.typ() == Some(DataType::Symlink) {
+            match self {
+                UnixfsNode::Pb { inner, .. } => {
+                    let link = std::str::from_utf8(inner.data.as_deref().unwrap_or_default())?;
+                    Ok(Some(link))
+                }
+                _ => Ok(None),
+            }
+        } else {
+            Ok(None)
+        }
+    }
+
     pub fn pretty<T: ContentLoader>(self, loader: T) -> UnixfsReader<T> {
         let current_links = vec![self.cid_links()];
 
@@ -221,6 +235,11 @@ impl<T: ContentLoader + Unpin + 'static> AsyncRead for UnixfsReader<T> {
                     current_links,
                     current_node,
                 ),
+                DataType::Symlink => {
+                    let data = inner.data.as_deref().unwrap_or_default();
+                    let res = poll_read_buf_at_pos(pos, data, buf);
+                    Poll::Ready(res)
+                }
                 DataType::Directory => {
                     // TODO: cache
                     let mut res = Vec::new();
@@ -301,7 +320,6 @@ fn load_next_node<T: ContentLoader + 'static>(
 
     let link = links.pop_front().unwrap();
 
-    println!("load cid {}", link);
     let fut = async move {
         let bytes = loader.load_cid(&link).await?;
         let node = UnixfsNode::decode(&link, bytes)?;
