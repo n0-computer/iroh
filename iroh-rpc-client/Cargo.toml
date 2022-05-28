@@ -9,6 +9,7 @@ description = "RPC type client for iroh"
 
 [dependencies]
 async-stream = "0.3.0"
+crossterm = "0.23.2"
 iroh-rpc-types = { path = "../iroh-rpc-types" }
 cid = "0.8.0"
 futures = "0.3.21"

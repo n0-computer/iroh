@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::net::SocketAddr;
 
 use anyhow::{Context, Result};
@@ -7,7 +6,7 @@ use futures::{Stream, StreamExt};
 
 use crate::gateway::GatewayClient;
 use crate::network::P2pClient;
-use crate::status::ServiceStatus;
+use crate::status::StatusTable;
 use crate::store::StoreClient;
 
 #[derive(Debug, Clone)]
@@ -36,39 +35,39 @@ impl Client {
         })
     }
 
-    pub async fn check(&self) -> HashMap<String, ServiceStatus> {
-        let mut s = HashMap::default();
-        s.insert("store".into(), self.store.check().await);
-        s.insert("p2p".into(), self.p2p.check().await);
-        s.insert("gateway".into(), self.gateway.check().await);
-        s
+    pub async fn check(&self) -> StatusTable {
+        StatusTable::new(
+            self.gateway.check().await,
+            self.p2p.check().await,
+            self.store.check().await,
+        )
     }
 
-    pub async fn watch(self) -> impl Stream<Item = HashMap<String, ServiceStatus>> {
+    pub async fn watch(self) -> impl Stream<Item = StatusTable> {
         stream! {
-            let mut statuses = self.check().await;
-            yield statuses.clone();
+            let mut status_table: StatusTable = Default::default();
+            yield status_table.clone();
             let store_status = self.store.watch().await;
-            futures::pin_mut!(store_status);
+            tokio::pin!(store_status);
             let p2p_status = self.p2p.watch().await;
-            futures::pin_mut!(p2p_status);
+            tokio::pin!(p2p_status);
             let gateway_status = self.gateway.watch().await;
-            futures::pin_mut!(gateway_status);
+            tokio::pin!(gateway_status);
             loop {
-            tokio::select! {
-                Some(status) = store_status.next() => {
-                    statuses.insert("store".into(), status);
-                    yield statuses.clone();
+                tokio::select! {
+                    Some(status) = store_status.next() => {
+                        status_table.update(status).unwrap() ;
+                        yield status_table.clone();
+                    }
+                    Some(status) = p2p_status.next() => {
+                        status_table.update(status).unwrap();
+                        yield status_table.clone();
+                    }
+                    Some(status) = gateway_status.next() => {
+                        status_table.update(status).unwrap();
+                        yield status_table.clone();
+                    }
                 }
-                Some(status) = p2p_status.next() => {
-                    statuses.insert("p2p".into(), status);
-                    yield statuses.clone();
-                }
-                Some(status) = gateway_status.next() => {
-                    statuses.insert("gateway".into(), status);
-                    yield statuses.clone();
-                }
-            }
             }
         }
     }

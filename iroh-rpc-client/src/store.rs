@@ -9,7 +9,7 @@ use iroh_rpc_types::store::{self, GetLinksRequest, GetRequest, HasRequest, PutRe
 use tonic::transport::{Channel, Endpoint};
 use tonic_health::proto::health_client::HealthClient;
 
-use crate::status::{self, ServiceStatus};
+use crate::status::{self, StatusRow};
 
 #[derive(Debug, Clone)]
 pub struct StoreClient {
@@ -79,12 +79,12 @@ impl StoreClient {
     }
 
     #[tracing::instrument(skip(self))]
-    pub async fn check(&self) -> ServiceStatus {
-        status::check(self.health.clone(), "store.Store".into()).await
+    pub async fn check(&self) -> StatusRow {
+        status::check(self.health.clone(), "store.Store").await
     }
 
     #[tracing::instrument(skip(self))]
-    pub async fn watch(&self) -> impl Stream<Item = ServiceStatus> {
-        status::watch(self.health.clone(), "store.Store".into()).await
+    pub async fn watch(&self) -> impl Stream<Item = StatusRow> {
+        status::watch(self.health.clone(), "store.Store").await
     }
 }

@@ -1,6 +1,7 @@
-mod status;
-
 use clap::{Parser, Subcommand};
+
+use iroh_ctl::status;
+
 #[derive(Parser, Debug, Clone)]
 #[clap(author, version, about, long_about = None, propagate_version = true)]
 struct Cli {

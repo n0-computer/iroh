@@ -13,7 +13,7 @@ use tonic::transport::{Channel, Endpoint};
 use tonic_health::proto::health_client::HealthClient;
 use tracing::{debug, warn};
 
-use crate::status::{self, ServiceStatus};
+use crate::status::{self, StatusRow};
 
 #[derive(Debug, Clone)]
 pub struct P2pClient {
@@ -113,13 +113,13 @@ impl P2pClient {
     }
 
     #[tracing::instrument(skip(self))]
-    pub async fn check(&self) -> ServiceStatus {
-        status::check(self.health.clone(), "p2p.P2p".into()).await
+    pub async fn check(&self) -> StatusRow {
+        status::check(self.health.clone(), "p2p.P2p").await
     }
 
     #[tracing::instrument(skip(self))]
-    pub async fn watch(&self) -> impl Stream<Item = ServiceStatus> {
-        status::watch(self.health.clone(), "p2p.P2p".into()).await
+    pub async fn watch(&self) -> impl Stream<Item = StatusRow> {
+        status::watch(self.health.clone(), "p2p.P2p").await
     }
 }
 
