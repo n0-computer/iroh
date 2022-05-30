@@ -151,6 +151,28 @@ impl Out {
         self.content.typ()
     }
 
+    /// Get a reference to the content as an IPLD node, if applicable.
+    pub fn ipld(&self) -> Option<&Ipld> {
+        match &self.content {
+            OutContent::DagPb(ipld, _) => Some(&ipld),
+            OutContent::DagCbor(ipld, _) => Some(&ipld),
+            OutContent::DagJson(ipld, _) => Some(&ipld),
+            OutContent::Raw(ipld, _) => Some(&ipld),
+            OutContent::Unixfs(_) => None,
+        }
+    }
+
+    /// Convert into an IPLD node, if applicable.
+    pub fn into_ipld(self) -> Option<Ipld> {
+        match self.content {
+            OutContent::DagPb(ipld, _) => Some(ipld),
+            OutContent::DagCbor(ipld, _) => Some(ipld),
+            OutContent::DagJson(ipld, _) => Some(ipld),
+            OutContent::Raw(ipld, _) => Some(ipld),
+            OutContent::Unixfs(_) => None,
+        }
+    }
+
     /// Returns an iterator over the content of this directory.
     /// Only if this is of type `unixfs` and a directory.
     pub fn unixfs_read_dir(&self) -> Option<impl Iterator<Item = Result<LinkRef<'_>>>> {

@@ -13,6 +13,8 @@ pub enum ResponseFormat {
     Raw,
     Car,
     Fs(String),
+    DagJson,
+    DagCbor,
 }
 
 impl std::convert::TryFrom<&str> for ResponseFormat {
@@ -22,6 +24,12 @@ impl std::convert::TryFrom<&str> for ResponseFormat {
         match s.to_lowercase().as_str() {
             "application/vnd.ipld.raw" | "raw" => Ok(ResponseFormat::Raw),
             "application/vnd.ipld.car" | "car" => Ok(ResponseFormat::Car),
+            "application/vnd.ipld.dag-json" | "application/json" | "json" => {
+                Ok(ResponseFormat::DagJson)
+            }
+            "application/vnd.ipld.dag-cbor" | "application/cbor" | "cbor" => {
+                Ok(ResponseFormat::DagCbor)
+            }
             "fs" | "" => Ok(ResponseFormat::Fs(String::new())),
             rf => {
                 if rf.starts_with("application/vnd.ipld.") {
@@ -50,6 +58,20 @@ impl ResponseFormat {
             ResponseFormat::Fs(_) => {
                 headers.insert(CONTENT_TYPE, CONTENT_TYPE_OCTET_STREAM.clone());
             }
+            // TODO(frando): Do we want to use the application/vnd.ipld headers instead?
+            ResponseFormat::DagJson => {
+                headers.insert(
+                    CONTENT_TYPE,
+                    HeaderValue::from_str("application/json").unwrap(),
+                );
+            }
+            // TODO(frando): Do we want to use the application/vnd.ipld headers instead?
+            ResponseFormat::DagCbor => {
+                headers.insert(
+                    CONTENT_TYPE,
+                    HeaderValue::from_str("application/cbor").unwrap(),
+                );
+            }
         }
     }
 
@@ -57,6 +79,8 @@ impl ResponseFormat {
         match self {
             ResponseFormat::Raw => "bin".to_string(),
             ResponseFormat::Car => "car".to_string(),
+            ResponseFormat::DagJson => "json".to_string(),
+            ResponseFormat::DagCbor => "cbor".to_string(),
             ResponseFormat::Fs(s) => {
                 if s.is_empty() {
                     String::new()
@@ -78,9 +102,14 @@ impl ResponseFormat {
                         // todo(arqu): add support for better media type detection
                         if h_value != "application/vnd.ipld.raw"
                             && h_value != "application/vnd.ipld.car"
+                            && h_value != "application/vnd.ipld.dag-json"
+                            && h_value != "application/vnd.ipld.dag-cbor"
                         {
                             return Err(format!("{}: {}", ERR_UNSUPPORTED_FORMAT, h_value));
                         }
+                        return ResponseFormat::try_from(h_value);
+                    }
+                    if h_value == "application/json" || h_value == "application/cbor" {
                         return ResponseFormat::try_from(h_value);
                     }
                 }

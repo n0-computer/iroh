@@ -1,16 +1,20 @@
 use axum::{
-    body::{self, Body, BoxBody, HttpBody},
+    body::{self, Body, BoxBody, Full, HttpBody},
     error_handling::HandleErrorLayer,
     extract::{Extension, Path, Query},
     http::{header::*, StatusCode},
     response::{IntoResponse, Redirect},
-    routing::get,
+    routing::{get, post},
     BoxError, Router,
 };
 use bytes::Bytes;
 use cid::Cid;
 use iroh_resolver::resolver::CidOrDomain;
 use iroh_rpc_client::Client as RpcClient;
+use libipld::{
+    codec::{Codec, Encode},
+    IpldCodec,
+};
 use serde::{Deserialize, Serialize};
 use serde_qs;
 use std::{
@@ -91,6 +95,7 @@ impl Core {
             .route("/ipns/:cid/*cpath", get(get_ipns))
             .route("/ipfs/ipfs/:cid", get(redundant_ipfs))
             .route("/ipfs/ipfs/:cid/*cpath", get(redundant_ipfs))
+            .route("/ipfs", post(post_ipfs))
             .layer(Extension(Arc::clone(&self.state)))
             .layer(
                 ServiceBuilder::new()
@@ -112,6 +117,7 @@ impl Core {
                     )
                 }),
             );
+
         // todo(arqu): make configurable
         let addr = format!("0.0.0.0:{}", self.state.config.port);
 
@@ -123,6 +129,64 @@ impl Core {
             .await
             .unwrap();
     }
+}
+
+#[derive(Debug)]
+enum InputFormat {
+    Raw,
+    DagJson,
+    DagCbor,
+}
+
+impl From<InputFormat> for IpldCodec {
+    fn from(format: InputFormat) -> IpldCodec {
+        match format {
+            InputFormat::Raw => IpldCodec::Raw,
+            InputFormat::DagJson => IpldCodec::DagJson,
+            InputFormat::DagCbor => IpldCodec::DagCbor,
+        }
+    }
+}
+
+impl InputFormat {
+    pub fn from_headers(headers: &HeaderMap) -> Result<Self, &'static str> {
+        match headers.get("content-type") {
+            Some(content_type) => match content_type.to_str().ok() {
+                Some("application/json") | Some("application/vnd.ipld.dag-json") => {
+                    Ok(InputFormat::DagJson)
+                }
+                Some("application/cbor") | Some("application/vnd.ipld.dag-cbor") => {
+                    Ok(InputFormat::DagCbor)
+                }
+                _ => Err("Unsupported content-type in headers"),
+            },
+            None => Ok(InputFormat::Raw),
+        }
+    }
+}
+
+#[tracing::instrument()]
+async fn post_ipfs(
+    Extension(state): Extension<Arc<State>>,
+    body: Bytes,
+    request_headers: HeaderMap,
+) -> Result<GatewayResponse, GatewayError> {
+    state.metrics.requests_total.inc();
+    let input_format = InputFormat::from_headers(&request_headers)
+        .map_err(|err| error(StatusCode::BAD_REQUEST, &err, &state))?;
+    let cid = match input_format {
+        InputFormat::Raw => state.client.put_raw(body, &state.rpc_client).await,
+        InputFormat::DagJson | InputFormat::DagCbor => {
+            let codec: IpldCodec = input_format.into();
+            let input = codec
+                .decode(&body)
+                .map_err(|err| error(StatusCode::UNPROCESSABLE_ENTITY, &err.to_string(), &state))?;
+            state.client.put_ipld(input, &state.rpc_client).await
+        }
+    }
+    .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, &e, &state))?;
+    let body = Full::from(Bytes::from(cid.to_string()));
+    response(StatusCode::OK, body, HeaderMap::new())
 }
 
 #[tracing::instrument()]
@@ -236,6 +300,9 @@ async fn get_ipfs(
         ResponseFormat::Raw => serve_raw(&req, state, headers, start_time).await,
         ResponseFormat::Car => serve_car(&req, state, headers, start_time).await,
         ResponseFormat::Fs(_) => serve_fs(&req, state, headers, start_time).await,
+        ResponseFormat::DagJson | ResponseFormat::DagCbor => {
+            serve_ipld(&req, state, headers, start_time).await
+        }
     }
 }
 
@@ -315,6 +382,9 @@ async fn get_ipns(
         ResponseFormat::Raw => serve_raw(&req, state, headers, start_time).await,
         ResponseFormat::Car => serve_car(&req, state, headers, start_time).await,
         ResponseFormat::Fs(_) => serve_fs(&req, state, headers, start_time).await,
+        ResponseFormat::DagJson | ResponseFormat::DagCbor => {
+            serve_ipld(&req, state, headers, start_time).await
+        }
     }
 }
 
@@ -349,6 +419,36 @@ async fn serve_raw(
         format!("{}.bin", req.cid).as_str(),
         DISPOSITION_ATTACHMENT,
     );
+    set_etag_headers(&mut headers, get_etag(&req.cid, Some(req.format.clone())));
+    add_cache_control_headers(&mut headers, req.full_content_path.to_string());
+    response(StatusCode::OK, body, headers)
+}
+
+#[tracing::instrument()]
+async fn serve_ipld(
+    req: &Request,
+    state: Arc<State>,
+    mut headers: HeaderMap,
+    start_time: std::time::Instant,
+) -> Result<GatewayResponse, GatewayError> {
+    let ipld = state
+        .client
+        .get_ipld(&req.full_content_path, start_time, Arc::clone(&state))
+        .await
+        .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, &e, &state))?;
+
+    let codec = match req.format {
+        ResponseFormat::DagCbor => IpldCodec::DagCbor,
+        ResponseFormat::DagJson => IpldCodec::DagJson,
+        _ => unreachable!(), // serve_ipld is only called for the above content formats.
+    };
+
+    // TODO(frando): we could save the encode if dag-cbor was requested without a path
+    // and use the bytes as stored instead.
+    let mut bytes = vec![];
+    ipld.encode(codec, &mut bytes)
+        .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string(), &state))?;
+    let body = Full::from(bytes);
     set_etag_headers(&mut headers, get_etag(&req.cid, Some(req.format.clone())));
     add_cache_control_headers(&mut headers, req.full_content_path.to_string());
     response(StatusCode::OK, body, headers)
