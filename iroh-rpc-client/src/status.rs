@@ -299,7 +299,7 @@ mod tests {
 
         p2p.status = ServiceStatus::Down(tonic::Status::new(tonic::Code::Unavailable, ""));
         let expect = StatusTable::new(gateway, p2p.clone(), store);
-        got.update(p2p.clone()).unwrap();
+        got.update(p2p).unwrap();
         assert_eq!(expect, got);
     }
 }
