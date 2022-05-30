@@ -154,10 +154,10 @@ impl Out {
     /// Get a reference to the content as an IPLD node, if applicable.
     pub fn ipld(&self) -> Option<&Ipld> {
         match &self.content {
-            OutContent::DagPb(ipld, _) => Some(&ipld),
-            OutContent::DagCbor(ipld, _) => Some(&ipld),
-            OutContent::DagJson(ipld, _) => Some(&ipld),
-            OutContent::Raw(ipld, _) => Some(&ipld),
+            OutContent::DagPb(ipld, _) => Some(ipld),
+            OutContent::DagCbor(ipld, _) => Some(ipld),
+            OutContent::DagJson(ipld, _) => Some(ipld),
+            OutContent::Raw(ipld, _) => Some(ipld),
             OutContent::Unixfs(_) => None,
         }
     }

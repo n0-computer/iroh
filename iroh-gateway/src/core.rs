@@ -173,7 +173,7 @@ async fn post_ipfs(
 ) -> Result<GatewayResponse, GatewayError> {
     state.metrics.requests_total.inc();
     let input_format = InputFormat::from_headers(&request_headers)
-        .map_err(|err| error(StatusCode::BAD_REQUEST, &err, &state))?;
+        .map_err(|err| error(StatusCode::BAD_REQUEST, err, &state))?;
     let cid = match input_format {
         InputFormat::Raw => state.client.put_raw(body, &state.rpc_client).await,
         InputFormat::DagJson | InputFormat::DagCbor => {
