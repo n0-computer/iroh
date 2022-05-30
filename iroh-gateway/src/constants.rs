@@ -7,6 +7,7 @@ pub static HEADER_X_CONTENT_TYPE_OPTIONS: HeaderName =
 pub static HEADER_X_TRACE_ID: HeaderName = HeaderName::from_static("x-trace-id");
 pub static HEADER_X_IPFS_GATEWAY_PREFIX: HeaderName =
     HeaderName::from_static("x-ipfs-gateway-prefix");
+pub static HEADER_X_IPFS_ROOTS: HeaderName = HeaderName::from_static("x-ipfs-roots");
 pub static HEADER_SERVICE_WORKER: HeaderName = HeaderName::from_static("service-worker");
 
 // Common Header Values

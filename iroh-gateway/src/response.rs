@@ -1,7 +1,7 @@
 use axum::{
     body::BoxBody,
     http::{header::*, HeaderValue, StatusCode},
-    response::{IntoResponse, Response},
+    response::{IntoResponse, Redirect, Response},
 };
 
 use crate::constants::*;
@@ -138,6 +138,11 @@ pub struct GatewayResponse {
 
 impl IntoResponse for GatewayResponse {
     fn into_response(mut self) -> Response {
+        if self.status_code == StatusCode::SEE_OTHER {
+            let path = self.headers.remove(LOCATION).unwrap();
+            let path = path.to_str().unwrap();
+            return Redirect::to(path).into_response();
+        }
         let mut rb = Response::builder().status(self.status_code);
         self.headers.insert(
             &HEADER_X_TRACE_ID,
@@ -146,6 +151,19 @@ impl IntoResponse for GatewayResponse {
         let rh = rb.headers_mut().unwrap();
         rh.extend(self.headers);
         rb.body(self.body).unwrap()
+    }
+}
+
+impl GatewayResponse {
+    pub fn redirect(to: &str) -> Self {
+        let mut headers = HeaderMap::new();
+        headers.insert(LOCATION, HeaderValue::from_str(to).unwrap());
+        Self {
+            status_code: StatusCode::SEE_OTHER,
+            body: BoxBody::default(),
+            headers,
+            trace_id: String::new(),
+        }
     }
 }
 

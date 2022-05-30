@@ -47,6 +47,10 @@ impl Path {
     pub fn tail(&self) -> &[String] {
         &self.tail
     }
+
+    pub fn extend_tail(&mut self, tail: Vec<String>) {
+        self.tail.extend(tail);
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

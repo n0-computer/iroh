@@ -1,8 +1,8 @@
 use crate::{constants::*, response::ResponseFormat};
 use ::time::OffsetDateTime;
 use axum::http::header::*;
-use iroh_resolver::resolver::CidOrDomain;
-use std::time;
+use iroh_resolver::resolver::{CidOrDomain, Metadata, PathType};
+use std::{fmt::Write, time};
 
 #[tracing::instrument()]
 pub fn add_user_headers(headers: &mut HeaderMap, user_headers: HeaderMap) {
@@ -13,6 +13,8 @@ pub fn add_user_headers(headers: &mut HeaderMap, user_headers: HeaderMap) {
 pub fn add_content_type_headers(headers: &mut HeaderMap, name: &str) {
     let guess = mime_guess::from_path(name);
     let content_type = guess.first_or_octet_stream().to_string();
+    // todo(arqu): deeper content type checking
+    // todo(arqu): if mime type starts with text/html; strip encoding to let browser detect
     headers.insert(CONTENT_TYPE, HeaderValue::from_str(&content_type).unwrap());
 }
 
@@ -47,11 +49,8 @@ pub fn set_content_disposition_headers(headers: &mut HeaderMap, filename: &str, 
 }
 
 #[tracing::instrument()]
-pub fn add_cache_control_headers(headers: &mut HeaderMap, content_path: String) {
-    if true {
-        // todo(arqu): work out if cpath is mutable
-        // now we just treat everything as mutable
-        // should also utilize the cache flag on config
+pub fn add_cache_control_headers(headers: &mut HeaderMap, metadata: Metadata) {
+    if metadata.path.typ() == PathType::Ipns {
         let lmdt: OffsetDateTime = time::SystemTime::now().into();
         headers.insert(
             LAST_MODIFIED,
@@ -61,6 +60,16 @@ pub fn add_cache_control_headers(headers: &mut HeaderMap, content_path: String) 
         headers.insert(LAST_MODIFIED, HeaderValue::from_str("0").unwrap());
         headers.insert(CACHE_CONTROL, VAL_IMMUTABLE_MAX_AGE.clone());
     }
+}
+
+#[tracing::instrument()]
+pub fn add_ipfs_roots_headers(headers: &mut HeaderMap, metadata: Metadata) {
+    let mut roots = "".to_string();
+    for (_path, rcid) in metadata.resolved_path {
+        write!(roots, "{},", rcid).unwrap();
+    }
+    roots.pop();
+    headers.insert(&HEADER_X_IPFS_ROOTS, HeaderValue::from_str(&roots).unwrap());
 }
 
 #[tracing::instrument()]
@@ -143,7 +152,7 @@ pub fn etag_weak_match(etag: &str, cid_etag: &str) -> bool {
 }
 
 #[tracing::instrument()]
-fn get_filename(content_path: &str) -> String {
+pub fn get_filename(content_path: &str) -> String {
     content_path
         .split('/')
         .filter(|s| !s.is_empty())
