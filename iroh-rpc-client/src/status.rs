@@ -13,6 +13,9 @@ use tonic_health::proto::{
     HealthCheckResponse,
 };
 
+// TODO: make configurable
+const WAIT: tokio::time::Duration = tokio::time::Duration::from_millis(1000);
+
 #[tracing::instrument(skip(health_client))]
 pub async fn check(health_client: HealthClient<Channel>, service: &'static str) -> StatusRow {
     let req = iroh_metrics::req::trace_tonic_req(HealthCheckRequest {
@@ -56,7 +59,7 @@ pub async fn watch(
                 Err(status) => yield StatusRow::new(service, 1, ServiceStatus::Down(status)),
             }
             /// wait before attempting to start a watch stream again
-            tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
+            tokio::time::sleep(WAIT).await;
         };
     }
 }
@@ -101,15 +104,31 @@ impl std::clone::Clone for ServiceStatus {
     }
 }
 
-#[derive(Debug, Clone)]
+// Should only be used for testing purposes
+// Implementation does not compare `ServiceStatus::Down(tonic::Status)`
+// with thorough rigor
+impl std::cmp::PartialEq for ServiceStatus {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (ServiceStatus::Unknown, ServiceStatus::Unknown) => true,
+            (ServiceStatus::Serving, ServiceStatus::Serving) => true,
+            (ServiceStatus::NotServing, ServiceStatus::NotServing) => true,
+            (ServiceStatus::ServiceUnknown, ServiceStatus::ServiceUnknown) => true,
+            (ServiceStatus::Down(s), ServiceStatus::Down(o)) => s.code() == o.code(),
+            _ => false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct StatusRow {
-    name: &'static str,
-    number: usize,
-    status: ServiceStatus,
+    pub(crate) name: &'static str,
+    pub(crate) number: usize,
+    pub(crate) status: ServiceStatus,
 }
 
 impl StatusRow {
-    fn new(name: &'static str, number: usize, status: ServiceStatus) -> Self {
+    pub(crate) fn new(name: &'static str, number: usize, status: ServiceStatus) -> Self {
         Self {
             name,
             number,
@@ -117,9 +136,9 @@ impl StatusRow {
         }
     }
 
-    // queue_status_table_row queues this row of the StatusRow to be written
+    // queue queues this row of the StatusRow to be written
     // You must call `writer.flush()` to actually write the content to the writer
-    fn queue_status_table_row<W>(&self, w: &mut W) -> Result<()>
+    fn queue<W>(&self, w: &mut W) -> Result<()>
     where
         W: Write,
     {
@@ -130,7 +149,7 @@ impl StatusRow {
                 w.queue(style::PrintStyledContent("Unknown".dark_yellow()))?;
             }
             ServiceStatus::NotServing => {
-                w.queue(style::PrintStyledContent("NotServing".dark_yellow()))?;
+                w.queue(style::PrintStyledContent("Not Serving".dark_yellow()))?;
             }
             ServiceStatus::Serving => {
                 w.queue(style::PrintStyledContent("Serving".green()))?;
@@ -140,12 +159,12 @@ impl StatusRow {
             }
             ServiceStatus::Down(status) => match status.code() {
                 tonic::Code::Unknown => {
-                    w.queue(style::PrintStyledContent("Down\t".dark_yellow()))?
-                        .queue(style::Print("The service has been interupted"))?;
+                    w.queue(style::PrintStyledContent("Down".dark_yellow()))?
+                        .queue(style::Print("\tThe service has been interupted"))?;
                 }
                 code => {
-                    w.queue(style::PrintStyledContent("Down\t".red()))?
-                        .queue(style::Print(format!("{}\t", code)))?;
+                    w.queue(style::PrintStyledContent("Down".red()))?
+                        .queue(style::Print(format!("\t{}", code)))?;
                 }
             },
         };
@@ -164,11 +183,11 @@ impl Default for StatusRow {
     }
 }
 
-#[derive(Default, Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct StatusTable {
-    gateway: StatusRow,
-    p2p: StatusRow,
-    store: StatusRow,
+    pub(crate) gateway: StatusRow,
+    pub(crate) p2p: StatusRow,
+    pub(crate) store: StatusRow,
 }
 
 impl StatusTable {
@@ -180,17 +199,20 @@ impl StatusTable {
         }
     }
 
-    pub fn update(&mut self, s: StatusRow) -> Result<()> {
+    pub fn update(&mut self, mut s: StatusRow) -> Result<()> {
         match s.name {
-            "gateway" => {
+            crate::gateway::NAME | "gateway" => {
+                s.name = "gateway";
                 self.gateway = s;
                 Ok(())
             }
-            "p2p" => {
+            crate::network::NAME | "p2p" => {
+                s.name = "p2p";
                 self.p2p = s;
                 Ok(())
             }
-            "store" => {
+            crate::store::NAME | "store" => {
+                s.name = "store";
                 self.store = s;
                 Ok(())
             }
@@ -200,16 +222,209 @@ impl StatusTable {
 
     /// queues the table for printing
     /// you must call `writer.flush()` to execute the queue
-    pub fn queue_table<W>(&self, mut w: W) -> Result<()>
+    pub fn queue<W>(&self, mut w: W) -> Result<()>
     where
         W: Write,
     {
         w.queue(style::PrintStyledContent(
             "Process\t\t\tNumber\tStatus\n".bold(),
         ))?;
-        self.gateway.queue_status_table_row(&mut w)?;
-        self.p2p.queue_status_table_row(&mut w)?;
-        self.gateway.queue_status_table_row(&mut w)?;
+        self.gateway.queue(&mut w)?;
+        self.p2p.queue(&mut w)?;
+        self.store.queue(&mut w)?;
         Ok(())
+    }
+}
+
+impl Default for StatusTable {
+    fn default() -> Self {
+        Self {
+            gateway: StatusRow::new(crate::gateway::NAME, 1, ServiceStatus::Unknown),
+            p2p: StatusRow::new(crate::network::NAME, 1, ServiceStatus::Unknown),
+            store: StatusRow::new(crate::store::NAME, 1, ServiceStatus::Unknown),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn status_row_default() {
+        let expect = StatusRow {
+            name: "",
+            number: 1,
+            status: ServiceStatus::Unknown,
+        };
+        assert_eq!(expect, Default::default());
+    }
+
+    #[test]
+    fn status_row_new() {
+        let expect = StatusRow {
+            name: "test",
+            number: 15,
+            status: ServiceStatus::NotServing,
+        };
+        assert_eq!(
+            expect,
+            StatusRow::new("test", 15, ServiceStatus::NotServing)
+        );
+    }
+
+    #[test]
+    fn status_row_queue() {
+        struct TestCase {
+            row: StatusRow,
+            output: String,
+        }
+
+        let rows = vec![
+            TestCase {
+                row: StatusRow::new("test", 1, ServiceStatus::Unknown),
+                output: format!("test\t\t\t1/1\t{}\n", "Unknown".dark_yellow()),
+            },
+            TestCase {
+                row: StatusRow::new("test", 1, ServiceStatus::NotServing),
+                output: format!("test\t\t\t1/1\t{}\n", "Not Serving".dark_yellow()),
+            },
+            TestCase {
+                row: StatusRow::new("test", 1, ServiceStatus::Serving),
+                output: format!("test\t\t\t1/1\t{}\n", "Serving".green()),
+            },
+            TestCase {
+                row: StatusRow::new("test", 1, ServiceStatus::ServiceUnknown),
+                output: format!("test\t\t\t1/1\t{}\n", "Service Unknown".dark_yellow()),
+            },
+            TestCase {
+                row: StatusRow::new(
+                    "test",
+                    1,
+                    ServiceStatus::Down(tonic::Status::new(tonic::Code::Unknown, "unknown")),
+                ),
+                output: format!(
+                    "test\t\t\t1/1\t{}\tThe service has been interupted\n",
+                    "Down".dark_yellow()
+                ),
+            },
+            TestCase {
+                row: StatusRow::new(
+                    "test",
+                    1,
+                    ServiceStatus::Down(tonic::Status::new(
+                        tonic::Code::Unavailable,
+                        "message text",
+                    )),
+                ),
+                output: format!(
+                    "test\t\t\t1/1\t{}\tThe service is currently unavailable\n",
+                    "Down".red()
+                ),
+            },
+        ];
+
+        for row in rows.into_iter() {
+            let mut got = Vec::new();
+            row.row.queue(&mut got).unwrap();
+            got.flush().unwrap();
+            let got = String::from_utf8(got).unwrap();
+            assert_eq!(row.output, got);
+        }
+    }
+
+    #[test]
+    fn status_table_default() {
+        let expect = StatusTable {
+            gateway: StatusRow {
+                name: crate::gateway::NAME,
+                number: 1,
+                status: ServiceStatus::Unknown,
+            },
+            p2p: StatusRow {
+                name: crate::network::NAME,
+                number: 1,
+                status: ServiceStatus::Unknown,
+            },
+            store: StatusRow {
+                name: crate::store::NAME,
+                number: 1,
+                status: ServiceStatus::Unknown,
+            },
+        };
+
+        assert_eq!(expect, StatusTable::default());
+    }
+
+    #[test]
+    fn status_table_new() {
+        let expect = StatusTable {
+            gateway: StatusRow {
+                name: "test",
+                number: 1,
+                status: ServiceStatus::Unknown,
+            },
+            p2p: StatusRow {
+                name: "test",
+                number: 1,
+                status: ServiceStatus::Unknown,
+            },
+            store: StatusRow {
+                name: "test",
+                number: 1,
+                status: ServiceStatus::Unknown,
+            },
+        };
+        assert_eq!(
+            expect,
+            StatusTable::new(
+                StatusRow::new("test", 1, ServiceStatus::Unknown),
+                StatusRow::new("test", 1, ServiceStatus::Unknown),
+                StatusRow::new("test", 1, ServiceStatus::Unknown)
+            )
+        );
+    }
+
+    #[test]
+    fn status_table_update() {
+        let mut gateway = StatusRow::new("gateway", 1, ServiceStatus::Unknown);
+        let mut p2p = StatusRow::new("p2p", 1, ServiceStatus::Unknown);
+        let mut store = StatusRow::new("store", 1, ServiceStatus::Unknown);
+        let mut got = StatusTable::new(gateway.clone(), p2p.clone(), store.clone());
+
+        store.status = ServiceStatus::Serving;
+        let expect = StatusTable::new(gateway.clone(), p2p.clone(), store.clone());
+        got.update(store.clone()).unwrap();
+        assert_eq!(expect, got);
+
+        gateway.status = ServiceStatus::ServiceUnknown;
+        let expect = StatusTable::new(gateway.clone(), p2p.clone(), store.clone());
+        got.update(gateway.clone()).unwrap();
+        assert_eq!(expect, got);
+
+        p2p.status = ServiceStatus::Down(tonic::Status::new(tonic::Code::Unavailable, ""));
+        let expect = StatusTable::new(gateway, p2p.clone(), store);
+        got.update(p2p.clone()).unwrap();
+        assert_eq!(expect, got);
+    }
+
+    #[test]
+    fn status_table_queue() {
+        let expect = format!("{}gateway\t\t\t1/1\t{}\np2p\t\t\t1/1\t{}\nstore\t\t\t1/1\t{}\tThe service is currently unavailable\n", "Process\t\t\tNumber\tStatus\n".bold(), "Unknown".dark_yellow(), "Serving".green(), "Down".red());
+        let table = StatusTable::new(
+            StatusRow::new("gateway", 1, ServiceStatus::Unknown),
+            StatusRow::new("p2p", 1, ServiceStatus::Serving),
+            StatusRow::new(
+                "store",
+                1,
+                ServiceStatus::Down(tonic::Status::new(tonic::Code::Unavailable, "")),
+            ),
+        );
+
+        let mut got = Vec::new();
+        table.queue(&mut got).unwrap();
+        got.flush().unwrap();
+        let got = String::from_utf8(got).unwrap();
+        assert_eq!(expect, got);
     }
 }

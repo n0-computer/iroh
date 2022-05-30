@@ -20,7 +20,7 @@ pub async fn status(watch: bool) -> Result<()> {
                 .queue(cursor::RestorePosition)?
                 .queue(Clear(ClearType::FromCursorUp))?
                 .queue(cursor::MoveTo(0, 1))?;
-            table.queue_table(&stdout)?;
+            table.queue(&stdout)?;
             stdout
                 .queue(cursor::SavePosition)?
                 .queue(style::Print("\n"))?
@@ -29,7 +29,7 @@ pub async fn status(watch: bool) -> Result<()> {
         Ok(())
     } else {
         let table = client.check().await;
-        table.queue_table(&stdout)?;
+        table.queue(&stdout)?;
         stdout.flush()?;
         Ok(())
     }

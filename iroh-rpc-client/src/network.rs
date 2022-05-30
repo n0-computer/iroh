@@ -15,6 +15,10 @@ use tracing::{debug, warn};
 
 use crate::status::{self, StatusRow};
 
+// name that the health service registers the p2p client as
+// this is derived from the protobuf definition of a `P2pServer`
+pub(crate) const NAME: &str = "p2p.P2p";
+
 #[derive(Debug, Clone)]
 pub struct P2pClient {
     p2p: p2p::p2p_client::P2pClient<Channel>,
@@ -114,12 +118,12 @@ impl P2pClient {
 
     #[tracing::instrument(skip(self))]
     pub async fn check(&self) -> StatusRow {
-        status::check(self.health.clone(), "p2p.P2p").await
+        status::check(self.health.clone(), NAME).await
     }
 
     #[tracing::instrument(skip(self))]
     pub async fn watch(&self) -> impl Stream<Item = StatusRow> {
-        status::watch(self.health.clone(), "p2p.P2p").await
+        status::watch(self.health.clone(), NAME).await
     }
 }
 

@@ -13,6 +13,7 @@ fn main() {
                 "proto/p2p.proto",
                 "proto/store.proto",
                 "proto/gateway.proto",
+                "proto/test.proto",
             ],
             &["proto"],
         )
