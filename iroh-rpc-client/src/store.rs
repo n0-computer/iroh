@@ -4,20 +4,36 @@ use std::net::SocketAddr;
 use anyhow::{Context, Result};
 use bytes::Bytes;
 use cid::Cid;
+use futures::Stream;
 use iroh_rpc_types::store::{self, GetLinksRequest, GetRequest, HasRequest, PutRequest};
+use tonic::transport::{Channel, Endpoint};
+use tonic_health::proto::health_client::HealthClient;
+
+use crate::status::{self, StatusRow};
 
 #[derive(Debug, Clone)]
-pub struct StoreClient(store::store_client::StoreClient<tonic::transport::Channel>);
+pub struct StoreClient {
+    store: store::store_client::StoreClient<Channel>,
+    health: HealthClient<Channel>,
+}
+
+// name that the health service registers the store client as
+// this is derived from the protobuf definition of a `StoreServer`
+pub const NAME: &str = "store.Store";
 
 impl StoreClient {
     pub async fn new(addr: SocketAddr) -> Result<Self> {
-        let conn = tonic::transport::Endpoint::new(format!("http://{}", addr))?
+        let conn = Endpoint::new(format!("http://{}", addr))?
             .keep_alive_while_idle(true)
             .connect_lazy();
 
-        let client = store::store_client::StoreClient::new(conn);
+        let client = store::store_client::StoreClient::new(conn.clone());
+        let health = HealthClient::new(conn);
 
-        Ok(StoreClient(client))
+        Ok(StoreClient {
+            store: client,
+            health,
+        })
     }
 
     #[tracing::instrument(skip(self, blob))]
@@ -27,7 +43,7 @@ impl StoreClient {
             blob,
             links: links.iter().map(|l| l.to_bytes()).collect(),
         });
-        self.0.clone().put(req).await?;
+        self.store.clone().put(req).await?;
         Ok(())
     }
 
@@ -36,7 +52,7 @@ impl StoreClient {
         let req = iroh_metrics::req::trace_tonic_req(GetRequest {
             cid: cid.to_bytes(),
         });
-        let res = self.0.clone().get(req).await?;
+        let res = self.store.clone().get(req).await?;
         Ok(res.into_inner().data)
     }
 
@@ -45,7 +61,7 @@ impl StoreClient {
         let req = iroh_metrics::req::trace_tonic_req(HasRequest {
             cid: cid.to_bytes(),
         });
-        let res = self.0.clone().has(req).await?;
+        let res = self.store.clone().has(req).await?;
         Ok(res.into_inner().has)
     }
 
@@ -54,7 +70,7 @@ impl StoreClient {
         let req = iroh_metrics::req::trace_tonic_req(GetLinksRequest {
             cid: cid.to_bytes(),
         });
-        let links = self.0.clone().get_links(req).await?.into_inner().links;
+        let links = self.store.clone().get_links(req).await?.into_inner().links;
         if links.is_empty() {
             Ok(None)
         } else {
@@ -64,5 +80,15 @@ impl StoreClient {
                 .collect();
             Ok(Some(links?))
         }
+    }
+
+    #[tracing::instrument(skip(self))]
+    pub async fn check(&self) -> StatusRow {
+        status::check(self.health.clone(), NAME).await
+    }
+
+    #[tracing::instrument(skip(self))]
+    pub async fn watch(&self) -> impl Stream<Item = StatusRow> {
+        status::watch(self.health.clone(), NAME).await
     }
 }

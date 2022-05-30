@@ -19,3 +19,8 @@ prost-types = "0.10.1"
 [build-dependencies]
 prost-build = "0.10.3"
 tonic-build = { version = "0.7.2", features = ["prost"] }
+
+[features]
+# Builds and empty tonic server & client as well as associated protobufs
+# that can be used for testing
+testing = []

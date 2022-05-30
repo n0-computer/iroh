@@ -8,7 +8,10 @@ use iroh_rpc_types::store::store_server;
 use iroh_rpc_types::store::{
     GetLinksRequest, GetLinksResponse, GetRequest, GetResponse, HasRequest, HasResponse, PutRequest,
 };
-use tonic::{transport::Server as TonicServer, Request, Response, Status};
+use tonic::{
+    transport::{NamedService, Server as TonicServer},
+    Request, Response, Status,
+};
 use tracing::info;
 
 use crate::store::Store;
@@ -92,10 +95,20 @@ impl store_server::Store for Rpc {
     }
 }
 
+impl NamedService for Rpc {
+    const NAME: &'static str = "store";
+}
+
 #[tracing::instrument(skip(store))]
 pub async fn new(addr: SocketAddr, store: Store) -> Result<()> {
     let rpc = Rpc { store };
+    let (mut health_reporter, health_service) = tonic_health::server::health_reporter();
+    health_reporter
+        .set_serving::<store_server::StoreServer<Rpc>>()
+        .await;
+
     TonicServer::builder()
+        .add_service(health_service)
         .add_service(store_server::StoreServer::new(rpc))
         .serve(addr)
         .await?;

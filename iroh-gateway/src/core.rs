@@ -31,6 +31,7 @@ use crate::{
     headers::*,
     metrics::{get_current_trace_id, Metrics},
     response::{get_response_format, GatewayResponse, ResponseFormat},
+    rpc,
 };
 
 #[derive(Debug)]
@@ -70,6 +71,7 @@ impl GetParams {
 
 impl Core {
     pub async fn new(config: Config, metrics: Metrics) -> anyhow::Result<Self> {
+        rpc::new(config.rpc.client_config.gateway_addr).await?;
         let rpc_client = RpcClient::new(&config.rpc.client_config).await?;
 
         Ok(Self {
