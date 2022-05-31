@@ -1,3 +1,4 @@
+use crate::{gateway, network, store};
 use anyhow::Result;
 use async_stream::stream;
 use futures::Stream;
@@ -11,7 +12,11 @@ use tonic_health::proto::{
 const WAIT: tokio::time::Duration = tokio::time::Duration::from_millis(1000);
 
 #[tracing::instrument(skip(health_client))]
-pub async fn check(health_client: HealthClient<Channel>, service: &'static str) -> StatusRow {
+pub async fn check(
+    health_client: HealthClient<Channel>,
+    service: &'static str,
+    display_name: &'static str,
+) -> StatusRow {
     let req = iroh_metrics::req::trace_tonic_req(HealthCheckRequest {
         service: service.to_string(),
     });
@@ -20,13 +25,14 @@ pub async fn check(health_client: HealthClient<Channel>, service: &'static str) 
         Ok(res) => res.into_inner().into(),
         Err(s) => ServiceStatus::Down(s),
     };
-    StatusRow::new(service, 1, status)
+    StatusRow::new(display_name, 1, status)
 }
 
 #[tracing::instrument(skip(health_client))]
 pub async fn watch(
     health_client: HealthClient<Channel>,
     service: &'static str,
+    display_name: &'static str,
 ) -> impl Stream<Item = StatusRow> {
     stream! {
         loop {
@@ -38,19 +44,19 @@ pub async fn watch(
                     // loop over the stream, breaking if we get an error or stop receiving messages
                     loop {
                         match stream.message().await {
-                            Ok(Some(message)) => yield StatusRow::new(service, 1, message.into()),
+                            Ok(Some(message)) => yield StatusRow::new(display_name, 1, message.into()),
                             Ok(None) => {
-                                yield StatusRow::new(service, 1, ServiceStatus::Down(tonic::Status::new(tonic::Code::Unavailable, format!("No more health messages from service `{}`", service))));
+                                yield StatusRow::new(display_name, 1, ServiceStatus::Down(tonic::Status::new(tonic::Code::Unavailable, format!("No more health messages from service `{}`", service))));
                                 break;
                             }
                             Err(status) => {
-                                yield StatusRow::new(service, 1, ServiceStatus::Down(status));
+                                yield StatusRow::new(display_name, 1, ServiceStatus::Down(status));
                                 break;
                             }
                         }
                     }
                 },
-                Err(status) => yield StatusRow::new(service, 1, ServiceStatus::Down(status)),
+                Err(status) => yield StatusRow::new(display_name, 1, ServiceStatus::Down(status)),
             }
             /// wait before attempting to start a watch stream again
             tokio::time::sleep(WAIT).await;
@@ -169,34 +175,29 @@ impl StatusTable {
         }
     }
 
-    pub fn update(&mut self, mut s: StatusRow) -> Result<()> {
-        match s.name {
-            crate::gateway::NAME | "gateway" => {
-                s.name = "gateway";
-                self.gateway = s;
-                Ok(())
-            }
-            crate::network::NAME | "p2p" => {
-                s.name = "p2p";
-                self.p2p = s;
-                Ok(())
-            }
-            crate::store::NAME | "store" => {
-                s.name = "store";
-                self.store = s;
-                Ok(())
-            }
-            _ => Err(anyhow::anyhow!("unknown service {}", s.name)),
+    pub fn update(&mut self, s: StatusRow) -> Result<()> {
+        if self.gateway.name() == s.name() {
+            self.gateway = s;
+            return Ok(());
         }
+        if self.p2p.name() == s.name() {
+            self.p2p = s;
+            return Ok(());
+        }
+        if self.store.name() == s.name() {
+            self.store = s;
+            return Ok(());
+        }
+        Err(anyhow::anyhow!("unknown service {}", s.name))
     }
 }
 
 impl Default for StatusTable {
     fn default() -> Self {
         Self {
-            gateway: StatusRow::new(crate::gateway::NAME, 1, ServiceStatus::Unknown),
-            p2p: StatusRow::new(crate::network::NAME, 1, ServiceStatus::Unknown),
-            store: StatusRow::new(crate::store::NAME, 1, ServiceStatus::Unknown),
+            gateway: StatusRow::new(gateway::NAME, 1, ServiceStatus::Unknown),
+            p2p: StatusRow::new(network::NAME, 1, ServiceStatus::Unknown),
+            store: StatusRow::new(store::NAME, 1, ServiceStatus::Unknown),
         }
     }
 }
@@ -282,9 +283,9 @@ mod tests {
 
     #[test]
     fn status_table_update() {
-        let mut gateway = StatusRow::new("gateway", 1, ServiceStatus::Unknown);
-        let mut p2p = StatusRow::new("p2p", 1, ServiceStatus::Unknown);
-        let mut store = StatusRow::new("store", 1, ServiceStatus::Unknown);
+        let mut gateway = StatusRow::new(gateway::NAME, 1, ServiceStatus::Unknown);
+        let mut p2p = StatusRow::new(network::NAME, 1, ServiceStatus::Unknown);
+        let mut store = StatusRow::new(store::NAME, 1, ServiceStatus::Unknown);
         let mut got = StatusTable::new(gateway.clone(), p2p.clone(), store.clone());
 
         store.status = ServiceStatus::Serving;

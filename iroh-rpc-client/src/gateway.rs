@@ -9,7 +9,10 @@ use crate::status::{self, StatusRow};
 
 // name that the health service registers the gateway client as
 // this is derived from the protobuf definition of a `GatewayServer`
-pub(crate) const NAME: &str = "gateway.Gateway";
+pub(crate) const SERVICE_NAME: &str = "gateway.Gateway";
+
+// the display name that we expect to see in the StatusTable
+pub(crate) const NAME: &str = "gateway";
 
 #[derive(Debug, Clone)]
 pub struct GatewayClient {
@@ -31,11 +34,11 @@ impl GatewayClient {
 
     #[tracing::instrument(skip(self))]
     pub async fn check(&self) -> StatusRow {
-        status::check(self.health.clone(), NAME).await
+        status::check(self.health.clone(), SERVICE_NAME, NAME).await
     }
 
     #[tracing::instrument(skip(self))]
     pub async fn watch(&self) -> impl Stream<Item = StatusRow> {
-        status::watch(self.health.clone(), NAME).await
+        status::watch(self.health.clone(), SERVICE_NAME, NAME).await
     }
 }

@@ -19,7 +19,10 @@ pub struct StoreClient {
 
 // name that the health service registers the store client as
 // this is derived from the protobuf definition of a `StoreServer`
-pub const NAME: &str = "store.Store";
+pub const SERVICE_NAME: &str = "store.Store";
+
+// the display name that we expect to see in the StatusTable
+pub(crate) const NAME: &str = "store";
 
 impl StoreClient {
     pub async fn new(addr: SocketAddr) -> Result<Self> {
@@ -84,11 +87,11 @@ impl StoreClient {
 
     #[tracing::instrument(skip(self))]
     pub async fn check(&self) -> StatusRow {
-        status::check(self.health.clone(), NAME).await
+        status::check(self.health.clone(), SERVICE_NAME, NAME).await
     }
 
     #[tracing::instrument(skip(self))]
     pub async fn watch(&self) -> impl Stream<Item = StatusRow> {
-        status::watch(self.health.clone(), NAME).await
+        status::watch(self.health.clone(), SERVICE_NAME, NAME).await
     }
 }
