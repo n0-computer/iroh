@@ -1,4 +1,4 @@
-pub const dir_list: &str = "
+pub const DIR_LIST: &str = "
 <div>
     <ol>
         {{#each links}}
@@ -9,7 +9,7 @@ pub const dir_list: &str = "
     </ol>
 </div>";
 
-pub const not_found: &str = "
+pub const NOT_FOUND: &str = "
 <div>
     <h1>404 Not Found</h1>
     <p>

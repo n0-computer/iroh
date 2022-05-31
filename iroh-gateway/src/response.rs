@@ -167,11 +167,20 @@ impl GatewayResponse {
     }
 
     pub fn redirect(to: &str) -> Self {
-        return Self::_redirect(to, StatusCode::SEE_OTHER);
+        Self::_redirect(to, StatusCode::SEE_OTHER)
     }
 
     pub fn redirect_permanently(to: &str) -> Self {
-        return Self::_redirect(to, StatusCode::MOVED_PERMANENTLY);
+        Self::_redirect(to, StatusCode::MOVED_PERMANENTLY)
+    }
+
+    pub fn not_modified() -> Self {
+        Self {
+            status_code: StatusCode::NOT_MODIFIED,
+            body: BoxBody::default(),
+            headers: HeaderMap::new(),
+            trace_id: String::new(),
+        }
     }
 }
 
