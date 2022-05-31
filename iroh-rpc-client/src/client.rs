@@ -140,14 +140,22 @@ mod tests {
         let gateway_name = gateway::NAME;
         let p2p_name = network::NAME;
         let store_name = store::NAME;
+
+        // make the services with the expected service names
         let (mut gateway_reporter, gateway_task) =
-            make_service(gateway_name, cfg.gateway_addr).await.unwrap();
-        let (mut p2p_reporter, p2p_task) = make_service(p2p_name, cfg.p2p_addr).await.unwrap();
-        let (mut store_reporter, store_task) =
-            make_service(store_name, cfg.store_addr).await.unwrap();
+            make_service(gateway::SERVICE_NAME, cfg.gateway_addr)
+                .await
+                .unwrap();
+        let (mut p2p_reporter, p2p_task) = make_service(network::SERVICE_NAME, cfg.p2p_addr)
+            .await
+            .unwrap();
+        let (mut store_reporter, store_task) = make_service(store::SERVICE_NAME, cfg.store_addr)
+            .await
+            .unwrap();
         let client = Client::new(&cfg).await.unwrap();
 
         // test `check`
+        // expect the names to be the hard-coded display names
         let mut expect = StatusTable::new(
             StatusRow::new(gateway_name, 1, ServiceStatus::Serving),
             StatusRow::new(p2p_name, 1, ServiceStatus::Serving),
@@ -165,10 +173,6 @@ mod tests {
         stream.next().await.unwrap();
         got = stream.next().await.unwrap();
 
-        // use display names that are currently hard-wired into `Client`
-        expect.gateway.name = "gateway";
-        expect.p2p.name = "p2p";
-        expect.store.name = "store";
         assert_eq!(expect, got);
 
         // update gateway
@@ -176,7 +180,7 @@ mod tests {
             .update(StatusRow::new(gateway_name, 1, ServiceStatus::Unknown))
             .unwrap();
         gateway_reporter
-            .set_service_status(gateway_name, ServingStatus::Unknown)
+            .set_service_status(gateway::SERVICE_NAME, ServingStatus::Unknown)
             .await;
         let got = stream.next().await.unwrap();
         assert_eq!(expect, got);
@@ -186,7 +190,7 @@ mod tests {
             .update(StatusRow::new(p2p_name, 1, ServiceStatus::NotServing))
             .unwrap();
         p2p_reporter
-            .set_service_status(p2p_name, ServingStatus::NotServing)
+            .set_service_status(network::SERVICE_NAME, ServingStatus::NotServing)
             .await;
         let got = stream.next().await.unwrap();
         assert_eq!(expect, got);
@@ -196,7 +200,7 @@ mod tests {
             .update(StatusRow::new(store_name, 1, ServiceStatus::Unknown))
             .unwrap();
         store_reporter
-            .set_service_status(store_name, ServingStatus::Unknown)
+            .set_service_status(store::SERVICE_NAME, ServingStatus::Unknown)
             .await;
         let got = stream.next().await.unwrap();
         assert_eq!(expect, got);

@@ -404,7 +404,9 @@ pub async fn build_transport(local_key: Keypair) -> Boxed<(PeerId, StreamMuxerBo
     // TODO: make transports configurable
 
     let transport = libp2p::tcp::TokioTcpConfig::new().nodelay(true);
-    let transport = libp2p::websocket::WsConfig::new(transport.clone()).or_transport(transport);
+    let transport =
+        libp2p::websocket::WsConfig::new(libp2p::tcp::TokioTcpConfig::new().nodelay(true))
+            .or_transport(transport);
     let transport = libp2p::dns::TokioDnsConfig::system(transport).unwrap();
     let auth_config = {
         let dh_keys = noise::Keypair::<noise::X25519Spec>::new()
