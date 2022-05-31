@@ -38,8 +38,7 @@ use crate::{
     error::GatewayError,
     headers::*,
     metrics::{get_current_trace_id, Metrics},
-    response::{get_response_format, GatewayResponse, ResponseFormat},
-    rpc,
+    response::{get_response_format, GatewayResponse, ResponseFormat}, rpc, templates,
 };
 
 #[derive(Debug)]
@@ -87,8 +86,8 @@ impl Core {
         rpc::new(config.rpc.client_config.gateway_addr).await?;
         let rpc_client = RpcClient::new(&config.rpc.client_config).await?;
         let mut templates = HashMap::new();
-        let dir_template = fs::read_to_string("templates/dir_list.hbs").await?;
-        templates.insert("dir_list".to_string(), dir_template);
+        templates.insert("dir_list".to_string(), templates::dir_list.to_string());
+        templates.insert("not_found".to_string(), templates::not_found.to_string());
 
         Ok(Self {
             state: Arc::new(State {
