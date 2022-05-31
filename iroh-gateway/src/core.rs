@@ -18,13 +18,15 @@ use serde_json::{
     value::{Map, Value as Json},
 };
 use serde_qs;
+use urlencoding::encode;
 use std::{
     collections::HashMap,
     error::Error,
     sync::Arc,
     time::{self, Duration},
+    fmt::Write,
 };
-use tokio::fs;
+use url::Url;
 use tower::ServiceBuilder;
 use tower_http::trace::TraceLayer;
 use tracing::{info, info_span};
@@ -65,6 +67,8 @@ pub struct GetParams {
     download: Option<bool>,
     /// specifies whether the response should render a directory even if index.html is present
     force_dir: Option<bool>,
+    /// uri query parameter for handling navigator.registerProtocolHandler Web API requests
+    uri: Option<String>,
 }
 
 impl GetParams {
@@ -158,6 +162,40 @@ async fn get_handler(
     let cpath = "".to_string();
     let cpath = params.get("cpath").unwrap_or(&cpath);
     let query_params_copy = query_params.clone();
+
+    let uri_param = query_params.uri.clone().unwrap_or_default();
+    if !uri_param.is_empty() {
+        let u = Url::parse(&uri_param);
+        if u.is_err() {
+            return Err(error(
+                StatusCode::BAD_REQUEST,
+                "invalid uri parameter",
+                &state,
+            ));
+        }
+        let u = u.unwrap();
+        let uri_scheme = u.scheme().to_string();
+        if uri_scheme != "ipfs" && uri_scheme != "ipns" {
+            return Err(error(
+                StatusCode::BAD_REQUEST,
+                "invalid uri scheme, must be ipfs or ipns",
+                &state,
+            ));
+        }
+        let mut uri_path = u.path().to_string();
+        let uri_query = u.query();
+        if uri_query.is_some() {
+            let encoded_query = encode(uri_query.unwrap());
+            write!(
+                uri_path,
+                "?{}",
+                encoded_query
+            ).map_err(|e| error(StatusCode::BAD_REQUEST, &e.to_string(), &state))?;
+        }
+        let uri_host = u.host().unwrap().to_string();
+        let redirect_uri = format!("{}://{}{}", uri_scheme, uri_host, uri_path);
+        return Ok(GatewayResponse::redirect_permanently(&redirect_uri));
+    }
 
     if request_headers.contains_key(&HEADER_SERVICE_WORKER) {
         let sw = request_headers.get(&HEADER_SERVICE_WORKER).unwrap();

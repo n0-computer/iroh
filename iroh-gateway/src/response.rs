@@ -155,15 +155,23 @@ impl IntoResponse for GatewayResponse {
 }
 
 impl GatewayResponse {
-    pub fn redirect(to: &str) -> Self {
+    fn _redirect(to: &str, status_code: StatusCode) -> Self {
         let mut headers = HeaderMap::new();
         headers.insert(LOCATION, HeaderValue::from_str(to).unwrap());
-        Self {
-            status_code: StatusCode::SEE_OTHER,
+        GatewayResponse {
+            status_code,
             body: BoxBody::default(),
-            headers,
+            headers: HeaderMap::new(),
             trace_id: String::new(),
         }
+    }
+
+    pub fn redirect(to: &str) -> Self {
+        return Self::_redirect(to, StatusCode::SEE_OTHER);
+    }
+
+    pub fn redirect_permanently(to: &str) -> Self {
+        return Self::_redirect(to, StatusCode::MOVED_PERMANENTLY);
     }
 }
 
