@@ -151,7 +151,7 @@ async fn get_handler(
     let start_time = time::Instant::now();
     // parse path params
     let scheme = params.get("scheme").unwrap();
-    if scheme != "ipfs" && scheme != "ipns" {
+    if scheme != SCHEME_IPFS && scheme != SCHEME_IPNS {
         return Err(error(
             StatusCode::BAD_REQUEST,
             "invalid scheme, must be ipfs or ipns",
@@ -225,17 +225,18 @@ fn protocol_handler_redirect(
     uri_param: String,
     state: &State,
 ) -> Result<GatewayResponse, GatewayError> {
-    let u = Url::parse(&uri_param);
-    if u.is_err() {
-        return Err(error(
-            StatusCode::BAD_REQUEST,
-            "invalid uri parameter",
-            state,
-        ));
-    }
-    let u = u.unwrap();
-    let uri_scheme = u.scheme().to_string();
-    if uri_scheme != "ipfs" && uri_scheme != "ipns" {
+    let u = match Url::parse(&uri_param) {
+        Ok(u) => u,
+        Err(e) => {
+            return Err(error(
+                StatusCode::BAD_REQUEST,
+                &format!("invalid uri: {}", e),
+                state,
+            ));
+        }
+    };
+    let uri_scheme = u.scheme();
+    if uri_scheme != SCHEME_IPFS && uri_scheme != SCHEME_IPNS {
         return Err(error(
             StatusCode::BAD_REQUEST,
             "invalid uri scheme, must be ipfs or ipns",
@@ -452,28 +453,23 @@ async fn serve_fs_dir(
     mut headers: HeaderMap,
     start_time: std::time::Instant,
 ) -> Result<GatewayResponse, GatewayError> {
-    let dir_list = String::from_utf8(dir_list.to_vec()).unwrap();
-    let dir_list_lines = dir_list.lines();
+    let dir_list = std::str::from_utf8(&dir_list[..]).unwrap();
+    let mut dir_list_lines = dir_list.lines();
     let force_dir = req.query_params.force_dir.unwrap_or(false);
-    if !force_dir {
-        for line in dir_list_lines.clone() {
-            if line == "index.html" {
-                if !req.content_path.ends_with('/') {
-                    let redirect_path = format!(
-                        "{}/{}",
-                        req.content_path,
-                        req.query_params.to_query_string()
-                    );
-                    return Ok(GatewayResponse::redirect(&redirect_path));
-                }
-                let mut new_req = req.clone();
-                new_req
-                    .resolved_path
-                    .extend_tail(vec!["index.html".to_string()]);
-                new_req.content_path = format!("{}/index.html", req.content_path);
-                return serve_fs(&new_req, state, headers, start_time).await;
-            }
+    let has_index = dir_list_lines.any(|l| l.starts_with("index.html"));
+    if !force_dir && has_index {
+        if !req.content_path.ends_with('/') {
+            let redirect_path = format!(
+                "{}/{}",
+                req.content_path,
+                req.query_params.to_query_string()
+            );
+            return Ok(GatewayResponse::redirect(&redirect_path));
         }
+        let mut new_req = req.clone();
+        new_req.resolved_path.push("index.html");
+        new_req.content_path = format!("{}/index.html", req.content_path);
+        return serve_fs(&new_req, state, headers, start_time).await;
     }
 
     headers.insert(CONTENT_TYPE, HeaderValue::from_str("text/html").unwrap());

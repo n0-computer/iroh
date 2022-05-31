@@ -48,8 +48,8 @@ impl Path {
         &self.tail
     }
 
-    pub fn extend_tail(&mut self, tail: Vec<String>) {
-        self.tail.extend(tail);
+    pub fn push(&mut self, str: impl AsRef<str>) {
+        self.tail.push(str.as_ref().to_owned());
     }
 }
 
