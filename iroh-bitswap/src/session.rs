@@ -36,7 +36,7 @@ impl Default for Config {
         Self {
             dial_concurrency_factor_providers: 32.try_into().unwrap(),
             dial_concurrency_factor_peer: 32.try_into().unwrap(),
-            dial_timeout: Duration::from_secs(1),
+            dial_timeout: Duration::from_secs(4),
         }
     }
 }
