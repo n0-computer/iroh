@@ -1,10 +1,17 @@
+use std::path::Path;
+
 use clap::Parser;
+use dirs::home_dir;
 use iroh_p2p::{metrics, Libp2pService};
+use iroh_rpc_client::RpcClientConfig;
 use libp2p::identity::{ed25519, Keypair};
 use libp2p::metrics::Metrics;
 use prometheus_client::registry::Registry;
 use tokio::task;
 use tracing::error;
+
+const IROH_DIR: &str = ".iroh";
+const CONFIG: &str = "p2p.config.toml";
 
 #[derive(Parser, Debug, Clone)]
 #[clap(author, version, about, long_about = None)]
@@ -36,7 +43,18 @@ async fn main() -> anyhow::Result<()> {
 
     // TODO: configurable network
 
-    let network_config = iroh_p2p::Libp2pConfig::default();
+    let mut network_config = iroh_p2p::Libp2pConfig::default();
+
+    if let Ok(rpc_client_config) = RpcClientConfig::from_file(Path::new(
+        &home_dir()
+            .expect("Error locating home directory.")
+            .join(IROH_DIR)
+            .join(CONFIG),
+    )) {
+        network_config.rpc_addr = rpc_client_config.p2p_addr;
+        network_config.rpc_client = rpc_client_config;
+    }
+
     let mut p2p_service = Libp2pService::new(
         network_config,
         net_keypair,

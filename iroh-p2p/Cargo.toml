@@ -38,6 +38,8 @@ iroh-metrics = { path = "../iroh-metrics" }
 names = { version = "0.13.0", default-features = false }
 git-version = "0.3.5"
 prometheus-client = "0.16.0"
+dirs = "4.0.0"
+toml = "0.5.9"
  
 [dependencies.libp2p]
 version = "0.45"

@@ -1,11 +1,16 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use clap::Parser;
+use dirs::home_dir;
 use iroh_metrics::store::Metrics;
+use iroh_rpc_client::RpcClientConfig;
 use iroh_store::{metrics, rpc, Config, Store};
 use iroh_util::block_until_sigint;
 use prometheus_client::registry::Registry;
 use tracing::info;
+
+const IROH_DIR: &str = ".iroh";
+const CONFIG: &str = "store.config.toml";
 
 #[derive(Parser, Debug)]
 #[clap(author, version, about)]
@@ -31,7 +36,15 @@ async fn main() -> anyhow::Result<()> {
     let version = env!("CARGO_PKG_VERSION");
     println!("Starting iroh-store, version {version}");
 
-    let config = Config::new(args.path.clone());
+    let mut config = Config::new(args.path.clone());
+    if let Ok(rpc_client_config) = RpcClientConfig::from_file(Path::new(
+        &home_dir()
+            .expect("Error locating home directory.")
+            .join(IROH_DIR)
+            .join(CONFIG),
+    )) {
+        config.rpc = rpc_client_config;
+    }
     let rpc_addr = config.rpc.store_addr;
 
     let store = if config.path.exists() {

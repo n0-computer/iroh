@@ -1,8 +1,9 @@
-use std::net::SocketAddr;
+use std::{fs::File, io::Read, net::SocketAddr, path::Path};
 
 use anyhow::{Context, Result};
 use async_stream::stream;
 use futures::{Stream, StreamExt};
+use serde::{Deserialize, Serialize};
 
 use crate::gateway::GatewayClient;
 use crate::network::P2pClient;
@@ -72,7 +73,7 @@ impl Client {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 // Config for the rpc Client
 pub struct RpcClientConfig {
     // gateway rpc address
@@ -81,6 +82,16 @@ pub struct RpcClientConfig {
     pub p2p_addr: SocketAddr,
     // store rpc address
     pub store_addr: SocketAddr,
+}
+
+impl RpcClientConfig {
+    pub fn from_file<P: AsRef<Path>>(path: P) -> Result<RpcClientConfig> {
+        let mut config_file = File::open(path)?;
+        let mut config_bytes: Vec<u8> = Vec::new();
+        config_file.read_to_end(&mut config_bytes)?;
+        let rpc_client_config: RpcClientConfig = toml::from_slice(&config_bytes)?;
+        Ok(rpc_client_config)
+    }
 }
 
 impl Default for RpcClientConfig {
