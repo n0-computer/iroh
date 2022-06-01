@@ -84,7 +84,10 @@ impl GetParams {
 
 impl Core {
     pub async fn new(config: Config, metrics: Metrics) -> anyhow::Result<Self> {
-        rpc::new(config.rpc.client_config.gateway_addr).await?;
+        tokio::spawn(async move {
+            // TODO: handle error
+            rpc::new(config.rpc.client_config.gateway_addr).await
+        });
         let rpc_client = RpcClient::new(&config.rpc.client_config).await?;
         let mut templates = HashMap::new();
         templates.insert("dir_list".to_string(), templates::DIR_LIST.to_string());
@@ -106,6 +109,7 @@ impl Core {
         let app = Router::new()
             .route("/:scheme/:cid", get(get_handler))
             .route("/:scheme/:cid/*cpath", get(get_handler))
+            .route("/health", get(health_check))
             .layer(Extension(Arc::clone(&self.state)))
             .layer(
                 ServiceBuilder::new()
@@ -218,6 +222,11 @@ async fn get_handler(
         ResponseFormat::Car => serve_car(&req, state, headers, start_time).await,
         ResponseFormat::Fs(_) => serve_fs(&req, state, headers, start_time).await,
     }
+}
+
+#[tracing::instrument()]
+async fn health_check() -> String {
+    "OK".to_string()
 }
 
 #[tracing::instrument()]
@@ -550,4 +559,46 @@ async fn middleware_error_handler(
         format!("unhandled internal error: {}", err).as_str(),
         &state,
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::RpcConfig;
+    use crate::metrics::Metrics;
+    use iroh_rpc_client::RpcClientConfig;
+    use prometheus_client::registry::Registry;
+
+    #[tokio::test]
+    async fn gateway_health() {
+        let mut config = Config::new(
+            false,
+            false,
+            false,
+            9001,
+            RpcConfig {
+                listen_addr: "0.0.0.0:0".parse().unwrap(),
+                client_config: RpcClientConfig {
+                    gateway_addr: "0.0.0.0:0".parse().unwrap(),
+                    p2p_addr: "0.0.0.0:0".parse().unwrap(),
+                    store_addr: "0.0.0.0:0".parse().unwrap(),
+                },
+            },
+        );
+        config.set_default_headers();
+
+        let mut prom_registry = Registry::default();
+        let gw_metrics = Metrics::new(&mut prom_registry);
+        let handler = Core::new(config, gw_metrics).await.unwrap();
+        let core_task = tokio::spawn(async move {
+            handler.serve().await;
+        });
+
+        let res = hyper::Client::new()
+            .get(hyper::Uri::from_static("http://localhost:9001/health"))
+            .await
+            .unwrap();
+        assert_eq!(StatusCode::OK, res.status());
+        core_task.abort();
+    }
 }
