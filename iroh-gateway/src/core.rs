@@ -27,7 +27,7 @@ use std::{
 };
 use tower::ServiceBuilder;
 use tower_http::trace::TraceLayer;
-use tracing::{info, info_span};
+use tracing::info_span;
 use url::Url;
 use urlencoding::encode;
 
@@ -104,7 +104,10 @@ impl Core {
         })
     }
 
-    pub async fn serve(self) {
+    pub fn serve(
+        self,
+    ) -> axum::Server<hyper::server::conn::AddrIncoming, axum::routing::IntoMakeService<Router>>
+    {
         // todo(arqu): ?uri=... https://github.com/ipfs/go-ipfs/pull/7802
         let app = Router::new()
             .route("/:scheme/:cid", get(get_handler))
@@ -134,13 +137,10 @@ impl Core {
         // todo(arqu): make configurable
         let addr = format!("0.0.0.0:{}", self.state.config.port);
 
-        info!("listening on {}", addr);
         axum::Server::bind(&addr.parse().unwrap())
             .http1_preserve_header_case(true)
             .http1_title_case_headers(true)
             .serve(app.into_make_service())
-            .await
-            .unwrap();
     }
 }
 
@@ -575,7 +575,7 @@ mod tests {
             false,
             false,
             false,
-            9001,
+            0,
             RpcConfig {
                 listen_addr: "0.0.0.0:0".parse().unwrap(),
                 client_config: RpcClientConfig {
@@ -590,15 +590,23 @@ mod tests {
         let mut prom_registry = Registry::default();
         let gw_metrics = Metrics::new(&mut prom_registry);
         let handler = Core::new(config, gw_metrics).await.unwrap();
+        let server = handler.serve();
+        let addr = server.local_addr();
         let core_task = tokio::spawn(async move {
-            handler.serve().await;
+            server.await.unwrap();
         });
 
-        let res = hyper::Client::new()
-            .get(hyper::Uri::from_static("http://localhost:9001/health"))
-            .await
+        let uri = hyper::Uri::builder()
+            .scheme("http")
+            .authority(format!("localhost:{}", addr.port()))
+            .path_and_query("/health")
+            .build()
             .unwrap();
+        let client = hyper::Client::new();
+        let res = client.get(uri).await.unwrap();
+
         assert_eq!(StatusCode::OK, res.status());
         core_task.abort();
+        core_task.await.unwrap_err();
     }
 }
