@@ -81,6 +81,7 @@ impl Config {
                 HEADER_X_TRACE_ID.clone(),
                 HEADER_X_CONTENT_TYPE_OPTIONS.clone(),
                 HEADER_X_IPFS_PATH.clone(),
+                HEADER_X_IPFS_ROOTS.clone(),
             ]
             .into_iter()
             .collect::<AccessControlAllowHeaders>(),

@@ -1,7 +1,7 @@
 use axum::{
     body::BoxBody,
     http::{header::*, HeaderValue, StatusCode},
-    response::{IntoResponse, Response},
+    response::{IntoResponse, Redirect, Response},
 };
 
 use crate::constants::*;
@@ -138,6 +138,11 @@ pub struct GatewayResponse {
 
 impl IntoResponse for GatewayResponse {
     fn into_response(mut self) -> Response {
+        if self.status_code == StatusCode::SEE_OTHER {
+            let path = self.headers.remove(LOCATION).unwrap();
+            let path = path.to_str().unwrap();
+            return Redirect::to(path).into_response();
+        }
         let mut rb = Response::builder().status(self.status_code);
         self.headers.insert(
             &HEADER_X_TRACE_ID,
@@ -146,6 +151,36 @@ impl IntoResponse for GatewayResponse {
         let rh = rb.headers_mut().unwrap();
         rh.extend(self.headers);
         rb.body(self.body).unwrap()
+    }
+}
+
+impl GatewayResponse {
+    fn _redirect(to: &str, status_code: StatusCode) -> Self {
+        let mut headers = HeaderMap::new();
+        headers.insert(LOCATION, HeaderValue::from_str(to).unwrap());
+        GatewayResponse {
+            status_code,
+            body: BoxBody::default(),
+            headers: HeaderMap::new(),
+            trace_id: String::new(),
+        }
+    }
+
+    pub fn redirect(to: &str) -> Self {
+        Self::_redirect(to, StatusCode::SEE_OTHER)
+    }
+
+    pub fn redirect_permanently(to: &str) -> Self {
+        Self::_redirect(to, StatusCode::MOVED_PERMANENTLY)
+    }
+
+    pub fn not_modified() -> Self {
+        Self {
+            status_code: StatusCode::NOT_MODIFIED,
+            body: BoxBody::default(),
+            headers: HeaderMap::new(),
+            trace_id: String::new(),
+        }
     }
 }
 

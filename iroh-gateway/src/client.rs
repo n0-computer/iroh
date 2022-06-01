@@ -2,11 +2,13 @@ use std::sync::Arc;
 
 use axum::body::StreamBody;
 use iroh_resolver::resolver::CidOrDomain;
+use iroh_resolver::resolver::Metadata;
 use iroh_resolver::resolver::OutPrettyReader;
 use iroh_resolver::resolver::Resolver;
 use tokio_util::io::ReaderStream;
 use tracing::info;
 
+use crate::core::GetParams;
 use crate::core::State;
 use crate::response::ResponseFormat;
 
@@ -27,15 +29,13 @@ impl Client {
     #[tracing::instrument(skip(rpc_client))]
     pub async fn get_file(
         &self,
-        path: &str,
+        path: iroh_resolver::resolver::Path,
         rpc_client: &iroh_rpc_client::Client,
         start_time: std::time::Instant,
         state: Arc<State>,
-    ) -> Result<PrettyStreamBody, String> {
+    ) -> Result<(PrettyStreamBody, Metadata), String> {
         info!("get file {}", path);
         state.metrics.cache_miss.inc();
-        let p: iroh_resolver::resolver::Path =
-            path.parse().map_err(|e: anyhow::Error| e.to_string())?;
         // todo(arqu): this is wrong but currently don't have access to the data stream
         state
             .metrics
@@ -45,12 +45,17 @@ impl Client {
             .metrics
             .hist_ttfb
             .observe(start_time.elapsed().as_millis() as f64);
-        let res = self.resolver.resolve(p).await.map_err(|e| e.to_string())?;
+        let res = self
+            .resolver
+            .resolve(path)
+            .await
+            .map_err(|e| e.to_string())?;
+        let metadata = res.metadata().clone();
         let reader = res.pretty(rpc_client.clone());
         let stream = ReaderStream::new(reader);
         let body = StreamBody::new(stream);
 
-        Ok(body)
+        Ok((body, metadata))
     }
 }
 
@@ -58,8 +63,9 @@ impl Client {
 pub struct Request {
     pub format: ResponseFormat,
     pub cid: CidOrDomain,
-    pub full_content_path: String,
+    pub resolved_path: iroh_resolver::resolver::Path,
     pub query_file_name: String,
     pub content_path: String,
     pub download: bool,
+    pub query_params: GetParams,
 }

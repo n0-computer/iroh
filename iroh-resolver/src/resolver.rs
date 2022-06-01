@@ -47,6 +47,10 @@ impl Path {
     pub fn tail(&self) -> &[String] {
         &self.tail
     }
+
+    pub fn push(&mut self, str: impl AsRef<str>) {
+        self.tail.push(str.as_ref().to_owned());
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -1,27 +1,35 @@
+use async_recursion::async_recursion;
 use axum::{
-    body::{self, Body, BoxBody, HttpBody},
+    body::{self, Body, HttpBody},
     error_handling::HandleErrorLayer,
     extract::{Extension, Path, Query},
     http::{header::*, StatusCode},
-    response::{IntoResponse, Redirect},
+    response::IntoResponse,
     routing::get,
     BoxError, Router,
 };
 use bytes::Bytes;
-use cid::Cid;
-use iroh_resolver::resolver::CidOrDomain;
+use handlebars::Handlebars;
+use iroh_resolver::resolver::{CidOrDomain, UnixfsType};
 use iroh_rpc_client::Client as RpcClient;
 use serde::{Deserialize, Serialize};
+use serde_json::{
+    json,
+    value::{Map, Value as Json},
+};
 use serde_qs;
 use std::{
     collections::HashMap,
     error::Error,
+    fmt::Write,
     sync::Arc,
     time::{self, Duration},
 };
 use tower::ServiceBuilder;
 use tower_http::trace::TraceLayer;
 use tracing::{info, info_span};
+use url::Url;
+use urlencoding::encode;
 
 use crate::{
     client::{Client, Request},
@@ -31,7 +39,7 @@ use crate::{
     headers::*,
     metrics::{get_current_trace_id, Metrics},
     response::{get_response_format, GatewayResponse, ResponseFormat},
-    rpc,
+    rpc, templates,
 };
 
 #[derive(Debug)]
@@ -44,10 +52,11 @@ pub struct State {
     config: Config,
     client: Client,
     rpc_client: iroh_rpc_client::Client,
+    handlebars: HashMap<String, String>,
     pub metrics: Metrics,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct GetParams {
     // todo(arqu): swap this for ResponseFormat
     /// specifies the expected format of the response
@@ -56,6 +65,10 @@ pub struct GetParams {
     filename: Option<String>,
     /// specifies whether the response should be of disposition inline or attachment
     download: Option<bool>,
+    /// specifies whether the response should render a directory even if index.html is present
+    force_dir: Option<bool>,
+    /// uri query parameter for handling navigator.registerProtocolHandler Web API requests
+    uri: Option<String>,
 }
 
 impl GetParams {
@@ -73,6 +86,9 @@ impl Core {
     pub async fn new(config: Config, metrics: Metrics) -> anyhow::Result<Self> {
         rpc::new(config.rpc.client_config.gateway_addr).await?;
         let rpc_client = RpcClient::new(&config.rpc.client_config).await?;
+        let mut templates = HashMap::new();
+        templates.insert("dir_list".to_string(), templates::DIR_LIST.to_string());
+        templates.insert("not_found".to_string(), templates::NOT_FOUND.to_string());
 
         Ok(Self {
             state: Arc::new(State {
@@ -80,6 +96,7 @@ impl Core {
                 client: Client::new(&rpc_client),
                 rpc_client,
                 metrics,
+                handlebars: templates,
             }),
         })
     }
@@ -87,12 +104,8 @@ impl Core {
     pub async fn serve(self) {
         // todo(arqu): ?uri=... https://github.com/ipfs/go-ipfs/pull/7802
         let app = Router::new()
-            .route("/ipfs/:cid", get(get_ipfs))
-            .route("/ipfs/:cid/*cpath", get(get_ipfs))
-            .route("/ipns/:cid", get(get_ipns))
-            .route("/ipns/:cid/*cpath", get(get_ipns))
-            .route("/ipfs/ipfs/:cid", get(redundant_ipfs))
-            .route("/ipfs/ipfs/:cid/*cpath", get(redundant_ipfs))
+            .route("/:scheme/:cid", get(get_handler))
+            .route("/:scheme/:cid/*cpath", get(get_handler))
             .layer(Extension(Arc::clone(&self.state)))
             .layer(
                 ServiceBuilder::new()
@@ -128,24 +141,7 @@ impl Core {
 }
 
 #[tracing::instrument()]
-async fn redundant_ipfs(
-    Path(params): Path<HashMap<String, String>>,
-    Query(query_params): Query<GetParams>,
-) -> impl IntoResponse {
-    let cid = params.get("cid").unwrap();
-    let cpath = "".to_string();
-    let cpath = params.get("cpath").unwrap_or(&cpath);
-    let redirect_path: String = if cpath.is_empty() {
-        format!("/ipfs/{}", cid)
-    } else {
-        format!("/ipfs/{}/{}", cid, cpath)
-    };
-    let redirect_path = format!("{}{}", redirect_path, query_params.to_query_string());
-    Redirect::to(&redirect_path).into_response()
-}
-
-#[tracing::instrument()]
-async fn get_ipfs(
+async fn get_handler(
     Extension(state): Extension<Arc<State>>,
     Path(params): Path<HashMap<String, String>>,
     Query(query_params): Query<GetParams>,
@@ -154,40 +150,32 @@ async fn get_ipfs(
     state.metrics.requests_total.inc();
     let start_time = time::Instant::now();
     // parse path params
-    let cid_param = params.get("cid").unwrap();
-    let cid = Cid::try_from(cid_param.clone());
-    let cpath = "".to_string();
-    let cpath = params.get("cpath").unwrap_or(&cpath);
-
-    if request_headers.contains_key(&HEADER_SERVICE_WORKER) {
-        let sw = request_headers.get(&HEADER_SERVICE_WORKER).unwrap();
-        if sw.to_str().unwrap() == "script" && cpath.is_empty() {
-            return Err(error(
-                StatusCode::BAD_REQUEST,
-                "Service Worker not supported",
-                &state,
-            ));
-        }
-    }
-    if request_headers.contains_key(&HEADER_X_IPFS_GATEWAY_PREFIX) {
+    let scheme = params.get("scheme").unwrap();
+    if scheme != SCHEME_IPFS && scheme != SCHEME_IPNS {
         return Err(error(
             StatusCode::BAD_REQUEST,
-            "Unsupported HTTP header",
+            "invalid scheme, must be ipfs or ipns",
             &state,
         ));
     }
+    let cid = params.get("cid").unwrap();
+    let cpath = "".to_string();
+    let cpath = params.get("cpath").unwrap_or(&cpath);
+    let query_params_copy = query_params.clone();
 
-    let cid = match cid {
-        Ok(cid) => cid,
-        Err(_) => {
-            // todo (arqu): improve error handling if possible https://github.com/dignifiedquire/iroh/pull/4#pullrequestreview-953147597
-            return Err(error(StatusCode::BAD_REQUEST, "invalid cid", &state));
-        }
-    };
-    let full_content_path = format!("/ipfs/{}{}", cid, cpath);
+    let uri_param = query_params.uri.clone().unwrap_or_default();
+    if !uri_param.is_empty() {
+        return protocol_handler_redirect(uri_param, &state);
+    }
+    service_worker_check(&request_headers, cpath.to_string(), &state)?;
+    unsuported_header_check(&request_headers, &state)?;
 
-    // todo(arqu): actually plug in a resolver
-    let resolved_cid = CidOrDomain::Cid(resolve_cid(&cid).await.unwrap());
+    let full_content_path = format!("/{}/{}{}", scheme, cid, cpath);
+    let resolved_path: iroh_resolver::resolver::Path = full_content_path
+        .parse()
+        .map_err(|e: anyhow::Error| e.to_string())
+        .map_err(|e| error(StatusCode::BAD_REQUEST, &e, &state))?;
+    let resolved_cid = resolved_path.root();
 
     // parse query params
     let format = match get_response_format(&request_headers, query_params.format) {
@@ -202,128 +190,122 @@ async fn get_ipfs(
 
     let mut headers = HeaderMap::new();
 
+    if let Some(resp) = etag_check(&request_headers, resolved_cid, &format, &state) {
+        return Ok(resp);
+    }
+
+    // init headers
+    format.write_headers(&mut headers);
+    add_user_headers(&mut headers, state.config.headers.clone());
+    headers.insert(
+        &HEADER_X_IPFS_PATH,
+        HeaderValue::from_str(&full_content_path).unwrap(),
+    );
+
+    // handle request and fetch data
+    let req = Request {
+        format,
+        cid: resolved_path.root().clone(),
+        resolved_path,
+        query_file_name,
+        content_path: full_content_path.to_string(),
+        download,
+        query_params: query_params_copy,
+    };
+
+    match req.format {
+        ResponseFormat::Raw => serve_raw(&req, state, headers, start_time).await,
+        ResponseFormat::Car => serve_car(&req, state, headers, start_time).await,
+        ResponseFormat::Fs(_) => serve_fs(&req, state, headers, start_time).await,
+    }
+}
+
+#[tracing::instrument()]
+fn protocol_handler_redirect(
+    uri_param: String,
+    state: &State,
+) -> Result<GatewayResponse, GatewayError> {
+    let u = match Url::parse(&uri_param) {
+        Ok(u) => u,
+        Err(e) => {
+            return Err(error(
+                StatusCode::BAD_REQUEST,
+                &format!("invalid uri: {}", e),
+                state,
+            ));
+        }
+    };
+    let uri_scheme = u.scheme();
+    if uri_scheme != SCHEME_IPFS && uri_scheme != SCHEME_IPNS {
+        return Err(error(
+            StatusCode::BAD_REQUEST,
+            "invalid uri scheme, must be ipfs or ipns",
+            state,
+        ));
+    }
+    let mut uri_path = u.path().to_string();
+    let uri_query = u.query();
+    if uri_query.is_some() {
+        let encoded_query = encode(uri_query.unwrap());
+        write!(uri_path, "?{}", encoded_query)
+            .map_err(|e| error(StatusCode::BAD_REQUEST, &e.to_string(), state))?;
+    }
+    let uri_host = u.host().unwrap().to_string();
+    let redirect_uri = format!("{}://{}{}", uri_scheme, uri_host, uri_path);
+    Ok(GatewayResponse::redirect_permanently(&redirect_uri))
+}
+
+#[tracing::instrument()]
+fn service_worker_check(
+    request_headers: &HeaderMap,
+    cpath: String,
+    state: &State,
+) -> Result<(), GatewayError> {
+    if request_headers.contains_key(&HEADER_SERVICE_WORKER) {
+        let sw = request_headers.get(&HEADER_SERVICE_WORKER).unwrap();
+        if sw.to_str().unwrap() == "script" && cpath.is_empty() {
+            return Err(error(
+                StatusCode::BAD_REQUEST,
+                "Service Worker not supported",
+                state,
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[tracing::instrument()]
+fn unsuported_header_check(request_headers: &HeaderMap, state: &State) -> Result<(), GatewayError> {
+    if request_headers.contains_key(&HEADER_X_IPFS_GATEWAY_PREFIX) {
+        return Err(error(
+            StatusCode::BAD_REQUEST,
+            "Unsupported HTTP header",
+            state,
+        ));
+    }
+    Ok(())
+}
+
+#[tracing::instrument()]
+fn etag_check(
+    request_headers: &HeaderMap,
+    resolved_cid: &CidOrDomain,
+    format: &ResponseFormat,
+    state: &State,
+) -> Option<GatewayResponse> {
     if request_headers.contains_key("If-None-Match") {
         // todo(arqu): handle dir etags
-        let cid_etag = get_etag(&resolved_cid, Some(format.clone()));
+        let cid_etag = get_etag(resolved_cid, Some(format.clone()));
         let inm = request_headers
             .get("If-None-Match")
             .unwrap()
             .to_str()
             .unwrap();
         if etag_matches(inm, &cid_etag) {
-            return response(StatusCode::NOT_MODIFIED, BoxBody::default(), headers);
+            return Some(GatewayResponse::not_modified());
         }
     }
-
-    // init headers
-    format.write_headers(&mut headers);
-    add_user_headers(&mut headers, state.config.headers.clone());
-    headers.insert(
-        &HEADER_X_IPFS_PATH,
-        HeaderValue::from_str(&full_content_path).unwrap(),
-    );
-    // todo(arqu): add X-Ipfs-Roots
-
-    // handle request and fetch data
-    let req = Request {
-        format,
-        cid: CidOrDomain::Cid(cid),
-        full_content_path,
-        query_file_name,
-        content_path: cpath.to_string(),
-        download,
-    };
-
-    match req.format {
-        ResponseFormat::Raw => serve_raw(&req, state, headers, start_time).await,
-        ResponseFormat::Car => serve_car(&req, state, headers, start_time).await,
-        ResponseFormat::Fs(_) => serve_fs(&req, state, headers, start_time).await,
-    }
-}
-
-#[tracing::instrument()]
-async fn get_ipns(
-    Extension(state): Extension<Arc<State>>,
-    Path(params): Path<HashMap<String, String>>,
-    Query(query_params): Query<GetParams>,
-    request_headers: HeaderMap,
-) -> Result<GatewayResponse, GatewayError> {
-    state.metrics.requests_total.inc();
-    let start_time = time::Instant::now();
-    // parse path params
-    let cid_param = params.get("cid").unwrap();
-    let cid = cid_param.clone();
-    let cpath = "".to_string();
-    let cpath = params.get("cpath").unwrap_or(&cpath);
-
-    if request_headers.contains_key(&HEADER_SERVICE_WORKER) {
-        let sw = request_headers.get(&HEADER_SERVICE_WORKER).unwrap();
-        if sw.to_str().unwrap() == "script" && cpath.is_empty() {
-            return Err(error(
-                StatusCode::BAD_REQUEST,
-                "Service Worker not supported",
-                &state,
-            ));
-        }
-    }
-    if request_headers.contains_key(&HEADER_X_IPFS_GATEWAY_PREFIX) {
-        return Err(error(
-            StatusCode::BAD_REQUEST,
-            "Unsupported HTTP header",
-            &state,
-        ));
-    }
-
-    // TODO: better path validation
-    let full_content_path = format!("/ipns/{}{}", cid, cpath);
-
-    // parse query params
-    let format = match get_response_format(&request_headers, query_params.format) {
-        Ok(format) => format,
-        Err(err) => {
-            return Err(error(StatusCode::BAD_REQUEST, &err, &state));
-        }
-    };
-
-    let query_file_name = query_params.filename.unwrap_or_default();
-    let download = query_params.download.unwrap_or_default();
-
-    let mut headers = HeaderMap::new();
-
-    if request_headers.contains_key("If-None-Match") {
-        // TODO: etags
-    }
-
-    // init headers
-    format.write_headers(&mut headers);
-    add_user_headers(&mut headers, state.config.headers.clone());
-    headers.insert(
-        &HEADER_X_IPFS_PATH,
-        HeaderValue::from_str(&full_content_path).unwrap(),
-    );
-    // todo(arqu): add X-Ipfs-Roots
-
-    // handle request and fetch data
-    let req = Request {
-        format,
-        cid: CidOrDomain::Domain(cid),
-        full_content_path,
-        query_file_name,
-        content_path: cpath.to_string(),
-        download,
-    };
-
-    match req.format {
-        ResponseFormat::Raw => serve_raw(&req, state, headers, start_time).await,
-        ResponseFormat::Car => serve_car(&req, state, headers, start_time).await,
-        ResponseFormat::Fs(_) => serve_fs(&req, state, headers, start_time).await,
-    }
-}
-
-// todo(arqu): flesh out resolving
-#[tracing::instrument()]
-async fn resolve_cid(cid: &Cid) -> Result<Cid, String> {
-    Ok(*cid)
+    None
 }
 
 #[tracing::instrument()]
@@ -334,17 +316,16 @@ async fn serve_raw(
     start_time: std::time::Instant,
 ) -> Result<GatewayResponse, GatewayError> {
     // FIXME: we currently only retrieve full cids
-    let body = state
+    let (body, metadata) = state
         .client
         .get_file(
-            &req.full_content_path,
+            req.resolved_path.clone(),
             &state.rpc_client,
             start_time,
             Arc::clone(&state),
         )
         .await
-        .unwrap();
-    // .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
+        .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, &e, &state))?;
 
     set_content_disposition_headers(
         &mut headers,
@@ -352,7 +333,8 @@ async fn serve_raw(
         DISPOSITION_ATTACHMENT,
     );
     set_etag_headers(&mut headers, get_etag(&req.cid, Some(req.format.clone())));
-    add_cache_control_headers(&mut headers, req.full_content_path.to_string());
+    add_cache_control_headers(&mut headers, metadata.clone());
+    add_ipfs_roots_headers(&mut headers, metadata);
     response(StatusCode::OK, body, headers)
 }
 
@@ -364,10 +346,10 @@ async fn serve_car(
     start_time: std::time::Instant,
 ) -> Result<GatewayResponse, GatewayError> {
     // FIXME: we currently only retrieve full cids
-    let body = state
+    let (body, metadata) = state
         .client
         .get_file(
-            &req.full_content_path,
+            req.resolved_path.clone(),
             &state.rpc_client,
             start_time,
             Arc::clone(&state),
@@ -385,10 +367,12 @@ async fn serve_car(
     let etag = format!("W/{}", get_etag(&req.cid, Some(req.format.clone())));
     set_etag_headers(&mut headers, etag);
     // todo(arqu): check if etag matches for root cid
+    add_ipfs_roots_headers(&mut headers, metadata);
     response(StatusCode::OK, body, headers)
 }
 
 #[tracing::instrument()]
+#[async_recursion]
 async fn serve_fs(
     req: &Request,
     state: Arc<State>,
@@ -396,10 +380,10 @@ async fn serve_fs(
     start_time: std::time::Instant,
 ) -> Result<GatewayResponse, GatewayError> {
     // FIXME: we currently only retrieve full cids
-    let body = state
+    let (mut body, metadata) = state
         .client
         .get_file(
-            &req.full_content_path,
+            req.resolved_path.clone(),
             &state.rpc_client,
             start_time,
             Arc::clone(&state),
@@ -407,16 +391,112 @@ async fn serve_fs(
         .await
         .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, &e, &state))?;
 
-    let name = add_content_disposition_headers(
-        &mut headers,
-        &req.query_file_name,
-        &req.content_path,
-        req.download,
-    );
-    set_etag_headers(&mut headers, get_etag(&req.cid, Some(req.format.clone())));
-    add_cache_control_headers(&mut headers, req.full_content_path.to_string());
-    add_content_type_headers(&mut headers, &name);
+    add_ipfs_roots_headers(&mut headers, metadata.clone());
+    match metadata.unixfs_type {
+        Some(UnixfsType::Dir) => {
+            if let Some(dir_list_data) = body.data().await {
+                let dir_list = match dir_list_data {
+                    Ok(b) => b,
+                    Err(_) => {
+                        return Err(error(
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            "failed to read dir listing",
+                            &state,
+                        ));
+                    }
+                };
+                return serve_fs_dir(&dir_list, req, state, headers, start_time).await;
+            } else {
+                return Err(error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to read dir listing",
+                    &state,
+                ));
+            }
+        }
+        Some(_) => {
+            // todo(arqu): error on no size
+            // todo(arqu): add lazy seeking
+            add_cache_control_headers(&mut headers, metadata.clone());
+            set_etag_headers(&mut headers, get_etag(&req.cid, Some(req.format.clone())));
+            let name = add_content_disposition_headers(
+                &mut headers,
+                &req.query_file_name,
+                &req.content_path,
+                req.download,
+            );
+            if metadata.unixfs_type == Some(UnixfsType::Symlink) {
+                headers.insert(
+                    CONTENT_TYPE,
+                    HeaderValue::from_str("inode/symlink").unwrap(),
+                );
+            } else {
+                add_content_type_headers(&mut headers, &name);
+            }
+        }
+        None => {
+            return Err(error(
+                StatusCode::BAD_REQUEST,
+                "couldn't determine unixfs type",
+                &state,
+            ));
+        }
+    }
     response(StatusCode::OK, body, headers)
+}
+
+#[tracing::instrument()]
+async fn serve_fs_dir(
+    dir_list: &Bytes,
+    req: &Request,
+    state: Arc<State>,
+    mut headers: HeaderMap,
+    start_time: std::time::Instant,
+) -> Result<GatewayResponse, GatewayError> {
+    let dir_list = std::str::from_utf8(&dir_list[..]).unwrap();
+    let mut dir_list_lines = dir_list.lines();
+    let force_dir = req.query_params.force_dir.unwrap_or(false);
+    let has_index = dir_list_lines.any(|l| l.starts_with("index.html"));
+    if !force_dir && has_index {
+        if !req.content_path.ends_with('/') {
+            let redirect_path = format!(
+                "{}/{}",
+                req.content_path,
+                req.query_params.to_query_string()
+            );
+            return Ok(GatewayResponse::redirect(&redirect_path));
+        }
+        let mut new_req = req.clone();
+        new_req.resolved_path.push("index.html");
+        new_req.content_path = format!("{}/index.html", req.content_path);
+        return serve_fs(&new_req, state, headers, start_time).await;
+    }
+
+    headers.insert(CONTENT_TYPE, HeaderValue::from_str("text/html").unwrap());
+    // todo(arqu): set etag
+    // set_etag_headers(&mut headers, metadata.dir_hash.clone());
+
+    let mut template_data: Map<String, Json> = Map::new();
+    let mut root_path = req.content_path.clone();
+    if !root_path.ends_with('/') {
+        root_path.push('/');
+    }
+    let links = dir_list_lines
+        .map(|line| {
+            let mut link = Map::new();
+            link.insert("name".to_string(), Json::String(get_filename(line)));
+            link.insert(
+                "path".to_string(),
+                Json::String(format!("{}{}", root_path, line)),
+            );
+            link
+        })
+        .collect::<Vec<Map<String, Json>>>();
+    template_data.insert("links".to_string(), json!(links));
+    let reg = Handlebars::new();
+    let dir_template = state.handlebars.get("dir_list").unwrap();
+    let res = reg.render_template(dir_template, &template_data).unwrap();
+    response(StatusCode::OK, Body::from(res), headers)
 }
 
 #[tracing::instrument(skip(body))]
