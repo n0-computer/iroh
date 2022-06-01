@@ -46,8 +46,10 @@ async fn main() -> Result<()> {
             .expect("failed to initialize metrics");
 
     let handler = Core::new(config, gw_metrics).await?;
+    let server = handler.serve();
+    println!("listening on {}", server.local_addr());
     let core_task = tokio::spawn(async move {
-        handler.serve().await;
+        server.await.unwrap();
     });
 
     iroh_util::block_until_sigint().await;

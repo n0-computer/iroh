@@ -30,6 +30,7 @@ opentelemetry = { version = "0.17.0", features = ["rt-tokio"] }
 time = "0.3.9"
 headers = "0.3.7"
 iroh-rpc-client = { path = "../iroh-rpc-client" }
+hyper = "0.14.19"
 libp2p = "0.45.0"
 iroh-util = { path = "../iroh-util" }
 anyhow = "1"

@@ -27,7 +27,7 @@ use std::{
 };
 use tower::ServiceBuilder;
 use tower_http::trace::TraceLayer;
-use tracing::{info, info_span};
+use tracing::info_span;
 use url::Url;
 use urlencoding::encode;
 
@@ -84,7 +84,10 @@ impl GetParams {
 
 impl Core {
     pub async fn new(config: Config, metrics: Metrics) -> anyhow::Result<Self> {
-        rpc::new(config.rpc.client_config.gateway_addr).await?;
+        tokio::spawn(async move {
+            // TODO: handle error
+            rpc::new(config.rpc.client_config.gateway_addr).await
+        });
         let rpc_client = RpcClient::new(&config.rpc.client_config).await?;
         let mut templates = HashMap::new();
         templates.insert("dir_list".to_string(), templates::DIR_LIST.to_string());
@@ -101,11 +104,15 @@ impl Core {
         })
     }
 
-    pub async fn serve(self) {
+    pub fn serve(
+        self,
+    ) -> axum::Server<hyper::server::conn::AddrIncoming, axum::routing::IntoMakeService<Router>>
+    {
         // todo(arqu): ?uri=... https://github.com/ipfs/go-ipfs/pull/7802
         let app = Router::new()
             .route("/:scheme/:cid", get(get_handler))
             .route("/:scheme/:cid/*cpath", get(get_handler))
+            .route("/health", get(health_check))
             .layer(Extension(Arc::clone(&self.state)))
             .layer(
                 ServiceBuilder::new()
@@ -130,13 +137,10 @@ impl Core {
         // todo(arqu): make configurable
         let addr = format!("0.0.0.0:{}", self.state.config.port);
 
-        info!("listening on {}", addr);
         axum::Server::bind(&addr.parse().unwrap())
             .http1_preserve_header_case(true)
             .http1_title_case_headers(true)
             .serve(app.into_make_service())
-            .await
-            .unwrap();
     }
 }
 
@@ -218,6 +222,11 @@ async fn get_handler(
         ResponseFormat::Car => serve_car(&req, state, headers, start_time).await,
         ResponseFormat::Fs(_) => serve_fs(&req, state, headers, start_time).await,
     }
+}
+
+#[tracing::instrument()]
+async fn health_check() -> String {
+    "OK".to_string()
 }
 
 #[tracing::instrument()]
@@ -550,4 +559,56 @@ async fn middleware_error_handler(
         format!("unhandled internal error: {}", err).as_str(),
         &state,
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::RpcConfig;
+    use crate::metrics::Metrics;
+    use iroh_rpc_client::RpcClientConfig;
+    use prometheus_client::registry::Registry;
+
+    #[tokio::test]
+    async fn gateway_health() {
+        let mut config = Config::new(
+            false,
+            false,
+            false,
+            0,
+            RpcConfig {
+                listen_addr: "0.0.0.0:0".parse().unwrap(),
+                client_config: RpcClientConfig {
+                    gateway_addr: "0.0.0.0:0".parse().unwrap(),
+                    p2p_addr: "0.0.0.0:0".parse().unwrap(),
+                    store_addr: "0.0.0.0:0".parse().unwrap(),
+                },
+            },
+        );
+        config.set_default_headers();
+
+        let mut prom_registry = Registry::default();
+        let gw_metrics = Metrics::new(&mut prom_registry);
+        let handler = Core::new(config, gw_metrics).await.unwrap();
+        let server = handler.serve();
+        let addr = server.local_addr();
+        let core_task = tokio::spawn(async move {
+            server.await.unwrap();
+        });
+
+        let uri = hyper::Uri::builder()
+            .scheme("http")
+            .authority(format!("localhost:{}", addr.port()))
+            .path_and_query("/health")
+            .build()
+            .unwrap();
+        let client = hyper::Client::new();
+        let res = client.get(uri).await.unwrap();
+
+        assert_eq!(StatusCode::OK, res.status());
+        let body = hyper::body::to_bytes(res.into_body()).await.unwrap();
+        assert_eq!(b"OK", &body[..]);
+        core_task.abort();
+        core_task.await.unwrap_err();
+    }
 }
