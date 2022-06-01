@@ -94,8 +94,14 @@ impl NodeBehaviour {
 
         let kad = if config.kademlia {
             let local_peer_id = local_key.public().to_peer_id();
+            // TODO: persist to store
             let store = MemoryStore::new(local_peer_id.to_owned());
-            let kad_config = KademliaConfig::default();
+            // TODO: make user configurable
+            let mut kad_config = KademliaConfig::default();
+            kad_config.set_parallelism(16usize.try_into().unwrap());
+            // TODO: potentially lower (this is per query)
+            kad_config.set_query_timeout(Duration::from_secs(5));
+
             let mut kademlia = Kademlia::with_config(local_peer_id, store, kad_config);
             for multiaddr in &config.bootstrap_peers {
                 // TODO: move parsing into config
