@@ -606,6 +606,8 @@ mod tests {
         let res = client.get(uri).await.unwrap();
 
         assert_eq!(StatusCode::OK, res.status());
+        let body = hyper::body::to_bytes(res.into_body()).await.unwrap();
+        assert_eq!(b"OK", &body[..]);
         core_task.abort();
         core_task.await.unwrap_err();
     }
