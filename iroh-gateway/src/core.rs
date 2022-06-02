@@ -10,8 +10,10 @@ use axum::{
 };
 use bytes::Bytes;
 use handlebars::Handlebars;
+use iroh_metrics::{gateway::Metrics, get_current_trace_id};
 use iroh_resolver::resolver::{CidOrDomain, UnixfsType};
 use iroh_rpc_client::Client as RpcClient;
+use prometheus_client::registry::Registry;
 use serde::{Deserialize, Serialize};
 use serde_json::{
     json,
@@ -37,7 +39,6 @@ use crate::{
     constants::*,
     error::GatewayError,
     headers::*,
-    metrics::{get_current_trace_id, Metrics},
     response::{get_response_format, GatewayResponse, ResponseFormat},
     rpc, templates,
 };
@@ -83,7 +84,11 @@ impl GetParams {
 }
 
 impl Core {
-    pub async fn new(config: Config, metrics: Metrics) -> anyhow::Result<Self> {
+    pub async fn new(
+        config: Config,
+        metrics: Metrics,
+        registry: &mut Registry,
+    ) -> anyhow::Result<Self> {
         tokio::spawn(async move {
             // TODO: handle error
             rpc::new(config.rpc.client_config.gateway_addr).await
@@ -92,11 +97,12 @@ impl Core {
         let mut templates = HashMap::new();
         templates.insert("dir_list".to_string(), templates::DIR_LIST.to_string());
         templates.insert("not_found".to_string(), templates::NOT_FOUND.to_string());
+        let client = Client::new(&rpc_client, registry);
 
         Ok(Self {
             state: Arc::new(State {
                 config,
-                client: Client::new(&rpc_client),
+                client,
                 rpc_client,
                 metrics,
                 handlebars: templates,
@@ -104,7 +110,7 @@ impl Core {
         })
     }
 
-    pub fn serve(
+    pub fn server(
         self,
     ) -> axum::Server<hyper::server::conn::AddrIncoming, axum::routing::IntoMakeService<Router>>
     {
@@ -331,7 +337,7 @@ async fn serve_raw(
             req.resolved_path.clone(),
             &state.rpc_client,
             start_time,
-            Arc::clone(&state),
+            &state.metrics,
         )
         .await
         .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, &e, &state))?;
@@ -361,7 +367,7 @@ async fn serve_car(
             req.resolved_path.clone(),
             &state.rpc_client,
             start_time,
-            Arc::clone(&state),
+            &state.metrics,
         )
         .await
         .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, &e, &state))?;
@@ -395,7 +401,7 @@ async fn serve_fs(
             req.resolved_path.clone(),
             &state.rpc_client,
             start_time,
-            Arc::clone(&state),
+            &state.metrics,
         )
         .await
         .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, &e, &state))?;
@@ -565,7 +571,6 @@ async fn middleware_error_handler(
 mod tests {
     use super::*;
     use crate::config::RpcConfig;
-    use crate::metrics::Metrics;
     use iroh_rpc_client::RpcClientConfig;
     use prometheus_client::registry::Registry;
 
@@ -589,8 +594,10 @@ mod tests {
 
         let mut prom_registry = Registry::default();
         let gw_metrics = Metrics::new(&mut prom_registry);
-        let handler = Core::new(config, gw_metrics).await.unwrap();
-        let server = handler.serve();
+        let handler = Core::new(config, gw_metrics, &mut prom_registry)
+            .await
+            .unwrap();
+        let server = handler.server();
         let addr = server.local_addr();
         let core_task = tokio::spawn(async move {
             server.await.unwrap();

@@ -3,16 +3,19 @@ use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::task::{Context, Poll};
+use std::time::Instant;
 
 use anyhow::{anyhow, bail, ensure, Context as _, Result};
 use async_trait::async_trait;
 use bytes::Bytes;
 use cid::multihash::{Code, MultihashDigest};
 use cid::Cid;
+use iroh_metrics::resolver::Metrics;
 use iroh_rpc_client::Client;
 use libipld::codec::{Decode, Encode};
 use libipld::prelude::Codec as _;
 use libipld::{Ipld, IpldCodec};
+use prometheus_client::registry::Registry;
 use tokio::io::AsyncRead;
 use tracing::{debug, trace, warn};
 
@@ -206,6 +209,7 @@ pub struct Metadata {
     /// Only contains the "top level cids", and only path segments that actually map
     /// to a block.
     pub resolved_path: Vec<(String, Cid)>,
+    pub source: Source,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -225,22 +229,33 @@ pub enum UnixfsType {
 }
 
 pub enum OutPrettyReader<T: ContentLoader> {
-    DagPb(usize, Bytes),
+    DagPb(usize, Bytes, iroh_metrics::gateway::Metrics, Instant),
     Unixfs(UnixfsReader<T>),
-    DagCbor(usize, Bytes),
-    DagJson(usize, Bytes),
-    Raw(usize, Bytes),
+    DagCbor(usize, Bytes, iroh_metrics::gateway::Metrics, Instant),
+    DagJson(usize, Bytes, iroh_metrics::gateway::Metrics, Instant),
+    Raw(usize, Bytes, iroh_metrics::gateway::Metrics, Instant),
 }
 
 impl Out {
-    pub fn pretty<T: ContentLoader>(self, loader: T) -> OutPrettyReader<T> {
+    pub fn pretty<T: ContentLoader>(
+        self,
+        loader: T,
+        metrics: iroh_metrics::gateway::Metrics,
+        start_time: Instant,
+    ) -> OutPrettyReader<T> {
         let pos = 0;
         match self.content {
-            OutContent::DagPb(_, bytes) => OutPrettyReader::DagPb(pos, bytes),
-            OutContent::DagCbor(_, bytes) => OutPrettyReader::DagCbor(pos, bytes),
-            OutContent::DagJson(_, bytes) => OutPrettyReader::DagJson(pos, bytes),
-            OutContent::Raw(_, bytes) => OutPrettyReader::Raw(pos, bytes),
-            OutContent::Unixfs(node) => OutPrettyReader::Unixfs(node.pretty(loader)),
+            OutContent::DagPb(_, bytes) => OutPrettyReader::DagPb(pos, bytes, metrics, start_time),
+            OutContent::DagCbor(_, bytes) => {
+                OutPrettyReader::DagCbor(pos, bytes, metrics, start_time)
+            }
+            OutContent::DagJson(_, bytes) => {
+                OutPrettyReader::DagJson(pos, bytes, metrics, start_time)
+            }
+            OutContent::Raw(_, bytes) => OutPrettyReader::Raw(pos, bytes, metrics, start_time),
+            OutContent::Unixfs(node) => {
+                OutPrettyReader::Unixfs(node.pretty(loader, metrics, start_time))
+            }
         }
     }
 }
@@ -252,11 +267,27 @@ impl<T: ContentLoader + Unpin + 'static> AsyncRead for OutPrettyReader<T> {
         buf: &mut tokio::io::ReadBuf<'_>,
     ) -> Poll<std::io::Result<()>> {
         match &mut *self {
-            OutPrettyReader::DagPb(pos, content)
-            | OutPrettyReader::DagCbor(pos, content)
-            | OutPrettyReader::DagJson(pos, content)
-            | OutPrettyReader::Raw(pos, content) => {
+            OutPrettyReader::DagPb(pos, content, metrics, start_time)
+            | OutPrettyReader::DagCbor(pos, content, metrics, start_time)
+            | OutPrettyReader::DagJson(pos, content, metrics, start_time)
+            | OutPrettyReader::Raw(pos, content, metrics, start_time) => {
+                let pos_current = *pos;
                 let res = poll_read_buf_at_pos(pos, content, buf);
+                let bytes_read = *pos - pos_current;
+                if pos_current == 0 && bytes_read > 0 {
+                    metrics
+                        .tts_block
+                        .set(start_time.elapsed().as_millis() as u64);
+                }
+                if bytes_read == 0 {
+                    metrics
+                        .tts_file
+                        .set(start_time.elapsed().as_millis() as u64);
+                    metrics
+                        .hist_ttsf
+                        .observe(start_time.elapsed().as_millis() as f64);
+                }
+                metrics.bytes_streamed.inc_by(bytes_read as u64);
                 Poll::Ready(res)
             }
             OutPrettyReader::Unixfs(r) => Pin::new(&mut *r).poll_read(cx, buf),
@@ -265,33 +296,46 @@ impl<T: ContentLoader + Unpin + 'static> AsyncRead for OutPrettyReader<T> {
 }
 
 #[derive(Debug)]
+pub struct LoadedCid {
+    pub data: Bytes,
+    pub source: Source,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Source {
+    Bitswap,
+    Store(String),
+}
+
+#[derive(Debug)]
 pub struct Resolver<T: ContentLoader> {
     loader: T,
+    metrics: Metrics,
 }
 
 #[async_trait]
 pub trait ContentLoader: Sync + Send + std::fmt::Debug + Clone {
     /// Loads the actual content of a given cid.
-    async fn load_cid(&self, cid: &Cid) -> Result<Bytes>;
+    async fn load_cid(&self, cid: &Cid) -> Result<LoadedCid>;
 }
 
 #[async_trait]
 impl<T: ContentLoader> ContentLoader for Arc<T> {
-    async fn load_cid(&self, cid: &Cid) -> Result<Bytes> {
+    async fn load_cid(&self, cid: &Cid) -> Result<LoadedCid> {
         self.as_ref().load_cid(cid).await
     }
 }
 
 #[async_trait]
 impl<'a, T: ContentLoader> ContentLoader for &'a T {
-    async fn load_cid(&self, cid: &Cid) -> Result<Bytes> {
+    async fn load_cid(&self, cid: &Cid) -> Result<LoadedCid> {
         (*self).load_cid(cid).await
     }
 }
 
 #[async_trait]
 impl ContentLoader for Client {
-    async fn load_cid(&self, cid: &Cid) -> Result<Bytes> {
+    async fn load_cid(&self, cid: &Cid) -> Result<LoadedCid> {
         trace!("loading cid");
         // TODO: better strategy
 
@@ -299,7 +343,10 @@ impl ContentLoader for Client {
         match self.store.get(cid).await {
             Ok(Some(data)) => {
                 trace!("retrieved from store");
-                return Ok(data);
+                return Ok(LoadedCid {
+                    data,
+                    source: Source::Store("iroh-store".to_string()),
+                });
             }
             Ok(None) => {}
             Err(err) => {
@@ -351,30 +398,40 @@ impl ContentLoader for Client {
 
         trace!("retrieved from p2p");
 
-        Ok(bytes)
+        Ok(LoadedCid {
+            data: bytes,
+            source: Source::Bitswap,
+        })
     }
 }
 
 impl<T: ContentLoader> Resolver<T> {
-    pub fn new(loader: T) -> Self {
-        Resolver { loader }
+    pub fn new(loader: T, registry: &mut Registry) -> Self {
+        let metrics = Metrics::new(registry);
+        Resolver { loader, metrics }
     }
 
     /// Resolves through a given path, returning the [`Cid`] and raw bytes of the final leaf.
     #[tracing::instrument(skip(self))]
     pub async fn resolve(&self, path: Path) -> Result<Out> {
         // Resolve the root block.
-        let (root_cid, root_bytes) = self.resolve_root(&path).await?;
+        let (root_cid, loaded_cid) = self.resolve_root(&path).await?;
+        if loaded_cid.source == Source::Bitswap {
+            self.metrics.cache_miss.inc();
+        } else {
+            self.metrics.cache_hit.inc();
+        }
 
         let codec = Codec::try_from(root_cid.codec()).context("unknown codec")?;
+
         match codec {
             Codec::DagPb => {
-                self.resolve_dag_pb_or_unixfs(path, root_cid, root_bytes)
+                self.resolve_dag_pb_or_unixfs(path, root_cid, loaded_cid)
                     .await
             }
-            Codec::DagCbor => self.resolve_dag_cbor(path, root_cid, root_bytes).await,
-            Codec::DagJson => self.resolve_dag_json(path, root_cid, root_bytes).await,
-            Codec::Raw => self.resolve_raw(path, root_cid, root_bytes).await,
+            Codec::DagCbor => self.resolve_dag_cbor(path, root_cid, loaded_cid).await,
+            Codec::DagJson => self.resolve_dag_json(path, root_cid, loaded_cid).await,
+            Codec::Raw => self.resolve_raw(path, root_cid, loaded_cid).await,
             _ => bail!("unsupported codec {:?}", codec),
         }
     }
@@ -391,8 +448,8 @@ impl<T: ContentLoader> Resolver<T> {
                     .get_link_by_name(&part)
                     .await?
                     .ok_or_else(|| anyhow!("link {} not found", part))?;
-                let next_bytes = self.load_cid(&next_link.cid).await?;
-                let next_node = UnixfsNode::decode(&next_link.cid, next_bytes)?;
+                let loaded_cid = self.load_cid(&next_link.cid).await?;
+                let next_node = UnixfsNode::decode(&next_link.cid, loaded_cid.data)?;
                 resolved_path.push((part.to_string(), next_link.cid));
 
                 *current = next_node;
@@ -406,14 +463,14 @@ impl<T: ContentLoader> Resolver<T> {
     }
 
     /// Resolves through both DagPb and nested UnixFs DAGs.
-    #[tracing::instrument(skip(self, bytes))]
+    #[tracing::instrument(skip(self, loaded_cid))]
     async fn resolve_dag_pb_or_unixfs(
         &self,
         root_path: Path,
         cid: Cid,
-        bytes: Bytes,
+        loaded_cid: LoadedCid,
     ) -> Result<Out> {
-        if let Ok(node) = UnixfsNode::decode(&cid, bytes.clone()) {
+        if let Ok(node) = UnixfsNode::decode(&cid, loaded_cid.data.clone()) {
             let tail = &root_path.tail;
             let mut current = node;
             let mut resolved_path = vec![(root_path.root.to_string(), cid)];
@@ -435,20 +492,26 @@ impl<T: ContentLoader> Resolver<T> {
                 typ: OutType::Unixfs,
                 unixfs_type,
                 resolved_path,
+                source: loaded_cid.source,
             };
             Ok(Out {
                 metadata,
                 content: OutContent::Unixfs(current),
             })
         } else {
-            self.resolve_dag_pb(root_path, cid, bytes).await
+            self.resolve_dag_pb(root_path, cid, loaded_cid).await
         }
     }
 
-    #[tracing::instrument(skip(self, bytes))]
-    async fn resolve_dag_pb(&self, root_path: Path, cid: Cid, bytes: Bytes) -> Result<Out> {
+    #[tracing::instrument(skip(self, loaded_cid))]
+    async fn resolve_dag_pb(
+        &self,
+        root_path: Path,
+        cid: Cid,
+        loaded_cid: LoadedCid,
+    ) -> Result<Out> {
         let ipld: libipld::Ipld = libipld::IpldCodec::DagPb
-            .decode(&bytes)
+            .decode(&loaded_cid.data)
             .map_err(|e| anyhow!("invalid dag cbor: {:?}", e))?;
 
         let out = self
@@ -457,7 +520,7 @@ impl<T: ContentLoader> Resolver<T> {
 
         // reencode if we only return part of the original
         let bytes = if root_path.tail.is_empty() {
-            bytes
+            loaded_cid.data
         } else {
             let mut bytes = Vec::new();
             out.encode(libipld::IpldCodec::DagCbor, &mut bytes)?;
@@ -470,6 +533,7 @@ impl<T: ContentLoader> Resolver<T> {
             typ: OutType::DagPb,
             unixfs_type: None,
             resolved_path: vec![(cid.to_string(), cid)],
+            source: loaded_cid.source,
         };
         Ok(Out {
             metadata,
@@ -477,10 +541,15 @@ impl<T: ContentLoader> Resolver<T> {
         })
     }
 
-    #[tracing::instrument(skip(self, bytes))]
-    async fn resolve_dag_cbor(&self, root_path: Path, cid: Cid, bytes: Bytes) -> Result<Out> {
+    #[tracing::instrument(skip(self, loaded_cid))]
+    async fn resolve_dag_cbor(
+        &self,
+        root_path: Path,
+        cid: Cid,
+        loaded_cid: LoadedCid,
+    ) -> Result<Out> {
         let ipld: libipld::Ipld = libipld::IpldCodec::DagCbor
-            .decode(&bytes)
+            .decode(&loaded_cid.data)
             .map_err(|e| anyhow!("invalid dag cbor: {:?}", e))?;
 
         let out = self
@@ -489,7 +558,7 @@ impl<T: ContentLoader> Resolver<T> {
 
         // reencode if we only return part of the original
         let bytes = if root_path.tail.is_empty() {
-            bytes
+            loaded_cid.data
         } else {
             let mut bytes = Vec::new();
             out.encode(libipld::IpldCodec::DagCbor, &mut bytes)?;
@@ -502,6 +571,7 @@ impl<T: ContentLoader> Resolver<T> {
             typ: OutType::DagCbor,
             unixfs_type: None,
             resolved_path: vec![(cid.to_string(), cid)],
+            source: loaded_cid.source,
         };
         Ok(Out {
             metadata,
@@ -509,10 +579,15 @@ impl<T: ContentLoader> Resolver<T> {
         })
     }
 
-    #[tracing::instrument(skip(self, bytes))]
-    async fn resolve_dag_json(&self, root_path: Path, cid: Cid, bytes: Bytes) -> Result<Out> {
+    #[tracing::instrument(skip(self, loaded_cid))]
+    async fn resolve_dag_json(
+        &self,
+        root_path: Path,
+        cid: Cid,
+        loaded_cid: LoadedCid,
+    ) -> Result<Out> {
         let ipld: libipld::Ipld = libipld::IpldCodec::DagJson
-            .decode(&bytes)
+            .decode(&loaded_cid.data)
             .map_err(|e| anyhow!("invalid dag json: {:?}", e))?;
 
         let out = self
@@ -521,7 +596,7 @@ impl<T: ContentLoader> Resolver<T> {
 
         // reencode if we only return part of the original
         let bytes = if root_path.tail.is_empty() {
-            bytes
+            loaded_cid.data
         } else {
             let mut bytes = Vec::new();
             out.encode(libipld::IpldCodec::DagJson, &mut bytes)?;
@@ -534,6 +609,7 @@ impl<T: ContentLoader> Resolver<T> {
             typ: OutType::DagJson,
             unixfs_type: None,
             resolved_path: vec![(cid.to_string(), cid)],
+            source: loaded_cid.source,
         };
         Ok(Out {
             metadata,
@@ -541,10 +617,10 @@ impl<T: ContentLoader> Resolver<T> {
         })
     }
 
-    #[tracing::instrument(skip(self, bytes))]
-    async fn resolve_raw(&self, root_path: Path, cid: Cid, bytes: Bytes) -> Result<Out> {
+    #[tracing::instrument(skip(self, loaded_cid))]
+    async fn resolve_raw(&self, root_path: Path, cid: Cid, loaded_cid: LoadedCid) -> Result<Out> {
         let ipld: libipld::Ipld = libipld::IpldCodec::Raw
-            .decode(&bytes)
+            .decode(&loaded_cid.data)
             .map_err(|e| anyhow!("invalid raw: {:?}", e))?;
 
         let out = self
@@ -553,14 +629,15 @@ impl<T: ContentLoader> Resolver<T> {
 
         let metadata = Metadata {
             path: root_path,
-            size: Some(bytes.len()),
+            size: Some(loaded_cid.data.len()),
             typ: OutType::Raw,
             unixfs_type: None,
             resolved_path: vec![(cid.to_string(), cid)],
+            source: loaded_cid.source,
         };
         Ok(Out {
             metadata,
-            content: OutContent::Raw(out, bytes),
+            content: OutContent::Raw(out, loaded_cid.data),
         })
     }
 
@@ -587,9 +664,9 @@ impl<T: ContentLoader> Resolver<T> {
                 );
 
                 // resolve link and update if we have encountered a link
-                let bytes = self.load_cid(&c).await?;
+                let loaded_cid = self.load_cid(&c).await?;
                 root = codec
-                    .decode(&bytes)
+                    .decode(&loaded_cid.data)
                     .map_err(|e| anyhow!("invalid dag json: {:?}", e))?;
                 current = &root;
             }
@@ -609,7 +686,7 @@ impl<T: ContentLoader> Resolver<T> {
     }
 
     #[tracing::instrument(skip(self))]
-    async fn resolve_root(&self, root: &Path) -> Result<(Cid, Bytes)> {
+    async fn resolve_root(&self, root: &Path) -> Result<(Cid, LoadedCid)> {
         let mut current = root.clone();
 
         // maximum cursion of ipns lookups
@@ -618,7 +695,10 @@ impl<T: ContentLoader> Resolver<T> {
         for _ in 0..MAX_LOOKUPS {
             match current.typ {
                 PathType::Ipfs => match current.root {
-                    CidOrDomain::Cid(ref c) => return Ok((*c, self.load_cid(c).await?)),
+                    CidOrDomain::Cid(ref c) => {
+                        let loaded_cid = self.load_cid(c).await?;
+                        return Ok((*c, loaded_cid));
+                    }
                     CidOrDomain::Domain(_) => bail!("invalid domain encountered"),
                 },
                 PathType::Ipns => match current.root {
@@ -641,7 +721,7 @@ impl<T: ContentLoader> Resolver<T> {
     }
 
     #[tracing::instrument(skip(self))]
-    async fn load_cid(&self, cid: &Cid) -> Result<Bytes> {
+    async fn load_cid(&self, cid: &Cid) -> Result<LoadedCid> {
         self.loader.load_cid(cid).await
     }
 
@@ -719,9 +799,12 @@ mod tests {
 
     #[async_trait]
     impl ContentLoader for HashMap<Cid, Bytes> {
-        async fn load_cid(&self, cid: &Cid) -> Result<Bytes> {
+        async fn load_cid(&self, cid: &Cid) -> Result<LoadedCid> {
             match self.get(cid) {
-                Some(b) => Ok(b.clone()),
+                Some(b) => Ok(LoadedCid {
+                    data: b.clone(),
+                    source: Source::Bitswap,
+                }),
                 None => bail!("not found"),
             }
         }
@@ -840,14 +923,19 @@ mod tests {
             let bytes = Bytes::from(bytes);
 
             let loader: Arc<HashMap<_, _>> = Arc::new([(c, bytes)].into_iter().collect());
-            let resolver = Resolver::new(loader.clone());
+            let resolver = Resolver::new(loader.clone(), &mut Registry::default());
 
             {
                 let path = format!("/ipfs/{c}/name");
                 let new_ipld = resolver.resolve(path.parse().unwrap()).await.unwrap();
                 let m = new_ipld.metadata().clone();
 
-                let out_bytes = read_to_vec(new_ipld.pretty(loader.clone())).await;
+                let out_bytes = read_to_vec(new_ipld.pretty(
+                    loader.clone(),
+                    iroh_metrics::gateway::Metrics::default(),
+                    Instant::now(),
+                ))
+                .await;
                 let out_ipld: Ipld = codec.decode(&out_bytes).unwrap();
                 assert_eq!(out_ipld, Ipld::String("Foo".to_string()));
 
@@ -870,7 +958,12 @@ mod tests {
                 let new_ipld = resolver.resolve(path.parse().unwrap()).await.unwrap();
                 let m = new_ipld.metadata().clone();
 
-                let out_bytes = read_to_vec(new_ipld.pretty(loader.clone())).await;
+                let out_bytes = read_to_vec(new_ipld.pretty(
+                    loader.clone(),
+                    iroh_metrics::gateway::Metrics::default(),
+                    Instant::now(),
+                ))
+                .await;
                 let out_ipld: Ipld = codec.decode(&out_bytes).unwrap();
                 assert_eq!(out_ipld, Ipld::Integer(1));
 
@@ -935,7 +1028,7 @@ mod tests {
         .into_iter()
         .collect();
         let loader = Arc::new(loader);
-        let resolver = Resolver::new(loader.clone());
+        let resolver = Resolver::new(loader.clone(), &mut Registry::default());
 
         {
             let path = format!("/ipfs/{root_cid_str}");
@@ -962,7 +1055,12 @@ mod tests {
 
             if let OutContent::Unixfs(node) = ipld_foo.content {
                 assert_eq!(
-                    read_to_string(node.pretty(loader.clone())).await,
+                    read_to_string(node.pretty(
+                        loader.clone(),
+                        iroh_metrics::gateway::Metrics::default(),
+                        Instant::now()
+                    ))
+                    .await,
                     "bar\nhello.txt\n"
                 );
             } else {
@@ -990,7 +1088,15 @@ mod tests {
             );
 
             if let OutContent::Unixfs(node) = ipld_hello_txt.content {
-                assert_eq!(read_to_string(node.pretty(loader.clone())).await, "hello\n");
+                assert_eq!(
+                    read_to_string(node.pretty(
+                        loader.clone(),
+                        iroh_metrics::gateway::Metrics::default(),
+                        Instant::now()
+                    ))
+                    .await,
+                    "hello\n"
+                );
             } else {
                 panic!("invalid result: {:?}", ipld_hello_txt);
             }
@@ -1016,7 +1122,15 @@ mod tests {
             );
 
             if let OutContent::Unixfs(node) = ipld_hello_txt.content {
-                assert_eq!(read_to_string(node.pretty(loader.clone())).await, "hello\n");
+                assert_eq!(
+                    read_to_string(node.pretty(
+                        loader.clone(),
+                        iroh_metrics::gateway::Metrics::default(),
+                        Instant::now()
+                    ))
+                    .await,
+                    "hello\n"
+                );
             } else {
                 panic!("invalid result: {:?}", ipld_hello_txt);
             }
@@ -1049,7 +1163,12 @@ mod tests {
 
             if let OutContent::Unixfs(node) = ipld_bar.content {
                 assert_eq!(
-                    read_to_string(node.pretty(loader.clone())).await,
+                    read_to_string(node.pretty(
+                        loader.clone(),
+                        iroh_metrics::gateway::Metrics::default(),
+                        Instant::now()
+                    ))
+                    .await,
                     "bar.txt\n"
                 );
             } else {
@@ -1076,7 +1195,15 @@ mod tests {
             );
 
             if let OutContent::Unixfs(node) = ipld_bar_txt.content {
-                assert_eq!(read_to_string(node.pretty(loader.clone())).await, "world\n");
+                assert_eq!(
+                    read_to_string(node.pretty(
+                        loader.clone(),
+                        iroh_metrics::gateway::Metrics::default(),
+                        Instant::now()
+                    ))
+                    .await,
+                    "world\n"
+                );
             } else {
                 panic!("invalid result: {:?}", ipld_bar_txt);
             }
@@ -1129,7 +1256,7 @@ mod tests {
         .into_iter()
         .collect();
         let loader = Arc::new(loader);
-        let resolver = Resolver::new(loader.clone());
+        let resolver = Resolver::new(loader.clone(), &mut Registry::default());
 
         {
             let ipld_foo = resolver
@@ -1148,7 +1275,12 @@ mod tests {
 
             if let OutContent::Unixfs(node) = ipld_foo.content {
                 assert_eq!(
-                    read_to_string(node.pretty(loader.clone())).await,
+                    read_to_string(node.pretty(
+                        loader.clone(),
+                        iroh_metrics::gateway::Metrics::default(),
+                        Instant::now()
+                    ))
+                    .await,
                     "bar\nhello.txt\n"
                 );
             } else {
@@ -1163,7 +1295,15 @@ mod tests {
                 .unwrap();
 
             if let OutContent::Unixfs(node) = ipld_hello_txt.content {
-                assert_eq!(read_to_string(node.pretty(loader.clone())).await, "hello\n");
+                assert_eq!(
+                    read_to_string(node.pretty(
+                        loader.clone(),
+                        iroh_metrics::gateway::Metrics::default(),
+                        Instant::now()
+                    ))
+                    .await,
+                    "hello\n"
+                );
             } else {
                 panic!("invalid result: {:?}", ipld_hello_txt);
             }
@@ -1185,7 +1325,12 @@ mod tests {
 
             if let OutContent::Unixfs(node) = ipld_bar.content {
                 assert_eq!(
-                    read_to_string(node.pretty(loader.clone())).await,
+                    read_to_string(node.pretty(
+                        loader.clone(),
+                        iroh_metrics::gateway::Metrics::default(),
+                        Instant::now()
+                    ))
+                    .await,
                     "bar.txt\n"
                 );
             } else {
@@ -1200,7 +1345,15 @@ mod tests {
                 .unwrap();
 
             if let OutContent::Unixfs(node) = ipld_bar_txt.content {
-                assert_eq!(read_to_string(node.pretty(loader.clone())).await, "world\n");
+                assert_eq!(
+                    read_to_string(node.pretty(
+                        loader.clone(),
+                        iroh_metrics::gateway::Metrics::default(),
+                        Instant::now()
+                    ))
+                    .await,
+                    "world\n"
+                );
             } else {
                 panic!("invalid result: {:?}", ipld_bar_txt);
             }
@@ -1241,7 +1394,7 @@ mod tests {
         }
 
         let loader = Arc::new(loader);
-        let resolver = Resolver::new(loader.clone());
+        let resolver = Resolver::new(loader.clone(), &mut Registry::default());
 
         {
             let path = format!("/ipfs/{root_cid_str}");
@@ -1258,7 +1411,12 @@ mod tests {
             );
 
             if let OutContent::Unixfs(node) = ipld_readme.content {
-                let content = read_to_string(node.pretty(loader.clone())).await;
+                let content = read_to_string(node.pretty(
+                    loader.clone(),
+                    iroh_metrics::gateway::Metrics::default(),
+                    Instant::now(),
+                ))
+                .await;
                 print!("{}", content);
                 assert_eq!(content.len(), 426);
                 assert!(content.starts_with("# iroh"));
@@ -1335,7 +1493,7 @@ mod tests {
         .into_iter()
         .collect();
         let loader = Arc::new(loader);
-        let resolver = Resolver::new(loader.clone());
+        let resolver = Resolver::new(loader.clone(), &mut Registry::default());
 
         {
             let path = format!("/ipfs/{root_cid_str}/hello.txt");
@@ -1357,7 +1515,15 @@ mod tests {
             );
 
             if let OutContent::Unixfs(node) = ipld_hello_txt.content {
-                assert_eq!(read_to_string(node.pretty(loader.clone())).await, "hello\n");
+                assert_eq!(
+                    read_to_string(node.pretty(
+                        loader.clone(),
+                        iroh_metrics::gateway::Metrics::default(),
+                        Instant::now()
+                    ))
+                    .await,
+                    "hello\n"
+                );
             } else {
                 panic!("invalid result: {:?}", ipld_hello_txt);
             }
@@ -1399,7 +1565,15 @@ mod tests {
             );
 
             if let OutContent::Unixfs(node) = ipld_bar_txt.content {
-                assert_eq!(read_to_string(node.pretty(loader.clone())).await, "world\n");
+                assert_eq!(
+                    read_to_string(node.pretty(
+                        loader.clone(),
+                        iroh_metrics::gateway::Metrics::default(),
+                        Instant::now()
+                    ))
+                    .await,
+                    "world\n"
+                );
             } else {
                 panic!("invalid result: {:?}", ipld_bar_txt);
             }
@@ -1428,7 +1602,12 @@ mod tests {
 
             if let OutContent::Unixfs(node) = ipld_bar_txt.content {
                 assert_eq!(
-                    read_to_string(node.pretty(loader.clone())).await,
+                    read_to_string(node.pretty(
+                        loader.clone(),
+                        iroh_metrics::gateway::Metrics::default(),
+                        Instant::now()
+                    ))
+                    .await,
                     "./bar.txt"
                 );
             } else {
@@ -1459,7 +1638,12 @@ mod tests {
 
             if let OutContent::Unixfs(node) = ipld_bar_txt.content {
                 assert_eq!(
-                    read_to_string(node.pretty(loader.clone())).await,
+                    read_to_string(node.pretty(
+                        loader.clone(),
+                        iroh_metrics::gateway::Metrics::default(),
+                        Instant::now()
+                    ))
+                    .await,
                     "../../hello.txt"
                 );
             } else {
@@ -1490,7 +1674,12 @@ mod tests {
 
             if let OutContent::Unixfs(node) = ipld_bar_txt.content {
                 assert_eq!(
-                    read_to_string(node.pretty(loader.clone())).await,
+                    read_to_string(node.pretty(
+                        loader.clone(),
+                        iroh_metrics::gateway::Metrics::default(),
+                        Instant::now()
+                    ))
+                    .await,
                     "../hello.txt"
                 );
             } else {
@@ -1514,7 +1703,12 @@ mod tests {
 
             if let OutContent::Unixfs(node) = ipld_bar_txt.content {
                 assert_eq!(
-                    read_to_string(node.pretty(loader.clone())).await,
+                    read_to_string(node.pretty(
+                        loader.clone(),
+                        iroh_metrics::gateway::Metrics::default(),
+                        Instant::now()
+                    ))
+                    .await,
                     "../hello.txt"
                 );
             } else {

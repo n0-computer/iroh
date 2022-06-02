@@ -4,6 +4,7 @@ use std::{
     io::Cursor,
     pin::Pin,
     task::{Context, Poll},
+    time::Instant,
 };
 
 use anyhow::{anyhow, Result};
@@ -180,7 +181,12 @@ impl UnixfsNode {
         }
     }
 
-    pub fn pretty<T: ContentLoader>(self, loader: T) -> UnixfsReader<T> {
+    pub fn pretty<T: ContentLoader>(
+        self,
+        loader: T,
+        metrics: iroh_metrics::gateway::Metrics,
+        start_time: Instant,
+    ) -> UnixfsReader<T> {
         let current_links = vec![self.cid_links()];
 
         UnixfsReader {
@@ -189,11 +195,13 @@ impl UnixfsNode {
             current_node: CurrentNodeState::Outer,
             current_links,
             loader,
+            metrics,
+            start_time,
         }
     }
 }
 
-#[derive(Debug)]
+// #[derive(Debug)]
 pub struct UnixfsReader<T: ContentLoader> {
     root_node: UnixfsNode,
     /// Absolute position in bytes
@@ -203,6 +211,8 @@ pub struct UnixfsReader<T: ContentLoader> {
     /// Stack of links left to traverse.
     current_links: Vec<VecDeque<Cid>>,
     loader: T,
+    metrics: iroh_metrics::gateway::Metrics,
+    start_time: Instant,
 }
 
 impl<T: ContentLoader + Unpin + 'static> AsyncRead for UnixfsReader<T> {
@@ -218,8 +228,11 @@ impl<T: ContentLoader + Unpin + 'static> AsyncRead for UnixfsReader<T> {
             current_links,
             pos,
             loader,
+            metrics,
+            start_time,
         } = &mut *self;
-        match root_node {
+        let pos_current = *pos;
+        let poll_res = match root_node {
             UnixfsNode::Raw { data } => {
                 let res = poll_read_buf_at_pos(pos, data, buf);
                 Poll::Ready(res)
@@ -250,7 +263,6 @@ impl<T: ContentLoader + Unpin + 'static> AsyncRead for UnixfsReader<T> {
                         res.extend_from_slice(b"\n");
                     }
                     let res = poll_read_buf_at_pos(pos, &res, buf);
-
                     Poll::Ready(res)
                 }
                 _ => Poll::Ready(Err(std::io::Error::new(
@@ -258,7 +270,24 @@ impl<T: ContentLoader + Unpin + 'static> AsyncRead for UnixfsReader<T> {
                     format!("unsupported Unixfs type: {:?} ", typ),
                 ))),
             },
+        };
+        let bytes_read = *pos - pos_current;
+        metrics.bytes_streamed.inc_by(bytes_read as u64);
+        if pos_current == 0 && bytes_read > 0 {
+            metrics
+                .tts_block
+                .set(start_time.elapsed().as_millis() as u64);
         }
+        if bytes_read == 0 {
+            metrics
+                .tts_file
+                .set(start_time.elapsed().as_millis() as u64);
+            metrics
+                .hist_ttsf
+                .observe(start_time.elapsed().as_millis() as f64);
+        }
+
+        poll_res
     }
 }
 
@@ -321,8 +350,8 @@ fn load_next_node<T: ContentLoader + 'static>(
     let link = links.pop_front().unwrap();
 
     let fut = async move {
-        let bytes = loader.load_cid(&link).await?;
-        let node = UnixfsNode::decode(&link, bytes)?;
+        let loaded_cid = loader.load_cid(&link).await?;
+        let node = UnixfsNode::decode(&link, loaded_cid.data)?;
         Ok(node)
     }
     .boxed();

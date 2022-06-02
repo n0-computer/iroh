@@ -1,10 +1,15 @@
+pub mod bitswap;
 pub mod config;
+pub mod gateway;
 pub mod req;
+pub mod resolver;
+pub mod store;
 
 use config::Config;
 use opentelemetry::{
     global,
     sdk::{propagation::TraceContextPropagator, trace, Resource},
+    trace::{TraceContextExt, TraceId},
 };
 use opentelemetry_otlp::WithExportConfig;
 use prometheus_client::{encoding::text::encode, registry::Registry};
@@ -12,6 +17,7 @@ use std::env::consts::{ARCH, OS};
 use std::time::Duration;
 use tokio::task::JoinHandle;
 use tracing::log::{debug, warn};
+use tracing_opentelemetry::OpenTelemetrySpanExt;
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer};
 
 pub struct MetricsHandle {
@@ -117,4 +123,12 @@ pub fn init_tracer(cfg: Config) -> Result<(), Box<dyn std::error::Error>> {
             .try_init()?;
     }
     Ok(())
+}
+
+pub fn get_current_trace_id() -> TraceId {
+    tracing::Span::current()
+        .context()
+        .span()
+        .span_context()
+        .trace_id()
 }

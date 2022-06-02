@@ -8,17 +8,17 @@ use std::{
 
 use anyhow::{anyhow, bail, Context, Result};
 use cid::Cid;
+use iroh_metrics::store::Metrics;
 use iroh_rpc_client::Client as RpcClient;
 use rocksdb::{
     BlockBasedOptions, Cache, DBPinnableSlice, IteratorMode, Options, WriteBatch, DB as RocksDb,
 };
 use tokio::task;
 
-use crate::Config;
-use crate::{
-    cf::{GraphV0, MetadataV0, Versioned, CF_BLOBS_V0, CF_GRAPH_V0, CF_ID_V0, CF_METADATA_V0},
-    metrics::Metrics,
+use crate::cf::{
+    GraphV0, MetadataV0, Versioned, CF_BLOBS_V0, CF_GRAPH_V0, CF_ID_V0, CF_METADATA_V0,
 };
+use crate::Config;
 
 #[derive(Clone)]
 pub struct Store {
@@ -435,8 +435,6 @@ impl Store {
 
 #[cfg(test)]
 mod tests {
-    use crate::metrics;
-
     use super::*;
 
     use iroh_rpc_client::RpcClientConfig;
@@ -452,7 +450,7 @@ mod tests {
             rpc: RpcClientConfig::default(),
         };
 
-        let metrics = metrics::Metrics::default();
+        let metrics = Metrics::default();
         let store = Store::create(config, metrics).await.unwrap();
 
         let mut values = Vec::new();
@@ -490,7 +488,7 @@ mod tests {
             rpc: RpcClientConfig::default(),
         };
 
-        let metrics = metrics::Metrics::default();
+        let metrics = Metrics::default();
         let store = Store::create(config.clone(), metrics).await.unwrap();
 
         let mut values = Vec::new();
@@ -519,7 +517,7 @@ mod tests {
 
         drop(store);
 
-        let metrics = metrics::Metrics::default();
+        let metrics = Metrics::default();
         let store = Store::open(config, metrics).await.unwrap();
         for (c, expected_data, expected_links) in values.iter() {
             let data = store.get(c).await.unwrap().unwrap();
