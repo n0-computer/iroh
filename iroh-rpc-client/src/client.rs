@@ -1,4 +1,4 @@
-use std::{fs::File, io::Read, net::SocketAddr, path::Path};
+use std::net::SocketAddr;
 
 use anyhow::{Context, Result};
 use async_stream::stream;
@@ -82,16 +82,6 @@ pub struct RpcClientConfig {
     pub p2p_addr: SocketAddr,
     // store rpc address
     pub store_addr: SocketAddr,
-}
-
-impl RpcClientConfig {
-    pub fn from_file<P: AsRef<Path>>(path: P) -> Result<RpcClientConfig> {
-        let mut config_file = File::open(path)?;
-        let mut config_bytes: Vec<u8> = Vec::new();
-        config_file.read_to_end(&mut config_bytes)?;
-        let rpc_client_config: RpcClientConfig = toml::from_slice(&config_bytes)?;
-        Ok(rpc_client_config)
-    }
 }
 
 impl Default for RpcClientConfig {

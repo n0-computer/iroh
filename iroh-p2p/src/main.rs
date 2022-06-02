@@ -1,16 +1,15 @@
-use std::path::Path;
+use std::path::PathBuf;
 
 use clap::Parser;
-use dirs::home_dir;
+use iroh_p2p::Libp2pConfig;
 use iroh_p2p::{metrics, Libp2pService};
-use iroh_rpc_client::RpcClientConfig;
+use iroh_util::{from_toml_file, iroh_home_path};
 use libp2p::identity::{ed25519, Keypair};
 use libp2p::metrics::Metrics;
 use prometheus_client::registry::Registry;
 use tokio::task;
 use tracing::error;
 
-const IROH_DIR: &str = ".iroh";
 const CONFIG: &str = "p2p.config.toml";
 
 #[derive(Parser, Debug, Clone)]
@@ -18,6 +17,8 @@ const CONFIG: &str = "p2p.config.toml";
 struct Args {
     #[clap(long = "no-metrics")]
     no_metrics: bool,
+    #[clap(long)]
+    cfg: Option<PathBuf>,
 }
 
 /// Starts daemon process
@@ -43,17 +44,16 @@ async fn main() -> anyhow::Result<()> {
 
     // TODO: configurable network
 
-    let mut network_config = iroh_p2p::Libp2pConfig::default();
-
-    if let Ok(rpc_client_config) = RpcClientConfig::from_file(Path::new(
-        &home_dir()
-            .expect("Error locating home directory.")
-            .join(IROH_DIR)
-            .join(CONFIG),
-    )) {
-        network_config.rpc_addr = rpc_client_config.p2p_addr;
-        network_config.rpc_client = rpc_client_config;
-    }
+    let network_config = {
+        // pass in optional paths where we may be able to load a config file
+        if let Some(cfg) = from_toml_file::<Libp2pConfig>(vec![args.cfg, iroh_home_path(CONFIG)]) {
+            cfg?
+            // flags should override config files
+        } else {
+            // otherwise, use a default
+            Libp2pConfig::default()
+        }
+    };
 
     let mut p2p_service = Libp2pService::new(
         network_config,

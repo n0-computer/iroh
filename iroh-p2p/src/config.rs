@@ -2,9 +2,10 @@ use std::net::SocketAddr;
 
 use iroh_rpc_client::RpcClientConfig;
 use libp2p::Multiaddr;
+use serde::{Deserialize, Serialize};
 
 /// Libp2p config for the node.
-#[derive(Debug)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct Libp2pConfig {
     /// Local address.
     pub listening_multiaddr: Multiaddr,
