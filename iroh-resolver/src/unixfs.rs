@@ -14,7 +14,10 @@ use futures::{future::BoxFuture, FutureExt};
 use prost::Message;
 use tokio::io::AsyncRead;
 
-use crate::{codecs::Codec, resolver::ContentLoader};
+use crate::{
+    codecs::Codec,
+    resolver::{ContentLoader, OutMetrics},
+};
 
 mod unixfs_pb {
     include!(concat!(env!("OUT_DIR"), "/unixfs_pb.rs"));
@@ -181,12 +184,7 @@ impl UnixfsNode {
         }
     }
 
-    pub fn pretty<T: ContentLoader>(
-        self,
-        loader: T,
-        metrics: iroh_metrics::gateway::Metrics,
-        start_time: Instant,
-    ) -> UnixfsReader<T> {
+    pub fn pretty<T: ContentLoader>(self, loader: T, om: OutMetrics) -> UnixfsReader<T> {
         let current_links = vec![self.cid_links()];
 
         UnixfsReader {
@@ -195,8 +193,7 @@ impl UnixfsNode {
             current_node: CurrentNodeState::Outer,
             current_links,
             loader,
-            metrics,
-            start_time,
+            out_metrics: om,
         }
     }
 }
@@ -211,8 +208,7 @@ pub struct UnixfsReader<T: ContentLoader> {
     /// Stack of links left to traverse.
     current_links: Vec<VecDeque<Cid>>,
     loader: T,
-    metrics: iroh_metrics::gateway::Metrics,
-    start_time: Instant,
+    out_metrics: OutMetrics,
 }
 
 impl<T: ContentLoader + Unpin + 'static> AsyncRead for UnixfsReader<T> {
@@ -228,8 +224,7 @@ impl<T: ContentLoader + Unpin + 'static> AsyncRead for UnixfsReader<T> {
             current_links,
             pos,
             loader,
-            metrics,
-            start_time,
+            out_metrics,
         } = &mut *self;
         let pos_current = *pos;
         let poll_res = match root_node {
@@ -272,21 +267,7 @@ impl<T: ContentLoader + Unpin + 'static> AsyncRead for UnixfsReader<T> {
             },
         };
         let bytes_read = *pos - pos_current;
-        metrics.bytes_streamed.inc_by(bytes_read as u64);
-        if pos_current == 0 && bytes_read > 0 {
-            metrics
-                .tts_block
-                .set(start_time.elapsed().as_millis() as u64);
-        }
-        if bytes_read == 0 {
-            metrics
-                .tts_file
-                .set(start_time.elapsed().as_millis() as u64);
-            metrics
-                .hist_ttsf
-                .observe(start_time.elapsed().as_millis() as f64);
-        }
-
+        out_metrics.observe_bytes_read(pos_current, bytes_read);
         poll_res
     }
 }

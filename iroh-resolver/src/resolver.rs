@@ -22,6 +22,8 @@ use tracing::{debug, trace, warn};
 use crate::codecs::Codec;
 use crate::unixfs::{poll_read_buf_at_pos, DataType, LinkRef, UnixfsNode, UnixfsReader};
 
+pub const IROH_STORE: &str = "iroh-store";
+
 /// Represents an ipfs path.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Path {
@@ -229,33 +231,65 @@ pub enum UnixfsType {
 }
 
 pub enum OutPrettyReader<T: ContentLoader> {
-    DagPb(usize, Bytes, iroh_metrics::gateway::Metrics, Instant),
+    DagPb(BytesReader),
     Unixfs(UnixfsReader<T>),
-    DagCbor(usize, Bytes, iroh_metrics::gateway::Metrics, Instant),
-    DagJson(usize, Bytes, iroh_metrics::gateway::Metrics, Instant),
-    Raw(usize, Bytes, iroh_metrics::gateway::Metrics, Instant),
+    DagCbor(BytesReader),
+    DagJson(BytesReader),
+    Raw(BytesReader),
+}
+
+pub struct BytesReader {
+    pos: usize,
+    bytes: Bytes,
+    om: OutMetrics,
+}
+
+pub struct OutMetrics {
+    pub start: Instant,
+    pub metrics: iroh_metrics::gateway::Metrics,
+}
+
+impl OutMetrics {
+    pub fn observe_bytes_read(&self, pos: usize, bytes_read: usize) {
+        if pos == 0 && bytes_read > 0 {
+            self.metrics
+                .tts_block
+                .set(self.start.elapsed().as_millis() as u64);
+        }
+        if bytes_read == 0 {
+            self.metrics
+                .tts_file
+                .set(self.start.elapsed().as_millis() as u64);
+            self.metrics
+                .hist_ttsf
+                .observe(self.start.elapsed().as_millis() as f64);
+        }
+        self.metrics.bytes_streamed.inc_by(bytes_read as u64);
+    }
+}
+
+impl Default for OutMetrics {
+    fn default() -> Self {
+        Self {
+            start: Instant::now(),
+            metrics: iroh_metrics::gateway::Metrics::default(),
+        }
+    }
 }
 
 impl Out {
-    pub fn pretty<T: ContentLoader>(
-        self,
-        loader: T,
-        metrics: iroh_metrics::gateway::Metrics,
-        start_time: Instant,
-    ) -> OutPrettyReader<T> {
+    pub fn pretty<T: ContentLoader>(self, loader: T, om: OutMetrics) -> OutPrettyReader<T> {
         let pos = 0;
         match self.content {
-            OutContent::DagPb(_, bytes) => OutPrettyReader::DagPb(pos, bytes, metrics, start_time),
+            OutContent::DagPb(_, bytes) => OutPrettyReader::DagPb(BytesReader { pos, bytes, om }),
             OutContent::DagCbor(_, bytes) => {
-                OutPrettyReader::DagCbor(pos, bytes, metrics, start_time)
+                OutPrettyReader::DagCbor(BytesReader { pos, bytes, om })
             }
             OutContent::DagJson(_, bytes) => {
-                OutPrettyReader::DagJson(pos, bytes, metrics, start_time)
+                OutPrettyReader::DagJson(BytesReader { pos, bytes, om })
             }
-            OutContent::Raw(_, bytes) => OutPrettyReader::Raw(pos, bytes, metrics, start_time),
-            OutContent::Unixfs(node) => {
-                OutPrettyReader::Unixfs(node.pretty(loader, metrics, start_time))
-            }
+            OutContent::Raw(_, bytes) => OutPrettyReader::Raw(BytesReader { pos, bytes, om }),
+            OutContent::Unixfs(node) => OutPrettyReader::Unixfs(node.pretty(loader, om)),
         }
     }
 }
@@ -267,27 +301,14 @@ impl<T: ContentLoader + Unpin + 'static> AsyncRead for OutPrettyReader<T> {
         buf: &mut tokio::io::ReadBuf<'_>,
     ) -> Poll<std::io::Result<()>> {
         match &mut *self {
-            OutPrettyReader::DagPb(pos, content, metrics, start_time)
-            | OutPrettyReader::DagCbor(pos, content, metrics, start_time)
-            | OutPrettyReader::DagJson(pos, content, metrics, start_time)
-            | OutPrettyReader::Raw(pos, content, metrics, start_time) => {
-                let pos_current = *pos;
-                let res = poll_read_buf_at_pos(pos, content, buf);
-                let bytes_read = *pos - pos_current;
-                if pos_current == 0 && bytes_read > 0 {
-                    metrics
-                        .tts_block
-                        .set(start_time.elapsed().as_millis() as u64);
-                }
-                if bytes_read == 0 {
-                    metrics
-                        .tts_file
-                        .set(start_time.elapsed().as_millis() as u64);
-                    metrics
-                        .hist_ttsf
-                        .observe(start_time.elapsed().as_millis() as f64);
-                }
-                metrics.bytes_streamed.inc_by(bytes_read as u64);
+            OutPrettyReader::DagPb(bytes_reader)
+            | OutPrettyReader::DagCbor(bytes_reader)
+            | OutPrettyReader::DagJson(bytes_reader)
+            | OutPrettyReader::Raw(bytes_reader) => {
+                let pos_current = bytes_reader.pos;
+                let res = poll_read_buf_at_pos(&mut bytes_reader.pos, &bytes_reader.bytes, buf);
+                let bytes_read = bytes_reader.pos - pos_current;
+                bytes_reader.om.observe_bytes_read(pos_current, bytes_read);
                 Poll::Ready(res)
             }
             OutPrettyReader::Unixfs(r) => Pin::new(&mut *r).poll_read(cx, buf),
@@ -304,7 +325,7 @@ pub struct LoadedCid {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Source {
     Bitswap,
-    Store(String),
+    Store(&'static str),
 }
 
 #[derive(Debug)]
@@ -345,7 +366,7 @@ impl ContentLoader for Client {
                 trace!("retrieved from store");
                 return Ok(LoadedCid {
                     data,
-                    source: Source::Store("iroh-store".to_string()),
+                    source: Source::Store(IROH_STORE),
                 });
             }
             Ok(None) => {}
@@ -930,12 +951,8 @@ mod tests {
                 let new_ipld = resolver.resolve(path.parse().unwrap()).await.unwrap();
                 let m = new_ipld.metadata().clone();
 
-                let out_bytes = read_to_vec(new_ipld.pretty(
-                    loader.clone(),
-                    iroh_metrics::gateway::Metrics::default(),
-                    Instant::now(),
-                ))
-                .await;
+                let out_bytes =
+                    read_to_vec(new_ipld.pretty(loader.clone(), OutMetrics::default())).await;
                 let out_ipld: Ipld = codec.decode(&out_bytes).unwrap();
                 assert_eq!(out_ipld, Ipld::String("Foo".to_string()));
 
@@ -958,12 +975,8 @@ mod tests {
                 let new_ipld = resolver.resolve(path.parse().unwrap()).await.unwrap();
                 let m = new_ipld.metadata().clone();
 
-                let out_bytes = read_to_vec(new_ipld.pretty(
-                    loader.clone(),
-                    iroh_metrics::gateway::Metrics::default(),
-                    Instant::now(),
-                ))
-                .await;
+                let out_bytes =
+                    read_to_vec(new_ipld.pretty(loader.clone(), OutMetrics::default())).await;
                 let out_ipld: Ipld = codec.decode(&out_bytes).unwrap();
                 assert_eq!(out_ipld, Ipld::Integer(1));
 
@@ -1055,12 +1068,7 @@ mod tests {
 
             if let OutContent::Unixfs(node) = ipld_foo.content {
                 assert_eq!(
-                    read_to_string(node.pretty(
-                        loader.clone(),
-                        iroh_metrics::gateway::Metrics::default(),
-                        Instant::now()
-                    ))
-                    .await,
+                    read_to_string(node.pretty(loader.clone(), OutMetrics::default(),)).await,
                     "bar\nhello.txt\n"
                 );
             } else {
@@ -1089,12 +1097,7 @@ mod tests {
 
             if let OutContent::Unixfs(node) = ipld_hello_txt.content {
                 assert_eq!(
-                    read_to_string(node.pretty(
-                        loader.clone(),
-                        iroh_metrics::gateway::Metrics::default(),
-                        Instant::now()
-                    ))
-                    .await,
+                    read_to_string(node.pretty(loader.clone(), OutMetrics::default(),)).await,
                     "hello\n"
                 );
             } else {
@@ -1123,12 +1126,7 @@ mod tests {
 
             if let OutContent::Unixfs(node) = ipld_hello_txt.content {
                 assert_eq!(
-                    read_to_string(node.pretty(
-                        loader.clone(),
-                        iroh_metrics::gateway::Metrics::default(),
-                        Instant::now()
-                    ))
-                    .await,
+                    read_to_string(node.pretty(loader.clone(), OutMetrics::default(),)).await,
                     "hello\n"
                 );
             } else {
@@ -1163,12 +1161,7 @@ mod tests {
 
             if let OutContent::Unixfs(node) = ipld_bar.content {
                 assert_eq!(
-                    read_to_string(node.pretty(
-                        loader.clone(),
-                        iroh_metrics::gateway::Metrics::default(),
-                        Instant::now()
-                    ))
-                    .await,
+                    read_to_string(node.pretty(loader.clone(), OutMetrics::default(),)).await,
                     "bar.txt\n"
                 );
             } else {
@@ -1196,12 +1189,7 @@ mod tests {
 
             if let OutContent::Unixfs(node) = ipld_bar_txt.content {
                 assert_eq!(
-                    read_to_string(node.pretty(
-                        loader.clone(),
-                        iroh_metrics::gateway::Metrics::default(),
-                        Instant::now()
-                    ))
-                    .await,
+                    read_to_string(node.pretty(loader.clone(), OutMetrics::default(),)).await,
                     "world\n"
                 );
             } else {
@@ -1275,12 +1263,7 @@ mod tests {
 
             if let OutContent::Unixfs(node) = ipld_foo.content {
                 assert_eq!(
-                    read_to_string(node.pretty(
-                        loader.clone(),
-                        iroh_metrics::gateway::Metrics::default(),
-                        Instant::now()
-                    ))
-                    .await,
+                    read_to_string(node.pretty(loader.clone(), OutMetrics::default(),)).await,
                     "bar\nhello.txt\n"
                 );
             } else {
@@ -1296,12 +1279,7 @@ mod tests {
 
             if let OutContent::Unixfs(node) = ipld_hello_txt.content {
                 assert_eq!(
-                    read_to_string(node.pretty(
-                        loader.clone(),
-                        iroh_metrics::gateway::Metrics::default(),
-                        Instant::now()
-                    ))
-                    .await,
+                    read_to_string(node.pretty(loader.clone(), OutMetrics::default(),)).await,
                     "hello\n"
                 );
             } else {
@@ -1325,12 +1303,7 @@ mod tests {
 
             if let OutContent::Unixfs(node) = ipld_bar.content {
                 assert_eq!(
-                    read_to_string(node.pretty(
-                        loader.clone(),
-                        iroh_metrics::gateway::Metrics::default(),
-                        Instant::now()
-                    ))
-                    .await,
+                    read_to_string(node.pretty(loader.clone(), OutMetrics::default(),)).await,
                     "bar.txt\n"
                 );
             } else {
@@ -1346,12 +1319,7 @@ mod tests {
 
             if let OutContent::Unixfs(node) = ipld_bar_txt.content {
                 assert_eq!(
-                    read_to_string(node.pretty(
-                        loader.clone(),
-                        iroh_metrics::gateway::Metrics::default(),
-                        Instant::now()
-                    ))
-                    .await,
+                    read_to_string(node.pretty(loader.clone(), OutMetrics::default(),)).await,
                     "world\n"
                 );
             } else {
@@ -1411,12 +1379,8 @@ mod tests {
             );
 
             if let OutContent::Unixfs(node) = ipld_readme.content {
-                let content = read_to_string(node.pretty(
-                    loader.clone(),
-                    iroh_metrics::gateway::Metrics::default(),
-                    Instant::now(),
-                ))
-                .await;
+                let content =
+                    read_to_string(node.pretty(loader.clone(), OutMetrics::default())).await;
                 print!("{}", content);
                 assert_eq!(content.len(), 426);
                 assert!(content.starts_with("# iroh"));
@@ -1516,12 +1480,7 @@ mod tests {
 
             if let OutContent::Unixfs(node) = ipld_hello_txt.content {
                 assert_eq!(
-                    read_to_string(node.pretty(
-                        loader.clone(),
-                        iroh_metrics::gateway::Metrics::default(),
-                        Instant::now()
-                    ))
-                    .await,
+                    read_to_string(node.pretty(loader.clone(), OutMetrics::default(),)).await,
                     "hello\n"
                 );
             } else {
@@ -1566,12 +1525,7 @@ mod tests {
 
             if let OutContent::Unixfs(node) = ipld_bar_txt.content {
                 assert_eq!(
-                    read_to_string(node.pretty(
-                        loader.clone(),
-                        iroh_metrics::gateway::Metrics::default(),
-                        Instant::now()
-                    ))
-                    .await,
+                    read_to_string(node.pretty(loader.clone(), OutMetrics::default(),)).await,
                     "world\n"
                 );
             } else {
@@ -1602,12 +1556,7 @@ mod tests {
 
             if let OutContent::Unixfs(node) = ipld_bar_txt.content {
                 assert_eq!(
-                    read_to_string(node.pretty(
-                        loader.clone(),
-                        iroh_metrics::gateway::Metrics::default(),
-                        Instant::now()
-                    ))
-                    .await,
+                    read_to_string(node.pretty(loader.clone(), OutMetrics::default(),)).await,
                     "./bar.txt"
                 );
             } else {
@@ -1638,12 +1587,7 @@ mod tests {
 
             if let OutContent::Unixfs(node) = ipld_bar_txt.content {
                 assert_eq!(
-                    read_to_string(node.pretty(
-                        loader.clone(),
-                        iroh_metrics::gateway::Metrics::default(),
-                        Instant::now()
-                    ))
-                    .await,
+                    read_to_string(node.pretty(loader.clone(), OutMetrics::default(),)).await,
                     "../../hello.txt"
                 );
             } else {
@@ -1674,12 +1618,7 @@ mod tests {
 
             if let OutContent::Unixfs(node) = ipld_bar_txt.content {
                 assert_eq!(
-                    read_to_string(node.pretty(
-                        loader.clone(),
-                        iroh_metrics::gateway::Metrics::default(),
-                        Instant::now()
-                    ))
-                    .await,
+                    read_to_string(node.pretty(loader.clone(), OutMetrics::default(),)).await,
                     "../hello.txt"
                 );
             } else {
@@ -1703,12 +1642,7 @@ mod tests {
 
             if let OutContent::Unixfs(node) = ipld_bar_txt.content {
                 assert_eq!(
-                    read_to_string(node.pretty(
-                        loader.clone(),
-                        iroh_metrics::gateway::Metrics::default(),
-                        Instant::now()
-                    ))
-                    .await,
+                    read_to_string(node.pretty(loader.clone(), OutMetrics::default(),)).await,
                     "../hello.txt"
                 );
             } else {

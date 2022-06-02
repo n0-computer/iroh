@@ -2,6 +2,7 @@ use axum::body::StreamBody;
 use iroh_metrics::gateway::Metrics;
 use iroh_resolver::resolver::CidOrDomain;
 use iroh_resolver::resolver::Metadata;
+use iroh_resolver::resolver::OutMetrics;
 use iroh_resolver::resolver::OutPrettyReader;
 use iroh_resolver::resolver::Resolver;
 use iroh_resolver::resolver::Source;
@@ -53,7 +54,13 @@ impl Client {
                 .hist_ttfb_cached
                 .observe(start_time.elapsed().as_millis() as f64);
         }
-        let reader = res.pretty(rpc_client.clone(), metrics.clone(), start_time);
+        let reader = res.pretty(
+            rpc_client.clone(),
+            OutMetrics {
+                metrics: metrics.clone(),
+                start: start_time,
+            },
+        );
         let stream = ReaderStream::new(reader);
         let body = StreamBody::new(stream);
 
