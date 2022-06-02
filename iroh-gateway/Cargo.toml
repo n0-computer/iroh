@@ -49,6 +49,7 @@ url = "2.2.2"
 urlencoding = "2.1.0"
 dirs = "4.0.0"
 toml = "0.5.9"
+http-serde = "1.1.0"
 
 [dev-dependencies]
 axum-macros = "0.2.0" # use #[axum_macros::debug_handler] for better error messages on handlers

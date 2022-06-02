@@ -1,15 +1,17 @@
-use std::net::SocketAddr;
+use std::{fs::File, io::Read, net::SocketAddr, path::Path};
 
 use crate::constants::*;
+use anyhow::Result;
 use axum::http::{header::*, Method};
 use headers::{
     AccessControlAllowHeaders, AccessControlAllowMethods, AccessControlAllowOrigin, HeaderMapExt,
 };
 use iroh_rpc_client::RpcClientConfig;
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 pub const DEFAULT_PORT: u16 = 9050;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Config {
     /// flag to toggle whether the gateway allows writing/pushing data
     pub writeable: bool,
@@ -18,13 +20,14 @@ pub struct Config {
     /// flag to toggle whether the gateway enables/utilizes caching
     pub cache: bool,
     /// set of user provided headers to attach to all responses
+    #[serde(with = "http_serde::header_map")]
     pub headers: HeaderMap,
     /// default port to listen on
     pub port: u16,
     pub rpc: RpcConfig,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct RpcConfig {
     /// Address on which to listen,
     pub listen_addr: SocketAddr,
@@ -106,6 +109,21 @@ impl Default for Config {
         t.set_default_headers();
         t
     }
+}
+
+trait ConfigT {
+    fn from_toml_file<P: AsRef<Path>>(path: P) -> Result<Self>
+    where
+        Self: Sized + DeserializeOwned,
+    {
+        let mut config_file = File::open(path)?;
+        let mut config_bytes: Vec<u8> = Vec::new();
+        config_file.read_to_end(&mut config_bytes)?;
+        let config: Self = toml::from_slice(&config_bytes)?;
+        Ok(config)
+    }
+
+    fn apply(self, other: Self) -> Self;
 }
 
 #[cfg(test)]
