@@ -3,7 +3,7 @@ use std::time::Instant;
 use cid::multihash::{Code, MultihashDigest};
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use iroh_metrics::store::Metrics;
-use iroh_rpc_client::RpcClientConfig;
+use iroh_rpc_client::Config as RpcClientConfig;
 use iroh_store::{Config, Store};
 use tokio::runtime::Runtime;
 

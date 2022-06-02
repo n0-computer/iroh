@@ -6,7 +6,7 @@ use axum::http::{header::*, Method};
 use headers::{
     AccessControlAllowHeaders, AccessControlAllowMethods, AccessControlAllowOrigin, HeaderMapExt,
 };
-use iroh_rpc_client::RpcClientConfig;
+use iroh_rpc_client::Config as RpcClientConfig;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 pub const DEFAULT_PORT: u16 = 9050;

@@ -437,7 +437,7 @@ impl Store {
 mod tests {
     use super::*;
 
-    use iroh_rpc_client::RpcClientConfig;
+    use iroh_rpc_client::Config as RpcClientConfig;
 
     use cid::multihash::{Code, MultihashDigest};
     const RAW: u64 = 0x55;

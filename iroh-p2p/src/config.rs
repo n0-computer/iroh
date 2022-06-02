@@ -1,6 +1,6 @@
 use std::net::SocketAddr;
 
-use iroh_rpc_client::RpcClientConfig;
+use iroh_rpc_client::Config as RpcClientConfig;
 use libp2p::Multiaddr;
 use serde::{Deserialize, Serialize};
 

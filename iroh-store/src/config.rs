@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use iroh_rpc_client::RpcClientConfig;
+use iroh_rpc_client::Config as RpcClientConfig;
 use serde::{Deserialize, Serialize};
 
 /// The configuration for the store.
