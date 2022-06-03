@@ -4,7 +4,6 @@ use std::{
     io::Cursor,
     pin::Pin,
     task::{Context, Poll},
-    time::Instant,
 };
 
 use anyhow::{anyhow, Result};
