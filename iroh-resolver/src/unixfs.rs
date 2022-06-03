@@ -13,7 +13,10 @@ use futures::{future::BoxFuture, FutureExt};
 use prost::Message;
 use tokio::io::AsyncRead;
 
-use crate::{codecs::Codec, resolver::ContentLoader};
+use crate::{
+    codecs::Codec,
+    resolver::{ContentLoader, OutMetrics},
+};
 
 mod unixfs_pb {
     include!(concat!(env!("OUT_DIR"), "/unixfs_pb.rs"));
@@ -180,7 +183,7 @@ impl UnixfsNode {
         }
     }
 
-    pub fn pretty<T: ContentLoader>(self, loader: T) -> UnixfsReader<T> {
+    pub fn pretty<T: ContentLoader>(self, loader: T, om: OutMetrics) -> UnixfsReader<T> {
         let current_links = vec![self.cid_links()];
 
         UnixfsReader {
@@ -189,11 +192,12 @@ impl UnixfsNode {
             current_node: CurrentNodeState::Outer,
             current_links,
             loader,
+            out_metrics: om,
         }
     }
 }
 
-#[derive(Debug)]
+// #[derive(Debug)]
 pub struct UnixfsReader<T: ContentLoader> {
     root_node: UnixfsNode,
     /// Absolute position in bytes
@@ -203,6 +207,7 @@ pub struct UnixfsReader<T: ContentLoader> {
     /// Stack of links left to traverse.
     current_links: Vec<VecDeque<Cid>>,
     loader: T,
+    out_metrics: OutMetrics,
 }
 
 impl<T: ContentLoader + Unpin + 'static> AsyncRead for UnixfsReader<T> {
@@ -218,8 +223,10 @@ impl<T: ContentLoader + Unpin + 'static> AsyncRead for UnixfsReader<T> {
             current_links,
             pos,
             loader,
+            out_metrics,
         } = &mut *self;
-        match root_node {
+        let pos_current = *pos;
+        let poll_res = match root_node {
             UnixfsNode::Raw { data } => {
                 let res = poll_read_buf_at_pos(pos, data, buf);
                 Poll::Ready(res)
@@ -250,7 +257,6 @@ impl<T: ContentLoader + Unpin + 'static> AsyncRead for UnixfsReader<T> {
                         res.extend_from_slice(b"\n");
                     }
                     let res = poll_read_buf_at_pos(pos, &res, buf);
-
                     Poll::Ready(res)
                 }
                 _ => Poll::Ready(Err(std::io::Error::new(
@@ -258,7 +264,10 @@ impl<T: ContentLoader + Unpin + 'static> AsyncRead for UnixfsReader<T> {
                     format!("unsupported Unixfs type: {:?} ", typ),
                 ))),
             },
-        }
+        };
+        let bytes_read = *pos - pos_current;
+        out_metrics.observe_bytes_read(pos_current, bytes_read);
+        poll_res
     }
 }
 
@@ -321,8 +330,8 @@ fn load_next_node<T: ContentLoader + 'static>(
     let link = links.pop_front().unwrap();
 
     let fut = async move {
-        let bytes = loader.load_cid(&link).await?;
-        let node = UnixfsNode::decode(&link, bytes)?;
+        let loaded_cid = loader.load_cid(&link).await?;
+        let node = UnixfsNode::decode(&link, loaded_cid.data)?;
         Ok(node)
     }
     .boxed();

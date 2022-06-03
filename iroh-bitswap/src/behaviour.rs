@@ -7,6 +7,7 @@ use std::task::{Context, Poll};
 
 use bytes::Bytes;
 use cid::Cid;
+use iroh_metrics::bitswap::Metrics;
 use libp2p::core::connection::ConnectionId;
 use libp2p::core::{ConnectedPoint, Multiaddr, PeerId};
 use libp2p::swarm::handler::OneShotHandler;
@@ -20,7 +21,6 @@ use crate::message::{BitswapMessage, Priority};
 use crate::protocol::{BitswapProtocol, Upgrade};
 use crate::query::{QueryId, QueryManager};
 use crate::session::{Config as SessionConfig, SessionManager};
-use crate::Metrics;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum BitswapEvent {

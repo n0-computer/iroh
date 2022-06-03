@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use clap::Parser;
+use iroh_metrics::store::Metrics;
 use iroh_store::{metrics, rpc, Config, Store};
 use iroh_util::block_until_sigint;
 use prometheus_client::registry::Registry;
@@ -21,7 +22,7 @@ async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
 
     let mut prom_registry = Registry::default();
-    let store_metrics = metrics::Metrics::new(&mut prom_registry);
+    let store_metrics = Metrics::new(&mut prom_registry);
     let metrics_handle =
         iroh_metrics::init_with_registry(metrics::metrics_config(args.no_metrics), prom_registry)
             .await
