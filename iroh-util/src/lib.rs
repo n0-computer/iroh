@@ -1,7 +1,5 @@
 use std::{
     cell::RefCell,
-    fs::File,
-    io::Read,
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicUsize, Ordering},
@@ -9,9 +7,7 @@ use std::{
     },
 };
 
-use anyhow::Result;
 use dirs::home_dir;
-use serde::de::DeserializeOwned;
 
 const IROH_DIR: &str = "./iroh";
 
@@ -36,27 +32,6 @@ pub async fn block_until_sigint() {
     .expect("Error setting Ctrl-C handler");
 
     ctrlc_oneshot.await.unwrap();
-}
-
-/// Given a list of Option<paths>, loads a config for the first existing path
-pub fn from_toml_file<D: DeserializeOwned>(paths: Vec<Option<PathBuf>>) -> Option<Result<D>> {
-    if let Some(path) = paths.into_iter().filter(|x| x.is_some()).flatten().next() {
-        let mut config_file = match File::open(path.as_path()) {
-            Ok(f) => f,
-            Err(e) => return Some(Err(e.into())),
-        };
-        let mut config_bytes: Vec<u8> = Vec::new();
-        match config_file.read_to_end(&mut config_bytes) {
-            Ok(_) => {}
-            Err(e) => return Some(Err(e.into())),
-        };
-        let config: D = match toml::from_slice(&config_bytes) {
-            Ok(c) => c,
-            Err(e) => return Some(Err(e.into())),
-        };
-        return Some(Ok(config));
-    }
-    None
 }
 
 /// Path that leads to a file in the iroh home directory

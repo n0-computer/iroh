@@ -23,15 +23,15 @@ impl Source for Config {
         let mut map: Map<String, Value> = Map::new();
         map.insert(
             "gateway_addr".into(),
-            Value::new(Some(&"struct".to_string()), self.gateway_addr.to_string()),
+            Value::new(None, self.gateway_addr.to_string()),
         );
         map.insert(
             "p2p_addr".into(),
-            Value::new(Some(&"struct".to_string()), self.p2p_addr.to_string()),
+            Value::new(None, self.p2p_addr.to_string()),
         );
         map.insert(
             "store_addr".into(),
-            Value::new(Some(&"struct".to_string()), self.store_addr.to_string()),
+            Value::new(None, self.store_addr.to_string()),
         );
         Ok(map)
     }
@@ -54,25 +54,30 @@ mod tests {
 
     #[test]
     fn test_collect() {
+        let default = Config::default();
         let mut expect: Map<String, Value> = Map::new();
         expect.insert(
             "gateway_addr".to_string(),
-            Value::new(Some(&"struct".to_string()), "0.0.0.0:4400"),
+            Value::new(None, default.gateway_addr.to_string()),
         );
         expect.insert(
             "p2p_addr".to_string(),
-            Value::new(Some(&"struct".to_string()), "0.0.0.0:4401"),
+            Value::new(None, default.p2p_addr.to_string()),
         );
         expect.insert(
             "store_addr".to_string(),
-            Value::new(Some(&"struct".to_string()), "0.0.0.0:4402"),
+            Value::new(None, default.store_addr.to_string()),
         );
         let got = Config::default().collect().unwrap();
-        assert_eq!(expect, got);
+        for key in got.keys() {
+            let left = expect.get(key).unwrap();
+            let right = got.get(key).unwrap();
+            assert_eq!(left, right);
+        }
     }
 
     #[test]
-    fn test_config() {
+    fn test_build_config_from_struct() {
         let expect = Config::default();
         let got: Config = ConfigBuilder::builder()
             .add_source(Config::default())

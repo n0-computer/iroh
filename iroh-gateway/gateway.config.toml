@@ -1,0 +1,12 @@
+writeable = false
+fetch = false
+cache = false
+port = 9050
+
+[rpc]
+listen_addr = "0.0.0.0:4400"
+
+[rpc.client_config]
+gateway_addr = "0.0.0.0:4400"
+p2p_addr = "0.0.0.0:4401"
+store_addr = "0.0.0.0:4402"

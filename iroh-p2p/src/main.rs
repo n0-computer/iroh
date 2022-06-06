@@ -3,14 +3,11 @@ use std::path::PathBuf;
 use clap::Parser;
 use iroh_p2p::Libp2pConfig;
 use iroh_p2p::{metrics, Libp2pService};
-use iroh_util::{from_toml_file, iroh_home_path};
 use libp2p::identity::{ed25519, Keypair};
 use libp2p::metrics::Metrics;
 use prometheus_client::registry::Registry;
 use tokio::task;
 use tracing::error;
-
-const CONFIG: &str = "p2p.config.toml";
 
 #[derive(Parser, Debug, Clone)]
 #[clap(author, version, about, long_about = None)]
@@ -43,17 +40,7 @@ async fn main() -> anyhow::Result<()> {
     };
 
     // TODO: configurable network
-
-    let network_config = {
-        // pass in optional paths where we may be able to load a config file
-        if let Some(cfg) = from_toml_file::<Libp2pConfig>(vec![args.cfg, iroh_home_path(CONFIG)]) {
-            cfg?
-            // flags should override config files
-        } else {
-            // otherwise, use a default
-            Libp2pConfig::default()
-        }
-    };
+    let network_config = Libp2pConfig::default();
 
     let mut p2p_service = Libp2pService::new(
         network_config,

@@ -4,11 +4,9 @@ use clap::Parser;
 use dirs::home_dir;
 use iroh_metrics::store::Metrics;
 use iroh_store::{metrics, rpc, Config, Store};
-use iroh_util::{block_until_sigint, from_toml_file, iroh_home_path};
+use iroh_util::block_until_sigint;
 use prometheus_client::registry::Registry;
 use tracing::info;
-
-const CONFIG: &str = "store.config.toml";
 
 #[derive(Parser, Debug)]
 #[clap(author, version, about)]
@@ -37,20 +35,7 @@ async fn main() -> anyhow::Result<()> {
     let version = env!("CARGO_PKG_VERSION");
     println!("Starting iroh-store, version {version}");
 
-    let config = {
-        // pass in optional paths where we may be able to load a config file
-        if let Some(cfg) = from_toml_file::<Config>(vec![args.cfg, iroh_home_path(CONFIG)]) {
-            let mut cfg = cfg?;
-            // flags should override config files
-            if let Some(store_path) = args.path {
-                cfg.path = store_path;
-            };
-            cfg
-        } else {
-            // otherwise, use a default config with the given store path
-            Config::new(args.path.unwrap())
-        }
-    };
+    let config = Config::new(args.path.unwrap());
     let rpc_addr = config.rpc.store_addr;
 
     let store = if config.path.exists() {

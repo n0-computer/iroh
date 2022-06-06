@@ -1,17 +1,18 @@
-use std::{fs::File, io::Read, net::SocketAddr, path::Path};
+use std::net::SocketAddr;
 
 use crate::constants::*;
-use anyhow::Result;
 use axum::http::{header::*, Method};
+use config::{ConfigError, Map, Source, Value, ValueKind};
 use headers::{
     AccessControlAllowHeaders, AccessControlAllowMethods, AccessControlAllowOrigin, HeaderMapExt,
 };
 use iroh_rpc_client::Config as RpcClientConfig;
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 
+pub const CONFIG: &str = "gateway.config.toml";
 pub const DEFAULT_PORT: u16 = 9050;
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct Config {
     /// flag to toggle whether the gateway allows writing/pushing data
     pub writeable: bool,
@@ -27,7 +28,7 @@ pub struct Config {
     pub rpc: RpcConfig,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct RpcConfig {
     /// Address on which to listen,
     pub listen_addr: SocketAddr,
@@ -41,6 +42,22 @@ impl Default for RpcConfig {
             listen_addr: client_config.gateway_addr,
             client_config,
         }
+    }
+}
+
+impl Source for RpcConfig {
+    fn clone_into_box(&self) -> Box<dyn Source + Send + Sync> {
+        Box::new(self.clone())
+    }
+    fn collect(&self) -> Result<Map<String, Value>, ConfigError> {
+        let client_config = self.client_config.collect()?;
+        let mut map: Map<String, Value> = Map::new();
+        map.insert("client_config".to_string(), Value::new(None, client_config));
+        map.insert(
+            "listen_addr".to_string(),
+            Value::new(None, self.listen_addr.to_string()),
+        );
+        Ok(map)
     }
 }
 
@@ -111,24 +128,39 @@ impl Default for Config {
     }
 }
 
-trait ConfigT {
-    fn from_toml_file<P: AsRef<Path>>(path: P) -> Result<Self>
-    where
-        Self: Sized + DeserializeOwned,
-    {
-        let mut config_file = File::open(path)?;
-        let mut config_bytes: Vec<u8> = Vec::new();
-        config_file.read_to_end(&mut config_bytes)?;
-        let config: Self = toml::from_slice(&config_bytes)?;
-        Ok(config)
+impl Source for Config {
+    fn clone_into_box(&self) -> Box<dyn Source + Send + Sync> {
+        Box::new(self.clone())
     }
 
-    fn apply(self, other: Self) -> Self;
+    fn collect(&self) -> Result<Map<String, Value>, ConfigError> {
+        let rpc = self.rpc.collect()?;
+        let mut map: Map<String, Value> = Map::new();
+        insert_into_config_map(&mut map, "writeable", self.writeable);
+        insert_into_config_map(&mut map, "fetch", self.fetch);
+        insert_into_config_map(&mut map, "cache", self.cache);
+        // TODO: add headers
+        // insert_into_config_map(&mut map, "headers", self.headers);
+        // Some issue between deserializing u64 & u16, converting this to
+        // an signed int fixes the issue
+        insert_into_config_map(&mut map, "port", self.port as i64);
+        insert_into_config_map(&mut map, "rpc", rpc);
+        Ok(map)
+    }
+}
+
+fn insert_into_config_map<I: Into<String>, V: Into<ValueKind>>(
+    map: &mut Map<String, Value>,
+    field: I,
+    val: V,
+) {
+    map.insert(field.into(), Value::new(None, val));
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use config::Config as ConfigBuilder;
 
     #[test]
     fn default_headers() {
@@ -147,4 +179,92 @@ mod tests {
         assert!(!config.cache);
         assert_eq!(config.port, DEFAULT_PORT);
     }
+
+    #[test]
+    fn test_collect_rpc_config() {
+        let default = RpcConfig::default();
+        let mut rpc_client_expect: Map<String, Value> = Map::new();
+        rpc_client_expect.insert(
+            "gateway_addr".to_string(),
+            Value::new(None, default.client_config.gateway_addr.to_string()),
+        );
+        rpc_client_expect.insert(
+            "p2p_addr".to_string(),
+            Value::new(None, default.client_config.p2p_addr.to_string()),
+        );
+        rpc_client_expect.insert(
+            "store_addr".to_string(),
+            Value::new(None, default.client_config.store_addr.to_string()),
+        );
+
+        let mut expect: Map<String, Value> = Map::new();
+        expect.insert(
+            "client_config".to_string(),
+            Value::new(None, rpc_client_expect),
+        );
+        expect.insert(
+            "listen_addr".to_string(),
+            Value::new(None, default.listen_addr.to_string()),
+        );
+
+        let got = RpcConfig::default().collect().unwrap();
+        for key in got.keys() {
+            let left = expect.get(key).unwrap();
+            let right = got.get(key).unwrap();
+            assert_eq!(left, right);
+        }
+    }
+
+    #[test]
+    fn test_build_rpc_config_from_struct() {
+        let expect = RpcConfig::default();
+        let got: RpcConfig = ConfigBuilder::builder()
+            .add_source(RpcConfig::default())
+            .build()
+            .unwrap()
+            .try_deserialize()
+            .unwrap();
+
+        assert_eq!(expect, got);
+    }
+
+    #[test]
+    fn test_collect() {
+        let rpc = RpcConfig::default().collect().unwrap();
+        let default = Config::default();
+        let mut expect: Map<String, Value> = Map::new();
+        expect.insert("writeable".to_string(), Value::new(None, default.writeable));
+        expect.insert("fetch".to_string(), Value::new(None, default.fetch));
+        expect.insert("cache".to_string(), Value::new(None, default.cache));
+        expect.insert("port".to_string(), Value::new(None, default.port as i64));
+        expect.insert("rpc".to_string(), Value::new(None, rpc));
+        let got = Config::default().collect().unwrap();
+        for key in got.keys() {
+            let left = expect.get(key).unwrap_or_else(|| panic!("{}", key));
+            let right = got.get(key).unwrap();
+            assert_eq!(left, right);
+        }
+    }
+
+    //     #[test]
+    //     fn test_build_config_from_struct() {
+    //         let expect = Config::default();
+    //         let got: Config = ConfigBuilder::builder()
+    //             .add_source(Config::default())
+    //             .build()
+    //             .unwrap()
+    //             .try_deserialize()
+    //             .unwrap();
+
+    //         assert_eq!(expect, got);
+    //     }
+
+    // #[test]
+    // fn test_write_file() {
+    //     let c = Config::default().set_default_headers();
+    //     let r = toml::to_string(&c).unwrap();
+    //     println!("{}", r);
+    //     std::fs::write(CONFIG, r).unwrap();
+    //     assert_eq!(1, 1);
+    // }
 }
