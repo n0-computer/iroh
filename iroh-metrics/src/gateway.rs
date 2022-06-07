@@ -91,7 +91,7 @@ impl Metrics {
         sub_registry.register(
             METRICS_HIST_TTFB_CACHED,
             "Histogram of TTFB from Cache",
-            Box::new(hist_ttfb.clone()),
+            Box::new(hist_ttfb_cached.clone()),
         );
 
         let hist_ttsf = Histogram::new(linear_buckets(0.0, 500.0, 240));
