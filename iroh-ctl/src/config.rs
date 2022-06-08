@@ -2,9 +2,15 @@ use config::{ConfigError, Map, Source, Value};
 use iroh_rpc_client::Config as RpcClientConfig;
 use serde::{Deserialize, Serialize};
 
+/// CONFIG_FILE_NAME is the name of the optional config file located in the iroh home directory
+pub const CONFIG_FILE_NAME: &str = "ctl.config.toml";
+/// ENV_PREFIX should be used along side the config field name to set a config field using
+/// environment variables
+pub const ENV_PREFIX: &str = "IROH_CTL";
+
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-struct Config {
-    rpc_client: RpcClientConfig,
+pub struct Config {
+    pub rpc_client: RpcClientConfig,
 }
 
 impl Source for Config {

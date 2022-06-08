@@ -12,7 +12,7 @@ use anyhow::Result;
 use config::{Environment, File, Map, Source, Value, ValueKind};
 use dirs::home_dir;
 
-const IROH_DIR: &str = "./iroh";
+const IROH_DIR: &str = ".iroh";
 
 /// Blocks current thread until ctrl-c is received
 pub async fn block_until_sigint() {
@@ -91,4 +91,15 @@ where
 
     let config: T = builder.build()?.try_deserialize()?;
     Ok(config)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn test_iroh_home_path() {
+        let got = iroh_home_path("foo.bar").unwrap();
+        let got = got.to_str().unwrap().to_string();
+        assert!(got.ends_with("/.iroh/foo.bar"));
+    }
 }

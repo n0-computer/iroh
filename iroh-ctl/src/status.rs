@@ -4,11 +4,9 @@ use anyhow::Result;
 use crossterm::terminal::{Clear, ClearType};
 use crossterm::{cursor, style, style::Stylize, QueueableCommand};
 use futures::StreamExt;
-use iroh_rpc_client::{Client, Config as RpcClientConfig, ServiceStatus, StatusRow, StatusTable};
+use iroh_rpc_client::{Client, ServiceStatus, StatusRow, StatusTable};
 
-pub async fn status(watch: bool) -> Result<()> {
-    let client = Client::new(&RpcClientConfig::default()).await.unwrap();
-
+pub async fn status(client: Client, watch: bool) -> Result<()> {
     let mut stdout = stdout();
     if watch {
         let status_stream = client.watch().await;

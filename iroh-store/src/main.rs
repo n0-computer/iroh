@@ -15,7 +15,7 @@ use tracing::info;
 #[clap(author, version, about)]
 struct Args {
     /// Path to the store
-    #[clap(long, short, required_unless_present("cfg"))]
+    #[clap(long, short)]
     path: Option<PathBuf>,
     #[clap(long = "no-metrics")]
     no_metrics: bool,
