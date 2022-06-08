@@ -23,9 +23,11 @@ pub fn put_benchmark(c: &mut Criterion) {
             |b, (key, value)| {
                 let executor = Runtime::new().unwrap();
                 let dir = tempfile::tempdir().unwrap();
+                let rpc_client = RpcClientConfig::default();
                 let config = Config {
                     path: dir.path().into(),
-                    rpc: RpcClientConfig::default(),
+                    rpc_addr: rpc_client.store_addr,
+                    rpc_client,
                 };
                 let metrics = Metrics::default();
                 let store =
@@ -50,9 +52,11 @@ pub fn get_benchmark(c: &mut Criterion) {
             |b, _| {
                 let executor = Runtime::new().unwrap();
                 let dir = tempfile::tempdir().unwrap();
+                let rpc_client = RpcClientConfig::default();
                 let config = Config {
                     path: dir.path().into(),
-                    rpc: RpcClientConfig::default(),
+                    rpc_addr: rpc_client.store_addr,
+                    rpc_client,
                 };
                 let metrics = Metrics::default();
                 let store =

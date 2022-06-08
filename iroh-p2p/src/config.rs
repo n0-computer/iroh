@@ -1,11 +1,17 @@
 use std::net::SocketAddr;
 
-use config::{ConfigError, Map, Source, Value, ValueKind};
+use config::{ConfigError, Map, Source, Value};
 use iroh_rpc_client::Config as RpcClientConfig;
+use iroh_util::insert_into_config_map;
 use libp2p::Multiaddr;
 use serde::{Deserialize, Serialize};
 
-pub const CONFIG: &str = "p2p.config.toml";
+/// CONFIG_FILE_NAME is the name of the optional config file located in the iroh home directory
+pub const CONFIG_FILE_NAME: &str = "p2p.config.toml";
+/// ENV_PREFIX should be used along side the config field name to set a config field using
+/// environment variables
+/// For example, `IROH_P2P_MDNS=true` would set the value of the `Libp2pConfig.mdns` field
+pub const ENV_PREFIX: &str = "IROH_P2P";
 
 /// Libp2p config for the node.
 #[derive(PartialEq, Debug, Clone, Deserialize, Serialize)]
@@ -51,14 +57,6 @@ impl Source for Libp2pConfig {
     }
 }
 
-fn insert_into_config_map<I: Into<String>, V: Into<ValueKind>>(
-    map: &mut Map<String, Value>,
-    field: I,
-    val: V,
-) {
-    map.insert(field.into(), Value::new(None, val));
-}
-
 // Based on https://github.com/ipfs/go-ipfs-config/blob/master/bootstrap_peers.go#L17.
 pub const DEFAULT_BOOTSTRAP: &[&str] = &[
     "/dnsaddr/bootstrap.libp2p.io/p2p/QmNnooDu7bfjPFoTZYxMNLWUQJyrVwtbZg5gBMjTezGAJN",
@@ -98,30 +96,12 @@ mod tests {
     #[test]
     fn test_collect() {
         let default = Libp2pConfig::default();
-        let mut rpc_client_expect: Map<String, Value> = Map::new();
-        rpc_client_expect.insert(
-            "gateway_addr".to_string(),
-            Value::new(None, default.rpc_client.gateway_addr.to_string()),
-        );
-        rpc_client_expect.insert(
-            "p2p_addr".to_string(),
-            Value::new(None, default.rpc_client.p2p_addr.to_string()),
-        );
-        rpc_client_expect.insert(
-            "store_addr".to_string(),
-            Value::new(None, default.rpc_client.store_addr.to_string()),
-        );
-
+        let rpc_client_expect = default.rpc_client.collect().unwrap();
         let bootstrap_peers: Vec<String> = default
             .bootstrap_peers
             .iter()
             .map(|node| node.to_string())
             .collect();
-        // let mut bootstrap_peers_expect: Map<String, Value> = Map::new();
-        // bootstrap_peers_expect.insert(
-        //     "bootstrap_peers".to_string(),
-        //     Value::new(None, bootstrap_peers),
-        // );
 
         let mut expect: Map<String, Value> = Map::new();
         expect.insert(

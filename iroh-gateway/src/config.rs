@@ -2,14 +2,20 @@ use std::net::SocketAddr;
 
 use crate::constants::*;
 use axum::http::{header::*, Method};
-use config::{ConfigError, Map, Source, Value, ValueKind};
+use config::{ConfigError, Map, Source, Value};
 use headers::{
     AccessControlAllowHeaders, AccessControlAllowMethods, AccessControlAllowOrigin, HeaderMapExt,
 };
 use iroh_rpc_client::Config as RpcClientConfig;
+use iroh_util::insert_into_config_map;
 use serde::{Deserialize, Serialize};
 
-pub const CONFIG: &str = "gateway.config.toml";
+/// CONFIG_FILE_NAME is the name of the optional config file located in the iroh home directory
+pub const CONFIG_FILE_NAME: &str = "gateway.config.toml";
+/// ENV_PREFIX should be used along side the config field name to set a config field using
+/// environment variables
+/// For example, `IROH_GATEWAY_PORT=1000` would set the value of the `Config.port` field
+pub const ENV_PREFIX: &str = "IROH_GATEWAY";
 pub const DEFAULT_PORT: u16 = 9050;
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
@@ -20,108 +26,94 @@ pub struct Config {
     pub fetch: bool,
     /// flag to toggle whether the gateway enables/utilizes caching
     pub cache: bool,
+    /// default port to listen on
+    pub port: u16,
+    /// rpc listening addr
+    pub rpc_addr: SocketAddr,
+    // NOTE: for toml to serialize properly, the "table" values must be serialized at the end, and
+    // so much come at the end of the `Config` struct
     /// set of user provided headers to attach to all responses
     #[serde(with = "http_serde::header_map")]
     pub headers: HeaderMap,
-    /// default port to listen on
-    pub port: u16,
-    pub rpc: RpcConfig,
-}
-
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
-pub struct RpcConfig {
-    /// Address on which to listen,
-    pub listen_addr: SocketAddr,
-    pub client_config: RpcClientConfig,
-}
-
-impl Default for RpcConfig {
-    fn default() -> Self {
-        let client_config = RpcClientConfig::default();
-        RpcConfig {
-            listen_addr: client_config.gateway_addr,
-            client_config,
-        }
-    }
-}
-
-impl Source for RpcConfig {
-    fn clone_into_box(&self) -> Box<dyn Source + Send + Sync> {
-        Box::new(self.clone())
-    }
-    fn collect(&self) -> Result<Map<String, Value>, ConfigError> {
-        let client_config = self.client_config.collect()?;
-        let mut map: Map<String, Value> = Map::new();
-        map.insert("client_config".to_string(), Value::new(None, client_config));
-        map.insert(
-            "listen_addr".to_string(),
-            Value::new(None, self.listen_addr.to_string()),
-        );
-        Ok(map)
-    }
+    /// rpc addresses for the gateway & addresses for the rpc client to dial
+    pub rpc_client: RpcClientConfig,
 }
 
 impl Config {
-    pub fn new(writeable: bool, fetch: bool, cache: bool, port: u16, rpc: RpcConfig) -> Self {
+    pub fn new(
+        writeable: bool,
+        fetch: bool,
+        cache: bool,
+        port: u16,
+        rpc_addr: SocketAddr,
+        rpc_client: RpcClientConfig,
+    ) -> Self {
         Self {
             writeable,
             fetch,
             cache,
             headers: HeaderMap::new(),
             port,
-            rpc,
+            rpc_addr,
+            rpc_client,
         }
     }
 
     pub fn set_default_headers(&mut self) {
-        let mut headers = HeaderMap::new();
-        headers.typed_insert(AccessControlAllowOrigin::ANY);
-        headers.typed_insert(
-            [
-                Method::GET,
-                Method::PUT,
-                Method::POST,
-                Method::DELETE,
-                Method::HEAD,
-                Method::OPTIONS,
-            ]
-            .into_iter()
-            .collect::<AccessControlAllowMethods>(),
-        );
-        headers.typed_insert(
-            [
-                CONTENT_TYPE,
-                CONTENT_DISPOSITION,
-                LAST_MODIFIED,
-                CACHE_CONTROL,
-                ACCEPT_RANGES,
-                ETAG,
-                HEADER_SERVICE_WORKER.clone(),
-                HEADER_X_IPFS_GATEWAY_PREFIX.clone(),
-                HEADER_X_TRACE_ID.clone(),
-                HEADER_X_CONTENT_TYPE_OPTIONS.clone(),
-                HEADER_X_IPFS_PATH.clone(),
-                HEADER_X_IPFS_ROOTS.clone(),
-            ]
-            .into_iter()
-            .collect::<AccessControlAllowHeaders>(),
-        );
-        // todo(arqu): remove these once propperly implmented
-        headers.insert(CACHE_CONTROL, VALUE_NO_CACHE_NO_TRANSFORM.clone());
-        headers.insert(ACCEPT_RANGES, VALUE_NONE.clone());
-        self.headers = headers;
+        self.headers = default_headers();
     }
+}
+
+fn default_headers() -> HeaderMap {
+    let mut headers = HeaderMap::new();
+    headers.typed_insert(AccessControlAllowOrigin::ANY);
+    headers.typed_insert(
+        [
+            Method::GET,
+            Method::PUT,
+            Method::POST,
+            Method::DELETE,
+            Method::HEAD,
+            Method::OPTIONS,
+        ]
+        .into_iter()
+        .collect::<AccessControlAllowMethods>(),
+    );
+    headers.typed_insert(
+        [
+            CONTENT_TYPE,
+            CONTENT_DISPOSITION,
+            LAST_MODIFIED,
+            CACHE_CONTROL,
+            ACCEPT_RANGES,
+            ETAG,
+            HEADER_SERVICE_WORKER.clone(),
+            HEADER_X_IPFS_GATEWAY_PREFIX.clone(),
+            HEADER_X_TRACE_ID.clone(),
+            HEADER_X_CONTENT_TYPE_OPTIONS.clone(),
+            HEADER_X_IPFS_PATH.clone(),
+            HEADER_X_IPFS_ROOTS.clone(),
+        ]
+        .into_iter()
+        .collect::<AccessControlAllowHeaders>(),
+    );
+    // todo(arqu): remove these once propperly implmented
+    headers.insert(CACHE_CONTROL, VALUE_NO_CACHE_NO_TRANSFORM.clone());
+    headers.insert(ACCEPT_RANGES, VALUE_NONE.clone());
+    headers
 }
 
 impl Default for Config {
     fn default() -> Self {
+        let rpc_client = RpcClientConfig::default();
         let mut t = Self {
             writeable: false,
             fetch: false,
             cache: false,
             headers: HeaderMap::new(),
             port: DEFAULT_PORT,
-            rpc: Default::default(),
+            rpc_addr: rpc_client.gateway_addr,
+            rpc_client,
         };
         t.set_default_headers();
         t
@@ -134,27 +126,31 @@ impl Source for Config {
     }
 
     fn collect(&self) -> Result<Map<String, Value>, ConfigError> {
-        let rpc = self.rpc.collect()?;
+        let rpc_client = self.rpc_client.collect()?;
         let mut map: Map<String, Value> = Map::new();
         insert_into_config_map(&mut map, "writeable", self.writeable);
         insert_into_config_map(&mut map, "fetch", self.fetch);
         insert_into_config_map(&mut map, "cache", self.cache);
-        // TODO: add headers
-        // insert_into_config_map(&mut map, "headers", self.headers);
         // Some issue between deserializing u64 & u16, converting this to
         // an signed int fixes the issue
         insert_into_config_map(&mut map, "port", self.port as i64);
-        insert_into_config_map(&mut map, "rpc", rpc);
+        insert_into_config_map(&mut map, "rpc_addr", self.rpc_addr.to_string());
+        insert_into_config_map(&mut map, "headers", collect_headers(&self.headers)?);
+        insert_into_config_map(&mut map, "rpc_client", rpc_client);
         Ok(map)
     }
 }
 
-fn insert_into_config_map<I: Into<String>, V: Into<ValueKind>>(
-    map: &mut Map<String, Value>,
-    field: I,
-    val: V,
-) {
-    map.insert(field.into(), Value::new(None, val));
+fn collect_headers(headers: &HeaderMap) -> Result<Map<String, Value>, ConfigError> {
+    let mut map = Map::new();
+    for (key, value) in headers.iter() {
+        insert_into_config_map(
+            &mut map,
+            key.as_str(),
+            value.to_str().map_err(|e| ConfigError::Foreign(e.into()))?,
+        );
+    }
+    Ok(map)
 }
 
 #[cfg(test)]
@@ -163,11 +159,10 @@ mod tests {
     use config::Config as ConfigBuilder;
 
     #[test]
-    fn default_headers() {
-        let mut config = Config::new(false, false, false, 9050, Default::default());
-        config.set_default_headers();
-        assert_eq!(config.headers.len(), 5);
-        let h = config.headers.get(&ACCESS_CONTROL_ALLOW_ORIGIN).unwrap();
+    fn test_default_headers() {
+        let headers = default_headers();
+        assert_eq!(headers.len(), 5);
+        let h = headers.get(&ACCESS_CONTROL_ALLOW_ORIGIN).unwrap();
         assert_eq!(h, "*");
     }
 
@@ -181,63 +176,25 @@ mod tests {
     }
 
     #[test]
-    fn test_collect_rpc_config() {
-        let default = RpcConfig::default();
-        let mut rpc_client_expect: Map<String, Value> = Map::new();
-        rpc_client_expect.insert(
-            "gateway_addr".to_string(),
-            Value::new(None, default.client_config.gateway_addr.to_string()),
-        );
-        rpc_client_expect.insert(
-            "p2p_addr".to_string(),
-            Value::new(None, default.client_config.p2p_addr.to_string()),
-        );
-        rpc_client_expect.insert(
-            "store_addr".to_string(),
-            Value::new(None, default.client_config.store_addr.to_string()),
-        );
-
-        let mut expect: Map<String, Value> = Map::new();
-        expect.insert(
-            "client_config".to_string(),
-            Value::new(None, rpc_client_expect),
-        );
-        expect.insert(
-            "listen_addr".to_string(),
-            Value::new(None, default.listen_addr.to_string()),
-        );
-
-        let got = RpcConfig::default().collect().unwrap();
-        for key in got.keys() {
-            let left = expect.get(key).unwrap();
-            let right = got.get(key).unwrap();
-            assert_eq!(left, right);
-        }
-    }
-
-    #[test]
-    fn test_build_rpc_config_from_struct() {
-        let expect = RpcConfig::default();
-        let got: RpcConfig = ConfigBuilder::builder()
-            .add_source(RpcConfig::default())
-            .build()
-            .unwrap()
-            .try_deserialize()
-            .unwrap();
-
-        assert_eq!(expect, got);
-    }
-
-    #[test]
     fn test_collect() {
-        let rpc = RpcConfig::default().collect().unwrap();
         let default = Config::default();
         let mut expect: Map<String, Value> = Map::new();
+        // TODO!!! Add headers to test in the right place
         expect.insert("writeable".to_string(), Value::new(None, default.writeable));
         expect.insert("fetch".to_string(), Value::new(None, default.fetch));
         expect.insert("cache".to_string(), Value::new(None, default.cache));
         expect.insert("port".to_string(), Value::new(None, default.port as i64));
-        expect.insert("rpc".to_string(), Value::new(None, rpc));
+        expect.insert(
+            "headers".to_string(),
+            Value::new(None, collect_headers(&default.headers).unwrap()),
+        );
+        let rpc_client = RpcClientConfig::default().collect().unwrap();
+        expect.insert(
+            "rpc_addr".to_string(),
+            Value::new(None, default.rpc_addr.to_string()),
+        );
+        expect.insert("rpc_client".to_string(), Value::new(None, rpc_client));
+
         let got = Config::default().collect().unwrap();
         for key in got.keys() {
             let left = expect.get(key).unwrap_or_else(|| panic!("{}", key));
@@ -246,25 +203,39 @@ mod tests {
         }
     }
 
-    //     #[test]
-    //     fn test_build_config_from_struct() {
-    //         let expect = Config::default();
-    //         let got: Config = ConfigBuilder::builder()
-    //             .add_source(Config::default())
-    //             .build()
-    //             .unwrap()
-    //             .try_deserialize()
-    //             .unwrap();
+    #[test]
+    fn test_collect_headers() {
+        let mut expect = Map::new();
+        expect.insert(
+            "access-control-allow-origin".to_string(),
+            Value::new(None, "*"),
+        );
+        expect.insert(
+            "access-control-allow-methods".to_string(),
+            Value::new(None, "GET, PUT, POST, DELETE, HEAD, OPTIONS"),
+        );
+        expect.insert("access-control-allow-headers".to_string(), Value::new(None, "content-type, content-disposition, last-modified, cache-control, accept-ranges, etag, service-worker, x-ipfs-gateway-prefix, x-trace-id, x-content-type-options, x-ipfs-path, x-ipfs-roots"));
+        expect.insert(
+            "cache-control".to_string(),
+            Value::new(None, "no-cache, no-transform"),
+        );
+        expect.insert("accept-ranges".to_string(), Value::new(None, "none"));
+        let got = collect_headers(&default_headers()).unwrap();
+        assert_eq!(expect, got);
+    }
 
-    //         assert_eq!(expect, got);
-    //     }
+    #[test]
+    fn test_build_config_from_struct() {
+        let mut expect = Config::default();
+        expect.set_default_headers();
+        let source = expect.clone();
+        let got: Config = ConfigBuilder::builder()
+            .add_source(source)
+            .build()
+            .unwrap()
+            .try_deserialize()
+            .unwrap();
 
-    // #[test]
-    // fn test_write_file() {
-    //     let c = Config::default().set_default_headers();
-    //     let r = toml::to_string(&c).unwrap();
-    //     println!("{}", r);
-    //     std::fs::write(CONFIG, r).unwrap();
-    //     assert_eq!(1, 1);
-    // }
+        assert_eq!(expect, got);
+    }
 }

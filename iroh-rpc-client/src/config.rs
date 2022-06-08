@@ -1,6 +1,7 @@
 use std::net::SocketAddr;
 
 use config::{ConfigError, Map, Source, Value};
+use iroh_util::insert_into_config_map;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -21,18 +22,9 @@ impl Source for Config {
 
     fn collect(&self) -> Result<Map<String, Value>, ConfigError> {
         let mut map: Map<String, Value> = Map::new();
-        map.insert(
-            "gateway_addr".into(),
-            Value::new(None, self.gateway_addr.to_string()),
-        );
-        map.insert(
-            "p2p_addr".into(),
-            Value::new(None, self.p2p_addr.to_string()),
-        );
-        map.insert(
-            "store_addr".into(),
-            Value::new(None, self.store_addr.to_string()),
-        );
+        insert_into_config_map(&mut map, "gateway_addr", self.gateway_addr.to_string());
+        insert_into_config_map(&mut map, "p2p_addr", self.p2p_addr.to_string());
+        insert_into_config_map(&mut map, "store_addr", self.store_addr.to_string());
         Ok(map)
     }
 }

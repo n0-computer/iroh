@@ -1,13 +1,15 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 use anyhow::Result;
 use clap::Parser;
 use iroh_gateway::{
-    config::{Config, RpcConfig},
+    config::{Config, CONFIG_FILE_NAME, ENV_PREFIX},
     core::Core,
     metrics,
 };
 use iroh_metrics::gateway::Metrics;
+use iroh_util::{iroh_home_path, make_config};
 use prometheus_client::registry::Registry;
 
 #[derive(Parser, Debug, Clone)]
@@ -27,21 +29,42 @@ struct Args {
     cfg: Option<PathBuf>,
 }
 
+impl Args {
+    fn make_overrides_map(&self) -> HashMap<&str, String> {
+        let mut map: HashMap<&str, String> = HashMap::new();
+        if let Some(port) = self.port {
+            map.insert("port", port.to_string());
+        }
+        if let Some(writable) = self.writeable {
+            map.insert("writable", writable.to_string());
+        }
+        if let Some(fetch) = self.fetch {
+            map.insert("fetch", fetch.to_string());
+        }
+        if let Some(cache) = self.cache {
+            map.insert("cache", cache.to_string());
+        }
+        map
+    }
+}
+
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<()> {
     let args = Args::parse();
 
-    let rpc_config = RpcConfig::default();
-    let mut config = Config::new(
-        args.writeable.map_or(false, |b| b),
-        args.fetch.map_or(false, |b| b),
-        args.cache.map_or(false, |f| f),
-        args.port.map_or(9050, |p| p),
-        rpc_config,
-    );
-    config.set_default_headers();
+    let sources = vec![iroh_home_path(CONFIG_FILE_NAME), args.cfg.clone()];
+    let config = make_config(
+        // default
+        Config::default(),
+        // potential config files
+        sources,
+        // env var prefix for this config
+        ENV_PREFIX,
+        // map of present command line arguments
+        args.make_overrides_map(),
+    )
+    .unwrap();
     println!("{:#?}", config);
-
     let mut prom_registry = Registry::default();
     let gw_metrics = Metrics::new(&mut prom_registry);
     let handler = Core::new(config, gw_metrics, &mut prom_registry).await?;
