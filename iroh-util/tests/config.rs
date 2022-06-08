@@ -57,7 +57,6 @@ impl Source for TestConfig {
 fn test_collect() {
     let default = TestConfig::new();
     let mut expect: Map<String, Value> = Map::new();
-    // TODO!!! Add headers to test in the right place
     expect.insert("port".to_string(), Value::new(None, default.port as i32));
     expect.insert(
         "addr".to_string(),

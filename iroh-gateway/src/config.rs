@@ -133,7 +133,7 @@ impl Source for Config {
         insert_into_config_map(&mut map, "cache", self.cache);
         // Some issue between deserializing u64 & u16, converting this to
         // an signed int fixes the issue
-        insert_into_config_map(&mut map, "port", self.port as i64);
+        insert_into_config_map(&mut map, "port", self.port as i32);
         insert_into_config_map(&mut map, "rpc_addr", self.rpc_addr.to_string());
         insert_into_config_map(&mut map, "headers", collect_headers(&self.headers)?);
         insert_into_config_map(&mut map, "rpc_client", rpc_client);
