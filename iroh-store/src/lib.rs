@@ -1,5 +1,5 @@
 mod cf;
-mod config;
+pub mod config;
 pub mod metrics;
 pub mod rpc;
 mod store;

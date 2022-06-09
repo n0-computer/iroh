@@ -5,7 +5,7 @@ pub mod req;
 pub mod resolver;
 pub mod store;
 
-use config::Config;
+use crate::config::Config;
 use opentelemetry::{
     global,
     sdk::{propagation::TraceContextPropagator, trace, Resource},
@@ -57,7 +57,7 @@ pub async fn init_metrics(
     if !cfg.debug {
         let prom_gateway_uri = format!(
             "{}/metrics/job/{}/instance/{}",
-            cfg.prometheus_gateway_endpoint, cfg.service_name, cfg.instance_id
+            cfg.prom_gateway_endpoint, cfg.service_name, cfg.instance_id
         );
         let push_client = reqwest::Client::new();
         return Ok(tokio::spawn(async move {

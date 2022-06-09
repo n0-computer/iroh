@@ -1,0 +1,8 @@
+port = 5000
+enabled = true
+list = ["changed", "values"]
+
+[map]
+four = 4
+five = 5
+six = 6

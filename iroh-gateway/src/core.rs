@@ -91,9 +91,9 @@ impl Core {
     ) -> anyhow::Result<Self> {
         tokio::spawn(async move {
             // TODO: handle error
-            rpc::new(config.rpc.client_config.gateway_addr).await
+            rpc::new(config.rpc_addr).await
         });
-        let rpc_client = RpcClient::new(&config.rpc.client_config).await?;
+        let rpc_client = RpcClient::new(&config.rpc_client).await?;
         let mut templates = HashMap::new();
         templates.insert("dir_list".to_string(), templates::DIR_LIST.to_string());
         templates.insert("not_found".to_string(), templates::NOT_FOUND.to_string());
@@ -570,8 +570,7 @@ async fn middleware_error_handler(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::RpcConfig;
-    use iroh_rpc_client::RpcClientConfig;
+    use iroh_rpc_client::Config as RpcClientConfig;
     use prometheus_client::registry::Registry;
 
     #[tokio::test]
@@ -581,13 +580,11 @@ mod tests {
             false,
             false,
             0,
-            RpcConfig {
-                listen_addr: "0.0.0.0:0".parse().unwrap(),
-                client_config: RpcClientConfig {
-                    gateway_addr: "0.0.0.0:0".parse().unwrap(),
-                    p2p_addr: "0.0.0.0:0".parse().unwrap(),
-                    store_addr: "0.0.0.0:0".parse().unwrap(),
-                },
+            "0.0.0.0:0".parse().unwrap(),
+            RpcClientConfig {
+                gateway_addr: "0.0.0.0:0".parse().unwrap(),
+                p2p_addr: "0.0.0.0:0".parse().unwrap(),
+                store_addr: "0.0.0.0:0".parse().unwrap(),
             },
         );
         config.set_default_headers();

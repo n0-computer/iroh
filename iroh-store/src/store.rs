@@ -100,7 +100,7 @@ impl Store {
         })
         .await??;
 
-        let _rpc_client = RpcClient::new(&config.rpc)
+        let _rpc_client = RpcClient::new(&config.rpc_client)
             .await
             .context("Error creating rpc client for store")?;
 
@@ -151,7 +151,7 @@ impl Store {
         })
         .await??;
 
-        let _rpc_client = RpcClient::new(&config.rpc)
+        let _rpc_client = RpcClient::new(&config.rpc_client)
             .await
             // TODO: first conflict between `anyhow` & `anyhow`
             // .map_err(|e| e.context("Error creating rpc client for store"))?;
@@ -437,7 +437,8 @@ impl Store {
 mod tests {
     use super::*;
 
-    use iroh_rpc_client::RpcClientConfig;
+    use iroh_metrics::config::Config as MetricsConfig;
+    use iroh_rpc_client::Config as RpcClientConfig;
 
     use cid::multihash::{Code, MultihashDigest};
     const RAW: u64 = 0x55;
@@ -445,9 +446,12 @@ mod tests {
     #[tokio::test]
     async fn test_basics() {
         let dir = tempfile::tempdir().unwrap();
+        let rpc_client = RpcClientConfig::default();
         let config = Config {
             path: dir.path().into(),
-            rpc: RpcClientConfig::default(),
+            rpc_addr: rpc_client.store_addr,
+            rpc_client,
+            metrics: MetricsConfig::default(),
         };
 
         let metrics = Metrics::default();
@@ -483,9 +487,12 @@ mod tests {
     #[tokio::test]
     async fn test_reopen() {
         let dir = tempfile::tempdir().unwrap();
+        let rpc_client = RpcClientConfig::default();
         let config = Config {
             path: dir.path().into(),
-            rpc: RpcClientConfig::default(),
+            rpc_addr: rpc_client.store_addr,
+            rpc_client,
+            metrics: MetricsConfig::default(),
         };
 
         let metrics = Metrics::default();

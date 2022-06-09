@@ -1,9 +1,8 @@
-use std::net::SocketAddr;
-
 use anyhow::{Context, Result};
 use async_stream::stream;
 use futures::{Stream, StreamExt};
 
+use crate::config::Config;
 use crate::gateway::GatewayClient;
 use crate::network::P2pClient;
 use crate::status::StatusTable;
@@ -17,7 +16,7 @@ pub struct Client {
 }
 
 impl Client {
-    pub async fn new(cfg: &RpcClientConfig) -> Result<Self> {
+    pub async fn new(cfg: &Config) -> Result<Self> {
         let gateway = GatewayClient::new(cfg.gateway_addr)
             .await
             .context("Could not create gateway rpc client")?;
@@ -72,30 +71,11 @@ impl Client {
     }
 }
 
-#[derive(Debug, Clone)]
-// Config for the rpc Client
-pub struct RpcClientConfig {
-    // gateway rpc address
-    pub gateway_addr: SocketAddr,
-    // p2p rpc address
-    pub p2p_addr: SocketAddr,
-    // store rpc address
-    pub store_addr: SocketAddr,
-}
-
-impl Default for RpcClientConfig {
-    fn default() -> Self {
-        Self {
-            gateway_addr: "0.0.0.0:4400".parse().unwrap(),
-            p2p_addr: "0.0.0.0:4401".parse().unwrap(),
-            store_addr: "0.0.0.0:4402".parse().unwrap(),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::net::SocketAddr;
+
     use iroh_rpc_types::test::test_server;
     use tonic::transport::Server as TonicServer;
     use tonic_health::{
@@ -135,7 +115,7 @@ mod tests {
 
     #[tokio::test]
     async fn client_status() {
-        let cfg = RpcClientConfig::default();
+        let cfg = Config::default();
 
         let gateway_name = gateway::NAME;
         let p2p_name = network::NAME;

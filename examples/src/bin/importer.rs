@@ -6,7 +6,7 @@ use clap::Parser;
 use futures::{stream::TryStreamExt, StreamExt};
 use indicatif::{ProgressBar, ProgressStyle};
 use iroh_car::CarReader;
-use iroh_rpc_client::{Client, RpcClientConfig};
+use iroh_rpc_client::{Client, Config as RpcClientConfig};
 use par_stream::prelude::*;
 
 #[derive(Parser, Debug, Clone)]

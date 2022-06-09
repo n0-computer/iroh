@@ -1,5 +1,10 @@
+use std::collections::HashMap;
+use std::path::PathBuf;
+
 use clap::Parser;
+use iroh_p2p::config::{Libp2pConfig, CONFIG_FILE_NAME, ENV_PREFIX};
 use iroh_p2p::{metrics, Libp2pService};
+use iroh_util::{iroh_home_path, make_config};
 use libp2p::identity::{ed25519, Keypair};
 use libp2p::metrics::Metrics;
 use prometheus_client::registry::Registry;
@@ -11,6 +16,16 @@ use tracing::error;
 struct Args {
     #[clap(long = "no-metrics")]
     no_metrics: bool,
+    #[clap(long)]
+    cfg: Option<PathBuf>,
+}
+
+impl Args {
+    fn make_overrides_map(&self) -> HashMap<String, String> {
+        let mut map = HashMap::new();
+        map.insert("metrics.debug".to_string(), self.no_metrics.to_string());
+        map
+    }
 }
 
 /// Starts daemon process
@@ -35,8 +50,21 @@ async fn main() -> anyhow::Result<()> {
     };
 
     // TODO: configurable network
+    let sources = vec![iroh_home_path(CONFIG_FILE_NAME), args.cfg.clone()];
+    let network_config = make_config(
+        // default
+        Libp2pConfig::default(),
+        // potential config files
+        sources,
+        // env var prefix for this config
+        ENV_PREFIX,
+        // map of present command line arguments
+        args.make_overrides_map(),
+    )
+    .unwrap();
 
-    let network_config = iroh_p2p::Libp2pConfig::default();
+    let metrics_config = network_config.metrics.clone();
+
     let mut p2p_service = Libp2pService::new(
         network_config,
         net_keypair,
@@ -45,10 +73,12 @@ async fn main() -> anyhow::Result<()> {
     )
     .await?;
 
-    let metrics_handle =
-        iroh_metrics::init_with_registry(metrics::metrics_config(args.no_metrics), prom_registry)
-            .await
-            .expect("failed to initialize metrics");
+    let metrics_handle = iroh_metrics::init_with_registry(
+        metrics::metrics_config_with_compile_time_info(metrics_config),
+        prom_registry,
+    )
+    .await
+    .expect("failed to initialize metrics");
 
     // Start services
     let p2p_task = task::spawn(async move {

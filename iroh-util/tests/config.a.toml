@@ -1,0 +1,6 @@
+port = 5000
+
+[map]
+seven = 7
+eight = 8
+nine = 9 
