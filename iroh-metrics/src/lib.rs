@@ -5,7 +5,7 @@ pub mod req;
 pub mod resolver;
 pub mod store;
 
-use config::Config;
+use crate::config::Config;
 use opentelemetry::{
     global,
     sdk::{propagation::TraceContextPropagator, trace, Resource},

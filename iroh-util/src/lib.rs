@@ -77,19 +77,16 @@ where
     }
 
     // next, add any environment variables
-    builder = builder.add_source(
-        Environment::with_prefix(env_prefex)
-            .try_parsing(true)
-            .separator("_")
-            .list_separator(","),
-    );
+    builder = builder.add_source(Environment::with_prefix(env_prefex).try_parsing(true));
 
     // finally, override any values
     for (flag, val) in flag_overrides.into_iter() {
         builder = builder.set_override(flag, val)?;
     }
 
-    let config: T = builder.build()?.try_deserialize()?;
+    let cfg = builder.build()?;
+    println!("config after build\n{:#?}\n", cfg);
+    let config: T = cfg.try_deserialize()?;
     Ok(config)
 }
 

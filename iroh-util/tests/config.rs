@@ -18,6 +18,7 @@ struct TestConfig {
     enabled: bool,
     list: Vec<String>,
     map: HashMap<String, i32>,
+    metrics: Metrics,
 }
 
 // impl default
@@ -33,6 +34,7 @@ impl TestConfig {
             enabled: true,
             list: vec!["hello".to_string(), "world".to_string()],
             map,
+            metrics: Metrics::new(),
         }
     }
 }
@@ -49,6 +51,34 @@ impl Source for TestConfig {
         insert_into_config_map(&mut map, "enabled", self.enabled);
         insert_into_config_map(&mut map, "list", self.list.clone());
         insert_into_config_map(&mut map, "map", self.map.clone());
+        let metrics = self.metrics.collect().unwrap();
+        insert_into_config_map(&mut map, "metrics", metrics);
+        Ok(map)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+struct Metrics {
+    // #[serde(alias = "metrics_service_name")]
+    service_name: String,
+}
+
+impl Metrics {
+    fn new() -> Self {
+        Self {
+            service_name: "test_service".to_string(),
+        }
+    }
+}
+
+impl Source for Metrics {
+    fn clone_into_box(&self) -> Box<dyn Source + Send + Sync> {
+        Box::new(self.clone())
+    }
+
+    fn collect(&self) -> Result<Map<String, Value>, ConfigError> {
+        let mut map = Map::new();
+        insert_into_config_map(&mut map, "service_name", self.service_name.clone());
         Ok(map)
     }
 }
@@ -65,6 +95,12 @@ fn test_collect() {
     expect.insert("enabled".to_string(), Value::new(None, default.enabled));
     expect.insert("list".to_string(), Value::new(None, default.list));
     expect.insert("map".to_string(), Value::new(None, default.map));
+    let mut metrics = Map::new();
+    metrics.insert(
+        "service_name".to_string(),
+        Value::new(None, default.metrics.service_name),
+    );
+    expect.insert("metrics".to_string(), Value::new(None, metrics));
 
     let got = TestConfig::new().collect().unwrap();
     for key in got.keys() {
@@ -100,8 +136,12 @@ fn test_make_config() {
         list: vec!["changed".to_string(), "values".to_string()],
         // added to by by default, CONFIG_A, & CONFIG_B
         map,
+        metrics: Metrics {
+            service_name: "new_name".to_string(),
+        },
     };
     std::env::set_var("IROH_TEST_CONFIG_PORT", "4000");
+    std::env::set_var("IROH_TEST_CONFIG_METRICS.SERVICE_NAME", "new_name");
     let got = make_config(
         TestConfig::new(),
         vec![
@@ -115,4 +155,7 @@ fn test_make_config() {
     .unwrap();
     assert_eq!(expect, got);
     std::env::remove_var("IROH_TEST_CONFIG_PORT");
+    std::env::remove_var("IROH_TEST_METRICS_SERVICE_NAME");
 }
+
+// add metrics
