@@ -2,8 +2,10 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
+use iroh_ctl::metrics;
 use iroh_rpc_client::Client;
 use iroh_util::{iroh_home_path, make_config};
+use prometheus_client::registry::Registry;
 
 use iroh_ctl::{
     config::{Config, CONFIG_FILE_NAME, ENV_PREFIX},
@@ -15,13 +17,17 @@ use iroh_ctl::{
 struct Cli {
     #[clap(long)]
     cfg: Option<PathBuf>,
+    #[clap(long = "no-metrics")]
+    no_metrics: bool,
     #[clap(subcommand)]
     command: Commands,
 }
 
 impl Cli {
     fn make_overrides_map(&self) -> HashMap<String, String> {
-        HashMap::new()
+        let mut map = HashMap::new();
+        map.insert("metrics.debug".to_string(), self.no_metrics.to_string());
+        map
     }
 }
 
@@ -52,6 +58,18 @@ async fn main() -> anyhow::Result<()> {
     )
     .unwrap();
 
+    let metrics_config = config.metrics.clone();
+
+    // stubbing in metrics
+    let prom_registry = Registry::default();
+    // TODO: need to register prometheus metrics
+    let metrics_handle = iroh_metrics::init_with_registry(
+        metrics::metrics_config_with_compile_time_info(metrics_config),
+        prom_registry,
+    )
+    .await
+    .expect("failed to initialize metrics");
+
     let client = Client::new(&config.rpc_client).await?;
 
     match cli.command {
@@ -60,5 +78,6 @@ async fn main() -> anyhow::Result<()> {
         }
     };
 
+    metrics_handle.shutdown();
     Ok(())
 }

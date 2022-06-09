@@ -1,6 +1,7 @@
 use std::net::SocketAddr;
 
 use config::{ConfigError, Map, Source, Value};
+use iroh_metrics::config::Config as MetricsConfig;
 use iroh_rpc_client::Config as RpcClientConfig;
 use iroh_util::insert_into_config_map;
 use libp2p::Multiaddr;
@@ -29,6 +30,7 @@ pub struct Libp2pConfig {
     /// Rpc listening addr
     pub rpc_addr: SocketAddr,
     pub rpc_client: RpcClientConfig,
+    pub metrics: MetricsConfig,
 }
 
 impl Source for Libp2pConfig {
@@ -36,9 +38,8 @@ impl Source for Libp2pConfig {
         Box::new(self.clone())
     }
     fn collect(&self) -> Result<Map<String, Value>, ConfigError> {
-        let rpc_client = self.rpc_client.collect()?;
         let mut map: Map<String, Value> = Map::new();
-        insert_into_config_map(&mut map, "rpc_client", rpc_client);
+        insert_into_config_map(&mut map, "rpc_client", self.rpc_client.collect()?);
         insert_into_config_map(&mut map, "rpc_addr", self.rpc_addr.to_string());
         // `config` package converts all unsigned integers into U64, which then has problems
         // downcasting to, in this case, u32. To get it to allow the convertion between the
@@ -53,6 +54,7 @@ impl Source for Libp2pConfig {
             "listening_multiaddr",
             self.listening_multiaddr.to_string(),
         );
+        insert_into_config_map(&mut map, "metrics", self.metrics.collect()?);
         Ok(map)
     }
 }
@@ -84,6 +86,7 @@ impl Default for Libp2pConfig {
             target_peer_count: 75,
             rpc_addr: "0.0.0.0:4401".parse().unwrap(),
             rpc_client: RpcClientConfig::default(),
+            metrics: MetricsConfig::default(),
         }
     }
 }
@@ -96,7 +99,6 @@ mod tests {
     #[test]
     fn test_collect() {
         let default = Libp2pConfig::default();
-        let rpc_client_expect = default.rpc_client.collect().unwrap();
         let bootstrap_peers: Vec<String> = default
             .bootstrap_peers
             .iter()
@@ -106,7 +108,7 @@ mod tests {
         let mut expect: Map<String, Value> = Map::new();
         expect.insert(
             "rpc_client".to_string(),
-            Value::new(None, rpc_client_expect),
+            Value::new(None, default.rpc_client.collect().unwrap()),
         );
         expect.insert(
             "rpc_addr".to_string(),
@@ -127,8 +129,12 @@ mod tests {
             "listening_multiaddr".to_string(),
             Value::new(None, default.listening_multiaddr.to_string()),
         );
+        expect.insert(
+            "metrics".to_string(),
+            Value::new(None, default.metrics.collect().unwrap()),
+        );
 
-        let got = Libp2pConfig::default().collect().unwrap();
+        let got = default.collect().unwrap();
         for key in got.keys() {
             let left = expect.get(key).unwrap();
             let right = got.get(key).unwrap();
@@ -140,7 +146,7 @@ mod tests {
     fn test_build_config_from_struct() {
         let expect = Libp2pConfig::default();
         let got: Libp2pConfig = ConfigBuilder::builder()
-            .add_source(Libp2pConfig::default())
+            .add_source(expect.clone())
             .build()
             .unwrap()
             .try_deserialize()

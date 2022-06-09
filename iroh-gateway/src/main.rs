@@ -44,6 +44,7 @@ impl Args {
         if let Some(cache) = self.cache {
             map.insert("cache", cache.to_string());
         }
+        map.insert("metrics.debug", self.no_metrics.to_string());
         map
     }
 }
@@ -53,7 +54,7 @@ async fn main() -> Result<()> {
     let args = Args::parse();
 
     let sources = vec![iroh_home_path(CONFIG_FILE_NAME), args.cfg.clone()];
-    let config = make_config(
+    let mut config = make_config(
         // default
         Config::default(),
         // potential config files
@@ -64,15 +65,17 @@ async fn main() -> Result<()> {
         args.make_overrides_map(),
     )
     .unwrap();
+    config.metrics = metrics::metrics_config_with_compile_time_info(config.metrics);
     println!("{:#?}", config);
+
+    let metrics_config = config.metrics.clone();
     let mut prom_registry = Registry::default();
     let gw_metrics = Metrics::new(&mut prom_registry);
     let handler = Core::new(config, gw_metrics, &mut prom_registry).await?;
 
-    let metrics_handle =
-        iroh_metrics::init_with_registry(metrics::metrics_config(args.no_metrics), prom_registry)
-            .await
-            .expect("failed to initialize metrics");
+    let metrics_handle = iroh_metrics::init_with_registry(metrics_config, prom_registry)
+        .await
+        .expect("failed to initialize metrics");
     let server = handler.server();
     println!("listening on {}", server.local_addr());
     let core_task = tokio::spawn(async move {

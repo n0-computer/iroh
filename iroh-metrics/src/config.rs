@@ -1,5 +1,4 @@
 use config::{ConfigError, Map, Source, Value};
-use git_version::git_version;
 use iroh_util::insert_into_config_map;
 use serde::{Deserialize, Serialize};
 
@@ -51,32 +50,17 @@ impl Source for Config {
 }
 
 impl Config {
-    pub fn new(
-        service_name: String,
-        instance_id: String,
-        build: String,
-        version: String,
-        service_env: String,
-        debug: bool,
-    ) -> Self {
-        let debug: bool = std::env::var("IROH_METRICS_DEBUG")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(debug);
-        let collector_endpoint = std::env::var("IROH_METRICS_COLLECTOR_ENDPOINT")
-            .unwrap_or_else(|_| "http://localhost:4317".to_string());
-        let prometheus_gateway_endpoint = std::env::var("IROH_METRICS_PROM_GATEWAY_ENDPOINT")
-            .unwrap_or_else(|_| "http://localhost:9091".to_string());
-        Config {
-            service_name,
-            instance_id,
-            build,
-            version,
-            service_env,
-            debug,
-            collector_endpoint,
-            prometheus_gateway_endpoint,
-        }
+    pub fn with_service_name(mut self, name: String) -> Self {
+        self.service_name = name;
+        self
+    }
+    pub fn with_build(mut self, build: String) -> Self {
+        self.build = build;
+        self
+    }
+    pub fn with_version(mut self, version: String) -> Self {
+        self.version = version;
+        self
     }
 }
 
@@ -85,7 +69,7 @@ impl Default for Config {
         Self {
             service_name: "unknown".to_string(),
             instance_id: names::Generator::default().next().unwrap(),
-            build: git_version!().to_string(),
+            build: "unknown".to_string(),
             version: "unknown".to_string(),
             service_env: "dev".to_string(),
             debug: false,
@@ -100,14 +84,10 @@ mod tests {
     use super::*;
 
     fn make_test_config() -> Config {
-        Config::new(
-            "test_service_name".into(),
-            "test_instance_id".into(),
-            "test_build".into(),
-            "test_version".into(),
-            "test_service_env".into(),
-            true,
-        )
+        Config::default()
+            .with_service_name("test_service_name".into())
+            .with_build("test_build".into())
+            .with_version("test_version".into())
     }
 
     #[test]

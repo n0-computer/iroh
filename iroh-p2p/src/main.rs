@@ -22,7 +22,9 @@ struct Args {
 
 impl Args {
     fn make_overrides_map(&self) -> HashMap<String, String> {
-        HashMap::new()
+        let mut map = HashMap::new();
+        map.insert("metrics.debug".to_string(), self.no_metrics.to_string());
+        map
     }
 }
 
@@ -61,6 +63,8 @@ async fn main() -> anyhow::Result<()> {
     )
     .unwrap();
 
+    let metrics_config = network_config.metrics.clone();
+
     let mut p2p_service = Libp2pService::new(
         network_config,
         net_keypair,
@@ -69,10 +73,12 @@ async fn main() -> anyhow::Result<()> {
     )
     .await?;
 
-    let metrics_handle =
-        iroh_metrics::init_with_registry(metrics::metrics_config(args.no_metrics), prom_registry)
-            .await
-            .expect("failed to initialize metrics");
+    let metrics_handle = iroh_metrics::init_with_registry(
+        metrics::metrics_config_with_compile_time_info(metrics_config),
+        prom_registry,
+    )
+    .await
+    .expect("failed to initialize metrics");
 
     // Start services
     let p2p_task = task::spawn(async move {

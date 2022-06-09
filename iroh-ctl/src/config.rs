@@ -1,5 +1,7 @@
 use config::{ConfigError, Map, Source, Value};
+use iroh_metrics::config::Config as MetricsConfig;
 use iroh_rpc_client::Config as RpcClientConfig;
+use iroh_util::insert_into_config_map;
 use serde::{Deserialize, Serialize};
 
 /// CONFIG_FILE_NAME is the name of the optional config file located in the iroh home directory
@@ -11,6 +13,7 @@ pub const ENV_PREFIX: &str = "IROH_CTL";
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Config {
     pub rpc_client: RpcClientConfig,
+    pub metrics: MetricsConfig,
 }
 
 impl Source for Config {
@@ -18,9 +21,9 @@ impl Source for Config {
         Box::new(self.clone())
     }
     fn collect(&self) -> Result<Map<String, Value>, ConfigError> {
-        let rpc_client = self.rpc_client.collect()?;
         let mut map: Map<String, Value> = Map::new();
-        map.insert("rpc_client".to_string(), Value::new(None, rpc_client));
+        insert_into_config_map(&mut map, "rpc_client", self.rpc_client.collect()?);
+        insert_into_config_map(&mut map, "metrics", self.metrics.collect()?);
         Ok(map)
     }
 }
@@ -32,34 +35,30 @@ mod tests {
 
     #[test]
     fn test_collect() {
-        let rpc_client_default = RpcClientConfig::default();
-        let mut rpc_client_expect: Map<String, Value> = Map::new();
-        rpc_client_expect.insert(
-            "gateway_addr".to_string(),
-            Value::new(None, rpc_client_default.gateway_addr.to_string()),
-        );
-        rpc_client_expect.insert(
-            "p2p_addr".to_string(),
-            Value::new(None, rpc_client_default.p2p_addr.to_string()),
-        );
-        rpc_client_expect.insert(
-            "store_addr".to_string(),
-            Value::new(None, rpc_client_default.store_addr.to_string()),
-        );
+        let default = Config::default();
         let mut expect: Map<String, Value> = Map::new();
         expect.insert(
             "rpc_client".to_string(),
-            Value::new(None, rpc_client_expect),
+            Value::new(None, default.rpc_client.collect().unwrap()),
         );
-        let got = Config::default().collect().unwrap();
-        assert_eq!(expect, got);
+        expect.insert(
+            "metrics".to_string(),
+            Value::new(None, default.metrics.collect().unwrap()),
+        );
+        let got = default.collect().unwrap();
+
+        for key in got.keys() {
+            let left = expect.get(key).unwrap();
+            let right = got.get(key).unwrap();
+            assert_eq!(left, right);
+        }
     }
 
     #[test]
     fn test_build_config_from_struct() {
         let expect = Config::default();
         let got: Config = ConfigBuilder::builder()
-            .add_source(Config::default())
+            .add_source(expect.clone())
             .build()
             .unwrap()
             .try_deserialize()

@@ -59,14 +59,19 @@ impl Source for TestConfig {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 struct Metrics {
-    // #[serde(alias = "metrics_service_name")]
-    service_name: String,
+    service_env: String,
+    instance_id: String,
+    foo: bool,
+    bar: i32,
 }
 
 impl Metrics {
     fn new() -> Self {
         Self {
-            service_name: "test_service".to_string(),
+            instance_id: "test_instance_id".to_string(),
+            service_env: "test_service".to_string(),
+            foo: false,
+            bar: 0,
         }
     }
 }
@@ -78,7 +83,10 @@ impl Source for Metrics {
 
     fn collect(&self) -> Result<Map<String, Value>, ConfigError> {
         let mut map = Map::new();
-        insert_into_config_map(&mut map, "service_name", self.service_name.clone());
+        insert_into_config_map(&mut map, "service_env", self.service_env.clone());
+        insert_into_config_map(&mut map, "instance_id", self.instance_id.clone());
+        insert_into_config_map(&mut map, "foo", self.foo);
+        insert_into_config_map(&mut map, "bar", self.bar);
         Ok(map)
     }
 }
@@ -97,9 +105,15 @@ fn test_collect() {
     expect.insert("map".to_string(), Value::new(None, default.map));
     let mut metrics = Map::new();
     metrics.insert(
-        "service_name".to_string(),
-        Value::new(None, default.metrics.service_name),
+        "service_env".to_string(),
+        Value::new(None, default.metrics.service_env),
     );
+    metrics.insert(
+        "instance_id".to_string(),
+        Value::new(None, default.metrics.instance_id),
+    );
+    metrics.insert("foo".to_string(), Value::new(None, default.metrics.foo));
+    metrics.insert("bar".to_string(), Value::new(None, default.metrics.bar));
     expect.insert("metrics".to_string(), Value::new(None, metrics));
 
     let got = TestConfig::new().collect().unwrap();
@@ -137,11 +151,27 @@ fn test_make_config() {
         // added to by by default, CONFIG_A, & CONFIG_B
         map,
         metrics: Metrics {
-            service_name: "new_name".to_string(),
+            // set by custom metrics env var
+            service_env: "new_service_env".to_string(),
+            // set by custom metrics env var
+            instance_id: "new_id".to_string(),
+            // set by `env_prefix` env var
+            foo: true,
+            // set by metrics env var
+            bar: 10,
         },
     };
+    // set config field using env var
     std::env::set_var("IROH_TEST_CONFIG_PORT", "4000");
-    std::env::set_var("IROH_TEST_CONFIG_METRICS.SERVICE_NAME", "new_name");
+    // set metrics fiels using `env_prefix` prefix & dot notation to set a nested field
+    // most terminal environments do not allow this
+    std::env::set_var("IROH_TEST_CONFIG_METRICS.FOO", "true");
+    // set metrics field using `IROH_METRICS` prefix
+    std::env::set_var("IROH_METRICS_BAR", "10");
+    // custom metrics env var
+    std::env::set_var("IROH_INSTANCE_ID", "new_id");
+    // custom metrics env var
+    std::env::set_var("IROH_ENV", "new_service_env");
     let got = make_config(
         TestConfig::new(),
         vec![
@@ -150,12 +180,15 @@ fn test_make_config() {
             None,
         ],
         "IROH_TEST_CONFIG",
-        HashMap::from([("enabled", "false")]),
+        HashMap::from([("enabled", "false"), ("metrics.debug", "true")]),
     )
     .unwrap();
     assert_eq!(expect, got);
     std::env::remove_var("IROH_TEST_CONFIG_PORT");
-    std::env::remove_var("IROH_TEST_METRICS_SERVICE_NAME");
+    std::env::remove_var("IROH_TEST_METRICS.SERVICE_NAME");
+    std::env::remove_var("IROH_METRICS_INSTANCE_ID");
+    std::env::remove_var("IROH_INSTANCE_ID");
+    std::env::remove_var("IROH_ENV");
 }
 
 // add metrics

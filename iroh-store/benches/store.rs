@@ -2,6 +2,7 @@ use std::time::Instant;
 
 use cid::multihash::{Code, MultihashDigest};
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use iroh_metrics::config::Config as MetricsConfig;
 use iroh_metrics::store::Metrics;
 use iroh_rpc_client::Config as RpcClientConfig;
 use iroh_store::{Config, Store};
@@ -28,6 +29,7 @@ pub fn put_benchmark(c: &mut Criterion) {
                     path: dir.path().into(),
                     rpc_addr: rpc_client.store_addr,
                     rpc_client,
+                    metrics: MetricsConfig::default(),
                 };
                 let metrics = Metrics::default();
                 let store =
@@ -57,6 +59,7 @@ pub fn get_benchmark(c: &mut Criterion) {
                     path: dir.path().into(),
                     rpc_addr: rpc_client.store_addr,
                     rpc_client,
+                    metrics: MetricsConfig::default(),
                 };
                 let metrics = Metrics::default();
                 let store =

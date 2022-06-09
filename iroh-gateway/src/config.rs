@@ -6,6 +6,7 @@ use config::{ConfigError, Map, Source, Value};
 use headers::{
     AccessControlAllowHeaders, AccessControlAllowMethods, AccessControlAllowOrigin, HeaderMapExt,
 };
+use iroh_metrics::config::Config as MetricsConfig;
 use iroh_rpc_client::Config as RpcClientConfig;
 use iroh_util::insert_into_config_map;
 use serde::{Deserialize, Serialize};
@@ -37,6 +38,8 @@ pub struct Config {
     pub headers: HeaderMap,
     /// rpc addresses for the gateway & addresses for the rpc client to dial
     pub rpc_client: RpcClientConfig,
+    /// metrics configuration
+    pub metrics: MetricsConfig,
 }
 
 impl Config {
@@ -56,6 +59,7 @@ impl Config {
             port,
             rpc_addr,
             rpc_client,
+            metrics: MetricsConfig::default(),
         }
     }
 
@@ -114,6 +118,7 @@ impl Default for Config {
             port: DEFAULT_PORT,
             rpc_addr: rpc_client.gateway_addr,
             rpc_client,
+            metrics: MetricsConfig::default(),
         };
         t.set_default_headers();
         t
@@ -137,6 +142,8 @@ impl Source for Config {
         insert_into_config_map(&mut map, "rpc_addr", self.rpc_addr.to_string());
         insert_into_config_map(&mut map, "headers", collect_headers(&self.headers)?);
         insert_into_config_map(&mut map, "rpc_client", rpc_client);
+        let metrics = self.metrics.collect()?;
+        insert_into_config_map(&mut map, "metrics", metrics);
         Ok(map)
     }
 }
@@ -179,7 +186,6 @@ mod tests {
     fn test_collect() {
         let default = Config::default();
         let mut expect: Map<String, Value> = Map::new();
-        // TODO!!! Add headers to test in the right place
         expect.insert("writeable".to_string(), Value::new(None, default.writeable));
         expect.insert("fetch".to_string(), Value::new(None, default.fetch));
         expect.insert("cache".to_string(), Value::new(None, default.cache));
@@ -188,14 +194,20 @@ mod tests {
             "headers".to_string(),
             Value::new(None, collect_headers(&default.headers).unwrap()),
         );
-        let rpc_client = RpcClientConfig::default().collect().unwrap();
         expect.insert(
             "rpc_addr".to_string(),
             Value::new(None, default.rpc_addr.to_string()),
         );
-        expect.insert("rpc_client".to_string(), Value::new(None, rpc_client));
+        expect.insert(
+            "rpc_client".to_string(),
+            Value::new(None, default.rpc_client.collect().unwrap()),
+        );
+        expect.insert(
+            "metrics".to_string(),
+            Value::new(None, default.metrics.collect().unwrap()),
+        );
 
-        let got = Config::default().collect().unwrap();
+        let got = default.collect().unwrap();
         for key in got.keys() {
             let left = expect.get(key).unwrap_or_else(|| panic!("{}", key));
             let right = got.get(key).unwrap();
