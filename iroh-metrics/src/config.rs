@@ -19,7 +19,8 @@ pub struct Config {
     /// The endpoint of the trace collector.
     pub collector_endpoint: String,
     /// The endpoint of the prometheus push gateway.
-    pub prometheus_gateway_endpoint: String,
+    #[serde(alias = "prom_gateway_endpoint")]
+    pub prom_gateway_endpoint: String,
 }
 
 impl Source for Config {
@@ -42,8 +43,8 @@ impl Source for Config {
         );
         insert_into_config_map(
             &mut map,
-            "prometheus_gateway_endpoint",
-            self.prometheus_gateway_endpoint.clone(),
+            "prom_gateway_endpoint",
+            self.prom_gateway_endpoint.clone(),
         );
         Ok(map)
     }
@@ -74,7 +75,7 @@ impl Default for Config {
             service_env: "dev".to_string(),
             debug: false,
             collector_endpoint: "http://localhost:4317".to_string(),
-            prometheus_gateway_endpoint: "http://localhost:9091".to_string(),
+            prom_gateway_endpoint: "http://localhost:9091".to_string(),
         }
     }
 }
@@ -114,8 +115,8 @@ mod tests {
             Value::new(None, cfg.collector_endpoint.clone()),
         );
         expect.insert(
-            "prometheus_gateway_endpoint".to_string(),
-            Value::new(None, cfg.prometheus_gateway_endpoint.clone()),
+            "prom_gateway_endpoint".to_string(),
+            Value::new(None, cfg.prom_gateway_endpoint.clone()),
         );
         let got = cfg.collect().unwrap();
         for key in got.keys() {

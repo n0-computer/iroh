@@ -161,34 +161,36 @@ fn test_make_config() {
             bar: 10,
         },
     };
-    // set config field using env var
-    std::env::set_var("IROH_TEST_CONFIG_PORT", "4000");
-    // set metrics fiels using `env_prefix` prefix & dot notation to set a nested field
-    // most terminal environments do not allow this
-    std::env::set_var("IROH_TEST_CONFIG_METRICS.FOO", "true");
-    // set metrics field using `IROH_METRICS` prefix
-    std::env::set_var("IROH_METRICS_BAR", "10");
-    // custom metrics env var
-    std::env::set_var("IROH_INSTANCE_ID", "new_id");
-    // custom metrics env var
-    std::env::set_var("IROH_ENV", "new_service_env");
-    let got = make_config(
-        TestConfig::new(),
+
+    temp_env::with_vars(
         vec![
-            Some(PathBuf::from(CONFIG_A)),
-            Some(PathBuf::from(CONFIG_B)),
-            None,
+            // set config field using env var
+            ("IROH_TEST_CONFIG_PORT", Some("4000")),
+            // set metrics fiels using `env_prefix` prefix & dot notation to set a nested field
+            // most terminal environments do not allow this
+            ("IROH_TEST_CONFIG_METRICS.FOO", Some("true")),
+            // set metrics field using `IROH_METRICS` prefix
+            ("IROH_METRICS_BAR", Some("10")),
+            // custom metrics env var
+            ("IROH_INSTANCE_ID", Some("new_id")),
+            // custom metrics env var
+            ("IROH_ENV", Some("new_service_env")),
         ],
-        "IROH_TEST_CONFIG",
-        HashMap::from([("enabled", "false"), ("metrics.debug", "true")]),
-    )
-    .unwrap();
-    assert_eq!(expect, got);
-    std::env::remove_var("IROH_TEST_CONFIG_PORT");
-    std::env::remove_var("IROH_TEST_METRICS.SERVICE_NAME");
-    std::env::remove_var("IROH_METRICS_INSTANCE_ID");
-    std::env::remove_var("IROH_INSTANCE_ID");
-    std::env::remove_var("IROH_ENV");
+        || {
+            let got = make_config(
+                TestConfig::new(),
+                vec![
+                    Some(PathBuf::from(CONFIG_A)),
+                    Some(PathBuf::from(CONFIG_B)),
+                    None,
+                ],
+                "IROH_TEST_CONFIG",
+                HashMap::from([("enabled", "false"), ("metrics.debug", "true")]),
+            )
+            .unwrap();
+            assert_eq!(expect, got);
+        },
+    );
 }
 
 // add metrics
