@@ -93,16 +93,18 @@ impl NodeBehaviour {
         .into();
 
         let kad = if config.kademlia {
-            let local_peer_id = local_key.public().to_peer_id();
+            let pub_key = local_key.public();
+
             // TODO: persist to store
-            let store = MemoryStore::new(local_peer_id.to_owned());
+            let store = MemoryStore::new(pub_key.to_peer_id());
+
             // TODO: make user configurable
             let mut kad_config = KademliaConfig::default();
             kad_config.set_parallelism(16usize.try_into().unwrap());
             // TODO: potentially lower (this is per query)
-            kad_config.set_query_timeout(Duration::from_secs(5));
+            kad_config.set_query_timeout(Duration::from_secs(60));
 
-            let mut kademlia = Kademlia::with_config(local_peer_id, store, kad_config);
+            let mut kademlia = Kademlia::with_config(pub_key.to_peer_id(), store, kad_config);
             for multiaddr in &config.bootstrap_peers {
                 // TODO: move parsing into config
                 let mut addr = multiaddr.to_owned();
@@ -113,9 +115,12 @@ impl NodeBehaviour {
                     warn!("Could not parse bootstrap addr {}", multiaddr);
                 }
             }
+
+            // Trigger initial bootstrap
             if let Err(e) = kademlia.bootstrap() {
                 warn!("Kademlia bootstrap failed: {}", e);
             }
+
             Some(kademlia)
         } else {
             None
@@ -161,6 +166,14 @@ impl NodeBehaviour {
     pub fn add_address(&mut self, peer: &PeerId, addr: Multiaddr) {
         if let Some(kad) = self.kad.as_mut() {
             kad.add_address(peer, addr);
+        }
+    }
+
+    pub fn finish_query(&mut self, id: &libp2p::kad::QueryId) {
+        if let Some(kad) = self.kad.as_mut() {
+            if let Some(mut query) = kad.query_mut(id) {
+                query.finish();
+            }
         }
     }
 }

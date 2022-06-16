@@ -182,6 +182,10 @@ impl QueryManager {
         }
     }
 
+    pub fn dial_failure(&mut self, peer_id: &PeerId) {
+        self.disconnected(peer_id);
+    }
+
     fn next_finished_query(&mut self) -> Option<(QueryId, Query)> {
         let mut next_query = None;
         for (query_id, query) in &self.queries {
