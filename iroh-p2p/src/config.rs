@@ -83,7 +83,7 @@ impl Default for Libp2pConfig {
             bootstrap_peers,
             mdns: false,
             kademlia: true,
-            target_peer_count: 75,
+            target_peer_count: 256,
             rpc_addr: "0.0.0.0:4401".parse().unwrap(),
             rpc_client: RpcClientConfig::default(),
             metrics: MetricsConfig::default(),

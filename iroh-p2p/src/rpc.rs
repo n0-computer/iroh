@@ -11,7 +11,7 @@ use libp2p::Multiaddr;
 use libp2p::PeerId;
 use tokio::sync::mpsc;
 use tonic::{transport::Server as TonicServer, Request, Response, Status};
-use tracing::trace;
+use tracing::{trace, warn};
 
 use iroh_bitswap::{Block, QueryError};
 use iroh_rpc_types::p2p::p2p_server;
@@ -87,7 +87,7 @@ impl p2p_server::P2p for P2p {
         trace!("received ProviderRequest: {:?}", req.key);
         let (s, mut r) = mpsc::channel(1024);
         let msg = RpcMessage::ProviderRequest {
-            key: req.key.into(),
+            key: req.key.clone().into(),
             response_channel: s,
         };
 
@@ -101,7 +101,14 @@ impl p2p_server::P2p for P2p {
         while let Some(provider) = r.recv().await {
             match provider {
                 Ok(provider) => providers.push(provider.to_bytes()),
-                Err(e) => return Err(Status::internal(e)),
+                Err(e) => {
+                    if providers.is_empty() {
+                        return Err(Status::internal(e));
+                    } else {
+                        warn!("error fetching providers for key {:?}: {:?}", req.key, e);
+                        break;
+                    }
+                }
             }
         }
 

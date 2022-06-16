@@ -10,6 +10,7 @@ use futures::channel::oneshot::Sender as OneShotSender;
 use futures_util::stream::StreamExt;
 use iroh_rpc_client::Client as RpcClient;
 use libp2p::core::muxing::StreamMuxerBox;
+use libp2p::core::transport::timeout::TransportTimeout;
 use libp2p::core::transport::Boxed;
 use libp2p::core::Multiaddr;
 pub use libp2p::gossipsub::{IdentTopic, Topic};
@@ -89,12 +90,12 @@ impl Libp2pService {
             .with_max_pending_outgoing(Some(30)) // TODO: configurable
             .with_max_established_incoming(Some(config.target_peer_count))
             .with_max_established_outgoing(Some(config.target_peer_count))
-            .with_max_established_per_peer(Some(60)); // TODO: configurable
+            .with_max_established_per_peer(Some(5)); // TODO: configurable
 
         let node = NodeBehaviour::new(&net_keypair, &config, registry).await?;
         let mut swarm = SwarmBuilder::new(transport, node, peer_id)
             .connection_limits(limits)
-            .notify_handler_buffer_size(std::num::NonZeroUsize::new(20).expect("Not zero")) // TODO: configurable
+            .notify_handler_buffer_size(20.try_into().unwrap()) // TODO: configurable
             .connection_event_buffer_size(128)
             .dial_concurrency_factor(NonZeroU8::new(16).unwrap())
             .executor(Box::new(|fut| {
@@ -427,6 +428,10 @@ pub async fn build_transport(local_key: Keypair) -> Boxed<(PeerId, StreamMuxerBo
     let transport =
         libp2p::websocket::WsConfig::new(libp2p::tcp::TokioTcpConfig::new().nodelay(true))
             .or_transport(transport);
+
+    // TODO: configurable
+    let transport = TransportTimeout::new(transport, Duration::from_secs(5));
+
     let transport = libp2p::dns::TokioDnsConfig::system(transport).unwrap();
     let auth_config = {
         let dh_keys = noise::Keypair::<noise::X25519Spec>::new()

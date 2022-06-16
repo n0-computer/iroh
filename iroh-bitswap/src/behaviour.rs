@@ -12,10 +12,10 @@ use libp2p::core::connection::ConnectionId;
 use libp2p::core::{ConnectedPoint, Multiaddr, PeerId};
 use libp2p::swarm::handler::OneShotHandler;
 use libp2p::swarm::{
-    IntoConnectionHandler, NetworkBehaviour, NetworkBehaviourAction, PollParameters,
+    DialError, IntoConnectionHandler, NetworkBehaviour, NetworkBehaviourAction, PollParameters,
 };
 use prometheus_client::registry::Registry;
-use tracing::{debug, instrument, warn};
+use tracing::{debug, instrument, trace, warn};
 
 use crate::message::{BitswapMessage, Priority};
 use crate::protocol::{BitswapProtocol, Upgrade};
@@ -206,6 +206,20 @@ impl NetworkBehaviour for Bitswap {
         }
     }
 
+    #[instrument(skip(self, _handler))]
+    fn inject_dial_failure(
+        &mut self,
+        peer_id: Option<PeerId>,
+        _handler: Self::ConnectionHandler,
+        _error: &DialError,
+    ) {
+        trace!("failed to dial");
+        if let Some(ref peer_id) = peer_id {
+            self.sessions.dial_failure(peer_id);
+            self.queries.dial_failure(peer_id);
+        }
+    }
+
     #[instrument(skip(self))]
     fn inject_event(&mut self, peer_id: PeerId, connection: ConnectionId, message: HandlerEvent) {
         match message {
@@ -254,7 +268,7 @@ impl NetworkBehaviour for Bitswap {
                         .push_back(NetworkBehaviourAction::GenerateEvent(event));
                 }
 
-                // TODO: cancle Query::Send
+                // TODO: cancel Query::Send
 
                 // Propagate Cancel Events
                 for cid in message.wantlist().cancels() {

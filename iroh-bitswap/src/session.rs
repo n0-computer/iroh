@@ -11,7 +11,7 @@ use libp2p::{
     },
     PeerId,
 };
-use tracing::{debug, trace};
+use tracing::trace;
 
 use crate::{behaviour::BitswapHandler, query::QueryManager, BitswapEvent};
 
@@ -73,6 +73,12 @@ impl SessionManager {
         self.sessions.remove(peer_id);
     }
 
+    pub fn dial_failure(&mut self, peer_id: &PeerId) {
+        if let Some(session) = self.sessions.get_mut(peer_id) {
+            session.state = State::Disconnected;
+        }
+    }
+
     pub fn create_session(&mut self, peer_id: &PeerId) {
         let session = self.sessions.entry(*peer_id).or_insert(Session {
             state: State::New,
@@ -99,8 +105,13 @@ impl SessionManager {
         queries: &mut QueryManager,
     ) -> Option<NetworkBehaviourAction<BitswapEvent, BitswapHandler>> {
         // cleanup disconnects
-        self.sessions
-            .retain(|_, s| !matches!(s.state, State::Disconnected));
+        self.sessions.retain(|_id, s| {
+            if matches!(s.state, State::Disconnected) {
+                return false;
+            }
+
+            true
+        });
 
         // limit parallel dials
         let skip_dialing =
@@ -117,7 +128,7 @@ impl SessionManager {
                         // no dialing this round
                         continue;
                     }
-                    trace!("Dialing {}", peer_id);
+                    trace!("dialing {}", peer_id);
                     let handler = Default::default();
                     session.state = State::Dialing(Instant::now());
 
@@ -134,13 +145,20 @@ impl SessionManager {
                 State::Dialing(start) => {
                     // check for dial timeouts
                     if start.elapsed() >= self.config.dial_timeout {
-                        debug!("dialing {}: timed out", peer_id);
+                        trace!("dialing {}: timed out", peer_id);
                         queries.disconnected(peer_id);
                         session.state = State::Disconnected;
                     }
                 }
                 State::Connected => {
                     if let Some(event) = queries.poll_peer(peer_id) {
+                        if let NetworkBehaviourAction::GenerateEvent(
+                            BitswapEvent::OutboundQueryCompleted { .. },
+                        ) = event
+                        {
+                            session.query_count -= 1;
+                        }
+
                         return Some(event);
                     }
                 }

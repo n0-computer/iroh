@@ -102,7 +102,7 @@ impl NodeBehaviour {
             let mut kad_config = KademliaConfig::default();
             kad_config.set_parallelism(16usize.try_into().unwrap());
             // TODO: potentially lower (this is per query)
-            kad_config.set_query_timeout(Duration::from_secs(5));
+            kad_config.set_query_timeout(Duration::from_secs(60));
 
             let mut kademlia = Kademlia::with_config(pub_key.to_peer_id(), store, kad_config);
             for multiaddr in &config.bootstrap_peers {
