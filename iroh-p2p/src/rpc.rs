@@ -9,6 +9,7 @@ use futures::channel::oneshot;
 use libp2p::kad::record::Key;
 use libp2p::Multiaddr;
 use libp2p::PeerId;
+use tokio::sync::mpsc;
 use tonic::{transport::Server as TonicServer, Request, Response, Status};
 use tracing::trace;
 
@@ -84,22 +85,26 @@ impl p2p_server::P2p for P2p {
         iroh_metrics::req::set_trace_ctx(&request);
         let req = request.into_inner();
         trace!("received ProviderRequest: {:?}", req.key);
-        let (s, r) = oneshot::channel();
+        let (s, mut r) = mpsc::channel(1024);
         let msg = RpcMessage::ProviderRequest {
             key: req.key.into(),
             response_channel: s,
         };
+
         self.sender
             .send(msg)
             .await
             .map_err(|_| Status::internal("receiver dropped"))?;
 
-        let providers = r
-            .await
-            .map_err(|_| Status::internal("sender dropped"))?
-            .map_err(|e| Status::internal(format!("failed to retrieve provider: {:?}", e)))?;
+        // TODO: streaming response
+        let mut providers = Vec::new();
+        while let Some(provider) = r.recv().await {
+            match provider {
+                Ok(provider) => providers.push(provider.to_bytes()),
+                Err(e) => return Err(Status::internal(e)),
+            }
+        }
 
-        let providers = providers.into_iter().map(|p| p.to_bytes()).collect();
         Ok(Response::new(Providers { providers }))
     }
 
@@ -219,7 +224,7 @@ pub enum RpcMessage {
     ProviderRequest {
         // TODO: potentially change this to Cid, as that is the only key we use for providers
         key: Key,
-        response_channel: oneshot::Sender<Result<HashSet<PeerId>, String>>,
+        response_channel: mpsc::Sender<Result<PeerId, String>>,
     },
     NetListeningAddrs(oneshot::Sender<(PeerId, Vec<Multiaddr>)>),
     NetPeers(oneshot::Sender<HashMap<PeerId, Vec<Multiaddr>>>),

@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::num::NonZeroU8;
 use std::time::Duration;
 
@@ -6,7 +6,7 @@ use ahash::AHashMap;
 use anyhow::{anyhow, Context, Result};
 use async_channel::{bounded as channel, Receiver};
 use cid::Cid;
-use futures::channel::oneshot::{self, Sender as OneShotSender};
+use futures::channel::oneshot::Sender as OneShotSender;
 use futures_util::stream::StreamExt;
 use iroh_rpc_client::Client as RpcClient;
 use libp2p::core::muxing::StreamMuxerBox;
@@ -16,7 +16,8 @@ pub use libp2p::gossipsub::{IdentTopic, Topic};
 use libp2p::identify::{IdentifyEvent, IdentifyInfo};
 use libp2p::identity::Keypair;
 use libp2p::kad::{
-    self, record::Key, GetProvidersError, GetProvidersOk, KademliaEvent, QueryResult,
+    self, record::Key, GetProvidersError, GetProvidersOk, GetProvidersProgress, KademliaEvent,
+    QueryProgress, QueryResult,
 };
 use libp2p::metrics::{Metrics, Recorder};
 use libp2p::multiaddr::Protocol;
@@ -28,7 +29,7 @@ use libp2p::swarm::{
 use libp2p::yamux::WindowUpdateMode;
 use libp2p::{core, mplex, noise, yamux, PeerId, Swarm, Transport};
 use prometheus_client::registry::Registry;
-use tokio::{select, time};
+use tokio::{select, sync::mpsc, time};
 use tracing::{debug, info, trace, warn};
 
 use iroh_bitswap::{
@@ -62,13 +63,15 @@ pub struct Libp2pService {
 }
 
 enum QueryChannel {
-    GetProviders(Vec<oneshot::Sender<Result<HashSet<PeerId>, String>>>),
+    GetProviders(Vec<mpsc::Sender<Result<PeerId, String>>>),
 }
 
 #[derive(Debug, Hash, PartialEq, Eq)]
 enum QueryKey {
     ProviderKey(Key),
 }
+
+const PROVIDER_LIMIT: usize = 20;
 
 impl Libp2pService {
     pub async fn new(
@@ -86,7 +89,7 @@ impl Libp2pService {
             .with_max_pending_outgoing(Some(30)) // TODO: configurable
             .with_max_established_incoming(Some(config.target_peer_count))
             .with_max_established_outgoing(Some(config.target_peer_count))
-            .with_max_established_per_peer(Some(5)); // TODO: configurable
+            .with_max_established_per_peer(Some(60)); // TODO: configurable
 
         let node = NodeBehaviour::new(&net_keypair, &config, registry).await?;
         let mut swarm = SwarmBuilder::new(transport, node, peer_id)
@@ -221,40 +224,54 @@ impl Libp2pService {
             Event::Kademlia(e) => {
                 self.metrics.record(&e);
                 if let KademliaEvent::OutboundQueryCompleted { result, .. } = e {
-                    debug!("kad: {:?}", result);
+                    debug!("kad completed: {:?}", result);
                     match result {
-                        QueryResult::GetProviders(Ok(GetProvidersOk {
-                            providers, key, ..
-                        })) => {
-                            if let Some(QueryChannel::GetProviders(chans)) =
-                                self.kad_queries.remove(&QueryKey::ProviderKey(key.clone()))
-                            {
-                                for chan in chans.into_iter() {
-                                    debug!("Sending providers for {:?}", key);
-                                    chan.send(Ok(providers.clone())).ok();
-                                }
-                            } else {
-                                debug!("No listeners");
-                            }
+                        QueryResult::GetProviders(Ok(GetProvidersOk { key, .. })) => {
+                            let _ = self.kad_queries.remove(&QueryKey::ProviderKey(key));
                         }
+
                         QueryResult::GetProviders(Err(err)) => {
-                            let (key, providers) = match err {
-                                GetProvidersError::Timeout { key, providers, .. } => {
-                                    (key, providers)
-                                }
+                            let key = match err {
+                                GetProvidersError::Timeout { key, .. } => key,
                             };
                             debug!("GetProviders timeout {:?}", key);
                             if let Some(QueryChannel::GetProviders(chans)) =
-                                self.kad_queries.remove(&QueryKey::ProviderKey(key.clone()))
+                                self.kad_queries.remove(&QueryKey::ProviderKey(key))
                             {
                                 for chan in chans.into_iter() {
-                                    debug!("Sending providers for {:?}", key);
-                                    chan.send(Ok(providers.clone())).ok();
+                                    chan.send(Err("Timeout".into())).await.ok();
                                 }
                             }
                         }
                         other => {
                             debug!("Libp2p => Unhandled Kademlia query result: {:?}", other)
+                        }
+                    }
+                } else if let KademliaEvent::OutboundQueryProgressed {
+                    id, result, count, ..
+                } = e
+                {
+                    debug!("kad progressed: {:?}", result);
+                    match result {
+                        QueryProgress::GetProviders(GetProvidersProgress {
+                            key, provider, ..
+                        }) => {
+                            if count >= PROVIDER_LIMIT {
+                                debug!("finish provider query {}/{}", count, PROVIDER_LIMIT);
+                                // Finish query if we have enough providers.
+                                self.swarm.behaviour_mut().finish_query(&id);
+                            }
+
+                            if let Some(QueryChannel::GetProviders(chans)) = self
+                                .kad_queries
+                                .get_mut(&QueryKey::ProviderKey(key.clone()))
+                            {
+                                for chan in chans.iter_mut() {
+                                    chan.send(Ok(provider)).await.ok();
+                                }
+                            } else {
+                                debug!("No listeners");
+                            }
                         }
                     }
                 }
@@ -342,7 +359,10 @@ impl Libp2pService {
                         );
                     }
                 } else {
-                    response_channel.send(Ok(Default::default())).ok();
+                    response_channel
+                        .send(Err("kademlia is not available".into()))
+                        .await
+                        .ok();
                 }
             }
             RpcMessage::NetListeningAddrs(response_channel) => {
@@ -433,4 +453,60 @@ pub async fn build_transport(local_key: Keypair) -> Boxed<(PeerId, StreamMuxerBo
         .multiplex(mplex_config)
         .timeout(Duration::from_secs(20)) // TODO: configurable
         .boxed()
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::metrics;
+
+    use super::*;
+    use anyhow::Result;
+    use libp2p::identity::ed25519;
+
+    #[tokio::test]
+    async fn test_fetch_providers() -> Result<()> {
+        let mut prom_registry = Registry::default();
+        let libp2p_metrics = Metrics::new(&mut prom_registry);
+        let net_keypair = {
+            let gen_keypair = ed25519::Keypair::generate();
+            Keypair::Ed25519(gen_keypair)
+        };
+
+        let mut network_config = Libp2pConfig::default();
+        network_config.metrics.debug = true;
+        let metrics_config = network_config.metrics.clone();
+
+        let mut p2p_service = Libp2pService::new(
+            network_config,
+            net_keypair,
+            &mut prom_registry,
+            libp2p_metrics,
+        )
+        .await?;
+
+        let metrics_handle = iroh_metrics::init_with_registry(
+            metrics::metrics_config_with_compile_time_info(metrics_config),
+            prom_registry,
+        )
+        .await
+        .expect("failed to initialize metrics");
+
+        let cfg = iroh_rpc_client::Config::default();
+        let p2p_task = tokio::task::spawn(async move {
+            p2p_service.run().await.unwrap();
+        });
+
+        {
+            let client = RpcClient::new(&cfg).await?;
+            let c = "QmbWqxBEKC3P8tqsKc98xmWNzrzDtRLMiMPL8wBuTGsMnR"
+                .parse()
+                .unwrap();
+            let providers = client.p2p.fetch_providers(&c).await?;
+            assert!(providers.len() >= PROVIDER_LIMIT);
+        }
+
+        p2p_task.abort();
+        metrics_handle.shutdown();
+        Ok(())
+    }
 }
