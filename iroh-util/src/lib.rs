@@ -38,12 +38,13 @@ pub async fn block_until_sigint() {
     ctrlc_oneshot.await.unwrap();
 }
 
+/// Path to the iroh home directory.
 pub fn iroh_home_root() -> Option<PathBuf> {
     let home = home_dir()?;
     Some(Path::new(&home).join(IROH_DIR))
 }
 
-/// Path that leads to a file in the iroh home directory
+/// Path that leads to a file in the iroh home directory.
 pub fn iroh_home_path(file_name: &str) -> Option<PathBuf> {
     let path = iroh_home_root()?.join(file_name);
     Some(path)
