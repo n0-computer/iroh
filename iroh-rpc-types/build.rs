@@ -4,6 +4,7 @@ fn main() {
         ".p2p.BitswapResponse",
         ".store.PutRequest.blob",
         ".store.GetResponse.data",
+        ".store.GetP2pIdentityResponse.keypair",
     ]);
 
     tonic_build::configure()

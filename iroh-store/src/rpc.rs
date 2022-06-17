@@ -4,7 +4,9 @@ use std::net::SocketAddr;
 use anyhow::Result;
 use bytes::BytesMut;
 use cid::Cid;
-use iroh_rpc_types::store::store_server;
+use iroh_rpc_types::store::{
+    store_server, GetP2pIdentityRequest, GetP2pIdentityResponse, PutP2pIdentityRequest,
+};
 use iroh_rpc_types::store::{
     GetLinksRequest, GetLinksResponse, GetRequest, GetResponse, HasRequest, HasResponse, PutRequest,
 };
@@ -91,6 +93,42 @@ impl store_server::Store for Rpc {
             Ok(Response::new(GetLinksResponse { links }))
         } else {
             Ok(Response::new(GetLinksResponse { links: Vec::new() }))
+        }
+    }
+
+    #[tracing::instrument(skip(self, request))]
+    async fn put_p2p_identity(
+        &self,
+        request: Request<PutP2pIdentityRequest>,
+    ) -> Result<Response<()>, tonic::Status> {
+        let req = request.into_inner();
+
+        let res = self
+            .store
+            .put_p2p_identity(&req.keypair)
+            .await
+            .map_err(|e| Status::internal(format!("{:?}", e)))?;
+
+        Ok(Response::new(res))
+    }
+
+    #[tracing::instrument(skip(self))]
+    async fn get_p2p_identity(
+        &self,
+        request: Request<GetP2pIdentityRequest>,
+    ) -> Result<Response<GetP2pIdentityResponse>, tonic::Status> {
+        let _req = request.into_inner();
+        if let Some(keypair) = self
+            .store
+            .get_p2p_identity()
+            .await
+            .map_err(|e| Status::internal(format!("{:?}", e)))?
+        {
+            Ok(Response::new(GetP2pIdentityResponse {
+                keypair: Some(BytesMut::from(keypair.as_ref()).freeze()),
+            }))
+        } else {
+            Ok(Response::new(GetP2pIdentityResponse { keypair: None }))
         }
     }
 }

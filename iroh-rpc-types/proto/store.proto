@@ -9,6 +9,8 @@ service Store {
   rpc Get(GetRequest) returns (GetResponse) {}
   rpc Has(HasRequest) returns (HasResponse) {}
   rpc GetLinks(GetLinksRequest) returns(GetLinksResponse) {}
+  rpc PutP2pIdentity(PutP2pIdentityRequest) returns (google.protobuf.Empty) {}
+  rpc GetP2pIdentity(GetP2pIdentityRequest) returns (GetP2pIdentityResponse) {}
 }
 
 message PutRequest {
@@ -49,3 +51,14 @@ message GetLinksResponse {
   repeated bytes links = 1;
 }
 
+message PutP2pIdentityRequest {
+  // Serialized keypair
+  bytes keypair = 1;
+}
+
+message GetP2pIdentityRequest {}
+
+message GetP2pIdentityResponse {
+  // Serialized keypair
+  optional bytes keypair = 1;
+}

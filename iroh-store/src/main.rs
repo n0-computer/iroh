@@ -58,7 +58,7 @@ async fn main() -> anyhow::Result<()> {
 
     let mut prom_registry = Registry::default();
     let store_metrics = Metrics::new(&mut prom_registry);
-    let metrics_handle = iroh_metrics::init_with_registry(
+    let metrics_handle = iroh_metrics::MetricsHandle::from_registry_with_tracer(
         metrics::metrics_config_with_compile_time_info(metrics_config),
         prom_registry,
     )

@@ -16,7 +16,8 @@ use rocksdb::{
 use tokio::task;
 
 use crate::cf::{
-    GraphV0, MetadataV0, Versioned, CF_BLOBS_V0, CF_GRAPH_V0, CF_ID_V0, CF_METADATA_V0,
+    GraphV0, MetadataV0, Versioned, CF_BLOBS_V0, CF_GRAPH_V0, CF_IDENTITY_V0, CF_ID_V0,
+    CF_METADATA_V0,
 };
 use crate::Config;
 
@@ -34,6 +35,8 @@ struct InnerStore {
     _cache: Cache,
     _rpc_client: RpcClient,
 }
+
+const P2P_ID_KEY: &[u8] = b"p2p-0";
 
 /// Creates the default rocksdb options
 fn default_options() -> (Options, Cache) {
@@ -96,6 +99,11 @@ impl Store {
                 db.create_cf(CF_ID_V0, &opts)?;
             }
 
+            {
+                let opts = Options::default();
+                db.create_cf(CF_IDENTITY_V0, &opts)?;
+            }
+
             Ok(db)
         })
         .await??;
@@ -128,7 +136,13 @@ impl Store {
             let db = RocksDb::open_cf(
                 &options,
                 path,
-                [CF_BLOBS_V0, CF_METADATA_V0, CF_GRAPH_V0, CF_ID_V0],
+                [
+                    CF_BLOBS_V0,
+                    CF_METADATA_V0,
+                    CF_GRAPH_V0,
+                    CF_ID_V0,
+                    CF_IDENTITY_V0,
+                ],
             )?;
 
             // read last inserted id
@@ -301,6 +315,34 @@ impl Store {
             .get_links_request_time
             .observe(start.elapsed().as_secs_f64());
         res
+    }
+
+    /// Stores a p2p identity.
+    #[tracing::instrument(skip(self, keypair))]
+    pub async fn put_p2p_identity<T: AsRef<[u8]>>(&self, keypair: T) -> Result<()> {
+        let cf = self
+            .inner
+            .content
+            .cf_handle(CF_IDENTITY_V0)
+            .ok_or_else(|| anyhow!("missing column family: identity"))?;
+
+        self.inner.content.put_cf(cf, P2P_ID_KEY, keypair)?;
+
+        Ok(())
+    }
+
+    /// Stores a p2p identity.
+    #[tracing::instrument(skip(self))]
+    pub async fn get_p2p_identity(&self) -> Result<Option<DBPinnableSlice<'_>>> {
+        let cf = self
+            .inner
+            .content
+            .cf_handle(CF_IDENTITY_V0)
+            .ok_or_else(|| anyhow!("missing column family: identity"))?;
+
+        let res = self.inner.content.get_pinned_cf(cf, P2P_ID_KEY)?;
+
+        Ok(res)
     }
 
     #[tracing::instrument(skip(self))]
@@ -555,5 +597,39 @@ mod tests {
             let links = store.get_links(c).await.unwrap().unwrap();
             assert_eq!(expected_links, &links[..]);
         }
+    }
+
+    #[tokio::test]
+    async fn test_p2p_identity() {
+        let dir = tempfile::tempdir().unwrap();
+        let rpc_client = RpcClientConfig::default();
+        let config = Config {
+            path: dir.path().into(),
+            rpc_addr: rpc_client.store_addr,
+            rpc_client,
+            metrics: MetricsConfig::default(),
+        };
+
+        let metrics = Metrics::default();
+        let store = Store::create(config, metrics).await.unwrap();
+
+        // no identity stored yet
+        assert!(store.get_p2p_identity().await.unwrap().is_none());
+
+        // store an identity
+        let id = [1u8; 256];
+        store.put_p2p_identity(&id).await.unwrap();
+        assert_eq!(
+            store.get_p2p_identity().await.unwrap().unwrap().as_ref(),
+            &id
+        );
+
+        // overwrite
+        let id = [2u8; 256];
+        store.put_p2p_identity(&id).await.unwrap();
+        assert_eq!(
+            store.get_p2p_identity().await.unwrap().unwrap().as_ref(),
+            &id
+        );
     }
 }

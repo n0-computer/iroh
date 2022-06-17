@@ -73,9 +73,10 @@ async fn main() -> Result<()> {
     let gw_metrics = Metrics::new(&mut prom_registry);
     let handler = Core::new(config, gw_metrics, &mut prom_registry).await?;
 
-    let metrics_handle = iroh_metrics::init_with_registry(metrics_config, prom_registry)
-        .await
-        .expect("failed to initialize metrics");
+    let metrics_handle =
+        iroh_metrics::MetricsHandle::from_registry_with_tracer(metrics_config, prom_registry)
+            .await
+            .expect("failed to initialize metrics");
     let server = handler.server();
     println!("listening on {}", server.local_addr());
     let core_task = tokio::spawn(async move {
