@@ -8,8 +8,8 @@ use futures::{Stream, StreamExt, TryStreamExt};
 use iroh_util::iroh_home_root;
 use ssh_key::LineEnding;
 use tokio::fs;
-use zeroize::Zeroizing;
 use tracing::warn;
+use zeroize::Zeroizing;
 
 /// Supported keypairs.
 #[derive(Clone, Debug)]
@@ -42,9 +42,7 @@ impl TryFrom<&'_ ssh_key::private::PrivateKey> for Keypair {
 
     fn try_from(key: &ssh_key::private::PrivateKey) -> Result<Self, Self::Error> {
         match key.key_data() {
-            ssh_key::private::KeypairData::Ed25519(kp) => {
-                Ok(Keypair::Ed25519(kp.clone()))
-            }
+            ssh_key::private::KeypairData::Ed25519(kp) => Ok(Keypair::Ed25519(kp.clone())),
             _ => Err(anyhow!("unsupported key format: {}", key.algorithm())),
         }
     }
@@ -168,7 +166,7 @@ impl DiskStorage {
         let mut counts = Vec::new();
         while let Some(file) = key_files.next().await {
             if let Ok(file) = file {
-                let file_name  = file.file_name().unwrap().to_string_lossy();
+                let file_name = file.file_name().unwrap().to_string_lossy();
                 if file_name.starts_with(&matcher) {
                     if let Some(raw_count) = file_name.split('_').nth(2) {
                         if let Ok(c) = raw_count.parse::<usize>() {
@@ -217,7 +215,7 @@ impl Storage for MemoryStorage {
     async fn len(&self) -> Result<usize> {
         Ok(self.keys.len())
     }
-    
+
     fn keys(&self) -> Box<dyn Stream<Item = Result<Keypair>> + Unpin + '_> {
         let s = async_stream::stream! {
             for key in &self.keys {
@@ -288,9 +286,9 @@ fn path_is_private_key<P: AsRef<Path>>(path: P) -> bool {
         }
 
         if file_name.split('_').count() != 3 {
-            return false
+            return false;
         }
-        
+
         if let Some(raw_count) = file_name.split('_').nth(2) {
             if raw_count.parse::<usize>().is_ok() {
                 return true;
@@ -331,24 +329,36 @@ mod tests {
     async fn basics_disk_keychain() {
         let dir = tempfile::tempdir().unwrap();
 
-        let mut kc = Keychain::<DiskStorage>::with_root(dir.path().into()).await.unwrap();
+        let mut kc = Keychain::<DiskStorage>::with_root(dir.path().into())
+            .await
+            .unwrap();
         assert_eq!(kc.len().await.unwrap(), 0);
         assert!(kc.is_empty().await.unwrap());
         kc.create_ed25519_key().await.unwrap();
         kc.create_ed25519_key().await.unwrap();
         assert_eq!(kc.len().await.unwrap(), 2);
 
-        let next_name = kc.storage.generate_name(ssh_key::Algorithm::Ed25519).await.unwrap();
+        let next_name = kc
+            .storage
+            .generate_name(ssh_key::Algorithm::Ed25519)
+            .await
+            .unwrap();
         assert_eq!(next_name, "id_ed25519_2");
 
         // create some dummy files
         fs::write(dir.path().join("foo"), b"foo").await.unwrap();
         fs::write(dir.path().join("id_foo"), b"foo").await.unwrap();
-        fs::write(dir.path().join("id_foo.pub"), b"foo").await.unwrap();
-        fs::write(dir.path().join("id_foo.txt"), b"foo").await.unwrap();
+        fs::write(dir.path().join("id_foo.pub"), b"foo")
+            .await
+            .unwrap();
+        fs::write(dir.path().join("id_foo.txt"), b"foo")
+            .await
+            .unwrap();
         fs::write(dir.path().join("foo.txt"), b"foo").await.unwrap();
         // correct name, invalid content, should be ignored
-        fs::write(dir.path().join("id_ed25119_4"), b"foo").await.unwrap();
+        fs::write(dir.path().join("id_ed25119_4"), b"foo")
+            .await
+            .unwrap();
 
         let keys: Vec<_> = kc.keys().try_collect().await.unwrap();
         assert_eq!(keys.len(), 2);
