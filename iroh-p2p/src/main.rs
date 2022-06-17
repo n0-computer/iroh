@@ -3,9 +3,8 @@ use std::path::PathBuf;
 
 use clap::Parser;
 use iroh_p2p::config::{Libp2pConfig, CONFIG_FILE_NAME, ENV_PREFIX};
-use iroh_p2p::{metrics, Libp2pService};
+use iroh_p2p::{metrics, DiskStorage, Keychain, Libp2pService};
 use iroh_util::{iroh_home_path, make_config};
-use libp2p::identity::{ed25519, Keypair};
 use libp2p::metrics::Metrics;
 use prometheus_client::registry::Registry;
 use tokio::task;
@@ -31,23 +30,10 @@ impl Args {
 /// Starts daemon process
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> anyhow::Result<()> {
-    let args = Args::parse();
-
-    let mut prom_registry = Registry::default();
-    let libp2p_metrics = Metrics::new(&mut prom_registry);
-
     let version = option_env!("IROH_VERSION").unwrap_or(env!("CARGO_PKG_VERSION"));
-
     println!("Starting iroh-p2p, version {version}");
 
-    // TODO: read keypair from disk
-    // TODO: configurable keypair
-    let net_keypair = {
-        // Keypair not found, generate and save generated keypair
-        let gen_keypair = ed25519::Keypair::generate();
-        // TODO: Save Ed25519 keypair to file
-        Keypair::Ed25519(gen_keypair)
-    };
+    let args = Args::parse();
 
     // TODO: configurable network
     let sources = vec![iroh_home_path(CONFIG_FILE_NAME), args.cfg.clone()];
@@ -63,22 +49,19 @@ async fn main() -> anyhow::Result<()> {
     )
     .unwrap();
 
-    let metrics_config = network_config.metrics.clone();
+    let mut prom_registry = Registry::default();
+    let libp2p_metrics = Metrics::new(&mut prom_registry);
+    let metrics_config =
+        metrics::metrics_config_with_compile_time_info(network_config.metrics.clone());
+    iroh_metrics::init_tracer(metrics_config.clone()).expect("failed to initialize tracer");
 
-    let mut p2p_service = Libp2pService::new(
-        network_config,
-        net_keypair,
-        &mut prom_registry,
-        libp2p_metrics,
-    )
-    .await?;
+    let kc = Keychain::<DiskStorage>::new().await?;
+    let mut p2p_service =
+        Libp2pService::new(network_config, kc, &mut prom_registry, libp2p_metrics).await?;
 
-    let metrics_handle = iroh_metrics::init_with_registry(
-        metrics::metrics_config_with_compile_time_info(metrics_config),
-        prom_registry,
-    )
-    .await
-    .expect("failed to initialize metrics");
+    let metrics_handle = iroh_metrics::MetricsHandle::from_registry(metrics_config, prom_registry)
+        .await
+        .expect("failed to initialize metrics");
 
     // Start services
     let p2p_task = task::spawn(async move {

@@ -30,23 +30,31 @@ impl MetricsHandle {
         opentelemetry::global::shutdown_tracer_provider();
         self.metrics_task.abort();
     }
-}
 
-/// Initialize the tracing and metrics subsystems.
-pub async fn init(cfg: Config) -> Result<MetricsHandle, Box<dyn std::error::Error>> {
-    init_tracer(cfg.clone())?;
-    let metrics_task = init_metrics(cfg, <Registry>::default()).await?;
-    Ok(MetricsHandle { metrics_task })
-}
+    /// Initialize the tracing and metrics subsystems.
+    pub async fn new_with_tracer(cfg: Config) -> Result<Self, Box<dyn std::error::Error>> {
+        init_tracer(cfg.clone())?;
+        let metrics_task = init_metrics(cfg, Registry::default()).await?;
+        Ok(MetricsHandle { metrics_task })
+    }
 
-/// Initialize the tracing and metrics subsystems with custom registry
-pub async fn init_with_registry(
-    cfg: Config,
-    registry: Registry,
-) -> Result<MetricsHandle, Box<dyn std::error::Error>> {
-    init_tracer(cfg.clone())?;
-    let metrics_task = init_metrics(cfg, registry).await?;
-    Ok(MetricsHandle { metrics_task })
+    /// Initialize the tracing and metrics subsystems a with custom registry.
+    pub async fn from_registry_with_tracer(
+        cfg: Config,
+        registry: Registry,
+    ) -> Result<MetricsHandle, Box<dyn std::error::Error>> {
+        init_tracer(cfg.clone())?;
+        Self::from_registry(cfg, registry).await
+    }
+
+    /// Initialize the metrics subsystems with a custom registry.
+    pub async fn from_registry(
+        cfg: Config,
+        registry: Registry,
+    ) -> Result<MetricsHandle, Box<dyn std::error::Error>> {
+        let metrics_task = init_metrics(cfg, registry).await?;
+        Ok(MetricsHandle { metrics_task })
+    }
 }
 
 /// Initialize the metrics subsystem.

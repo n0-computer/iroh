@@ -38,6 +38,7 @@ use iroh_bitswap::{
     QueryResult as BitswapQueryResult, WantResult,
 };
 
+use crate::keys::{Keychain, Storage};
 use crate::{
     behaviour::{Event, NodeBehaviour},
     rpc::{self, RpcMessage},
@@ -54,13 +55,14 @@ pub enum NetworkEvent {
 }
 
 /// The Libp2pService listens to events from the Libp2p swarm.
-pub struct Libp2pService {
+pub struct Libp2pService<KeyStorage: Storage> {
     swarm: Swarm<NodeBehaviour>,
     net_receiver_in: Receiver<RpcMessage>,
     bitswap_queries: AHashMap<BitswapQueryId, OneShotSender<Result<Block, QueryError>>>,
     kad_queries: AHashMap<QueryKey, QueryChannel>,
     metrics: Metrics,
     rpc_client: RpcClient,
+    _keychain: Keychain<KeyStorage>,
 }
 
 enum QueryChannel {
@@ -74,17 +76,45 @@ enum QueryKey {
 
 const PROVIDER_LIMIT: usize = 20;
 
-impl Libp2pService {
+async fn load_identity<S: Storage>(kc: &mut Keychain<S>) -> Result<Keypair> {
+    if kc.is_empty().await? {
+        info!("no identity found, creating",);
+        kc.create_ed25519_key().await?;
+    }
+
+    // for now we just use the first key
+    let first_key = kc.keys().next().await;
+    if let Some(keypair) = first_key {
+        let keypair: Keypair = keypair?.into();
+        info!("identity loaded: {}", PeerId::from(keypair.public()));
+        return Ok(keypair);
+    }
+
+    Err(anyhow!("inconsistent keystate"))
+}
+
+impl<KeyStorage: Storage> Libp2pService<KeyStorage> {
     pub async fn new(
         config: Libp2pConfig,
-        net_keypair: Keypair,
+        mut keychain: Keychain<KeyStorage>,
         registry: &mut Registry,
         metrics: Metrics,
     ) -> Result<Self> {
+        let (network_sender_in, network_receiver_in) = channel(1_000); // TODO: configurable
+
+        tokio::spawn(async move {
+            // TODO: handle error
+            rpc::new(config.rpc_addr, network_sender_in).await.unwrap()
+        });
+
+        let rpc_client = RpcClient::new(&config.rpc_client)
+            .await
+            .context("failed to create rpc client")?;
+
+        let net_keypair = load_identity(&mut keychain).await?;
         let peer_id = PeerId::from(net_keypair.public());
 
         let transport = build_transport(net_keypair.clone()).await;
-
         let limits = ConnectionLimits::default()
             .with_max_pending_incoming(Some(10)) // TODO: configurable
             .with_max_pending_outgoing(Some(30)) // TODO: configurable
@@ -105,17 +135,6 @@ impl Libp2pService {
 
         Swarm::listen_on(&mut swarm, config.listening_multiaddr).unwrap();
 
-        let (network_sender_in, network_receiver_in) = channel(1_000); // TODO: configurable
-
-        tokio::spawn(async move {
-            // TODO: handle error
-            rpc::new(config.rpc_addr, network_sender_in).await.unwrap()
-        });
-
-        let rpc_client = RpcClient::new(&config.rpc_client)
-            .await
-            .context("failed to create rpc client")?;
-
         Ok(Libp2pService {
             swarm,
             net_receiver_in: network_receiver_in,
@@ -123,6 +142,7 @@ impl Libp2pService {
             kad_queries: Default::default(),
             metrics,
             rpc_client,
+            _keychain: keychain,
         })
     }
 
@@ -462,34 +482,24 @@ pub async fn build_transport(local_key: Keypair) -> Boxed<(PeerId, StreamMuxerBo
 
 #[cfg(test)]
 mod tests {
-    use crate::metrics;
+    use crate::{keys::MemoryStorage, metrics};
 
     use super::*;
     use anyhow::Result;
-    use libp2p::identity::ed25519;
 
     #[tokio::test]
     async fn test_fetch_providers() -> Result<()> {
         let mut prom_registry = Registry::default();
         let libp2p_metrics = Metrics::new(&mut prom_registry);
-        let net_keypair = {
-            let gen_keypair = ed25519::Keypair::generate();
-            Keypair::Ed25519(gen_keypair)
-        };
-
         let mut network_config = Libp2pConfig::default();
         network_config.metrics.debug = true;
         let metrics_config = network_config.metrics.clone();
 
-        let mut p2p_service = Libp2pService::new(
-            network_config,
-            net_keypair,
-            &mut prom_registry,
-            libp2p_metrics,
-        )
-        .await?;
+        let kc = Keychain::<MemoryStorage>::new();
+        let mut p2p_service =
+            Libp2pService::new(network_config, kc, &mut prom_registry, libp2p_metrics).await?;
 
-        let metrics_handle = iroh_metrics::init_with_registry(
+        let metrics_handle = iroh_metrics::MetricsHandle::from_registry_with_tracer(
             metrics::metrics_config_with_compile_time_info(metrics_config),
             prom_registry,
         )

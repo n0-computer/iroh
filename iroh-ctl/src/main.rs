@@ -63,7 +63,7 @@ async fn main() -> anyhow::Result<()> {
     // stubbing in metrics
     let prom_registry = Registry::default();
     // TODO: need to register prometheus metrics
-    let metrics_handle = iroh_metrics::init_with_registry(
+    let metrics_handle = iroh_metrics::MetricsHandle::from_registry_with_tracer(
         metrics::metrics_config_with_compile_time_info(metrics_config),
         prom_registry,
     )
