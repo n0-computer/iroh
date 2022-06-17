@@ -5,11 +5,7 @@ use anyhow::{Context, Result};
 use bytes::Bytes;
 use cid::Cid;
 use futures::Stream;
-use iroh_rpc_types::store::{
-    self, GetLinksRequest, GetP2pIdentityRequest, GetRequest, HasRequest, PutP2pIdentityRequest,
-    PutRequest,
-};
-use libp2p::identity::Keypair;
+use iroh_rpc_types::store::{self, GetLinksRequest, GetRequest, HasRequest, PutRequest};
 use tonic::transport::{Channel, Endpoint};
 use tonic_health::proto::health_client::HealthClient;
 
@@ -87,31 +83,6 @@ impl StoreClient {
                 .collect();
             Ok(Some(links?))
         }
-    }
-
-    #[tracing::instrument(skip(self))]
-    pub async fn get_p2p_identity(&self) -> Result<Option<Keypair>> {
-        let req = iroh_metrics::req::trace_tonic_req(GetP2pIdentityRequest {});
-        let res = self.store.clone().get_p2p_identity(req).await?;
-
-        if let Some(raw) = res.into_inner().keypair {
-            if !raw.is_empty() {
-                let keypair = Keypair::from_protobuf_encoding(&raw)?;
-                return Ok(Some(keypair));
-            }
-        }
-
-        Ok(None)
-    }
-
-    #[tracing::instrument(skip(self))]
-    pub async fn put_p2p_identity(&self, keypair: &Keypair) -> Result<()> {
-        let req = iroh_metrics::req::trace_tonic_req(PutP2pIdentityRequest {
-            keypair: keypair.to_protobuf_encoding()?,
-        });
-        self.store.clone().put_p2p_identity(req).await?;
-
-        Ok(())
     }
 
     #[tracing::instrument(skip(self))]

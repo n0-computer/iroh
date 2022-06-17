@@ -15,7 +15,7 @@ use libp2p::core::transport::Boxed;
 use libp2p::core::Multiaddr;
 pub use libp2p::gossipsub::{IdentTopic, Topic};
 use libp2p::identify::{IdentifyEvent, IdentifyInfo};
-use libp2p::identity::{ed25519, Keypair};
+use libp2p::identity::Keypair;
 use libp2p::kad::{
     self, record::Key, GetProvidersError, GetProvidersOk, GetProvidersProgress, KademliaEvent,
     QueryProgress, QueryResult,
@@ -38,6 +38,7 @@ use iroh_bitswap::{
     QueryResult as BitswapQueryResult, WantResult,
 };
 
+use crate::keys::{Keychain, Storage};
 use crate::{
     behaviour::{Event, NodeBehaviour},
     rpc::{self, RpcMessage},
@@ -54,13 +55,14 @@ pub enum NetworkEvent {
 }
 
 /// The Libp2pService listens to events from the Libp2p swarm.
-pub struct Libp2pService {
+pub struct Libp2pService<KeyStorage: Storage> {
     swarm: Swarm<NodeBehaviour>,
     net_receiver_in: Receiver<RpcMessage>,
     bitswap_queries: AHashMap<BitswapQueryId, OneShotSender<Result<Block, QueryError>>>,
     kad_queries: AHashMap<QueryKey, QueryChannel>,
     metrics: Metrics,
     rpc_client: RpcClient,
+    _keychain: Keychain<KeyStorage>,
 }
 
 enum QueryChannel {
@@ -74,36 +76,27 @@ enum QueryKey {
 
 const PROVIDER_LIMIT: usize = 20;
 
-async fn load_identity(rpc: &RpcClient) -> Result<Keypair> {
-    match rpc.store.get_p2p_identity().await {
-        Ok(Some(keypair)) => {
-            info!("identity loaded: {}", PeerId::from(keypair.public()));
-            Ok(keypair)
-        }
-        Err(_) | Ok(None) => {
-            let keypair = gen_identity()?;
-            if let Err(e) = rpc.store.put_p2p_identity(&keypair).await {
-                warn!("failed to store identity: {:?}", e);
-            }
-
-            info!(
-                "no identity found, created new: {}",
-                PeerId::from(keypair.public())
-            );
-            Ok(keypair)
-        }
+async fn load_identity<S: Storage>(kc: &mut Keychain<S>) -> Result<Keypair> {
+    if kc.is_empty().await? {
+        info!("no identity found, creating",);
+        kc.create_ed25519_key().await?;
     }
+
+    // for now we just use the first key
+    let first_key = kc.keys().next().await;
+    if let Some(keypair) = first_key {
+        let keypair: Keypair = keypair?.into();
+        info!("identity loaded: {}", PeerId::from(keypair.public()));
+        return Ok(keypair);
+    }
+
+    Err(anyhow!("inconsistent keystate"))
 }
 
-/// Generates a new keypair.
-fn gen_identity() -> Result<Keypair> {
-    let keypair = ed25519::Keypair::generate();
-    Ok(Keypair::Ed25519(keypair))
-}
-
-impl Libp2pService {
+impl<KeyStorage: Storage> Libp2pService<KeyStorage> {
     pub async fn new(
         config: Libp2pConfig,
+        mut keychain: Keychain<KeyStorage>,
         registry: &mut Registry,
         metrics: Metrics,
     ) -> Result<Self> {
@@ -118,7 +111,7 @@ impl Libp2pService {
             .await
             .context("failed to create rpc client")?;
 
-        let net_keypair = load_identity(&rpc_client).await?;
+        let net_keypair = load_identity(&mut keychain).await?;
         let peer_id = PeerId::from(net_keypair.public());
 
         let transport = build_transport(net_keypair.clone()).await;
@@ -149,6 +142,7 @@ impl Libp2pService {
             kad_queries: Default::default(),
             metrics,
             rpc_client,
+            _keychain: keychain,
         })
     }
 
@@ -488,7 +482,7 @@ pub async fn build_transport(local_key: Keypair) -> Boxed<(PeerId, StreamMuxerBo
 
 #[cfg(test)]
 mod tests {
-    use crate::metrics;
+    use crate::{keys::MemoryStorage, metrics};
 
     use super::*;
     use anyhow::Result;
@@ -501,8 +495,9 @@ mod tests {
         network_config.metrics.debug = true;
         let metrics_config = network_config.metrics.clone();
 
+        let kc = Keychain::<MemoryStorage>::new();
         let mut p2p_service =
-            Libp2pService::new(network_config, &mut prom_registry, libp2p_metrics).await?;
+            Libp2pService::new(network_config, kc, &mut prom_registry, libp2p_metrics).await?;
 
         let metrics_handle = iroh_metrics::MetricsHandle::from_registry_with_tracer(
             metrics::metrics_config_with_compile_time_info(metrics_config),

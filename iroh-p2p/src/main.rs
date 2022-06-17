@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 use clap::Parser;
 use iroh_p2p::config::{Libp2pConfig, CONFIG_FILE_NAME, ENV_PREFIX};
-use iroh_p2p::{metrics, Libp2pService};
+use iroh_p2p::{metrics, DiskStorage, Keychain, Libp2pService};
 use iroh_util::{iroh_home_path, make_config};
 use libp2p::metrics::Metrics;
 use prometheus_client::registry::Registry;
@@ -55,8 +55,9 @@ async fn main() -> anyhow::Result<()> {
         metrics::metrics_config_with_compile_time_info(network_config.metrics.clone());
     iroh_metrics::init_tracer(metrics_config.clone()).expect("failed to initialize tracer");
 
+    let kc = Keychain::<DiskStorage>::new().await?;
     let mut p2p_service =
-        Libp2pService::new(network_config, &mut prom_registry, libp2p_metrics).await?;
+        Libp2pService::new(network_config, kc, &mut prom_registry, libp2p_metrics).await?;
 
     let metrics_handle = iroh_metrics::MetricsHandle::from_registry(metrics_config, prom_registry)
         .await
