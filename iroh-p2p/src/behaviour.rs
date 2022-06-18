@@ -7,6 +7,7 @@ use anyhow::Result;
 use bytes::Bytes;
 use cid::Cid;
 use iroh_bitswap::{Bitswap, BitswapConfig, BitswapEvent, Priority, QueryId};
+use libp2p::autonat;
 use libp2p::core::identity::Keypair;
 use libp2p::core::PeerId;
 use libp2p::identify::{Identify, IdentifyConfig, IdentifyEvent};
@@ -34,6 +35,7 @@ pub(crate) struct NodeBehaviour {
     bitswap: Bitswap,
     pub(crate) kad: Toggle<Kademlia<MemoryStore>>,
     mdns: Toggle<Mdns>,
+    pub(crate) autonat: Toggle<autonat::Behaviour>,
 }
 
 /// Event type which is emitted from the [NodeBehaviour] into the libp2p service.
@@ -44,6 +46,7 @@ pub(crate) enum Event {
     Kademlia(KademliaEvent),
     Mdns(MdnsEvent),
     Bitswap(BitswapEvent),
+    Autonat(autonat::Event),
 }
 
 impl From<PingEvent> for Event {
@@ -73,6 +76,12 @@ impl From<MdnsEvent> for Event {
 impl From<BitswapEvent> for Event {
     fn from(event: BitswapEvent) -> Self {
         Event::Bitswap(event)
+    }
+}
+
+impl From<autonat::Event> for Event {
+    fn from(event: autonat::Event) -> Self {
+        Event::Autonat(event)
     }
 }
 
@@ -127,6 +136,19 @@ impl NodeBehaviour {
         }
         .into();
 
+        let autonat = if config.autonat {
+            let pub_key = local_key.public();
+            let config = autonat::Config {
+                use_connected: true,
+                ..Default::default()
+            }; // TODO: configurable
+            let autonat = autonat::Behaviour::new(pub_key.to_peer_id(), config);
+            Some(autonat)
+        } else {
+            None
+        }
+        .into();
+
         let mut req_res_config = RequestResponseConfig::default();
         req_res_config.set_request_timeout(Duration::from_secs(20));
         req_res_config.set_connection_keep_alive(Duration::from_secs(20));
@@ -137,6 +159,7 @@ impl NodeBehaviour {
             bitswap,
             mdns,
             kad,
+            autonat,
         })
     }
 

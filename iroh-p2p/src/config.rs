@@ -25,6 +25,8 @@ pub struct Libp2pConfig {
     pub mdns: bool,
     /// Kademlia discovery enabled.
     pub kademlia: bool,
+    /// Autonat holepunching enabled.
+    pub autonat: bool,
     /// Target peer count.
     pub target_peer_count: u32,
     /// Rpc listening addr
@@ -46,6 +48,7 @@ impl Source for Libp2pConfig {
         // config::Config and the p2p::Config, we need to cast it as a signed int
         insert_into_config_map(&mut map, "target_peer_count", self.target_peer_count as i64);
         insert_into_config_map(&mut map, "kademlia", self.kademlia);
+        insert_into_config_map(&mut map, "autonat", self.autonat);
         insert_into_config_map(&mut map, "mdns", self.mdns);
         let peers: Vec<String> = self.bootstrap_peers.iter().map(|b| b.to_string()).collect();
         insert_into_config_map(&mut map, "bootstrap_peers", peers);
@@ -83,6 +86,7 @@ impl Default for Libp2pConfig {
             bootstrap_peers,
             mdns: false,
             kademlia: true,
+            autonat: true,
             target_peer_count: 256,
             rpc_addr: "0.0.0.0:4401".parse().unwrap(),
             rpc_client: RpcClientConfig::default(),
@@ -120,6 +124,7 @@ mod tests {
             Value::new(None, default.target_peer_count as i64),
         );
         expect.insert("kademlia".to_string(), Value::new(None, default.kademlia));
+        expect.insert("autonat".to_string(), Value::new(None, default.autonat));
         expect.insert("mdns".to_string(), Value::new(None, default.mdns));
         expect.insert(
             "bootstrap_peers".to_string(),

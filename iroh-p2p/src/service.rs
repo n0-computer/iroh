@@ -314,12 +314,24 @@ impl<KeyStorage: Storage> Libp2pService<KeyStorage> {
                         .iter()
                         .any(|p| p.as_bytes() == kad::protocol::DEFAULT_PROTO_NAME)
                     {
+                        for addr in &listen_addrs {
+                            if let Some(kad) = self.swarm.behaviour_mut().kad.as_mut() {
+                                kad.add_address(&peer_id, addr.clone());
+                            }
+                        }
+                    }
+
+                    // Inform autonat about identified peers
+                    // TODO: expose protocol name on `libp2p::autonat`.
+                    // TODO: should we remove them at some point?
+                    if protocols
+                        .iter()
+                        .any(|p| p.as_bytes() == b"/libp2p/autonat/1.0.0")
+                    {
                         for addr in listen_addrs {
-                            self.swarm
-                                .behaviour_mut()
-                                .kad
-                                .as_mut()
-                                .map(|k| k.add_address(&peer_id, addr));
+                            if let Some(autonat) = self.swarm.behaviour_mut().autonat.as_mut() {
+                                autonat.add_server(peer_id, Some(addr));
+                            }
                         }
                     }
                 }
