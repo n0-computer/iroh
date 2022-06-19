@@ -11,7 +11,7 @@ use futures_util::stream::StreamExt;
 use iroh_rpc_client::Client as RpcClient;
 use libp2p::core::muxing::StreamMuxerBox;
 use libp2p::core::transport::timeout::TransportTimeout;
-use libp2p::core::transport::Boxed;
+use libp2p::core::transport::{Boxed, OrTransport};
 use libp2p::core::Multiaddr;
 pub use libp2p::gossipsub::{IdentTopic, Topic};
 use libp2p::identify::{IdentifyEvent, IdentifyInfo};
@@ -114,7 +114,7 @@ impl<KeyStorage: Storage> Libp2pService<KeyStorage> {
         let net_keypair = load_identity(&mut keychain).await?;
         let peer_id = PeerId::from(net_keypair.public());
 
-        let transport = build_transport(net_keypair.clone()).await;
+        let (transport, relay_client) = build_transport(net_keypair.clone(), &config).await;
         let limits = ConnectionLimits::default()
             .with_max_pending_incoming(Some(10)) // TODO: configurable
             .with_max_pending_outgoing(Some(30)) // TODO: configurable
@@ -122,7 +122,7 @@ impl<KeyStorage: Storage> Libp2pService<KeyStorage> {
             .with_max_established_outgoing(Some(config.target_peer_count))
             .with_max_established_per_peer(Some(5)); // TODO: configurable
 
-        let node = NodeBehaviour::new(&net_keypair, &config, registry).await?;
+        let node = NodeBehaviour::new(&net_keypair, &config, registry, relay_client).await?;
         let mut swarm = SwarmBuilder::new(transport, node, peer_id)
             .connection_limits(limits)
             .notify_handler_buffer_size(20.try_into().unwrap()) // TODO: configurable
@@ -453,7 +453,13 @@ impl<KeyStorage: Storage> Libp2pService<KeyStorage> {
 }
 
 /// Builds the transport stack that LibP2P will communicate over.
-pub async fn build_transport(local_key: Keypair) -> Boxed<(PeerId, StreamMuxerBox)> {
+pub async fn build_transport(
+    local_key: Keypair,
+    config: &Libp2pConfig,
+) -> (
+    Boxed<(PeerId, StreamMuxerBox)>,
+    Option<libp2p::relay::v2::client::Client>,
+) {
     // TODO: make transports configurable
 
     let transport = libp2p::tcp::TokioTcpConfig::new().nodelay(true);
@@ -463,8 +469,8 @@ pub async fn build_transport(local_key: Keypair) -> Boxed<(PeerId, StreamMuxerBo
 
     // TODO: configurable
     let transport = TransportTimeout::new(transport, Duration::from_secs(5));
-
     let transport = libp2p::dns::TokioDnsConfig::system(transport).unwrap();
+
     let auth_config = {
         let dh_keys = noise::Keypair::<noise::X25519Spec>::new()
             .into_authentic(&local_key)
@@ -484,12 +490,31 @@ pub async fn build_transport(local_key: Keypair) -> Boxed<(PeerId, StreamMuxerBo
         core::upgrade::SelectUpgrade::new(yamux_config, mplex_config)
     };
 
-    transport
-        .upgrade(core::upgrade::Version::V1Lazy)
-        .authenticate(auth_config)
-        .multiplex(mplex_config)
-        .timeout(Duration::from_secs(20)) // TODO: configurable
-        .boxed()
+    if config.relay_client {
+        let (relay_transport, relay_client) =
+            libp2p::relay::v2::client::Client::new_transport_and_behaviour(
+                local_key.public().to_peer_id(),
+            );
+
+        let transport = OrTransport::new(relay_transport, transport);
+        let transport = transport
+            .upgrade(core::upgrade::Version::V1Lazy)
+            .authenticate(auth_config)
+            .multiplex(mplex_config)
+            .timeout(Duration::from_secs(20)) // TODO: configurable
+            .boxed();
+
+        (transport, Some(relay_client))
+    } else {
+        let transport = transport
+            .upgrade(core::upgrade::Version::V1Lazy)
+            .authenticate(auth_config)
+            .multiplex(mplex_config)
+            .timeout(Duration::from_secs(20)) // TODO: configurable
+            .boxed();
+
+        (transport, None)
+    }
 }
 
 #[cfg(test)]
