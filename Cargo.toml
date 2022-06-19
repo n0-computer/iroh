@@ -17,6 +17,5 @@ members = [
 ]
 
 [patch.crates-io]
-# TODO: switch to crates.io once 0.45 is released
 libp2p = { git = "https://github.com/dignifiedquire/rust-libp2p", branch = "feat-kad-count" }
 # libp2p = { path = "../rust-libp2p" }

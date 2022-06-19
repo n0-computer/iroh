@@ -5,7 +5,6 @@ use clap::Parser;
 use iroh_p2p::config::{Libp2pConfig, CONFIG_FILE_NAME, ENV_PREFIX};
 use iroh_p2p::{metrics, DiskStorage, Keychain, Libp2pService};
 use iroh_util::{iroh_home_path, make_config};
-use libp2p::metrics::Metrics;
 use prometheus_client::registry::Registry;
 use tokio::task;
 use tracing::error;
@@ -50,14 +49,12 @@ async fn main() -> anyhow::Result<()> {
     .unwrap();
 
     let mut prom_registry = Registry::default();
-    let libp2p_metrics = Metrics::new(&mut prom_registry);
     let metrics_config =
         metrics::metrics_config_with_compile_time_info(network_config.metrics.clone());
     iroh_metrics::init_tracer(metrics_config.clone()).expect("failed to initialize tracer");
 
     let kc = Keychain::<DiskStorage>::new().await?;
-    let mut p2p_service =
-        Libp2pService::new(network_config, kc, &mut prom_registry, libp2p_metrics).await?;
+    let mut p2p_service = Libp2pService::new(network_config, kc, &mut prom_registry).await?;
 
     let metrics_handle = iroh_metrics::MetricsHandle::from_registry(metrics_config, prom_registry)
         .await

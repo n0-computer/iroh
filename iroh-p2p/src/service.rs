@@ -98,8 +98,9 @@ impl<KeyStorage: Storage> Libp2pService<KeyStorage> {
         config: Libp2pConfig,
         mut keychain: Keychain<KeyStorage>,
         registry: &mut Registry,
-        metrics: Metrics,
     ) -> Result<Self> {
+        let metrics = Metrics::new(registry);
+
         let (network_sender_in, network_receiver_in) = channel(1_000); // TODO: configurable
 
         tokio::spawn(async move {
@@ -339,6 +340,12 @@ impl<KeyStorage: Storage> Libp2pService<KeyStorage> {
             Event::Ping(e) => {
                 self.metrics.record(&e);
             }
+            Event::Relay(e) => {
+                self.metrics.record(&e);
+            }
+            Event::Dcutr(e) => {
+                self.metrics.record(&e);
+            }
             _ => {
                 // TODO: check all important events are handled
             }
@@ -527,14 +534,12 @@ mod tests {
     #[tokio::test]
     async fn test_fetch_providers() -> Result<()> {
         let mut prom_registry = Registry::default();
-        let libp2p_metrics = Metrics::new(&mut prom_registry);
         let mut network_config = Libp2pConfig::default();
         network_config.metrics.debug = true;
         let metrics_config = network_config.metrics.clone();
 
         let kc = Keychain::<MemoryStorage>::new();
-        let mut p2p_service =
-            Libp2pService::new(network_config, kc, &mut prom_registry, libp2p_metrics).await?;
+        let mut p2p_service = Libp2pService::new(network_config, kc, &mut prom_registry).await?;
 
         let metrics_handle = iroh_metrics::MetricsHandle::from_registry_with_tracer(
             metrics::metrics_config_with_compile_time_info(metrics_config),

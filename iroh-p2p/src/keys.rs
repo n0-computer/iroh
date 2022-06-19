@@ -177,7 +177,6 @@ impl DiskStorage {
             }
         }
         counts.sort_unstable();
-        dbg!(&counts);
         Ok(counts.last().map(|c| c + 1).unwrap_or_default())
     }
 
