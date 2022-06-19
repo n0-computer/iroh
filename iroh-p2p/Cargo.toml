@@ -61,6 +61,8 @@ features = [
   "websocket",
   "serde",
   "metrics",
+  "relay",
+  "dcutr",
 ] 
 
 [dependencies.multihash]

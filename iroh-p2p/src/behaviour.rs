@@ -15,8 +15,10 @@ use libp2p::kad::{Kademlia, KademliaConfig, KademliaEvent};
 use libp2p::mdns::{Mdns, MdnsEvent};
 use libp2p::multiaddr::Protocol;
 use libp2p::ping::{Ping, PingEvent};
+use libp2p::relay;
 use libp2p::request_response::RequestResponseConfig;
 use libp2p::swarm::behaviour::toggle::Toggle;
+use libp2p::{autonat, dcutr};
 use libp2p::{Multiaddr, NetworkBehaviour};
 use prometheus_client::registry::Registry;
 use tracing::warn;
@@ -34,6 +36,10 @@ pub(crate) struct NodeBehaviour {
     bitswap: Bitswap,
     pub(crate) kad: Toggle<Kademlia<MemoryStore>>,
     mdns: Toggle<Mdns>,
+    pub(crate) autonat: Toggle<autonat::Behaviour>,
+    relay: Toggle<relay::v2::relay::Relay>,
+    relay_client: Toggle<relay::v2::client::Client>,
+    dcutr: Toggle<dcutr::behaviour::Behaviour>,
 }
 
 /// Event type which is emitted from the [NodeBehaviour] into the libp2p service.
@@ -44,6 +50,10 @@ pub(crate) enum Event {
     Kademlia(KademliaEvent),
     Mdns(MdnsEvent),
     Bitswap(BitswapEvent),
+    Autonat(autonat::Event),
+    Relay(relay::v2::relay::Event),
+    RelayClient(relay::v2::client::Event),
+    Dcutr(dcutr::behaviour::Event),
 }
 
 impl From<PingEvent> for Event {
@@ -76,11 +86,36 @@ impl From<BitswapEvent> for Event {
     }
 }
 
+impl From<autonat::Event> for Event {
+    fn from(event: autonat::Event) -> Self {
+        Event::Autonat(event)
+    }
+}
+
+impl From<relay::v2::relay::Event> for Event {
+    fn from(event: relay::v2::relay::Event) -> Self {
+        Event::Relay(event)
+    }
+}
+
+impl From<relay::v2::client::Event> for Event {
+    fn from(event: relay::v2::client::Event) -> Self {
+        Event::RelayClient(event)
+    }
+}
+
+impl From<dcutr::behaviour::Event> for Event {
+    fn from(event: dcutr::behaviour::Event) -> Self {
+        Event::Dcutr(event)
+    }
+}
+
 impl NodeBehaviour {
     pub async fn new(
         local_key: &Keypair,
         config: &Libp2pConfig,
         registry: &mut Registry,
+        relay_client: Option<relay::v2::client::Client>,
     ) -> Result<Self> {
         let bs_config = BitswapConfig::default();
         let bitswap = Bitswap::new(bs_config, registry);
@@ -127,6 +162,37 @@ impl NodeBehaviour {
         }
         .into();
 
+        let autonat = if config.autonat {
+            let pub_key = local_key.public();
+            let config = autonat::Config {
+                use_connected: true,
+                ..Default::default()
+            }; // TODO: configurable
+            let autonat = autonat::Behaviour::new(pub_key.to_peer_id(), config);
+            Some(autonat)
+        } else {
+            None
+        }
+        .into();
+
+        let relay = if config.relay_server {
+            let config = relay::v2::relay::Config::default();
+            let r = relay::v2::relay::Relay::new(local_key.public().to_peer_id(), config);
+            Some(r)
+        } else {
+            None
+        }
+        .into();
+
+        let (dcutr, relay_client) = if config.relay_client {
+            let relay_client =
+                relay_client.expect("missing relay client even though it was enabled");
+            let dcutr = dcutr::behaviour::Behaviour::new();
+            (Some(dcutr), Some(relay_client))
+        } else {
+            (None, None)
+        };
+
         let mut req_res_config = RequestResponseConfig::default();
         req_res_config.set_request_timeout(Duration::from_secs(20));
         req_res_config.set_connection_keep_alive(Duration::from_secs(20));
@@ -137,6 +203,10 @@ impl NodeBehaviour {
             bitswap,
             mdns,
             kad,
+            autonat,
+            relay,
+            dcutr: dcutr.into(),
+            relay_client: relay_client.into(),
         })
     }
 
