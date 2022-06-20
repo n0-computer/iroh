@@ -126,8 +126,8 @@ impl Core {
                     .layer(Extension(Arc::clone(&self.state)))
                     .layer(HandleErrorLayer::new(middleware_error_handler))
                     .load_shed()
-                    .concurrency_limit(1024)
-                    .timeout(Duration::from_secs(120))
+                    .concurrency_limit(2048)
+                    .timeout(Duration::from_secs(60))
                     .into_inner(),
             )
             .layer(
