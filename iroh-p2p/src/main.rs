@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 use clap::Parser;
 use iroh_p2p::config::{Libp2pConfig, CONFIG_FILE_NAME, ENV_PREFIX};
-use iroh_p2p::{metrics, DiskStorage, Keychain, Libp2pService};
+use iroh_p2p::{metrics, DiskStorage, Keychain, Node};
 use iroh_util::{iroh_home_path, make_config};
 use prometheus_client::registry::Registry;
 use tokio::task;
@@ -54,7 +54,7 @@ async fn main() -> anyhow::Result<()> {
     iroh_metrics::init_tracer(metrics_config.clone()).expect("failed to initialize tracer");
 
     let kc = Keychain::<DiskStorage>::new().await?;
-    let mut p2p_service = Libp2pService::new(network_config, kc, &mut prom_registry).await?;
+    let mut p2p = Node::new(network_config, kc, &mut prom_registry).await?;
 
     let metrics_handle = iroh_metrics::MetricsHandle::from_registry(metrics_config, prom_registry)
         .await
@@ -62,7 +62,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Start services
     let p2p_task = task::spawn(async move {
-        if let Err(err) = p2p_service.run().await {
+        if let Err(err) = p2p.run().await {
             error!("{:?}", err);
         }
     });
