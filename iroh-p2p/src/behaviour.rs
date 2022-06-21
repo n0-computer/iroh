@@ -2,30 +2,29 @@ use std::collections::HashSet;
 use std::error::Error;
 use std::time::Duration;
 
-use crate::config::Libp2pConfig;
 use anyhow::Result;
 use bytes::Bytes;
 use cid::Cid;
-use iroh_bitswap::{Bitswap, BitswapConfig, BitswapEvent, Priority, QueryId};
+use iroh_bitswap::{Bitswap, BitswapConfig, Priority, QueryId};
 use libp2p::core::identity::Keypair;
 use libp2p::core::PeerId;
-use libp2p::identify::{Identify, IdentifyConfig, IdentifyEvent};
+use libp2p::identify::{Identify, IdentifyConfig};
 use libp2p::kad::store::MemoryStore;
-use libp2p::kad::{Kademlia, KademliaConfig, KademliaEvent};
-use libp2p::mdns::{Mdns, MdnsEvent};
+use libp2p::kad::{Kademlia, KademliaConfig};
+use libp2p::mdns::Mdns;
 use libp2p::multiaddr::Protocol;
-use libp2p::ping::{Ping, PingEvent};
+use libp2p::ping::Ping;
 use libp2p::relay;
-use libp2p::request_response::RequestResponseConfig;
 use libp2p::swarm::behaviour::toggle::Toggle;
 use libp2p::{autonat, dcutr};
 use libp2p::{Multiaddr, NetworkBehaviour};
 use prometheus_client::registry::Registry;
 use tracing::warn;
 
-lazy_static::lazy_static! {
-    static ref VERSION: &'static str = env!("CARGO_PKG_VERSION");
-}
+pub(crate) use self::event::Event;
+use crate::config::Libp2pConfig;
+
+mod event;
 
 /// Libp2p behaviour for the node.
 #[derive(NetworkBehaviour)]
@@ -40,74 +39,6 @@ pub(crate) struct NodeBehaviour {
     relay: Toggle<relay::v2::relay::Relay>,
     relay_client: Toggle<relay::v2::client::Client>,
     dcutr: Toggle<dcutr::behaviour::Behaviour>,
-}
-
-/// Event type which is emitted from the [NodeBehaviour] into the libp2p service.
-#[derive(Debug)]
-pub(crate) enum Event {
-    Ping(PingEvent),
-    Identify(Box<IdentifyEvent>),
-    Kademlia(KademliaEvent),
-    Mdns(MdnsEvent),
-    Bitswap(BitswapEvent),
-    Autonat(autonat::Event),
-    Relay(relay::v2::relay::Event),
-    RelayClient(relay::v2::client::Event),
-    Dcutr(dcutr::behaviour::Event),
-}
-
-impl From<PingEvent> for Event {
-    fn from(event: PingEvent) -> Self {
-        Event::Ping(event)
-    }
-}
-
-impl From<IdentifyEvent> for Event {
-    fn from(event: IdentifyEvent) -> Self {
-        Event::Identify(Box::new(event))
-    }
-}
-
-impl From<KademliaEvent> for Event {
-    fn from(event: KademliaEvent) -> Self {
-        Event::Kademlia(event)
-    }
-}
-
-impl From<MdnsEvent> for Event {
-    fn from(event: MdnsEvent) -> Self {
-        Event::Mdns(event)
-    }
-}
-
-impl From<BitswapEvent> for Event {
-    fn from(event: BitswapEvent) -> Self {
-        Event::Bitswap(event)
-    }
-}
-
-impl From<autonat::Event> for Event {
-    fn from(event: autonat::Event) -> Self {
-        Event::Autonat(event)
-    }
-}
-
-impl From<relay::v2::relay::Event> for Event {
-    fn from(event: relay::v2::relay::Event) -> Self {
-        Event::Relay(event)
-    }
-}
-
-impl From<relay::v2::client::Event> for Event {
-    fn from(event: relay::v2::client::Event) -> Self {
-        Event::RelayClient(event)
-    }
-}
-
-impl From<dcutr::behaviour::Event> for Event {
-    fn from(event: dcutr::behaviour::Event) -> Self {
-        Event::Dcutr(event)
-    }
 }
 
 impl NodeBehaviour {
@@ -193,13 +124,15 @@ impl NodeBehaviour {
             (None, None)
         };
 
-        let mut req_res_config = RequestResponseConfig::default();
-        req_res_config.set_request_timeout(Duration::from_secs(20));
-        req_res_config.set_connection_keep_alive(Duration::from_secs(20));
+        let identify = {
+            let config = IdentifyConfig::new("ipfs/0.1.0".into(), local_key.public())
+                .with_agent_version(format!("iroh/{}", env!("CARGO_PKG_VERSION")));
+            Identify::new(config)
+        };
 
         Ok(NodeBehaviour {
             ping: Ping::default(),
-            identify: Identify::new(IdentifyConfig::new("ipfs/0.1.0".into(), local_key.public())),
+            identify,
             bitswap,
             mdns,
             kad,

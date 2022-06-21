@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::num::NonZeroU8;
 use std::time::Duration;
 
 use ahash::AHashMap;
@@ -9,9 +8,6 @@ use cid::Cid;
 use futures::channel::oneshot::Sender as OneShotSender;
 use futures_util::stream::StreamExt;
 use iroh_rpc_client::Client as RpcClient;
-use libp2p::core::muxing::StreamMuxerBox;
-use libp2p::core::transport::timeout::TransportTimeout;
-use libp2p::core::transport::{Boxed, OrTransport};
 use libp2p::core::Multiaddr;
 pub use libp2p::gossipsub::{IdentTopic, Topic};
 use libp2p::identify::{IdentifyEvent, IdentifyInfo};
@@ -23,12 +19,8 @@ use libp2p::kad::{
 use libp2p::metrics::{Metrics, Recorder};
 use libp2p::multiaddr::Protocol;
 use libp2p::multihash::Multihash;
-use libp2p::swarm::{
-    ConnectionHandler, ConnectionLimits, IntoConnectionHandler, NetworkBehaviour, SwarmBuilder,
-    SwarmEvent,
-};
-use libp2p::yamux::WindowUpdateMode;
-use libp2p::{core, mplex, noise, yamux, PeerId, Swarm, Transport};
+use libp2p::swarm::{ConnectionHandler, IntoConnectionHandler, NetworkBehaviour, SwarmEvent};
+use libp2p::{PeerId, Swarm};
 use prometheus_client::registry::Registry;
 use tokio::{select, sync::mpsc, time};
 use tracing::{debug, info, trace, warn};
@@ -39,13 +31,13 @@ use iroh_bitswap::{
 };
 
 use crate::keys::{Keychain, Storage};
+use crate::swarm::build_swarm;
 use crate::{
     behaviour::{Event, NodeBehaviour},
     rpc::{self, RpcMessage},
     Libp2pConfig,
 };
 
-/// Events emitted by this Service.
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug)]
 pub enum NetworkEvent {
@@ -54,8 +46,7 @@ pub enum NetworkEvent {
     BitswapBlock { cid: Cid },
 }
 
-/// The Libp2pService listens to events from the Libp2p swarm.
-pub struct Libp2pService<KeyStorage: Storage> {
+pub struct Node<KeyStorage: Storage> {
     swarm: Swarm<NodeBehaviour>,
     net_receiver_in: Receiver<RpcMessage>,
     bitswap_queries: AHashMap<BitswapQueryId, OneShotSender<Result<Block, QueryError>>>,
@@ -76,32 +67,14 @@ enum QueryKey {
 
 const PROVIDER_LIMIT: usize = 20;
 
-async fn load_identity<S: Storage>(kc: &mut Keychain<S>) -> Result<Keypair> {
-    if kc.is_empty().await? {
-        info!("no identity found, creating",);
-        kc.create_ed25519_key().await?;
-    }
-
-    // for now we just use the first key
-    let first_key = kc.keys().next().await;
-    if let Some(keypair) = first_key {
-        let keypair: Keypair = keypair?.into();
-        info!("identity loaded: {}", PeerId::from(keypair.public()));
-        return Ok(keypair);
-    }
-
-    Err(anyhow!("inconsistent keystate"))
-}
-
-impl<KeyStorage: Storage> Libp2pService<KeyStorage> {
+impl<KeyStorage: Storage> Node<KeyStorage> {
     pub async fn new(
         config: Libp2pConfig,
         mut keychain: Keychain<KeyStorage>,
         registry: &mut Registry,
     ) -> Result<Self> {
         let metrics = Metrics::new(registry);
-
-        let (network_sender_in, network_receiver_in) = channel(1_000); // TODO: configurable
+        let (network_sender_in, network_receiver_in) = channel(1024); // TODO: configurable
 
         tokio::spawn(async move {
             // TODO: handle error
@@ -112,31 +85,11 @@ impl<KeyStorage: Storage> Libp2pService<KeyStorage> {
             .await
             .context("failed to create rpc client")?;
 
-        let net_keypair = load_identity(&mut keychain).await?;
-        let peer_id = PeerId::from(net_keypair.public());
-
-        let (transport, relay_client) = build_transport(net_keypair.clone(), &config).await;
-        let limits = ConnectionLimits::default()
-            .with_max_pending_incoming(Some(10)) // TODO: configurable
-            .with_max_pending_outgoing(Some(30)) // TODO: configurable
-            .with_max_established_incoming(Some(config.target_peer_count))
-            .with_max_established_outgoing(Some(config.target_peer_count))
-            .with_max_established_per_peer(Some(5)); // TODO: configurable
-
-        let node = NodeBehaviour::new(&net_keypair, &config, registry, relay_client).await?;
-        let mut swarm = SwarmBuilder::new(transport, node, peer_id)
-            .connection_limits(limits)
-            .notify_handler_buffer_size(20.try_into().unwrap()) // TODO: configurable
-            .connection_event_buffer_size(128)
-            .dial_concurrency_factor(NonZeroU8::new(16).unwrap())
-            .executor(Box::new(|fut| {
-                tokio::spawn(fut);
-            }))
-            .build();
-
+        let keypair = load_identity(&mut keychain).await?;
+        let mut swarm = build_swarm(&config, &keypair, registry).await?;
         Swarm::listen_on(&mut swarm, config.listening_multiaddr).unwrap();
 
-        Ok(Libp2pService {
+        Ok(Node {
             swarm,
             net_receiver_in: network_receiver_in,
             bitswap_queries: Default::default(),
@@ -459,69 +412,21 @@ impl<KeyStorage: Storage> Libp2pService<KeyStorage> {
     }
 }
 
-/// Builds the transport stack that LibP2P will communicate over.
-pub async fn build_transport(
-    local_key: Keypair,
-    config: &Libp2pConfig,
-) -> (
-    Boxed<(PeerId, StreamMuxerBox)>,
-    Option<libp2p::relay::v2::client::Client>,
-) {
-    // TODO: make transports configurable
-
-    let transport = libp2p::tcp::TokioTcpConfig::new().nodelay(true);
-    let transport =
-        libp2p::websocket::WsConfig::new(libp2p::tcp::TokioTcpConfig::new().nodelay(true))
-            .or_transport(transport);
-
-    // TODO: configurable
-    let transport = TransportTimeout::new(transport, Duration::from_secs(5));
-    let transport = libp2p::dns::TokioDnsConfig::system(transport).unwrap();
-
-    let auth_config = {
-        let dh_keys = noise::Keypair::<noise::X25519Spec>::new()
-            .into_authentic(&local_key)
-            .expect("Noise key generation failed");
-
-        noise::NoiseConfig::xx(dh_keys).into_authenticated()
-    };
-
-    let mplex_config = {
-        let mut mplex_config = mplex::MplexConfig::new();
-        mplex_config.set_max_buffer_size(usize::MAX);
-
-        let mut yamux_config = yamux::YamuxConfig::default();
-        yamux_config.set_max_buffer_size(16 * 1024 * 1024); // TODO: configurable
-        yamux_config.set_receive_window_size(16 * 1024 * 1024); // TODO: configurable
-        yamux_config.set_window_update_mode(WindowUpdateMode::on_receive());
-        core::upgrade::SelectUpgrade::new(yamux_config, mplex_config)
-    };
-
-    if config.relay_client {
-        let (relay_transport, relay_client) =
-            libp2p::relay::v2::client::Client::new_transport_and_behaviour(
-                local_key.public().to_peer_id(),
-            );
-
-        let transport = OrTransport::new(relay_transport, transport);
-        let transport = transport
-            .upgrade(core::upgrade::Version::V1Lazy)
-            .authenticate(auth_config)
-            .multiplex(mplex_config)
-            .timeout(Duration::from_secs(20)) // TODO: configurable
-            .boxed();
-
-        (transport, Some(relay_client))
-    } else {
-        let transport = transport
-            .upgrade(core::upgrade::Version::V1Lazy)
-            .authenticate(auth_config)
-            .multiplex(mplex_config)
-            .timeout(Duration::from_secs(20)) // TODO: configurable
-            .boxed();
-
-        (transport, None)
+async fn load_identity<S: Storage>(kc: &mut Keychain<S>) -> Result<Keypair> {
+    if kc.is_empty().await? {
+        info!("no identity found, creating",);
+        kc.create_ed25519_key().await?;
     }
+
+    // for now we just use the first key
+    let first_key = kc.keys().next().await;
+    if let Some(keypair) = first_key {
+        let keypair: Keypair = keypair?.into();
+        info!("identity loaded: {}", PeerId::from(keypair.public()));
+        return Ok(keypair);
+    }
+
+    Err(anyhow!("inconsistent keystate"))
 }
 
 #[cfg(test)]
@@ -539,7 +444,7 @@ mod tests {
         let metrics_config = network_config.metrics.clone();
 
         let kc = Keychain::<MemoryStorage>::new();
-        let mut p2p_service = Libp2pService::new(network_config, kc, &mut prom_registry).await?;
+        let mut p2p = Node::new(network_config, kc, &mut prom_registry).await?;
 
         let metrics_handle = iroh_metrics::MetricsHandle::from_registry_with_tracer(
             metrics::metrics_config_with_compile_time_info(metrics_config),
@@ -550,7 +455,7 @@ mod tests {
 
         let cfg = iroh_rpc_client::Config::default();
         let p2p_task = tokio::task::spawn(async move {
-            p2p_service.run().await.unwrap();
+            p2p.run().await.unwrap();
         });
 
         {
