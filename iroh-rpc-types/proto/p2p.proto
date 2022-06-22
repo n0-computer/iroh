@@ -7,13 +7,11 @@ import "google/protobuf/empty.proto";
 service P2p {
   rpc FetchBitswap(BitswapRequest) returns (BitswapResponse) {}
   rpc FetchProvider(Key) returns (Providers) {}
-  rpc GetListeningAddrs(Empty) returns (GetListeningAddrsResponse) {}
-  rpc GetPeers(Empty) returns (GetPeersResponse) {}
+  rpc GetListeningAddrs(google.protobuf.Empty) returns (GetListeningAddrsResponse) {}
+  rpc GetPeers(google.protobuf.Empty) returns (GetPeersResponse) {}
   rpc PeerConnect(ConnectRequest) returns (ConnectResponse) {}
   rpc PeerDisconnect(DisconnectRequest) returns (google.protobuf.Empty) {}
 }
-
-message Empty {}
 
 message BitswapRequest {
   // Serialized CID of the requested block.

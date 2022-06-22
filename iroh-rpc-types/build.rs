@@ -2,6 +2,7 @@ fn main() {
     let mut config = prost_build::Config::new();
     config.bytes(&[
         ".p2p.BitswapResponse",
+        ".gossipsub.PublishRequest.data",
         ".store.PutRequest.blob",
         ".store.GetResponse.data",
     ]);
@@ -12,6 +13,7 @@ fn main() {
             &[
                 "proto/p2p.proto",
                 "proto/store.proto",
+                "proto/gossipsub.proto",
                 "proto/gateway.proto",
                 "proto/test.proto",
             ],

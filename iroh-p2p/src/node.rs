@@ -34,7 +34,7 @@ use crate::keys::{Keychain, Storage};
 use crate::swarm::build_swarm;
 use crate::{
     behaviour::{Event, NodeBehaviour},
-    rpc::{self, RpcMessage},
+    rpc::{self, GossipsubMessage, RpcMessage},
     Libp2pConfig,
 };
 
@@ -404,8 +404,106 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
 
                 response_channel
                     .send(())
-                    .map_err(|_| anyhow!("Failed to disconnect from a peer"))?;
+                    .map_err(|_| anyhow!("sender dropped"))?;
             }
+            RpcMessage::Gossipsub(g) => match g {
+                GossipsubMessage::AddExplicitPeer(response_channel, peer_id) => {
+                    self.swarm
+                        .behaviour_mut()
+                        .gossipsub
+                        .add_explicit_peer(&peer_id);
+                    response_channel
+                        .send(())
+                        .map_err(|_| anyhow!("sender dropped"))?;
+                }
+                GossipsubMessage::AllMeshPeers(response_channel) => {
+                    let peers = self
+                        .swarm
+                        .behaviour_mut()
+                        .gossipsub
+                        .all_mesh_peers()
+                        .copied()
+                        .collect();
+                    response_channel
+                        .send(peers)
+                        .map_err(|_| anyhow!("sender dropped"))?;
+                }
+                GossipsubMessage::AllPeers(response_channel) => {
+                    let all_peers = self
+                        .swarm
+                        .behaviour_mut()
+                        .gossipsub
+                        .all_peers()
+                        .map(|(p, t)| (*p, t.into_iter().cloned().collect()))
+                        .collect();
+                    response_channel
+                        .send(all_peers)
+                        .map_err(|_| anyhow!("sender dropped"))?;
+                }
+                GossipsubMessage::MeshPeers(response_channel, topic_hash) => {
+                    let peers = self
+                        .swarm
+                        .behaviour_mut()
+                        .gossipsub
+                        .mesh_peers(&topic_hash)
+                        .copied()
+                        .collect();
+                    response_channel
+                        .send(peers)
+                        .map_err(|_| anyhow!("sender dropped"))?;
+                }
+                GossipsubMessage::Publish(response_channel, topic_hash, bytes) => {
+                    let res = self
+                        .swarm
+                        .behaviour_mut()
+                        .gossipsub
+                        .publish(IdentTopic::new(topic_hash.into_string()), bytes.to_vec());
+                    response_channel
+                        .send(res)
+                        .map_err(|_| anyhow!("sender dropped"))?;
+                }
+                GossipsubMessage::RemoveExplicitPeer(response_channel, peer_id) => {
+                    self.swarm
+                        .behaviour_mut()
+                        .gossipsub
+                        .remove_explicit_peer(&peer_id);
+                    response_channel
+                        .send(())
+                        .map_err(|_| anyhow!("sender dropped"))?;
+                }
+                GossipsubMessage::Subscribe(response_channel, topic_hash) => {
+                    let res = self
+                        .swarm
+                        .behaviour_mut()
+                        .gossipsub
+                        .subscribe(&IdentTopic::new(topic_hash.into_string()));
+                    response_channel
+                        .send(res)
+                        .map_err(|_| anyhow!("sender dropped"))?;
+                }
+                GossipsubMessage::Topics(response_channel) => {
+                    let topics = self
+                        .swarm
+                        .behaviour_mut()
+                        .gossipsub
+                        .topics()
+                        .cloned()
+                        .collect();
+                    response_channel
+                        .send(topics)
+                        .map_err(|_| anyhow!("sender dropped"))?;
+                }
+                GossipsubMessage::Unsubscribe(response_channel, topic_hash) => {
+                    let res = self
+                        .swarm
+                        .behaviour_mut()
+                        .gossipsub
+                        .unsubscribe(&IdentTopic::new(topic_hash.into_string()));
+                    response_channel
+                        .send(res)
+                        .map_err(|_| anyhow!("sender dropped"))?;
+                }
+            },
         }
 
         Ok(())

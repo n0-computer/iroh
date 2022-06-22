@@ -8,8 +8,8 @@ use cid::Cid;
 use iroh_bitswap::{Bitswap, BitswapConfig, Priority, QueryId};
 use libp2p::core::identity::Keypair;
 use libp2p::core::PeerId;
-use libp2p::gossipsub::{Gossipsub, GossipsubConfig, GossipsubEvent, MessageAuthenticity};
-use libp2p::identify::{Identify, IdentifyConfig, IdentifyEvent};
+use libp2p::gossipsub::{Gossipsub, GossipsubConfig, MessageAuthenticity};
+use libp2p::identify::{Identify, IdentifyConfig};
 use libp2p::kad::store::MemoryStore;
 use libp2p::kad::{Kademlia, KademliaConfig};
 use libp2p::mdns::Mdns;
@@ -40,7 +40,7 @@ pub(crate) struct NodeBehaviour {
     relay: Toggle<relay::v2::relay::Relay>,
     relay_client: Toggle<relay::v2::client::Client>,
     dcutr: Toggle<dcutr::behaviour::Behaviour>,
-    gossipsub: Gossipsub,
+    pub(crate) gossipsub: Gossipsub,
 }
 
 impl NodeBehaviour {
