@@ -13,6 +13,7 @@ pub struct Store {
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum StoreCommands {
+    #[clap(about = "Version of the iroh store binary")]
     Version,
     Block(Block),
     Dag(Dag),

@@ -3,6 +3,7 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 use iroh_ctl::{
+    gateway::{run_command as run_gateway_command, Gateway},
     metrics,
     p2p::{run_command as run_p2p_command, P2p},
     store::{run_command as run_store_command, Store},
@@ -47,6 +48,7 @@ enum Commands {
     Version,
     P2p(P2p),
     Store(Store),
+    Gateway(Gateway),
 }
 
 #[tokio::main(flavor = "multi_thread")]
@@ -89,6 +91,7 @@ async fn main() -> anyhow::Result<()> {
         }
         Commands::P2p(p2p) => run_p2p_command(client, p2p).await?,
         Commands::Store(store) => run_store_command(client, store).await?,
+        Commands::Gateway(gateway) => run_gateway_command(client, gateway).await?,
     };
 
     metrics_handle.shutdown();

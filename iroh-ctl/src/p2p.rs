@@ -19,6 +19,7 @@ pub struct P2p {
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum P2pCommands {
+    Version,
     Addrs(Addrs),
     #[clap(
         about = "Open a new direct connection to one or more peer addresses.\nThe address format is a Multiaddress."
@@ -198,13 +199,25 @@ pub struct Gossipsub {
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum GossipsubCommands {
-    Publish { topic: String, file: PathBuf },
-    Subscribe { topic: String },
-    Unsubscribe { topic: String },
+    Publish {
+        topic: String,
+        #[clap(long, short)]
+        file: PathBuf,
+    },
+    Subscribe {
+        topic: String,
+    },
+    Unsubscribe {
+        topic: String,
+    },
 }
 
 pub async fn run_command(rpc: Client, cmd: P2p) -> Result<()> {
     match cmd.command {
+        P2pCommands::Version => {
+            let v = rpc.p2p.version().await?;
+            println!("v{}", v);
+        }
         P2pCommands::Addrs(addrs) => match addrs.command {
             None => {
                 let addrs = rpc.p2p.get_peers().await?;

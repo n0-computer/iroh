@@ -48,6 +48,13 @@ impl P2pClient {
         })
     }
 
+    #[tracing::instrument(skip(self))]
+    pub async fn version(&self) -> Result<String> {
+        let req = iroh_metrics::req::trace_tonic_req(());
+        let res = self.p2p.clone().version(req).await?;
+        Ok(res.into_inner().version)
+    }
+
     // Fetches a block directly from the network.
     #[tracing::instrument(skip(self))]
     pub async fn fetch_bitswap(&self, cid: Cid, providers: HashSet<PeerId>) -> Result<Bytes> {
