@@ -1,13 +1,14 @@
 use anyhow::Error;
-use std::collections::HashSet;
 use std::path::PathBuf;
 use std::str::FromStr;
+use std::{collections::HashSet, io::Read};
 
 use anyhow::Result;
+use bytes::Bytes;
 use cid::Cid;
 use clap::{Args, Subcommand};
 use iroh_rpc_client::Client;
-use libp2p::{Multiaddr, PeerId};
+use libp2p::{gossipsub::TopicHash, Multiaddr, PeerId};
 
 #[derive(Args, Debug, Clone)]
 #[clap(about = "Manage peer-2-peer networking.")]
@@ -185,6 +186,21 @@ pub enum DevCommands {
     FetchProviders {
         cid: Cid,
     },
+    Gossipsub(Gossipsub),
+}
+
+#[derive(Args, Debug, Clone)]
+#[clap(hide = true)]
+pub struct Gossipsub {
+    #[clap(subcommand)]
+    command: GossipsubCommands,
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum GossipsubCommands {
+    Publish { topic: String, file: PathBuf },
+    Subscribe { topic: String },
+    Unsubscribe { topic: String },
 }
 
 pub async fn run_command(rpc: Client, cmd: P2p) -> Result<()> {
@@ -233,6 +249,30 @@ pub async fn run_command(rpc: Client, cmd: P2p) -> Result<()> {
                 let res = rpc.p2p.fetch_providers(&cid).await?;
                 println!("{:#?}", res);
             }
+            DevCommands::Gossipsub(g) => match g.command {
+                GossipsubCommands::Publish { topic, file } => {
+                    let mut f = std::fs::File::open(file)?;
+                    let mut v: Vec<u8> = Vec::new();
+                    f.read_to_end(&mut v)?;
+                    let message_id = rpc
+                        .p2p
+                        .gossipsub_publish(TopicHash::from_raw(topic), Bytes::from(v))
+                        .await?;
+                    println!("Message Id: {}", message_id);
+                }
+                GossipsubCommands::Subscribe { topic } => {
+                    rpc.p2p
+                        .gossipsub_subscribe(TopicHash::from_raw(topic.clone()))
+                        .await?;
+                    println!("Subscribed to {}", topic);
+                }
+                GossipsubCommands::Unsubscribe { topic } => {
+                    rpc.p2p
+                        .gossipsub_unsubscribe(TopicHash::from_raw(topic.clone()))
+                        .await?;
+                    println!("Unsubscribed from {}", topic);
+                }
+            },
         },
     };
     Ok(())
