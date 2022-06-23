@@ -35,11 +35,16 @@ pub enum BlockCommands {
     #[clap(about = "Get a raw IPFS block.")]
     Get { cid: Cid },
     #[clap(
-        about = "Store input as an IPFS block.\nNot yet implemented.",
+        about = "Store input as an IPFS block.
+Not yet implemented.",
         hide = true
     )]
     Put { path: PathBuf },
-    #[clap(about = "Remove IPFS block(s).\nNot yet implemented.", hide = true)]
+    #[clap(
+        about = "Remove IPFS block(s).
+Not yet implemented.",
+        hide = true
+    )]
     Rm {
         cids: Vec<String>,
         #[clap(short, long)]
@@ -51,7 +56,8 @@ pub enum BlockCommands {
 
 #[derive(Args, Debug, Clone)]
 #[clap(
-    about = "Interact with IPLD DAG objects.\nNot yet implemented.",
+    about = "Interact with IPLD DAG objects.
+Not yet implemented.",
     hide = true
 )]
 pub struct Dag {
@@ -62,7 +68,8 @@ pub struct Dag {
 #[derive(Subcommand, Debug, Clone)]
 pub enum DagCommands {
     #[clap(
-        about = "Streams the selected DAG as a .car stream on stdout.\nNot yet implemented.",
+        about = "Streams the selected DAG as a .car stream on stdout.
+Not yet implemented.",
         hide = true
     )]
     Export {
@@ -70,14 +77,19 @@ pub enum DagCommands {
         #[clap(short, long)]
         progress: bool,
     },
-    #[clap(about = "Get a DAG node from IPFS.\nNot yet implemented.", hide = true)]
+    #[clap(
+        about = "Get a DAG node from IPFS.
+Not yet implemented.",
+        hide = true
+    )]
     Get {
         cid: Cid,
         #[clap(short, long = "output-codec")]
         output_codec: String,
     },
     #[clap(
-        about = "Import the contents of .car files.\nNot yet implemented.",
+        about = "Import the contents of .car files.
+Not yet implemented.",
         hide = true
     )]
     Import {
@@ -85,10 +97,15 @@ pub enum DagCommands {
         #[clap(short, long = "pin-roots")]
         pin_roots: bool,
     },
-    #[clap(about = "Add a DAG node to IPFS.\nNot yet implemented.", hide = true)]
+    #[clap(
+        about = "Add a DAG node to IPFS.
+Not yet implemented.",
+        hide = true
+    )]
     Put { path: PathBuf },
     #[clap(
-        about = "Remove DAG from IPFS node.\nNot yet implemented.",
+        about = "Remove DAG from IPFS node.
+Not yet implemented.",
         hide = true
     )]
     Remove { cid: Cid },

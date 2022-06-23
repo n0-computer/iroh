@@ -21,9 +21,8 @@ pub struct P2p {
 pub enum P2pCommands {
     Version,
     Addrs(Addrs),
-    #[clap(
-        about = "Open a new direct connection to one or more peer addresses.\nThe address format is a Multiaddress."
-    )]
+    #[clap(about = "Open a new direct connection to one or more peer addresses.
+The address format is a Multiaddress.")]
     Connect {
         #[clap(long = "peer-id", short)]
         peer_id: PeerId,
@@ -31,7 +30,8 @@ pub enum P2pCommands {
         addrs: Vec<Multiaddr>,
     },
     #[clap(
-        about = "Closes a connection to a peer address. The address format is a Multiaddress.\nThe disconnect is not permanent; if iroh needs to talk to that address later, it will reconnect."
+        about = "Closes a connection to a peer address. The address format is a Multiaddress.
+The disconnect is not permanent; if iroh needs to talk to that address later, it will reconnect."
     )]
     Disconnect {
         #[clap(long = "peer-id", short)]
@@ -42,7 +42,9 @@ pub enum P2pCommands {
     )]
     Peers,
     #[clap(
-        about = "Ping is a tool to test sending data to other peers. It sends pings, waits for pongs, and prints out round-trip latency information.\nIf a multiaddress is provided, only that address is dialed.\nIf a peerID is provided, ping looks up the peer via the routing system, and will choose an addresses during connection negotiation.",
+        about = "Ping is a tool to test sending data to other peers. It sends pings, waits for pongs, and prints out round-trip latency information.
+If a multiaddress is provided, only that address is dialed.
+If a peerID is provided, ping looks up the peer via the routing system, and will choose an addresses during connection negotiation.",
         hide = true
     )]
     Ping {
@@ -90,7 +92,9 @@ pub enum AddrsCommands {
     )]
     Listen,
     #[clap(
-        about = "Show addresses this node has broadcast for other peers to connect to this process. Addresses are listed in multiaddress format.\nA number of factors can change the set of addresses, including a change in IP address, discovery of additional IP addresses outside of NAT layers, and changes in addresses announced to the network.\nNot yet implemented.",
+        about = "Show addresses this node has broadcast for other peers to connect to this process. Addresses are listed in multiaddress format.
+A number of factors can change the set of addresses, including a change in IP address, discovery of additional IP addresses outside of NAT layers, and changes in addresses announced to the network.
+Not yet implemented.",
         hide = true
     )]
     Local,
@@ -106,22 +110,26 @@ pub struct Dht {
 #[derive(Subcommand, Debug, Clone)]
 pub enum DhtCommands {
     #[clap(
-        about = "Find the multiaddresses associated with a Peer ID.\nNot yet implemented.",
+        about = "Find the multiaddresses associated with a Peer ID.
+Not yet implemented.",
         hide = true
     )]
     FindPeer { peer_id: PeerId },
     #[clap(
-        about = "Find peers that can provide a specific value, given a key.\nNot yet implemented.",
+        about = "Find peers that can provide a specific value, given a key.
+Not yet implemented.",
         hide = true
     )]
     FindProvs { cid: Cid },
     #[clap(
-        about = "Given a key, query the routing system for its best value.\nNot yet implemented.",
+        about = "Given a key, query the routing system for its best value.
+Not yet implemented.",
         hide = true
     )]
     Get { cid: Cid },
     #[clap(
-        about = "Announce this node is providing values for a key to the network.\nNot yet implemented.",
+        about = "Announce this node is providing values for a key to the network.
+Not yet implemented.",
         hide = true
     )]
     Provide {
@@ -130,12 +138,14 @@ pub enum DhtCommands {
         recursive: bool,
     },
     #[clap(
-        about = "Write a key/value pair to the routing system.\nNot yet implemented.",
+        about = "Write a key/value pair to the routing system.
+Not yet implemented.",
         hide = true
     )]
     Put { key: Cid, file_path: PathBuf },
     #[clap(
-        about = "Find the closest Peer IDs to a given Peer ID by querying the DHT.\nNot yet implemented.",
+        about = "Find the closest Peer IDs to a given Peer ID by querying the DHT.
+Not yet implemented.",
         hide = true
     )]
     Query { peer_id: PeerId },
@@ -143,7 +153,8 @@ pub enum DhtCommands {
 
 #[derive(Args, Debug, Clone)]
 #[clap(
-    about = "Interact with the bitswap agent.\nNot yet implemented.",
+    about = "Interact with the bitswap agent.
+Not yet implemented.",
     hide = true
 )]
 pub struct Bitswap {
@@ -154,17 +165,20 @@ pub struct Bitswap {
 #[derive(Subcommand, Debug, Clone)]
 pub enum BitswapCommands {
     #[clap(
-        about = "Show the current ledger for a peer.\nNot yet implemented.",
+        about = "Show the current ledger for a peer.
+Not yet implemented.",
         hide = true
     )]
     Ledger { peer_id: PeerId },
     #[clap(
-        about = "Trigger reprovider to announce our data to the network.\nNot yet implemented.",
+        about = "Trigger reprovider to announce our data to the network.
+Not yet implemented.",
         hide = true
     )]
     Reprovide,
     #[clap(
-        about = "Show blocks currently on the wantlist.\nNot yet implemented.",
+        about = "Show blocks currently on the wantlist.
+Not yet implemented.",
         hide = true
     )]
     Wantlist,
