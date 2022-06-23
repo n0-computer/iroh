@@ -6,7 +6,8 @@ use bytes::BytesMut;
 use cid::Cid;
 use iroh_rpc_types::store::store_server;
 use iroh_rpc_types::store::{
-    GetLinksRequest, GetLinksResponse, GetRequest, GetResponse, HasRequest, HasResponse, PutRequest,
+    GetLinksRequest, GetLinksResponse, GetRequest, GetResponse, HasRequest, HasResponse,
+    PutRequest, VersionResponse,
 };
 use tonic::{
     transport::{NamedService, Server as TonicServer},
@@ -22,6 +23,15 @@ struct Rpc {
 
 #[tonic::async_trait]
 impl store_server::Store for Rpc {
+    #[tracing::instrument(skip(self))]
+    async fn version(
+        &self,
+        _request: Request<()>,
+    ) -> Result<Response<VersionResponse>, tonic::Status> {
+        let version = env!("CARGO_PKG_VERSION").to_string();
+        Ok(Response::new(VersionResponse { version }))
+    }
+
     #[tracing::instrument(skip(self, request))]
     async fn put(&self, request: Request<PutRequest>) -> Result<Response<()>, tonic::Status> {
         let req = request.into_inner();

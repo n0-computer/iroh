@@ -5,10 +5,15 @@ package store;
 import "google/protobuf/empty.proto";
 
 service Store {
+  rpc Version(google.protobuf.Empty) returns (VersionResponse) {}
   rpc Put(PutRequest) returns (google.protobuf.Empty) {}
   rpc Get(GetRequest) returns (GetResponse) {}
   rpc Has(HasRequest) returns (HasResponse) {}
   rpc GetLinks(GetLinksRequest) returns(GetLinksResponse) {}
+}
+
+message VersionResponse {
+  string version = 1;
 }
 
 message PutRequest {

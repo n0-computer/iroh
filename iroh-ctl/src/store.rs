@@ -13,6 +13,7 @@ pub struct Store {
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum StoreCommands {
+    Version,
     Block(Block),
     Dag(Dag),
     #[clap(hide = true)]
@@ -94,6 +95,10 @@ pub enum DagCommands {
 
 pub async fn run_command(rpc: Client, cmd: Store) -> Result<()> {
     match cmd.command {
+        StoreCommands::Version => {
+            let v = rpc.store.version().await?;
+            println!("v{}", v);
+        }
         StoreCommands::Block(block) => {
             match block.command {
                 BlockCommands::Get { cid } => {
