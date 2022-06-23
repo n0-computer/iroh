@@ -1,7 +1,7 @@
 use iroh_bitswap::BitswapEvent;
 use libp2p::{
-    autonat, dcutr, identify::IdentifyEvent, kad::KademliaEvent, mdns::MdnsEvent, ping::PingEvent,
-    relay,
+    autonat, dcutr, gossipsub::GossipsubEvent, identify::IdentifyEvent, kad::KademliaEvent,
+    mdns::MdnsEvent, ping::PingEvent, relay,
 };
 
 /// Event type which is emitted from the [`NodeBehaviour`].
@@ -16,6 +16,7 @@ pub enum Event {
     Relay(relay::v2::relay::Event),
     RelayClient(relay::v2::client::Event),
     Dcutr(dcutr::behaviour::Event),
+    Gossipsub(GossipsubEvent),
 }
 
 impl From<PingEvent> for Event {
@@ -45,6 +46,12 @@ impl From<MdnsEvent> for Event {
 impl From<BitswapEvent> for Event {
     fn from(event: BitswapEvent) -> Self {
         Event::Bitswap(event)
+    }
+}
+
+impl From<GossipsubEvent> for Event {
+    fn from(event: GossipsubEvent) -> Self {
+        Event::Gossipsub(event)
     }
 }
 

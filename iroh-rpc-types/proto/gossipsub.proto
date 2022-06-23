@@ -1,0 +1,63 @@
+syntax = "proto3";
+
+package gossipsub;
+
+import "google/protobuf/empty.proto";
+
+service Gossipsub {
+  rpc AddExplicitPeer(PeerIdMsg) returns (google.protobuf.Empty) {}
+  rpc AllMeshPeers(google.protobuf.Empty) returns (PeersResponse) {}
+  rpc AllPeers(google.protobuf.Empty) returns (AllPeersResponse) {}
+  rpc MeshPeers(TopicHashMsg) returns (PeersResponse) {}
+  rpc Publish(PublishRequest) returns (PublishResponse) {}
+  rpc RemoveExplicitPeer(PeerIdMsg) returns (google.protobuf.Empty) {}
+  rpc Subscribe(TopicHashMsg) returns (SubscribeResponse) {}
+  rpc Topics(google.protobuf.Empty) returns (TopicsResponse) {}
+  rpc Unsubscribe(TopicHashMsg) returns (SubscribeResponse) {}
+}
+
+message PeerIdMsg {
+  // Serialized PeerId
+  bytes peer_id = 1;
+}
+
+message TopicHashMsg {
+  // Serialized topic hash
+  string topic_hash = 1;
+}
+
+message PublishRequest {
+  // Serialized topic hash
+  string topic_hash = 1;
+  // Bytes of data to publish
+  bytes data = 2;
+}
+
+message PublishResponse {
+  // Serialized message id
+  bytes message_id = 1;
+}
+
+message SubscribeResponse {
+  bool was_subscribed = 1;
+}
+
+message AllPeersResponse {
+  repeated PeerAndTopics all = 1;
+}
+
+message PeerAndTopics {
+  bytes peer_id = 1;
+  repeated string topics = 2;
+}
+
+message PeersResponse {
+  // List of PeerIds
+  repeated bytes peers = 1;
+}
+
+message TopicsResponse {
+  // List of topics
+  repeated string topics = 1;
+}
+
