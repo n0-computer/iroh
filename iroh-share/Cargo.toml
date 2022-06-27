@@ -1,0 +1,18 @@
+[package]
+name = "iroh-share"
+version = "0.1.0"
+edition = "2021"
+authors = ["Friedel Ziegelmayer <me@dignifiedquire.com>"]
+license = "Apache-2.0/MIT"
+repository = "https://github.com/n0-computer/iroh"
+description = "Sharing files with iroh"
+
+[dependencies]
+iroh-p2p = { path = "../iroh-p2p" }
+
+[dev-dependencies]
+tokio = { version = "1" }
+
+[features]
+default = []
+
