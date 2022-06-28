@@ -45,11 +45,7 @@ Not yet implemented.",
 Not yet implemented.",
         hide = true
     )]
-    Rm {
-        cids: Vec<String>,
-        #[clap(short, long)]
-        force: bool,
-    },
+    Rm { cid: Cid },
     #[clap(hide = true)]
     Has { cid: Cid },
 }
@@ -68,7 +64,7 @@ pub struct Dag {
 #[derive(Subcommand, Debug, Clone)]
 pub enum DagCommands {
     #[clap(
-        about = "Streams the selected DAG as a .car stream on stdout.
+        about = "Streams the selected DAG on stdout.
 Not yet implemented.",
         hide = true
     )]
@@ -76,6 +72,8 @@ Not yet implemented.",
         root: Cid,
         #[clap(short, long)]
         progress: bool,
+        #[clap(short, long, default_value = "car")]
+        output_codec: String,
     },
     #[clap(
         about = "Get a DAG node from IPFS.
@@ -84,11 +82,11 @@ Not yet implemented.",
     )]
     Get {
         cid: Cid,
-        #[clap(short, long = "output-codec")]
+        #[clap(short, long = "output-codec", default_value = "car")]
         output_codec: String,
     },
     #[clap(
-        about = "Import the contents of .car files.
+        about = "Import contents.
 Not yet implemented.",
         hide = true
     )]
@@ -96,6 +94,8 @@ Not yet implemented.",
         path: PathBuf,
         #[clap(short, long = "pin-roots")]
         pin_roots: bool,
+        #[clap(short, long = "input-codec", default_value = "car")]
+        input_codec: String,
     },
     #[clap(
         about = "Add a DAG node to IPFS.
@@ -117,27 +117,32 @@ pub async fn run_command(rpc: Client, cmd: Store) -> Result<()> {
             let v = rpc.store.version().await?;
             println!("v{}", v);
         }
-        StoreCommands::Block(block) => {
-            match block.command {
-                BlockCommands::Get { cid } => {
-                    let b = rpc.store.get(cid).await?;
-                    println!("{:?}\n", b);
-                }
-                BlockCommands::Put { path } => {
-                    todo!("`block put` command not yet implemented - path {:?}", path);
-                }
-                BlockCommands::Rm { cids, force } => {
-                    todo!("`block rm` command not yet implemented\narguments:\n\tcid {:?}\n\tforce {:?}", cids, force);
-                }
-                BlockCommands::Has { cid } => {
-                    let b = rpc.store.has(cid).await?;
-                    println!("{}", b);
-                }
+        StoreCommands::Block(block) => match block.command {
+            BlockCommands::Get { cid } => {
+                let b = rpc.store.get(cid).await?;
+                println!("{:?}\n", b);
             }
-        }
+            BlockCommands::Put { path } => {
+                todo!("`block put` command not yet implemented - path {:?}", path);
+            }
+            BlockCommands::Rm { cid } => {
+                todo!(
+                    "`block rm` command not yet implemented\narguments:\n\tcid {:?}",
+                    cid
+                );
+            }
+            BlockCommands::Has { cid } => {
+                let b = rpc.store.has(cid).await?;
+                println!("{}", b);
+            }
+        },
         StoreCommands::Dag(dag) => match dag.command {
-            DagCommands::Export { root, progress } => {
-                todo!("`dag export` command not yet implemented\narguments:\n\troot {:?}\n\tprogress {:?}", root, progress);
+            DagCommands::Export {
+                root,
+                progress,
+                output_codec,
+            } => {
+                todo!("`dag export` command not yet implemented\narguments:\n\troot {:?}\n\tprogress {:?}\n\toutput codec {:?}", root, progress, output_codec);
             }
             DagCommands::Get { cid, output_codec } => {
                 todo!("`dag get` command not yet implemented\narguments:\n\tcid {:?}\n\toutput_codec {:?}", cid, output_codec);
@@ -148,8 +153,12 @@ pub async fn run_command(rpc: Client, cmd: Store) -> Result<()> {
                     path
                 );
             }
-            DagCommands::Import { path, pin_roots } => {
-                todo!("`dag import` command not yet implemented\narguments:\n\tpath {:?}\n\tpin_roots {:?}", path, pin_roots);
+            DagCommands::Import {
+                path,
+                pin_roots,
+                input_codec,
+            } => {
+                todo!("`dag import` command not yet implemented\narguments:\n\tpath {:?}\n\tpin_roots {:?}\n\tinput_codec {:?}", path, pin_roots, input_codec);
             }
             DagCommands::Remove { cid } => {
                 todo!(

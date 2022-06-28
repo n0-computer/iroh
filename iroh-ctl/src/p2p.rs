@@ -1,7 +1,7 @@
 use anyhow::Error;
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::str::FromStr;
-use std::{collections::HashSet, io::Read};
 
 use anyhow::Result;
 use bytes::Bytes;
@@ -9,6 +9,7 @@ use cid::Cid;
 use clap::{Args, Subcommand};
 use iroh_rpc_client::Client;
 use libp2p::{gossipsub::TopicHash, Multiaddr, PeerId};
+use tokio::{fs::File, io::stdin, io::AsyncReadExt};
 
 #[derive(Args, Debug, Clone)]
 #[clap(about = "Manage peer-2-peer networking.")]
@@ -216,7 +217,7 @@ pub enum GossipsubCommands {
     Publish {
         topic: String,
         #[clap(long, short)]
-        file: PathBuf,
+        file: Option<PathBuf>,
     },
     Subscribe {
         topic: String,
@@ -278,9 +279,13 @@ pub async fn run_command(rpc: Client, cmd: P2p) -> Result<()> {
             }
             DevCommands::Gossipsub(g) => match g.command {
                 GossipsubCommands::Publish { topic, file } => {
-                    let mut f = std::fs::File::open(file)?;
                     let mut v: Vec<u8> = Vec::new();
-                    f.read_to_end(&mut v)?;
+                    if let Some(file) = file {
+                        let mut f = File::open(file).await?;
+                        f.read_to_end(&mut v).await?;
+                    } else {
+                        stdin().read_to_end(&mut v).await?;
+                    }
                     let message_id = rpc
                         .p2p
                         .gossipsub_publish(TopicHash::from_raw(topic), Bytes::from(v))
