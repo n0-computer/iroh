@@ -18,11 +18,11 @@ use crate::{
     resolver::{ContentLoader, OutMetrics},
 };
 
-mod unixfs_pb {
+pub(crate) mod unixfs_pb {
     include!(concat!(env!("OUT_DIR"), "/unixfs_pb.rs"));
 }
 
-mod dag_pb {
+pub(crate) mod dag_pb {
     include!(concat!(env!("OUT_DIR"), "/merkledag_pb.rs"));
 }
 
@@ -74,7 +74,7 @@ pub struct LinkRef<'a> {
     pub tsize: Option<u64>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum UnixfsNode {
     Raw {
         data: Bytes,
@@ -101,6 +101,16 @@ impl UnixfsNode {
                 let _typ: DataType = inner.r#type.try_into()?;
 
                 Ok(UnixfsNode::Pb { outer, inner })
+            }
+        }
+    }
+
+    pub fn encode(&self) -> Result<Bytes> {
+        match self {
+            UnixfsNode::Raw { data } => Ok(data.clone()),
+            UnixfsNode::Pb { outer, .. } => {
+                let bytes = outer.encode_to_vec();
+                Ok(bytes.into())
             }
         }
     }

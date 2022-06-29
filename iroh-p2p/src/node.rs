@@ -224,7 +224,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                 num_established,
                 ..
             } => {
-                if u32::from(num_established) == 1 {
+                if num_established == 1.try_into().unwrap() {
                     self.emit_network_event(NetworkEvent::PeerConnected(peer_id))
                         .await;
                 }
@@ -235,7 +235,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                 num_established,
                 ..
             } => {
-                if u32::from(num_established) == 0 {
+                if num_established == 0 {
                     self.emit_network_event(NetworkEvent::PeerDisconnected(peer_id))
                         .await;
                 }

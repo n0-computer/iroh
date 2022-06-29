@@ -39,11 +39,17 @@ pub mod sender {
 
     impl Sender {
         pub async fn new(port: u16, rpc_port: u16) -> Result<Self> {
-            let mut config = config::Libp2pConfig::default();
-            config.listening_multiaddr = format!("/ip4/0.0.0.0/tcp/{port}").parse().unwrap();
-            config.mdns = true;
-            config.rpc_addr = format!("0.0.0.0:{rpc_port}").parse().unwrap();
-            config.rpc_client.p2p_addr = config.rpc_addr;
+            let rpc_addr = format!("0.0.0.0:{rpc_port}").parse().unwrap();
+            let config = config::Libp2pConfig {
+                listening_multiaddr: format!("/ip4/0.0.0.0/tcp/{port}").parse().unwrap(),
+                mdns: true,
+                rpc_addr,
+                rpc_client: iroh_rpc_client::Config {
+                    p2p_addr: rpc_addr,
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
 
             let rpc = Client::new(&config.rpc_client).await?;
 
@@ -195,11 +201,17 @@ pub mod receiver {
 
     impl Receiver {
         pub async fn new(port: u16, rpc_port: u16) -> Result<Self> {
-            let mut config = config::Libp2pConfig::default();
-            config.listening_multiaddr = format!("/ip4/0.0.0.0/tcp/{port}").parse().unwrap();
-            config.mdns = true;
-            config.rpc_addr = format!("0.0.0.0:{rpc_port}").parse().unwrap();
-            config.rpc_client.p2p_addr = config.rpc_addr;
+            let rpc_addr = format!("0.0.0.0:{rpc_port}").parse().unwrap();
+            let config = config::Libp2pConfig {
+                listening_multiaddr: format!("/ip4/0.0.0.0/tcp/{port}").parse().unwrap(),
+                mdns: true,
+                rpc_addr,
+                rpc_client: iroh_rpc_client::Config {
+                    p2p_addr: rpc_addr,
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
 
             let rpc = Client::new(&config.rpc_client).await?;
 
