@@ -127,8 +127,8 @@ impl P2pClient {
         let req = iroh_metrics::req::trace_tonic_req(DisconnectRequest {
             peer_id: peer_id.to_bytes(),
         });
-        let res = self.p2p.clone().peer_disconnect(req).await?.into_inner();
-        Ok(res)
+        self.p2p.clone().peer_disconnect(req).await?.into_inner();
+        Ok(())
     }
 
     #[tracing::instrument(skip(self))]

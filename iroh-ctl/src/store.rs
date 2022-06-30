@@ -16,7 +16,6 @@ pub enum StoreCommands {
     #[clap(about = "Version of the iroh store binary")]
     Version,
     Block(Block),
-    Dag(Dag),
     #[clap(hide = true)]
     GetLinks {
         cid: Cid,
@@ -50,67 +49,6 @@ Not yet implemented.",
     Has { cid: Cid },
 }
 
-#[derive(Args, Debug, Clone)]
-#[clap(
-    about = "Interact with IPLD DAG objects.
-Not yet implemented.",
-    hide = true
-)]
-pub struct Dag {
-    #[clap(subcommand)]
-    command: DagCommands,
-}
-
-#[derive(Subcommand, Debug, Clone)]
-pub enum DagCommands {
-    #[clap(
-        about = "Streams the selected DAG on stdout.
-Not yet implemented.",
-        hide = true
-    )]
-    Export {
-        root: Cid,
-        #[clap(short, long)]
-        progress: bool,
-        #[clap(short, long, default_value = "car")]
-        output_codec: String,
-    },
-    #[clap(
-        about = "Get a DAG node from IPFS.
-Not yet implemented.",
-        hide = true
-    )]
-    Get {
-        cid: Cid,
-        #[clap(short, long = "output-codec", default_value = "car")]
-        output_codec: String,
-    },
-    #[clap(
-        about = "Import contents.
-Not yet implemented.",
-        hide = true
-    )]
-    Import {
-        path: PathBuf,
-        #[clap(short, long = "pin-roots")]
-        pin_roots: bool,
-        #[clap(short, long = "input-codec", default_value = "car")]
-        input_codec: String,
-    },
-    #[clap(
-        about = "Add a DAG node to IPFS.
-Not yet implemented.",
-        hide = true
-    )]
-    Put { path: PathBuf },
-    #[clap(
-        about = "Remove DAG from IPFS node.
-Not yet implemented.",
-        hide = true
-    )]
-    Remove { cid: Cid },
-}
-
 pub async fn run_command(rpc: Client, cmd: Store) -> Result<()> {
     match cmd.command {
         StoreCommands::Version => {
@@ -134,37 +72,6 @@ pub async fn run_command(rpc: Client, cmd: Store) -> Result<()> {
             BlockCommands::Has { cid } => {
                 let b = rpc.store.has(cid).await?;
                 println!("{}", b);
-            }
-        },
-        StoreCommands::Dag(dag) => match dag.command {
-            DagCommands::Export {
-                root,
-                progress,
-                output_codec,
-            } => {
-                todo!("`dag export` command not yet implemented\narguments:\n\troot {:?}\n\tprogress {:?}\n\toutput codec {:?}", root, progress, output_codec);
-            }
-            DagCommands::Get { cid, output_codec } => {
-                todo!("`dag get` command not yet implemented\narguments:\n\tcid {:?}\n\toutput_codec {:?}", cid, output_codec);
-            }
-            DagCommands::Put { path } => {
-                todo!(
-                    "`dag put` command not yet implemented\narguments:\n\tpath {:?}",
-                    path
-                );
-            }
-            DagCommands::Import {
-                path,
-                pin_roots,
-                input_codec,
-            } => {
-                todo!("`dag import` command not yet implemented\narguments:\n\tpath {:?}\n\tpin_roots {:?}\n\tinput_codec {:?}", path, pin_roots, input_codec);
-            }
-            DagCommands::Remove { cid } => {
-                todo!(
-                    "`dag remove` command not yet implemented\narguments:\n\tcid {:?}",
-                    cid
-                );
             }
         },
         StoreCommands::GetLinks { cid } => {
