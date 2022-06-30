@@ -1,12 +1,16 @@
+use std::pin::Pin;
+
 use crate::{
+    chunker::{self, Chunker},
     codecs::Codec,
     unixfs::{dag_pb, unixfs_pb, DataType, UnixfsNode},
 };
-use anyhow::{anyhow, ensure, Result};
-use bytes::{Bytes, BytesMut};
+use anyhow::{anyhow, Result};
+use bytes::Bytes;
 use cid::{multihash::MultihashDigest, Cid};
+use futures::{Stream, StreamExt};
 use prost::Message;
-use tokio::io::AsyncReadExt;
+use tokio::io::AsyncRead;
 
 pub struct DirectoryBuilder {
     name: Option<String>,
@@ -34,10 +38,11 @@ impl DirectoryBuilder {
     pub async fn build(self) -> Result<Directory> {
         let mut links = Vec::with_capacity(self.files.len());
         for file in self.files {
-            let (cid, bytes) = file.encode_with_cid()?;
+            let name = file.name.clone();
+            let (cid, bytes) = file.encode_root().await?;
             links.push(dag_pb::PbLink {
                 hash: Some(cid.to_bytes()),
-                name: Some(file.name),
+                name: Some(name),
                 tsize: Some(bytes.len() as u64),
             });
         }
@@ -76,52 +81,105 @@ impl Directory {
 
 pub struct FileBuilder {
     name: Option<String>,
-    content: Option<FileContent>,
-}
-
-enum FileContent {
-    Bytes(Bytes),
-    Reader(Box<dyn tokio::io::AsyncRead + Unpin>, usize),
-}
-
-impl FileContent {
-    pub async fn into_bytes(self) -> Result<Bytes> {
-        match self {
-            FileContent::Bytes(v) => Ok(v),
-            FileContent::Reader(mut r, l) => {
-                let mut bytes = BytesMut::with_capacity(l);
-                r.read_exact(&mut bytes).await?;
-                Ok(bytes.freeze())
-            }
-        }
-    }
-
-    pub fn len(&self) -> usize {
-        match self {
-            FileContent::Bytes(v) => v.len(),
-            FileContent::Reader(_, len) => *len,
-        }
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
+    content: Option<Pin<Box<dyn AsyncRead>>>,
+    chunker: Chunker,
 }
 
 pub struct File {
     name: String,
-    node: UnixfsNode,
+    nodes: Pin<Box<dyn Stream<Item = Result<UnixfsNode>>>>,
+}
+
+pub enum EncodedFile {
+    Raw(Bytes),
+    Chunked { root: Bytes, leaves: Vec<Bytes> },
+}
+
+impl EncodedFile {
+    pub fn root(&self) -> &Bytes {
+        match self {
+            EncodedFile::Raw(r) => r,
+            EncodedFile::Chunked { root, .. } => root,
+        }
+    }
+
+    pub fn root_cid(&self) -> Cid {
+        let root = self.root();
+        let hash = cid::multihash::Code::Sha2_256.digest(root);
+        let codec = match self {
+            EncodedFile::Raw(_) => Codec::Raw,
+            EncodedFile::Chunked { .. } => Codec::Sha2256,
+        };
+
+        Cid::new_v1(codec as _, hash)
+    }
+
+    pub fn leave_cids(&self) -> Option<Vec<Cid>> {
+        match self {
+            EncodedFile::Raw(_) => None,
+            EncodedFile::Chunked { leaves, .. } => {
+                let cids = leaves
+                    .iter()
+                    .map(|l| Cid::new_v1(Codec::Raw as _, cid::multihash::Code::Sha2_256.digest(l)))
+                    .collect();
+                Some(cids)
+            }
+        }
+    }
 }
 
 impl File {
-    pub fn encode(&self) -> Result<Bytes> {
-        self.node.encode()
+    pub async fn encode_root(self) -> Result<(Cid, Bytes)> {
+        let mut current = None;
+        let parts = self.encode();
+        tokio::pin!(parts);
+
+        while let Some(part) = parts.next().await {
+            current = Some(part);
+        }
+
+        current.expect("must not be empty")
     }
 
-    pub fn encode_with_cid(&self) -> Result<(Cid, Bytes)> {
-        let bytes = self.node.encode()?;
-        let hash = cid::multihash::Code::Sha2_256.digest(&bytes);
-        Ok((Cid::new_v1(Codec::Raw as _, hash), bytes))
+    pub fn encode(self) -> impl Stream<Item = Result<(Cid, Bytes)>> {
+        async_stream::try_stream! {
+            let mut cids = Vec::new();
+            let nodes = self.nodes;
+            tokio::pin!(nodes);
+
+            while let Some(node) = nodes.next().await {
+                let node = node?;
+                let bytes = node.encode()?;
+                let cid = Cid::new_v1(Codec::Raw as _, cid::multihash::Code::Sha2_256.digest(&bytes));
+                cids.push((cid, bytes.len()));
+                yield (cid, bytes);
+            }
+
+            if cids.len() > 1  {
+                // yield root as last element, as we now have all links
+                let links = cids.into_iter().map(|(cid, len)| {
+                    dag_pb::PbLink {
+                        hash: Some(cid.to_bytes()),
+                        name: Some("".into()),
+                        tsize: Some(len as u64),
+                    }
+                }).collect();
+
+                let inner = unixfs_pb::Data {
+                    r#type: DataType::File as i32,
+                    ..Default::default()
+                };
+                let data = inner.encode_to_vec().into();
+                let outer = dag_pb::PbNode {
+                    links,
+                    data: Some(data),
+                };
+                let node = UnixfsNode::Pb { outer, inner };
+                let bytes = node.encode()?;
+                let cid = Cid::new_v1(Codec::Sha2256 as _, cid::multihash::Code::Sha2_256.digest(&bytes));
+                yield (cid, bytes)
+            }
+        }
     }
 }
 
@@ -130,6 +188,7 @@ impl FileBuilder {
         Self {
             name: None,
             content: None,
+            chunker: chunker::Chunker::fixed_size(),
         }
     }
 
@@ -139,16 +198,13 @@ impl FileBuilder {
     }
 
     pub fn content_bytes<B: Into<Bytes>>(&mut self, content: B) -> &mut Self {
-        self.content = Some(FileContent::Bytes(content.into()));
+        let bytes = content.into();
+        self.content = Some(Box::pin(std::io::Cursor::new(bytes)));
         self
     }
 
-    pub fn content_reader<T: tokio::io::AsyncRead + Unpin + 'static>(
-        &mut self,
-        content: T,
-        size: usize,
-    ) -> &mut Self {
-        self.content = Some(FileContent::Reader(Box::new(content), size));
+    pub fn content_reader<T: tokio::io::AsyncRead + 'static>(&mut self, content: T) -> &mut Self {
+        self.content = Some(Box::pin(content));
         self
     }
 
@@ -156,15 +212,19 @@ impl FileBuilder {
         // encodes files as raw
 
         let name = self.name.ok_or_else(|| anyhow!("missing name"))?;
-        let content = self.content.ok_or_else(|| anyhow!("missing content"))?;
+        let reader = self.content.ok_or_else(|| anyhow!("missing content"))?;
 
-        // TODO: handle large content
-        ensure!(content.len() < 1024 * 1024 * 1024, "file too large");
+        let nodes = self.chunker.chunks(reader).map(|chunk| match chunk {
+            Ok(chunk) => Ok(UnixfsNode::Raw {
+                data: chunk.freeze(),
+            }),
+            Err(err) => Err(err.into()),
+        });
 
-        let data = content.into_bytes().await?;
-        let node = UnixfsNode::Raw { data };
-
-        Ok(File { name, node })
+        Ok(File {
+            name,
+            nodes: Box::pin(nodes),
+        })
     }
 }
 
@@ -172,6 +232,7 @@ impl FileBuilder {
 mod tests {
     use super::*;
     use anyhow::Result;
+    use futures::TryStreamExt;
 
     #[tokio::test]
     async fn test_builder_basics() -> Result<()> {
@@ -183,13 +244,25 @@ mod tests {
         let mut bar = FileBuilder::new();
         bar.name("bar.txt").content_bytes(b"bar".to_vec());
         let bar = bar.build().await?;
-        let (bar_cid, _) = bar.encode_with_cid()?;
+        let bar_encoded: Vec<_> = {
+            let mut bar = FileBuilder::new();
+            bar.name("bar.txt").content_bytes(b"bar".to_vec());
+            let bar = bar.build().await?;
+            bar.encode().try_collect().await?
+        };
+        assert_eq!(bar_encoded.len(), 1);
 
         // Add a file
         let mut baz = FileBuilder::new();
         baz.name("baz.txt").content_bytes(b"baz".to_vec());
         let baz = baz.build().await?;
-        let (baz_cid, _) = baz.encode_with_cid()?;
+        let baz_encoded: Vec<_> = {
+            let mut baz = FileBuilder::new();
+            baz.name("baz.txt").content_bytes(b"baz".to_vec());
+            let baz = baz.build().await?;
+            baz.encode().try_collect().await?
+        };
+        assert_eq!(baz_encoded.len(), 1);
 
         dir.add_file(bar).add_file(baz);
 
@@ -201,14 +274,121 @@ mod tests {
 
         let links = decoded_dir.links().collect::<Result<Vec<_>>>().unwrap();
         assert_eq!(links[0].name.unwrap(), "bar.txt");
-        assert_eq!(links[0].cid, bar_cid);
+        assert_eq!(links[0].cid, bar_encoded[0].0);
         assert_eq!(links[1].name.unwrap(), "baz.txt");
-        assert_eq!(links[1].cid, baz_cid);
+        assert_eq!(links[1].cid, baz_encoded[0].0);
 
+        // TODO: check content
         // TODO: add nested directory
 
         Ok(())
     }
 
-    // TODO: large files + stream
+    #[tokio::test]
+    async fn test_builder_stream_small() -> Result<()> {
+        // Create a directory
+        let mut dir = DirectoryBuilder::new();
+        dir.name("foo");
+
+        // Add a file
+        let mut bar = FileBuilder::new();
+        let bar_reader = std::io::Cursor::new(b"bar");
+        bar.name("bar.txt").content_reader(bar_reader);
+        let bar = bar.build().await?;
+        let bar_encoded: Vec<_> = {
+            let mut bar = FileBuilder::new();
+            let bar_reader = std::io::Cursor::new(b"bar");
+            bar.name("bar.txt").content_reader(bar_reader);
+            let bar = bar.build().await?;
+            bar.encode().try_collect().await?
+        };
+        assert_eq!(bar_encoded.len(), 1);
+
+        // Add a file
+        let mut baz = FileBuilder::new();
+        let baz_reader = std::io::Cursor::new(b"bazz");
+        baz.name("baz.txt").content_reader(baz_reader);
+        let baz = baz.build().await?;
+        let baz_encoded: Vec<_> = {
+            let mut baz = FileBuilder::new();
+            let baz_reader = std::io::Cursor::new(b"bazz");
+            baz.name("baz.txt").content_reader(baz_reader);
+            let baz = baz.build().await?;
+            baz.encode().try_collect().await?
+        };
+        assert_eq!(baz_encoded.len(), 1);
+
+        dir.add_file(bar).add_file(baz);
+
+        let dir = dir.build().await?;
+
+        let (cid_dir, dir_encoded) = dir.encode_with_cid()?;
+        let decoded_dir = UnixfsNode::decode(&cid_dir, dir_encoded)?;
+        assert_eq!(dir.node, decoded_dir);
+
+        let links = decoded_dir.links().collect::<Result<Vec<_>>>().unwrap();
+        assert_eq!(links[0].name.unwrap(), "bar.txt");
+        assert_eq!(links[0].cid, bar_encoded[0].0);
+        assert_eq!(links[1].name.unwrap(), "baz.txt");
+        assert_eq!(links[1].cid, baz_encoded[0].0);
+
+        // TODO: check content
+        // TODO: add nested directory
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_builder_stream_large() -> Result<()> {
+        // Create a directory
+        let mut dir = DirectoryBuilder::new();
+        dir.name("foo");
+
+        // Add a file
+        let mut bar = FileBuilder::new();
+        let bar_reader = std::io::Cursor::new(vec![1u8; 1024 * 1024]);
+        bar.name("bar.txt").content_reader(bar_reader);
+        let bar = bar.build().await?;
+        let bar_encoded: Vec<_> = {
+            let mut bar = FileBuilder::new();
+            let bar_reader = std::io::Cursor::new(vec![1u8; 1024 * 1024]);
+            bar.name("bar.txt").content_reader(bar_reader);
+            let bar = bar.build().await?;
+            bar.encode().try_collect().await?
+        };
+        assert_eq!(bar_encoded.len(), 5);
+
+        // Add a file
+        let mut baz = FileBuilder::new();
+        let baz_reader = std::io::Cursor::new(vec![2u8; 1024 * 1024 * 2]);
+        baz.name("baz.txt").content_reader(baz_reader);
+        let baz = baz.build().await?;
+        let baz_encoded: Vec<_> = {
+            let mut baz = FileBuilder::new();
+            let baz_reader = std::io::Cursor::new(vec![2u8; 1024 * 1024 * 2]);
+            baz.name("baz.txt").content_reader(baz_reader);
+            let baz = baz.build().await?;
+            baz.encode().try_collect().await?
+        };
+        assert_eq!(baz_encoded.len(), 9);
+
+        dir.add_file(bar).add_file(baz);
+
+        let dir = dir.build().await?;
+
+        let (cid_dir, dir_encoded) = dir.encode_with_cid()?;
+        let decoded_dir = UnixfsNode::decode(&cid_dir, dir_encoded)?;
+        assert_eq!(dir.node, decoded_dir);
+
+        let links = decoded_dir.links().collect::<Result<Vec<_>>>().unwrap();
+        assert_eq!(links[0].name.unwrap(), "bar.txt");
+        assert_eq!(links[0].cid, bar_encoded[4].0);
+        assert_eq!(links[1].name.unwrap(), "baz.txt");
+        assert_eq!(links[1].cid, baz_encoded[8].0);
+
+        // TODO: check content
+        // TODO: add nested directory
+
+        Ok(())
+    }
 }
