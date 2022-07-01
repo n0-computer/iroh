@@ -2,7 +2,12 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
-use iroh_ctl::metrics;
+use iroh_ctl::{
+    gateway::{run_command as run_gateway_command, Gateway},
+    metrics,
+    p2p::{run_command as run_p2p_command, P2p},
+    store::{run_command as run_store_command, Store},
+};
 use iroh_rpc_client::Client;
 use iroh_util::{iroh_home_path, make_config};
 use prometheus_client::registry::Registry;
@@ -13,7 +18,7 @@ use iroh_ctl::{
 };
 
 #[derive(Parser, Debug, Clone)]
-#[clap(author, version, about, long_about = None, propagate_version = true)]
+#[clap(version, about, long_about = None, propagate_version = true)]
 struct Cli {
     #[clap(long)]
     cfg: Option<PathBuf>,
@@ -33,12 +38,17 @@ impl Cli {
 
 #[derive(Subcommand, Debug, Clone)]
 enum Commands {
-    /// status checks the health of the differen processes
+    /// status checks the health of the different processes
+    #[clap(about = "Check the health of the different iroh processes.")]
     Status {
         #[clap(short, long)]
         /// when true, updates the status table whenever a change in a process's status occurs
         watch: bool,
     },
+    Version,
+    P2p(P2p),
+    Store(Store),
+    Gateway(Gateway),
 }
 
 #[tokio::main(flavor = "multi_thread")]
@@ -76,6 +86,12 @@ async fn main() -> anyhow::Result<()> {
         Commands::Status { watch } => {
             crate::status::status(client, watch).await?;
         }
+        Commands::Version => {
+            println!("v{}", env!("CARGO_PKG_VERSION"));
+        }
+        Commands::P2p(p2p) => run_p2p_command(client, p2p).await?,
+        Commands::Store(store) => run_store_command(client, store).await?,
+        Commands::Gateway(gateway) => run_gateway_command(client, gateway).await?,
     };
 
     metrics_handle.shutdown();

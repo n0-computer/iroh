@@ -2,6 +2,7 @@ use std::net::SocketAddr;
 
 use anyhow::Result;
 use futures::Stream;
+use iroh_rpc_types::gateway;
 use tonic::transport::{Channel, Endpoint};
 use tonic_health::proto::health_client::HealthClient;
 
@@ -17,6 +18,7 @@ pub(crate) const NAME: &str = "gateway";
 #[derive(Debug, Clone)]
 pub struct GatewayClient {
     health: HealthClient<Channel>,
+    gateway: gateway::gateway_client::GatewayClient<Channel>,
 }
 
 impl GatewayClient {
@@ -25,11 +27,20 @@ impl GatewayClient {
             .keep_alive_while_idle(true)
             .connect_lazy();
 
-        let health_client = HealthClient::new(conn);
+        let health_client = HealthClient::new(conn.clone());
+        let gateway_client = gateway::gateway_client::GatewayClient::new(conn);
 
         Ok(GatewayClient {
             health: health_client,
+            gateway: gateway_client,
         })
+    }
+
+    #[tracing::instrument(skip(self))]
+    pub async fn version(&self) -> Result<String> {
+        let req = iroh_metrics::req::trace_tonic_req(());
+        let res = self.gateway.clone().version(req).await?;
+        Ok(res.into_inner().version)
     }
 
     #[tracing::instrument(skip(self))]

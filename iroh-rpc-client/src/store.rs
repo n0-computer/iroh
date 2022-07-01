@@ -39,6 +39,13 @@ impl StoreClient {
         })
     }
 
+    #[tracing::instrument(skip(self))]
+    pub async fn version(&self) -> Result<String> {
+        let req = iroh_metrics::req::trace_tonic_req(());
+        let res = self.store.clone().version(req).await?;
+        Ok(res.into_inner().version)
+    }
+
     #[tracing::instrument(skip(self, blob))]
     pub async fn put(&self, cid: Cid, blob: Bytes, links: Vec<Cid>) -> Result<()> {
         let req = iroh_metrics::req::trace_tonic_req(PutRequest {

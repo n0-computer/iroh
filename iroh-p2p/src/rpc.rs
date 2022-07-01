@@ -19,8 +19,8 @@ use tonic::{transport::Server as TonicServer, Request, Response, Status};
 use tracing::{trace, warn};
 
 use iroh_bitswap::{Block, QueryError};
-use iroh_rpc_types::p2p::gossipsub_server;
 use iroh_rpc_types::p2p::p2p_server;
+use iroh_rpc_types::p2p::{gossipsub_server, VersionResponse};
 use iroh_rpc_types::p2p::{
     AllPeersResponse, BitswapRequest, BitswapResponse, ConnectRequest, ConnectResponse,
     DisconnectRequest, GetListeningAddrsResponse, GetPeersResponse, Key as ProviderKey, Multiaddrs,
@@ -34,6 +34,15 @@ struct P2p {
 
 #[tonic::async_trait]
 impl p2p_server::P2p for P2p {
+    #[tracing::instrument(skip(self))]
+    async fn version(
+        &self,
+        _request: Request<()>,
+    ) -> Result<Response<VersionResponse>, tonic::Status> {
+        let version = env!("CARGO_PKG_VERSION").to_string();
+        Ok(Response::new(VersionResponse { version }))
+    }
+
     // TODO: expand to handle multiple cids at once. Probably not a tough fix, just want to push
     // forward right now
     #[tracing::instrument(skip(self, request))]

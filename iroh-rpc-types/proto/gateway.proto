@@ -2,4 +2,12 @@ syntax = "proto3";
 
 package gateway;
 
-service Gateway {}
+import "google/protobuf/empty.proto";
+
+service Gateway {
+  rpc Version(google.protobuf.Empty) returns (VersionResponse) {}
+}
+
+message VersionResponse {
+  string version = 1;
+}
