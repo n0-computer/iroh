@@ -139,9 +139,11 @@ pub struct GatewayResponse {
 impl IntoResponse for GatewayResponse {
     fn into_response(mut self) -> Response {
         if self.status_code == StatusCode::SEE_OTHER {
-            let path = self.headers.remove(LOCATION).unwrap();
-            let path = path.to_str().unwrap();
-            return Redirect::to(path).into_response();
+            if let Some(ref path) = self.headers.remove(LOCATION) {
+                if let Ok(path) = path.to_str() {
+                    return Redirect::to(path).into_response();
+                }
+            }
         }
         let mut rb = Response::builder().status(self.status_code);
         self.headers.insert(
