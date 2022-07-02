@@ -70,6 +70,7 @@ pub struct GetParams {
     force_dir: Option<bool>,
     /// uri query parameter for handling navigator.registerProtocolHandler Web API requests
     uri: Option<String>,
+    recursive: Option<bool>,
 }
 
 impl GetParams {
@@ -197,6 +198,7 @@ async fn get_handler(
 
     let query_file_name = query_params.filename.unwrap_or_default();
     let download = query_params.download.unwrap_or_default();
+    let recursive = query_params.recursive.unwrap_or_default();
 
     let mut headers = HeaderMap::new();
 
@@ -223,10 +225,14 @@ async fn get_handler(
         query_params: query_params_copy,
     };
 
-    match req.format {
-        ResponseFormat::Raw => serve_raw(&req, state, headers, start_time).await,
-        ResponseFormat::Car => serve_car(&req, state, headers, start_time).await,
-        ResponseFormat::Fs(_) => serve_fs(&req, state, headers, start_time).await,
+    if recursive {
+        serve_car_recursive(&req, state, headers, start_time).await
+    } else {
+        match req.format {
+            ResponseFormat::Raw => serve_raw(&req, state, headers, start_time).await,
+            ResponseFormat::Car => serve_car(&req, state, headers, start_time).await,
+            ResponseFormat::Fs(_) => serve_fs(&req, state, headers, start_time).await,
+        }
     }
 }
 
@@ -383,6 +389,41 @@ async fn serve_car(
     set_etag_headers(&mut headers, etag);
     // todo(arqu): check if etag matches for root cid
     add_ipfs_roots_headers(&mut headers, metadata);
+    response(StatusCode::OK, body, headers)
+}
+
+#[tracing::instrument()]
+async fn serve_car_recursive(
+    req: &Request,
+    state: Arc<State>,
+    mut headers: HeaderMap,
+    start_time: std::time::Instant,
+) -> Result<GatewayResponse, GatewayError> {
+    // FIXME: actually package as car file
+
+    let body = state
+        .client
+        .clone()
+        .get_file_recursive(
+            req.resolved_path.clone(),
+            state.rpc_client.clone(),
+            start_time,
+            state.metrics.clone(),
+        )
+        .await
+        .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, &e, &state))?;
+
+    set_content_disposition_headers(
+        &mut headers,
+        format!("{}.car", req.cid).as_str(),
+        DISPOSITION_ATTACHMENT,
+    );
+
+    // todo(arqu): this should be root cid
+    let etag = format!("W/{}", get_etag(&req.cid, Some(req.format.clone())));
+    set_etag_headers(&mut headers, etag);
+    // todo(arqu): check if etag matches for root cid
+    // add_ipfs_roots_headers(&mut headers, metadata);
     response(StatusCode::OK, body, headers)
 }
 

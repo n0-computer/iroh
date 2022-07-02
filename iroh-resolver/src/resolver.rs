@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::fmt::{self, Display, Formatter};
 use std::pin::Pin;
 use std::str::FromStr;
@@ -10,6 +11,7 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use cid::multihash::{Code, MultihashDigest};
 use cid::Cid;
+use futures::Stream;
 use iroh_metrics::resolver::Metrics;
 use iroh_rpc_client::Client;
 use libipld::codec::{Decode, Encode};
@@ -160,6 +162,10 @@ impl Out {
         self.content.typ()
     }
 
+    pub fn links(&self) -> Result<Vec<Cid>> {
+        self.content.links()
+    }
+
     /// Returns an iterator over the content of this directory.
     /// Only if this is of type `unixfs` and a directory.
     pub fn unixfs_read_dir(&self) -> Option<impl Iterator<Item = Result<LinkRef<'_>>>> {
@@ -193,6 +199,20 @@ impl OutContent {
             OutContent::DagCbor(_, _) => OutType::DagCbor,
             OutContent::DagJson(_, _) => OutType::DagJson,
             OutContent::Raw(_, _) => OutType::Raw,
+        }
+    }
+
+    fn links(&self) -> Result<Vec<Cid>> {
+        match self {
+            OutContent::DagPb(ipld, _)
+            | OutContent::DagCbor(ipld, _)
+            | OutContent::DagJson(ipld, _)
+            | OutContent::Raw(ipld, _) => {
+                let mut links = Vec::new();
+                ipld.references(&mut links);
+                Ok(links)
+            }
+            OutContent::Unixfs(node) => node.links().map(|r| r.map(|r| r.cid)).collect(),
         }
     }
 }
@@ -335,7 +355,7 @@ pub struct Resolver<T: ContentLoader> {
 }
 
 #[async_trait]
-pub trait ContentLoader: Sync + Send + std::fmt::Debug + Clone {
+pub trait ContentLoader: Sync + Send + std::fmt::Debug + Clone + 'static {
     /// Loads the actual content of a given cid.
     async fn load_cid(&self, cid: &Cid) -> Result<LoadedCid>;
 }
@@ -423,6 +443,33 @@ impl<T: ContentLoader> Resolver<T> {
     pub fn new(loader: T, registry: &mut Registry) -> Self {
         let metrics = Metrics::new(registry);
         Resolver { loader, metrics }
+    }
+
+    #[tracing::instrument(skip(self))]
+    pub fn resolve_recursive(&self, root: Path) -> impl Stream<Item = Result<Out>> {
+        let mut cids = VecDeque::new();
+        let s = self.clone();
+        cids.push_back(tokio::spawn(async move { s.resolve(root).await }));
+        let this = self.clone();
+        async_stream::try_stream! {
+            loop {
+                if let Some(current) = cids.pop_front() {
+                    let current = current.await??;
+                    let links = current.links()?;
+                    for link in links {
+                        // TOOD: limit
+                        let s = this.clone();
+                        cids.push_back(tokio::spawn(async move {
+                            s.resolve(Path::from_cid(link)).await
+                        }));
+                    }
+                    yield current;
+                } else {
+                    // no links left to resolve
+                    break;
+                }
+            }
+        }
     }
 
     /// Resolves through a given path, returning the [`Cid`] and raw bytes of the final leaf.
@@ -807,6 +854,7 @@ mod tests {
 
     use super::*;
     use cid::multihash::{Code, MultihashDigest};
+    use futures::TryStreamExt;
     use libipld::{codec::Encode, Ipld, IpldCodec};
     use tokio::io::AsyncReadExt;
 
@@ -1176,6 +1224,82 @@ mod tests {
                 panic!("invalid result: {:?}", ipld_bar_txt);
             }
         }
+    }
+
+    #[tokio::test]
+    async fn test_resolve_recursive_unixfs_basics_cid_v0() {
+        // Test content
+        // ------------
+        // QmaRGe7bVmVaLmxbrMiVNXqW4pRNNp3xq7hFtyRKA3mtJL foo/bar/bar.txt
+        //   contains: "world"
+        // QmZULkCELmmk5XNfCgTnCyFgAVxBRBXyDHGGMVoLFLiXEN foo/hello.txt
+        //   contains: "hello"
+        // QmcHTZfwWWYG2Gbv9wR6bWZBvAgpFV5BcDoLrC2XMCkggn foo/bar
+        // QmdkGfDx42RNdAZFALHn5hjHqUq7L9o6Ef4zLnFEu3Y4Go foo
+
+        let bar_txt_cid_str = "QmaRGe7bVmVaLmxbrMiVNXqW4pRNNp3xq7hFtyRKA3mtJL";
+        let bar_txt_block_bytes = load_fixture(bar_txt_cid_str).await;
+
+        let bar_cid_str = "QmcHTZfwWWYG2Gbv9wR6bWZBvAgpFV5BcDoLrC2XMCkggn";
+        let bar_block_bytes = load_fixture(bar_cid_str).await;
+
+        let hello_txt_cid_str = "QmZULkCELmmk5XNfCgTnCyFgAVxBRBXyDHGGMVoLFLiXEN";
+        let hello_txt_block_bytes = load_fixture(hello_txt_cid_str).await;
+
+        // read root
+        let root_cid_str = "QmdkGfDx42RNdAZFALHn5hjHqUq7L9o6Ef4zLnFEu3Y4Go";
+        let root_cid: Cid = root_cid_str.parse().unwrap();
+        let root_block_bytes = load_fixture(root_cid_str).await;
+        let root_block = UnixfsNode::decode(&root_cid, root_block_bytes.clone()).unwrap();
+
+        let links: Vec<_> = root_block.links().collect::<Result<_>>().unwrap();
+        assert_eq!(links.len(), 2);
+
+        assert_eq!(links[0].cid, bar_cid_str.parse().unwrap());
+        assert_eq!(links[0].name.unwrap(), "bar");
+
+        assert_eq!(links[1].cid, hello_txt_cid_str.parse().unwrap());
+        assert_eq!(links[1].name.unwrap(), "hello.txt");
+
+        let loader: HashMap<Cid, Bytes> = [
+            (root_cid, root_block_bytes.clone()),
+            (hello_txt_cid_str.parse().unwrap(), hello_txt_block_bytes),
+            (bar_cid_str.parse().unwrap(), bar_block_bytes),
+            (bar_txt_cid_str.parse().unwrap(), bar_txt_block_bytes),
+        ]
+        .into_iter()
+        .collect();
+        let loader = Arc::new(loader);
+        let resolver = Resolver::new(loader.clone(), &mut Registry::default());
+
+        let path = format!("/ipfs/{root_cid_str}");
+        let results: Vec<_> = resolver
+            .resolve_recursive(path.parse().unwrap())
+            .try_collect()
+            .await
+            .unwrap();
+        assert_eq!(results.len(), 4);
+
+        for result in &results {
+            assert_eq!(result.typ(), OutType::Unixfs);
+        }
+
+        assert_eq!(
+            results[0].metadata().path.to_string(),
+            format!("/ipfs/{root_cid_str}")
+        );
+        assert_eq!(
+            results[1].metadata().path.to_string(),
+            format!("/ipfs/{bar_cid_str}")
+        );
+        assert_eq!(
+            results[2].metadata().path.to_string(),
+            format!("/ipfs/{hello_txt_cid_str}")
+        );
+        assert_eq!(
+            results[3].metadata().path.to_string(),
+            format!("/ipfs/{bar_txt_cid_str}")
+        );
     }
 
     #[tokio::test]
