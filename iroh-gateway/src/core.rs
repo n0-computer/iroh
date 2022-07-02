@@ -150,7 +150,7 @@ impl Core {
     }
 }
 
-#[tracing::instrument()]
+#[tracing::instrument(skip(state))]
 async fn get_handler(
     Extension(state): Extension<Arc<State>>,
     Path(params): Path<HashMap<String, String>>,
@@ -469,9 +469,8 @@ async fn serve_fs_dir(
     start_time: std::time::Instant,
 ) -> Result<GatewayResponse, GatewayError> {
     let dir_list = std::str::from_utf8(&dir_list[..]).unwrap();
-    let mut dir_list_lines = dir_list.lines();
     let force_dir = req.query_params.force_dir.unwrap_or(false);
-    let has_index = dir_list_lines.any(|l| l.starts_with("index.html"));
+    let has_index = dir_list.lines().any(|l| l.starts_with("index.html"));
     if !force_dir && has_index {
         if !req.content_path.ends_with('/') {
             let redirect_path = format!(
@@ -496,7 +495,8 @@ async fn serve_fs_dir(
     if !root_path.ends_with('/') {
         root_path.push('/');
     }
-    let links = dir_list_lines
+    let links = dir_list
+        .lines()
         .map(|line| {
             let mut link = Map::new();
             link.insert("name".to_string(), Json::String(get_filename(line)));
