@@ -27,7 +27,7 @@ impl Client {
         }
     }
 
-    #[tracing::instrument(skip(rpc_client))]
+    #[tracing::instrument(skip(self, rpc_client, metrics))]
     pub async fn get_file(
         &self,
         path: iroh_resolver::resolver::Path,
