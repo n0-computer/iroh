@@ -318,7 +318,7 @@ mod tests {
     use libp2p::core::transport::Boxed;
     use libp2p::identity::Keypair;
     use libp2p::swarm::{SwarmBuilder, SwarmEvent};
-    use libp2p::tcp::TokioTcpConfig;
+    use libp2p::tcp::{GenTcpConfig, TokioTcpTransport};
     use libp2p::yamux::YamuxConfig;
     use libp2p::{noise, PeerId, Swarm, Transport};
     use tracing::trace;
@@ -340,8 +340,7 @@ mod tests {
         };
 
         let peer_id = local_key.public().to_peer_id();
-        let transport = TokioTcpConfig::new()
-            .nodelay(true)
+        let transport = TokioTcpTransport::new(GenTcpConfig::default().nodelay(true))
             .upgrade(Version::V1)
             .authenticate(auth_config)
             .multiplex(YamuxConfig::default())

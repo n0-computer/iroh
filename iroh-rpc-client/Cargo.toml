@@ -19,7 +19,7 @@ tonic-health = "0.6.0"
 prost = "0.10.3"
 anyhow = "1.0.57"
 bytes = "1.1.0"
-libp2p = "0.47"
+libp2p = "0.46"
 iroh-metrics = { path = "../iroh-metrics" }
 tracing = "0.1.34"
 toml = "0.5.9"
