@@ -10,17 +10,23 @@ description = "Sharing files with iroh"
 [dependencies]
 anyhow = "1.0.58"
 iroh-p2p = { path = "../iroh-p2p" }
+iroh-store = {path = "../iroh-store" }
+iroh-rpc-client = { path = "../iroh-rpc-client" }
+iroh-metrics = { path = "../iroh-metrics" }
+iroh-resolver = { path = "../iroh-resolver" }
 prometheus-client = "0.16.0"
 tracing = "0.1.34"
 tokio = { version = "1" }
-iroh-rpc-client = { path = "../iroh-rpc-client" }
 libp2p = "0.47"
 serde = { version = "1", features = ["derive"] }
 futures = "0.3.21"
 async-channel = "1.6.1"
+bytes = "1.1.0"
+cid = "0.8.5"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }
+tempfile = "3.3"
 
 [features]
 default = []

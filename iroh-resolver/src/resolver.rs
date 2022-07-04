@@ -328,7 +328,7 @@ pub enum Source {
     Store(&'static str),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Resolver<T: ContentLoader> {
     loader: T,
     metrics: Metrics,
@@ -344,13 +344,6 @@ pub trait ContentLoader: Sync + Send + std::fmt::Debug + Clone {
 impl<T: ContentLoader> ContentLoader for Arc<T> {
     async fn load_cid(&self, cid: &Cid) -> Result<LoadedCid> {
         self.as_ref().load_cid(cid).await
-    }
-}
-
-#[async_trait]
-impl<'a, T: ContentLoader> ContentLoader for &'a T {
-    async fn load_cid(&self, cid: &Cid) -> Result<LoadedCid> {
-        (*self).load_cid(cid).await
     }
 }
 
