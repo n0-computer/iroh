@@ -445,6 +445,10 @@ impl<T: ContentLoader> Resolver<T> {
         Resolver { loader, metrics }
     }
 
+    pub fn loader(&self) -> &T {
+        &self.loader
+    }
+
     #[tracing::instrument(skip(self))]
     pub fn resolve_recursive(&self, root: Path) -> impl Stream<Item = Result<Out>> {
         let mut cids = VecDeque::new();

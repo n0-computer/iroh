@@ -259,18 +259,25 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                 match e {
                     BitswapEvent::InboundRequest { request } => match request {
                         InboundRequest::Want { cid, sender, .. } => {
-                            if let Ok(Some(data)) = self.rpc_client.store.get(cid).await {
-                                trace!("Found data for: {}", cid);
-                                if let Err(e) =
-                                    self.swarm.behaviour_mut().send_block(&sender, cid, data)
-                                {
-                                    warn!(
-                                        "failed to send block for {} to {}: {:?}",
-                                        cid, sender, e
-                                    );
+                            info!("bitswap want {}", cid);
+                            match self.rpc_client.store.get(cid).await {
+                                Ok(Some(data)) => {
+                                    trace!("Found data for: {}", cid);
+                                    if let Err(e) =
+                                        self.swarm.behaviour_mut().send_block(&sender, cid, data)
+                                    {
+                                        warn!(
+                                            "failed to send block for {} to {}: {:?}",
+                                            cid, sender, e
+                                        );
+                                    }
                                 }
-                            } else {
-                                trace!("Don't have data for: {}", cid);
+                                Ok(None) => {
+                                    trace!("Don't have data for: {}", cid);
+                                }
+                                Err(e) => {
+                                    warn!("Failed to get data for: {}: {:?}", cid, e);
+                                }
                             }
                         }
                         InboundRequest::Cancel { .. } => {
