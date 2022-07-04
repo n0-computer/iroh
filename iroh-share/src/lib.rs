@@ -224,6 +224,7 @@ pub mod receiver {
     use anyhow::Result;
     use async_channel::{bounded, Receiver as ChannelReceiver};
     use cid::Cid;
+    use futures::StreamExt;
     use iroh_p2p::{config, Keychain, MemoryStorage, NetworkEvent, Node};
     use iroh_rpc_client::Client;
     use libp2p::gossipsub::{GossipsubMessage, MessageId, TopicHash};
@@ -327,10 +328,13 @@ pub mod receiver {
                             Ok(root) => {
                                 println!("R: got roto {:?}, from: {:?}", root, from);
                                 // TODO: resolve recursively
-                                let res = resolver
-                                    .resolve(iroh_resolver::resolver::Path::from_cid(root))
-                                    .await;
-                                s.send(res).await.unwrap();
+                                let results = resolver.resolve_recursive(
+                                    iroh_resolver::resolver::Path::from_cid(root),
+                                );
+                                tokio::pin!(results);
+                                while let Some(res) = results.next().await {
+                                    s.send(res).await.unwrap();
+                                }
                             }
                             Err(err) => {
                                 warn!("got unexpected message from {}: {:?}", from, err);
@@ -360,6 +364,7 @@ pub mod receiver {
 
     impl Transfer<'_> {
         pub async fn recv(&self) -> Result<Data> {
+            // TODO: load not just the root
             let res = self.data_receiver.recv().await??;
             // TODO: notification
             let mut reader = res.pretty(self.receiver.rpc.clone(), Default::default());
