@@ -132,10 +132,14 @@ pub mod sender {
             let (s, r) = oneshot();
 
             let root = {
+                // wrap in directory to preserve t
+                let mut root_dir = iroh_resolver::unixfs_builder::DirectoryBuilder::new();
                 let mut file = iroh_resolver::unixfs_builder::FileBuilder::new();
                 file.name(&name).content_bytes(data);
                 let file = file.build().await?;
-                let parts = file.encode();
+                root_dir.add_file(file);
+                let root_dir = root_dir.build().await?;
+                let parts = root_dir.encode();
                 tokio::pin!(parts);
                 let mut root_cid = None;
                 while let Some(part) = parts.next().await {
@@ -231,13 +235,13 @@ pub mod receiver {
     use std::collections::HashSet;
     use std::sync::Arc;
 
-    use anyhow::{bail, ensure, Result};
+    use anyhow::{anyhow, bail, ensure, Result};
     use async_channel::{bounded, Receiver as ChannelReceiver};
     use async_trait::async_trait;
     use cid::Cid;
     use futures::StreamExt;
     use iroh_p2p::{config, Keychain, MemoryStorage, NetworkEvent, Node};
-    use iroh_resolver::resolver::{ContentLoader, LoadedCid, Source, IROH_STORE};
+    use iroh_resolver::resolver::{ContentLoader, LoadedCid, Path, Source, IROH_STORE};
     use iroh_resolver::{parse_links, verify_hash};
     use iroh_rpc_client::Client;
     use libp2p::gossipsub::{GossipsubMessage, MessageId, TopicHash};
@@ -475,14 +479,27 @@ pub mod receiver {
             // TODO: load not just the root
             let res = self.data_receiver.recv().await??;
             // TODO: notification
-            let mut reader = res.pretty(self.receiver.rpc.clone(), Default::default());
+            // we expect unixfs
+            let files: Vec<_> = res
+                .unixfs_read_dir()
+                .ok_or_else(|| anyhow!("unexpected data format"))?
+                .collect::<Result<_>>()?;
+            ensure!(files.len() == 1, "expected only one file to be sent");
+            let file = &files[0];
+            let name = file.name.map(Into::into).unwrap_or_default();
+
+            // grab the actual file
+            let file_res = self
+                .receiver
+                .resolver
+                .resolve(Path::from_cid(file.cid))
+                .await?;
+
+            let mut reader = file_res.pretty(self.receiver.rpc.clone(), Default::default());
             let mut bytes = Vec::new();
             reader.read_to_end(&mut bytes).await?;
 
-            Ok(Data {
-                name: "".into(), // TODO,
-                bytes,
-            })
+            Ok(Data { name, bytes })
         }
     }
 
@@ -548,8 +565,7 @@ mod tests {
 
         let data = receiver_transfer.recv().await.context("r: recv")?;
         assert_eq!(data.bytes(), &bytes);
-        // TODO:
-        // assert_eq!(data.name(), "foo.jpg");
+        assert_eq!(data.name(), "foo.jpg");
 
         Ok(())
     }

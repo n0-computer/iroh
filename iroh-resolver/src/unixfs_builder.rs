@@ -36,46 +36,73 @@ impl DirectoryBuilder {
     }
 
     pub async fn build(self) -> Result<Directory> {
-        let mut links = Vec::with_capacity(self.files.len());
-        for file in self.files {
-            let name = file.name.clone();
-            let (cid, bytes) = file.encode_root().await?;
-            links.push(dag_pb::PbLink {
-                hash: Some(cid.to_bytes()),
-                name: Some(name),
-                tsize: Some(bytes.len() as u64),
-            });
-        }
-        let inner = unixfs_pb::Data {
-            r#type: DataType::Directory as i32,
-            ..Default::default()
-        };
-        let data = inner.encode_to_vec().into();
-        let outer = dag_pb::PbNode {
-            links,
-            data: Some(data),
-        };
+        let DirectoryBuilder { name, files } = self;
+        let name = name.unwrap_or_default();
 
-        let node = UnixfsNode::Pb { outer, inner };
-
-        Ok(Directory { node })
+        Ok(Directory { name, files })
     }
 }
 
-#[derive(Debug)]
 pub struct Directory {
-    node: UnixfsNode,
+    name: String,
+    files: Vec<File>,
 }
 
 impl Directory {
-    pub fn encode(&self) -> Result<Bytes> {
-        self.node.encode()
+    pub fn name(&self) -> &str {
+        &self.name
     }
 
-    pub fn encode_with_cid(&self) -> Result<(Cid, Bytes)> {
-        let bytes = self.node.encode()?;
-        let hash = cid::multihash::Code::Sha2_256.digest(&bytes);
-        Ok((Cid::new_v1(Codec::Sha2256 as _, hash), bytes))
+    pub async fn encode_root(self) -> Result<(Cid, Bytes)> {
+        let mut current = None;
+        let parts = self.encode();
+        tokio::pin!(parts);
+
+        while let Some(part) = parts.next().await {
+            current = Some(part);
+        }
+
+        current.expect("must not be empty")
+    }
+
+    pub fn encode(self) -> impl Stream<Item = Result<(Cid, Bytes)>> {
+        async_stream::try_stream! {
+            let mut links = Vec::new();
+            for file in self.files {
+                let name = file.name.clone();
+                let parts = file.encode();
+                tokio::pin!(parts);
+
+                let mut root = None;
+                while let Some(part) = parts.next().await {
+                    let (cid, bytes) = part?;
+                    root = Some((cid, bytes.clone()));
+                    yield (cid, bytes);
+                }
+                let (cid, bytes) = root.expect("file must not be empty");
+                links.push(dag_pb::PbLink {
+                    hash: Some(cid.to_bytes()),
+                    name: Some(name),
+                    tsize: Some(bytes.len() as u64),
+                });
+            }
+
+            // directory itself comes last
+            let inner = unixfs_pb::Data {
+                r#type: DataType::Directory as i32,
+                ..Default::default()
+            };
+            let data = inner.encode_to_vec().into();
+            let outer = dag_pb::PbNode {
+                links,
+                data: Some(data),
+            };
+
+            let node = UnixfsNode::Pb { outer, inner };
+            let bytes = node.encode()?;
+            let cid = Cid::new_v1(Codec::DagPb as _, cid::multihash::Code::Sha2_256.digest(&bytes));
+            yield (cid, bytes)
+        }
     }
 }
 
@@ -176,7 +203,7 @@ impl File {
                 };
                 let node = UnixfsNode::Pb { outer, inner };
                 let bytes = node.encode()?;
-                let cid = Cid::new_v1(Codec::Sha2256 as _, cid::multihash::Code::Sha2_256.digest(&bytes));
+                let cid = Cid::new_v1(Codec::DagPb as _, cid::multihash::Code::Sha2_256.digest(&bytes));
                 yield (cid, bytes)
             }
         }
@@ -268,9 +295,8 @@ mod tests {
 
         let dir = dir.build().await?;
 
-        let (cid_dir, dir_encoded) = dir.encode_with_cid()?;
+        let (cid_dir, dir_encoded) = dir.encode_root().await?;
         let decoded_dir = UnixfsNode::decode(&cid_dir, dir_encoded)?;
-        assert_eq!(dir.node, decoded_dir);
 
         let links = decoded_dir.links().collect::<Result<Vec<_>>>().unwrap();
         assert_eq!(links[0].name.unwrap(), "bar.txt");
@@ -322,9 +348,8 @@ mod tests {
 
         let dir = dir.build().await?;
 
-        let (cid_dir, dir_encoded) = dir.encode_with_cid()?;
+        let (cid_dir, dir_encoded) = dir.encode_root().await?;
         let decoded_dir = UnixfsNode::decode(&cid_dir, dir_encoded)?;
-        assert_eq!(dir.node, decoded_dir);
 
         let links = decoded_dir.links().collect::<Result<Vec<_>>>().unwrap();
         assert_eq!(links[0].name.unwrap(), "bar.txt");
@@ -376,9 +401,8 @@ mod tests {
 
         let dir = dir.build().await?;
 
-        let (cid_dir, dir_encoded) = dir.encode_with_cid()?;
+        let (cid_dir, dir_encoded) = dir.encode_root().await?;
         let decoded_dir = UnixfsNode::decode(&cid_dir, dir_encoded)?;
-        assert_eq!(dir.node, decoded_dir);
 
         let links = decoded_dir.links().collect::<Result<Vec<_>>>().unwrap();
         assert_eq!(links[0].name.unwrap(), "bar.txt");
