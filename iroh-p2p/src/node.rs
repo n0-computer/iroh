@@ -71,6 +71,7 @@ pub struct Node<KeyStorage: Storage> {
     net_receiver_in: Receiver<RpcMessage>,
     bitswap_queries: AHashMap<BitswapQueryId, OneShotSender<Result<Block, QueryError>>>,
     kad_queries: AHashMap<QueryKey, QueryChannel>,
+    dial_queries: AHashMap<PeerId, Vec<OneShotSender<bool>>>,
     network_events: Vec<Sender<NetworkEvent>>,
     metrics: Metrics,
     rpc_client: RpcClient,
@@ -119,6 +120,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
             net_receiver_in: network_receiver_in,
             bitswap_queries: Default::default(),
             kad_queries: Default::default(),
+            dial_queries: Default::default(),
             network_events: Vec::new(),
             metrics,
             rpc_client,
@@ -224,6 +226,12 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                 num_established,
                 ..
             } => {
+                if let Some(channels) = self.dial_queries.get_mut(&peer_id) {
+                    while let Some(channel) = channels.pop() {
+                        channel.send(true).ok();
+                    }
+                }
+
                 if num_established == 1.try_into().unwrap() {
                     self.emit_network_event(NetworkEvent::PeerConnected(peer_id))
                         .await;
@@ -238,6 +246,18 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                 if num_established == 0 {
                     self.emit_network_event(NetworkEvent::PeerDisconnected(peer_id))
                         .await;
+                }
+                Ok(())
+            }
+            SwarmEvent::OutgoingConnectionError { peer_id, error } => {
+                warn!("failed to dial: {:?}, {:?}", peer_id, error);
+
+                if let Some(peer_id) = peer_id {
+                    if let Some(channels) = self.dial_queries.get_mut(&peer_id) {
+                        while let Some(channel) = channels.pop() {
+                            channel.send(false).ok();
+                        }
+                    }
                 }
                 Ok(())
             }
@@ -537,7 +557,8 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                     .map_err(|_| anyhow!("Failed to get Libp2p peers"))?;
             }
             RpcMessage::NetConnect(response_channel, peer_id, mut addresses) => {
-                let mut success = false;
+                let channels = self.dial_queries.entry(peer_id).or_default();
+                channels.push(response_channel);
 
                 for multiaddr in addresses.iter_mut() {
                     self.swarm
@@ -547,15 +568,10 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                     multiaddr.push(Protocol::P2p(
                         Multihash::from_bytes(&peer_id.to_bytes()).unwrap(),
                     ));
-                    if Swarm::dial(&mut self.swarm, multiaddr.clone()).is_ok() {
-                        success = true;
-                        break;
+                    if let Err(e) = Swarm::dial(&mut self.swarm, multiaddr.clone()) {
+                        warn!("invalid dial options: {:?}", e);
                     }
                 }
-
-                response_channel
-                    .send(success)
-                    .map_err(|_| anyhow!("Failed to connect to a peer"))?;
             }
             RpcMessage::NetDisconnect(response_channel, _peer_id) => {
                 warn!("NetDisconnect API not yet implemented"); // TODO: implement NetDisconnect
