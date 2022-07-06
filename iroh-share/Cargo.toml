@@ -14,6 +14,7 @@ iroh-store = {path = "../iroh-store" }
 iroh-rpc-client = { path = "../iroh-rpc-client" }
 iroh-metrics = { path = "../iroh-metrics" }
 iroh-resolver = { path = "../iroh-resolver" }
+iroh-util = { path = "../iroh-util" }
 prometheus-client = "0.16.0"
 tracing = "0.1.34"
 tokio = { version = "1" }
@@ -25,10 +26,14 @@ bytes = "1.1.0"
 cid = "0.8.5"
 async-trait = "0.1.56"
 
-[dev-dependencies]
-tokio = { version = "1", features = ["full"] }
+clap = { version = "3.1.14", features = ["derive"] }
+bincode = "1.3.3"
+multibase = "0.9.1"
 tempfile = "3.3"
 tracing-subscriber = "0.3.14"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full"] }
 
 [features]
 default = []
