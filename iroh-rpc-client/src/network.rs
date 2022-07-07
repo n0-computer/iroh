@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 
-use anyhow::{Context, Result};
+use anyhow::{ensure, Context, Result};
 use bytes::Bytes;
 use cid::Cid;
 use futures::Stream;
@@ -112,13 +112,14 @@ impl P2pClient {
     }
 
     #[tracing::instrument(skip(self))]
-    pub async fn connect(&self, peer_id: PeerId, addrs: Vec<Multiaddr>) -> Result<bool> {
+    pub async fn connect(&self, peer_id: PeerId, addrs: Vec<Multiaddr>) -> Result<()> {
         let req = iroh_metrics::req::trace_tonic_req(ConnectRequest {
             peer_id: peer_id.to_bytes(),
             addrs: addrs.iter().map(|a| a.to_vec()).collect(),
         });
         let res = self.p2p.clone().peer_connect(req).await?.into_inner();
-        Ok(res.success)
+        ensure!(res.success, "dial failed");
+        Ok(())
     }
 
     #[tracing::instrument(skip(self))]

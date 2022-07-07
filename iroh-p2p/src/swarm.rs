@@ -7,6 +7,7 @@ use libp2p::{
         muxing::StreamMuxerBox,
         transport::{timeout::TransportTimeout, Boxed, OrTransport},
     },
+    dns,
     identity::Keypair,
     mplex, noise,
     swarm::{ConnectionLimits, SwarmBuilder},
@@ -35,8 +36,10 @@ async fn build_transport(
     .or_transport(transport);
 
     // TODO: configurable
-    let transport = TransportTimeout::new(transport, Duration::from_secs(5));
-    let transport = libp2p::dns::TokioDnsConfig::system(transport).unwrap();
+    let transport = TransportTimeout::new(transport, Duration::from_secs(10));
+    let dns_cfg = dns::ResolverConfig::cloudflare();
+    let dns_opts = dns::ResolverOpts::default();
+    let transport = dns::TokioDnsConfig::custom(transport, dns_cfg, dns_opts).unwrap();
 
     let auth_config = {
         let dh_keys = noise::Keypair::<noise::X25519Spec>::new()
@@ -57,6 +60,8 @@ async fn build_transport(
         core::upgrade::SelectUpgrade::new(yamux_config, mplex_config)
     };
 
+    // TODO: configurable
+    let connection_timeout = Duration::from_secs(30);
     if config.relay_client {
         let (relay_transport, relay_client) =
             libp2p::relay::v2::client::Client::new_transport_and_behaviour(
@@ -68,7 +73,7 @@ async fn build_transport(
             .upgrade(core::upgrade::Version::V1Lazy)
             .authenticate(auth_config)
             .multiplex(muxer_config)
-            .timeout(Duration::from_secs(20)) // TODO: configurable
+            .timeout(connection_timeout)
             .boxed();
 
         (transport, Some(relay_client))
@@ -77,7 +82,7 @@ async fn build_transport(
             .upgrade(core::upgrade::Version::V1Lazy)
             .authenticate(auth_config)
             .multiplex(muxer_config)
-            .timeout(Duration::from_secs(20)) // TODO: configurable
+            .timeout(connection_timeout)
             .boxed();
 
         (transport, None)

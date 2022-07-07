@@ -47,7 +47,7 @@ async fn main() -> Result<()> {
             let sender_dir = tempfile::tempdir().unwrap();
             let sender_db = sender_dir.path().join("db");
 
-            let port = 2223;
+            let port = 9990;
             let rpc_p2p_port = 5550;
             let rpc_store_port = 5560;
             let sender = Sender::new(port, rpc_p2p_port, rpc_store_port, &sender_db)

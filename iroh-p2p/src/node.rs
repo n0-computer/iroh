@@ -557,20 +557,18 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                     .send(peer_addresses)
                     .map_err(|_| anyhow!("Failed to get Libp2p peers"))?;
             }
-            RpcMessage::NetConnect(response_channel, peer_id, mut addresses) => {
+            RpcMessage::NetConnect(response_channel, peer_id, addresses) => {
                 let channels = self.dial_queries.entry(peer_id).or_default();
                 channels.push(response_channel);
 
-                for multiaddr in addresses.iter_mut() {
-                    self.swarm
-                        .behaviour_mut()
-                        .add_address(&peer_id, multiaddr.clone());
-
-                    multiaddr.push(Protocol::P2p(
-                        Multihash::from_bytes(&peer_id.to_bytes()).unwrap(),
-                    ));
-                    if let Err(e) = Swarm::dial(&mut self.swarm, multiaddr.clone()) {
-                        warn!("invalid dial options: {:?}", e);
+                let dial_opts = DialOpts::peer_id(peer_id)
+                    .addresses(addresses)
+                    .condition(libp2p::swarm::dial_opts::PeerCondition::Always)
+                    .build();
+                if let Err(e) = Swarm::dial(&mut self.swarm, dial_opts) {
+                    warn!("invalid dial options: {:?}", e);
+                    while let Some(channel) = channels.pop() {
+                        channel.send(false).ok();
                     }
                 }
             }
