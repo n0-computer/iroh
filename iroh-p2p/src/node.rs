@@ -537,11 +537,12 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                 }
             }
             RpcMessage::NetListeningAddrs(response_channel) => {
-                let listeners: Vec<_> = Swarm::listeners(&self.swarm).cloned().collect();
-                let peer_id = Swarm::local_peer_id(&self.swarm);
+                let mut listeners: Vec<_> = Swarm::listeners(&self.swarm).cloned().collect();
+                let peer_id = *Swarm::local_peer_id(&self.swarm);
+                listeners.extend(Swarm::external_addresses(&self.swarm).map(|r| r.addr.clone()));
 
                 response_channel
-                    .send((*peer_id, listeners))
+                    .send((peer_id, listeners))
                     .map_err(|_| anyhow!("Failed to get Libp2p listeners"))?;
             }
             RpcMessage::NetPeers(response_channel) => {

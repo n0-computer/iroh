@@ -147,7 +147,6 @@ impl P2pNode {
         };
         let config = config::Libp2pConfig {
             listening_multiaddr: format!("/ip4/0.0.0.0/tcp/{port}").parse().unwrap(),
-            bootstrap_peers: Default::default(),
             mdns: true,
             rpc_addr: rpc_p2p_addr,
             rpc_client: rpc_client_config.clone(),

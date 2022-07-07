@@ -99,6 +99,9 @@ impl NodeBehaviour {
             let pub_key = local_key.public();
             let config = autonat::Config {
                 use_connected: true,
+                boot_delay: Duration::from_secs(0),
+                refresh_interval: Duration::from_secs(5),
+                retry_interval: Duration::from_secs(5),
                 ..Default::default()
             }; // TODO: configurable
             let autonat = autonat::Behaviour::new(pub_key.to_peer_id(), config);

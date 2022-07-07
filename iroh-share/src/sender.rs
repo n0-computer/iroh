@@ -134,6 +134,7 @@ impl Transfer<'_> {
             .get_listening_addrs()
             .await
             .context("getting p2p info")?;
+        info!("Available addrs: {:?}", addrs);
 
         let root = self.root.to_bytes().to_vec(); // TODO: actual root hash.
         let peer = self.peer;

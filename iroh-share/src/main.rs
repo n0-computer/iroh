@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{path::PathBuf, time::Duration};
 
 use anyhow::{ensure, Context, Result};
 use clap::{Parser, Subcommand};
@@ -47,7 +47,7 @@ async fn main() -> Result<()> {
             let sender_dir = tempfile::tempdir().unwrap();
             let sender_db = sender_dir.path().join("db");
 
-            let port = 9990;
+            let port = 2223;
             let rpc_p2p_port = 5550;
             let rpc_store_port = 5560;
             let sender = Sender::new(port, rpc_p2p_port, rpc_store_port, &sender_db)
@@ -68,6 +68,7 @@ async fn main() -> Result<()> {
                 .transfer_from_data(name, data.into())
                 .await
                 .context("transfer")?;
+            tokio::time::sleep(Duration::from_secs(2)).await;
             let ticket = sender_transfer.ticket().await.context("s: ticket")?;
             let ticket_bytes = ticket.as_bytes();
             let ticket_str = multibase::encode(multibase::Base::Base64, &ticket_bytes);
