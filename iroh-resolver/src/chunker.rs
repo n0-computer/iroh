@@ -8,7 +8,7 @@ use tokio::io::{AsyncRead, AsyncReadExt};
 pub const DEFAULT_CHUNKS_SIZE: usize = 1024 * 256;
 
 /// Chunks are limited to 1MiB by default
-pub const DEFAULT_CHUNK_SIZE_LIMIT: usize = 1024 * 1024 * 1024;
+pub const DEFAULT_CHUNK_SIZE_LIMIT: usize = 1024 * 1024;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Chunker {

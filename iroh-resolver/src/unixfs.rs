@@ -6,7 +6,7 @@ use std::{
     task::{Context, Poll},
 };
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, ensure, Result};
 use bytes::{Buf, Bytes};
 use cid::Cid;
 use futures::{future::BoxFuture, FutureExt};
@@ -14,6 +14,7 @@ use prost::Message;
 use tokio::io::AsyncRead;
 
 use crate::{
+    chunker::DEFAULT_CHUNK_SIZE_LIMIT,
     codecs::Codec,
     resolver::{ContentLoader, OutMetrics},
 };
@@ -106,13 +107,21 @@ impl UnixfsNode {
     }
 
     pub fn encode(&self) -> Result<Bytes> {
-        match self {
-            UnixfsNode::Raw { data } => Ok(data.clone()),
+        let out = match self {
+            UnixfsNode::Raw { data } => data.clone(),
             UnixfsNode::Pb { outer, .. } => {
                 let bytes = outer.encode_to_vec();
-                Ok(bytes.into())
+                bytes.into()
             }
-        }
+        };
+
+        ensure!(
+            out.len() <= DEFAULT_CHUNK_SIZE_LIMIT,
+            "node is too large: {} bytes",
+            out.len()
+        );
+
+        Ok(out)
     }
 
     pub fn typ(&self) -> Option<DataType> {

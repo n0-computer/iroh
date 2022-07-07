@@ -450,20 +450,26 @@ impl<T: ContentLoader> Resolver<T> {
     #[tracing::instrument(skip(self))]
     pub fn resolve_recursive(&self, root: Path) -> impl Stream<Item = Result<Out>> {
         let mut cids = VecDeque::new();
-        let s = self.clone();
-        cids.push_back(tokio::spawn(async move { s.resolve(root).await }));
         let this = self.clone();
         async_stream::try_stream! {
+            cids.push_back(this.resolve(root).await);
             loop {
                 if let Some(current) = cids.pop_front() {
-                    let current = current.await??;
+                    let current = current?;
                     let links = current.links()?;
-                    for link in links {
-                        // TOOD: limit
-                        let s = this.clone();
-                        cids.push_back(tokio::spawn(async move {
-                            s.resolve(Path::from_cid(link)).await
-                        }));
+                    // TODO: configurable limit
+                    for link_chunk in links.chunks(8) {
+                        let next = futures::future::join_all(
+                            link_chunk.iter().map(|link| {
+                                let this = this.clone();
+                                async move {
+                                    this.resolve(Path::from_cid(*link)).await
+                                }
+                            })
+                        ).await;
+                        for res in next.into_iter() {
+                            cids.push_back(res);
+                        }
                     }
                     yield current;
                 } else {

@@ -1,6 +1,6 @@
 use std::{collections::HashSet, path::Path, sync::Arc};
 
-use anyhow::{bail, ensure, Context, Result};
+use anyhow::{bail, ensure, Result};
 use async_channel::Receiver;
 use async_trait::async_trait;
 use cid::Cid;
@@ -83,12 +83,14 @@ impl ContentLoader for Loader {
         let providers = self.providers.lock().await.clone();
         ensure!(!providers.is_empty(), "no providers supplied");
 
-        let bytes = self
-            .client
-            .p2p
-            .fetch_bitswap(cid, providers)
-            .await
-            .context("bitswap fetch")?;
+        let res = self.client.p2p.fetch_bitswap(cid, providers).await;
+        let bytes = match res {
+            Ok(bytes) => bytes,
+            Err(err) => {
+                error!("Bitswap error: {:#?}", err);
+                return Err(err);
+            }
+        };
 
         // verify cid
         let bytes_clone = bytes.clone();
@@ -143,9 +145,11 @@ impl P2pNode {
         };
         let config = config::Libp2pConfig {
             listening_multiaddr: format!("/ip4/0.0.0.0/tcp/{port}").parse().unwrap(),
-            mdns: true,
+            mdns: false,
             rpc_addr: rpc_p2p_addr,
             rpc_client: rpc_client_config.clone(),
+            bootstrap_peers: Default::default(), // disable bootstrap for now
+            target_peer_count: 8,
             ..Default::default()
         };
 

@@ -1,11 +1,11 @@
 use std::pin::Pin;
 
 use crate::{
-    chunker::{self, Chunker},
+    chunker::{self, Chunker, DEFAULT_CHUNK_SIZE_LIMIT},
     codecs::Codec,
     unixfs::{dag_pb, unixfs_pb, DataType, UnixfsNode},
 };
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, ensure, Result};
 use bytes::Bytes;
 use cid::{multihash::MultihashDigest, Cid};
 use futures::{Stream, StreamExt};
@@ -92,11 +92,7 @@ impl Directory {
                 r#type: DataType::Directory as i32,
                 ..Default::default()
             };
-            let data = inner.encode_to_vec().into();
-            let outer = dag_pb::PbNode {
-                links,
-                data: Some(data),
-            };
+            let outer = encode_unixfs_pb(&inner, links)?;
 
             let node = UnixfsNode::Pb { outer, inner };
             let bytes = node.encode()?;
@@ -196,11 +192,7 @@ impl File {
                     r#type: DataType::File as i32,
                     ..Default::default()
                 };
-                let data = inner.encode_to_vec().into();
-                let outer = dag_pb::PbNode {
-                    links,
-                    data: Some(data),
-                };
+                let outer = encode_unixfs_pb(&inner, links)?;
                 let node = UnixfsNode::Pb { outer, inner };
                 let bytes = node.encode()?;
                 let cid = Cid::new_v1(Codec::DagPb as _, cid::multihash::Code::Sha2_256.digest(&bytes));
@@ -208,6 +200,20 @@ impl File {
             }
         }
     }
+}
+
+fn encode_unixfs_pb(inner: &unixfs_pb::Data, links: Vec<dag_pb::PbLink>) -> Result<dag_pb::PbNode> {
+    let data = inner.encode_to_vec();
+    ensure!(
+        data.len() <= DEFAULT_CHUNK_SIZE_LIMIT,
+        "node is too large: {} bytes",
+        data.len()
+    );
+
+    Ok(dag_pb::PbNode {
+        links,
+        data: Some(data.into()),
+    })
 }
 
 impl FileBuilder {
