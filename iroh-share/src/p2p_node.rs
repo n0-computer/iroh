@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use tokio::{sync::Mutex, task::JoinHandle};
 use tracing::{error, warn};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Ticket {
     pub peer_id: PeerId,
     pub addrs: Vec<Multiaddr>,
