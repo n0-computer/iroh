@@ -1,5 +1,4 @@
 use std::path::Path;
-use std::sync::atomic::AtomicU64;
 
 use anyhow::{Context, Result};
 use async_channel::{bounded, Receiver};
@@ -10,6 +9,7 @@ use futures::StreamExt;
 use iroh_p2p::{GossipsubEvent, NetworkEvent};
 use libp2p::gossipsub::{Sha256Topic, TopicHash};
 use libp2p::PeerId;
+use rand::Rng;
 use tracing::{error, info};
 
 use crate::p2p_node::{P2pNode, Ticket};
@@ -17,7 +17,6 @@ use crate::p2p_node::{P2pNode, Ticket};
 /// The sending part of the data transfer.
 pub struct Sender {
     p2p: P2pNode,
-    next_id: AtomicU64,
     gossip_events: Receiver<GossipsubEvent>,
 }
 
@@ -45,7 +44,6 @@ impl Sender {
 
         Ok(Sender {
             p2p,
-            next_id: 0.into(),
             gossip_events: r,
         })
     }
@@ -100,24 +98,19 @@ impl Sender {
         });
 
         Ok(Transfer {
-            id,
             topic: topic_hash,
             sender: self,
-            name,
             root,
             peer: r,
         })
     }
 
     fn next_id(&self) -> u64 {
-        self.next_id
-            .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+        rand::thread_rng().gen()
     }
 }
 
 pub struct Transfer<'a> {
-    id: u64,
-    name: String,
     root: Cid,
     sender: &'a Sender,
     peer: OneShotReceiver<PeerId>,
@@ -144,7 +137,7 @@ impl Transfer<'_> {
 
         tokio::task::spawn(async move {
             match peer.await {
-                Ok(peer_id) => {
+                Ok(_peer_id) => {
                     rpc.p2p.gossipsub_publish(topic, root.into()).await.unwrap();
                 }
                 Err(e) => {

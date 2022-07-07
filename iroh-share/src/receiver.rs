@@ -103,17 +103,13 @@ impl Receiver {
 
         Ok(Transfer {
             receiver: self,
-            ticket,
-            topic,
             data_receiver: r,
         })
     }
 }
 
 pub struct Transfer<'a> {
-    ticket: Ticket,
     receiver: &'a Receiver,
-    topic: TopicHash,
     data_receiver: ChannelReceiver<Result<iroh_resolver::resolver::Out>>,
 }
 
