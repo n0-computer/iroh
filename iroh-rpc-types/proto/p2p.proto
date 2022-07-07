@@ -12,6 +12,7 @@ service P2p {
   rpc GetPeers(google.protobuf.Empty) returns (GetPeersResponse) {}
   rpc PeerConnect(ConnectRequest) returns (ConnectResponse) {}
   rpc PeerDisconnect(DisconnectRequest) returns (google.protobuf.Empty) {}
+  rpc Shutdown(google.protobuf.Empty) returns (google.protobuf.Empty) {}
 }
 
 message VersionResponse {

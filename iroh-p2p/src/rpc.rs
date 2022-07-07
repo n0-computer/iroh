@@ -43,6 +43,15 @@ impl p2p_server::P2p for P2p {
         Ok(Response::new(VersionResponse { version }))
     }
 
+    #[tracing::instrument(skip(self))]
+    async fn shutdown(&self, _request: Request<()>) -> Result<Response<()>, tonic::Status> {
+        self.sender
+            .send(RpcMessage::Shutdown)
+            .await
+            .map_err(|_| Status::internal("receiver dropped"))?;
+        Ok(Response::new(()))
+    }
+
     // TODO: expand to handle multiple cids at once. Probably not a tough fix, just want to push
     // forward right now
     #[tracing::instrument(skip(self, request))]
@@ -58,7 +67,7 @@ impl p2p_server::P2p for P2p {
         trace!("received BitswapRequest: {:?}", cid);
         let providers = req
             .providers
-            .ok_or_else(|| Status::invalid_argument("missing providers"))?;
+            .ok_or_else(|| Status::invalid_argument(format!("missing providers for: {}", cid)))?;
 
         let providers: HashSet<PeerId> = providers
             .providers
@@ -70,7 +79,10 @@ impl p2p_server::P2p for P2p {
             .collect::<Result<_, Status>>()?;
 
         if providers.is_empty() {
-            return Err(Status::invalid_argument("missing providers"));
+            return Err(Status::invalid_argument(format!(
+                "missing providers for: {}",
+                cid
+            )));
         }
 
         let (s, r) = oneshot::channel();
@@ -459,6 +471,7 @@ pub enum RpcMessage {
     NetConnect(oneshot::Sender<bool>, PeerId, Vec<Multiaddr>),
     NetDisconnect(oneshot::Sender<()>, PeerId),
     Gossipsub(GossipsubMessage),
+    Shutdown,
 }
 
 #[derive(Debug)]

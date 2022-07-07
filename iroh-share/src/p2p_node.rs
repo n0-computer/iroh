@@ -1,6 +1,6 @@
 use std::{collections::HashSet, path::Path, sync::Arc};
 
-use anyhow::{bail, ensure, Result};
+use anyhow::{bail, ensure, Context, Result};
 use async_channel::Receiver;
 use async_trait::async_trait;
 use cid::Cid;
@@ -16,7 +16,7 @@ use libp2p::{Multiaddr, PeerId};
 use prometheus_client::registry::Registry;
 use serde::{Deserialize, Serialize};
 use tokio::{sync::Mutex, task::JoinHandle};
-use tracing::{debug, error, warn};
+use tracing::{error, warn};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Ticket {
@@ -83,9 +83,13 @@ impl ContentLoader for Loader {
         let providers = self.providers.lock().await.clone();
         ensure!(!providers.is_empty(), "no providers supplied");
 
-        let bytes = self.client.p2p.fetch_bitswap(cid, providers).await?;
+        let bytes = self
+            .client
+            .p2p
+            .fetch_bitswap(cid, providers)
+            .await
+            .context("bitswap fetch")?;
 
-        // TODO: is this the right place?
         // verify cid
         let bytes_clone = bytes.clone();
         match tokio::task::spawn_blocking(move || verify_hash(&cid, &bytes_clone)).await? {
@@ -104,25 +108,17 @@ impl ContentLoader for Loader {
             }
         }
 
-        // trigger storage in the background
         let cloned = bytes.clone();
         let rpc = self.clone();
-        tokio::spawn(async move {
+        {
             let clone2 = cloned.clone();
             let links =
                 tokio::task::spawn_blocking(move || parse_links(&cid, &clone2).unwrap_or_default())
                     .await
                     .unwrap_or_default();
 
-            let len = cloned.len();
-            let links_len = links.len();
-            match rpc.client.store.put(cid, cloned, links).await {
-                Ok(_) => debug!("stored {} ({}bytes, {}links)", cid, len, links_len),
-                Err(err) => {
-                    warn!("failed to store {}: {:?}", cid, err);
-                }
-            }
-        });
+            rpc.client.store.put(cid, cloned, links).await?;
+        }
 
         Ok(LoadedCid {
             data: bytes,
@@ -203,11 +199,12 @@ impl P2pNode {
     pub fn resolver(&self) -> &Resolver<Loader> {
         &self.resolver
     }
-}
 
-impl Drop for P2pNode {
-    fn drop(&mut self) {
-        self.p2p_task.abort();
+    pub async fn close(self) -> Result<()> {
+        self.rpc.p2p.shutdown().await?;
         self.store_task.abort();
+        self.p2p_task.await?;
+        self.store_task.await.ok();
+        Ok(())
     }
 }

@@ -3,12 +3,11 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use async_channel::{bounded, Receiver};
 use bytes::Bytes;
-use cid::Cid;
-use futures::channel::oneshot::{channel as oneshot, Receiver as OneShotReceiver};
+use futures::channel::oneshot::channel as oneshot;
 use futures::StreamExt;
 use iroh_p2p::{GossipsubEvent, NetworkEvent};
-use libp2p::gossipsub::{Sha256Topic, TopicHash};
-use libp2p::PeerId;
+use iroh_resolver::unixfs_builder::DirectoryBuilder;
+use libp2p::gossipsub::Sha256Topic;
 use rand::Rng;
 use tracing::{error, info};
 
@@ -48,25 +47,22 @@ impl Sender {
         })
     }
 
-    pub async fn transfer_from_data(
+    pub async fn close(self) -> Result<()> {
+        self.p2p.close().await?;
+        Ok(())
+    }
+
+    pub async fn transfer_from_dir_builder(
         &self,
-        name: impl Into<String>,
-        data: Bytes,
-    ) -> Result<Transfer<'_>> {
+        dir_builder: DirectoryBuilder,
+    ) -> Result<Transfer> {
         let id = self.next_id();
         let t = Sha256Topic::new(format!("iroh-share-{}", id));
-        let name = name.into();
+        let root_dir = dir_builder.build().await?;
 
         let (s, r) = oneshot();
 
         let root = {
-            // wrap in directory to preserve t
-            let mut root_dir = iroh_resolver::unixfs_builder::DirectoryBuilder::new();
-            let mut file = iroh_resolver::unixfs_builder::FileBuilder::new();
-            file.name(&name).content_bytes(data);
-            let file = file.build().await?;
-            root_dir.add_file(file);
-            let root_dir = root_dir.build().await?;
             let parts = root_dir.encode();
             tokio::pin!(parts);
             let mut root_cid = None;
@@ -74,7 +70,6 @@ impl Sender {
                 // TODO: store links in the store
                 let (cid, bytes) = part?;
                 root_cid = Some(cid);
-                info!("storing {:?}", cid);
                 self.p2p.rpc().store.put(cid, bytes, vec![]).await?;
             }
             root_cid.unwrap()
@@ -97,30 +92,7 @@ impl Sender {
             }
         });
 
-        Ok(Transfer {
-            topic: topic_hash,
-            sender: self,
-            root,
-            peer: r,
-        })
-    }
-
-    fn next_id(&self) -> u64 {
-        rand::thread_rng().gen()
-    }
-}
-
-pub struct Transfer<'a> {
-    root: Cid,
-    sender: &'a Sender,
-    peer: OneShotReceiver<PeerId>,
-    topic: TopicHash,
-}
-
-impl Transfer<'_> {
-    pub async fn ticket(self) -> Result<Ticket> {
         let (peer_id, addrs) = self
-            .sender
             .p2p
             .rpc()
             .p2p
@@ -128,17 +100,18 @@ impl Transfer<'_> {
             .await
             .context("getting p2p info")?;
         info!("Available addrs: {:?}", addrs);
-
-        let root = self.root.to_bytes().to_vec(); // TODO: actual root hash.
-        let peer = self.peer;
-        let topic = self.topic;
-        let topic_string = topic.to_string();
-        let rpc = self.sender.p2p.rpc().clone();
+        let root_bytes = root.to_bytes().to_vec();
+        let topic_string = topic_hash.to_string();
+        let rpc = self.p2p.rpc().clone();
+        let topic = topic_hash.clone();
 
         tokio::task::spawn(async move {
-            match peer.await {
+            match r.await {
                 Ok(_peer_id) => {
-                    rpc.p2p.gossipsub_publish(topic, root.into()).await.unwrap();
+                    rpc.p2p
+                        .gossipsub_publish(topic, root_bytes.into())
+                        .await
+                        .unwrap();
                 }
                 Err(e) => {
                     error!("failed to receive root, transfer aborted: {:?}", e);
@@ -146,10 +119,42 @@ impl Transfer<'_> {
             }
         });
 
-        Ok(Ticket {
+        let ticket = Ticket {
             peer_id,
             addrs,
             topic: topic_string,
-        })
+        };
+
+        Ok(Transfer { ticket })
+    }
+
+    pub async fn transfer_from_data(
+        &self,
+        name: impl Into<String>,
+        data: Bytes,
+    ) -> Result<Transfer> {
+        let name = name.into();
+        // wrap in directory to preserve the name
+        let mut root_dir = iroh_resolver::unixfs_builder::DirectoryBuilder::new();
+        let mut file = iroh_resolver::unixfs_builder::FileBuilder::new();
+        file.name(&name).content_bytes(data);
+        let file = file.build().await?;
+        root_dir.add_file(file);
+
+        self.transfer_from_dir_builder(root_dir).await
+    }
+
+    fn next_id(&self) -> u64 {
+        rand::thread_rng().gen()
+    }
+}
+
+pub struct Transfer {
+    ticket: Ticket,
+}
+
+impl Transfer {
+    pub fn ticket(&self) -> &Ticket {
+        &self.ticket
     }
 }

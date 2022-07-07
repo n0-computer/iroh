@@ -85,28 +85,57 @@ mod tests {
     async fn test_fixed_chunker() {
         // exact match
         {
-            let bytes = std::io::Cursor::new(vec![1u8; 1024]);
+            let mut content = Vec::with_capacity(1024);
+            for _ in 0..256 {
+                content.push(1);
+            }
+            for _ in 0..256 {
+                content.push(2);
+            }
+            for _ in 0..256 {
+                content.push(3);
+            }
+            for _ in 0..256 {
+                content.push(4);
+            }
+            let bytes = std::io::Cursor::new(content);
 
             let chunker = Chunker::fixed_with_size(256);
             let chunks: Vec<_> = chunker.chunks(bytes).try_collect().await.unwrap();
             assert_eq!(chunks.len(), 4);
             assert_eq!(&chunks[0], &[1u8; 256][..]);
-            assert_eq!(&chunks[1], &[1u8; 256][..]);
-            assert_eq!(&chunks[2], &[1u8; 256][..]);
-            assert_eq!(&chunks[3], &[1u8; 256][..]);
+            assert_eq!(&chunks[1], &[2u8; 256][..]);
+            assert_eq!(&chunks[2], &[3u8; 256][..]);
+            assert_eq!(&chunks[3], &[4u8; 256][..]);
         }
 
         // overflow
         {
-            let bytes = std::io::Cursor::new(vec![1u8; 1026]);
+            let mut content = Vec::with_capacity(1024);
+            for _ in 0..256 {
+                content.push(1);
+            }
+            for _ in 0..256 {
+                content.push(2);
+            }
+            for _ in 0..256 {
+                content.push(3);
+            }
+            for _ in 0..256 {
+                content.push(4);
+            }
+            content.push(5);
+            content.push(5);
+
+            let bytes = std::io::Cursor::new(content);
             let chunker = Chunker::fixed_with_size(256);
             let chunks: Vec<_> = chunker.chunks(bytes).try_collect().await.unwrap();
             assert_eq!(chunks.len(), 5);
             assert_eq!(&chunks[0], &[1u8; 256][..]);
-            assert_eq!(&chunks[1], &[1u8; 256][..]);
-            assert_eq!(&chunks[2], &[1u8; 256][..]);
-            assert_eq!(&chunks[3], &[1u8; 256][..]);
-            assert_eq!(&chunks[4], &[1u8; 2][..]);
+            assert_eq!(&chunks[1], &[2u8; 256][..]);
+            assert_eq!(&chunks[2], &[3u8; 256][..]);
+            assert_eq!(&chunks[3], &[4u8; 256][..]);
+            assert_eq!(&chunks[4], &[5u8; 2][..]);
         }
     }
 }

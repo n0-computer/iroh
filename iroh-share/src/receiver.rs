@@ -1,15 +1,15 @@
-use anyhow::{anyhow, ensure, Result};
+use anyhow::{ensure, Context, Result};
 use async_channel::{bounded, Receiver as ChannelReceiver};
 use cid::Cid;
 use futures::StreamExt;
 use iroh_p2p::NetworkEvent;
-use iroh_resolver::resolver::Path;
+use iroh_resolver::resolver::{Out, OutPrettyReader, OutType, Path, Resolver, UnixfsType};
+use iroh_resolver::unixfs::LinkRef;
 use libp2p::gossipsub::{GossipsubMessage, MessageId, TopicHash};
 use libp2p::PeerId;
-use tokio::io::AsyncReadExt;
-use tracing::warn;
+use tracing::{info, warn};
 
-use crate::p2p_node::{P2pNode, Ticket};
+use crate::p2p_node::{Loader, P2pNode, Ticket};
 
 pub struct Receiver {
     p2p: P2pNode,
@@ -47,8 +47,9 @@ impl Receiver {
         })
     }
 
-    pub async fn transfer_from_ticket(&self, ticket: Ticket) -> Result<Transfer<'_>> {
+    pub async fn transfer_from_ticket(&self, ticket: &Ticket) -> Result<Transfer<'_>> {
         // Connect to the sender
+        info!("connecting");
         self.p2p
             .rpc()
             .p2p
@@ -86,8 +87,14 @@ impl Receiver {
                             let results = resolver
                                 .resolve_recursive(iroh_resolver::resolver::Path::from_cid(root));
                             tokio::pin!(results);
+                            // root is the first
+                            // let the rest be resolved, but not keep in mem
+                            let mut first = true;
                             while let Some(res) = results.next().await {
-                                s.send(res).await.unwrap();
+                                if first {
+                                    s.send(res).await.unwrap();
+                                    first = false;
+                                }
                             }
                             s.close();
                         }
@@ -106,6 +113,11 @@ impl Receiver {
             data_receiver: r,
         })
     }
+
+    pub async fn close(self) -> Result<()> {
+        self.p2p.close().await?;
+        Ok(())
+    }
 }
 
 pub struct Transfer<'a> {
@@ -115,50 +127,56 @@ pub struct Transfer<'a> {
 
 impl Transfer<'_> {
     pub async fn recv(&self) -> Result<Data> {
-        // TODO: load not just the root
-        let mut res = Vec::new();
-        while let Ok(part) = self.data_receiver.recv().await {
-            res.push(part?);
-        }
+        let root = self.data_receiver.recv().await??;
+        ensure!(
+            root.metadata().typ == OutType::Unixfs,
+            "expected unixfs data"
+        );
 
-        // TODO: notification
-        // we expect unixfs
-        // root is the first value
-        let files: Vec<_> = res[0]
-            .unixfs_read_dir()
-            .ok_or_else(|| anyhow!("unexpected data format"))?
-            .collect::<Result<_>>()?;
-        ensure!(files.len() == 1, "expected only one file to be sent");
-        let file = &files[0];
-        let name = file.name.map(Into::into).unwrap_or_default();
-
-        // grab the actual file
-        let file_res = self
-            .receiver
-            .p2p
-            .resolver()
-            .resolve(Path::from_cid(file.cid))
-            .await?;
-
-        let mut reader = file_res.pretty(self.receiver.p2p.rpc().clone(), Default::default());
-        let mut bytes = Vec::new();
-        reader.read_to_end(&mut bytes).await?;
-
-        Ok(Data { name, bytes })
+        Ok(Data {
+            resolver: self.receiver.p2p.resolver().clone(),
+            root,
+        })
     }
 }
 
 pub struct Data {
-    name: String,
-    bytes: Vec<u8>,
+    resolver: Resolver<Loader>,
+    root: Out,
 }
 
 impl Data {
-    pub fn name(&self) -> &str {
-        &self.name
+    pub fn typ(&self) -> UnixfsType {
+        self.root.metadata().unixfs_type.unwrap()
     }
 
-    pub fn bytes(&self) -> &[u8] {
-        &self.bytes
+    pub fn is_file(&self) -> bool {
+        self.typ() == UnixfsType::File
+    }
+
+    pub fn is_dir(&self) -> bool {
+        self.typ() == UnixfsType::Dir
+    }
+
+    pub fn read_dir(&self) -> Option<impl Iterator<Item = Result<LinkRef<'_>>>> {
+        self.root.unixfs_read_dir()
+    }
+
+    pub fn pretty(self) -> OutPrettyReader<Loader> {
+        self.root
+            .pretty(self.resolver.loader().clone(), Default::default())
+    }
+
+    pub async fn read_file(&self, link: &LinkRef<'_>) -> Result<Data> {
+        let root = self
+            .resolver
+            .resolve(Path::from_cid(link.cid))
+            .await
+            .context("resolve")?;
+
+        Ok(Data {
+            resolver: self.resolver.clone(),
+            root,
+        })
     }
 }

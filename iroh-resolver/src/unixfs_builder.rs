@@ -242,9 +242,10 @@ impl FileBuilder {
         let reader = self.content.ok_or_else(|| anyhow!("missing content"))?;
 
         let nodes = self.chunker.chunks(reader).map(|chunk| match chunk {
-            Ok(chunk) => Ok(UnixfsNode::Raw {
-                data: chunk.freeze(),
-            }),
+            Ok(chunk) => {
+                let data = chunk.freeze();
+                Ok(UnixfsNode::Raw { data })
+            }
             Err(err) => Err(err.into()),
         });
 
@@ -385,12 +386,19 @@ mod tests {
 
         // Add a file
         let mut baz = FileBuilder::new();
-        let baz_reader = std::io::Cursor::new(vec![2u8; 1024 * 1024 * 2]);
+        let mut baz_content = Vec::with_capacity(1024 * 1024 * 2);
+        for i in 0..2 {
+            for _ in 0..(1024 * 1024) {
+                baz_content.push(i);
+            }
+        }
+
+        let baz_reader = std::io::Cursor::new(baz_content.clone());
         baz.name("baz.txt").content_reader(baz_reader);
         let baz = baz.build().await?;
         let baz_encoded: Vec<_> = {
             let mut baz = FileBuilder::new();
-            let baz_reader = std::io::Cursor::new(vec![2u8; 1024 * 1024 * 2]);
+            let baz_reader = std::io::Cursor::new(baz_content);
             baz.name("baz.txt").content_reader(baz_reader);
             let baz = baz.build().await?;
             baz.encode().try_collect().await?
@@ -409,6 +417,17 @@ mod tests {
         assert_eq!(links[0].cid, bar_encoded[4].0);
         assert_eq!(links[1].name.unwrap(), "baz.txt");
         assert_eq!(links[1].cid, baz_encoded[8].0);
+        for i in 0..9 {
+            let node = UnixfsNode::decode(&baz_encoded[i].0, baz_encoded[i].1.clone())?;
+            if i == 8 {
+                assert_eq!(node.typ(), Some(DataType::File));
+                assert_eq!(node.links().count(), 8);
+            } else {
+                assert_eq!(node.typ(), None); // raw leaves
+                assert_eq!(node.size(), Some(1024 * 256));
+                assert_eq!(node.links().count(), 0);
+            }
+        }
 
         // TODO: check content
         // TODO: add nested directory

@@ -3,6 +3,7 @@ use std::{path::PathBuf, time::Duration};
 use anyhow::{ensure, Context, Result};
 use clap::{Parser, Subcommand};
 use iroh_share::{Receiver, Sender, Ticket};
+use tokio::io::AsyncWriteExt;
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
 #[derive(Parser, Debug)]
@@ -70,7 +71,7 @@ async fn main() -> Result<()> {
                 .await
                 .context("transfer")?;
             tokio::time::sleep(Duration::from_secs(2)).await;
-            let ticket = sender_transfer.ticket().await.context("s: ticket")?;
+            let ticket = sender_transfer.ticket();
             let ticket_bytes = ticket.as_bytes();
             let ticket_str = multibase::encode(multibase::Base::Base64, &ticket_bytes);
             println!("Ticket:\n{}\n", ticket_str);
@@ -92,17 +93,37 @@ async fn main() -> Result<()> {
                 .await
                 .context("failed to create sender")?;
             let receiver_transfer = receiver
-                .transfer_from_ticket(ticket)
+                .transfer_from_ticket(&ticket)
                 .await
                 .context("failed to read transfer")?;
             let data = receiver_transfer.recv().await?;
 
-            let out = out.unwrap_or_else(|| std::env::current_dir().expect("cannot determine cwd"));
-            let path = out.join(data.name());
-            tokio::fs::create_dir_all(out).await?;
-            tokio::fs::write(&path, data.bytes()).await?;
+            let mut out_dir = std::env::current_dir()?;
+            if let Some(out) = out {
+                out_dir = out_dir.join(out);
+            }
+            tokio::fs::create_dir_all(&out_dir)
+                .await
+                .with_context(|| format!("failed to create {}", out_dir.display()))?;
 
-            println!("Received: {}, written to: {}", data.name(), path.display());
+            let out = tokio::fs::canonicalize(out_dir).await?;
+
+            for link in data.read_dir().unwrap() {
+                let link = link?;
+                let file_content = data.read_file(&link).await?;
+                let path = out.join(link.name.unwrap_or_default());
+                println!("Writing {}", path.display());
+                let mut file = tokio::fs::File::create(&path)
+                    .await
+                    .with_context(|| format!("create file: {}", path.display()))?;
+                let mut content = file_content.pretty();
+                tokio::io::copy(&mut content, &mut file)
+                    .await
+                    .context("copy")?;
+                file.flush().await?;
+            }
+
+            println!("Received all data, written to: {}", out.display());
         }
     }
 

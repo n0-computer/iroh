@@ -25,6 +25,7 @@ use libp2p::swarm::dial_opts::{DialOpts, PeerCondition};
 use libp2p::swarm::{ConnectionHandler, IntoConnectionHandler, NetworkBehaviour, SwarmEvent};
 use libp2p::{PeerId, Swarm};
 use prometheus_client::registry::Registry;
+use tokio::task::JoinHandle;
 use tokio::{select, sync::mpsc, time};
 use tracing::{debug, info, trace, warn};
 
@@ -77,6 +78,7 @@ pub struct Node<KeyStorage: Storage> {
     rpc_client: RpcClient,
     _keychain: Keychain<KeyStorage>,
     kad_last_range: Option<(Distance, Distance)>,
+    rpc_task: JoinHandle<()>,
 }
 
 enum QueryChannel {
@@ -89,9 +91,14 @@ enum QueryKey {
 }
 
 const PROVIDER_LIMIT: usize = 20;
-
 const NICE_INTERVAL: Duration = Duration::from_secs(6);
 const BOOTSTRAP_INTERVAL: Duration = Duration::from_secs(5 * 60);
+
+impl<KeyStorage: Storage> Drop for Node<KeyStorage> {
+    fn drop(&mut self) {
+        self.rpc_task.abort();
+    }
+}
 
 impl<KeyStorage: Storage> Node<KeyStorage> {
     pub async fn new(
@@ -102,7 +109,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
         let metrics = Metrics::new(registry);
         let (network_sender_in, network_receiver_in) = channel(1024); // TODO: configurable
 
-        tokio::spawn(async move {
+        let rpc_task = tokio::spawn(async move {
             // TODO: handle error
             rpc::new(config.rpc_addr, network_sender_in).await.unwrap()
         });
@@ -126,6 +133,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
             rpc_client,
             _keychain: keychain,
             kad_last_range: None,
+            rpc_task,
         })
     }
 
@@ -143,8 +151,15 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                     }
                 }
                 rpc_message = self.net_receiver_in.recv() => {
-                    if let Err(err) = self.handle_rpc_message(rpc_message?).await {
-                        warn!("rpc: {:?}", err);
+                    match self.handle_rpc_message(rpc_message?).await {
+                        Ok(true) => {
+                            // shutdown
+                            return Ok(());
+                        }
+                        Ok(false) => {}
+                        Err(err) => {
+                            warn!("rpc: {:?}", err);
+                        }
                     }
                 }
                 _interval_event = nice_interval.tick() => {
@@ -485,7 +500,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
         Ok(())
     }
 
-    async fn handle_rpc_message(&mut self, message: RpcMessage) -> Result<()> {
+    async fn handle_rpc_message(&mut self, message: RpcMessage) -> Result<bool> {
         info!("rpc message {:?}", message);
         // Inbound messages
         match message {
@@ -677,9 +692,12 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                         .map_err(|_| anyhow!("sender dropped"))?;
                 }
             },
+            RpcMessage::Shutdown => {
+                return Ok(true);
+            }
         }
 
-        Ok(())
+        Ok(false)
     }
 }
 

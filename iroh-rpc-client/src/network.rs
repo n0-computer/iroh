@@ -143,6 +143,13 @@ impl P2pClient {
     }
 
     #[tracing::instrument(skip(self))]
+    pub async fn shutdown(&self) -> Result<()> {
+        let req = iroh_metrics::req::trace_tonic_req(());
+        self.p2p.clone().shutdown(req).await?.into_inner();
+        Ok(())
+    }
+
+    #[tracing::instrument(skip(self))]
     pub async fn gossipsub_add_explicit_peer(&self, peer_id: PeerId) -> Result<()> {
         let req = iroh_metrics::req::trace_tonic_req(PeerIdMsg {
             peer_id: peer_id.to_bytes(),

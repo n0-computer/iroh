@@ -180,6 +180,21 @@ impl Out {
             _ => None,
         }
     }
+
+    pub fn pretty<T: ContentLoader>(self, loader: T, om: OutMetrics) -> OutPrettyReader<T> {
+        let pos = 0;
+        match self.content {
+            OutContent::DagPb(_, bytes) => OutPrettyReader::DagPb(BytesReader { pos, bytes, om }),
+            OutContent::DagCbor(_, bytes) => {
+                OutPrettyReader::DagCbor(BytesReader { pos, bytes, om })
+            }
+            OutContent::DagJson(_, bytes) => {
+                OutPrettyReader::DagJson(BytesReader { pos, bytes, om })
+            }
+            OutContent::Raw(_, bytes) => OutPrettyReader::Raw(BytesReader { pos, bytes, om }),
+            OutContent::Unixfs(node) => OutPrettyReader::Unixfs(node.pretty(loader, om)),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -293,23 +308,6 @@ impl Default for OutMetrics {
         Self {
             start: Instant::now(),
             metrics: iroh_metrics::gateway::Metrics::default(),
-        }
-    }
-}
-
-impl Out {
-    pub fn pretty<T: ContentLoader>(self, loader: T, om: OutMetrics) -> OutPrettyReader<T> {
-        let pos = 0;
-        match self.content {
-            OutContent::DagPb(_, bytes) => OutPrettyReader::DagPb(BytesReader { pos, bytes, om }),
-            OutContent::DagCbor(_, bytes) => {
-                OutPrettyReader::DagCbor(BytesReader { pos, bytes, om })
-            }
-            OutContent::DagJson(_, bytes) => {
-                OutPrettyReader::DagJson(BytesReader { pos, bytes, om })
-            }
-            OutContent::Raw(_, bytes) => OutPrettyReader::Raw(BytesReader { pos, bytes, om }),
-            OutContent::Unixfs(node) => OutPrettyReader::Unixfs(node.pretty(loader, om)),
         }
     }
 }
@@ -1437,7 +1435,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_unixfs_split_file() {
+    async fn test_unixfs_split_file_regular() {
         // Test content
         // ------------
         // QmUr9cs4mhWxabKqm9PYPSQQ6AQGbHJBtyrNmxtKgxqUx9 README.md
@@ -1495,6 +1493,61 @@ mod tests {
             }
         }
     }
+
+    #[tokio::test]
+    async fn test_unixfs_split_file_recursive() {
+        // Test content
+        // ------------
+        // QmUr9cs4mhWxabKqm9PYPSQQ6AQGbHJBtyrNmxtKgxqUx9 README.md
+        //
+        // imported with `go-ipfs add --chunker size-100`
+
+        let pieces_cid_str = [
+            "QmccJ8pV5hG7DEbq66ih1ZtowxgvqVS6imt98Ku62J2WRw",
+            "QmUajVwSkEp9JvdW914Qh1BCMRSUf2ztiQa6jqy1aWhwJv",
+            "QmNyLad1dWGS6mv2zno4iEviBSYSUR2SrQ8JoZNDz1UHYy",
+            "QmcXoBdCgmFMoNbASaQCNVswRuuuqbw4VvA7e5GtHbhRNp",
+            "QmP9yKRwuji5i7RTgrevwJwXp7uqQu1prv88nxq9uj99rW",
+        ];
+
+        // read root
+        let root_cid_str = "QmUr9cs4mhWxabKqm9PYPSQQ6AQGbHJBtyrNmxtKgxqUx9";
+        let root_cid: Cid = root_cid_str.parse().unwrap();
+        let root_block_bytes = load_fixture(root_cid_str).await;
+        let root_block = UnixfsNode::decode(&root_cid, root_block_bytes.clone()).unwrap();
+
+        let links: Vec<_> = root_block.links().collect::<Result<_>>().unwrap();
+        assert_eq!(links.len(), 5);
+
+        let mut loader: HashMap<Cid, Bytes> =
+            [(root_cid, root_block_bytes.clone())].into_iter().collect();
+
+        for c in &pieces_cid_str {
+            let bytes = load_fixture(c).await;
+            loader.insert(c.parse().unwrap(), bytes);
+        }
+
+        let loader = Arc::new(loader);
+        let resolver = Resolver::new(loader.clone(), &mut Registry::default());
+
+        {
+            let path = format!("/ipfs/{root_cid_str}");
+            let parts: Vec<_> = resolver
+                .resolve_recursive(path.parse().unwrap())
+                .try_collect()
+                .await
+                .unwrap();
+            assert_eq!(parts.len(), 6);
+            assert_eq!(parts[0].metadata().unixfs_type.unwrap(), UnixfsType::File);
+            assert_eq!(parts[0].metadata().path, Path::from_cid(root_cid));
+            assert_eq!(parts[1].metadata().path, pieces_cid_str[0].parse().unwrap());
+            assert_eq!(parts[2].metadata().path, pieces_cid_str[1].parse().unwrap());
+            assert_eq!(parts[3].metadata().path, pieces_cid_str[2].parse().unwrap());
+            assert_eq!(parts[4].metadata().path, pieces_cid_str[3].parse().unwrap());
+            assert_eq!(parts[5].metadata().path, pieces_cid_str[4].parse().unwrap());
+        }
+    }
+
     #[tokio::test]
     async fn test_unixfs_symlink() {
         // Test content
