@@ -17,7 +17,6 @@ opentelemetry-otlp = { version = "0.10.0", features = ["tonic"] }
 metrics = "0.18.1"
 metrics-util = "0.12"
 metrics-exporter-prometheus = { version = "0.9", features = ["push-gateway"]}
-metrics-exporter-log = "0.4.0"
 tonic = "0.7.2"
 tokio = { version = "1.17.0", features = ["macros", "rt-multi-thread", "process"] }
 prometheus-client = "0.16.0"
