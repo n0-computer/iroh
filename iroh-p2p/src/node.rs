@@ -250,7 +250,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                 Ok(())
             }
             SwarmEvent::OutgoingConnectionError { peer_id, error } => {
-                warn!("failed to dial: {:?}, {:?}", peer_id, error);
+                debug!("failed to dial: {:?}, {:?}", peer_id, error);
 
                 if let Some(peer_id) = peer_id {
                     if let Some(channels) = self.dial_queries.get_mut(&peer_id) {

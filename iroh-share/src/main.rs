@@ -26,7 +26,8 @@ enum Commands {
         /// The encoded ticket string
         ticket: String,
         /// Where to write the received data to
-        out: PathBuf,
+        #[clap(long)]
+        out: Option<PathBuf>,
     },
 }
 
@@ -96,6 +97,7 @@ async fn main() -> Result<()> {
                 .context("failed to read transfer")?;
             let data = receiver_transfer.recv().await?;
 
+            let out = out.unwrap_or_else(|| std::env::current_dir().expect("cannot determine cwd"));
             let path = out.join(data.name());
             tokio::fs::create_dir_all(out).await?;
             tokio::fs::write(&path, data.bytes()).await?;
