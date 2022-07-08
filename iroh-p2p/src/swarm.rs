@@ -95,7 +95,7 @@ pub(crate) async fn build_swarm(
     let behaviour = NodeBehaviour::new(keypair, config, registry, relay_client).await?;
 
     let limits = ConnectionLimits::default()
-        .with_max_pending_incoming(Some(10)) // TODO: configurable
+        .with_max_pending_incoming(Some(30)) // TODO: configurable
         .with_max_pending_outgoing(Some(30)) // TODO: configurable
         .with_max_established_incoming(Some(config.target_peer_count))
         .with_max_established_outgoing(Some(config.target_peer_count))

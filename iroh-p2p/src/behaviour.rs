@@ -187,4 +187,11 @@ impl NodeBehaviour {
             }
         }
     }
+
+    pub fn kad_bootstrap(&mut self) -> Result<()> {
+        if let Some(kad) = self.kad.as_mut() {
+            kad.bootstrap()?;
+        }
+        Ok(())
+    }
 }
