@@ -19,8 +19,6 @@ use libp2p::kad::{
     QueryProgress, QueryResult,
 };
 use libp2p::metrics::{Metrics, Recorder};
-use libp2p::multiaddr::Protocol;
-use libp2p::multihash::Multihash;
 use libp2p::swarm::dial_opts::{DialOpts, PeerCondition};
 use libp2p::swarm::{ConnectionHandler, IntoConnectionHandler, NetworkBehaviour, SwarmEvent};
 use libp2p::{PeerId, Swarm};
