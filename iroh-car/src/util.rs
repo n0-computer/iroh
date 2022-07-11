@@ -84,7 +84,7 @@ mod tests {
     #[tokio::test]
     async fn ld_read_write_fail() {
         let mut buffer = Vec::<u8>::new();
-        let size = 2 * MAX_ALLOC;
+        let size = MAX_ALLOC + 1;
         ld_write(&mut buffer, &vec![2u8; size]).await.unwrap();
         let reader = std::io::Cursor::new(buffer);
 
