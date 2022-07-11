@@ -11,6 +11,8 @@ pub enum Error {
     Io(#[from] std::io::Error),
     #[error("Cbor encoding error: {0}")]
     Cbor(#[from] ipld::error::Error),
+    #[error("ld read too large {0}")]
+    LdReadTooLarge(usize),
 }
 
 impl From<cid::Error> for Error {

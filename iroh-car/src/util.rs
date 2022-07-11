@@ -3,27 +3,37 @@ use integer_encoding::VarIntAsyncReader;
 use tokio::io::{AsyncRead, AsyncReadExt};
 
 use super::error::Error;
-pub(crate) async fn ld_read<R>(mut reader: R, buf: &mut Vec<u8>) -> Result<bool, Error>
+
+/// Maximum size that is used for single node.
+pub(crate) const MAX_ALLOC: usize = 4 * 1024 * 1024 * 1024;
+
+pub(crate) async fn ld_read<R>(mut reader: R, buf: &mut Vec<u8>) -> Result<Option<&[u8]>, Error>
 where
     R: AsyncRead + Send + Unpin,
 {
-    let l: usize = match VarIntAsyncReader::read_varint_async(&mut reader).await {
+    let length: usize = match VarIntAsyncReader::read_varint_async(&mut reader).await {
         Ok(len) => len,
         Err(e) => {
             if e.kind() == std::io::ErrorKind::UnexpectedEof {
-                return Ok(false);
+                return Ok(None);
             }
             return Err(Error::Parsing(e.to_string()));
         }
     };
 
-    buf.clear();
+    if length > MAX_ALLOC {
+        return Err(Error::LdReadTooLarge(length));
+    }
+    if length > buf.len() {
+        buf.resize(length, 0);
+    }
+
     reader
-        .take(l as u64)
-        .read_to_end(buf)
+        .read_exact(&mut buf[..length])
         .await
         .map_err(|e| Error::Parsing(e.to_string()))?;
-    Ok(true)
+
+    Ok(Some(&buf[..length]))
 }
 
 pub(crate) async fn read_node<R>(
@@ -33,8 +43,8 @@ pub(crate) async fn read_node<R>(
 where
     R: AsyncRead + Send + Unpin,
 {
-    if ld_read(buf_reader, buf).await? {
-        let mut cursor = std::io::Cursor::new(&buf);
+    if let Some(buf) = ld_read(buf_reader, buf).await? {
+        let mut cursor = std::io::Cursor::new(buf);
         let c = Cid::read_bytes(&mut cursor)?;
         let pos = cursor.position() as usize;
 
@@ -61,13 +71,25 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn ld_read_write() {
+    async fn ld_read_write_good() {
         let mut buffer = Vec::<u8>::new();
         ld_write(&mut buffer, b"test bytes").await.unwrap();
         let reader = std::io::Cursor::new(buffer);
-        let mut buffer = Vec::new();
-        let read = ld_read(reader, &mut buffer).await.unwrap();
-        assert!(read);
-        assert_eq!(&buffer, b"test bytes");
+
+        let mut buffer = vec![1u8; 1024];
+        let read = ld_read(reader, &mut buffer).await.unwrap().unwrap();
+        assert_eq!(read, b"test bytes");
+    }
+
+    #[tokio::test]
+    async fn ld_read_write_fail() {
+        let mut buffer = Vec::<u8>::new();
+        let size = MAX_ALLOC + 1;
+        ld_write(&mut buffer, &vec![2u8; size]).await.unwrap();
+        let reader = std::io::Cursor::new(buffer);
+
+        let mut buffer = vec![1u8; 1024];
+        let read = ld_read(reader, &mut buffer).await;
+        assert!(matches!(read, Err(Error::LdReadTooLarge(_))));
     }
 }
