@@ -23,19 +23,20 @@ where
     pub async fn new(mut reader: R) -> Result<Self, Error> {
         let mut buffer = Vec::new();
 
-        if !ld_read(&mut reader, &mut buffer).await? {
-            return Err(Error::Parsing(
+        match ld_read(&mut reader, &mut buffer).await? {
+            Some(buf) => {
+                let header = CarHeader::decode(buf)?;
+
+                Ok(CarReader {
+                    reader,
+                    header,
+                    buffer,
+                })
+            }
+            None => Err(Error::Parsing(
                 "failed to parse uvarint for header".to_string(),
-            ));
+            )),
         }
-
-        let header = CarHeader::decode(&buffer)?;
-
-        Ok(CarReader {
-            reader,
-            header,
-            buffer,
-        })
     }
 
     /// Returns the header of this car file.
