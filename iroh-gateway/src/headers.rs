@@ -65,7 +65,7 @@ pub fn add_cache_control_headers(headers: &mut HeaderMap, metadata: Metadata) {
 #[tracing::instrument()]
 pub fn add_ipfs_roots_headers(headers: &mut HeaderMap, metadata: Metadata) {
     let mut roots = "".to_string();
-    for (_path, rcid) in metadata.resolved_path {
+    for rcid in metadata.resolved_path {
         write!(roots, "{},", rcid).unwrap();
     }
     roots.pop();

@@ -206,11 +206,11 @@ pub struct Metadata {
     pub size: Option<usize>,
     pub typ: OutType,
     pub unixfs_type: Option<UnixfsType>,
-    /// List of mappings "path part" -> Cid.
+    /// List of resolved cids. In order of the `path`.
     ///
     /// Only contains the "top level cids", and only path segments that actually map
     /// to a block.
-    pub resolved_path: Vec<(String, Cid)>,
+    pub resolved_path: Vec<Cid>,
     pub source: Source,
 }
 
@@ -460,7 +460,7 @@ impl<T: ContentLoader> Resolver<T> {
     async fn inner_resolve(
         &self,
         current: &mut UnixfsNode,
-        resolved_path: &mut Vec<(String, Cid)>,
+        resolved_path: &mut Vec<Cid>,
         part: &str,
     ) -> Result<()> {
         match current.typ() {
@@ -471,7 +471,7 @@ impl<T: ContentLoader> Resolver<T> {
                     .ok_or_else(|| anyhow!("link {} not found", part))?;
                 let loaded_cid = self.load_cid(&next_link.cid).await?;
                 let next_node = UnixfsNode::decode(&next_link.cid, loaded_cid.data)?;
-                resolved_path.push((part.to_string(), next_link.cid));
+                resolved_path.push(next_link.cid);
 
                 *current = next_node;
             }
@@ -494,7 +494,7 @@ impl<T: ContentLoader> Resolver<T> {
         if let Ok(node) = UnixfsNode::decode(&cid, loaded_cid.data.clone()) {
             let tail = &root_path.tail;
             let mut current = node;
-            let mut resolved_path = vec![(root_path.root.to_string(), cid)];
+            let mut resolved_path = vec![cid];
 
             for part in tail {
                 self.inner_resolve(&mut current, &mut resolved_path, part)
@@ -553,7 +553,7 @@ impl<T: ContentLoader> Resolver<T> {
             size: Some(bytes.len()),
             typ: OutType::DagPb,
             unixfs_type: None,
-            resolved_path: vec![(cid.to_string(), cid)],
+            resolved_path: vec![cid],
             source: loaded_cid.source,
         };
         Ok(Out {
@@ -591,7 +591,7 @@ impl<T: ContentLoader> Resolver<T> {
             size: Some(bytes.len()),
             typ: OutType::DagCbor,
             unixfs_type: None,
-            resolved_path: vec![(cid.to_string(), cid)],
+            resolved_path: vec![cid],
             source: loaded_cid.source,
         };
         Ok(Out {
@@ -629,7 +629,7 @@ impl<T: ContentLoader> Resolver<T> {
             size: Some(bytes.len()),
             typ: OutType::DagJson,
             unixfs_type: None,
-            resolved_path: vec![(cid.to_string(), cid)],
+            resolved_path: vec![cid],
             source: loaded_cid.source,
         };
         Ok(Out {
@@ -653,7 +653,7 @@ impl<T: ContentLoader> Resolver<T> {
             size: Some(loaded_cid.data.len()),
             typ: OutType::Raw,
             unixfs_type: None,
-            resolved_path: vec![(cid.to_string(), cid)],
+            resolved_path: vec![cid],
             source: loaded_cid.source,
         };
         Ok(Out {
@@ -671,11 +671,10 @@ impl<T: ContentLoader> Resolver<T> {
         path: &[String],
     ) -> Result<Ipld> {
         let mut root = root;
-        let mut current = &root;
+        let mut current = root;
 
         for part in path {
             if let libipld::Ipld::Link(c) = current {
-                let c = *c;
                 let new_codec: libipld::IpldCodec = c.codec().try_into()?;
                 ensure!(
                     new_codec == codec,
@@ -689,7 +688,7 @@ impl<T: ContentLoader> Resolver<T> {
                 root = codec
                     .decode(&loaded_cid.data)
                     .map_err(|e| anyhow!("invalid dag json: {:?}", e))?;
-                current = &root;
+                current = root;
             }
 
             let index: libipld::ipld::IpldIndex = if let Ok(i) = part.parse::<usize>() {
@@ -698,12 +697,12 @@ impl<T: ContentLoader> Resolver<T> {
                 part.clone().into()
             };
 
-            current = current.get(index)?;
+            current = current.take(index)?;
         }
 
         // TODO: can we avoid this clone?
 
-        Ok(current.clone())
+        Ok(current)
     }
 
     #[tracing::instrument(skip(self))]
@@ -968,7 +967,7 @@ mod tests {
                     _ => unreachable!(),
                 }
                 assert_eq!(m.size, Some(out_bytes.len()));
-                assert_eq!(m.resolved_path, vec![(c.to_string(), c)]);
+                assert_eq!(m.resolved_path, vec![c]);
             }
             {
                 let path = format!("/ipfs/{c}/details/0");
@@ -992,7 +991,7 @@ mod tests {
                     _ => unreachable!(),
                 }
                 assert_eq!(m.size, Some(out_bytes.len()));
-                assert_eq!(m.resolved_path, vec![(c.to_string(), c)]);
+                assert_eq!(m.resolved_path, vec![c]);
             }
         }
     }
@@ -1061,10 +1060,7 @@ mod tests {
             assert_eq!(m.path.to_string(), path);
             assert_eq!(m.typ, OutType::Unixfs);
             assert_eq!(m.size, None);
-            assert_eq!(
-                m.resolved_path,
-                vec![(root_cid_str.to_string(), root_cid_str.parse().unwrap())]
-            );
+            assert_eq!(m.resolved_path, vec![root_cid_str.parse().unwrap()]);
 
             if let OutContent::Unixfs(node) = ipld_foo.content {
                 assert_eq!(
@@ -1090,8 +1086,8 @@ mod tests {
             assert_eq!(
                 m.resolved_path,
                 vec![
-                    (root_cid_str.to_string(), root_cid_str.parse().unwrap()),
-                    ("hello.txt".to_string(), hello_txt_cid_str.parse().unwrap()),
+                    root_cid_str.parse().unwrap(),
+                    hello_txt_cid_str.parse().unwrap(),
                 ]
             );
 
@@ -1116,13 +1112,7 @@ mod tests {
             assert_eq!(m.path.to_string(), path);
             assert_eq!(m.typ, OutType::Unixfs);
             assert_eq!(m.size, Some(6));
-            assert_eq!(
-                m.resolved_path,
-                vec![(
-                    hello_txt_cid_str.to_string(),
-                    hello_txt_cid_str.parse().unwrap()
-                )]
-            );
+            assert_eq!(m.resolved_path, vec![hello_txt_cid_str.parse().unwrap()]);
 
             if let OutContent::Unixfs(node) = ipld_hello_txt.content {
                 assert_eq!(
@@ -1153,10 +1143,7 @@ mod tests {
             assert_eq!(m.size, None);
             assert_eq!(
                 m.resolved_path,
-                vec![
-                    (root_cid_str.to_string(), root_cid_str.parse().unwrap()),
-                    ("bar".to_string(), bar_cid_str.parse().unwrap()),
-                ]
+                vec![root_cid_str.parse().unwrap(), bar_cid_str.parse().unwrap(),]
             );
 
             if let OutContent::Unixfs(node) = ipld_bar.content {
@@ -1181,9 +1168,9 @@ mod tests {
             assert_eq!(
                 m.resolved_path,
                 vec![
-                    (root_cid_str.to_string(), root_cid_str.parse().unwrap()),
-                    ("bar".to_string(), bar_cid_str.parse().unwrap()),
-                    ("bar.txt".to_string(), bar_txt_cid_str.parse().unwrap()),
+                    root_cid_str.parse().unwrap(),
+                    bar_cid_str.parse().unwrap(),
+                    bar_txt_cid_str.parse().unwrap(),
                 ]
             );
 
@@ -1373,10 +1360,7 @@ mod tests {
             assert_eq!(m.path.to_string(), path);
             assert_eq!(m.typ, OutType::Unixfs);
             assert_eq!(m.size, None); // multipart file, we don't know the size ahead of time
-            assert_eq!(
-                m.resolved_path,
-                vec![(root_cid_str.to_string(), root_cid_str.parse().unwrap()),]
-            );
+            assert_eq!(m.resolved_path, vec![root_cid_str.parse().unwrap(),]);
 
             if let OutContent::Unixfs(node) = ipld_readme.content {
                 let content =
@@ -1473,8 +1457,8 @@ mod tests {
             assert_eq!(
                 m.resolved_path,
                 vec![
-                    (root_cid_str.to_string(), root_cid_str.parse().unwrap()),
-                    ("hello.txt".to_string(), hello_txt_cid_str.parse().unwrap()),
+                    root_cid_str.parse().unwrap(),
+                    hello_txt_cid_str.parse().unwrap()
                 ]
             );
 
@@ -1517,9 +1501,9 @@ mod tests {
             assert_eq!(
                 m.resolved_path,
                 vec![
-                    (root_cid_str.to_string(), root_cid_str.parse().unwrap()),
-                    ("bar".to_string(), bar_cid_str.parse().unwrap()),
-                    ("bar.txt".to_string(), bar_txt_cid_str.parse().unwrap()),
+                    root_cid_str.parse().unwrap(),
+                    bar_cid_str.parse().unwrap(),
+                    bar_txt_cid_str.parse().unwrap()
                 ]
             );
 
@@ -1545,12 +1529,9 @@ mod tests {
             assert_eq!(
                 m.resolved_path,
                 vec![
-                    (root_cid_str.to_string(), root_cid_str.parse().unwrap()),
-                    ("bar".to_string(), bar_cid_str.parse().unwrap()),
-                    (
-                        "my-symlink-local.txt".to_string(),
-                        my_symlink_local_cid_str.parse().unwrap()
-                    ),
+                    root_cid_str.parse().unwrap(),
+                    bar_cid_str.parse().unwrap(),
+                    my_symlink_local_cid_str.parse().unwrap()
                 ]
             );
 
@@ -1576,12 +1557,9 @@ mod tests {
             assert_eq!(
                 m.resolved_path,
                 vec![
-                    (root_cid_str.to_string(), root_cid_str.parse().unwrap()),
-                    ("bar".to_string(), bar_cid_str.parse().unwrap()),
-                    (
-                        "my-symlink-outer.txt".to_string(),
-                        my_symlink_outer_cid_str.parse().unwrap()
-                    ),
+                    root_cid_str.parse().unwrap(),
+                    bar_cid_str.parse().unwrap(),
+                    my_symlink_outer_cid_str.parse().unwrap()
                 ]
             );
 
@@ -1607,12 +1585,9 @@ mod tests {
             assert_eq!(
                 m.resolved_path,
                 vec![
-                    (root_cid_str.to_string(), root_cid_str.parse().unwrap()),
-                    ("bar".to_string(), bar_cid_str.parse().unwrap()),
-                    (
-                        "my-symlink.txt".to_string(),
-                        my_symlink_cid_str.parse().unwrap()
-                    ),
+                    root_cid_str.parse().unwrap(),
+                    bar_cid_str.parse().unwrap(),
+                    my_symlink_cid_str.parse().unwrap()
                 ]
             );
 
@@ -1632,13 +1607,7 @@ mod tests {
             assert_eq!(m.unixfs_type, Some(UnixfsType::Symlink));
             assert_eq!(m.path.to_string(), path);
             assert_eq!(m.typ, OutType::Unixfs);
-            assert_eq!(
-                m.resolved_path,
-                vec![(
-                    my_symlink_cid_str.to_string(),
-                    my_symlink_cid_str.parse().unwrap()
-                ),]
-            );
+            assert_eq!(m.resolved_path, vec![my_symlink_cid_str.parse().unwrap()]);
 
             if let OutContent::Unixfs(node) = ipld_bar_txt.content {
                 assert_eq!(
