@@ -499,7 +499,6 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
     }
 
     async fn handle_rpc_message(&mut self, message: RpcMessage) -> Result<bool> {
-        info!("rpc message {:?}", message);
         // Inbound messages
         match message {
             RpcMessage::BitswapRequest {
