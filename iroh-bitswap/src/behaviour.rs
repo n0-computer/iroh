@@ -127,7 +127,7 @@ impl Bitswap {
             .want(cid, priority, providers.into_iter().collect())
     }
 
-    #[instrument(skip(self))]
+    #[instrument(skip(self, data))]
     pub fn send_block(&mut self, peer_id: &PeerId, cid: Cid, data: Bytes) -> QueryId {
         debug!("send_block: {}", cid);
 

@@ -162,7 +162,10 @@ impl P2pNode {
             path: db_path.to_path_buf(),
             rpc_addr: rpc_store_addr,
             rpc_client: rpc_client_config.clone(),
-            metrics: Default::default(),
+            metrics: iroh_metrics::config::Config {
+                debug: true, // disable tracing by default
+                ..Default::default()
+            },
         };
 
         let store_metrics = Metrics::new(&mut prom_registry);
