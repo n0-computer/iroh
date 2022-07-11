@@ -23,7 +23,7 @@ serde = { version = "1", features = ["derive"] }
 futures = "0.3.21"
 async-channel = "1.6.1"
 bytes = "1.1.0"
-cid = "0.8.5"
+cid = { version = "0.8.5", features = ["serde-codec"] }
 async-trait = "0.1.56"
 
 clap = { version = "3.1.14", features = ["derive"] }

@@ -1,17 +1,21 @@
 use std::path::Path;
 
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use async_channel::{bounded, Receiver};
 use bytes::Bytes;
-use futures::channel::oneshot::channel as oneshot;
+use futures::channel::oneshot::{channel as oneshot, Receiver as OneShotReceiver};
 use futures::StreamExt;
 use iroh_p2p::{GossipsubEvent, NetworkEvent};
 use iroh_resolver::unixfs_builder::DirectoryBuilder;
 use libp2p::gossipsub::Sha256Topic;
 use rand::Rng;
-use tracing::{error, info};
+use tokio::task::JoinHandle;
+use tracing::{debug, info, warn};
 
-use crate::p2p_node::{P2pNode, Ticket};
+use crate::{
+    p2p_node::{P2pNode, Ticket},
+    ReceiverMessage, SenderMessage,
+};
 
 /// The sending part of the data transfer.
 pub struct Sender {
@@ -60,31 +64,73 @@ impl Sender {
         let t = Sha256Topic::new(format!("iroh-share-{}", id));
         let root_dir = dir_builder.build().await?;
 
-        let (s, r) = oneshot();
+        let (done_sender, done_receiver) = oneshot();
 
-        let root = {
+        let (root, num_parts) = {
             let parts = root_dir.encode();
             tokio::pin!(parts);
+            let mut num_parts = 0;
             let mut root_cid = None;
             while let Some(part) = parts.next().await {
                 // TODO: store links in the store
                 let (cid, bytes) = part?;
+                num_parts += 1;
                 root_cid = Some(cid);
                 self.p2p.rpc().store.put(cid, bytes, vec![]).await?;
             }
-            root_cid.unwrap()
+            (root_cid.unwrap(), num_parts)
         };
 
         let gossip_events = self.gossip_events.clone();
         let topic_hash = t.hash();
         let th = topic_hash.clone();
-        tokio::task::spawn(async move {
+        let rpc = self.p2p.rpc().clone();
+
+        // subscribe to the topic, to receive responses
+        self.p2p
+            .rpc()
+            .p2p
+            .gossipsub_subscribe(topic_hash.clone())
+            .await?;
+
+        let gossip_task = tokio::task::spawn(async move {
+            let mut current_peer = None;
             while let Ok(event) = gossip_events.recv().await {
                 match event {
                     GossipsubEvent::Subscribed { peer_id, topic } => {
-                        if topic == th {
-                            s.send(peer_id).ok();
-                            break;
+                        if topic == th && current_peer.is_none() {
+                            info!("connected to {}", peer_id);
+                            current_peer = Some(peer_id);
+
+                            let start =
+                                bincode::serialize(&SenderMessage::Start { root, num_parts })
+                                    .expect("serialize failure");
+                            rpc.p2p
+                                .gossipsub_publish(topic.clone(), start.into())
+                                .await
+                                .unwrap();
+                        }
+                    }
+                    GossipsubEvent::Message { from, message, .. } => {
+                        debug!("received message from {}", from);
+                        if let Some(current_peer) = current_peer {
+                            if from == current_peer {
+                                match bincode::deserialize(&message.data) {
+                                    Ok(ReceiverMessage::FinishOk) => {
+                                        info!("finished transfer");
+                                        done_sender.send(Ok(())).ok();
+                                        break;
+                                    }
+                                    Ok(ReceiverMessage::FinishError(err)) => {
+                                        info!("transfer failed: {}", err);
+                                        done_sender.send(Err(anyhow!("{}", err))).ok();
+                                        break;
+                                    }
+                                    Err(err) => {
+                                        warn!("unexpected message: {:?}", err);
+                                    }
+                                }
+                            }
                         }
                     }
                     _ => {}
@@ -100,24 +146,7 @@ impl Sender {
             .await
             .context("getting p2p info")?;
         info!("Available addrs: {:?}", addrs);
-        let root_bytes = root.to_bytes().to_vec();
         let topic_string = topic_hash.to_string();
-        let rpc = self.p2p.rpc().clone();
-        let topic = topic_hash.clone();
-
-        tokio::task::spawn(async move {
-            match r.await {
-                Ok(_peer_id) => {
-                    rpc.p2p
-                        .gossipsub_publish(topic, root_bytes.into())
-                        .await
-                        .unwrap();
-                }
-                Err(e) => {
-                    error!("failed to receive root, transfer aborted: {:?}", e);
-                }
-            }
-        });
 
         let ticket = Ticket {
             peer_id,
@@ -125,7 +154,11 @@ impl Sender {
             topic: topic_string,
         };
 
-        Ok(Transfer { ticket })
+        Ok(Transfer {
+            ticket,
+            done_receiver,
+            gossip_task,
+        })
     }
 
     pub async fn transfer_from_data(
@@ -151,10 +184,19 @@ impl Sender {
 
 pub struct Transfer {
     ticket: Ticket,
+    done_receiver: OneShotReceiver<Result<()>>,
+    gossip_task: JoinHandle<()>,
 }
 
 impl Transfer {
     pub fn ticket(&self) -> &Ticket {
         &self.ticket
+    }
+
+    /// Waits until the transfer is done.
+    pub async fn done(self) -> Result<()> {
+        self.done_receiver.await??;
+        self.gossip_task.await?;
+        Ok(())
     }
 }

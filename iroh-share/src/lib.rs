@@ -2,9 +2,32 @@ mod p2p_node;
 mod receiver;
 mod sender;
 
+use cid::Cid;
+use serde::{Deserialize, Serialize};
+
 pub use crate::p2p_node::Ticket;
-pub use crate::receiver::{Receiver, Transfer as ReceiverTransfer};
+pub use crate::receiver::{ProgressEvent, Receiver, Transfer as ReceiverTransfer};
 pub use crate::sender::{Sender, Transfer as SenderTransfer};
+
+/// Messages sent from the sender.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+enum SenderMessage {
+    Start {
+        /// The root Cid of the content.
+        root: Cid,
+        /// How many individual pieces the transfer consists of.
+        num_parts: usize,
+    },
+}
+
+/// Messages sent from the receiver.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+enum ReceiverMessage {
+    /// Transfer was completed successfully.
+    FinishOk,
+    /// Transfer failed.
+    FinishError(String),
+}
 
 #[cfg(test)]
 mod tests {
@@ -13,6 +36,7 @@ mod tests {
     use super::*;
     use anyhow::{Context, Result};
     use bytes::Bytes;
+    use futures::TryStreamExt;
     use iroh_resolver::unixfs_builder::{DirectoryBuilder, FileBuilder};
     use tokio::io::AsyncReadExt;
     use tracing_subscriber::{fmt, prelude::*, EnvFilter};
@@ -56,7 +80,7 @@ mod tests {
             .context("r: new")?;
 
         // tries to discover the sender, and receive the root
-        let receiver_transfer = receiver
+        let mut receiver_transfer = receiver
             .transfer_from_ticket(ticket)
             .await
             .context("r: transfer")?;
@@ -66,11 +90,25 @@ mod tests {
         let files: Vec<_> = data.read_dir().unwrap().collect::<Result<_>>()?;
         assert_eq!(files.len(), 1);
 
+        // Check progress
+        {
+            let progress = receiver_transfer.progress()?;
+            let progress: Vec<_> = progress.try_collect().await.unwrap();
+            assert_eq!(progress.len(), 2);
+            assert_eq!(progress[0], ProgressEvent::Piece { index: 1, total: 2 });
+            assert_eq!(progress[1], ProgressEvent::Piece { index: 2, total: 2 });
+        }
         let file = &files[0];
         assert_eq!(file.name.unwrap(), "foo.jpg");
-        // let mut content = Vec::new();
-        //        data.pretty().read_to_end(&mut content).await?;
-        //        assert_eq!(&content, &bytes);
+
+        let mut content = Vec::new();
+        let file = data.read_file(&files[0]).await?;
+        file.pretty().read_to_end(&mut content).await?;
+        assert_eq!(&content, &bytes);
+
+        // wait for the sender to report done
+        println!("waiting for done");
+        sender_transfer.done().await?;
 
         sender.close().await?;
         receiver.close().await?;
@@ -113,13 +151,27 @@ mod tests {
             .context("r: new")?;
 
         // tries to discover the sender, and receive the root
-        let receiver_transfer = receiver
+        let mut receiver_transfer = receiver
             .transfer_from_ticket(ticket)
             .await
             .context("r: transfer")?;
 
         let data = receiver_transfer.recv().await.context("r: recv")?;
         assert!(data.is_dir());
+
+        // Check progress
+        {
+            let progress = receiver_transfer.progress()?;
+            let progress: Vec<_> = progress.try_collect().await.unwrap();
+            assert_eq!(progress.len(), 7);
+            assert_eq!(progress[0], ProgressEvent::Piece { index: 1, total: 7 });
+            assert_eq!(progress[1], ProgressEvent::Piece { index: 2, total: 7 });
+            assert_eq!(progress[2], ProgressEvent::Piece { index: 3, total: 7 });
+            assert_eq!(progress[3], ProgressEvent::Piece { index: 4, total: 7 });
+            assert_eq!(progress[4], ProgressEvent::Piece { index: 5, total: 7 });
+            assert_eq!(progress[5], ProgressEvent::Piece { index: 6, total: 7 });
+            assert_eq!(progress[6], ProgressEvent::Piece { index: 7, total: 7 });
+        }
 
         let files: Vec<_> = data.read_dir().unwrap().collect::<Result<_>>()?;
         assert_eq!(files.len(), 2);
@@ -143,6 +195,9 @@ mod tests {
                 .context("read_to_end")?;
             assert_eq!(&file_content, &vec![1; 1024 * 1000]);
         }
+
+        // wait for the sender to report done
+        sender_transfer.done().await?;
 
         sender.close().await?;
         receiver.close().await?;

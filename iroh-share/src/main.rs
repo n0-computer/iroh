@@ -2,7 +2,7 @@ use std::{path::PathBuf, time::Duration};
 
 use anyhow::{ensure, Context, Result};
 use clap::{Parser, Subcommand};
-use iroh_share::{Receiver, Sender, Ticket};
+use iroh_share::{ProgressEvent, Receiver, Sender, Ticket};
 use tokio::io::AsyncWriteExt;
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
@@ -92,11 +92,25 @@ async fn main() -> Result<()> {
             let receiver = Receiver::new(port, rpc_p2p_port, rpc_store_port, &sender_db)
                 .await
                 .context("failed to create sender")?;
-            let receiver_transfer = receiver
+            let mut receiver_transfer = receiver
                 .transfer_from_ticket(&ticket)
                 .await
                 .context("failed to read transfer")?;
             let data = receiver_transfer.recv().await?;
+            let progress = receiver_transfer.progress()?;
+
+            tokio::spawn(async move {
+                while let Ok(ev) = progress.recv().await {
+                    match ev {
+                        Ok(ProgressEvent::Piece { index, total }) => {
+                            println!("transferred: {}/{}", index, total);
+                        }
+                        Err(e) => {
+                            eprintln!("transfer failed: {}", e);
+                        }
+                    }
+                }
+            });
 
             let mut out_dir = std::env::current_dir()?;
             if let Some(out) = out {
