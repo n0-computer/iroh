@@ -710,7 +710,7 @@ impl<T: ContentLoader> Resolver<T> {
         })
     }
 
-    #[tracing::instrument(skip(self))]
+    #[tracing::instrument(skip(self, root))]
     async fn resolve_ipld(
         &self,
         _cid: Cid,
