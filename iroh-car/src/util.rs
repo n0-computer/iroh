@@ -5,7 +5,7 @@ use tokio::io::{AsyncRead, AsyncReadExt};
 use super::error::Error;
 
 /// Maximum size that is used for single node.
-pub(crate) const MAX_ALLOC: usize = 4 * 1024 * 1024 * 1024;
+pub(crate) const MAX_ALLOC: usize = 4 * 1024 * 1024;
 
 pub(crate) async fn ld_read<R>(mut reader: R, buf: &mut Vec<u8>) -> Result<Option<&[u8]>, Error>
 where
