@@ -13,7 +13,6 @@ use iroh_rpc_client::Client as RpcClient;
 use rocksdb::{
     BlockBasedOptions, Cache, DBPinnableSlice, IteratorMode, Options, WriteBatch, DB as RocksDb,
 };
-use tokio::task;
 
 use crate::cf::{
     GraphV0, MetadataV0, Versioned, CF_BLOBS_V0, CF_GRAPH_V0, CF_ID_V0, CF_METADATA_V0,
@@ -77,28 +76,23 @@ impl Store {
         options.create_if_missing(true);
 
         let path = config.path.clone();
-        let db = task::spawn_blocking(move || -> Result<_> {
-            let mut db = RocksDb::open(&options, path)?;
-            {
-                let opts = default_blob_opts();
-                db.create_cf(CF_BLOBS_V0, &opts)?;
-            }
-            {
-                let opts = Options::default();
-                db.create_cf(CF_METADATA_V0, &opts)?;
-            }
-            {
-                let opts = Options::default();
-                db.create_cf(CF_GRAPH_V0, &opts)?;
-            }
-            {
-                let opts = Options::default();
-                db.create_cf(CF_ID_V0, &opts)?;
-            }
-
-            Ok(db)
-        })
-        .await??;
+        let mut db = RocksDb::open(&options, path)?;
+        {
+            let opts = default_blob_opts();
+            db.create_cf(CF_BLOBS_V0, &opts)?;
+        }
+        {
+            let opts = Options::default();
+            db.create_cf(CF_METADATA_V0, &opts)?;
+        }
+        {
+            let opts = Options::default();
+            db.create_cf(CF_GRAPH_V0, &opts)?;
+        }
+        {
+            let opts = Options::default();
+            db.create_cf(CF_ID_V0, &opts)?;
+        }
 
         let _rpc_client = RpcClient::new(&config.rpc_client)
             .await
@@ -124,7 +118,7 @@ impl Store {
         // TODO: find a way to read existing options
 
         let path = config.path.clone();
-        let (db, next_id) = task::spawn_blocking(move || -> Result<_> {
+        let (db, next_id) =  {
             let db = RocksDb::open_cf(
                 &options,
                 path,
@@ -147,9 +141,8 @@ impl Store {
                 last_id + 1
             };
 
-            Ok((db, next_id))
-        })
-        .await??;
+            (db, next_id)
+        };
 
         let _rpc_client = RpcClient::new(&config.rpc_client)
             .await
