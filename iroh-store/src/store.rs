@@ -118,7 +118,7 @@ impl Store {
         // TODO: find a way to read existing options
 
         let path = config.path.clone();
-        let (db, next_id) =  {
+        let (db, next_id) = {
             let db = RocksDb::open_cf(
                 &options,
                 path,
