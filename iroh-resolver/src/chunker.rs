@@ -86,18 +86,10 @@ mod tests {
         // exact match
         {
             let mut content = Vec::with_capacity(1024);
-            for _ in 0..256 {
-                content.push(1);
-            }
-            for _ in 0..256 {
-                content.push(2);
-            }
-            for _ in 0..256 {
-                content.push(3);
-            }
-            for _ in 0..256 {
-                content.push(4);
-            }
+            content.resize(256, 1);
+            content.resize(512, 2);
+            content.resize(768, 3);
+            content.resize(1024, 4);
             let bytes = std::io::Cursor::new(content);
 
             let chunker = Chunker::fixed_with_size(256);
@@ -112,18 +104,10 @@ mod tests {
         // overflow
         {
             let mut content = Vec::with_capacity(1024);
-            for _ in 0..256 {
-                content.push(1);
-            }
-            for _ in 0..256 {
-                content.push(2);
-            }
-            for _ in 0..256 {
-                content.push(3);
-            }
-            for _ in 0..256 {
-                content.push(4);
-            }
+            content.resize(256, 1);
+            content.resize(512, 2);
+            content.resize(768, 3);
+            content.resize(1024, 4);
             content.push(5);
             content.push(5);
 

@@ -36,15 +36,13 @@ impl Receiver {
 
         let gossip_task = tokio::task::spawn(async move {
             while let Ok(event) = events.recv().await {
-                match event {
-                    NetworkEvent::Gossipsub(iroh_p2p::GossipsubEvent::Message {
-                        from,
-                        id,
-                        message,
-                    }) => {
-                        s.try_send((id, from, message)).ok();
-                    }
-                    _ => {}
+                if let NetworkEvent::Gossipsub(iroh_p2p::GossipsubEvent::Message {
+                    from,
+                    id,
+                    message,
+                }) = event
+                {
+                    s.try_send((id, from, message)).ok();
                 }
             }
         });

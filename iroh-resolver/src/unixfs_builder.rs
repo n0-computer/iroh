@@ -1,4 +1,4 @@
-use std::pin::Pin;
+use std::{fmt::Debug, pin::Pin};
 
 use crate::{
     chunker::{self, Chunker, DEFAULT_CHUNK_SIZE_LIMIT},
@@ -12,6 +12,8 @@ use futures::{Stream, StreamExt};
 use prost::Message;
 use tokio::io::AsyncRead;
 
+/// Construct a UnixFS directory.
+#[derive(Debug, Default)]
 pub struct DirectoryBuilder {
     name: Option<String>,
     files: Vec<File>,
@@ -19,10 +21,7 @@ pub struct DirectoryBuilder {
 
 impl DirectoryBuilder {
     pub fn new() -> Self {
-        Self {
-            name: None,
-            files: Vec::new(),
-        }
+        Self::default()
     }
 
     pub fn name(&mut self, name: impl Into<String>) -> &mut Self {
@@ -43,6 +42,8 @@ impl DirectoryBuilder {
     }
 }
 
+/// Representation of a constructed Directory.
+#[derive(Debug)]
 pub struct Directory {
     name: String,
     files: Vec<File>,
@@ -102,17 +103,46 @@ impl Directory {
     }
 }
 
+/// Constructs a UnixFS file.
 pub struct FileBuilder {
     name: Option<String>,
     content: Option<Pin<Box<dyn AsyncRead>>>,
     chunker: Chunker,
 }
 
+impl Debug for FileBuilder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let content = if self.content.is_some() {
+            "Some(Box<AsyncRead>)"
+        } else {
+            "None"
+        };
+
+        f.debug_struct("FileBuilder")
+            .field("name", &self.name)
+            .field("content", &content)
+            .field("chunker", &self.chunker)
+            .finish()
+    }
+}
+
+/// Representation of a constructed File.
 pub struct File {
     name: String,
     nodes: Pin<Box<dyn Stream<Item = Result<UnixfsNode>>>>,
 }
 
+impl Debug for File {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("File")
+            .field("name", &self.name)
+            .field("nodes", &"Stream<Item = Result<UnixfsNode>>")
+            .finish()
+    }
+}
+
+/// A File that has been encoded into serialized UnixFS.
+#[derive(Debug)]
 pub enum EncodedFile {
     Raw(Bytes),
     Chunked { root: Bytes, leaves: Vec<Bytes> },
@@ -216,13 +246,19 @@ fn encode_unixfs_pb(inner: &unixfs_pb::Data, links: Vec<dag_pb::PbLink>) -> Resu
     })
 }
 
-impl FileBuilder {
-    pub fn new() -> Self {
+impl Default for FileBuilder {
+    fn default() -> Self {
         Self {
             name: None,
             content: None,
             chunker: chunker::Chunker::fixed_size(),
         }
+    }
+}
+
+impl FileBuilder {
+    pub fn new() -> Self {
+        Self::default()
     }
 
     pub fn name(&mut self, name: impl Into<String>) -> &mut Self {
@@ -423,8 +459,9 @@ mod tests {
         assert_eq!(links[0].cid, bar_encoded[4].0);
         assert_eq!(links[1].name.unwrap(), "baz.txt");
         assert_eq!(links[1].cid, baz_encoded[8].0);
-        for i in 0..9 {
-            let node = UnixfsNode::decode(&baz_encoded[i].0, baz_encoded[i].1.clone())?;
+
+        for (i, encoded) in baz_encoded.iter().enumerate() {
+            let node = UnixfsNode::decode(&encoded.0, encoded.1.clone())?;
             if i == 8 {
                 assert_eq!(node.typ(), Some(DataType::File));
                 assert_eq!(node.links().count(), 8);

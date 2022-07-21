@@ -35,12 +35,9 @@ impl Sender {
 
         tokio::task::spawn(async move {
             while let Ok(event) = events.recv().await {
-                match event {
-                    NetworkEvent::Gossipsub(e) => {
-                        // drop events if they are not processed
-                        s.try_send(e).ok();
-                    }
-                    _ => {}
+                if let NetworkEvent::Gossipsub(e) = event {
+                    // drop events if they are not processed
+                    s.try_send(e).ok();
                 }
             }
         });

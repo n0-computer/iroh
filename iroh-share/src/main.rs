@@ -62,7 +62,7 @@ async fn main() -> Result<()> {
             // TODO: streaming read
             let name = path
                 .file_name()
-                .map(|s| s.to_string_lossy().to_owned())
+                .map(|s| s.to_string_lossy())
                 .unwrap_or_default();
             let data = tokio::fs::read(&path).await?;
 
