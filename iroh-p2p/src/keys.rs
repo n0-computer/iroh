@@ -201,7 +201,7 @@ pub trait Storage: std::fmt::Debug {
     async fn put(&mut self, keypair: Keypair) -> Result<()>;
     async fn len(&self) -> Result<usize>;
 
-    fn keys(&self) -> Box<dyn Stream<Item = Result<Keypair>> + Unpin + '_>;
+    fn keys(&self) -> Box<dyn Stream<Item = Result<Keypair>> + Unpin + Send + '_>;
 }
 
 #[async_trait]
@@ -215,7 +215,7 @@ impl Storage for MemoryStorage {
         Ok(self.keys.len())
     }
 
-    fn keys(&self) -> Box<dyn Stream<Item = Result<Keypair>> + Unpin + '_> {
+    fn keys(&self) -> Box<dyn Stream<Item = Result<Keypair>> + Unpin + Send + '_> {
         let s = async_stream::stream! {
             for key in &self.keys {
                 yield Ok(key.clone());
@@ -242,7 +242,7 @@ impl Storage for DiskStorage {
         Ok(files.len())
     }
 
-    fn keys(&self) -> Box<dyn Stream<Item = Result<Keypair>> + Unpin + '_> {
+    fn keys(&self) -> Box<dyn Stream<Item = Result<Keypair>> + Unpin + Send + '_> {
         let s = async_stream::try_stream! {
             let mut reader = fs::read_dir(&self.path).await?;
 

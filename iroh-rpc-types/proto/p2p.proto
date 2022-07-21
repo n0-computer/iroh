@@ -12,6 +12,17 @@ service P2p {
   rpc GetPeers(google.protobuf.Empty) returns (GetPeersResponse) {}
   rpc PeerConnect(ConnectRequest) returns (ConnectResponse) {}
   rpc PeerDisconnect(DisconnectRequest) returns (google.protobuf.Empty) {}
+  rpc Shutdown(google.protobuf.Empty) returns (google.protobuf.Empty) {}
+
+  rpc GossipsubAddExplicitPeer(GossipsubPeerIdMsg) returns (google.protobuf.Empty) {}
+  rpc GossipsubAllMeshPeers(google.protobuf.Empty) returns (GossipsubPeersResponse) {}
+  rpc GossipsubAllPeers(google.protobuf.Empty) returns (GossipsubAllPeersResponse) {}
+  rpc GossipsubMeshPeers(GossipsubTopicHashMsg) returns (GossipsubPeersResponse) {}
+  rpc GossipsubPublish(GossipsubPublishRequest) returns (GossipsubPublishResponse) {}
+  rpc GossipsubRemoveExplicitPeer(GossipsubPeerIdMsg) returns (google.protobuf.Empty) {}
+  rpc GossipsubSubscribe(GossipsubTopicHashMsg) returns (GossipsubSubscribeResponse) {}
+  rpc GossipsubTopics(google.protobuf.Empty) returns (GossipsubTopicsResponse) {}
+  rpc GossipsubUnsubscribe(GossipsubTopicHashMsg) returns (GossipsubSubscribeResponse) {}
 }
 
 message VersionResponse {
@@ -72,3 +83,50 @@ message Multiaddrs {
   // Serialized list of multiaddrs
   repeated bytes addrs = 1;
 }
+
+
+message GossipsubPeerIdMsg {
+  // Serialized PeerId
+  bytes peer_id = 1;
+}
+
+message GossipsubTopicHashMsg {
+  // Serialized topic hash
+  string topic_hash = 1;
+}
+
+message GossipsubPublishRequest {
+  // Serialized topic hash
+  string topic_hash = 1;
+  // Bytes of data to publish
+  bytes data = 2;
+}
+
+message GossipsubPublishResponse {
+  // Serialized message Gossipsubid
+  bytes message_id = 1;
+}
+
+message GossipsubSubscribeResponse {
+  bool was_subscribed = 1;
+}
+
+message GossipsubAllPeersResponse {
+  repeated GossipsubPeerAndTopics all = 1;
+}
+
+message GossipsubPeerAndTopics {
+  bytes peer_id = 1;
+  repeated string topics = 2;
+}
+
+message GossipsubPeersResponse {
+  // List of PeerIds
+  repeated bytes peers = 1;
+}
+
+message GossipsubTopicsResponse {
+  // List of topics
+  repeated string topics = 1;
+}
+

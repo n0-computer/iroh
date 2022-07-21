@@ -6,7 +6,7 @@ use std::{
     task::{Context, Poll},
 };
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, ensure, Result};
 use bytes::{Buf, Bytes};
 use cid::Cid;
 use futures::{future::BoxFuture, FutureExt};
@@ -14,15 +14,16 @@ use prost::Message;
 use tokio::io::AsyncRead;
 
 use crate::{
+    chunker::DEFAULT_CHUNK_SIZE_LIMIT,
     codecs::Codec,
     resolver::{ContentLoader, OutMetrics},
 };
 
-mod unixfs_pb {
+pub(crate) mod unixfs_pb {
     include!(concat!(env!("OUT_DIR"), "/unixfs_pb.rs"));
 }
 
-mod dag_pb {
+pub(crate) mod dag_pb {
     include!(concat!(env!("OUT_DIR"), "/merkledag_pb.rs"));
 }
 
@@ -74,7 +75,7 @@ pub struct LinkRef<'a> {
     pub tsize: Option<u64>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum UnixfsNode {
     Raw {
         data: Bytes,
@@ -103,6 +104,24 @@ impl UnixfsNode {
                 Ok(UnixfsNode::Pb { outer, inner })
             }
         }
+    }
+
+    pub fn encode(&self) -> Result<Bytes> {
+        let out = match self {
+            UnixfsNode::Raw { data } => data.clone(),
+            UnixfsNode::Pb { outer, .. } => {
+                let bytes = outer.encode_to_vec();
+                bytes.into()
+            }
+        };
+
+        ensure!(
+            out.len() <= DEFAULT_CHUNK_SIZE_LIMIT,
+            "node is too large: {} bytes",
+            out.len()
+        );
+
+        Ok(out)
     }
 
     pub fn typ(&self) -> Option<DataType> {

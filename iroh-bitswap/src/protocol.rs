@@ -12,7 +12,7 @@ use tracing::trace;
 use crate::error::BitswapError;
 use crate::message::BitswapMessage;
 
-const MAX_BUF_SIZE: usize = 1024 * 1024;
+const MAX_BUF_SIZE: usize = 1024 * 1024 * 2;
 
 const PROTOCOLS: [&[u8]; 2] = [b"/ipfs/bitswap/1.1.0", b"/ipfs/bitswap/1.2.0"];
 
