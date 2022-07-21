@@ -1,6 +1,5 @@
-use std::net::SocketAddr;
-
 use anyhow::Result;
+use iroh_rpc_client::Addr;
 use iroh_rpc_types::gateway::gateway_server;
 use iroh_rpc_types::gateway::VersionResponse;
 use tonic::{
@@ -27,16 +26,22 @@ impl NamedService for Gateway {
     const NAME: &'static str = "gateway";
 }
 
-pub async fn new(addr: SocketAddr) -> Result<()> {
+pub async fn new(addr: Addr) -> Result<()> {
     let (mut health_reporter, health_service) = health_reporter();
     health_reporter
         .set_serving::<gateway_server::GatewayServer<Gateway>>()
         .await;
 
-    TonicServer::builder()
-        .add_service(health_service)
-        .add_service(gateway_server::GatewayServer::new(Gateway {}))
-        .serve(addr)
-        .await?;
+    match addr {
+        Addr::GrpcHttp2(addr) => {
+            TonicServer::builder()
+                .add_service(health_service)
+                .add_service(gateway_server::GatewayServer::new(Gateway {}))
+                .serve(addr)
+                .await?;
+        }
+        Addr::GrpcUds(_) => unimplemented!(),
+        Addr::Mem => unimplemented!(),
+    }
     Ok(())
 }

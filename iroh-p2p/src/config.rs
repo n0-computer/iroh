@@ -1,8 +1,6 @@
-use std::net::SocketAddr;
-
 use config::{ConfigError, Map, Source, Value};
 use iroh_metrics::config::Config as MetricsConfig;
-use iroh_rpc_client::Config as RpcClientConfig;
+use iroh_rpc_client::{Addr, Config as RpcClientConfig};
 use iroh_util::insert_into_config_map;
 use libp2p::Multiaddr;
 use serde::{Deserialize, Serialize};
@@ -34,7 +32,7 @@ pub struct Libp2pConfig {
     /// Target peer count.
     pub target_peer_count: u32,
     /// Rpc listening addr
-    pub rpc_addr: SocketAddr,
+    pub rpc_addr: Addr,
     pub rpc_client: RpcClientConfig,
     pub metrics: MetricsConfig,
 }
@@ -96,7 +94,7 @@ impl Default for Libp2pConfig {
             relay_server: true,
             relay_client: true,
             target_peer_count: 256,
-            rpc_addr: "0.0.0.0:4401".parse().unwrap(),
+            rpc_addr: "grpc://0.0.0.0:4401".parse().unwrap(),
             rpc_client: RpcClientConfig::default(),
             metrics: MetricsConfig::default(),
         }

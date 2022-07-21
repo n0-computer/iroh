@@ -449,7 +449,7 @@ mod tests {
         let rpc_client = RpcClientConfig::default();
         let config = Config {
             path: dir.path().into(),
-            rpc_addr: rpc_client.store_addr,
+            rpc_addr: rpc_client.store_addr.clone(),
             rpc_client,
             metrics: MetricsConfig::default(),
         };
@@ -490,7 +490,7 @@ mod tests {
         let rpc_client = RpcClientConfig::default();
         let config = Config {
             path: dir.path().into(),
-            rpc_addr: rpc_client.store_addr,
+            rpc_addr: rpc_client.store_addr.clone(),
             rpc_client,
             metrics: MetricsConfig::default(),
         };

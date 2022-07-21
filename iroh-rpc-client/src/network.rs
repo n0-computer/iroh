@@ -1,5 +1,4 @@
 use std::collections::{HashMap, HashSet};
-use std::net::SocketAddr;
 
 use anyhow::{ensure, Context, Result};
 use bytes::Bytes;
@@ -14,6 +13,7 @@ use libp2p::{Multiaddr, PeerId};
 use tracing::{debug, warn};
 
 use crate::backend::P2pBackend;
+use crate::config::Addr;
 use crate::status::{self, StatusRow};
 
 // name that the health service registers the p2p client as
@@ -29,10 +29,15 @@ pub struct P2pClient {
 }
 
 impl P2pClient {
-    pub async fn new(addr: SocketAddr) -> Result<Self> {
-        let backend = P2pBackend::new(addr)?;
-
-        Ok(P2pClient { backend })
+    pub async fn new(addr: &Addr) -> Result<Self> {
+        match addr {
+            Addr::GrpcHttp2(addr) => {
+                let backend = P2pBackend::new(*addr)?;
+                Ok(P2pClient { backend })
+            }
+            Addr::GrpcUds(_) => unimplemented!(),
+            Addr::Mem => unimplemented!(),
+        }
     }
 
     #[tracing::instrument(skip(self))]
@@ -532,7 +537,7 @@ mod tests {
         let listener = TcpListener::bind("0.0.0.0:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         let server_task = tokio::spawn(async move { TestRpcServer::serve(listener).await });
-        let client = P2pClient::new(addr).await.unwrap();
+        let client = P2pClient::new(&Addr::GrpcHttp2(addr)).await.unwrap();
 
         // check the gossipsub methods serialize and deserialize correctly
         client

@@ -90,9 +90,10 @@ impl Core {
         metrics: Metrics,
         registry: &mut Registry,
     ) -> anyhow::Result<Self> {
+        let rpc_addr = config.rpc_addr.clone();
         tokio::spawn(async move {
             // TODO: handle error
-            rpc::new(config.rpc_addr).await
+            rpc::new(rpc_addr).await
         });
         let rpc_client = RpcClient::new(&config.rpc_client).await?;
         let mut templates = HashMap::new();
@@ -621,11 +622,11 @@ mod tests {
             false,
             false,
             0,
-            "0.0.0.0:0".parse().unwrap(),
+            "grpc://0.0.0.0:0".parse().unwrap(),
             RpcClientConfig {
-                gateway_addr: "0.0.0.0:0".parse().unwrap(),
-                p2p_addr: "0.0.0.0:0".parse().unwrap(),
-                store_addr: "0.0.0.0:0".parse().unwrap(),
+                gateway_addr: "grpc://0.0.0.0:0".parse().unwrap(),
+                p2p_addr: "grpc://0.0.0.0:0".parse().unwrap(),
+                store_addr: "grpc://0.0.0.0:0".parse().unwrap(),
             },
         );
         config.set_default_headers();

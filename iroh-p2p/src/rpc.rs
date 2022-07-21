@@ -1,12 +1,12 @@
 use std::collections::{HashMap, HashSet};
 use std::io;
-use std::net::SocketAddr;
 
 use anyhow::Result;
 use async_channel::Sender;
 use bytes::Bytes;
 use cid::Cid;
 use futures::channel::oneshot;
+use iroh_rpc_client::Addr;
 use libp2p::gossipsub::{
     error::{PublishError, SubscriptionError},
     MessageId, TopicHash,
@@ -416,21 +416,29 @@ pub fn publish_error_to_status(p: PublishError) -> Status {
     }
 }
 
-pub async fn new(addr: SocketAddr, sender: Sender<RpcMessage>) -> Result<()> {
+pub async fn new(addr: Addr, sender: Sender<RpcMessage>) -> Result<()> {
     let p2p = P2p {
         sender: sender.clone(),
     };
-    let (mut health_reporter, health_service) = tonic_health::server::health_reporter();
-    health_reporter
-        .set_serving::<p2p_server::P2pServer<P2p>>()
-        .await;
-    let p2p_service = p2p_server::P2pServer::new(p2p);
 
-    TonicServer::builder()
-        .add_service(health_service)
-        .add_service(p2p_service)
-        .serve(addr)
-        .await?;
+    match addr {
+        Addr::GrpcHttp2(addr) => {
+            let (mut health_reporter, health_service) = tonic_health::server::health_reporter();
+            health_reporter
+                .set_serving::<p2p_server::P2pServer<P2p>>()
+                .await;
+            let p2p_service = p2p_server::P2pServer::new(p2p);
+
+            TonicServer::builder()
+                .add_service(health_service)
+                .add_service(p2p_service)
+                .serve(addr)
+                .await?;
+        }
+        Addr::GrpcUds(_) => unimplemented!(),
+        Addr::Mem => unimplemented!(),
+    }
+
     Ok(())
 }
 

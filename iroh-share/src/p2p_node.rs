@@ -11,7 +11,7 @@ use iroh_resolver::{
     resolver::{ContentLoader, LoadedCid, Resolver, Source, IROH_STORE},
     verify_hash,
 };
-use iroh_rpc_client::Client;
+use iroh_rpc_client::{Addr, Client};
 use libp2p::{Multiaddr, PeerId};
 use prometheus_client::registry::Registry;
 use serde::{Deserialize, Serialize};
@@ -136,11 +136,11 @@ impl P2pNode {
         rpc_store_port: u16,
         db_path: &Path,
     ) -> Result<(Self, Receiver<NetworkEvent>)> {
-        let rpc_p2p_addr = format!("0.0.0.0:{rpc_p2p_port}").parse().unwrap();
-        let rpc_store_addr = format!("0.0.0.0:{rpc_store_port}").parse().unwrap();
+        let rpc_p2p_addr: Addr = format!("grpc://0.0.0.0:{rpc_p2p_port}").parse().unwrap();
+        let rpc_store_addr: Addr = format!("grpc://0.0.0.0:{rpc_store_port}").parse().unwrap();
         let rpc_client_config = iroh_rpc_client::Config {
-            p2p_addr: rpc_p2p_addr,
-            store_addr: rpc_store_addr,
+            p2p_addr: rpc_p2p_addr.clone(),
+            store_addr: rpc_store_addr.clone(),
             ..Default::default()
         };
         let config = config::Libp2pConfig {
@@ -160,7 +160,7 @@ impl P2pNode {
 
         let store_config = iroh_store::Config {
             path: db_path.to_path_buf(),
-            rpc_addr: rpc_store_addr,
+            rpc_addr: rpc_store_addr.clone(),
             rpc_client: rpc_client_config.clone(),
             metrics: iroh_metrics::config::Config {
                 debug: true, // disable tracing by default
