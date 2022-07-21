@@ -1,11 +1,9 @@
-use std::net::SocketAddr;
-use std::path::PathBuf;
-
 use config::{ConfigError, Map, Source, Value};
 use iroh_metrics::config::Config as MetricsConfig;
-use iroh_rpc_client::Config as RpcClientConfig;
+use iroh_rpc_client::{Addr, Config as RpcClientConfig};
 use iroh_util::insert_into_config_map;
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 
 /// CONFIG_FILE_NAME is the name of the optional config file located in the iroh home directory
 pub const CONFIG_FILE_NAME: &str = "store.config.toml";
@@ -19,7 +17,7 @@ pub const ENV_PREFIX: &str = "IROH_STORE";
 pub struct Config {
     /// The location of the content database.
     pub path: PathBuf,
-    pub rpc_addr: SocketAddr,
+    pub rpc_addr: Addr,
     pub rpc_client: RpcClientConfig,
     pub metrics: MetricsConfig,
 }
@@ -29,7 +27,7 @@ impl Config {
         let rpc_client = RpcClientConfig::default();
         Self {
             path,
-            rpc_addr: rpc_client.store_addr,
+            rpc_addr: rpc_client.store_addr.clone(),
             rpc_client,
             metrics: MetricsConfig::default(),
         }

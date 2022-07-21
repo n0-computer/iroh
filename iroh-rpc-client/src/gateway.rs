@@ -1,9 +1,8 @@
-use std::net::SocketAddr;
-
 use anyhow::Result;
 use futures::Stream;
 
 use crate::backend::GatewayBackend;
+use crate::config::Addr;
 use crate::status::{self, StatusRow};
 
 // name that the health service registers the gateway client as
@@ -19,10 +18,15 @@ pub struct GatewayClient {
 }
 
 impl GatewayClient {
-    pub async fn new(addr: SocketAddr) -> Result<Self> {
-        let backend = GatewayBackend::new(addr)?;
-
-        Ok(GatewayClient { backend })
+    pub async fn new(addr: &Addr) -> Result<Self> {
+        match addr {
+            Addr::GrpcHttp2(addr) => {
+                let backend = GatewayBackend::new(*addr)?;
+                Ok(GatewayClient { backend })
+            }
+            Addr::GrpcUds(_) => unimplemented!(),
+            Addr::Mem => unimplemented!(),
+        }
     }
 
     #[tracing::instrument(skip(self))]

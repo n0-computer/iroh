@@ -1,9 +1,9 @@
 use std::io::Cursor;
-use std::net::SocketAddr;
 
 use anyhow::Result;
 use bytes::BytesMut;
 use cid::Cid;
+use iroh_rpc_client::Addr;
 use iroh_rpc_types::store::store_server;
 use iroh_rpc_types::store::{
     GetLinksRequest, GetLinksResponse, GetRequest, GetResponse, HasRequest, HasResponse,
@@ -110,18 +110,24 @@ impl NamedService for Rpc {
 }
 
 #[tracing::instrument(skip(store))]
-pub async fn new(addr: SocketAddr, store: Store) -> Result<()> {
+pub async fn new(addr: Addr, store: Store) -> Result<()> {
     let rpc = Rpc { store };
     let (mut health_reporter, health_service) = tonic_health::server::health_reporter();
     health_reporter
         .set_serving::<store_server::StoreServer<Rpc>>()
         .await;
 
-    TonicServer::builder()
-        .add_service(health_service)
-        .add_service(store_server::StoreServer::new(rpc))
-        .serve(addr)
-        .await?;
+    match addr {
+        Addr::GrpcHttp2(addr) => {
+            TonicServer::builder()
+                .add_service(health_service)
+                .add_service(store_server::StoreServer::new(rpc))
+                .serve(addr)
+                .await?;
+        }
+        Addr::GrpcUds(_) => unimplemented!(),
+        Addr::Mem => unimplemented!(),
+    }
     Ok(())
 }
 

@@ -7,5 +7,5 @@ mod status;
 mod store;
 
 pub use crate::client::Client;
-pub use crate::config::Config;
+pub use crate::config::{Addr, Config};
 pub use crate::status::{ServiceStatus, StatusRow, StatusTable};

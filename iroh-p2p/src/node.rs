@@ -106,9 +106,10 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
         let metrics = Metrics::new(registry);
         let (network_sender_in, network_receiver_in) = channel(1024); // TODO: configurable
 
+        let rpc_addr = config.rpc_addr.clone();
         let rpc_task = tokio::spawn(async move {
             // TODO: handle error
-            rpc::new(config.rpc_addr, network_sender_in).await.unwrap()
+            rpc::new(rpc_addr, network_sender_in).await.unwrap()
         });
 
         let rpc_client = RpcClient::new(&config.rpc_client)

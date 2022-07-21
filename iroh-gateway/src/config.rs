@@ -1,5 +1,3 @@
-use std::net::SocketAddr;
-
 use crate::constants::*;
 use axum::http::{header::*, Method};
 use config::{ConfigError, Map, Source, Value};
@@ -7,7 +5,7 @@ use headers::{
     AccessControlAllowHeaders, AccessControlAllowMethods, AccessControlAllowOrigin, HeaderMapExt,
 };
 use iroh_metrics::config::Config as MetricsConfig;
-use iroh_rpc_client::Config as RpcClientConfig;
+use iroh_rpc_client::{Addr, Config as RpcClientConfig};
 use iroh_util::insert_into_config_map;
 use serde::{Deserialize, Serialize};
 
@@ -30,7 +28,7 @@ pub struct Config {
     /// default port to listen on
     pub port: u16,
     /// rpc listening addr
-    pub rpc_addr: SocketAddr,
+    pub rpc_addr: Addr,
     // NOTE: for toml to serialize properly, the "table" values must be serialized at the end, and
     // so much come at the end of the `Config` struct
     /// set of user provided headers to attach to all responses
@@ -48,7 +46,7 @@ impl Config {
         fetch: bool,
         cache: bool,
         port: u16,
-        rpc_addr: SocketAddr,
+        rpc_addr: Addr,
         rpc_client: RpcClientConfig,
     ) -> Self {
         Self {
@@ -116,7 +114,7 @@ impl Default for Config {
             cache: false,
             headers: HeaderMap::new(),
             port: DEFAULT_PORT,
-            rpc_addr: rpc_client.gateway_addr,
+            rpc_addr: rpc_client.gateway_addr.clone(),
             rpc_client,
             metrics: MetricsConfig::default(),
         };

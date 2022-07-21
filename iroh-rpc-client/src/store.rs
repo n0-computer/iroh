@@ -1,5 +1,4 @@
 use std::io::Cursor;
-use std::net::SocketAddr;
 
 use anyhow::{Context, Result};
 use bytes::Bytes;
@@ -8,6 +7,7 @@ use futures::Stream;
 use iroh_rpc_types::store::{GetLinksRequest, GetRequest, HasRequest, PutRequest};
 
 use crate::backend::StoreBackend;
+use crate::config::Addr;
 use crate::status::{self, StatusRow};
 
 #[derive(Debug, Clone)]
@@ -23,10 +23,16 @@ pub const SERVICE_NAME: &str = "store.Store";
 pub(crate) const NAME: &str = "store";
 
 impl StoreClient {
-    pub async fn new(addr: SocketAddr) -> Result<Self> {
-        let backend = StoreBackend::new(addr)?;
+    pub async fn new(addr: &Addr) -> Result<Self> {
+        match addr {
+            Addr::GrpcHttp2(addr) => {
+                let backend = StoreBackend::new(*addr)?;
 
-        Ok(StoreClient { backend })
+                Ok(StoreClient { backend })
+            }
+            Addr::GrpcUds(_) => unimplemented!(),
+            Addr::Mem => unimplemented!(),
+        }
     }
 
     #[tracing::instrument(skip(self))]

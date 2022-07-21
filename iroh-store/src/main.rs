@@ -65,7 +65,7 @@ async fn main() -> anyhow::Result<()> {
     .await
     .expect("failed to initialize metrics");
 
-    let rpc_addr = config.rpc_addr;
+    let rpc_addr = config.rpc_addr.clone();
     let store = if config.path.exists() {
         info!("Opening store at {}", config.path.display());
         Store::open(config, store_metrics).await?

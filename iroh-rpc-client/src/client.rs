@@ -17,13 +17,14 @@ pub struct Client {
 
 impl Client {
     pub async fn new(cfg: &Config) -> Result<Self> {
-        let gateway = GatewayClient::new(cfg.gateway_addr)
+        let gateway = GatewayClient::new(&cfg.gateway_addr)
             .await
             .context("Could not create gateway rpc client")?;
-        let p2p = P2pClient::new(cfg.p2p_addr)
+
+        let p2p = P2pClient::new(&cfg.p2p_addr)
             .await
             .context("Could not create p2p rpc client")?;
-        let store = StoreClient::new(cfg.store_addr)
+        let store = StoreClient::new(&cfg.store_addr)
             .await
             .context("Could not create store rpc client")?;
 
@@ -122,16 +123,24 @@ mod tests {
         let store_name = store::NAME;
 
         // make the services with the expected service names
-        let (mut gateway_reporter, gateway_task) =
-            make_service(gateway::SERVICE_NAME, cfg.gateway_addr)
-                .await
-                .unwrap();
-        let (mut p2p_reporter, p2p_task) = make_service(network::SERVICE_NAME, cfg.p2p_addr)
-            .await
-            .unwrap();
-        let (mut store_reporter, store_task) = make_service(store::SERVICE_NAME, cfg.store_addr)
-            .await
-            .unwrap();
+        let (mut gateway_reporter, gateway_task) = make_service(
+            gateway::SERVICE_NAME,
+            cfg.gateway_addr.try_as_socket_addr().unwrap(),
+        )
+        .await
+        .unwrap();
+        let (mut p2p_reporter, p2p_task) = make_service(
+            network::SERVICE_NAME,
+            cfg.p2p_addr.try_as_socket_addr().unwrap(),
+        )
+        .await
+        .unwrap();
+        let (mut store_reporter, store_task) = make_service(
+            store::SERVICE_NAME,
+            cfg.store_addr.try_as_socket_addr().unwrap(),
+        )
+        .await
+        .unwrap();
         let client = Client::new(&cfg).await.unwrap();
 
         // test `check`

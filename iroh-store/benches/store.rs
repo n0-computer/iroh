@@ -27,7 +27,7 @@ pub fn put_benchmark(c: &mut Criterion) {
                 let rpc_client = RpcClientConfig::default();
                 let config = Config {
                     path: dir.path().into(),
-                    rpc_addr: rpc_client.store_addr,
+                    rpc_addr: rpc_client.store_addr.clone(),
                     rpc_client,
                     metrics: MetricsConfig::default(),
                 };
@@ -57,7 +57,7 @@ pub fn get_benchmark(c: &mut Criterion) {
                 let rpc_client = RpcClientConfig::default();
                 let config = Config {
                     path: dir.path().into(),
-                    rpc_addr: rpc_client.store_addr,
+                    rpc_addr: rpc_client.store_addr.clone(),
                     rpc_client,
                     metrics: MetricsConfig::default(),
                 };
