@@ -28,6 +28,7 @@ use std::{
     sync::Arc,
     time::{self, Duration},
 };
+use tokio::sync::RwLock;
 use tower::ServiceBuilder;
 use tower_http::trace::TraceLayer;
 use tracing::info_span;
@@ -35,6 +36,7 @@ use url::Url;
 use urlencoding::encode;
 
 use crate::{
+    bad_bits::BadBits,
     client::{Client, Request},
     config::Config,
     constants::*,
@@ -58,6 +60,7 @@ pub struct State {
     rpc_client: iroh_rpc_client::Client,
     handlebars: HashMap<String, String>,
     pub metrics: Metrics,
+    bad_bits: Arc<RwLock<BadBits>>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -93,6 +96,7 @@ impl Core {
         rpc_addr: GatewayServerAddr,
         metrics: Metrics,
         registry: &mut Registry,
+        bad_bits: Arc<RwLock<BadBits>>,
     ) -> anyhow::Result<Self> {
         tokio::spawn(async move {
             // TODO: handle error
@@ -111,6 +115,7 @@ impl Core {
                 rpc_client,
                 metrics,
                 handlebars: templates,
+                bad_bits,
             }),
         })
     }
@@ -185,12 +190,37 @@ async fn get_handler(
     service_worker_check(&request_headers, cpath.to_string(), &state)?;
     unsuported_header_check(&request_headers, &state)?;
 
+    // check if cid is in the denylist
+    if state.bad_bits.read().await.is_bad(cid, cpath) {
+        return Err(error(
+            StatusCode::FORBIDDEN,
+            "CID is in the denylist",
+            &state,
+        ));
+    } else {
+        println!("\n not bad: {}{}", cid, cpath);
+    }
+
     let full_content_path = format!("/{}/{}{}", scheme, cid, cpath);
     let resolved_path: iroh_resolver::resolver::Path = full_content_path
         .parse()
         .map_err(|e: anyhow::Error| e.to_string())
         .map_err(|e| error(StatusCode::BAD_REQUEST, &e, &state))?;
     let resolved_cid = resolved_path.root();
+
+    // check if cid is in the denylist
+    if state
+        .bad_bits
+        .read()
+        .await
+        .is_bad(resolved_cid.to_string().as_str(), "")
+    {
+        return Err(error(
+            StatusCode::FORBIDDEN,
+            "CID is in the denylist",
+            &state,
+        ));
+    }
 
     // parse query params
     let format = match get_response_format(&request_headers, query_params.format) {
@@ -636,9 +666,15 @@ mod tests {
         let mut prom_registry = Registry::default();
         let gw_metrics = Metrics::new(&mut prom_registry);
         let rpc_addr = "grpc://0.0.0.0:0".parse().unwrap();
-        let handler = Core::new(config, rpc_addr, gw_metrics, &mut prom_registry)
-            .await
-            .unwrap();
+        let handler = Core::new(
+            config,
+            rpc_addr,
+            gw_metrics,
+            &mut prom_registry,
+            Arc::new(RwLock::new(BadBits::new())),
+        )
+        .await
+        .unwrap();
         let server = handler.server();
         let addr = server.local_addr();
         let core_task = tokio::spawn(async move {
