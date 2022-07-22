@@ -1,3 +1,4 @@
+pub mod bad_bits;
 mod client;
 pub mod config;
 mod constants;
