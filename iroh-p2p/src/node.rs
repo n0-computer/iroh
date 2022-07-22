@@ -3,12 +3,12 @@ use std::time::Duration;
 
 use ahash::AHashMap;
 use anyhow::{anyhow, Context, Result};
-use async_channel::{bounded as channel, Receiver, Sender};
+use async_channel::{bounded as channel, Receiver};
+use cid::Cid;
 use futures::channel::oneshot::Sender as OneShotSender;
 use futures_util::stream::StreamExt;
 use iroh_rpc_client::Client as RpcClient;
 use libp2p::core::Multiaddr;
-use libp2p::gossipsub::{GossipsubMessage, MessageId, TopicHash};
 pub use libp2p::gossipsub::{IdentTopic, Topic};
 use libp2p::identify::{IdentifyEvent, IdentifyInfo};
 use libp2p::identity::Keypair;
@@ -19,11 +19,12 @@ use libp2p::kad::{
     QueryProgress, QueryResult,
 };
 use libp2p::metrics::{Metrics, Recorder};
+use libp2p::multiaddr::Protocol;
+use libp2p::multihash::Multihash;
 use libp2p::swarm::dial_opts::{DialOpts, PeerCondition};
 use libp2p::swarm::{ConnectionHandler, IntoConnectionHandler, NetworkBehaviour, SwarmEvent};
 use libp2p::{PeerId, Swarm};
 use prometheus_client::registry::Registry;
-use tokio::task::JoinHandle;
 use tokio::{select, sync::mpsc, time};
 use tracing::{debug, info, trace, warn};
 
@@ -36,33 +37,16 @@ use crate::keys::{Keychain, Storage};
 use crate::swarm::build_swarm;
 use crate::{
     behaviour::{Event, NodeBehaviour},
-    rpc::{self, RpcMessage},
+    rpc::{self, GossipsubMessage, RpcMessage},
     Libp2pConfig,
 };
 
 #[allow(clippy::large_enum_variant)]
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum NetworkEvent {
     PeerConnected(PeerId),
     PeerDisconnected(PeerId),
-    Gossipsub(GossipsubEvent),
-}
-
-#[derive(Debug, Clone)]
-pub enum GossipsubEvent {
-    Subscribed {
-        peer_id: PeerId,
-        topic: TopicHash,
-    },
-    Unsubscribed {
-        peer_id: PeerId,
-        topic: TopicHash,
-    },
-    Message {
-        from: PeerId,
-        id: MessageId,
-        message: GossipsubMessage,
-    },
+    BitswapBlock { cid: Cid },
 }
 
 pub struct Node<KeyStorage: Storage> {
@@ -70,13 +54,10 @@ pub struct Node<KeyStorage: Storage> {
     net_receiver_in: Receiver<RpcMessage>,
     bitswap_queries: AHashMap<BitswapQueryId, OneShotSender<Result<Block, QueryError>>>,
     kad_queries: AHashMap<QueryKey, QueryChannel>,
-    dial_queries: AHashMap<PeerId, Vec<OneShotSender<bool>>>,
-    network_events: Vec<Sender<NetworkEvent>>,
     metrics: Metrics,
     rpc_client: RpcClient,
     _keychain: Keychain<KeyStorage>,
     kad_last_range: Option<(Distance, Distance)>,
-    rpc_task: JoinHandle<()>,
 }
 
 enum QueryChannel {
@@ -89,14 +70,9 @@ enum QueryKey {
 }
 
 const PROVIDER_LIMIT: usize = 20;
+
 const NICE_INTERVAL: Duration = Duration::from_secs(6);
 const BOOTSTRAP_INTERVAL: Duration = Duration::from_secs(5 * 60);
-
-impl<KeyStorage: Storage> Drop for Node<KeyStorage> {
-    fn drop(&mut self) {
-        self.rpc_task.abort();
-    }
-}
 
 impl<KeyStorage: Storage> Node<KeyStorage> {
     pub async fn new(
@@ -107,7 +83,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
         let metrics = Metrics::new(registry);
         let (network_sender_in, network_receiver_in) = channel(1024); // TODO: configurable
 
-        let rpc_task = tokio::spawn(async move {
+        tokio::spawn(async move {
             // TODO: handle error
             rpc::new(config.rpc_addr, network_sender_in).await.unwrap()
         });
@@ -125,13 +101,10 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
             net_receiver_in: network_receiver_in,
             bitswap_queries: Default::default(),
             kad_queries: Default::default(),
-            dial_queries: Default::default(),
-            network_events: Vec::new(),
             metrics,
             rpc_client,
             _keychain: keychain,
             kad_last_range: None,
-            rpc_task,
         })
     }
 
@@ -149,15 +122,8 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                     }
                 }
                 rpc_message = self.net_receiver_in.recv() => {
-                    match self.handle_rpc_message(rpc_message?).await {
-                        Ok(true) => {
-                            // shutdown
-                            return Ok(());
-                        }
-                        Ok(false) => {}
-                        Err(err) => {
-                            warn!("rpc: {:?}", err);
-                        }
+                    if let Err(err) = self.handle_rpc_message(rpc_message?).await {
+                        warn!("rpc: {:?}", err);
                     }
                 }
                 _interval_event = nice_interval.tick() => {
@@ -217,13 +183,6 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
         }
     }
 
-    /// Subscribe to [`NetworkEvent`]s.
-    pub fn network_events(&mut self) -> Receiver<NetworkEvent> {
-        let (s, r) = channel(512);
-        self.network_events.push(s);
-        r
-    }
-
     async fn handle_swarm_event(
         &mut self,
         event: SwarmEvent<
@@ -234,55 +193,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
         match event {
             // outbound events
             SwarmEvent::Behaviour(event) => self.handle_node_event(event).await,
-            SwarmEvent::ConnectionEstablished {
-                peer_id,
-                num_established,
-                ..
-            } => {
-                if let Some(channels) = self.dial_queries.get_mut(&peer_id) {
-                    while let Some(channel) = channels.pop() {
-                        channel.send(true).ok();
-                    }
-                }
-
-                if num_established == 1.try_into().unwrap() {
-                    self.emit_network_event(NetworkEvent::PeerConnected(peer_id))
-                        .await;
-                }
-                Ok(())
-            }
-            SwarmEvent::ConnectionClosed {
-                peer_id,
-                num_established,
-                ..
-            } => {
-                if num_established == 0 {
-                    self.emit_network_event(NetworkEvent::PeerDisconnected(peer_id))
-                        .await;
-                }
-                Ok(())
-            }
-            SwarmEvent::OutgoingConnectionError { peer_id, error } => {
-                debug!("failed to dial: {:?}, {:?}", peer_id, error);
-
-                if let Some(peer_id) = peer_id {
-                    if let Some(channels) = self.dial_queries.get_mut(&peer_id) {
-                        while let Some(channel) = channels.pop() {
-                            channel.send(false).ok();
-                        }
-                    }
-                }
-                Ok(())
-            }
             _ => Ok(()),
-        }
-    }
-
-    async fn emit_network_event(&mut self, ev: NetworkEvent) {
-        for sender in &mut self.network_events {
-            if let Err(e) = sender.send(ev.clone()).await {
-                warn!("failed to send network event: {:?}", e);
-            }
         }
     }
 
@@ -292,25 +203,18 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                 match e {
                     BitswapEvent::InboundRequest { request } => match request {
                         InboundRequest::Want { cid, sender, .. } => {
-                            info!("bitswap want {}", cid);
-                            match self.rpc_client.store.get(cid).await {
-                                Ok(Some(data)) => {
-                                    trace!("Found data for: {}", cid);
-                                    if let Err(e) =
-                                        self.swarm.behaviour_mut().send_block(&sender, cid, data)
-                                    {
-                                        warn!(
-                                            "failed to send block for {} to {}: {:?}",
-                                            cid, sender, e
-                                        );
-                                    }
+                            if let Ok(Some(data)) = self.rpc_client.store.get(cid).await {
+                                trace!("Found data for: {}", cid);
+                                if let Err(e) =
+                                    self.swarm.behaviour_mut().send_block(&sender, cid, data)
+                                {
+                                    warn!(
+                                        "failed to send block for {} to {}: {:?}",
+                                        cid, sender, e
+                                    );
                                 }
-                                Ok(None) => {
-                                    trace!("Don't have data for: {}", cid);
-                                }
-                                Err(e) => {
-                                    warn!("Failed to get data for: {}: {:?}", cid, e);
-                                }
+                            } else {
+                                trace!("Don't have data for: {}", cid);
                             }
                         }
                         InboundRequest::Cancel { .. } => {
@@ -462,34 +366,6 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
             Event::Dcutr(e) => {
                 self.metrics.record(&e);
             }
-            Event::Gossipsub(e) => {
-                self.metrics.record(&e);
-                if let libp2p::gossipsub::GossipsubEvent::Message {
-                    propagation_source,
-                    message_id,
-                    message,
-                } = e
-                {
-                    self.emit_network_event(NetworkEvent::Gossipsub(GossipsubEvent::Message {
-                        from: propagation_source,
-                        id: message_id,
-                        message,
-                    }))
-                    .await;
-                } else if let libp2p::gossipsub::GossipsubEvent::Subscribed { peer_id, topic } = e {
-                    self.emit_network_event(NetworkEvent::Gossipsub(GossipsubEvent::Subscribed {
-                        peer_id,
-                        topic,
-                    }))
-                    .await;
-                } else if let libp2p::gossipsub::GossipsubEvent::Unsubscribed { peer_id, topic } = e
-                {
-                    self.emit_network_event(NetworkEvent::Gossipsub(
-                        GossipsubEvent::Unsubscribed { peer_id, topic },
-                    ))
-                    .await;
-                }
-            }
             _ => {
                 // TODO: check all important events are handled
             }
@@ -498,7 +374,8 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
         Ok(())
     }
 
-    async fn handle_rpc_message(&mut self, message: RpcMessage) -> Result<bool> {
+    async fn handle_rpc_message(&mut self, message: RpcMessage) -> Result<()> {
+        info!("rpc message {:?}", message);
         // Inbound messages
         match message {
             RpcMessage::BitswapRequest {
@@ -549,12 +426,11 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                 }
             }
             RpcMessage::NetListeningAddrs(response_channel) => {
-                let mut listeners: Vec<_> = Swarm::listeners(&self.swarm).cloned().collect();
-                let peer_id = *Swarm::local_peer_id(&self.swarm);
-                listeners.extend(Swarm::external_addresses(&self.swarm).map(|r| r.addr.clone()));
+                let listeners: Vec<_> = Swarm::listeners(&self.swarm).cloned().collect();
+                let peer_id = Swarm::local_peer_id(&self.swarm);
 
                 response_channel
-                    .send((peer_id, listeners))
+                    .send((*peer_id, listeners))
                     .map_err(|_| anyhow!("Failed to get Libp2p listeners"))?;
             }
             RpcMessage::NetPeers(response_channel) => {
@@ -569,20 +445,26 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                     .send(peer_addresses)
                     .map_err(|_| anyhow!("Failed to get Libp2p peers"))?;
             }
-            RpcMessage::NetConnect(response_channel, peer_id, addresses) => {
-                let channels = self.dial_queries.entry(peer_id).or_default();
-                channels.push(response_channel);
+            RpcMessage::NetConnect(response_channel, peer_id, mut addresses) => {
+                let mut success = false;
 
-                let dial_opts = DialOpts::peer_id(peer_id)
-                    .addresses(addresses)
-                    .condition(libp2p::swarm::dial_opts::PeerCondition::Always)
-                    .build();
-                if let Err(e) = Swarm::dial(&mut self.swarm, dial_opts) {
-                    warn!("invalid dial options: {:?}", e);
-                    while let Some(channel) = channels.pop() {
-                        channel.send(false).ok();
+                for multiaddr in addresses.iter_mut() {
+                    self.swarm
+                        .behaviour_mut()
+                        .add_address(&peer_id, multiaddr.clone());
+
+                    multiaddr.push(Protocol::P2p(
+                        Multihash::from_bytes(&peer_id.to_bytes()).unwrap(),
+                    ));
+                    if Swarm::dial(&mut self.swarm, multiaddr.clone()).is_ok() {
+                        success = true;
+                        break;
                     }
                 }
+
+                response_channel
+                    .send(success)
+                    .map_err(|_| anyhow!("Failed to connect to a peer"))?;
             }
             RpcMessage::NetDisconnect(response_channel, _peer_id) => {
                 warn!("NetDisconnect API not yet implemented"); // TODO: implement NetDisconnect
@@ -592,7 +474,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                     .map_err(|_| anyhow!("sender dropped"))?;
             }
             RpcMessage::Gossipsub(g) => match g {
-                rpc::GossipsubMessage::AddExplicitPeer(response_channel, peer_id) => {
+                GossipsubMessage::AddExplicitPeer(response_channel, peer_id) => {
                     self.swarm
                         .behaviour_mut()
                         .gossipsub
@@ -601,7 +483,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                         .send(())
                         .map_err(|_| anyhow!("sender dropped"))?;
                 }
-                rpc::GossipsubMessage::AllMeshPeers(response_channel) => {
+                GossipsubMessage::AllMeshPeers(response_channel) => {
                     let peers = self
                         .swarm
                         .behaviour_mut()
@@ -613,7 +495,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                         .send(peers)
                         .map_err(|_| anyhow!("sender dropped"))?;
                 }
-                rpc::GossipsubMessage::AllPeers(response_channel) => {
+                GossipsubMessage::AllPeers(response_channel) => {
                     let all_peers = self
                         .swarm
                         .behaviour_mut()
@@ -625,7 +507,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                         .send(all_peers)
                         .map_err(|_| anyhow!("sender dropped"))?;
                 }
-                rpc::GossipsubMessage::MeshPeers(response_channel, topic_hash) => {
+                GossipsubMessage::MeshPeers(response_channel, topic_hash) => {
                     let peers = self
                         .swarm
                         .behaviour_mut()
@@ -637,7 +519,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                         .send(peers)
                         .map_err(|_| anyhow!("sender dropped"))?;
                 }
-                rpc::GossipsubMessage::Publish(response_channel, topic_hash, bytes) => {
+                GossipsubMessage::Publish(response_channel, topic_hash, bytes) => {
                     let res = self
                         .swarm
                         .behaviour_mut()
@@ -647,7 +529,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                         .send(res)
                         .map_err(|_| anyhow!("sender dropped"))?;
                 }
-                rpc::GossipsubMessage::RemoveExplicitPeer(response_channel, peer_id) => {
+                GossipsubMessage::RemoveExplicitPeer(response_channel, peer_id) => {
                     self.swarm
                         .behaviour_mut()
                         .gossipsub
@@ -656,7 +538,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                         .send(())
                         .map_err(|_| anyhow!("sender dropped"))?;
                 }
-                rpc::GossipsubMessage::Subscribe(response_channel, topic_hash) => {
+                GossipsubMessage::Subscribe(response_channel, topic_hash) => {
                     let res = self
                         .swarm
                         .behaviour_mut()
@@ -666,7 +548,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                         .send(res)
                         .map_err(|_| anyhow!("sender dropped"))?;
                 }
-                rpc::GossipsubMessage::Topics(response_channel) => {
+                GossipsubMessage::Topics(response_channel) => {
                     let topics = self
                         .swarm
                         .behaviour_mut()
@@ -678,7 +560,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                         .send(topics)
                         .map_err(|_| anyhow!("sender dropped"))?;
                 }
-                rpc::GossipsubMessage::Unsubscribe(response_channel, topic_hash) => {
+                GossipsubMessage::Unsubscribe(response_channel, topic_hash) => {
                     let res = self
                         .swarm
                         .behaviour_mut()
@@ -689,12 +571,9 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                         .map_err(|_| anyhow!("sender dropped"))?;
                 }
             },
-            RpcMessage::Shutdown => {
-                return Ok(true);
-            }
         }
 
-        Ok(false)
+        Ok(())
     }
 }
 

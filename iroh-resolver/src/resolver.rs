@@ -1,4 +1,3 @@
-use std::collections::VecDeque;
 use std::fmt::{self, Display, Formatter};
 use std::pin::Pin;
 use std::str::FromStr;
@@ -11,7 +10,6 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use cid::multihash::{Code, MultihashDigest};
 use cid::Cid;
-use futures::Stream;
 use iroh_metrics::resolver::Metrics;
 use iroh_rpc_client::Client;
 use libipld::codec::{Decode, Encode};
@@ -162,10 +160,6 @@ impl Out {
         self.content.typ()
     }
 
-    pub fn links(&self) -> Result<Vec<Cid>> {
-        self.content.links()
-    }
-
     /// Returns an iterator over the content of this directory.
     /// Only if this is of type `unixfs` and a directory.
     pub fn unixfs_read_dir(&self) -> Option<impl Iterator<Item = Result<LinkRef<'_>>>> {
@@ -178,21 +172,6 @@ impl Out {
                 }
             }
             _ => None,
-        }
-    }
-
-    pub fn pretty<T: ContentLoader>(self, loader: T, om: OutMetrics) -> OutPrettyReader<T> {
-        let pos = 0;
-        match self.content {
-            OutContent::DagPb(_, bytes) => OutPrettyReader::DagPb(BytesReader { pos, bytes, om }),
-            OutContent::DagCbor(_, bytes) => {
-                OutPrettyReader::DagCbor(BytesReader { pos, bytes, om })
-            }
-            OutContent::DagJson(_, bytes) => {
-                OutPrettyReader::DagJson(BytesReader { pos, bytes, om })
-            }
-            OutContent::Raw(_, bytes) => OutPrettyReader::Raw(BytesReader { pos, bytes, om }),
-            OutContent::Unixfs(node) => OutPrettyReader::Unixfs(node.pretty(loader, om)),
         }
     }
 }
@@ -214,20 +193,6 @@ impl OutContent {
             OutContent::DagCbor(_, _) => OutType::DagCbor,
             OutContent::DagJson(_, _) => OutType::DagJson,
             OutContent::Raw(_, _) => OutType::Raw,
-        }
-    }
-
-    fn links(&self) -> Result<Vec<Cid>> {
-        match self {
-            OutContent::DagPb(ipld, _)
-            | OutContent::DagCbor(ipld, _)
-            | OutContent::DagJson(ipld, _)
-            | OutContent::Raw(ipld, _) => {
-                let mut links = Vec::new();
-                ipld.references(&mut links);
-                Ok(links)
-            }
-            OutContent::Unixfs(node) => node.links().map(|r| r.map(|r| r.cid)).collect(),
         }
     }
 }
@@ -312,6 +277,23 @@ impl Default for OutMetrics {
     }
 }
 
+impl Out {
+    pub fn pretty<T: ContentLoader>(self, loader: T, om: OutMetrics) -> OutPrettyReader<T> {
+        let pos = 0;
+        match self.content {
+            OutContent::DagPb(_, bytes) => OutPrettyReader::DagPb(BytesReader { pos, bytes, om }),
+            OutContent::DagCbor(_, bytes) => {
+                OutPrettyReader::DagCbor(BytesReader { pos, bytes, om })
+            }
+            OutContent::DagJson(_, bytes) => {
+                OutPrettyReader::DagJson(BytesReader { pos, bytes, om })
+            }
+            OutContent::Raw(_, bytes) => OutPrettyReader::Raw(BytesReader { pos, bytes, om }),
+            OutContent::Unixfs(node) => OutPrettyReader::Unixfs(node.pretty(loader, om)),
+        }
+    }
+}
+
 impl<T: ContentLoader + Unpin + 'static> AsyncRead for OutPrettyReader<T> {
     fn poll_read(
         mut self: Pin<&mut Self>,
@@ -346,14 +328,14 @@ pub enum Source {
     Store(&'static str),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Resolver<T: ContentLoader> {
     loader: T,
     metrics: Metrics,
 }
 
 #[async_trait]
-pub trait ContentLoader: Sync + Send + std::fmt::Debug + Clone + 'static {
+pub trait ContentLoader: Sync + Send + std::fmt::Debug + Clone {
     /// Loads the actual content of a given cid.
     async fn load_cid(&self, cid: &Cid) -> Result<LoadedCid>;
 }
@@ -362,6 +344,13 @@ pub trait ContentLoader: Sync + Send + std::fmt::Debug + Clone + 'static {
 impl<T: ContentLoader> ContentLoader for Arc<T> {
     async fn load_cid(&self, cid: &Cid) -> Result<LoadedCid> {
         self.as_ref().load_cid(cid).await
+    }
+}
+
+#[async_trait]
+impl<'a, T: ContentLoader> ContentLoader for &'a T {
+    async fn load_cid(&self, cid: &Cid) -> Result<LoadedCid> {
+        (*self).load_cid(cid).await
     }
 }
 
@@ -441,43 +430,6 @@ impl<T: ContentLoader> Resolver<T> {
     pub fn new(loader: T, registry: &mut Registry) -> Self {
         let metrics = Metrics::new(registry);
         Resolver { loader, metrics }
-    }
-
-    pub fn loader(&self) -> &T {
-        &self.loader
-    }
-
-    #[tracing::instrument(skip(self))]
-    pub fn resolve_recursive(&self, root: Path) -> impl Stream<Item = Result<Out>> {
-        let mut cids = VecDeque::new();
-        let this = self.clone();
-        async_stream::try_stream! {
-            cids.push_back(this.resolve(root).await);
-            loop {
-                if let Some(current) = cids.pop_front() {
-                    let current = current?;
-                    let links = current.links()?;
-                    // TODO: configurable limit
-                    for link_chunk in links.chunks(8) {
-                        let next = futures::future::join_all(
-                            link_chunk.iter().map(|link| {
-                                let this = this.clone();
-                                async move {
-                                    this.resolve(Path::from_cid(*link)).await
-                                }
-                            })
-                        ).await;
-                        for res in next.into_iter() {
-                            cids.push_back(res);
-                        }
-                    }
-                    yield current;
-                } else {
-                    // no links left to resolve
-                    break;
-                }
-            }
-        }
     }
 
     /// Resolves through a given path, returning the [`Cid`] and raw bytes of the final leaf.
@@ -710,7 +662,7 @@ impl<T: ContentLoader> Resolver<T> {
         })
     }
 
-    #[tracing::instrument(skip(self, root))]
+    #[tracing::instrument(skip(self))]
     async fn resolve_ipld(
         &self,
         _cid: Cid,
@@ -862,7 +814,6 @@ mod tests {
 
     use super::*;
     use cid::multihash::{Code, MultihashDigest};
-    use futures::TryStreamExt;
     use libipld::{codec::Encode, Ipld, IpldCodec};
     use tokio::io::AsyncReadExt;
 
@@ -1235,82 +1186,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_resolve_recursive_unixfs_basics_cid_v0() {
-        // Test content
-        // ------------
-        // QmaRGe7bVmVaLmxbrMiVNXqW4pRNNp3xq7hFtyRKA3mtJL foo/bar/bar.txt
-        //   contains: "world"
-        // QmZULkCELmmk5XNfCgTnCyFgAVxBRBXyDHGGMVoLFLiXEN foo/hello.txt
-        //   contains: "hello"
-        // QmcHTZfwWWYG2Gbv9wR6bWZBvAgpFV5BcDoLrC2XMCkggn foo/bar
-        // QmdkGfDx42RNdAZFALHn5hjHqUq7L9o6Ef4zLnFEu3Y4Go foo
-
-        let bar_txt_cid_str = "QmaRGe7bVmVaLmxbrMiVNXqW4pRNNp3xq7hFtyRKA3mtJL";
-        let bar_txt_block_bytes = load_fixture(bar_txt_cid_str).await;
-
-        let bar_cid_str = "QmcHTZfwWWYG2Gbv9wR6bWZBvAgpFV5BcDoLrC2XMCkggn";
-        let bar_block_bytes = load_fixture(bar_cid_str).await;
-
-        let hello_txt_cid_str = "QmZULkCELmmk5XNfCgTnCyFgAVxBRBXyDHGGMVoLFLiXEN";
-        let hello_txt_block_bytes = load_fixture(hello_txt_cid_str).await;
-
-        // read root
-        let root_cid_str = "QmdkGfDx42RNdAZFALHn5hjHqUq7L9o6Ef4zLnFEu3Y4Go";
-        let root_cid: Cid = root_cid_str.parse().unwrap();
-        let root_block_bytes = load_fixture(root_cid_str).await;
-        let root_block = UnixfsNode::decode(&root_cid, root_block_bytes.clone()).unwrap();
-
-        let links: Vec<_> = root_block.links().collect::<Result<_>>().unwrap();
-        assert_eq!(links.len(), 2);
-
-        assert_eq!(links[0].cid, bar_cid_str.parse().unwrap());
-        assert_eq!(links[0].name.unwrap(), "bar");
-
-        assert_eq!(links[1].cid, hello_txt_cid_str.parse().unwrap());
-        assert_eq!(links[1].name.unwrap(), "hello.txt");
-
-        let loader: HashMap<Cid, Bytes> = [
-            (root_cid, root_block_bytes.clone()),
-            (hello_txt_cid_str.parse().unwrap(), hello_txt_block_bytes),
-            (bar_cid_str.parse().unwrap(), bar_block_bytes),
-            (bar_txt_cid_str.parse().unwrap(), bar_txt_block_bytes),
-        ]
-        .into_iter()
-        .collect();
-        let loader = Arc::new(loader);
-        let resolver = Resolver::new(loader.clone(), &mut Registry::default());
-
-        let path = format!("/ipfs/{root_cid_str}");
-        let results: Vec<_> = resolver
-            .resolve_recursive(path.parse().unwrap())
-            .try_collect()
-            .await
-            .unwrap();
-        assert_eq!(results.len(), 4);
-
-        for result in &results {
-            assert_eq!(result.typ(), OutType::Unixfs);
-        }
-
-        assert_eq!(
-            results[0].metadata().path.to_string(),
-            format!("/ipfs/{root_cid_str}")
-        );
-        assert_eq!(
-            results[1].metadata().path.to_string(),
-            format!("/ipfs/{bar_cid_str}")
-        );
-        assert_eq!(
-            results[2].metadata().path.to_string(),
-            format!("/ipfs/{hello_txt_cid_str}")
-        );
-        assert_eq!(
-            results[3].metadata().path.to_string(),
-            format!("/ipfs/{bar_txt_cid_str}")
-        );
-    }
-
-    #[tokio::test]
     async fn test_unixfs_basics_cid_v1() {
         // uses raw leaves
 
@@ -1441,7 +1316,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_unixfs_split_file_regular() {
+    async fn test_unixfs_split_file() {
         // Test content
         // ------------
         // QmUr9cs4mhWxabKqm9PYPSQQ6AQGbHJBtyrNmxtKgxqUx9 README.md
@@ -1499,61 +1374,6 @@ mod tests {
             }
         }
     }
-
-    #[tokio::test]
-    async fn test_unixfs_split_file_recursive() {
-        // Test content
-        // ------------
-        // QmUr9cs4mhWxabKqm9PYPSQQ6AQGbHJBtyrNmxtKgxqUx9 README.md
-        //
-        // imported with `go-ipfs add --chunker size-100`
-
-        let pieces_cid_str = [
-            "QmccJ8pV5hG7DEbq66ih1ZtowxgvqVS6imt98Ku62J2WRw",
-            "QmUajVwSkEp9JvdW914Qh1BCMRSUf2ztiQa6jqy1aWhwJv",
-            "QmNyLad1dWGS6mv2zno4iEviBSYSUR2SrQ8JoZNDz1UHYy",
-            "QmcXoBdCgmFMoNbASaQCNVswRuuuqbw4VvA7e5GtHbhRNp",
-            "QmP9yKRwuji5i7RTgrevwJwXp7uqQu1prv88nxq9uj99rW",
-        ];
-
-        // read root
-        let root_cid_str = "QmUr9cs4mhWxabKqm9PYPSQQ6AQGbHJBtyrNmxtKgxqUx9";
-        let root_cid: Cid = root_cid_str.parse().unwrap();
-        let root_block_bytes = load_fixture(root_cid_str).await;
-        let root_block = UnixfsNode::decode(&root_cid, root_block_bytes.clone()).unwrap();
-
-        let links: Vec<_> = root_block.links().collect::<Result<_>>().unwrap();
-        assert_eq!(links.len(), 5);
-
-        let mut loader: HashMap<Cid, Bytes> =
-            [(root_cid, root_block_bytes.clone())].into_iter().collect();
-
-        for c in &pieces_cid_str {
-            let bytes = load_fixture(c).await;
-            loader.insert(c.parse().unwrap(), bytes);
-        }
-
-        let loader = Arc::new(loader);
-        let resolver = Resolver::new(loader.clone(), &mut Registry::default());
-
-        {
-            let path = format!("/ipfs/{root_cid_str}");
-            let parts: Vec<_> = resolver
-                .resolve_recursive(path.parse().unwrap())
-                .try_collect()
-                .await
-                .unwrap();
-            assert_eq!(parts.len(), 6);
-            assert_eq!(parts[0].metadata().unixfs_type.unwrap(), UnixfsType::File);
-            assert_eq!(parts[0].metadata().path, Path::from_cid(root_cid));
-            assert_eq!(parts[1].metadata().path, pieces_cid_str[0].parse().unwrap());
-            assert_eq!(parts[2].metadata().path, pieces_cid_str[1].parse().unwrap());
-            assert_eq!(parts[3].metadata().path, pieces_cid_str[2].parse().unwrap());
-            assert_eq!(parts[4].metadata().path, pieces_cid_str[3].parse().unwrap());
-            assert_eq!(parts[5].metadata().path, pieces_cid_str[4].parse().unwrap());
-        }
-    }
-
     #[tokio::test]
     async fn test_unixfs_symlink() {
         // Test content

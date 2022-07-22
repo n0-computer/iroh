@@ -9,7 +9,7 @@ use tonic_health::proto::{
 };
 
 // TODO: make configurable
-const WAIT: std::time::Duration = std::time::Duration::from_millis(1000);
+const WAIT: tokio::time::Duration = tokio::time::Duration::from_millis(1000);
 
 #[tracing::instrument(skip(health_client))]
 pub async fn check(

@@ -1,4 +1,3 @@
-mod backend;
 mod client;
 mod config;
 mod gateway;

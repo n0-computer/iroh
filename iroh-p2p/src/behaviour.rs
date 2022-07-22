@@ -17,8 +17,8 @@ use libp2p::multiaddr::Protocol;
 use libp2p::ping::Ping;
 use libp2p::relay;
 use libp2p::swarm::behaviour::toggle::Toggle;
-use libp2p::NetworkBehaviour;
 use libp2p::{autonat, dcutr};
+use libp2p::{Multiaddr, NetworkBehaviour};
 use prometheus_client::registry::Registry;
 use tracing::warn;
 
@@ -99,9 +99,6 @@ impl NodeBehaviour {
             let pub_key = local_key.public();
             let config = autonat::Config {
                 use_connected: true,
-                boot_delay: Duration::from_secs(0),
-                refresh_interval: Duration::from_secs(5),
-                retry_interval: Duration::from_secs(5),
                 ..Default::default()
             }; // TODO: configurable
             let autonat = autonat::Behaviour::new(pub_key.to_peer_id(), config);
@@ -175,6 +172,12 @@ impl NodeBehaviour {
     ) -> Result<QueryId, Box<dyn Error>> {
         let id = self.bitswap.want_block(cid, priority, providers);
         Ok(id)
+    }
+
+    pub fn add_address(&mut self, peer: &PeerId, addr: Multiaddr) {
+        if let Some(kad) = self.kad.as_mut() {
+            kad.add_address(peer, addr);
+        }
     }
 
     pub fn finish_query(&mut self, id: &libp2p::kad::QueryId) {

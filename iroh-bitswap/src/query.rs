@@ -103,10 +103,14 @@ impl QueryManager {
         })
     }
 
-    pub fn process_block(&mut self, sender: &PeerId, block: &Block) -> (Vec<PeerId>, Vec<QueryId>) {
+    pub fn process_block(
+        &mut self,
+        sender: &PeerId,
+        block: &Block,
+    ) -> (Vec<PeerId>, Option<QueryId>) {
         let mut cancels = Vec::new();
         let mut unused_providers = Vec::new();
-        let mut query_ids = Vec::new();
+        let mut query_id = None;
 
         self.queries.retain(|id, query| {
             match query {
@@ -117,7 +121,7 @@ impl QueryManager {
                     state,
                 } => {
                     if &block.cid == cid {
-                        query_ids.push(*id);
+                        query_id = Some(*id);
                         for provider in providers.iter() {
                             unused_providers.push(*provider);
                         }
@@ -148,7 +152,7 @@ impl QueryManager {
             });
         }
 
-        (unused_providers, query_ids)
+        (unused_providers, query_id)
     }
 
     /// Handle disconnection of the endpoint
@@ -463,7 +467,7 @@ mod tests {
         // inject received block
         let (unused_providers, qid) = queries.process_block(&provider_id_1, &Block { cid, data });
         assert_eq!(unused_providers, &[provider_id_2]);
-        assert_eq!(qid, vec![query_id]);
+        assert_eq!(qid, Some(query_id));
     }
 
     #[test]

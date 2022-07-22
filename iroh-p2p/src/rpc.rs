@@ -19,12 +19,13 @@ use tonic::{transport::Server as TonicServer, Request, Response, Status};
 use tracing::{trace, warn};
 
 use iroh_bitswap::{Block, QueryError};
+use iroh_rpc_types::p2p::p2p_server;
+use iroh_rpc_types::p2p::{gossipsub_server, VersionResponse};
 use iroh_rpc_types::p2p::{
-    p2p_server, BitswapRequest, BitswapResponse, ConnectRequest, ConnectResponse,
-    DisconnectRequest, GetListeningAddrsResponse, GetPeersResponse, GossipsubAllPeersResponse,
-    GossipsubPeerAndTopics, GossipsubPeerIdMsg, GossipsubPeersResponse, GossipsubPublishRequest,
-    GossipsubPublishResponse, GossipsubSubscribeResponse, GossipsubTopicHashMsg,
-    GossipsubTopicsResponse, Key as ProviderKey, Multiaddrs, Providers, VersionResponse,
+    AllPeersResponse, BitswapRequest, BitswapResponse, ConnectRequest, ConnectResponse,
+    DisconnectRequest, GetListeningAddrsResponse, GetPeersResponse, Key as ProviderKey, Multiaddrs,
+    PeerAndTopics, PeerIdMsg, PeersResponse, Providers, PublishRequest, PublishResponse,
+    SubscribeResponse, TopicHashMsg, TopicsResponse,
 };
 
 struct P2p {
@@ -42,15 +43,6 @@ impl p2p_server::P2p for P2p {
         Ok(Response::new(VersionResponse { version }))
     }
 
-    #[tracing::instrument(skip(self))]
-    async fn shutdown(&self, _request: Request<()>) -> Result<Response<()>, tonic::Status> {
-        self.sender
-            .send(RpcMessage::Shutdown)
-            .await
-            .map_err(|_| Status::internal("receiver dropped"))?;
-        Ok(Response::new(()))
-    }
-
     // TODO: expand to handle multiple cids at once. Probably not a tough fix, just want to push
     // forward right now
     #[tracing::instrument(skip(self, request))]
@@ -66,7 +58,7 @@ impl p2p_server::P2p for P2p {
         trace!("received BitswapRequest: {:?}", cid);
         let providers = req
             .providers
-            .ok_or_else(|| Status::invalid_argument(format!("missing providers for: {}", cid)))?;
+            .ok_or_else(|| Status::invalid_argument("missing providers"))?;
 
         let providers: HashSet<PeerId> = providers
             .providers
@@ -78,10 +70,7 @@ impl p2p_server::P2p for P2p {
             .collect::<Result<_, Status>>()?;
 
         if providers.is_empty() {
-            return Err(Status::invalid_argument(format!(
-                "missing providers for: {}",
-                cid
-            )));
+            return Err(Status::invalid_argument("missing providers"));
         }
 
         let (s, r) = oneshot::channel();
@@ -218,10 +207,13 @@ impl p2p_server::P2p for P2p {
         let ack = r.await.map_err(|_| Status::internal("sender dropped"))?;
         Ok(Response::new(ack))
     }
+}
 
-    async fn gossipsub_add_explicit_peer(
+#[tonic::async_trait]
+impl gossipsub_server::Gossipsub for P2p {
+    async fn add_explicit_peer(
         &self,
-        request: Request<GossipsubPeerIdMsg>,
+        request: Request<PeerIdMsg>,
     ) -> Result<Response<()>, tonic::Status> {
         let req = request.into_inner();
         let (s, r) = oneshot::channel();
@@ -238,10 +230,10 @@ impl p2p_server::P2p for P2p {
         Ok(Response::new(()))
     }
 
-    async fn gossipsub_all_mesh_peers(
+    async fn all_mesh_peers(
         &self,
         _request: Request<()>,
-    ) -> Result<Response<GossipsubPeersResponse>, tonic::Status> {
+    ) -> Result<Response<PeersResponse>, tonic::Status> {
         let (s, r) = oneshot::channel();
         let msg = RpcMessage::Gossipsub(GossipsubMessage::AllMeshPeers(s));
         self.sender
@@ -252,13 +244,13 @@ impl p2p_server::P2p for P2p {
         let peers = r.await.map_err(|_| Status::internal("sender dropped"))?;
 
         let peers = peers.into_iter().map(|p| p.to_bytes()).collect();
-        Ok(Response::new(GossipsubPeersResponse { peers }))
+        Ok(Response::new(PeersResponse { peers }))
     }
 
-    async fn gossipsub_all_peers(
+    async fn all_peers(
         &self,
         _request: Request<()>,
-    ) -> Result<Response<GossipsubAllPeersResponse>, tonic::Status> {
+    ) -> Result<Response<AllPeersResponse>, tonic::Status> {
         let (s, r) = oneshot::channel();
         let msg = RpcMessage::Gossipsub(GossipsubMessage::AllPeers(s));
         self.sender
@@ -269,18 +261,18 @@ impl p2p_server::P2p for P2p {
         let all_peers = r.await.map_err(|_| Status::internal("sender dropped"))?;
         let all = all_peers
             .into_iter()
-            .map(|(p, t)| GossipsubPeerAndTopics {
+            .map(|(p, t)| PeerAndTopics {
                 peer_id: p.to_bytes(),
                 topics: t.into_iter().map(|t| t.into_string()).collect(),
             })
             .collect();
-        Ok(Response::new(GossipsubAllPeersResponse { all }))
+        Ok(Response::new(AllPeersResponse { all }))
     }
 
-    async fn gossipsub_mesh_peers(
+    async fn mesh_peers(
         &self,
-        request: Request<GossipsubTopicHashMsg>,
-    ) -> Result<Response<GossipsubPeersResponse>, tonic::Status> {
+        request: Request<TopicHashMsg>,
+    ) -> Result<Response<PeersResponse>, tonic::Status> {
         let req = request.into_inner();
         let topic = TopicHash::from_raw(req.topic_hash);
         let (s, r) = oneshot::channel();
@@ -292,13 +284,13 @@ impl p2p_server::P2p for P2p {
 
         let res = r.await.map_err(|_| Status::internal("sender dropped"))?;
         let peers = res.into_iter().map(|p| p.to_bytes()).collect();
-        Ok(Response::new(GossipsubPeersResponse { peers }))
+        Ok(Response::new(PeersResponse { peers }))
     }
 
-    async fn gossipsub_publish(
+    async fn publish(
         &self,
-        request: Request<GossipsubPublishRequest>,
-    ) -> Result<Response<GossipsubPublishResponse>, tonic::Status> {
+        request: Request<PublishRequest>,
+    ) -> Result<Response<PublishResponse>, tonic::Status> {
         let req = request.into_inner();
         let data = req.data;
         let topic_hash = TopicHash::from_raw(req.topic_hash);
@@ -314,14 +306,14 @@ impl p2p_server::P2p for P2p {
             .map_err(|_| Status::internal("sender dropped"))?
             .map_err(publish_error_to_status)?;
 
-        Ok(Response::new(GossipsubPublishResponse {
+        Ok(Response::new(PublishResponse {
             message_id: message_id.0,
         }))
     }
 
-    async fn gossipsub_remove_explicit_peer(
+    async fn remove_explicit_peer(
         &self,
-        request: Request<GossipsubPeerIdMsg>,
+        request: Request<PeerIdMsg>,
     ) -> Result<Response<()>, tonic::Status> {
         let req = request.into_inner();
         let peer_id = peer_id_from_bytes(req.peer_id)?;
@@ -336,10 +328,10 @@ impl p2p_server::P2p for P2p {
         Ok(Response::new(()))
     }
 
-    async fn gossipsub_subscribe(
+    async fn subscribe(
         &self,
-        request: Request<GossipsubTopicHashMsg>,
-    ) -> Result<Response<GossipsubSubscribeResponse>, tonic::Status> {
+        request: Request<TopicHashMsg>,
+    ) -> Result<Response<SubscribeResponse>, tonic::Status> {
         let req = request.into_inner();
         let (s, r) = oneshot::channel();
         let msg = RpcMessage::Gossipsub(GossipsubMessage::Subscribe(
@@ -360,13 +352,13 @@ impl p2p_server::P2p for P2p {
                 SubscriptionError::NotAllowed => Status::permission_denied(e.to_string()),
             })?;
 
-        Ok(Response::new(GossipsubSubscribeResponse { was_subscribed }))
+        Ok(Response::new(SubscribeResponse { was_subscribed }))
     }
 
-    async fn gossipsub_topics(
+    async fn topics(
         &self,
         _request: Request<()>,
-    ) -> Result<Response<GossipsubTopicsResponse>, tonic::Status> {
+    ) -> Result<Response<TopicsResponse>, tonic::Status> {
         let (s, r) = oneshot::channel();
         let msg = RpcMessage::Gossipsub(GossipsubMessage::Topics(s));
 
@@ -381,13 +373,13 @@ impl p2p_server::P2p for P2p {
             .into_iter()
             .map(|t| t.into_string())
             .collect();
-        Ok(Response::new(GossipsubTopicsResponse { topics }))
+        Ok(Response::new(TopicsResponse { topics }))
     }
 
-    async fn gossipsub_unsubscribe(
+    async fn unsubscribe(
         &self,
-        request: Request<GossipsubTopicHashMsg>,
-    ) -> Result<Response<GossipsubSubscribeResponse>, tonic::Status> {
+        request: Request<TopicHashMsg>,
+    ) -> Result<Response<SubscribeResponse>, tonic::Status> {
         let req = request.into_inner();
         let (s, r) = oneshot::channel();
         let msg = RpcMessage::Gossipsub(GossipsubMessage::Unsubscribe(
@@ -404,7 +396,7 @@ impl p2p_server::P2p for P2p {
             .await
             .map_err(|_| Status::internal("sender dropped"))?
             .map_err(publish_error_to_status)?;
-        Ok(Response::new(GossipsubSubscribeResponse { was_subscribed }))
+        Ok(Response::new(SubscribeResponse { was_subscribed }))
     }
 }
 
@@ -420,15 +412,18 @@ pub async fn new(addr: SocketAddr, sender: Sender<RpcMessage>) -> Result<()> {
     let p2p = P2p {
         sender: sender.clone(),
     };
+    let gossipsub = P2p { sender };
     let (mut health_reporter, health_service) = tonic_health::server::health_reporter();
     health_reporter
         .set_serving::<p2p_server::P2pServer<P2p>>()
         .await;
     let p2p_service = p2p_server::P2pServer::new(p2p);
+    let gossipsub_service = gossipsub_server::GossipsubServer::new(gossipsub);
 
     TonicServer::builder()
         .add_service(health_service)
         .add_service(p2p_service)
+        .add_service(gossipsub_service)
         .serve(addr)
         .await?;
     Ok(())
@@ -464,7 +459,6 @@ pub enum RpcMessage {
     NetConnect(oneshot::Sender<bool>, PeerId, Vec<Multiaddr>),
     NetDisconnect(oneshot::Sender<()>, PeerId),
     Gossipsub(GossipsubMessage),
-    Shutdown,
 }
 
 #[derive(Debug)]
