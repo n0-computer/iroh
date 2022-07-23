@@ -6,14 +6,21 @@ use cid::Cid;
 use futures::Stream;
 use iroh_rpc_types::p2p::{
     BitswapRequest, ConnectRequest, DisconnectRequest, GossipsubPeerAndTopics, GossipsubPeerIdMsg,
-    GossipsubPublishRequest, GossipsubTopicHashMsg, Key, Providers,
+    GossipsubPublishRequest, GossipsubTopicHashMsg, Key, P2p, Providers,
 };
+use iroh_rpc_types::Addr;
 use libp2p::gossipsub::{MessageId, TopicHash};
 use libp2p::{Multiaddr, PeerId};
 use tracing::{debug, warn};
 
-use crate::backend::P2pBackend;
-use crate::config::Addr;
+#[cfg(feature = "grpc")]
+use iroh_rpc_types::p2p::p2p_client::P2pClient as GrpcP2pClient;
+#[cfg(feature = "grpc")]
+use tonic::transport::{Channel, Endpoint};
+#[cfg(feature = "grpc")]
+use tonic_health::proto::health_client::HealthClient;
+
+#[cfg(feature = "grpc")]
 use crate::status::{self, StatusRow};
 
 // name that the health service registers the p2p client as
@@ -24,27 +31,52 @@ pub(crate) const SERVICE_NAME: &str = "p2p.P2p";
 pub(crate) const NAME: &str = "p2p";
 
 #[derive(Debug, Clone)]
-pub struct P2pClient {
-    backend: P2pBackend,
+pub enum P2pClient {
+    #[cfg(feature = "grpc")]
+    Grpc {
+        client: GrpcP2pClient<Channel>,
+        health: HealthClient<Channel>,
+    },
+    #[cfg(feature = "mem")]
+    Mem,
 }
 
 impl P2pClient {
     pub async fn new(addr: &Addr) -> Result<Self> {
         match addr {
+            #[cfg(feature = "grpc")]
             Addr::GrpcHttp2(addr) => {
-                let backend = P2pBackend::new(*addr)?;
-                Ok(P2pClient { backend })
+                let conn = Endpoint::new(format!("http://{}", addr))?
+                    .keep_alive_while_idle(true)
+                    .connect_lazy();
+
+                let client = GrpcP2pClient::new(conn.clone());
+                let health = HealthClient::new(conn);
+
+                Ok(P2pClient::Grpc { client, health })
             }
+            #[cfg(feature = "grpc")]
             Addr::GrpcUds(_) => unimplemented!(),
-            Addr::Mem => unimplemented!(),
+            #[cfg(feature = "mem")]
+            Addr::Mem => Ok(P2pClient::Mem),
+        }
+    }
+
+    fn backend(&self) -> &impl P2p {
+        match self {
+            #[cfg(feature = "grpc")]
+            Self::Grpc { client, .. } => client,
+            #[cfg(feature = "mem")]
+            Self::Mem => {
+                todo!()
+            }
         }
     }
 
     #[tracing::instrument(skip(self))]
     pub async fn version(&self) -> Result<String> {
-        let req = iroh_metrics::req::trace_tonic_req(());
-        let res = self.backend.client().clone().version(req).await?;
-        Ok(res.into_inner().version)
+        let res = self.backend().version(()).await?;
+        Ok(res.version)
     }
 
     // Fetches a block directly from the network.
@@ -55,22 +87,22 @@ impl P2pClient {
             providers: providers.into_iter().map(|id| id.to_bytes()).collect(),
         };
 
-        let req = iroh_metrics::req::trace_tonic_req(BitswapRequest {
+        let req = BitswapRequest {
             cid: cid.to_bytes(),
             providers: Some(providers),
-        });
-        let res = self.backend.client().clone().fetch_bitswap(req).await?;
-        Ok(res.into_inner().data)
+        };
+        let res = self.backend().fetch_bitswap(req).await?;
+        Ok(res.data)
     }
 
     #[tracing::instrument(skip(self))]
     pub async fn fetch_providers(&self, key: &Cid) -> Result<HashSet<PeerId>> {
-        let req = iroh_metrics::req::trace_tonic_req(Key {
+        let req = Key {
             key: key.hash().to_bytes(),
-        });
-        let res = self.backend.client().clone().fetch_provider(req).await?;
+        };
+        let res = self.backend().fetch_provider(req).await?;
         let mut providers = HashSet::new();
-        for provider in res.into_inner().providers.into_iter() {
+        for provider in res.providers.into_iter() {
             providers.insert(PeerId::from_bytes(&provider[..])?);
         }
         Ok(providers)
@@ -78,14 +110,7 @@ impl P2pClient {
 
     #[tracing::instrument(skip(self))]
     pub async fn get_listening_addrs(&self) -> Result<(PeerId, Vec<Multiaddr>)> {
-        let req = iroh_metrics::req::trace_tonic_req(());
-        let res = self
-            .backend
-            .client()
-            .clone()
-            .get_listening_addrs(req)
-            .await?
-            .into_inner();
+        let res = self.backend().get_listening_addrs(()).await?;
         let peer_id = PeerId::from_bytes(&res.peer_id[..])?;
         let addrs = addrs_from_bytes(res.addrs)?;
         Ok((peer_id, addrs))
@@ -93,15 +118,7 @@ impl P2pClient {
 
     #[tracing::instrument(skip(self))]
     pub async fn get_peers(&self) -> Result<HashMap<PeerId, Vec<Multiaddr>>> {
-        let req = iroh_metrics::req::trace_tonic_req(());
-        let peers = self
-            .backend
-            .client()
-            .clone()
-            .get_peers(req)
-            .await?
-            .into_inner()
-            .peers;
+        let peers = self.backend().get_peers(()).await?.peers;
         let mut peers_map = HashMap::new();
         for (peer, addrs) in peers.into_iter() {
             let peer = peer.parse()?;
@@ -113,17 +130,11 @@ impl P2pClient {
 
     #[tracing::instrument(skip(self))]
     pub async fn connect(&self, peer_id: PeerId, addrs: Vec<Multiaddr>) -> Result<()> {
-        let req = iroh_metrics::req::trace_tonic_req(ConnectRequest {
+        let req = ConnectRequest {
             peer_id: peer_id.to_bytes(),
             addrs: addrs.iter().map(|a| a.to_vec()).collect(),
-        });
-        let res = self
-            .backend
-            .client()
-            .clone()
-            .peer_connect(req)
-            .await?
-            .into_inner();
+        };
+        let res = self.backend().peer_connect(req).await?;
         ensure!(res.success, "dial failed");
         Ok(())
     }
@@ -131,170 +142,116 @@ impl P2pClient {
     #[tracing::instrument(skip(self))]
     pub async fn disconnect(&self, peer_id: PeerId) -> Result<()> {
         warn!("NetDisconnect not yet implemented on p2p node");
-        let req = iroh_metrics::req::trace_tonic_req(DisconnectRequest {
+        let req = DisconnectRequest {
             peer_id: peer_id.to_bytes(),
-        });
-        self.backend
-            .client()
-            .clone()
-            .peer_disconnect(req)
-            .await?
-            .into_inner();
+        };
+        self.backend().peer_disconnect(req).await?;
         Ok(())
     }
 
+    #[cfg(feature = "grpc")]
     #[tracing::instrument(skip(self))]
     pub async fn check(&self) -> StatusRow {
-        status::check(self.backend.health().clone(), SERVICE_NAME, NAME).await
+        match self {
+            Self::Grpc { health, .. } => status::check(health.clone(), SERVICE_NAME, NAME).await,
+            Self::Mem => {
+                todo!()
+            }
+        }
     }
 
+    #[cfg(feature = "grpc")]
     #[tracing::instrument(skip(self))]
     pub async fn watch(&self) -> impl Stream<Item = StatusRow> {
-        status::watch(self.backend.health().clone(), SERVICE_NAME, NAME).await
+        match self {
+            Self::Grpc { health, .. } => status::watch(health.clone(), SERVICE_NAME, NAME).await,
+            Self::Mem => {
+                todo!()
+            }
+        }
     }
 
     #[tracing::instrument(skip(self))]
     pub async fn shutdown(&self) -> Result<()> {
-        let req = iroh_metrics::req::trace_tonic_req(());
-        self.backend
-            .client()
-            .clone()
-            .shutdown(req)
-            .await?
-            .into_inner();
+        self.backend().shutdown(()).await?;
         Ok(())
     }
 
     #[tracing::instrument(skip(self))]
     pub async fn gossipsub_add_explicit_peer(&self, peer_id: PeerId) -> Result<()> {
-        let req = iroh_metrics::req::trace_tonic_req(GossipsubPeerIdMsg {
+        let req = GossipsubPeerIdMsg {
             peer_id: peer_id.to_bytes(),
-        });
-        self.backend
-            .client()
-            .clone()
-            .gossipsub_add_explicit_peer(req)
-            .await?
-            .into_inner();
+        };
+        self.backend().gossipsub_add_explicit_peer(req).await?;
         Ok(())
     }
 
     #[tracing::instrument(skip(self))]
     pub async fn gossipsub_all_mesh_peers(&self) -> Result<Vec<PeerId>> {
-        let req = iroh_metrics::req::trace_tonic_req(());
-        let res = self
-            .backend
-            .client()
-            .clone()
-            .gossipsub_all_mesh_peers(req)
-            .await?
-            .into_inner();
+        let res = self.backend().gossipsub_all_mesh_peers(()).await?;
         let peer_ids = peer_ids_from_bytes(res.peers)?;
         Ok(peer_ids)
     }
 
     #[tracing::instrument(skip(self))]
     pub async fn gossipsub_all_peers(&self) -> Result<Vec<(PeerId, Vec<TopicHash>)>> {
-        let req = iroh_metrics::req::trace_tonic_req(());
-        let res = self
-            .backend
-            .client()
-            .clone()
-            .gossipsub_all_peers(req)
-            .await?
-            .into_inner()
-            .all;
+        let res = self.backend().gossipsub_all_peers(()).await?.all;
         let peers_and_topics = all_peers_from_bytes(res)?;
         Ok(peers_and_topics)
     }
 
     #[tracing::instrument(skip(self))]
     pub async fn gossipsub_mesh_peers(&self, topic: TopicHash) -> Result<Vec<PeerId>> {
-        let req = iroh_metrics::req::trace_tonic_req(GossipsubTopicHashMsg {
+        let req = GossipsubTopicHashMsg {
             topic_hash: topic.into_string(),
-        });
-        let res = self
-            .backend
-            .client()
-            .clone()
-            .gossipsub_mesh_peers(req)
-            .await?
-            .into_inner();
+        };
+        let res = self.backend().gossipsub_mesh_peers(req).await?;
         let peer_ids = peer_ids_from_bytes(res.peers)?;
         Ok(peer_ids)
     }
 
     #[tracing::instrument(skip(self, data))]
     pub async fn gossipsub_publish(&self, topic_hash: TopicHash, data: Bytes) -> Result<MessageId> {
-        let req = iroh_metrics::req::trace_tonic_req(GossipsubPublishRequest {
+        let req = GossipsubPublishRequest {
             topic_hash: topic_hash.to_string(),
             data,
-        });
-        let res = self
-            .backend
-            .client()
-            .clone()
-            .gossipsub_publish(req)
-            .await?
-            .into_inner();
+        };
+        let res = self.backend().gossipsub_publish(req).await?;
         let message_id = MessageId::new(&res.message_id);
         Ok(message_id)
     }
 
     #[tracing::instrument(skip(self))]
     pub async fn gossipsub_remove_explicit_peer(&self, peer_id: PeerId) -> Result<()> {
-        let req = iroh_metrics::req::trace_tonic_req(GossipsubPeerIdMsg {
+        let req = GossipsubPeerIdMsg {
             peer_id: peer_id.to_bytes(),
-        });
-        self.backend
-            .client()
-            .clone()
-            .gossipsub_remove_explicit_peer(req)
-            .await?;
+        };
+        self.backend().gossipsub_remove_explicit_peer(req).await?;
         Ok(())
     }
 
     #[tracing::instrument(skip(self))]
     pub async fn gossipsub_subscribe(&self, topic: TopicHash) -> Result<bool> {
-        let req = iroh_metrics::req::trace_tonic_req(GossipsubTopicHashMsg {
+        let req = GossipsubTopicHashMsg {
             topic_hash: topic.to_string(),
-        });
-        let res = self
-            .backend
-            .client()
-            .clone()
-            .gossipsub_subscribe(req)
-            .await?
-            .into_inner();
+        };
+        let res = self.backend().gossipsub_subscribe(req).await?;
         Ok(res.was_subscribed)
     }
 
     #[tracing::instrument(skip(self))]
     pub async fn gossipsub_topics(&self) -> Result<Vec<TopicHash>> {
-        let req = iroh_metrics::req::trace_tonic_req(());
-        let res = self
-            .backend
-            .client()
-            .clone()
-            .gossipsub_topics(req)
-            .await?
-            .into_inner();
+        let res = self.backend().gossipsub_topics(()).await?;
         let topics = res.topics.into_iter().map(TopicHash::from_raw).collect();
         Ok(topics)
     }
 
     #[tracing::instrument(skip(self))]
     pub async fn gossipsub_unsubscribe(&self, topic: TopicHash) -> Result<bool> {
-        let req = iroh_metrics::req::trace_tonic_req(GossipsubTopicHashMsg {
+        let req = GossipsubTopicHashMsg {
             topic_hash: topic.to_string(),
-        });
-        let res = self
-            .backend
-            .client()
-            .clone()
-            .gossipsub_unsubscribe(req)
-            .await?
-            .into_inner();
+        };
+        let res = self.backend().gossipsub_unsubscribe(req).await?;
         Ok(res.was_subscribed)
     }
 }
@@ -325,9 +282,11 @@ fn addrs_from_bytes(a: Vec<Vec<u8>>) -> Result<Vec<Multiaddr>> {
     a.into_iter().map(addr_from_bytes).collect()
 }
 
-#[cfg(test)]
+// TODO: mem tests
+#[cfg(all(test, feature = "grpc"))]
 mod tests {
     use super::*;
+    use async_trait::async_trait;
     use iroh_rpc_types::p2p::{
         p2p_server, BitswapResponse, ConnectResponse, GetListeningAddrsResponse, GetPeersResponse,
         GossipsubAllPeersResponse, GossipsubPeersResponse, GossipsubPublishResponse,
@@ -385,7 +344,7 @@ mod tests {
         Bytes::from_static(b"hello world!")
     }
 
-    #[tonic::async_trait]
+    #[async_trait]
     impl p2p_server::P2p for TestRpcServer {
         async fn version(
             &self,

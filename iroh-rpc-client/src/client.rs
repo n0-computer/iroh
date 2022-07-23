@@ -1,11 +1,9 @@
 use anyhow::{Context, Result};
-use async_stream::stream;
 use futures::{Stream, StreamExt};
 
 use crate::config::Config;
 use crate::gateway::GatewayClient;
 use crate::network::P2pClient;
-use crate::status::StatusTable;
 use crate::store::StoreClient;
 
 #[derive(Debug, Clone)]
@@ -35,17 +33,19 @@ impl Client {
         })
     }
 
-    pub async fn check(&self) -> StatusTable {
-        StatusTable::new(
+    #[cfg(feature = "grpc")]
+    pub async fn check(&self) -> crate::status::StatusTable {
+        crate::status::StatusTable::new(
             self.gateway.check().await,
             self.p2p.check().await,
             self.store.check().await,
         )
     }
 
-    pub async fn watch(self) -> impl Stream<Item = StatusTable> {
-        stream! {
-            let mut status_table: StatusTable = Default::default();
+    #[cfg(feature = "grpc")]
+    pub async fn watch(self) -> impl Stream<Item = crate::status::StatusTable> {
+        async_stream::stream! {
+            let mut status_table: crate::status::StatusTable = Default::default();
             let gateway_status = self.gateway.watch().await;
             tokio::pin!(gateway_status);
             let p2p_status = self.p2p.watch().await;
@@ -72,7 +72,8 @@ impl Client {
     }
 }
 
-#[cfg(test)]
+// TODO: write tests for mem transport
+#[cfg(all(test, feature = "grpc"))]
 mod tests {
     use super::*;
     use std::net::SocketAddr;

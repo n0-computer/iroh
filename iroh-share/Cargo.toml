@@ -9,9 +9,10 @@ description = "Sharing files with iroh"
 
 [dependencies]
 anyhow = "1.0.58"
-iroh-p2p = { path = "../iroh-p2p" }
-iroh-store = {path = "../iroh-store" }
-iroh-rpc-client = { path = "../iroh-rpc-client" }
+iroh-p2p = { path = "../iroh-p2p", default-features = false, features = ["rpc-mem"] }
+iroh-store = {path = "../iroh-store", default-features = false, features = ["rpc-mem"] }
+iroh-rpc-client = { path = "../iroh-rpc-client", default-features = false, features = ["mem"] }
+iroh-rpc-types = { path = "../iroh-rpc-types", default-features = false, features = ["mem"] }
 iroh-metrics = { path = "../iroh-metrics" }
 iroh-resolver = { path = "../iroh-resolver" }
 iroh-util = { path = "../iroh-util" }
@@ -25,7 +26,6 @@ async-channel = "1.6.1"
 bytes = "1.1.0"
 cid = { version = "0.8.5", features = ["serde-codec"] }
 async-trait = "0.1.56"
-
 clap = { version = "3.1.14", features = ["derive"] }
 bincode = "1.3.3"
 multibase = "0.9.1"

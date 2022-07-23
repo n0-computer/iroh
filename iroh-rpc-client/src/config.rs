@@ -1,10 +1,7 @@
-use std::{fmt::Display, net::SocketAddr, path::PathBuf, str::FromStr};
-
-use anyhow::anyhow;
 use config::{ConfigError, Map, Source, Value};
+use iroh_rpc_types::Addr;
 use iroh_util::insert_into_config_map;
 use serde::{Deserialize, Serialize};
-use serde_with::{DeserializeFromStr, SerializeDisplay};
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 // Config for the rpc Client
@@ -15,58 +12,6 @@ pub struct Config {
     pub p2p_addr: Addr,
     // store rpc address
     pub store_addr: Addr,
-}
-
-#[derive(SerializeDisplay, DeserializeFromStr, Debug, Clone, PartialEq)]
-pub enum Addr {
-    GrpcHttp2(SocketAddr),
-    GrpcUds(PathBuf),
-    Mem, // TODO: channel
-}
-
-impl Addr {
-    pub fn try_as_socket_addr(&self) -> Option<SocketAddr> {
-        if let Addr::GrpcHttp2(addr) = self {
-            return Some(*addr);
-        }
-        None
-    }
-}
-
-impl Display for Addr {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Addr::GrpcHttp2(addr) => write!(f, "grpc://{}", addr),
-            Addr::GrpcUds(path) => write!(f, "grpc://{}", path.display()),
-            Addr::Mem => write!(f, "mem"),
-        }
-    }
-}
-
-impl FromStr for Addr {
-    type Err = anyhow::Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if s == "mem" {
-            return Ok(Addr::Mem);
-        }
-
-        let mut parts = s.split("://");
-        if let Some(prefix) = parts.next() {
-            if prefix == "grpc" {
-                if let Some(part) = parts.next() {
-                    if let Ok(addr) = part.parse::<SocketAddr>() {
-                        return Ok(Addr::GrpcHttp2(addr));
-                    }
-                    if let Ok(path) = part.parse::<PathBuf>() {
-                        return Ok(Addr::GrpcUds(path));
-                    }
-                }
-            }
-        }
-
-        Err(anyhow!("invalid addr: {}", s))
-    }
 }
 
 impl Source for Config {
@@ -133,25 +78,5 @@ mod tests {
             .unwrap();
 
         assert_eq!(expect, got);
-    }
-
-    #[test]
-    fn test_addr_roundtrip() {
-        let socket: SocketAddr = "198.168.2.1:1234".parse().unwrap();
-        let addr = Addr::GrpcHttp2(socket);
-
-        assert_eq!(addr.to_string().parse::<Addr>().unwrap(), addr);
-        assert_eq!(addr.to_string(), "grpc://198.168.2.1:1234");
-
-        let path: PathBuf = "/foo/bar".parse().unwrap();
-        let addr = Addr::GrpcUds(path);
-
-        assert_eq!(addr.to_string().parse::<Addr>().unwrap(), addr);
-        assert_eq!(addr.to_string(), "grpc:///foo/bar");
-
-        let addr = Addr::Mem;
-
-        assert_eq!(addr.to_string().parse::<Addr>().unwrap(), addr);
-        assert_eq!(addr.to_string(), "mem");
     }
 }
