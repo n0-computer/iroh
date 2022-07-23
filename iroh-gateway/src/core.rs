@@ -40,7 +40,9 @@ use crate::{
     error::GatewayError,
     headers::*,
     response::{get_response_format, GatewayResponse, ResponseFormat},
-    rpc, templates,
+    rpc,
+    rpc::Gateway,
+    templates,
 };
 
 #[derive(Debug)]
@@ -93,7 +95,7 @@ impl Core {
         let rpc_addr = config.rpc_addr.clone();
         tokio::spawn(async move {
             // TODO: handle error
-            rpc::new(rpc_addr).await
+            rpc::new(rpc_addr, Gateway::default()).await
         });
         let rpc_client = RpcClient::new(&config.rpc_client).await?;
         let mut templates = HashMap::new();

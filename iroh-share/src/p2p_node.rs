@@ -11,7 +11,8 @@ use iroh_resolver::{
     resolver::{ContentLoader, LoadedCid, Resolver, Source, IROH_STORE},
     verify_hash,
 };
-use iroh_rpc_client::{Addr, Client};
+use iroh_rpc_client::Client;
+use iroh_rpc_types::Addr;
 use libp2p::{Multiaddr, PeerId};
 use prometheus_client::registry::Registry;
 use serde::{Deserialize, Serialize};
