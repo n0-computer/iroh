@@ -23,6 +23,7 @@ async-recursion = "1.0.0"
 trust-dns-resolver = { version = "0.21.2", features = ["tokio-runtime"] }
 prometheus-client = "0.16.0"
 iroh-metrics = { path = "../iroh-metrics" }
+async-stream = "0.3.3"
 
 [dev-dependencies]
 criterion = { version = "0.3.5", features = ["async_tokio"] }

@@ -63,6 +63,7 @@ features = [
   "metrics",
   "relay",
   "dcutr",
+  "autonat",
 ] 
 
 [dependencies.multihash]

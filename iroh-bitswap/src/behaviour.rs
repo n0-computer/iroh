@@ -127,7 +127,7 @@ impl Bitswap {
             .want(cid, priority, providers.into_iter().collect())
     }
 
-    #[instrument(skip(self))]
+    #[instrument(skip(self, data))]
     pub fn send_block(&mut self, peer_id: &PeerId, cid: Cid, data: Bytes) -> QueryId {
         debug!("send_block: {}", cid);
 
@@ -235,15 +235,15 @@ impl NetworkBehaviour for Bitswap {
                         .received_block_bytes
                         .inc_by(block.data().len() as u64);
 
-                    let (unused_providers, query_id) = self.queries.process_block(&peer_id, &block);
-
-                    if let Some(query_id) = query_id {
+                    let (unused_providers, query_ids) =
+                        self.queries.process_block(&peer_id, &block);
+                    for query_id in query_ids {
                         let event = BitswapEvent::OutboundQueryCompleted {
                             id: query_id,
                             result: QueryResult::Want(WantResult::Ok {
                                 sender: peer_id,
                                 cid: block.cid,
-                                data: block.data,
+                                data: block.data.clone(),
                             }),
                         };
 
