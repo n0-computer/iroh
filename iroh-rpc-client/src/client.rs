@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use futures::{Stream, StreamExt};
 
 use crate::config::Config;
@@ -55,6 +55,24 @@ impl Client {
             p2p,
             store,
         })
+    }
+
+    pub fn try_p2p(&self) -> Result<&P2pClient> {
+        self.p2p
+            .as_ref()
+            .ok_or_else(|| anyhow!("missing rpc p2p connnection"))
+    }
+
+    pub fn try_gateway(&self) -> Result<&GatewayClient> {
+        self.gateway
+            .as_ref()
+            .ok_or_else(|| anyhow!("missing rpc gateway connnection"))
+    }
+
+    pub fn try_store(&self) -> Result<&StoreClient> {
+        self.store
+            .as_ref()
+            .ok_or_else(|| anyhow!("missing rpc store connnection"))
     }
 
     #[cfg(feature = "grpc")]

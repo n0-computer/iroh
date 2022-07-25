@@ -372,13 +372,7 @@ impl ContentLoader for Client {
         // TODO: better strategy
 
         let cid = *cid;
-        match self
-            .store
-            .as_ref()
-            .ok_or_else(|| anyhow!("missing store rpc conn"))?
-            .get(cid)
-            .await
-        {
+        match self.try_store()?.get(cid).await {
             Ok(Some(data)) => {
                 trace!("retrieved from store");
                 return Ok(LoadedCid {
@@ -391,10 +385,7 @@ impl ContentLoader for Client {
                 warn!("failed to fetch data from store {}: {:?}", cid, err);
             }
         }
-        let p2p = self
-            .p2p
-            .as_ref()
-            .ok_or_else(|| anyhow!("missing p2p rpc conn"))?;
+        let p2p = self.try_p2p()?;
         let providers = p2p.fetch_providers(&cid).await?;
         let bytes = p2p.fetch_bitswap(cid, providers).await?;
 

@@ -52,12 +52,12 @@ Not yet implemented.",
 pub async fn run_command(rpc: Client, cmd: Store) -> Result<()> {
     match cmd.command {
         StoreCommands::Version => {
-            let v = rpc.store.version().await?;
+            let v = rpc.try_store()?.version().await?;
             println!("v{}", v);
         }
         StoreCommands::Block(block) => match block.command {
             BlockCommands::Get { cid } => {
-                let b = rpc.store.get(cid).await?;
+                let b = rpc.try_store()?.get(cid).await?;
                 println!("{:?}\n", b);
             }
             BlockCommands::Put { path } => {
@@ -70,12 +70,12 @@ pub async fn run_command(rpc: Client, cmd: Store) -> Result<()> {
                 );
             }
             BlockCommands::Has { cid } => {
-                let b = rpc.store.has(cid).await?;
+                let b = rpc.try_store()?.has(cid).await?;
                 println!("{}", b);
             }
         },
         StoreCommands::GetLinks { cid } => {
-            let links = rpc.store.get_links(cid).await?;
+            let links = rpc.try_store()?.get_links(cid).await?;
             println!("{:#?}", links);
         }
     };
