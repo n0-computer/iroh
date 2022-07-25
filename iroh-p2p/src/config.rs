@@ -1,7 +1,7 @@
 use config::{ConfigError, Map, Source, Value};
 use iroh_metrics::config::Config as MetricsConfig;
 use iroh_rpc_client::Config as RpcClientConfig;
-use iroh_rpc_types::p2p::P2pServerAddr;
+use iroh_rpc_types::p2p::{P2pClientAddr, P2pServerAddr};
 use iroh_util::insert_into_config_map;
 use libp2p::Multiaddr;
 use serde::{Deserialize, Serialize};
@@ -80,6 +80,30 @@ pub const DEFAULT_BOOTSTRAP: &[&str] = &[
 // "/ip4/104.131.131.82/udp/4001/quic/p2p/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ", // mars.i.ipfs.io
 
 impl Libp2pConfig {
+    pub fn default_with_rpc(server_addr: P2pServerAddr, client_addr: P2pClientAddr) -> Self {
+        let bootstrap_peers = DEFAULT_BOOTSTRAP
+            .iter()
+            .map(|node| node.parse().unwrap())
+            .collect();
+
+        Self {
+            listening_multiaddr: "/ip4/0.0.0.0/tcp/4444".parse().unwrap(),
+            bootstrap_peers,
+            mdns: false,
+            kademlia: true,
+            autonat: true,
+            relay_server: true,
+            relay_client: true,
+            target_peer_count: 256,
+            rpc_addr: server_addr,
+            rpc_client: RpcClientConfig {
+                p2p_addr: Some(client_addr),
+                ..Default::default()
+            },
+            metrics: MetricsConfig::default(),
+        }
+    }
+
     pub fn default_grpc() -> Self {
         let bootstrap_peers = DEFAULT_BOOTSTRAP
             .iter()

@@ -733,29 +733,77 @@ async fn load_identity<S: Storage>(kc: &mut Keychain<S>) -> Result<Keypair> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{keys::MemoryStorage, metrics};
+    use crate::keys::MemoryStorage;
 
     use super::*;
     use anyhow::Result;
+    use iroh_rpc_types::{
+        p2p::{P2pClientAddr, P2pServerAddr},
+        Addr,
+    };
 
+    #[cfg(feature = "rpc-grpc")]
     #[tokio::test]
-    async fn test_fetch_providers() -> Result<()> {
+    async fn test_fetch_providers_grpc() -> Result<()> {
+        let server_addr = "grpc://0.0.0.0:4401".parse().unwrap();
+        let client_addr = "grpc://0.0.0.0:4401".parse().unwrap();
+        fetch_providers(
+            "/ip4/0.0.0.0/tcp/5001".parse().unwrap(),
+            server_addr,
+            client_addr,
+        )
+        .await?;
+        Ok(())
+    }
+
+    #[cfg(all(feature = "rpc-grpc", unix))]
+    #[tokio::test]
+    async fn test_fetch_providers_uds() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let file = dir.path().join("cool.iroh");
+
+        let server_addr = P2pServerAddr::GrpcUds(file.clone());
+        let client_addr = P2pClientAddr::GrpcUds(file);
+        fetch_providers(
+            "/ip4/0.0.0.0/tcp/5002".parse().unwrap(),
+            server_addr,
+            client_addr,
+        )
+        .await?;
+        Ok(())
+    }
+
+    #[cfg(feature = "rpc-mem")]
+    #[tokio::test]
+    async fn test_fetch_providers_mem() -> Result<()> {
+        let (server_addr, client_addr) = Addr::new_mem();
+        fetch_providers(
+            "/ip4/0.0.0.0/tcp/5003".parse().unwrap(),
+            server_addr,
+            client_addr,
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn fetch_providers(
+        addr: Multiaddr,
+        rpc_server_addr: P2pServerAddr,
+        rpc_client_addr: P2pClientAddr,
+    ) -> Result<()> {
         let mut prom_registry = Registry::default();
-        let mut network_config = Libp2pConfig::default_grpc();
+        let mut network_config =
+            Libp2pConfig::default_with_rpc(rpc_server_addr, rpc_client_addr.clone());
+        network_config.listening_multiaddr = addr;
         network_config.metrics.debug = true;
-        let metrics_config = network_config.metrics.clone();
 
         let kc = Keychain::<MemoryStorage>::new();
         let mut p2p = Node::new(network_config, kc, &mut prom_registry).await?;
 
-        let metrics_handle = iroh_metrics::MetricsHandle::from_registry_with_tracer(
-            metrics::metrics_config_with_compile_time_info(metrics_config),
-            prom_registry,
-        )
-        .await
-        .expect("failed to initialize metrics");
-
-        let cfg = iroh_rpc_client::Config::default_grpc();
+        let cfg = iroh_rpc_client::Config {
+            p2p_addr: Some(rpc_client_addr),
+            ..Default::default()
+        };
         let p2p_task = tokio::task::spawn(async move {
             p2p.run().await.unwrap();
         });
@@ -766,11 +814,11 @@ mod tests {
                 .parse()
                 .unwrap();
             let providers = client.p2p.unwrap().fetch_providers(&c).await?;
+            assert!(!providers.is_empty());
             assert!(providers.len() >= PROVIDER_LIMIT);
         }
 
         p2p_task.abort();
-        metrics_handle.shutdown();
         Ok(())
     }
 }

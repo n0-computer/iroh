@@ -46,8 +46,27 @@ impl StoreClient {
                     backend: StoreClientBackend::Grpc { client, health },
                 })
             }
-            #[cfg(feature = "grpc")]
-            Addr::GrpcUds(_) => unimplemented!(),
+            #[cfg(all(feature = "grpc", unix))]
+            Addr::GrpcUds(path) => {
+                use tokio::net::UnixStream;
+                use tonic::transport::Uri;
+
+                let path = std::sync::Arc::new(path);
+                // dummy addr
+                let conn = Endpoint::new("http://[..]:50051")?
+                    .keep_alive_while_idle(true)
+                    .connect_with_connector_lazy(tower::service_fn(move |_: Uri| {
+                        let path = path.clone();
+                        UnixStream::connect(path.as_ref().clone())
+                    }));
+
+                let client = GrpcStoreClient::new(conn.clone());
+                let health = HealthClient::new(conn);
+
+                Ok(StoreClient {
+                    backend: StoreClientBackend::Grpc { client, health },
+                })
+            }
             #[cfg(feature = "mem")]
             Addr::Mem(s, r) => Ok(StoreClient {
                 backend: StoreClientBackend::Mem(s, r),

@@ -22,7 +22,26 @@ pub async fn serve<P: P2p>(addr: P2pServerAddr, p2p: P) -> anyhow::Result<()> {
             Ok(())
         }
         #[cfg(feature = "grpc")]
-        Addr::GrpcUds(_) => unimplemented!(),
+        Addr::GrpcUds(path) => {
+            use tokio::net::UnixListener;
+            use tokio_stream::wrappers::UnixListenerStream;
+
+            let (mut health_reporter, health_service) = tonic_health::server::health_reporter();
+            health_reporter
+                .set_serving::<p2p_server::P2pServer<P>>()
+                .await;
+
+            let uds = UnixListener::bind(path)?;
+            let uds_stream = UnixListenerStream::new(uds);
+
+            tonic::transport::Server::builder()
+                .add_service(health_service)
+                .add_service(p2p_server::P2pServer::new(p2p))
+                .serve_with_incoming(uds_stream)
+                .await?;
+
+            Ok(())
+        }
         #[cfg(feature = "mem")]
         Addr::Mem(sender, receiver) => {
             p2p.serve_mem(sender, receiver).await?;

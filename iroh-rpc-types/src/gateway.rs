@@ -21,8 +21,27 @@ pub async fn serve<G: Gateway>(addr: GatewayServerAddr, gateway: G) -> anyhow::R
 
             Ok(())
         }
-        #[cfg(feature = "grpc")]
-        Addr::GrpcUds(_) => unimplemented!(),
+        #[cfg(all(feature = "grpc", unix))]
+        Addr::GrpcUds(path) => {
+            use tokio::net::UnixListener;
+            use tokio_stream::wrappers::UnixListenerStream;
+
+            let (mut health_reporter, health_service) = tonic_health::server::health_reporter();
+            health_reporter
+                .set_serving::<gateway_server::GatewayServer<G>>()
+                .await;
+
+            let uds = UnixListener::bind(path)?;
+            let uds_stream = UnixListenerStream::new(uds);
+
+            tonic::transport::Server::builder()
+                .add_service(health_service)
+                .add_service(gateway_server::GatewayServer::new(gateway))
+                .serve_with_incoming(uds_stream)
+                .await?;
+
+            Ok(())
+        }
         #[cfg(feature = "mem")]
         Addr::Mem(sender, receiver) => {
             gateway.serve_mem(sender, receiver).await?;
