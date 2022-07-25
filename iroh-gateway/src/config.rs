@@ -6,7 +6,7 @@ use headers::{
 };
 use iroh_metrics::config::Config as MetricsConfig;
 use iroh_rpc_client::Config as RpcClientConfig;
-use iroh_rpc_types::Addr;
+use iroh_rpc_types::{gateway::GatewayAddr, Addr};
 use iroh_util::insert_into_config_map;
 use serde::{Deserialize, Serialize};
 
@@ -29,7 +29,7 @@ pub struct Config {
     /// default port to listen on
     pub port: u16,
     /// rpc listening addr
-    pub rpc_addr: Addr,
+    pub rpc_addr: GatewayAddr,
     // NOTE: for toml to serialize properly, the "table" values must be serialized at the end, and
     // so much come at the end of the `Config` struct
     /// set of user provided headers to attach to all responses

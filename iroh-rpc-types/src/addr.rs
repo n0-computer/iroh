@@ -1,19 +1,43 @@
-use std::{fmt::Display, net::SocketAddr, str::FromStr};
+use std::{
+    fmt::{Debug, Display},
+    net::SocketAddr,
+    str::FromStr,
+};
 
-use anyhow::anyhow;
+use anyhow::{anyhow, bail};
+use async_channel::{Receiver, Sender};
 use serde_with::{DeserializeFromStr, SerializeDisplay};
 
-#[derive(SerializeDisplay, DeserializeFromStr, Debug, Clone, PartialEq)]
-pub enum Addr {
+#[derive(SerializeDisplay, DeserializeFromStr, Clone)]
+pub enum Addr<SEND = (), RECV = ()> {
     #[cfg(feature = "grpc")]
     GrpcHttp2(SocketAddr),
     #[cfg(feature = "grpc")]
     GrpcUds(std::path::PathBuf),
     #[cfg(feature = "mem")]
-    Mem, // TODO: channel
+    Mem(Sender<RECV>, Receiver<SEND>),
 }
 
-impl Addr {
+impl<S, R> PartialEq for Addr<S, R> {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            #[cfg(feature = "grpc")]
+            (Self::GrpcHttp2(addr1), Self::GrpcHttp2(addr2)) => addr1.eq(addr2),
+            #[cfg(feature = "grpc")]
+            (Self::GrpcUds(path1), Self::GrpcUds(path2)) => path1.eq(path2),
+            _ => false,
+        }
+    }
+}
+
+impl<S, R> Addr<S, R> {
+    pub fn new_mem() -> (Addr<S, R>, Addr<R, S>) {
+        let (s1, r1) = async_channel::bounded(256);
+        let (s2, r2) = async_channel::bounded(256);
+
+        (Addr::Mem(s1, r2), Addr::Mem(s2, r1))
+    }
+
     pub fn try_as_socket_addr(&self) -> Option<SocketAddr> {
         #[cfg(feature = "grpc")]
         if let Addr::GrpcHttp2(addr) = self {
@@ -23,7 +47,7 @@ impl Addr {
     }
 }
 
-impl Display for Addr {
+impl<S, R> Display for Addr<S, R> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             #[cfg(feature = "grpc")]
@@ -31,20 +55,26 @@ impl Display for Addr {
             #[cfg(feature = "grpc")]
             Addr::GrpcUds(path) => write!(f, "grpc://{}", path.display()),
             #[cfg(feature = "mem")]
-            Addr::Mem => write!(f, "mem"),
+            Addr::Mem(_, _) => write!(f, "mem"),
             #[allow(unreachable_patterns)]
             _ => unreachable!(),
         }
     }
 }
 
-impl FromStr for Addr {
+impl<S, R> Debug for Addr<S, R> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        Display::fmt(self, f)
+    }
+}
+
+impl<S, R> FromStr for Addr<S, R> {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         #[cfg(feature = "mem")]
         if s == "mem" {
-            return Ok(Addr::Mem);
+            bail!("memory addresses can not be serialized or deserialized");
         }
 
         let mut parts = s.split("://");
@@ -84,14 +114,5 @@ mod tests {
 
         assert_eq!(addr.to_string().parse::<Addr>().unwrap(), addr);
         assert_eq!(addr.to_string(), "grpc:///foo/bar");
-    }
-
-    #[cfg(feature = "mem")]
-    #[test]
-    fn test_addr_roundtrip_mem() {
-        let addr = Addr::Mem;
-
-        assert_eq!(addr.to_string().parse::<Addr>().unwrap(), addr);
-        assert_eq!(addr.to_string(), "mem");
     }
 }

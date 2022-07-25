@@ -1,9 +1,6 @@
 use anyhow::Result;
 use async_trait::async_trait;
-use iroh_rpc_types::{
-    gateway::{Gateway as RpcGateway, VersionResponse},
-    Addr,
-};
+use iroh_rpc_types::gateway::{Gateway as RpcGateway, GatewayAddr, VersionResponse};
 
 #[derive(Default)]
 pub struct Gateway {}
@@ -22,6 +19,6 @@ impl iroh_rpc_types::NamedService for Gateway {
     const NAME: &'static str = "gateway";
 }
 
-pub async fn new(addr: Addr, gateway: Gateway) -> Result<()> {
+pub async fn new(addr: GatewayAddr, gateway: Gateway) -> Result<()> {
     iroh_rpc_types::gateway::serve(addr, gateway).await
 }

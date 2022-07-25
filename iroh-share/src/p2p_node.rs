@@ -68,7 +68,7 @@ impl Loader {
 impl ContentLoader for Loader {
     async fn load_cid(&self, cid: &Cid) -> Result<LoadedCid> {
         let cid = *cid;
-        match self.client.store.get(cid).await {
+        match self.client.store.as_ref().unwrap().get(cid).await {
             Ok(Some(data)) => {
                 return Ok(LoadedCid {
                     data,
@@ -84,7 +84,13 @@ impl ContentLoader for Loader {
         let providers = self.providers.lock().await.clone();
         ensure!(!providers.is_empty(), "no providers supplied");
 
-        let res = self.client.p2p.fetch_bitswap(cid, providers).await;
+        let res = self
+            .client
+            .p2p
+            .as_ref()
+            .unwrap()
+            .fetch_bitswap(cid, providers)
+            .await;
         let bytes = match res {
             Ok(bytes) => bytes,
             Err(err) => {
@@ -120,7 +126,12 @@ impl ContentLoader for Loader {
                     .await
                     .unwrap_or_default();
 
-            rpc.client.store.put(cid, cloned, links).await?;
+            rpc.client
+                .store
+                .as_ref()
+                .unwrap()
+                .put(cid, cloned, links)
+                .await?;
         }
 
         Ok(LoadedCid {
@@ -131,38 +142,39 @@ impl ContentLoader for Loader {
 }
 
 impl P2pNode {
-    pub async fn new(
-        port: u16,
-        rpc_p2p_port: u16,
-        rpc_store_port: u16,
-        db_path: &Path,
-    ) -> Result<(Self, Receiver<NetworkEvent>)> {
-        let rpc_p2p_addr: Addr = format!("grpc://0.0.0.0:{rpc_p2p_port}").parse().unwrap();
-        let rpc_store_addr: Addr = format!("grpc://0.0.0.0:{rpc_store_port}").parse().unwrap();
-        let rpc_client_config = iroh_rpc_client::Config {
-            p2p_addr: rpc_p2p_addr.clone(),
-            store_addr: rpc_store_addr.clone(),
-            ..Default::default()
+    pub async fn new(port: u16, db_path: &Path) -> Result<(Self, Receiver<NetworkEvent>)> {
+        let (rpc_p2p_addr_server, rpc_p2p_addr_client) = Addr::new_mem();
+        let (rpc_store_addr_server, rpc_store_addr_client) = Addr::new_mem();
+
+        let rpc_store_client_config = iroh_rpc_client::Config {
+            p2p_addr: Some(rpc_p2p_addr_client.clone()),
+            store_addr: Some(rpc_store_addr_client.clone()),
+            gateway_addr: None,
+        };
+        let rpc_p2p_client_config = iroh_rpc_client::Config {
+            p2p_addr: Some(rpc_p2p_addr_client.clone()),
+            store_addr: Some(rpc_store_addr_client.clone()),
+            gateway_addr: None,
         };
         let config = config::Libp2pConfig {
             listening_multiaddr: format!("/ip4/0.0.0.0/tcp/{port}").parse().unwrap(),
             mdns: false,
-            rpc_addr: rpc_p2p_addr,
-            rpc_client: rpc_client_config.clone(),
+            rpc_addr: rpc_p2p_addr_server,
+            rpc_client: rpc_p2p_client_config.clone(),
             bootstrap_peers: Default::default(), // disable bootstrap for now
             target_peer_count: 8,
             ..Default::default()
         };
 
-        let rpc = Client::new(&config.rpc_client).await?;
+        let rpc = Client::new(rpc_p2p_client_config).await?;
         let loader = Loader::new(rpc.clone());
         let mut prom_registry = Registry::default();
         let resolver = iroh_resolver::resolver::Resolver::new(loader, &mut prom_registry);
 
         let store_config = iroh_store::Config {
             path: db_path.to_path_buf(),
-            rpc_addr: rpc_store_addr.clone(),
-            rpc_client: rpc_client_config.clone(),
+            rpc_addr: rpc_store_addr_server.clone(),
+            rpc_client: rpc_store_client_config,
             metrics: iroh_metrics::config::Config {
                 debug: true, // disable tracing by default
                 ..Default::default()
@@ -186,8 +198,11 @@ impl P2pNode {
             }
         });
 
-        let store_task =
-            tokio::spawn(async move { iroh_store::rpc::new(rpc_store_addr, store).await.unwrap() });
+        let store_task = tokio::spawn(async move {
+            iroh_store::rpc::new(rpc_store_addr_server, store)
+                .await
+                .unwrap()
+        });
 
         Ok((
             Self {
@@ -209,7 +224,7 @@ impl P2pNode {
     }
 
     pub async fn close(self) -> Result<()> {
-        self.rpc.p2p.shutdown().await?;
+        self.rpc.p2p.unwrap().shutdown().await?;
         self.store_task.abort();
         self.p2p_task.await?;
         self.store_task.await.ok();

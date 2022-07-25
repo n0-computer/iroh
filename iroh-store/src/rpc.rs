@@ -4,12 +4,9 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use bytes::BytesMut;
 use cid::Cid;
-use iroh_rpc_types::{
-    store::{
-        GetLinksRequest, GetLinksResponse, GetRequest, GetResponse, HasRequest, HasResponse,
-        PutRequest, Store as RpcStore, VersionResponse,
-    },
-    Addr,
+use iroh_rpc_types::store::{
+    GetLinksRequest, GetLinksResponse, GetRequest, GetResponse, HasRequest, HasResponse,
+    PutRequest, Store as RpcStore, StoreServerAddr, VersionResponse,
 };
 use tracing::info;
 
@@ -71,7 +68,7 @@ impl RpcStore for Store {
 }
 
 #[tracing::instrument(skip(store))]
-pub async fn new(addr: Addr, store: Store) -> Result<()> {
+pub async fn new(addr: StoreServerAddr, store: Store) -> Result<()> {
     iroh_rpc_types::store::serve(addr, store).await
 }
 
