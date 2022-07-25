@@ -435,6 +435,7 @@ mod tests {
 
     use iroh_metrics::config::Config as MetricsConfig;
     use iroh_rpc_client::Config as RpcClientConfig;
+    use iroh_rpc_types::Addr;
 
     use cid::multihash::{Code, MultihashDigest};
     const RAW: u64 = 0x55;
@@ -443,9 +444,10 @@ mod tests {
     async fn test_basics() {
         let dir = tempfile::tempdir().unwrap();
         let rpc_client = RpcClientConfig::default();
+        let (rpc_addr, _) = Addr::new_mem();
         let config = Config {
             path: dir.path().into(),
-            rpc_addr: rpc_client.store_addr.to_string().parse().unwrap(),
+            rpc_addr,
             rpc_client,
             metrics: MetricsConfig::default(),
         };
@@ -484,9 +486,10 @@ mod tests {
     async fn test_reopen() {
         let dir = tempfile::tempdir().unwrap();
         let rpc_client = RpcClientConfig::default();
+        let (rpc_addr, _) = Addr::new_mem();
         let config = Config {
             path: dir.path().into(),
-            rpc_addr: rpc_client.store_addr.to_string().parse().unwrap(),
+            rpc_addr,
             rpc_client,
             metrics: MetricsConfig::default(),
         };

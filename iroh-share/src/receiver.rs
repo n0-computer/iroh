@@ -52,12 +52,7 @@ impl Receiver {
     pub async fn transfer_from_ticket(&self, ticket: &Ticket) -> Result<Transfer<'_>> {
         // Connect to the sender
         info!("connecting");
-        let p2p = self
-            .p2p
-            .rpc()
-            .p2p
-            .as_ref()
-            .expect("missing p2p rpc transport");
+        let p2p = self.p2p.rpc().try_p2p()?;
 
         p2p.connect(ticket.peer_id, ticket.addrs.clone()).await?;
         p2p.gossipsub_add_explicit_peer(ticket.peer_id).await?;
@@ -124,9 +119,8 @@ impl Receiver {
                             } else {
                                 ReceiverMessage::FinishOk
                             };
-                            rpc.p2p
-                                .as_ref()
-                                .unwrap()
+                            rpc.try_p2p()
+                                .expect("missing p2p rpc")
                                 .gossipsub_publish(
                                     topic,
                                     bincode::serialize(&msg)

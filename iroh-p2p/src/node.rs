@@ -753,7 +753,7 @@ mod tests {
         .await
         .expect("failed to initialize metrics");
 
-        let cfg = iroh_rpc_client::Config::default();
+        let cfg = iroh_rpc_client::Config::default_grpc();
         let p2p_task = tokio::task::spawn(async move {
             p2p.run().await.unwrap();
         });

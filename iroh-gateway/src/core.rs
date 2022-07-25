@@ -97,7 +97,7 @@ impl Core {
             // TODO: handle error
             rpc::new(rpc_addr, Gateway::default()).await
         });
-        let rpc_client = RpcClient::new(&config.rpc_client).await?;
+        let rpc_client = RpcClient::new(config.rpc_client.clone()).await?;
         let mut templates = HashMap::new();
         templates.insert("dir_list".to_string(), templates::DIR_LIST.to_string());
         templates.insert("not_found".to_string(), templates::NOT_FOUND.to_string());
@@ -626,9 +626,9 @@ mod tests {
             0,
             "grpc://0.0.0.0:0".parse().unwrap(),
             RpcClientConfig {
-                gateway_addr: "grpc://0.0.0.0:0".parse().unwrap(),
-                p2p_addr: "grpc://0.0.0.0:0".parse().unwrap(),
-                store_addr: "grpc://0.0.0.0:0".parse().unwrap(),
+                gateway_addr: None,
+                p2p_addr: None,
+                store_addr: None,
             },
         );
         config.set_default_headers();

@@ -25,7 +25,7 @@ async fn main() -> Result<()> {
     println!("Importing from {:?} (limit: {:?})", args.path, args.limit);
 
     let rpc_config = RpcClientConfig::default();
-    let rpc = Client::new(&rpc_config).await?;
+    let rpc = Client::new(rpc_config).await?;
 
     let car_file = tokio::fs::File::open(&args.path).await?;
     let total_size = car_file.metadata().await?.len();
@@ -64,7 +64,7 @@ async fn main() -> Result<()> {
             let pb = pb_clone.clone();
             async move {
                 let l = data.len();
-                rpc.store.put(cid, data, links).await?;
+                rpc.try_store()?.put(cid, data, links).await?;
                 pb.inc(l as _);
                 Ok(l)
             }

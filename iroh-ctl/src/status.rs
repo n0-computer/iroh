@@ -91,13 +91,13 @@ mod tests {
     fn status_table_queue() {
         let expect = format!("{}gateway\t\t\t1/1\t{}\np2p\t\t\t1/1\t{}\nstore\t\t\t1/1\t{}\tThe service is currently unavailable\n", "Process\t\t\tNumber\tStatus\n".bold(), "Unknown".dark_yellow(), "Serving".green(), "Down".red());
         let table = StatusTable::new(
-            StatusRow::new("gateway", 1, ServiceStatus::Unknown),
-            StatusRow::new("p2p", 1, ServiceStatus::Serving),
-            StatusRow::new(
+            Some(StatusRow::new("gateway", 1, ServiceStatus::Unknown)),
+            Some(StatusRow::new("p2p", 1, ServiceStatus::Serving)),
+            Some(StatusRow::new(
                 "store",
                 1,
                 ServiceStatus::Down(tonic::Status::new(tonic::Code::Unavailable, "")),
-            ),
+            )),
         );
 
         let mut got = Vec::new();

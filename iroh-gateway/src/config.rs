@@ -6,7 +6,7 @@ use headers::{
 };
 use iroh_metrics::config::Config as MetricsConfig;
 use iroh_rpc_client::Config as RpcClientConfig;
-use iroh_rpc_types::{gateway::GatewayAddr, Addr};
+use iroh_rpc_types::gateway::GatewayServerAddr;
 use iroh_util::insert_into_config_map;
 use serde::{Deserialize, Serialize};
 
@@ -29,7 +29,7 @@ pub struct Config {
     /// default port to listen on
     pub port: u16,
     /// rpc listening addr
-    pub rpc_addr: GatewayAddr,
+    pub rpc_addr: GatewayServerAddr,
     // NOTE: for toml to serialize properly, the "table" values must be serialized at the end, and
     // so much come at the end of the `Config` struct
     /// set of user provided headers to attach to all responses
@@ -47,7 +47,7 @@ impl Config {
         fetch: bool,
         cache: bool,
         port: u16,
-        rpc_addr: Addr,
+        rpc_addr: GatewayServerAddr,
         rpc_client: RpcClientConfig,
     ) -> Self {
         Self {
@@ -108,14 +108,20 @@ fn default_headers() -> HeaderMap {
 
 impl Default for Config {
     fn default() -> Self {
-        let rpc_client = RpcClientConfig::default();
+        let rpc_client = RpcClientConfig::default_grpc();
         let mut t = Self {
             writeable: false,
             fetch: false,
             cache: false,
             headers: HeaderMap::new(),
             port: DEFAULT_PORT,
-            rpc_addr: rpc_client.gateway_addr.clone(),
+            rpc_addr: rpc_client
+                .gateway_addr
+                .as_ref()
+                .unwrap()
+                .to_string()
+                .parse()
+                .unwrap(),
             rpc_client,
             metrics: MetricsConfig::default(),
         };
