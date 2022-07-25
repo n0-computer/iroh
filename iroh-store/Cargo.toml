@@ -24,7 +24,7 @@ iroh-rpc-client = { path = "../iroh-rpc-client", default-features = false }
 iroh-util = { path = "../iroh-util" }
 bytes = "1.1.0"
 prometheus-client = "0.16.0"
-iroh-metrics = { path = "../iroh-metrics" }
+iroh-metrics = { path = "../iroh-metrics", default-features = false }
 tracing-opentelemetry = "0.17.2"
 opentelemetry = { version = "0.17.0", features = ["rt-tokio"] }
 names = { version = "0.13.0", default-features = false }
@@ -40,7 +40,7 @@ tokio = { version = "1.18.0", features = ["rt", "macros", "rt-multi-thread"] }
 
 [features]
 default = ["rpc-grpc", "rpc-mem"]
-rpc-grpc = ["iroh-rpc-types/grpc", "iroh-rpc-client/grpc"]
+rpc-grpc = ["iroh-rpc-types/grpc", "iroh-rpc-client/grpc", "iroh-metrics/rpc-grpc"]
 rpc-mem = ["iroh-rpc-types/mem", "iroh-rpc-client/mem"]
 
 [[bench]]

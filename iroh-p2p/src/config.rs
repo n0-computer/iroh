@@ -79,8 +79,8 @@ pub const DEFAULT_BOOTSTRAP: &[&str] = &[
 
 // "/ip4/104.131.131.82/udp/4001/quic/p2p/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ", // mars.i.ipfs.io
 
-impl Default for Libp2pConfig {
-    fn default() -> Self {
+impl Libp2pConfig {
+    pub fn default_grpc() -> Self {
         let bootstrap_peers = DEFAULT_BOOTSTRAP
             .iter()
             .map(|node| node.parse().unwrap())
@@ -109,7 +109,7 @@ mod tests {
 
     #[test]
     fn test_collect() {
-        let default = Libp2pConfig::default();
+        let default = Libp2pConfig::default_grpc();
         let bootstrap_peers: Vec<String> = default
             .bootstrap_peers
             .iter()
@@ -164,7 +164,7 @@ mod tests {
 
     #[test]
     fn test_build_config_from_struct() {
-        let expect = Libp2pConfig::default();
+        let expect = Libp2pConfig::default_grpc();
         let got: Libp2pConfig = ConfigBuilder::builder()
             .add_source(expect.clone())
             .build()
