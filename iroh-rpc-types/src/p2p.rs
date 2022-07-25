@@ -21,7 +21,7 @@ pub async fn serve<P: P2p>(addr: P2pServerAddr, p2p: P) -> anyhow::Result<()> {
                 .await?;
             Ok(())
         }
-        #[cfg(feature = "grpc")]
+        #[cfg(all(feature = "grpc", unix))]
         Addr::GrpcUds(path) => {
             use tokio::net::UnixListener;
             use tokio_stream::wrappers::UnixListenerStream;
