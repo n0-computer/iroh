@@ -148,11 +148,15 @@ impl P2pNode {
         let config = config::Libp2pConfig {
             listening_multiaddr: format!("/ip4/0.0.0.0/tcp/{port}").parse().unwrap(),
             mdns: false,
+            kademlia: true,
+            autonat: true,
+            relay_client: true,
+            relay_server: false,
             rpc_addr: rpc_p2p_addr_server,
             rpc_client: rpc_p2p_client_config.clone(),
             bootstrap_peers: Default::default(), // disable bootstrap for now
             target_peer_count: 8,
-            ..Default::default()
+            metrics: Default::default(),
         };
 
         let rpc = Client::new(rpc_p2p_client_config).await?;

@@ -38,7 +38,7 @@ async fn main() -> anyhow::Result<()> {
     let sources = vec![iroh_home_path(CONFIG_FILE_NAME), args.cfg.clone()];
     let network_config = make_config(
         // default
-        Libp2pConfig::default(),
+        Libp2pConfig::default_grpc(),
         // potential config files
         sources,
         // env var prefix for this config

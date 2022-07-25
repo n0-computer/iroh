@@ -741,7 +741,7 @@ mod tests {
     #[tokio::test]
     async fn test_fetch_providers() -> Result<()> {
         let mut prom_registry = Registry::default();
-        let mut network_config = Libp2pConfig::default();
+        let mut network_config = Libp2pConfig::default_grpc();
         network_config.metrics.debug = true;
         let metrics_config = network_config.metrics.clone();
 

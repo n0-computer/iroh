@@ -22,7 +22,7 @@ async-trait = "0.1.53"
 async-recursion = "1.0.0"
 trust-dns-resolver = { version = "0.21.2", features = ["tokio-runtime"] }
 prometheus-client = "0.17.0"
-iroh-metrics = { path = "../iroh-metrics" }
+iroh-metrics = { path = "../iroh-metrics", default-features = false }
 async-stream = "0.3.3"
 
 [dev-dependencies]
@@ -35,6 +35,6 @@ prost-build = "0.10"
 
 [features]
 default = ["rpc-grpc", "rpc-mem"]
-rpc-grpc = ["iroh-rpc-client/grpc"]
+rpc-grpc = ["iroh-rpc-client/grpc", "iroh-metrics/rpc-grpc"]
 rpc-mem = ["iroh-rpc-client/mem"]
 

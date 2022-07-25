@@ -1,6 +1,7 @@
 pub mod bitswap;
 pub mod config;
 pub mod gateway;
+#[cfg(feature = "rpc-grpc")]
 pub mod req;
 pub mod resolver;
 pub mod store;
@@ -105,14 +106,14 @@ pub fn init_tracer(cfg: Config) -> Result<(), Box<dyn std::error::Error>> {
         tracing_subscriber::registry().with(log_subscriber).init();
     } else {
         global::set_text_map_propagator(TraceContextPropagator::new());
+        let exporter = opentelemetry_otlp::new_exporter()
+            .tonic()
+            .with_endpoint(cfg.collector_endpoint)
+            .with_timeout(std::time::Duration::from_secs(5));
+
         let tracer = opentelemetry_otlp::new_pipeline()
             .tracing()
-            .with_exporter(
-                opentelemetry_otlp::new_exporter()
-                    .tonic()
-                    .with_endpoint(cfg.collector_endpoint)
-                    .with_timeout(std::time::Duration::from_secs(5)),
-            )
+            .with_exporter(exporter)
             .with_trace_config(trace::config().with_resource(Resource::new(vec![
                 opentelemetry::KeyValue::new("instance.id", cfg.instance_id),
                 opentelemetry::KeyValue::new("service.name", cfg.service_name),
