@@ -4,7 +4,7 @@ use crate::Addr;
 
 include_proto!("p2p");
 
-pub async fn serve<P: P2p>(addr: Addr, p2p: P) -> anyhow::Result<()> {
+pub async fn serve<P: P2p>(addr: P2pServerAddr, p2p: P) -> anyhow::Result<()> {
     match addr {
         #[cfg(feature = "grpc")]
         Addr::GrpcHttp2(addr) => {
@@ -24,25 +24,104 @@ pub async fn serve<P: P2p>(addr: Addr, p2p: P) -> anyhow::Result<()> {
         #[cfg(feature = "grpc")]
         Addr::GrpcUds(_) => unimplemented!(),
         #[cfg(feature = "mem")]
-        Addr::Mem => unimplemented!(),
+        Addr::Mem(sender, receiver) => {
+            p2p.serve_mem(sender, receiver).await?;
+            Ok(())
+        }
     }
 }
 
 macro_rules! proxy {
     ($($name:ident: $req:ty => $res:ty),+) => {
+        pub type P2pServerAddr = Addr<P2pRequest, P2pResponse>;
+        pub type P2pClientAddr = Addr<P2pResponse, P2pRequest>;
+
+        #[derive(Debug, Clone)]
+        pub enum P2pClientBackend {
+            #[cfg(feature = "grpc")]
+            Grpc {
+                client: p2p_client::P2pClient<tonic::transport::Channel>,
+                health: tonic_health::proto::health_client::HealthClient<tonic::transport::Channel>,
+            },
+            #[cfg(feature = "mem")]
+            Mem(async_channel::Sender<P2pRequest>, async_channel::Receiver<P2pResponse>),
+        }
+
+        #[allow(non_camel_case_types)]
+        #[derive(Debug, Clone)]
+        pub enum P2pRequest {
+            $(
+                $name($req),
+            )+
+        }
+
+        #[allow(non_camel_case_types)]
+        #[derive(Debug, Clone)]
+        pub enum P2pResponse {
+            $(
+                $name(Result<$res, String>),
+            )+
+        }
+
         #[async_trait]
         pub trait P2p: Send + Sync + 'static {
             $(
                 async fn $name(&self, request: $req) -> anyhow::Result<$res>;
+            )+
+
+            async fn serve_mem(
+                &self,
+                sender: async_channel::Sender<P2pResponse>,
+                receiver: async_channel::Receiver<P2pRequest>
+            ) -> anyhow::Result<()> {
+                while let Ok(msg) = receiver.recv().await {
+                    match msg {
+                        $(
+                            P2pRequest::$name(req) => {
+                                let res = self.$name(req).await.map_err(|e| e.to_string());
+                                sender.send(P2pResponse::$name(res)).await.ok();
+                            }
+                        )+
+                    }
+                }
+
+                Ok(())
+            }
+        }
+
+        #[async_trait]
+        impl P2p for P2pClientBackend {
+            $(
+                async fn $name(&self, req: $req) -> anyhow::Result<$res> {
+                    match self {
+                        #[cfg(feature = "grpc")]
+                        Self::Grpc { client, .. } => {
+                            let req = iroh_metrics::req::trace_tonic_req(req);
+                            let mut c = client.clone();
+                            let res = p2p_client::P2pClient::$name(&mut c, req).await?;
+
+                            Ok(res.into_inner())
+                        }
+                        #[cfg(feature = "mem")]
+                        Self::Mem(s, r) => {
+                            s.send(P2pRequest::$name(req)).await?;
+                            let res = r.recv().await?;
+                            if let P2pResponse::$name(res) = res {
+                                res.map_err(|e| anyhow::anyhow!(e))
+                            } else {
+                                anyhow::bail!("invalid response {:?}, expected {}", res, stringify!($name));
+                            }
+                        }
+                    }
+                }
             )+
         }
 
 
         #[cfg(feature = "grpc")]
         mod grpc {
-            use self::p2p_client::P2pClient;
             use super::*;
-            use tonic::{transport::Channel, Request, Response, Status};
+            use tonic::{Request, Response, Status};
 
             #[async_trait]
             impl<P: P2p> p2p_server::P2p for P {
@@ -54,19 +133,6 @@ macro_rules! proxy {
                         let req = req.into_inner();
                         let res = P2p::$name(self, req).await.map_err(|err| Status::internal(err.to_string()))?;
                         Ok(Response::new(res))
-                    }
-                )+
-            }
-
-            #[async_trait]
-            impl P2p for P2pClient<Channel> {
-                $(
-                    async fn $name(&self, req: $req) -> anyhow::Result<$res> {
-                        let req = iroh_metrics::req::trace_tonic_req(req);
-                        let mut c = self.clone();
-                        let res = P2pClient::$name(&mut c, req).await?;
-
-                        Ok(res.into_inner())
                     }
                 )+
             }

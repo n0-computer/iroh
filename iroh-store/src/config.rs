@@ -1,7 +1,7 @@
 use config::{ConfigError, Map, Source, Value};
 use iroh_metrics::config::Config as MetricsConfig;
 use iroh_rpc_client::Config as RpcClientConfig;
-use iroh_rpc_types::Addr;
+use iroh_rpc_types::store::StoreServerAddr;
 use iroh_util::insert_into_config_map;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -18,7 +18,7 @@ pub const ENV_PREFIX: &str = "IROH_STORE";
 pub struct Config {
     /// The location of the content database.
     pub path: PathBuf,
-    pub rpc_addr: Addr,
+    pub rpc_addr: StoreServerAddr,
     pub rpc_client: RpcClientConfig,
     pub metrics: MetricsConfig,
 }
@@ -28,7 +28,7 @@ impl Config {
         let rpc_client = RpcClientConfig::default();
         Self {
             path,
-            rpc_addr: rpc_client.store_addr.clone(),
+            rpc_addr: "grpc://0.0.0.0:4402".parse().unwrap(),
             rpc_client,
             metrics: MetricsConfig::default(),
         }

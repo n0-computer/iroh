@@ -1,4 +1,4 @@
-// use crate::{gateway, network, store};
+use crate::{gateway, network, store};
 use anyhow::Result;
 use async_stream::stream;
 use futures::Stream;
@@ -167,11 +167,15 @@ pub struct StatusTable {
 }
 
 impl StatusTable {
-    pub fn new(gateway: StatusRow, p2p: StatusRow, store: StatusRow) -> Self {
+    pub fn new(
+        gateway: Option<StatusRow>,
+        p2p: Option<StatusRow>,
+        store: Option<StatusRow>,
+    ) -> Self {
         Self {
-            gateway,
-            p2p,
-            store,
+            gateway: gateway.unwrap_or_default(),
+            p2p: p2p.unwrap_or_default(),
+            store: store.unwrap_or_default(),
         }
     }
 
@@ -194,12 +198,11 @@ impl StatusTable {
 
 impl Default for StatusTable {
     fn default() -> Self {
-        todo!()
-        // Self {
-        //     gateway: StatusRow::new(gateway::NAME, 1, ServiceStatus::Unknown),
-        //     p2p: StatusRow::new(network::NAME, 1, ServiceStatus::Unknown),
-        //     store: StatusRow::new(store::NAME, 1, ServiceStatus::Unknown),
-        // }
+        Self {
+            gateway: StatusRow::new(gateway::NAME, 1, ServiceStatus::Unknown),
+            p2p: StatusRow::new(network::NAME, 1, ServiceStatus::Unknown),
+            store: StatusRow::new(store::NAME, 1, ServiceStatus::Unknown),
+        }
     }
 }
 
@@ -230,28 +233,28 @@ mod tests {
         );
     }
 
-    // #[test]
-    // fn status_table_default() {
-    //     let expect = StatusTable {
-    //         gateway: StatusRow {
-    //             name: crate::gateway::NAME,
-    //             number: 1,
-    //             status: ServiceStatus::Unknown,
-    //         },
-    //         p2p: StatusRow {
-    //             name: crate::network::NAME,
-    //             number: 1,
-    //             status: ServiceStatus::Unknown,
-    //         },
-    //         store: StatusRow {
-    //             name: crate::store::NAME,
-    //             number: 1,
-    //             status: ServiceStatus::Unknown,
-    //         },
-    //     };
+    #[test]
+    fn status_table_default() {
+        let expect = StatusTable {
+            gateway: StatusRow {
+                name: crate::gateway::NAME,
+                number: 1,
+                status: ServiceStatus::Unknown,
+            },
+            p2p: StatusRow {
+                name: crate::network::NAME,
+                number: 1,
+                status: ServiceStatus::Unknown,
+            },
+            store: StatusRow {
+                name: crate::store::NAME,
+                number: 1,
+                status: ServiceStatus::Unknown,
+            },
+        };
 
-    //     assert_eq!(expect, StatusTable::default());
-    // }
+        assert_eq!(expect, StatusTable::default());
+    }
 
     #[test]
     fn status_table_new() {
@@ -275,33 +278,34 @@ mod tests {
         assert_eq!(
             expect,
             StatusTable::new(
-                StatusRow::new("test", 1, ServiceStatus::Unknown),
-                StatusRow::new("test", 1, ServiceStatus::Unknown),
-                StatusRow::new("test", 1, ServiceStatus::Unknown)
+                Some(StatusRow::new("test", 1, ServiceStatus::Unknown)),
+                Some(StatusRow::new("test", 1, ServiceStatus::Unknown)),
+                Some(StatusRow::new("test", 1, ServiceStatus::Unknown))
             )
         );
     }
 
-    // #[test]
-    // fn status_table_update() {
-    //     let mut gateway = StatusRow::new(gateway::NAME, 1, ServiceStatus::Unknown);
-    //     let mut p2p = StatusRow::new(network::NAME, 1, ServiceStatus::Unknown);
-    //     let mut store = StatusRow::new(store::NAME, 1, ServiceStatus::Unknown);
-    //     let mut got = StatusTable::new(gateway.clone(), p2p.clone(), store.clone());
+    #[test]
+    fn status_table_update() {
+        let mut gateway = Some(StatusRow::new(gateway::NAME, 1, ServiceStatus::Unknown));
+        let mut p2p = Some(StatusRow::new(network::NAME, 1, ServiceStatus::Unknown));
+        let mut store = Some(StatusRow::new(store::NAME, 1, ServiceStatus::Unknown));
+        let mut got = StatusTable::new(gateway.clone(), p2p.clone(), store.clone());
 
-    //     store.status = ServiceStatus::Serving;
-    //     let expect = StatusTable::new(gateway.clone(), p2p.clone(), store.clone());
-    //     got.update(store.clone()).unwrap();
-    //     assert_eq!(expect, got);
+        store.as_mut().unwrap().status = ServiceStatus::Serving;
+        let expect = StatusTable::new(gateway.clone(), p2p.clone(), store.clone());
+        got.update(store.clone().unwrap()).unwrap();
+        assert_eq!(expect, got);
 
-    //     gateway.status = ServiceStatus::ServiceUnknown;
-    //     let expect = StatusTable::new(gateway.clone(), p2p.clone(), store.clone());
-    //     got.update(gateway.clone()).unwrap();
-    //     assert_eq!(expect, got);
+        gateway.as_mut().unwrap().status = ServiceStatus::ServiceUnknown;
+        let expect = StatusTable::new(gateway.clone(), p2p.clone(), store.clone());
+        got.update(gateway.clone().unwrap()).unwrap();
+        assert_eq!(expect, got);
 
-    //     p2p.status = ServiceStatus::Down(tonic::Status::new(tonic::Code::Unavailable, ""));
-    //     let expect = StatusTable::new(gateway, p2p.clone(), store);
-    //     got.update(p2p).unwrap();
-    //     assert_eq!(expect, got);
-    // }
+        p2p.as_mut().unwrap().status =
+            ServiceStatus::Down(tonic::Status::new(tonic::Code::Unavailable, ""));
+        let expect = StatusTable::new(gateway, p2p.clone(), store);
+        got.update(p2p.unwrap()).unwrap();
+        assert_eq!(expect, got);
+    }
 }

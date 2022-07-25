@@ -6,7 +6,6 @@ use async_channel::Sender;
 use bytes::Bytes;
 use cid::Cid;
 use futures::channel::oneshot;
-use iroh_rpc_types::Addr;
 use libp2p::gossipsub::{
     error::{PublishError, SubscriptionError},
     MessageId, TopicHash,
@@ -24,7 +23,7 @@ use iroh_rpc_types::p2p::{
     GetListeningAddrsResponse, GetPeersResponse, GossipsubAllPeersResponse, GossipsubPeerAndTopics,
     GossipsubPeerIdMsg, GossipsubPeersResponse, GossipsubPublishRequest, GossipsubPublishResponse,
     GossipsubSubscribeResponse, GossipsubTopicHashMsg, GossipsubTopicsResponse, Key as ProviderKey,
-    Multiaddrs, P2p as RpcP2p, Providers, VersionResponse,
+    Multiaddrs, P2p as RpcP2p, P2pServerAddr, Providers, VersionResponse,
 };
 
 struct P2p {
@@ -299,7 +298,7 @@ impl RpcP2p for P2p {
     }
 }
 
-pub async fn new(addr: Addr, sender: Sender<RpcMessage>) -> Result<()> {
+pub async fn new(addr: P2pServerAddr, sender: Sender<RpcMessage>) -> Result<()> {
     let p2p = P2p { sender };
 
     iroh_rpc_types::p2p::serve(addr, p2p).await

@@ -5,9 +5,12 @@ use anyhow::Result;
 use futures::Stream;
 #[cfg(feature = "grpc")]
 use iroh_rpc_types::gateway::gateway_client::GatewayClient as GrpcGatewayClient;
-use iroh_rpc_types::{gateway::Gateway, Addr};
+use iroh_rpc_types::{
+    gateway::{Gateway, GatewayClientAddr, GatewayClientBackend},
+    Addr,
+};
 #[cfg(feature = "grpc")]
-use tonic::transport::{Channel, Endpoint};
+use tonic::transport::Endpoint;
 #[cfg(feature = "grpc")]
 use tonic_health::proto::health_client::HealthClient;
 
@@ -19,18 +22,12 @@ pub(crate) const SERVICE_NAME: &str = "gateway.Gateway";
 pub(crate) const NAME: &str = "gateway";
 
 #[derive(Debug, Clone)]
-pub enum GatewayClient {
-    #[cfg(feature = "grpc")]
-    Grpc {
-        client: GrpcGatewayClient<Channel>,
-        health: HealthClient<Channel>,
-    },
-    #[cfg(feature = "mem")]
-    Mem,
+pub struct GatewayClient {
+    backend: GatewayClientBackend,
 }
 
 impl GatewayClient {
-    pub async fn new(addr: &Addr) -> Result<Self> {
+    pub async fn new(addr: GatewayClientAddr) -> Result<Self> {
         match addr {
             #[cfg(feature = "grpc")]
             Addr::GrpcHttp2(addr) => {
@@ -41,38 +38,33 @@ impl GatewayClient {
                 let client = GrpcGatewayClient::new(conn.clone());
                 let health = HealthClient::new(conn);
 
-                Ok(GatewayClient::Grpc { client, health })
+                Ok(GatewayClient {
+                    backend: GatewayClientBackend::Grpc { client, health },
+                })
             }
             #[cfg(feature = "grpc")]
             Addr::GrpcUds(_) => unimplemented!(),
             #[cfg(feature = "mem")]
-            Addr::Mem => Ok(GatewayClient::Mem),
-        }
-    }
-
-    fn backend(&self) -> &impl Gateway {
-        match self {
-            #[cfg(feature = "grpc")]
-            Self::Grpc { client, .. } => client,
-            #[cfg(feature = "mem")]
-            Self::Mem => {
-                todo!()
-            }
+            Addr::Mem(s, r) => Ok(GatewayClient {
+                backend: GatewayClientBackend::Mem(s, r),
+            }),
         }
     }
 
     #[tracing::instrument(skip(self))]
     pub async fn version(&self) -> Result<String> {
-        let res = self.backend().version(()).await?;
+        let res = self.backend.version(()).await?;
         Ok(res.version)
     }
 
     #[cfg(feature = "grpc")]
     #[tracing::instrument(skip(self))]
     pub async fn check(&self) -> StatusRow {
-        match self {
-            Self::Grpc { health, .. } => status::check(health.clone(), SERVICE_NAME, NAME).await,
-            Self::Mem => {
+        match &self.backend {
+            GatewayClientBackend::Grpc { health, .. } => {
+                status::check(health.clone(), SERVICE_NAME, NAME).await
+            }
+            _ => {
                 todo!()
             }
         }
@@ -81,9 +73,11 @@ impl GatewayClient {
     #[cfg(feature = "grpc")]
     #[tracing::instrument(skip(self))]
     pub async fn watch(&self) -> impl Stream<Item = StatusRow> {
-        match self {
-            Self::Grpc { health, .. } => status::watch(health.clone(), SERVICE_NAME, NAME).await,
-            Self::Mem => {
+        match &self.backend {
+            GatewayClientBackend::Grpc { health, .. } => {
+                status::watch(health.clone(), SERVICE_NAME, NAME).await
+            }
+            _ => {
                 todo!()
             }
         }

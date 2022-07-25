@@ -107,19 +107,26 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
         let metrics = Metrics::new(registry);
         let (network_sender_in, network_receiver_in) = channel(1024); // TODO: configurable
 
-        let rpc_addr = config.rpc_addr.clone();
+        let keypair = load_identity(&mut keychain).await?;
+        let mut swarm = build_swarm(&config, &keypair, registry).await?;
+
+        let Libp2pConfig {
+            listening_multiaddr,
+            rpc_addr,
+            rpc_client,
+            ..
+        } = config;
+
         let rpc_task = tokio::spawn(async move {
             // TODO: handle error
             rpc::new(rpc_addr, network_sender_in).await.unwrap()
         });
 
-        let rpc_client = RpcClient::new(&config.rpc_client)
+        let rpc_client = RpcClient::new(rpc_client)
             .await
             .context("failed to create rpc client")?;
 
-        let keypair = load_identity(&mut keychain).await?;
-        let mut swarm = build_swarm(&config, &keypair, registry).await?;
-        Swarm::listen_on(&mut swarm, config.listening_multiaddr).unwrap();
+        Swarm::listen_on(&mut swarm, listening_multiaddr).unwrap();
 
         Ok(Node {
             swarm,
@@ -294,24 +301,30 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                     BitswapEvent::InboundRequest { request } => match request {
                         InboundRequest::Want { cid, sender, .. } => {
                             info!("bitswap want {}", cid);
-                            match self.rpc_client.store.get(cid).await {
-                                Ok(Some(data)) => {
-                                    trace!("Found data for: {}", cid);
-                                    if let Err(e) =
-                                        self.swarm.behaviour_mut().send_block(&sender, cid, data)
-                                    {
-                                        warn!(
-                                            "failed to send block for {} to {}: {:?}",
-                                            cid, sender, e
-                                        );
+                            if let Some(rpc_store) = self.rpc_client.store.as_ref() {
+                                match rpc_store.get(cid).await {
+                                    Ok(Some(data)) => {
+                                        trace!("Found data for: {}", cid);
+                                        if let Err(e) = self
+                                            .swarm
+                                            .behaviour_mut()
+                                            .send_block(&sender, cid, data)
+                                        {
+                                            warn!(
+                                                "failed to send block for {} to {}: {:?}",
+                                                cid, sender, e
+                                            );
+                                        }
+                                    }
+                                    Ok(None) => {
+                                        trace!("Don't have data for: {}", cid);
+                                    }
+                                    Err(e) => {
+                                        warn!("Failed to get data for: {}: {:?}", cid, e);
                                     }
                                 }
-                                Ok(None) => {
-                                    trace!("Don't have data for: {}", cid);
-                                }
-                                Err(e) => {
-                                    warn!("Failed to get data for: {}: {:?}", cid, e);
-                                }
+                            } else {
+                                warn!("Failed to get data for: {}: missing store rpc conn", cid);
                             }
                         }
                         InboundRequest::Cancel { .. } => {
@@ -746,11 +759,11 @@ mod tests {
         });
 
         {
-            let client = RpcClient::new(&cfg).await?;
+            let client = RpcClient::new(cfg).await?;
             let c = "QmbWqxBEKC3P8tqsKc98xmWNzrzDtRLMiMPL8wBuTGsMnR"
                 .parse()
                 .unwrap();
-            let providers = client.p2p.fetch_providers(&c).await?;
+            let providers = client.p2p.unwrap().fetch_providers(&c).await?;
             assert!(providers.len() >= PROVIDER_LIMIT);
         }
 

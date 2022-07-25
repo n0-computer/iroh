@@ -62,9 +62,7 @@ mod tests {
         let sender_dir = tempfile::tempdir().unwrap();
         let sender_db = sender_dir.path().join("db");
 
-        let sender = s::Sender::new(9990, 5550, 5560, &sender_db)
-            .await
-            .context("s:new")?;
+        let sender = s::Sender::new(9990, &sender_db).await.context("s:new")?;
         let bytes = Bytes::from(vec![1u8; 5 * 1024]);
         let sender_transfer = sender
             .transfer_from_data("foo.jpg", bytes.clone())
@@ -75,7 +73,7 @@ mod tests {
         // the ticket is serialized, shared with the receiver and deserialized there
         let receiver_dir = tempfile::tempdir().unwrap();
         let receiver_db = receiver_dir.path().join("db");
-        let receiver = r::Receiver::new(9991, 5551, 5561, &receiver_db)
+        let receiver = r::Receiver::new(9991, &receiver_db)
             .await
             .context("r: new")?;
 
@@ -121,9 +119,7 @@ mod tests {
         let sender_dir = tempfile::tempdir().unwrap();
         let sender_db = sender_dir.path().join("db");
 
-        let sender = s::Sender::new(9990, 5550, 5560, &sender_db)
-            .await
-            .context("s:new")?;
+        let sender = s::Sender::new(9990, &sender_db).await.context("s:new")?;
 
         let mut dir_builder = DirectoryBuilder::new();
         dir_builder.name("foo");
@@ -146,7 +142,7 @@ mod tests {
         // the ticket is serialized, shared with the receiver and deserialized there
         let receiver_dir = tempfile::tempdir().unwrap();
         let receiver_db = receiver_dir.path().join("db");
-        let receiver = r::Receiver::new(9991, 5551, 5561, &receiver_db)
+        let receiver = r::Receiver::new(9991, &receiver_db)
             .await
             .context("r: new")?;
 

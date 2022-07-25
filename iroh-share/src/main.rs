@@ -50,9 +50,7 @@ async fn main() -> Result<()> {
             let sender_db = sender_dir.path().join("db");
 
             let port = 9990;
-            let rpc_p2p_port = 5550;
-            let rpc_store_port = 5560;
-            let sender = Sender::new(port, rpc_p2p_port, rpc_store_port, &sender_db)
+            let sender = Sender::new(port, &sender_db)
                 .await
                 .context("failed to create sender")?;
 
@@ -87,9 +85,7 @@ async fn main() -> Result<()> {
             let sender_db = sender_dir.path().join("db");
 
             let port = 9991;
-            let rpc_p2p_port = 5551;
-            let rpc_store_port = 5561;
-            let receiver = Receiver::new(port, rpc_p2p_port, rpc_store_port, &sender_db)
+            let receiver = Receiver::new(port, &sender_db)
                 .await
                 .context("failed to create sender")?;
             let mut receiver_transfer = receiver

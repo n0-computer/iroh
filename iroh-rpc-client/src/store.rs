@@ -6,10 +6,12 @@ use cid::Cid;
 use futures::Stream;
 #[cfg(feature = "grpc")]
 use iroh_rpc_types::store::store_client::StoreClient as GrpcStoreClient;
-use iroh_rpc_types::store::{GetLinksRequest, GetRequest, HasRequest, PutRequest, Store};
+use iroh_rpc_types::store::{
+    GetLinksRequest, GetRequest, HasRequest, PutRequest, Store, StoreClientAddr, StoreClientBackend,
+};
 use iroh_rpc_types::Addr;
 #[cfg(feature = "grpc")]
-use tonic::transport::{Channel, Endpoint};
+use tonic::transport::Endpoint;
 #[cfg(feature = "grpc")]
 use tonic_health::proto::health_client::HealthClient;
 
@@ -24,18 +26,12 @@ pub const SERVICE_NAME: &str = "store.Store";
 pub(crate) const NAME: &str = "store";
 
 #[derive(Debug, Clone)]
-pub enum StoreClient {
-    #[cfg(feature = "grpc")]
-    Grpc {
-        client: GrpcStoreClient<Channel>,
-        health: HealthClient<Channel>,
-    },
-    #[cfg(feature = "mem")]
-    Mem,
+pub struct StoreClient {
+    backend: StoreClientBackend,
 }
 
 impl StoreClient {
-    pub async fn new(addr: &Addr) -> Result<Self> {
+    pub async fn new(addr: StoreClientAddr) -> Result<Self> {
         match addr {
             #[cfg(feature = "grpc")]
             Addr::GrpcHttp2(addr) => {
@@ -46,38 +42,33 @@ impl StoreClient {
                 let client = GrpcStoreClient::new(conn.clone());
                 let health = HealthClient::new(conn);
 
-                Ok(StoreClient::Grpc { client, health })
+                Ok(StoreClient {
+                    backend: StoreClientBackend::Grpc { client, health },
+                })
             }
             #[cfg(feature = "grpc")]
             Addr::GrpcUds(_) => unimplemented!(),
             #[cfg(feature = "mem")]
-            Addr::Mem => Ok(StoreClient::Mem),
-        }
-    }
-
-    fn backend(&self) -> &impl Store {
-        match self {
-            #[cfg(feature = "grpc")]
-            Self::Grpc { client, .. } => client,
-            #[cfg(feature = "mem")]
-            Self::Mem => {
-                todo!()
-            }
+            Addr::Mem(s, r) => Ok(StoreClient {
+                backend: StoreClientBackend::Mem(s, r),
+            }),
         }
     }
 
     #[tracing::instrument(skip(self))]
     pub async fn version(&self) -> Result<String> {
-        let res = self.backend().version(()).await?;
+        let res = self.backend.version(()).await?;
         Ok(res.version)
     }
 
     #[cfg(feature = "grpc")]
     #[tracing::instrument(skip(self))]
     pub async fn check(&self) -> StatusRow {
-        match self {
-            Self::Grpc { health, .. } => status::check(health.clone(), SERVICE_NAME, NAME).await,
-            Self::Mem => {
+        match &self.backend {
+            StoreClientBackend::Grpc { health, .. } => {
+                status::check(health.clone(), SERVICE_NAME, NAME).await
+            }
+            _ => {
                 todo!()
             }
         }
@@ -86,9 +77,11 @@ impl StoreClient {
     #[cfg(feature = "grpc")]
     #[tracing::instrument(skip(self))]
     pub async fn watch(&self) -> impl Stream<Item = StatusRow> {
-        match self {
-            Self::Grpc { health, .. } => status::watch(health.clone(), SERVICE_NAME, NAME).await,
-            Self::Mem => {
+        match &self.backend {
+            StoreClientBackend::Grpc { health, .. } => {
+                status::watch(health.clone(), SERVICE_NAME, NAME).await
+            }
+            _ => {
                 todo!()
             }
         }
@@ -101,7 +94,7 @@ impl StoreClient {
             blob,
             links: links.iter().map(|l| l.to_bytes()).collect(),
         };
-        self.backend().put(req).await?;
+        self.backend.put(req).await?;
         Ok(())
     }
 
@@ -110,7 +103,7 @@ impl StoreClient {
         let req = GetRequest {
             cid: cid.to_bytes(),
         };
-        let res = self.backend().get(req).await?;
+        let res = self.backend.get(req).await?;
         Ok(res.data)
     }
 
@@ -119,7 +112,7 @@ impl StoreClient {
         let req = HasRequest {
             cid: cid.to_bytes(),
         };
-        let res = self.backend().has(req).await?;
+        let res = self.backend.has(req).await?;
         Ok(res.has)
     }
 
@@ -128,7 +121,7 @@ impl StoreClient {
         let req = GetLinksRequest {
             cid: cid.to_bytes(),
         };
-        let links = self.backend().get_links(req).await?.links;
+        let links = self.backend.get_links(req).await?.links;
         if links.is_empty() {
             Ok(None)
         } else {

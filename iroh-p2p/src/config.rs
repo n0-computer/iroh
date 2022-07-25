@@ -1,7 +1,7 @@
 use config::{ConfigError, Map, Source, Value};
 use iroh_metrics::config::Config as MetricsConfig;
 use iroh_rpc_client::Config as RpcClientConfig;
-use iroh_rpc_types::Addr;
+use iroh_rpc_types::p2p::P2pServerAddr;
 use iroh_util::insert_into_config_map;
 use libp2p::Multiaddr;
 use serde::{Deserialize, Serialize};
@@ -33,7 +33,7 @@ pub struct Libp2pConfig {
     /// Target peer count.
     pub target_peer_count: u32,
     /// Rpc listening addr
-    pub rpc_addr: Addr,
+    pub rpc_addr: P2pServerAddr,
     pub rpc_client: RpcClientConfig,
     pub metrics: MetricsConfig,
 }
