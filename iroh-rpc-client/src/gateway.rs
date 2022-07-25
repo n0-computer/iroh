@@ -42,8 +42,27 @@ impl GatewayClient {
                     backend: GatewayClientBackend::Grpc { client, health },
                 })
             }
-            #[cfg(feature = "grpc")]
-            Addr::GrpcUds(_) => unimplemented!(),
+            #[cfg(all(feature = "grpc", unix))]
+            Addr::GrpcUds(path) => {
+                use tokio::net::UnixStream;
+                use tonic::transport::Uri;
+
+                let path = std::sync::Arc::new(path);
+                // dummy addr
+                let conn = Endpoint::new("http://[..]:50051")?
+                    .keep_alive_while_idle(true)
+                    .connect_with_connector_lazy(tower::service_fn(move |_: Uri| {
+                        let path = path.clone();
+                        UnixStream::connect(path.as_ref().clone())
+                    }));
+
+                let client = GrpcGatewayClient::new(conn.clone());
+                let health = HealthClient::new(conn);
+
+                Ok(GatewayClient {
+                    backend: GatewayClientBackend::Grpc { client, health },
+                })
+            }
             #[cfg(feature = "mem")]
             Addr::Mem(s, r) => Ok(GatewayClient {
                 backend: GatewayClientBackend::Mem(s, r),

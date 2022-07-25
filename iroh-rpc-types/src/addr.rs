@@ -12,7 +12,7 @@ use serde_with::{DeserializeFromStr, SerializeDisplay};
 pub enum Addr<SEND = (), RECV = ()> {
     #[cfg(feature = "grpc")]
     GrpcHttp2(SocketAddr),
-    #[cfg(feature = "grpc")]
+    #[cfg(all(feature = "grpc", unix))]
     GrpcUds(std::path::PathBuf),
     #[cfg(feature = "mem")]
     Mem(Sender<RECV>, Receiver<SEND>),
@@ -23,7 +23,7 @@ impl<S, R> PartialEq for Addr<S, R> {
         match (self, other) {
             #[cfg(feature = "grpc")]
             (Self::GrpcHttp2(addr1), Self::GrpcHttp2(addr2)) => addr1.eq(addr2),
-            #[cfg(feature = "grpc")]
+            #[cfg(all(feature = "grpc", unix))]
             (Self::GrpcUds(path1), Self::GrpcUds(path2)) => path1.eq(path2),
             _ => false,
         }
@@ -52,7 +52,7 @@ impl<S, R> Display for Addr<S, R> {
         match self {
             #[cfg(feature = "grpc")]
             Addr::GrpcHttp2(addr) => write!(f, "grpc://{}", addr),
-            #[cfg(feature = "grpc")]
+            #[cfg(all(feature = "grpc", unix))]
             Addr::GrpcUds(path) => write!(f, "grpc://{}", path.display()),
             #[cfg(feature = "mem")]
             Addr::Mem(_, _) => write!(f, "mem"),
@@ -85,6 +85,7 @@ impl<S, R> FromStr for Addr<S, R> {
                     if let Ok(addr) = part.parse::<SocketAddr>() {
                         return Ok(Addr::GrpcHttp2(addr));
                     }
+                    #[cfg(unix)]
                     if let Ok(path) = part.parse::<std::path::PathBuf>() {
                         return Ok(Addr::GrpcUds(path));
                     }
@@ -102,13 +103,17 @@ mod tests {
 
     #[cfg(feature = "grpc")]
     #[test]
-    fn test_addr_roundtrip_grpc() {
+    fn test_addr_roundtrip_grpc_http2() {
         let socket: SocketAddr = "198.168.2.1:1234".parse().unwrap();
         let addr = Addr::GrpcHttp2(socket);
 
         assert_eq!(addr.to_string().parse::<Addr>().unwrap(), addr);
         assert_eq!(addr.to_string(), "grpc://198.168.2.1:1234");
+    }
 
+    #[cfg(all(feature = "grpc", unix))]
+    #[test]
+    fn test_addr_roundtrip_grpc_uds() {
         let path: std::path::PathBuf = "/foo/bar".parse().unwrap();
         let addr = Addr::GrpcUds(path);
 
