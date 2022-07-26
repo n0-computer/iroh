@@ -13,6 +13,20 @@ pub const CONFIG_FILE_NAME: &str = "p2p.config.toml";
 /// For example, `IROH_P2P_MDNS=true` would set the value of the `Libp2pConfig.mdns` field
 pub const ENV_PREFIX: &str = "IROH_P2P";
 
+/// Default bootstrap nodes
+///
+/// Based on https://github.com/ipfs/go-ipfs-config/blob/master/bootstrap_peers.go#L17.
+pub const DEFAULT_BOOTSTRAP: &[&str] = &[
+    "/dnsaddr/bootstrap.libp2p.io/p2p/QmNnooDu7bfjPFoTZYxMNLWUQJyrVwtbZg5gBMjTezGAJN",
+    "/dnsaddr/bootstrap.libp2p.io/p2p/QmQCU2EcMqAqQPR2i9bChDtGNJchTbq5TbXJJ16u19uLTa",
+    "/dnsaddr/bootstrap.libp2p.io/p2p/QmbLHAnMoJPWSCR5Zhtx6BHJX9KiKNN6tpvbUcqanj75Nb",
+    "/dnsaddr/bootstrap.libp2p.io/p2p/QmcZf59bWwK5XFi76CZX8cbJ4BhTzzA3gU1ZjYZcYW3dwt",
+    "/ip4/104.131.131.82/tcp/4001/p2p/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ", // mars.i.ipfs.io
+];
+// no udp support yet
+
+// "/ip4/104.131.131.82/udp/4001/quic/p2p/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ", // mars.i.ipfs.io
+
 /// Libp2p config for the node.
 #[derive(PartialEq, Debug, Clone, Deserialize, Serialize)]
 pub struct Libp2pConfig {
@@ -32,6 +46,12 @@ pub struct Libp2pConfig {
     pub relay_client: bool,
     /// Target peer count.
     pub target_peer_count: u32,
+}
+
+/// Configuration for the node.
+#[derive(PartialEq, Debug, Clone, Deserialize, Serialize)]
+pub struct Config {
+    pub libp2p: Libp2pConfig,
     /// Rpc listening addr
     pub rpc_addr: P2pServerAddr,
     pub rpc_client: RpcClientConfig,
@@ -42,10 +62,9 @@ impl Source for Libp2pConfig {
     fn clone_into_box(&self) -> Box<dyn Source + Send + Sync> {
         Box::new(self.clone())
     }
+
     fn collect(&self) -> Result<Map<String, Value>, ConfigError> {
         let mut map: Map<String, Value> = Map::new();
-        insert_into_config_map(&mut map, "rpc_client", self.rpc_client.collect()?);
-        insert_into_config_map(&mut map, "rpc_addr", self.rpc_addr.to_string());
         // `config` package converts all unsigned integers into U64, which then has problems
         // downcasting to, in this case, u32. To get it to allow the convertion between the
         // config::Config and the p2p::Config, we need to cast it as a signed int
@@ -62,25 +81,28 @@ impl Source for Libp2pConfig {
             "listening_multiaddr",
             self.listening_multiaddr.to_string(),
         );
+        Ok(map)
+    }
+}
+
+impl Source for Config {
+    fn clone_into_box(&self) -> Box<dyn Source + Send + Sync> {
+        Box::new(self.clone())
+    }
+
+    fn collect(&self) -> Result<Map<String, Value>, ConfigError> {
+        let mut map: Map<String, Value> = Map::new();
+
+        insert_into_config_map(&mut map, "libp2p", self.libp2p.collect()?);
+        insert_into_config_map(&mut map, "rpc_client", self.rpc_client.collect()?);
+        insert_into_config_map(&mut map, "rpc_addr", self.rpc_addr.to_string());
         insert_into_config_map(&mut map, "metrics", self.metrics.collect()?);
         Ok(map)
     }
 }
 
-// Based on https://github.com/ipfs/go-ipfs-config/blob/master/bootstrap_peers.go#L17.
-pub const DEFAULT_BOOTSTRAP: &[&str] = &[
-    "/dnsaddr/bootstrap.libp2p.io/p2p/QmNnooDu7bfjPFoTZYxMNLWUQJyrVwtbZg5gBMjTezGAJN",
-    "/dnsaddr/bootstrap.libp2p.io/p2p/QmQCU2EcMqAqQPR2i9bChDtGNJchTbq5TbXJJ16u19uLTa",
-    "/dnsaddr/bootstrap.libp2p.io/p2p/QmbLHAnMoJPWSCR5Zhtx6BHJX9KiKNN6tpvbUcqanj75Nb",
-    "/dnsaddr/bootstrap.libp2p.io/p2p/QmcZf59bWwK5XFi76CZX8cbJ4BhTzzA3gU1ZjYZcYW3dwt",
-    "/ip4/104.131.131.82/tcp/4001/p2p/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ", // mars.i.ipfs.io
-];
-// no udp support yet
-
-// "/ip4/104.131.131.82/udp/4001/quic/p2p/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ", // mars.i.ipfs.io
-
-impl Libp2pConfig {
-    pub fn default_with_rpc(server_addr: P2pServerAddr, client_addr: P2pClientAddr) -> Self {
+impl Default for Libp2pConfig {
+    fn default() -> Self {
         let bootstrap_peers = DEFAULT_BOOTSTRAP
             .iter()
             .map(|node| node.parse().unwrap())
@@ -95,6 +117,14 @@ impl Libp2pConfig {
             relay_server: true,
             relay_client: true,
             target_peer_count: 256,
+        }
+    }
+}
+
+impl Config {
+    pub fn default_with_rpc(server_addr: P2pServerAddr, client_addr: P2pClientAddr) -> Self {
+        Self {
+            libp2p: Libp2pConfig::default(),
             rpc_addr: server_addr,
             rpc_client: RpcClientConfig {
                 p2p_addr: Some(client_addr),
@@ -105,24 +135,9 @@ impl Libp2pConfig {
     }
 
     pub fn default_grpc() -> Self {
-        let bootstrap_peers = DEFAULT_BOOTSTRAP
-            .iter()
-            .map(|node| node.parse().unwrap())
-            .collect();
+        let addr = "grpc://0.0.0.0:4401";
 
-        Self {
-            listening_multiaddr: "/ip4/0.0.0.0/tcp/4444".parse().unwrap(),
-            bootstrap_peers,
-            mdns: false,
-            kademlia: true,
-            autonat: true,
-            relay_server: true,
-            relay_client: true,
-            target_peer_count: 256,
-            rpc_addr: "grpc://0.0.0.0:4401".parse().unwrap(),
-            rpc_client: RpcClientConfig::default(),
-            metrics: MetricsConfig::default(),
-        }
+        Self::default_with_rpc(addr.parse().unwrap(), addr.parse().unwrap())
     }
 }
 
@@ -133,14 +148,19 @@ mod tests {
 
     #[test]
     fn test_collect() {
-        let default = Libp2pConfig::default_grpc();
+        let default = Config::default_grpc();
         let bootstrap_peers: Vec<String> = default
+            .libp2p
             .bootstrap_peers
             .iter()
             .map(|node| node.to_string())
             .collect();
 
         let mut expect: Map<String, Value> = Map::new();
+        expect.insert(
+            "libp2p".to_string(),
+            Value::new(None, default.libp2p.collect().unwrap()),
+        );
         expect.insert(
             "rpc_client".to_string(),
             Value::new(None, default.rpc_client.collect().unwrap()),
@@ -149,6 +169,21 @@ mod tests {
             "rpc_addr".to_string(),
             Value::new(None, default.rpc_addr.to_string()),
         );
+        expect.insert(
+            "metrics".to_string(),
+            Value::new(None, default.metrics.collect().unwrap()),
+        );
+
+        let got = default.collect().unwrap();
+        for key in got.keys() {
+            let left = expect.get(key).unwrap();
+            let right = got.get(key).unwrap();
+            assert_eq!(left, right);
+        }
+
+        // libp2p
+        let mut expect: Map<String, Value> = Map::new();
+        let default = &default.libp2p;
         expect.insert(
             "target_peer_count".to_string(),
             // see `Source` implementation for  why we need to cast this as a signed int
@@ -173,10 +208,6 @@ mod tests {
             "listening_multiaddr".to_string(),
             Value::new(None, default.listening_multiaddr.to_string()),
         );
-        expect.insert(
-            "metrics".to_string(),
-            Value::new(None, default.metrics.collect().unwrap()),
-        );
 
         let got = default.collect().unwrap();
         for key in got.keys() {
@@ -188,8 +219,8 @@ mod tests {
 
     #[test]
     fn test_build_config_from_struct() {
-        let expect = Libp2pConfig::default_grpc();
-        let got: Libp2pConfig = ConfigBuilder::builder()
+        let expect = Config::default_grpc();
+        let got: Config = ConfigBuilder::builder()
             .add_source(expect.clone())
             .build()
             .unwrap()

@@ -36,7 +36,7 @@ use crate::swarm::build_swarm;
 use crate::{
     behaviour::{Event, NodeBehaviour},
     rpc::{self, RpcMessage},
-    Libp2pConfig,
+    Config, Libp2pConfig,
 };
 
 #[allow(clippy::large_enum_variant)]
@@ -99,7 +99,7 @@ impl<KeyStorage: Storage> Drop for Node<KeyStorage> {
 
 impl<KeyStorage: Storage> Node<KeyStorage> {
     pub async fn new(
-        config: Libp2pConfig,
+        config: Config,
         mut keychain: Keychain<KeyStorage>,
         registry: &mut Registry,
     ) -> Result<Self> {
@@ -107,10 +107,14 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
         let (network_sender_in, network_receiver_in) = channel(1024); // TODO: configurable
 
         let keypair = load_identity(&mut keychain).await?;
-        let mut swarm = build_swarm(&config, &keypair, registry).await?;
+        let mut swarm = build_swarm(&config.libp2p, &keypair, registry).await?;
 
-        let Libp2pConfig {
-            listening_multiaddr,
+        let Config {
+            libp2p:
+                Libp2pConfig {
+                    listening_multiaddr,
+                    ..
+                },
             rpc_addr,
             rpc_client,
             ..
@@ -792,9 +796,8 @@ mod tests {
         rpc_client_addr: P2pClientAddr,
     ) -> Result<()> {
         let mut prom_registry = Registry::default();
-        let mut network_config =
-            Libp2pConfig::default_with_rpc(rpc_server_addr, rpc_client_addr.clone());
-        network_config.listening_multiaddr = addr;
+        let mut network_config = Config::default_with_rpc(rpc_server_addr, rpc_client_addr.clone());
+        network_config.libp2p.listening_multiaddr = addr;
         network_config.metrics.debug = true;
 
         let kc = Keychain::<MemoryStorage>::new();

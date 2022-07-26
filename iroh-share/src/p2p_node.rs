@@ -145,17 +145,19 @@ impl P2pNode {
             store_addr: Some(rpc_store_addr_client.clone()),
             gateway_addr: None,
         };
-        let config = config::Libp2pConfig {
-            listening_multiaddr: format!("/ip4/0.0.0.0/tcp/{port}").parse().unwrap(),
-            mdns: false,
-            kademlia: true,
-            autonat: true,
-            relay_client: true,
-            relay_server: false,
+        let config = config::Config {
+            libp2p: config::Libp2pConfig {
+                listening_multiaddr: format!("/ip4/0.0.0.0/tcp/{port}").parse().unwrap(),
+                mdns: false,
+                kademlia: true,
+                autonat: true,
+                relay_client: true,
+                bootstrap_peers: Default::default(), // disable bootstrap for now
+                relay_server: false,
+                target_peer_count: 8,
+            },
             rpc_addr: rpc_p2p_addr_server,
             rpc_client: rpc_p2p_client_config.clone(),
-            bootstrap_peers: Default::default(), // disable bootstrap for now
-            target_peer_count: 8,
             metrics: Default::default(),
         };
 
