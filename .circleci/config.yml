@@ -156,16 +156,12 @@ workflows:
           requires:
             - cargo_fetch
       - test:
-          name: "Test CPU"
+          name: "Test linxu:x86_64"
           cargo-args: "--workspace"
           requires:
             - cargo_fetch
       - test:
-          name: "Test CPU (no default features)"
+          name: "Test linux:x86_64 (no default features)"
           cargo-args: "--workspace --no-default-features"
-          requires:
-            - cargo_fetch
-
-      - test_ignored:
           requires:
             - cargo_fetch
