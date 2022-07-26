@@ -128,7 +128,11 @@ impl p2p_server::P2p for P2p {
         let mut providers = Vec::new();
         while let Some(provider) = r.recv().await {
             match provider {
-                Ok(provider) => providers.push(provider.to_bytes()),
+                Ok(new_providers) => {
+                    for provider in new_providers {
+                        providers.push(provider.to_bytes());
+                    }
+                }
                 Err(e) => {
                     if providers.is_empty() {
                         return Err(Status::internal(e));
@@ -457,7 +461,7 @@ pub enum RpcMessage {
     ProviderRequest {
         // TODO: potentially change this to Cid, as that is the only key we use for providers
         key: Key,
-        response_channel: mpsc::Sender<Result<PeerId, String>>,
+        response_channel: mpsc::Sender<Result<HashSet<PeerId>, String>>,
     },
     NetListeningAddrs(oneshot::Sender<(PeerId, Vec<Multiaddr>)>),
     NetPeers(oneshot::Sender<HashMap<PeerId, Vec<Multiaddr>>>),

@@ -19,7 +19,7 @@ metrics-util = "0.12"
 metrics-exporter-prometheus = { version = "0.9", features = ["push-gateway"]}
 tonic = "0.7.2"
 tokio = { version = "1.17.0", features = ["macros", "rt-multi-thread", "process"] }
-prometheus-client = "0.16.0"
+prometheus-client = "0.17.0"
 reqwest = { version = "0.11.10", features = ["rustls-tls"], default-features = false}
 config = "0.13.1"
 iroh-util = { path = "../iroh-util" }

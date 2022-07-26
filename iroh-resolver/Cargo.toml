@@ -21,7 +21,7 @@ tracing = "0.1.34"
 async-trait = "0.1.53"
 async-recursion = "1.0.0"
 trust-dns-resolver = { version = "0.21.2", features = ["tokio-runtime"] }
-prometheus-client = "0.16.0"
+prometheus-client = "0.17.0"
 iroh-metrics = { path = "../iroh-metrics" }
 async-stream = "0.3.3"
 

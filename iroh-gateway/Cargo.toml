@@ -37,7 +37,7 @@ anyhow = "1"
 futures = "0.3.5"
 tracing-subscriber = { version = "0.3.11", features = ["env-filter"] }
 iroh-resolver = { path = "../iroh-resolver" }
-prometheus-client = "0.16.0"
+prometheus-client = "0.17.0"
 tokio-util = { version = "0.7.2", features = ["io"] }
 bytes = "1.1.0"
 tower-layer = { version = "0.3" }

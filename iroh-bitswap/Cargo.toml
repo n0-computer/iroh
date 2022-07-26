@@ -23,7 +23,7 @@ unsigned-varint = "0.7.0"
 ahash = "0.7.6"
 tracing = "0.1.34"
 num_enum = "0.5.7"
-prometheus-client = "0.16.0"
+prometheus-client = "0.17.0"
 iroh-metrics = { path = "../iroh-metrics" }
 names = { version = "0.13.0", default-features = false }
 git-version = "0.3.5"
