@@ -3,7 +3,7 @@ version: 2.1
 parameters:
   nightly-version:
     type: string
-    default: "nightly-2022-03-10"
+    default: "nightly-2022-06-23"
 
 executors:
   default:
