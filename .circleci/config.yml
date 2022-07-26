@@ -1,0 +1,148 @@
+version: 2.1
+
+parameters:
+  nightly-version:
+    type: string
+    default: "nightly-2022-03-10"
+
+executors:
+  default:
+    docker:
+      - image: filecoin/rust:latest
+    working_directory: ~/ci
+
+restore-workspace: &restore-workspace
+  attach_workspace:
+    at: ~/
+
+restore-cache: &restore-cache
+  restore_cache:
+    keys:
+      - cargo-v1-{{ checksum "rust-toolchain" }}-{{ checksum "Cargo.toml" }}-{{ checksum "Cargo.lock" }}-{{ arch }}
+      - repo-source-{{ .Branch }}-{{ .Revision }}
+
+commands:
+  set-env-path:
+    steps:
+      - run:
+          name: Set the PATH env variable
+          command: |
+            # Also put the Rust LLVM tools into the PATH.
+            echo 'export PATH="$HOME:~/.cargo/bin:~/.rustup/toolchains/<< pipeline.parameters.nightly-version >>-x86_64-unknown-linux-gnu/lib/rustlib/x86_64-unknown-linux-gnu/bin:$PATH"' | tee --append $BASH_ENV
+            source $BASH_ENV
+jobs:
+  cargo_fetch:
+    executor: default
+    steps:
+      - checkout
+      - run: curl https://sh.rustup.rs -sSf | sh -s -- -y
+      - set-env-path
+      - run: echo $HOME
+      - run: cargo --version
+      - run: rustc --version
+      - run:
+          name: Update submodules
+          command: git submodule update --init --recursive
+      - run:
+          name: Calculate dependencies
+          command: cargo generate-lockfile
+      - restore_cache:
+          keys:
+            - cargo-v1-{{ checksum "rust-toolchain" }}-{{ checksum "Cargo.toml" }}-{{ checksum "Cargo.lock" }}-{{ arch }}
+      - run: cargo update
+      - run: cargo fetch
+      - run: rustup install $(cat rust-toolchain)
+      - run: rustup default $(cat rust-toolchain)
+      # A nightly build is needed for code coverage reporting
+      - run: rustup toolchain install --profile minimal << pipeline.parameters.nightly-version >>
+      - run: rustup component add --toolchain << pipeline.parameters.nightly-version >> llvm-tools-preview
+      - run: rustc --version
+      - run: rm -rf .git
+      - persist_to_workspace:
+          root: ~/
+          paths:
+            - ci
+      - save_cache:
+          key: cargo-v1-{{ checksum "rust-toolchain" }}-{{ checksum "Cargo.toml" }}-{{ checksum "Cargo.lock" }}-{{ arch }}
+          paths:
+            - "~/.cargo"
+            - "~/.rustup"
+
+  test:
+    executor: default
+    parameters:
+      cargo-args:
+        description: Addtional arguments for the cargo command
+        type: string
+        default: ""
+    environment:
+      RUST_LOG: debug
+    steps:
+      - set-env-path
+      - *restore-workspace
+      - *restore-cache
+      - run:
+          name: Test << parameters.framework>> with << parameters.cargo-args >>
+          command: cargo test << parameters.cargo-args >>
+
+  test_ignored:
+    executor: default
+    environment:
+      RUST_LOG: debug
+    steps:
+      - set-env-path
+      - *restore-workspace
+      - *restore-cache
+      - run:
+          name: Test ignored
+          command: cargo test --release -- --ignored
+          no_output_timeout: 30m
+
+  rustfmt:
+    executor: default
+    steps:
+      - *restore-workspace
+      - *restore-cache
+      - set-env-path
+      - run:
+          name: Run cargo fmt
+          command: cargo fmt --all -- --check
+
+  clippy:
+    executor: default
+    environment:
+      RUST_LOG: debug
+    steps:
+      - *restore-workspace
+      - *restore-cache
+      - set-env-path
+      - run:
+          name: Run cargo clippy (default features)
+          command: cargo clippy --all --all-targets -- -D warnings
+
+workflows:
+  version: 2.1
+
+  test:
+    jobs:
+      - cargo_fetch
+      - rustfmt:
+          requires:
+            - cargo_fetch
+      - clippy:
+          requires:
+            - cargo_fetch
+      - test:
+          name: "Test CPU"
+          cargo-args: "--workspace"
+          requires:
+            - cargo_fetch
+      - test:
+          name: "Test CPU (no default features)"
+          cargo-args: "--workspace --no-default-features"
+          requires:
+            - cargo_fetch
+
+      - test_ignored:
+          requires:
+            - cargo_fetch
