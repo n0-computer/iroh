@@ -10,6 +10,7 @@ executors:
     docker:
       - image: cimg/rust:1.62.0
     working_directory: ~/ci
+    resource_class: xlarge
 
 restore-workspace: &restore-workspace
   attach_workspace:
@@ -36,7 +37,7 @@ jobs:
     steps:
       - checkout
       - run: curl https://getsubstrate.io -sSf | bash -s -- --fast
-      - run: sudo apt install llvm make libclang-dev
+      - run: sudo apt install llvm make clang
       - run: curl https://sh.rustup.rs -sSf | sh -s -- -y
       - set-env-path
       - run: echo $HOME
