@@ -8,8 +8,7 @@ parameters:
 executors:
   default:
     docker:
-      - image: filecoin/rust:latest
-    working_directory: ~/ci
+      - image: cimg/rust:1.61.0
 
 restore-workspace: &restore-workspace
   attach_workspace:
