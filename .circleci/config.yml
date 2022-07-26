@@ -31,6 +31,36 @@ commands:
             # Also put the Rust LLVM tools into the PATH.
             echo 'export PATH="$HOME:~/.cargo/bin:~/.rustup/toolchains/<< pipeline.parameters.nightly-version >>-x86_64-unknown-linux-gnu/lib/rustlib/x86_64-unknown-linux-gnu/bin:$PATH"' | tee --append $BASH_ENV
             source $BASH_ENV
+
+
+  setup-sccache:
+    steps:
+      - run:
+          name: Install sccache
+          command: |
+            cargo install sccache
+            # This configures Rust to use sccache.
+            echo 'export "RUSTC_WRAPPER"="sccache"' >> $BASH_ENV
+            # This is the maximum space sccache cache will use on disk.
+            echo 'export "SCCACHE_CACHE_SIZE"="1G"' >> $BASH_ENV
+            sccache --version
+  restore-sccache-cache:
+    steps:
+      - restore_cache:
+          name: Restore sccache cache
+          key: sccache-cache-stable-{{ arch }}-{{ .Environment.CIRCLE_JOB }}
+  save-sccache-cache:
+    steps:
+      - save_cache:
+          name: Save sccache cache
+          # We use {{ epoch }} to always upload a fresh cache:
+          # Of course, restore_cache will not find this exact key,
+          # but it will fall back to the closest key (aka the most recent).
+          # See https://discuss.circleci.com/t/add-mechanism-to-update-existing-cache-key/9014/13
+          key: sccache-cache-stable-{{ arch }}-{{ .Environment.CIRCLE_JOB }}-{{ epoch }}
+          paths:
+            - "~/.cache/sccache"
+
 jobs:
   cargo_fetch:
     executor: default
@@ -57,6 +87,7 @@ jobs:
       - run: rustup toolchain install --profile minimal << pipeline.parameters.nightly-version >>
       - run: rustup component add --toolchain << pipeline.parameters.nightly-version >> llvm-tools-preview
       - run: rustc --version
+      - setup-sccache
       - persist_to_workspace:
           root: ~/
           paths:
@@ -80,44 +111,37 @@ jobs:
       - set-env-path
       - *restore-workspace
       - *restore-cache
+      - restore-sccache-cache
       - run:
           name: Test with << parameters.cargo-args >>
           command: cargo test << parameters.cargo-args >>
-
-  test_ignored:
-    executor: default
-    environment:
-      RUST_LOG: debug
-    steps:
-      - set-env-path
-      - *restore-workspace
-      - *restore-cache
-      - run:
-          name: Test ignored
-          command: cargo test --release -- --ignored
-          no_output_timeout: 30m
+      - save-sccache-cache
 
   rustfmt:
     executor: default
     steps:
+      - set-env-path
       - *restore-workspace
       - *restore-cache
-      - set-env-path
+      - restore-sccache-cache
       - run:
           name: Run cargo fmt
           command: cargo fmt --all -- --check
+      - save-sccache-cache
 
   clippy:
     executor: default
     environment:
       RUST_LOG: debug
     steps:
+      - set-env-path
       - *restore-workspace
       - *restore-cache
-      - set-env-path
+      - restore-sccache-cache
       - run:
           name: Run cargo clippy (default features)
           command: cargo clippy --all --all-targets -- -D warnings
+      - save-sccache-cache
 
 workflows:
   version: 2.1
