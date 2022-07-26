@@ -9,6 +9,7 @@ executors:
   default:
     docker:
       - image: cimg/rust:1.61.0
+    working_directory: ~/ci
 
 restore-workspace: &restore-workspace
   attach_workspace:
@@ -59,6 +60,8 @@ jobs:
       - run: rm -rf .git
       - persist_to_workspace:
           root: ~/
+          paths:
+            - ci
       - save_cache:
           key: cargo-v1-{{ checksum "rust-toolchain" }}-{{ checksum "Cargo.toml" }}-{{ checksum "Cargo.lock" }}-{{ arch }}
           paths:
