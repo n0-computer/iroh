@@ -57,10 +57,6 @@ jobs:
       - run: rustup component add --toolchain << pipeline.parameters.nightly-version >> llvm-tools-preview
       - run: rustc --version
       - run: rm -rf .git
-      - persist_to_workspace:
-          root: ~/
-          paths:
-            - ci
       - save_cache:
           key: cargo-v1-{{ checksum "rust-toolchain" }}-{{ checksum "Cargo.toml" }}-{{ checksum "Cargo.lock" }}-{{ arch }}
           paths:
