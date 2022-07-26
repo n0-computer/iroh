@@ -19,7 +19,7 @@ restore-workspace: &restore-workspace
 restore-cache: &restore-cache
   restore_cache:
     keys:
-      - cargo-v4-{{ checksum "rust-toolchain" }}-{{ checksum "Cargo.toml" }}-{{ checksum "Cargo.lock" }}-{{ arch }}
+      - cargo-v5-{{ checksum "rust-toolchain" }}-{{ checksum "Cargo.toml" }}-{{ checksum "Cargo.lock" }}-{{ arch }}
       - repo-source-{{ .Branch }}-{{ .Revision }}
 
 commands:
@@ -78,7 +78,7 @@ jobs:
           command: cargo generate-lockfile
       - restore_cache:
           keys:
-            - cargo-v4-{{ checksum "rust-toolchain" }}-{{ checksum "Cargo.toml" }}-{{ checksum "Cargo.lock" }}-{{ arch }}
+            - cargo-v5-{{ checksum "rust-toolchain" }}-{{ checksum "Cargo.toml" }}-{{ checksum "Cargo.lock" }}-{{ arch }}
       - run: cargo update
       - run: cargo fetch
       - run: rustup install $(cat rust-toolchain)
@@ -93,7 +93,7 @@ jobs:
           paths:
             - ci
       - save_cache:
-          key: cargo-v4-{{ checksum "rust-toolchain" }}-{{ checksum "Cargo.toml" }}-{{ checksum "Cargo.lock" }}-{{ arch }}
+          key: cargo-v5-{{ checksum "rust-toolchain" }}-{{ checksum "Cargo.toml" }}-{{ checksum "Cargo.lock" }}-{{ arch }}
           paths:
             - "~/.cargo"
             - "~/.rustup"
@@ -111,6 +111,7 @@ jobs:
       - set-env-path
       - *restore-workspace
       - *restore-cache
+      - setup-sccache
       - restore-sccache-cache
       - run:
           name: Test with << parameters.cargo-args >>
@@ -123,6 +124,7 @@ jobs:
       - set-env-path
       - *restore-workspace
       - *restore-cache
+      - setup-sccache
       - restore-sccache-cache
       - run:
           name: Run cargo fmt
@@ -137,6 +139,7 @@ jobs:
       - set-env-path
       - *restore-workspace
       - *restore-cache
+      - setup-sccache
       - restore-sccache-cache
       - run:
           name: Run cargo clippy (default features)
