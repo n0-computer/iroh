@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
 use ahash::AHashMap;
@@ -15,8 +15,7 @@ use libp2p::identity::Keypair;
 use libp2p::kad::kbucket::{Distance, NodeStatus};
 use libp2p::kad::BootstrapOk;
 use libp2p::kad::{
-    self, record::Key, GetProvidersError, GetProvidersOk, GetProvidersProgress, KademliaEvent,
-    QueryProgress, QueryResult,
+    self, record::Key, GetProvidersError, GetProvidersOk, KademliaEvent, QueryResult,
 };
 use libp2p::metrics::{Metrics, Recorder};
 use libp2p::swarm::dial_opts::{DialOpts, PeerCondition};
@@ -80,7 +79,7 @@ pub struct Node<KeyStorage: Storage> {
 }
 
 enum QueryChannel {
-    GetProviders(Vec<mpsc::Sender<Result<PeerId, String>>>),
+    GetProviders(Vec<mpsc::Sender<Result<HashSet<PeerId>, String>>>),
 }
 
 #[derive(Debug, Hash, PartialEq, Eq)]
@@ -350,10 +349,40 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
             }
             Event::Kademlia(e) => {
                 self.metrics.record(&e);
-                if let KademliaEvent::OutboundQueryCompleted { result, .. } = e {
+                if let KademliaEvent::OutboundQueryProgressed {
+                    id, result, index, ..
+                } = e
+                {
                     match result {
-                        QueryResult::GetProviders(Ok(GetProvidersOk { key, .. })) => {
-                            let _ = self.kad_queries.remove(&QueryKey::ProviderKey(key));
+                        QueryResult::GetProviders(Ok(GetProvidersOk {
+                            key,
+                            providers,
+                            providers_so_far,
+                            ..
+                        })) => {
+                            if index.last {
+                                let _ = self.kad_queries.remove(&QueryKey::ProviderKey(key));
+                            } else {
+                                if providers_so_far >= PROVIDER_LIMIT {
+                                    debug!(
+                                        "finish provider query {}/{}",
+                                        providers_so_far, PROVIDER_LIMIT
+                                    );
+                                    // Finish query if we have enough providers.
+                                    self.swarm.behaviour_mut().finish_query(&id);
+                                }
+
+                                if let Some(QueryChannel::GetProviders(chans)) = self
+                                    .kad_queries
+                                    .get_mut(&QueryKey::ProviderKey(key.clone()))
+                                {
+                                    for chan in chans.iter_mut() {
+                                        chan.send(Ok(providers.clone())).await.ok();
+                                    }
+                                } else {
+                                    debug!("No listeners");
+                                }
+                            }
                         }
 
                         QueryResult::GetProviders(Err(err)) => {
@@ -383,33 +412,6 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                         }
                         other => {
                             debug!("Libp2p => Unhandled Kademlia query result: {:?}", other)
-                        }
-                    }
-                } else if let KademliaEvent::OutboundQueryProgressed {
-                    id, result, count, ..
-                } = e
-                {
-                    debug!("kad progressed: {:?}", result);
-                    match result {
-                        QueryProgress::GetProviders(GetProvidersProgress {
-                            key, provider, ..
-                        }) => {
-                            if count >= PROVIDER_LIMIT {
-                                debug!("finish provider query {}/{}", count, PROVIDER_LIMIT);
-                                // Finish query if we have enough providers.
-                                self.swarm.behaviour_mut().finish_query(&id);
-                            }
-
-                            if let Some(QueryChannel::GetProviders(chans)) = self
-                                .kad_queries
-                                .get_mut(&QueryKey::ProviderKey(key.clone()))
-                            {
-                                for chan in chans.iter_mut() {
-                                    chan.send(Ok(provider)).await.ok();
-                                }
-                            } else {
-                                debug!("No listeners");
-                            }
                         }
                     }
                 }
