@@ -46,3 +46,7 @@ rpc-mem = ["iroh-rpc-types/mem", "iroh-rpc-client/mem"]
 [[bench]]
 name = "store"
 harness = false
+
+[[bench]]
+name = "rpc"
+harness = false

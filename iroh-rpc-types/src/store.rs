@@ -1,3 +1,4 @@
+use anyhow::Context;
 use async_trait::async_trait;
 
 use crate::Addr;
@@ -31,7 +32,15 @@ pub async fn serve<S: Store>(addr: StoreServerAddr, store: S) -> anyhow::Result<
                 .set_serving::<store_server::StoreServer<S>>()
                 .await;
 
-            let uds = UnixListener::bind(path)?;
+            if path.exists() {
+                if path.is_dir() {
+                    anyhow::bail!("cannot bind socket to directory: {}", path.display());
+                }
+                tokio::fs::remove_file(&path).await?;
+            }
+
+            let uds = UnixListener::bind(&path)
+                .with_context(|| format!("failed to bind to {}", path.display()))?;
             let uds_stream = UnixListenerStream::new(uds);
 
             tonic::transport::Server::builder()
