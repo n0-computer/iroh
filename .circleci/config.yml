@@ -18,7 +18,7 @@ restore-workspace: &restore-workspace
 restore-cache: &restore-cache
   restore_cache:
     keys:
-      - cargo-v1-{{ checksum "rust-toolchain" }}-{{ checksum "Cargo.toml" }}-{{ checksum "Cargo.lock" }}-{{ arch }}
+      - cargo-v2-{{ checksum "rust-toolchain" }}-{{ checksum "Cargo.toml" }}-{{ checksum "Cargo.lock" }}-{{ arch }}
       - repo-source-{{ .Branch }}-{{ .Revision }}
 
 commands:
@@ -35,8 +35,7 @@ jobs:
     executor: default
     steps:
       - checkout
-      - run: curl https://getsubstrate.io -sSf | bash -s -- --fast
-      - run: sudo apt install llvm make
+      - run: sudo apt install llvm make libclang-dev
       - run: curl https://sh.rustup.rs -sSf | sh -s -- -y
       - set-env-path
       - run: echo $HOME
@@ -50,7 +49,7 @@ jobs:
           command: cargo generate-lockfile
       - restore_cache:
           keys:
-            - cargo-v1-{{ checksum "rust-toolchain" }}-{{ checksum "Cargo.toml" }}-{{ checksum "Cargo.lock" }}-{{ arch }}
+            - cargo-v2-{{ checksum "rust-toolchain" }}-{{ checksum "Cargo.toml" }}-{{ checksum "Cargo.lock" }}-{{ arch }}
       - run: cargo update
       - run: cargo fetch
       - run: rustup install $(cat rust-toolchain)
@@ -65,7 +64,7 @@ jobs:
           paths:
             - ci
       - save_cache:
-          key: cargo-v1-{{ checksum "rust-toolchain" }}-{{ checksum "Cargo.toml" }}-{{ checksum "Cargo.lock" }}-{{ arch }}
+          key: cargo-v2-{{ checksum "rust-toolchain" }}-{{ checksum "Cargo.toml" }}-{{ checksum "Cargo.lock" }}-{{ arch }}
           paths:
             - "~/.cargo"
             - "~/.rustup"
