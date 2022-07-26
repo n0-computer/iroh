@@ -1,0 +1,26 @@
+# Dockerfile for CircleCI
+# build with
+# `docker build -t dignifiedquire/iroh-ci:latest -f ./Dockerfile-ci .`
+# rebuild: `docker build --pull --no-cache -t dignifiedquire/iroh-ci:latest -f ./Dockerfile-ci .`
+
+FROM cimg/rust:1.62.0
+
+# Some of the dependencies I need to build a few libraries,
+# personalize to your needs. You can use multi-stage builds
+# to produce a lightweight image.
+RUN sudo apt-get update && \
+    sudo apt-get install -y \
+    cmake pkg-config libssl-dev git gcc build-essential git clang libclang-dev \
+    make curl openssh-client \
+    autoconf automake cmake libtool libcurl4-openssl-dev libssl-dev \
+    libelf-dev libdw-dev binutils-dev zlib1g-dev libiberty-dev wget \
+    xz-utils pkg-config python
+
+RUN curl https://sh.rustup.rs -sSf | sh -s -- -y
+
+ENV PATH "$PATH:/root/.cargo/bin"
+ENV RUSTFLAGS "-C link-dead-code"
+
+RUN sudo bash -l -c 'echo $(rustc --print sysroot)/lib >> /etc/ld.so.conf'
+RUN sudo bash -l -c 'echo /usr/local/lib >> /etc/ld.so.conf'
+RUN sudo ldconfig

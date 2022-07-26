@@ -8,7 +8,7 @@ parameters:
 executors:
   default:
     docker:
-      - image: cimg/rust:1.62.0
+      - image: dignifiedquire/iroh-ci:latest
     working_directory: ~/ci
     resource_class: xlarge
 
@@ -19,7 +19,7 @@ restore-workspace: &restore-workspace
 restore-cache: &restore-cache
   restore_cache:
     keys:
-      - cargo-v3-{{ checksum "rust-toolchain" }}-{{ checksum "Cargo.toml" }}-{{ checksum "Cargo.lock" }}-{{ arch }}
+      - cargo-v4-{{ checksum "rust-toolchain" }}-{{ checksum "Cargo.toml" }}-{{ checksum "Cargo.lock" }}-{{ arch }}
       - repo-source-{{ .Branch }}-{{ .Revision }}
 
 commands:
@@ -36,9 +36,6 @@ jobs:
     executor: default
     steps:
       - checkout
-      - run: curl https://getsubstrate.io -sSf | bash -s -- --fast
-      - run: sudo apt install llvm make clang
-      - run: curl https://sh.rustup.rs -sSf | sh -s -- -y
       - set-env-path
       - run: echo $HOME
       - run: cargo --version
@@ -51,7 +48,7 @@ jobs:
           command: cargo generate-lockfile
       - restore_cache:
           keys:
-            - cargo-v3-{{ checksum "rust-toolchain" }}-{{ checksum "Cargo.toml" }}-{{ checksum "Cargo.lock" }}-{{ arch }}
+            - cargo-v4-{{ checksum "rust-toolchain" }}-{{ checksum "Cargo.toml" }}-{{ checksum "Cargo.lock" }}-{{ arch }}
       - run: cargo update
       - run: cargo fetch
       - run: rustup install $(cat rust-toolchain)
@@ -60,13 +57,12 @@ jobs:
       - run: rustup toolchain install --profile minimal << pipeline.parameters.nightly-version >>
       - run: rustup component add --toolchain << pipeline.parameters.nightly-version >> llvm-tools-preview
       - run: rustc --version
-      - run: rm -rf .git
       - persist_to_workspace:
           root: ~/
           paths:
             - ci
       - save_cache:
-          key: cargo-v3-{{ checksum "rust-toolchain" }}-{{ checksum "Cargo.toml" }}-{{ checksum "Cargo.lock" }}-{{ arch }}
+          key: cargo-v4-{{ checksum "rust-toolchain" }}-{{ checksum "Cargo.toml" }}-{{ checksum "Cargo.lock" }}-{{ arch }}
           paths:
             - "~/.cargo"
             - "~/.rustup"
