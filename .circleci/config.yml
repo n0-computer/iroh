@@ -82,7 +82,7 @@ jobs:
       - *restore-workspace
       - *restore-cache
       - run:
-          name: Test << parameters.framework>> with << parameters.cargo-args >>
+          name: Test with << parameters.cargo-args >>
           command: cargo test << parameters.cargo-args >>
 
   test_ignored:
