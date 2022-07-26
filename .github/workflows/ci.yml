@@ -16,7 +16,8 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest, macOS-latest]
-        rust: [nightly, stable]
+        # rust: [nightly, stable]
+        rust: [1.61.0]
         experimental: [false]
         include:
           - os: ubuntu-latest
