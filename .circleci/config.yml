@@ -8,7 +8,7 @@ parameters:
 executors:
   default:
     docker:
-      - image: cimg/rust:1.61.0
+      - image: cimg/rust:1.62.0
     working_directory: ~/ci
 
 restore-workspace: &restore-workspace
@@ -35,6 +35,8 @@ jobs:
     executor: default
     steps:
       - checkout
+      - run: curl https://getsubstrate.io -sSf | bash -s -- --fast
+      - run: sudo apt install llvm make
       - run: curl https://sh.rustup.rs -sSf | sh -s -- -y
       - set-env-path
       - run: echo $HOME
