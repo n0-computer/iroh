@@ -35,6 +35,7 @@ jobs:
     executor: default
     steps:
       - checkout
+      - run: curl https://getsubstrate.io -sSf | bash -s -- --fast
       - run: sudo apt install llvm make libclang-dev
       - run: curl https://sh.rustup.rs -sSf | sh -s -- -y
       - set-env-path
