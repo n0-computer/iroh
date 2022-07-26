@@ -10,6 +10,10 @@ executors:
     docker:
       - image: cimg/rust:1.61.0
 
+restore-workspace: &restore-workspace
+  attach_workspace:
+    at: ~/
+
 restore-cache: &restore-cache
   restore_cache:
     keys:
@@ -53,6 +57,8 @@ jobs:
       - run: rustup component add --toolchain << pipeline.parameters.nightly-version >> llvm-tools-preview
       - run: rustc --version
       - run: rm -rf .git
+      - persist_to_workspace:
+          root: ~/
       - save_cache:
           key: cargo-v1-{{ checksum "rust-toolchain" }}-{{ checksum "Cargo.toml" }}-{{ checksum "Cargo.lock" }}-{{ arch }}
           paths:
@@ -70,6 +76,7 @@ jobs:
       RUST_LOG: debug
     steps:
       - set-env-path
+      - *restore-workspace
       - *restore-cache
       - run:
           name: Test with << parameters.cargo-args >>
@@ -81,6 +88,7 @@ jobs:
       RUST_LOG: debug
     steps:
       - set-env-path
+      - *restore-workspace
       - *restore-cache
       - run:
           name: Test ignored
@@ -90,6 +98,7 @@ jobs:
   rustfmt:
     executor: default
     steps:
+      - *restore-workspace
       - *restore-cache
       - set-env-path
       - run:
@@ -101,6 +110,7 @@ jobs:
     environment:
       RUST_LOG: debug
     steps:
+      - *restore-workspace
       - *restore-cache
       - set-env-path
       - run:
