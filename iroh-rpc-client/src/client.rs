@@ -1,4 +1,5 @@
 use anyhow::{anyhow, Context, Result};
+#[cfg(feature = "grpc")]
 use futures::{Stream, StreamExt};
 
 use crate::config::Config;

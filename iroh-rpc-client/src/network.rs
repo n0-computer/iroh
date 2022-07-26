@@ -3,7 +3,10 @@ use std::collections::{HashMap, HashSet};
 use anyhow::{ensure, Context, Result};
 use bytes::Bytes;
 use cid::Cid;
+#[cfg(feature = "grpc")]
 use futures::Stream;
+#[cfg(feature = "grpc")]
+use iroh_rpc_types::p2p::p2p_client::P2pClient as GrpcP2pClient;
 use iroh_rpc_types::p2p::{
     BitswapRequest, ConnectRequest, DisconnectRequest, GossipsubPeerAndTopics, GossipsubPeerIdMsg,
     GossipsubPublishRequest, GossipsubTopicHashMsg, Key, P2p, P2pClientAddr, P2pClientBackend,
@@ -12,74 +15,18 @@ use iroh_rpc_types::p2p::{
 use iroh_rpc_types::Addr;
 use libp2p::gossipsub::{MessageId, TopicHash};
 use libp2p::{Multiaddr, PeerId};
-use tracing::{debug, warn};
-
-#[cfg(feature = "grpc")]
-use iroh_rpc_types::p2p::p2p_client::P2pClient as GrpcP2pClient;
 #[cfg(feature = "grpc")]
 use tonic::transport::Endpoint;
 #[cfg(feature = "grpc")]
 use tonic_health::proto::health_client::HealthClient;
+use tracing::{debug, warn};
 
 #[cfg(feature = "grpc")]
 use crate::status::{self, StatusRow};
 
-// name that the health service registers the p2p client as
-// this is derived from the protobuf definition of a `P2pServer`
-pub(crate) const SERVICE_NAME: &str = "p2p.P2p";
-
-// the display name that we expect to see in the StatusTable
-pub(crate) const NAME: &str = "p2p";
-
-#[derive(Debug, Clone)]
-pub struct P2pClient {
-    backend: P2pClientBackend,
-}
+impl_client!(P2p);
 
 impl P2pClient {
-    pub async fn new(addr: P2pClientAddr) -> Result<Self> {
-        match addr {
-            #[cfg(feature = "grpc")]
-            Addr::GrpcHttp2(addr) => {
-                let conn = Endpoint::new(format!("http://{}", addr))?
-                    .keep_alive_while_idle(true)
-                    .connect_lazy();
-
-                let client = GrpcP2pClient::new(conn.clone());
-                let health = HealthClient::new(conn);
-
-                Ok(P2pClient {
-                    backend: P2pClientBackend::Grpc { client, health },
-                })
-            }
-            #[cfg(all(feature = "grpc", unix))]
-            Addr::GrpcUds(path) => {
-                use tokio::net::UnixStream;
-                use tonic::transport::Uri;
-
-                let path = std::sync::Arc::new(path);
-                // dummy addr
-                let conn = Endpoint::new("http://[..]:50051")?
-                    .keep_alive_while_idle(true)
-                    .connect_with_connector_lazy(tower::service_fn(move |_: Uri| {
-                        let path = path.clone();
-                        UnixStream::connect(path.as_ref().clone())
-                    }));
-
-                let client = GrpcP2pClient::new(conn.clone());
-                let health = HealthClient::new(conn);
-
-                Ok(P2pClient {
-                    backend: P2pClientBackend::Grpc { client, health },
-                })
-            }
-            #[cfg(feature = "mem")]
-            Addr::Mem(s, r) => Ok(P2pClient {
-                backend: P2pClientBackend::Mem(s, r),
-            }),
-        }
-    }
-
     #[tracing::instrument(skip(self))]
     pub async fn version(&self) -> Result<String> {
         let res = self.backend.version(()).await?;
@@ -154,32 +101,6 @@ impl P2pClient {
         };
         self.backend.peer_disconnect(req).await?;
         Ok(())
-    }
-
-    #[cfg(feature = "grpc")]
-    #[tracing::instrument(skip(self))]
-    pub async fn check(&self) -> StatusRow {
-        match &self.backend {
-            P2pClientBackend::Grpc { health, .. } => {
-                status::check(health.clone(), SERVICE_NAME, NAME).await
-            }
-            _ => {
-                todo!()
-            }
-        }
-    }
-
-    #[cfg(feature = "grpc")]
-    #[tracing::instrument(skip(self))]
-    pub async fn watch(&self) -> impl Stream<Item = StatusRow> {
-        match &self.backend {
-            P2pClientBackend::Grpc { health, .. } => {
-                status::watch(health.clone(), SERVICE_NAME, NAME).await
-            }
-            _ => {
-                todo!()
-            }
-        }
     }
 
     #[tracing::instrument(skip(self))]

@@ -1,13 +1,5 @@
-// Based on tonic::include_proto
-macro_rules! include_proto {
-    ($package: tt) => {
-        #[allow(clippy::all)]
-        mod proto {
-            include!(concat!(env!("OUT_DIR"), concat!("/", $package, ".rs")));
-        }
-        pub use proto::*;
-    };
-}
+#[macro_use]
+mod macros;
 
 pub mod gateway;
 pub mod p2p;

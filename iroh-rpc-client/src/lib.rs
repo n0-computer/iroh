@@ -1,3 +1,6 @@
+#[macro_use]
+mod macros;
+
 mod client;
 mod config;
 mod gateway;

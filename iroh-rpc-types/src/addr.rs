@@ -77,17 +77,19 @@ impl<S, R> FromStr for Addr<S, R> {
             bail!("memory addresses can not be serialized or deserialized");
         }
 
-        let mut parts = s.split("://");
-        if let Some(prefix) = parts.next() {
-            #[cfg(feature = "grpc")]
-            if prefix == "grpc" {
-                if let Some(part) = parts.next() {
-                    if let Ok(addr) = part.parse::<SocketAddr>() {
-                        return Ok(Addr::GrpcHttp2(addr));
-                    }
-                    #[cfg(unix)]
-                    if let Ok(path) = part.parse::<std::path::PathBuf>() {
-                        return Ok(Addr::GrpcUds(path));
+        #[cfg(feature = "grpc")]
+        {
+            let mut parts = s.split("://");
+            if let Some(prefix) = parts.next() {
+                if prefix == "grpc" {
+                    if let Some(part) = parts.next() {
+                        if let Ok(addr) = part.parse::<SocketAddr>() {
+                            return Ok(Addr::GrpcHttp2(addr));
+                        }
+                        #[cfg(unix)]
+                        if let Ok(path) = part.parse::<std::path::PathBuf>() {
+                            return Ok(Addr::GrpcUds(path));
+                        }
                     }
                 }
             }
