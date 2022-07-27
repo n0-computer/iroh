@@ -33,12 +33,22 @@ macro_rules! proxy {
                         if path.exists() {
                             if path.is_dir() {
                                 anyhow::bail!("cannot bind socket to directory: {}", path.display());
+                            } else {
+                                anyhow::bail!("cannot bind socket: already exists: {}", path.display());
                             }
-                            tokio::fs::remove_file(&path).await?;
+                        }
+                        // Delete file on close
+                        struct UdsGuard(std::path::PathBuf);
+                        impl Drop for UdsGuard {
+                            fn drop(&mut self) {
+                                let _ = std::fs::remove_file(&self.0);
+                            }
                         }
 
                         let uds = UnixListener::bind(&path)
                             .with_context(|| format!("failed to bind to {}", path.display()))?;
+                        let _guard = UdsGuard(path.clone().into());
+
                         let uds_stream = UnixListenerStream::new(uds);
 
                         tonic::transport::Server::builder()
