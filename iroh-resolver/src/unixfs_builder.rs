@@ -1,4 +1,4 @@
-use std::{fmt::Debug, pin::Pin};
+use std::{fmt::Debug, path::Path, pin::Pin};
 
 use crate::{
     chunker::{self, Chunker, DEFAULT_CHUNK_SIZE_LIMIT},
@@ -9,6 +9,7 @@ use anyhow::{anyhow, ensure, Result};
 use bytes::Bytes;
 use cid::{multihash::MultihashDigest, Cid};
 use futures::{Stream, StreamExt};
+use iroh_rpc_client::Client;
 use prost::Message;
 use tokio::io::AsyncRead;
 
@@ -296,6 +297,45 @@ impl FileBuilder {
             nodes: Box::pin(nodes),
         })
     }
+}
+
+/// Adds a single file.
+/// - storing the content using `rpc.store`
+/// - returns the root Cid
+/// - wraps into a UnixFs directory to presever the filename
+pub async fn add_file(path: &Path, rpc: &Client) -> Result<Cid> {
+    ensure!(path.is_file(), "provided path was not a file");
+
+    // wrap file in dir to preserve file name
+    let mut dir = DirectoryBuilder::new();
+    dir.name("");
+    let mut file = FileBuilder::new();
+    file.name(
+        path.file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or_default(),
+    );
+    let f = tokio::fs::File::open(path).await?;
+    let buf = tokio::io::BufReader::new(f);
+    file.content_reader(buf);
+    let file = file.build().await?;
+    dir.add_file(file);
+
+    let dir = dir.build().await?;
+
+    // encode and store
+    let mut root = None;
+    let parts = dir.encode();
+    tokio::pin!(parts);
+
+    let store = rpc.try_store()?;
+    while let Some(part) = parts.next().await {
+        let (cid, bytes) = part?;
+        store.put(cid, bytes, vec![]).await?;
+        root = Some(cid);
+    }
+
+    Ok(root.expect("missing root"))
 }
 
 #[cfg(test)]

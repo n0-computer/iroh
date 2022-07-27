@@ -29,6 +29,8 @@ async-stream = "0.3.3"
 criterion = { version = "0.3.5", features = ["async_tokio"] }
 tempfile = "3.3.0"
 tokio = { version = "1.18.0", features = ["rt", "macros", "rt-multi-thread"] }
+iroh-store = { path = "../iroh-store", default-features = false }
+iroh-rpc-types = { path = "../iroh-rpc-types", default-features = false }
 
 [build-dependencies]
 prost-build = "0.10"
@@ -38,3 +40,6 @@ default = ["rpc-grpc", "rpc-mem"]
 rpc-grpc = ["iroh-rpc-client/grpc", "iroh-metrics/rpc-grpc"]
 rpc-mem = ["iroh-rpc-client/mem"]
 
+[[bench]]
+name = "unixfs"
+harness = false
