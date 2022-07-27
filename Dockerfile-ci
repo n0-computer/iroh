@@ -21,6 +21,11 @@ RUN curl https://sh.rustup.rs -sSf | sh -s -- -y
 ENV PATH "$PATH:/root/.cargo/bin"
 ENV RUSTFLAGS "-C link-dead-code"
 
+# set CROSS_DOCKER_IN_DOCKER to inform `cross` that it is executed from within a container
+ENV CROSS_DOCKER_IN_DOCKER=true
+# install `cross`
+RUN cargo install cross
+
 RUN sudo bash -l -c 'echo $(rustc --print sysroot)/lib >> /etc/ld.so.conf'
 RUN sudo bash -l -c 'echo /usr/local/lib >> /etc/ld.so.conf'
 RUN sudo ldconfig
