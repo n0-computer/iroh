@@ -33,6 +33,20 @@ impl P2pClient {
         Ok(res.version)
     }
 
+    #[tracing::instrument(skip(self))]
+    pub async fn local_peer_id(&self) -> Result<PeerId> {
+        let res = self.backend.local_peer_id(()).await?;
+        let peer_id = PeerId::from_bytes(&res.peer_id[..])?;
+        Ok(peer_id)
+    }
+
+    #[tracing::instrument(skip(self))]
+    pub async fn external_addresses(&self) -> Result<Vec<Multiaddr>> {
+        let res = self.backend.external_addrs(()).await?;
+        let addrs = addrs_from_bytes(res.addrs)?;
+        Ok(addrs)
+    }
+
     // Fetches a block directly from the network.
     #[tracing::instrument(skip(self))]
     pub async fn fetch_bitswap(&self, cid: Cid, providers: HashSet<PeerId>) -> Result<Bytes> {
@@ -60,6 +74,24 @@ impl P2pClient {
             providers.insert(PeerId::from_bytes(&provider[..])?);
         }
         Ok(providers)
+    }
+
+    #[tracing::instrument(skip(self))]
+    pub async fn start_providing(&self, key: &Cid) -> Result<()> {
+        let req = Key {
+            key: key.hash().to_bytes(),
+        };
+        self.backend.start_providing(req).await?;
+        Ok(())
+    }
+
+    #[tracing::instrument(skip(self))]
+    pub async fn stop_providing(&self, key: &Cid) -> Result<()> {
+        let req = Key {
+            key: key.hash().to_bytes(),
+        };
+        self.backend.stop_providing(req).await?;
+        Ok(())
     }
 
     #[tracing::instrument(skip(self))]
