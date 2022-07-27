@@ -24,13 +24,8 @@ pub struct Sender {
 }
 
 impl Sender {
-    pub async fn new(
-        port: u16,
-        rpc_p2p_port: u16,
-        rpc_store_port: u16,
-        db_path: &Path,
-    ) -> Result<Self> {
-        let (p2p, events) = P2pNode::new(port, rpc_p2p_port, rpc_store_port, db_path).await?;
+    pub async fn new(port: u16, db_path: &Path) -> Result<Self> {
+        let (p2p, events) = P2pNode::new(port, db_path).await?;
         let (s, r) = bounded(1024);
 
         tokio::task::spawn(async move {
@@ -63,6 +58,8 @@ impl Sender {
 
         let (done_sender, done_receiver) = oneshot();
 
+        let p2p = self.p2p.rpc().try_p2p()?;
+        let store = self.p2p.rpc().try_store()?;
         let (root, num_parts) = {
             let parts = root_dir.encode();
             tokio::pin!(parts);
@@ -73,7 +70,7 @@ impl Sender {
                 let (cid, bytes) = part?;
                 num_parts += 1;
                 root_cid = Some(cid);
-                self.p2p.rpc().store.put(cid, bytes, vec![]).await?;
+                store.put(cid, bytes, vec![]).await?;
             }
             (root_cid.unwrap(), num_parts)
         };
@@ -81,15 +78,10 @@ impl Sender {
         let gossip_events = self.gossip_events.clone();
         let topic_hash = t.hash();
         let th = topic_hash.clone();
-        let rpc = self.p2p.rpc().clone();
 
         // subscribe to the topic, to receive responses
-        self.p2p
-            .rpc()
-            .p2p
-            .gossipsub_subscribe(topic_hash.clone())
-            .await?;
-
+        p2p.gossipsub_subscribe(topic_hash.clone()).await?;
+        let p2p2 = p2p.clone();
         let gossip_task = tokio::task::spawn(async move {
             let mut current_peer = None;
             while let Ok(event) = gossip_events.recv().await {
@@ -102,8 +94,7 @@ impl Sender {
                             let start =
                                 bincode::serialize(&SenderMessage::Start { root, num_parts })
                                     .expect("serialize failure");
-                            rpc.p2p
-                                .gossipsub_publish(topic.clone(), start.into())
+                            p2p2.gossipsub_publish(topic.clone(), start.into())
                                 .await
                                 .unwrap();
                         }
@@ -135,10 +126,7 @@ impl Sender {
             }
         });
 
-        let (peer_id, addrs) = self
-            .p2p
-            .rpc()
-            .p2p
+        let (peer_id, addrs) = p2p
             .get_listening_addrs()
             .await
             .context("getting p2p info")?;

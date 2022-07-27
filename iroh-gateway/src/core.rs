@@ -40,7 +40,9 @@ use crate::{
     error::GatewayError,
     headers::*,
     response::{get_response_format, GatewayResponse, ResponseFormat},
-    rpc, templates,
+    rpc,
+    rpc::Gateway,
+    templates,
 };
 
 #[derive(Debug)]
@@ -90,11 +92,12 @@ impl Core {
         metrics: Metrics,
         registry: &mut Registry,
     ) -> anyhow::Result<Self> {
+        let rpc_addr = config.rpc_addr.clone();
         tokio::spawn(async move {
             // TODO: handle error
-            rpc::new(config.rpc_addr).await
+            rpc::new(rpc_addr, Gateway::default()).await
         });
-        let rpc_client = RpcClient::new(&config.rpc_client).await?;
+        let rpc_client = RpcClient::new(config.rpc_client.clone()).await?;
         let mut templates = HashMap::new();
         templates.insert("dir_list".to_string(), templates::DIR_LIST.to_string());
         templates.insert("not_found".to_string(), templates::NOT_FOUND.to_string());
@@ -621,11 +624,11 @@ mod tests {
             false,
             false,
             0,
-            "0.0.0.0:0".parse().unwrap(),
+            "grpc://0.0.0.0:0".parse().unwrap(),
             RpcClientConfig {
-                gateway_addr: "0.0.0.0:0".parse().unwrap(),
-                p2p_addr: "0.0.0.0:0".parse().unwrap(),
-                store_addr: "0.0.0.0:0".parse().unwrap(),
+                gateway_addr: None,
+                p2p_addr: None,
+                store_addr: None,
             },
         );
         config.set_default_headers();

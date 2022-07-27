@@ -28,8 +28,6 @@ pub struct Store {
 
 struct InnerStore {
     content: RocksDb,
-    #[allow(dead_code)]
-    config: Config,
     next_id: AtomicU64,
     _cache: Cache,
     _rpc_client: RpcClient,
@@ -100,14 +98,13 @@ impl Store {
         })
         .await??;
 
-        let _rpc_client = RpcClient::new(&config.rpc_client)
+        let _rpc_client = RpcClient::new(config.rpc_client)
             .await
             .context("Error creating rpc client for store")?;
 
         Ok(Store {
             inner: Arc::new(InnerStore {
                 content: db,
-                config,
                 next_id: 1.into(),
                 _cache: cache,
                 _rpc_client,
@@ -151,7 +148,7 @@ impl Store {
         })
         .await??;
 
-        let _rpc_client = RpcClient::new(&config.rpc_client)
+        let _rpc_client = RpcClient::new(config.rpc_client)
             .await
             // TODO: first conflict between `anyhow` & `anyhow`
             // .map_err(|e| e.context("Error creating rpc client for store"))?;
@@ -160,7 +157,6 @@ impl Store {
         Ok(Store {
             inner: Arc::new(InnerStore {
                 content: db,
-                config,
                 next_id: next_id.into(),
                 _cache: cache,
                 _rpc_client,
@@ -439,6 +435,7 @@ mod tests {
 
     use iroh_metrics::config::Config as MetricsConfig;
     use iroh_rpc_client::Config as RpcClientConfig;
+    use iroh_rpc_types::Addr;
 
     use cid::multihash::{Code, MultihashDigest};
     const RAW: u64 = 0x55;
@@ -447,9 +444,10 @@ mod tests {
     async fn test_basics() {
         let dir = tempfile::tempdir().unwrap();
         let rpc_client = RpcClientConfig::default();
+        let (rpc_addr, _) = Addr::new_mem();
         let config = Config {
             path: dir.path().into(),
-            rpc_addr: rpc_client.store_addr,
+            rpc_addr,
             rpc_client,
             metrics: MetricsConfig::default(),
         };
@@ -488,9 +486,10 @@ mod tests {
     async fn test_reopen() {
         let dir = tempfile::tempdir().unwrap();
         let rpc_client = RpcClientConfig::default();
+        let (rpc_addr, _) = Addr::new_mem();
         let config = Config {
             path: dir.path().into(),
-            rpc_addr: rpc_client.store_addr,
+            rpc_addr,
             rpc_client,
             metrics: MetricsConfig::default(),
         };

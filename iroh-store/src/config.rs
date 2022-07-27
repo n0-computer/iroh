@@ -1,11 +1,10 @@
-use std::net::SocketAddr;
-use std::path::PathBuf;
-
 use config::{ConfigError, Map, Source, Value};
 use iroh_metrics::config::Config as MetricsConfig;
 use iroh_rpc_client::Config as RpcClientConfig;
+use iroh_rpc_types::store::{StoreClientAddr, StoreServerAddr};
 use iroh_util::insert_into_config_map;
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 
 /// CONFIG_FILE_NAME is the name of the optional config file located in the iroh home directory
 pub const CONFIG_FILE_NAME: &str = "store.config.toml";
@@ -19,20 +18,31 @@ pub const ENV_PREFIX: &str = "IROH_STORE";
 pub struct Config {
     /// The location of the content database.
     pub path: PathBuf,
-    pub rpc_addr: SocketAddr,
+    pub rpc_addr: StoreServerAddr,
     pub rpc_client: RpcClientConfig,
     pub metrics: MetricsConfig,
 }
 
 impl Config {
-    pub fn new(path: PathBuf) -> Self {
-        let rpc_client = RpcClientConfig::default();
+    pub fn new_with_rpc(
+        path: PathBuf,
+        server_addr: StoreServerAddr,
+        client_addr: StoreClientAddr,
+    ) -> Self {
         Self {
             path,
-            rpc_addr: rpc_client.store_addr,
-            rpc_client,
+            rpc_addr: server_addr,
+            rpc_client: RpcClientConfig {
+                store_addr: Some(client_addr),
+                ..Default::default()
+            },
             metrics: MetricsConfig::default(),
         }
+    }
+
+    pub fn new_grpc(path: PathBuf) -> Self {
+        let addr = "grpc://0.0.0.0:4402";
+        Self::new_with_rpc(path, addr.parse().unwrap(), addr.parse().unwrap())
     }
 }
 
@@ -63,7 +73,7 @@ mod tests {
     #[test]
     fn test_collect() {
         let path = PathBuf::new().join("test");
-        let default = Config::new(path);
+        let default = Config::new_grpc(path);
 
         let mut expect: Map<String, Value> = Map::new();
         expect.insert(
@@ -94,7 +104,7 @@ mod tests {
     #[test]
     fn test_build_config_from_struct() {
         let path = PathBuf::new().join("test");
-        let expect = Config::new(path);
+        let expect = Config::new_grpc(path);
         let got: Config = ConfigBuilder::builder()
             .add_source(expect.clone())
             .build()

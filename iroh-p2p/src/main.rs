@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use clap::Parser;
-use iroh_p2p::config::{Libp2pConfig, CONFIG_FILE_NAME, ENV_PREFIX};
+use iroh_p2p::config::{Config, CONFIG_FILE_NAME, ENV_PREFIX};
 use iroh_p2p::{metrics, DiskStorage, Keychain, Node};
 use iroh_util::{iroh_home_path, make_config};
 use prometheus_client::registry::Registry;
@@ -38,7 +38,7 @@ async fn main() -> anyhow::Result<()> {
     let sources = vec![iroh_home_path(CONFIG_FILE_NAME), args.cfg.clone()];
     let network_config = make_config(
         // default
-        Libp2pConfig::default(),
+        Config::default_grpc(),
         // potential config files
         sources,
         // env var prefix for this config

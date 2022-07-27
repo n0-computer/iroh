@@ -45,7 +45,7 @@ async fn main() -> anyhow::Result<()> {
     let sources = vec![iroh_home_path(CONFIG_FILE_NAME), args.cfg.clone()];
     let config = make_config(
         // default
-        Config::new(args.path.clone().unwrap_or_else(|| PathBuf::from(""))),
+        Config::new_grpc(args.path.clone().unwrap_or_else(|| PathBuf::from(""))),
         // potential config files
         sources,
         // env var prefix for this config
@@ -65,7 +65,7 @@ async fn main() -> anyhow::Result<()> {
     .await
     .expect("failed to initialize metrics");
 
-    let rpc_addr = config.rpc_addr;
+    let rpc_addr = config.rpc_addr.clone();
     let store = if config.path.exists() {
         info!("Opening store at {}", config.path.display());
         Store::open(config, store_metrics).await?

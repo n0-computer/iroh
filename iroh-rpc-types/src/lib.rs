@@ -1,7 +1,16 @@
-#[allow(clippy::all)]
+#[macro_use]
+mod macros;
+
 pub mod gateway;
 pub mod p2p;
 pub mod store;
+
+// Reexport for convenience.
+#[cfg(feature = "grpc")]
+pub use tonic::transport::NamedService;
+
 #[cfg(feature = "testing")]
-#[allow(clippy::all)]
 pub mod test;
+
+mod addr;
+pub use crate::addr::Addr;

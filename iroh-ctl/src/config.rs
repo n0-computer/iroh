@@ -10,10 +10,19 @@ pub const CONFIG_FILE_NAME: &str = "ctl.config.toml";
 /// environment variables
 pub const ENV_PREFIX: &str = "IROH_CTL";
 
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Config {
     pub rpc_client: RpcClientConfig,
     pub metrics: MetricsConfig,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            rpc_client: RpcClientConfig::default_grpc(),
+            metrics: Default::default(),
+        }
+    }
 }
 
 impl Source for Config {

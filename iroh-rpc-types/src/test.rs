@@ -1,1 +1,1 @@
-tonic::include_proto!("test");
+include_proto!("test");

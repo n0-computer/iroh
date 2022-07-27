@@ -1,44 +1,25 @@
-use std::net::SocketAddr;
-
-use anyhow::Result;
-use futures::Stream;
-
-use crate::backend::GatewayBackend;
+#[cfg(feature = "grpc")]
 use crate::status::{self, StatusRow};
+use anyhow::Result;
+#[cfg(feature = "grpc")]
+use futures::Stream;
+#[cfg(feature = "grpc")]
+use iroh_rpc_types::gateway::gateway_client::GatewayClient as GrpcGatewayClient;
+use iroh_rpc_types::{
+    gateway::{Gateway, GatewayClientAddr, GatewayClientBackend},
+    Addr,
+};
+#[cfg(feature = "grpc")]
+use tonic::transport::Endpoint;
+#[cfg(feature = "grpc")]
+use tonic_health::proto::health_client::HealthClient;
 
-// name that the health service registers the gateway client as
-// this is derived from the protobuf definition of a `GatewayServer`
-pub(crate) const SERVICE_NAME: &str = "gateway.Gateway";
-
-// the display name that we expect to see in the StatusTable
-pub(crate) const NAME: &str = "gateway";
-
-#[derive(Debug, Clone)]
-pub struct GatewayClient {
-    backend: GatewayBackend,
-}
+impl_client!(Gateway);
 
 impl GatewayClient {
-    pub async fn new(addr: SocketAddr) -> Result<Self> {
-        let backend = GatewayBackend::new(addr)?;
-
-        Ok(GatewayClient { backend })
-    }
-
     #[tracing::instrument(skip(self))]
     pub async fn version(&self) -> Result<String> {
-        let req = iroh_metrics::req::trace_tonic_req(());
-        let res = self.backend.client().clone().version(req).await?;
-        Ok(res.into_inner().version)
-    }
-
-    #[tracing::instrument(skip(self))]
-    pub async fn check(&self) -> StatusRow {
-        status::check(self.backend.health().clone(), SERVICE_NAME, NAME).await
-    }
-
-    #[tracing::instrument(skip(self))]
-    pub async fn watch(&self) -> impl Stream<Item = StatusRow> {
-        status::watch(self.backend.health().clone(), SERVICE_NAME, NAME).await
+        let res = self.backend.version(()).await?;
+        Ok(res.version)
     }
 }

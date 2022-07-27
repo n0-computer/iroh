@@ -33,7 +33,7 @@ pub enum DevCommands {
 pub async fn run_command(rpc: Client, g: Gateway) -> Result<()> {
     match g.command {
         GatewayCommands::Version => {
-            let v = rpc.gateway.version().await?;
+            let v = rpc.try_gateway()?.version().await?;
             println!("v{}", v);
         }
         GatewayCommands::Dev(dev) => match dev.command {

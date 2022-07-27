@@ -9,15 +9,37 @@ description = "RPC type definitions for iroh"
 
 
 [dependencies]
-tonic = "0.7.2"
 prost = "0.10.3"
 prost-types = "0.10.1"
+async-trait = "0.1.56"
+anyhow = "1.0.58"
+serde_with = "2.0.0"
+iroh-metrics = { path = "../iroh-metrics", default-features = false }
+
+tonic = { version = "0.7.2", optional = true }
+tonic-health = { version = "0.6.0", optional = true }
+async-channel = "1.6.1"
+tokio = { version = "1", optional = true, features = ["net"] }
+tokio-stream = { version = "0.1.9", optional = true, features = ["net"] }
+paste = "1.0.7"
 
 [build-dependencies]
 prost-build = "0.10.3"
-tonic-build = { version = "0.7.2", features = ["prost"] }
+tonic-build = { version = "0.7.2", features = ["prost"], optional = true }
 
 [features]
+default = ["grpc", "mem"]
+# GRPC based transport
+grpc = [
+  "tonic",
+  "tonic-build",
+  "tonic-health",
+  "iroh-metrics/rpc-grpc",
+  "tokio", "tokio-stream"
+]
+# Memory based transport
+mem = []
+
 # Builds and empty tonic server & client as well as associated protobufs
 # that can be used for testing
 testing = []

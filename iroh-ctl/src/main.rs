@@ -80,7 +80,7 @@ async fn main() -> anyhow::Result<()> {
     .await
     .expect("failed to initialize metrics");
 
-    let client = Client::new(&config.rpc_client).await?;
+    let client = Client::new(config.rpc_client).await?;
 
     match cli.command {
         Commands::Status { watch } => {

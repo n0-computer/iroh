@@ -8,6 +8,9 @@ description = "IPFS gateway"
 repository = "https://github.com/dignifiedquire/iroh"
 
 [dependencies]
+iroh-rpc-client = { path = "../iroh-rpc-client", default-features = false }
+iroh-rpc-types = { path = "../iroh-rpc-types", default-features = false }
+
 cid = "0.8.4"
 tokio = { version = "1.17.0", features = ["macros", "rt-multi-thread", "process"] }
 axum = "0.5.1"
@@ -17,11 +20,8 @@ serde_json = "1.0.78"
 serde_qs = "0.9.2"
 tower = { version = "0.4", features = ["util", "timeout", "load-shed", "limit"] }
 mime_guess = "2.0.4"
-iroh-metrics = { path = "../iroh-metrics" }
-iroh-rpc-types = { path = "../iroh-rpc-types" }
+iroh-metrics = { path = "../iroh-metrics", default-features = false }
 tracing = "0.1.33"
-tonic = "0.7.2"
-tonic-health = "0.6.0"
 names = { version = "0.13.0", default-features = false }
 git-version = "0.3.5"
 rand = "0.8.5"
@@ -29,7 +29,6 @@ tracing-opentelemetry = "0.17.2"
 opentelemetry = { version = "0.17.0", features = ["rt-tokio"] }
 time = "0.3.9"
 headers = "0.3.7"
-iroh-rpc-client = { path = "../iroh-rpc-client" }
 hyper = "0.14.19"
 libp2p = { version = "0.47", default-features = false }
 iroh-util = { path = "../iroh-util" }
@@ -51,6 +50,13 @@ dirs = "4.0.0"
 toml = "0.5.9"
 http-serde = "1.1.0"
 config = "0.13.1"
+async-trait = "0.1.56"
 
 [dev-dependencies]
 axum-macros = "0.2.0" # use #[axum_macros::debug_handler] for better error messages on handlers
+
+
+[features]
+default = ["rpc-grpc", "rpc-mem"]
+rpc-grpc = ["iroh-rpc-types/grpc", "iroh-rpc-client/grpc", "iroh-metrics/rpc-grpc"]
+rpc-mem = ["iroh-rpc-types/mem", "iroh-rpc-client/mem"]

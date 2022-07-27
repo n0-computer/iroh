@@ -25,13 +25,8 @@ pub struct Receiver {
 }
 
 impl Receiver {
-    pub async fn new(
-        port: u16,
-        rpc_p2p_port: u16,
-        rpc_store_port: u16,
-        db_path: &std::path::Path,
-    ) -> Result<Self> {
-        let (p2p, events) = P2pNode::new(port, rpc_p2p_port, rpc_store_port, db_path).await?;
+    pub async fn new(port: u16, db_path: &std::path::Path) -> Result<Self> {
+        let (p2p, events) = P2pNode::new(port, db_path).await?;
         let (s, r) = bounded(1024);
 
         let gossip_task = tokio::task::spawn(async move {
@@ -57,22 +52,12 @@ impl Receiver {
     pub async fn transfer_from_ticket(&self, ticket: &Ticket) -> Result<Transfer<'_>> {
         // Connect to the sender
         info!("connecting");
-        self.p2p
-            .rpc()
-            .p2p
-            .connect(ticket.peer_id, ticket.addrs.clone())
-            .await?;
-        self.p2p
-            .rpc()
-            .p2p
-            .gossipsub_add_explicit_peer(ticket.peer_id)
-            .await?;
+        let p2p = self.p2p.rpc().try_p2p()?;
+
+        p2p.connect(ticket.peer_id, ticket.addrs.clone()).await?;
+        p2p.gossipsub_add_explicit_peer(ticket.peer_id).await?;
         let topic = TopicHash::from_raw(&ticket.topic);
-        self.p2p
-            .rpc()
-            .p2p
-            .gossipsub_subscribe(topic.clone())
-            .await?;
+        p2p.gossipsub_subscribe(topic.clone()).await?;
         let gossip_messages = self.gossip_messages.clone();
         let expected_sender = ticket.peer_id;
         let resolver = self.p2p.resolver().clone();
@@ -134,7 +119,8 @@ impl Receiver {
                             } else {
                                 ReceiverMessage::FinishOk
                             };
-                            rpc.p2p
+                            rpc.try_p2p()
+                                .expect("missing p2p rpc")
                                 .gossipsub_publish(
                                     topic,
                                     bincode::serialize(&msg)

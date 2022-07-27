@@ -1,1 +1,6 @@
-tonic::include_proto!("gateway");
+include_proto!("gateway");
+
+proxy!(
+    Gateway,
+    version: () => VersionResponse
+);

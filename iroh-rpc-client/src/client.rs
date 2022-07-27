@@ -1,31 +1,55 @@
-use anyhow::{Context, Result};
-use async_stream::stream;
+use anyhow::{anyhow, Context, Result};
+#[cfg(feature = "grpc")]
 use futures::{Stream, StreamExt};
 
 use crate::config::Config;
 use crate::gateway::GatewayClient;
 use crate::network::P2pClient;
-use crate::status::StatusTable;
 use crate::store::StoreClient;
 
 #[derive(Debug, Clone)]
 pub struct Client {
-    pub gateway: GatewayClient,
-    pub p2p: P2pClient,
-    pub store: StoreClient,
+    pub gateway: Option<GatewayClient>,
+    pub p2p: Option<P2pClient>,
+    pub store: Option<StoreClient>,
 }
 
 impl Client {
-    pub async fn new(cfg: &Config) -> Result<Self> {
-        let gateway = GatewayClient::new(cfg.gateway_addr)
-            .await
-            .context("Could not create gateway rpc client")?;
-        let p2p = P2pClient::new(cfg.p2p_addr)
-            .await
-            .context("Could not create p2p rpc client")?;
-        let store = StoreClient::new(cfg.store_addr)
-            .await
-            .context("Could not create store rpc client")?;
+    pub async fn new(cfg: Config) -> Result<Self> {
+        let Config {
+            gateway_addr,
+            p2p_addr,
+            store_addr,
+        } = cfg;
+
+        let gateway = if let Some(addr) = gateway_addr {
+            Some(
+                GatewayClient::new(addr)
+                    .await
+                    .context("Could not create gateway rpc client")?,
+            )
+        } else {
+            None
+        };
+
+        let p2p = if let Some(addr) = p2p_addr {
+            Some(
+                P2pClient::new(addr)
+                    .await
+                    .context("Could not create p2p rpc client")?,
+            )
+        } else {
+            None
+        };
+        let store = if let Some(addr) = store_addr {
+            Some(
+                StoreClient::new(addr)
+                    .await
+                    .context("Could not create store rpc client")?,
+            )
+        } else {
+            None
+        };
 
         Ok(Client {
             gateway,
@@ -34,44 +58,74 @@ impl Client {
         })
     }
 
-    pub async fn check(&self) -> StatusTable {
-        StatusTable::new(
-            self.gateway.check().await,
-            self.p2p.check().await,
-            self.store.check().await,
-        )
+    pub fn try_p2p(&self) -> Result<&P2pClient> {
+        self.p2p
+            .as_ref()
+            .ok_or_else(|| anyhow!("missing rpc p2p connnection"))
     }
 
-    pub async fn watch(self) -> impl Stream<Item = StatusTable> {
-        stream! {
-            let mut status_table: StatusTable = Default::default();
-            let gateway_status = self.gateway.watch().await;
-            tokio::pin!(gateway_status);
-            let p2p_status = self.p2p.watch().await;
-            tokio::pin!(p2p_status);
-            let store_status = self.store.watch().await;
-            tokio::pin!(store_status);
-            loop {
-                tokio::select! {
-                    Some(status) = gateway_status.next() => {
-                        status_table.update(status).unwrap();
-                        yield status_table.clone();
-                    }
-                    Some(status) = p2p_status.next() => {
-                        status_table.update(status).unwrap();
-                        yield status_table.clone();
-                    }
-                    Some(status) = store_status.next() => {
-                        status_table.update(status).unwrap() ;
-                        yield status_table.clone();
-                    }
-                }
+    pub fn try_gateway(&self) -> Result<&GatewayClient> {
+        self.gateway
+            .as_ref()
+            .ok_or_else(|| anyhow!("missing rpc gateway connnection"))
+    }
+
+    pub fn try_store(&self) -> Result<&StoreClient> {
+        self.store
+            .as_ref()
+            .ok_or_else(|| anyhow!("missing rpc store connnection"))
+    }
+
+    #[cfg(feature = "grpc")]
+    pub async fn check(&self) -> crate::status::StatusTable {
+        let g = if let Some(ref g) = self.gateway {
+            Some(g.check().await)
+        } else {
+            None
+        };
+        let p = if let Some(ref p) = self.p2p {
+            Some(p.check().await)
+        } else {
+            None
+        };
+        let s = if let Some(ref s) = self.store {
+            Some(s.check().await)
+        } else {
+            None
+        };
+        crate::status::StatusTable::new(g, p, s)
+    }
+
+    #[cfg(feature = "grpc")]
+    pub async fn watch(self) -> impl Stream<Item = crate::status::StatusTable> {
+        async_stream::stream! {
+            let mut status_table: crate::status::StatusTable = Default::default();
+            let mut streams = Vec::new();
+
+            if let Some(ref g) = self.gateway {
+                let g = g.watch().await;
+                streams.push(g.boxed());
+            }
+            if let Some(ref p) = self.p2p {
+                let p = p.watch().await;
+                streams.push(p.boxed());
+            }
+            if let Some(ref s) = self.store {
+                let s = s.watch().await;
+                streams.push(s.boxed());
+            }
+
+            let mut stream = futures::stream::select_all(streams);
+            while let Some(status) = stream.next().await {
+                status_table.update(status).unwrap();
+                yield status_table.clone();
             }
         }
     }
 }
 
-#[cfg(test)]
+// TODO: write tests for mem transport
+#[cfg(all(test, feature = "grpc"))]
 mod tests {
     use super::*;
     use std::net::SocketAddr;
@@ -115,31 +169,47 @@ mod tests {
 
     #[tokio::test]
     async fn client_status() {
-        let cfg = Config::default();
+        let cfg = Config::default_grpc();
 
         let gateway_name = gateway::NAME;
         let p2p_name = network::NAME;
         let store_name = store::NAME;
 
         // make the services with the expected service names
-        let (mut gateway_reporter, gateway_task) =
-            make_service(gateway::SERVICE_NAME, cfg.gateway_addr)
-                .await
-                .unwrap();
-        let (mut p2p_reporter, p2p_task) = make_service(network::SERVICE_NAME, cfg.p2p_addr)
-            .await
-            .unwrap();
-        let (mut store_reporter, store_task) = make_service(store::SERVICE_NAME, cfg.store_addr)
-            .await
-            .unwrap();
-        let client = Client::new(&cfg).await.unwrap();
+        let (mut gateway_reporter, gateway_task) = make_service(
+            gateway::SERVICE_NAME,
+            cfg.gateway_addr
+                .as_ref()
+                .unwrap()
+                .try_as_socket_addr()
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+        let (mut p2p_reporter, p2p_task) = make_service(
+            network::SERVICE_NAME,
+            cfg.p2p_addr.as_ref().unwrap().try_as_socket_addr().unwrap(),
+        )
+        .await
+        .unwrap();
+        let (mut store_reporter, store_task) = make_service(
+            store::SERVICE_NAME,
+            cfg.store_addr
+                .as_ref()
+                .unwrap()
+                .try_as_socket_addr()
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+        let client = Client::new(cfg).await.unwrap();
 
         // test `check`
         // expect the names to be the hard-coded display names
         let mut expect = StatusTable::new(
-            StatusRow::new(gateway_name, 1, ServiceStatus::Serving),
-            StatusRow::new(p2p_name, 1, ServiceStatus::Serving),
-            StatusRow::new(store_name, 1, ServiceStatus::Serving),
+            Some(StatusRow::new(gateway_name, 1, ServiceStatus::Serving)),
+            Some(StatusRow::new(p2p_name, 1, ServiceStatus::Serving)),
+            Some(StatusRow::new(store_name, 1, ServiceStatus::Serving)),
         );
         let mut got = client.check().await;
         assert_eq!(expect, got);
