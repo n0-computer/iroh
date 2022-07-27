@@ -5,7 +5,7 @@ macro_rules! proxy {
             pub async fn serve<T: $label>(addr: [<$label ServerAddr>], source: T) -> anyhow::Result<()> {
                 match addr {
                     #[cfg(feature = "grpc")]
-                    crate::Addr::GrpcHttp2(addr) => {
+                    $crate::Addr::GrpcHttp2(addr) => {
                         let (mut health_reporter, health_service) = tonic_health::server::health_reporter();
                         health_reporter
                             .set_serving::<[<$label:lower _server>]::[<$label Server>]<T>>()
@@ -20,7 +20,7 @@ macro_rules! proxy {
                         Ok(())
                     }
                     #[cfg(all(feature = "grpc", unix))]
-                    crate::Addr::GrpcUds(path) => {
+                    $crate::Addr::GrpcUds(path) => {
                         use anyhow::Context;
                         use tokio::net::UnixListener;
                         use tokio_stream::wrappers::UnixListenerStream;
@@ -50,7 +50,7 @@ macro_rules! proxy {
                         Ok(())
                     }
                     #[cfg(feature = "mem")]
-                    crate::Addr::Mem(sender, receiver) => {
+                    $crate::Addr::Mem(sender, receiver) => {
                         while let Ok(msg) = receiver.recv().await {
                             match msg {
                                 $(
@@ -68,8 +68,8 @@ macro_rules! proxy {
             }
 
 
-            pub type [<$label ServerAddr>] = crate::Addr<[<$label Request>], [<$label Response>]>;
-            pub type [<$label ClientAddr>] = crate::Addr<[<$label Response>], [<$label Request>]>;
+            pub type [<$label ServerAddr>] = $crate::Addr<[<$label Request>], [<$label Response>]>;
+            pub type [<$label ClientAddr>] = $crate::Addr<[<$label Response>], [<$label Request>]>;
 
             #[derive(Debug, Clone)]
             pub enum [<$label ClientBackend>] {
