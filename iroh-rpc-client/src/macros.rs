@@ -5,7 +5,7 @@ macro_rules! impl_client {
             /// Name that the health service registers the client,
             /// as this is derived from the protobuf definition.
             #[cfg(feature = "grpc")]
-            pub(crate) const SERVICE_NAME: &str = stringify!([<$label:lower $label>]);
+            pub(crate) const SERVICE_NAME: &str = stringify!([<$label:lower>].[<$label>]);
 
             /// The display name that we expect to see in the StatusTable.
             #[cfg(feature = "grpc")]
