@@ -181,18 +181,20 @@ impl Out {
         }
     }
 
-    pub fn pretty<T: ContentLoader>(self, loader: T, om: OutMetrics) -> OutPrettyReader<T> {
+    pub fn pretty<T: ContentLoader>(self, loader: T, om: OutMetrics) -> Result<OutPrettyReader<T>> {
         let pos = 0;
         match self.content {
-            OutContent::DagPb(_, bytes) => OutPrettyReader::DagPb(BytesReader { pos, bytes, om }),
+            OutContent::DagPb(_, bytes) => {
+                Ok(OutPrettyReader::DagPb(BytesReader { pos, bytes, om }))
+            }
             OutContent::DagCbor(_, bytes) => {
-                OutPrettyReader::DagCbor(BytesReader { pos, bytes, om })
+                Ok(OutPrettyReader::DagCbor(BytesReader { pos, bytes, om }))
             }
             OutContent::DagJson(_, bytes) => {
-                OutPrettyReader::DagJson(BytesReader { pos, bytes, om })
+                Ok(OutPrettyReader::DagJson(BytesReader { pos, bytes, om }))
             }
-            OutContent::Raw(_, bytes) => OutPrettyReader::Raw(BytesReader { pos, bytes, om }),
-            OutContent::Unixfs(node) => OutPrettyReader::Unixfs(node.pretty(loader, om)),
+            OutContent::Raw(_, bytes) => Ok(OutPrettyReader::Raw(BytesReader { pos, bytes, om })),
+            OutContent::Unixfs(node) => Ok(OutPrettyReader::Unixfs(node.into_reader(loader, om)?)),
         }
     }
 }
@@ -495,8 +497,8 @@ impl<T: ContentLoader> Resolver<T> {
         resolved_path: &mut Vec<Cid>,
         part: &str,
     ) -> Result<()> {
-        match current.typ() {
-            Some(DataType::Directory) => {
+        match current {
+            UnixfsNode::Directory(_) => {
                 let next_link = current
                     .get_link_by_name(&part)
                     .await?
@@ -507,11 +509,12 @@ impl<T: ContentLoader> Resolver<T> {
 
                 *current = next_node;
             }
-            Some(DataType::HamtShard) => {
+            UnixfsNode::HamtShard(node) => {
+                println!("hamt shard {:?} {:?}", node.hash_type(), node.fanout());
                 todo!()
             }
-            ty => {
-                bail!("unexpected unixfs type {:?}", ty);
+            _ => {
+                bail!("unexpected unixfs type {:?}", current.typ());
             }
         }
 
@@ -986,8 +989,12 @@ mod tests {
                 let new_ipld = resolver.resolve(path.parse().unwrap()).await.unwrap();
                 let m = new_ipld.metadata().clone();
 
-                let out_bytes =
-                    read_to_vec(new_ipld.pretty(loader.clone(), OutMetrics::default())).await;
+                let out_bytes = read_to_vec(
+                    new_ipld
+                        .pretty(loader.clone(), OutMetrics::default())
+                        .unwrap(),
+                )
+                .await;
                 let out_ipld: Ipld = codec.decode(&out_bytes).unwrap();
                 assert_eq!(out_ipld, Ipld::String("Foo".to_string()));
 
@@ -1010,8 +1017,12 @@ mod tests {
                 let new_ipld = resolver.resolve(path.parse().unwrap()).await.unwrap();
                 let m = new_ipld.metadata().clone();
 
-                let out_bytes =
-                    read_to_vec(new_ipld.pretty(loader.clone(), OutMetrics::default())).await;
+                let out_bytes = read_to_vec(
+                    new_ipld
+                        .pretty(loader.clone(), OutMetrics::default())
+                        .unwrap(),
+                )
+                .await;
                 let out_ipld: Ipld = codec.decode(&out_bytes).unwrap();
                 assert_eq!(out_ipld, Ipld::Integer(1));
 
@@ -1100,7 +1111,11 @@ mod tests {
 
             if let OutContent::Unixfs(node) = ipld_foo.content {
                 assert_eq!(
-                    read_to_string(node.pretty(loader.clone(), OutMetrics::default(),)).await,
+                    read_to_string(
+                        node.into_reader(loader.clone(), OutMetrics::default())
+                            .unwrap()
+                    )
+                    .await,
                     "bar\nhello.txt\n"
                 );
             } else {
@@ -1129,7 +1144,11 @@ mod tests {
 
             if let OutContent::Unixfs(node) = ipld_hello_txt.content {
                 assert_eq!(
-                    read_to_string(node.pretty(loader.clone(), OutMetrics::default(),)).await,
+                    read_to_string(
+                        node.into_reader(loader.clone(), OutMetrics::default())
+                            .unwrap()
+                    )
+                    .await,
                     "hello\n"
                 );
             } else {
@@ -1152,7 +1171,11 @@ mod tests {
 
             if let OutContent::Unixfs(node) = ipld_hello_txt.content {
                 assert_eq!(
-                    read_to_string(node.pretty(loader.clone(), OutMetrics::default(),)).await,
+                    read_to_string(
+                        node.into_reader(loader.clone(), OutMetrics::default())
+                            .unwrap()
+                    )
+                    .await,
                     "hello\n"
                 );
             } else {
@@ -1184,7 +1207,11 @@ mod tests {
 
             if let OutContent::Unixfs(node) = ipld_bar.content {
                 assert_eq!(
-                    read_to_string(node.pretty(loader.clone(), OutMetrics::default(),)).await,
+                    read_to_string(
+                        node.into_reader(loader.clone(), OutMetrics::default())
+                            .unwrap()
+                    )
+                    .await,
                     "bar.txt\n"
                 );
             } else {
@@ -1212,7 +1239,11 @@ mod tests {
 
             if let OutContent::Unixfs(node) = ipld_bar_txt.content {
                 assert_eq!(
-                    read_to_string(node.pretty(loader.clone(), OutMetrics::default(),)).await,
+                    read_to_string(
+                        node.into_reader(loader.clone(), OutMetrics::default())
+                            .unwrap()
+                    )
+                    .await,
                     "world\n"
                 );
             } else {
@@ -1362,7 +1393,11 @@ mod tests {
 
             if let OutContent::Unixfs(node) = ipld_foo.content {
                 assert_eq!(
-                    read_to_string(node.pretty(loader.clone(), OutMetrics::default(),)).await,
+                    read_to_string(
+                        node.into_reader(loader.clone(), OutMetrics::default())
+                            .unwrap()
+                    )
+                    .await,
                     "bar\nhello.txt\n"
                 );
             } else {
@@ -1378,7 +1413,11 @@ mod tests {
 
             if let OutContent::Unixfs(node) = ipld_hello_txt.content {
                 assert_eq!(
-                    read_to_string(node.pretty(loader.clone(), OutMetrics::default(),)).await,
+                    read_to_string(
+                        node.into_reader(loader.clone(), OutMetrics::default())
+                            .unwrap()
+                    )
+                    .await,
                     "hello\n"
                 );
             } else {
@@ -1402,7 +1441,11 @@ mod tests {
 
             if let OutContent::Unixfs(node) = ipld_bar.content {
                 assert_eq!(
-                    read_to_string(node.pretty(loader.clone(), OutMetrics::default(),)).await,
+                    read_to_string(
+                        node.into_reader(loader.clone(), OutMetrics::default())
+                            .unwrap()
+                    )
+                    .await,
                     "bar.txt\n"
                 );
             } else {
@@ -1418,7 +1461,11 @@ mod tests {
 
             if let OutContent::Unixfs(node) = ipld_bar_txt.content {
                 assert_eq!(
-                    read_to_string(node.pretty(loader.clone(), OutMetrics::default(),)).await,
+                    read_to_string(
+                        node.into_reader(loader.clone(), OutMetrics::default())
+                            .unwrap()
+                    )
+                    .await,
                     "world\n"
                 );
             } else {
@@ -1475,8 +1522,11 @@ mod tests {
             assert_eq!(m.resolved_path, vec![root_cid_str.parse().unwrap(),]);
 
             if let OutContent::Unixfs(node) = ipld_readme.content {
-                let content =
-                    read_to_string(node.pretty(loader.clone(), OutMetrics::default())).await;
+                let content = read_to_string(
+                    node.into_reader(loader.clone(), OutMetrics::default())
+                        .unwrap(),
+                )
+                .await;
                 print!("{}", content);
                 assert_eq!(content.len(), 426);
                 assert!(content.starts_with("# iroh"));
@@ -1631,7 +1681,11 @@ mod tests {
 
             if let OutContent::Unixfs(node) = ipld_hello_txt.content {
                 assert_eq!(
-                    read_to_string(node.pretty(loader.clone(), OutMetrics::default(),)).await,
+                    read_to_string(
+                        node.into_reader(loader.clone(), OutMetrics::default())
+                            .unwrap()
+                    )
+                    .await,
                     "hello\n"
                 );
             } else {
@@ -1676,7 +1730,11 @@ mod tests {
 
             if let OutContent::Unixfs(node) = ipld_bar_txt.content {
                 assert_eq!(
-                    read_to_string(node.pretty(loader.clone(), OutMetrics::default(),)).await,
+                    read_to_string(
+                        node.into_reader(loader.clone(), OutMetrics::default())
+                            .unwrap()
+                    )
+                    .await,
                     "world\n"
                 );
             } else {
@@ -1704,7 +1762,11 @@ mod tests {
 
             if let OutContent::Unixfs(node) = ipld_bar_txt.content {
                 assert_eq!(
-                    read_to_string(node.pretty(loader.clone(), OutMetrics::default(),)).await,
+                    read_to_string(
+                        node.into_reader(loader.clone(), OutMetrics::default())
+                            .unwrap()
+                    )
+                    .await,
                     "./bar.txt"
                 );
             } else {
@@ -1732,7 +1794,11 @@ mod tests {
 
             if let OutContent::Unixfs(node) = ipld_bar_txt.content {
                 assert_eq!(
-                    read_to_string(node.pretty(loader.clone(), OutMetrics::default(),)).await,
+                    read_to_string(
+                        node.into_reader(loader.clone(), OutMetrics::default())
+                            .unwrap()
+                    )
+                    .await,
                     "../../hello.txt"
                 );
             } else {
@@ -1760,7 +1826,11 @@ mod tests {
 
             if let OutContent::Unixfs(node) = ipld_bar_txt.content {
                 assert_eq!(
-                    read_to_string(node.pretty(loader.clone(), OutMetrics::default(),)).await,
+                    read_to_string(
+                        node.into_reader(loader.clone(), OutMetrics::default())
+                            .unwrap()
+                    )
+                    .await,
                     "../hello.txt"
                 );
             } else {
@@ -1778,7 +1848,11 @@ mod tests {
 
             if let OutContent::Unixfs(node) = ipld_bar_txt.content {
                 assert_eq!(
-                    read_to_string(node.pretty(loader.clone(), OutMetrics::default(),)).await,
+                    read_to_string(
+                        node.into_reader(loader.clone(), OutMetrics::default())
+                            .unwrap()
+                    )
+                    .await,
                     "../hello.txt"
                 );
             } else {
@@ -1862,7 +1936,11 @@ mod tests {
 
             if let OutContent::Unixfs(node) = ipld_99_txt.content {
                 assert_eq!(
-                    read_to_string(node.pretty(loader.clone(), OutMetrics::default(),)).await,
+                    read_to_string(
+                        node.into_reader(loader.clone(), OutMetrics::default())
+                            .unwrap()
+                    )
+                    .await,
                     "9999"
                 );
             } else {

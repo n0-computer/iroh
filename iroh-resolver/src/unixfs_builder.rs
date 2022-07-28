@@ -12,7 +12,7 @@ use tokio::io::AsyncRead;
 use crate::{
     chunker::{self, Chunker, DEFAULT_CHUNK_SIZE_LIMIT},
     codecs::Codec,
-    unixfs::{dag_pb, unixfs_pb, DataType, UnixfsNode},
+    unixfs::{dag_pb, unixfs_pb, DataType, Node, UnixfsNode},
 };
 
 /// Construct a UnixFS directory.
@@ -98,7 +98,7 @@ impl Directory {
             };
             let outer = encode_unixfs_pb(&inner, links)?;
 
-            let node = UnixfsNode::Pb { outer, inner };
+            let node = UnixfsNode::Directory(Node { outer, inner });
             let bytes = node.encode()?;
             let cid = Cid::new_v1(Codec::DagPb as _, cid::multihash::Code::Sha2_256.digest(&bytes));
             yield (cid, bytes)
@@ -226,7 +226,7 @@ impl File {
                     ..Default::default()
                 };
                 let outer = encode_unixfs_pb(&inner, links)?;
-                let node = UnixfsNode::Pb { outer, inner };
+                let node = UnixfsNode::Directory(Node { outer, inner });
                 let bytes = node.encode()?;
                 let cid = Cid::new_v1(Codec::DagPb as _, cid::multihash::Code::Sha2_256.digest(&bytes));
                 yield (cid, bytes)
@@ -289,7 +289,7 @@ impl FileBuilder {
         let nodes = self.chunker.chunks(reader).map(|chunk| match chunk {
             Ok(chunk) => {
                 let data = chunk.freeze();
-                Ok(UnixfsNode::Raw { data })
+                Ok(UnixfsNode::Raw(data))
             }
             Err(err) => Err(err.into()),
         });
