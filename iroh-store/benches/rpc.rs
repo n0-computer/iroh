@@ -72,7 +72,6 @@ pub fn put_benchmark(c: &mut Criterion) {
 
                     let config = Config {
                         path: dir.path().join("db"),
-                        rpc_addr: server_addr.clone(),
                         rpc_client: rpc_client.clone(),
                         metrics: MetricsConfig::default(),
                     };
@@ -80,9 +79,7 @@ pub fn put_benchmark(c: &mut Criterion) {
                     let (_task, rpc) = executor.block_on(async {
                         let store = Store::create(config, metrics).await.unwrap();
                         let task = executor.spawn(async move {
-                            iroh_store::rpc::new(server_addr.clone(), store)
-                                .await
-                                .unwrap()
+                            iroh_store::rpc::new(server_addr, store).await.unwrap()
                         });
                         // wait for a moment until the transport is setup
                         // TODO: signal this more clearly
@@ -130,7 +127,6 @@ pub fn get_benchmark(c: &mut Criterion) {
 
                     let config = Config {
                         path: dir.path().join("db"),
-                        rpc_addr: server_addr.clone(),
                         rpc_client: rpc_client.clone(),
                         metrics: MetricsConfig::default(),
                     };
@@ -138,9 +134,7 @@ pub fn get_benchmark(c: &mut Criterion) {
                     let (_task, rpc) = executor.block_on(async {
                         let store = Store::create(config, metrics).await.unwrap();
                         let task = executor.spawn(async move {
-                            iroh_store::rpc::new(server_addr.clone(), store)
-                                .await
-                                .unwrap()
+                            iroh_store::rpc::new(server_addr, store).await.unwrap()
                         });
                         // wait for a moment until the transport is setup
                         // TODO: signal this more clearly

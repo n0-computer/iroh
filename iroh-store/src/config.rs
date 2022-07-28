@@ -1,7 +1,11 @@
+use anyhow::{bail, Result};
 use config::{ConfigError, Map, Source, Value};
 use iroh_metrics::config::Config as MetricsConfig;
 use iroh_rpc_client::Config as RpcClientConfig;
-use iroh_rpc_types::store::{StoreClientAddr, StoreServerAddr};
+use iroh_rpc_types::{
+    store::{StoreClientAddr, StoreServerAddr},
+    Addr,
+};
 use iroh_util::insert_into_config_map;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -14,24 +18,18 @@ pub const CONFIG_FILE_NAME: &str = "store.config.toml";
 pub const ENV_PREFIX: &str = "IROH_STORE";
 
 /// The configuration for the store.
-#[derive(PartialEq, Debug, Clone, Deserialize, Serialize)]
+#[derive(PartialEq, Debug, Deserialize, Serialize, Clone)]
 pub struct Config {
     /// The location of the content database.
     pub path: PathBuf,
-    pub rpc_addr: StoreServerAddr,
     pub rpc_client: RpcClientConfig,
     pub metrics: MetricsConfig,
 }
 
 impl Config {
-    pub fn new_with_rpc(
-        path: PathBuf,
-        server_addr: StoreServerAddr,
-        client_addr: StoreClientAddr,
-    ) -> Self {
+    pub fn new_with_rpc(path: PathBuf, client_addr: StoreClientAddr) -> Self {
         Self {
             path,
-            rpc_addr: server_addr,
             rpc_client: RpcClientConfig {
                 store_addr: Some(client_addr),
                 ..Default::default()
@@ -40,9 +38,26 @@ impl Config {
         }
     }
 
+    #[cfg(feature = "rpc-grpc")]
     pub fn new_grpc(path: PathBuf) -> Self {
         let addr = "grpc://0.0.0.0:4402";
-        Self::new_with_rpc(path, addr.parse().unwrap(), addr.parse().unwrap())
+        Self::new_with_rpc(path, addr.parse().unwrap())
+    }
+
+    /// Derive server addr for non memory addrs.
+    pub fn server_rpc_addr(&self) -> Result<Option<StoreServerAddr>> {
+        self.rpc_client
+            .store_addr
+            .as_ref()
+            .map(|addr| match addr {
+                #[cfg(feature = "rpc-grpc")]
+                Addr::GrpcHttp2(addr) => Ok(Addr::GrpcHttp2(*addr)),
+                #[cfg(feature = "rpc-grpc")]
+                Addr::GrpcUds(path) => Ok(Addr::GrpcUds(path.clone())),
+                #[cfg(feature = "rpc-mem")]
+                Addr::Mem(_) => bail!("can not derive rpc_addr for mem addr"),
+            })
+            .transpose()
     }
 }
 
@@ -57,7 +72,6 @@ impl Source for Config {
             .to_str()
             .ok_or_else(|| ConfigError::Foreign("No `path` set. Path is required.".into()))?;
         insert_into_config_map(&mut map, "path", path);
-        insert_into_config_map(&mut map, "rpc_addr", self.rpc_addr.to_string());
         insert_into_config_map(&mut map, "rpc_client", self.rpc_client.collect()?);
         insert_into_config_map(&mut map, "metrics", self.metrics.collect()?);
 
@@ -76,10 +90,6 @@ mod tests {
         let default = Config::new_grpc(path);
 
         let mut expect: Map<String, Value> = Map::new();
-        expect.insert(
-            "rpc_addr".to_string(),
-            Value::new(None, default.rpc_addr.to_string()),
-        );
         expect.insert(
             "rpc_client".to_string(),
             Value::new(None, default.rpc_client.collect().unwrap()),

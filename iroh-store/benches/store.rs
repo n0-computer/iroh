@@ -5,7 +5,6 @@ use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criteri
 use iroh_metrics::config::Config as MetricsConfig;
 use iroh_metrics::store::Metrics;
 use iroh_rpc_client::Config as RpcClientConfig;
-use iroh_rpc_types::Addr;
 use iroh_store::{Config, Store};
 use tokio::runtime::Runtime;
 
@@ -26,10 +25,8 @@ pub fn put_benchmark(c: &mut Criterion) {
                 let executor = Runtime::new().unwrap();
                 let dir = tempfile::tempdir().unwrap();
                 let rpc_client = RpcClientConfig::default();
-                let (rpc_addr, _) = Addr::new_mem();
                 let config = Config {
                     path: dir.path().into(),
-                    rpc_addr,
                     rpc_client,
                     metrics: MetricsConfig::default(),
                 };
@@ -57,10 +54,8 @@ pub fn get_benchmark(c: &mut Criterion) {
                 let executor = Runtime::new().unwrap();
                 let dir = tempfile::tempdir().unwrap();
                 let rpc_client = RpcClientConfig::default();
-                let (rpc_addr, _) = Addr::new_mem();
                 let config = Config {
                     path: dir.path().into(),
-                    rpc_addr,
                     rpc_client,
                     metrics: MetricsConfig::default(),
                 };

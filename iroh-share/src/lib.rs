@@ -38,6 +38,7 @@ mod tests {
     use bytes::Bytes;
     use futures::TryStreamExt;
     use iroh_resolver::unixfs_builder::{DirectoryBuilder, FileBuilder};
+    use rand::RngCore;
     use tokio::io::AsyncReadExt;
     use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
@@ -63,7 +64,9 @@ mod tests {
         let sender_db = sender_dir.path().join("db");
 
         let sender = s::Sender::new(9990, &sender_db).await.context("s:new")?;
-        let bytes = Bytes::from(vec![1u8; 5 * 1024]);
+        let mut bytes = vec![0u8; 5 * 1024 * 1024 - 8];
+        rand::thread_rng().fill_bytes(&mut bytes);
+        let bytes = Bytes::from(bytes);
         let sender_transfer = sender
             .transfer_from_data("foo.jpg", bytes.clone())
             .await
@@ -88,14 +91,6 @@ mod tests {
         let files: Vec<_> = data.read_dir().unwrap().collect::<Result<_>>()?;
         assert_eq!(files.len(), 1);
 
-        // Check progress
-        {
-            let progress = receiver_transfer.progress()?;
-            let progress: Vec<_> = progress.try_collect().await.unwrap();
-            assert_eq!(progress.len(), 2);
-            assert_eq!(progress[0], ProgressEvent::Piece { index: 1, total: 2 });
-            assert_eq!(progress[1], ProgressEvent::Piece { index: 2, total: 2 });
-        }
         let file = &files[0];
         assert_eq!(file.name.unwrap(), "foo.jpg");
 
@@ -104,12 +99,31 @@ mod tests {
         file.pretty().read_to_end(&mut content).await?;
         assert_eq!(&content, &bytes);
 
+        // Check progress
+        {
+            let progress = receiver_transfer.progress()?;
+            let progress: Vec<_> = progress.try_collect().await.unwrap();
+            assert_eq!(progress.len(), 22);
+            assert_eq!(
+                progress[0],
+                ProgressEvent::Piece {
+                    index: 1,
+                    total: 22
+                }
+            );
+            assert_eq!(
+                progress[1],
+                ProgressEvent::Piece {
+                    index: 2,
+                    total: 22
+                }
+            );
+        }
+
         // wait for the sender to report done
         println!("waiting for done");
         sender_transfer.done().await?;
-
-        sender.close().await?;
-        receiver.close().await?;
+        receiver_transfer.finish().await?;
 
         Ok(())
     }
@@ -128,7 +142,9 @@ mod tests {
         dir_builder.add_file(file.build().await?);
 
         let mut file = FileBuilder::new();
-        tokio::fs::write(sender_dir.path().join("baz.txt"), vec![1; 1024 * 1000]).await?;
+        let mut bytes = vec![0u8; 5 * 1024 * 1024 - 8];
+        rand::thread_rng().fill_bytes(&mut bytes);
+        tokio::fs::write(sender_dir.path().join("baz.txt"), &bytes).await?;
         let f = tokio::fs::File::open(sender_dir.path().join("baz.txt")).await?;
         file.name("baz.txt").content_reader(f);
         dir_builder.add_file(file.build().await?);
@@ -155,20 +171,6 @@ mod tests {
         let data = receiver_transfer.recv().await.context("r: recv")?;
         assert!(data.is_dir());
 
-        // Check progress
-        {
-            let progress = receiver_transfer.progress()?;
-            let progress: Vec<_> = progress.try_collect().await.unwrap();
-            assert_eq!(progress.len(), 7);
-            assert_eq!(progress[0], ProgressEvent::Piece { index: 1, total: 7 });
-            assert_eq!(progress[1], ProgressEvent::Piece { index: 2, total: 7 });
-            assert_eq!(progress[2], ProgressEvent::Piece { index: 3, total: 7 });
-            assert_eq!(progress[3], ProgressEvent::Piece { index: 4, total: 7 });
-            assert_eq!(progress[4], ProgressEvent::Piece { index: 5, total: 7 });
-            assert_eq!(progress[5], ProgressEvent::Piece { index: 6, total: 7 });
-            assert_eq!(progress[6], ProgressEvent::Piece { index: 7, total: 7 });
-        }
-
         let files: Vec<_> = data.read_dir().unwrap().collect::<Result<_>>()?;
         assert_eq!(files.len(), 2);
         {
@@ -189,14 +191,68 @@ mod tests {
                 .read_to_end(&mut file_content)
                 .await
                 .context("read_to_end")?;
-            assert_eq!(&file_content, &vec![1; 1024 * 1000]);
+            assert_eq!(&file_content, &bytes);
+        }
+
+        // Check progress
+        {
+            let progress = receiver_transfer.progress()?;
+            let progress: Vec<_> = progress.try_collect().await.unwrap();
+            assert_eq!(progress.len(), 23);
+            assert_eq!(
+                progress[0],
+                ProgressEvent::Piece {
+                    index: 1,
+                    total: 23
+                }
+            );
+            assert_eq!(
+                progress[1],
+                ProgressEvent::Piece {
+                    index: 2,
+                    total: 23
+                }
+            );
+            assert_eq!(
+                progress[2],
+                ProgressEvent::Piece {
+                    index: 3,
+                    total: 23
+                }
+            );
+            assert_eq!(
+                progress[3],
+                ProgressEvent::Piece {
+                    index: 4,
+                    total: 23
+                }
+            );
+            assert_eq!(
+                progress[4],
+                ProgressEvent::Piece {
+                    index: 5,
+                    total: 23
+                }
+            );
+            assert_eq!(
+                progress[5],
+                ProgressEvent::Piece {
+                    index: 6,
+                    total: 23
+                }
+            );
+            assert_eq!(
+                progress[6],
+                ProgressEvent::Piece {
+                    index: 7,
+                    total: 23
+                }
+            );
         }
 
         // wait for the sender to report done
         sender_transfer.done().await?;
-
-        sender.close().await?;
-        receiver.close().await?;
+        receiver_transfer.finish().await?;
 
         Ok(())
     }

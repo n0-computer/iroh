@@ -2,7 +2,6 @@ use std::collections::{HashMap, HashSet};
 use std::io;
 
 use anyhow::{bail, ensure, Context, Result};
-use async_channel::Sender;
 use bytes::Bytes;
 use cid::Cid;
 use futures::channel::oneshot;
@@ -14,6 +13,7 @@ use libp2p::kad::record::Key;
 use libp2p::Multiaddr;
 use libp2p::PeerId;
 use tokio::sync::mpsc;
+use tokio::sync::mpsc::Sender;
 use tracing::{trace, warn};
 
 use async_trait::async_trait;
@@ -72,6 +72,13 @@ impl RpcP2p for P2p {
         trace!("making bitswap request for {:?}", cid);
         self.sender.send(msg).await?;
         let block = r.await?.context("bitswap")?;
+
+        ensure!(
+            cid == block.cid,
+            "unexpected bitswap response: expected: {} got: {}",
+            cid,
+            block.cid
+        );
 
         trace!("bitswap response for {:?}", cid);
         Ok(BitswapResponse { data: block.data })

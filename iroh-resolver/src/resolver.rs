@@ -368,7 +368,6 @@ impl<T: ContentLoader> ContentLoader for Arc<T> {
 #[async_trait]
 impl ContentLoader for Client {
     async fn load_cid(&self, cid: &Cid) -> Result<LoadedCid> {
-        trace!("loading cid");
         // TODO: better strategy
 
         let cid = *cid;
@@ -388,25 +387,6 @@ impl ContentLoader for Client {
         let p2p = self.try_p2p()?;
         let providers = p2p.fetch_providers(&cid).await?;
         let bytes = p2p.fetch_bitswap(cid, providers).await?;
-
-        // TODO: is this the right place?
-        // verify cid
-        let bytes_clone = bytes.clone();
-        match tokio::task::spawn_blocking(move || verify_hash(&cid, &bytes_clone)).await? {
-            Some(true) => {
-                // all good
-            }
-            Some(false) => {
-                bail!("invalid hash {:?}", cid.hash());
-            }
-            None => {
-                warn!(
-                    "unable to verify hash, unknown hash function {} for {}",
-                    cid.hash().code(),
-                    cid
-                );
-            }
-        }
 
         // trigger storage in the background
         let cloned = bytes.clone();

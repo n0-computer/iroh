@@ -54,8 +54,8 @@ macro_rules! impl_client {
                             })
                         }
                         #[cfg(feature = "mem")]
-                        Addr::Mem(s, r) => Ok([<$label Client>] {
-                            backend: [<$label ClientBackend>]::Mem(s, r),
+                        Addr::Mem(s) => Ok([<$label Client>] {
+                            backend: [<$label ClientBackend>]::Mem(s),
                         }),
                     }
                 }

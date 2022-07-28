@@ -18,8 +18,7 @@ iroh-metrics = { path = "../iroh-metrics", default-features = false }
 
 tonic = { version = "0.7.2", optional = true }
 tonic-health = { version = "0.6.0", optional = true }
-async-channel = "1.6.1"
-tokio = { version = "1", optional = true, features = ["net"] }
+tokio = { version = "1", features = ["net", "sync"] }
 tokio-stream = { version = "0.1.9", optional = true, features = ["net"] }
 paste = "1.0.7"
 
@@ -35,7 +34,7 @@ grpc = [
   "tonic-build",
   "tonic-health",
   "iroh-metrics/rpc-grpc",
-  "tokio", "tokio-stream"
+  "tokio-stream"
 ]
 # Memory based transport
 mem = []

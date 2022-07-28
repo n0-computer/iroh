@@ -60,13 +60,13 @@ macro_rules! proxy {
                         Ok(())
                     }
                     #[cfg(feature = "mem")]
-                    $crate::Addr::Mem(sender, receiver) => {
-                        while let Ok(msg) = receiver.recv().await {
+                    $crate::Addr::Mem(mut receiver) => {
+                        while let Some((msg, sender)) = receiver.recv().await {
                             match msg {
                                 $(
                                     [<$label Request>]::$name(req) => {
                                         let res = source.$name(req).await.map_err(|e| e.to_string());
-                                        sender.send([<$label Response>]::$name(res)).await.ok();
+                                        sender.send([<$label Response>]::$name(res)).ok();
                                     }
                                 )+
                             }
@@ -78,8 +78,16 @@ macro_rules! proxy {
             }
 
 
-            pub type [<$label ServerAddr>] = $crate::Addr<[<$label Request>], [<$label Response>]>;
-            pub type [<$label ClientAddr>] = $crate::Addr<[<$label Response>], [<$label Request>]>;
+            pub type [<$label ServerAddr>] = $crate::Addr<
+                tokio::sync::mpsc::Receiver<
+                  ([<$label Request>], tokio::sync::oneshot::Sender<[<$label Response>]>),
+                >
+            >;
+            pub type [<$label ClientAddr>] = $crate::Addr<
+                tokio::sync::mpsc::Sender<
+                  ([<$label Request>], tokio::sync::oneshot::Sender<[<$label Response>]>),
+                >
+            >;
 
             #[derive(Debug, Clone)]
             pub enum [<$label ClientBackend>] {
@@ -89,7 +97,12 @@ macro_rules! proxy {
                     health: tonic_health::proto::health_client::HealthClient<tonic::transport::Channel>,
                 },
                 #[cfg(feature = "mem")]
-                Mem(async_channel::Sender<[<$label Request>]>, async_channel::Receiver<[<$label Response>]>),
+                Mem(
+                    tokio::sync::mpsc::Sender<(
+                        [<$label Request>],
+                        tokio::sync::oneshot::Sender<[<$label Response>]>
+                    )>
+                ),
             }
 
             #[allow(non_camel_case_types)]
@@ -129,14 +142,16 @@ macro_rules! proxy {
                                 Ok(res.into_inner())
                             }
                             #[cfg(feature = "mem")]
-                            Self::Mem(s, r) => {
-                                s.send([<$label Request>]::$name(req)).await?;
-                                let res = r.recv().await?;
+                            Self::Mem(s) => {
+                                let (s_res, r_res) = tokio::sync::oneshot::channel();
+                                s.send(([<$label Request>]::$name(req), s_res)).await?;
+
+                                let res = r_res.await?;
                                 #[allow(irrefutable_let_patterns)]
                                 if let [<$label Response>]::$name(res) = res {
-                                    res.map_err(|e| anyhow::anyhow!(e))
+                                    return res.map_err(|e| anyhow::anyhow!(e))
                                 } else {
-                                    anyhow::bail!("invalid response {:?}, expected {}", res, stringify!($name));
+                                    anyhow::bail!("invalid response: {:?}", res);
                                 }
                             }
                         }
