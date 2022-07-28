@@ -1,17 +1,19 @@
 use std::{fmt::Debug, path::Path, pin::Pin};
 
-use crate::{
-    chunker::{self, Chunker, DEFAULT_CHUNK_SIZE_LIMIT},
-    codecs::Codec,
-    unixfs::{dag_pb, unixfs_pb, DataType, UnixfsNode},
-};
 use anyhow::{anyhow, ensure, Result};
+use async_trait::async_trait;
 use bytes::Bytes;
 use cid::{multihash::MultihashDigest, Cid};
 use futures::{Stream, StreamExt};
 use iroh_rpc_client::Client;
 use prost::Message;
 use tokio::io::AsyncRead;
+
+use crate::{
+    chunker::{self, Chunker, DEFAULT_CHUNK_SIZE_LIMIT},
+    codecs::Codec,
+    unixfs::{dag_pb, unixfs_pb, DataType, UnixfsNode},
+};
 
 /// Construct a UnixFS directory.
 #[derive(Debug, Default)]
@@ -299,11 +301,31 @@ impl FileBuilder {
     }
 }
 
+#[async_trait]
+pub trait Store {
+    async fn put(&self, cid: Cid, blob: Bytes, links: Vec<Cid>) -> Result<()>;
+}
+
+#[async_trait]
+impl Store for &Client {
+    async fn put(&self, cid: Cid, blob: Bytes, links: Vec<Cid>) -> Result<()> {
+        self.try_store()?.put(cid, blob, links).await
+    }
+}
+
+#[async_trait]
+impl Store for &tokio::sync::Mutex<std::collections::HashMap<Cid, Bytes>> {
+    async fn put(&self, cid: Cid, blob: Bytes, _links: Vec<Cid>) -> Result<()> {
+        self.lock().await.insert(cid, blob);
+        Ok(())
+    }
+}
+
 /// Adds a single file.
 /// - storing the content using `rpc.store`
 /// - returns the root Cid
 /// - wraps into a UnixFs directory to presever the filename
-pub async fn add_file(path: &Path, rpc: &Client) -> Result<Cid> {
+pub async fn add_file<S: Store>(path: &Path, rpc: Option<S>) -> Result<Cid> {
     ensure!(path.is_file(), "provided path was not a file");
 
     // wrap file in dir to preserve file name
@@ -328,10 +350,11 @@ pub async fn add_file(path: &Path, rpc: &Client) -> Result<Cid> {
     let parts = dir.encode();
     tokio::pin!(parts);
 
-    let store = rpc.try_store()?;
     while let Some(part) = parts.next().await {
         let (cid, bytes) = part?;
-        store.put(cid, bytes, vec![]).await?;
+        if let Some(ref rpc) = rpc {
+            rpc.put(cid, bytes, vec![]).await?;
+        }
         root = Some(cid);
     }
 
