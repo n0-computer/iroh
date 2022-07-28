@@ -111,7 +111,7 @@ commands:
             # This configures Rust to use sccache.
             echo 'export "RUSTC_WRAPPER"="sccache"' >> $BASH_ENV
             # This is the maximum space sccache cache will use on disk.
-            echo 'export "SCCACHE_CACHE_SIZE"="1G"' >> $BASH_ENV
+            echo 'export "SCCACHE_CACHE_SIZE"="4G"' >> $BASH_ENV
             sccache --version
   restore-sccache-cache:
     steps:
@@ -247,6 +247,8 @@ jobs:
       - setup-env
       - setup-protoc
       - set-env-path
+      - setup-sccache
+      - restore-sccache-cache
       - run:
           name: Install cargo cross
           command: |
@@ -300,6 +302,7 @@ jobs:
           path: ./target/aarch64-unknown-linux-musl/release/
           os: linux
           arch: aarch64
+      - save-sccache-cache
 
   build-mac:
     executor: mac-executor
