@@ -148,9 +148,10 @@ commands:
       - run:
           name: push to s3
           command: |
-             aws s3 cp <<parameters.path>>iroh-gateway s3://vorc/iroh-gateway-<<parameters.os>>-<<parameters.arch>>-${IROG_GATEWAY_VERSION}-<<parameters.version>> --no-progress
-             aws s3 cp <<parameters.path>>iroh-p2p s3://vorc/iroh-p2p-<<parameters.os>>-<<parameters.arch>>-${IROG_P2P_VERSION}-<<parameters.version>> --no-progress
-             aws s3 cp <<parameters.path>>iroh-store s3://vorc/iroh-store-<<parameters.os>>-<<parameters.arch>>-${IROG_STORE_VERSION}-<<parameters.version>> --no-progress
+              source $BASH_ENV
+              aws s3 cp <<parameters.path>>iroh-gateway s3://vorc/iroh-gateway-<<parameters.os>>-<<parameters.arch>>-${IROG_GATEWAY_VERSION}-<<parameters.version>> --no-progress
+              aws s3 cp <<parameters.path>>iroh-p2p s3://vorc/iroh-p2p-<<parameters.os>>-<<parameters.arch>>-${IROG_P2P_VERSION}-<<parameters.version>> --no-progress
+              aws s3 cp <<parameters.path>>iroh-store s3://vorc/iroh-store-<<parameters.os>>-<<parameters.arch>>-${IROG_STORE_VERSION}-<<parameters.version>> --no-progress
 
 
 jobs:
