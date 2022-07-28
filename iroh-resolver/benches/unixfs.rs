@@ -36,7 +36,6 @@ pub fn add_benchmark(c: &mut Criterion) {
 
                 let config = Config {
                     path: dir.path().join("db"),
-                    rpc_addr: server_addr.clone(),
                     rpc_client: rpc_client.clone(),
                     metrics: MetricsConfig::default(),
                 };
@@ -44,9 +43,7 @@ pub fn add_benchmark(c: &mut Criterion) {
                 let (_task, rpc) = executor.block_on(async {
                     let store = Store::create(config, metrics).await.unwrap();
                     let task = executor.spawn(async move {
-                        iroh_store::rpc::new(server_addr.clone(), store)
-                            .await
-                            .unwrap()
+                        iroh_store::rpc::new(server_addr, store).await.unwrap()
                     });
                     // wait for a moment until the transport is setup
                     // TODO: signal this more clearly
@@ -56,7 +53,7 @@ pub fn add_benchmark(c: &mut Criterion) {
                 });
                 let rpc_ref = &rpc;
                 b.to_async(&executor).iter(|| async move {
-                    let c = iroh_resolver::unixfs_builder::add_file(path, rpc_ref)
+                    let c = iroh_resolver::unixfs_builder::add_file(path, Some(rpc_ref))
                         .await
                         .unwrap();
                     black_box(c)
