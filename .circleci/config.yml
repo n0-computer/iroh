@@ -345,6 +345,6 @@ workflows:
       - build_release:
           name: "build linux release"
           context: aws_s3
-          filters:
-            branches:
-              only: main
+          # filters:
+            # branches:
+              # only: main
