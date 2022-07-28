@@ -8,7 +8,6 @@ repository = "https://github.com/n0-computer/iroh"
 description = "Implementation of the p2p part of iroh"
 
 [dependencies]
-async-channel = "1.6.1"
 asynchronous-codec = "0.6.0"
 async-trait = "0.1.56"
 anyhow = "1.0"
@@ -37,6 +36,7 @@ dirs = "4.0.0"
 toml = "0.5.9"
 zeroize = "1.4"
 ssh-key = { version = "0.4.2", features = ["ed25519", "std", "rand_core"], default-features = false }
+iroh-resolver = { path = "../iroh-resolver", default-features = false }
 rand = "0.8.5"
 async-stream = "0.3.3"
 tempfile = "3.3.0"
@@ -75,6 +75,6 @@ tokio = { version = "1.0.1" }
 
 [features]
 default = ["rpc-grpc", "rpc-mem"]
-rpc-grpc = ["iroh-rpc-types/grpc", "iroh-rpc-client/grpc", "iroh-metrics/rpc-grpc"]
-rpc-mem = ["iroh-rpc-types/mem", "iroh-rpc-client/mem"]
+rpc-grpc = ["iroh-rpc-types/grpc", "iroh-rpc-client/grpc", "iroh-metrics/rpc-grpc", "iroh-resolver/rpc-grpc"]
+rpc-mem = ["iroh-rpc-types/mem", "iroh-rpc-client/mem", "iroh-resolver/rpc-mem"]
 

@@ -13,6 +13,7 @@ use handlebars::Handlebars;
 use iroh_metrics::{gateway::Metrics, get_current_trace_id};
 use iroh_resolver::resolver::{CidOrDomain, UnixfsType};
 use iroh_rpc_client::Client as RpcClient;
+use iroh_rpc_types::gateway::GatewayServerAddr;
 use prometheus_client::registry::Registry;
 use serde::{Deserialize, Serialize};
 use serde_json::{
@@ -89,10 +90,10 @@ impl GetParams {
 impl Core {
     pub async fn new(
         config: Config,
+        rpc_addr: GatewayServerAddr,
         metrics: Metrics,
         registry: &mut Registry,
     ) -> anyhow::Result<Self> {
-        let rpc_addr = config.rpc_addr.clone();
         tokio::spawn(async move {
             // TODO: handle error
             rpc::new(rpc_addr, Gateway::default()).await
@@ -624,7 +625,6 @@ mod tests {
             false,
             false,
             0,
-            "grpc://0.0.0.0:0".parse().unwrap(),
             RpcClientConfig {
                 gateway_addr: None,
                 p2p_addr: None,
@@ -635,7 +635,8 @@ mod tests {
 
         let mut prom_registry = Registry::default();
         let gw_metrics = Metrics::new(&mut prom_registry);
-        let handler = Core::new(config, gw_metrics, &mut prom_registry)
+        let rpc_addr = "grpc://0.0.0.0:0".parse().unwrap();
+        let handler = Core::new(config, rpc_addr, gw_metrics, &mut prom_registry)
             .await
             .unwrap();
         let server = handler.server();

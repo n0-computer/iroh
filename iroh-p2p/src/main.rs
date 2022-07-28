@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+use anyhow::anyhow;
 use clap::Parser;
 use iroh_p2p::config::{Config, CONFIG_FILE_NAME, ENV_PREFIX};
 use iroh_p2p::{metrics, DiskStorage, Keychain, Node};
@@ -54,7 +55,10 @@ async fn main() -> anyhow::Result<()> {
     iroh_metrics::init_tracer(metrics_config.clone()).expect("failed to initialize tracer");
 
     let kc = Keychain::<DiskStorage>::new().await?;
-    let mut p2p = Node::new(network_config, kc, &mut prom_registry).await?;
+    let rpc_addr = network_config
+        .server_rpc_addr()?
+        .ok_or_else(|| anyhow!("missing p2p rpc addr"))?;
+    let mut p2p = Node::new(network_config, rpc_addr, kc, &mut prom_registry).await?;
 
     let metrics_handle = iroh_metrics::MetricsHandle::from_registry(metrics_config, prom_registry)
         .await

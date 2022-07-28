@@ -1,7 +1,6 @@
 use std::{collections::HashSet, path::Path, sync::Arc};
 
-use anyhow::{bail, ensure, Result};
-use async_channel::Receiver;
+use anyhow::{ensure, Result};
 use async_trait::async_trait;
 use cid::Cid;
 use iroh_metrics::store::Metrics;
@@ -9,13 +8,13 @@ use iroh_p2p::{config, Keychain, MemoryStorage, NetworkEvent, Node};
 use iroh_resolver::{
     parse_links,
     resolver::{ContentLoader, LoadedCid, Resolver, Source, IROH_STORE},
-    verify_hash,
 };
 use iroh_rpc_client::Client;
 use iroh_rpc_types::Addr;
 use libp2p::{Multiaddr, PeerId};
 use prometheus_client::registry::Registry;
 use serde::{Deserialize, Serialize};
+use tokio::sync::mpsc::Receiver;
 use tokio::{sync::Mutex, task::JoinHandle};
 use tracing::{error, warn};
 
@@ -93,24 +92,6 @@ impl ContentLoader for Loader {
             }
         };
 
-        // verify cid
-        let bytes_clone = bytes.clone();
-        match tokio::task::spawn_blocking(move || verify_hash(&cid, &bytes_clone)).await? {
-            Some(true) => {
-                // all good
-            }
-            Some(false) => {
-                bail!("invalid hash {:?}", cid.hash());
-            }
-            None => {
-                warn!(
-                    "unable to verify hash, unknown hash function {} for {}",
-                    cid.hash().code(),
-                    cid
-                );
-            }
-        }
-
         let cloned = bytes.clone();
         let rpc = self.clone();
         {
@@ -156,7 +137,6 @@ impl P2pNode {
                 relay_server: false,
                 target_peer_count: 8,
             },
-            rpc_addr: rpc_p2p_addr_server,
             rpc_client: rpc_p2p_client_config.clone(),
             metrics: Default::default(),
         };
@@ -168,7 +148,6 @@ impl P2pNode {
 
         let store_config = iroh_store::Config {
             path: db_path.to_path_buf(),
-            rpc_addr: rpc_store_addr_server.clone(),
             rpc_client: rpc_store_client_config,
             metrics: iroh_metrics::config::Config {
                 debug: true, // disable tracing by default
@@ -184,7 +163,7 @@ impl P2pNode {
         };
 
         let kc = Keychain::<MemoryStorage>::new();
-        let mut p2p = Node::new(config, kc, &mut prom_registry).await?;
+        let mut p2p = Node::new(config, rpc_p2p_addr_server, kc, &mut prom_registry).await?;
         let events = p2p.network_events();
 
         let p2p_task = tokio::task::spawn(async move {

@@ -5,20 +5,20 @@ use std::{
 };
 
 use anyhow::{anyhow, bail};
-use async_channel::{Receiver, Sender};
 use serde_with::{DeserializeFromStr, SerializeDisplay};
+use tokio::sync::mpsc::{Receiver, Sender};
 
 #[derive(SerializeDisplay, DeserializeFromStr, Clone)]
-pub enum Addr<SEND = (), RECV = ()> {
+pub enum Addr<T = ()> {
     #[cfg(feature = "grpc")]
     GrpcHttp2(SocketAddr),
     #[cfg(all(feature = "grpc", unix))]
     GrpcUds(std::path::PathBuf),
     #[cfg(feature = "mem")]
-    Mem(Sender<RECV>, Receiver<SEND>),
+    Mem(T),
 }
 
-impl<S, R> PartialEq for Addr<S, R> {
+impl<T> PartialEq for Addr<T> {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             #[cfg(feature = "grpc")]
@@ -30,14 +30,15 @@ impl<S, R> PartialEq for Addr<S, R> {
     }
 }
 
-impl<S, R> Addr<S, R> {
-    pub fn new_mem() -> (Addr<S, R>, Addr<R, S>) {
-        let (s1, r1) = async_channel::bounded(256);
-        let (s2, r2) = async_channel::bounded(256);
+impl<T> Addr<T> {
+    pub fn new_mem() -> (Addr<Receiver<T>>, Addr<Sender<T>>) {
+        let (s, r) = tokio::sync::mpsc::channel(256);
 
-        (Addr::Mem(s1, r2), Addr::Mem(s2, r1))
+        (Addr::Mem(r), Addr::Mem(s))
     }
+}
 
+impl<T> Addr<T> {
     pub fn try_as_socket_addr(&self) -> Option<SocketAddr> {
         #[cfg(feature = "grpc")]
         if let Addr::GrpcHttp2(addr) = self {
@@ -47,7 +48,7 @@ impl<S, R> Addr<S, R> {
     }
 }
 
-impl<S, R> Display for Addr<S, R> {
+impl<T> Display for Addr<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             #[cfg(feature = "grpc")]
@@ -55,20 +56,20 @@ impl<S, R> Display for Addr<S, R> {
             #[cfg(all(feature = "grpc", unix))]
             Addr::GrpcUds(path) => write!(f, "grpc://{}", path.display()),
             #[cfg(feature = "mem")]
-            Addr::Mem(_, _) => write!(f, "mem"),
+            Addr::Mem(_) => write!(f, "mem"),
             #[allow(unreachable_patterns)]
             _ => unreachable!(),
         }
     }
 }
 
-impl<S, R> Debug for Addr<S, R> {
+impl<T> Debug for Addr<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         Display::fmt(self, f)
     }
 }
 
-impl<S, R> FromStr for Addr<S, R> {
+impl<T> FromStr for Addr<T> {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {

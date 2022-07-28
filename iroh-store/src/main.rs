@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+use anyhow::anyhow;
 use clap::Parser;
 use iroh_metrics::store::Metrics;
 use iroh_store::{
@@ -65,7 +66,9 @@ async fn main() -> anyhow::Result<()> {
     .await
     .expect("failed to initialize metrics");
 
-    let rpc_addr = config.rpc_addr.clone();
+    let rpc_addr = config
+        .server_rpc_addr()?
+        .ok_or_else(|| anyhow!("missing store rpc addr"))?;
     let store = if config.path.exists() {
         info!("Opening store at {}", config.path.display());
         Store::open(config, store_metrics).await?

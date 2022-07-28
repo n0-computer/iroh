@@ -1,7 +1,8 @@
-use std::{path::PathBuf, time::Duration};
+use std::path::PathBuf;
 
 use anyhow::{ensure, Context, Result};
 use clap::{Parser, Subcommand};
+use futures::stream::StreamExt;
 use iroh_share::{ProgressEvent, Receiver, Sender, Ticket};
 use tokio::io::AsyncWriteExt;
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
@@ -60,20 +61,22 @@ async fn main() -> Result<()> {
             // TODO: streaming read
             let name = path
                 .file_name()
-                .map(|s| s.to_string_lossy())
-                .unwrap_or_default();
-            let data = tokio::fs::read(&path).await?;
+                .ok_or_else(|| anyhow::anyhow!("missing file name"))?;
+            let name = name
+                .to_str()
+                .ok_or_else(|| anyhow::anyhow!("file name must be valid utf8"))?;
 
+            let data = tokio::fs::read(&path).await?;
             let sender_transfer = sender
                 .transfer_from_data(name, data.into())
                 .await
                 .context("transfer")?;
-            tokio::time::sleep(Duration::from_secs(2)).await;
+
             let ticket = sender_transfer.ticket();
             let ticket_bytes = ticket.as_bytes();
             let ticket_str = multibase::encode(multibase::Base::Base64, &ticket_bytes);
             println!("Ticket:\n{}\n", ticket_str);
-            iroh_util::block_until_sigint().await;
+            sender_transfer.done().await?;
         }
         Commands::Receive { ticket, out } => {
             println!("Receiving");
@@ -93,10 +96,10 @@ async fn main() -> Result<()> {
                 .await
                 .context("failed to read transfer")?;
             let data = receiver_transfer.recv().await?;
-            let progress = receiver_transfer.progress()?;
+            let mut progress = receiver_transfer.progress()?;
 
             tokio::spawn(async move {
-                while let Ok(ev) = progress.recv().await {
+                while let Some(ev) = progress.next().await {
                     match ev {
                         Ok(ProgressEvent::Piece { index, total }) => {
                             println!("transferred: {}/{}", index, total);
@@ -133,6 +136,7 @@ async fn main() -> Result<()> {
                 file.flush().await?;
             }
 
+            receiver_transfer.finish().await?;
             println!("Received all data, written to: {}", out.display());
         }
     }

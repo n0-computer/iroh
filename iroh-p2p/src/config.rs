@@ -1,7 +1,11 @@
+use anyhow::{bail, Result};
 use config::{ConfigError, Map, Source, Value};
 use iroh_metrics::config::Config as MetricsConfig;
 use iroh_rpc_client::Config as RpcClientConfig;
-use iroh_rpc_types::p2p::{P2pClientAddr, P2pServerAddr};
+use iroh_rpc_types::{
+    p2p::{P2pClientAddr, P2pServerAddr},
+    Addr,
+};
 use iroh_util::insert_into_config_map;
 use libp2p::Multiaddr;
 use serde::{Deserialize, Serialize};
@@ -52,8 +56,6 @@ pub struct Libp2pConfig {
 #[derive(PartialEq, Debug, Clone, Deserialize, Serialize)]
 pub struct Config {
     pub libp2p: Libp2pConfig,
-    /// Rpc listening addr
-    pub rpc_addr: P2pServerAddr,
     pub rpc_client: RpcClientConfig,
     pub metrics: MetricsConfig,
 }
@@ -95,7 +97,6 @@ impl Source for Config {
 
         insert_into_config_map(&mut map, "libp2p", self.libp2p.collect()?);
         insert_into_config_map(&mut map, "rpc_client", self.rpc_client.collect()?);
-        insert_into_config_map(&mut map, "rpc_addr", self.rpc_addr.to_string());
         insert_into_config_map(&mut map, "metrics", self.metrics.collect()?);
         Ok(map)
     }
@@ -122,10 +123,9 @@ impl Default for Libp2pConfig {
 }
 
 impl Config {
-    pub fn default_with_rpc(server_addr: P2pServerAddr, client_addr: P2pClientAddr) -> Self {
+    pub fn default_with_rpc(client_addr: P2pClientAddr) -> Self {
         Self {
             libp2p: Libp2pConfig::default(),
-            rpc_addr: server_addr,
             rpc_client: RpcClientConfig {
                 p2p_addr: Some(client_addr),
                 ..Default::default()
@@ -137,7 +137,23 @@ impl Config {
     pub fn default_grpc() -> Self {
         let addr = "grpc://0.0.0.0:4401";
 
-        Self::default_with_rpc(addr.parse().unwrap(), addr.parse().unwrap())
+        Self::default_with_rpc(addr.parse().unwrap())
+    }
+
+    /// Derive server addr for non memory addrs.
+    pub fn server_rpc_addr(&self) -> Result<Option<P2pServerAddr>> {
+        self.rpc_client
+            .p2p_addr
+            .as_ref()
+            .map(|addr| match addr {
+                #[cfg(feature = "rpc-grpc")]
+                Addr::GrpcHttp2(addr) => Ok(Addr::GrpcHttp2(*addr)),
+                #[cfg(feature = "rpc-grpc")]
+                Addr::GrpcUds(path) => Ok(Addr::GrpcUds(path.clone())),
+                #[cfg(feature = "rpc-mem")]
+                Addr::Mem(_) => bail!("can not derive rpc_addr for mem addr"),
+            })
+            .transpose()
     }
 }
 
@@ -164,10 +180,6 @@ mod tests {
         expect.insert(
             "rpc_client".to_string(),
             Value::new(None, default.rpc_client.collect().unwrap()),
-        );
-        expect.insert(
-            "rpc_addr".to_string(),
-            Value::new(None, default.rpc_addr.to_string()),
         );
         expect.insert(
             "metrics".to_string(),

@@ -155,13 +155,7 @@ impl NodeBehaviour {
     }
 
     /// Send a block to a peer over bitswap
-    #[allow(dead_code)]
-    pub fn send_block(
-        &mut self,
-        peer_id: &PeerId,
-        cid: Cid,
-        data: Bytes,
-    ) -> Result<(), Box<dyn Error>> {
+    pub fn send_block(&mut self, peer_id: &PeerId, cid: Cid, data: Bytes) -> Result<()> {
         self.bitswap.send_block(peer_id, cid, data);
         Ok(())
     }

@@ -1,4 +1,5 @@
 use crate::constants::*;
+use anyhow::{bail, Result};
 use axum::http::{header::*, Method};
 use config::{ConfigError, Map, Source, Value};
 use headers::{
@@ -6,7 +7,7 @@ use headers::{
 };
 use iroh_metrics::config::Config as MetricsConfig;
 use iroh_rpc_client::Config as RpcClientConfig;
-use iroh_rpc_types::gateway::GatewayServerAddr;
+use iroh_rpc_types::{gateway::GatewayServerAddr, Addr};
 use iroh_util::insert_into_config_map;
 use serde::{Deserialize, Serialize};
 
@@ -28,8 +29,6 @@ pub struct Config {
     pub cache: bool,
     /// default port to listen on
     pub port: u16,
-    /// rpc listening addr
-    pub rpc_addr: GatewayServerAddr,
     // NOTE: for toml to serialize properly, the "table" values must be serialized at the end, and
     // so much come at the end of the `Config` struct
     /// set of user provided headers to attach to all responses
@@ -47,7 +46,6 @@ impl Config {
         fetch: bool,
         cache: bool,
         port: u16,
-        rpc_addr: GatewayServerAddr,
         rpc_client: RpcClientConfig,
     ) -> Self {
         Self {
@@ -56,7 +54,6 @@ impl Config {
             cache,
             headers: HeaderMap::new(),
             port,
-            rpc_addr,
             rpc_client,
             metrics: MetricsConfig::default(),
         }
@@ -64,6 +61,22 @@ impl Config {
 
     pub fn set_default_headers(&mut self) {
         self.headers = default_headers();
+    }
+
+    /// Derive server addr for non memory addrs.
+    pub fn server_rpc_addr(&self) -> Result<Option<GatewayServerAddr>> {
+        self.rpc_client
+            .gateway_addr
+            .as_ref()
+            .map(|addr| match addr {
+                #[cfg(feature = "rpc-grpc")]
+                Addr::GrpcHttp2(addr) => Ok(Addr::GrpcHttp2(*addr)),
+                #[cfg(feature = "rpc-grpc")]
+                Addr::GrpcUds(path) => Ok(Addr::GrpcUds(path.clone())),
+                #[cfg(feature = "rpc-mem")]
+                Addr::Mem(_) => bail!("can not derive rpc_addr for mem addr"),
+            })
+            .transpose()
     }
 }
 
@@ -115,13 +128,6 @@ impl Default for Config {
             cache: false,
             headers: HeaderMap::new(),
             port: DEFAULT_PORT,
-            rpc_addr: rpc_client
-                .gateway_addr
-                .as_ref()
-                .unwrap()
-                .to_string()
-                .parse()
-                .unwrap(),
             rpc_client,
             metrics: MetricsConfig::default(),
         };
@@ -144,7 +150,6 @@ impl Source for Config {
         // Some issue between deserializing u64 & u16, converting this to
         // an signed int fixes the issue
         insert_into_config_map(&mut map, "port", self.port as i32);
-        insert_into_config_map(&mut map, "rpc_addr", self.rpc_addr.to_string());
         insert_into_config_map(&mut map, "headers", collect_headers(&self.headers)?);
         insert_into_config_map(&mut map, "rpc_client", rpc_client);
         let metrics = self.metrics.collect()?;
@@ -198,10 +203,6 @@ mod tests {
         expect.insert(
             "headers".to_string(),
             Value::new(None, collect_headers(&default.headers).unwrap()),
-        );
-        expect.insert(
-            "rpc_addr".to_string(),
-            Value::new(None, default.rpc_addr.to_string()),
         );
         expect.insert(
             "rpc_client".to_string(),

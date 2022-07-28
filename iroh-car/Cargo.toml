@@ -19,6 +19,5 @@ tokio = { version = "1.0.1", features = ["io-util"] }
 
 [dev-dependencies]
 tokio = { version = "1.0.1", features = ["macros", "sync", "rt", "fs", "io-util"] }
-async-channel = "1.6.1"
 
 [features]

@@ -3,10 +3,10 @@ use std::time::Duration;
 
 use ahash::AHashMap;
 use anyhow::{anyhow, Context, Result};
-use async_channel::{bounded as channel, Receiver, Sender};
 use futures::channel::oneshot::Sender as OneShotSender;
 use futures_util::stream::StreamExt;
 use iroh_rpc_client::Client as RpcClient;
+use iroh_rpc_types::p2p::P2pServerAddr;
 use libp2p::core::Multiaddr;
 use libp2p::gossipsub::{GossipsubMessage, MessageId, TopicHash};
 pub use libp2p::gossipsub::{IdentTopic, Topic};
@@ -22,6 +22,7 @@ use libp2p::swarm::dial_opts::{DialOpts, PeerCondition};
 use libp2p::swarm::{ConnectionHandler, IntoConnectionHandler, NetworkBehaviour, SwarmEvent};
 use libp2p::{PeerId, Swarm};
 use prometheus_client::registry::Registry;
+use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio::task::JoinHandle;
 use tokio::{select, sync::mpsc, time};
 use tracing::{debug, info, trace, warn};
@@ -100,6 +101,7 @@ impl<KeyStorage: Storage> Drop for Node<KeyStorage> {
 impl<KeyStorage: Storage> Node<KeyStorage> {
     pub async fn new(
         config: Config,
+        rpc_addr: P2pServerAddr,
         mut keychain: Keychain<KeyStorage>,
         registry: &mut Registry,
     ) -> Result<Self> {
@@ -115,7 +117,6 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                     listening_multiaddr,
                     ..
                 },
-            rpc_addr,
             rpc_client,
             ..
         } = config;
@@ -160,7 +161,8 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                     }
                 }
                 rpc_message = self.net_receiver_in.recv() => {
-                    match self.handle_rpc_message(rpc_message?).await {
+                    let rpc_message = rpc_message.ok_or_else(|| anyhow!("unexpected close"))?;
+                    match self.handle_rpc_message(rpc_message).await {
                         Ok(true) => {
                             // shutdown
                             return Ok(());
@@ -337,16 +339,28 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                     BitswapEvent::OutboundQueryCompleted { id, result } => match result {
                         BitswapQueryResult::Want(WantResult::Ok { sender, cid, data }) => {
                             info!("got block {} from {}", cid, sender);
-                            // TODO: verify cid hash
-                            let b = Block::new(data, cid);
-                            if let Some(chan) = self.bitswap_queries.remove(&id) {
-                                // TODO: send cid and block
-                                if chan.send(Ok(b)).is_err() {
-                                    debug!("Bitswap response channel send failed");
+                            match iroh_resolver::resolver::verify_hash(&cid, &data) {
+                                Some(true) => {
+                                    let b = Block::new(data, cid);
+                                    if let Some(chan) = self.bitswap_queries.remove(&id) {
+                                        if chan.send(Ok(b)).is_err() {
+                                            debug!("Bitswap response channel send failed");
+                                        }
+                                        trace!("Saved Bitswap block with cid {:?}", cid);
+                                    } else {
+                                        debug!("Received Bitswap response, but response channel cannot be found");
+                                    }
                                 }
-                                trace!("Saved Bitswap block with cid {:?}", cid);
-                            } else {
-                                debug!("Received Bitswap response, but response channel cannot be found");
+                                Some(false) => {
+                                    warn!("Invalid data received, ignoring");
+                                }
+                                None => {
+                                    warn!(
+                                        "unable to verify hash, unknown hash function {} for {}, ignoring",
+                                        cid.hash().code(),
+                                        cid
+                                    );
+                                }
                             }
                         }
                         BitswapQueryResult::Want(WantResult::Err(e)) => {
@@ -796,12 +810,12 @@ mod tests {
         rpc_client_addr: P2pClientAddr,
     ) -> Result<()> {
         let mut prom_registry = Registry::default();
-        let mut network_config = Config::default_with_rpc(rpc_server_addr, rpc_client_addr.clone());
+        let mut network_config = Config::default_with_rpc(rpc_client_addr.clone());
         network_config.libp2p.listening_multiaddr = addr;
         network_config.metrics.debug = true;
 
         let kc = Keychain::<MemoryStorage>::new();
-        let mut p2p = Node::new(network_config, kc, &mut prom_registry).await?;
+        let mut p2p = Node::new(network_config, rpc_server_addr, kc, &mut prom_registry).await?;
 
         let cfg = iroh_rpc_client::Config {
             p2p_addr: Some(rpc_client_addr),

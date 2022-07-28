@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use clap::Parser;
 use iroh_gateway::{
     config::{Config, CONFIG_FILE_NAME, ENV_PREFIX},
@@ -71,7 +71,10 @@ async fn main() -> Result<()> {
     let metrics_config = config.metrics.clone();
     let mut prom_registry = Registry::default();
     let gw_metrics = Metrics::new(&mut prom_registry);
-    let handler = Core::new(config, gw_metrics, &mut prom_registry).await?;
+    let rpc_addr = config
+        .server_rpc_addr()?
+        .ok_or_else(|| anyhow!("missing gateway rpc addr"))?;
+    let handler = Core::new(config, rpc_addr, gw_metrics, &mut prom_registry).await?;
 
     let metrics_handle =
         iroh_metrics::MetricsHandle::from_registry_with_tracer(metrics_config, prom_registry)
