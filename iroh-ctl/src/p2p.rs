@@ -234,7 +234,7 @@ pub async fn run_command(rpc: Client, cmd: P2p) -> Result<()> {
             println!("v{}", v);
         }
         P2pCommands::PeerId => {
-            let peer_id = rpc.p2p.local_peer_id().await?;
+            let peer_id = rpc.try_p2p()?.local_peer_id().await?;
             println!("{}", peer_id);
         }
         P2pCommands::Addrs(addrs) => match addrs.command {
@@ -247,7 +247,7 @@ pub async fn run_command(rpc: Client, cmd: P2p) -> Result<()> {
                 println!("{:#?}", addrs);
             }
             Some(AddrsCommands::Local) => {
-                let addrs = rpc.p2p.external_addresses().await?;
+                let addrs = rpc.try_p2p()?.external_addresses().await?;
                 println!("external addresses:");
                 addrs.iter().for_each(|a| println!("\t{:?}", a));
             }

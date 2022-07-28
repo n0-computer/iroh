@@ -1,9 +1,10 @@
+use std::io::prelude::*;
 use std::path::PathBuf;
 
 use anyhow::Result;
 use cid::Cid;
 use clap::{Args, Subcommand};
-use futures::StreamExt;
+use iroh_resolver::unixfs_builder;
 use iroh_rpc_client::Client;
 
 #[derive(Args, Debug, Clone)]
@@ -32,7 +33,7 @@ pub struct Block {
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum BlockCommands {
-    #[clap(about = "Get a raw IPFS block.")]
+    #[clap(about = "Get a raw IPFS block from the store & print the content to stdout")]
     Get { cid: Cid },
     #[clap(
         about = "Store input as an IPFS block.
@@ -59,31 +60,15 @@ pub async fn run_command(rpc: Client, cmd: Store) -> Result<()> {
         StoreCommands::Block(block) => match block.command {
             BlockCommands::Get { cid } => {
                 let b = rpc.try_store()?.get(cid).await?;
-                println!("{:?}\n", b);
+                if let Some(b) = b {
+                    std::io::stdout().write_all(&b)?;
+                } else {
+                    println!("local store does not contain block {:?}", cid);
+                }
             }
             BlockCommands::Put { path } => {
-                let name = path.file_name().unwrap().to_str().unwrap();
-                let data = std::fs::read(&path)?;
-                let mut file = iroh_resolver::unixfs_builder::FileBuilder::new();
-                file.name(name).content_bytes(data);
-                let file = file.build().await?;
-                let mut root_cid: Option<Cid> = None;
-                let parts = file.encode();
-                tokio::pin!(parts);
-                while let Some(part) = parts.next().await {
-                    // TODO: store links in the store
-                    let (cid, bytes) = part?;
-                    root_cid = Some(cid);
-                    rpc.store.put(cid, bytes, vec![]).await?;
-                }
-                let root = root_cid.unwrap();
-                if let Err(e) = rpc.p2p.start_providing(&root).await {
-                    println!(
-                        "added '{:?}' to store, but unable to provide blocks: {:?}",
-                        path, e
-                    );
-                }
-                println!("/ipfs/{}\n", root.to_string());
+                let cid = unixfs_builder::add_file(path.as_path(), &rpc).await?;
+                println!("/ipfs/{}\n", cid);
             }
             BlockCommands::Rm { cid } => {
                 todo!(

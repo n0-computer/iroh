@@ -532,9 +532,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                     .ok();
             }
             RpcMessage::LocalPeerId(response_channel) => {
-                response_channel
-                    .send(self.swarm.local_peer_id().clone())
-                    .ok();
+                response_channel.send(*self.swarm.local_peer_id()).ok();
             }
             RpcMessage::BitswapRequest {
                 cids,

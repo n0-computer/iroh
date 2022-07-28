@@ -254,7 +254,8 @@ mod tests {
     use iroh_rpc_types::p2p::{
         p2p_server, BitswapResponse, ConnectResponse, GetListeningAddrsResponse, GetPeersResponse,
         GossipsubAllPeersResponse, GossipsubPeersResponse, GossipsubPublishResponse,
-        GossipsubSubscribeResponse, GossipsubTopicsResponse, VersionResponse,
+        GossipsubSubscribeResponse, GossipsubTopicsResponse, Multiaddrs, PeerIdResponse,
+        VersionResponse,
     };
     use libp2p::gossipsub::IdentTopic;
     use tokio::net::TcpListener;
@@ -314,6 +315,34 @@ mod tests {
             &self,
             _request: Request<()>,
         ) -> Result<tonic::Response<VersionResponse>, tonic::Status> {
+            todo!()
+        }
+
+        async fn local_peer_id(
+            &self,
+            _request: Request<()>,
+        ) -> Result<tonic::Response<PeerIdResponse>, tonic::Status> {
+            todo!()
+        }
+
+        async fn external_addrs(
+            &self,
+            _request: Request<()>,
+        ) -> Result<tonic::Response<Multiaddrs>, tonic::Status> {
+            todo!()
+        }
+
+        async fn start_providing(
+            &self,
+            _request: Request<Key>,
+        ) -> Result<tonic::Response<()>, tonic::Status> {
+            todo!()
+        }
+
+        async fn stop_providing(
+            &self,
+            _request: Request<Key>,
+        ) -> Result<tonic::Response<()>, tonic::Status> {
             todo!()
         }
 
