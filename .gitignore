@@ -2,3 +2,4 @@
 /iroh_gateway/test_files/*
 .env
 Cargo.lock
+foo

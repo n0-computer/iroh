@@ -31,14 +31,15 @@ tempfile = "3.3.0"
 tokio = { version = "1.18.0", features = ["rt", "macros", "rt-multi-thread"] }
 iroh-store = { path = "../iroh-store", default-features = false }
 iroh-rpc-types = { path = "../iroh-rpc-types", default-features = false }
+iroh-car = { path = "../iroh-car" }
 
 [build-dependencies]
 prost-build = "0.10"
 
 [features]
 default = ["rpc-grpc", "rpc-mem"]
-rpc-grpc = ["iroh-rpc-client/grpc", "iroh-metrics/rpc-grpc"]
-rpc-mem = ["iroh-rpc-client/mem"]
+rpc-grpc = ["iroh-rpc-client/grpc", "iroh-metrics/rpc-grpc", "iroh-rpc-types/grpc", "iroh-store/rpc-grpc"]
+rpc-mem = ["iroh-rpc-client/mem", "iroh-rpc-types/mem", "iroh-store/rpc-mem"]
 
 [[bench]]
 name = "unixfs"

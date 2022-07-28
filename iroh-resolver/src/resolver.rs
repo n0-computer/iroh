@@ -507,6 +507,9 @@ impl<T: ContentLoader> Resolver<T> {
 
                 *current = next_node;
             }
+            Some(DataType::HamtShard) => {
+                todo!()
+            }
             ty => {
                 bail!("unexpected unixfs type {:?}", ty);
             }
@@ -846,7 +849,7 @@ mod tests {
 
     use super::*;
     use cid::multihash::{Code, MultihashDigest};
-    use futures::TryStreamExt;
+    use futures::{StreamExt, TryStreamExt};
     use libipld::{codec::Encode, Ipld, IpldCodec};
     use tokio::io::AsyncReadExt;
 
@@ -1806,5 +1809,65 @@ mod tests {
         let result = resolve_dnslink("website.ipfs.io").await.unwrap();
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].typ(), PathType::Ipfs);
+    }
+
+    #[tokio::test]
+    async fn test_unixfs_hamt_dir() {
+        // Test content
+        // ------------
+        // for n in $(seq 10000); do echo $n > foo/$n.txt; done
+        // ipfs add --recursive foo
+        //
+        // QmUu8pzQ5yjhDrg4GiHYLeko2oT76vcmYX5bw6sjiEJ82k foo
+        // QmWKbcq9HGfat7FsL85qrwNUxnmo3xAWzUo2nEj9BoAZeP foo/9999.txt
+
+        let root_cid_str = "QmUu8pzQ5yjhDrg4GiHYLeko2oT76vcmYX5bw6sjiEJ82k";
+        let hello_99_cid_str = "QmWKbcq9HGfat7FsL85qrwNUxnmo3xAWzUo2nEj9BoAZeP";
+
+        let reader = tokio::io::BufReader::new(
+            tokio::fs::File::open("./fixtures/big-foo.car")
+                .await
+                .unwrap(),
+        );
+        let car_reader = iroh_car::CarReader::new(reader).await.unwrap();
+        let files: HashMap<Cid, Bytes> = car_reader
+            .stream()
+            .map(|r| r.map(|(k, v)| (k, Bytes::from(v))))
+            .try_collect()
+            .await
+            .unwrap();
+        assert_eq!(files.len(), 10938);
+
+        let loader = Arc::new(files);
+        let resolver = Resolver::new(loader.clone(), &mut Registry::default());
+
+        {
+            let path = format!("/ipfs/{root_cid_str}/9999.txt");
+            let ipld_99_txt = resolver.resolve(path.parse().unwrap()).await.unwrap();
+
+            assert!(ipld_99_txt.unixfs_read_dir().is_none());
+
+            let m = ipld_99_txt.metadata();
+            assert_eq!(m.unixfs_type, Some(UnixfsType::File));
+            assert_eq!(m.path.to_string(), path);
+            assert_eq!(m.typ, OutType::Unixfs);
+            assert_eq!(m.size, Some(6));
+            assert_eq!(
+                m.resolved_path,
+                vec![
+                    root_cid_str.parse().unwrap(),
+                    hello_99_cid_str.parse().unwrap()
+                ]
+            );
+
+            if let OutContent::Unixfs(node) = ipld_99_txt.content {
+                assert_eq!(
+                    read_to_string(node.pretty(loader.clone(), OutMetrics::default(),)).await,
+                    "9999"
+                );
+            } else {
+                panic!("invalid result: {:?}", ipld_99_txt);
+            }
+        }
     }
 }
