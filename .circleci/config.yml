@@ -347,7 +347,7 @@ workflows:
           requires:
             - cargo_fetch
       - test:
-          name: "Test linxu:x86_64"
+          name: "Test linux:x86_64"
           cargo-args: "--workspace"
           requires:
             - cargo_fetch
@@ -359,6 +359,6 @@ workflows:
       - build_release:
           name: "build linux release"
           context: aws_s3
-          # filters:
-            # branches:
-              # only: main
+          filters:
+            branches:
+              only: main
