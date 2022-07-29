@@ -149,9 +149,9 @@ commands:
           name: push to s3
           command: |
               source $BASH_ENV
-              aws s3 cp <<parameters.path>>iroh-gateway s3://vorc/iroh-gateway-<<parameters.os>>-<<parameters.arch>>-${IROG_GATEWAY_VERSION}-${CIRCLE_SHA1::7} --no-progress
-              aws s3 cp <<parameters.path>>iroh-p2p s3://vorc/iroh-p2p-<<parameters.os>>-<<parameters.arch>>-${IROG_P2P_VERSION}-${CIRCLE_SHA1::7} --no-progress
-              aws s3 cp <<parameters.path>>iroh-store s3://vorc/iroh-store-<<parameters.os>>-<<parameters.arch>>-${IROG_STORE_VERSION}-${CIRCLE_SHA1::7} --no-progress
+              aws s3 cp <<parameters.path>>iroh-gateway s3://vorc/iroh-gateway-<<parameters.os>>-<<parameters.arch>>-${CIRCLE_SHA1::7} --no-progress
+              aws s3 cp <<parameters.path>>iroh-p2p s3://vorc/iroh-p2p-<<parameters.os>>-<<parameters.arch>>-${CIRCLE_SHA1::7} --no-progress
+              aws s3 cp <<parameters.path>>iroh-store s3://vorc/iroh-store-<<parameters.os>>-<<parameters.arch>>-${CIRCLE_SHA1::7} --no-progress
 
   push-to-s3-latest:
     parameters:
@@ -166,7 +166,7 @@ commands:
         type: string
     steps:
       - run:
-          name: push to s3
+          name: push to s3 latest
           command: |
               source $BASH_ENV
               aws s3 cp <<parameters.path>>iroh-gateway s3://vorc/iroh-gateway-<<parameters.os>>-<<parameters.arch>>-latest --no-progress
@@ -285,19 +285,19 @@ jobs:
       - run:
           name: build x86_64_linux
           command: cargo build --release
-      - run:
-          name: get iroh versions
-          command: |
-            pkv=$(cargo pkgid iroh-gateway)
-            IFS='#' read -ra res \<<< "$pkv"
-            echo 'export IROG_GATEWAY_VERSION=${res[1]}'  | tee --append $BASH_ENV
-            pkv=$(cargo pkgid iroh-p2p)
-            IFS='#' read -ra res \<<< "$pkv"
-            echo 'export IROG_P2P_VERSION=${res[1]}'  | tee --append $BASH_ENV
-            pkv=$(cargo pkgid iroh-store)
-            IFS='#' read -ra res \<<< "$pkv"
-            echo 'export IROG_STORE_VERSION=${res[1]}'  | tee --append $BASH_ENV
-            source $BASH_ENV
+      # - run:
+      #     name: get iroh versions
+      #     command: |
+      #       pkv=$(cargo pkgid iroh-gateway)
+      #       IFS='#' read -ra res \<<< "$pkv"
+      #       echo 'export IROH_GATEWAY_VERSION=${res[1]}' >> $BASH_ENV
+      #       pkv=$(cargo pkgid iroh-p2p)
+      #       IFS='#' read -ra res \<<< "$pkv"
+      #       echo 'export IROH_P2P_VERSION=${res[1]}' >> $BASH_ENV
+      #       pkv=$(cargo pkgid iroh-store)
+      #       IFS='#' read -ra res \<<< "$pkv"
+      #       echo 'export IROH_STORE_VERSION=${res[1]}' >> $BASH_ENV
+      #       source $BASH_ENV
       - push-to-s3:
           path: ./target/release/
           os: linux
