@@ -309,7 +309,7 @@ jobs:
           profile-name: default
       - run:
           name: build x86_64_linux
-          command: cargo build --release
+          command: cargo build --release -v
       # - run:
       #     name: get iroh versions
       #     command: |
@@ -357,7 +357,7 @@ jobs:
           profile-name: default
       - run:
           name: build x86_64_darwin
-          command: cargo build --release
+          command: cargo build --release -v
       - push-to-s3:
           path: ./target/release/
           os: darwin
