@@ -22,6 +22,7 @@ use tokio::io::AsyncRead;
 use tracing::{debug, trace, warn};
 
 use crate::codecs::Codec;
+use crate::hamt::Hamt;
 use crate::unixfs::{poll_read_buf_at_pos, DataType, LinkRef, UnixfsNode, UnixfsReader};
 
 pub const IROH_STORE: &str = "iroh-store";
@@ -142,7 +143,7 @@ impl FromStr for Path {
 #[derive(Debug)]
 pub struct Out {
     metadata: Metadata,
-    content: OutContent,
+    pub(crate) content: OutContent,
 }
 
 impl Out {
@@ -200,7 +201,7 @@ impl Out {
 }
 
 #[derive(Debug)]
-enum OutContent {
+pub(crate) enum OutContent {
     DagPb(Ipld, Bytes),
     Unixfs(UnixfsNode),
     DagCbor(Ipld, Bytes),
@@ -209,7 +210,7 @@ enum OutContent {
 }
 
 impl OutContent {
-    fn typ(&self) -> OutType {
+    pub(crate) fn typ(&self) -> OutType {
         match self {
             OutContent::DagPb(_, _) => OutType::DagPb,
             OutContent::Unixfs(_) => OutType::Unixfs,
@@ -219,7 +220,7 @@ impl OutContent {
         }
     }
 
-    fn links(&self) -> Result<Vec<Cid>> {
+    pub(crate) fn links(&self) -> Result<Vec<Cid>> {
         match self {
             OutContent::DagPb(ipld, _)
             | OutContent::DagCbor(ipld, _)
@@ -510,8 +511,16 @@ impl<T: ContentLoader> Resolver<T> {
                 *current = next_node;
             }
             UnixfsNode::HamtShard(node) => {
-                println!("hamt shard {:?} {:?}", node.hash_type(), node.fanout());
-                todo!()
+                let hamt = Hamt::from_node(node)?;
+
+                let (next_link, next_node) = hamt
+                    .get(self, part.as_bytes())
+                    .await?
+                    .ok_or_else(|| anyhow!("link {} not found", part))?;
+                // TODO: is this the right way to to resolved path here?
+                resolved_path.push(next_link.cid);
+
+                *current = next_node.clone();
             }
             _ => {
                 bail!("unexpected unixfs type {:?}", current.typ());
@@ -1896,7 +1905,6 @@ mod tests {
         // QmWKbcq9HGfat7FsL85qrwNUxnmo3xAWzUo2nEj9BoAZeP foo/9999.txt
 
         let root_cid_str = "QmUu8pzQ5yjhDrg4GiHYLeko2oT76vcmYX5bw6sjiEJ82k";
-        let hello_99_cid_str = "QmWKbcq9HGfat7FsL85qrwNUxnmo3xAWzUo2nEj9BoAZeP";
 
         let reader = tokio::io::BufReader::new(
             tokio::fs::File::open("./fixtures/big-foo.car")
@@ -1915,36 +1923,29 @@ mod tests {
         let loader = Arc::new(files);
         let resolver = Resolver::new(loader.clone(), &mut Registry::default());
 
-        {
-            let path = format!("/ipfs/{root_cid_str}/9999.txt");
-            let ipld_99_txt = resolver.resolve(path.parse().unwrap()).await.unwrap();
+        for i in 1..=10000 {
+            let path = format!("/ipfs/{root_cid_str}/{}.txt", i);
+            let ipld_txt = resolver.resolve(path.parse().unwrap()).await.unwrap();
 
-            assert!(ipld_99_txt.unixfs_read_dir().is_none());
+            assert!(ipld_txt.unixfs_read_dir().is_none());
 
-            let m = ipld_99_txt.metadata();
+            let m = ipld_txt.metadata();
             assert_eq!(m.unixfs_type, Some(UnixfsType::File));
             assert_eq!(m.path.to_string(), path);
             assert_eq!(m.typ, OutType::Unixfs);
-            assert_eq!(m.size, Some(6));
-            assert_eq!(
-                m.resolved_path,
-                vec![
-                    root_cid_str.parse().unwrap(),
-                    hello_99_cid_str.parse().unwrap()
-                ]
-            );
+            assert!(m.size.unwrap() > 0);
 
-            if let OutContent::Unixfs(node) = ipld_99_txt.content {
+            if let OutContent::Unixfs(node) = ipld_txt.content {
                 assert_eq!(
                     read_to_string(
                         node.into_reader(loader.clone(), OutMetrics::default())
                             .unwrap()
                     )
                     .await,
-                    "9999"
+                    format!("{}\n", i),
                 );
             } else {
-                panic!("invalid result: {:?}", ipld_99_txt);
+                panic!("invalid result: {:?}", ipld_txt);
             }
         }
     }

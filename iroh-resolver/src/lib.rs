@@ -1,5 +1,6 @@
 pub mod chunker;
 pub mod codecs;
+pub mod hamt;
 pub mod resolver;
 pub mod unixfs;
 pub mod unixfs_builder;

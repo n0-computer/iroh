@@ -75,6 +75,16 @@ pub struct LinkRef<'a> {
     pub tsize: Option<u64>,
 }
 
+impl LinkRef<'_> {
+    pub fn to_owned(&self) -> Link {
+        Link {
+            cid: self.cid,
+            name: self.name.map(|t| t.to_string()),
+            tsize: self.tsize,
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Clone)]
 pub enum UnixfsNode {
     Raw(Bytes),
@@ -110,6 +120,10 @@ impl Node {
         self.inner.r#type.try_into().expect("invalid data type")
     }
 
+    pub fn data(&self) -> Option<Bytes> {
+        self.inner.data.clone()
+    }
+
     pub fn size(&self) -> Option<usize> {
         if self.outer.links.is_empty() {
             return Some(
@@ -140,8 +154,8 @@ impl Node {
     }
 
     /// Returns the fanout value. Only used for HAMT Shards.
-    pub fn fanout(&self) -> Option<u64> {
-        self.inner.fanout
+    pub fn fanout(&self) -> Option<u32> {
+        self.inner.fanout.and_then(|f| u32::try_from(f).ok())
     }
 }
 
