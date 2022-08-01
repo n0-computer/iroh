@@ -401,6 +401,6 @@ workflows:
       - build_release_osx:
           name: "build mac release"
           context: aws_s3
-          # filters:
-          #   branches:
-          #     only: main
+          filters:
+            branches:
+              only: main
