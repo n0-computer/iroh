@@ -350,7 +350,6 @@ jobs:
       - checkout
       - setup-env-mac
       - setup-protoc-mac
-      # - set-env-path
       - setup-sccache
       - restore-sccache-cache
       - aws-cli/setup:
@@ -367,6 +366,23 @@ jobs:
           path: ./target/release/
           os: darwin
           arch: x86_64
+      - run:
+          name: deps for aarch64_darwin
+          command: |
+            rustup target add aarch64-apple-darwin
+            rustup toolchain install stable-aarch64-apple-darwin
+      - run:
+          name: build aarch64_darwin
+          no_output_timeout: 20m
+          command: cargo build --release -v --target aarch64-apple-darwin
+      - push-to-s3:
+          path: ./target/aarch64-apple-darwin/release/
+          os: darwin
+          arch: aarch64
+      - push-to-s3-latest:
+          path: ./target/aarch64-apple-darwin/release/
+          os: darwin
+          arch: aarch64
       - save-sccache-cache
 
 
