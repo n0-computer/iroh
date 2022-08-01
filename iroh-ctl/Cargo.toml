@@ -27,3 +27,4 @@ libp2p = { version = "0.47", default-features = false }
 cid = "0.8.5"
 multiaddr = "0.14.0"
 bytes = "1.1.0"
+iroh-resolver = { path = "../iroh-resolver" }

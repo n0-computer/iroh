@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+use cid::Cid;
 use clap::{Parser, Subcommand};
 use iroh_ctl::{
     gateway::{run_command as run_gateway_command, Gateway},
@@ -8,9 +9,11 @@ use iroh_ctl::{
     p2p::{run_command as run_p2p_command, P2p},
     store::{run_command as run_store_command, Store},
 };
+use iroh_resolver::{resolver::ContentLoader, unixfs_builder};
 use iroh_rpc_client::Client;
 use iroh_util::{iroh_home_path, make_config};
 use prometheus_client::registry::Registry;
+use tokio::io::AsyncWriteExt;
 
 use iroh_ctl::{
     config::{Config, CONFIG_FILE_NAME, ENV_PREFIX},
@@ -49,6 +52,18 @@ enum Commands {
     P2p(P2p),
     Store(Store),
     Gateway(Gateway),
+    #[clap(about = "break up a file into block and provide those blocks on the ipfs network")]
+    Add {
+        path: PathBuf,
+    },
+    #[clap(
+        about = "get content based on a Content Identifier from the ipfs network, and save it "
+    )]
+    Get {
+        cid: Cid,
+        #[clap(long, short)]
+        path: PathBuf,
+    },
 }
 
 #[tokio::main(flavor = "multi_thread")]
@@ -92,6 +107,17 @@ async fn main() -> anyhow::Result<()> {
         Commands::P2p(p2p) => run_p2p_command(client, p2p).await?,
         Commands::Store(store) => run_store_command(client, store).await?,
         Commands::Gateway(gateway) => run_gateway_command(client, gateway).await?,
+        Commands::Add { path } => {
+            let cid = unixfs_builder::add_file(path.as_path(), &client).await?;
+            client.try_p2p()?.start_providing(&cid).await?;
+            println!("/ipfs/{}", cid);
+        }
+        Commands::Get { cid, path } => {
+            let loaded = client.load_cid(&cid).await?;
+            let mut file = tokio::fs::File::create(path.clone()).await?;
+            file.write_all(&loaded.data).await?;
+            println!("cid {:?} written to {:?}", cid, path);
+        }
     };
 
     metrics_handle.shutdown();
