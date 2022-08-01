@@ -357,6 +357,7 @@ jobs:
           profile-name: default
       - run:
           name: build x86_64_darwin
+          no_output_timeout: 20m
           command: cargo build --release -v
       - push-to-s3:
           path: ./target/release/
