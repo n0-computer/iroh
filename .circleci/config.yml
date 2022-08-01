@@ -258,6 +258,27 @@ jobs:
           command: cargo test << parameters.cargo-args >> -j 4
       - save-sccache-cache
 
+  test_darwin:
+    executor: mac-executor
+    parameters:
+      cargo-args:
+        description: Addtional arguments for the cargo command
+        type: string
+        default: ""
+    environment:
+      RUST_LOG: debug
+    steps:
+      - checkout
+      - setup-env-mac
+      - setup-protoc-mac
+      - setup-sccache
+      - restore-sccache-cache
+      - run:
+          no_output_timeout: 20m
+          name: Test with << parameters.cargo-args >>
+          command: cargo test << parameters.cargo-args >> -j 2
+      - save-sccache-cache
+
   rustfmt:
     executor: docker-executor
     steps:
@@ -399,24 +420,36 @@ workflows:
           requires:
             - cargo_fetch
       - test:
-          name: "Test linux:x86_64"
+          name: "test_linux_x86_64"
           cargo-args: "--workspace"
           requires:
             - cargo_fetch
       - test:
-          name: "Test linux:x86_64 (no default features)"
+          name: "test_linux_x86_64--no-default-features"
           cargo-args: "--workspace --no-default-features"
           requires:
             - cargo_fetch
       - build_release:
           name: "build linux release"
           context: aws_s3
+          requires:
+            - test_linux_x86_64
+            - test_linux_x86_64--no-default-features
           filters:
             branches:
               only: main
+      - test_darwin:
+          name: "test_darwin_x86_64"
+          cargo-args: "--workspace"
+      - test_darwin:
+          name: "test_darwin_x86_64--no-default-features"
+          cargo-args: "--workspace --no-default-features"
       - build_release_osx:
           name: "build mac release"
           context: aws_s3
+          requires:
+            - test_darwin_x86_64
+            - test_darwin_x86_64--no-default-features
           filters:
             branches:
               only: main
