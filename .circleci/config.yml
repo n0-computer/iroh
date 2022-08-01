@@ -52,8 +52,8 @@ commands:
           name: setup rust
           command: |
             curl https://sh.rustup.rs -sSf | sh -s -- -y
-            echo 'export PATH="$PATH:/root/.cargo/bin"' | tee --append $BASH_ENV
-            echo 'export RUSTFLAGS="-C link-dead-code"'  | tee --append $BASH_ENV
+            echo 'export PATH="$PATH:/root/.cargo/bin"' >> $BASH_ENV
+            echo 'export RUSTFLAGS="-C link-dead-code"' >> $BASH_ENV
             source $BASH_ENV
       - run:
           name: setup ld
@@ -61,6 +61,31 @@ commands:
             sudo bash -l -c 'echo $(rustc --print sysroot)/lib >> /etc/ld.so.conf'
             sudo bash -l -c 'echo /usr/local/lib >> /etc/ld.so.conf'
             sudo ldconfig
+
+  setup-env-mac:
+    steps:
+      - run:
+          name: setup deps
+          command: |
+            if ! which brew >/dev/null 2>&1; then
+              /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/master/install.sh)"
+            fi
+
+            brew update
+            brew install openssl cmake llvm
+      - run:
+          name: setup rust
+          command: |
+            curl https://sh.rustup.rs -sSf | sh -s -- -y
+            echo 'export PATH="$PATH:/root/.cargo/bin"' >> $BASH_ENV
+            echo 'export RUSTFLAGS="-C link-dead-code"' >> $BASH_ENV
+            source $BASH_ENV
+      # - run:
+      #     name: setup ld
+      #     command: |
+      #       sudo bash -l -c 'echo $(rustc --print sysroot)/lib >> /etc/ld.so.conf'
+      #       sudo bash -l -c 'echo /usr/local/lib >> /etc/ld.so.conf'
+      #       sudo ldconfig
 
   setup-protoc:
     steps:
@@ -73,8 +98,8 @@ commands:
             sudo unzip -o $PROTOC_ZIP -d /usr/local bin/protoc
             sudo unzip -o $PROTOC_ZIP -d /usr/local 'include/*'
             rm -f $PROTOC_ZIP
-            echo 'export PROTOC=/usr/local/bin/protoc' | tee --append $BASH_ENV
-            echo 'export PROTOC_INCLUDE=/usr/local/include'  | tee --append $BASH_ENV
+            echo 'export PROTOC=/usr/local/bin/protoc' >> $BASH_ENV
+            echo 'export PROTOC_INCLUDE=/usr/local/include' >> $BASH_ENV
             source $BASH_ENV
     
   setup-protoc-mac:
@@ -88,8 +113,8 @@ commands:
             sudo unzip -o $PROTOC_ZIP -d /usr/local bin/protoc
             sudo unzip -o $PROTOC_ZIP -d /usr/local 'include/*'
             rm -f $PROTOC_ZIP
-            echo 'export PROTOC=/usr/local/bin/protoc' | tee --append $BASH_ENV
-            echo 'export PROTOC_INCLUDE=/usr/local/include'  | tee --append $BASH_ENV
+            echo 'export PROTOC=/usr/local/bin/protoc' >> $BASH_ENV
+            echo 'export PROTOC_INCLUDE=/usr/local/include' >> $BASH_ENV
             source $BASH_ENV
 
   set-env-path:
@@ -98,7 +123,7 @@ commands:
           name: Set the PATH env variable
           command: |
             # Also put the Rust LLVM tools into the PATH.
-            echo 'export PATH="$HOME:~/.cargo/bin:~/.rustup/toolchains/<< pipeline.parameters.nightly-version >>-x86_64-unknown-linux-gnu/lib/rustlib/x86_64-unknown-linux-gnu/bin:$PATH"' | tee --append $BASH_ENV
+            echo 'export PATH="$HOME:~/.cargo/bin:~/.rustup/toolchains/<< pipeline.parameters.nightly-version >>-x86_64-unknown-linux-gnu/lib/rustlib/x86_64-unknown-linux-gnu/bin:$PATH"' >> $BASH_ENV
             source $BASH_ENV
 
 
@@ -319,19 +344,29 @@ jobs:
           arch: aarch64
       - save-sccache-cache
 
-  build-mac:
+  build_release_osx:
     executor: mac-executor
     steps:
       - checkout
-      - setup-env
+      - setup-env-mac
       - setup-protoc-mac
-      - set-env-path
+      # - set-env-path
+      - setup-sccache
+      - restore-sccache-cache
+      - aws-cli/setup:
+          profile-name: default
       - run:
           name: build x86_64_darwin
           command: cargo build --release
-      # - run:
-      #     name: build aarch64_darwin
-      #     command: cargo build --release
+      - push-to-s3:
+          path: ./target/release/
+          os: darwin
+          arch: x86_64
+      - push-to-s3-latest:
+          path: ./target/release/
+          os: darwin
+          arch: x86_64
+      - save-sccache-cache
 
 
 workflows:
@@ -362,3 +397,9 @@ workflows:
           filters:
             branches:
               only: main
+      - build_release_osx:
+          name: "build mac release"
+          context: aws_s3
+          # filters:
+          #   branches:
+          #     only: main
