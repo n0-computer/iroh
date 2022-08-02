@@ -14,8 +14,10 @@ pub struct Config {
     pub version: String,
     /// The environment of the service.
     pub service_env: String,
-    /// Flag to enable debug mode.
-    pub debug: bool,
+    /// Flag to enable metrics collection.
+    pub collect: bool,
+    /// Flag to enable tracing collection.
+    pub tracing: bool,
     /// The endpoint of the trace collector.
     pub collector_endpoint: String,
     /// The endpoint of the prometheus push gateway.
@@ -35,7 +37,8 @@ impl Source for Config {
         insert_into_config_map(&mut map, "build", self.build.clone());
         insert_into_config_map(&mut map, "version", self.version.clone());
         insert_into_config_map(&mut map, "service_env", self.service_env.clone());
-        insert_into_config_map(&mut map, "debug", self.debug);
+        insert_into_config_map(&mut map, "collect", self.collect);
+        insert_into_config_map(&mut map, "tracing", self.tracing);
         insert_into_config_map(
             &mut map,
             "collector_endpoint",
@@ -73,7 +76,8 @@ impl Default for Config {
             build: "unknown".to_string(),
             version: "unknown".to_string(),
             service_env: "dev".to_string(),
-            debug: false,
+            collect: false,
+            tracing: false,
             collector_endpoint: "http://localhost:4317".to_string(),
             prom_gateway_endpoint: "http://localhost:9091".to_string(),
         }
@@ -109,7 +113,8 @@ mod tests {
             "service_env".to_string(),
             Value::new(None, cfg.service_env.clone()),
         );
-        expect.insert("debug".to_string(), Value::new(None, cfg.debug));
+        expect.insert("collect".to_string(), Value::new(None, cfg.collect));
+        expect.insert("tracing".to_string(), Value::new(None, cfg.tracing));
         expect.insert(
             "collector_endpoint".to_string(),
             Value::new(None, cfg.collector_endpoint.clone()),

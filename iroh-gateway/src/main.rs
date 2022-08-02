@@ -23,8 +23,10 @@ struct Args {
     fetch: Option<bool>,
     #[clap(short, long)]
     cache: Option<bool>,
-    #[clap(long = "no-metrics")]
-    no_metrics: bool,
+    #[clap(long = "metrics")]
+    metrics: bool,
+    #[clap(long = "tracing")]
+    tracing: bool,
     #[clap(long)]
     cfg: Option<PathBuf>,
 }
@@ -44,7 +46,8 @@ impl Args {
         if let Some(cache) = self.cache {
             map.insert("cache", cache.to_string());
         }
-        map.insert("metrics.debug", self.no_metrics.to_string());
+        map.insert("metrics.collect", self.metrics.to_string());
+        map.insert("metrics.tracing", self.tracing.to_string());
         map
     }
 }
