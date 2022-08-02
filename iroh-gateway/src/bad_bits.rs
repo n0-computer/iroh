@@ -4,6 +4,8 @@ use std::{collections::HashMap, sync::Arc, time::Duration};
 use tokio::{sync::RwLock, task::JoinHandle};
 use tracing::log::error;
 
+const BAD_BITS_UPDATE_INTERVAL: Duration = Duration::from_secs(3600*8);
+
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct BadBitsAnchor {
     pub anchor: String,
@@ -74,7 +76,7 @@ pub fn bad_bits_update_handler(bad_bits: Arc<RwLock<BadBits>>) -> JoinHandle<()>
             } else {
                 error!("Failed to fetch denylist: {}", res.status());
             }
-            tokio::time::sleep(Duration::from_secs(30)).await;
+            tokio::time::sleep(BAD_BITS_UPDATE_INTERVAL).await;
         }
     })
 }
