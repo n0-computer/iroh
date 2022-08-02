@@ -18,8 +18,10 @@ struct Args {
     /// Path to the store
     #[clap(long, short)]
     path: Option<PathBuf>,
-    #[clap(long = "no-metrics")]
-    no_metrics: bool,
+    #[clap(long = "metrics")]
+    metrics: bool,
+    #[clap(long = "tracing")]
+    tracing: bool,
     /// Path to the config file
     #[clap(long)]
     cfg: Option<PathBuf>,
@@ -31,7 +33,8 @@ impl Args {
         if let Some(path) = self.path.clone() {
             map.insert("path".to_string(), path.to_str().unwrap_or("").to_string());
         }
-        map.insert("metrics.debug".to_string(), self.no_metrics.to_string());
+        map.insert("metrics.collect".to_string(), self.metrics.to_string());
+        map.insert("metrics.tracing".to_string(), self.tracing.to_string());
         map
     }
 }
