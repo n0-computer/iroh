@@ -4,7 +4,7 @@ use std::{collections::HashMap, sync::Arc, time::Duration};
 use tokio::{sync::RwLock, task::JoinHandle};
 use tracing::log::error;
 
-const BAD_BITS_UPDATE_INTERVAL: Duration = Duration::from_secs(3600*8);
+const BAD_BITS_UPDATE_INTERVAL: Duration = Duration::from_secs(3600 * 8);
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct BadBitsAnchor {

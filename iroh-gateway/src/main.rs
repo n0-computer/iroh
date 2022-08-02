@@ -30,6 +30,8 @@ struct Args {
     no_metrics: bool,
     #[clap(long)]
     cfg: Option<PathBuf>,
+    #[clap(long)]
+    denylist: Option<bool>,
 }
 
 impl Args {
@@ -46,6 +48,9 @@ impl Args {
         }
         if let Some(cache) = self.cache {
             map.insert("cache", cache.to_string());
+        }
+        if let Some(denylist) = self.denylist {
+            map.insert("denylist", denylist.to_string());
         }
         map.insert("metrics.debug", self.no_metrics.to_string());
         map
@@ -69,6 +74,7 @@ async fn main() -> Result<()> {
     )
     .unwrap();
     config.metrics = metrics::metrics_config_with_compile_time_info(config.metrics);
+    let use_denylist = config.denylist;
     println!("{:#?}", config);
 
     let metrics_config = config.metrics.clone();
@@ -87,7 +93,10 @@ async fn main() -> Result<()> {
     )
     .await?;
 
-    let bad_bits_handle = bad_bits::bad_bits_update_handler(bad_bits);
+    let bad_bits_handle = match use_denylist {
+        true => bad_bits::bad_bits_update_handler(bad_bits),
+        false => tokio::spawn(async move {}),
+    };
     let metrics_handle =
         iroh_metrics::MetricsHandle::from_registry_with_tracer(metrics_config, prom_registry)
             .await
