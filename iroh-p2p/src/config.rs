@@ -142,16 +142,18 @@ impl Config {
 
     /// Derive server addr for non memory addrs.
     pub fn server_rpc_addr(&self) -> Result<Option<P2pServerAddr>> {
+        #![allow(clippy::unreachable)]
         self.rpc_client
             .p2p_addr
             .as_ref()
             .map(|addr| match addr {
                 #[cfg(feature = "rpc-grpc")]
                 Addr::GrpcHttp2(addr) => Ok(Addr::GrpcHttp2(*addr)),
-                #[cfg(feature = "rpc-grpc")]
+                #[cfg(all(feature = "rpc-grpc", unix))]
                 Addr::GrpcUds(path) => Ok(Addr::GrpcUds(path.clone())),
                 #[cfg(feature = "rpc-mem")]
                 Addr::Mem(_) => bail!("can not derive rpc_addr for mem addr"),
+                _ => bail!("invalid rpc_addr"),
             })
             .transpose()
     }

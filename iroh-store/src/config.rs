@@ -38,7 +38,6 @@ impl Config {
         }
     }
 
-    #[cfg(feature = "rpc-grpc")]
     pub fn new_grpc(path: PathBuf) -> Self {
         let addr = "grpc://0.0.0.0:4402";
         Self::new_with_rpc(path, addr.parse().unwrap())
@@ -52,10 +51,11 @@ impl Config {
             .map(|addr| match addr {
                 #[cfg(feature = "rpc-grpc")]
                 Addr::GrpcHttp2(addr) => Ok(Addr::GrpcHttp2(*addr)),
-                #[cfg(feature = "rpc-grpc")]
+                #[cfg(all(feature = "rpc-grpc", unix))]
                 Addr::GrpcUds(path) => Ok(Addr::GrpcUds(path.clone())),
                 #[cfg(feature = "rpc-mem")]
                 Addr::Mem(_) => bail!("can not derive rpc_addr for mem addr"),
+                _ => bail!("invalid rpc_addr"),
             })
             .transpose()
     }
@@ -85,6 +85,7 @@ mod tests {
     use config::Config as ConfigBuilder;
 
     #[test]
+    #[cfg(all(feature = "rpc-grpc", unix))]
     fn test_collect() {
         let path = PathBuf::new().join("test");
         let default = Config::new_grpc(path);
@@ -112,6 +113,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(all(feature = "rpc-grpc", unix))]
     fn test_build_config_from_struct() {
         let path = PathBuf::new().join("test");
         let expect = Config::new_grpc(path);
