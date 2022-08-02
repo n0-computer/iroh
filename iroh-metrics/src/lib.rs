@@ -63,7 +63,7 @@ pub async fn init_metrics(
     cfg: Config,
     registry: Registry,
 ) -> Result<JoinHandle<()>, Box<dyn std::error::Error>> {
-    if !cfg.debug {
+    if cfg.collect {
         let prom_gateway_uri = format!(
             "{}/metrics/job/{}/instance/{}",
             cfg.prom_gateway_endpoint, cfg.service_name, cfg.instance_id
@@ -102,7 +102,7 @@ pub fn init_tracer(cfg: Config) -> Result<(), Box<dyn std::error::Error>> {
     let log_subscriber = fmt::layer()
         .pretty()
         .with_filter(EnvFilter::from_default_env());
-    if cfg.debug {
+    if !cfg.tracing {
         tracing_subscriber::registry().with(log_subscriber).init();
     } else {
         global::set_text_map_propagator(TraceContextPropagator::new());

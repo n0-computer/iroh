@@ -812,7 +812,6 @@ mod tests {
         let mut prom_registry = Registry::default();
         let mut network_config = Config::default_with_rpc(rpc_client_addr.clone());
         network_config.libp2p.listening_multiaddr = addr;
-        network_config.metrics.debug = true;
 
         let kc = Keychain::<MemoryStorage>::new();
         let mut p2p = Node::new(network_config, rpc_server_addr, kc, &mut prom_registry).await?;

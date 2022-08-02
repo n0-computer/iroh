@@ -13,8 +13,10 @@ use tracing::error;
 #[derive(Parser, Debug, Clone)]
 #[clap(author, version, about, long_about = None)]
 struct Args {
-    #[clap(long = "no-metrics")]
-    no_metrics: bool,
+    #[clap(long = "metrics")]
+    metrics: bool,
+    #[clap(long = "tracing")]
+    tracing: bool,
     #[clap(long)]
     cfg: Option<PathBuf>,
 }
@@ -22,7 +24,8 @@ struct Args {
 impl Args {
     fn make_overrides_map(&self) -> HashMap<String, String> {
         let mut map = HashMap::new();
-        map.insert("metrics.debug".to_string(), self.no_metrics.to_string());
+        map.insert("metrics.collect".to_string(), self.metrics.to_string());
+        map.insert("metrics.tracing".to_string(), self.tracing.to_string());
         map
     }
 }

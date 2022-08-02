@@ -150,7 +150,7 @@ impl P2pNode {
             path: db_path.to_path_buf(),
             rpc_client: rpc_store_client_config,
             metrics: iroh_metrics::config::Config {
-                debug: true, // disable tracing by default
+                tracing: false, // disable tracing by default
                 ..Default::default()
             },
         };
