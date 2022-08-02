@@ -177,6 +177,7 @@ commands:
               aws s3 cp <<parameters.path>>iroh-gateway s3://vorc/iroh-gateway-<<parameters.os>>-<<parameters.arch>>-${CIRCLE_SHA1::7} --no-progress
               aws s3 cp <<parameters.path>>iroh-p2p s3://vorc/iroh-p2p-<<parameters.os>>-<<parameters.arch>>-${CIRCLE_SHA1::7} --no-progress
               aws s3 cp <<parameters.path>>iroh-store s3://vorc/iroh-store-<<parameters.os>>-<<parameters.arch>>-${CIRCLE_SHA1::7} --no-progress
+              aws s3 cp <<parameters.path>>iroh-ctl s3://vorc/iroh-ctl-<<parameters.os>>-<<parameters.arch>>-${CIRCLE_SHA1::7} --no-progress
 
   push-to-s3-latest:
     parameters:
@@ -197,7 +198,7 @@ commands:
               aws s3 cp <<parameters.path>>iroh-gateway s3://vorc/iroh-gateway-<<parameters.os>>-<<parameters.arch>>-latest --no-progress
               aws s3 cp <<parameters.path>>iroh-p2p s3://vorc/iroh-p2p-<<parameters.os>>-<<parameters.arch>>-latest --no-progress
               aws s3 cp <<parameters.path>>iroh-store s3://vorc/iroh-store-<<parameters.os>>-<<parameters.arch>>-latest --no-progress
-
+              aws s3 cp <<parameters.path>>iroh-ctl s3://vorc/iroh-ctl-<<parameters.os>>-<<parameters.arch>>-latest --no-progress
 
 jobs:
   cargo_fetch:
