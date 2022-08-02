@@ -1,9 +1,11 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
 use clap::Parser;
 use iroh_gateway::{
+    bad_bits::{self, BadBits},
     config::{Config, CONFIG_FILE_NAME, ENV_PREFIX},
     core::Core,
     metrics,
@@ -11,6 +13,7 @@ use iroh_gateway::{
 use iroh_metrics::gateway::Metrics;
 use iroh_util::{iroh_home_path, make_config};
 use prometheus_client::registry::Registry;
+use tokio::sync::RwLock;
 
 #[derive(Parser, Debug, Clone)]
 #[clap(author, version, about, long_about = None)]
@@ -27,6 +30,8 @@ struct Args {
     no_metrics: bool,
     #[clap(long)]
     cfg: Option<PathBuf>,
+    #[clap(long)]
+    denylist: Option<bool>,
 }
 
 impl Args {
@@ -43,6 +48,9 @@ impl Args {
         }
         if let Some(cache) = self.cache {
             map.insert("cache", cache.to_string());
+        }
+        if let Some(denylist) = self.denylist {
+            map.insert("denylist", denylist.to_string());
         }
         map.insert("metrics.debug", self.no_metrics.to_string());
         map
@@ -66,16 +74,29 @@ async fn main() -> Result<()> {
     )
     .unwrap();
     config.metrics = metrics::metrics_config_with_compile_time_info(config.metrics);
+    let use_denylist = config.denylist;
     println!("{:#?}", config);
 
     let metrics_config = config.metrics.clone();
     let mut prom_registry = Registry::default();
     let gw_metrics = Metrics::new(&mut prom_registry);
+    let bad_bits = Arc::new(RwLock::new(BadBits::new()));
     let rpc_addr = config
         .server_rpc_addr()?
         .ok_or_else(|| anyhow!("missing gateway rpc addr"))?;
-    let handler = Core::new(config, rpc_addr, gw_metrics, &mut prom_registry).await?;
+    let handler = Core::new(
+        config,
+        rpc_addr,
+        gw_metrics,
+        &mut prom_registry,
+        Arc::clone(&bad_bits),
+    )
+    .await?;
 
+    let bad_bits_handle = match use_denylist {
+        true => bad_bits::bad_bits_update_handler(bad_bits),
+        false => tokio::spawn(async move {}),
+    };
     let metrics_handle =
         iroh_metrics::MetricsHandle::from_registry_with_tracer(metrics_config, prom_registry)
             .await
@@ -90,5 +111,6 @@ async fn main() -> Result<()> {
     core_task.abort();
 
     metrics_handle.shutdown();
+    bad_bits_handle.abort();
     Ok(())
 }

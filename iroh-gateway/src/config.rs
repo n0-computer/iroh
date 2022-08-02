@@ -38,6 +38,8 @@ pub struct Config {
     pub rpc_client: RpcClientConfig,
     /// metrics configuration
     pub metrics: MetricsConfig,
+    /// flag to toggle whether the gateway should use denylist on requests
+    pub denylist: bool,
 }
 
 impl Config {
@@ -56,6 +58,7 @@ impl Config {
             port,
             rpc_client,
             metrics: MetricsConfig::default(),
+            denylist: false,
         }
     }
 
@@ -130,6 +133,7 @@ impl Default for Config {
             port: DEFAULT_PORT,
             rpc_client,
             metrics: MetricsConfig::default(),
+            denylist: false,
         };
         t.set_default_headers();
         t
@@ -147,6 +151,7 @@ impl Source for Config {
         insert_into_config_map(&mut map, "writeable", self.writeable);
         insert_into_config_map(&mut map, "fetch", self.fetch);
         insert_into_config_map(&mut map, "cache", self.cache);
+        insert_into_config_map(&mut map, "denylist", self.denylist);
         // Some issue between deserializing u64 & u16, converting this to
         // an signed int fixes the issue
         insert_into_config_map(&mut map, "port", self.port as i32);
@@ -200,6 +205,7 @@ mod tests {
         expect.insert("fetch".to_string(), Value::new(None, default.fetch));
         expect.insert("cache".to_string(), Value::new(None, default.cache));
         expect.insert("port".to_string(), Value::new(None, default.port as i64));
+        expect.insert("denylist".to_string(), Value::new(None, default.denylist));
         expect.insert(
             "headers".to_string(),
             Value::new(None, collect_headers(&default.headers).unwrap()),
