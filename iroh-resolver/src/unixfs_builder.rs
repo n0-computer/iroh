@@ -1,16 +1,19 @@
-use std::{fmt::Debug, pin::Pin};
+use std::{fmt::Debug, path::Path, pin::Pin};
+
+use anyhow::{anyhow, ensure, Result};
+use async_trait::async_trait;
+use bytes::Bytes;
+use cid::{multihash::MultihashDigest, Cid};
+use futures::{Stream, StreamExt};
+use iroh_rpc_client::Client;
+use prost::Message;
+use tokio::io::AsyncRead;
 
 use crate::{
     chunker::{self, Chunker, DEFAULT_CHUNK_SIZE_LIMIT},
     codecs::Codec,
-    unixfs::{dag_pb, unixfs_pb, DataType, UnixfsNode},
+    unixfs::{dag_pb, unixfs_pb, DataType, Node, UnixfsNode},
 };
-use anyhow::{anyhow, ensure, Result};
-use bytes::Bytes;
-use cid::{multihash::MultihashDigest, Cid};
-use futures::{Stream, StreamExt};
-use prost::Message;
-use tokio::io::AsyncRead;
 
 /// Construct a UnixFS directory.
 #[derive(Debug, Default)]
@@ -95,7 +98,7 @@ impl Directory {
             };
             let outer = encode_unixfs_pb(&inner, links)?;
 
-            let node = UnixfsNode::Pb { outer, inner };
+            let node = UnixfsNode::Directory(Node { outer, inner });
             let bytes = node.encode()?;
             let cid = Cid::new_v1(Codec::DagPb as _, cid::multihash::Code::Sha2_256.digest(&bytes));
             yield (cid, bytes)
@@ -223,7 +226,7 @@ impl File {
                     ..Default::default()
                 };
                 let outer = encode_unixfs_pb(&inner, links)?;
-                let node = UnixfsNode::Pb { outer, inner };
+                let node = UnixfsNode::Directory(Node { outer, inner });
                 let bytes = node.encode()?;
                 let cid = Cid::new_v1(Codec::DagPb as _, cid::multihash::Code::Sha2_256.digest(&bytes));
                 yield (cid, bytes)
@@ -286,7 +289,7 @@ impl FileBuilder {
         let nodes = self.chunker.chunks(reader).map(|chunk| match chunk {
             Ok(chunk) => {
                 let data = chunk.freeze();
-                Ok(UnixfsNode::Raw { data })
+                Ok(UnixfsNode::Raw(data))
             }
             Err(err) => Err(err.into()),
         });
@@ -296,6 +299,66 @@ impl FileBuilder {
             nodes: Box::pin(nodes),
         })
     }
+}
+
+#[async_trait]
+pub trait Store {
+    async fn put(&self, cid: Cid, blob: Bytes, links: Vec<Cid>) -> Result<()>;
+}
+
+#[async_trait]
+impl Store for &Client {
+    async fn put(&self, cid: Cid, blob: Bytes, links: Vec<Cid>) -> Result<()> {
+        self.try_store()?.put(cid, blob, links).await
+    }
+}
+
+#[async_trait]
+impl Store for &tokio::sync::Mutex<std::collections::HashMap<Cid, Bytes>> {
+    async fn put(&self, cid: Cid, blob: Bytes, _links: Vec<Cid>) -> Result<()> {
+        self.lock().await.insert(cid, blob);
+        Ok(())
+    }
+}
+
+/// Adds a single file.
+/// - storing the content using `rpc.store`
+/// - returns the root Cid
+/// - wraps into a UnixFs directory to presever the filename
+pub async fn add_file<S: Store>(path: &Path, rpc: Option<S>) -> Result<Cid> {
+    ensure!(path.is_file(), "provided path was not a file");
+
+    // wrap file in dir to preserve file name
+    let mut dir = DirectoryBuilder::new();
+    dir.name("");
+    let mut file = FileBuilder::new();
+    file.name(
+        path.file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or_default(),
+    );
+    let f = tokio::fs::File::open(path).await?;
+    let buf = tokio::io::BufReader::new(f);
+    file.content_reader(buf);
+    let file = file.build().await?;
+    dir.add_file(file);
+
+    let dir = dir.build().await?;
+
+    // encode and store
+    let mut root = None;
+    let parts = dir.encode();
+    tokio::pin!(parts);
+
+    while let Some(part) = parts.next().await {
+        let (cid, bytes) = part?;
+        if let Some(ref rpc) = rpc {
+            rpc.put(cid, bytes, vec![]).await?;
+        }
+        root = Some(cid);
+    }
+
+    Ok(root.expect("missing root"))
 }
 
 #[cfg(test)]

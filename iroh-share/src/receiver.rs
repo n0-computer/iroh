@@ -234,7 +234,7 @@ impl Data {
         self.root.unixfs_read_dir()
     }
 
-    pub fn pretty(self) -> OutPrettyReader<Loader> {
+    pub fn pretty(self) -> Result<OutPrettyReader<Loader>> {
         self.root
             .pretty(self.resolver.loader().clone(), Default::default())
     }

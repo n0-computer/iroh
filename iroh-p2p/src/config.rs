@@ -48,8 +48,14 @@ pub struct Libp2pConfig {
     pub relay_server: bool,
     /// Relay client enabled.
     pub relay_client: bool,
-    /// Target peer count.
-    pub target_peer_count: u32,
+    pub max_conns_out: u32,
+    pub max_conns_in: u32,
+    pub max_conns_pending_out: u32,
+    pub max_conns_pending_in: u32,
+    pub max_conns_per_peer: u32,
+    pub notify_handler_buffer_size: usize,
+    pub connection_event_buffer_size: usize,
+    pub dial_concurrency_factor: u8,
 }
 
 /// Configuration for the node.
@@ -70,7 +76,39 @@ impl Source for Libp2pConfig {
         // `config` package converts all unsigned integers into U64, which then has problems
         // downcasting to, in this case, u32. To get it to allow the convertion between the
         // config::Config and the p2p::Config, we need to cast it as a signed int
-        insert_into_config_map(&mut map, "target_peer_count", self.target_peer_count as i64);
+        insert_into_config_map(&mut map, "max_conns_in", self.max_conns_in as i64);
+        insert_into_config_map(&mut map, "max_conns_out", self.max_conns_out as i64);
+        insert_into_config_map(
+            &mut map,
+            "max_conns_pending_in",
+            self.max_conns_pending_in as i64,
+        );
+        insert_into_config_map(
+            &mut map,
+            "max_conns_pending_out",
+            self.max_conns_pending_out as i64,
+        );
+        insert_into_config_map(
+            &mut map,
+            "max_conns_per_peer",
+            self.max_conns_per_peer as i64,
+        );
+        insert_into_config_map(
+            &mut map,
+            "notify_handler_buffer_size",
+            self.notify_handler_buffer_size as i64,
+        );
+        insert_into_config_map(
+            &mut map,
+            "connection_event_buffer_size",
+            self.connection_event_buffer_size as i64,
+        );
+        insert_into_config_map(
+            &mut map,
+            "dial_concurrency_factor",
+            self.dial_concurrency_factor as i64,
+        );
+
         insert_into_config_map(&mut map, "kademlia", self.kademlia);
         insert_into_config_map(&mut map, "autonat", self.autonat);
         insert_into_config_map(&mut map, "mdns", self.mdns);
@@ -117,7 +155,14 @@ impl Default for Libp2pConfig {
             autonat: true,
             relay_server: true,
             relay_client: true,
-            target_peer_count: 256,
+            max_conns_pending_out: 256,
+            max_conns_pending_in: 256,
+            max_conns_in: 256,
+            max_conns_out: 256,
+            max_conns_per_peer: 8,
+            notify_handler_buffer_size: 256,
+            connection_event_buffer_size: 256,
+            dial_concurrency_factor: 16,
         }
     }
 }
@@ -200,11 +245,43 @@ mod tests {
         // libp2p
         let mut expect: Map<String, Value> = Map::new();
         let default = &default.libp2p;
+
+        // see `Source` implementation for  why we need to cast this as a signed int
         expect.insert(
-            "target_peer_count".to_string(),
-            // see `Source` implementation for  why we need to cast this as a signed int
-            Value::new(None, default.target_peer_count as i64),
+            "max_conns_in".to_string(),
+            Value::new(None, default.max_conns_in as i64),
         );
+        expect.insert(
+            "max_conns_out".to_string(),
+            Value::new(None, default.max_conns_out as i64),
+        );
+        expect.insert(
+            "max_conns_pending_in".to_string(),
+            Value::new(None, default.max_conns_pending_in as i64),
+        );
+        expect.insert(
+            "max_conns_pending_out".to_string(),
+            Value::new(None, default.max_conns_pending_out as i64),
+        );
+        expect.insert(
+            "max_conns_per_peer".to_string(),
+            Value::new(None, default.max_conns_per_peer as i64),
+        );
+
+        expect.insert(
+            "notify_handler_buffer_size".to_string(),
+            Value::new(None, default.notify_handler_buffer_size as i64),
+        );
+
+        expect.insert(
+            "connection_event_buffer_size".to_string(),
+            Value::new(None, default.connection_event_buffer_size as i64),
+        );
+        expect.insert(
+            "dial_concurrency_factor".to_string(),
+            Value::new(None, default.dial_concurrency_factor as i64),
+        );
+
         expect.insert("kademlia".to_string(), Value::new(None, default.kademlia));
         expect.insert("autonat".to_string(), Value::new(None, default.autonat));
         expect.insert("mdns".to_string(), Value::new(None, default.mdns));
@@ -227,6 +304,7 @@ mod tests {
 
         let got = default.collect().unwrap();
         for key in got.keys() {
+            dbg!(key);
             let left = expect.get(key).unwrap();
             let right = got.get(key).unwrap();
             assert_eq!(left, right);

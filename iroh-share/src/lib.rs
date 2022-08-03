@@ -96,7 +96,7 @@ mod tests {
 
         let mut content = Vec::new();
         let file = data.read_file(&files[0]).await?;
-        file.pretty().read_to_end(&mut content).await?;
+        file.pretty()?.read_to_end(&mut content).await?;
         assert_eq!(&content, &bytes);
 
         // Check progress
@@ -178,7 +178,7 @@ mod tests {
             assert_eq!(files[0].name.unwrap(), "bar.txt");
             let file = data.read_file(&files[0]).await?;
             let mut file_content = Vec::new();
-            file.pretty().read_to_end(&mut file_content).await?;
+            file.pretty()?.read_to_end(&mut file_content).await?;
             assert_eq!(&file_content, b"bar");
         }
 
@@ -187,7 +187,7 @@ mod tests {
             assert_eq!(files[1].name.unwrap(), "baz.txt");
             let file = data.read_file(&files[1]).await?;
             let mut file_content = Vec::new();
-            file.pretty()
+            file.pretty()?
                 .read_to_end(&mut file_content)
                 .await
                 .context("read_to_end")?;
