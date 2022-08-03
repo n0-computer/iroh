@@ -135,7 +135,9 @@ impl P2pNode {
                 relay_client: true,
                 bootstrap_peers: Default::default(), // disable bootstrap for now
                 relay_server: false,
-                target_peer_count: 8,
+                max_conns_in: 8,
+                max_conns_out: 8,
+                ..Default::default()
             },
             rpc_client: rpc_p2p_client_config.clone(),
             metrics: Default::default(),
