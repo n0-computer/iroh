@@ -558,7 +558,6 @@ impl<T: ContentLoader> Resolver<T> {
                     Some(UnixfsType::File)
                 }
             };
-            dbg!(current.typ());
             let metadata = Metadata {
                 path: root_path,
                 size: current.size(),
