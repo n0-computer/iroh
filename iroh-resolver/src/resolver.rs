@@ -548,12 +548,17 @@ impl<T: ContentLoader> Resolver<T> {
                     .await?;
             }
 
-            let unixfs_type = current.typ().and_then(|t| match t {
-                DataType::Directory => Some(UnixfsType::Dir),
-                DataType::File | DataType::Raw => Some(UnixfsType::File),
-                DataType::Symlink => Some(UnixfsType::Symlink),
-                _ => None,
-            });
+            let unixfs_type = match current.typ() {
+                Some(DataType::Directory) | Some(DataType::HamtShard) => Some(UnixfsType::Dir),
+                Some(DataType::File) | Some(DataType::Raw) => Some(UnixfsType::File),
+                Some(DataType::Symlink) => Some(UnixfsType::Symlink),
+                Some(DataType::Metadata) => None,
+                None => {
+                    // this means the file is raw
+                    Some(UnixfsType::File)
+                }
+            };
+            dbg!(current.typ());
             let metadata = Metadata {
                 path: root_path,
                 size: current.size(),
