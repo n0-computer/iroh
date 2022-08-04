@@ -6,7 +6,7 @@ use std::{
     task::{Context, Poll},
 };
 
-use anyhow::{anyhow, ensure, Result};
+use anyhow::{anyhow, bail, ensure, Result};
 use bytes::{Buf, Bytes};
 use cid::Cid;
 use futures::{future::BoxFuture, FutureExt};
@@ -75,21 +75,94 @@ pub struct LinkRef<'a> {
     pub tsize: Option<u64>,
 }
 
-#[derive(Debug, PartialEq)]
+impl LinkRef<'_> {
+    pub fn to_owned(&self) -> Link {
+        Link {
+            cid: self.cid,
+            name: self.name.map(|t| t.to_string()),
+            tsize: self.tsize,
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Clone)]
 pub enum UnixfsNode {
-    Raw {
-        data: Bytes,
-    },
-    Pb {
-        outer: dag_pb::PbNode,
-        inner: unixfs_pb::Data,
-    },
+    Raw(Bytes),
+    RawNode(Node),
+    Directory(Node),
+    File(Node),
+    Symlink(Node),
+    HamtShard(Node),
+}
+
+#[derive(
+    Debug, Copy, Clone, PartialEq, Eq, num_enum::IntoPrimitive, num_enum::TryFromPrimitive, Hash,
+)]
+#[repr(u64)]
+pub enum HamtHashFunction {
+    /// Murmur3 6464
+    Murmur3 = 0x22,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct Node {
+    pub(super) outer: dag_pb::PbNode,
+    pub(super) inner: unixfs_pb::Data,
+}
+
+impl Node {
+    fn encode(&self) -> Result<Bytes> {
+        let bytes = self.outer.encode_to_vec();
+        Ok(bytes.into())
+    }
+
+    pub fn typ(&self) -> DataType {
+        self.inner.r#type.try_into().expect("invalid data type")
+    }
+
+    pub fn data(&self) -> Option<Bytes> {
+        self.inner.data.clone()
+    }
+
+    pub fn size(&self) -> Option<usize> {
+        if self.outer.links.is_empty() {
+            return Some(
+                self.inner
+                    .data
+                    .as_ref()
+                    .map(|d| d.len())
+                    .unwrap_or_default(),
+            );
+        }
+
+        None
+    }
+
+    fn cid_links(&self) -> Result<VecDeque<Cid>> {
+        let links = self
+            .outer
+            .links
+            .iter()
+            .map(|h| Cid::read_bytes(Cursor::new(h.hash.as_deref().unwrap())))
+            .collect::<Result<_, _>>()?;
+        Ok(links)
+    }
+
+    /// Returns the hash type. Only used for HAMT Shards.
+    pub fn hash_type(&self) -> Option<HamtHashFunction> {
+        self.inner.hash_type.and_then(|t| t.try_into().ok())
+    }
+
+    /// Returns the fanout value. Only used for HAMT Shards.
+    pub fn fanout(&self) -> Option<u32> {
+        self.inner.fanout.and_then(|f| u32::try_from(f).ok())
+    }
 }
 
 impl UnixfsNode {
     pub fn decode(cid: &Cid, buf: Bytes) -> Result<Self> {
         match cid.codec() {
-            c if c == Codec::Raw as u64 => Ok(UnixfsNode::Raw { data: buf }),
+            c if c == Codec::Raw as u64 => Ok(UnixfsNode::Raw(buf)),
             _ => {
                 let outer = dag_pb::PbNode::decode(buf)?;
                 let inner_data = outer
@@ -98,21 +171,30 @@ impl UnixfsNode {
                     .cloned()
                     .ok_or_else(|| anyhow!("missing data"))?;
                 let inner = unixfs_pb::Data::decode(inner_data)?;
-                // ensure correct unixfs type
-                let _typ: DataType = inner.r#type.try_into()?;
+                let typ: DataType = inner.r#type.try_into()?;
+                let node = Node { outer, inner };
 
-                Ok(UnixfsNode::Pb { outer, inner })
+                // ensure correct unixfs type
+                match typ {
+                    DataType::Raw => todo!(),
+                    DataType::Directory => Ok(UnixfsNode::Directory(node)),
+                    DataType::File => Ok(UnixfsNode::File(node)),
+                    DataType::Symlink => Ok(UnixfsNode::Symlink(node)),
+                    DataType::HamtShard => Ok(UnixfsNode::HamtShard(node)),
+                    DataType::Metadata => bail!("unixfs metadata is not supported"),
+                }
             }
         }
     }
 
     pub fn encode(&self) -> Result<Bytes> {
         let out = match self {
-            UnixfsNode::Raw { data } => data.clone(),
-            UnixfsNode::Pb { outer, .. } => {
-                let bytes = outer.encode_to_vec();
-                bytes.into()
-            }
+            UnixfsNode::Raw(data) => data.clone(),
+            UnixfsNode::RawNode(node)
+            | UnixfsNode::Directory(node)
+            | UnixfsNode::File(node)
+            | UnixfsNode::Symlink(node)
+            | UnixfsNode::HamtShard(node) => node.encode()?,
         };
 
         ensure!(
@@ -124,12 +206,14 @@ impl UnixfsNode {
         Ok(out)
     }
 
-    pub fn typ(&self) -> Option<DataType> {
+    pub const fn typ(&self) -> Option<DataType> {
         match self {
-            UnixfsNode::Raw { .. } => None,
-            UnixfsNode::Pb { inner, .. } => {
-                Some(inner.r#type.try_into().expect("invalid data type"))
-            }
+            UnixfsNode::Raw(_) => None,
+            UnixfsNode::RawNode(_) => Some(DataType::Raw),
+            UnixfsNode::Directory(_) => Some(DataType::Directory),
+            UnixfsNode::File(_) => Some(DataType::File),
+            UnixfsNode::Symlink(_) => Some(DataType::Symlink),
+            UnixfsNode::HamtShard(_) => Some(DataType::HamtShard),
         }
     }
 
@@ -137,26 +221,28 @@ impl UnixfsNode {
     /// Available only for `Raw` and `File` which are a single block with no links.
     pub fn size(&self) -> Option<usize> {
         match self {
-            UnixfsNode::Raw { data } => Some(data.len()),
-            UnixfsNode::Pb { outer, inner } => {
-                if outer.links.is_empty() {
-                    return Some(inner.data.as_ref().map(|d| d.len()).unwrap_or_default());
-                }
-
-                None
-            }
+            UnixfsNode::Raw(data) => Some(data.len()),
+            UnixfsNode::Directory(node)
+            | UnixfsNode::RawNode(node)
+            | UnixfsNode::File(node)
+            | UnixfsNode::Symlink(node)
+            | UnixfsNode::HamtShard(node) => node.size(),
         }
     }
 
     pub fn links(&self) -> Links {
         match self {
-            UnixfsNode::Raw { .. } => Links::Raw,
-            UnixfsNode::Pb { outer, .. } => Links::Pb { i: 0, outer },
+            UnixfsNode::Raw(_) => Links::Raw,
+            UnixfsNode::RawNode(node) => Links::RawNode(PbLinks::new(&node.outer)),
+            UnixfsNode::Directory(node) => Links::Directory(PbLinks::new(&node.outer)),
+            UnixfsNode::File(node) => Links::File(PbLinks::new(&node.outer)),
+            UnixfsNode::Symlink(node) => Links::Symlink(PbLinks::new(&node.outer)),
+            UnixfsNode::HamtShard(node) => Links::HamtShard(PbLinks::new(&node.outer)),
         }
     }
 
-    pub fn is_dir(&self) -> bool {
-        matches!(self.typ(), Some(DataType::Directory))
+    pub const fn is_dir(&self) -> bool {
+        matches!(self, Self::Directory(_))
     }
 
     pub async fn get_link_by_name<S: AsRef<str>>(
@@ -172,47 +258,41 @@ impl UnixfsNode {
             .transpose()
     }
 
-    fn cid_links(&self) -> VecDeque<Cid> {
+    fn cid_links(&self) -> Result<VecDeque<Cid>> {
         match self {
-            UnixfsNode::Pb { outer, .. } => {
-                outer
-                    .links
-                    .iter()
-                    .map(|h| {
-                        // TODO: error handling
-                        Cid::read_bytes(Cursor::new(h.hash.as_deref().unwrap())).unwrap()
-                    })
-                    .collect()
-            }
-            UnixfsNode::Raw { .. } => Default::default(),
+            UnixfsNode::Raw(_) => Ok(Default::default()),
+            UnixfsNode::RawNode(node)
+            | UnixfsNode::Directory(node)
+            | UnixfsNode::File(node)
+            | UnixfsNode::Symlink(node)
+            | UnixfsNode::HamtShard(node) => node.cid_links(),
         }
     }
 
     pub fn symlink(&self) -> Result<Option<&str>> {
-        if self.typ() == Some(DataType::Symlink) {
-            match self {
-                UnixfsNode::Pb { inner, .. } => {
-                    let link = std::str::from_utf8(inner.data.as_deref().unwrap_or_default())?;
-                    Ok(Some(link))
-                }
-                _ => Ok(None),
-            }
+        if let Self::Symlink(ref node) = self {
+            let link = std::str::from_utf8(node.inner.data.as_deref().unwrap_or_default())?;
+            Ok(Some(link))
         } else {
             Ok(None)
         }
     }
 
-    pub fn pretty<T: ContentLoader>(self, loader: T, om: OutMetrics) -> UnixfsReader<T> {
-        let current_links = vec![self.cid_links()];
+    pub fn into_reader<T: ContentLoader>(
+        self,
+        loader: T,
+        om: OutMetrics,
+    ) -> Result<UnixfsReader<T>> {
+        let current_links = vec![self.cid_links()?];
 
-        UnixfsReader {
+        Ok(UnixfsReader {
             root_node: self,
             pos: 0,
             current_node: CurrentNodeState::Outer,
             current_links,
             loader,
             out_metrics: om,
-        }
+        })
     }
 }
 
@@ -246,43 +326,40 @@ impl<T: ContentLoader + Unpin + 'static> AsyncRead for UnixfsReader<T> {
         } = &mut *self;
         let pos_current = *pos;
         let poll_res = match root_node {
-            UnixfsNode::Raw { data } => {
+            UnixfsNode::Raw(data) => {
                 let res = poll_read_buf_at_pos(pos, data, buf);
                 Poll::Ready(res)
             }
-            UnixfsNode::Pb { outer, inner } => match typ.unwrap() {
-                DataType::File => poll_read_file_at(
-                    cx,
-                    outer,
-                    inner,
-                    loader.clone(),
-                    pos,
-                    buf,
-                    current_links,
-                    current_node,
-                ),
-                DataType::Symlink => {
-                    let data = inner.data.as_deref().unwrap_or_default();
-                    let res = poll_read_buf_at_pos(pos, data, buf);
-                    Poll::Ready(res)
-                }
-                DataType::Directory => {
-                    // TODO: cache
-                    let mut res = Vec::new();
-                    for link in &outer.links {
-                        if let Some(ref name) = link.name {
-                            res.extend_from_slice(name.as_bytes());
-                        }
-                        res.extend_from_slice(b"\n");
+            UnixfsNode::File(node) => poll_read_file_at(
+                cx,
+                node,
+                loader.clone(),
+                pos,
+                buf,
+                current_links,
+                current_node,
+            ),
+            UnixfsNode::Symlink(node) => {
+                let data = node.inner.data.as_deref().unwrap_or_default();
+                let res = poll_read_buf_at_pos(pos, data, buf);
+                Poll::Ready(res)
+            }
+            UnixfsNode::Directory(node) => {
+                // TODO: cache
+                let mut res = Vec::new();
+                for link in &node.outer.links {
+                    if let Some(ref name) = link.name {
+                        res.extend_from_slice(name.as_bytes());
                     }
-                    let res = poll_read_buf_at_pos(pos, &res, buf);
-                    Poll::Ready(res)
+                    res.extend_from_slice(b"\n");
                 }
-                _ => Poll::Ready(Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    format!("unsupported Unixfs type: {:?} ", typ),
-                ))),
-            },
+                let res = poll_read_buf_at_pos(pos, &res, buf);
+                Poll::Ready(res)
+            }
+            _ => Poll::Ready(Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("unsupported Unixfs type: {:?} ", typ),
+            ))),
         };
         let bytes_read = *pos - pos_current;
         out_metrics.observe_bytes_read(pos_current, bytes_read);
@@ -361,8 +438,7 @@ fn load_next_node<T: ContentLoader + 'static>(
 #[allow(clippy::too_many_arguments)]
 fn poll_read_file_at<T: ContentLoader + 'static>(
     cx: &mut Context<'_>,
-    root_outer: &dag_pb::PbNode,
-    root_inner: &unixfs_pb::Data,
+    root_node: &Node,
     loader: T,
     pos: &mut usize,
     buf: &mut tokio::io::ReadBuf<'_>,
@@ -373,15 +449,15 @@ fn poll_read_file_at<T: ContentLoader + 'static>(
         match current_node {
             CurrentNodeState::Outer => {
                 // check for links
-                if root_outer.links.is_empty() {
+                if root_node.outer.links.is_empty() {
                     // simplest case just one file
-                    let data = root_inner.data.as_deref().unwrap_or(&[][..]);
+                    let data = root_node.inner.data.as_deref().unwrap_or(&[][..]);
                     let res = poll_read_buf_at_pos(pos, data, buf);
                     return Poll::Ready(res);
                 }
 
                 // read root local data
-                if let Some(ref data) = root_inner.data {
+                if let Some(ref data) = root_node.inner.data {
                     if *pos < data.len() {
                         let res = poll_read_buf_at_pos(pos, data, buf);
                         return Poll::Ready(res);
@@ -404,9 +480,18 @@ fn poll_read_file_at<T: ContentLoader + 'static>(
                         return Poll::Pending;
                     }
                     Poll::Ready(Ok(node)) => {
-                        current_links.push(node.cid_links());
-                        *current_node = CurrentNodeState::Loaded(0, node);
-
+                        match node.cid_links() {
+                            Ok(links) => {
+                                current_links.push(links);
+                                *current_node = CurrentNodeState::Loaded(0, node);
+                            }
+                            Err(e) => {
+                                return Poll::Ready(Err(std::io::Error::new(
+                                    std::io::ErrorKind::InvalidData,
+                                    e.to_string(),
+                                )));
+                            }
+                        }
                         // TODO: do one read
                     }
                     Poll::Ready(Err(e)) => {
@@ -422,7 +507,7 @@ fn poll_read_file_at<T: ContentLoader + 'static>(
                 // already loaded
                 let ty = current_node_inner.typ();
                 match current_node_inner {
-                    UnixfsNode::Raw { data } => {
+                    UnixfsNode::Raw(data) => {
                         let old = *node_pos;
                         let res = poll_read_buf_at_pos(node_pos, data, buf);
                         // advance global pos
@@ -437,29 +522,28 @@ fn poll_read_file_at<T: ContentLoader + 'static>(
                             }
                         }
                     }
-                    UnixfsNode::Pb { inner, .. } => {
-                        if ty == Some(DataType::File) || ty == Some(DataType::Raw) {
-                            // read direct node data
-                            if let Some(ref data) = inner.data {
-                                let old = *node_pos;
-                                let res = poll_read_buf_at_pos(node_pos, data, buf);
-                                let amt_read = *node_pos - old;
-                                *pos += amt_read;
-                                if amt_read > 0 {
-                                    return Poll::Ready(res);
-                                }
+                    UnixfsNode::File(node) | UnixfsNode::RawNode(node) => {
+                        // read direct node data
+                        if let Some(ref data) = node.inner.data {
+                            let old = *node_pos;
+                            let res = poll_read_buf_at_pos(node_pos, data, buf);
+                            let amt_read = *node_pos - old;
+                            *pos += amt_read;
+                            if amt_read > 0 {
+                                return Poll::Ready(res);
                             }
-
-                            // follow links
-                            if load_next_node(current_node, current_links, loader.clone()) {
-                                return Poll::Ready(Ok(()));
-                            }
-                        } else {
-                            return Poll::Ready(Err(std::io::Error::new(
-                                std::io::ErrorKind::InvalidData,
-                                format!("invalid type nested in chunked file: {:?}", ty),
-                            )));
                         }
+
+                        // follow links
+                        if load_next_node(current_node, current_links, loader.clone()) {
+                            return Poll::Ready(Ok(()));
+                        }
+                    }
+                    _ => {
+                        return Poll::Ready(Err(std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            format!("invalid type nested in chunked file: {:?}", ty),
+                        )));
                     }
                 }
             }
@@ -470,7 +554,23 @@ fn poll_read_file_at<T: ContentLoader + 'static>(
 #[derive(Debug)]
 pub enum Links<'a> {
     Raw,
-    Pb { i: usize, outer: &'a dag_pb::PbNode },
+    RawNode(PbLinks<'a>),
+    Directory(PbLinks<'a>),
+    File(PbLinks<'a>),
+    Symlink(PbLinks<'a>),
+    HamtShard(PbLinks<'a>),
+}
+
+#[derive(Debug)]
+pub struct PbLinks<'a> {
+    i: usize,
+    outer: &'a dag_pb::PbNode,
+}
+
+impl<'a> PbLinks<'a> {
+    pub fn new(outer: &'a dag_pb::PbNode) -> Self {
+        PbLinks { i: 0, outer }
+    }
 }
 
 impl<'a> Iterator for Links<'a> {
@@ -479,35 +579,53 @@ impl<'a> Iterator for Links<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         match self {
             Links::Raw => None,
-            Links::Pb { i, outer } => {
-                if *i == outer.links.len() {
-                    return None;
-                }
-
-                let l = &outer.links[*i];
-                *i += 1;
-
-                let res = l
-                    .hash
-                    .as_ref()
-                    .ok_or_else(|| anyhow!("missing link"))
-                    .and_then(|c| {
-                        Ok(LinkRef {
-                            cid: Cid::read_bytes(Cursor::new(c))?,
-                            name: l.name.as_deref(),
-                            tsize: l.tsize,
-                        })
-                    });
-
-                Some(res)
-            }
+            Links::Directory(links)
+            | Links::RawNode(links)
+            | Links::File(links)
+            | Links::Symlink(links)
+            | Links::HamtShard(links) => links.next(),
         }
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
         match self {
             Links::Raw => (0, Some(0)),
-            Links::Pb { outer, .. } => (outer.links.len(), Some(outer.links.len())),
+            Links::Directory(links)
+            | Links::RawNode(links)
+            | Links::File(links)
+            | Links::Symlink(links)
+            | Links::HamtShard(links) => links.size_hint(),
         }
+    }
+}
+
+impl<'a> Iterator for PbLinks<'a> {
+    type Item = Result<LinkRef<'a>>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.i == self.outer.links.len() {
+            return None;
+        }
+
+        let l = &self.outer.links[self.i];
+        self.i += 1;
+
+        let res = l
+            .hash
+            .as_ref()
+            .ok_or_else(|| anyhow!("missing link"))
+            .and_then(|c| {
+                Ok(LinkRef {
+                    cid: Cid::read_bytes(Cursor::new(c))?,
+                    name: l.name.as_deref(),
+                    tsize: l.tsize,
+                })
+            });
+
+        Some(res)
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.outer.links.len(), Some(self.outer.links.len()))
     }
 }

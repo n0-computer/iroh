@@ -129,7 +129,7 @@ async fn main() -> Result<()> {
                 let mut file = tokio::fs::File::create(&path)
                     .await
                     .with_context(|| format!("create file: {}", path.display()))?;
-                let mut content = file_content.pretty();
+                let mut content = file_content.pretty()?;
                 tokio::io::copy(&mut content, &mut file)
                     .await
                     .context("copy")?;

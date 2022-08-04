@@ -59,13 +59,15 @@ impl Client {
                 .hist_ttfb_cached
                 .observe(start_time.elapsed().as_millis() as f64);
         }
-        let reader = res.pretty(
-            rpc_client.clone(),
-            OutMetrics {
-                metrics: metrics.clone(),
-                start: start_time,
-            },
-        );
+        let reader = res
+            .pretty(
+                rpc_client.clone(),
+                OutMetrics {
+                    metrics: metrics.clone(),
+                    start: start_time,
+                },
+            )
+            .map_err(|e| e.to_string())?;
         let stream = ReaderStream::new(reader);
         let body = StreamBody::new(stream);
 
@@ -103,16 +105,25 @@ impl Client {
                                 .hist_ttfb_cached
                                 .observe(start_time.elapsed().as_millis() as f64);
                         }
-                        let mut reader = res.pretty(
+                        let reader = res.pretty(
                             rpc_client.clone(),
                             OutMetrics {
                                 metrics: metrics.clone(),
                                 start: start_time,
                             },
                         );
-                        let mut bytes = Vec::new();
-                        reader.read_to_end(&mut bytes).await.unwrap();
-                        sender.send_data(bytes.into()).await.unwrap();
+                        match reader {
+                            Ok(mut reader) => {
+                                let mut bytes = Vec::new();
+                                reader.read_to_end(&mut bytes).await.unwrap();
+                                sender.send_data(bytes.into()).await.unwrap();
+                            }
+                            Err(e) => {
+                                warn!("failed to load recursively: {:?}", e);
+                                sender.abort();
+                                break;
+                            }
+                        }
                     }
                     Err(e) => {
                         warn!("failed to load recursively: {:?}", e);

@@ -100,16 +100,16 @@ pub(crate) async fn build_swarm(
     let behaviour = NodeBehaviour::new(keypair, config, registry, relay_client).await?;
 
     let limits = ConnectionLimits::default()
-        .with_max_pending_incoming(Some(30)) // TODO: configurable
-        .with_max_pending_outgoing(Some(30)) // TODO: configurable
-        .with_max_established_incoming(Some(config.target_peer_count))
-        .with_max_established_outgoing(Some(config.target_peer_count))
-        .with_max_established_per_peer(Some(5)); // TODO: configurable
+        .with_max_pending_incoming(Some(config.max_conns_pending_in))
+        .with_max_pending_outgoing(Some(config.max_conns_pending_out))
+        .with_max_established_incoming(Some(config.max_conns_in))
+        .with_max_established_outgoing(Some(config.max_conns_out))
+        .with_max_established_per_peer(Some(config.max_conns_per_peer));
     let swarm = SwarmBuilder::new(transport, behaviour, peer_id)
         .connection_limits(limits)
-        .notify_handler_buffer_size(20.try_into().unwrap()) // TODO: configurable
-        .connection_event_buffer_size(128)
-        .dial_concurrency_factor(16.try_into().unwrap())
+        .notify_handler_buffer_size(config.notify_handler_buffer_size.try_into()?)
+        .connection_event_buffer_size(config.connection_event_buffer_size)
+        .dial_concurrency_factor(config.dial_concurrency_factor.try_into().unwrap())
         .executor(Box::new(|fut| {
             tokio::spawn(fut);
         }))
