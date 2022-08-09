@@ -1,10 +1,12 @@
-use crypto::{digest::Digest, sha2::Sha256};
+use cid::Cid;
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use sha2::{Digest, Sha256};
+use std::{collections::HashSet, str::FromStr, sync::Arc, time::Duration};
 use tokio::{sync::RwLock, task::JoinHandle};
 use tracing::log::error;
 
 const BAD_BITS_UPDATE_INTERVAL: Duration = Duration::from_secs(3600 * 8);
+const DEFAULT_DENY_LIST_URI: &str = "http://badbits.dwebops.pub/denylist.json";
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct BadBitsAnchor {
@@ -14,39 +16,50 @@ pub struct BadBitsAnchor {
 #[derive(Debug)]
 pub struct BadBits {
     pub last_updated: time::Instant,
-    pub denylist: HashMap<String, bool>,
+    pub denylist: HashSet<String>,
 }
 
 impl BadBits {
     pub fn new() -> Self {
         Self {
             last_updated: time::Instant::now(),
-            denylist: HashMap::new(),
+            denylist: HashSet::new(),
         }
     }
 
-    pub fn update(&mut self, denylist: HashMap<String, bool>) {
+    pub fn update(&mut self, denylist: HashSet<String>) {
         self.last_updated = time::Instant::now();
         self.denylist = denylist;
     }
 
     pub fn is_bad(&self, cid: &str, path: &str) -> bool {
+        let cid = match Cid::from_str(cid) {
+            Ok(cid) => cid,
+            Err(_) => return false,
+        };
         let hash = BadBits::to_anchor(cid, path);
-        *self.denylist.get(&hash).unwrap_or(&false)
+        self.denylist.contains(&hash)
     }
 
-    pub fn to_anchor(cid: &str, path: &str) -> String {
+    pub fn to_anchor(cid: Cid, path: &str) -> String {
         let mut hasher = Sha256::new();
-        hasher.input_str(cid);
+        hasher.update(cid.into_v1().unwrap().to_string());
         if !path.is_empty() {
             if path.starts_with('/') {
-                hasher.input_str(path);
+                hasher.update(path);
             } else {
-                hasher.input_str("/");
-                hasher.input_str(path);
+                hasher.update("/");
+                hasher.update(path);
             }
+        } else {
+            hasher.update("/");
         }
-        hasher.result_str()
+        let x = hasher.finalize().to_vec();
+        let mut s = String::new();
+        for b in x {
+            s.push_str(&format!("{:02x}", b));
+        }
+        s
     }
 }
 
@@ -59,20 +72,23 @@ impl Default for BadBits {
 pub fn bad_bits_update_handler(bad_bits: Arc<RwLock<BadBits>>) -> JoinHandle<()> {
     tokio::spawn(async move {
         loop {
-            let denylist_uri = "http://badbits.dwebops.pub/denylist.json";
+            let denylist_uri = DEFAULT_DENY_LIST_URI;
             let res = reqwest::get(denylist_uri).await.unwrap();
             if res.status().is_success() {
                 let body = res.bytes().await.unwrap();
-                let body = serde_json::from_slice::<Vec<BadBitsAnchor>>(&body[..]).unwrap();
-                let new_denylist: HashMap<String, bool> = body
-                    .into_iter()
-                    .map(|anchor| (anchor.anchor, true))
-                    .collect();
-                bad_bits.write().await.update(new_denylist);
-                println!(
-                    "updated denylist: len={}",
-                    bad_bits.read().await.denylist.len()
-                );
+                if body.len() > 1 << 26 {
+                    // 64MB
+                    error!("denylist too large");
+                } else {
+                    let body = serde_json::from_slice::<Vec<BadBitsAnchor>>(&body[..]).unwrap();
+                    let new_denylist: HashSet<String> =
+                        body.into_iter().map(|anchor| anchor.anchor).collect();
+                    bad_bits.write().await.update(new_denylist);
+                    println!(
+                        "updated denylist: len={}",
+                        bad_bits.read().await.denylist.len()
+                    );
+                }
             } else {
                 error!("Failed to fetch denylist: {}", res.status());
             }
@@ -92,17 +108,65 @@ mod tests {
     use prometheus_client::registry::Registry;
 
     #[tokio::test]
+    async fn bad_bits_anchor() {
+        let cid =
+            Cid::from_str("bafkreidyeivj7adnnac6ljvzj2e3rd5xdw3revw4da7mx2ckrstapoupoq").unwrap();
+        let anchor = BadBits::to_anchor(cid, "");
+        assert_eq!(
+            anchor,
+            "d572cfd7fca1f89293f2d71270c51d82445b4502207a0df0707586b3e799521b"
+        );
+
+        let cid =
+            Cid::from_str("bafkreidyeivj7adnnac6ljvzj2e3rd5xdw3revw4da7mx2ckrstapoupoq").unwrap();
+        let path = "/";
+        let anchor = BadBits::to_anchor(cid, path);
+        assert_eq!(
+            anchor,
+            "d572cfd7fca1f89293f2d71270c51d82445b4502207a0df0707586b3e799521b"
+        );
+
+        let cid =
+            Cid::from_str("bafkreidyeivj7adnnac6ljvzj2e3rd5xdw3revw4da7mx2ckrstapoupoq").unwrap();
+        let path = "/test";
+        let anchor = BadBits::to_anchor(cid, path);
+        assert_eq!(
+            anchor,
+            "b62182173b68ef7ffb1ea5053717b700b80a21a5c28501900b050d704099b3c5"
+        );
+
+        let cid = Cid::from_str("QmdZ8zoh1iCsk8TdSAWN49tziH5MMn8XPvJcWmpFD1ygB7").unwrap();
+        let path = "";
+        let anchor = BadBits::to_anchor(cid, path);
+        assert_eq!(
+            anchor,
+            "1a0e25ca02cd2c97af7e200b9b1a1db11c763473d60c12b8193078c95bbf917f"
+        );
+
+        let cid = Cid::from_str("QmdZ8zoh1iCsk8TdSAWN49tziH5MMn8XPvJcWmpFD1ygB7").unwrap();
+        let path = "/test";
+        let anchor = BadBits::to_anchor(cid, path);
+        assert_eq!(
+            anchor,
+            "bf61fece5f55f922abf36e852b7c329b30350fdcba0d51328c95f33bab0bd5e9"
+        );
+    }
+
+    #[tokio::test]
     async fn gateway_bad_bits() {
-        let bad_cid = "bafkreidyeivj7adnnac6ljvzj2e3rd5xdw3revw4da7mx2ckrstapoupoq";
+        let bad_cid =
+            Cid::from_str("bafkreidyeivj7adnnac6ljvzj2e3rd5xdw3revw4da7mx2ckrstapoupoq").unwrap();
         let bad_path = "bad/foo.jpeg";
-        let good_cid = "bafkreieq5jui4j25lacwomsqgjeswwl3y5zcdrresptwgmfylxo2depppq";
+        let good_cid =
+            Cid::from_str("bafkreieq5jui4j25lacwomsqgjeswwl3y5zcdrresptwgmfylxo2depppq").unwrap();
         let good_path = "good/foo.jpeg";
-        let bad_cid_2 = "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi";
+        let bad_cid_2 =
+            Cid::from_str("bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi").unwrap();
         let mut bbits = BadBits::new();
-        let mut deny_list = HashMap::<String, bool>::new();
-        deny_list.insert(BadBits::to_anchor(bad_cid, ""), true);
-        deny_list.insert(BadBits::to_anchor(bad_cid, bad_path), true);
-        deny_list.insert(BadBits::to_anchor(bad_cid_2, bad_path), true);
+        let mut deny_list = HashSet::<String>::new();
+        deny_list.insert(BadBits::to_anchor(bad_cid, ""));
+        deny_list.insert(BadBits::to_anchor(bad_cid, bad_path));
+        deny_list.insert(BadBits::to_anchor(bad_cid_2, bad_path));
         bbits.update(deny_list);
 
         let mut config = Config::new(
@@ -175,9 +239,17 @@ mod tests {
         let client = hyper::Client::new();
         let res = client.get(uri).await.unwrap();
         let status = res.status();
-        let body = hyper::body::to_bytes(res.into_body()).await.unwrap();
-        let r = String::from_utf8(body.to_vec()).unwrap();
-        println!("{}", r);
+        assert_eq!(StatusCode::FORBIDDEN, status);
+
+        let uri = hyper::Uri::builder()
+            .scheme("http")
+            .authority(format!("localhost:{}", addr.port()))
+            .path_and_query(format!("/ipfs/{}/{}?format=raw", bad_cid_2, bad_path))
+            .build()
+            .unwrap();
+        let client = hyper::Client::new();
+        let res = client.get(uri).await.unwrap();
+        let status = res.status();
         assert_eq!(StatusCode::FORBIDDEN, status);
 
         let uri = hyper::Uri::builder()

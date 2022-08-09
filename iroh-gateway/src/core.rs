@@ -197,8 +197,6 @@ async fn get_handler(
             "CID is in the denylist",
             &state,
         ));
-    } else {
-        println!("\n not bad: {}{}", cid, cpath);
     }
 
     let full_content_path = format!("/{}/{}{}", scheme, cid, cpath);

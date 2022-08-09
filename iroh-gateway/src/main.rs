@@ -97,9 +97,10 @@ async fn main() -> Result<()> {
     .await?;
 
     let bad_bits_handle = match use_denylist {
-        true => bad_bits::bad_bits_update_handler(bad_bits),
-        false => tokio::spawn(async move {}),
+        true => Some(bad_bits::bad_bits_update_handler(bad_bits)),
+        false => None,
     };
+
     let metrics_handle =
         iroh_metrics::MetricsHandle::from_registry_with_tracer(metrics_config, prom_registry)
             .await
@@ -114,6 +115,9 @@ async fn main() -> Result<()> {
     core_task.abort();
 
     metrics_handle.shutdown();
-    bad_bits_handle.abort();
+    if let Some(handle) = bad_bits_handle {
+        handle.abort();
+    }
+
     Ok(())
 }
