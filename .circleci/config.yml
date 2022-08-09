@@ -206,7 +206,7 @@ jobs:
     steps:
       - checkout
       # - setup-env
-      # - setup-protoc
+      - setup-protoc
       - set-env-path
       - run: echo $HOME
       - run: cargo --version
@@ -250,6 +250,7 @@ jobs:
       RUST_LOG: debug
     steps:
       - set-env-path
+      - setup-protoc
       - *restore-workspace
       - *restore-cache
       - setup-sccache
@@ -299,6 +300,7 @@ jobs:
       RUST_LOG: debug
     steps:
       - set-env-path
+      - setup-protoc
       - *restore-workspace
       - *restore-cache
       - setup-sccache

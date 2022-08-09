@@ -90,6 +90,7 @@ macro_rules! proxy {
             >;
 
             #[derive(Debug, Clone)]
+            #[allow(clippy::large_enum_variant)]
             pub enum [<$label ClientBackend>] {
                 #[cfg(feature = "grpc")]
                 Grpc {

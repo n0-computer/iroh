@@ -137,6 +137,7 @@ impl Store {
                 let mut iter = db.full_iterator_cf(&cf_meta, IteratorMode::End);
                 let last_id = iter
                     .next()
+                    .and_then(|r| r.ok())
                     .and_then(|(key, _)| key[..8].try_into().ok())
                     .map(u64::from_be_bytes)
                     .unwrap_or_default();

@@ -12,17 +12,18 @@ iroh-rpc-client = { path = "../iroh-rpc-client", default-features = false }
 iroh-rpc-types = { path = "../iroh-rpc-types", default-features = false }
 
 cid = "0.8.4"
-tokio = { version = "1.17.0", features = ["macros", "rt-multi-thread", "process"] }
+
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "process"] }
 axum = "0.5.1"
 clap = { version = "3.1.14", features = ["derive"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0.78"
-serde_qs = "0.9.2"
+serde_qs = "0.10.1"
 tower = { version = "0.4", features = ["util", "timeout", "load-shed", "limit"] }
 mime_guess = "2.0.4"
 iroh-metrics = { path = "../iroh-metrics", default-features = false }
 tracing = "0.1.33"
-names = { version = "0.13.0", default-features = false }
+names = { version = "0.14.0", default-features = false }
 git-version = "0.3.5"
 rand = "0.8.5"
 tracing-opentelemetry = "0.17.2"
@@ -33,17 +34,17 @@ hyper = "0.14.19"
 libp2p = { version = "0.47", default-features = false }
 iroh-util = { path = "../iroh-util" }
 anyhow = "1"
-futures = "0.3.5"
+futures = "0.3.21"
 tracing-subscriber = { version = "0.3.11", features = ["env-filter"] }
 iroh-resolver = { path = "../iroh-resolver" }
 prometheus-client = "0.17.0"
-tokio-util = { version = "0.7.2", features = ["io"] }
+tokio-util = { version = "0.7", features = ["io"] }
 bytes = "1.1.0"
 tower-layer = { version = "0.3" }
-tower-http = { version = "0.1", features = ["trace"] }
+tower-http = { version = "0.3", features = ["trace"] }
 http = "0.2"
 async-recursion = "1.0.0"
-handlebars = "3"
+handlebars = "4"
 url = "2.2.2"
 urlencoding = "2.1.0"
 dirs = "4.0.0"
