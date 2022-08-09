@@ -133,7 +133,7 @@ impl RocksFs {
     /// Deletes all elements in the database.
     pub fn clear(&self) -> Result<()> {
         for r in self.db.full_iterator(rocksdb::IteratorMode::Start) {
-            let (key, _) = r.unwrap();
+            let (key, _) = r?;
             self.db.delete(key)?;
         }
 
