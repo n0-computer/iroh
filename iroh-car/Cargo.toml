@@ -12,12 +12,12 @@ cid = "0.8"
 ipld = { package = "libipld", version = "0.13"}
 ipld-cbor = { package = "libipld-cbor", version = "0.13" }
 thiserror = "1.0"
-futures = "0.3.5"
+futures = "0.3.21"
 integer-encoding = { version = "3.0", features = ["tokio_async"] }
 multihash = "0.16"
-tokio = { version = "1.0.1", features = ["io-util"] }
+tokio = { version = "1", features = ["io-util"] }
 
 [dev-dependencies]
-tokio = { version = "1.0.1", features = ["macros", "sync", "rt", "fs", "io-util"] }
+tokio = { version = "1", features = ["macros", "sync", "rt", "fs", "io-util"] }
 
 [features]

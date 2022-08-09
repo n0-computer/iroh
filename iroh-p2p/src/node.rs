@@ -382,7 +382,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
             Event::Kademlia(e) => {
                 self.metrics.record(&e);
                 if let KademliaEvent::OutboundQueryProgressed {
-                    id, result, index, ..
+                    id, result, step, ..
                 } = e
                 {
                     match result {
@@ -392,7 +392,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                             providers_so_far,
                             ..
                         })) => {
-                            if index.last {
+                            if step.last {
                                 let _ = self.kad_queries.remove(&QueryKey::ProviderKey(key));
                             } else {
                                 if providers_so_far >= PROVIDER_LIMIT {

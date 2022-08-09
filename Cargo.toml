@@ -18,5 +18,5 @@ members = [
 ]
 
 [patch.crates-io]
-libp2p = { git = "https://github.com/dignifiedquire/rust-libp2p", rev = "dc5db669dae07680896e71cf0813c0154ca97918" }
+libp2p = { git = "https://github.com/dignifiedquire/rust-libp2p", branch = "feat-kad-count" }
 # libp2p = { path = "../rust-libp2p" }
