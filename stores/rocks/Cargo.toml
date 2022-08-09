@@ -9,7 +9,7 @@ description = "Implementation of RocksDB based Store"
 
 [dependencies]
 anyhow = "1.0.57"
-rocksdb = { git = "https://github.com/rust-rocksdb/rust-rocksdb", branch = "master" }
+rocksdb = { git = "https://github.com/rust-rocksdb/rust-rocksdb", rev = "934855fe5429f515460cbac01d9e6417e04401bd" }
 flatfs-store = { path = "../flatfs", optional = true }
 
 [dev-dependencies]
