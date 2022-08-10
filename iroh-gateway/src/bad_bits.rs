@@ -3,20 +3,26 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{collections::HashSet, str::FromStr, sync::Arc, time::Duration};
 use tokio::{sync::RwLock, task::JoinHandle};
-use tracing::log::error;
+use tracing::{debug, log::error};
 
 const BAD_BITS_UPDATE_INTERVAL: Duration = Duration::from_secs(3600 * 8);
 const DEFAULT_DENY_LIST_URI: &str = "http://badbits.dwebops.pub/denylist.json";
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, Eq, Hash, PartialEq)]
 pub struct BadBitsAnchor {
-    pub anchor: String,
+    pub value: [u8; 32],
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Eq, Hash, PartialEq)]
+pub struct BadBitsAnchorStr {
+    #[serde(rename = "anchor")]
+    pub value: String,
 }
 
 #[derive(Debug)]
 pub struct BadBits {
     pub last_updated: time::Instant,
-    pub denylist: HashSet<String>,
+    pub denylist: HashSet<BadBitsAnchor>,
 }
 
 impl BadBits {
@@ -27,7 +33,7 @@ impl BadBits {
         }
     }
 
-    pub fn update(&mut self, denylist: HashSet<String>) {
+    pub fn update(&mut self, denylist: HashSet<BadBitsAnchor>) {
         self.last_updated = time::Instant::now();
         self.denylist = denylist;
     }
@@ -41,7 +47,7 @@ impl BadBits {
         self.denylist.contains(&hash)
     }
 
-    pub fn to_anchor(cid: Cid, path: &str) -> String {
+    pub fn to_anchor(cid: Cid, path: &str) -> BadBitsAnchor {
         let mut hasher = Sha256::new();
         hasher.update(cid.into_v1().unwrap().to_string());
         if !path.is_empty() {
@@ -54,12 +60,9 @@ impl BadBits {
         } else {
             hasher.update("/");
         }
-        let x = hasher.finalize().to_vec();
-        let mut s = String::new();
-        for b in x {
-            s.push_str(&format!("{:02x}", b));
+        BadBitsAnchor {
+            value: hasher.finalize()[..].try_into().unwrap(),
         }
-        s
     }
 }
 
@@ -67,6 +70,13 @@ impl Default for BadBits {
     fn default() -> Self {
         Self::new()
     }
+}
+
+pub fn decode_hex(s: &str) -> Result<Vec<u8>, std::num::ParseIntError> {
+    (0..s.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&s[i..i + 2], 16))
+        .collect()
 }
 
 pub fn bad_bits_update_handler(bad_bits: Arc<RwLock<BadBits>>) -> JoinHandle<()> {
@@ -78,13 +88,20 @@ pub fn bad_bits_update_handler(bad_bits: Arc<RwLock<BadBits>>) -> JoinHandle<()>
                 let body = res.bytes().await.unwrap();
                 if body.len() > 1 << 26 {
                     // 64MB
-                    error!("denylist too large");
+                    error!("denylist too large: {}", body.len());
                 } else {
-                    let body = serde_json::from_slice::<Vec<BadBitsAnchor>>(&body[..]).unwrap();
-                    let new_denylist: HashSet<String> =
-                        body.into_iter().map(|anchor| anchor.anchor).collect();
+                    let body = serde_json::from_slice::<Vec<BadBitsAnchorStr>>(&body[..]).unwrap();
+                    let new_denylist: HashSet<BadBitsAnchor> = body
+                        .into_iter()
+                        .map(|a| {
+                            let b = decode_hex(&a.value).unwrap();
+                            BadBitsAnchor {
+                                value: b[..32].try_into().unwrap(),
+                            }
+                        })
+                        .collect();
                     bad_bits.write().await.update(new_denylist);
-                    println!(
+                    debug!(
                         "updated denylist: len={}",
                         bad_bits.read().await.denylist.len()
                     );
@@ -102,6 +119,7 @@ mod tests {
     use crate::config::Config;
 
     use super::*;
+    use hex_literal::hex;
     use http::StatusCode;
     use iroh_metrics::gateway::Metrics;
     use iroh_rpc_client::Config as RpcClientConfig;
@@ -113,8 +131,8 @@ mod tests {
             Cid::from_str("bafkreidyeivj7adnnac6ljvzj2e3rd5xdw3revw4da7mx2ckrstapoupoq").unwrap();
         let anchor = BadBits::to_anchor(cid, "");
         assert_eq!(
-            anchor,
-            "d572cfd7fca1f89293f2d71270c51d82445b4502207a0df0707586b3e799521b"
+            anchor.value,
+            hex!("d572cfd7fca1f89293f2d71270c51d82445b4502207a0df0707586b3e799521b")
         );
 
         let cid =
@@ -122,8 +140,8 @@ mod tests {
         let path = "/";
         let anchor = BadBits::to_anchor(cid, path);
         assert_eq!(
-            anchor,
-            "d572cfd7fca1f89293f2d71270c51d82445b4502207a0df0707586b3e799521b"
+            anchor.value,
+            hex!("d572cfd7fca1f89293f2d71270c51d82445b4502207a0df0707586b3e799521b")
         );
 
         let cid =
@@ -131,24 +149,24 @@ mod tests {
         let path = "/test";
         let anchor = BadBits::to_anchor(cid, path);
         assert_eq!(
-            anchor,
-            "b62182173b68ef7ffb1ea5053717b700b80a21a5c28501900b050d704099b3c5"
+            anchor.value,
+            hex!("b62182173b68ef7ffb1ea5053717b700b80a21a5c28501900b050d704099b3c5")
         );
 
         let cid = Cid::from_str("QmdZ8zoh1iCsk8TdSAWN49tziH5MMn8XPvJcWmpFD1ygB7").unwrap();
         let path = "";
         let anchor = BadBits::to_anchor(cid, path);
         assert_eq!(
-            anchor,
-            "1a0e25ca02cd2c97af7e200b9b1a1db11c763473d60c12b8193078c95bbf917f"
+            anchor.value,
+            hex!("1a0e25ca02cd2c97af7e200b9b1a1db11c763473d60c12b8193078c95bbf917f")
         );
 
         let cid = Cid::from_str("QmdZ8zoh1iCsk8TdSAWN49tziH5MMn8XPvJcWmpFD1ygB7").unwrap();
         let path = "/test";
         let anchor = BadBits::to_anchor(cid, path);
         assert_eq!(
-            anchor,
-            "bf61fece5f55f922abf36e852b7c329b30350fdcba0d51328c95f33bab0bd5e9"
+            anchor.value,
+            hex!("bf61fece5f55f922abf36e852b7c329b30350fdcba0d51328c95f33bab0bd5e9")
         );
     }
 
@@ -163,7 +181,7 @@ mod tests {
         let bad_cid_2 =
             Cid::from_str("bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi").unwrap();
         let mut bbits = BadBits::new();
-        let mut deny_list = HashSet::<String>::new();
+        let mut deny_list = HashSet::<BadBitsAnchor>::new();
         deny_list.insert(BadBits::to_anchor(bad_cid, ""));
         deny_list.insert(BadBits::to_anchor(bad_cid, bad_path));
         deny_list.insert(BadBits::to_anchor(bad_cid_2, bad_path));

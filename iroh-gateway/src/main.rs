@@ -26,14 +26,14 @@ struct Args {
     fetch: Option<bool>,
     #[clap(short, long)]
     cache: Option<bool>,
-    #[clap(long = "metrics")]
+    #[clap(long)]
     metrics: bool,
-    #[clap(long = "tracing")]
+    #[clap(long)]
     tracing: bool,
     #[clap(long)]
     cfg: Option<PathBuf>,
     #[clap(long)]
-    denylist: Option<bool>,
+    denylist: bool,
 }
 
 impl Args {
@@ -51,9 +51,7 @@ impl Args {
         if let Some(cache) = self.cache {
             map.insert("cache", cache.to_string());
         }
-        if let Some(denylist) = self.denylist {
-            map.insert("denylist", denylist.to_string());
-        }
+        map.insert("denylist", self.denylist.to_string());
         map.insert("metrics.collect", self.metrics.to_string());
         map.insert("metrics.tracing", self.tracing.to_string());
         map
