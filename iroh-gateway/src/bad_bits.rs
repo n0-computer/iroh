@@ -50,16 +50,10 @@ impl BadBits {
     pub fn to_anchor(cid: Cid, path: &str) -> BadBitsAnchor {
         let mut hasher = Sha256::new();
         hasher.update(cid.into_v1().unwrap().to_string());
-        if !path.is_empty() {
-            if path.starts_with('/') {
-                hasher.update(path);
-            } else {
-                hasher.update("/");
-                hasher.update(path);
-            }
-        } else {
+        if !path.starts_with('/') {
             hasher.update("/");
         }
+        hasher.update(path);
         BadBitsAnchor {
             value: hasher.finalize()[..].try_into().unwrap(),
         }
