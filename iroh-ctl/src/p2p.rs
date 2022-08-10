@@ -116,11 +116,8 @@ Not yet implemented.",
         hide = true
     )]
     FindPeer { peer_id: PeerId },
-    #[clap(
-        about = "Find peers that can provide a specific value, given a key.
-Not yet implemented.",
-        hide = true
-    )]
+    #[clap(about = "Find peers that can provide a specific value, given a key.
+Not yet implemented.")]
     FindProvs { cid: Cid },
     #[clap(
         about = "Given a key, query the routing system for its best value.
@@ -261,9 +258,15 @@ pub async fn run_command(rpc: Client, cmd: P2p) -> Result<()> {
         P2pCommands::Ping { ping_args, count } => {
             todo!("{:?} {:?}", ping_args, count);
         }
-        P2pCommands::Dht(d) => {
-            todo!("DHT commands are not yet implemented - {:#?}", d);
-        }
+        P2pCommands::Dht(d) => match d.command {
+            DhtCommands::FindProvs { cid } => {
+                let providers = rpc.try_p2p()?.fetch_providers(&cid).await?;
+                for prov in providers {
+                    println!("{}", prov);
+                }
+            }
+            _ => todo!("not yet implemented - {:?}", d.command),
+        },
         P2pCommands::Bitswap(d) => {
             todo!("Bitswap commands are not yet implemented - {:#?}", d);
         }
