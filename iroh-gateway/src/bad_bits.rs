@@ -19,7 +19,7 @@ where
     D: Deserializer<'de>,
 {
     let s = String::deserialize(deserializer)?;
-    let b = decode_hex(&s).unwrap();
+    let b = hex::decode(&s).unwrap();
     b[..32].try_into().map_err(de::Error::custom)
 }
 
@@ -68,13 +68,6 @@ impl Default for BadBits {
     fn default() -> Self {
         Self::new()
     }
-}
-
-pub fn decode_hex(s: &str) -> Result<Vec<u8>, std::num::ParseIntError> {
-    (0..s.len())
-        .step_by(2)
-        .map(|i| u8::from_str_radix(&s[i..i + 2], 16))
-        .collect()
 }
 
 pub fn bad_bits_update_handler(bad_bits: Arc<RwLock<BadBits>>) -> JoinHandle<()> {
