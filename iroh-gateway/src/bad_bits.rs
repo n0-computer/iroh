@@ -1,5 +1,5 @@
 use cid::Cid;
-use serde::{Deserialize, Serialize};
+use serde::{de, Deserialize, Deserializer, Serialize};
 use sha2::{Digest, Sha256};
 use std::{collections::HashSet, str::FromStr, sync::Arc, time::Duration};
 use tokio::{sync::RwLock, task::JoinHandle};
@@ -10,13 +10,17 @@ const DEFAULT_DENY_LIST_URI: &str = "http://badbits.dwebops.pub/denylist.json";
 
 #[derive(Debug, Deserialize, Serialize, Clone, Eq, Hash, PartialEq)]
 pub struct BadBitsAnchor {
+    #[serde(rename = "anchor", deserialize_with = "de_from_str")]
     pub value: [u8; 32],
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Eq, Hash, PartialEq)]
-pub struct BadBitsAnchorStr {
-    #[serde(rename = "anchor")]
-    pub value: String,
+fn de_from_str<'de, D>(deserializer: D) -> Result<[u8; 32], D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let s = String::deserialize(deserializer)?;
+    let b = decode_hex(&s).unwrap();
+    b[..32].try_into().map_err(de::Error::custom)
 }
 
 #[derive(Debug)]
@@ -84,16 +88,8 @@ pub fn bad_bits_update_handler(bad_bits: Arc<RwLock<BadBits>>) -> JoinHandle<()>
                     // 64MB
                     error!("denylist too large: {}", body.len());
                 } else {
-                    let body = serde_json::from_slice::<Vec<BadBitsAnchorStr>>(&body[..]).unwrap();
-                    let new_denylist: HashSet<BadBitsAnchor> = body
-                        .into_iter()
-                        .map(|a| {
-                            let b = decode_hex(&a.value).unwrap();
-                            BadBitsAnchor {
-                                value: b[..32].try_into().unwrap(),
-                            }
-                        })
-                        .collect();
+                    let body = serde_json::from_slice::<Vec<BadBitsAnchor>>(&body[..]).unwrap();
+                    let new_denylist = HashSet::from_iter(body);
                     bad_bits.write().await.update(new_denylist);
                     debug!(
                         "updated denylist: len={}",
