@@ -10,6 +10,8 @@ repository = "https://github.com/dignifiedquire/iroh"
 [dependencies]
 iroh-rpc-client = { path = "../iroh-rpc-client", default-features = false }
 iroh-rpc-types = { path = "../iroh-rpc-types", default-features = false }
+iroh-p2p = {path = "../iroh-p2p", default-features = false, features = ["rpc-mem"], optional = true}
+iroh-store = {path = "../iroh-store", default-features = false, features = ["rpc-mem"], optional = true}
 
 cid = "0.8.6"
 
@@ -63,6 +65,7 @@ axum-macros = "0.2.0" # use #[axum_macros::debug_handler] for better error messa
 
 
 [features]
-default = ["rpc-grpc", "rpc-mem"]
+default = ["rpc-mem", "rpc-grpc", "ipfsd"]
+ipfsd = ["iroh-p2p/rpc-mem", "iroh-store/rpc-mem"]
 rpc-grpc = ["iroh-rpc-types/grpc", "iroh-rpc-client/grpc", "iroh-metrics/rpc-grpc"]
 rpc-mem = ["iroh-rpc-types/mem", "iroh-rpc-client/mem"]

@@ -128,7 +128,11 @@ fn default_headers() -> HeaderMap {
 
 impl Default for Config {
     fn default() -> Self {
+        #[cfg(not(feature = "ipfsd"))]
         let rpc_client = RpcClientConfig::default_grpc();
+        #[cfg(feature = "ipfsd")]
+        let rpc_client = RpcClientConfig::default_ipfsd();
+
         let mut t = Self {
             writeable: false,
             fetch: false,

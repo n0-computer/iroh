@@ -42,6 +42,30 @@ impl Config {
             store_addr: Some("grpc://0.0.0.0:4402".parse().unwrap()),
         }
     }
+
+    // When running in ipfsd mode, the resolver will use memory channels to
+    // communicate with the p2p and store modules.
+    // The gateway itself is exposing a UDS rpc endpoint to be also usable
+    // as a single entry point for other system services.
+    pub fn default_ipfsd() -> Self {
+        use iroh_rpc_types::Addr;
+        let path = {
+            #[cfg(target_os = "android")]
+            "/dev/socket/ipfsd".into();
+
+            #[cfg(not(target_os = "android"))]
+            {
+                let path = format!("{}", std::env::temp_dir().join("ipfsd.gateway").display());
+                path.into()
+            }
+        };
+
+        Self {
+            gateway_addr: Some(Addr::GrpcUds(path)),
+            p2p_addr: None,
+            store_addr: None,
+        }
+    }
 }
 
 #[cfg(test)]
