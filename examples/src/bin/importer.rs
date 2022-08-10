@@ -52,7 +52,7 @@ async fn main() -> Result<()> {
         .try_par_map_unordered(None, move |(cid, data)| {
             move || {
                 let data = Bytes::from(data);
-                if iroh_resolver::verify_hash(&cid, &data) == Some(false) {
+                if iroh_util::verify_hash(&cid, &data) == Some(false) {
                     bail!("invalid hash {:?}", cid);
                 }
                 let links = iroh_resolver::parse_links(&cid, &data).unwrap_or_default();

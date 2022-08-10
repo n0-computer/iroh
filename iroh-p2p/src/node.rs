@@ -339,7 +339,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                     BitswapEvent::OutboundQueryCompleted { id, result } => match result {
                         BitswapQueryResult::Want(WantResult::Ok { sender, cid, data }) => {
                             info!("got block {} from {}", cid, sender);
-                            match iroh_resolver::resolver::verify_hash(&cid, &data) {
+                            match iroh_util::verify_hash(&cid, &data) {
                                 Some(true) => {
                                     let b = Block::new(data, cid);
                                     if let Some(chan) = self.bitswap_queries.remove(&id) {

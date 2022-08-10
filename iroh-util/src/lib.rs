@@ -9,6 +9,10 @@ use std::{
 };
 
 use anyhow::Result;
+use cid::{
+    multihash::{Code, MultihashDigest},
+    Cid,
+};
 use config::{Config, ConfigError, Environment, File, Map, Source, Value, ValueKind};
 use dirs::home_dir;
 use tracing::debug;
@@ -138,6 +142,14 @@ where
     debug!("make_config:\n{:#?}\n", cfg);
     let cfg: T = cfg.try_deserialize()?;
     Ok(cfg)
+}
+
+/// Verifies that the provided bytes hash to the given multihash.
+pub fn verify_hash(cid: &Cid, bytes: &[u8]) -> Option<bool> {
+    Code::try_from(cid.hash().code()).ok().map(|code| {
+        let calculated_hash = code.digest(bytes);
+        &calculated_hash == cid.hash()
+    })
 }
 
 #[cfg(test)]
