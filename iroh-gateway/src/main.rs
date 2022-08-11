@@ -75,13 +75,15 @@ async fn main() -> Result<()> {
     )
     .unwrap();
     config.metrics = metrics::metrics_config_with_compile_time_info(config.metrics);
-    let use_denylist = config.denylist;
     println!("{:#?}", config);
 
     let metrics_config = config.metrics.clone();
     let mut prom_registry = Registry::default();
     let gw_metrics = Metrics::new(&mut prom_registry);
-    let bad_bits = Arc::new(RwLock::new(BadBits::new()));
+    let bad_bits = match config.denylist {
+        true => Arc::new(Some(RwLock::new(BadBits::new()))),
+        false => Arc::new(None),
+    };
     let rpc_addr = config
         .server_rpc_addr()?
         .ok_or_else(|| anyhow!("missing gateway rpc addr"))?;
@@ -94,10 +96,7 @@ async fn main() -> Result<()> {
     )
     .await?;
 
-    let bad_bits_handle = match use_denylist {
-        true => Some(bad_bits::bad_bits_update_handler(bad_bits)),
-        false => None,
-    };
+    let bad_bits_handle = bad_bits::spawn_bad_bits_updater(Arc::clone(&bad_bits));
 
     let metrics_handle =
         iroh_metrics::MetricsHandle::from_registry_with_tracer(metrics_config, prom_registry)

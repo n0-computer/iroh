@@ -60,7 +60,7 @@ pub struct State {
     rpc_client: iroh_rpc_client::Client,
     handlebars: HashMap<String, String>,
     pub metrics: Metrics,
-    bad_bits: Arc<RwLock<BadBits>>,
+    bad_bits: Arc<Option<RwLock<BadBits>>>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -96,7 +96,7 @@ impl Core {
         rpc_addr: GatewayServerAddr,
         metrics: Metrics,
         registry: &mut Registry,
-        bad_bits: Arc<RwLock<BadBits>>,
+        bad_bits: Arc<Option<RwLock<BadBits>>>,
     ) -> anyhow::Result<Self> {
         tokio::spawn(async move {
             // TODO: handle error
@@ -190,8 +190,7 @@ async fn get_handler(
     service_worker_check(&request_headers, cpath.to_string(), &state)?;
     unsuported_header_check(&request_headers, &state)?;
 
-    // check if cid is in the denylist
-    if state.bad_bits.read().await.is_bad(cid, cpath) {
+    if check_bad_bits(&state, cid, cpath).await {
         return Err(error(
             StatusCode::FORBIDDEN,
             "CID is in the denylist",
@@ -206,13 +205,7 @@ async fn get_handler(
         .map_err(|e| error(StatusCode::BAD_REQUEST, &e, &state))?;
     let resolved_cid = resolved_path.root();
 
-    // check if cid is in the denylist
-    if state
-        .bad_bits
-        .read()
-        .await
-        .is_bad(resolved_cid.to_string().as_str(), "")
-    {
+    if check_bad_bits(&state, resolved_cid.to_string().as_str(), cpath).await {
         return Err(error(
             StatusCode::FORBIDDEN,
             "CID is in the denylist",
@@ -337,6 +330,19 @@ fn unsuported_header_check(request_headers: &HeaderMap, state: &State) -> Result
         ));
     }
     Ok(())
+}
+
+pub async fn check_bad_bits(state: &State, cid: &str, path: &str) -> bool {
+    // check if cid is in the denylist
+    if state.bad_bits.is_some() {
+        let bad_bits = state.bad_bits.as_ref();
+        if let Some(bbits) = bad_bits {
+            if bbits.read().await.is_bad(cid, path) {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 #[tracing::instrument()]
@@ -669,7 +675,7 @@ mod tests {
             rpc_addr,
             gw_metrics,
             &mut prom_registry,
-            Arc::new(RwLock::new(BadBits::new())),
+            Arc::new(Some(RwLock::new(BadBits::new()))),
         )
         .await
         .unwrap();

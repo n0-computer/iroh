@@ -70,31 +70,38 @@ impl Default for BadBits {
     }
 }
 
-pub fn bad_bits_update_handler(bad_bits: Arc<RwLock<BadBits>>) -> JoinHandle<()> {
-    tokio::spawn(async move {
-        loop {
-            let denylist_uri = DEFAULT_DENY_LIST_URI;
-            let res = reqwest::get(denylist_uri).await.unwrap();
-            if res.status().is_success() {
-                let body = res.bytes().await.unwrap();
-                if body.len() > 1 << 26 {
-                    // 64MB
-                    error!("denylist too large: {}", body.len());
-                } else {
-                    let body = serde_json::from_slice::<Vec<BadBitsAnchor>>(&body[..]).unwrap();
-                    let new_denylist = HashSet::from_iter(body);
-                    bad_bits.write().await.update(new_denylist);
-                    debug!(
-                        "updated denylist: len={}",
-                        bad_bits.read().await.denylist.len()
-                    );
+pub fn spawn_bad_bits_updater(bad_bits: Arc<Option<RwLock<BadBits>>>) -> Option<JoinHandle<()>> {
+    if bad_bits.is_some() {
+        return Some(tokio::spawn(async move {
+            let bad_bits = bad_bits.as_ref();
+            if let Some(bbits) = bad_bits {
+                loop {
+                    let denylist_uri = DEFAULT_DENY_LIST_URI;
+                    let res = reqwest::get(denylist_uri).await.unwrap();
+                    if res.status().is_success() {
+                        let body = res.bytes().await.unwrap();
+                        if body.len() > 1 << 26 {
+                            // 64MB
+                            error!("denylist too large: {}", body.len());
+                        } else {
+                            let body =
+                                serde_json::from_slice::<Vec<BadBitsAnchor>>(&body[..]).unwrap();
+                            let new_denylist = HashSet::from_iter(body);
+                            bbits.write().await.update(new_denylist);
+                            debug!(
+                                "updated denylist: len={}",
+                                bbits.read().await.denylist.len()
+                            );
+                        }
+                    } else {
+                        error!("Failed to fetch denylist: {}", res.status());
+                    }
+                    tokio::time::sleep(BAD_BITS_UPDATE_INTERVAL).await;
                 }
-            } else {
-                error!("Failed to fetch denylist: {}", res.status());
             }
-            tokio::time::sleep(BAD_BITS_UPDATE_INTERVAL).await;
-        }
-    })
+        }));
+    }
+    None
 }
 
 #[cfg(test)]
@@ -191,7 +198,7 @@ mod tests {
             rpc_addr,
             gw_metrics,
             &mut prom_registry,
-            Arc::new(RwLock::new(bbits)),
+            Arc::new(Some(RwLock::new(bbits))),
         )
         .await
         .unwrap();
@@ -224,16 +231,6 @@ mod tests {
         let uri = hyper::Uri::builder()
             .scheme("http")
             .authority(format!("localhost:{}", addr.port()))
-            .path_and_query(format!("/ipfs/{}/{}", bad_cid, good_path))
-            .build()
-            .unwrap();
-        let client = hyper::Client::new();
-        let res = client.get(uri).await.unwrap();
-        assert_eq!(StatusCode::FORBIDDEN, res.status());
-
-        let uri = hyper::Uri::builder()
-            .scheme("http")
-            .authority(format!("localhost:{}", addr.port()))
             .path_and_query(format!("/ipfs/{}/{}", bad_cid_2, bad_path))
             .build()
             .unwrap();
@@ -252,6 +249,16 @@ mod tests {
         let res = client.get(uri).await.unwrap();
         let status = res.status();
         assert_eq!(StatusCode::FORBIDDEN, status);
+
+        let uri = hyper::Uri::builder()
+            .scheme("http")
+            .authority(format!("localhost:{}", addr.port()))
+            .path_and_query(format!("/ipfs/{}/{}", bad_cid, good_path))
+            .build()
+            .unwrap();
+        let client = hyper::Client::new();
+        let res = client.get(uri).await.unwrap();
+        assert!(res.status() != StatusCode::FORBIDDEN);
 
         let uri = hyper::Uri::builder()
             .scheme("http")
