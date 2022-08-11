@@ -79,10 +79,15 @@ async fn main() -> Result<()> {
     // When running in ipfsd mode, update the rpc client config to setup
     // memory addresses for the p2p and store modules.
     #[cfg(feature = "ipfsd")]
-    let store_rpc = {
+    let (store_rpc, p2p_rpc) = {
         let (store_recv, store_sender) = Addr::new_mem();
         config.rpc_client.store_addr = Some(store_sender);
-        iroh_gateway::mem_store::start(store_recv).await?
+        let store_rpc = iroh_gateway::mem_store::start(store_recv).await?;
+
+        let (p2p_recv, p2p_sender) = Addr::new_mem();
+        config.rpc_client.p2p_addr = Some(p2p_sender);
+        let p2p_rpc = iroh_gateway::mem_p2p::start(p2p_recv).await?;
+        (store_rpc, p2p_rpc)
     };
 
     config.metrics = metrics::metrics_config_with_compile_time_info(config.metrics);
@@ -124,6 +129,7 @@ async fn main() -> Result<()> {
     #[cfg(feature = "ipfsd")]
     {
         store_rpc.abort();
+        p2p_rpc.abort();
     }
 
     core_task.abort();

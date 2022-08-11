@@ -12,8 +12,6 @@ use tracing::info;
 /// Starts a new store, using the given mem rpc channel.
 /// TODO: refactor to share most of the setup with iroh-store/src/main.rs
 pub async fn start(rpc_addr: StoreServerAddr) -> anyhow::Result<JoinHandle<()>> {
-    println!("Starting memory store with addr {}", rpc_addr);
-
     let overrides: HashMap<String, String> = HashMap::new();
     let config: iroh_store::Config = make_config(
         // default
