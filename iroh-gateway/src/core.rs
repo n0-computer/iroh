@@ -675,7 +675,7 @@ mod tests {
             rpc_addr,
             gw_metrics,
             &mut prom_registry,
-            Arc::new(Some(RwLock::new(BadBits::new()))),
+            Arc::new(None),
         )
         .await
         .unwrap();
