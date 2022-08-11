@@ -5,6 +5,8 @@ mod constants;
 pub mod core;
 mod error;
 mod headers;
+#[cfg(feature = "ipfsd")]
+pub mod mem_store;
 pub mod metrics;
 mod response;
 mod rpc;

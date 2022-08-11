@@ -11,6 +11,7 @@ use iroh_gateway::{
     metrics,
 };
 use iroh_metrics::gateway::Metrics;
+use iroh_rpc_types::Addr;
 use iroh_util::{iroh_home_path, make_config};
 use prometheus_client::registry::Registry;
 use tokio::sync::RwLock;
@@ -74,6 +75,16 @@ async fn main() -> Result<()> {
         args.make_overrides_map(),
     )
     .unwrap();
+
+    // When running in ipfsd mode, update the rpc client config to setup
+    // memory addresses for the p2p and store modules.
+    #[cfg(feature = "ipfsd")]
+    let store_rpc = {
+        let (store_recv, store_sender) = Addr::new_mem();
+        config.rpc_client.store_addr = Some(store_sender);
+        iroh_gateway::mem_store::start(store_recv).await?
+    };
+
     config.metrics = metrics::metrics_config_with_compile_time_info(config.metrics);
     println!("{:#?}", config);
 
@@ -109,6 +120,12 @@ async fn main() -> Result<()> {
     });
 
     iroh_util::block_until_sigint().await;
+
+    #[cfg(feature = "ipfsd")]
+    {
+        store_rpc.abort();
+    }
+
     core_task.abort();
 
     metrics_handle.shutdown();
