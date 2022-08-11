@@ -261,7 +261,9 @@ jobs:
       - save-sccache-cache
 
   test_darwin:
-    executor: mac-executor
+    # executor: mac-executor
+    machine: true
+    resource_class: n0-computer/mac-intel
     parameters:
       cargo-args:
         description: Addtional arguments for the cargo command
@@ -362,6 +364,12 @@ jobs:
           os: linux
           arch: aarch64
       - save-sccache-cache
+  
+  runner-test:
+    machine: true
+    resource_class: n0-computer/mac-intel
+    steps:
+      - run: echo "Hi I'm on Runners!"
 
   build_release_osx:
     executor: mac-executor
@@ -410,44 +418,45 @@ workflows:
 
   iroh-ci-cd:
     jobs:
-      - cargo_fetch
-      - rustfmt:
-          requires:
-            - cargo_fetch
-      - clippy:
-          requires:
-            - cargo_fetch
-      - test:
-          name: "test_linux_x86_64"
-          cargo-args: "--workspace"
-          requires:
-            - cargo_fetch
-      - test:
-          name: "test_linux_x86_64--no-default-features"
-          cargo-args: "--workspace --no-default-features"
-          requires:
-            - cargo_fetch
-      - build_release:
-          name: "build linux release"
-          context: aws_s3
-          requires:
-            - test_linux_x86_64
-            - test_linux_x86_64--no-default-features
-          filters:
-            branches:
-              only: main
+      # - cargo_fetch
+      # - rustfmt:
+      #     requires:
+      #       - cargo_fetch
+      # - clippy:
+      #     requires:
+      #       - cargo_fetch
+      # - test:
+      #     name: "test_linux_x86_64"
+      #     cargo-args: "--workspace"
+      #     requires:
+      #       - cargo_fetch
+      # - test:
+      #     name: "test_linux_x86_64--no-default-features"
+      #     cargo-args: "--workspace --no-default-features"
+      #     requires:
+      #       - cargo_fetch
+      # - build_release:
+      #     name: "build linux release"
+      #     context: aws_s3
+      #     requires:
+      #       - test_linux_x86_64
+      #       - test_linux_x86_64--no-default-features
+      #     filters:
+      #       branches:
+      #         only: main
       - test_darwin:
           name: "test_darwin_x86_64"
           cargo-args: "--workspace"
-      - test_darwin:
-          name: "test_darwin_x86_64--no-default-features"
-          cargo-args: "--workspace --no-default-features"
-      - build_release_osx:
-          name: "build mac release"
-          context: aws_s3
-          requires:
-            - test_darwin_x86_64
-            - test_darwin_x86_64--no-default-features
-          filters:
-            branches:
-              only: main
+      # - test_darwin:
+      #     name: "test_darwin_x86_64--no-default-features"
+      #     cargo-args: "--workspace --no-default-features"
+      # - build_release_osx:
+      #     name: "build mac release"
+      #     context: aws_s3
+      #     requires:
+      #       - test_darwin_x86_64
+      #       - test_darwin_x86_64--no-default-features
+      #     filters:
+      #       branches:
+      #         only: main
+      # - runner-test
