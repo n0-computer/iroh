@@ -116,8 +116,7 @@ Not yet implemented.",
         hide = true
     )]
     FindPeer { peer_id: PeerId },
-    #[clap(about = "Find peers that can provide a specific value, given a key.
-Not yet implemented.")]
+    #[clap(about = "Find peers that can provide a specific value, given a key.")]
     FindProvs { cid: Cid },
     #[clap(
         about = "Given a key, query the routing system for its best value.
