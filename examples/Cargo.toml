@@ -19,6 +19,7 @@ bytes = "1.1.0"
 bytesize = "1.1.0"
 par-stream = { version = "0.10.2", default-features = false, features = ["runtime-tokio"] }
 indicatif = "0.17.0"
+iroh-util = { path = "../iroh-util" }
 
 [features]
 default = []

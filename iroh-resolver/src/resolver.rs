@@ -9,7 +9,6 @@ use std::time::Instant;
 use anyhow::{anyhow, bail, ensure, Context as _, Result};
 use async_trait::async_trait;
 use bytes::Bytes;
-use cid::multihash::{Code, MultihashDigest};
 use cid::Cid;
 use futures::Stream;
 use iroh_metrics::resolver::Metrics;
@@ -820,14 +819,6 @@ pub fn parse_links(cid: &Cid, bytes: &[u8]) -> Result<Vec<Cid>> {
     Ok(links)
 }
 
-/// Verifies that the provided bytes hash to the given multihash.
-pub fn verify_hash(cid: &Cid, bytes: &[u8]) -> Option<bool> {
-    Code::try_from(cid.hash().code()).ok().map(|code| {
-        let calculated_hash = code.digest(bytes);
-        &calculated_hash == cid.hash()
-    })
-}
-
 #[tracing::instrument]
 async fn resolve_dnslink(url: &str) -> Result<Vec<Path>> {
     let url = format!("_dnslink.{}.", url);
@@ -960,7 +951,7 @@ mod tests {
             let digest = Code::Blake3_256.digest(&bytes);
             let c = Cid::new_v1(codec.into(), digest);
 
-            assert_eq!(verify_hash(&c, &bytes), Some(true));
+            assert_eq!(iroh_util::verify_hash(&c, &bytes), Some(true));
         }
     }
 

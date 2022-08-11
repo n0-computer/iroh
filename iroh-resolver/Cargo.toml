@@ -34,6 +34,7 @@ tokio = { version = "1", features = ["rt", "macros", "rt-multi-thread"] }
 iroh-store = { path = "../iroh-store", default-features = false }
 iroh-rpc-types = { path = "../iroh-rpc-types", default-features = false }
 iroh-car = { path = "../iroh-car" }
+iroh-util = { path = "../iroh-util", default-features = false }
 
 [build-dependencies]
 prost-build = "0.11.1"
