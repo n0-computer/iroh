@@ -4,11 +4,11 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
 use clap::Parser;
+use iroh_gateway::metrics;
 use iroh_metrics::gateway::Metrics;
 use iroh_one::{
     config::{Config, CONFIG_FILE_NAME, ENV_PREFIX},
     core::Core,
-    metrics,
 };
 use iroh_rpc_types::Addr;
 use iroh_util::{iroh_home_path, make_config};
