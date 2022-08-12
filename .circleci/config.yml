@@ -126,6 +126,17 @@ commands:
             echo 'export PATH="$HOME:~/.cargo/bin:~/.rustup/toolchains/<< pipeline.parameters.nightly-version >>-x86_64-unknown-linux-gnu/lib/rustlib/x86_64-unknown-linux-gnu/bin:$PATH"' >> $BASH_ENV
             source $BASH_ENV
 
+  setup-sccache-mac:
+    steps:
+      - run:
+          name: Install sccache on mac
+          command: |
+            brew install sccache
+            # This configures Rust to use sccache.
+            echo 'export "RUSTC_WRAPPER"="sccache"' >> $BASH_ENV
+            # This is the maximum space sccache cache will use on disk.
+            echo 'export "SCCACHE_CACHE_SIZE"="4G"' >> $BASH_ENV
+            sccache --version
 
   setup-sccache:
     steps:
@@ -275,7 +286,7 @@ jobs:
       - checkout
       - setup-env-mac
       - setup-protoc-mac
-      - setup-sccache
+      - setup-sccache-mac
       - restore-sccache-cache
       - run:
           no_output_timeout: 20m
@@ -377,7 +388,7 @@ jobs:
       - checkout
       - setup-env-mac
       - setup-protoc-mac
-      - setup-sccache
+      - setup-sccache-mac
       - restore-sccache-cache
       - aws-cli/setup:
           profile-name: default
