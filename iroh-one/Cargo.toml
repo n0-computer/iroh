@@ -9,19 +9,12 @@ version = "0.1.0"
 
 [dependencies]
 anyhow = "1"
-async-recursion = "1.0.0"
 async-trait = "0.1.56"
 axum = "0.5.1"
-bytes = "1.1.0"
-cid = "0.8.4"
 clap = {version = "3.1.14", features = ["derive"]}
 config = "0.13.1"
-dirs = "4.0.0"
 futures = "0.3.21"
-git-version = "0.3.5"
-handlebars = "4"
 headers = "0.3.7"
-http = "0.2"
 http-serde = "1.1.0"
 hyper = "0.14.19"
 iroh-gateway = {path = "../iroh-gateway"}
@@ -32,30 +25,14 @@ iroh-rpc-client = {path = "../iroh-rpc-client", default-features = false}
 iroh-rpc-types = {path = "../iroh-rpc-types", default-features = false}
 iroh-store = {path = "../iroh-store", default-features = false, features = ["rpc-mem"]}
 iroh-util = {path = "../iroh-util"}
-libp2p = {version = "0.47", default-features = false}
-mime_guess = "2.0.4"
-names = {version = "0.14.0", default-features = false}
-opentelemetry = {version = "0.17.0", features = ["rt-tokio"]}
 prometheus-client = "0.17.0"
-rand = "0.8.5"
 serde = {version = "1.0", features = ["derive"]}
-serde_json = "1.0.78"
-serde_qs = "0.10.1"
-time = "0.3.9"
 tokio = {version = "1", features = ["macros", "rt-multi-thread", "process"]}
-tokio-util = {version = "0.7", features = ["io"]}
-toml = "0.5.9"
-tower = {version = "0.4", features = ["util", "timeout", "load-shed", "limit"]}
-tower-http = {version = "0.3", features = ["trace"]}
-tower-layer = {version = "0.3"}
 tracing = "0.1.33"
-tracing-opentelemetry = "0.17.2"
-tracing-subscriber = {version = "0.3.11", features = ["env-filter"]}
-url = "2.2.2"
-urlencoding = "2.1.0"
 
 [dev-dependencies]
 axum-macros = "0.2.0" # use #[axum_macros::debug_handler] for better error messages on handlers
+http = "0.2" 
 
 [features]
 default = ["rpc-mem", "rpc-grpc"]

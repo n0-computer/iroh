@@ -15,8 +15,8 @@ use serde::{Deserialize, Serialize};
 pub const CONFIG_FILE_NAME: &str = "gateway.config.toml";
 /// ENV_PREFIX should be used along side the config field name to set a config field using
 /// environment variables
-/// For example, `IROH_GATEWAY_PORT=1000` would set the value of the `Config.port` field
-pub const ENV_PREFIX: &str = "IROH_GATEWAY";
+/// For example, `IROH_ONE_PORT=1000` would set the value of the `Config.port` field
+pub const ENV_PREFIX: &str = "IROH_ONE";
 pub const DEFAULT_PORT: u16 = 9050;
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
