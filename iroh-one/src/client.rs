@@ -16,7 +16,7 @@ use tracing::info;
 use tracing::warn;
 
 use crate::core::GetParams;
-use crate::response::ResponseFormat;
+use iroh_gateway::response::ResponseFormat;
 
 #[derive(Debug, Clone)]
 pub struct Client {
