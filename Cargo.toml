@@ -8,6 +8,7 @@ members = [
   "iroh-rpc-types",
   "iroh-gateway",
   "iroh-metrics",
+  "iroh-one",
   "iroh-p2p",
   "iroh-resolver",
   "iroh-store",

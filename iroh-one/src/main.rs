@@ -1,19 +1,17 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
 use clap::Parser;
-use iroh_gateway::{
-    bad_bits::{self, BadBits},
+use iroh_metrics::gateway::Metrics;
+use iroh_one::{
     config::{Config, CONFIG_FILE_NAME, ENV_PREFIX},
     core::Core,
     metrics,
 };
-use iroh_metrics::gateway::Metrics;
+use iroh_rpc_types::Addr;
 use iroh_util::{iroh_home_path, make_config};
 use prometheus_client::registry::Registry;
-use tokio::sync::RwLock;
 
 #[derive(Parser, Debug, Clone)]
 #[clap(author, version, about, long_about = None)]
@@ -26,14 +24,12 @@ struct Args {
     fetch: Option<bool>,
     #[clap(short, long)]
     cache: Option<bool>,
-    #[clap(long)]
+    #[clap(long = "metrics")]
     metrics: bool,
-    #[clap(long)]
+    #[clap(long = "tracing")]
     tracing: bool,
     #[clap(long)]
     cfg: Option<PathBuf>,
-    #[clap(long)]
-    denylist: bool,
 }
 
 impl Args {
@@ -51,7 +47,6 @@ impl Args {
         if let Some(cache) = self.cache {
             map.insert("cache", cache.to_string());
         }
-        map.insert("denylist", self.denylist.to_string());
         map.insert("metrics.collect", self.metrics.to_string());
         map.insert("metrics.tracing", self.tracing.to_string());
         map
@@ -74,47 +69,54 @@ async fn main() -> Result<()> {
         args.make_overrides_map(),
     )
     .unwrap();
+
+    let (store_rpc, p2p_rpc) = {
+        let (store_recv, store_sender) = Addr::new_mem();
+        config.rpc_client.store_addr = Some(store_sender);
+        let store_rpc = iroh_one::mem_store::start(store_recv).await?;
+
+        let (p2p_recv, p2p_sender) = Addr::new_mem();
+        config.rpc_client.p2p_addr = Some(p2p_sender);
+        let p2p_rpc = iroh_one::mem_p2p::start(p2p_recv).await?;
+        (store_rpc, p2p_rpc)
+    };
+
     config.metrics = metrics::metrics_config_with_compile_time_info(config.metrics);
     println!("{:#?}", config);
 
     let metrics_config = config.metrics.clone();
     let mut prom_registry = Registry::default();
     let gw_metrics = Metrics::new(&mut prom_registry);
-    let bad_bits = match config.denylist {
-        true => Arc::new(Some(RwLock::new(BadBits::new()))),
-        false => Arc::new(None),
-    };
     let rpc_addr = config
         .server_rpc_addr()?
         .ok_or_else(|| anyhow!("missing gateway rpc addr"))?;
-    let handler = Core::new(
-        config,
-        rpc_addr,
-        gw_metrics,
-        &mut prom_registry,
-        Arc::clone(&bad_bits),
-    )
-    .await?;
-
-    let bad_bits_handle = bad_bits::spawn_bad_bits_updater(Arc::clone(&bad_bits));
+    let handler = Core::new(config, rpc_addr, gw_metrics, &mut prom_registry).await?;
 
     let metrics_handle =
         iroh_metrics::MetricsHandle::from_registry_with_tracer(metrics_config, prom_registry)
             .await
             .expect("failed to initialize metrics");
-    let server = handler.server();
-    println!("listening on {}", server.local_addr());
+    let server = handler.http_server();
+    println!("HTTP endpoint listening on {}", server.local_addr());
     let core_task = tokio::spawn(async move {
         server.await.unwrap();
     });
 
+    let uds_server_task = {
+        let uds_server = handler.uds_server();
+        let task = tokio::spawn(async move {
+            uds_server.await.unwrap();
+        });
+        task
+    };
+
     iroh_util::block_until_sigint().await;
+
+    store_rpc.abort();
+    p2p_rpc.abort();
+    uds_server_task.abort();
     core_task.abort();
 
     metrics_handle.shutdown();
-    if let Some(handle) = bad_bits_handle {
-        handle.abort();
-    }
-
     Ok(())
 }

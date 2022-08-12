@@ -6,7 +6,7 @@ use axum::{
     http::{header::*, StatusCode},
     response::IntoResponse,
     routing::get,
-    BoxError, Router,
+    BoxError, Router, Server,
 };
 use bytes::Bytes;
 use handlebars::Handlebars;
@@ -28,15 +28,13 @@ use std::{
     sync::Arc,
     time::{self, Duration},
 };
-use tokio::sync::RwLock;
+use tokio::net::UnixListener;
 use tower::ServiceBuilder;
 use tower_http::trace::TraceLayer;
 use tracing::info_span;
 use url::Url;
 use urlencoding::encode;
-
 use crate::{
-    bad_bits::BadBits,
     client::{Client, Request},
     config::Config,
     constants::*,
@@ -46,6 +44,7 @@ use crate::{
     rpc,
     rpc::Gateway,
     templates,
+    uds,
 };
 
 #[derive(Debug)]
@@ -60,7 +59,6 @@ pub struct State {
     rpc_client: iroh_rpc_client::Client,
     handlebars: HashMap<String, String>,
     pub metrics: Metrics,
-    bad_bits: Arc<Option<RwLock<BadBits>>>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -96,7 +94,6 @@ impl Core {
         rpc_addr: GatewayServerAddr,
         metrics: Metrics,
         registry: &mut Registry,
-        bad_bits: Arc<Option<RwLock<BadBits>>>,
     ) -> anyhow::Result<Self> {
         tokio::spawn(async move {
             // TODO: handle error
@@ -115,17 +112,13 @@ impl Core {
                 rpc_client,
                 metrics,
                 handlebars: templates,
-                bad_bits,
             }),
         })
     }
 
-    pub fn server(
-        self,
-    ) -> axum::Server<hyper::server::conn::AddrIncoming, axum::routing::IntoMakeService<Router>>
-    {
+    fn get_app(&self) -> Router {
         // todo(arqu): ?uri=... https://github.com/ipfs/go-ipfs/pull/7802
-        let app = Router::new()
+        Router::new()
             .route("/:scheme/:cid", get(get_handler))
             .route("/:scheme/:cid/*cpath", get(get_handler))
             .route("/health", get(health_check))
@@ -149,14 +142,40 @@ impl Core {
                         uri = %request.uri(),
                     )
                 }),
-            );
+            )
+    }
+
+    pub fn http_server(
+        &self,
+    ) -> Server<hyper::server::conn::AddrIncoming, axum::routing::IntoMakeService<Router>> {
+        let app = self.get_app();
         // todo(arqu): make configurable
         let addr = format!("0.0.0.0:{}", self.state.config.port);
 
-        axum::Server::bind(&addr.parse().unwrap())
+        Server::bind(&addr.parse().unwrap())
             .http1_preserve_header_case(true)
             .http1_title_case_headers(true)
             .serve(app.into_make_service())
+    }
+
+    pub fn uds_server(
+        &self,
+    ) -> Server<
+        uds::ServerAccept,
+        axum::extract::connect_info::IntoMakeServiceWithConnectInfo<Router, uds::UdsConnectInfo>,
+    > {
+        #[cfg(target_os = "android")]
+        let path = "/dev/socket/ipfsd.http".to_owned();
+
+        #[cfg(not(target_os = "android"))]
+        let path = format!("{}", std::env::temp_dir().join("ipfsd.http").display());
+
+        let _ = std::fs::remove_file(&path);
+        let uds = UnixListener::bind(&path).unwrap();
+        println!("Binding to UDS at {}", path);
+        let app = self.get_app();
+        Server::builder(uds::ServerAccept { uds })
+            .serve(app.into_make_service_with_connect_info::<uds::UdsConnectInfo>())
     }
 }
 
@@ -190,28 +209,12 @@ async fn get_handler(
     service_worker_check(&request_headers, cpath.to_string(), &state)?;
     unsuported_header_check(&request_headers, &state)?;
 
-    if check_bad_bits(&state, cid, cpath).await {
-        return Err(error(
-            StatusCode::FORBIDDEN,
-            "CID is in the denylist",
-            &state,
-        ));
-    }
-
     let full_content_path = format!("/{}/{}{}", scheme, cid, cpath);
     let resolved_path: iroh_resolver::resolver::Path = full_content_path
         .parse()
         .map_err(|e: anyhow::Error| e.to_string())
         .map_err(|e| error(StatusCode::BAD_REQUEST, &e, &state))?;
     let resolved_cid = resolved_path.root();
-
-    if check_bad_bits(&state, resolved_cid.to_string().as_str(), cpath).await {
-        return Err(error(
-            StatusCode::FORBIDDEN,
-            "CID is in the denylist",
-            &state,
-        ));
-    }
 
     // parse query params
     let format = match get_response_format(&request_headers, query_params.format) {
@@ -330,19 +333,6 @@ fn unsuported_header_check(request_headers: &HeaderMap, state: &State) -> Result
         ));
     }
     Ok(())
-}
-
-pub async fn check_bad_bits(state: &State, cid: &str, path: &str) -> bool {
-    // check if cid is in the denylist
-    if state.bad_bits.is_some() {
-        let bad_bits = state.bad_bits.as_ref();
-        if let Some(bbits) = bad_bits {
-            if bbits.read().await.is_bad(cid, path) {
-                return true;
-            }
-        }
-    }
-    false
 }
 
 #[tracing::instrument()]
@@ -670,16 +660,10 @@ mod tests {
         let mut prom_registry = Registry::default();
         let gw_metrics = Metrics::new(&mut prom_registry);
         let rpc_addr = "grpc://0.0.0.0:0".parse().unwrap();
-        let handler = Core::new(
-            config,
-            rpc_addr,
-            gw_metrics,
-            &mut prom_registry,
-            Arc::new(None),
-        )
-        .await
-        .unwrap();
-        let server = handler.server();
+        let handler = Core::new(config, rpc_addr, gw_metrics, &mut prom_registry)
+            .await
+            .unwrap();
+        let server = handler.http_server();
         let addr = server.local_addr();
         let core_task = tokio::spawn(async move {
             server.await.unwrap();
