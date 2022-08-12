@@ -9,7 +9,7 @@ use iroh_store::{
 use iroh_util::{block_until_sigint, iroh_home_path, make_config};
 use prometheus_client::registry::Registry;
 use std::path::PathBuf;
-use tracing::info;
+use tracing::{info, debug, error};
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> anyhow::Result<()> {
@@ -40,6 +40,14 @@ async fn main() -> anyhow::Result<()> {
     )
     .await
     .expect("failed to initialize metrics");
+
+    #[cfg(unix)]
+    {
+        match iroh_util::increase_fd_limit() {
+            Ok(soft) => debug!("NOFILE limit: soft = {}", soft),
+            Err(err) => error!("Error increasing NOFILE limit: {}", err),
+        }
+    }
 
     let rpc_addr = config
         .server_rpc_addr()?
