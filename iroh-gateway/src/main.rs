@@ -11,6 +11,7 @@ use iroh_gateway::{
     metrics,
 };
 use iroh_metrics::gateway::Metrics;
+#[cfg(feature = "ipfsd")]
 use iroh_rpc_types::Addr;
 use iroh_util::{iroh_home_path, make_config};
 use prometheus_client::registry::Registry;
@@ -118,11 +119,20 @@ async fn main() -> Result<()> {
         iroh_metrics::MetricsHandle::from_registry_with_tracer(metrics_config, prom_registry)
             .await
             .expect("failed to initialize metrics");
-    let server = handler.server();
-    println!("listening on {}", server.local_addr());
+    let server = handler.http_server();
+    println!("HTTP endpoint listening on {}", server.local_addr());
     let core_task = tokio::spawn(async move {
         server.await.unwrap();
     });
+
+    #[cfg(feature = "ipfsd")]
+    let uds_server_task = {
+        let uds_server = handler.uds_server();
+        let task = tokio::spawn(async move {
+            uds_server.await.unwrap();
+        });
+        task
+    };
 
     iroh_util::block_until_sigint().await;
 
@@ -130,6 +140,7 @@ async fn main() -> Result<()> {
     {
         store_rpc.abort();
         p2p_rpc.abort();
+        uds_server_task.abort();
     }
 
     core_task.abort();

@@ -6,7 +6,7 @@ use axum::{
     http::{header::*, StatusCode},
     response::IntoResponse,
     routing::get,
-    BoxError, Router,
+    BoxError, Router, Server,
 };
 use bytes::Bytes;
 use futures::TryStreamExt;
@@ -33,12 +33,16 @@ use std::{
     time::{self, Duration},
 };
 use tokio::sync::RwLock;
+#[cfg(feature = "ipfsd")]
+use tokio::net::UnixListener;
 use tower::ServiceBuilder;
 use tower_http::trace::TraceLayer;
 use tracing::info_span;
 use url::Url;
 use urlencoding::encode;
 
+#[cfg(feature = "ipfsd")]
+use crate::uds;
 use crate::{
     bad_bits::BadBits,
     client::{Client, FileResult, Request},
@@ -122,12 +126,9 @@ impl Core {
         })
     }
 
-    pub fn server(
-        self,
-    ) -> axum::Server<hyper::server::conn::AddrIncoming, axum::routing::IntoMakeService<Router>>
-    {
+    fn get_app(&self) -> Router {
         // todo(arqu): ?uri=... https://github.com/ipfs/go-ipfs/pull/7802
-        let app = Router::new()
+        Router::new()
             .route("/:scheme/:cid", get(get_handler))
             .route("/:scheme/:cid/*cpath", get(get_handler))
             .route("/health", get(health_check))
@@ -151,14 +152,41 @@ impl Core {
                         uri = %request.uri(),
                     )
                 }),
-            );
+            )
+    }
+
+    pub fn http_server(
+        &self,
+    ) -> Server<hyper::server::conn::AddrIncoming, axum::routing::IntoMakeService<Router>> {
+        let app = self.get_app();
         // todo(arqu): make configurable
         let addr = format!("0.0.0.0:{}", self.state.config.port);
 
-        axum::Server::bind(&addr.parse().unwrap())
+        Server::bind(&addr.parse().unwrap())
             .http1_preserve_header_case(true)
             .http1_title_case_headers(true)
             .serve(app.into_make_service())
+    }
+
+    #[cfg(feature = "ipfsd")]
+    pub fn uds_server(
+        &self,
+    ) -> Server<
+        uds::ServerAccept,
+        axum::extract::connect_info::IntoMakeServiceWithConnectInfo<Router, uds::UdsConnectInfo>,
+    > {
+        #[cfg(target_os = "android")]
+        let path = "/dev/socket/ipfsd.http".to_owned();
+
+        #[cfg(not(target_os = "android"))]
+        let path = format!("{}", std::env::temp_dir().join("ipfsd.http").display());
+
+        let _ = std::fs::remove_file(&path);
+        let uds = UnixListener::bind(&path).unwrap();
+        println!("Binding to UDS at {}", path);
+        let app = self.get_app();
+        Server::builder(uds::ServerAccept { uds })
+            .serve(app.into_make_service_with_connect_info::<uds::UdsConnectInfo>())
     }
 }
 
@@ -690,7 +718,7 @@ mod tests {
         )
         .await
         .unwrap();
-        let server = handler.server();
+        let server = handler.http_server();
         let addr = server.local_addr();
         let core_task = tokio::spawn(async move {
             server.await.unwrap();

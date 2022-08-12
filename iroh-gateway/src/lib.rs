@@ -13,3 +13,5 @@ pub mod metrics;
 mod response;
 mod rpc;
 mod templates;
+#[cfg(feature = "ipfsd")]
+mod uds;
