@@ -1,3 +1,11 @@
+use crate::{
+    client::{Client, Request},
+    config::Config,
+    error::GatewayError,
+    rpc,
+    rpc::Gateway,
+    templates, uds,
+};
 use async_recursion::async_recursion;
 use axum::{
     body::{self, Body, HttpBody},
@@ -10,6 +18,11 @@ use axum::{
 };
 use bytes::Bytes;
 use handlebars::Handlebars;
+use iroh_gateway::{
+    constants::*,
+    headers::*,
+    response::{get_response_format, GatewayResponse, ResponseFormat},
+};
 use iroh_metrics::{gateway::Metrics, get_current_trace_id};
 use iroh_resolver::resolver::{CidOrDomain, UnixfsType};
 use iroh_rpc_client::Client as RpcClient;
@@ -34,18 +47,6 @@ use tower_http::trace::TraceLayer;
 use tracing::info_span;
 use url::Url;
 use urlencoding::encode;
-use crate::{
-    client::{Client, Request},
-    config::Config,
-    constants::*,
-    error::GatewayError,
-    headers::*,
-    response::{get_response_format, GatewayResponse, ResponseFormat},
-    rpc,
-    rpc::Gateway,
-    templates,
-    uds,
-};
 
 #[derive(Debug)]
 pub struct Core {
