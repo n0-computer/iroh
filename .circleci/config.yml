@@ -362,6 +362,7 @@ jobs:
           command: |
             rustup target add aarch64-unknown-linux-gnu
             rustup toolchain install stable-aarch64-unknown-linux-gnu
+            rustup default stable-aarch64-unknown-linux-gnu
       - run:
           name: build aarch64_linux
           command: cargo build --release -v --target aarch64-unknown-linux-gnu
@@ -376,7 +377,9 @@ jobs:
       - save-sccache-cache
 
   build_release_osx:
-    executor: mac-executor
+    #executor: mac-executor
+    machine: true
+    resource_class: n0-computer/mac-intel
     steps:
       - checkout
       - setup-env-mac
@@ -402,6 +405,7 @@ jobs:
           command: |
             rustup target add aarch64-apple-darwin
             rustup toolchain install stable-aarch64-apple-darwin
+            rustup default stable-aarch64-apple-darwin
       - run:
           name: build aarch64_darwin
           no_output_timeout: 20m
