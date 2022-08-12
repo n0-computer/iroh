@@ -9,4 +9,4 @@ pub mod headers;
 pub mod metrics;
 pub mod response;
 mod rpc;
-mod templates;
+pub mod templates;

@@ -1,9 +1,10 @@
-use crate::{rpc, rpc::Gateway, templates, uds};
+use crate::{rpc, rpc::Gateway, uds};
 use axum::{Router, Server};
 use iroh_gateway::{
     client::Client,
     core::State,
     handlers::{get_app_routes, StateConfig}, bad_bits::BadBits,
+    templates,
 };
 use iroh_metrics::gateway::Metrics;
 use iroh_rpc_client::Client as RpcClient;
