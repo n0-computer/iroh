@@ -80,11 +80,11 @@ commands:
             echo 'export PATH="$PATH:/root/.cargo/bin"' >> $BASH_ENV
             echo 'export RUSTFLAGS="-C link-dead-code"' >> $BASH_ENV
             source $BASH_ENV
-      # - run:
-      #     name: setup ld
-      #     command: |
-      #       sudo bash -l -c 'echo $(rustc --print sysroot)/lib >> /etc/ld.so.conf'
-      #       sudo bash -l -c 'echo /usr/local/lib >> /etc/ld.so.conf'
+      - run:
+          name: setup ld
+          command: |
+            sudo bash -l -c 'echo $(rustc --print sysroot)/lib >> /etc/ld.so.conf'
+            sudo bash -l -c 'echo /usr/local/lib >> /etc/ld.so.conf'
       #       sudo ldconfig
 
   setup-protoc:
