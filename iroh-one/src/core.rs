@@ -6,16 +6,12 @@ use axum::{
     http::{header::*, StatusCode},
     response::IntoResponse,
     routing::get,
-    BoxError, Router,
+    BoxError, Router, Server,
 };
 use bytes::Bytes;
-use futures::TryStreamExt;
 use handlebars::Handlebars;
 use iroh_metrics::{gateway::Metrics, get_current_trace_id};
-use iroh_resolver::{
-    resolver::{CidOrDomain, OutMetrics, UnixfsType},
-    unixfs::Link,
-};
+use iroh_resolver::resolver::{CidOrDomain, UnixfsType};
 use iroh_rpc_client::Client as RpcClient;
 use iroh_rpc_types::gateway::GatewayServerAddr;
 use prometheus_client::registry::Registry;
@@ -32,16 +28,14 @@ use std::{
     sync::Arc,
     time::{self, Duration},
 };
-use tokio::sync::RwLock;
+use tokio::net::UnixListener;
 use tower::ServiceBuilder;
 use tower_http::trace::TraceLayer;
 use tracing::info_span;
 use url::Url;
 use urlencoding::encode;
-
 use crate::{
-    bad_bits::BadBits,
-    client::{Client, FileResult, Request},
+    client::{Client, Request},
     config::Config,
     constants::*,
     error::GatewayError,
@@ -50,6 +44,7 @@ use crate::{
     rpc,
     rpc::Gateway,
     templates,
+    uds,
 };
 
 #[derive(Debug)]
@@ -61,9 +56,9 @@ pub struct Core {
 pub struct State {
     config: Config,
     client: Client,
+    rpc_client: iroh_rpc_client::Client,
     handlebars: HashMap<String, String>,
     pub metrics: Metrics,
-    bad_bits: Arc<Option<RwLock<BadBits>>>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -99,7 +94,6 @@ impl Core {
         rpc_addr: GatewayServerAddr,
         metrics: Metrics,
         registry: &mut Registry,
-        bad_bits: Arc<Option<RwLock<BadBits>>>,
     ) -> anyhow::Result<Self> {
         tokio::spawn(async move {
             // TODO: handle error
@@ -115,19 +109,16 @@ impl Core {
             state: Arc::new(State {
                 config,
                 client,
+                rpc_client,
                 metrics,
                 handlebars: templates,
-                bad_bits,
             }),
         })
     }
 
-    pub fn server(
-        self,
-    ) -> axum::Server<hyper::server::conn::AddrIncoming, axum::routing::IntoMakeService<Router>>
-    {
+    fn get_app(&self) -> Router {
         // todo(arqu): ?uri=... https://github.com/ipfs/go-ipfs/pull/7802
-        let app = Router::new()
+        Router::new()
             .route("/:scheme/:cid", get(get_handler))
             .route("/:scheme/:cid/*cpath", get(get_handler))
             .route("/health", get(health_check))
@@ -151,14 +142,40 @@ impl Core {
                         uri = %request.uri(),
                     )
                 }),
-            );
+            )
+    }
+
+    pub fn http_server(
+        &self,
+    ) -> Server<hyper::server::conn::AddrIncoming, axum::routing::IntoMakeService<Router>> {
+        let app = self.get_app();
         // todo(arqu): make configurable
         let addr = format!("0.0.0.0:{}", self.state.config.port);
 
-        axum::Server::bind(&addr.parse().unwrap())
+        Server::bind(&addr.parse().unwrap())
             .http1_preserve_header_case(true)
             .http1_title_case_headers(true)
             .serve(app.into_make_service())
+    }
+
+    pub fn uds_server(
+        &self,
+    ) -> Server<
+        uds::ServerAccept,
+        axum::extract::connect_info::IntoMakeServiceWithConnectInfo<Router, uds::UdsConnectInfo>,
+    > {
+        #[cfg(target_os = "android")]
+        let path = "/dev/socket/ipfsd.http".to_owned();
+
+        #[cfg(not(target_os = "android"))]
+        let path = format!("{}", std::env::temp_dir().join("ipfsd.http").display());
+
+        let _ = std::fs::remove_file(&path);
+        let uds = UnixListener::bind(&path).unwrap();
+        println!("Binding to UDS at {}", path);
+        let app = self.get_app();
+        Server::builder(uds::ServerAccept { uds })
+            .serve(app.into_make_service_with_connect_info::<uds::UdsConnectInfo>())
     }
 }
 
@@ -192,28 +209,12 @@ async fn get_handler(
     service_worker_check(&request_headers, cpath.to_string(), &state)?;
     unsuported_header_check(&request_headers, &state)?;
 
-    if check_bad_bits(&state, cid, cpath).await {
-        return Err(error(
-            StatusCode::FORBIDDEN,
-            "CID is in the denylist",
-            &state,
-        ));
-    }
-
     let full_content_path = format!("/{}/{}{}", scheme, cid, cpath);
     let resolved_path: iroh_resolver::resolver::Path = full_content_path
         .parse()
         .map_err(|e: anyhow::Error| e.to_string())
         .map_err(|e| error(StatusCode::BAD_REQUEST, &e, &state))?;
     let resolved_cid = resolved_path.root();
-
-    if check_bad_bits(&state, resolved_cid.to_string().as_str(), cpath).await {
-        return Err(error(
-            StatusCode::FORBIDDEN,
-            "CID is in the denylist",
-            &state,
-        ));
-    }
 
     // parse query params
     let format = match get_response_format(&request_headers, query_params.format) {
@@ -334,19 +335,6 @@ fn unsuported_header_check(request_headers: &HeaderMap, state: &State) -> Result
     Ok(())
 }
 
-pub async fn check_bad_bits(state: &State, cid: &str, path: &str) -> bool {
-    // check if cid is in the denylist
-    if state.bad_bits.is_some() {
-        let bad_bits = state.bad_bits.as_ref();
-        if let Some(bbits) = bad_bits {
-            if bbits.read().await.is_bad(cid, path) {
-                return true;
-            }
-        }
-    }
-    false
-}
-
 #[tracing::instrument()]
 fn etag_check(
     request_headers: &HeaderMap,
@@ -379,28 +367,24 @@ async fn serve_raw(
     // FIXME: we currently only retrieve full cids
     let (body, metadata) = state
         .client
-        .get_file(req.resolved_path.clone(), start_time, &state.metrics)
+        .get_file(
+            req.resolved_path.clone(),
+            &state.rpc_client,
+            start_time,
+            &state.metrics,
+        )
         .await
         .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, &e, &state))?;
 
-    match body {
-        FileResult::File(body) => {
-            set_content_disposition_headers(
-                &mut headers,
-                format!("{}.bin", req.cid).as_str(),
-                DISPOSITION_ATTACHMENT,
-            );
-            set_etag_headers(&mut headers, get_etag(&req.cid, Some(req.format.clone())));
-            add_cache_control_headers(&mut headers, metadata.clone());
-            add_ipfs_roots_headers(&mut headers, metadata);
-            response(StatusCode::OK, body, headers)
-        }
-        FileResult::Directory(_) => Err(error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "cannot serve directory as raw",
-            &state,
-        )),
-    }
+    set_content_disposition_headers(
+        &mut headers,
+        format!("{}.bin", req.cid).as_str(),
+        DISPOSITION_ATTACHMENT,
+    );
+    set_etag_headers(&mut headers, get_etag(&req.cid, Some(req.format.clone())));
+    add_cache_control_headers(&mut headers, metadata.clone());
+    add_ipfs_roots_headers(&mut headers, metadata);
+    response(StatusCode::OK, body, headers)
 }
 
 #[tracing::instrument()]
@@ -413,31 +397,27 @@ async fn serve_car(
     // FIXME: we currently only retrieve full cids
     let (body, metadata) = state
         .client
-        .get_file(req.resolved_path.clone(), start_time, &state.metrics)
+        .get_file(
+            req.resolved_path.clone(),
+            &state.rpc_client,
+            start_time,
+            &state.metrics,
+        )
         .await
         .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, &e, &state))?;
 
-    match body {
-        FileResult::File(body) => {
-            set_content_disposition_headers(
-                &mut headers,
-                format!("{}.car", req.cid).as_str(),
-                DISPOSITION_ATTACHMENT,
-            );
+    set_content_disposition_headers(
+        &mut headers,
+        format!("{}.car", req.cid).as_str(),
+        DISPOSITION_ATTACHMENT,
+    );
 
-            // todo(arqu): this should be root cid
-            let etag = format!("W/{}", get_etag(&req.cid, Some(req.format.clone())));
-            set_etag_headers(&mut headers, etag);
-            // todo(arqu): check if etag matches for root cid
-            add_ipfs_roots_headers(&mut headers, metadata);
-            response(StatusCode::OK, body, headers)
-        }
-        FileResult::Directory(_) => Err(error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "cannot serve directory as car file",
-            &state,
-        )),
-    }
+    // todo(arqu): this should be root cid
+    let etag = format!("W/{}", get_etag(&req.cid, Some(req.format.clone())));
+    set_etag_headers(&mut headers, etag);
+    // todo(arqu): check if etag matches for root cid
+    add_ipfs_roots_headers(&mut headers, metadata);
+    response(StatusCode::OK, body, headers)
 }
 
 #[tracing::instrument()]
@@ -452,7 +432,12 @@ async fn serve_car_recursive(
     let body = state
         .client
         .clone()
-        .get_file_recursive(req.resolved_path.clone(), start_time, state.metrics.clone())
+        .get_file_recursive(
+            req.resolved_path.clone(),
+            state.rpc_client.clone(),
+            start_time,
+            state.metrics.clone(),
+        )
         .await
         .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, &e, &state))?;
 
@@ -479,87 +464,82 @@ async fn serve_fs(
     start_time: std::time::Instant,
 ) -> Result<GatewayResponse, GatewayError> {
     // FIXME: we currently only retrieve full cids
-    let (body, metadata) = state
+    let (mut body, metadata) = state
         .client
-        .get_file(req.resolved_path.clone(), start_time, &state.metrics)
+        .get_file(
+            req.resolved_path.clone(),
+            &state.rpc_client,
+            start_time,
+            &state.metrics,
+        )
         .await
         .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, &e, &state))?;
 
     add_ipfs_roots_headers(&mut headers, metadata.clone());
-    match body {
-        FileResult::Directory(res) => {
-            let dir_list: anyhow::Result<Vec<_>> = res
-                .unixfs_read_dir(
-                    &state.client.resolver,
-                    OutMetrics {
-                        metrics: state.metrics.clone(),
-                        start: start_time,
-                    },
-                )
-                .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string(), &state))?
-                .expect("already known this is a directory")
-                .try_collect()
-                .await;
-            match dir_list {
-                Ok(dir_list) => serve_fs_dir(&dir_list, req, state, headers, start_time).await,
-                Err(e) => {
-                    tracing::warn!("failed to read dir: {:?}", e);
-                    Err(error(
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        "failed to read dir listing",
-                        &state,
-                    ))
-                }
+    match metadata.unixfs_type {
+        Some(UnixfsType::Dir) => {
+            if let Some(dir_list_data) = body.data().await {
+                let dir_list = match dir_list_data {
+                    Ok(b) => b,
+                    Err(_) => {
+                        return Err(error(
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            "failed to read dir listing",
+                            &state,
+                        ));
+                    }
+                };
+                return serve_fs_dir(&dir_list, req, state, headers, start_time).await;
+            } else {
+                return Err(error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to read dir listing",
+                    &state,
+                ));
             }
         }
-        FileResult::File(body) => {
-            match metadata.unixfs_type {
-                Some(_) => {
-                    // todo(arqu): error on no size
-                    // todo(arqu): add lazy seeking
-                    add_cache_control_headers(&mut headers, metadata.clone());
-                    set_etag_headers(&mut headers, get_etag(&req.cid, Some(req.format.clone())));
-                    let name = add_content_disposition_headers(
-                        &mut headers,
-                        &req.query_file_name,
-                        &req.content_path,
-                        req.download,
-                    );
-                    if metadata.unixfs_type == Some(UnixfsType::Symlink) {
-                        headers.insert(
-                            CONTENT_TYPE,
-                            HeaderValue::from_str("inode/symlink").unwrap(),
-                        );
-                    } else {
-                        add_content_type_headers(&mut headers, &name);
-                    }
-                    response(StatusCode::OK, body, headers)
-                }
-                None => Err(error(
-                    StatusCode::BAD_REQUEST,
-                    "couldn't determine unixfs type",
-                    &state,
-                )),
+        Some(_) => {
+            // todo(arqu): error on no size
+            // todo(arqu): add lazy seeking
+            add_cache_control_headers(&mut headers, metadata.clone());
+            set_etag_headers(&mut headers, get_etag(&req.cid, Some(req.format.clone())));
+            let name = add_content_disposition_headers(
+                &mut headers,
+                &req.query_file_name,
+                &req.content_path,
+                req.download,
+            );
+            if metadata.unixfs_type == Some(UnixfsType::Symlink) {
+                headers.insert(
+                    CONTENT_TYPE,
+                    HeaderValue::from_str("inode/symlink").unwrap(),
+                );
+            } else {
+                add_content_type_headers(&mut headers, &name);
             }
+        }
+        None => {
+            return Err(error(
+                StatusCode::BAD_REQUEST,
+                "couldn't determine unixfs type",
+                &state,
+            ));
         }
     }
+    response(StatusCode::OK, body, headers)
 }
 
 #[tracing::instrument()]
 async fn serve_fs_dir(
-    dir_list: &[Link],
+    dir_list: &Bytes,
     req: &Request,
     state: Arc<State>,
     mut headers: HeaderMap,
     start_time: std::time::Instant,
 ) -> Result<GatewayResponse, GatewayError> {
+    let dir_list = std::str::from_utf8(&dir_list[..]).unwrap();
     let force_dir = req.query_params.force_dir.unwrap_or(false);
-    let has_index = dir_list.iter().any(|l| {
-        l.name
-            .as_ref()
-            .map(|l| l.starts_with("index.html"))
-            .unwrap_or_default()
-    });
+    let has_index = dir_list.lines().any(|l| l.starts_with("index.html"));
     if !force_dir && has_index {
         if !req.content_path.ends_with('/') {
             let redirect_path = format!(
@@ -585,14 +565,13 @@ async fn serve_fs_dir(
         root_path.push('/');
     }
     let links = dir_list
-        .iter()
-        .map(|l| {
-            let name = l.name.as_deref().unwrap_or_default();
+        .lines()
+        .map(|line| {
             let mut link = Map::new();
-            link.insert("name".to_string(), Json::String(get_filename(name)));
+            link.insert("name".to_string(), Json::String(get_filename(line)));
             link.insert(
                 "path".to_string(),
-                Json::String(format!("{}{}", root_path, name)),
+                Json::String(format!("{}{}", root_path, line)),
             );
             link
         })
@@ -681,16 +660,10 @@ mod tests {
         let mut prom_registry = Registry::default();
         let gw_metrics = Metrics::new(&mut prom_registry);
         let rpc_addr = "grpc://0.0.0.0:0".parse().unwrap();
-        let handler = Core::new(
-            config,
-            rpc_addr,
-            gw_metrics,
-            &mut prom_registry,
-            Arc::new(None),
-        )
-        .await
-        .unwrap();
-        let server = handler.server();
+        let handler = Core::new(config, rpc_addr, gw_metrics, &mut prom_registry)
+            .await
+            .unwrap();
+        let server = handler.http_server();
         let addr = server.local_addr();
         let core_task = tokio::spawn(async move {
             server.await.unwrap();
