@@ -1,9 +1,10 @@
 pub mod bad_bits;
-mod client;
+pub mod client;
 pub mod config;
 pub mod constants;
 pub mod core;
 mod error;
+pub mod handlers;
 pub mod headers;
 pub mod metrics;
 pub mod response;

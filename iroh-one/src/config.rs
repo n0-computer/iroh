@@ -186,6 +186,20 @@ impl Source for Config {
     }
 }
 
+impl iroh_gateway::handlers::StateConfig for Config {
+    fn rpc_client(&self) -> iroh_rpc_client::Config {
+        self.rpc_client.clone()
+    }
+
+    fn port(&self) -> u16 {
+        self.port
+    }
+
+    fn user_headers(&self) -> HeaderMap<HeaderValue> {
+        self.headers.clone()
+    }
+}
+
 fn collect_headers(headers: &HeaderMap) -> Result<Map<String, Value>, ConfigError> {
     let mut map = Map::new();
     for (key, value) in headers.iter() {
