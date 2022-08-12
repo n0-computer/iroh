@@ -50,10 +50,7 @@ pub trait StateConfig: std::fmt::Debug + Sync + Send {
     fn user_headers(&self) -> HeaderMap<HeaderValue>;
 }
 
-pub fn get_app_routes<T>(state: &Arc<T>) -> Router
-where
-    T: Send + Sync + 'static
-{
+pub fn get_app_routes(state: &Arc<State>) -> Router {
     // todo(arqu): ?uri=... https://github.com/ipfs/go-ipfs/pull/7802
     Router::new()
         .route("/:scheme/:cid", get(get_handler))
