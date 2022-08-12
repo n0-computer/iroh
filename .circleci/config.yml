@@ -80,12 +80,11 @@ commands:
             echo 'export PATH="$PATH:/root/.cargo/bin"' >> $BASH_ENV
             echo 'export RUSTFLAGS="-C link-dead-code"' >> $BASH_ENV
             source $BASH_ENV
-      # - run:
-      #     name: setup ld
-      #     command: |
-      #       sudo bash -l -c 'echo $(rustc --print sysroot)/lib >> /etc/ld.so.conf'
-      #       sudo bash -l -c 'echo /usr/local/lib >> /etc/ld.so.conf'
-      #       sudo ldconfig
+      - run:
+          name: setup ld
+          command: |
+            sudo bash -l -c 'echo $(rustc --print sysroot)/lib >> /etc/ld.so.conf'
+            sudo bash -l -c 'echo /usr/local/lib >> /etc/ld.so.conf'
 
   setup-protoc:
     steps:
@@ -126,6 +125,17 @@ commands:
             echo 'export PATH="$HOME:~/.cargo/bin:~/.rustup/toolchains/<< pipeline.parameters.nightly-version >>-x86_64-unknown-linux-gnu/lib/rustlib/x86_64-unknown-linux-gnu/bin:$PATH"' >> $BASH_ENV
             source $BASH_ENV
 
+  setup-sccache-mac:
+    steps:
+      - run:
+          name: Install sccache on mac
+          command: |
+            brew install sccache
+            # This configures Rust to use sccache.
+            echo 'export "RUSTC_WRAPPER"="sccache"' >> $BASH_ENV
+            # This is the maximum space sccache cache will use on disk.
+            echo 'export "SCCACHE_CACHE_SIZE"="4G"' >> $BASH_ENV
+            sccache --version
 
   setup-sccache:
     steps:
@@ -261,7 +271,9 @@ jobs:
       - save-sccache-cache
 
   test_darwin:
-    executor: mac-executor
+    # executor: mac-executor
+    machine: true
+    resource_class: n0-computer/mac-intel
     parameters:
       cargo-args:
         description: Addtional arguments for the cargo command
@@ -273,12 +285,12 @@ jobs:
       - checkout
       - setup-env-mac
       - setup-protoc-mac
-      - setup-sccache
+      - setup-sccache-mac
       - restore-sccache-cache
       - run:
           no_output_timeout: 20m
           name: Test with << parameters.cargo-args >>
-          command: cargo test << parameters.cargo-args >> -j 2
+          command: cargo test << parameters.cargo-args >> -j 4
       - save-sccache-cache
 
   rustfmt:
@@ -350,6 +362,7 @@ jobs:
           command: |
             rustup target add aarch64-unknown-linux-gnu
             rustup toolchain install stable-aarch64-unknown-linux-gnu
+            rustup default stable-aarch64-unknown-linux-gnu
       - run:
           name: build aarch64_linux
           command: cargo build --release -v --target aarch64-unknown-linux-gnu
@@ -364,12 +377,14 @@ jobs:
       - save-sccache-cache
 
   build_release_osx:
-    executor: mac-executor
+    #executor: mac-executor
+    machine: true
+    resource_class: n0-computer/mac-intel
     steps:
       - checkout
       - setup-env-mac
       - setup-protoc-mac
-      - setup-sccache
+      - setup-sccache-mac
       - restore-sccache-cache
       - aws-cli/setup:
           profile-name: default
@@ -390,6 +405,7 @@ jobs:
           command: |
             rustup target add aarch64-apple-darwin
             rustup toolchain install stable-aarch64-apple-darwin
+            rustup default stable-aarch64-apple-darwin
       - run:
           name: build aarch64_darwin
           no_output_timeout: 20m
