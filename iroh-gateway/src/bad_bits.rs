@@ -194,7 +194,7 @@ mod tests {
         let gw_metrics = Metrics::new(&mut prom_registry);
         let rpc_addr = "grpc://0.0.0.0:0".parse().unwrap();
         let handler = crate::core::Core::new(
-            config,
+            Arc::new(config),
             rpc_addr,
             gw_metrics,
             &mut prom_registry,

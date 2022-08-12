@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
 use clap::Parser;
@@ -90,7 +91,7 @@ async fn main() -> Result<()> {
     let rpc_addr = config
         .server_rpc_addr()?
         .ok_or_else(|| anyhow!("missing gateway rpc addr"))?;
-    let handler = Core::new(config, rpc_addr, gw_metrics, &mut prom_registry).await?;
+    let handler = Core::new(Arc::new(config), rpc_addr, gw_metrics, &mut prom_registry).await?;
 
     let metrics_handle =
         iroh_metrics::MetricsHandle::from_registry_with_tracer(metrics_config, prom_registry)

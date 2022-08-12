@@ -88,7 +88,7 @@ async fn main() -> Result<()> {
         .server_rpc_addr()?
         .ok_or_else(|| anyhow!("missing gateway rpc addr"))?;
     let handler = Core::new(
-        config,
+        Arc::new(config),
         rpc_addr,
         gw_metrics,
         &mut prom_registry,
