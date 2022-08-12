@@ -16,14 +16,14 @@ use tokio::{
     io::{AsyncRead, AsyncWrite},
     net::{unix::UCred, UnixListener, UnixStream},
 };
-use tower::BoxError;
+
 pub struct ServerAccept {
     pub uds: UnixListener,
 }
 
 impl Accept for ServerAccept {
     type Conn = UnixStream;
-    type Error = BoxError;
+    type Error = Box<dyn std::error::Error + Send + Sync>;
 
     fn poll_accept(
         self: Pin<&mut Self>,
