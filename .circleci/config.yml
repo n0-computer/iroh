@@ -290,7 +290,7 @@ jobs:
       - run:
           no_output_timeout: 20m
           name: Test with << parameters.cargo-args >>
-          command: cargo test << parameters.cargo-args >> -j 2
+          command: cargo test << parameters.cargo-args >> -j 4
       - save-sccache-cache
 
   rustfmt:
