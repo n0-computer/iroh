@@ -57,11 +57,11 @@ pub fn get_app_routes(state: &Arc<State>) -> Router {
         .route("/:scheme/:cid", get(get_handler))
         .route("/:scheme/:cid/*cpath", get(get_handler))
         .route("/health", get(health_check))
-        .layer(Extension(Arc::clone(&state)))
+        .layer(Extension(Arc::clone(state)))
         .layer(
             ServiceBuilder::new()
                 // Handle errors from middleware
-                .layer(Extension(Arc::clone(&state)))
+                .layer(Extension(Arc::clone(state)))
                 .layer(HandleErrorLayer::new(middleware_error_handler))
                 .load_shed()
                 .concurrency_limit(2048)

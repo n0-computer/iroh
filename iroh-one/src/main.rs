@@ -74,11 +74,11 @@ async fn main() -> Result<()> {
     let (store_rpc, p2p_rpc) = {
         let (store_recv, store_sender) = Addr::new_mem();
         config.rpc_client.store_addr = Some(store_sender);
-        let store_rpc = iroh_one::mem_store::start(store_recv).await?;
+        let store_rpc = iroh_one::mem_store::start(store_recv, config.clone().into()).await?;
 
         let (p2p_recv, p2p_sender) = Addr::new_mem();
         config.rpc_client.p2p_addr = Some(p2p_sender);
-        let p2p_rpc = iroh_one::mem_p2p::start(p2p_recv).await?;
+        let p2p_rpc = iroh_one::mem_p2p::start(p2p_recv, config.clone().into()).await?;
         (store_rpc, p2p_rpc)
     };
 
@@ -105,10 +105,9 @@ async fn main() -> Result<()> {
 
     let uds_server_task = {
         let uds_server = handler.uds_server();
-        let task = tokio::spawn(async move {
+        tokio::spawn(async move {
             uds_server.await.unwrap();
-        });
-        task
+        })
     };
 
     iroh_util::block_until_sigint().await;
