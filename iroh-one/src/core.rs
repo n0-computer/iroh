@@ -83,24 +83,15 @@ impl Core {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::Config;
-    use iroh_rpc_client::Config as RpcClientConfig;
+    use crate::config::{Config, GatewayConfig};
     use prometheus_client::registry::Registry;
 
     #[tokio::test]
     async fn gateway_health() {
-        let mut config = Config::new(
-            false,
-            false,
-            false,
-            0,
-            RpcClientConfig {
-                gateway_addr: None,
-                p2p_addr: None,
-                store_addr: None,
-            },
-        );
-        config.set_default_headers();
+        let mut gateway = GatewayConfig::new(false, false, false, 0);
+        gateway.set_default_headers();
+        let mut config = Config::default();
+        config.gateway = gateway;
 
         let mut prom_registry = Registry::default();
         let gw_metrics = Metrics::new(&mut prom_registry);
