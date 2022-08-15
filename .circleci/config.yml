@@ -381,7 +381,7 @@ jobs:
       - save-sccache-cache
   
   build_release_aarch64:
-    executor: default
+    executor: arm-executor
     steps:
       - checkout
       - setup-env
