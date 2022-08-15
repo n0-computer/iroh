@@ -360,19 +360,6 @@ jobs:
       # - run:
       #     name: build x86_64_linux
       #     command: cargo build --release -v
-      # - run:
-      #     name: get iroh versions
-      #     command: |
-      #       pkv=$(cargo pkgid iroh-gateway)
-      #       IFS='#' read -ra res \<<< "$pkv"
-      #       echo 'export IROH_GATEWAY_VERSION=${res[1]}' >> $BASH_ENV
-      #       pkv=$(cargo pkgid iroh-p2p)
-      #       IFS='#' read -ra res \<<< "$pkv"
-      #       echo 'export IROH_P2P_VERSION=${res[1]}' >> $BASH_ENV
-      #       pkv=$(cargo pkgid iroh-store)
-      #       IFS='#' read -ra res \<<< "$pkv"
-      #       echo 'export IROH_STORE_VERSION=${res[1]}' >> $BASH_ENV
-      #       source $BASH_ENV
       # - push-to-s3:
       #     path: ./target/release/
       #     os: linux
@@ -388,6 +375,8 @@ jobs:
             rustup target add aarch64-unknown-linux-gnu
             # rustup toolchain install stable-aarch64-unknown-linux-gnu --force-non-host
             # rustup default stable-aarch64-unknown-linux-gnu --force-non-host
+            rustup toolchain list
+            ls -la ~/.rustup/toolchains/
       - set-env-path-aarch64
       - run:
           name: build aarch64_linux
