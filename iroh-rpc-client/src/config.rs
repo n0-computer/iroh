@@ -12,6 +12,8 @@ pub struct Config {
     pub p2p_addr: Option<P2pClientAddr>,
     // store rpc address
     pub store_addr: Option<StoreClientAddr>,
+    // Domain name of a gateway to fetch raw CIDs.
+    pub raw_gateway: Option<String>,
 }
 
 impl Source for Config {
@@ -40,6 +42,7 @@ impl Config {
             gateway_addr: Some("grpc://0.0.0.0:4400".parse().unwrap()),
             p2p_addr: Some("grpc://0.0.0.0:4401".parse().unwrap()),
             store_addr: Some("grpc://0.0.0.0:4402".parse().unwrap()),
+            raw_gateway: None,
         }
     }
 }

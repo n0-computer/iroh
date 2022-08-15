@@ -89,7 +89,7 @@ mod tests {
 
     #[tokio::test]
     async fn gateway_health() {
-        let mut gateway = GatewayConfig::new(false, false, false, 0);
+        let mut gateway = GatewayConfig::default();
         gateway.set_default_headers();
         let mut config = Config::default();
         config.gateway = gateway;

@@ -82,6 +82,8 @@ async fn main() -> Result<()> {
         (store_rpc, p2p_rpc)
     };
 
+    config.rpc_client.raw_gateway = Some(config.gateway.raw_gateway.clone());
+
     config.metrics = metrics::metrics_config_with_compile_time_info(config.metrics);
     println!("{:#?}", config);
 

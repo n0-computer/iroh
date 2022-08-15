@@ -12,6 +12,7 @@ pub struct Client {
     pub gateway: Option<GatewayClient>,
     pub p2p: Option<P2pClient>,
     pub store: Option<StoreClient>,
+    pub raw_gateway: Option<String>,
 }
 
 impl Client {
@@ -20,6 +21,7 @@ impl Client {
             gateway_addr,
             p2p_addr,
             store_addr,
+            raw_gateway,
         } = cfg;
 
         let gateway = if let Some(addr) = gateway_addr {
@@ -55,7 +57,14 @@ impl Client {
             gateway,
             p2p,
             store,
+            raw_gateway,
         })
+    }
+
+    pub fn try_raw_gateway(&self) -> Result<&String> {
+        self.raw_gateway
+            .as_ref()
+            .ok_or_else(|| anyhow!("no gateway configured to fetch raw CIDs"))
     }
 
     pub fn try_p2p(&self) -> Result<&P2pClient> {

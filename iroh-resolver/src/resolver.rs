@@ -9,8 +9,9 @@ use std::time::Instant;
 use anyhow::{anyhow, bail, ensure, Context as _, Result};
 use async_trait::async_trait;
 use bytes::Bytes;
-use cid::Cid;
+use cid::{multibase, Cid};
 use futures::Stream;
+use futures::{future::FutureExt, pin_mut, select};
 use iroh_metrics::resolver::Metrics;
 use iroh_rpc_client::Client;
 use libipld::codec::{Decode, Encode};
@@ -18,7 +19,7 @@ use libipld::prelude::Codec as _;
 use libipld::{Ipld, IpldCodec};
 use prometheus_client::registry::Registry;
 use tokio::io::AsyncRead;
-use tracing::{debug, trace, warn};
+use tracing::{debug, error, trace, warn};
 
 use crate::codecs::Codec;
 use crate::unixfs::{
@@ -381,6 +382,7 @@ pub struct LoadedCid {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Source {
     Bitswap,
+    Http,
     Store(&'static str),
 }
 
@@ -404,6 +406,31 @@ impl<T: ContentLoader> ContentLoader for Arc<T> {
 }
 
 #[async_trait]
+trait CidFetcher {
+    async fn fetch_p2p(&self, cid: &Cid) -> Result<Bytes, anyhow::Error>;
+
+    async fn fetch_http(&self, cid: &Cid) -> Result<Bytes, anyhow::Error>;
+}
+
+#[async_trait]
+impl CidFetcher for Client {
+    async fn fetch_p2p(&self, cid: &Cid) -> Result<Bytes, anyhow::Error> {
+        let p2p = self.try_p2p()?;
+        let providers = p2p.fetch_providers(cid).await?;
+        p2p.fetch_bitswap(*cid, providers).await
+    }
+
+    async fn fetch_http(&self, cid: &Cid) -> Result<Bytes, anyhow::Error> {
+        let gateway = self.try_raw_gateway()?;
+        let cid_str = multibase::encode(multibase::Base::Base32Lower, cid.to_bytes().as_slice());
+        let gateway_url = format!("https://{}.ipfs.{}?format=raw", cid_str, gateway);
+        debug!("Will fetch {}", gateway_url);
+        let response = reqwest::get(gateway_url).await?;
+        response.bytes().await.map_err(|e| e.into())
+    }
+}
+
+#[async_trait]
 impl ContentLoader for Client {
     async fn load_cid(&self, cid: &Cid) -> Result<LoadedCid> {
         // TODO: better strategy
@@ -422,40 +449,75 @@ impl ContentLoader for Client {
                 warn!("failed to fetch data from store {}: {:?}", cid, err);
             }
         }
-        let p2p = self.try_p2p()?;
-        let providers = p2p.fetch_providers(&cid).await?;
-        let bytes = p2p.fetch_bitswap(cid, providers).await?;
 
-        // trigger storage in the background
-        let cloned = bytes.clone();
-        let rpc = self.clone();
-        tokio::spawn(async move {
-            let clone2 = cloned.clone();
-            let links =
-                tokio::task::spawn_blocking(move || parse_links(&cid, &clone2).unwrap_or_default())
-                    .await
-                    .unwrap_or_default();
+        let p2p_fut = self.fetch_p2p(&cid).fuse();
+        let http_fut = self.fetch_http(&cid).fuse();
+        pin_mut!(p2p_fut, http_fut);
 
-            let len = cloned.len();
-            let links_len = links.len();
-            if let Some(store_rpc) = rpc.store.as_ref() {
-                match store_rpc.put(cid, cloned, links).await {
-                    Ok(_) => debug!("stored {} ({}bytes, {}links)", cid, len, links_len),
-                    Err(err) => {
-                        warn!("failed to store {}: {:?}", cid, err);
+        let mut bytes: Option<Bytes> = None;
+        let mut source = Source::Bitswap;
+
+        // Race the p2p and http fetches.
+        loop {
+            select! {
+                res = http_fut => {
+                    if let Ok(data) = res {
+                        debug!("retrieved from http");
+                        if let Some(true) = iroh_util::verify_hash(&cid, &data) {
+                            source = Source::Http;
+                            bytes = Some(data);
+                            break;
+                        } else {
+                            error!("Got http data, but CID verification failed!");
+                        }
                     }
                 }
-            } else {
-                warn!("failed to store: missing store rpc conn");
+                res = p2p_fut => {
+                    if let Ok(data) = res {
+                        debug!("retrieved from p2p");
+                        bytes = Some(data);
+                        break;
+                    }
+                }
+                complete => { break; }
             }
-        });
+        }
 
-        trace!("retrieved from p2p");
+        if let Some(bytes) = bytes {
+            // trigger storage in the background
+            let cloned = bytes.clone();
+            let rpc = self.clone();
+            tokio::spawn(async move {
+                let clone2 = cloned.clone();
+                let links = tokio::task::spawn_blocking(move || {
+                    parse_links(&cid, &clone2).unwrap_or_default()
+                })
+                .await
+                .unwrap_or_default();
 
-        Ok(LoadedCid {
-            data: bytes,
-            source: Source::Bitswap,
-        })
+                if let Some(store_rpc) = rpc.store.as_ref() {
+                    let len = cloned.len();
+                    let links_len = links.len();
+                    match store_rpc.put(cid, cloned, links).await {
+                        Ok(_) => {
+                            debug!("stored {} ({} bytes, {} links)", cid, len, links_len)
+                        }
+                        Err(err) => {
+                            error!("failed to store {}: {:?}", cid, err);
+                        }
+                    }
+                } else {
+                    error!("failed to store: missing store rpc conn");
+                }
+            });
+
+            Ok(LoadedCid {
+                data: bytes,
+                source,
+            })
+        } else {
+            Err(anyhow::anyhow!("Failed to load from p2p & http"))
+        }
     }
 }
 
@@ -538,7 +600,7 @@ impl<T: ContentLoader> Resolver<T> {
                 let next_link = current
                     .get_link_by_name(&part)
                     .await?
-                    .ok_or_else(|| anyhow!("link {} not found", part))?;
+                    .ok_or_else(|| anyhow!("UnixfsNode::Directory link '{}' not found", part))?;
                 let loaded_cid = self.load_cid(&next_link.cid).await?;
                 let next_node = UnixfsNode::decode(&next_link.cid, loaded_cid.data)?;
                 resolved_path.push(next_link.cid);
@@ -549,7 +611,7 @@ impl<T: ContentLoader> Resolver<T> {
                 let (next_link, next_node) = hamt
                     .get(self, part.as_bytes())
                     .await?
-                    .ok_or_else(|| anyhow!("link {} not found", part))?;
+                    .ok_or_else(|| anyhow!("UnixfsNode::HamtShard link '{}' not found", part))?;
                 // TODO: is this the right way to to resolved path here?
                 resolved_path.push(next_link.cid);
 
