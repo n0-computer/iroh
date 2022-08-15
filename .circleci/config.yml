@@ -364,6 +364,7 @@ jobs:
       - set-env-path:
           arch: "x86_64"
       - setup-sccache-new
+          arch: "x86_64"
       - restore-sccache-cache
       - aws-cli/setup:
           profile-name: default
@@ -390,6 +391,7 @@ jobs:
       - set-env-path:
           arch: "aarch64"
       - setup-sccache-new
+          arch: "aarch64"
       - restore-sccache-cache
       - aws-cli/setup:
           profile-name: default
