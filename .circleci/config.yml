@@ -148,6 +148,21 @@ commands:
             # This is the maximum space sccache cache will use on disk.
             echo 'export "SCCACHE_CACHE_SIZE"="4G"' >> $BASH_ENV
             sccache --version
+
+  setup-sccache-new:
+    steps:
+      - run:
+          name: Install sccache
+          command: |
+            wget https://github.com/mozilla/sccache/releases/download/v0.3.0/sccache-dist-v0.3.0-x86_64-unknown-linux-musl.tar.gz
+            tar –xvzf sccache-dist-v0.3.0-x86_64-unknown-linux-musl.tar.gz
+            cp sccache-dist-v0.3.0-x86_64-unknown-linux-musl/sccache /usr/local/bin
+            chmod +x /usr/local/bin/sccache
+            # This configures Rust to use sccache.
+            echo 'export "RUSTC_WRAPPER"="sccache"' >> $BASH_ENV
+            # This is the maximum space sccache cache will use on disk.
+            echo 'export "SCCACHE_CACHE_SIZE"="4G"' >> $BASH_ENV
+            sccache --version
   restore-sccache-cache:
     steps:
       - restore_cache:
@@ -329,7 +344,7 @@ jobs:
       - setup-env
       - setup-protoc
       - set-env-path
-      - setup-sccache
+      - setup-sccache-new
       - restore-sccache-cache
       - aws-cli/setup:
           profile-name: default
