@@ -1,9 +1,11 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
 use clap::Parser;
 use iroh_gateway::{
+    bad_bits::{self, BadBits},
     config::{Config, CONFIG_FILE_NAME, ENV_PREFIX},
     core::Core,
     metrics,
@@ -11,6 +13,7 @@ use iroh_gateway::{
 use iroh_metrics::gateway::Metrics;
 use iroh_util::{iroh_home_path, make_config};
 use prometheus_client::registry::Registry;
+use tokio::sync::RwLock;
 
 #[derive(Parser, Debug, Clone)]
 #[clap(author, version, about, long_about = None)]
@@ -23,12 +26,14 @@ struct Args {
     fetch: Option<bool>,
     #[clap(short, long)]
     cache: Option<bool>,
-    #[clap(long = "metrics")]
+    #[clap(long)]
     metrics: bool,
-    #[clap(long = "tracing")]
+    #[clap(long)]
     tracing: bool,
     #[clap(long)]
     cfg: Option<PathBuf>,
+    #[clap(long)]
+    denylist: bool,
 }
 
 impl Args {
@@ -46,6 +51,7 @@ impl Args {
         if let Some(cache) = self.cache {
             map.insert("cache", cache.to_string());
         }
+        map.insert("denylist", self.denylist.to_string());
         map.insert("metrics.collect", self.metrics.to_string());
         map.insert("metrics.tracing", self.tracing.to_string());
         map
@@ -74,10 +80,23 @@ async fn main() -> Result<()> {
     let metrics_config = config.metrics.clone();
     let mut prom_registry = Registry::default();
     let gw_metrics = Metrics::new(&mut prom_registry);
+    let bad_bits = match config.denylist {
+        true => Arc::new(Some(RwLock::new(BadBits::new()))),
+        false => Arc::new(None),
+    };
     let rpc_addr = config
         .server_rpc_addr()?
         .ok_or_else(|| anyhow!("missing gateway rpc addr"))?;
-    let handler = Core::new(config, rpc_addr, gw_metrics, &mut prom_registry).await?;
+    let handler = Core::new(
+        config,
+        rpc_addr,
+        gw_metrics,
+        &mut prom_registry,
+        Arc::clone(&bad_bits),
+    )
+    .await?;
+
+    let bad_bits_handle = bad_bits::spawn_bad_bits_updater(Arc::clone(&bad_bits));
 
     let metrics_handle =
         iroh_metrics::MetricsHandle::from_registry_with_tracer(metrics_config, prom_registry)
@@ -93,5 +112,9 @@ async fn main() -> Result<()> {
     core_task.abort();
 
     metrics_handle.shutdown();
+    if let Some(handle) = bad_bits_handle {
+        handle.abort();
+    }
+
     Ok(())
 }
