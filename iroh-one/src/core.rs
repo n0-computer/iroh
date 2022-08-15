@@ -1,9 +1,10 @@
 use crate::{rpc, rpc::Gateway, uds};
 use axum::{Router, Server};
 use iroh_gateway::{
+    bad_bits::BadBits,
     client::Client,
     core::State,
-    handlers::{get_app_routes, StateConfig}, bad_bits::BadBits,
+    handlers::{get_app_routes, StateConfig},
     templates,
 };
 use iroh_metrics::gateway::Metrics;
@@ -97,9 +98,15 @@ mod tests {
         let mut prom_registry = Registry::default();
         let gw_metrics = Metrics::new(&mut prom_registry);
         let rpc_addr = "grpc://0.0.0.0:0".parse().unwrap();
-        let handler = Core::new(Arc::new(config), rpc_addr, gw_metrics, &mut prom_registry)
-            .await
-            .unwrap();
+        let handler = Core::new(
+            Arc::new(config),
+            rpc_addr,
+            gw_metrics,
+            &mut prom_registry,
+            Arc::new(None),
+        )
+        .await
+        .unwrap();
         let server = handler.http_server();
         let addr = server.local_addr();
         let core_task = tokio::spawn(async move {

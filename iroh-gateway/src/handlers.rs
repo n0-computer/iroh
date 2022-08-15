@@ -137,12 +137,28 @@ pub async fn get_handler(
     service_worker_check(&request_headers, cpath.to_string(), &state)?;
     unsuported_header_check(&request_headers, &state)?;
 
+    if check_bad_bits(&state, cid, cpath).await {
+        return Err(error(
+            StatusCode::FORBIDDEN,
+            "CID is in the denylist",
+            &state,
+        ));
+    }
+
     let full_content_path = format!("/{}/{}{}", scheme, cid, cpath);
     let resolved_path: iroh_resolver::resolver::Path = full_content_path
         .parse()
         .map_err(|e: anyhow::Error| e.to_string())
         .map_err(|e| error(StatusCode::BAD_REQUEST, &e, &state))?;
     let resolved_cid = resolved_path.root();
+
+    if check_bad_bits(&state, resolved_cid.to_string().as_str(), cpath).await {
+        return Err(error(
+            StatusCode::FORBIDDEN,
+            "CID is in the denylist",
+            &state,
+        ));
+    }
 
     // parse query params
     let format = match get_response_format(&request_headers, query_params.format) {
@@ -261,6 +277,19 @@ fn unsuported_header_check(request_headers: &HeaderMap, state: &State) -> Result
         ));
     }
     Ok(())
+}
+
+pub async fn check_bad_bits(state: &State, cid: &str, path: &str) -> bool {
+    // check if cid is in the denylist
+    if state.bad_bits.is_some() {
+        let bad_bits = state.bad_bits.as_ref();
+        if let Some(bbits) = bad_bits {
+            if bbits.read().await.is_bad(cid, path) {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 #[tracing::instrument()]
