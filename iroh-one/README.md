@@ -1,14 +1,14 @@
-# Iroh Gateway
+# Iroh One Gateway
 
 A rust implementation of an IPFS gateway.
 
 ## Running / Building
 
-`cargo run -- -p 10000`
+`cargo run --release -- -p 10000`
 
 ### Options
 
-- Run with `cargo run -- -h` for details
+- Run with `cargo run --release -- -h` for details
 - `-wcf` Writeable, Cache, Fetch (options to toggle write enable, caching mechanics and fetching from the network); currently exists but is not implemented
 - `-p` Port the gateway should listen on
 
