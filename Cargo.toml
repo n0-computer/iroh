@@ -20,7 +20,3 @@ members = [
 [patch.crates-io]
 libp2p = { git = "https://github.com/dignifiedquire/rust-libp2p", branch = "feat-kad-count" }
 # libp2p = { path = "../rust-libp2p" }
-
-
-[target.aarch64-unknown-linux-gnu]
-linker = "aarch64-linux-gnu-gcc"
