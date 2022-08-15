@@ -87,12 +87,16 @@ commands:
             sudo bash -l -c 'echo /usr/local/lib >> /etc/ld.so.conf'
 
   setup-protoc:
+    parameters:
+      arch:
+        default: "x86_64"
+        type: string
     steps:
       - run:
           name: setup protoc
           command: |
             PROTOC_VERSION=3.20.1
-            PROTOC_ZIP=protoc-$PROTOC_VERSION-linux-x86_64.zip
+            PROTOC_ZIP=protoc-$PROTOC_VERSION-linux-<<parameters.arch>>.zip
             curl -OL https://github.com/protocolbuffers/protobuf/releases/download/v$PROTOC_VERSION/$PROTOC_ZIP
             sudo unzip -o $PROTOC_ZIP -d /usr/local bin/protoc
             sudo unzip -o $PROTOC_ZIP -d /usr/local 'include/*'
@@ -117,21 +121,16 @@ commands:
             source $BASH_ENV
 
   set-env-path:
+    parameters:
+      arch:
+        default: "x86_64"
+        type: string
     steps:
       - run:
           name: Set the PATH env variable
           command: |
             # Also put the Rust LLVM tools into the PATH.
-            echo 'export PATH="$HOME:~/.cargo/bin:~/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/x86_64-unknown-linux-gnu/bin:$PATH"' >> $BASH_ENV
-            source $BASH_ENV
-  
-  set-env-path-aarch64:
-    steps:
-      - run:
-          name: Set the PATH env variable
-          command: |
-            # Also put the Rust LLVM tools into the PATH.
-            echo 'export PATH="$HOME:~/.cargo/bin:~/.rustup/toolchains/stable-aarch64-unknown-linux-gnu/lib/rustlib/aarch64-unknown-linux-gnu/bin:$PATH"' >> $BASH_ENV
+            echo 'export PATH="$HOME:~/.cargo/bin:~/.rustup/toolchains/stable-<<parameters.arch>>-unknown-linux-gnu/lib/rustlib/<<parameters.arch>>-unknown-linux-gnu/bin:$PATH"' >> $BASH_ENV
             source $BASH_ENV
 
   setup-sccache-mac:
@@ -159,13 +158,17 @@ commands:
             sccache --version
 
   setup-sccache-new:
+    parameters:
+      arch:
+        default: "x86_64"
+        type: string
     steps:
       - run:
           name: Install sccache
           command: |
-            wget https://github.com/mozilla/sccache/releases/download/v0.3.0/sccache-v0.3.0-x86_64-unknown-linux-musl.tar.gz
-            tar -xvzf sccache-v0.3.0-x86_64-unknown-linux-musl.tar.gz
-            sudo cp sccache-v0.3.0-x86_64-unknown-linux-musl/sccache /usr/local/bin/sccache
+            wget https://github.com/mozilla/sccache/releases/download/v0.3.0/sccache-v0.3.0-<<parameters.arch>>-unknown-linux-musl.tar.gz
+            tar -xvzf sccache-v0.3.0-<<parameters.arch>>-unknown-linux-musl.tar.gz
+            sudo cp sccache-v0.3.0-<<parameters.arch>>-unknown-linux-musl/sccache /usr/local/bin/sccache
             sudo chmod +x /usr/local/bin/sccache
             # This configures Rust to use sccache.
             echo 'export "RUSTC_WRAPPER"="sccache"' >> $BASH_ENV
@@ -348,49 +351,38 @@ jobs:
 
   build_release:
     executor: default
+    parameters:
+      arch: # x86_64 | aarch64
+        default: "x86_64"
+        type: string
+      arch_alt: # amd64 | aarch64
+        default: "amd64"
+        type: string
+      arch_alt_2: # x86_64 | aarch_64
+        default: "x86_64"
+        type: string
     steps:
       - checkout
       - setup-env
-      - setup-protoc
-      - set-env-path
+      - setup-protoc:
+          arch: <<parameters.arch_alt_2>>
+      - set-env-path:
+          arch: <<parameters.arch>>
       - setup-sccache-new
       - restore-sccache-cache
       - aws-cli/setup:
           profile-name: default
-      # - run:
-      #     name: build x86_64_linux
-      #     command: cargo build --release -v
+      - run:
+          name: build <<parameters.arch>> release
+          command: cargo build --release -v
       # - push-to-s3:
       #     path: ./target/release/
       #     os: linux
-      #     arch: amd64
+      #     arch: <<parameters.arch_alt>>
       # - push-to-s3-latest:
       #     path: ./target/release/
       #     os: linux
-      #     arch: amd64
-      - run:
-          name: deps for aarch64_linux
-          command: |
-            # sudo apt-get install gcc-aarch64-linux-gnu gcc-multilib -y
-            rustup target add aarch64-unknown-linux-gnu
-            rustup toolchain install stable-aarch64-unknown-linux-gnu --force-non-host
-            # rustup default stable-aarch64-unknown-linux-gnu --force-non-host
-            rustup toolchain list
-            ls -la ~/.rustup/toolchains/
-      - set-env-path-aarch64
-      - run:
-          name: build aarch64_linux
-          command: |
-            export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
-            cargo build --release -v --target aarch64-unknown-linux-gnu
-      - push-to-s3:
-          path: ./target/aarch64-unknown-linux-gnu/release/
-          os: linux
-          arch: aarch64
-      - push-to-s3-latest:
-          path: ./target/aarch64-unknown-linux-gnu/release/
-          os: linux
-          arch: aarch64
+      #     arch: <<parameters.arch_alt>>
       - save-sccache-cache
 
   build_release_osx:
@@ -463,6 +455,15 @@ workflows:
       - build_release:
           name: "build linux release"
           context: aws_s3
+          arch: "x86_64"
+          arch_alt: "amd64"
+          arch_alt_2: "x86_64"
+      - build_release:
+          name: "build linux release"
+          context: aws_s3
+          arch: "aarch64"
+          arch_alt: "aarch64"
+          arch_alt_2: "aarch_64"
           # requires:
           #   - test_linux_x86_64
           #   - test_linux_x86_64--no-default-features
