@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
 use clap::Parser;
-use iroh_gateway::metrics;
+use iroh_gateway::{metrics, bad_bits::BadBits};
 use iroh_metrics::gateway::Metrics;
 use iroh_one::{
     config::{Config, CONFIG_FILE_NAME, ENV_PREFIX},
@@ -13,6 +13,7 @@ use iroh_one::{
 use iroh_rpc_types::Addr;
 use iroh_util::{iroh_home_path, make_config};
 use prometheus_client::registry::Registry;
+use tokio::sync::RwLock;
 
 #[derive(Parser, Debug, Clone)]
 #[clap(author, version, about, long_about = None)]
@@ -25,9 +26,9 @@ struct Args {
     fetch: Option<bool>,
     #[clap(short, long)]
     cache: Option<bool>,
-    #[clap(long = "metrics")]
+    #[clap(long)]
     metrics: bool,
-    #[clap(long = "tracing")]
+    #[clap(long)]
     tracing: bool,
     #[clap(long)]
     cfg: Option<PathBuf>,
@@ -93,7 +94,20 @@ async fn main() -> Result<()> {
     let rpc_addr = config
         .server_rpc_addr()?
         .ok_or_else(|| anyhow!("missing gateway rpc addr"))?;
-    let handler = Core::new(Arc::new(config), rpc_addr, gw_metrics, &mut prom_registry).await?;
+
+    let bad_bits = match config.gateway.denylist {
+        true => Arc::new(Some(RwLock::new(BadBits::new()))),
+        false => Arc::new(None),
+    };
+
+    let handler = Core::new(
+        Arc::new(config),
+        rpc_addr,
+        gw_metrics,
+        &mut prom_registry,
+        Arc::clone(&bad_bits),
+    )
+    .await?;
 
     let metrics_handle =
         iroh_metrics::MetricsHandle::from_registry_with_tracer(metrics_config, prom_registry)

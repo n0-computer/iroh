@@ -87,6 +87,8 @@ pub struct GatewayConfig {
     /// set of user provided headers to attach to all responses
     #[serde(with = "http_serde::header_map")]
     pub headers: HeaderMap,
+    /// flag to toggle whether the gateway should use denylist on requests
+    pub denylist: bool,
 }
 
 impl Config {
@@ -181,6 +183,7 @@ impl GatewayConfig {
             headers: HeaderMap::new(),
             port,
             raw_gateway: raw_gateway.to_owned(),
+            denylist: false,
         }
     }
 
@@ -249,6 +252,7 @@ impl Default for GatewayConfig {
             headers: HeaderMap::new(),
             port: DEFAULT_PORT,
             raw_gateway: "dweb.link".to_owned(),
+            denylist: false,
         };
         t.set_default_headers();
         t
@@ -282,6 +286,7 @@ impl Source for GatewayConfig {
         insert_into_config_map(&mut map, "writeable", self.writeable);
         insert_into_config_map(&mut map, "fetch", self.fetch);
         insert_into_config_map(&mut map, "cache", self.cache);
+        insert_into_config_map(&mut map, "denylist", self.denylist);
         insert_into_config_map(&mut map, "raw_gateway", self.raw_gateway.clone());
         // Some issue between deserializing u64 & u16, converting this to
         // an signed int fixes the issue

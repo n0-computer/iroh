@@ -1,6 +1,7 @@
 use crate::{rpc, rpc::Gateway, uds};
 use axum::{Router, Server};
 use iroh_gateway::{
+    bad_bits::BadBits,
     client::Client,
     core::State,
     handlers::{get_app_routes, StateConfig},
@@ -12,6 +13,7 @@ use iroh_rpc_types::gateway::GatewayServerAddr;
 use prometheus_client::registry::Registry;
 use std::{collections::HashMap, sync::Arc};
 use tokio::net::UnixListener;
+use tokio::sync::RwLock;
 
 #[derive(Debug)]
 pub struct Core {
@@ -24,6 +26,7 @@ impl Core {
         rpc_addr: GatewayServerAddr,
         metrics: Metrics,
         registry: &mut Registry,
+        bad_bits: Arc<Option<RwLock<BadBits>>>,
     ) -> anyhow::Result<Self> {
         tokio::spawn(async move {
             // TODO: handle error
@@ -42,6 +45,7 @@ impl Core {
                 rpc_client,
                 metrics,
                 handlebars: templates,
+                bad_bits,
             }),
         })
     }
@@ -96,9 +100,15 @@ mod tests {
         let mut prom_registry = Registry::default();
         let gw_metrics = Metrics::new(&mut prom_registry);
         let rpc_addr = "grpc://0.0.0.0:0".parse().unwrap();
-        let handler = Core::new(Arc::new(config), rpc_addr, gw_metrics, &mut prom_registry)
-            .await
-            .unwrap();
+        let handler = Core::new(
+            Arc::new(config),
+            rpc_addr,
+            gw_metrics,
+            &mut prom_registry,
+            Arc::new(None),
+        )
+        .await
+        .unwrap();
         let server = handler.http_server();
         let addr = server.local_addr();
         let core_task = tokio::spawn(async move {
