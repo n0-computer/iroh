@@ -398,8 +398,8 @@ jobs:
           os: "osx"
       - setup-sccache-mac
       - restore-sccache-cache
-      - aws-cli/setup:
-          profile-name: default
+      # - aws-cli/setup: # already exists on our runners
+      #     profile-name: default
       - run:
           name: build x86_64_darwin
           no_output_timeout: 20m
