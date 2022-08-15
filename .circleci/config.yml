@@ -360,7 +360,7 @@ jobs:
       - run:
           name: deps for aarch64_linux
           command: |
-            sudo apt-get install gcc-9-aarch64-linux-gnu gcc-aarch64-linux-gnu gcc-multilib -y
+            sudo apt-get install gcc-multilib -y
             rustup target add aarch64-unknown-linux-gnu
             # rustup toolchain install stable-aarch64-unknown-linux-gnu --force-non-host
             # rustup default stable-aarch64-unknown-linux-gnu --force-non-host
