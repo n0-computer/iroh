@@ -382,7 +382,7 @@ jobs:
       - run:
           name: build aarch64_linux
           command: |
-            # export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
+            export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
             cargo build --release -v --target aarch64-unknown-linux-gnu
       - push-to-s3:
           path: ./target/aarch64-unknown-linux-gnu/release/
