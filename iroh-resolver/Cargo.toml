@@ -15,6 +15,7 @@ num_enum = "0.5.7"
 prost = "0.11"
 bytes = "1.1.0"
 iroh-rpc-client = { path = "../iroh-rpc-client", default-features = false }
+iroh-util = { path = "../iroh-util", default-features = false }
 tokio = { version = "1" }
 futures = "0.3.21"
 tracing = "0.1.34"
@@ -26,6 +27,7 @@ iroh-metrics = { path = "../iroh-metrics", default-features = false }
 async-stream = "0.3.3"
 fastmurmur3 = "0.1.2"
 once_cell = "1.13.0"
+reqwest = "0.11"
 
 [dev-dependencies]
 criterion = { version = "0.3.5", features = ["async_tokio"] }
@@ -34,7 +36,6 @@ tokio = { version = "1", features = ["rt", "macros", "rt-multi-thread"] }
 iroh-store = { path = "../iroh-store", default-features = false }
 iroh-rpc-types = { path = "../iroh-rpc-types", default-features = false }
 iroh-car = { path = "../iroh-car" }
-iroh-util = { path = "../iroh-util", default-features = false }
 
 [build-dependencies]
 prost-build = "0.11.1"

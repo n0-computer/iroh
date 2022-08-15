@@ -80,6 +80,8 @@ pub struct GatewayConfig {
     pub cache: bool,
     /// default port to listen on
     pub port: u16,
+    /// Gateway from which to fetch raw CIDs. TODO: move to p2p config?
+    pub raw_gateway: String,
     // NOTE: for toml to serialize properly, the "table" values must be serialized at the end, and
     // so much come at the end of the `Config` struct
     /// set of user provided headers to attach to all responses
@@ -143,6 +145,7 @@ impl Config {
             gateway_addr: Some(Addr::GrpcUds(path)),
             p2p_addr: None,
             store_addr: None,
+            raw_gateway: None,
         }
     }
 }
@@ -170,13 +173,14 @@ impl Into<FullP2pConfig> for Config {
 }
 
 impl GatewayConfig {
-    pub fn new(writeable: bool, fetch: bool, cache: bool, port: u16) -> Self {
+    pub fn new(writeable: bool, fetch: bool, cache: bool, port: u16, raw_gateway: &str) -> Self {
         Self {
             writeable,
             fetch,
             cache,
             headers: HeaderMap::new(),
             port,
+            raw_gateway: raw_gateway.to_owned(),
         }
     }
 
@@ -244,6 +248,7 @@ impl Default for GatewayConfig {
             cache: false,
             headers: HeaderMap::new(),
             port: DEFAULT_PORT,
+            raw_gateway: "dweb.link".to_owned(),
         };
         t.set_default_headers();
         t
@@ -277,6 +282,7 @@ impl Source for GatewayConfig {
         insert_into_config_map(&mut map, "writeable", self.writeable);
         insert_into_config_map(&mut map, "fetch", self.fetch);
         insert_into_config_map(&mut map, "cache", self.cache);
+        insert_into_config_map(&mut map, "raw_gateway", self.raw_gateway.clone());
         // Some issue between deserializing u64 & u16, converting this to
         // an signed int fixes the issue
         insert_into_config_map(&mut map, "port", self.port as i32);
