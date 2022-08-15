@@ -154,9 +154,9 @@ commands:
       - run:
           name: Install sccache
           command: |
-            wget https://github.com/mozilla/sccache/releases/download/v0.3.0/sccache-dist-v0.3.0-x86_64-unknown-linux-musl.tar.gz
-            tar -xvzf sccache-dist-v0.3.0-x86_64-unknown-linux-musl.tar.gz
-            cp sccache-dist-v0.3.0-x86_64-unknown-linux-musl/sccache-dist /usr/local/bin/sccache
+            wget https://github.com/mozilla/sccache/releases/download/v0.3.0/sccache-v0.3.0-x86_64-unknown-linux-musl.tar.gz
+            tar -xvzf sccache-v0.3.0-x86_64-unknown-linux-musl.tar.gz
+            sudo cp sccache-v0.3.0-x86_64-unknown-linux-musl/sccache /usr/local/bin/sccache
             chmod +x /usr/local/bin/sccache
             # This configures Rust to use sccache.
             echo 'export "RUSTC_WRAPPER"="sccache"' >> $BASH_ENV
