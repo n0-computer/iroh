@@ -14,6 +14,11 @@ executors:
       image: ubuntu-2004:current
     working_directory: ~/ci
     resource_class: large
+  arm-executor:
+    machine:
+      image: ubuntu-2004:current
+    working_directory: ~/ci
+    resource_class: arm.large
   mac-executor:
     macos:
       xcode: 13.4.1
@@ -350,7 +355,6 @@ jobs:
       - save-sccache-cache
 
   build_release:
-    executor: default
     parameters:
       arch: # x86_64 | aarch64
         default: "x86_64"
@@ -453,13 +457,15 @@ workflows:
       #     requires:
       #       - cargo_fetch
       - build_release:
-          name: "build linux release"
+          executor: default
+          name: "build linux release x86_64"
           context: aws_s3
           arch: "x86_64"
           arch_alt: "amd64"
           arch_alt_2: "x86_64"
       - build_release:
-          name: "build linux release"
+          executor: arm-executor
+          name: "build linux release aarch64"
           context: aws_s3
           arch: "aarch64"
           arch_alt: "aarch64"
