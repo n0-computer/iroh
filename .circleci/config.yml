@@ -363,7 +363,7 @@ jobs:
           arch: "x86_64"
       - set-env-path:
           arch: "x86_64"
-      - setup-sccache-new
+      - setup-sccache-new:
           arch: "x86_64"
       - restore-sccache-cache
       - aws-cli/setup:
@@ -390,7 +390,7 @@ jobs:
           arch: "aarch_64"
       - set-env-path:
           arch: "aarch64"
-      - setup-sccache-new
+      - setup-sccache-new:
           arch: "aarch64"
       - restore-sccache-cache
       - aws-cli/setup:
