@@ -155,7 +155,7 @@ commands:
           name: Install sccache
           command: |
             wget https://github.com/mozilla/sccache/releases/download/v0.3.0/sccache-dist-v0.3.0-x86_64-unknown-linux-musl.tar.gz
-            tar –xvzf sccache-dist-v0.3.0-x86_64-unknown-linux-musl.tar.gz
+            tar -xvzf sccache-dist-v0.3.0-x86_64-unknown-linux-musl.tar.gz
             cp sccache-dist-v0.3.0-x86_64-unknown-linux-musl/sccache /usr/local/bin
             chmod +x /usr/local/bin/sccache
             # This configures Rust to use sccache.
