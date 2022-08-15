@@ -131,7 +131,7 @@ commands:
           name: Set the PATH env variable
           command: |
             # Also put the Rust LLVM tools into the PATH.
-            echo 'export PATH="$HOME:~/.cargo/bin:~/.rustup/toolchains/stable-aarch64-unknown-linux-gnu/lib/rustlib/x86_64-unknown-linux-gnu/bin:$PATH"' >> $BASH_ENV
+            echo 'export PATH="$HOME:~/.cargo/bin:~/.rustup/toolchains/stable-aarch64-unknown-linux-gnu/lib/rustlib/aarch64-unknown-linux-gnu/bin:$PATH"' >> $BASH_ENV
             source $BASH_ENV
 
   setup-sccache-mac:
