@@ -373,7 +373,7 @@ jobs:
           command: |
             # sudo apt-get install gcc-aarch64-linux-gnu gcc-multilib -y
             rustup target add aarch64-unknown-linux-gnu
-            rustup toolchain install aarch64-unknown-linux-gnu --force-non-host
+            rustup toolchain install stable-aarch64-unknown-linux-gnu --force-non-host
             # rustup default stable-aarch64-unknown-linux-gnu --force-non-host
             rustup toolchain list
             ls -la ~/.rustup/toolchains/
