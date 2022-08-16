@@ -2,6 +2,8 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
+#[cfg(feature = "metrics")]
+use iroh_ctl::metrics;
 use iroh_ctl::{
     gateway::{run_command as run_gateway_command, Gateway},
     p2p::{run_command as run_p2p_command, P2p},
@@ -11,8 +13,6 @@ use iroh_rpc_client::Client;
 use iroh_util::{iroh_home_path, make_config};
 #[cfg(feature = "metrics")]
 use prometheus_client::registry::Registry;
-#[cfg(feature = "metrics")]
-use iroh_ctl::metrics;
 
 use iroh_ctl::{
     config::{Config, CONFIG_FILE_NAME, ENV_PREFIX},
