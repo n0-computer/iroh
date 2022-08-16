@@ -8,6 +8,7 @@ use std::{
 
 use anyhow::{anyhow, bail, Context, Result};
 use cid::Cid;
+#[cfg(feature = "metrics")]
 use iroh_metrics::store::Metrics;
 use iroh_rpc_client::Client as RpcClient;
 use rocksdb::{
@@ -23,6 +24,7 @@ use crate::Config;
 #[derive(Clone)]
 pub struct Store {
     inner: Arc<InnerStore>,
+    #[cfg(feature = "metrics")]
     metrics: Metrics,
 }
 
@@ -69,8 +71,11 @@ fn default_blob_opts() -> Options {
 
 impl Store {
     /// Creates a new database.
-    #[tracing::instrument]
-    pub async fn create(config: Config, metrics: Metrics) -> Result<Self> {
+    #[tracing::instrument(skip(metrics))]
+    pub async fn create(
+        config: Config,
+        #[cfg(feature = "metrics")] metrics: Metrics,
+    ) -> Result<Self> {
         let (mut options, cache) = default_options();
         options.create_if_missing(true);
 
@@ -109,13 +114,17 @@ impl Store {
                 _cache: cache,
                 _rpc_client,
             }),
+            #[cfg(feature = "metrics")]
             metrics,
         })
     }
 
     /// Opens an existing database.
-    #[tracing::instrument]
-    pub async fn open(config: Config, metrics: Metrics) -> Result<Self> {
+    #[tracing::instrument(skip(metrics))]
+    pub async fn open(
+        config: Config,
+        #[cfg(feature = "metrics")] metrics: Metrics,
+    ) -> Result<Self> {
         let (mut options, cache) = default_options();
         options.create_if_missing(false);
         // TODO: find a way to read existing options
@@ -162,6 +171,7 @@ impl Store {
                 _cache: cache,
                 _rpc_client,
             }),
+            #[cfg(feature = "metrics")]
             metrics,
         })
     }
@@ -171,6 +181,7 @@ impl Store {
     where
         L: IntoIterator<Item = Cid>,
     {
+        #[cfg(feature = "metrics")]
         self.metrics.put_requests_total.inc();
 
         if self.has(&cid).await? {
@@ -179,6 +190,7 @@ impl Store {
 
         let id = self.next_id();
 
+        #[cfg(feature = "metrics")]
         let start = std::time::Instant::now();
 
         let id_bytes = id.to_be_bytes();
@@ -219,6 +231,7 @@ impl Store {
             .cf_handle(CF_GRAPH_V0)
             .ok_or_else(|| anyhow!("missing column family: metadata"))?;
 
+        #[cfg(feature = "metrics")]
         let blob_size = blob.as_ref().len();
 
         let mut batch = WriteBatch::default();
@@ -227,32 +240,41 @@ impl Store {
         batch.put_cf(cf_meta, &id_bytes, metadata_bytes);
         batch.put_cf(cf_graph, &id_bytes, graph_bytes);
         self.inner.content.write(batch)?;
-        self.metrics
-            .put_request_time
-            .observe(start.elapsed().as_secs_f64());
-        self.metrics.put_bytes.inc_by(blob_size as u64);
-
+        #[cfg(feature = "metrics")]
+        {
+            self.metrics
+                .put_request_time
+                .observe(start.elapsed().as_secs_f64());
+            self.metrics.put_bytes.inc_by(blob_size as u64);
+        }
         Ok(())
     }
 
     #[tracing::instrument(skip(self))]
     pub async fn get(&self, cid: &Cid) -> Result<Option<DBPinnableSlice<'_>>> {
+        #[cfg(feature = "metrics")]
         self.metrics.get_requests_total.inc();
+        #[cfg(feature = "metrics")]
         let start = std::time::Instant::now();
         let res = match self.get_id(cid).await? {
             Some(id) => {
                 let maybe_blob = self.get_by_id(id).await?;
-                self.metrics.get_store_hit.inc();
-                self.metrics
-                    .get_bytes
-                    .inc_by(maybe_blob.as_ref().map(|b| b.len()).unwrap_or(0) as u64);
+                #[cfg(feature = "metrics")]
+                {
+                    self.metrics.get_store_hit.inc();
+                    self.metrics
+                        .get_bytes
+                        .inc_by(maybe_blob.as_ref().map(|b| b.len()).unwrap_or(0) as u64);
+                }
                 Ok(maybe_blob)
             }
             None => {
+                #[cfg(feature = "metrics")]
                 self.metrics.get_store_miss.inc();
                 Ok(None)
             }
         };
+        #[cfg(feature = "metrics")]
         self.metrics
             .get_request_time
             .observe(start.elapsed().as_secs_f64());
@@ -281,19 +303,24 @@ impl Store {
 
     #[tracing::instrument(skip(self))]
     pub async fn get_links(&self, cid: &Cid) -> Result<Option<Vec<Cid>>> {
+        #[cfg(feature = "metrics")]
         self.metrics.get_links_requests_total.inc();
+        #[cfg(feature = "metrics")]
         let start = std::time::Instant::now();
         let res = match self.get_id(cid).await? {
             Some(id) => {
                 let maybe_links = self.get_links_by_id(id).await?;
+                #[cfg(feature = "metrics")]
                 self.metrics.get_links_hit.inc();
                 Ok(maybe_links)
             }
             None => {
+                #[cfg(feature = "metrics")]
                 self.metrics.get_links_miss.inc();
                 Ok(None)
             }
         };
+        #[cfg(feature = "metrics")]
         self.metrics
             .get_links_request_time
             .observe(start.elapsed().as_secs_f64());
@@ -447,11 +474,19 @@ mod tests {
         let config = Config {
             path: dir.path().into(),
             rpc_client,
+            #[cfg(feature = "metrics")]
             metrics: MetricsConfig::default(),
         };
 
+        #[cfg(feature = "metrics")]
         let metrics = Metrics::default();
-        let store = Store::create(config, metrics).await.unwrap();
+        let store = Store::create(
+            config,
+            #[cfg(feature = "metrics")]
+            metrics,
+        )
+        .await
+        .unwrap();
 
         let mut values = Vec::new();
 
@@ -487,11 +522,19 @@ mod tests {
         let config = Config {
             path: dir.path().into(),
             rpc_client,
+            #[cfg(feature = "metrics")]
             metrics: MetricsConfig::default(),
         };
 
+        #[cfg(feature = "metrics")]
         let metrics = Metrics::default();
-        let store = Store::create(config.clone(), metrics).await.unwrap();
+        let store = Store::create(
+            config.clone(),
+            #[cfg(feature = "metrics")]
+            metrics,
+        )
+        .await
+        .unwrap();
 
         let mut values = Vec::new();
 
@@ -519,8 +562,15 @@ mod tests {
 
         drop(store);
 
+        #[cfg(feature = "metrics")]
         let metrics = Metrics::default();
-        let store = Store::open(config, metrics).await.unwrap();
+        let store = Store::open(
+            config,
+            #[cfg(feature = "metrics")]
+            metrics,
+        )
+        .await
+        .unwrap();
         for (c, expected_data, expected_links) in values.iter() {
             let data = store.get(c).await.unwrap().unwrap();
             assert_eq!(expected_data, &data[..]);

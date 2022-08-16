@@ -5,6 +5,7 @@ mod constants;
 pub mod core;
 mod error;
 mod headers;
+#[cfg(feature = "metrics")]
 pub mod metrics;
 mod response;
 mod rpc;

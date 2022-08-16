@@ -7,6 +7,7 @@ use std::task::{Context, Poll};
 
 use bytes::Bytes;
 use cid::Cid;
+#[cfg(feature = "metrics")]
 use iroh_metrics::bitswap::Metrics;
 use libp2p::core::connection::ConnectionId;
 use libp2p::core::{ConnectedPoint, Multiaddr, PeerId};
@@ -14,6 +15,7 @@ use libp2p::swarm::handler::OneShotHandler;
 use libp2p::swarm::{
     DialError, IntoConnectionHandler, NetworkBehaviour, NetworkBehaviourAction, PollParameters,
 };
+#[cfg(feature = "metrics")]
 use prometheus_client::registry::Registry;
 use tracing::{debug, instrument, trace, warn};
 
@@ -89,6 +91,7 @@ pub struct Bitswap {
     sessions: SessionManager,
     #[allow(dead_code)]
     config: BitswapConfig,
+    #[cfg(feature = "metrics")]
     metrics: Metrics,
 }
 
@@ -99,11 +102,12 @@ pub struct BitswapConfig {
 
 impl Bitswap {
     /// Create a new `Bitswap`.
-    pub fn new(config: BitswapConfig, registry: &mut Registry) -> Self {
+    pub fn new(config: BitswapConfig, #[cfg(feature = "metrics")] registry: &mut Registry) -> Self {
         let sessions = SessionManager::new(config.session.clone());
         Bitswap {
             config,
             sessions,
+            #[cfg(feature = "metrics")]
             metrics: Metrics::new(registry),
             ..Default::default()
         }
@@ -121,7 +125,7 @@ impl Bitswap {
         for provider in providers.iter() {
             self.sessions.create_session(provider);
         }
-
+        #[cfg(feature = "metrics")]
         self.metrics.providers_total.inc_by(providers.len() as u64);
         self.queries
             .want(cid, priority, providers.into_iter().collect())
@@ -130,7 +134,7 @@ impl Bitswap {
     #[instrument(skip(self, data))]
     pub fn send_block(&mut self, peer_id: &PeerId, cid: Cid, data: Bytes) -> QueryId {
         debug!("send_block: {}", cid);
-
+        #[cfg(feature = "metrics")]
         self.metrics.sent_block_bytes.inc_by(data.len() as u64);
         self.sessions.create_session(peer_id);
         self.queries.send(*peer_id, cid, data)
@@ -227,10 +231,12 @@ impl NetworkBehaviour for Bitswap {
                 // outbound upgrade
             }
             HandlerEvent::Bitswap(mut message) => {
+                #[cfg(feature = "metrics")]
                 self.metrics.requests_total.inc();
 
                 // Process incoming message.
                 while let Some(block) = message.pop_block() {
+                    #[cfg(feature = "metrics")]
                     self.metrics
                         .received_block_bytes
                         .inc_by(block.data().len() as u64);
@@ -272,6 +278,7 @@ impl NetworkBehaviour for Bitswap {
 
                 // Propagate Cancel Events
                 for cid in message.wantlist().cancels() {
+                    #[cfg(feature = "metrics")]
                     self.metrics.canceled_total.inc();
                     let event = BitswapEvent::InboundRequest {
                         request: InboundRequest::Cancel {

@@ -13,11 +13,10 @@ use futures::{future::BoxFuture, FutureExt};
 use prost::Message;
 use tokio::io::AsyncRead;
 
-use crate::{
-    chunker::DEFAULT_CHUNK_SIZE_LIMIT,
-    codecs::Codec,
-    resolver::{ContentLoader, OutMetrics},
-};
+use crate::{chunker::DEFAULT_CHUNK_SIZE_LIMIT, codecs::Codec, resolver::ContentLoader};
+
+#[cfg(feature = "metrics")]
+use crate::resolver::OutMetrics;
 
 pub(crate) mod unixfs_pb {
     include!(concat!(env!("OUT_DIR"), "/unixfs_pb.rs"));
@@ -281,7 +280,7 @@ impl UnixfsNode {
     pub fn into_reader<T: ContentLoader>(
         self,
         loader: T,
-        om: OutMetrics,
+        #[cfg(feature = "metrics")] om: OutMetrics,
     ) -> Result<UnixfsReader<T>> {
         let current_links = vec![self.cid_links()?];
 
@@ -291,6 +290,7 @@ impl UnixfsNode {
             current_node: CurrentNodeState::Outer,
             current_links,
             loader,
+            #[cfg(feature = "metrics")]
             out_metrics: om,
         })
     }
@@ -306,6 +306,7 @@ pub struct UnixfsReader<T: ContentLoader> {
     /// Stack of links left to traverse.
     current_links: Vec<VecDeque<Cid>>,
     loader: T,
+    #[cfg(feature = "metrics")]
     out_metrics: OutMetrics,
 }
 
@@ -322,8 +323,10 @@ impl<T: ContentLoader + Unpin + 'static> AsyncRead for UnixfsReader<T> {
             current_links,
             pos,
             loader,
+            #[cfg(feature = "metrics")]
             out_metrics,
         } = &mut *self;
+        #[cfg(feature = "metrics")]
         let pos_current = *pos;
         let poll_res = match root_node {
             UnixfsNode::Raw(data) => {
@@ -361,8 +364,11 @@ impl<T: ContentLoader + Unpin + 'static> AsyncRead for UnixfsReader<T> {
                 format!("unsupported Unixfs type: {:?} ", typ),
             ))),
         };
-        let bytes_read = *pos - pos_current;
-        out_metrics.observe_bytes_read(pos_current, bytes_read);
+        #[cfg(feature = "metrics")]
+        {
+            let bytes_read = *pos - pos_current;
+            out_metrics.observe_bytes_read(pos_current, bytes_read);
+        }
         poll_res
     }
 }

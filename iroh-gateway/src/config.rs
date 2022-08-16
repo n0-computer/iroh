@@ -5,11 +5,15 @@ use config::{ConfigError, Map, Source, Value};
 use headers::{
     AccessControlAllowHeaders, AccessControlAllowMethods, AccessControlAllowOrigin, HeaderMapExt,
 };
-use iroh_metrics::config::Config as MetricsConfig;
 use iroh_rpc_client::Config as RpcClientConfig;
-use iroh_rpc_types::{gateway::GatewayServerAddr, Addr};
+use iroh_rpc_types::gateway::GatewayServerAddr;
+#[allow(unused_imports)]
+use iroh_rpc_types::Addr;
 use iroh_util::insert_into_config_map;
 use serde::{Deserialize, Serialize};
+
+#[cfg(feature = "metrics")]
+use iroh_metrics::config::Config as MetricsConfig;
 
 /// CONFIG_FILE_NAME is the name of the optional config file located in the iroh home directory
 pub const CONFIG_FILE_NAME: &str = "gateway.config.toml";
@@ -37,6 +41,7 @@ pub struct Config {
     /// rpc addresses for the gateway & addresses for the rpc client to dial
     pub rpc_client: RpcClientConfig,
     /// metrics configuration
+    #[cfg(feature = "metrics")]
     pub metrics: MetricsConfig,
     /// flag to toggle whether the gateway should use denylist on requests
     pub denylist: bool,
@@ -57,6 +62,7 @@ impl Config {
             headers: HeaderMap::new(),
             port,
             rpc_client,
+            #[cfg(feature = "metrics")]
             metrics: MetricsConfig::default(),
             denylist: false,
         }
@@ -136,6 +142,7 @@ impl Default for Config {
             headers: HeaderMap::new(),
             port: DEFAULT_PORT,
             rpc_client,
+            #[cfg(feature = "metrics")]
             metrics: MetricsConfig::default(),
             denylist: false,
         };
@@ -161,8 +168,11 @@ impl Source for Config {
         insert_into_config_map(&mut map, "port", self.port as i32);
         insert_into_config_map(&mut map, "headers", collect_headers(&self.headers)?);
         insert_into_config_map(&mut map, "rpc_client", rpc_client);
-        let metrics = self.metrics.collect()?;
-        insert_into_config_map(&mut map, "metrics", metrics);
+        #[cfg(feature = "metrics")]
+        {
+            let metrics = self.metrics.collect()?;
+            insert_into_config_map(&mut map, "metrics", metrics);
+        }
         Ok(map)
     }
 }
@@ -218,6 +228,7 @@ mod tests {
             "rpc_client".to_string(),
             Value::new(None, default.rpc_client.collect().unwrap()),
         );
+        #[cfg(feature = "metrics")]
         expect.insert(
             "metrics".to_string(),
             Value::new(None, default.metrics.collect().unwrap()),

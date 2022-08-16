@@ -133,6 +133,7 @@ pub struct GatewayResponse {
     pub status_code: StatusCode,
     pub body: BoxBody,
     pub headers: HeaderMap,
+    #[cfg(feature = "metrics")]
     pub trace_id: String,
 }
 
@@ -146,6 +147,7 @@ impl IntoResponse for GatewayResponse {
             }
         }
         let mut rb = Response::builder().status(self.status_code);
+        #[cfg(feature = "metrics")]
         self.headers.insert(
             &HEADER_X_TRACE_ID,
             HeaderValue::from_str(&self.trace_id).unwrap(),
@@ -164,6 +166,7 @@ impl GatewayResponse {
             status_code,
             body: BoxBody::default(),
             headers: HeaderMap::new(),
+            #[cfg(feature = "metrics")]
             trace_id: String::new(),
         }
     }
@@ -181,6 +184,7 @@ impl GatewayResponse {
             status_code: StatusCode::NOT_MODIFIED,
             body: BoxBody::default(),
             headers: HeaderMap::new(),
+            #[cfg(feature = "metrics")]
             trace_id: String::new(),
         }
     }

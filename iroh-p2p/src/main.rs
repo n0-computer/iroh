@@ -4,8 +4,11 @@ use std::path::PathBuf;
 use anyhow::anyhow;
 use clap::Parser;
 use iroh_p2p::config::{Config, CONFIG_FILE_NAME, ENV_PREFIX};
-use iroh_p2p::{metrics, DiskStorage, Keychain, Node};
+#[cfg(feature = "metrics")]
+use iroh_p2p::metrics;
+use iroh_p2p::{DiskStorage, Keychain, Node};
 use iroh_util::{iroh_home_path, make_config};
+#[cfg(feature = "metrics")]
 use prometheus_client::registry::Registry;
 use tokio::task;
 use tracing::error;
@@ -14,6 +17,7 @@ use tracing::error;
 #[clap(author, version, about, long_about = None)]
 struct Args {
     #[clap(long = "metrics")]
+    #[cfg(feature = "metrics")]
     metrics: bool,
     #[clap(long = "tracing")]
     tracing: bool,
@@ -23,8 +27,11 @@ struct Args {
 
 impl Args {
     fn make_overrides_map(&self) -> HashMap<String, String> {
+        #[allow(unused_mut)]
         let mut map = HashMap::new();
+        #[cfg(feature = "metrics")]
         map.insert("metrics.collect".to_string(), self.metrics.to_string());
+        #[cfg(feature = "metrics")]
         map.insert("metrics.tracing".to_string(), self.tracing.to_string());
         map
     }
@@ -52,17 +59,28 @@ async fn main() -> anyhow::Result<()> {
     )
     .unwrap();
 
+    #[cfg(feature = "metrics")]
     let mut prom_registry = Registry::default();
+    #[cfg(feature = "metrics")]
     let metrics_config =
         metrics::metrics_config_with_compile_time_info(network_config.metrics.clone());
+    #[cfg(feature = "metrics")]
     iroh_metrics::init_tracer(metrics_config.clone()).expect("failed to initialize tracer");
 
     let kc = Keychain::<DiskStorage>::new().await?;
     let rpc_addr = network_config
         .server_rpc_addr()?
         .ok_or_else(|| anyhow!("missing p2p rpc addr"))?;
-    let mut p2p = Node::new(network_config, rpc_addr, kc, &mut prom_registry).await?;
+    let mut p2p = Node::new(
+        network_config,
+        rpc_addr,
+        kc,
+        #[cfg(feature = "metrics")]
+        &mut prom_registry,
+    )
+    .await?;
 
+    #[cfg(feature = "metrics")]
     let metrics_handle = iroh_metrics::MetricsHandle::from_registry(metrics_config, prom_registry)
         .await
         .expect("failed to initialize metrics");
@@ -79,6 +97,7 @@ async fn main() -> anyhow::Result<()> {
     // Cancel all async services
     p2p_task.abort();
 
+    #[cfg(feature = "metrics")]
     metrics_handle.shutdown();
     Ok(())
 }

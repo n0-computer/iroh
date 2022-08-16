@@ -196,7 +196,9 @@ mod tests {
         let handler = crate::core::Core::new(
             config,
             rpc_addr,
+            #[cfg(feature = "metrics")]
             gw_metrics,
+            #[cfg(feature = "metrics")]
             &mut prom_registry,
             Arc::new(Some(RwLock::new(bbits))),
         )

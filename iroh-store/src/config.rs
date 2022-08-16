@@ -1,5 +1,6 @@
 use anyhow::{bail, Result};
 use config::{ConfigError, Map, Source, Value};
+#[cfg(feature = "metrics")]
 use iroh_metrics::config::Config as MetricsConfig;
 use iroh_rpc_client::Config as RpcClientConfig;
 use iroh_rpc_types::{
@@ -23,6 +24,7 @@ pub struct Config {
     /// The location of the content database.
     pub path: PathBuf,
     pub rpc_client: RpcClientConfig,
+    #[cfg(feature = "metrics")]
     pub metrics: MetricsConfig,
 }
 
@@ -34,6 +36,7 @@ impl Config {
                 store_addr: Some(client_addr),
                 ..Default::default()
             },
+            #[cfg(feature = "metrics")]
             metrics: MetricsConfig::default(),
         }
     }
@@ -76,6 +79,7 @@ impl Source for Config {
             .ok_or_else(|| ConfigError::Foreign("No `path` set. Path is required.".into()))?;
         insert_into_config_map(&mut map, "path", path);
         insert_into_config_map(&mut map, "rpc_client", self.rpc_client.collect()?);
+        #[cfg(feature = "metrics")]
         insert_into_config_map(&mut map, "metrics", self.metrics.collect()?);
 
         Ok(map)
@@ -102,6 +106,7 @@ mod tests {
             "path".to_string(),
             Value::new(None, default.path.to_str().unwrap()),
         );
+        #[cfg(feature = "metrics")]
         expect.insert(
             "metrics".to_string(),
             Value::new(None, default.metrics.collect().unwrap()),

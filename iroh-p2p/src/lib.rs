@@ -1,6 +1,7 @@
 mod behaviour;
 pub mod config;
 mod keys;
+#[cfg(feature = "metrics")]
 pub mod metrics;
 mod node;
 pub mod rpc;

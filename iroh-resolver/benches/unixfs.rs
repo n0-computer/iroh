@@ -1,4 +1,5 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+#[cfg(feature = "metrics")]
 use iroh_metrics::config::Config as MetricsConfig;
 use iroh_metrics::store::Metrics;
 use iroh_rpc_client::Client;
@@ -37,11 +38,18 @@ pub fn add_benchmark(c: &mut Criterion) {
                 let config = Config {
                     path: dir.path().join("db"),
                     rpc_client: rpc_client.clone(),
+                    #[cfg(feature = "metrics")]
                     metrics: MetricsConfig::default(),
                 };
                 let metrics = Metrics::default();
                 let (_task, rpc) = executor.block_on(async {
-                    let store = Store::create(config, metrics).await.unwrap();
+                    let store = Store::create(
+                        config,
+                        #[cfg(feature = "metrics")]
+                        metrics,
+                    )
+                    .await
+                    .unwrap();
                     let task = executor.spawn(async move {
                         iroh_store::rpc::new(server_addr, store).await.unwrap()
                     });

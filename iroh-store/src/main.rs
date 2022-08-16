@@ -3,14 +3,19 @@ use std::path::PathBuf;
 
 use anyhow::anyhow;
 use clap::Parser;
-use iroh_metrics::store::Metrics;
 use iroh_store::{
     config::{CONFIG_FILE_NAME, ENV_PREFIX},
-    metrics, rpc, Config, Store,
+    rpc, Config, Store,
 };
 use iroh_util::{block_until_sigint, iroh_home_path, make_config};
-use prometheus_client::registry::Registry;
 use tracing::info;
+
+#[cfg(feature = "metrics")]
+use iroh_metrics::store::Metrics;
+#[cfg(feature = "metrics")]
+use iroh_store::metrics;
+#[cfg(feature = "metrics")]
+use prometheus_client::registry::Registry;
 
 #[derive(Parser, Debug)]
 #[clap(author, version, about)]
@@ -19,6 +24,7 @@ struct Args {
     #[clap(long, short)]
     path: Option<PathBuf>,
     #[clap(long = "metrics")]
+    #[cfg(feature = "metrics")]
     metrics: bool,
     #[clap(long = "tracing")]
     tracing: bool,
@@ -33,7 +39,9 @@ impl Args {
         if let Some(path) = self.path.clone() {
             map.insert("path".to_string(), path.to_str().unwrap_or("").to_string());
         }
+        #[cfg(feature = "metrics")]
         map.insert("metrics.collect".to_string(), self.metrics.to_string());
+        #[cfg(feature = "metrics")]
         map.insert("metrics.tracing".to_string(), self.tracing.to_string());
         map
     }
@@ -58,10 +66,14 @@ async fn main() -> anyhow::Result<()> {
         args.make_overrides_map(),
     )
     .unwrap();
+    #[cfg(feature = "metrics")]
     let metrics_config = config.metrics.clone();
 
+    #[cfg(feature = "metrics")]
     let mut prom_registry = Registry::default();
+    #[cfg(feature = "metrics")]
     let store_metrics = Metrics::new(&mut prom_registry);
+    #[cfg(feature = "metrics")]
     let metrics_handle = iroh_metrics::MetricsHandle::from_registry_with_tracer(
         metrics::metrics_config_with_compile_time_info(metrics_config),
         prom_registry,
@@ -74,16 +86,27 @@ async fn main() -> anyhow::Result<()> {
         .ok_or_else(|| anyhow!("missing store rpc addr"))?;
     let store = if config.path.exists() {
         info!("Opening store at {}", config.path.display());
-        Store::open(config, store_metrics).await?
+        Store::open(
+            config,
+            #[cfg(feature = "metrics")]
+            store_metrics,
+        )
+        .await?
     } else {
         info!("Creating store at {}", config.path.display());
-        Store::create(config, store_metrics).await?
+        Store::create(
+            config,
+            #[cfg(feature = "metrics")]
+            store_metrics,
+        )
+        .await?
     };
 
     let rpc_task = tokio::spawn(async move { rpc::new(rpc_addr, store).await.unwrap() });
 
     block_until_sigint().await;
     rpc_task.abort();
+    #[cfg(feature = "metrics")]
     metrics_handle.shutdown();
 
     Ok(())

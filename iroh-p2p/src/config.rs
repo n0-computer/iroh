@@ -1,5 +1,6 @@
 use anyhow::{bail, Result};
 use config::{ConfigError, Map, Source, Value};
+#[cfg(feature = "metrics")]
 use iroh_metrics::config::Config as MetricsConfig;
 use iroh_rpc_client::Config as RpcClientConfig;
 use iroh_rpc_types::{
@@ -63,6 +64,7 @@ pub struct Libp2pConfig {
 pub struct Config {
     pub libp2p: Libp2pConfig,
     pub rpc_client: RpcClientConfig,
+    #[cfg(feature = "metrics")]
     pub metrics: MetricsConfig,
 }
 
@@ -135,6 +137,7 @@ impl Source for Config {
 
         insert_into_config_map(&mut map, "libp2p", self.libp2p.collect()?);
         insert_into_config_map(&mut map, "rpc_client", self.rpc_client.collect()?);
+        #[cfg(feature = "metrics")]
         insert_into_config_map(&mut map, "metrics", self.metrics.collect()?);
         Ok(map)
     }
@@ -175,6 +178,7 @@ impl Config {
                 p2p_addr: Some(client_addr),
                 ..Default::default()
             },
+            #[cfg(feature = "metrics")]
             metrics: MetricsConfig::default(),
         }
     }
@@ -230,6 +234,7 @@ mod tests {
             "rpc_client".to_string(),
             Value::new(None, default.rpc_client.collect().unwrap()),
         );
+        #[cfg(feature = "metrics")]
         expect.insert(
             "metrics".to_string(),
             Value::new(None, default.metrics.collect().unwrap()),

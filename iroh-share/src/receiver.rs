@@ -235,8 +235,11 @@ impl Data {
     }
 
     pub fn pretty(self) -> Result<OutPrettyReader<Loader>> {
-        self.root
-            .pretty(self.resolver.loader().clone(), Default::default())
+        self.root.pretty(
+            self.resolver.loader().clone(),
+            #[cfg(feature = "metrics")]
+            Default::default(),
+        )
     }
 
     pub async fn read_file(&self, link: &LinkRef<'_>) -> Result<Data> {

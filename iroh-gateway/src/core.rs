@@ -10,11 +10,9 @@ use axum::{
 };
 use bytes::Bytes;
 use handlebars::Handlebars;
-use iroh_metrics::{gateway::Metrics, get_current_trace_id};
 use iroh_resolver::resolver::{CidOrDomain, UnixfsType};
 use iroh_rpc_client::Client as RpcClient;
 use iroh_rpc_types::gateway::GatewayServerAddr;
-use prometheus_client::registry::Registry;
 use serde::{Deserialize, Serialize};
 use serde_json::{
     json,
@@ -34,6 +32,11 @@ use tower_http::trace::TraceLayer;
 use tracing::info_span;
 use url::Url;
 use urlencoding::encode;
+
+#[cfg(feature = "metrics")]
+use iroh_metrics::{gateway::Metrics, get_current_trace_id};
+#[cfg(feature = "metrics")]
+use prometheus_client::registry::Registry;
 
 use crate::{
     bad_bits::BadBits,
@@ -59,6 +62,7 @@ pub struct State {
     client: Client,
     rpc_client: iroh_rpc_client::Client,
     handlebars: HashMap<String, String>,
+    #[cfg(feature = "metrics")]
     pub metrics: Metrics,
     bad_bits: Arc<Option<RwLock<BadBits>>>,
 }
@@ -94,8 +98,8 @@ impl Core {
     pub async fn new(
         config: Config,
         rpc_addr: GatewayServerAddr,
-        metrics: Metrics,
-        registry: &mut Registry,
+        #[cfg(feature = "metrics")] metrics: Metrics,
+        #[cfg(feature = "metrics")] registry: &mut Registry,
         bad_bits: Arc<Option<RwLock<BadBits>>>,
     ) -> anyhow::Result<Self> {
         tokio::spawn(async move {
@@ -106,13 +110,18 @@ impl Core {
         let mut templates = HashMap::new();
         templates.insert("dir_list".to_string(), templates::DIR_LIST.to_string());
         templates.insert("not_found".to_string(), templates::NOT_FOUND.to_string());
-        let client = Client::new(&rpc_client, registry);
+        let client = Client::new(
+            &rpc_client,
+            #[cfg(feature = "metrics")]
+            registry,
+        );
 
         Ok(Self {
             state: Arc::new(State {
                 config,
                 client,
                 rpc_client,
+                #[cfg(feature = "metrics")]
                 metrics,
                 handlebars: templates,
                 bad_bits,
@@ -167,6 +176,7 @@ async fn get_handler(
     Query(query_params): Query<GetParams>,
     request_headers: HeaderMap,
 ) -> Result<GatewayResponse, GatewayError> {
+    #[cfg(feature = "metrics")]
     state.metrics.requests_total.inc();
     let start_time = time::Instant::now();
     // parse path params
@@ -381,6 +391,7 @@ async fn serve_raw(
             req.resolved_path.clone(),
             &state.rpc_client,
             start_time,
+            #[cfg(feature = "metrics")]
             &state.metrics,
         )
         .await
@@ -411,6 +422,7 @@ async fn serve_car(
             req.resolved_path.clone(),
             &state.rpc_client,
             start_time,
+            #[cfg(feature = "metrics")]
             &state.metrics,
         )
         .await
@@ -446,6 +458,7 @@ async fn serve_car_recursive(
             req.resolved_path.clone(),
             state.rpc_client.clone(),
             start_time,
+            #[cfg(feature = "metrics")]
             state.metrics.clone(),
         )
         .await
@@ -480,6 +493,7 @@ async fn serve_fs(
             req.resolved_path.clone(),
             &state.rpc_client,
             start_time,
+            #[cfg(feature = "metrics")]
             &state.metrics,
         )
         .await
@@ -607,16 +621,19 @@ where
         status_code,
         body: body::boxed(body),
         headers,
+        #[cfg(feature = "metrics")]
         trace_id: get_current_trace_id().to_string(),
     })
 }
 
 #[tracing::instrument()]
 fn error(status_code: StatusCode, message: &str, state: &State) -> GatewayError {
+    #[cfg(feature = "metrics")]
     state.metrics.error_count.inc();
     GatewayError {
         status_code,
         message: message.to_string(),
+        #[cfg(feature = "metrics")]
         trace_id: get_current_trace_id().to_string(),
     }
 }
@@ -626,6 +643,7 @@ async fn middleware_error_handler(
     Extension(state): Extension<Arc<State>>,
     err: BoxError,
 ) -> impl IntoResponse {
+    #[cfg(feature = "metrics")]
     state.metrics.fail_count.inc();
     if err.is::<tower::timeout::error::Elapsed>() {
         return error(StatusCode::REQUEST_TIMEOUT, "request timed out", &state);
@@ -667,13 +685,17 @@ mod tests {
         );
         config.set_default_headers();
 
+        #[cfg(feature = "metrics")]
         let mut prom_registry = Registry::default();
+        #[cfg(feature = "metrics")]
         let gw_metrics = Metrics::new(&mut prom_registry);
         let rpc_addr = "grpc://0.0.0.0:0".parse().unwrap();
         let handler = Core::new(
             config,
             rpc_addr,
+            #[cfg(feature = "metrics")]
             gw_metrics,
+            #[cfg(feature = "metrics")]
             &mut prom_registry,
             Arc::new(None),
         )

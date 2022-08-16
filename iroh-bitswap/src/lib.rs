@@ -4,6 +4,7 @@ mod behaviour;
 mod block;
 mod error;
 mod message;
+#[cfg(feature = "metrics")]
 mod metrics;
 mod prefix;
 mod protocol;
@@ -18,5 +19,6 @@ pub use crate::block::tests::create_block as create_test_block;
 pub use crate::block::Block;
 pub use crate::error::BitswapError;
 pub use crate::message::{BitswapMessage, Priority};
+#[cfg(feature = "metrics")]
 pub use crate::metrics::*;
 pub use crate::query::QueryId;

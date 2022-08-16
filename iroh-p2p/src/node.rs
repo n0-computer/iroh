@@ -17,10 +17,12 @@ use libp2p::kad::BootstrapOk;
 use libp2p::kad::{
     self, record::Key, GetProvidersError, GetProvidersOk, KademliaEvent, QueryResult,
 };
+#[cfg(feature = "metrics")]
 use libp2p::metrics::{Metrics, Recorder};
 use libp2p::swarm::dial_opts::{DialOpts, PeerCondition};
 use libp2p::swarm::{ConnectionHandler, IntoConnectionHandler, NetworkBehaviour, SwarmEvent};
 use libp2p::{PeerId, Swarm};
+#[cfg(feature = "metrics")]
 use prometheus_client::registry::Registry;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio::task::JoinHandle;
@@ -72,6 +74,7 @@ pub struct Node<KeyStorage: Storage> {
     kad_queries: AHashMap<QueryKey, QueryChannel>,
     dial_queries: AHashMap<PeerId, Vec<OneShotSender<bool>>>,
     network_events: Vec<Sender<NetworkEvent>>,
+    #[cfg(feature = "metrics")]
     metrics: Metrics,
     rpc_client: RpcClient,
     _keychain: Keychain<KeyStorage>,
@@ -103,13 +106,20 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
         config: Config,
         rpc_addr: P2pServerAddr,
         mut keychain: Keychain<KeyStorage>,
-        registry: &mut Registry,
+        #[cfg(feature = "metrics")] registry: &mut Registry,
     ) -> Result<Self> {
+        #[cfg(feature = "metrics")]
         let metrics = Metrics::new(registry);
         let (network_sender_in, network_receiver_in) = channel(1024); // TODO: configurable
 
         let keypair = load_identity(&mut keychain).await?;
-        let mut swarm = build_swarm(&config.libp2p, &keypair, registry).await?;
+        let mut swarm = build_swarm(
+            &config.libp2p,
+            &keypair,
+            #[cfg(feature = "metrics")]
+            registry,
+        )
+        .await?;
 
         let Config {
             libp2p:
@@ -139,6 +149,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
             kad_queries: Default::default(),
             dial_queries: Default::default(),
             network_events: Vec::new(),
+            #[cfg(feature = "metrics")]
             metrics,
             rpc_client,
             _keychain: keychain,
@@ -243,6 +254,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
             <NodeBehaviour as NetworkBehaviour>::OutEvent,
             <<<NodeBehaviour as NetworkBehaviour>::ConnectionHandler as IntoConnectionHandler>::Handler as ConnectionHandler>::Error>,
     ) -> Result<()> {
+        #[cfg(feature = "metrics")]
         self.metrics.record(&event);
         match event {
             // outbound events
@@ -380,6 +392,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                 }
             }
             Event::Kademlia(e) => {
+                #[cfg(feature = "metrics")]
                 self.metrics.record(&e);
                 if let KademliaEvent::OutboundQueryProgressed {
                     id, result, step, ..
@@ -449,6 +462,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                 }
             }
             Event::Identify(e) => {
+                #[cfg(feature = "metrics")]
                 self.metrics.record(&*e);
                 if let IdentifyEvent::Received {
                     peer_id,
@@ -487,16 +501,23 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                     }
                 }
             }
+            #[allow(unused_variables)]
             Event::Ping(e) => {
+                #[cfg(feature = "metrics")]
                 self.metrics.record(&e);
             }
+            #[allow(unused_variables)]
             Event::Relay(e) => {
+                #[cfg(feature = "metrics")]
                 self.metrics.record(&e);
             }
+            #[allow(unused_variables)]
             Event::Dcutr(e) => {
+                #[cfg(feature = "metrics")]
                 self.metrics.record(&e);
             }
             Event::Gossipsub(e) => {
+                #[cfg(feature = "metrics")]
                 self.metrics.record(&e);
                 if let libp2p::gossipsub::GossipsubEvent::Message {
                     propagation_source,
@@ -809,12 +830,20 @@ mod tests {
         rpc_server_addr: P2pServerAddr,
         rpc_client_addr: P2pClientAddr,
     ) -> Result<()> {
+        #[cfg(feature = "metrics")]
         let mut prom_registry = Registry::default();
         let mut network_config = Config::default_with_rpc(rpc_client_addr.clone());
         network_config.libp2p.listening_multiaddr = addr;
 
         let kc = Keychain::<MemoryStorage>::new();
-        let mut p2p = Node::new(network_config, rpc_server_addr, kc, &mut prom_registry).await?;
+        let mut p2p = Node::new(
+            network_config,
+            rpc_server_addr,
+            kc,
+            #[cfg(feature = "metrics")]
+            &mut prom_registry,
+        )
+        .await?;
 
         let cfg = iroh_rpc_client::Config {
             p2p_addr: Some(rpc_client_addr),

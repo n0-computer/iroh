@@ -8,12 +8,16 @@ use iroh_gateway::{
     bad_bits::{self, BadBits},
     config::{Config, CONFIG_FILE_NAME, ENV_PREFIX},
     core::Core,
-    metrics,
 };
-use iroh_metrics::gateway::Metrics;
 use iroh_util::{iroh_home_path, make_config};
-use prometheus_client::registry::Registry;
 use tokio::sync::RwLock;
+
+#[cfg(feature = "metrics")]
+use iroh_gateway::metrics;
+#[cfg(feature = "metrics")]
+use iroh_metrics::gateway::Metrics;
+#[cfg(feature = "metrics")]
+use prometheus_client::registry::Registry;
 
 #[derive(Parser, Debug, Clone)]
 #[clap(author, version, about, long_about = None)]
@@ -27,6 +31,7 @@ struct Args {
     #[clap(short, long)]
     cache: Option<bool>,
     #[clap(long)]
+    #[cfg(feature = "metrics")]
     metrics: bool,
     #[clap(long)]
     tracing: bool,
@@ -52,7 +57,9 @@ impl Args {
             map.insert("cache", cache.to_string());
         }
         map.insert("denylist", self.denylist.to_string());
+        #[cfg(feature = "metrics")]
         map.insert("metrics.collect", self.metrics.to_string());
+        #[cfg(feature = "metrics")]
         map.insert("metrics.tracing", self.tracing.to_string());
         map
     }
@@ -63,6 +70,7 @@ async fn main() -> Result<()> {
     let args = Args::parse();
 
     let sources = vec![iroh_home_path(CONFIG_FILE_NAME), args.cfg.clone()];
+    #[allow(unused_mut)]
     let mut config = make_config(
         // default
         Config::default(),
@@ -74,12 +82,19 @@ async fn main() -> Result<()> {
         args.make_overrides_map(),
     )
     .unwrap();
-    config.metrics = metrics::metrics_config_with_compile_time_info(config.metrics);
-    println!("{:#?}", config);
 
+    #[cfg(feature = "metrics")]
+    {
+        config.metrics = metrics::metrics_config_with_compile_time_info(config.metrics);
+    }
+    #[cfg(feature = "metrics")]
     let metrics_config = config.metrics.clone();
+    #[cfg(feature = "metrics")]
     let mut prom_registry = Registry::default();
+    #[cfg(feature = "metrics")]
     let gw_metrics = Metrics::new(&mut prom_registry);
+
+    println!("{:#?}", config);
     let bad_bits = match config.denylist {
         true => Arc::new(Some(RwLock::new(BadBits::new()))),
         false => Arc::new(None),
@@ -90,7 +105,9 @@ async fn main() -> Result<()> {
     let handler = Core::new(
         config,
         rpc_addr,
+        #[cfg(feature = "metrics")]
         gw_metrics,
+        #[cfg(feature = "metrics")]
         &mut prom_registry,
         Arc::clone(&bad_bits),
     )
@@ -98,6 +115,7 @@ async fn main() -> Result<()> {
 
     let bad_bits_handle = bad_bits::spawn_bad_bits_updater(Arc::clone(&bad_bits));
 
+    #[cfg(feature = "metrics")]
     let metrics_handle =
         iroh_metrics::MetricsHandle::from_registry_with_tracer(metrics_config, prom_registry)
             .await
@@ -111,6 +129,7 @@ async fn main() -> Result<()> {
     iroh_util::block_until_sigint().await;
     core_task.abort();
 
+    #[cfg(feature = "metrics")]
     metrics_handle.shutdown();
     if let Some(handle) = bad_bits_handle {
         handle.abort();

@@ -1,5 +1,6 @@
 mod cf;
 pub mod config;
+#[cfg(feature = "metrics")]
 pub mod metrics;
 pub mod rpc;
 mod store;

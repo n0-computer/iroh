@@ -21,7 +21,7 @@ serde_json = "1.0.78"
 serde_qs = "0.10.1"
 tower = { version = "0.4", features = ["util", "timeout", "load-shed", "limit"] }
 mime_guess = "2.0.4"
-iroh-metrics = { path = "../iroh-metrics", default-features = false }
+iroh-metrics = { path = "../iroh-metrics", default-features = false, optional=true }
 tracing = "0.1.33"
 names = { version = "0.14.0", default-features = false }
 git-version = "0.3.5"
@@ -62,6 +62,7 @@ axum-macros = "0.2.0" # use #[axum_macros::debug_handler] for better error messa
 
 
 [features]
-default = ["rpc-grpc", "rpc-mem"]
+default = ["rpc-grpc", "rpc-mem", "metrics"]
+metrics = ["iroh-metrics", "iroh-resolver/metrics"]
 rpc-grpc = ["iroh-rpc-types/grpc", "iroh-rpc-client/grpc", "iroh-metrics/rpc-grpc"]
 rpc-mem = ["iroh-rpc-types/mem", "iroh-rpc-client/mem"]

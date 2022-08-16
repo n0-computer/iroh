@@ -4,21 +4,25 @@ use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::task::{Context, Poll};
-use std::time::Instant;
 
 use anyhow::{anyhow, bail, ensure, Context as _, Result};
 use async_trait::async_trait;
 use bytes::Bytes;
 use cid::Cid;
 use futures::Stream;
-use iroh_metrics::resolver::Metrics;
 use iroh_rpc_client::Client;
 use libipld::codec::{Decode, Encode};
 use libipld::prelude::Codec as _;
 use libipld::{Ipld, IpldCodec};
-use prometheus_client::registry::Registry;
 use tokio::io::AsyncRead;
 use tracing::{debug, trace, warn};
+
+#[cfg(feature = "metrics")]
+use iroh_metrics::resolver::Metrics;
+#[cfg(feature = "metrics")]
+use prometheus_client::registry::Registry;
+#[cfg(feature = "metrics")]
+use std::time::Instant;
 
 use crate::codecs::Codec;
 use crate::hamt::Hamt;
@@ -181,20 +185,42 @@ impl Out {
         }
     }
 
-    pub fn pretty<T: ContentLoader>(self, loader: T, om: OutMetrics) -> Result<OutPrettyReader<T>> {
+    pub fn pretty<T: ContentLoader>(
+        self,
+        loader: T,
+        #[cfg(feature = "metrics")] om: OutMetrics,
+    ) -> Result<OutPrettyReader<T>> {
         let pos = 0;
         match self.content {
-            OutContent::DagPb(_, bytes) => {
-                Ok(OutPrettyReader::DagPb(BytesReader { pos, bytes, om }))
-            }
-            OutContent::DagCbor(_, bytes) => {
-                Ok(OutPrettyReader::DagCbor(BytesReader { pos, bytes, om }))
-            }
-            OutContent::DagJson(_, bytes) => {
-                Ok(OutPrettyReader::DagJson(BytesReader { pos, bytes, om }))
-            }
-            OutContent::Raw(_, bytes) => Ok(OutPrettyReader::Raw(BytesReader { pos, bytes, om })),
-            OutContent::Unixfs(node) => Ok(OutPrettyReader::Unixfs(node.into_reader(loader, om)?)),
+            OutContent::DagPb(_, bytes) => Ok(OutPrettyReader::DagPb(BytesReader {
+                pos,
+                bytes,
+                #[cfg(feature = "metrics")]
+                om,
+            })),
+            OutContent::DagCbor(_, bytes) => Ok(OutPrettyReader::DagCbor(BytesReader {
+                pos,
+                bytes,
+                #[cfg(feature = "metrics")]
+                om,
+            })),
+            OutContent::DagJson(_, bytes) => Ok(OutPrettyReader::DagJson(BytesReader {
+                pos,
+                bytes,
+                #[cfg(feature = "metrics")]
+                om,
+            })),
+            OutContent::Raw(_, bytes) => Ok(OutPrettyReader::Raw(BytesReader {
+                pos,
+                bytes,
+                #[cfg(feature = "metrics")]
+                om,
+            })),
+            OutContent::Unixfs(node) => Ok(OutPrettyReader::Unixfs(node.into_reader(
+                loader,
+                #[cfg(feature = "metrics")]
+                om,
+            )?)),
         }
     }
 }
@@ -278,14 +304,17 @@ pub enum OutPrettyReader<T: ContentLoader> {
 pub struct BytesReader {
     pos: usize,
     bytes: Bytes,
+    #[cfg(feature = "metrics")]
     om: OutMetrics,
 }
 
+#[cfg(feature = "metrics")]
 pub struct OutMetrics {
     pub start: Instant,
     pub metrics: iroh_metrics::gateway::Metrics,
 }
 
+#[cfg(feature = "metrics")]
 impl OutMetrics {
     pub fn observe_bytes_read(&self, pos: usize, bytes_read: usize) {
         if pos == 0 && bytes_read > 0 {
@@ -305,6 +334,7 @@ impl OutMetrics {
     }
 }
 
+#[cfg(feature = "metrics")]
 impl Default for OutMetrics {
     fn default() -> Self {
         Self {
@@ -325,10 +355,14 @@ impl<T: ContentLoader + Unpin + 'static> AsyncRead for OutPrettyReader<T> {
             | OutPrettyReader::DagCbor(bytes_reader)
             | OutPrettyReader::DagJson(bytes_reader)
             | OutPrettyReader::Raw(bytes_reader) => {
+                #[cfg(feature = "metrics")]
                 let pos_current = bytes_reader.pos;
                 let res = poll_read_buf_at_pos(&mut bytes_reader.pos, &bytes_reader.bytes, buf);
-                let bytes_read = bytes_reader.pos - pos_current;
-                bytes_reader.om.observe_bytes_read(pos_current, bytes_read);
+                #[cfg(feature = "metrics")]
+                {
+                    let bytes_read = bytes_reader.pos - pos_current;
+                    bytes_reader.om.observe_bytes_read(pos_current, bytes_read);
+                }
                 Poll::Ready(res)
             }
             OutPrettyReader::Unixfs(r) => Pin::new(&mut *r).poll_read(cx, buf),
@@ -351,6 +385,7 @@ pub enum Source {
 #[derive(Debug, Clone)]
 pub struct Resolver<T: ContentLoader> {
     loader: T,
+    #[cfg(feature = "metrics")]
     metrics: Metrics,
 }
 
@@ -424,9 +459,15 @@ impl ContentLoader for Client {
 }
 
 impl<T: ContentLoader> Resolver<T> {
+    #[cfg(feature = "metrics")]
     pub fn new(loader: T, registry: &mut Registry) -> Self {
         let metrics = Metrics::new(registry);
         Resolver { loader, metrics }
+    }
+
+    #[cfg(not(feature = "metrics"))]
+    pub fn new(loader: T) -> Self {
+        Resolver { loader }
     }
 
     pub fn loader(&self) -> &T {
@@ -471,6 +512,8 @@ impl<T: ContentLoader> Resolver<T> {
     pub async fn resolve(&self, path: Path) -> Result<Out> {
         // Resolve the root block.
         let (root_cid, loaded_cid) = self.resolve_root(&path).await?;
+
+        #[cfg(feature = "metrics")]
         if loaded_cid.source == Source::Bitswap {
             self.metrics.cache_miss.inc();
         } else {
@@ -986,7 +1029,11 @@ mod tests {
             let bytes = Bytes::from(bytes);
 
             let loader: Arc<HashMap<_, _>> = Arc::new([(c, bytes)].into_iter().collect());
-            let resolver = Resolver::new(loader.clone(), &mut Registry::default());
+            let resolver = Resolver::new(
+                loader.clone(),
+                #[cfg(feature = "metrics")]
+                &mut Registry::default(),
+            );
 
             {
                 let path = format!("/ipfs/{c}/name");
@@ -995,7 +1042,11 @@ mod tests {
 
                 let out_bytes = read_to_vec(
                     new_ipld
-                        .pretty(loader.clone(), OutMetrics::default())
+                        .pretty(
+                            loader.clone(),
+                            #[cfg(feature = "metrics")]
+                            OutMetrics::default(),
+                        )
                         .unwrap(),
                 )
                 .await;
@@ -1023,7 +1074,11 @@ mod tests {
 
                 let out_bytes = read_to_vec(
                     new_ipld
-                        .pretty(loader.clone(), OutMetrics::default())
+                        .pretty(
+                            loader.clone(),
+                            #[cfg(feature = "metrics")]
+                            OutMetrics::default(),
+                        )
                         .unwrap(),
                 )
                 .await;
@@ -1091,7 +1146,11 @@ mod tests {
         .into_iter()
         .collect();
         let loader = Arc::new(loader);
-        let resolver = Resolver::new(loader.clone(), &mut Registry::default());
+        let resolver = Resolver::new(
+            loader.clone(),
+            #[cfg(feature = "metrics")]
+            &mut Registry::default(),
+        );
 
         {
             let path = format!("/ipfs/{root_cid_str}");
@@ -1116,8 +1175,12 @@ mod tests {
             if let OutContent::Unixfs(node) = ipld_foo.content {
                 assert_eq!(
                     read_to_string(
-                        node.into_reader(loader.clone(), OutMetrics::default())
-                            .unwrap()
+                        node.into_reader(
+                            loader.clone(),
+                            #[cfg(feature = "metrics")]
+                            OutMetrics::default()
+                        )
+                        .unwrap()
                     )
                     .await,
                     "bar\nhello.txt\n"
@@ -1149,8 +1212,12 @@ mod tests {
             if let OutContent::Unixfs(node) = ipld_hello_txt.content {
                 assert_eq!(
                     read_to_string(
-                        node.into_reader(loader.clone(), OutMetrics::default())
-                            .unwrap()
+                        node.into_reader(
+                            loader.clone(),
+                            #[cfg(feature = "metrics")]
+                            OutMetrics::default()
+                        )
+                        .unwrap()
                     )
                     .await,
                     "hello\n"
@@ -1176,8 +1243,12 @@ mod tests {
             if let OutContent::Unixfs(node) = ipld_hello_txt.content {
                 assert_eq!(
                     read_to_string(
-                        node.into_reader(loader.clone(), OutMetrics::default())
-                            .unwrap()
+                        node.into_reader(
+                            loader.clone(),
+                            #[cfg(feature = "metrics")]
+                            OutMetrics::default()
+                        )
+                        .unwrap()
                     )
                     .await,
                     "hello\n"
@@ -1212,8 +1283,12 @@ mod tests {
             if let OutContent::Unixfs(node) = ipld_bar.content {
                 assert_eq!(
                     read_to_string(
-                        node.into_reader(loader.clone(), OutMetrics::default())
-                            .unwrap()
+                        node.into_reader(
+                            loader.clone(),
+                            #[cfg(feature = "metrics")]
+                            OutMetrics::default()
+                        )
+                        .unwrap()
                     )
                     .await,
                     "bar.txt\n"
@@ -1244,8 +1319,12 @@ mod tests {
             if let OutContent::Unixfs(node) = ipld_bar_txt.content {
                 assert_eq!(
                     read_to_string(
-                        node.into_reader(loader.clone(), OutMetrics::default())
-                            .unwrap()
+                        node.into_reader(
+                            loader.clone(),
+                            #[cfg(feature = "metrics")]
+                            OutMetrics::default()
+                        )
+                        .unwrap()
                     )
                     .await,
                     "world\n"
@@ -1300,7 +1379,11 @@ mod tests {
         .into_iter()
         .collect();
         let loader = Arc::new(loader);
-        let resolver = Resolver::new(loader.clone(), &mut Registry::default());
+        let resolver = Resolver::new(
+            loader.clone(),
+            #[cfg(feature = "metrics")]
+            &mut Registry::default(),
+        );
 
         let path = format!("/ipfs/{root_cid_str}");
         let results: Vec<_> = resolver
@@ -1378,7 +1461,11 @@ mod tests {
         .into_iter()
         .collect();
         let loader = Arc::new(loader);
-        let resolver = Resolver::new(loader.clone(), &mut Registry::default());
+        let resolver = Resolver::new(
+            loader.clone(),
+            #[cfg(feature = "metrics")]
+            &mut Registry::default(),
+        );
 
         {
             let ipld_foo = resolver
@@ -1398,8 +1485,12 @@ mod tests {
             if let OutContent::Unixfs(node) = ipld_foo.content {
                 assert_eq!(
                     read_to_string(
-                        node.into_reader(loader.clone(), OutMetrics::default())
-                            .unwrap()
+                        node.into_reader(
+                            loader.clone(),
+                            #[cfg(feature = "metrics")]
+                            OutMetrics::default()
+                        )
+                        .unwrap()
                     )
                     .await,
                     "bar\nhello.txt\n"
@@ -1418,8 +1509,12 @@ mod tests {
             if let OutContent::Unixfs(node) = ipld_hello_txt.content {
                 assert_eq!(
                     read_to_string(
-                        node.into_reader(loader.clone(), OutMetrics::default())
-                            .unwrap()
+                        node.into_reader(
+                            loader.clone(),
+                            #[cfg(feature = "metrics")]
+                            OutMetrics::default()
+                        )
+                        .unwrap()
                     )
                     .await,
                     "hello\n"
@@ -1446,8 +1541,12 @@ mod tests {
             if let OutContent::Unixfs(node) = ipld_bar.content {
                 assert_eq!(
                     read_to_string(
-                        node.into_reader(loader.clone(), OutMetrics::default())
-                            .unwrap()
+                        node.into_reader(
+                            loader.clone(),
+                            #[cfg(feature = "metrics")]
+                            OutMetrics::default()
+                        )
+                        .unwrap()
                     )
                     .await,
                     "bar.txt\n"
@@ -1466,8 +1565,12 @@ mod tests {
             if let OutContent::Unixfs(node) = ipld_bar_txt.content {
                 assert_eq!(
                     read_to_string(
-                        node.into_reader(loader.clone(), OutMetrics::default())
-                            .unwrap()
+                        node.into_reader(
+                            loader.clone(),
+                            #[cfg(feature = "metrics")]
+                            OutMetrics::default()
+                        )
+                        .unwrap()
                     )
                     .await,
                     "world\n"
@@ -1512,7 +1615,11 @@ mod tests {
         }
 
         let loader = Arc::new(loader);
-        let resolver = Resolver::new(loader.clone(), &mut Registry::default());
+        let resolver = Resolver::new(
+            loader.clone(),
+            #[cfg(feature = "metrics")]
+            &mut Registry::default(),
+        );
 
         {
             let path = format!("/ipfs/{root_cid_str}");
@@ -1527,8 +1634,12 @@ mod tests {
 
             if let OutContent::Unixfs(node) = ipld_readme.content {
                 let content = read_to_string(
-                    node.into_reader(loader.clone(), OutMetrics::default())
-                        .unwrap(),
+                    node.into_reader(
+                        loader.clone(),
+                        #[cfg(feature = "metrics")]
+                        OutMetrics::default(),
+                    )
+                    .unwrap(),
                 )
                 .await;
                 print!("{}", content);
@@ -1575,7 +1686,11 @@ mod tests {
         }
 
         let loader = Arc::new(loader);
-        let resolver = Resolver::new(loader.clone(), &mut Registry::default());
+        let resolver = Resolver::new(
+            loader.clone(),
+            #[cfg(feature = "metrics")]
+            &mut Registry::default(),
+        );
 
         {
             let path = format!("/ipfs/{root_cid_str}");
@@ -1662,7 +1777,11 @@ mod tests {
         .into_iter()
         .collect();
         let loader = Arc::new(loader);
-        let resolver = Resolver::new(loader.clone(), &mut Registry::default());
+        let resolver = Resolver::new(
+            loader.clone(),
+            #[cfg(feature = "metrics")]
+            &mut Registry::default(),
+        );
 
         {
             let path = format!("/ipfs/{root_cid_str}/hello.txt");
@@ -1686,8 +1805,12 @@ mod tests {
             if let OutContent::Unixfs(node) = ipld_hello_txt.content {
                 assert_eq!(
                     read_to_string(
-                        node.into_reader(loader.clone(), OutMetrics::default())
-                            .unwrap()
+                        node.into_reader(
+                            loader.clone(),
+                            #[cfg(feature = "metrics")]
+                            OutMetrics::default()
+                        )
+                        .unwrap()
                     )
                     .await,
                     "hello\n"
@@ -1735,8 +1858,12 @@ mod tests {
             if let OutContent::Unixfs(node) = ipld_bar_txt.content {
                 assert_eq!(
                     read_to_string(
-                        node.into_reader(loader.clone(), OutMetrics::default())
-                            .unwrap()
+                        node.into_reader(
+                            loader.clone(),
+                            #[cfg(feature = "metrics")]
+                            OutMetrics::default()
+                        )
+                        .unwrap()
                     )
                     .await,
                     "world\n"
@@ -1767,8 +1894,12 @@ mod tests {
             if let OutContent::Unixfs(node) = ipld_bar_txt.content {
                 assert_eq!(
                     read_to_string(
-                        node.into_reader(loader.clone(), OutMetrics::default())
-                            .unwrap()
+                        node.into_reader(
+                            loader.clone(),
+                            #[cfg(feature = "metrics")]
+                            OutMetrics::default()
+                        )
+                        .unwrap()
                     )
                     .await,
                     "./bar.txt"
@@ -1799,8 +1930,12 @@ mod tests {
             if let OutContent::Unixfs(node) = ipld_bar_txt.content {
                 assert_eq!(
                     read_to_string(
-                        node.into_reader(loader.clone(), OutMetrics::default())
-                            .unwrap()
+                        node.into_reader(
+                            loader.clone(),
+                            #[cfg(feature = "metrics")]
+                            OutMetrics::default()
+                        )
+                        .unwrap()
                     )
                     .await,
                     "../../hello.txt"
@@ -1831,8 +1966,12 @@ mod tests {
             if let OutContent::Unixfs(node) = ipld_bar_txt.content {
                 assert_eq!(
                     read_to_string(
-                        node.into_reader(loader.clone(), OutMetrics::default())
-                            .unwrap()
+                        node.into_reader(
+                            loader.clone(),
+                            #[cfg(feature = "metrics")]
+                            OutMetrics::default()
+                        )
+                        .unwrap()
                     )
                     .await,
                     "../hello.txt"
@@ -1853,8 +1992,12 @@ mod tests {
             if let OutContent::Unixfs(node) = ipld_bar_txt.content {
                 assert_eq!(
                     read_to_string(
-                        node.into_reader(loader.clone(), OutMetrics::default())
-                            .unwrap()
+                        node.into_reader(
+                            loader.clone(),
+                            #[cfg(feature = "metrics")]
+                            OutMetrics::default()
+                        )
+                        .unwrap()
                     )
                     .await,
                     "../hello.txt"
@@ -1916,7 +2059,11 @@ mod tests {
         assert_eq!(files.len(), 10938);
 
         let loader = Arc::new(files);
-        let resolver = Resolver::new(loader.clone(), &mut Registry::default());
+        let resolver = Resolver::new(
+            loader.clone(),
+            #[cfg(feature = "metrics")]
+            &mut Registry::default(),
+        );
 
         for i in 1..=10000 {
             let path = format!("/ipfs/{root_cid_str}/{}.txt", i);
@@ -1933,8 +2080,12 @@ mod tests {
             if let OutContent::Unixfs(node) = ipld_txt.content {
                 assert_eq!(
                     read_to_string(
-                        node.into_reader(loader.clone(), OutMetrics::default())
-                            .unwrap()
+                        node.into_reader(
+                            loader.clone(),
+                            #[cfg(feature = "metrics")]
+                            OutMetrics::default()
+                        )
+                        .unwrap()
                     )
                     .await,
                     format!("{}\n", i),
