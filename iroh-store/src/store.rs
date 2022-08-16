@@ -461,6 +461,7 @@ impl Store {
 mod tests {
     use super::*;
 
+    #[cfg(feature = "metrics")]
     use iroh_metrics::config::Config as MetricsConfig;
     use iroh_rpc_client::Config as RpcClientConfig;
 

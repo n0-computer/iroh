@@ -668,6 +668,7 @@ async fn middleware_error_handler(
 mod tests {
     use super::*;
     use iroh_rpc_client::Config as RpcClientConfig;
+    #[cfg(feature = "metrics")]
     use prometheus_client::registry::Registry;
 
     #[tokio::test]

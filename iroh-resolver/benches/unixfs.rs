@@ -1,6 +1,7 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 #[cfg(feature = "metrics")]
 use iroh_metrics::config::Config as MetricsConfig;
+#[cfg(feature = "metrics")]
 use iroh_metrics::store::Metrics;
 use iroh_rpc_client::Client;
 use iroh_rpc_client::Config as RpcClientConfig;
@@ -41,6 +42,7 @@ pub fn add_benchmark(c: &mut Criterion) {
                     #[cfg(feature = "metrics")]
                     metrics: MetricsConfig::default(),
                 };
+                #[cfg(feature = "metrics")]
                 let metrics = Metrics::default();
                 let (_task, rpc) = executor.block_on(async {
                     let store = Store::create(

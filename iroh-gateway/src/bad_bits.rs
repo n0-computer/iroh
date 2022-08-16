@@ -111,8 +111,10 @@ mod tests {
     use super::*;
     use hex_literal::hex;
     use http::StatusCode;
+    #[cfg(feature = "metrics")]
     use iroh_metrics::gateway::Metrics;
     use iroh_rpc_client::Config as RpcClientConfig;
+    #[cfg(feature = "metrics")]
     use prometheus_client::registry::Registry;
 
     #[tokio::test]
@@ -190,7 +192,9 @@ mod tests {
         );
         config.set_default_headers();
 
+        #[cfg(feature = "metrics")]
         let mut prom_registry = Registry::default();
+        #[cfg(feature = "metrics")]
         let gw_metrics = Metrics::new(&mut prom_registry);
         let rpc_addr = "grpc://0.0.0.0:0".parse().unwrap();
         let handler = crate::core::Core::new(

@@ -3,7 +3,9 @@ use std::time::Instant;
 use bytes::Bytes;
 use cid::multihash::{Code, MultihashDigest};
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+#[cfg(feature = "metrics")]
 use iroh_metrics::config::Config as MetricsConfig;
+#[cfg(feature = "metrics")]
 use iroh_metrics::store::Metrics;
 use iroh_rpc_client::{Client, Config as RpcClientConfig};
 use iroh_rpc_types::{
@@ -76,6 +78,7 @@ pub fn put_benchmark(c: &mut Criterion) {
                         #[cfg(feature = "metrics")]
                         metrics: MetricsConfig::default(),
                     };
+                    #[cfg(feature = "metrics")]
                     let metrics = Metrics::default();
                     let (_task, rpc) = executor.block_on(async {
                         let store = Store::create(
@@ -138,6 +141,7 @@ pub fn get_benchmark(c: &mut Criterion) {
                         #[cfg(feature = "metrics")]
                         metrics: MetricsConfig::default(),
                     };
+                    #[cfg(feature = "metrics")]
                     let metrics = Metrics::default();
                     let (_task, rpc) = executor.block_on(async {
                         let store = Store::create(

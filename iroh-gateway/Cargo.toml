@@ -37,7 +37,7 @@ anyhow = "1"
 futures = "0.3.21"
 tracing-subscriber = { version = "0.3.11", features = ["env-filter"] }
 iroh-resolver = { path = "../iroh-resolver" }
-prometheus-client = "0.17.0"
+prometheus-client = { version = "0.17.0", optional=true}
 tokio-util = { version = "0.7", features = ["io"] }
 bytes = "1.1.0"
 tower-layer = { version = "0.3" }
@@ -63,6 +63,6 @@ axum-macros = "0.2.0" # use #[axum_macros::debug_handler] for better error messa
 
 [features]
 default = ["rpc-grpc", "rpc-mem", "metrics"]
-metrics = ["iroh-metrics", "iroh-resolver/metrics"]
+metrics = ["iroh-metrics", "iroh-resolver/metrics", "prometheus-client"]
 rpc-grpc = ["iroh-rpc-types/grpc", "iroh-rpc-client/grpc", "iroh-metrics/rpc-grpc"]
 rpc-mem = ["iroh-rpc-types/mem", "iroh-rpc-client/mem"]

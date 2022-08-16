@@ -4,6 +4,7 @@ use cid::multihash::{Code, MultihashDigest};
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 #[cfg(feature = "metrics")]
 use iroh_metrics::config::Config as MetricsConfig;
+#[cfg(feature = "metrics")]
 use iroh_metrics::store::Metrics;
 use iroh_rpc_client::Config as RpcClientConfig;
 use iroh_store::{Config, Store};
@@ -32,6 +33,7 @@ pub fn put_benchmark(c: &mut Criterion) {
                     #[cfg(feature = "metrics")]
                     metrics: MetricsConfig::default(),
                 };
+                #[cfg(feature = "metrics")]
                 let metrics = Metrics::default();
                 let store = executor.block_on(async {
                     Store::create(
@@ -69,6 +71,7 @@ pub fn get_benchmark(c: &mut Criterion) {
                     #[cfg(feature = "metrics")]
                     metrics: MetricsConfig::default(),
                 };
+                #[cfg(feature = "metrics")]
                 let metrics = Metrics::default();
                 let store = executor.block_on(async {
                     Store::create(
