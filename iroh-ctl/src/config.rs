@@ -1,4 +1,5 @@
 use config::{ConfigError, Map, Source, Value};
+#[cfg(feature = "metrics")]
 use iroh_metrics::config::Config as MetricsConfig;
 use iroh_rpc_client::Config as RpcClientConfig;
 use iroh_util::insert_into_config_map;
@@ -13,6 +14,7 @@ pub const ENV_PREFIX: &str = "IROH_CTL";
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Config {
     pub rpc_client: RpcClientConfig,
+    #[cfg(feature = "metrics")]
     pub metrics: MetricsConfig,
 }
 
@@ -20,6 +22,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             rpc_client: RpcClientConfig::default_grpc(),
+            #[cfg(feature = "metrics")]
             metrics: Default::default(),
         }
     }
@@ -32,6 +35,7 @@ impl Source for Config {
     fn collect(&self) -> Result<Map<String, Value>, ConfigError> {
         let mut map: Map<String, Value> = Map::new();
         insert_into_config_map(&mut map, "rpc_client", self.rpc_client.collect()?);
+        #[cfg(feature = "metrics")]
         insert_into_config_map(&mut map, "metrics", self.metrics.collect()?);
         Ok(map)
     }
@@ -50,6 +54,7 @@ mod tests {
             "rpc_client".to_string(),
             Value::new(None, default.rpc_client.collect().unwrap()),
         );
+        #[cfg(feature = "metrics")]
         expect.insert(
             "metrics".to_string(),
             Value::new(None, default.metrics.collect().unwrap()),
