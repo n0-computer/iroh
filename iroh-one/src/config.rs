@@ -134,7 +134,9 @@ impl Config {
     pub fn default_ipfsd() -> RpcClientConfig {
         let path = {
             #[cfg(target_os = "android")]
-            "/dev/socket/ipfsd".into();
+            {
+                "/dev/socket/ipfsd".into()
+            }
 
             #[cfg(not(target_os = "android"))]
             {
