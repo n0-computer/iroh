@@ -1,7 +1,7 @@
 use std::{
     collections::VecDeque,
     fmt::Debug,
-    io::Cursor,
+    io::{self, Cursor},
     pin::Pin,
     task::{Context, Poll},
 };
@@ -9,14 +9,15 @@ use std::{
 use anyhow::{anyhow, bail, ensure, Result};
 use bytes::{Buf, Bytes};
 use cid::Cid;
-use futures::{future::BoxFuture, FutureExt};
+use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
 use prost::Message;
 use tokio::io::AsyncRead;
 
 use crate::{
     chunker::DEFAULT_CHUNK_SIZE_LIMIT,
     codecs::Codec,
-    resolver::{ContentLoader, OutMetrics},
+    hamt::Hamt,
+    resolver::{ContentLoader, OutMetrics, Resolver},
 };
 
 pub(crate) mod unixfs_pb {
@@ -68,6 +69,16 @@ pub struct Link {
     pub tsize: Option<u64>,
 }
 
+impl Link {
+    pub fn as_ref(&self) -> LinkRef<'_> {
+        LinkRef {
+            cid: self.cid,
+            name: self.name.as_ref().map(|s| s.as_str()),
+            tsize: self.tsize,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LinkRef<'a> {
     pub cid: Cid,
@@ -92,7 +103,7 @@ pub enum UnixfsNode {
     Directory(Node),
     File(Node),
     Symlink(Node),
-    HamtShard(Node),
+    HamtShard(Node, Hamt),
 }
 
 #[derive(
@@ -138,14 +149,15 @@ impl Node {
         None
     }
 
-    fn cid_links(&self) -> Result<VecDeque<Cid>> {
-        let links = self
-            .outer
-            .links
-            .iter()
-            .map(|h| Cid::read_bytes(Cursor::new(h.hash.as_deref().unwrap())))
-            .collect::<Result<_, _>>()?;
-        Ok(links)
+    pub fn links(&self) -> Links {
+        match self.typ() {
+            DataType::Raw => Links::RawNode(PbLinks::new(&self.outer)),
+            DataType::Directory => Links::Directory(PbLinks::new(&self.outer)),
+            DataType::File => Links::File(PbLinks::new(&self.outer)),
+            DataType::Symlink => Links::Symlink(PbLinks::new(&self.outer)),
+            DataType::HamtShard => Links::HamtShard(PbLinks::new(&self.outer)),
+            DataType::Metadata => unimplemented!(),
+        }
     }
 
     /// Returns the hash type. Only used for HAMT Shards.
@@ -180,7 +192,10 @@ impl UnixfsNode {
                     DataType::Directory => Ok(UnixfsNode::Directory(node)),
                     DataType::File => Ok(UnixfsNode::File(node)),
                     DataType::Symlink => Ok(UnixfsNode::Symlink(node)),
-                    DataType::HamtShard => Ok(UnixfsNode::HamtShard(node)),
+                    DataType::HamtShard => {
+                        let hamt = Hamt::from_node(&node)?;
+                        Ok(UnixfsNode::HamtShard(node, hamt))
+                    }
                     DataType::Metadata => bail!("unixfs metadata is not supported"),
                 }
             }
@@ -194,7 +209,7 @@ impl UnixfsNode {
             | UnixfsNode::Directory(node)
             | UnixfsNode::File(node)
             | UnixfsNode::Symlink(node)
-            | UnixfsNode::HamtShard(node) => node.encode()?,
+            | UnixfsNode::HamtShard(node, _) => node.encode()?,
         };
 
         ensure!(
@@ -213,7 +228,7 @@ impl UnixfsNode {
             UnixfsNode::Directory(_) => Some(DataType::Directory),
             UnixfsNode::File(_) => Some(DataType::File),
             UnixfsNode::Symlink(_) => Some(DataType::Symlink),
-            UnixfsNode::HamtShard(_) => Some(DataType::HamtShard),
+            UnixfsNode::HamtShard(_, _) => Some(DataType::HamtShard),
         }
     }
 
@@ -226,23 +241,27 @@ impl UnixfsNode {
             | UnixfsNode::RawNode(node)
             | UnixfsNode::File(node)
             | UnixfsNode::Symlink(node)
-            | UnixfsNode::HamtShard(node) => node.size(),
+            | UnixfsNode::HamtShard(node, _) => node.size(),
         }
     }
 
-    pub fn links(&self) -> Links {
+    pub fn links<'a>(&'a self) -> Links<'a> {
         match self {
             UnixfsNode::Raw(_) => Links::Raw,
             UnixfsNode::RawNode(node) => Links::RawNode(PbLinks::new(&node.outer)),
             UnixfsNode::Directory(node) => Links::Directory(PbLinks::new(&node.outer)),
             UnixfsNode::File(node) => Links::File(PbLinks::new(&node.outer)),
             UnixfsNode::Symlink(node) => Links::Symlink(PbLinks::new(&node.outer)),
-            UnixfsNode::HamtShard(node) => Links::HamtShard(PbLinks::new(&node.outer)),
+            UnixfsNode::HamtShard(node, _) => Links::HamtShard(PbLinks::new(&node.outer)),
         }
     }
 
+    pub fn links_owned(&self) -> Result<VecDeque<Link>> {
+        self.links().map(|l| l.map(|l| l.to_owned())).collect()
+    }
+
     pub const fn is_dir(&self) -> bool {
-        matches!(self, Self::Directory(_))
+        matches!(self, Self::Directory(_) | Self::HamtShard(_, _))
     }
 
     pub async fn get_link_by_name<S: AsRef<str>>(
@@ -258,17 +277,6 @@ impl UnixfsNode {
             .transpose()
     }
 
-    fn cid_links(&self) -> Result<VecDeque<Cid>> {
-        match self {
-            UnixfsNode::Raw(_) => Ok(Default::default()),
-            UnixfsNode::RawNode(node)
-            | UnixfsNode::Directory(node)
-            | UnixfsNode::File(node)
-            | UnixfsNode::Symlink(node)
-            | UnixfsNode::HamtShard(node) => node.cid_links(),
-        }
-    }
-
     pub fn symlink(&self) -> Result<Option<&str>> {
         if let Self::Symlink(ref node) = self {
             let link = std::str::from_utf8(node.inner.data.as_deref().unwrap_or_default())?;
@@ -280,33 +288,117 @@ impl UnixfsNode {
 
     pub fn into_reader<T: ContentLoader>(
         self,
-        loader: T,
+        loader: Resolver<T>,
         om: OutMetrics,
     ) -> Result<UnixfsReader<T>> {
-        let current_links = vec![self.cid_links()?];
+        match self {
+            UnixfsNode::Raw(_)
+            | UnixfsNode::RawNode(_)
+            | UnixfsNode::File(_)
+            | UnixfsNode::Symlink(_) => {
+                let current_links = vec![self.links_owned()?];
 
-        Ok(UnixfsReader {
-            root_node: self,
-            pos: 0,
-            current_node: CurrentNodeState::Outer,
-            current_links,
-            loader,
-            out_metrics: om,
-        })
+                Ok(UnixfsReader::File {
+                    root_node: self,
+                    pos: 0,
+                    current_node: CurrentNodeState::Outer,
+                    current_links,
+                    loader,
+                    out_metrics: om,
+                })
+            }
+            UnixfsNode::Directory(_) => {
+                let source = futures::stream::iter(
+                    self.links()
+                        .map(|l| {
+                            l.map(|l| {
+                                dbg!(&l.name);
+                                let mut name =
+                                    l.name.map(|s| s.as_bytes().to_vec()).unwrap_or_default();
+
+                                name.extend_from_slice(b"\n");
+                                Bytes::from(name)
+                            })
+                            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))
+                        })
+                        .collect::<Vec<_>>(),
+                )
+                .boxed();
+                let stream = tokio_util::io::StreamReader::new(source);
+
+                Ok(UnixfsReader::Directory {
+                    stream,
+                    pos: 0,
+                    out_metrics: om,
+                })
+            }
+            UnixfsNode::HamtShard(_, hamt) => {
+                let stream = HamtReaderStreamBuilder {
+                    loader,
+                    hamt,
+                    stream_builder: |hamt: &Hamt, loader: &Resolver<T>| {
+                        let source = hamt
+                            .children(loader)
+                            .map(|l| {
+                                l.map(|l| {
+                                    let mut name =
+                                        l.name.map(|s| s.as_bytes().to_vec()).unwrap_or_default();
+                                    name.extend_from_slice(b"\n");
+                                    Bytes::from(name)
+                                })
+                                .map_err(|e| {
+                                    io::Error::new(io::ErrorKind::InvalidData, e.to_string())
+                                })
+                            })
+                            .boxed();
+                        tokio_util::io::StreamReader::new(source)
+                    },
+                }
+                .build();
+
+                Ok(UnixfsReader::Hamt {
+                    stream,
+                    pos: 0,
+                    out_metrics: om,
+                })
+            }
+        }
     }
 }
 
-// #[derive(Debug)]
-pub struct UnixfsReader<T: ContentLoader> {
-    root_node: UnixfsNode,
-    /// Absolute position in bytes
-    pos: usize,
-    /// Current node being operated on, only used for nested nodes (not the root).
-    current_node: CurrentNodeState,
-    /// Stack of links left to traverse.
-    current_links: Vec<VecDeque<Cid>>,
-    loader: T,
-    out_metrics: OutMetrics,
+use ouroboros::self_referencing;
+
+#[self_referencing]
+pub struct HamtReaderStream<T: ContentLoader> {
+    hamt: Hamt,
+    loader: Resolver<T>,
+    #[borrows(hamt, loader)]
+    #[covariant]
+    stream: tokio_util::io::StreamReader<BoxStream<'this, io::Result<Bytes>>, Bytes>,
+}
+
+pub enum UnixfsReader<T: ContentLoader> {
+    Hamt {
+        stream: HamtReaderStream<T>,
+        pos: usize,
+        out_metrics: OutMetrics,
+    },
+    Directory {
+        stream: tokio_util::io::StreamReader<BoxStream<'static, io::Result<Bytes>>, Bytes>,
+        pos: usize,
+        out_metrics: OutMetrics,
+    },
+    File {
+        root_node: UnixfsNode,
+        /// Absolute position in bytes
+        pos: usize,
+        /// Current node being operated on, only used for nested nodes (not the root).
+        current_node: CurrentNodeState,
+        /// Stack of links left to traverse.
+        current_links: Vec<VecDeque<Link>>,
+        loader: Resolver<T>,
+        out_metrics: OutMetrics,
+    },
 }
 
 impl<T: ContentLoader + Unpin + 'static> AsyncRead for UnixfsReader<T> {
@@ -315,55 +407,87 @@ impl<T: ContentLoader + Unpin + 'static> AsyncRead for UnixfsReader<T> {
         cx: &mut Context<'_>,
         buf: &mut tokio::io::ReadBuf<'_>,
     ) -> Poll<std::io::Result<()>> {
-        let typ = self.root_node.typ();
-        let Self {
-            root_node,
-            current_node,
-            current_links,
-            pos,
-            loader,
-            out_metrics,
-        } = &mut *self;
-        let pos_current = *pos;
-        let poll_res = match root_node {
-            UnixfsNode::Raw(data) => {
-                let res = poll_read_buf_at_pos(pos, data, buf);
-                Poll::Ready(res)
-            }
-            UnixfsNode::File(node) => poll_read_file_at(
-                cx,
-                node,
-                loader.clone(),
+        dbg!("poll_read", buf.filled());
+        match &mut *self {
+            UnixfsReader::Hamt {
+                stream,
                 pos,
-                buf,
-                current_links,
-                current_node,
-            ),
-            UnixfsNode::Symlink(node) => {
-                let data = node.inner.data.as_deref().unwrap_or_default();
-                let res = poll_read_buf_at_pos(pos, data, buf);
-                Poll::Ready(res)
-            }
-            UnixfsNode::Directory(node) => {
-                // TODO: cache
-                let mut res = Vec::new();
-                for link in &node.outer.links {
-                    if let Some(ref name) = link.name {
-                        res.extend_from_slice(name.as_bytes());
+                out_metrics,
+                ..
+            } => {
+                let pos_current = *pos;
+                let start = buf.filled().len();
+                let poll_res = stream.with_mut(|fields| Pin::new(fields.stream).poll_read(cx, buf));
+                match poll_res {
+                    Poll::Pending => Poll::Pending,
+                    Poll::Ready(Ok(())) => {
+                        let bytes_read = buf.filled().len() - start;
+                        *pos += bytes_read;
+                        out_metrics.observe_bytes_read(pos_current, bytes_read);
+                        Poll::Ready(Ok(()))
                     }
-                    res.extend_from_slice(b"\n");
+                    Poll::Ready(Err(e)) => Poll::Ready(Err(e)),
                 }
-                let res = poll_read_buf_at_pos(pos, &res, buf);
-                Poll::Ready(res)
             }
-            _ => Poll::Ready(Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!("unsupported Unixfs type: {:?} ", typ),
-            ))),
-        };
-        let bytes_read = *pos - pos_current;
-        out_metrics.observe_bytes_read(pos_current, bytes_read);
-        poll_res
+            UnixfsReader::Directory {
+                stream,
+                pos,
+                out_metrics,
+            } => {
+                let pos_current = *pos;
+                let start = buf.filled().len();
+                match Pin::new(stream).poll_read(cx, buf) {
+                    Poll::Pending => Poll::Pending,
+                    Poll::Ready(Ok(())) => {
+                        let bytes_read = buf.filled().len() - start;
+                        dbg!(std::str::from_utf8(buf.filled()), bytes_read);
+
+                        *pos += bytes_read;
+                        out_metrics.observe_bytes_read(pos_current, bytes_read);
+                        Poll::Ready(Ok(()))
+                    }
+                    Poll::Ready(Err(e)) => Poll::Ready(Err(e)),
+                }
+            }
+            UnixfsReader::File {
+                root_node,
+                pos,
+                current_node,
+                current_links,
+                loader,
+                out_metrics,
+            } => {
+                let typ = root_node.typ();
+                let pos_current = *pos;
+                let poll_res = match root_node {
+                    UnixfsNode::Raw(data) => {
+                        let res = poll_read_buf_at_pos(pos, data, buf);
+                        Poll::Ready(res)
+                    }
+                    UnixfsNode::File(node) => poll_read_file_at(
+                        cx,
+                        node,
+                        loader.loader().clone(),
+                        pos,
+                        buf,
+                        current_links,
+                        current_node,
+                    ),
+                    UnixfsNode::Symlink(node) => {
+                        let data = node.inner.data.as_deref().unwrap_or_default();
+                        let res = poll_read_buf_at_pos(pos, data, buf);
+                        Poll::Ready(res)
+                    }
+                    _ => Poll::Ready(Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        format!("unsupported Unixfs type for file types: {:?} ", typ),
+                    ))),
+                };
+                let bytes_read = *pos - pos_current;
+                out_metrics.observe_bytes_read(pos_current, bytes_read);
+                poll_res
+            }
+        }
     }
 }
 
@@ -383,7 +507,7 @@ pub fn poll_read_buf_at_pos(
     Ok(())
 }
 
-enum CurrentNodeState {
+pub enum CurrentNodeState {
     Outer,
     None,
     Loaded(usize, UnixfsNode),
@@ -405,7 +529,7 @@ impl Debug for CurrentNodeState {
 
 fn load_next_node<T: ContentLoader + 'static>(
     current_node: &mut CurrentNodeState,
-    current_links: &mut Vec<VecDeque<Cid>>,
+    current_links: &mut Vec<VecDeque<Link>>,
     loader: T,
 ) -> bool {
     // Load next node
@@ -426,8 +550,8 @@ fn load_next_node<T: ContentLoader + 'static>(
     let link = links.pop_front().unwrap();
 
     let fut = async move {
-        let loaded_cid = loader.load_cid(&link).await?;
-        let node = UnixfsNode::decode(&link, loaded_cid.data)?;
+        let loaded_cid = loader.load_cid(&link.cid).await?;
+        let node = UnixfsNode::decode(&link.cid, loaded_cid.data)?;
         Ok(node)
     }
     .boxed();
@@ -442,7 +566,7 @@ fn poll_read_file_at<T: ContentLoader + 'static>(
     loader: T,
     pos: &mut usize,
     buf: &mut tokio::io::ReadBuf<'_>,
-    current_links: &mut Vec<VecDeque<Cid>>,
+    current_links: &mut Vec<VecDeque<Link>>,
     current_node: &mut CurrentNodeState,
 ) -> Poll<std::io::Result<()>> {
     loop {
@@ -480,7 +604,7 @@ fn poll_read_file_at<T: ContentLoader + 'static>(
                         return Poll::Pending;
                     }
                     Poll::Ready(Ok(node)) => {
-                        match node.cid_links() {
+                        match node.links_owned() {
                             Ok(links) => {
                                 current_links.push(links);
                                 *current_node = CurrentNodeState::Loaded(0, node);

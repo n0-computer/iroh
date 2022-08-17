@@ -10,7 +10,7 @@ use anyhow::{anyhow, bail, ensure, Context as _, Result};
 use async_trait::async_trait;
 use bytes::Bytes;
 use cid::Cid;
-use futures::Stream;
+use futures::{stream::BoxStream, Stream};
 use iroh_metrics::resolver::Metrics;
 use iroh_rpc_client::Client;
 use libipld::codec::{Decode, Encode};
@@ -21,8 +21,7 @@ use tokio::io::AsyncRead;
 use tracing::{debug, trace, warn};
 
 use crate::codecs::Codec;
-use crate::hamt::Hamt;
-use crate::unixfs::{poll_read_buf_at_pos, DataType, LinkRef, UnixfsNode, UnixfsReader};
+use crate::unixfs::{poll_read_buf_at_pos, DataType, Link, UnixfsNode, UnixfsReader};
 
 pub const IROH_STORE: &str = "iroh-store";
 
@@ -139,7 +138,7 @@ impl FromStr for Path {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Out {
     metadata: Metadata,
     pub(crate) content: OutContent,
@@ -166,22 +165,29 @@ impl Out {
         self.content.links()
     }
 
-    /// Returns an iterator over the content of this directory.
+    /// Returns a stream over the content of this directory.
     /// Only if this is of type `unixfs` and a directory.
-    pub fn unixfs_read_dir(&self) -> Option<impl Iterator<Item = Result<LinkRef<'_>>>> {
-        match self.content {
-            OutContent::Unixfs(ref node) => {
-                if node.is_dir() {
-                    Some(node.links())
-                } else {
-                    None
-                }
-            }
-            _ => None,
+    pub fn unixfs_read_dir<'a, 'b: 'a, C: ContentLoader>(
+        &'a self,
+        loader: &'b Resolver<C>,
+    ) -> Result<Option<BoxStream<'a, Result<Link>>>> {
+        match &self.content {
+            OutContent::Unixfs(node) => match node {
+                UnixfsNode::Directory(_) => Ok(Some(Box::pin(futures::stream::iter(
+                    node.links().map(|l| l.map(|l| l.to_owned())),
+                )))),
+                UnixfsNode::HamtShard(_, hamt) => Ok(Some(Box::pin(hamt.children(loader)))),
+                _ => Ok(None),
+            },
+            _ => Ok(None),
         }
     }
 
-    pub fn pretty<T: ContentLoader>(self, loader: T, om: OutMetrics) -> Result<OutPrettyReader<T>> {
+    pub fn pretty<T: ContentLoader>(
+        self,
+        loader: Resolver<T>,
+        om: OutMetrics,
+    ) -> Result<OutPrettyReader<T>> {
         let pos = 0;
         match self.content {
             OutContent::DagPb(_, bytes) => {
@@ -199,7 +205,7 @@ impl Out {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) enum OutContent {
     DagPb(Ipld, Bytes),
     Unixfs(UnixfsNode),
@@ -509,9 +515,7 @@ impl<T: ContentLoader> Resolver<T> {
 
                 *current = next_node;
             }
-            UnixfsNode::HamtShard(node) => {
-                let hamt = Hamt::from_node(node)?;
-
+            UnixfsNode::HamtShard(_, hamt) => {
                 let (next_link, next_node) = hamt
                     .get(self, part.as_bytes())
                     .await?
@@ -548,7 +552,8 @@ impl<T: ContentLoader> Resolver<T> {
             }
 
             let unixfs_type = match current.typ() {
-                Some(DataType::Directory) | Some(DataType::HamtShard) => Some(UnixfsType::Dir),
+                Some(DataType::Directory) => Some(UnixfsType::Dir),
+                Some(DataType::HamtShard) => Some(UnixfsType::Dir),
                 Some(DataType::File) | Some(DataType::Raw) => Some(UnixfsType::File),
                 Some(DataType::Symlink) => Some(UnixfsType::Symlink),
                 Some(DataType::Metadata) => None,
@@ -995,7 +1000,7 @@ mod tests {
 
                 let out_bytes = read_to_vec(
                     new_ipld
-                        .pretty(loader.clone(), OutMetrics::default())
+                        .pretty(resolver.clone(), OutMetrics::default())
                         .unwrap(),
                 )
                 .await;
@@ -1023,7 +1028,7 @@ mod tests {
 
                 let out_bytes = read_to_vec(
                     new_ipld
-                        .pretty(loader.clone(), OutMetrics::default())
+                        .pretty(resolver.clone(), OutMetrics::default())
                         .unwrap(),
                 )
                 .await;
@@ -1098,13 +1103,15 @@ mod tests {
             let ipld_foo = resolver.resolve(path.parse().unwrap()).await.unwrap();
 
             let ls = ipld_foo
-                .unixfs_read_dir()
+                .unixfs_read_dir(&resolver)
                 .unwrap()
-                .collect::<Result<Vec<_>>>()
+                .unwrap()
+                .try_collect::<Vec<_>>()
+                .await
                 .unwrap();
             assert_eq!(ls.len(), 2);
-            assert_eq!(ls[0].name.unwrap(), "bar");
-            assert_eq!(ls[1].name.unwrap(), "hello.txt");
+            assert_eq!(ls[0].name.as_ref().unwrap(), "bar");
+            assert_eq!(ls[1].name.as_ref().unwrap(), "hello.txt");
 
             let m = ipld_foo.metadata();
             assert_eq!(m.unixfs_type, Some(UnixfsType::Dir));
@@ -1113,10 +1120,10 @@ mod tests {
             assert_eq!(m.size, None);
             assert_eq!(m.resolved_path, vec![root_cid_str.parse().unwrap()]);
 
-            if let OutContent::Unixfs(node) = ipld_foo.content {
+            if let OutContent::Unixfs(node) = ipld_foo.content.clone() {
                 assert_eq!(
                     read_to_string(
-                        node.into_reader(loader.clone(), OutMetrics::default())
+                        node.into_reader(resolver.clone(), OutMetrics::default())
                             .unwrap()
                     )
                     .await,
@@ -1125,13 +1132,21 @@ mod tests {
             } else {
                 panic!("invalid result: {:?}", ipld_foo);
             }
+
+            let dir_listing = read_to_string(
+                ipld_foo
+                    .pretty(resolver.clone(), OutMetrics::default())
+                    .unwrap(),
+            )
+            .await;
+            assert_eq!(dir_listing, "bar\nhello.txt\n");
         }
 
         {
             let path = format!("/ipfs/{root_cid_str}/hello.txt");
             let ipld_hello_txt = resolver.resolve(path.parse().unwrap()).await.unwrap();
 
-            assert!(ipld_hello_txt.unixfs_read_dir().is_none());
+            assert!(ipld_hello_txt.unixfs_read_dir(&resolver).unwrap().is_none());
 
             let m = ipld_hello_txt.metadata();
             assert_eq!(m.unixfs_type, Some(UnixfsType::File));
@@ -1149,7 +1164,7 @@ mod tests {
             if let OutContent::Unixfs(node) = ipld_hello_txt.content {
                 assert_eq!(
                     read_to_string(
-                        node.into_reader(loader.clone(), OutMetrics::default())
+                        node.into_reader(resolver.clone(), OutMetrics::default())
                             .unwrap()
                     )
                     .await,
@@ -1164,7 +1179,7 @@ mod tests {
             let path = format!("/ipfs/{hello_txt_cid_str}");
             let ipld_hello_txt = resolver.resolve(path.parse().unwrap()).await.unwrap();
 
-            assert!(ipld_hello_txt.unixfs_read_dir().is_none());
+            assert!(ipld_hello_txt.unixfs_read_dir(&resolver).unwrap().is_none());
 
             let m = ipld_hello_txt.metadata();
             assert_eq!(m.unixfs_type, Some(UnixfsType::File));
@@ -1176,7 +1191,7 @@ mod tests {
             if let OutContent::Unixfs(node) = ipld_hello_txt.content {
                 assert_eq!(
                     read_to_string(
-                        node.into_reader(loader.clone(), OutMetrics::default())
+                        node.into_reader(resolver.clone(), OutMetrics::default())
                             .unwrap()
                     )
                     .await,
@@ -1192,12 +1207,14 @@ mod tests {
             let ipld_bar = resolver.resolve(path.parse().unwrap()).await.unwrap();
 
             let ls = ipld_bar
-                .unixfs_read_dir()
+                .unixfs_read_dir(&resolver)
                 .unwrap()
-                .collect::<Result<Vec<_>>>()
+                .unwrap()
+                .try_collect::<Vec<_>>()
+                .await
                 .unwrap();
             assert_eq!(ls.len(), 1);
-            assert_eq!(ls[0].name.unwrap(), "bar.txt");
+            assert_eq!(ls[0].name.as_ref().unwrap(), "bar.txt");
 
             let m = ipld_bar.metadata();
             assert_eq!(m.unixfs_type, Some(UnixfsType::Dir));
@@ -1212,7 +1229,7 @@ mod tests {
             if let OutContent::Unixfs(node) = ipld_bar.content {
                 assert_eq!(
                     read_to_string(
-                        node.into_reader(loader.clone(), OutMetrics::default())
+                        node.into_reader(resolver.clone(), OutMetrics::default())
                             .unwrap()
                     )
                     .await,
@@ -1244,7 +1261,7 @@ mod tests {
             if let OutContent::Unixfs(node) = ipld_bar_txt.content {
                 assert_eq!(
                     read_to_string(
-                        node.into_reader(loader.clone(), OutMetrics::default())
+                        node.into_reader(resolver.clone(), OutMetrics::default())
                             .unwrap()
                     )
                     .await,
@@ -1387,18 +1404,20 @@ mod tests {
                 .unwrap();
 
             let ls = ipld_foo
-                .unixfs_read_dir()
+                .unixfs_read_dir(&resolver)
                 .unwrap()
-                .collect::<Result<Vec<_>>>()
+                .unwrap()
+                .try_collect::<Vec<_>>()
+                .await
                 .unwrap();
             assert_eq!(ls.len(), 2);
-            assert_eq!(ls[0].name.unwrap(), "bar");
-            assert_eq!(ls[1].name.unwrap(), "hello.txt");
+            assert_eq!(ls[0].name.as_ref().unwrap(), "bar");
+            assert_eq!(ls[1].name.as_ref().unwrap(), "hello.txt");
 
             if let OutContent::Unixfs(node) = ipld_foo.content {
                 assert_eq!(
                     read_to_string(
-                        node.into_reader(loader.clone(), OutMetrics::default())
+                        node.into_reader(resolver.clone(), OutMetrics::default())
                             .unwrap()
                     )
                     .await,
@@ -1418,7 +1437,7 @@ mod tests {
             if let OutContent::Unixfs(node) = ipld_hello_txt.content {
                 assert_eq!(
                     read_to_string(
-                        node.into_reader(loader.clone(), OutMetrics::default())
+                        node.into_reader(resolver.clone(), OutMetrics::default())
                             .unwrap()
                     )
                     .await,
@@ -1436,17 +1455,19 @@ mod tests {
                 .unwrap();
 
             let ls = ipld_bar
-                .unixfs_read_dir()
+                .unixfs_read_dir(&resolver)
                 .unwrap()
-                .collect::<Result<Vec<_>>>()
+                .unwrap()
+                .try_collect::<Vec<_>>()
+                .await
                 .unwrap();
             assert_eq!(ls.len(), 1);
-            assert_eq!(ls[0].name.unwrap(), "bar.txt");
+            assert_eq!(ls[0].name.as_ref().unwrap(), "bar.txt");
 
             if let OutContent::Unixfs(node) = ipld_bar.content {
                 assert_eq!(
                     read_to_string(
-                        node.into_reader(loader.clone(), OutMetrics::default())
+                        node.into_reader(resolver.clone(), OutMetrics::default())
                             .unwrap()
                     )
                     .await,
@@ -1466,7 +1487,7 @@ mod tests {
             if let OutContent::Unixfs(node) = ipld_bar_txt.content {
                 assert_eq!(
                     read_to_string(
-                        node.into_reader(loader.clone(), OutMetrics::default())
+                        node.into_reader(resolver.clone(), OutMetrics::default())
                             .unwrap()
                     )
                     .await,
@@ -1527,7 +1548,7 @@ mod tests {
 
             if let OutContent::Unixfs(node) = ipld_readme.content {
                 let content = read_to_string(
-                    node.into_reader(loader.clone(), OutMetrics::default())
+                    node.into_reader(resolver.clone(), OutMetrics::default())
                         .unwrap(),
                 )
                 .await;
@@ -1668,7 +1689,7 @@ mod tests {
             let path = format!("/ipfs/{root_cid_str}/hello.txt");
             let ipld_hello_txt = resolver.resolve(path.parse().unwrap()).await.unwrap();
 
-            assert!(ipld_hello_txt.unixfs_read_dir().is_none());
+            assert!(ipld_hello_txt.unixfs_read_dir(&resolver).unwrap().is_none());
 
             let m = ipld_hello_txt.metadata();
             assert_eq!(m.unixfs_type, Some(UnixfsType::File));
@@ -1686,7 +1707,7 @@ mod tests {
             if let OutContent::Unixfs(node) = ipld_hello_txt.content {
                 assert_eq!(
                     read_to_string(
-                        node.into_reader(loader.clone(), OutMetrics::default())
+                        node.into_reader(resolver.clone(), OutMetrics::default())
                             .unwrap()
                     )
                     .await,
@@ -1702,15 +1723,17 @@ mod tests {
             let ipld_bar = resolver.resolve(path.parse().unwrap()).await.unwrap();
 
             let ls = ipld_bar
-                .unixfs_read_dir()
+                .unixfs_read_dir(&resolver)
                 .unwrap()
-                .collect::<Result<Vec<_>>>()
+                .unwrap()
+                .try_collect::<Vec<_>>()
+                .await
                 .unwrap();
             assert_eq!(ls.len(), 4);
-            assert_eq!(ls[0].name.unwrap(), "bar.txt");
-            assert_eq!(ls[1].name.unwrap(), "my-symlink-local.txt");
-            assert_eq!(ls[2].name.unwrap(), "my-symlink-outer.txt");
-            assert_eq!(ls[3].name.unwrap(), "my-symlink.txt");
+            assert_eq!(ls[0].name.as_ref().unwrap(), "bar.txt");
+            assert_eq!(ls[1].name.as_ref().unwrap(), "my-symlink-local.txt");
+            assert_eq!(ls[2].name.as_ref().unwrap(), "my-symlink-outer.txt");
+            assert_eq!(ls[3].name.as_ref().unwrap(), "my-symlink.txt");
         }
 
         // regular file
@@ -1735,7 +1758,7 @@ mod tests {
             if let OutContent::Unixfs(node) = ipld_bar_txt.content {
                 assert_eq!(
                     read_to_string(
-                        node.into_reader(loader.clone(), OutMetrics::default())
+                        node.into_reader(resolver.clone(), OutMetrics::default())
                             .unwrap()
                     )
                     .await,
@@ -1767,7 +1790,7 @@ mod tests {
             if let OutContent::Unixfs(node) = ipld_bar_txt.content {
                 assert_eq!(
                     read_to_string(
-                        node.into_reader(loader.clone(), OutMetrics::default())
+                        node.into_reader(resolver.clone(), OutMetrics::default())
                             .unwrap()
                     )
                     .await,
@@ -1799,7 +1822,7 @@ mod tests {
             if let OutContent::Unixfs(node) = ipld_bar_txt.content {
                 assert_eq!(
                     read_to_string(
-                        node.into_reader(loader.clone(), OutMetrics::default())
+                        node.into_reader(resolver.clone(), OutMetrics::default())
                             .unwrap()
                     )
                     .await,
@@ -1831,7 +1854,7 @@ mod tests {
             if let OutContent::Unixfs(node) = ipld_bar_txt.content {
                 assert_eq!(
                     read_to_string(
-                        node.into_reader(loader.clone(), OutMetrics::default())
+                        node.into_reader(resolver.clone(), OutMetrics::default())
                             .unwrap()
                     )
                     .await,
@@ -1853,7 +1876,7 @@ mod tests {
             if let OutContent::Unixfs(node) = ipld_bar_txt.content {
                 assert_eq!(
                     read_to_string(
-                        node.into_reader(loader.clone(), OutMetrics::default())
+                        node.into_reader(resolver.clone(), OutMetrics::default())
                             .unwrap()
                     )
                     .await,
@@ -1918,11 +1941,12 @@ mod tests {
         let loader = Arc::new(files);
         let resolver = Resolver::new(loader.clone(), &mut Registry::default());
 
-        for i in 1..=10000 {
-            let path = format!("/ipfs/{root_cid_str}/{}.txt", i);
+        // foo/bar/bar.txt
+        {
+            let path = format!("/ipfs/{root_cid_str}/bar/bar.txt");
             let ipld_txt = resolver.resolve(path.parse().unwrap()).await.unwrap();
 
-            assert!(ipld_txt.unixfs_read_dir().is_none());
+            assert!(ipld_txt.unixfs_read_dir(&resolver).unwrap().is_none());
 
             let m = ipld_txt.metadata();
             assert_eq!(m.unixfs_type, Some(UnixfsType::File));
@@ -1933,7 +1957,82 @@ mod tests {
             if let OutContent::Unixfs(node) = ipld_txt.content {
                 assert_eq!(
                     read_to_string(
-                        node.into_reader(loader.clone(), OutMetrics::default())
+                        node.into_reader(resolver.clone(), OutMetrics::default())
+                            .unwrap()
+                    )
+                    .await,
+                    "world\n",
+                );
+            } else {
+                panic!("invalid result: {:?}", ipld_txt);
+            }
+        }
+        // read the directory listing
+        {
+            let path = format!("/ipfs/{root_cid_str}");
+            let ipld_txt = resolver.resolve(path.parse().unwrap()).await.unwrap();
+
+            let mut links = ipld_txt
+                .unixfs_read_dir(&resolver)
+                .expect("missing listing")
+                .unwrap()
+                .try_collect::<Vec<_>>()
+                .await
+                .unwrap();
+            // these are not sorted by name originally
+            links.sort_by(|a, b| {
+                let a = a.name.as_ref().unwrap();
+                let b = b.name.as_ref().unwrap();
+
+                match (
+                    a.replace(".txt", "").parse::<usize>(),
+                    b.replace(".txt", "").parse::<usize>(),
+                ) {
+                    (Ok(a), Ok(b)) => a.cmp(&b),
+                    _ => a.cmp(b),
+                }
+            });
+
+            for (i, link) in links.iter().take(10000).enumerate() {
+                assert_eq!(link.name, Some(format!("{}.txt", i + 1)));
+            }
+
+            assert_eq!(links[10000].name, Some("bar".into()));
+            assert_eq!(links[10001].name, Some("hello.txt".into()));
+
+            assert_eq!(links.len(), 10_000 + 2);
+
+            // pretty directory listing
+            if let OutContent::Unixfs(node) = ipld_txt.content {
+                assert_eq!(
+                    read_to_string(
+                        node.into_reader(resolver.clone(), OutMetrics::default())
+                            .unwrap()
+                    )
+                    .await,
+                    include_str!("../fixtures/hamt_dir.txt")
+                );
+            } else {
+                panic!("invalid result: {:?}", ipld_txt);
+            }
+        }
+
+        for i in 1..=10000 {
+            let path = format!("/ipfs/{root_cid_str}/{}.txt", i);
+            let ipld_txt = resolver.resolve(path.parse().unwrap()).await.unwrap();
+
+            assert!(ipld_txt.unixfs_read_dir(&resolver).unwrap().is_none());
+
+            let m = ipld_txt.metadata();
+            assert_eq!(m.unixfs_type, Some(UnixfsType::File));
+            assert_eq!(m.path.to_string(), path);
+            assert_eq!(m.typ, OutType::Unixfs);
+            assert!(m.size.unwrap() > 0);
+
+            if let OutContent::Unixfs(node) = ipld_txt.content {
+                assert_eq!(
+                    read_to_string(
+                        node.into_reader(resolver.clone(), OutMetrics::default())
                             .unwrap()
                     )
                     .await,

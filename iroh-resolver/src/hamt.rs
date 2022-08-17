@@ -1,5 +1,6 @@
 use anyhow::{bail, ensure, Result};
 use async_recursion::async_recursion;
+use futures::{stream::BoxStream, Stream, StreamExt};
 use once_cell::sync::OnceCell;
 
 use crate::{
@@ -20,12 +21,12 @@ const MAX_DEPTH: usize = HASH_BIT_LENGTH;
 
 const DEFAULT_FANOUT: u32 = 256;
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct Hamt {
     root: Node,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Clone)]
 struct Node {
     bitfield: Bitfield,
     bit_width: u32,
@@ -33,16 +34,16 @@ struct Node {
     pointers: Vec<NodeLink>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Clone)]
 struct NodeLink {
     link: Link,
     cache: OnceCell<Box<InnerNode>>,
 }
 
 #[allow(clippy::large_enum_variant)]
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Clone)]
 enum InnerNode {
-    Node(Node),
+    Node { node: Node, value: UnixfsNode },
     Leaf { link: Link, value: UnixfsNode },
 }
 
@@ -59,6 +60,24 @@ impl Hamt {
     ) -> Result<Option<(&Link, &UnixfsNode)>> {
         self.root.get(loader, key).await
     }
+
+    pub fn padding_len(&self) -> usize {
+        self.root.padding_len
+    }
+
+    pub fn calculate_padding_len(node: &unixfs::Node) -> usize {
+        let fanout = node.fanout().unwrap_or(DEFAULT_FANOUT);
+        // TODO: avoid allocation
+        let padding = format!("{:X}", fanout - 1);
+        padding.len()
+    }
+
+    pub fn children<'a, 'b: 'a, C: ContentLoader>(
+        &'a self,
+        loader: &'b Resolver<C>,
+    ) -> impl Stream<Item = Result<Link>> + 'a {
+        self.root.children(loader)
+    }
 }
 
 impl InnerNode {
@@ -68,19 +87,64 @@ impl InnerNode {
     ) -> Result<Self> {
         let path = Path::from_cid(link.cid);
         let out = loader.resolve(path).await?;
+
         match out.content {
-            OutContent::Unixfs(node) => match node {
-                UnixfsNode::HamtShard(ref shard) => {
-                    let node = Node::from_node(shard)?;
-                    Ok(InnerNode::Node(node))
-                }
-                UnixfsNode::File(_) => Ok(InnerNode::Leaf {
+            OutContent::Unixfs(value) => match value {
+                UnixfsNode::HamtShard(_, ref hamt) => Ok(InnerNode::Node {
+                    node: hamt.root.clone(),
+                    value,
+                }),
+                UnixfsNode::RawNode(_)
+                | UnixfsNode::File(_)
+                | UnixfsNode::Directory(_)
+                | UnixfsNode::Raw(_)
+                | UnixfsNode::Symlink(_) => Ok(InnerNode::Leaf {
+                    link: link.clone(),
+                    value,
+                }),
+            },
+            OutContent::Raw(_, bytes) => {
+                let node = UnixfsNode::decode(&link.cid, bytes)?;
+
+                Ok(InnerNode::Leaf {
                     link: link.clone(),
                     value: node,
-                }),
-                _ => bail!("unexpected unixfs node: {:?}", node.typ()),
-            },
+                })
+            }
             _ => bail!("unexpected node: {:?}", out.content.typ()),
+        }
+    }
+    fn children<'a, 'b: 'a, C: ContentLoader>(
+        &'a self,
+        loader: &'b Resolver<C>,
+    ) -> impl Stream<Item = Result<Link>> + 'a {
+        async_stream::try_stream! {
+            match self {
+                InnerNode::Node { node, .. } => {
+                    let mut children = node.children(loader);
+                    while let Some(link) = children.next().await {
+                        let link = link?;
+                        yield link;
+                    }
+
+                },
+                InnerNode::Leaf { value, .. } => match value {
+                    UnixfsNode::Directory(_) => {
+                        for link in value.links() {
+                            let link = link?;
+                            yield link.to_owned();
+                        }
+                    }
+                    UnixfsNode::HamtShard(_, hamt) => {
+                        let mut children = hamt.children(loader);
+                        while let Some(link) = children.next().await {
+                            let link = link?;
+                            yield link;
+                        }
+                    }
+                    _ => {}
+                }
+            }
         }
     }
 }
@@ -100,15 +164,17 @@ impl Node {
         let links = Links::HamtShard(PbLinks::new(&node.outer));
         let pointers = links
             .map(|l| {
+                let l = l?;
                 Ok(NodeLink {
-                    link: l?.to_owned(),
+                    link: l.to_owned(),
                     cache: Default::default(),
                 })
             })
             .collect::<Result<_>>()?;
 
         let bit_width = log2(fanout);
-        let padding_len = format!("{:X}", fanout - 1).len();
+        let padding = format!("{:X}", fanout - 1);
+        let padding_len = padding.len();
 
         Ok(Node {
             bitfield,
@@ -127,6 +193,7 @@ impl Node {
         let res = self
             .get_value(loader, &mut HashBits::new(&hashed_key), key, 0)
             .await?;
+
         Ok(res)
     }
 
@@ -146,18 +213,22 @@ impl Node {
 
         let cindex = self.index_for_bit_pos(idx);
         let child = self.get_child(cindex);
-        let cached_node = if let Some(cached_node) = child.cache.get() {
-            cached_node
-        } else {
-            match InnerNode::load_from_link(&child.link, loader).await {
-                Ok(node) => child.cache.get_or_init(|| Box::new(node)),
-                Err(_) => return Ok(None),
-            }
-        };
-
-        let cached_node: &InnerNode = &*cached_node;
+        let cached_node = self.load_child(loader, child).await?;
         match cached_node {
-            InnerNode::Node(node) => node.get_value(loader, hashed_key, key, depth + 1).await,
+            InnerNode::Node { node, value } => {
+                let name = child
+                    .link
+                    .name
+                    .as_ref()
+                    .map(|s| &s.as_bytes()[self.padding_len..])
+                    .unwrap_or_default();
+
+                if key == name {
+                    Ok(Some((&child.link, value)))
+                } else {
+                    node.get_value(loader, hashed_key, key, depth + 1).await
+                }
+            }
             InnerNode::Leaf { link, value } => {
                 let name = link
                     .name
@@ -173,6 +244,19 @@ impl Node {
         }
     }
 
+    async fn load_child<'a, C: ContentLoader>(
+        &self,
+        loader: &Resolver<C>,
+        child: &'a NodeLink,
+    ) -> Result<&'a InnerNode> {
+        if let Some(cached_node) = child.cache.get() {
+            Ok(cached_node)
+        } else {
+            let node = InnerNode::load_from_link(&child.link, loader).await?;
+            Ok(child.cache.get_or_init(|| Box::new(node)))
+        }
+    }
+
     fn index_for_bit_pos(&self, bp: u32) -> usize {
         let mask = Bitfield::zero().set_bits_le(bp);
         assert_eq!(mask.count_ones(), bp as usize);
@@ -181,6 +265,38 @@ impl Node {
 
     fn get_child(&self, i: usize) -> &NodeLink {
         &self.pointers[i]
+    }
+
+    fn children<'a, 'b: 'a, C: ContentLoader>(
+        &'a self,
+        loader: &'b Resolver<C>,
+    ) -> BoxStream<'a, Result<Link>> {
+        async_stream::try_stream! {
+            let padding_len = self.padding_len;
+            for pointer in &self.pointers {
+                if let Some(ref name) = pointer.link.name {
+                    if name.len() > padding_len {
+                        yield Link {
+                            cid: pointer.link.cid,
+                            name: pointer.link.name.as_ref().map(|n| {
+                                std::str::from_utf8(&n.as_bytes()[padding_len..]).unwrap().to_string()
+                            }),
+                            tsize: pointer.link.tsize,
+                        };
+                    } else {
+                        // recurse
+                        let child = self.load_child(loader, pointer).await?;
+                        let children = child.children(loader);
+                        tokio::pin!(children);
+                        while let Some(link) = children.next().await {
+                            let link = link?;
+                            yield link;
+                        }
+                    }
+                }
+            }
+        }
+        .boxed()
     }
 }
 

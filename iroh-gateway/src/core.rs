@@ -57,7 +57,6 @@ pub struct Core {
 pub struct State {
     config: Config,
     client: Client,
-    rpc_client: iroh_rpc_client::Client,
     handlebars: HashMap<String, String>,
     pub metrics: Metrics,
     bad_bits: Arc<Option<RwLock<BadBits>>>,
@@ -112,7 +111,6 @@ impl Core {
             state: Arc::new(State {
                 config,
                 client,
-                rpc_client,
                 metrics,
                 handlebars: templates,
                 bad_bits,
@@ -377,12 +375,7 @@ async fn serve_raw(
     // FIXME: we currently only retrieve full cids
     let (body, metadata) = state
         .client
-        .get_file(
-            req.resolved_path.clone(),
-            &state.rpc_client,
-            start_time,
-            &state.metrics,
-        )
+        .get_file(req.resolved_path.clone(), start_time, &state.metrics)
         .await
         .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, &e, &state))?;
 
@@ -407,12 +400,7 @@ async fn serve_car(
     // FIXME: we currently only retrieve full cids
     let (body, metadata) = state
         .client
-        .get_file(
-            req.resolved_path.clone(),
-            &state.rpc_client,
-            start_time,
-            &state.metrics,
-        )
+        .get_file(req.resolved_path.clone(), start_time, &state.metrics)
         .await
         .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, &e, &state))?;
 
@@ -442,12 +430,7 @@ async fn serve_car_recursive(
     let body = state
         .client
         .clone()
-        .get_file_recursive(
-            req.resolved_path.clone(),
-            state.rpc_client.clone(),
-            start_time,
-            state.metrics.clone(),
-        )
+        .get_file_recursive(req.resolved_path.clone(), start_time, state.metrics.clone())
         .await
         .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, &e, &state))?;
 
@@ -476,12 +459,7 @@ async fn serve_fs(
     // FIXME: we currently only retrieve full cids
     let (mut body, metadata) = state
         .client
-        .get_file(
-            req.resolved_path.clone(),
-            &state.rpc_client,
-            start_time,
-            &state.metrics,
-        )
+        .get_file(req.resolved_path.clone(), start_time, &state.metrics)
         .await
         .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, &e, &state))?;
 
@@ -490,8 +468,12 @@ async fn serve_fs(
         Some(UnixfsType::Dir) => {
             if let Some(dir_list_data) = body.data().await {
                 let dir_list = match dir_list_data {
-                    Ok(b) => b,
-                    Err(_) => {
+                    Ok(b) => {
+                        dbg!(std::str::from_utf8(&b).unwrap());
+                        b
+                    }
+                    Err(e) => {
+                        tracing::warn!("failed to read dir: {:?}", e);
                         return Err(error(
                             StatusCode::INTERNAL_SERVER_ERROR,
                             "failed to read dir listing",
