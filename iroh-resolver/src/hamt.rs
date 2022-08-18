@@ -155,7 +155,7 @@ impl Node {
             }
         };
 
-        let cached_node: &InnerNode = &*cached_node;
+        let cached_node: &InnerNode = &**cached_node;
         match cached_node {
             InnerNode::Node(node) => node.get_value(loader, hashed_key, key, depth + 1).await,
             InnerNode::Leaf { link, value } => {
