@@ -48,7 +48,8 @@ impl ResponseFormat {
                 headers.insert(CACHE_CONTROL, VALUE_NO_CACHE_NO_TRANSFORM.clone());
             }
             ResponseFormat::Fs(_) => {
-                headers.insert(CONTENT_TYPE, CONTENT_TYPE_OCTET_STREAM.clone());
+                // Don't send application/octet-stream in that case, let the
+                // client decide instead.
             }
         }
     }
@@ -233,10 +234,6 @@ mod tests {
         let rf = ResponseFormat::try_from("fs").unwrap();
         let mut headers = HeaderMap::new();
         rf.write_headers(&mut headers);
-        assert_eq!(headers.len(), 1);
-        assert_eq!(
-            headers.get(&CONTENT_TYPE).unwrap(),
-            &CONTENT_TYPE_OCTET_STREAM
-        );
+        assert_eq!(headers.len(), 0);
     }
 }
