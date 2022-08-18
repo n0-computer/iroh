@@ -92,8 +92,10 @@ mod tests {
     async fn gateway_health() {
         let mut gateway = GatewayConfig::default();
         gateway.set_default_headers();
-        let mut config = Config::default();
-        config.gateway = gateway;
+        let config = Config {
+            gateway,
+            ..Default::default()
+        };
 
         let mut prom_registry = Registry::default();
         let gw_metrics = Metrics::new(&mut prom_registry);
