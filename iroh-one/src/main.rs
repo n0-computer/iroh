@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
 use clap::Parser;
-use iroh_gateway::{metrics, bad_bits::BadBits};
+use iroh_gateway::{bad_bits::BadBits, metrics};
 use iroh_metrics::gateway::Metrics;
 use iroh_one::{
     config::{Config, CONFIG_FILE_NAME, ENV_PREFIX},
