@@ -27,8 +27,6 @@ pub static CONTENT_TYPE_IPLD_RAW: HeaderValue =
     HeaderValue::from_static("application/vnd.ipld.raw");
 pub static CONTENT_TYPE_IPLD_CAR: HeaderValue =
     HeaderValue::from_static("application/vnd.ipld.car; version=1");
-pub static CONTENT_TYPE_OCTET_STREAM: HeaderValue =
-    HeaderValue::from_static("application/octet-stream");
 
 // Schemes
 pub static SCHEME_IPFS: &str = "ipfs";

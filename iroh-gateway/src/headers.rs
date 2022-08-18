@@ -12,10 +12,14 @@ pub fn add_user_headers(headers: &mut HeaderMap, user_headers: HeaderMap) {
 #[tracing::instrument()]
 pub fn add_content_type_headers(headers: &mut HeaderMap, name: &str) {
     let guess = mime_guess::from_path(name);
-    let content_type = guess.first_or_octet_stream().to_string();
-    // todo(arqu): deeper content type checking
-    // todo(arqu): if mime type starts with text/html; strip encoding to let browser detect
-    headers.insert(CONTENT_TYPE, HeaderValue::from_str(&content_type).unwrap());
+    if let Some(content_type) = guess.first() {
+        // todo(arqu): deeper content type checking
+        // todo(arqu): if mime type starts with text/html; strip encoding to let browser detect
+        headers.insert(
+            CONTENT_TYPE,
+            HeaderValue::from_str(&content_type.to_string()).unwrap(),
+        );
+    }
 }
 
 #[tracing::instrument()]
@@ -201,11 +205,7 @@ mod tests {
         let mut headers = HeaderMap::new();
         let name = "test.RAND_EXT";
         add_content_type_headers(&mut headers, name);
-        assert_eq!(headers.len(), 1);
-        assert_eq!(
-            headers.get(&CONTENT_TYPE).unwrap(),
-            &CONTENT_TYPE_OCTET_STREAM
-        );
+        assert_eq!(headers.len(), 0);
     }
 
     #[test]
