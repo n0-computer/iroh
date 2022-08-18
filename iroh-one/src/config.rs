@@ -351,26 +351,24 @@ mod tests {
         let default = Config::default();
         let mut expect: Map<String, Value> = Map::new();
         expect.insert(
-            "writeable".to_string(),
-            Value::new(None, default.gateway.writeable),
-        );
-        expect.insert("fetch".to_string(), Value::new(None, default.gateway.fetch));
-        expect.insert("cache".to_string(), Value::new(None, default.gateway.cache));
-        expect.insert(
-            "port".to_string(),
-            Value::new(None, default.gateway.port as i64),
+            "gateway".to_string(),
+            Value::new(None, default.gateway.collect().unwrap()),
         );
         expect.insert(
-            "headers".to_string(),
-            Value::new(None, collect_headers(&default.gateway.headers).unwrap()),
+            "store".to_string(),
+            Value::new(None, default.store.collect().unwrap()),
         );
         expect.insert(
-            "rpc_client".to_string(),
-            Value::new(None, default.rpc_client.collect().unwrap()),
+            "p2p".to_string(),
+            Value::new(None, default.p2p.collect().unwrap()),
         );
         expect.insert(
             "metrics".to_string(),
             Value::new(None, default.metrics.collect().unwrap()),
+        );
+        expect.insert(
+            "rpc_client".to_string(),
+            Value::new(None, default.rpc_client.collect().unwrap()),
         );
 
         let got = default.collect().unwrap();
