@@ -26,7 +26,10 @@ pub struct Client {
     resolver: Resolver<iroh_rpc_client::Client>,
 }
 
-pub struct PrettyStreamBody(ReaderStream<OutPrettyReader<iroh_rpc_client::Client>>);
+pub struct PrettyStreamBody(
+    ReaderStream<OutPrettyReader<iroh_rpc_client::Client>>,
+    Option<u64>,
+);
 
 impl http_body::Body for PrettyStreamBody {
     type Data = Bytes;
@@ -52,7 +55,10 @@ impl http_body::Body for PrettyStreamBody {
                 dbg!(&chunk);
                 Poll::Ready(Some(Ok(chunk)))
             }
-            Some(Err(err)) => Poll::Ready(Some(Err(err.to_string()))),
+            Some(Err(err)) => {
+                dbg!(err.to_string());
+                Poll::Ready(Some(Err(err.to_string())))
+            }
             None => {
                 dbg!("stream end");
                 Poll::Ready(None)
@@ -67,7 +73,13 @@ impl http_body::Body for PrettyStreamBody {
         Poll::Ready(Ok(None))
     }
 
-    // TODO: implement size_hint
+    fn size_hint(&self) -> http_body::SizeHint {
+        let mut size_hint = http_body::SizeHint::new();
+        if let Some(size) = self.1 {
+            size_hint.set_exact(size);
+        }
+        size_hint
+    }
 }
 
 impl Client {
@@ -103,41 +115,6 @@ impl Client {
                 .hist_ttfb_cached
                 .observe(start_time.elapsed().as_millis() as f64);
         }
-        {
-            let mut reader = res
-                .clone()
-                .pretty(
-                    self.resolver.clone(),
-                    OutMetrics {
-                        metrics: metrics.clone(),
-                        start: start_time,
-                    },
-                )
-                .map_err(|e| e.to_string())?;
-            let mut s = String::new();
-            reader.read_to_string(&mut s).await.unwrap();
-            dbg!(s);
-        }
-        {
-            let reader = res
-                .clone()
-                .pretty(
-                    self.resolver.clone(),
-                    OutMetrics {
-                        metrics: metrics.clone(),
-                        start: start_time,
-                    },
-                )
-                .map_err(|e| e.to_string())?;
-
-            let mut stream = ReaderStream::new(reader);
-            let mut s = String::new();
-            while let Some(part) = stream.next().await {
-                let part = part.unwrap();
-                s.push_str(std::str::from_utf8(&part).unwrap());
-            }
-            dbg!(s);
-        }
         let reader = res
             .pretty(
                 self.resolver.clone(),
@@ -148,8 +125,9 @@ impl Client {
             )
             .map_err(|e| e.to_string())?;
         // TODO: avoid double indirection (stream of bytes -> asyncread -> stream of bytes)
+        let size = reader.size();
         let stream = ReaderStream::new(reader);
-        let body = PrettyStreamBody(stream);
+        let body = PrettyStreamBody(stream, size);
 
         Ok((body, metadata))
     }

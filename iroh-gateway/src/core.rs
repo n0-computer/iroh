@@ -1,3 +1,4 @@
+use anyhow::ensure;
 use async_recursion::async_recursion;
 use axum::{
     body::{self, Body, HttpBody},
@@ -469,6 +470,20 @@ async fn serve_fs(
             if let Some(dir_list_data) = body.data().await {
                 let dir_list = match dir_list_data {
                     Ok(b) => {
+                        if let Some(size_hint) = body.size_hint().exact() {
+                            if b.len() as u64 != size_hint {
+                                return Err(error(
+                                    StatusCode::INTERNAL_SERVER_ERROR,
+                                    &format!(
+                                        "failed to load all data {} != {}",
+                                        b.len(),
+                                        size_hint
+                                    ),
+                                    &state,
+                                ));
+                            }
+                        }
+
                         dbg!(std::str::from_utf8(&b).unwrap());
                         b
                     }

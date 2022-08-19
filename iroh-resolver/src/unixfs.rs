@@ -135,6 +135,14 @@ impl Node {
         self.inner.data.clone()
     }
 
+    pub fn filesize(&self) -> Option<u64> {
+        self.inner.filesize
+    }
+
+    pub fn blocksizes(&self) -> &[u64] {
+        &self.inner.blocksizes
+    }
+
     pub fn size(&self) -> Option<usize> {
         if self.outer.links.is_empty() {
             return Some(
@@ -245,6 +253,19 @@ impl UnixfsNode {
         }
     }
 
+    /// Returns the filesize in bytes.
+    /// Should only be set for `Raw` and `File`.
+    pub fn filesize(&self) -> Option<u64> {
+        match self {
+            UnixfsNode::Raw(data) => Some(data.len() as u64),
+            UnixfsNode::Directory(node)
+            | UnixfsNode::RawNode(node)
+            | UnixfsNode::File(node)
+            | UnixfsNode::Symlink(node)
+            | UnixfsNode::HamtShard(node, _) => node.filesize(),
+        }
+    }
+
     pub fn links<'a>(&'a self) -> Links<'a> {
         match self {
             UnixfsNode::Raw(_) => Links::Raw,
@@ -308,28 +329,33 @@ impl UnixfsNode {
                 })
             }
             UnixfsNode::Directory(_) => {
-                let source = futures::stream::iter(
-                    self.links()
-                        .map(|l| {
-                            l.map(|l| {
-                                dbg!(&l.name);
-                                let mut name =
-                                    l.name.map(|s| s.as_bytes().to_vec()).unwrap_or_default();
+                let source = self
+                    .links()
+                    .map(|l| {
+                        l.map(|l| {
+                            dbg!(&l.name);
+                            let mut name =
+                                l.name.map(|s| s.as_bytes().to_vec()).unwrap_or_default();
 
-                                name.extend_from_slice(b"\n");
-                                Bytes::from(name)
-                            })
-                            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))
+                            name.extend_from_slice(b"\n");
+                            Bytes::from(name)
                         })
-                        .collect::<Vec<_>>(),
-                )
-                .boxed();
+                        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))
+                    })
+                    .collect::<Vec<_>>();
+                dbg!(&source);
+                let size = source
+                    .iter()
+                    .map(|b| b.as_ref().map(|l| l.len() as u64).unwrap_or_default())
+                    .sum();
+                let source = futures::stream::iter(source).boxed();
                 let stream = tokio_util::io::StreamReader::new(source);
 
                 Ok(UnixfsReader::Directory {
                     stream,
                     pos: 0,
                     out_metrics: om,
+                    size,
                 })
             }
             UnixfsNode::HamtShard(_, hamt) => {
@@ -387,6 +413,8 @@ pub enum UnixfsReader<T: ContentLoader> {
         stream: tokio_util::io::StreamReader<BoxStream<'static, io::Result<Bytes>>, Bytes>,
         pos: usize,
         out_metrics: OutMetrics,
+        // size of the "rendered" output in bytes
+        size: u64,
     },
     File {
         root_node: UnixfsNode,
@@ -399,6 +427,41 @@ pub enum UnixfsReader<T: ContentLoader> {
         loader: Resolver<T>,
         out_metrics: OutMetrics,
     },
+}
+impl<T: ContentLoader> UnixfsReader<T> {
+    /// Returrns the size in bytes, if known in advance.
+    pub fn size(&self) -> Option<u64> {
+        match self {
+            UnixfsReader::Directory {
+                stream,
+                pos,
+                out_metrics,
+                size,
+            } => {
+                // size is known upfront
+                Some(*size)
+            }
+            UnixfsReader::File {
+                root_node,
+                pos,
+                current_node,
+                current_links,
+                loader,
+                out_metrics,
+            } => {
+                // File size is stored in the protobuf
+                root_node.filesize()
+            }
+            UnixfsReader::Hamt {
+                stream,
+                pos,
+                out_metrics,
+            } => {
+                // Can't know upfront, as we need to load the individual blocks first
+                None
+            }
+        }
+    }
 }
 
 impl<T: ContentLoader + Unpin + 'static> AsyncRead for UnixfsReader<T> {
@@ -433,6 +496,7 @@ impl<T: ContentLoader + Unpin + 'static> AsyncRead for UnixfsReader<T> {
                 stream,
                 pos,
                 out_metrics,
+                ..
             } => {
                 let pos_current = *pos;
                 let start = buf.filled().len();

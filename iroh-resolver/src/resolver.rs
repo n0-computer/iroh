@@ -281,10 +281,30 @@ pub enum OutPrettyReader<T: ContentLoader> {
     Raw(BytesReader),
 }
 
+impl<T: ContentLoader> OutPrettyReader<T> {
+    /// Returrns the size in bytes, if known in advance.
+    pub fn size(&self) -> Option<u64> {
+        match self {
+            OutPrettyReader::DagPb(reader)
+            | OutPrettyReader::DagCbor(reader)
+            | OutPrettyReader::DagJson(reader)
+            | OutPrettyReader::Raw(reader) => reader.size(),
+            OutPrettyReader::Unixfs(reader) => reader.size(),
+        }
+    }
+}
+
 pub struct BytesReader {
     pos: usize,
     bytes: Bytes,
     om: OutMetrics,
+}
+
+impl BytesReader {
+    /// Returrns the size in bytes, if known in advance.
+    pub fn size(&self) -> Option<u64> {
+        Some(self.bytes.len() as u64)
+    }
 }
 
 pub struct OutMetrics {
