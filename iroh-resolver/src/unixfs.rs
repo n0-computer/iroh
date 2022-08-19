@@ -10,7 +10,6 @@ use anyhow::{anyhow, bail, ensure, Result};
 use bytes::{Buf, Bytes};
 use cid::Cid;
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt, Stream, StreamExt};
-use ouroboros::self_referencing;
 use prost::Message;
 use tokio::io::AsyncRead;
 

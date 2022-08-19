@@ -123,9 +123,8 @@ impl Client {
                 )
                 .map_err(|e| e.to_string())?;
 
-            let size = reader.size();
             let stream = ReaderStream::new(reader);
-            let body = PrettyStreamBody(stream, size);
+            let body = PrettyStreamBody(stream, metadata.size);
 
             Ok((FileResult::File(body), metadata))
         }

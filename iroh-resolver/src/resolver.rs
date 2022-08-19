@@ -256,7 +256,7 @@ pub struct Metadata {
     /// The original path for that was resolved.
     pub path: Path,
     /// Size in bytes.
-    pub size: Option<usize>,
+    pub size: Option<u64>,
     pub typ: OutType,
     pub unixfs_type: Option<UnixfsType>,
     /// List of resolved cids. In order of the `path`.
@@ -594,7 +594,7 @@ impl<T: ContentLoader> Resolver<T> {
             };
             let metadata = Metadata {
                 path: root_path,
-                size: current.size(),
+                size: current.filesize(),
                 typ: OutType::Unixfs,
                 unixfs_type,
                 resolved_path,
@@ -635,7 +635,7 @@ impl<T: ContentLoader> Resolver<T> {
 
         let metadata = Metadata {
             path: root_path,
-            size: Some(bytes.len()),
+            size: Some(bytes.len() as u64),
             typ: OutType::DagPb,
             unixfs_type: None,
             resolved_path: vec![cid],
@@ -673,7 +673,7 @@ impl<T: ContentLoader> Resolver<T> {
 
         let metadata = Metadata {
             path: root_path,
-            size: Some(bytes.len()),
+            size: Some(bytes.len() as u64),
             typ: OutType::DagCbor,
             unixfs_type: None,
             resolved_path: vec![cid],
@@ -711,7 +711,7 @@ impl<T: ContentLoader> Resolver<T> {
 
         let metadata = Metadata {
             path: root_path,
-            size: Some(bytes.len()),
+            size: Some(bytes.len() as u64),
             typ: OutType::DagJson,
             unixfs_type: None,
             resolved_path: vec![cid],
@@ -735,7 +735,7 @@ impl<T: ContentLoader> Resolver<T> {
 
         let metadata = Metadata {
             path: root_path,
-            size: Some(loaded_cid.data.len()),
+            size: Some(loaded_cid.data.len() as u64),
             typ: OutType::Raw,
             unixfs_type: None,
             resolved_path: vec![cid],
@@ -1048,7 +1048,7 @@ mod tests {
                     }
                     _ => unreachable!(),
                 }
-                assert_eq!(m.size, Some(out_bytes.len()));
+                assert_eq!(m.size, Some(out_bytes.len() as u64));
                 assert_eq!(m.resolved_path, vec![c]);
             }
             {
@@ -1076,7 +1076,7 @@ mod tests {
                     }
                     _ => unreachable!(),
                 }
-                assert_eq!(m.size, Some(out_bytes.len()));
+                assert_eq!(m.size, Some(out_bytes.len() as u64));
                 assert_eq!(m.resolved_path, vec![c]);
             }
         }
@@ -1524,7 +1524,7 @@ mod tests {
             assert_eq!(m.unixfs_type, Some(UnixfsType::File));
             assert_eq!(m.path.to_string(), path);
             assert_eq!(m.typ, OutType::Unixfs);
-            assert_eq!(m.size, None); // multipart file, we don't know the size ahead of time
+            assert_eq!(m.size, Some(426));
             assert_eq!(m.resolved_path, vec![root_cid_str.parse().unwrap(),]);
 
             if let OutContent::Unixfs(node) = ipld_readme.content {
