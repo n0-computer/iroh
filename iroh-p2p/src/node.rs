@@ -625,104 +625,75 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                     .send(())
                     .map_err(|_| anyhow!("sender dropped"))?;
             }
-            RpcMessage::Gossipsub(g) => match g {
-                rpc::GossipsubMessage::AddExplicitPeer(response_channel, peer_id) => {
-                    self.swarm
-                        .behaviour_mut()
-                        .gossipsub
-                        .add_explicit_peer(&peer_id);
-                    response_channel
-                        .send(())
-                        .map_err(|_| anyhow!("sender dropped"))?;
+            RpcMessage::Gossipsub(g) => {
+                let gossipsub = match self.swarm.behaviour_mut().gossipsub.as_mut() {
+                    Some(gossipsub) => gossipsub,
+                    None => {
+                        tracing::warn!("Unexpected gossipsub message");
+                        return Ok(false);
+                    }
+                };
+                match g {
+                    rpc::GossipsubMessage::AddExplicitPeer(response_channel, peer_id) => {
+                        gossipsub.add_explicit_peer(&peer_id);
+                        response_channel
+                            .send(())
+                            .map_err(|_| anyhow!("sender dropped"))?;
+                    }
+                    rpc::GossipsubMessage::AllMeshPeers(response_channel) => {
+                        let peers = gossipsub.all_mesh_peers().copied().collect();
+                        response_channel
+                            .send(peers)
+                            .map_err(|_| anyhow!("sender dropped"))?;
+                    }
+                    rpc::GossipsubMessage::AllPeers(response_channel) => {
+                        let all_peers = gossipsub
+                            .all_peers()
+                            .map(|(p, t)| (*p, t.into_iter().cloned().collect()))
+                            .collect();
+                        response_channel
+                            .send(all_peers)
+                            .map_err(|_| anyhow!("sender dropped"))?;
+                    }
+                    rpc::GossipsubMessage::MeshPeers(response_channel, topic_hash) => {
+                        let peers = gossipsub.mesh_peers(&topic_hash).copied().collect();
+                        response_channel
+                            .send(peers)
+                            .map_err(|_| anyhow!("sender dropped"))?;
+                    }
+                    rpc::GossipsubMessage::Publish(response_channel, topic_hash, bytes) => {
+                        let res = gossipsub
+                            .publish(IdentTopic::new(topic_hash.into_string()), bytes.to_vec());
+                        response_channel
+                            .send(res)
+                            .map_err(|_| anyhow!("sender dropped"))?;
+                    }
+                    rpc::GossipsubMessage::RemoveExplicitPeer(response_channel, peer_id) => {
+                        gossipsub.remove_explicit_peer(&peer_id);
+                        response_channel
+                            .send(())
+                            .map_err(|_| anyhow!("sender dropped"))?;
+                    }
+                    rpc::GossipsubMessage::Subscribe(response_channel, topic_hash) => {
+                        let res = gossipsub.subscribe(&IdentTopic::new(topic_hash.into_string()));
+                        response_channel
+                            .send(res)
+                            .map_err(|_| anyhow!("sender dropped"))?;
+                    }
+                    rpc::GossipsubMessage::Topics(response_channel) => {
+                        let topics = gossipsub.topics().cloned().collect();
+                        response_channel
+                            .send(topics)
+                            .map_err(|_| anyhow!("sender dropped"))?;
+                    }
+                    rpc::GossipsubMessage::Unsubscribe(response_channel, topic_hash) => {
+                        let res = gossipsub.unsubscribe(&IdentTopic::new(topic_hash.into_string()));
+                        response_channel
+                            .send(res)
+                            .map_err(|_| anyhow!("sender dropped"))?;
+                    }
                 }
-                rpc::GossipsubMessage::AllMeshPeers(response_channel) => {
-                    let peers = self
-                        .swarm
-                        .behaviour_mut()
-                        .gossipsub
-                        .all_mesh_peers()
-                        .copied()
-                        .collect();
-                    response_channel
-                        .send(peers)
-                        .map_err(|_| anyhow!("sender dropped"))?;
-                }
-                rpc::GossipsubMessage::AllPeers(response_channel) => {
-                    let all_peers = self
-                        .swarm
-                        .behaviour_mut()
-                        .gossipsub
-                        .all_peers()
-                        .map(|(p, t)| (*p, t.into_iter().cloned().collect()))
-                        .collect();
-                    response_channel
-                        .send(all_peers)
-                        .map_err(|_| anyhow!("sender dropped"))?;
-                }
-                rpc::GossipsubMessage::MeshPeers(response_channel, topic_hash) => {
-                    let peers = self
-                        .swarm
-                        .behaviour_mut()
-                        .gossipsub
-                        .mesh_peers(&topic_hash)
-                        .copied()
-                        .collect();
-                    response_channel
-                        .send(peers)
-                        .map_err(|_| anyhow!("sender dropped"))?;
-                }
-                rpc::GossipsubMessage::Publish(response_channel, topic_hash, bytes) => {
-                    let res = self
-                        .swarm
-                        .behaviour_mut()
-                        .gossipsub
-                        .publish(IdentTopic::new(topic_hash.into_string()), bytes.to_vec());
-                    response_channel
-                        .send(res)
-                        .map_err(|_| anyhow!("sender dropped"))?;
-                }
-                rpc::GossipsubMessage::RemoveExplicitPeer(response_channel, peer_id) => {
-                    self.swarm
-                        .behaviour_mut()
-                        .gossipsub
-                        .remove_explicit_peer(&peer_id);
-                    response_channel
-                        .send(())
-                        .map_err(|_| anyhow!("sender dropped"))?;
-                }
-                rpc::GossipsubMessage::Subscribe(response_channel, topic_hash) => {
-                    let res = self
-                        .swarm
-                        .behaviour_mut()
-                        .gossipsub
-                        .subscribe(&IdentTopic::new(topic_hash.into_string()));
-                    response_channel
-                        .send(res)
-                        .map_err(|_| anyhow!("sender dropped"))?;
-                }
-                rpc::GossipsubMessage::Topics(response_channel) => {
-                    let topics = self
-                        .swarm
-                        .behaviour_mut()
-                        .gossipsub
-                        .topics()
-                        .cloned()
-                        .collect();
-                    response_channel
-                        .send(topics)
-                        .map_err(|_| anyhow!("sender dropped"))?;
-                }
-                rpc::GossipsubMessage::Unsubscribe(response_channel, topic_hash) => {
-                    let res = self
-                        .swarm
-                        .behaviour_mut()
-                        .gossipsub
-                        .unsubscribe(&IdentTopic::new(topic_hash.into_string()));
-                    response_channel
-                        .send(res)
-                        .map_err(|_| anyhow!("sender dropped"))?;
-                }
-            },
+            }
             RpcMessage::Shutdown => {
                 return Ok(true);
             }
