@@ -1,15 +1,11 @@
 use anyhow::{bail, Result};
-use axum::http::{header::*, Method};
+use axum::http::{header::*};
 use config::{ConfigError, Map, Source, Value};
-use headers::{
-    AccessControlAllowHeaders, AccessControlAllowMethods, AccessControlAllowOrigin, HeaderMapExt,
-};
-use iroh_gateway::constants::*;
+
 use iroh_metrics::config::Config as MetricsConfig;
-use iroh_p2p::{Config as FullP2pConfig, Libp2pConfig};
+use iroh_p2p::{Libp2pConfig};
 use iroh_rpc_client::Config as RpcClientConfig;
 use iroh_rpc_types::{gateway::GatewayServerAddr, Addr};
-use iroh_store::Config as FullStoreConfig;
 use iroh_util::insert_into_config_map;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -27,11 +23,11 @@ pub const DEFAULT_PORT: u16 = 9050;
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct Config {
     // Gateway specific configuration.
-    pub gateway: GatewayConfig,
+    pub gateway: iroh_gateway::config::Config,
     // Store specific configuration.
-    pub store: StoreConfig,
+    pub store: iroh_store::config::Config,
     // P2P specific configuration.
-    pub p2p: iroh_p2p::Libp2pConfig,
+    pub p2p: iroh_p2p::config::Config,
 
     /// rpc addresses for the gateway & addresses for the rpc client to dial
     pub rpc_client: RpcClientConfig,
@@ -39,63 +35,11 @@ pub struct Config {
     pub metrics: MetricsConfig,
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
-pub struct StoreConfig {
-    /// The location of the content database.
-    pub path: PathBuf,
-}
-
-impl Source for StoreConfig {
-    fn clone_into_box(&self) -> Box<dyn Source + Send + Sync> {
-        Box::new(self.clone())
-    }
-
-    fn collect(&self) -> Result<Map<String, Value>, ConfigError> {
-        let mut map: Map<String, Value> = Map::new();
-
-        let path = self
-            .path
-            .to_str()
-            .ok_or_else(|| ConfigError::Foreign("No `path` set. Path is required.".into()))?;
-        insert_into_config_map(&mut map, "path", path);
-        Ok(map)
-    }
-}
-
-impl Default for StoreConfig {
-    fn default() -> Self {
-        Self {
-            path: PathBuf::from("./iroh-store-db"),
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
-pub struct GatewayConfig {
-    /// flag to toggle whether the gateway allows writing/pushing data
-    pub writeable: bool,
-    /// flag to toggle whether the gateway allows fetching data from other nodes or is local only
-    pub fetch: bool,
-    /// flag to toggle whether the gateway enables/utilizes caching
-    pub cache: bool,
-    /// default port to listen on
-    pub port: u16,
-    /// Gateway from which to fetch raw CIDs. TODO: move to p2p config?
-    pub raw_gateway: String,
-    // NOTE: for toml to serialize properly, the "table" values must be serialized at the end, and
-    // so much come at the end of the `Config` struct
-    /// set of user provided headers to attach to all responses
-    #[serde(with = "http_serde::header_map")]
-    pub headers: HeaderMap,
-    /// flag to toggle whether the gateway should use denylist on requests
-    pub denylist: bool,
-}
-
 impl Config {
     pub fn new(
-        gateway: GatewayConfig,
-        store: StoreConfig,
-        p2p: Libp2pConfig,
+        gateway: iroh_gateway::config::Config,
+        store: iroh_store::config::Config,
+        p2p: iroh_p2p::config::Config,
         rpc_client: RpcClientConfig,
     ) -> Self {
         Self {
@@ -154,110 +98,39 @@ impl Config {
     }
 }
 
-#[allow(clippy::from_over_into)]
-impl Into<FullStoreConfig> for Config {
-    fn into(self) -> FullStoreConfig {
-        FullStoreConfig {
-            path: self.store.path.clone(),
-            rpc_client: self.rpc_client.clone(),
-            metrics: self.metrics,
-        }
-    }
-}
-
-#[allow(clippy::from_over_into)]
-impl Into<FullP2pConfig> for Config {
-    fn into(self) -> FullP2pConfig {
-        FullP2pConfig {
-            libp2p: self.p2p.clone(),
-            rpc_client: self.rpc_client.clone(),
-            metrics: self.metrics,
-        }
-    }
-}
-
-impl GatewayConfig {
-    pub fn new(writeable: bool, fetch: bool, cache: bool, port: u16, raw_gateway: &str) -> Self {
-        Self {
-            writeable,
-            fetch,
-            cache,
-            headers: HeaderMap::new(),
-            port,
-            raw_gateway: raw_gateway.to_owned(),
-            denylist: false,
-        }
-    }
-
-    pub fn set_default_headers(&mut self) {
-        self.headers = default_headers();
-    }
-}
-
-fn default_headers() -> HeaderMap {
-    let mut headers = HeaderMap::new();
-    headers.typed_insert(AccessControlAllowOrigin::ANY);
-    headers.typed_insert(
-        [
-            Method::GET,
-            Method::PUT,
-            Method::POST,
-            Method::DELETE,
-            Method::HEAD,
-            Method::OPTIONS,
-        ]
-        .into_iter()
-        .collect::<AccessControlAllowMethods>(),
-    );
-    headers.typed_insert(
-        [
-            CONTENT_TYPE,
-            CONTENT_DISPOSITION,
-            LAST_MODIFIED,
-            CACHE_CONTROL,
-            ACCEPT_RANGES,
-            ETAG,
-            HEADER_SERVICE_WORKER.clone(),
-            HEADER_X_IPFS_GATEWAY_PREFIX.clone(),
-            HEADER_X_TRACE_ID.clone(),
-            HEADER_X_CONTENT_TYPE_OPTIONS.clone(),
-            HEADER_X_IPFS_PATH.clone(),
-            HEADER_X_IPFS_ROOTS.clone(),
-        ]
-        .into_iter()
-        .collect::<AccessControlAllowHeaders>(),
-    );
-    // todo(arqu): remove these once propperly implmented
-    headers.insert(CACHE_CONTROL, VALUE_NO_CACHE_NO_TRANSFORM.clone());
-    headers.insert(ACCEPT_RANGES, VALUE_NONE.clone());
-    headers
-}
-
 impl Default for Config {
     fn default() -> Self {
+        let ipfsd = Self::default_ipfsd();
+        let metrics_config = MetricsConfig::default();
         Self {
-            rpc_client: Self::default_ipfsd(),
-            metrics: MetricsConfig::default(),
-            gateway: GatewayConfig::default(),
-            store: StoreConfig::default(),
-            p2p: Libp2pConfig::default(),
+            rpc_client: ipfsd.clone(),
+            metrics: metrics_config.clone(),
+            gateway: iroh_gateway::config::Config::default(),
+            store: default_store_config(ipfsd.clone(), metrics_config.clone()),
+            p2p: default_p2p_config(ipfsd, metrics_config),
         }
     }
 }
 
-impl Default for GatewayConfig {
-    fn default() -> Self {
-        let mut t = Self {
-            writeable: false,
-            fetch: false,
-            cache: false,
-            headers: HeaderMap::new(),
-            port: DEFAULT_PORT,
-            raw_gateway: "dweb.link".to_owned(),
-            denylist: false,
-        };
-        t.set_default_headers();
-        t
+fn default_store_config(
+    ipfsd: RpcClientConfig,
+    metrics: iroh_metrics::config::Config,
+) -> iroh_store::config::Config {
+    iroh_store::config::Config {
+        path: PathBuf::new(),
+        rpc_client: ipfsd,
+        metrics,
+    }
+}
+
+fn default_p2p_config(
+    ipfsd: RpcClientConfig,
+    metrics: iroh_metrics::config::Config,
+) -> iroh_p2p::config::Config {
+    iroh_p2p::config::Config {
+        libp2p: Libp2pConfig::default(),
+        rpc_client: ipfsd,
+        metrics,
     }
 }
 
@@ -278,26 +151,6 @@ impl Source for Config {
     }
 }
 
-impl Source for GatewayConfig {
-    fn clone_into_box(&self) -> Box<dyn Source + Send + Sync> {
-        Box::new(self.clone())
-    }
-
-    fn collect(&self) -> Result<Map<String, Value>, ConfigError> {
-        let mut map: Map<String, Value> = Map::new();
-        insert_into_config_map(&mut map, "writeable", self.writeable);
-        insert_into_config_map(&mut map, "fetch", self.fetch);
-        insert_into_config_map(&mut map, "cache", self.cache);
-        insert_into_config_map(&mut map, "denylist", self.denylist);
-        insert_into_config_map(&mut map, "raw_gateway", self.raw_gateway.clone());
-        // Some issue between deserializing u64 & u16, converting this to
-        // an signed int fixes the issue
-        insert_into_config_map(&mut map, "port", self.port as i32);
-        insert_into_config_map(&mut map, "headers", collect_headers(&self.headers)?);
-        Ok(map)
-    }
-}
-
 impl iroh_gateway::handlers::StateConfig for Config {
     fn rpc_client(&self) -> iroh_rpc_client::Config {
         self.rpc_client.clone()
@@ -309,109 +162,5 @@ impl iroh_gateway::handlers::StateConfig for Config {
 
     fn user_headers(&self) -> HeaderMap<HeaderValue> {
         self.gateway.headers.clone()
-    }
-}
-
-fn collect_headers(headers: &HeaderMap) -> Result<Map<String, Value>, ConfigError> {
-    let mut map = Map::new();
-    for (key, value) in headers.iter() {
-        insert_into_config_map(
-            &mut map,
-            key.as_str(),
-            value.to_str().map_err(|e| ConfigError::Foreign(e.into()))?,
-        );
-    }
-    Ok(map)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use config::Config as ConfigBuilder;
-
-    #[test]
-    fn test_default_headers() {
-        let headers = default_headers();
-        assert_eq!(headers.len(), 5);
-        let h = headers.get(&ACCESS_CONTROL_ALLOW_ORIGIN).unwrap();
-        assert_eq!(h, "*");
-    }
-
-    #[test]
-    fn default_config() {
-        let config = Config::default();
-        assert!(!config.gateway.writeable);
-        assert!(!config.gateway.fetch);
-        assert!(!config.gateway.cache);
-        assert_eq!(config.gateway.port, DEFAULT_PORT);
-    }
-
-    #[test]
-    fn test_collect() {
-        let default = Config::default();
-        let mut expect: Map<String, Value> = Map::new();
-        expect.insert(
-            "gateway".to_string(),
-            Value::new(None, default.gateway.collect().unwrap()),
-        );
-        expect.insert(
-            "store".to_string(),
-            Value::new(None, default.store.collect().unwrap()),
-        );
-        expect.insert(
-            "p2p".to_string(),
-            Value::new(None, default.p2p.collect().unwrap()),
-        );
-        expect.insert(
-            "metrics".to_string(),
-            Value::new(None, default.metrics.collect().unwrap()),
-        );
-        expect.insert(
-            "rpc_client".to_string(),
-            Value::new(None, default.rpc_client.collect().unwrap()),
-        );
-
-        let got = default.collect().unwrap();
-        for key in got.keys() {
-            let left = expect.get(key).unwrap_or_else(|| panic!("{}", key));
-            let right = got.get(key).unwrap();
-            assert_eq!(left, right);
-        }
-    }
-
-    #[test]
-    fn test_collect_headers() {
-        let mut expect = Map::new();
-        expect.insert(
-            "access-control-allow-origin".to_string(),
-            Value::new(None, "*"),
-        );
-        expect.insert(
-            "access-control-allow-methods".to_string(),
-            Value::new(None, "GET, PUT, POST, DELETE, HEAD, OPTIONS"),
-        );
-        expect.insert("access-control-allow-headers".to_string(), Value::new(None, "content-type, content-disposition, last-modified, cache-control, accept-ranges, etag, service-worker, x-ipfs-gateway-prefix, x-trace-id, x-content-type-options, x-ipfs-path, x-ipfs-roots"));
-        expect.insert(
-            "cache-control".to_string(),
-            Value::new(None, "no-cache, no-transform"),
-        );
-        expect.insert("accept-ranges".to_string(), Value::new(None, "none"));
-        let got = collect_headers(&default_headers()).unwrap();
-        assert_eq!(expect, got);
-    }
-
-    #[test]
-    fn test_build_config_from_struct() {
-        let mut expect = Config::default();
-        expect.gateway.set_default_headers();
-        let source = expect.clone();
-        let got: Config = ConfigBuilder::builder()
-            .add_source(source)
-            .build()
-            .unwrap()
-            .try_deserialize()
-            .unwrap();
-
-        assert_eq!(expect, got);
     }
 }

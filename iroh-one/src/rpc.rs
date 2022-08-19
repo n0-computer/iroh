@@ -19,6 +19,7 @@ impl iroh_rpc_types::NamedService for Gateway {
     const NAME: &'static str = "gateway";
 }
 
+#[allow(dead_code)]
 pub async fn new(addr: GatewayServerAddr, gateway: Gateway) -> Result<()> {
     iroh_rpc_types::gateway::serve(addr, gateway).await
 }

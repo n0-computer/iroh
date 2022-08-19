@@ -1,4 +1,4 @@
-use crate::{rpc, rpc::Gateway, uds};
+use crate::uds;
 use axum::{Router, Server};
 use iroh_gateway::{
     bad_bits::BadBits,
@@ -13,11 +13,9 @@ use iroh_rpc_types::gateway::GatewayServerAddr;
 use prometheus_client::registry::Registry;
 use std::{collections::HashMap, sync::Arc};
 use tokio::{net::UnixListener, sync::RwLock};
-
-#[derive(Debug)]
-pub struct Core {
-    state: Arc<State>,
-}
+use iroh_gateway::{core::State, handlers::get_app_routes};
+use std::sync::Arc;
+use tokio::net::UnixListener;
 
 impl Core {
     pub async fn new(

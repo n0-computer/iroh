@@ -15,12 +15,12 @@ use crate::{
     templates,
 };
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Core {
     state: Arc<State>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct State {
     pub config: Arc<dyn StateConfig>,
     pub client: Client,
@@ -118,6 +118,7 @@ mod tests {
             false,
             false,
             false,
+            "",
             0,
             RpcClientConfig {
                 gateway_addr: None,
