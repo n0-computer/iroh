@@ -1,6 +1,7 @@
 use std::pin::Pin;
 use std::task::Poll;
 
+use anyhow::Result;
 use bytes::Bytes;
 use futures::StreamExt;
 use futures::TryStream;
@@ -8,6 +9,7 @@ use http::HeaderMap;
 use iroh_metrics::gateway::Metrics;
 use iroh_resolver::resolver::CidOrDomain;
 use iroh_resolver::resolver::Metadata;
+use iroh_resolver::resolver::Out;
 use iroh_resolver::resolver::OutMetrics;
 use iroh_resolver::resolver::OutPrettyReader;
 use iroh_resolver::resolver::Resolver;
@@ -23,13 +25,18 @@ use crate::response::ResponseFormat;
 
 #[derive(Debug, Clone)]
 pub struct Client {
-    resolver: Resolver<iroh_rpc_client::Client>,
+    pub(crate) resolver: Resolver<iroh_rpc_client::Client>,
 }
 
 pub struct PrettyStreamBody(
     ReaderStream<OutPrettyReader<iroh_rpc_client::Client>>,
     Option<u64>,
 );
+
+pub enum FileResult {
+    File(PrettyStreamBody),
+    Directory(Out),
+}
 
 impl http_body::Body for PrettyStreamBody {
     type Data = Bytes;
@@ -39,30 +46,16 @@ impl http_body::Body for PrettyStreamBody {
         mut self: Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> Poll<Option<Result<Self::Data, Self::Error>>> {
-        dbg!("poll_data");
         let stream = Pin::new(&mut self.0);
-        let res = match stream.try_poll_next(cx) {
-            Poll::Ready(res) => res,
-            Poll::Pending => {
-                dbg!("pending");
-                return Poll::Pending;
-            }
-        };
-        match res {
-            Some(Ok(chunk)) => {
+        match stream.try_poll_next(cx) {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(Some(Ok(chunk))) => {
                 let chunk = chunk.into();
 
-                dbg!(&chunk);
                 Poll::Ready(Some(Ok(chunk)))
             }
-            Some(Err(err)) => {
-                dbg!(err.to_string());
-                Poll::Ready(Some(Err(err.to_string())))
-            }
-            None => {
-                dbg!("stream end");
-                Poll::Ready(None)
-            }
+            Poll::Ready(Some(Err(err))) => Poll::Ready(Some(Err(err.to_string()))),
+            Poll::Ready(None) => Poll::Ready(None),
         }
     }
 
@@ -95,7 +88,7 @@ impl Client {
         path: iroh_resolver::resolver::Path,
         start_time: std::time::Instant,
         metrics: &Metrics,
-    ) -> Result<(PrettyStreamBody, Metadata), String> {
+    ) -> Result<(FileResult, Metadata), String> {
         info!("get file {}", path);
         let res = self
             .resolver
@@ -115,21 +108,27 @@ impl Client {
                 .hist_ttfb_cached
                 .observe(start_time.elapsed().as_millis() as f64);
         }
-        let reader = res
-            .pretty(
-                self.resolver.clone(),
-                OutMetrics {
-                    metrics: metrics.clone(),
-                    start: start_time,
-                },
-            )
-            .map_err(|e| e.to_string())?;
-        // TODO: avoid double indirection (stream of bytes -> asyncread -> stream of bytes)
-        let size = reader.size();
-        let stream = ReaderStream::new(reader);
-        let body = PrettyStreamBody(stream, size);
 
-        Ok((body, metadata))
+        if res.is_dir() {
+            let body = FileResult::Directory(res);
+            Ok((body, metadata))
+        } else {
+            let reader = res
+                .pretty(
+                    self.resolver.clone(),
+                    OutMetrics {
+                        metrics: metrics.clone(),
+                        start: start_time,
+                    },
+                )
+                .map_err(|e| e.to_string())?;
+
+            let size = reader.size();
+            let stream = ReaderStream::new(reader);
+            let body = PrettyStreamBody(stream, size);
+
+            Ok((FileResult::File(body), metadata))
+        }
     }
 
     #[tracing::instrument(skip(self, metrics))]

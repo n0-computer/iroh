@@ -1,7 +1,7 @@
 use std::{
     collections::VecDeque,
     fmt::Debug,
-    io::{self, Cursor},
+    io::Cursor,
     pin::Pin,
     task::{Context, Poll},
 };
@@ -9,7 +9,8 @@ use std::{
 use anyhow::{anyhow, bail, ensure, Result};
 use bytes::{Buf, Bytes};
 use cid::Cid;
-use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
+use futures::{future::BoxFuture, stream::BoxStream, FutureExt, Stream, StreamExt};
+use ouroboros::self_referencing;
 use prost::Message;
 use tokio::io::AsyncRead;
 
@@ -307,11 +308,39 @@ impl UnixfsNode {
         }
     }
 
-    pub fn into_reader<T: ContentLoader>(
+    /// If this is a directory or hamt shard, returns a stream that yields all children of it.
+    pub fn as_child_reader<'a, 'b: 'a, T: ContentLoader>(
+        &'a self,
+        loader: &'b Resolver<T>,
+        om: OutMetrics,
+    ) -> Result<Option<UnixfsChildStream<'a>>> {
+        match self {
+            UnixfsNode::Raw(_)
+            | UnixfsNode::RawNode(_)
+            | UnixfsNode::File(_)
+            | UnixfsNode::Symlink(_) => Ok(None),
+            UnixfsNode::Directory(_) => {
+                let source = self.links().map(|l| l.map(|l| l.to_owned()));
+                let stream = futures::stream::iter(source).boxed();
+
+                Ok(Some(UnixfsChildStream::Directory {
+                    stream,
+                    out_metrics: om,
+                }))
+            }
+            UnixfsNode::HamtShard(_, hamt) => Ok(Some(UnixfsChildStream::Hamt {
+                stream: hamt.children(loader).boxed(),
+                pos: 0,
+                out_metrics: om,
+            })),
+        }
+    }
+
+    pub fn into_content_reader<T: ContentLoader>(
         self,
         loader: Resolver<T>,
         om: OutMetrics,
-    ) -> Result<UnixfsReader<T>> {
+    ) -> Result<Option<UnixfsContentReader<T>>> {
         match self {
             UnixfsNode::Raw(_)
             | UnixfsNode::RawNode(_)
@@ -319,103 +348,33 @@ impl UnixfsNode {
             | UnixfsNode::Symlink(_) => {
                 let current_links = vec![self.links_owned()?];
 
-                Ok(UnixfsReader::File {
+                Ok(Some(UnixfsContentReader::File {
                     root_node: self,
                     pos: 0,
                     current_node: CurrentNodeState::Outer,
                     current_links,
                     loader,
                     out_metrics: om,
-                })
+                }))
             }
-            UnixfsNode::Directory(_) => {
-                let source = self
-                    .links()
-                    .map(|l| {
-                        l.map(|l| {
-                            dbg!(&l.name);
-                            let mut name =
-                                l.name.map(|s| s.as_bytes().to_vec()).unwrap_or_default();
-
-                            name.extend_from_slice(b"\n");
-                            Bytes::from(name)
-                        })
-                        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))
-                    })
-                    .collect::<Vec<_>>();
-                dbg!(&source);
-                let size = source
-                    .iter()
-                    .map(|b| b.as_ref().map(|l| l.len() as u64).unwrap_or_default())
-                    .sum();
-                let source = futures::stream::iter(source).boxed();
-                let stream = tokio_util::io::StreamReader::new(source);
-
-                Ok(UnixfsReader::Directory {
-                    stream,
-                    pos: 0,
-                    out_metrics: om,
-                    size,
-                })
-            }
-            UnixfsNode::HamtShard(_, hamt) => {
-                let stream = HamtReaderStreamBuilder {
-                    loader,
-                    hamt,
-                    stream_builder: |hamt: &Hamt, loader: &Resolver<T>| {
-                        let source = hamt
-                            .children(loader)
-                            .map(|l| {
-                                l.map(|l| {
-                                    let mut name =
-                                        l.name.map(|s| s.as_bytes().to_vec()).unwrap_or_default();
-                                    name.extend_from_slice(b"\n");
-                                    Bytes::from(name)
-                                })
-                                .map_err(|e| {
-                                    io::Error::new(io::ErrorKind::InvalidData, e.to_string())
-                                })
-                            })
-                            .boxed();
-                        tokio_util::io::StreamReader::new(source)
-                    },
-                }
-                .build();
-
-                Ok(UnixfsReader::Hamt {
-                    stream,
-                    pos: 0,
-                    out_metrics: om,
-                })
-            }
+            UnixfsNode::HamtShard(_, _) | UnixfsNode::Directory(_) => Ok(None),
         }
     }
 }
 
-use ouroboros::self_referencing;
-
-#[self_referencing]
-pub struct HamtReaderStream<T: ContentLoader> {
-    hamt: Hamt,
-    loader: Resolver<T>,
-    #[borrows(hamt, loader)]
-    #[covariant]
-    stream: tokio_util::io::StreamReader<BoxStream<'this, io::Result<Bytes>>, Bytes>,
-}
-
-pub enum UnixfsReader<T: ContentLoader> {
+pub enum UnixfsChildStream<'a> {
     Hamt {
-        stream: HamtReaderStream<T>,
+        stream: BoxStream<'a, Result<Link>>,
         pos: usize,
         out_metrics: OutMetrics,
     },
     Directory {
-        stream: tokio_util::io::StreamReader<BoxStream<'static, io::Result<Bytes>>, Bytes>,
-        pos: usize,
+        stream: BoxStream<'a, Result<Link>>,
         out_metrics: OutMetrics,
-        // size of the "rendered" output in bytes
-        size: u64,
     },
+}
+
+pub enum UnixfsContentReader<T: ContentLoader> {
     File {
         root_node: UnixfsNode,
         /// Absolute position in bytes
@@ -428,92 +387,45 @@ pub enum UnixfsReader<T: ContentLoader> {
         out_metrics: OutMetrics,
     },
 }
-impl<T: ContentLoader> UnixfsReader<T> {
+
+impl<T: ContentLoader> UnixfsContentReader<T> {
     /// Returrns the size in bytes, if known in advance.
     pub fn size(&self) -> Option<u64> {
         match self {
-            UnixfsReader::Directory {
-                stream,
-                pos,
-                out_metrics,
-                size,
-            } => {
-                // size is known upfront
-                Some(*size)
-            }
-            UnixfsReader::File {
-                root_node,
-                pos,
-                current_node,
-                current_links,
-                loader,
-                out_metrics,
-            } => {
+            UnixfsContentReader::File { root_node, .. } => {
                 // File size is stored in the protobuf
                 root_node.filesize()
-            }
-            UnixfsReader::Hamt {
-                stream,
-                pos,
-                out_metrics,
-            } => {
-                // Can't know upfront, as we need to load the individual blocks first
-                None
             }
         }
     }
 }
 
-impl<T: ContentLoader + Unpin + 'static> AsyncRead for UnixfsReader<T> {
+impl Stream for UnixfsChildStream<'_> {
+    type Item = Result<Link>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        match &mut *self {
+            UnixfsChildStream::Hamt { stream, .. } => Pin::new(stream).poll_next(cx),
+            UnixfsChildStream::Directory { stream, .. } => Pin::new(stream).poll_next(cx),
+        }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        match self {
+            UnixfsChildStream::Directory { stream, .. } => stream.size_hint(),
+            UnixfsChildStream::Hamt { .. } => (0, None),
+        }
+    }
+}
+
+impl<T: ContentLoader + Unpin + 'static> AsyncRead for UnixfsContentReader<T> {
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         buf: &mut tokio::io::ReadBuf<'_>,
     ) -> Poll<std::io::Result<()>> {
-        dbg!("poll_read", buf.filled());
         match &mut *self {
-            UnixfsReader::Hamt {
-                stream,
-                pos,
-                out_metrics,
-                ..
-            } => {
-                let pos_current = *pos;
-                let start = buf.filled().len();
-                let poll_res = stream.with_mut(|fields| Pin::new(fields.stream).poll_read(cx, buf));
-                match poll_res {
-                    Poll::Pending => Poll::Pending,
-                    Poll::Ready(Ok(())) => {
-                        let bytes_read = buf.filled().len() - start;
-                        *pos += bytes_read;
-                        out_metrics.observe_bytes_read(pos_current, bytes_read);
-                        Poll::Ready(Ok(()))
-                    }
-                    Poll::Ready(Err(e)) => Poll::Ready(Err(e)),
-                }
-            }
-            UnixfsReader::Directory {
-                stream,
-                pos,
-                out_metrics,
-                ..
-            } => {
-                let pos_current = *pos;
-                let start = buf.filled().len();
-                match Pin::new(stream).poll_read(cx, buf) {
-                    Poll::Pending => Poll::Pending,
-                    Poll::Ready(Ok(())) => {
-                        let bytes_read = buf.filled().len() - start;
-                        dbg!(std::str::from_utf8(buf.filled()), bytes_read);
-
-                        *pos += bytes_read;
-                        out_metrics.observe_bytes_read(pos_current, bytes_read);
-                        Poll::Ready(Ok(()))
-                    }
-                    Poll::Ready(Err(e)) => Poll::Ready(Err(e)),
-                }
-            }
-            UnixfsReader::File {
+            UnixfsContentReader::File {
                 root_node,
                 pos,
                 current_node,
