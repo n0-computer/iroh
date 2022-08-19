@@ -73,7 +73,7 @@ impl Link {
     pub fn as_ref(&self) -> LinkRef<'_> {
         LinkRef {
             cid: self.cid,
-            name: self.name.as_ref().map(|s| s.as_str()),
+            name: self.name.as_deref(),
             tsize: self.tsize,
         }
     }
@@ -266,7 +266,7 @@ impl UnixfsNode {
         }
     }
 
-    pub fn links<'a>(&'a self) -> Links<'a> {
+    pub fn links(&self) -> Links<'_> {
         match self {
             UnixfsNode::Raw(_) => Links::Raw,
             UnixfsNode::RawNode(node) => Links::RawNode(PbLinks::new(&node.outer)),
@@ -482,6 +482,7 @@ pub fn poll_read_buf_at_pos(
     Ok(())
 }
 
+#[allow(clippy::large_enum_variant)]
 pub enum CurrentNodeState {
     Outer,
     None,

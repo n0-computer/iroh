@@ -33,6 +33,7 @@ pub struct PrettyStreamBody(
     Option<u64>,
 );
 
+#[allow(clippy::large_enum_variant)]
 pub enum FileResult {
     File(PrettyStreamBody),
     Directory(Out),
@@ -49,11 +50,7 @@ impl http_body::Body for PrettyStreamBody {
         let stream = Pin::new(&mut self.0);
         match stream.try_poll_next(cx) {
             Poll::Pending => Poll::Pending,
-            Poll::Ready(Some(Ok(chunk))) => {
-                let chunk = chunk.into();
-
-                Poll::Ready(Some(Ok(chunk)))
-            }
+            Poll::Ready(Some(Ok(chunk))) => Poll::Ready(Some(Ok(chunk))),
             Poll::Ready(Some(Err(err))) => Poll::Ready(Some(Err(err.to_string()))),
             Poll::Ready(None) => Poll::Ready(None),
         }

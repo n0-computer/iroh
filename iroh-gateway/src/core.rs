@@ -397,7 +397,7 @@ async fn serve_raw(
         }
         FileResult::Directory(_) => Err(error(
             StatusCode::INTERNAL_SERVER_ERROR,
-            &format!("cannot serve directory as raw"),
+            "cannot serve directory as raw",
             &state,
         )),
     }
@@ -434,7 +434,7 @@ async fn serve_car(
         }
         FileResult::Directory(_) => Err(error(
             StatusCode::INTERNAL_SERVER_ERROR,
-            &format!("cannot serve directory as car file"),
+            "cannot serve directory as car file",
             &state,
         )),
     }
@@ -504,11 +504,11 @@ async fn serve_fs(
                 Ok(dir_list) => serve_fs_dir(&dir_list, req, state, headers, start_time).await,
                 Err(e) => {
                     tracing::warn!("failed to read dir: {:?}", e);
-                    return Err(error(
+                    Err(error(
                         StatusCode::INTERNAL_SERVER_ERROR,
                         "failed to read dir listing",
                         &state,
-                    ));
+                    ))
                 }
             }
         }
@@ -587,7 +587,7 @@ async fn serve_fs_dir(
     let links = dir_list
         .iter()
         .map(|l| {
-            let name = l.name.as_ref().map(|l| l.as_str()).unwrap_or_default();
+            let name = l.name.as_deref().unwrap_or_default();
             let mut link = Map::new();
             link.insert("name".to_string(), Json::String(get_filename(name)));
             link.insert(
