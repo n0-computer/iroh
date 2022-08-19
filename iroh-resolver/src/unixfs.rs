@@ -8,7 +8,7 @@ use std::{
 
 use anyhow::{anyhow, bail, ensure, Result};
 use bytes::{Buf, Bytes};
-use cid::Cid;
+use cid::{multihash::MultihashDigest, Cid};
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt, Stream, StreamExt};
 use prost::Message;
 use tokio::io::AsyncRead;
@@ -210,14 +210,25 @@ impl UnixfsNode {
         }
     }
 
-    pub fn encode(&self) -> Result<Bytes> {
-        let out = match self {
-            UnixfsNode::Raw(data) => data.clone(),
+    pub fn encode(&self) -> Result<(Cid, Bytes)> {
+        let (cid, out) = match self {
+            UnixfsNode::Raw(data) => {
+                let out = data.clone();
+                let cid = Cid::new_v1(Codec::Raw as _, cid::multihash::Code::Sha2_256.digest(&out));
+                (cid, out)
+            }
             UnixfsNode::RawNode(node)
             | UnixfsNode::Directory(node)
             | UnixfsNode::File(node)
             | UnixfsNode::Symlink(node)
-            | UnixfsNode::HamtShard(node, _) => node.encode()?,
+            | UnixfsNode::HamtShard(node, _) => {
+                let out = node.encode()?;
+                let cid = Cid::new_v1(
+                    Codec::DagPb as _,
+                    cid::multihash::Code::Sha2_256.digest(&out),
+                );
+                (cid, out)
+            }
         };
 
         ensure!(
@@ -226,7 +237,7 @@ impl UnixfsNode {
             out.len()
         );
 
-        Ok(out)
+        Ok((cid, out))
     }
 
     pub const fn typ(&self) -> Option<DataType> {
@@ -388,7 +399,7 @@ pub enum UnixfsContentReader<T: ContentLoader> {
 }
 
 impl<T: ContentLoader> UnixfsContentReader<T> {
-    /// Returrns the size in bytes, if known in advance.
+    /// Returns the size in bytes, if known in advance.
     pub fn size(&self) -> Option<u64> {
         match self {
             UnixfsContentReader::File { root_node, .. } => {
