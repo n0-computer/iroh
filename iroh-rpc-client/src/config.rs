@@ -32,6 +32,9 @@ impl Source for Config {
         if let Some(addr) = &self.store_addr {
             insert_into_config_map(&mut map, "store_addr", addr.to_string());
         }
+        if let Some(path) = &self.raw_gateway {
+            insert_into_config_map(&mut map, "raw_gateway", path.clone());
+        }
         Ok(map)
     }
 }
