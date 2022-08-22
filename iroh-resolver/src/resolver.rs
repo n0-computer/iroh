@@ -17,7 +17,7 @@ use libipld::codec::{Decode, Encode};
 use libipld::prelude::Codec as _;
 use libipld::{Ipld, IpldCodec};
 use tokio::io::AsyncRead;
-use tracing::{debug, trace, warn};
+use tracing::{debug, info, trace, warn};
 
 use iroh_metrics::{
     core::{MObserver, MRecorder},
@@ -429,7 +429,20 @@ impl ContentLoader for Client {
             }
         }
         let p2p = self.try_p2p()?;
-        let providers = p2p.fetch_providers(&cid).await?;
+        let providers = match p2p.fetch_providers_dht(&cid).await {
+            Ok(providers) => {
+                if providers.is_empty() {
+                    info!("failed to find providers for {} on the dht", cid);
+                    p2p.fetch_providers_bitswap(&cid).await?
+                } else {
+                    providers
+                }
+            }
+            Err(e) => {
+                info!("failed to find providers for {} on the dht: {}", cid, e);
+                p2p.fetch_providers_bitswap(&cid).await?
+            }
+        };
         let bytes = p2p.fetch_bitswap(cid, providers).await?;
 
         // trigger storage in the background

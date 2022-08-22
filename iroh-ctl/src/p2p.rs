@@ -195,7 +195,10 @@ pub enum DevCommands {
         #[clap(required = true)]
         providers: Vec<PeerId>,
     },
-    FetchProviders {
+    FetchProvidersDht {
+        cid: Cid,
+    },
+    FetchProvidersBitswap {
         cid: Cid,
     },
     Gossipsub(Gossipsub),
@@ -259,7 +262,7 @@ pub async fn run_command(rpc: Client, cmd: P2p) -> Result<()> {
         }
         P2pCommands::Dht(d) => match d.command {
             DhtCommands::FindProvs { cid } => {
-                let providers = rpc.try_p2p()?.fetch_providers(&cid).await?;
+                let providers = rpc.try_p2p()?.fetch_providers_dht(&cid).await?;
                 for prov in providers {
                     println!("{}", prov);
                 }
@@ -275,8 +278,12 @@ pub async fn run_command(rpc: Client, cmd: P2p) -> Result<()> {
                 let res = rpc.try_p2p()?.fetch_bitswap(cid, providers).await?;
                 println!("{:#?}", res);
             }
-            DevCommands::FetchProviders { cid } => {
-                let res = rpc.try_p2p()?.fetch_providers(&cid).await?;
+            DevCommands::FetchProvidersDht { cid } => {
+                let res = rpc.try_p2p()?.fetch_providers_dht(&cid).await?;
+                println!("{:#?}", res);
+            }
+            DevCommands::FetchProvidersBitswap { cid } => {
+                let res = rpc.try_p2p()?.fetch_providers_bitswap(&cid).await?;
                 println!("{:#?}", res);
             }
             DevCommands::Gossipsub(g) => match g.command {

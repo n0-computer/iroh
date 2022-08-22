@@ -28,11 +28,12 @@ use tokio::{select, sync::mpsc, time};
 use tracing::{debug, info, trace, warn};
 
 use iroh_bitswap::{
-    BitswapEvent, Block, InboundRequest, QueryError, QueryId as BitswapQueryId,
-    QueryResult as BitswapQueryResult, WantResult,
+    BitswapEvent, Block, FindProvidersResult, InboundRequest, QueryError,
+    QueryId as BitswapQueryId, QueryResult as BitswapQueryResult, WantResult,
 };
 
 use crate::keys::{Keychain, Storage};
+use crate::rpc::ProviderRequestKey;
 use crate::swarm::build_swarm;
 use crate::{
     behaviour::{Event, NodeBehaviour},
@@ -68,8 +69,8 @@ pub enum GossipsubEvent {
 pub struct Node<KeyStorage: Storage> {
     swarm: Swarm<NodeBehaviour>,
     net_receiver_in: Receiver<RpcMessage>,
-    bitswap_queries: AHashMap<BitswapQueryId, OneShotSender<Result<Block, QueryError>>>,
-    kad_queries: AHashMap<QueryKey, QueryChannel>,
+    bitswap_queries: AHashMap<BitswapQueryId, BitswapQueryChannel>,
+    kad_queries: AHashMap<QueryKey, KadQueryChannel>,
     dial_queries: AHashMap<PeerId, Vec<OneShotSender<bool>>>,
     network_events: Vec<Sender<NetworkEvent>>,
     rpc_client: RpcClient,
@@ -78,7 +79,12 @@ pub struct Node<KeyStorage: Storage> {
     rpc_task: JoinHandle<()>,
 }
 
-enum QueryChannel {
+enum BitswapQueryChannel {
+    Want(OneShotSender<Result<Block, QueryError>>),
+    FindProviders(mpsc::Sender<Result<HashSet<PeerId>, String>>),
+}
+
+enum KadQueryChannel {
     GetProviders(Vec<mpsc::Sender<Result<HashSet<PeerId>, String>>>),
 }
 
@@ -328,6 +334,35 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                                 warn!("Failed to get data for: {}: missing store rpc conn", cid);
                             }
                         }
+                        InboundRequest::WantHave { cid, sender, .. } => {
+                            info!("bitswap want have {}", cid);
+                            if let Some(rpc_store) = self.rpc_client.store.as_ref() {
+                                match rpc_store.has(cid).await {
+                                    Ok(true) => {
+                                        trace!("Have data for: {}", cid);
+                                        if let Err(e) =
+                                            self.swarm.behaviour_mut().send_have_block(&sender, cid)
+                                        {
+                                            warn!(
+                                                "failed to send block have for {} to {}: {:?}",
+                                                cid, sender, e
+                                            );
+                                        }
+                                    }
+                                    Ok(false) => {
+                                        trace!("Don't have data for: {}", cid);
+                                    }
+                                    Err(e) => {
+                                        warn!("Failed to check for data for: {}: {:?}", cid, e);
+                                    }
+                                }
+                            } else {
+                                warn!(
+                                    "Failed to check for data for: {}: missing store rpc conn",
+                                    cid
+                                );
+                            }
+                        }
                         InboundRequest::Cancel { .. } => {
                             // nothing to do atm
                         }
@@ -338,7 +373,9 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                             match iroh_util::verify_hash(&cid, &data) {
                                 Some(true) => {
                                     let b = Block::new(data, cid);
-                                    if let Some(chan) = self.bitswap_queries.remove(&id) {
+                                    if let Some(BitswapQueryChannel::Want(chan)) =
+                                        self.bitswap_queries.remove(&id)
+                                    {
                                         if chan.send(Ok(b)).is_err() {
                                             debug!("Bitswap response channel send failed");
                                         }
@@ -360,13 +397,43 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                             }
                         }
                         BitswapQueryResult::Want(WantResult::Err(e)) => {
-                            if let Some(chan) = self.bitswap_queries.remove(&id) {
+                            if let Some(BitswapQueryChannel::Want(chan)) =
+                                self.bitswap_queries.remove(&id)
+                            {
                                 if chan.send(Err(e)).is_err() {
                                     debug!("Bitswap response channel send failed");
                                 }
                             }
                         }
+                        BitswapQueryResult::FindProviders(FindProvidersResult::Ok {
+                            cid,
+                            peers,
+                        }) => {
+                            info!("found providers {} for {}", peers.len(), cid);
+                            if let Some(BitswapQueryChannel::FindProviders(chan)) =
+                                self.bitswap_queries.remove(&id)
+                            {
+                                if chan.send(Ok(peers.into_iter().collect())).await.is_err() {
+                                    debug!("Bitswap provider response channel send failed");
+                                }
+                                trace!("Saved Bitswap block with cid {:?}", cid);
+                            } else {
+                                debug!("Received Bitswap response, but response channel cannot be found");
+                            }
+                        }
+                        BitswapQueryResult::FindProviders(FindProvidersResult::Err(e)) => {
+                            if let Some(BitswapQueryChannel::FindProviders(chan)) =
+                                self.bitswap_queries.remove(&id)
+                            {
+                                if chan.send(Err(e.to_string())).await.is_err() {
+                                    debug!("Bitswap response channel send failed");
+                                }
+                            }
+                        }
                         BitswapQueryResult::Send(_) => {
+                            // Nothing to do yet
+                        }
+                        BitswapQueryResult::SendHave(_) => {
                             // Nothing to do yet
                         }
                         BitswapQueryResult::Cancel(_) => {
@@ -400,7 +467,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                                     self.swarm.behaviour_mut().finish_query(&id);
                                 }
 
-                                if let Some(QueryChannel::GetProviders(chans)) = self
+                                if let Some(KadQueryChannel::GetProviders(chans)) = self
                                     .kad_queries
                                     .get_mut(&QueryKey::ProviderKey(key.clone()))
                                 {
@@ -418,7 +485,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                                 GetProvidersError::Timeout { key, .. } => key,
                             };
                             debug!("GetProviders timeout {:?}", key);
-                            if let Some(QueryChannel::GetProviders(chans)) =
+                            if let Some(KadQueryChannel::GetProviders(chans)) =
                                 self.kad_queries.remove(&QueryKey::ProviderKey(key))
                             {
                                 for chan in chans.into_iter() {
@@ -543,41 +610,60 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                         .want_block(cid, 1000, providers.clone()) // TODO: priority?
                         .map_err(|err| anyhow!("Failed to send a bitswap want_block: {:?}", err))?;
 
-                    self.bitswap_queries.insert(query_id, response_channel);
+                    self.bitswap_queries
+                        .insert(query_id, BitswapQueryChannel::Want(response_channel));
                 }
             }
             RpcMessage::ProviderRequest {
                 key,
                 response_channel,
-            } => {
-                if let Some(kad) = self.swarm.behaviour_mut().kad.as_mut() {
-                    if let Some(QueryChannel::GetProviders(chans)) = self
-                        .kad_queries
-                        .get_mut(&QueryKey::ProviderKey(key.clone()))
-                    {
-                        debug!(
-                            "RpcMessage::ProviderRequest: already fetching providers for {:?}",
-                            key
-                        );
-                        chans.push(response_channel);
+            } => match key {
+                ProviderRequestKey::Dht(key) => {
+                    if let Some(kad) = self.swarm.behaviour_mut().kad.as_mut() {
+                        if let Some(KadQueryChannel::GetProviders(chans)) = self
+                            .kad_queries
+                            .get_mut(&QueryKey::ProviderKey(key.clone()))
+                        {
+                            debug!(
+                                "RpcMessage::ProviderRequest: already fetching providers for {:?}",
+                                key
+                            );
+                            chans.push(response_channel);
+                        } else {
+                            debug!(
+                                "RpcMessage::ProviderRequest: getting providers for {:?}",
+                                key
+                            );
+                            let _ = kad.get_providers(key.clone());
+                            self.kad_queries.insert(
+                                QueryKey::ProviderKey(key),
+                                KadQueryChannel::GetProviders(vec![response_channel]),
+                            );
+                        }
                     } else {
-                        debug!(
-                            "RpcMessage::ProviderRequest: getting providers for {:?}",
-                            key
-                        );
-                        let _ = kad.get_providers(key.clone());
-                        self.kad_queries.insert(
-                            QueryKey::ProviderKey(key),
-                            QueryChannel::GetProviders(vec![response_channel]),
-                        );
+                        response_channel
+                            .send(Err("kademlia is not available".into()))
+                            .await
+                            .ok();
                     }
-                } else {
-                    response_channel
-                        .send(Err("kademlia is not available".into()))
-                        .await
-                        .ok();
                 }
-            }
+                ProviderRequestKey::Bitswap(cid) => {
+                    debug!(
+                        "RpcMessage::ProviderRequest: getting providers for {:?}",
+                        key
+                    );
+
+                    match self.swarm.behaviour_mut().find_providers(cid, 1000) {
+                        Ok(id) => {
+                            self.bitswap_queries
+                                .insert(id, BitswapQueryChannel::FindProviders(response_channel));
+                        }
+                        Err(e) => {
+                            response_channel.send(Err(e.to_string())).await.ok();
+                        }
+                    }
+                }
+            },
             RpcMessage::NetListeningAddrs(response_channel) => {
                 let mut listeners: Vec<_> = Swarm::listeners(&self.swarm).cloned().collect();
                 let peer_id = *Swarm::local_peer_id(&self.swarm);
@@ -795,7 +881,7 @@ mod tests {
             let c = "QmbWqxBEKC3P8tqsKc98xmWNzrzDtRLMiMPL8wBuTGsMnR"
                 .parse()
                 .unwrap();
-            let providers = client.p2p.unwrap().fetch_providers(&c).await?;
+            let providers = client.p2p.unwrap().fetch_providers_dht(&c).await?;
             assert!(!providers.is_empty());
             assert!(providers.len() >= PROVIDER_LIMIT);
         }

@@ -85,11 +85,45 @@ impl RpcP2p for P2p {
     }
 
     #[tracing::instrument(skip(self, req))]
-    async fn fetch_provider(&self, req: ProviderKey) -> Result<Providers> {
+    async fn fetch_provider_dht(&self, req: ProviderKey) -> Result<Providers> {
         trace!("received ProviderRequest: {:?}", req.key);
         let (s, mut r) = mpsc::channel(1024);
         let msg = RpcMessage::ProviderRequest {
-            key: req.key.clone().into(),
+            key: ProviderRequestKey::Dht(req.key.clone().into()),
+            response_channel: s,
+        };
+
+        self.sender.send(msg).await?;
+
+        // TODO: streaming response
+        let mut providers = Vec::new();
+        while let Some(provider) = r.recv().await {
+            match provider {
+                Ok(new_providers) => {
+                    for provider in new_providers {
+                        providers.push(provider.to_bytes());
+                    }
+                }
+                Err(e) => {
+                    if providers.is_empty() {
+                        bail!("{}", e);
+                    } else {
+                        warn!("error fetching providers for key {:?}: {:?}", req.key, e);
+                        break;
+                    }
+                }
+            }
+        }
+
+        Ok(Providers { providers })
+    }
+
+    #[tracing::instrument(skip(self, req))]
+    async fn fetch_provider_bitswap(&self, req: ProviderKey) -> Result<Providers> {
+        trace!("received ProviderRequest: {:?}", req.key);
+        let (s, mut r) = mpsc::channel(1024);
+        let msg = RpcMessage::ProviderRequest {
+            key: ProviderRequestKey::Bitswap(Cid::try_from(&req.key[..])?),
             response_channel: s,
         };
 
@@ -327,6 +361,13 @@ fn addrs_from_bytes(a: Vec<Vec<u8>>) -> Result<Vec<Multiaddr>> {
     a.into_iter().map(addr_from_bytes).collect()
 }
 
+#[derive(Debug)]
+pub enum ProviderRequestKey {
+    // TODO: potentially change this to Cid, as that is the only key we use for providers
+    Dht(Key),
+    Bitswap(Cid),
+}
+
 /// Rpc specific messages handled by the p2p node
 #[derive(Debug)]
 pub enum RpcMessage {
@@ -336,8 +377,7 @@ pub enum RpcMessage {
         providers: HashSet<PeerId>,
     },
     ProviderRequest {
-        // TODO: potentially change this to Cid, as that is the only key we use for providers
-        key: Key,
+        key: ProviderRequestKey,
         response_channel: mpsc::Sender<Result<HashSet<PeerId>, String>>,
     },
     NetListeningAddrs(oneshot::Sender<(PeerId, Vec<Multiaddr>)>),
