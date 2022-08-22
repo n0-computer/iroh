@@ -88,11 +88,11 @@ mod tests {
 
         let data = receiver_transfer.recv().await.context("r: recv")?;
         assert!(data.is_dir());
-        let files: Vec<_> = data.read_dir().unwrap().collect::<Result<_>>()?;
+        let files: Vec<_> = data.read_dir()?.unwrap().try_collect().await?;
         assert_eq!(files.len(), 1);
 
         let file = &files[0];
-        assert_eq!(file.name.unwrap(), "foo.jpg");
+        assert_eq!(file.name.as_ref().unwrap(), "foo.jpg");
 
         let mut content = Vec::new();
         let file = data.read_file(&files[0]).await?;
@@ -171,11 +171,11 @@ mod tests {
         let data = receiver_transfer.recv().await.context("r: recv")?;
         assert!(data.is_dir());
 
-        let files: Vec<_> = data.read_dir().unwrap().collect::<Result<_>>()?;
+        let files: Vec<_> = data.read_dir()?.unwrap().try_collect().await?;
         assert_eq!(files.len(), 2);
         {
             println!("reading file bar.txt");
-            assert_eq!(files[0].name.unwrap(), "bar.txt");
+            assert_eq!(files[0].name.as_ref().unwrap(), "bar.txt");
             let file = data.read_file(&files[0]).await?;
             let mut file_content = Vec::new();
             file.pretty()?.read_to_end(&mut file_content).await?;
@@ -184,7 +184,7 @@ mod tests {
 
         {
             println!("reading file baz.txt");
-            assert_eq!(files[1].name.unwrap(), "baz.txt");
+            assert_eq!(files[1].name.as_ref().unwrap(), "baz.txt");
             let file = data.read_file(&files[1]).await?;
             let mut file_content = Vec::new();
             file.pretty()?

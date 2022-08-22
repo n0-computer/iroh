@@ -9,9 +9,13 @@ use axum::{
     BoxError, Router,
 };
 use bytes::Bytes;
+use futures::TryStreamExt;
 use handlebars::Handlebars;
 use iroh_metrics::{gateway::Metrics, get_current_trace_id};
-use iroh_resolver::resolver::{CidOrDomain, UnixfsType};
+use iroh_resolver::{
+    resolver::{CidOrDomain, OutMetrics, UnixfsType},
+    unixfs::Link,
+};
 use iroh_rpc_client::Client as RpcClient;
 use iroh_rpc_types::gateway::GatewayServerAddr;
 use prometheus_client::registry::Registry;
@@ -37,7 +41,7 @@ use urlencoding::encode;
 
 use crate::{
     bad_bits::BadBits,
-    client::{Client, Request},
+    client::{Client, FileResult, Request},
     config::Config,
     constants::*,
     error::GatewayError,
@@ -57,7 +61,6 @@ pub struct Core {
 pub struct State {
     config: Config,
     client: Client,
-    rpc_client: iroh_rpc_client::Client,
     handlebars: HashMap<String, String>,
     pub metrics: Metrics,
     bad_bits: Arc<Option<RwLock<BadBits>>>,
@@ -112,7 +115,6 @@ impl Core {
             state: Arc::new(State {
                 config,
                 client,
-                rpc_client,
                 metrics,
                 handlebars: templates,
                 bad_bits,
@@ -377,24 +379,28 @@ async fn serve_raw(
     // FIXME: we currently only retrieve full cids
     let (body, metadata) = state
         .client
-        .get_file(
-            req.resolved_path.clone(),
-            &state.rpc_client,
-            start_time,
-            &state.metrics,
-        )
+        .get_file(req.resolved_path.clone(), start_time, &state.metrics)
         .await
         .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, &e, &state))?;
 
-    set_content_disposition_headers(
-        &mut headers,
-        format!("{}.bin", req.cid).as_str(),
-        DISPOSITION_ATTACHMENT,
-    );
-    set_etag_headers(&mut headers, get_etag(&req.cid, Some(req.format.clone())));
-    add_cache_control_headers(&mut headers, metadata.clone());
-    add_ipfs_roots_headers(&mut headers, metadata);
-    response(StatusCode::OK, body, headers)
+    match body {
+        FileResult::File(body) => {
+            set_content_disposition_headers(
+                &mut headers,
+                format!("{}.bin", req.cid).as_str(),
+                DISPOSITION_ATTACHMENT,
+            );
+            set_etag_headers(&mut headers, get_etag(&req.cid, Some(req.format.clone())));
+            add_cache_control_headers(&mut headers, metadata.clone());
+            add_ipfs_roots_headers(&mut headers, metadata);
+            response(StatusCode::OK, body, headers)
+        }
+        FileResult::Directory(_) => Err(error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "cannot serve directory as raw",
+            &state,
+        )),
+    }
 }
 
 #[tracing::instrument()]
@@ -407,27 +413,31 @@ async fn serve_car(
     // FIXME: we currently only retrieve full cids
     let (body, metadata) = state
         .client
-        .get_file(
-            req.resolved_path.clone(),
-            &state.rpc_client,
-            start_time,
-            &state.metrics,
-        )
+        .get_file(req.resolved_path.clone(), start_time, &state.metrics)
         .await
         .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, &e, &state))?;
 
-    set_content_disposition_headers(
-        &mut headers,
-        format!("{}.car", req.cid).as_str(),
-        DISPOSITION_ATTACHMENT,
-    );
+    match body {
+        FileResult::File(body) => {
+            set_content_disposition_headers(
+                &mut headers,
+                format!("{}.car", req.cid).as_str(),
+                DISPOSITION_ATTACHMENT,
+            );
 
-    // todo(arqu): this should be root cid
-    let etag = format!("W/{}", get_etag(&req.cid, Some(req.format.clone())));
-    set_etag_headers(&mut headers, etag);
-    // todo(arqu): check if etag matches for root cid
-    add_ipfs_roots_headers(&mut headers, metadata);
-    response(StatusCode::OK, body, headers)
+            // todo(arqu): this should be root cid
+            let etag = format!("W/{}", get_etag(&req.cid, Some(req.format.clone())));
+            set_etag_headers(&mut headers, etag);
+            // todo(arqu): check if etag matches for root cid
+            add_ipfs_roots_headers(&mut headers, metadata);
+            response(StatusCode::OK, body, headers)
+        }
+        FileResult::Directory(_) => Err(error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "cannot serve directory as car file",
+            &state,
+        )),
+    }
 }
 
 #[tracing::instrument()]
@@ -442,12 +452,7 @@ async fn serve_car_recursive(
     let body = state
         .client
         .clone()
-        .get_file_recursive(
-            req.resolved_path.clone(),
-            state.rpc_client.clone(),
-            start_time,
-            state.metrics.clone(),
-        )
+        .get_file_recursive(req.resolved_path.clone(), start_time, state.metrics.clone())
         .await
         .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, &e, &state))?;
 
@@ -474,82 +479,87 @@ async fn serve_fs(
     start_time: std::time::Instant,
 ) -> Result<GatewayResponse, GatewayError> {
     // FIXME: we currently only retrieve full cids
-    let (mut body, metadata) = state
+    let (body, metadata) = state
         .client
-        .get_file(
-            req.resolved_path.clone(),
-            &state.rpc_client,
-            start_time,
-            &state.metrics,
-        )
+        .get_file(req.resolved_path.clone(), start_time, &state.metrics)
         .await
         .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, &e, &state))?;
 
     add_ipfs_roots_headers(&mut headers, metadata.clone());
-    match metadata.unixfs_type {
-        Some(UnixfsType::Dir) => {
-            if let Some(dir_list_data) = body.data().await {
-                let dir_list = match dir_list_data {
-                    Ok(b) => b,
-                    Err(_) => {
-                        return Err(error(
-                            StatusCode::INTERNAL_SERVER_ERROR,
-                            "failed to read dir listing",
-                            &state,
-                        ));
+    match body {
+        FileResult::Directory(res) => {
+            let dir_list: anyhow::Result<Vec<_>> = res
+                .unixfs_read_dir(
+                    &state.client.resolver,
+                    OutMetrics {
+                        metrics: state.metrics.clone(),
+                        start: start_time,
+                    },
+                )
+                .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string(), &state))?
+                .expect("already known this is a directory")
+                .try_collect()
+                .await;
+            match dir_list {
+                Ok(dir_list) => serve_fs_dir(&dir_list, req, state, headers, start_time).await,
+                Err(e) => {
+                    tracing::warn!("failed to read dir: {:?}", e);
+                    Err(error(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "failed to read dir listing",
+                        &state,
+                    ))
+                }
+            }
+        }
+        FileResult::File(body) => {
+            match metadata.unixfs_type {
+                Some(_) => {
+                    // todo(arqu): error on no size
+                    // todo(arqu): add lazy seeking
+                    add_cache_control_headers(&mut headers, metadata.clone());
+                    set_etag_headers(&mut headers, get_etag(&req.cid, Some(req.format.clone())));
+                    let name = add_content_disposition_headers(
+                        &mut headers,
+                        &req.query_file_name,
+                        &req.content_path,
+                        req.download,
+                    );
+                    if metadata.unixfs_type == Some(UnixfsType::Symlink) {
+                        headers.insert(
+                            CONTENT_TYPE,
+                            HeaderValue::from_str("inode/symlink").unwrap(),
+                        );
+                    } else {
+                        add_content_type_headers(&mut headers, &name);
                     }
-                };
-                return serve_fs_dir(&dir_list, req, state, headers, start_time).await;
-            } else {
-                return Err(error(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "failed to read dir listing",
+                    response(StatusCode::OK, body, headers)
+                }
+                None => Err(error(
+                    StatusCode::BAD_REQUEST,
+                    "couldn't determine unixfs type",
                     &state,
-                ));
+                )),
             }
-        }
-        Some(_) => {
-            // todo(arqu): error on no size
-            // todo(arqu): add lazy seeking
-            add_cache_control_headers(&mut headers, metadata.clone());
-            set_etag_headers(&mut headers, get_etag(&req.cid, Some(req.format.clone())));
-            let name = add_content_disposition_headers(
-                &mut headers,
-                &req.query_file_name,
-                &req.content_path,
-                req.download,
-            );
-            if metadata.unixfs_type == Some(UnixfsType::Symlink) {
-                headers.insert(
-                    CONTENT_TYPE,
-                    HeaderValue::from_str("inode/symlink").unwrap(),
-                );
-            } else {
-                add_content_type_headers(&mut headers, &name);
-            }
-        }
-        None => {
-            return Err(error(
-                StatusCode::BAD_REQUEST,
-                "couldn't determine unixfs type",
-                &state,
-            ));
         }
     }
-    response(StatusCode::OK, body, headers)
 }
 
 #[tracing::instrument()]
 async fn serve_fs_dir(
-    dir_list: &Bytes,
+    dir_list: &[Link],
     req: &Request,
     state: Arc<State>,
     mut headers: HeaderMap,
     start_time: std::time::Instant,
 ) -> Result<GatewayResponse, GatewayError> {
-    let dir_list = std::str::from_utf8(&dir_list[..]).unwrap();
     let force_dir = req.query_params.force_dir.unwrap_or(false);
-    let has_index = dir_list.lines().any(|l| l.starts_with("index.html"));
+    let has_index = dir_list.iter().any(|l| {
+        l.name
+            .as_ref()
+            .map(|l| l.starts_with("index.html"))
+            .unwrap_or_default()
+    });
     if !force_dir && has_index {
         if !req.content_path.ends_with('/') {
             let redirect_path = format!(
@@ -575,13 +585,14 @@ async fn serve_fs_dir(
         root_path.push('/');
     }
     let links = dir_list
-        .lines()
-        .map(|line| {
+        .iter()
+        .map(|l| {
+            let name = l.name.as_deref().unwrap_or_default();
             let mut link = Map::new();
-            link.insert("name".to_string(), Json::String(get_filename(line)));
+            link.insert("name".to_string(), Json::String(get_filename(name)));
             link.insert(
                 "path".to_string(),
-                Json::String(format!("{}{}", root_path, line)),
+                Json::String(format!("{}{}", root_path, name)),
             );
             link
         })

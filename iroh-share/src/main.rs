@@ -121,7 +121,8 @@ async fn main() -> Result<()> {
 
             let out = tokio::fs::canonicalize(out_dir).await?;
 
-            for link in data.read_dir().unwrap() {
+            let mut reader = data.read_dir()?.unwrap();
+            while let Some(link) = reader.next().await {
                 let link = link?;
                 let file_content = data.read_file(&link).await?;
                 let path = out.join(link.name.unwrap_or_default());

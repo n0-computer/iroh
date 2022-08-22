@@ -1,11 +1,13 @@
 use anyhow::{anyhow, ensure, Context, Result};
 use futures::{
     channel::{oneshot::channel as oneshot, oneshot::Receiver as OneShotReceiver},
-    StreamExt,
+    Stream, StreamExt,
 };
 use iroh_p2p::NetworkEvent;
-use iroh_resolver::resolver::{Out, OutPrettyReader, OutType, Path, Resolver, UnixfsType};
-use iroh_resolver::unixfs::LinkRef;
+use iroh_resolver::{
+    resolver::{Out, OutPrettyReader, OutType, Path, Resolver, UnixfsType},
+    unixfs::Link,
+};
 use libp2p::gossipsub::{GossipsubMessage, MessageId, TopicHash};
 use libp2p::PeerId;
 use tokio::sync::mpsc::{channel, Receiver as ChannelReceiver};
@@ -230,16 +232,16 @@ impl Data {
         self.typ() == UnixfsType::Dir
     }
 
-    pub fn read_dir(&self) -> Option<impl Iterator<Item = Result<LinkRef<'_>>>> {
-        self.root.unixfs_read_dir()
+    pub fn read_dir(&self) -> Result<Option<impl Stream<Item = Result<Link>> + '_>> {
+        self.root
+            .unixfs_read_dir(&self.resolver, Default::default())
     }
 
     pub fn pretty(self) -> Result<OutPrettyReader<Loader>> {
-        self.root
-            .pretty(self.resolver.loader().clone(), Default::default())
+        self.root.pretty(self.resolver, Default::default())
     }
 
-    pub async fn read_file(&self, link: &LinkRef<'_>) -> Result<Data> {
+    pub async fn read_file(&self, link: &Link) -> Result<Data> {
         let root = self
             .resolver
             .resolve(Path::from_cid(link.cid))

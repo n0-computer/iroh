@@ -1,10 +1,15 @@
-use std::sync::Arc;
+use std::pin::Pin;
+use std::task::Poll;
 
-use axum::body::StreamBody;
+use anyhow::Result;
+use bytes::Bytes;
 use futures::StreamExt;
+use futures::TryStream;
+use http::HeaderMap;
 use iroh_metrics::gateway::Metrics;
 use iroh_resolver::resolver::CidOrDomain;
 use iroh_resolver::resolver::Metadata;
+use iroh_resolver::resolver::Out;
 use iroh_resolver::resolver::OutMetrics;
 use iroh_resolver::resolver::OutPrettyReader;
 use iroh_resolver::resolver::Resolver;
@@ -20,26 +25,67 @@ use crate::response::ResponseFormat;
 
 #[derive(Debug, Clone)]
 pub struct Client {
-    resolver: Arc<Resolver<iroh_rpc_client::Client>>,
+    pub(crate) resolver: Resolver<iroh_rpc_client::Client>,
 }
 
-pub type PrettyStreamBody = StreamBody<ReaderStream<OutPrettyReader<iroh_rpc_client::Client>>>;
+pub struct PrettyStreamBody(
+    ReaderStream<OutPrettyReader<iroh_rpc_client::Client>>,
+    Option<u64>,
+);
+
+#[allow(clippy::large_enum_variant)]
+pub enum FileResult {
+    File(PrettyStreamBody),
+    Directory(Out),
+}
+
+impl http_body::Body for PrettyStreamBody {
+    type Data = Bytes;
+    type Error = String;
+
+    fn poll_data(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<Option<Result<Self::Data, Self::Error>>> {
+        let stream = Pin::new(&mut self.0);
+        match stream.try_poll_next(cx) {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(Some(Ok(chunk))) => Poll::Ready(Some(Ok(chunk))),
+            Poll::Ready(Some(Err(err))) => Poll::Ready(Some(Err(err.to_string()))),
+            Poll::Ready(None) => Poll::Ready(None),
+        }
+    }
+
+    fn poll_trailers(
+        self: Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+    ) -> Poll<Result<Option<HeaderMap>, Self::Error>> {
+        Poll::Ready(Ok(None))
+    }
+
+    fn size_hint(&self) -> http_body::SizeHint {
+        let mut size_hint = http_body::SizeHint::new();
+        if let Some(size) = self.1 {
+            size_hint.set_exact(size);
+        }
+        size_hint
+    }
+}
 
 impl Client {
     pub fn new(rpc_client: &iroh_rpc_client::Client, registry: &mut Registry) -> Self {
         Self {
-            resolver: Arc::new(Resolver::new(rpc_client.clone(), registry)),
+            resolver: Resolver::new(rpc_client.clone(), registry),
         }
     }
 
-    #[tracing::instrument(skip(self, rpc_client, metrics))]
+    #[tracing::instrument(skip(self, metrics))]
     pub async fn get_file(
         &self,
         path: iroh_resolver::resolver::Path,
-        rpc_client: &iroh_rpc_client::Client,
         start_time: std::time::Instant,
         metrics: &Metrics,
-    ) -> Result<(PrettyStreamBody, Metadata), String> {
+    ) -> Result<(FileResult, Metadata), String> {
         info!("get file {}", path);
         let res = self
             .resolver
@@ -59,26 +105,32 @@ impl Client {
                 .hist_ttfb_cached
                 .observe(start_time.elapsed().as_millis() as f64);
         }
-        let reader = res
-            .pretty(
-                rpc_client.clone(),
-                OutMetrics {
-                    metrics: metrics.clone(),
-                    start: start_time,
-                },
-            )
-            .map_err(|e| e.to_string())?;
-        let stream = ReaderStream::new(reader);
-        let body = StreamBody::new(stream);
 
-        Ok((body, metadata))
+        if res.is_dir() {
+            let body = FileResult::Directory(res);
+            Ok((body, metadata))
+        } else {
+            let reader = res
+                .pretty(
+                    self.resolver.clone(),
+                    OutMetrics {
+                        metrics: metrics.clone(),
+                        start: start_time,
+                    },
+                )
+                .map_err(|e| e.to_string())?;
+
+            let stream = ReaderStream::new(reader);
+            let body = PrettyStreamBody(stream, metadata.size);
+
+            Ok((FileResult::File(body), metadata))
+        }
     }
 
-    #[tracing::instrument(skip(self, rpc_client, metrics))]
+    #[tracing::instrument(skip(self, metrics))]
     pub async fn get_file_recursive(
         self,
         path: iroh_resolver::resolver::Path,
-        rpc_client: iroh_rpc_client::Client,
         start_time: std::time::Instant,
         metrics: Metrics,
     ) -> Result<axum::body::Body, String> {
@@ -106,7 +158,7 @@ impl Client {
                                 .observe(start_time.elapsed().as_millis() as f64);
                         }
                         let reader = res.pretty(
-                            rpc_client.clone(),
+                            self.resolver.clone(),
                             OutMetrics {
                                 metrics: metrics.clone(),
                                 start: start_time,
