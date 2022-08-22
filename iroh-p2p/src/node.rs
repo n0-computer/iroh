@@ -308,8 +308,8 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                     BitswapEvent::InboundRequest { request } => match request {
                         InboundRequest::Want { cid, sender, .. } => {
                             info!("bitswap want {}", cid);
-                            if let Some(rpc_store) = self.rpc_client.store.as_ref() {
-                                match rpc_store.get(cid).await {
+                            match self.rpc_client.try_store() {
+                                Ok(rpc_store) => match rpc_store.get(cid).await {
                                     Ok(Some(data)) => {
                                         trace!("Found data for: {}", cid);
                                         if let Err(e) = self
@@ -329,9 +329,10 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                                     Err(e) => {
                                         warn!("Failed to get data for: {}: {:?}", cid, e);
                                     }
+                                },
+                                Err(e) => {
+                                    warn!("Failed to get data for: {}: {:?}", cid, e);
                                 }
-                            } else {
-                                warn!("Failed to get data for: {}: missing store rpc conn", cid);
                             }
                         }
                         InboundRequest::WantHave { cid, sender, .. } => {
