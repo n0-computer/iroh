@@ -32,7 +32,7 @@ mod event;
 pub(crate) struct NodeBehaviour {
     ping: Ping,
     identify: Identify,
-    bitswap: Bitswap,
+    pub(crate) bitswap: Bitswap,
     pub(crate) kad: Toggle<Kademlia<MemoryStore>>,
     mdns: Toggle<Mdns>,
     pub(crate) autonat: Toggle<autonat::Behaviour>,

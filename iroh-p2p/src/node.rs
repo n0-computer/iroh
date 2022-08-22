@@ -536,6 +536,18 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                         }
                     }
 
+                    // Inform bitswap about identified peers
+                    if protocols.iter().any(|p| {
+                        for protocol in &iroh_bitswap::PROTOCOLS {
+                            if &p.as_bytes() == protocol {
+                                return true;
+                            }
+                        }
+                        false
+                    }) {
+                        self.swarm.behaviour_mut().bitswap.add_peer(peer_id);
+                    }
+
                     // Inform autonat about identified peers
                     // TODO: expose protocol name on `libp2p::autonat`.
                     // TODO: should we remove them at some point?
