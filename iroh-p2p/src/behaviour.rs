@@ -40,7 +40,7 @@ pub(crate) struct NodeBehaviour {
     relay: Toggle<relay::v2::relay::Relay>,
     relay_client: Toggle<relay::v2::client::Client>,
     dcutr: Toggle<dcutr::behaviour::Behaviour>,
-    pub(crate) gossipsub: Gossipsub,
+    pub(crate) gossipsub: Toggle<Gossipsub>,
 }
 
 impl NodeBehaviour {
@@ -135,10 +135,17 @@ impl NodeBehaviour {
             Identify::new(config)
         };
 
-        let gossipsub_config = GossipsubConfig::default();
-        let message_authenticity = MessageAuthenticity::Signed(local_key.clone());
-        let gossipsub = Gossipsub::new(message_authenticity, gossipsub_config)
-            .map_err(|e| anyhow::anyhow!("{}", e))?;
+        let gossipsub = if config.gossipsub {
+            let gossipsub_config = GossipsubConfig::default();
+            let message_authenticity = MessageAuthenticity::Signed(local_key.clone());
+            Some(
+                Gossipsub::new(message_authenticity, gossipsub_config)
+                    .map_err(|e| anyhow::anyhow!("{}", e))?,
+            )
+        } else {
+            None
+        }
+        .into();
 
         Ok(NodeBehaviour {
             ping: Ping::default(),

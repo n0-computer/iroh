@@ -48,6 +48,8 @@ pub struct Libp2pConfig {
     pub relay_server: bool,
     /// Relay client enabled.
     pub relay_client: bool,
+    /// Gossipsub enabled.
+    pub gossipsub: bool,
     pub max_conns_out: u32,
     pub max_conns_in: u32,
     pub max_conns_pending_out: u32,
@@ -114,6 +116,7 @@ impl Source for Libp2pConfig {
         insert_into_config_map(&mut map, "mdns", self.mdns);
         insert_into_config_map(&mut map, "relay_server", self.relay_server);
         insert_into_config_map(&mut map, "relay_client", self.relay_client);
+        insert_into_config_map(&mut map, "gossipsub", self.gossipsub);
         let peers: Vec<String> = self.bootstrap_peers.iter().map(|b| b.to_string()).collect();
         insert_into_config_map(&mut map, "bootstrap_peers", peers);
         insert_into_config_map(
@@ -155,6 +158,7 @@ impl Default for Libp2pConfig {
             autonat: true,
             relay_server: true,
             relay_client: true,
+            gossipsub: true,
             max_conns_pending_out: 256,
             max_conns_pending_in: 256,
             max_conns_in: 256,
@@ -293,6 +297,7 @@ mod tests {
             "relay_client".to_string(),
             Value::new(None, default.relay_client),
         );
+        expect.insert("gossipsub".to_string(), Value::new(None, default.gossipsub));
         expect.insert(
             "bootstrap_peers".to_string(),
             Value::new(None, bootstrap_peers),
