@@ -23,7 +23,7 @@ use crate::protocol::{BitswapProtocol, Upgrade};
 use crate::query::{QueryId, QueryManager};
 use crate::session::{Config as SessionConfig, SessionManager};
 
-const MAX_PROVIDERS: usize = 50;
+const MAX_PROVIDERS: usize = 100;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum BitswapEvent {
@@ -183,12 +183,16 @@ impl Bitswap {
 
         // TODO: better strategies, than just all peers.
         // TODO: use peers that connect later
-        let peers = self
+        let peers: AHashSet<_> = self
             .connected_peers()
             .map(|p| p.to_owned())
             .take(MAX_PROVIDERS)
             .collect();
         debug!("with peers: {:?}", &peers);
+        for peer in peers.iter() {
+            self.sessions.create_session(peer);
+        }
+
         self.queries.find_providers(cid, priority, peers)
     }
 
