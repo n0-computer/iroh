@@ -391,7 +391,6 @@ impl QueryManager {
             .filter(|(_, query)| query.contains_unused_provider(peer_id))
         {
             num_queries += 1;
-            dbg!(&query);
             match query {
                 Query::Want {
                     providers,
@@ -488,7 +487,6 @@ impl QueryManager {
         for id in finished_queries {
             self.queries.remove(&id);
         }
-        dbg!(&msg);
         if num_queries > 0 {
             if msg.is_empty() {
                 error!("{} queries, but message is empty: {:?}", num_queries, msg);
