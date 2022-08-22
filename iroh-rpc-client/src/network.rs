@@ -50,11 +50,24 @@ impl P2pClient {
     }
 
     #[tracing::instrument(skip(self))]
-    pub async fn fetch_providers(&self, key: &Cid) -> Result<HashSet<PeerId>> {
+    pub async fn fetch_providers_dht(&self, key: &Cid) -> Result<HashSet<PeerId>> {
         let req = Key {
             key: key.hash().to_bytes(),
         };
-        let res = self.backend.fetch_provider(req).await?;
+        let res = self.backend.fetch_provider_dht(req).await?;
+        let mut providers = HashSet::new();
+        for provider in res.providers.into_iter() {
+            providers.insert(PeerId::from_bytes(&provider[..])?);
+        }
+        Ok(providers)
+    }
+
+    #[tracing::instrument(skip(self))]
+    pub async fn fetch_providers_bitswap(&self, key: &Cid) -> Result<HashSet<PeerId>> {
+        let req = Key {
+            key: key.to_bytes(),
+        };
+        let res = self.backend.fetch_provider_bitswap(req).await?;
         let mut providers = HashSet::new();
         for provider in res.providers.into_iter() {
             providers.insert(PeerId::from_bytes(&provider[..])?);
@@ -292,7 +305,14 @@ mod tests {
             todo!()
         }
 
-        async fn fetch_provider(
+        async fn fetch_provider_dht(
+            &self,
+            _request: Request<Key>,
+        ) -> Result<tonic::Response<Providers>, tonic::Status> {
+            todo!()
+        }
+
+        async fn fetch_provider_bitswap(
             &self,
             _request: Request<Key>,
         ) -> Result<tonic::Response<Providers>, tonic::Status> {

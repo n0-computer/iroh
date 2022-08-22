@@ -22,16 +22,26 @@ pub struct Wantlist {
     want_blocks: AHashMap<Cid, Priority>,
     /// Blocks to cancel.
     cancel_blocks: AHashSet<Cid>,
+    /// Blocks this peer provides.
+    want_have_blocks: AHashMap<Cid, Priority>,
 }
 
 impl Wantlist {
     pub fn is_empty(&self) -> bool {
-        self.want_blocks.is_empty() && self.cancel_blocks.is_empty()
+        self.want_blocks.is_empty()
+            && self.cancel_blocks.is_empty()
+            && self.want_have_blocks.is_empty()
     }
 
     /// Returns the list of wanted blocks.
     pub fn blocks(&self) -> impl Iterator<Item = (&Cid, Priority)> {
         self.want_blocks
+            .iter()
+            .map(|(cid, priority)| (cid, *priority))
+    }
+
+    pub fn want_have_blocks(&self) -> impl Iterator<Item = (&Cid, Priority)> {
+        self.want_have_blocks
             .iter()
             .map(|(cid, priority)| (cid, *priority))
     }
@@ -45,6 +55,11 @@ impl Wantlist {
     pub fn want_block(&mut self, cid: &Cid, priority: Priority) {
         self.cancel_blocks.remove(cid);
         self.want_blocks.insert(*cid, priority);
+    }
+
+    /// Adds a block to the have want list.
+    pub fn want_have_block(&mut self, cid: &Cid, priority: Priority) {
+        self.want_have_blocks.insert(*cid, priority);
     }
 
     /// Adds a block to the cancel list.
@@ -68,6 +83,17 @@ impl Wantlist {
                 cancel: false,
                 want_type: WantType::Block as _,
                 send_dont_have: false,
+            };
+            wantlist.entries.push(entry);
+        }
+
+        for (cid, &priority) in &self.want_have_blocks {
+            let entry = pb::message::wantlist::Entry {
+                block: cid.to_bytes(),
+                priority,
+                cancel: false,
+                want_type: WantType::Have as _,
+                send_dont_have: true,
             };
             wantlist.entries.push(entry);
         }
@@ -101,7 +127,9 @@ impl Wantlist {
                     }
                 }
                 ty if pb::message::wantlist::WantType::Have as i32 == ty => {
-                    // currently not used
+                    if !entry.cancel {
+                        wantlist.want_have_blocks.insert(cid, entry.priority);
+                    }
                 }
                 _ => {}
             }
@@ -131,6 +159,19 @@ pub struct BlockPresence {
 pub enum BlockPresenceType {
     Have = 0,
     DontHave = 1,
+}
+
+impl BlockPresence {
+    pub fn have(cid: Cid) -> Self {
+        BlockPresence {
+            cid,
+            typ: BlockPresenceType::Have,
+        }
+    }
+
+    pub fn is_have(&self) -> bool {
+        matches!(self.typ, BlockPresenceType::Have)
+    }
 }
 
 impl From<BlockPresence> for pb::message::BlockPresence {
@@ -166,6 +207,11 @@ impl BitswapMessage {
         &self.blocks
     }
 
+    /// Returns the list of blocks.
+    pub fn block_presences(&self) -> &[BlockPresence] {
+        &self.block_presences
+    }
+
     pub fn remove_block(&mut self, i: usize) -> Block {
         self.blocks.remove(i)
     }
@@ -186,6 +232,11 @@ impl BitswapMessage {
     /// Adds a `Block` to the message.
     pub fn add_block(&mut self, block: Block) {
         self.blocks.push(block);
+    }
+
+    /// Adds a `BlockPresence` to the message.
+    pub fn add_block_presence(&mut self, bp: BlockPresence) {
+        self.block_presences.push(bp);
     }
 
     /// Turns this `Message` into a message that can be sent to a substream.
@@ -278,6 +329,16 @@ mod tests {
         let mut message = BitswapMessage::new();
         let block = create_block(&b"hello world"[..]);
         message.wantlist_mut().want_block(block.cid(), 1);
+        let bytes = message.to_bytes();
+        let new_message = BitswapMessage::from_bytes(bytes).unwrap();
+        assert_eq!(message, new_message);
+    }
+
+    #[test]
+    fn test_want_have_message_to_from_bytes() {
+        let mut message = BitswapMessage::new();
+        let block = create_block(&b"hello world"[..]);
+        message.wantlist_mut().want_have_block(block.cid(), 1);
         let bytes = message.to_bytes();
         let new_message = BitswapMessage::from_bytes(bytes).unwrap();
         assert_eq!(message, new_message);

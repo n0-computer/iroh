@@ -11,8 +11,8 @@ mod query;
 mod session;
 
 pub use crate::behaviour::{
-    Bitswap, BitswapConfig, BitswapEvent, CancelResult, InboundRequest, QueryError, QueryResult,
-    SendResult, WantResult,
+    Bitswap, BitswapConfig, BitswapEvent, CancelResult, FindProvidersResult, InboundRequest,
+    QueryError, QueryResult, SendHaveResult, SendResult, WantResult,
 };
 pub use crate::block::tests::create_block as create_test_block;
 pub use crate::block::Block;

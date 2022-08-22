@@ -8,7 +8,8 @@ use libp2p::{
 use tracing::{error, trace};
 
 use crate::{
-    behaviour::{BitswapHandler, QueryError},
+    behaviour::{BitswapHandler, FindProvidersResult, QueryError, SendHaveResult},
+    message::BlockPresence,
     BitswapEvent, BitswapMessage, Block, CancelResult, Priority, QueryResult, SendResult,
     WantResult,
 };
@@ -48,10 +49,24 @@ impl QueryManager {
             .count()
     }
 
+    fn want_have_len(&self) -> usize {
+        self.queries
+            .values()
+            .filter(|q| matches!(q, Query::FindProviders { .. }))
+            .count()
+    }
+
     fn send_len(&self) -> usize {
         self.queries
             .values()
             .filter(|q| matches!(q, Query::Send { .. }))
+            .count()
+    }
+
+    fn send_have_len(&self) -> usize {
+        self.queries
+            .values()
+            .filter(|q| matches!(q, Query::SendHave { .. }))
             .count()
     }
 
@@ -69,6 +84,29 @@ impl QueryManager {
             receiver,
             block: Block { cid, data },
             state: State::New,
+        })
+    }
+
+    pub fn send_have(&mut self, receiver: PeerId, cid: Cid) -> QueryId {
+        self.new_query(Query::SendHave {
+            receiver,
+            cid,
+            state: State::New,
+        })
+    }
+
+    pub fn find_providers(
+        &mut self,
+        cid: Cid,
+        priority: Priority,
+        peers: AHashSet<PeerId>,
+    ) -> QueryId {
+        self.new_query(Query::FindProviders {
+            cid,
+            peers,
+            providers: Default::default(),
+            state: State::New,
+            priority,
         })
     }
 
@@ -90,8 +128,10 @@ impl QueryManager {
                 }
                 !to_remove
             }
+            Query::FindProviders { .. } => true,
             Query::Cancel { .. } => true,
             Query::Send { .. } => true,
+            Query::SendHave { .. } => true,
         });
 
         cancel.map(|(providers, cid)| {
@@ -135,8 +175,10 @@ impl QueryManager {
                         true
                     }
                 }
+                Query::FindProviders { .. } => true,
                 Query::Cancel { .. } => true,
                 Query::Send { .. } => true,
+                Query::SendHave { .. } => true,
             }
         });
 
@@ -149,6 +191,43 @@ impl QueryManager {
         }
 
         (unused_providers, query_ids)
+    }
+
+    pub fn process_block_presence(
+        &mut self,
+        peer: PeerId,
+        bp: &BlockPresence,
+    ) -> Vec<(QueryId, AHashSet<PeerId>)> {
+        let mut results = Vec::new();
+
+        self.queries.retain(|id, query| match query {
+            Query::Want { .. } => true,
+            Query::FindProviders {
+                cid,
+                peers,
+                providers,
+                ..
+            } => {
+                if bp.is_have() && &bp.cid == cid {
+                    providers.insert(peer);
+
+                    if peers.is_empty() {
+                        results.push((*id, providers.clone()));
+
+                        false
+                    } else {
+                        true
+                    }
+                } else {
+                    true
+                }
+            }
+            Query::Cancel { .. } => true,
+            Query::Send { .. } => true,
+            Query::SendHave { .. } => true,
+        });
+
+        results
     }
 
     /// Handle disconnection of the endpoint
@@ -164,7 +243,17 @@ impl QueryManager {
                         used_providers.remove(peer_id);
                     }
                 }
+                Query::FindProviders { state, .. } => {
+                    if let State::Sent(used_providers) = state {
+                        used_providers.remove(peer_id);
+                    }
+                }
                 Query::Send { state, .. } => {
+                    if let State::Sent(used_providers) = state {
+                        used_providers.remove(peer_id);
+                    }
+                }
+                Query::SendHave { state, .. } => {
                     if let State::Sent(used_providers) = state {
                         used_providers.remove(peer_id);
                     }
@@ -198,7 +287,25 @@ impl QueryManager {
                         }
                     }
                 }
+                Query::FindProviders { state, peers, .. } => {
+                    if peers.is_empty() {
+                        if let State::Sent(used_providers) = state {
+                            if used_providers.is_empty() {
+                                next_query = Some(query_id);
+                                break;
+                            }
+                        }
+                    }
+                }
                 Query::Send { state, .. } => {
+                    if let State::Sent(providers) = state {
+                        if providers.is_empty() {
+                            next_query = Some(query_id);
+                            break;
+                        }
+                    }
+                }
+                Query::SendHave { state, .. } => {
                     if let State::Sent(providers) = state {
                         if providers.is_empty() {
                             next_query = Some(query_id);
@@ -233,6 +340,14 @@ impl QueryManager {
         self.next_finished_query()
             .map(|(id, query)| match query {
                 Query::Send { .. } => (id, QueryResult::Send(SendResult::Err(QueryError::Timeout))),
+                Query::SendHave { .. } => (
+                    id,
+                    QueryResult::SendHave(SendHaveResult::Err(QueryError::Timeout)),
+                ),
+                Query::FindProviders { .. } => (
+                    id,
+                    QueryResult::FindProviders(FindProvidersResult::Err(QueryError::Timeout)),
+                ),
                 Query::Want { .. } => (id, QueryResult::Want(WantResult::Err(QueryError::Timeout))),
                 Query::Cancel { .. } => (
                     id,
@@ -259,11 +374,13 @@ impl QueryManager {
         let mut msg = BitswapMessage::default();
 
         trace!(
-            "connected {}, looking for queries: {}want, {}cancel, {}send",
+            "connected {}, looking for queries: {}want, {}want have, {}cancel, {}send, {}send have",
             peer_id,
             self.want_len(),
+            self.want_have_len(),
             self.cancel_len(),
-            self.send_len()
+            self.send_len(),
+            self.send_have_len()
         );
         let mut num_queries = 0;
         let mut finished_queries = Vec::new();
@@ -274,6 +391,7 @@ impl QueryManager {
             .filter(|(_, query)| query.contains_unused_provider(peer_id))
         {
             num_queries += 1;
+            dbg!(&query);
             match query {
                 Query::Want {
                     providers,
@@ -284,6 +402,26 @@ impl QueryManager {
                     msg.wantlist_mut().want_block(cid, *priority);
 
                     providers.remove(peer_id);
+
+                    // update state
+                    match state {
+                        State::New => {
+                            *state = State::Sent([*peer_id].into_iter().collect());
+                        }
+                        State::Sent(sent_providers) => {
+                            sent_providers.insert(*peer_id);
+                        }
+                    }
+                }
+                Query::FindProviders {
+                    cid,
+                    peers,
+                    state,
+                    priority,
+                    ..
+                } => {
+                    msg.wantlist_mut().want_have_block(cid, *priority);
+                    peers.remove(peer_id);
 
                     // update state
                     match state {
@@ -328,6 +466,21 @@ impl QueryManager {
                         finished_queries.push(*query_id);
                     }
                 },
+                Query::SendHave {
+                    cid,
+                    state,
+                    receiver,
+                } => match state {
+                    State::New => {
+                        msg.add_block_presence(BlockPresence::have(*cid));
+                        *state = State::Sent([*receiver].into_iter().collect());
+                    }
+                    State::Sent(_) => {
+                        // nothing to do anymore
+                        num_queries -= 1;
+                        finished_queries.push(*query_id);
+                    }
+                },
             }
         }
 
@@ -335,7 +488,7 @@ impl QueryManager {
         for id in finished_queries {
             self.queries.remove(&id);
         }
-
+        dbg!(&msg);
         if num_queries > 0 {
             if msg.is_empty() {
                 error!("{} queries, but message is empty: {:?}", num_queries, msg);
@@ -362,6 +515,15 @@ enum Query {
         priority: Priority,
         state: State,
     },
+    FindProviders {
+        cid: Cid,
+        /// peers that are contacted
+        peers: AHashSet<PeerId>,
+        /// found providers.
+        providers: AHashSet<PeerId>,
+        state: State,
+        priority: Priority,
+    },
     /// Cancel a single CID.
     Cancel {
         providers: AHashSet<PeerId>,
@@ -374,6 +536,12 @@ enum Query {
         block: Block,
         state: State,
     },
+    /// Sends a want have confirmation.
+    SendHave {
+        receiver: PeerId,
+        cid: Cid,
+        state: State,
+    },
 }
 
 impl Query {
@@ -382,7 +550,9 @@ impl Query {
             Query::Want { providers, .. } | Query::Cancel { providers, .. } => {
                 providers.contains(peer_id)
             }
+            Query::FindProviders { peers, .. } => peers.contains(peer_id),
             Query::Send { receiver, .. } => receiver == peer_id,
+            Query::SendHave { receiver, .. } => receiver == peer_id,
         }
     }
 
@@ -402,7 +572,27 @@ impl Query {
                 }
                 false
             }
+            Query::FindProviders { peers, state, .. } => {
+                if peers.contains(peer_id) {
+                    return true;
+                }
+                if let State::Sent(p) = state {
+                    return p.contains(peer_id);
+                }
+                false
+            }
             Query::Send {
+                receiver, state, ..
+            } => {
+                if receiver == peer_id {
+                    return true;
+                }
+                if let State::Sent(p) = state {
+                    return p.contains(peer_id);
+                }
+                false
+            }
+            Query::SendHave {
                 receiver, state, ..
             } => {
                 if receiver == peer_id {

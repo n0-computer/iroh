@@ -2,9 +2,10 @@
 //! - `/ipfs/bitswap/1.1.0` and
 //! - `/ipfs/bitswap/1.2.0`.
 
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::task::{Context, Poll};
 
+use ahash::AHashSet;
 use bytes::Bytes;
 use cid::Cid;
 use iroh_metrics::inc;
@@ -32,7 +33,9 @@ pub enum BitswapEvent {
 #[allow(clippy::large_enum_variant)]
 pub enum QueryResult {
     Want(WantResult),
+    FindProviders(FindProvidersResult),
     Send(SendResult),
+    SendHave(SendHaveResult),
     Cancel(CancelResult),
 }
 
@@ -44,6 +47,19 @@ pub enum WantResult {
         cid: Cid,
         data: Bytes,
     },
+    Err(QueryError),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[allow(clippy::large_enum_variant)]
+pub enum FindProvidersResult {
+    Ok { cid: Cid, peers: AHashSet<PeerId> },
+    Err(QueryError),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum SendHaveResult {
+    Ok,
     Err(QueryError),
 }
 
@@ -72,6 +88,11 @@ pub enum InboundRequest {
         cid: Cid,
         priority: Priority,
     },
+    WantHave {
+        sender: PeerId,
+        cid: Cid,
+        priority: Priority,
+    },
     Cancel {
         sender: PeerId,
         cid: Cid,
@@ -89,6 +110,14 @@ pub struct Bitswap {
     sessions: SessionManager,
     #[allow(dead_code)]
     config: BitswapConfig,
+    known_peers: HashMap<PeerId, PeerState>,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq)]
+enum PeerState {
+    Unknown,
+    Connected,
+    Disconnected,
 }
 
 #[derive(Default, Debug, Clone, PartialEq)]
@@ -105,6 +134,10 @@ impl Bitswap {
             sessions,
             ..Default::default()
         }
+    }
+
+    pub fn add_peer(&mut self, peer: PeerId) {
+        self.known_peers.insert(peer, PeerState::Unknown);
     }
 
     /// Request the given block from the list of providers.
@@ -134,6 +167,25 @@ impl Bitswap {
         self.queries.send(*peer_id, cid, data)
     }
 
+    #[instrument(skip(self))]
+    pub fn send_have_block(&mut self, peer_id: &PeerId, cid: Cid) -> QueryId {
+        debug!("send_have_block: {}", cid);
+
+        self.sessions.create_session(peer_id);
+        self.queries.send_have(*peer_id, cid)
+    }
+
+    #[instrument(skip(self))]
+    pub fn find_providers(&mut self, cid: Cid, priority: Priority) -> QueryId {
+        debug!("find_providers: {}", cid);
+
+        // TODO: better strategies, than just all peers.
+        // TODO: use peers that connect later
+        let peers = self.connected_peers().map(|p| p.to_owned()).collect();
+        debug!("with peers: {:?}", &peers);
+        self.queries.find_providers(cid, priority, peers)
+    }
+
     /// Removes the block from our want list and updates all peers.
     ///
     /// Can be either a user request or be called when the block was received.
@@ -141,6 +193,15 @@ impl Bitswap {
     pub fn cancel_block(&mut self, cid: &Cid) -> Option<QueryId> {
         debug!("cancel_block: {}", cid);
         self.queries.cancel(cid)
+    }
+
+    fn connected_peers(&self) -> impl Iterator<Item = &PeerId> {
+        self.known_peers
+            .iter()
+            .filter_map(|(id, state)| match state {
+                PeerState::Connected | PeerState::Unknown => Some(id),
+                PeerState::Disconnected => None,
+            })
     }
 }
 
@@ -187,6 +248,12 @@ impl NetworkBehaviour for Bitswap {
         if other_established == 0 {
             self.sessions.new_connection(peer_id);
         }
+        let val = self
+            .known_peers
+            .entry(*peer_id)
+            .or_insert(PeerState::Unknown);
+
+        *val = PeerState::Connected;
     }
 
     #[instrument(skip(self, _handler))]
@@ -201,6 +268,9 @@ impl NetworkBehaviour for Bitswap {
         if remaining_established == 0 {
             self.sessions.disconnected(peer_id);
             self.queries.disconnected(peer_id);
+            if let Some(val) = self.known_peers.get_mut(peer_id) {
+                *val = PeerState::Disconnected;
+            }
         }
     }
 
@@ -215,6 +285,9 @@ impl NetworkBehaviour for Bitswap {
         if let Some(ref peer_id) = peer_id {
             self.sessions.dial_failure(peer_id);
             self.queries.dial_failure(peer_id);
+
+            // remove peers we can't dial
+            self.known_peers.remove(peer_id);
         }
     }
 
@@ -251,10 +324,39 @@ impl NetworkBehaviour for Bitswap {
                     }
                 }
 
+                for bp in message.block_presences() {
+                    let results = self.queries.process_block_presence(peer_id, bp);
+                    for (query_id, peers) in results {
+                        let event = BitswapEvent::OutboundQueryCompleted {
+                            id: query_id,
+                            result: QueryResult::FindProviders(FindProvidersResult::Ok {
+                                cid: bp.cid,
+                                peers,
+                            }),
+                        };
+
+                        self.events
+                            .push_back(NetworkBehaviourAction::GenerateEvent(event));
+                    }
+                }
+
                 // Propagate Want Events
                 for (cid, priority) in message.wantlist().blocks() {
                     let event = BitswapEvent::InboundRequest {
                         request: InboundRequest::Want {
+                            sender: peer_id,
+                            cid: *cid,
+                            priority,
+                        },
+                    };
+                    self.events
+                        .push_back(NetworkBehaviourAction::GenerateEvent(event));
+                }
+
+                // Propagate WantHave Events
+                for (cid, priority) in message.wantlist().want_have_blocks() {
+                    let event = BitswapEvent::InboundRequest {
+                        request: InboundRequest::WantHave {
                             sender: peer_id,
                             cid: *cid,
                             priority,
@@ -305,6 +407,7 @@ impl NetworkBehaviour for Bitswap {
 #[cfg(test)]
 mod tests {
     use std::io::{Error, ErrorKind};
+    use std::sync::atomic::AtomicBool;
     use std::time::Duration;
 
     use futures::channel::mpsc;
@@ -377,6 +480,9 @@ mod tests {
         } = create_block(&b"hello world"[..]);
         let cid = cid_orig;
 
+        let received_have_orig = AtomicBool::new(false);
+
+        let received_have = &received_have_orig;
         let peer1 = async move {
             while swarm1.next().now_or_never().is_some() {}
 
@@ -387,13 +493,28 @@ mod tests {
             loop {
                 match swarm1.next().await {
                     Some(SwarmEvent::Behaviour(BitswapEvent::InboundRequest {
+                        request:
+                            InboundRequest::WantHave {
+                                sender,
+                                cid,
+                                priority,
+                            },
+                    })) => {
+                        trace!("peer1: wanthave: {}", cid);
+                        assert_eq!(cid_orig, cid);
+                        assert_eq!(priority, 1000);
+                        swarm1.behaviour_mut().send_have_block(&sender, cid_orig);
+                        received_have.store(true, std::sync::atomic::Ordering::SeqCst);
+                    }
+                    Some(SwarmEvent::Behaviour(BitswapEvent::InboundRequest {
                         request: InboundRequest::Want { sender, cid, .. },
                     })) => {
-                        if cid == cid_orig {
-                            swarm1
-                                .behaviour_mut()
-                                .send_block(&sender, cid_orig, data_orig.clone());
-                        }
+                        trace!("peer1: want: {}", cid);
+                        assert_eq!(cid_orig, cid);
+
+                        swarm1
+                            .behaviour_mut()
+                            .send_block(&sender, cid_orig, data_orig.clone());
                     }
                     ev => trace!("peer1: {:?}", ev),
                 }
@@ -402,18 +523,47 @@ mod tests {
 
         let peer2 = async move {
             Swarm::dial(&mut swarm2, rx.next().await.unwrap()).unwrap();
-            let orig_id =
-                swarm2
-                    .behaviour_mut()
-                    .want_block(cid, 1000, [peer1_id].into_iter().collect());
+
+            let mut want_id = None;
+            let mut orig_id = None;
             let orig_cid = cid;
             loop {
                 match swarm2.next().await {
+                    Some(SwarmEvent::ConnectionEstablished {
+                        peer_id,
+                        num_established,
+                        ..
+                    }) => {
+                        assert_eq!(u32::from(num_established), 1);
+                        assert_eq!(peer_id, peer1_id);
+
+                        // wait for the connection to send the want
+                        want_id = Some(swarm2.behaviour_mut().find_providers(cid, 1000));
+                    }
+                    Some(SwarmEvent::Behaviour(BitswapEvent::OutboundQueryCompleted {
+                        id,
+                        result: QueryResult::FindProviders(FindProvidersResult::Ok { cid, peers }),
+                    })) => {
+                        trace!("peer2: findproviders: {}", cid);
+                        assert_eq!(orig_cid, cid);
+                        assert_eq!(peers.len(), 1);
+                        assert_eq!(want_id.unwrap(), id);
+
+                        assert!(peers.contains(&peer1_id));
+
+                        assert!(received_have.load(std::sync::atomic::Ordering::SeqCst));
+
+                        orig_id = Some(swarm2.behaviour_mut().want_block(
+                            cid,
+                            1000,
+                            [peer1_id].into_iter().collect(),
+                        ));
+                    }
                     Some(SwarmEvent::Behaviour(BitswapEvent::OutboundQueryCompleted {
                         id,
                         result: QueryResult::Want(WantResult::Ok { sender, cid, data }),
                     })) => {
-                        assert_eq!(orig_id, id);
+                        assert_eq!(orig_id.unwrap(), id);
                         assert_eq!(sender, peer1_id);
                         assert_eq!(orig_cid, cid);
                         return data;
@@ -427,6 +577,8 @@ mod tests {
             .await
             .factor_first()
             .0;
+
+        assert!(received_have.load(std::sync::atomic::Ordering::SeqCst));
         assert_eq!(&block[..], b"hello world");
     }
 }

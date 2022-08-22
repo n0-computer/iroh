@@ -165,6 +165,17 @@ impl NodeBehaviour {
         Ok(())
     }
 
+    /// Send a block have to a peer over bitswap
+    pub fn send_have_block(&mut self, peer_id: &PeerId, cid: Cid) -> Result<()> {
+        self.bitswap.send_have_block(peer_id, cid);
+        Ok(())
+    }
+
+    pub fn find_providers(&mut self, cid: Cid, priority: Priority) -> Result<QueryId> {
+        let id = self.bitswap.find_providers(cid, priority);
+        Ok(id)
+    }
+
     /// Send a request for data over bitswap
     pub fn want_block(
         &mut self,
