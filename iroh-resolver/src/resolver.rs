@@ -429,18 +429,27 @@ impl ContentLoader for Client {
             }
         }
         let p2p = self.try_p2p()?;
-        let providers = match p2p.fetch_providers_dht(&cid).await {
-            Ok(providers) => {
-                if providers.is_empty() {
-                    info!("failed to find providers for {} on the dht", cid);
-                    p2p.fetch_providers_bitswap(&cid).await?
-                } else {
-                    providers
-                }
+        let a = p2p.fetch_providers_dht(&cid);
+        let b = p2p.fetch_providers_bitswap(&cid);
+        tokio::pin!(a);
+        tokio::pin!(b);
+        let providers = futures::future::try_select(a, b).await;
+        let providers = match providers {
+            Ok(futures::future::Either::Left((providers, _))) => {
+                info!("found providers for {} on the dht", cid);
+                providers
             }
-            Err(e) => {
-                info!("failed to find providers for {} on the dht: {}", cid, e);
-                p2p.fetch_providers_bitswap(&cid).await?
+            Ok(futures::future::Either::Right((providers, _))) => {
+                info!("found providers for {} on the bitswap", cid);
+                providers
+            }
+            Err(futures::future::Either::Left((e, fut))) => {
+                warn!("failed to fetch providers dht: {:?}", e);
+                fut.await?
+            }
+            Err(futures::future::Either::Right((e, fut))) => {
+                warn!("failed to fetch providers bitswap: {:?}", e);
+                fut.await?
             }
         };
         let bytes = p2p.fetch_bitswap(cid, providers).await?;
