@@ -19,4 +19,5 @@ pub use crate::block::Block;
 pub use crate::error::BitswapError;
 pub use crate::message::{BitswapMessage, Priority};
 pub use crate::metrics::*;
+pub use crate::protocol::PROTOCOLS;
 pub use crate::query::QueryId;

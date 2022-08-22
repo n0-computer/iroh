@@ -4,6 +4,7 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::task::{Context, Poll};
+use std::time::Duration;
 
 use ahash::AHashSet;
 use bytes::Bytes;
@@ -14,7 +15,8 @@ use libp2p::core::connection::ConnectionId;
 use libp2p::core::{ConnectedPoint, Multiaddr, PeerId};
 use libp2p::swarm::handler::OneShotHandler;
 use libp2p::swarm::{
-    DialError, IntoConnectionHandler, NetworkBehaviour, NetworkBehaviourAction, PollParameters,
+    DialError, IntoConnectionHandler, NetworkBehaviour, NetworkBehaviourAction,
+    OneShotHandlerConfig, PollParameters, SubstreamProtocol,
 };
 use tracing::{debug, instrument, trace, warn};
 
@@ -239,7 +241,14 @@ impl NetworkBehaviour for Bitswap {
     type OutEvent = BitswapEvent;
 
     fn new_handler(&mut self) -> Self::ConnectionHandler {
-        Default::default()
+        OneShotHandler::new(
+            SubstreamProtocol::new(Default::default(), ()),
+            OneShotHandlerConfig {
+                keep_alive_timeout: Duration::from_secs(30),
+                outbound_substream_timeout: Duration::from_secs(30),
+                max_dial_negotiated: 64,
+            },
+        )
     }
 
     fn addresses_of_peer(&mut self, _peer_id: &PeerId) -> Vec<Multiaddr> {

@@ -113,13 +113,13 @@ impl SessionManager {
             true
         });
 
-        // limit parallel dials
-        let skip_dialing =
-            self.current_dials() >= self.config.dial_concurrency_factor_providers.get() as _;
-
         if let Some(ev) = queries.poll_all() {
             return Some(ev);
         }
+
+        // limit parallel dials
+        let skip_dialing =
+            self.current_dials() >= self.config.dial_concurrency_factor_providers.get() as _;
 
         for (peer_id, session) in self.sessions.iter_mut() {
             match session.state {
