@@ -292,7 +292,7 @@ pub enum OutPrettyReader<T: ContentLoader> {
 }
 
 impl<T: ContentLoader> OutPrettyReader<T> {
-    /// Returrns the size in bytes, if known in advance.
+    /// Returns the size in bytes, if known in advance.
     pub fn size(&self) -> Option<u64> {
         match self {
             OutPrettyReader::DagPb(reader)
@@ -311,7 +311,7 @@ pub struct BytesReader {
 }
 
 impl BytesReader {
-    /// Returrns the size in bytes, if known in advance.
+    /// Returns the size in bytes, if known in advance.
     pub fn size(&self) -> Option<u64> {
         Some(self.bytes.len() as u64)
     }
