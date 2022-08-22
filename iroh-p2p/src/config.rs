@@ -184,9 +184,13 @@ impl Config {
     }
 
     pub fn default_grpc() -> Self {
-        let addr = "grpc://0.0.0.0:4401";
+        let rpc_client = RpcClientConfig::default_grpc();
 
-        Self::default_with_rpc(addr.parse().unwrap())
+        Self {
+            libp2p: Libp2pConfig::default(),
+            rpc_client,
+            metrics: MetricsConfig::default(),
+        }
     }
 
     /// Derive server addr for non memory addrs.

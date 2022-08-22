@@ -18,6 +18,7 @@ macro_rules! impl_client {
 
             impl [<$label Client>] {
                 pub async fn new(addr: [<$label ClientAddr>]) -> Result<Self> {
+                    tracing::info!("connecting to {}", addr);
                     match addr {
                         #[cfg(feature = "grpc")]
                         Addr::GrpcHttp2(addr) => {

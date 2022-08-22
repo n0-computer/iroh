@@ -69,6 +69,7 @@ impl RpcStore for Store {
 
 #[tracing::instrument(skip(store))]
 pub async fn new(addr: StoreServerAddr, store: Store) -> Result<()> {
+    info!("rpc listening on: {}", addr);
     iroh_rpc_types::store::serve(addr, store).await
 }
 
