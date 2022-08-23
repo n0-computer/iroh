@@ -211,7 +211,7 @@ impl QueryManager {
                 if bp.is_have() && &bp.cid == cid {
                     providers.insert(peer);
 
-                    if peers.is_empty() {
+                    if peers.is_empty() || providers.len() >= 20 {
                         results.push((*id, providers.clone()));
 
                         false
