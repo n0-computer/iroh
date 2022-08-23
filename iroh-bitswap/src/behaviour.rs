@@ -25,7 +25,7 @@ use crate::protocol::{BitswapProtocol, Upgrade};
 use crate::query::{QueryId, QueryManager};
 use crate::session::{Config as SessionConfig, SessionManager};
 
-const MAX_PROVIDERS: usize = 100;
+const MAX_PROVIDERS: usize = 10_000; // yolo
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum BitswapEvent {
