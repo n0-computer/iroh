@@ -447,28 +447,43 @@ impl ContentLoader for Client {
             }
         }
 
-        let providers = load_providers(self, &cid).await?;
-        ctx.providers.extend(providers);
+        let ctx_ref = &ctx;
+        let (base_providers, root_providers) =
+            futures::future::join(load_providers(self, &cid), async move {
+                if let Some(ref cid) = ctx_ref.root_cid {
+                    // if there is a root cid, try the providers for that
+                    info!("fetching providers from root {}", cid);
+                    load_providers(self, cid).await
+                } else {
+                    if let CidOrDomain::Cid(ref cid) = ctx_ref.path.root() {
+                        info!("fetching providers from path {}", ctx_ref.path);
+                        // if there is a root cid in the path, try the providers for that
+
+                        load_providers(self, cid).await
+                    } else {
+                        Ok(HashSet::new())
+                    }
+                }
+            })
+            .await;
+
+        let base_providers = base_providers?;
+        let root_providers = root_providers?;
+
+        info!(
+            "found {} base providers and {} root providers for {}",
+            base_providers.len(),
+            root_providers.len(),
+            cid
+        );
+        ctx.providers.extend(base_providers);
+        ctx.providers.extend(root_providers);
 
         if ctx.providers.is_empty() {
             info!(
                 "no providers found on bitswap or the dht for {} ({:?})",
                 cid, ctx
             );
-            if let Some(ref cid) = ctx.root_cid {
-                // if there is a root cid, try the providers for that
-                info!("fetching providers from root {}", cid);
-                let providers = load_providers(self, cid).await?;
-                ctx.providers.extend(providers);
-            } else {
-                if let CidOrDomain::Cid(ref cid) = ctx.path.root() {
-                    info!("fetching providers from path {}", ctx.path);
-                    // if there is a root cid in the path, try the providers for that
-
-                    let providers = load_providers(self, cid).await?;
-                    ctx.providers.extend(providers);
-                }
-            }
         }
 
         info!("total providers count: {}", ctx.providers.len());
@@ -518,15 +533,22 @@ async fn load_providers(client: &Client, cid: &Cid) -> Result<HashSet<PeerId>> {
     tokio::pin!(a);
     tokio::pin!(b);
     match futures::future::try_select(a, b).await {
-        Ok(futures::future::Either::Left((providers, _))) => {
+        Ok(futures::future::Either::Left((providers, fut))) => {
+            if providers.is_empty() {
+                return Ok(fut.await?);
+            }
             info!(
                 "found providers for {} on the dht ({})",
                 cid,
                 providers.len()
             );
+
             Ok(providers)
         }
-        Ok(futures::future::Either::Right((providers, _))) => {
+        Ok(futures::future::Either::Right((providers, fut))) => {
+            if providers.is_empty() {
+                return Ok(fut.await?);
+            }
             info!(
                 "found providers for {} on bitswap ({})",
                 cid,
