@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::fmt::{self, Display, Formatter};
 use std::pin::Pin;
 use std::str::FromStr;
@@ -16,6 +16,7 @@ use iroh_rpc_client::Client;
 use libipld::codec::{Decode, Encode};
 use libipld::prelude::Codec as _;
 use libipld::{Ipld, IpldCodec};
+use libp2p::PeerId;
 use tokio::io::AsyncRead;
 use tracing::{debug, info, trace, warn};
 
@@ -383,6 +384,7 @@ impl<T: ContentLoader + Unpin + 'static> AsyncRead for OutPrettyReader<T> {
 pub struct LoadedCid {
     pub data: Bytes,
     pub source: Source,
+    pub providers: HashSet<PeerId>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -399,19 +401,19 @@ pub struct Resolver<T: ContentLoader> {
 #[async_trait]
 pub trait ContentLoader: Sync + Send + std::fmt::Debug + Clone + 'static {
     /// Loads the actual content of a given cid.
-    async fn load_cid(&self, cid: &Cid) -> Result<LoadedCid>;
+    async fn load_cid(&self, cid: &Cid, providers: &HashSet<PeerId>) -> Result<LoadedCid>;
 }
 
 #[async_trait]
 impl<T: ContentLoader> ContentLoader for Arc<T> {
-    async fn load_cid(&self, cid: &Cid) -> Result<LoadedCid> {
-        self.as_ref().load_cid(cid).await
+    async fn load_cid(&self, cid: &Cid, providers: &HashSet<PeerId>) -> Result<LoadedCid> {
+        self.as_ref().load_cid(cid, providers).await
     }
 }
 
 #[async_trait]
 impl ContentLoader for Client {
-    async fn load_cid(&self, cid: &Cid) -> Result<LoadedCid> {
+    async fn load_cid(&self, cid: &Cid, old_providers: &HashSet<PeerId>) -> Result<LoadedCid> {
         // TODO: better strategy
 
         let cid = *cid;
@@ -421,6 +423,7 @@ impl ContentLoader for Client {
                 return Ok(LoadedCid {
                     data,
                     source: Source::Store(IROH_STORE),
+                    providers: Default::default(),
                 });
             }
             Ok(None) => {}
@@ -433,8 +436,7 @@ impl ContentLoader for Client {
         let b = p2p.fetch_providers_bitswap(&cid);
         tokio::pin!(a);
         tokio::pin!(b);
-        let providers = futures::future::try_select(a, b).await;
-        let providers = match providers {
+        let mut providers = match futures::future::try_select(a, b).await {
             Ok(futures::future::Either::Left((providers, _))) => {
                 info!("found providers for {} on the dht", cid);
                 providers
@@ -452,7 +454,10 @@ impl ContentLoader for Client {
                 fut.await?
             }
         };
-        let bytes = p2p.fetch_bitswap(cid, providers).await?;
+
+        providers.extend(old_providers);
+
+        let bytes = p2p.fetch_bitswap(cid, providers.clone()).await?;
 
         // trigger storage in the background
         let cloned = bytes.clone();
@@ -483,6 +488,7 @@ impl ContentLoader for Client {
         Ok(LoadedCid {
             data: bytes,
             source: Source::Bitswap,
+            providers,
         })
     }
 }
@@ -559,6 +565,7 @@ impl<T: ContentLoader> Resolver<T> {
         current: &mut UnixfsNode,
         resolved_path: &mut Vec<Cid>,
         part: &str,
+        providers: &HashSet<PeerId>,
     ) -> Result<()> {
         match current {
             UnixfsNode::Directory(_) => {
@@ -566,7 +573,7 @@ impl<T: ContentLoader> Resolver<T> {
                     .get_link_by_name(&part)
                     .await?
                     .ok_or_else(|| anyhow!("UnixfsNode::Directory link '{}' not found", part))?;
-                let loaded_cid = self.load_cid(&next_link.cid).await?;
+                let loaded_cid = self.load_cid(&next_link.cid, providers).await?;
                 let next_node = UnixfsNode::decode(&next_link.cid, loaded_cid.data)?;
                 resolved_path.push(next_link.cid);
 
@@ -604,8 +611,13 @@ impl<T: ContentLoader> Resolver<T> {
             let mut resolved_path = vec![cid];
 
             for part in tail {
-                self.inner_resolve(&mut current, &mut resolved_path, part)
-                    .await?;
+                self.inner_resolve(
+                    &mut current,
+                    &mut resolved_path,
+                    part,
+                    &loaded_cid.providers,
+                )
+                .await?;
             }
 
             let unixfs_type = match current.typ() {
@@ -648,7 +660,13 @@ impl<T: ContentLoader> Resolver<T> {
             .map_err(|e| anyhow!("invalid dag cbor: {:?}", e))?;
 
         let out = self
-            .resolve_ipld(cid, libipld::IpldCodec::DagPb, ipld, &root_path.tail)
+            .resolve_ipld(
+                cid,
+                libipld::IpldCodec::DagPb,
+                ipld,
+                &root_path.tail,
+                &loaded_cid.providers,
+            )
             .await?;
 
         // reencode if we only return part of the original
@@ -686,7 +704,13 @@ impl<T: ContentLoader> Resolver<T> {
             .map_err(|e| anyhow!("invalid dag cbor: {:?}", e))?;
 
         let out = self
-            .resolve_ipld(cid, libipld::IpldCodec::DagCbor, ipld, &root_path.tail)
+            .resolve_ipld(
+                cid,
+                libipld::IpldCodec::DagCbor,
+                ipld,
+                &root_path.tail,
+                &loaded_cid.providers,
+            )
             .await?;
 
         // reencode if we only return part of the original
@@ -724,7 +748,13 @@ impl<T: ContentLoader> Resolver<T> {
             .map_err(|e| anyhow!("invalid dag json: {:?}", e))?;
 
         let out = self
-            .resolve_ipld(cid, libipld::IpldCodec::DagJson, ipld, &root_path.tail)
+            .resolve_ipld(
+                cid,
+                libipld::IpldCodec::DagJson,
+                ipld,
+                &root_path.tail,
+                &loaded_cid.providers,
+            )
             .await?;
 
         // reencode if we only return part of the original
@@ -757,7 +787,13 @@ impl<T: ContentLoader> Resolver<T> {
             .map_err(|e| anyhow!("invalid raw: {:?}", e))?;
 
         let out = self
-            .resolve_ipld(cid, libipld::IpldCodec::Raw, ipld, &root_path.tail)
+            .resolve_ipld(
+                cid,
+                libipld::IpldCodec::Raw,
+                ipld,
+                &root_path.tail,
+                &loaded_cid.providers,
+            )
             .await?;
 
         let metadata = Metadata {
@@ -781,6 +817,7 @@ impl<T: ContentLoader> Resolver<T> {
         codec: libipld::IpldCodec,
         root: Ipld,
         path: &[String],
+        providers: &HashSet<PeerId>,
     ) -> Result<Ipld> {
         let mut root = root;
         let mut current = root;
@@ -796,7 +833,7 @@ impl<T: ContentLoader> Resolver<T> {
                 );
 
                 // resolve link and update if we have encountered a link
-                let loaded_cid = self.load_cid(&c).await?;
+                let loaded_cid = self.load_cid(&c, providers).await?;
                 root = codec
                     .decode(&loaded_cid.data)
                     .map_err(|e| anyhow!("invalid dag json: {:?}", e))?;
@@ -828,7 +865,7 @@ impl<T: ContentLoader> Resolver<T> {
             match current.typ {
                 PathType::Ipfs => match current.root {
                     CidOrDomain::Cid(ref c) => {
-                        let loaded_cid = self.load_cid(c).await?;
+                        let loaded_cid = self.load_cid(c, &Default::default()).await?;
                         return Ok((*c, loaded_cid));
                     }
                     CidOrDomain::Domain(_) => bail!("invalid domain encountered"),
@@ -853,8 +890,8 @@ impl<T: ContentLoader> Resolver<T> {
     }
 
     #[tracing::instrument(skip(self))]
-    async fn load_cid(&self, cid: &Cid) -> Result<LoadedCid> {
-        self.loader.load_cid(cid).await
+    async fn load_cid(&self, cid: &Cid, providers: &HashSet<PeerId>) -> Result<LoadedCid> {
+        self.loader.load_cid(cid, providers).await
     }
 
     #[tracing::instrument(skip(self))]
@@ -924,11 +961,12 @@ mod tests {
 
     #[async_trait]
     impl ContentLoader for HashMap<Cid, Bytes> {
-        async fn load_cid(&self, cid: &Cid) -> Result<LoadedCid> {
+        async fn load_cid(&self, cid: &Cid, providers: &HashSet<PeerId>) -> Result<LoadedCid> {
             match self.get(cid) {
                 Some(b) => Ok(LoadedCid {
                     data: b.clone(),
                     source: Source::Bitswap,
+                    providers: providers.clone(),
                 }),
                 None => bail!("not found"),
             }
