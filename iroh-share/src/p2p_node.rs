@@ -63,13 +63,16 @@ impl Loader {
 
 #[async_trait]
 impl ContentLoader for Loader {
-    async fn load_cid(&self, cid: &Cid) -> Result<LoadedCid> {
+    async fn load_cid(&self, cid: &Cid, _providers: &HashSet<PeerId>) -> Result<LoadedCid> {
         let cid = *cid;
+        let providers = self.providers.lock().await.clone();
+
         match self.client.try_store()?.get(cid).await {
             Ok(Some(data)) => {
                 return Ok(LoadedCid {
                     data,
                     source: Source::Store(IROH_STORE),
+                    providers: providers.clone(),
                 });
             }
             Ok(None) => {}
@@ -78,10 +81,13 @@ impl ContentLoader for Loader {
             }
         }
 
-        let providers = self.providers.lock().await.clone();
         ensure!(!providers.is_empty(), "no providers supplied");
 
-        let res = self.client.try_p2p()?.fetch_bitswap(cid, providers).await;
+        let res = self
+            .client
+            .try_p2p()?
+            .fetch_bitswap(cid, providers.clone())
+            .await;
         let bytes = match res {
             Ok(bytes) => bytes,
             Err(err) => {
@@ -105,6 +111,7 @@ impl ContentLoader for Loader {
         Ok(LoadedCid {
             data: bytes,
             source: Source::Bitswap,
+            providers,
         })
     }
 }
