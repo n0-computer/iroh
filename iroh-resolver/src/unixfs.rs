@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashSet, VecDeque},
+    collections::VecDeque,
     fmt::Debug,
     io::Cursor,
     pin::Pin,
@@ -10,7 +10,6 @@ use anyhow::{anyhow, bail, ensure, Result};
 use bytes::{Buf, Bytes};
 use cid::{multihash::MultihashDigest, Cid};
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt, Stream, StreamExt};
-use libp2p::PeerId;
 use prost::Message;
 use tokio::io::AsyncRead;
 
@@ -18,7 +17,7 @@ use crate::{
     chunker::DEFAULT_CHUNK_SIZE_LIMIT,
     codecs::Codec,
     hamt::Hamt,
-    resolver::{ContentLoader, OutMetrics, Resolver},
+    resolver::{ContentLoader, LoaderContext, OutMetrics, Path, Resolver},
 };
 
 pub(crate) mod unixfs_pb {
@@ -368,7 +367,7 @@ impl UnixfsNode {
                     current_links,
                     loader,
                     out_metrics: om,
-                    providers: std::sync::Arc::new(tokio::sync::Mutex::new(Default::default())),
+                    ctx: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
                 }))
             }
             UnixfsNode::HamtShard(_, _) | UnixfsNode::Directory(_) => Ok(None),
@@ -399,7 +398,7 @@ pub enum UnixfsContentReader<T: ContentLoader> {
         current_links: Vec<VecDeque<Link>>,
         loader: Resolver<T>,
         out_metrics: OutMetrics,
-        providers: std::sync::Arc<tokio::sync::Mutex<HashSet<PeerId>>>,
+        ctx: std::sync::Arc<tokio::sync::Mutex<Option<LoaderContext>>>,
     },
 }
 
@@ -447,7 +446,7 @@ impl<T: ContentLoader + Unpin + 'static> AsyncRead for UnixfsContentReader<T> {
                 current_links,
                 loader,
                 out_metrics,
-                providers,
+                ctx,
             } => {
                 let typ = root_node.typ();
                 let pos_current = *pos;
@@ -464,7 +463,7 @@ impl<T: ContentLoader + Unpin + 'static> AsyncRead for UnixfsContentReader<T> {
                         buf,
                         current_links,
                         current_node,
-                        providers.clone(),
+                        ctx.clone(),
                     ),
                     UnixfsNode::Symlink(node) => {
                         let data = node.inner.data.as_deref().unwrap_or_default();
@@ -525,7 +524,7 @@ fn load_next_node<T: ContentLoader + 'static>(
     current_node: &mut CurrentNodeState,
     current_links: &mut Vec<VecDeque<Link>>,
     loader: T,
-    providers: std::sync::Arc<tokio::sync::Mutex<HashSet<PeerId>>>,
+    ctx: std::sync::Arc<tokio::sync::Mutex<Option<LoaderContext>>>,
 ) -> bool {
     // Load next node
     if current_links.is_empty() {
@@ -545,10 +544,14 @@ fn load_next_node<T: ContentLoader + 'static>(
     let link = links.pop_front().unwrap();
 
     let fut = async move {
-        let mut providers = providers.lock().await;
-        let loaded_cid = loader.load_cid(&link.cid, &providers).await?;
+        let mut ctx = ctx.lock().await;
+        if ctx.is_none() {
+            *ctx = Some(LoaderContext::from_path(Path::from_cid(link.cid)));
+        }
+        let mut ctx = ctx.as_mut().unwrap();
+        let loaded_cid = loader.load_cid(&link.cid, &mut ctx).await?;
         let node = UnixfsNode::decode(&link.cid, loaded_cid.data)?;
-        providers.extend(loaded_cid.providers);
+
         Ok(node)
     }
     .boxed();
@@ -565,7 +568,7 @@ fn poll_read_file_at<T: ContentLoader + 'static>(
     buf: &mut tokio::io::ReadBuf<'_>,
     current_links: &mut Vec<VecDeque<Link>>,
     current_node: &mut CurrentNodeState,
-    providers: std::sync::Arc<tokio::sync::Mutex<HashSet<PeerId>>>,
+    ctx: std::sync::Arc<tokio::sync::Mutex<Option<LoaderContext>>>,
 ) -> Poll<std::io::Result<()>> {
     loop {
         match current_node {
@@ -586,22 +589,12 @@ fn poll_read_file_at<T: ContentLoader + 'static>(
                     }
                 }
                 *current_node = CurrentNodeState::None;
-                if load_next_node(
-                    current_node,
-                    current_links,
-                    loader.clone(),
-                    providers.clone(),
-                ) {
+                if load_next_node(current_node, current_links, loader.clone(), ctx.clone()) {
                     return Poll::Ready(Ok(()));
                 }
             }
             CurrentNodeState::None => {
-                if load_next_node(
-                    current_node,
-                    current_links,
-                    loader.clone(),
-                    providers.clone(),
-                ) {
+                if load_next_node(current_node, current_links, loader.clone(), ctx.clone()) {
                     return Poll::Ready(Ok(()));
                 }
             }
@@ -653,7 +646,7 @@ fn poll_read_file_at<T: ContentLoader + 'static>(
                                 current_node,
                                 current_links,
                                 loader.clone(),
-                                providers.clone(),
+                                ctx.clone(),
                             ) {
                                 return Poll::Ready(Ok(()));
                             }
@@ -672,12 +665,8 @@ fn poll_read_file_at<T: ContentLoader + 'static>(
                         }
 
                         // follow links
-                        if load_next_node(
-                            current_node,
-                            current_links,
-                            loader.clone(),
-                            providers.clone(),
-                        ) {
+                        if load_next_node(current_node, current_links, loader.clone(), ctx.clone())
+                        {
                             return Poll::Ready(Ok(()));
                         }
                     }

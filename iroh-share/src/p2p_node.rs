@@ -6,7 +6,7 @@ use cid::Cid;
 use iroh_p2p::{config, Keychain, MemoryStorage, NetworkEvent, Node};
 use iroh_resolver::{
     parse_links,
-    resolver::{ContentLoader, LoadedCid, Resolver, Source, IROH_STORE},
+    resolver::{ContentLoader, LoadedCid, LoaderContext, Resolver, Source, IROH_STORE},
 };
 use iroh_rpc_client::Client;
 use iroh_rpc_types::Addr;
@@ -63,7 +63,7 @@ impl Loader {
 
 #[async_trait]
 impl ContentLoader for Loader {
-    async fn load_cid(&self, cid: &Cid, _providers: &HashSet<PeerId>) -> Result<LoadedCid> {
+    async fn load_cid(&self, cid: &Cid, _ctx: &mut LoaderContext) -> Result<LoadedCid> {
         let cid = *cid;
         let providers = self.providers.lock().await.clone();
 
@@ -72,7 +72,6 @@ impl ContentLoader for Loader {
                 return Ok(LoadedCid {
                     data,
                     source: Source::Store(IROH_STORE),
-                    providers: providers.clone(),
                 });
             }
             Ok(None) => {}
@@ -111,7 +110,6 @@ impl ContentLoader for Loader {
         Ok(LoadedCid {
             data: bytes,
             source: Source::Bitswap,
-            providers,
         })
     }
 }
