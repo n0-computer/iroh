@@ -204,16 +204,35 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                     }
                 }
                 _internal_event = expiry_interval.tick() => {
-                    self.bitswap_queries.retain(|_key, state| {
-                        match state {
-                            BitswapQueryChannel::FindProviders { timeout, .. } => {
-                                timeout.elapsed() < Duration::from_secs(20)
+                    let mut err = Ok(());
+                    self.bitswap_queries.retain(|key, state| {
+                        match (key, state) {
+                            (BitswapQueryKey::FindProviders(cid), BitswapQueryChannel::FindProviders { timeout, .. }) => {
+                                if timeout.elapsed() < Duration::from_secs(20) {
+                                    true
+                                } else {
+                                    err = self.swarm.behaviour_mut().cancel_want_block(cid);
+                                    false
+                                }
                             }
-                            BitswapQueryChannel::Want { timeout, .. }=> {
-                                timeout.elapsed() < Duration::from_secs(60)
+                            (BitswapQueryKey::Want(cid), BitswapQueryChannel::Want { timeout, .. })=> {
+                                if timeout.elapsed() < Duration::from_secs(60) {
+                                    true
+                                } else {
+                                    err = self.swarm.behaviour_mut().cancel_block(cid);
+                                    false
+                                }
+                            }
+                            _ => {
+                                err = Err(anyhow!("invalid bitswap query state"));
+                                false
                             }
                         }
                     });
+
+                    if err.is_err() {
+                        return err;
+                    }
                 }
             }
         }
