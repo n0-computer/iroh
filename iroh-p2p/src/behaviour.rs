@@ -165,6 +165,16 @@ impl NodeBehaviour {
         Ok(())
     }
 
+    pub fn cancel_block(&mut self, cid: &Cid) -> Result<()> {
+        self.bitswap.cancel_block(cid);
+        Ok(())
+    }
+
+    pub fn cancel_want_block(&mut self, cid: &Cid) -> Result<()> {
+        self.bitswap.cancel_want_block(cid);
+        Ok(())
+    }
+
     /// Send a block have to a peer over bitswap
     pub fn send_have_block(&mut self, peer_id: &PeerId, cid: Cid) -> Result<()> {
         self.bitswap.send_have_block(peer_id, cid);
