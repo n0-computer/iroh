@@ -5,7 +5,7 @@ use std::time::Duration;
 use anyhow::Result;
 use bytes::Bytes;
 use cid::Cid;
-use iroh_bitswap::{Bitswap, BitswapConfig, Priority, QueryId};
+use iroh_bitswap::{Bitswap, BitswapConfig, Priority};
 use libp2p::core::identity::Keypair;
 use libp2p::core::PeerId;
 use libp2p::gossipsub::{Gossipsub, GossipsubConfig, MessageAuthenticity};
@@ -171,9 +171,9 @@ impl NodeBehaviour {
         Ok(())
     }
 
-    pub fn find_providers(&mut self, cid: Cid, priority: Priority) -> Result<QueryId> {
-        let id = self.bitswap.find_providers(cid, priority);
-        Ok(id)
+    pub fn find_providers(&mut self, cid: Cid, priority: Priority) -> Result<()> {
+        self.bitswap.find_providers(cid, priority);
+        Ok(())
     }
 
     /// Send a request for data over bitswap
@@ -182,9 +182,9 @@ impl NodeBehaviour {
         cid: Cid,
         priority: Priority,
         providers: HashSet<PeerId>,
-    ) -> Result<QueryId, Box<dyn Error>> {
-        let id = self.bitswap.want_block(cid, priority, providers);
-        Ok(id)
+    ) -> Result<(), Box<dyn Error>> {
+        self.bitswap.want_block(cid, priority, providers);
+        Ok(())
     }
 
     pub fn finish_query(&mut self, id: &libp2p::kad::QueryId) {

@@ -354,9 +354,8 @@ impl QueryManager {
                     QueryResult::Cancel(CancelResult::Err(QueryError::Timeout)),
                 ),
             })
-            .map(|(id, result)| {
+            .map(|(_, result)| {
                 NetworkBehaviourAction::GenerateEvent(BitswapEvent::OutboundQueryCompleted {
-                    id,
                     result,
                 })
             })
@@ -701,11 +700,10 @@ mod tests {
 
         let q = queries.poll_all().unwrap();
         if let NetworkBehaviourAction::GenerateEvent(BitswapEvent::OutboundQueryCompleted {
-            id,
             ..
         }) = q
         {
-            assert_eq!(id, query_id);
+            //
         } else {
             panic!("invalid poll result");
         }
