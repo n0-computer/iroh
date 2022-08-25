@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use ahash::AHashMap;
 use anyhow::{anyhow, Context, Result};
+use cid::Cid;
 use futures::channel::oneshot::Sender as OneShotSender;
 use futures_util::stream::StreamExt;
 use iroh_metrics::p2p_metrics;
@@ -29,7 +30,7 @@ use tracing::{debug, info, trace, warn};
 
 use iroh_bitswap::{
     BitswapEvent, Block, FindProvidersResult, InboundRequest, QueryError,
-    QueryId as BitswapQueryId, QueryResult as BitswapQueryResult, WantResult,
+    QueryResult as BitswapQueryResult, WantResult,
 };
 
 use crate::keys::{Keychain, Storage};
@@ -69,7 +70,7 @@ pub enum GossipsubEvent {
 pub struct Node<KeyStorage: Storage> {
     swarm: Swarm<NodeBehaviour>,
     net_receiver_in: Receiver<RpcMessage>,
-    bitswap_queries: AHashMap<BitswapQueryId, BitswapQueryChannel>,
+    bitswap_queries: AHashMap<BitswapQueryKey, BitswapQueryChannel>,
     kad_queries: AHashMap<QueryKey, KadQueryChannel>,
     dial_queries: AHashMap<PeerId, Vec<OneShotSender<bool>>>,
     network_events: Vec<Sender<NetworkEvent>>,
@@ -81,7 +82,10 @@ pub struct Node<KeyStorage: Storage> {
 
 enum BitswapQueryChannel {
     Want(OneShotSender<Result<Block, QueryError>>),
-    FindProviders(mpsc::Sender<Result<HashSet<PeerId>, String>>),
+    FindProviders {
+        provider_count: usize,
+        chan: mpsc::Sender<Result<HashSet<PeerId>, String>>,
+    },
 }
 
 enum KadQueryChannel {
@@ -91,6 +95,12 @@ enum KadQueryChannel {
 #[derive(Debug, Hash, PartialEq, Eq)]
 enum QueryKey {
     ProviderKey(Key),
+}
+
+#[derive(Debug, Hash, PartialEq, Eq)]
+enum BitswapQueryKey {
+    Want(Cid),
+    FindProviders(Cid),
 }
 
 const PROVIDER_LIMIT: usize = 20;
@@ -336,7 +346,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                             }
                         }
                         InboundRequest::WantHave { cid, sender, .. } => {
-                            info!("bitswap want have {}", cid);
+                            trace!("bitswap want have {}", cid);
                             if let Some(rpc_store) = self.rpc_client.store.as_ref() {
                                 match rpc_store.has(cid).await {
                                     Ok(true) => {
@@ -368,14 +378,14 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                             // nothing to do atm
                         }
                     },
-                    BitswapEvent::OutboundQueryCompleted { id, result } => match result {
+                    BitswapEvent::OutboundQueryCompleted { result } => match result {
                         BitswapQueryResult::Want(WantResult::Ok { sender, cid, data }) => {
                             info!("got block {} from {}", cid, sender);
                             match iroh_util::verify_hash(&cid, &data) {
                                 Some(true) => {
                                     let b = Block::new(data, cid);
                                     if let Some(BitswapQueryChannel::Want(chan)) =
-                                        self.bitswap_queries.remove(&id)
+                                        self.bitswap_queries.remove(&BitswapQueryKey::Want(cid))
                                     {
                                         if chan.send(Ok(b)).is_err() {
                                             debug!("Bitswap response channel send failed");
@@ -397,36 +407,53 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                                 }
                             }
                         }
-                        BitswapQueryResult::Want(WantResult::Err(e)) => {
+                        BitswapQueryResult::Want(WantResult::Err { cid, error }) => {
                             if let Some(BitswapQueryChannel::Want(chan)) =
-                                self.bitswap_queries.remove(&id)
+                                self.bitswap_queries.remove(&BitswapQueryKey::Want(cid))
                             {
-                                if chan.send(Err(e)).is_err() {
+                                if chan.send(Err(error)).is_err() {
                                     debug!("Bitswap response channel send failed");
                                 }
                             }
                         }
                         BitswapQueryResult::FindProviders(FindProvidersResult::Ok {
                             cid,
-                            peers,
+                            provider,
                         }) => {
-                            info!("found providers {} for {}", peers.len(), cid);
-                            if let Some(BitswapQueryChannel::FindProviders(chan)) =
-                                self.bitswap_queries.remove(&id)
+                            info!("Bitswap found provider for {}", cid);
+                            if let Some(BitswapQueryChannel::FindProviders {
+                                provider_count,
+                                chan,
+                            }) = self
+                                .bitswap_queries
+                                .get_mut(&BitswapQueryKey::FindProviders(cid))
                             {
-                                if chan.send(Ok(peers.into_iter().collect())).await.is_err() {
+                                *provider_count += 1;
+                                if chan
+                                    .send(Ok([provider].into_iter().collect()))
+                                    .await
+                                    .is_err()
+                                {
                                     debug!("Bitswap provider response channel send failed");
                                 }
-                                trace!("Saved Bitswap block with cid {:?}", cid);
+                                if *provider_count >= PROVIDER_LIMIT {
+                                    let _ = self
+                                        .bitswap_queries
+                                        .remove(&BitswapQueryKey::FindProviders(cid));
+                                }
                             } else {
                                 debug!("Received Bitswap response, but response channel cannot be found");
                             }
                         }
-                        BitswapQueryResult::FindProviders(FindProvidersResult::Err(e)) => {
-                            if let Some(BitswapQueryChannel::FindProviders(chan)) =
-                                self.bitswap_queries.remove(&id)
+                        BitswapQueryResult::FindProviders(FindProvidersResult::Err {
+                            cid,
+                            error,
+                        }) => {
+                            if let Some(BitswapQueryChannel::FindProviders { chan, .. }) = self
+                                .bitswap_queries
+                                .remove(&BitswapQueryKey::FindProviders(cid))
                             {
-                                if chan.send(Err(e.to_string())).await.is_err() {
+                                if chan.send(Err(error.to_string())).await.is_err() {
                                     debug!("Bitswap response channel send failed");
                                 }
                             }
@@ -617,14 +644,15 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                 providers,
             } => {
                 for (cid, response_channel) in cids.into_iter().zip(response_channels.into_iter()) {
-                    let query_id = self
-                        .swarm
+                    self.swarm
                         .behaviour_mut()
                         .want_block(cid, 1000, providers.clone()) // TODO: priority?
                         .map_err(|err| anyhow!("Failed to send a bitswap want_block: {:?}", err))?;
 
-                    self.bitswap_queries
-                        .insert(query_id, BitswapQueryChannel::Want(response_channel));
+                    self.bitswap_queries.insert(
+                        BitswapQueryKey::Want(cid),
+                        BitswapQueryChannel::Want(response_channel),
+                    );
                 }
             }
             RpcMessage::ProviderRequest {
@@ -667,9 +695,14 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                     );
 
                     match self.swarm.behaviour_mut().find_providers(cid, 1000) {
-                        Ok(id) => {
-                            self.bitswap_queries
-                                .insert(id, BitswapQueryChannel::FindProviders(response_channel));
+                        Ok(()) => {
+                            self.bitswap_queries.insert(
+                                BitswapQueryKey::FindProviders(cid),
+                                BitswapQueryChannel::FindProviders {
+                                    provider_count: 0,
+                                    chan: response_channel,
+                                },
+                            );
                         }
                         Err(e) => {
                             response_channel.send(Err(e.to_string())).await.ok();
