@@ -1,5 +1,5 @@
 use std::collections::{HashMap, HashSet};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use ahash::AHashMap;
 use anyhow::{anyhow, Context, Result};
@@ -81,9 +81,14 @@ pub struct Node<KeyStorage: Storage> {
 }
 
 enum BitswapQueryChannel {
-    Want(OneShotSender<Result<Block, QueryError>>),
+    Want {
+        timeout: Instant,
+        chan: OneShotSender<Result<Block, QueryError>>,
+    },
     FindProviders {
+        timeout: Instant,
         provider_count: usize,
+        expected_provider_count: usize,
         chan: mpsc::Sender<Result<HashSet<PeerId>, String>>,
     },
 }
@@ -165,6 +170,8 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
         let mut nice_interval = time::interval(NICE_INTERVAL);
         let mut bootstrap_interval = time::interval(BOOTSTRAP_INTERVAL);
 
+        let mut expiry_interval = time::interval(Duration::from_secs(1));
+
         loop {
             select! {
                 swarm_event = self.swarm.select_next_some() => {
@@ -195,6 +202,18 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                     if let Err(e) = self.swarm.behaviour_mut().kad_bootstrap() {
                         warn!("kad bootstrap failed: {:?}", e);
                     }
+                }
+                _internal_event = expiry_interval.tick() => {
+                    self.bitswap_queries.retain(|_key, state| {
+                        match state {
+                            BitswapQueryChannel::FindProviders { timeout, .. } => {
+                                timeout.elapsed() < Duration::from_secs(20)
+                            }
+                            BitswapQueryChannel::Want { timeout, .. }=> {
+                                timeout.elapsed() < Duration::from_secs(60)
+                            }
+                        }
+                    });
                 }
             }
         }
@@ -384,7 +403,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                             match iroh_util::verify_hash(&cid, &data) {
                                 Some(true) => {
                                     let b = Block::new(data, cid);
-                                    if let Some(BitswapQueryChannel::Want(chan)) =
+                                    if let Some(BitswapQueryChannel::Want { chan, .. }) =
                                         self.bitswap_queries.remove(&BitswapQueryKey::Want(cid))
                                     {
                                         if chan.send(Ok(b)).is_err() {
@@ -408,7 +427,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                             }
                         }
                         BitswapQueryResult::Want(WantResult::Err { cid, error }) => {
-                            if let Some(BitswapQueryChannel::Want(chan)) =
+                            if let Some(BitswapQueryChannel::Want { chan, .. }) =
                                 self.bitswap_queries.remove(&BitswapQueryKey::Want(cid))
                             {
                                 if chan.send(Err(error)).is_err() {
@@ -422,7 +441,9 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                         }) => {
                             info!("Bitswap found provider for {}", cid);
                             if let Some(BitswapQueryChannel::FindProviders {
+                                timeout,
                                 provider_count,
+                                expected_provider_count,
                                 chan,
                             }) = self
                                 .bitswap_queries
@@ -436,7 +457,12 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                                 {
                                     debug!("Bitswap provider response channel send failed");
                                 }
-                                if *provider_count >= PROVIDER_LIMIT {
+                                if *provider_count >= *expected_provider_count {
+                                    let _ = self
+                                        .bitswap_queries
+                                        .remove(&BitswapQueryKey::FindProviders(cid));
+                                } else if timeout.elapsed() >= Duration::from_secs(20) {
+                                    chan.send(Err("timeout".into())).await.ok();
                                     let _ = self
                                         .bitswap_queries
                                         .remove(&BitswapQueryKey::FindProviders(cid));
@@ -651,7 +677,10 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
 
                     self.bitswap_queries.insert(
                         BitswapQueryKey::Want(cid),
-                        BitswapQueryChannel::Want(response_channel),
+                        BitswapQueryChannel::Want {
+                            timeout: Instant::now(),
+                            chan: response_channel,
+                        },
                     );
                 }
             }
@@ -699,6 +728,8 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                             self.bitswap_queries.insert(
                                 BitswapQueryKey::FindProviders(cid),
                                 BitswapQueryChannel::FindProviders {
+                                    timeout: Instant::now(),
+                                    expected_provider_count: PROVIDER_LIMIT,
                                     provider_count: 0,
                                     chan: response_channel,
                                 },
