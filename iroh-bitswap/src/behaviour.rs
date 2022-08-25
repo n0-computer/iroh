@@ -330,8 +330,19 @@ impl NetworkBehaviour for Bitswap {
         _failed_addresses: Option<&Vec<Multiaddr>>,
         other_established: usize,
     ) {
-        let val = self.known_peers.entry(*peer_id).or_default();
-        val.conn = ConnState::Connected;
+        let peer_state = self.known_peers.entry(*peer_id).or_default();
+        peer_state.conn = ConnState::Connected;
+
+        if other_established == 0 && !peer_state.is_empty() {
+            // queue up message to be sent as soon as we are connected
+            let msg = peer_state.send_message();
+            self.events
+                .push_back(NetworkBehaviourAction::NotifyHandler {
+                    peer_id: *peer_id,
+                    handler: NotifyHandler::Any,
+                    event: msg,
+                });
+        }
     }
 
     #[instrument(skip(self, _handler))]

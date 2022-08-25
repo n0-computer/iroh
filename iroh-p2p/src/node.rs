@@ -230,9 +230,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                         }
                     });
 
-                    if err.is_err() {
-                        return err;
-                    }
+                    err?;
                 }
             }
         }
