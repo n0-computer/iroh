@@ -16,16 +16,53 @@ use crate::{
     unixfs::{dag_pb, unixfs_pb, DataType, Node, UnixfsNode},
 };
 
+// CID_LEN is the length of a cid
+const CID_LEN: usize = 64;
+
+// the PBNode.Data field may contain some data, this buffer is to ensure that
+// the contents of that data field + the size of the encoded protobuf links
+// will not be larger than the chunk size
+const BUFFER: usize = 1024;
+
+#[derive(Debug, PartialEq)]
+enum DirectoryType {
+    Basic,
+    // TODO: writing hamt sharding not yet implemented
+    Hamt,
+}
+
 /// Construct a UnixFS directory.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct DirectoryBuilder {
     name: Option<String>,
     files: Vec<File>,
+    typ: DirectoryType,
+    // estimated_size is used to compare the size of the directory
+    // to the chunk size.
+    // When the number of links in a directory get so large that the
+    // links themselves no longer fit into one chunk
+    // we must use HAMT sharding to represent that directory.
+    // max size that the directory can be before it should be created
+    // as a HAMT, rather than a Basic directory
+    estimated_size: usize,
+    chunker: Chunker,
+}
+
+impl Default for DirectoryBuilder {
+    fn default() -> Self {
+        Self {
+            name: None,
+            files: Default::default(),
+            typ: DirectoryType::Basic,
+            estimated_size: 0,
+            chunker: Chunker::fixed_size(),
+        }
+    }
 }
 
 impl DirectoryBuilder {
     pub fn new() -> Self {
-        Self::default()
+        Default::default()
     }
 
     pub fn name(&mut self, name: impl Into<String>) -> &mut Self {
@@ -34,12 +71,22 @@ impl DirectoryBuilder {
     }
 
     pub fn add_file(&mut self, file: File) -> &mut Self {
+        self.estimated_size += self.estimated_size + file.name().len() + CID_LEN;
+        if self.typ == DirectoryType::Basic
+            && self.estimated_size + BUFFER > self.chunker.chunk_size()
+        {
+            self.typ = DirectoryType::Hamt;
+        }
         self.files.push(file);
         self
     }
 
     pub async fn build(self) -> Result<Directory> {
-        let DirectoryBuilder { name, files } = self;
+        if self.typ == DirectoryType::Hamt {
+            anyhow::bail!("too many links to fit into one chunk, must be encoded as a HAMT. However, HAMT creation has not yet been implemented.");
+        }
+        let DirectoryBuilder { name, files, .. } = self;
+
         let name = name.unwrap_or_default();
 
         Ok(Directory { name, files })
@@ -185,6 +232,10 @@ impl EncodedFile {
 }
 
 impl File {
+    pub fn name(&self) -> String {
+        self.name.clone()
+    }
+
     pub async fn encode_root(self) -> Result<(Cid, Bytes)> {
         let mut current = None;
         let parts = self.encode();
@@ -288,7 +339,7 @@ impl Store for &tokio::sync::Mutex<std::collections::HashMap<Cid, Bytes>> {
 /// Adds a single file.
 /// - storing the content using `rpc.store`
 /// - returns the root Cid
-/// - wraps into a UnixFs directory to presever the filename
+/// - wraps into a UnixFs directory to preserve the filename
 pub async fn add_file<S: Store>(path: &Path, rpc: Option<S>) -> Result<Cid> {
     ensure!(path.is_file(), "provided path was not a file");
 
@@ -501,6 +552,42 @@ mod tests {
 
         // TODO: check content
         // TODO: add nested directory
+
+        Ok(())
+    }
+
+    fn test_chunk_stream(num_chunks: usize) -> impl Stream<Item = std::io::Result<BytesMut>> {
+        futures::stream::iter((0..num_chunks).map(|n| Ok(BytesMut::from(&n.to_be_bytes()[..]))))
+    }
+
+    #[tokio::test]
+    async fn test_chunk_size_overflow() -> Result<()> {
+        let chunker = Chunker::FixedSize { chunk_size: 1200 };
+        let mut builder = DirectoryBuilder::new();
+        builder.chunker = chunker;
+
+        // add one file
+        let nodes = Box::pin(test_chunk_stream(1));
+        let file = File {
+            name: "foo.bar".into(),
+            nodes,
+        };
+        builder.add_file(file);
+        assert_eq!(DirectoryType::Basic, builder.typ);
+
+        // add second file. this should cause us to try and convert
+        // the directory to a hamt
+        let nodes = Box::pin(test_chunk_stream(1));
+        let file = File {
+            name: "foo.bar".into(),
+            nodes,
+        };
+        builder.add_file(file);
+        assert_eq!(DirectoryType::Hamt, builder.typ);
+
+        if (builder.build().await).is_ok() {
+            panic!("expected builder to error when attempting to build a hamt directory")
+        }
 
         Ok(())
     }

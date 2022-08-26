@@ -73,6 +73,12 @@ impl Chunker {
             }
         }
     }
+
+    pub fn chunk_size(&self) -> usize {
+        match self {
+            Self::FixedSize { chunk_size } => *chunk_size,
+        }
+    }
 }
 
 #[cfg(test)]
