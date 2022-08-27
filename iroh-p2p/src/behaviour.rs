@@ -19,7 +19,6 @@ use libp2p::relay;
 use libp2p::swarm::behaviour::toggle::Toggle;
 use libp2p::NetworkBehaviour;
 use libp2p::{autonat, dcutr};
-use prometheus_client::registry::Registry;
 use tracing::warn;
 
 pub(crate) use self::event::Event;
@@ -47,11 +46,10 @@ impl NodeBehaviour {
     pub async fn new(
         local_key: &Keypair,
         config: &Libp2pConfig,
-        registry: &mut Registry,
         relay_client: Option<relay::v2::client::Client>,
     ) -> Result<Self> {
         let bs_config = BitswapConfig::default();
-        let bitswap = Bitswap::new(bs_config, registry);
+        let bitswap = Bitswap::new(bs_config);
 
         let mdns = if config.mdns {
             Some(Mdns::new(Default::default()).await?)

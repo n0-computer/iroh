@@ -7,14 +7,14 @@ use std::task::{Context, Poll};
 
 use bytes::Bytes;
 use cid::Cid;
-use iroh_metrics::bitswap::Metrics;
+use iroh_metrics::bitswap::BitswapMetrics;
+use iroh_metrics::{record_sync, Collector};
 use libp2p::core::connection::ConnectionId;
 use libp2p::core::{ConnectedPoint, Multiaddr, PeerId};
 use libp2p::swarm::handler::OneShotHandler;
 use libp2p::swarm::{
     DialError, IntoConnectionHandler, NetworkBehaviour, NetworkBehaviourAction, PollParameters,
 };
-use prometheus_client::registry::Registry;
 use tracing::{debug, instrument, trace, warn};
 
 use crate::message::{BitswapMessage, Priority};
@@ -89,7 +89,6 @@ pub struct Bitswap {
     sessions: SessionManager,
     #[allow(dead_code)]
     config: BitswapConfig,
-    metrics: Metrics,
 }
 
 #[derive(Default, Debug, Clone, PartialEq)]
@@ -99,12 +98,11 @@ pub struct BitswapConfig {
 
 impl Bitswap {
     /// Create a new `Bitswap`.
-    pub fn new(config: BitswapConfig, registry: &mut Registry) -> Self {
+    pub fn new(config: BitswapConfig) -> Self {
         let sessions = SessionManager::new(config.session.clone());
         Bitswap {
             config,
             sessions,
-            metrics: Metrics::new(registry),
             ..Default::default()
         }
     }
@@ -122,7 +120,11 @@ impl Bitswap {
             self.sessions.create_session(provider);
         }
 
-        self.metrics.providers_total.inc_by(providers.len() as u64);
+        record_sync(
+            Collector::Bitswap,
+            BitswapMetrics::Providers,
+            providers.len() as u64,
+        );
         self.queries
             .want(cid, priority, providers.into_iter().collect())
     }
@@ -131,7 +133,11 @@ impl Bitswap {
     pub fn send_block(&mut self, peer_id: &PeerId, cid: Cid, data: Bytes) -> QueryId {
         debug!("send_block: {}", cid);
 
-        self.metrics.sent_block_bytes.inc_by(data.len() as u64);
+        record_sync(
+            Collector::Bitswap,
+            BitswapMetrics::BlockBytesOut,
+            data.len() as u64,
+        );
         self.sessions.create_session(peer_id);
         self.queries.send(*peer_id, cid, data)
     }
@@ -227,13 +233,15 @@ impl NetworkBehaviour for Bitswap {
                 // outbound upgrade
             }
             HandlerEvent::Bitswap(mut message) => {
-                self.metrics.requests_total.inc();
+                record_sync(Collector::Bitswap, BitswapMetrics::Requests, 1);
 
                 // Process incoming message.
                 while let Some(block) = message.pop_block() {
-                    self.metrics
-                        .received_block_bytes
-                        .inc_by(block.data().len() as u64);
+                    record_sync(
+                        Collector::Bitswap,
+                        BitswapMetrics::BlockBytesIn,
+                        block.data.len() as u64,
+                    );
 
                     let (unused_providers, query_ids) =
                         self.queries.process_block(&peer_id, &block);
@@ -272,7 +280,7 @@ impl NetworkBehaviour for Bitswap {
 
                 // Propagate Cancel Events
                 for cid in message.wantlist().cancels() {
-                    self.metrics.canceled_total.inc();
+                    record_sync(Collector::Bitswap, BitswapMetrics::Cancels, 1);
                     let event = BitswapEvent::InboundRequest {
                         request: InboundRequest::Cancel {
                             sender: peer_id,

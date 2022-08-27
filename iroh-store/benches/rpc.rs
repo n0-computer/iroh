@@ -4,7 +4,6 @@ use bytes::Bytes;
 use cid::multihash::{Code, MultihashDigest};
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use iroh_metrics::config::Config as MetricsConfig;
-use iroh_metrics::store::Metrics;
 use iroh_rpc_client::{Client, Config as RpcClientConfig};
 use iroh_rpc_types::{
     store::{StoreClientAddr, StoreServerAddr},
@@ -75,9 +74,8 @@ pub fn put_benchmark(c: &mut Criterion) {
                         rpc_client: rpc_client.clone(),
                         metrics: MetricsConfig::default(),
                     };
-                    let metrics = Metrics::default();
                     let (_task, rpc) = executor.block_on(async {
-                        let store = Store::create(config, metrics).await.unwrap();
+                        let store = Store::create(config).await.unwrap();
                         let task = executor.spawn(async move {
                             iroh_store::rpc::new(server_addr, store).await.unwrap()
                         });
@@ -130,9 +128,8 @@ pub fn get_benchmark(c: &mut Criterion) {
                         rpc_client: rpc_client.clone(),
                         metrics: MetricsConfig::default(),
                     };
-                    let metrics = Metrics::default();
                     let (_task, rpc) = executor.block_on(async {
-                        let store = Store::create(config, metrics).await.unwrap();
+                        let store = Store::create(config).await.unwrap();
                         let task = executor.spawn(async move {
                             iroh_store::rpc::new(server_addr, store).await.unwrap()
                         });

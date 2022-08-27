@@ -8,7 +8,11 @@ use std::{
 
 use anyhow::{anyhow, bail, Context, Result};
 use cid::Cid;
-use iroh_metrics::store::Metrics;
+use iroh_metrics::{
+    observe, observe_sync, record, record_sync,
+    store::{StoreHistograms, StoreMetrics},
+    Collector,
+};
 use iroh_rpc_client::Client as RpcClient;
 use rocksdb::{
     BlockBasedOptions, Cache, DBPinnableSlice, IteratorMode, Options, WriteBatch, DB as RocksDb,
@@ -23,7 +27,6 @@ use crate::Config;
 #[derive(Clone)]
 pub struct Store {
     inner: Arc<InnerStore>,
-    metrics: Metrics,
 }
 
 struct InnerStore {
@@ -70,7 +73,7 @@ fn default_blob_opts() -> Options {
 impl Store {
     /// Creates a new database.
     #[tracing::instrument]
-    pub async fn create(config: Config, metrics: Metrics) -> Result<Self> {
+    pub async fn create(config: Config) -> Result<Self> {
         let (mut options, cache) = default_options();
         options.create_if_missing(true);
 
@@ -109,13 +112,12 @@ impl Store {
                 _cache: cache,
                 _rpc_client,
             }),
-            metrics,
         })
     }
 
     /// Opens an existing database.
     #[tracing::instrument]
-    pub async fn open(config: Config, metrics: Metrics) -> Result<Self> {
+    pub async fn open(config: Config) -> Result<Self> {
         let (mut options, cache) = default_options();
         options.create_if_missing(false);
         // TODO: find a way to read existing options
@@ -162,7 +164,6 @@ impl Store {
                 _cache: cache,
                 _rpc_client,
             }),
-            metrics,
         })
     }
 
@@ -171,7 +172,7 @@ impl Store {
     where
         L: IntoIterator<Item = Cid>,
     {
-        self.metrics.put_requests_total.inc();
+        record_sync(Collector::Store, StoreMetrics::PutRequests, 1);
 
         if self.has(&cid).await? {
             return Ok(());
@@ -227,35 +228,43 @@ impl Store {
         batch.put_cf(cf_meta, &id_bytes, metadata_bytes);
         batch.put_cf(cf_graph, &id_bytes, graph_bytes);
         self.inner.content.write(batch)?;
-        self.metrics
-            .put_request_time
-            .observe(start.elapsed().as_secs_f64());
-        self.metrics.put_bytes.inc_by(blob_size as u64);
+        observe_sync(
+            Collector::Store,
+            StoreHistograms::PutRequests,
+            start.elapsed().as_secs_f64(),
+        );
+        record_sync(Collector::Store, StoreMetrics::PutBytes, blob_size as u64);
 
         Ok(())
     }
 
     #[tracing::instrument(skip(self))]
     pub async fn get(&self, cid: &Cid) -> Result<Option<DBPinnableSlice<'_>>> {
-        self.metrics.get_requests_total.inc();
+        record(Collector::Store, StoreMetrics::GetRequests, 1).await;
         let start = std::time::Instant::now();
         let res = match self.get_id(cid).await? {
             Some(id) => {
                 let maybe_blob = self.get_by_id(id).await?;
-                self.metrics.get_store_hit.inc();
-                self.metrics
-                    .get_bytes
-                    .inc_by(maybe_blob.as_ref().map(|b| b.len()).unwrap_or(0) as u64);
+                record(Collector::Store, StoreMetrics::StoreHit, 1).await;
+                record(
+                    Collector::Store,
+                    StoreMetrics::GetBytes,
+                    maybe_blob.as_ref().map(|b| b.len()).unwrap_or(0) as u64,
+                )
+                .await;
                 Ok(maybe_blob)
             }
             None => {
-                self.metrics.get_store_miss.inc();
+                record(Collector::Store, StoreMetrics::StoreMiss, 1).await;
                 Ok(None)
             }
         };
-        self.metrics
-            .get_request_time
-            .observe(start.elapsed().as_secs_f64());
+        observe(
+            Collector::Store,
+            StoreHistograms::GetRequests,
+            start.elapsed().as_secs_f64(),
+        )
+        .await;
         res
     }
 
@@ -281,22 +290,25 @@ impl Store {
 
     #[tracing::instrument(skip(self))]
     pub async fn get_links(&self, cid: &Cid) -> Result<Option<Vec<Cid>>> {
-        self.metrics.get_links_requests_total.inc();
+        record(Collector::Store, StoreMetrics::GetLinksRequests, 1).await;
         let start = std::time::Instant::now();
         let res = match self.get_id(cid).await? {
             Some(id) => {
                 let maybe_links = self.get_links_by_id(id).await?;
-                self.metrics.get_links_hit.inc();
+                record(Collector::Store, StoreMetrics::GetLinksHit, 1).await;
                 Ok(maybe_links)
             }
             None => {
-                self.metrics.get_links_miss.inc();
+                record(Collector::Store, StoreMetrics::GetLinksMiss, 1).await;
                 Ok(None)
             }
         };
-        self.metrics
-            .get_links_request_time
-            .observe(start.elapsed().as_secs_f64());
+        observe(
+            Collector::Store,
+            StoreHistograms::GetLinksRequests,
+            start.elapsed().as_secs_f64(),
+        )
+        .await;
         res
     }
 
@@ -450,8 +462,7 @@ mod tests {
             metrics: MetricsConfig::default(),
         };
 
-        let metrics = Metrics::default();
-        let store = Store::create(config, metrics).await.unwrap();
+        let store = Store::create(config).await.unwrap();
 
         let mut values = Vec::new();
 
@@ -490,8 +501,7 @@ mod tests {
             metrics: MetricsConfig::default(),
         };
 
-        let metrics = Metrics::default();
-        let store = Store::create(config.clone(), metrics).await.unwrap();
+        let store = Store::create(config.clone()).await.unwrap();
 
         let mut values = Vec::new();
 
@@ -519,8 +529,7 @@ mod tests {
 
         drop(store);
 
-        let metrics = Metrics::default();
-        let store = Store::open(config, metrics).await.unwrap();
+        let store = Store::open(config).await.unwrap();
         for (c, expected_data, expected_links) in values.iter() {
             let data = store.get(c).await.unwrap().unwrap();
             assert_eq!(expected_data, &data[..]);

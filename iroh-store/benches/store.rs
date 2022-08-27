@@ -3,7 +3,6 @@ use std::time::Instant;
 use cid::multihash::{Code, MultihashDigest};
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use iroh_metrics::config::Config as MetricsConfig;
-use iroh_metrics::store::Metrics;
 use iroh_rpc_client::Config as RpcClientConfig;
 use iroh_store::{Config, Store};
 use tokio::runtime::Runtime;
@@ -30,9 +29,7 @@ pub fn put_benchmark(c: &mut Criterion) {
                     rpc_client,
                     metrics: MetricsConfig::default(),
                 };
-                let metrics = Metrics::default();
-                let store =
-                    executor.block_on(async { Store::create(config, metrics).await.unwrap() });
+                let store = executor.block_on(async { Store::create(config).await.unwrap() });
                 let store_ref = &store;
                 b.to_async(&executor).iter(|| async move {
                     store_ref.put(*key, black_box(value), []).await.unwrap()
@@ -59,9 +56,7 @@ pub fn get_benchmark(c: &mut Criterion) {
                     rpc_client,
                     metrics: MetricsConfig::default(),
                 };
-                let metrics = Metrics::default();
-                let store =
-                    executor.block_on(async { Store::create(config, metrics).await.unwrap() });
+                let store = executor.block_on(async { Store::create(config).await.unwrap() });
                 let store_ref = &store;
                 let keys = executor.block_on(async {
                     let mut keys = Vec::new();

@@ -111,9 +111,7 @@ mod tests {
     use super::*;
     use hex_literal::hex;
     use http::StatusCode;
-    use iroh_metrics::gateway::Metrics;
     use iroh_rpc_client::Config as RpcClientConfig;
-    use prometheus_client::registry::Registry;
 
     #[tokio::test]
     async fn bad_bits_anchor() {
@@ -190,18 +188,10 @@ mod tests {
         );
         config.set_default_headers();
 
-        let mut prom_registry = Registry::default();
-        let gw_metrics = Metrics::new(&mut prom_registry);
         let rpc_addr = "grpc://0.0.0.0:0".parse().unwrap();
-        let handler = crate::core::Core::new(
-            Arc::new(config),
-            rpc_addr,
-            gw_metrics,
-            &mut prom_registry,
-            Arc::new(Some(RwLock::new(bbits))),
-        )
-        .await
-        .unwrap();
+        let handler = crate::core::Core::new(config, rpc_addr, Arc::new(Some(RwLock::new(bbits))))
+            .await
+            .unwrap();
         let server = handler.server();
         let addr = server.local_addr();
         let core_task = tokio::spawn(async move {

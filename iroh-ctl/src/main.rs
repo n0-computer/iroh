@@ -4,13 +4,11 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 use iroh_ctl::{
     gateway::{run_command as run_gateway_command, Gateway},
-    metrics,
     p2p::{run_command as run_p2p_command, P2p},
     store::{run_command as run_store_command, Store},
 };
 use iroh_rpc_client::Client;
 use iroh_util::{iroh_home_path, make_config};
-use prometheus_client::registry::Registry;
 
 use iroh_ctl::{
     config::{Config, CONFIG_FILE_NAME, ENV_PREFIX},
@@ -68,18 +66,6 @@ async fn main() -> anyhow::Result<()> {
     )
     .unwrap();
 
-    let metrics_config = config.metrics.clone();
-
-    // stubbing in metrics
-    let prom_registry = Registry::default();
-    // TODO: need to register prometheus metrics
-    let metrics_handle = iroh_metrics::MetricsHandle::from_registry_with_tracer(
-        metrics::metrics_config_with_compile_time_info(metrics_config),
-        prom_registry,
-    )
-    .await
-    .expect("failed to initialize metrics");
-
     let client = Client::new(config.rpc_client).await?;
 
     match cli.command {
@@ -94,6 +80,5 @@ async fn main() -> anyhow::Result<()> {
         Commands::Gateway(gateway) => run_gateway_command(client, gateway).await?,
     };
 
-    metrics_handle.shutdown();
     Ok(())
 }

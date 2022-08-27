@@ -14,7 +14,6 @@ use libp2p::{
     yamux::{self, WindowUpdateMode},
     PeerId, Swarm, Transport,
 };
-use prometheus_client::registry::Registry;
 
 use crate::{behaviour::NodeBehaviour, Libp2pConfig};
 
@@ -92,12 +91,11 @@ async fn build_transport(
 pub(crate) async fn build_swarm(
     config: &Libp2pConfig,
     keypair: &Keypair,
-    registry: &mut Registry,
 ) -> Result<Swarm<NodeBehaviour>> {
     let peer_id = keypair.public().to_peer_id();
 
     let (transport, relay_client) = build_transport(keypair, config).await;
-    let behaviour = NodeBehaviour::new(keypair, config, registry, relay_client).await?;
+    let behaviour = NodeBehaviour::new(keypair, config, relay_client).await?;
 
     let limits = ConnectionLimits::default()
         .with_max_pending_incoming(Some(config.max_conns_pending_in))

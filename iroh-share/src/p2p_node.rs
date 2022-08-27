@@ -3,7 +3,6 @@ use std::{collections::HashSet, path::Path, sync::Arc};
 use anyhow::{ensure, Result};
 use async_trait::async_trait;
 use cid::Cid;
-use iroh_metrics::store::Metrics;
 use iroh_p2p::{config, Keychain, MemoryStorage, NetworkEvent, Node};
 use iroh_resolver::{
     parse_links,
@@ -12,7 +11,6 @@ use iroh_resolver::{
 use iroh_rpc_client::Client;
 use iroh_rpc_types::Addr;
 use libp2p::{Multiaddr, PeerId};
-use prometheus_client::registry::Registry;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::Receiver;
 use tokio::{sync::Mutex, task::JoinHandle};
@@ -145,8 +143,7 @@ impl P2pNode {
 
         let rpc = Client::new(rpc_p2p_client_config).await?;
         let loader = Loader::new(rpc.clone());
-        let mut prom_registry = Registry::default();
-        let resolver = iroh_resolver::resolver::Resolver::new(loader, &mut prom_registry);
+        let resolver = iroh_resolver::resolver::Resolver::new(loader);
 
         let store_config = iroh_store::Config {
             path: db_path.to_path_buf(),
@@ -157,15 +154,14 @@ impl P2pNode {
             },
         };
 
-        let store_metrics = Metrics::new(&mut prom_registry);
         let store = if store_config.path.exists() {
-            iroh_store::Store::open(store_config, store_metrics).await?
+            iroh_store::Store::open(store_config).await?
         } else {
-            iroh_store::Store::create(store_config, store_metrics).await?
+            iroh_store::Store::create(store_config).await?
         };
 
         let kc = Keychain::<MemoryStorage>::new();
-        let mut p2p = Node::new(config, rpc_p2p_addr_server, kc, &mut prom_registry).await?;
+        let mut p2p = Node::new(config, rpc_p2p_addr_server, kc).await?;
         let events = p2p.network_events();
 
         let p2p_task = tokio::task::spawn(async move {

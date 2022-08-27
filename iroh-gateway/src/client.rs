@@ -3,22 +3,18 @@ use std::task::Poll;
 
 use anyhow::Result;
 use bytes::Bytes;
-use futures::StreamExt;
-use futures::TryStream;
+use futures::{StreamExt, TryStream};
 use http::HeaderMap;
-use iroh_metrics::gateway::Metrics;
-use iroh_resolver::resolver::CidOrDomain;
-use iroh_resolver::resolver::Metadata;
-use iroh_resolver::resolver::Out;
-use iroh_resolver::resolver::OutMetrics;
-use iroh_resolver::resolver::OutPrettyReader;
-use iroh_resolver::resolver::Resolver;
-use iroh_resolver::resolver::Source;
-use prometheus_client::registry::Registry;
+use iroh_metrics::{
+    gateway::{GatewayHistograms, GatewayMetrics},
+    observe, record, Collector,
+};
+use iroh_resolver::resolver::{
+    CidOrDomain, Metadata, Out, OutMetrics, OutPrettyReader, Resolver, Source,
+};
 use tokio::io::AsyncReadExt;
 use tokio_util::io::ReaderStream;
-use tracing::info;
-use tracing::warn;
+use tracing::{info, warn};
 
 use crate::handlers::GetParams;
 use crate::response::ResponseFormat;
@@ -73,18 +69,17 @@ impl http_body::Body for PrettyStreamBody {
 }
 
 impl Client {
-    pub fn new(rpc_client: &iroh_rpc_client::Client, registry: &mut Registry) -> Self {
+    pub fn new(rpc_client: &iroh_rpc_client::Client) -> Self {
         Self {
-            resolver: Resolver::new(rpc_client.clone(), registry),
+            resolver: Resolver::new(rpc_client.clone()),
         }
     }
 
-    #[tracing::instrument(skip(self, metrics))]
+    #[tracing::instrument(skip(self))]
     pub async fn get_file(
         &self,
         path: iroh_resolver::resolver::Path,
         start_time: std::time::Instant,
-        metrics: &Metrics,
     ) -> Result<(FileResult, Metadata), String> {
         info!("get file {}", path);
         let res = self
@@ -92,18 +87,27 @@ impl Client {
             .resolve(path)
             .await
             .map_err(|e| e.to_string())?;
-        metrics
-            .ttf_block
-            .set(start_time.elapsed().as_millis() as u64);
+        record(
+            Collector::Gateway,
+            GatewayMetrics::TimeToFetchFirstBlock,
+            start_time.elapsed().as_millis() as u64,
+        )
+        .await;
         let metadata = res.metadata().clone();
         if metadata.source == Source::Bitswap {
-            metrics
-                .hist_ttfb
-                .observe(start_time.elapsed().as_millis() as f64);
+            observe(
+                Collector::Gateway,
+                GatewayHistograms::TimeToFetchFirstBlock,
+                start_time.elapsed().as_millis() as f64,
+            )
+            .await;
         } else {
-            metrics
-                .hist_ttfb_cached
-                .observe(start_time.elapsed().as_millis() as f64);
+            observe(
+                Collector::Gateway,
+                GatewayHistograms::TimeToFetchFirstBlockCached,
+                start_time.elapsed().as_millis() as f64,
+            )
+            .await;
         }
 
         if res.is_dir() {
@@ -111,13 +115,7 @@ impl Client {
             Ok((body, metadata))
         } else {
             let reader = res
-                .pretty(
-                    self.resolver.clone(),
-                    OutMetrics {
-                        metrics: metrics.clone(),
-                        start: start_time,
-                    },
-                )
+                .pretty(self.resolver.clone(), OutMetrics { start: start_time })
                 .map_err(|e| e.to_string())?;
 
             let stream = ReaderStream::new(reader);
@@ -127,12 +125,11 @@ impl Client {
         }
     }
 
-    #[tracing::instrument(skip(self, metrics))]
+    #[tracing::instrument(skip(self))]
     pub async fn get_file_recursive(
         self,
         path: iroh_resolver::resolver::Path,
         start_time: std::time::Instant,
-        metrics: Metrics,
     ) -> Result<axum::body::Body, String> {
         info!("get file {}", path);
         let (mut sender, body) = axum::body::Body::channel();
@@ -144,26 +141,30 @@ impl Client {
             while let Some(res) = res.next().await {
                 match res {
                     Ok(res) => {
-                        metrics
-                            .ttf_block
-                            .set(start_time.elapsed().as_millis() as u64);
+                        record(
+                            Collector::Gateway,
+                            GatewayMetrics::TimeToFetchFirstBlock,
+                            start_time.elapsed().as_millis() as u64,
+                        )
+                        .await;
                         let metadata = res.metadata().clone();
                         if metadata.source == Source::Bitswap {
-                            metrics
-                                .hist_ttfb
-                                .observe(start_time.elapsed().as_millis() as f64);
+                            observe(
+                                Collector::Gateway,
+                                GatewayHistograms::TimeToFetchFirstBlock,
+                                start_time.elapsed().as_millis() as f64,
+                            )
+                            .await;
                         } else {
-                            metrics
-                                .hist_ttfb_cached
-                                .observe(start_time.elapsed().as_millis() as f64);
+                            observe(
+                                Collector::Gateway,
+                                GatewayHistograms::TimeToFetchFirstBlockCached,
+                                start_time.elapsed().as_millis() as f64,
+                            )
+                            .await;
                         }
-                        let reader = res.pretty(
-                            self.resolver.clone(),
-                            OutMetrics {
-                                metrics: metrics.clone(),
-                                start: start_time,
-                            },
-                        );
+                        let reader =
+                            res.pretty(self.resolver.clone(), OutMetrics { start: start_time });
                         match reader {
                             Ok(mut reader) => {
                                 let mut bytes = Vec::new();
