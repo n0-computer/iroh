@@ -46,6 +46,9 @@ where
             let reading = now.elapsed();
             let len = packet.len();
             let message = BitswapMessage::from_bytes(packet)?;
+
+            // TODO: record inbound bytes
+
             trace!(
                 "upgrade_inbound_done {} in {}ms ({} blocks, {} wants) - reading {}ms",
                 len,
@@ -110,6 +113,8 @@ where
             let bytes = self.into_bytes();
             let l = bytes.len();
             upgrade::write_length_prefixed(&mut socket, bytes).await?;
+            // TODO: record outbound bytes
+
             trace!("upgrade_outbound_done {}", l);
             socket.close().await?;
 

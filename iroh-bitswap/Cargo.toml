@@ -26,6 +26,7 @@ num_enum = "0.5.7"
 iroh-metrics = { path = "../iroh-metrics", default-features = false, features = ["bitswap"] }
 names = { version = "0.14.0", default-features = false }
 git-version = "0.3.5"
+caches = "0.2.2"
 
 [dev-dependencies]
 criterion = "0.3.5"
