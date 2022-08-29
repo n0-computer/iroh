@@ -290,15 +290,7 @@ impl Bitswap {
         // TODO: better strategies, than just all peers.
         // TODO: use peers that connect later
 
-        for peer in self
-            .known_peers
-            .values_mut()
-            .filter(|state| match state.conn {
-                ConnState::Connected | ConnState::Unknown => true,
-                ConnState::Disconnected | ConnState::Dialing => false,
-            })
-            .take(MAX_PROVIDERS)
-        {
+        for peer in self.known_peers.values_mut().take(MAX_PROVIDERS) {
             peer.want_have_block(&cid, priority);
         }
     }
@@ -383,19 +375,22 @@ impl NetworkBehaviour for Bitswap {
         };
 
         peer_state.conn = ConnState::Connected;
-        inc!(BitswapMetrics::ConnectedPeers);
 
-        if other_established == 0 && !peer_state.is_empty() {
-            // queue up message to be sent as soon as we are connected
-            let msg = peer_state.send_message();
-            inc!(BitswapMetrics::MessagesSent);
-            inc!(BitswapMetrics::EventsBackpressureIn);
-            self.events
-                .push_back(NetworkBehaviourAction::NotifyHandler {
-                    peer_id: *peer_id,
-                    handler: NotifyHandler::Any,
-                    event: msg,
-                });
+        if other_established == 0 {
+            inc!(BitswapMetrics::ConnectedPeers);
+
+            if !peer_state.is_empty() {
+                // queue up message to be sent as soon as we are connected
+                let msg = peer_state.send_message();
+                inc!(BitswapMetrics::MessagesSent);
+                inc!(BitswapMetrics::EventsBackpressureIn);
+                self.events
+                    .push_back(NetworkBehaviourAction::NotifyHandler {
+                        peer_id: *peer_id,
+                        handler: NotifyHandler::Any,
+                        event: msg,
+                    });
+            }
         }
     }
 
@@ -409,8 +404,9 @@ impl NetworkBehaviour for Bitswap {
         remaining_established: usize,
     ) {
         if remaining_established == 0 {
-            inc!(BitswapMetrics::DisconnectedPeers);
             if let Some(val) = self.known_peers.get_mut(peer_id) {
+                inc!(BitswapMetrics::DisconnectedPeers);
+
                 val.conn = ConnState::Disconnected;
             }
         }
@@ -461,9 +457,9 @@ impl NetworkBehaviour for Bitswap {
 
                     for (id, state) in self.known_peers.iter_mut() {
                         if id == &peer_id {
-                            state.cancel_block(&block.cid);
-                        } else {
                             state.remove_block(&block.cid);
+                        } else {
+                            state.cancel_block(&block.cid);
                         }
                     }
 
@@ -605,7 +601,7 @@ impl NetworkBehaviour for Bitswap {
 
             // not connected, need to dial
             peer_state.conn = ConnState::Dialing;
-            let handler = Default::default();
+            let handler = self.new_handler();
             return Poll::Ready(NetworkBehaviourAction::Dial {
                 opts: DialOpts::peer_id(*peer_id).build(),
                 handler,
