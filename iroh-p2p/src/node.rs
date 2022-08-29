@@ -417,7 +417,9 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                     BitswapEvent::OutboundQueryCompleted { result } => match result {
                         BitswapQueryResult::Want(WantResult::Ok { sender, cid, data }) => {
                             info!("got block {} from {}", cid, sender);
-                            match iroh_util::verify_hash(&cid, &data) {
+                            match tokio::task::block_in_place(|| {
+                                iroh_util::verify_hash(&cid, &data)
+                            }) {
                                 Some(true) => {
                                     let b = Block::new(data, cid);
                                     if let Some(BitswapQueryChannel::Want { chan, .. }) =
@@ -457,48 +459,48 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                             provider,
                         }) => {
                             info!("Bitswap found provider for {}", cid);
+                            let query = self
+                                .bitswap_queries
+                                .get_mut(&BitswapQueryKey::FindProviders(cid));
+                            let mut to_remove = query.is_none();
+
                             if let Some(BitswapQueryChannel::FindProviders {
-                                timeout,
                                 provider_count,
                                 expected_provider_count,
                                 chan,
-                            }) = self
-                                .bitswap_queries
-                                .get_mut(&BitswapQueryKey::FindProviders(cid))
+                                ..
+                            }) = query
                             {
                                 *provider_count += 1;
-                                if chan
+                                to_remove |= chan
                                     .send(Ok([provider].into_iter().collect()))
                                     .await
-                                    .is_err()
-                                {
-                                    debug!("Bitswap provider response channel send failed");
-                                }
-                                if *provider_count >= *expected_provider_count {
-                                    let _ = self
-                                        .bitswap_queries
-                                        .remove(&BitswapQueryKey::FindProviders(cid));
-                                } else if timeout.elapsed() >= Duration::from_secs(20) {
-                                    chan.send(Err("timeout".into())).await.ok();
-                                    let _ = self
-                                        .bitswap_queries
-                                        .remove(&BitswapQueryKey::FindProviders(cid));
-                                }
-                            } else {
-                                debug!("Received Bitswap response, but response channel cannot be found");
+                                    .is_err();
+                                to_remove |= *provider_count >= *expected_provider_count;
+                            }
+
+                            if to_remove {
+                                self.swarm.behaviour_mut().cancel_want_block(&cid).ok();
+                                self.bitswap_queries
+                                    .remove(&BitswapQueryKey::FindProviders(cid));
                             }
                         }
                         BitswapQueryResult::FindProviders(FindProvidersResult::Err {
                             cid,
                             error,
                         }) => {
-                            if let Some(BitswapQueryChannel::FindProviders { chan, .. }) = self
+                            let query = self
                                 .bitswap_queries
-                                .remove(&BitswapQueryKey::FindProviders(cid))
-                            {
-                                if chan.send(Err(error.to_string())).await.is_err() {
-                                    debug!("Bitswap response channel send failed");
-                                }
+                                .remove(&BitswapQueryKey::FindProviders(cid));
+
+                            let mut to_remove = query.is_none();
+                            if let Some(BitswapQueryChannel::FindProviders { chan, .. }) = query {
+                                to_remove |= chan.send(Err(error.to_string())).await.is_err();
+                            }
+                            if to_remove {
+                                self.swarm.behaviour_mut().cancel_want_block(&cid).ok();
+                                self.bitswap_queries
+                                    .remove(&BitswapQueryKey::FindProviders(cid));
                             }
                         }
                         BitswapQueryResult::Send(_) => {

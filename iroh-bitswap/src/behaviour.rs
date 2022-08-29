@@ -2,12 +2,12 @@
 //! - `/ipfs/bitswap/1.1.0` and
 //! - `/ipfs/bitswap/1.2.0`.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashSet, VecDeque};
 use std::task::{Context, Poll};
 use std::time::Duration;
 
-use ahash::AHashSet;
 use bytes::Bytes;
+use caches::Cache;
 use cid::Cid;
 use iroh_metrics::inc;
 use iroh_metrics::{bitswap::BitswapMetrics, core::MRecorder, record};
@@ -110,13 +110,12 @@ pub enum InboundRequest {
 pub type BitswapHandler = OneShotHandler<BitswapProtocol, BitswapMessage, HandlerEvent>;
 
 /// Network behaviour that handles sending and receiving IPFS blocks.
-#[derive(Default)]
 pub struct Bitswap {
     /// Queue of events to report to the user.
     events: VecDeque<NetworkBehaviourAction<BitswapEvent, BitswapHandler>>,
     #[allow(dead_code)]
     config: BitswapConfig,
-    known_peers: HashMap<PeerId, PeerState>,
+    known_peers: caches::RawLRU<PeerId, PeerState>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -192,31 +191,57 @@ enum ConnState {
     Dialing,
 }
 
-#[derive(Default, Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct BitswapConfig {
-    // pub session: SessionConfig,
+    pub max_cached_peers: usize,
+}
+
+impl Default for BitswapConfig {
+    fn default() -> Self {
+        BitswapConfig {
+            max_cached_peers: 4096,
+        }
+    }
+}
+
+impl Default for Bitswap {
+    fn default() -> Self {
+        Self::new(BitswapConfig::default())
+    }
 }
 
 impl Bitswap {
     /// Create a new `Bitswap`.
     pub fn new(config: BitswapConfig) -> Self {
+        let known_peers = caches::RawLRU::new(config.max_cached_peers).unwrap();
+
         Bitswap {
             config,
-            ..Default::default()
+            known_peers,
+            events: Default::default(),
         }
     }
 
+    /// Notifies about a peer that speaks the bitswap protocol.
     pub fn add_peer(&mut self, peer: PeerId) {
-        self.known_peers.insert(peer, PeerState::default());
+        // TODO: inc known peers
+        self.known_peers.put(peer, PeerState::default());
     }
 
     /// Request the given block from the list of providers.
     #[instrument(skip(self))]
     pub fn want_block<'a>(&mut self, cid: Cid, priority: Priority, providers: HashSet<PeerId>) {
         debug!("want_block: {}", cid);
+        // TODO: inc wanted blocks
         for provider in providers.iter() {
-            let peer = self.known_peers.entry(*provider).or_default();
-            peer.want_block(&cid, priority);
+            if let Some(peer) = self.known_peers.get_mut(provider) {
+                peer.want_block(&cid, priority);
+            } else {
+                // TODO: inc known peers
+                let mut peer = PeerState::default();
+                peer.want_block(&cid, priority);
+                self.known_peers.put(*provider, peer);
+            }
         }
 
         record!(BitswapMetrics::Providers, providers.len() as u64);
@@ -228,32 +253,47 @@ impl Bitswap {
 
         record!(BitswapMetrics::BlockBytesOut, data.len() as u64);
 
-        let peer = self.known_peers.entry(*peer_id).or_default();
-        peer.send_block(cid, data);
+        if let Some(peer) = self.known_peers.get_mut(peer_id) {
+            peer.send_block(cid, data);
+        } else {
+            // TODO: inc known peers
+            let mut peer = PeerState::default();
+            peer.send_block(cid, data);
+            self.known_peers.put(*peer_id, peer);
+        }
     }
 
     #[instrument(skip(self))]
     pub fn send_have_block(&mut self, peer_id: &PeerId, cid: Cid) {
         debug!("send_have_block: {}", cid);
 
-        let peer = self.known_peers.entry(*peer_id).or_default();
-        peer.send_have_block(cid);
+        if let Some(peer) = self.known_peers.get_mut(peer_id) {
+            peer.send_have_block(cid);
+        } else {
+            // TODO: inc known peers
+            let mut peer = PeerState::default();
+            peer.send_have_block(cid);
+            self.known_peers.put(*peer_id, peer);
+        }
     }
 
     #[instrument(skip(self))]
     pub fn find_providers(&mut self, cid: Cid, priority: Priority) {
         debug!("find_providers: {}", cid);
+        // TODO: inc want have blocks
 
         // TODO: better strategies, than just all peers.
         // TODO: use peers that connect later
-        let peers: AHashSet<_> = self
-            .connected_peers()
-            .map(|p| p.to_owned())
+
+        for peer in self
+            .known_peers
+            .values_mut()
+            .filter(|state| match state.conn {
+                ConnState::Connected | ConnState::Unknown => true,
+                ConnState::Disconnected | ConnState::Dialing => false,
+            })
             .take(MAX_PROVIDERS)
-            .collect();
-        debug!("with peers: {:?}", &peers);
-        for peer in peers.iter() {
-            let peer = self.known_peers.entry(*peer).or_default();
+        {
             peer.want_have_block(&cid, priority);
         }
     }
@@ -263,6 +303,8 @@ impl Bitswap {
     /// Can be either a user request or be called when the block was received.
     #[instrument(skip(self))]
     pub fn cancel_block(&mut self, cid: &Cid) {
+        // TODO: dec want block
+
         debug!("cancel_block: {}", cid);
         for state in self.known_peers.values_mut() {
             state.cancel_block(cid);
@@ -271,19 +313,12 @@ impl Bitswap {
 
     #[instrument(skip(self))]
     pub fn cancel_want_block(&mut self, cid: &Cid) {
+        // TODO: dec want have block
+
         debug!("cancel_block: {}", cid);
         for state in self.known_peers.values_mut() {
             state.remove_want_block(cid);
         }
-    }
-
-    fn connected_peers(&self) -> impl Iterator<Item = &PeerId> {
-        self.known_peers
-            .iter()
-            .filter_map(|(id, state)| match state.conn {
-                ConnState::Connected | ConnState::Unknown => Some(id),
-                ConnState::Disconnected | ConnState::Dialing => None,
-            })
     }
 }
 
@@ -334,12 +369,21 @@ impl NetworkBehaviour for Bitswap {
         _failed_addresses: Option<&Vec<Multiaddr>>,
         other_established: usize,
     ) {
-        let peer_state = self.known_peers.entry(*peer_id).or_default();
+        let peer_state = if let Some(peer) = self.known_peers.get_mut(peer_id) {
+            peer
+        } else {
+            // TODO: inc known peers
+            self.known_peers.put(*peer_id, PeerState::default());
+            self.known_peers.get_mut(peer_id).unwrap()
+        };
+
         peer_state.conn = ConnState::Connected;
+        // TODO: inc connected peers
 
         if other_established == 0 && !peer_state.is_empty() {
             // queue up message to be sent as soon as we are connected
             let msg = peer_state.send_message();
+            // TODO: inc messages sent
             self.events
                 .push_back(NetworkBehaviourAction::NotifyHandler {
                     peer_id: *peer_id,
@@ -359,6 +403,7 @@ impl NetworkBehaviour for Bitswap {
         remaining_established: usize,
     ) {
         if remaining_established == 0 {
+            // TODO: dec connected peers
             if let Some(val) = self.known_peers.get_mut(peer_id) {
                 val.conn = ConnState::Disconnected;
             }
@@ -375,12 +420,21 @@ impl NetworkBehaviour for Bitswap {
         if let Some(ref peer_id) = peer_id {
             if let DialError::ConnectionLimit(_) = error {
                 // we can retry later
-                let state = self.known_peers.entry(*peer_id).or_default();
+                let state = if let Some(peer) = self.known_peers.get_mut(peer_id) {
+                    peer
+                } else {
+                    // TODO: inc known peers
+                    self.known_peers.put(*peer_id, PeerState::default());
+                    self.known_peers.get_mut(peer_id).unwrap()
+                };
+
+                // TODO: dec connected peers
                 state.conn = ConnState::Disconnected;
             } else {
                 trace!("dial failure {:?}: {:?}", peer_id, error);
 
                 // remove peers we can't dial
+                // TODO: dec known peers
                 self.known_peers.remove(peer_id);
             }
         }
