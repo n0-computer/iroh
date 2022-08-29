@@ -176,9 +176,13 @@ impl PeerState {
 
 impl Default for PeerState {
     fn default() -> Self {
+        // default to full for the first one
+        let mut msg = BitswapMessage::default();
+        msg.wantlist_mut().set_full(true);
+
         PeerState {
             conn: ConnState::Unknown,
-            msg: Default::default(),
+            msg,
         }
     }
 }
