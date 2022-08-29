@@ -26,7 +26,7 @@ use crate::protocol::{BitswapProtocol, Upgrade};
 // use crate::session::{Config as SessionConfig, SessionManager};
 use crate::Block;
 
-const MAX_PROVIDERS: usize = 10; // yolo
+const MAX_PROVIDERS: usize = 1000; // yolo
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum BitswapEvent {
@@ -136,6 +136,10 @@ impl PeerState {
 
     fn is_empty(&self) -> bool {
         self.msg.is_empty()
+    }
+
+    fn has_blocks(&self) -> bool {
+        !self.msg.blocks().is_empty()
     }
 
     fn send_message(&mut self) -> BitswapMessage {
@@ -374,6 +378,8 @@ impl NetworkBehaviour for Bitswap {
                 let state = self.known_peers.entry(*peer_id).or_default();
                 state.conn = ConnState::Disconnected;
             } else {
+                trace!("dial failure {:?}: {:?}", peer_id, error);
+
                 // remove peers we can't dial
                 self.known_peers.remove(peer_id);
             }
@@ -484,7 +490,26 @@ impl NetworkBehaviour for Bitswap {
             return Poll::Ready(event);
         }
 
-        // make progress on connected peers first
+        // make progress on connected peers first, that have wants
+        if let Some((peer_id, peer_state)) = self
+            .known_peers
+            .iter_mut()
+            .find(|(_, s)| s.is_connected() && s.has_blocks())
+        {
+            // connected, send message
+            // TODO: limit size
+            // TODO: limit how ofen we send
+
+            let msg = peer_state.send_message();
+            trace!("sending message to {} {:?}", peer_id, msg);
+            return Poll::Ready(NetworkBehaviourAction::NotifyHandler {
+                peer_id: *peer_id,
+                handler: NotifyHandler::Any,
+                event: msg,
+            });
+        }
+
+        // make progress on connected peers that have no wants
         if let Some((peer_id, peer_state)) = self
             .known_peers
             .iter_mut()
