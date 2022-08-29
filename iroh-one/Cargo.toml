@@ -35,7 +35,7 @@ axum-macros = "0.2.0" # use #[axum_macros::debug_handler] for better error messa
 http = "0.2" 
 
 [features]
-default = ["rpc-mem", "rpc-grpc", "uds-gateway"]
+default = ["rpc-mem", "rpc-grpc"]
 rpc-grpc = ["iroh-rpc-types/grpc", "iroh-rpc-client/grpc", "iroh-metrics/rpc-grpc"]
 rpc-mem = ["iroh-rpc-types/mem", "iroh-rpc-client/mem"]
 uds-gateway = []

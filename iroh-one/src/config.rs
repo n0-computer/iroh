@@ -5,6 +5,7 @@ use config::{ConfigError, Map, Source, Value};
 use iroh_metrics::config::Config as MetricsConfig;
 use iroh_p2p::Libp2pConfig;
 use iroh_rpc_client::Config as RpcClientConfig;
+#[cfg(feature = "uds-gateway")]
 use iroh_rpc_types::Addr;
 use iroh_util::insert_into_config_map;
 use serde::{Deserialize, Serialize};
@@ -33,6 +34,9 @@ pub struct Config {
     pub rpc_client: RpcClientConfig,
     /// metrics configuration
     pub metrics: MetricsConfig,
+    /// Path for the UDS socket for the gateway.
+    #[cfg(feature = "uds-gateway")]
+    pub uds_path: Option<PathBuf>,
 }
 
 impl Config {
@@ -41,6 +45,7 @@ impl Config {
         store: iroh_store::config::Config,
         p2p: iroh_p2p::config::Config,
         rpc_client: RpcClientConfig,
+        #[cfg(feature = "uds-gateway")] uds_path: Option<PathBuf>,
     ) -> Self {
         Self {
             gateway,
@@ -48,6 +53,8 @@ impl Config {
             p2p,
             rpc_client,
             metrics: MetricsConfig::default(),
+            #[cfg(feature = "uds-gateway")]
+            uds_path,
         }
     }
 
@@ -67,7 +74,6 @@ impl Config {
             gateway_addr: None,
             p2p_addr: None,
             store_addr: None,
-            raw_gateway: None,
         }
     }
 
@@ -81,6 +87,9 @@ impl Config {
 
 impl Default for Config {
     fn default() -> Self {
+        #[cfg(feature = "uds-gateway")]
+        let uds_path: PathBuf =
+            format!("{}", std::env::temp_dir().join("ipfsd.gateway").display()).into();
         let ipfsd = Self::default_ipfsd();
         let metrics_config = MetricsConfig::default();
         Self {
@@ -89,6 +98,8 @@ impl Default for Config {
             gateway: iroh_gateway::config::Config::default(),
             store: default_store_config(ipfsd.clone(), metrics_config.clone()),
             p2p: default_p2p_config(ipfsd, metrics_config),
+            #[cfg(feature = "uds-gateway")]
+            uds_path: Some(uds_path),
         }
     }
 }
@@ -128,6 +139,10 @@ impl Source for Config {
         insert_into_config_map(&mut map, "p2p", self.p2p.collect()?);
         insert_into_config_map(&mut map, "rpc_client", self.rpc_client.collect()?);
         insert_into_config_map(&mut map, "metrics", self.metrics.collect()?);
+        #[cfg(feature = "uds-gateway")]
+        if let Some(uds_path) = self.uds_path.as_ref() {
+            insert_into_config_map(&mut map, "uds_path", uds_path.to_str().unwrap().to_string());
+        }
         Ok(map)
     }
 }

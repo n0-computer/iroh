@@ -24,6 +24,9 @@ pub struct Args {
     /// Path to the store
     #[clap(long = "store-path")]
     pub store_path: Option<PathBuf>,
+    #[cfg(feature = "uds-gateway")]
+    #[clap(long = "uds-path")]
+    pub uds_path: Option<PathBuf>,
     #[clap(long)]
     pub cfg: Option<PathBuf>,
 }
@@ -48,6 +51,10 @@ impl Args {
         map.insert("metrics.tracing", self.tracing.to_string());
         if let Some(path) = self.store_path.clone() {
             map.insert("store.path", path.to_str().unwrap_or("").to_string());
+        }
+        #[cfg(feature = "uds-gateway")]
+        if let Some(path) = self.uds_path.clone() {
+            map.insert("uds_path", path.to_str().unwrap_or("").to_string());
         }
         map
     }

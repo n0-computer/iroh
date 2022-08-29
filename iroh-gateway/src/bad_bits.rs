@@ -181,13 +181,11 @@ mod tests {
             false,
             false,
             false,
-            "",
             0,
             RpcClientConfig {
                 gateway_addr: None,
                 p2p_addr: None,
                 store_addr: None,
-                raw_gateway: None,
             },
         );
         config.set_default_headers();

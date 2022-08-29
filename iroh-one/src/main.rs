@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+#[allow(unused_imports)]
 use anyhow::{anyhow, Result};
 use clap::Parser;
 use iroh_gateway::{bad_bits::BadBits, core::Core, metrics};
@@ -32,8 +33,6 @@ async fn main() -> Result<()> {
     )
     .unwrap();
 
-    config.gateway.raw_gateway = "dweb.link".to_string();
-
     let (store_rpc, p2p_rpc) = {
         let (store_recv, store_sender) = Addr::new_mem();
         config.rpc_client.store_addr = Some(store_sender);
@@ -45,7 +44,13 @@ async fn main() -> Result<()> {
         (store_rpc, p2p_rpc)
     };
 
-    config.rpc_client.raw_gateway = Some(config.gateway.raw_gateway.clone());
+    #[cfg(not(feature = "uds-gateway"))]
+    let (rpc_addr, gw_sender) = Addr::new_mem();
+    #[cfg(not(feature = "uds-gateway"))]
+    {
+        config.rpc_client.gateway_addr = Some(gw_sender);
+    }
+
     config.sync_rpc_client();
 
     config.metrics = metrics::metrics_config_with_compile_time_info(config.metrics);
@@ -54,6 +59,8 @@ async fn main() -> Result<()> {
     let metrics_config = config.metrics.clone();
     let mut prom_registry = Registry::default();
     let gw_metrics = Metrics::new(&mut prom_registry);
+
+    #[cfg(feature = "uds-gateway")]
     let rpc_addr = config
         .gateway
         .server_rpc_addr()?
@@ -65,7 +72,7 @@ async fn main() -> Result<()> {
     };
 
     let shared_state = Core::make_state(
-        Arc::new(config),
+        Arc::new(config.clone()),
         gw_metrics,
         &mut prom_registry,
         Arc::clone(&bad_bits),
@@ -86,7 +93,10 @@ async fn main() -> Result<()> {
 
     #[cfg(feature = "uds-gateway")]
     let uds_server_task = {
-        let path = format!("{}", std::env::temp_dir().join("ipfsd.http").display());
+        let mut path = std::env::temp_dir().join("ipfsd.http");
+        if let Some(uds_path) = config.uds_path {
+            path = uds_path;
+        }
         let uds_server = uds::uds_server(shared_state, path);
         tokio::spawn(async move {
             uds_server.await.unwrap();

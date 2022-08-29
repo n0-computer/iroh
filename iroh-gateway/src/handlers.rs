@@ -12,7 +12,10 @@ use bytes::Bytes;
 use futures::TryStreamExt;
 use handlebars::Handlebars;
 use iroh_metrics::get_current_trace_id;
-use iroh_resolver::{resolver::{CidOrDomain, UnixfsType, OutMetrics}, unixfs::Link};
+use iroh_resolver::{
+    resolver::{CidOrDomain, OutMetrics, UnixfsType},
+    unixfs::Link,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{
     json,
@@ -33,7 +36,7 @@ use url::Url;
 use urlencoding::encode;
 
 use crate::{
-    client::{Request, FileResult},
+    client::{FileResult, Request},
     constants::*,
     core::State,
     error::GatewayError,

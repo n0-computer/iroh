@@ -29,8 +29,6 @@ pub struct Config {
     pub cache: bool,
     /// default port to listen on
     pub port: u16,
-    /// Gateway from which to fetch raw CIDs. TODO: move to p2p config?
-    pub raw_gateway: String,
     // NOTE: for toml to serialize properly, the "table" values must be serialized at the end, and
     // so much come at the end of the `Config` struct
     /// set of user provided headers to attach to all responses
@@ -49,7 +47,6 @@ impl Config {
         writeable: bool,
         fetch: bool,
         cache: bool,
-        raw_gateway: &str,
         port: u16,
         rpc_client: RpcClientConfig,
     ) -> Self {
@@ -59,7 +56,6 @@ impl Config {
             cache,
             headers: HeaderMap::new(),
             port,
-            raw_gateway: raw_gateway.to_owned(),
             rpc_client,
             metrics: MetricsConfig::default(),
             denylist: false,
@@ -139,7 +135,6 @@ impl Default for Config {
             cache: false,
             headers: HeaderMap::new(),
             port: DEFAULT_PORT,
-            raw_gateway: String::new(),
             rpc_client,
             metrics: MetricsConfig::default(),
             denylist: false,
@@ -164,7 +159,6 @@ impl Source for Config {
         // Some issue between deserializing u64 & u16, converting this to
         // an signed int fixes the issue
         insert_into_config_map(&mut map, "port", self.port as i32);
-        insert_into_config_map(&mut map, "raw_gateway", self.raw_gateway.clone());
         insert_into_config_map(&mut map, "headers", collect_headers(&self.headers)?);
         insert_into_config_map(&mut map, "rpc_client", rpc_client);
         let metrics = self.metrics.collect()?;
