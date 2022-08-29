@@ -522,9 +522,9 @@ impl LoaderContext {
             }
         };
 
-        ensure!(!providers.is_empty(), "no providers found");
-
-        self.provider_cache.put(*cid, providers.clone()).await;
+        if !providers.is_empty() {
+            self.provider_cache.put(*cid, providers.clone()).await;
+        }
 
         Ok(providers)
     }
