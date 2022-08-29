@@ -1,13 +1,14 @@
-use std::{path::PathBuf, sync::Arc};
+use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
 use clap::Parser;
-use iroh_gateway::{bad_bits::BadBits, cli::Args, core::Core, metrics};
+use iroh_gateway::{bad_bits::BadBits, core::Core, metrics};
 use iroh_metrics::gateway::Metrics;
+#[cfg(feature = "uds-gateway")]
+use iroh_one::uds;
 use iroh_one::{
+    cli::Args,
     config::{Config, CONFIG_FILE_NAME, ENV_PREFIX},
-    // core::Core,
-    core,
 };
 use iroh_rpc_types::Addr;
 use iroh_util::{iroh_home_path, make_config};
@@ -32,23 +33,20 @@ async fn main() -> Result<()> {
     .unwrap();
 
     config.gateway.raw_gateway = "dweb.link".to_string();
-    config.store.path = PathBuf::from("./iroh-store-db");
 
     let (store_rpc, p2p_rpc) = {
         let (store_recv, store_sender) = Addr::new_mem();
         config.rpc_client.store_addr = Some(store_sender);
-        let store_rpc = iroh_one::mem_store::start(store_recv, config.clone().store.into()).await?;
+        let store_rpc = iroh_one::mem_store::start(store_recv, config.clone().store).await?;
 
         let (p2p_recv, p2p_sender) = Addr::new_mem();
         config.rpc_client.p2p_addr = Some(p2p_sender);
-        let p2p_rpc = iroh_one::mem_p2p::start(p2p_recv, config.clone().p2p.into()).await?;
+        let p2p_rpc = iroh_one::mem_p2p::start(p2p_recv, config.clone().p2p).await?;
         (store_rpc, p2p_rpc)
     };
 
     config.rpc_client.raw_gateway = Some(config.gateway.raw_gateway.clone());
-    config.gateway.rpc_client = config.rpc_client.clone();
-    config.p2p.rpc_client = config.rpc_client.clone();
-    config.store.rpc_client = config.rpc_client.clone();
+    config.sync_rpc_client();
 
     config.metrics = metrics::metrics_config_with_compile_time_info(config.metrics);
     println!("{:#?}", config);
@@ -57,6 +55,7 @@ async fn main() -> Result<()> {
     let mut prom_registry = Registry::default();
     let gw_metrics = Metrics::new(&mut prom_registry);
     let rpc_addr = config
+        .gateway
         .server_rpc_addr()?
         .ok_or_else(|| anyhow!("missing gateway rpc addr"))?;
 
@@ -85,8 +84,10 @@ async fn main() -> Result<()> {
         server.await.unwrap();
     });
 
+    #[cfg(feature = "uds-gateway")]
     let uds_server_task = {
-        let uds_server = core::uds_server(shared_state);
+        let path = format!("{}", std::env::temp_dir().join("ipfsd.http").display());
+        let uds_server = uds::uds_server(shared_state, path);
         tokio::spawn(async move {
             uds_server.await.unwrap();
         })
@@ -96,6 +97,7 @@ async fn main() -> Result<()> {
 
     store_rpc.abort();
     p2p_rpc.abort();
+    #[cfg(feature = "uds-gateway")]
     uds_server_task.abort();
     core_task.abort();
 

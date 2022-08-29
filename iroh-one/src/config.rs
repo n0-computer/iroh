@@ -1,11 +1,11 @@
-use anyhow::{bail, Result};
-use axum::http::{header::*};
+use anyhow::Result;
+use axum::http::header::*;
 use config::{ConfigError, Map, Source, Value};
 
 use iroh_metrics::config::Config as MetricsConfig;
-use iroh_p2p::{Libp2pConfig};
+use iroh_p2p::Libp2pConfig;
 use iroh_rpc_client::Config as RpcClientConfig;
-use iroh_rpc_types::{gateway::GatewayServerAddr, Addr};
+use iroh_rpc_types::Addr;
 use iroh_util::insert_into_config_map;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -51,50 +51,31 @@ impl Config {
         }
     }
 
-    /// Derive server addr for non memory addrs.
-    pub fn server_rpc_addr(&self) -> Result<Option<GatewayServerAddr>> {
-        self.rpc_client
-            .gateway_addr
-            .as_ref()
-            .map(|addr| {
-                #[allow(unreachable_patterns)]
-                match addr {
-                    #[cfg(feature = "rpc-grpc")]
-                    Addr::GrpcHttp2(addr) => Ok(Addr::GrpcHttp2(*addr)),
-                    #[cfg(all(feature = "rpc-grpc", unix))]
-                    Addr::GrpcUds(path) => Ok(Addr::GrpcUds(path.clone())),
-                    #[cfg(feature = "rpc-mem")]
-                    Addr::Mem(_) => bail!("can not derive rpc_addr for mem addr"),
-                    _ => bail!("invalid rpc_addr"),
-                }
-            })
-            .transpose()
-    }
-
     // When running in ipfsd mode, the resolver will use memory channels to
     // communicate with the p2p and store modules.
     // The gateway itself is exposing a UDS rpc endpoint to be also usable
-    // as a single entry point for other system services.
+    // as a single entry point for other system services if feature enabled.
     pub fn default_ipfsd() -> RpcClientConfig {
-        let path = {
-            #[cfg(target_os = "android")]
-            {
-                "/dev/socket/ipfsd".into()
-            }
-
-            #[cfg(not(target_os = "android"))]
-            {
-                let path = format!("{}", std::env::temp_dir().join("ipfsd.gateway").display());
-                path.into()
-            }
-        };
+        #[cfg(feature = "uds-gateway")]
+        let path: PathBuf =
+            format!("{}", std::env::temp_dir().join("ipfsd.gateway").display()).into();
 
         RpcClientConfig {
+            #[cfg(feature = "uds-gateway")]
             gateway_addr: Some(Addr::GrpcUds(path)),
+            #[cfg(not(feature = "uds-gateway"))]
+            gateway_addr: None,
             p2p_addr: None,
             store_addr: None,
             raw_gateway: None,
         }
+    }
+
+    // synchronize the rpc config across subsystems
+    pub fn sync_rpc_client(&mut self) {
+        self.gateway.rpc_client = self.rpc_client.clone();
+        self.p2p.rpc_client = self.rpc_client.clone();
+        self.store.rpc_client = self.rpc_client.clone();
     }
 }
 

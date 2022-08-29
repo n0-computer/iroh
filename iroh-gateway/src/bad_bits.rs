@@ -181,6 +181,7 @@ mod tests {
             false,
             false,
             false,
+            "",
             0,
             RpcClientConfig {
                 gateway_addr: None,

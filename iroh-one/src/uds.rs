@@ -1,11 +1,13 @@
 /// HTTP over UDS support
 /// From https://github.com/tokio-rs/axum/blob/1fe45583626a4c9c890cc01131d38c57f8728686/examples/unix-domain-socket/src/main.rs
 use axum::extract::connect_info;
+use axum::{Router, Server};
 use futures::ready;
 use hyper::{
     client::connect::{Connected, Connection},
     server::accept::Accept,
 };
+use iroh_gateway::{core::State, handlers::get_app_routes};
 use std::{
     io,
     pin::Pin,
@@ -92,4 +94,25 @@ impl connect_info::Connected<&UnixStream> for UdsConnectInfo {
             peer_cred,
         }
     }
+}
+
+pub fn uds_server(
+    state: Arc<State>,
+    path: String,
+) -> Server<
+    ServerAccept,
+    axum::extract::connect_info::IntoMakeServiceWithConnectInfo<Router, UdsConnectInfo>,
+> {
+    // #[cfg(target_os = "android")]
+    // let path = "/dev/socket/ipfsd.http".to_owned();
+
+    // #[cfg(not(target_os = "android"))]
+    // let path = format!("{}", std::env::temp_dir().join("ipfsd.http").display());
+
+    let _ = std::fs::remove_file(&path);
+    let uds = UnixListener::bind(&path).unwrap();
+    println!("Binding to UDS at {}", path);
+    let app = get_app_routes(&state);
+    Server::builder(ServerAccept { uds })
+        .serve(app.into_make_service_with_connect_info::<UdsConnectInfo>())
 }

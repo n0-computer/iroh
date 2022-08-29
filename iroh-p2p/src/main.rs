@@ -1,34 +1,11 @@
-use std::collections::HashMap;
-use std::path::PathBuf;
-
 use anyhow::anyhow;
 use clap::Parser;
 use iroh_p2p::config::{Config, CONFIG_FILE_NAME, ENV_PREFIX};
-use iroh_p2p::{metrics, DiskStorage, Keychain, Node};
+use iroh_p2p::{cli::Args, metrics, DiskStorage, Keychain, Node};
 use iroh_util::{iroh_home_path, make_config};
 use prometheus_client::registry::Registry;
 use tokio::task;
 use tracing::error;
-
-#[derive(Parser, Debug, Clone)]
-#[clap(author, version, about, long_about = None)]
-struct Args {
-    #[clap(long = "metrics")]
-    metrics: bool,
-    #[clap(long = "tracing")]
-    tracing: bool,
-    #[clap(long)]
-    cfg: Option<PathBuf>,
-}
-
-impl Args {
-    fn make_overrides_map(&self) -> HashMap<String, String> {
-        let mut map = HashMap::new();
-        map.insert("metrics.collect".to_string(), self.metrics.to_string());
-        map.insert("metrics.tracing".to_string(), self.tracing.to_string());
-        map
-    }
-}
 
 /// Starts daemon process
 #[tokio::main(flavor = "multi_thread")]
