@@ -25,6 +25,7 @@ pub struct Wantlist {
     cancel_blocks: AHashSet<Cid>,
     /// Blocks this peer provides.
     want_have_blocks: AHashMap<Cid, Priority>,
+    full: bool,
 }
 
 impl Wantlist {
@@ -78,12 +79,16 @@ impl Wantlist {
         self.want_have_blocks.remove(cid);
     }
 
+    pub fn set_full(&mut self, full: bool) {
+        self.full = full;
+    }
+
     fn into_pb(self) -> pb::message::Wantlist {
         use pb::message::wantlist::WantType;
 
         let mut wantlist = pb::message::Wantlist {
             entries: Vec::with_capacity(self.want_blocks.len() + self.cancel_blocks.len()),
-            full: false,
+            full: self.full,
         };
 
         for (cid, &priority) in &self.want_blocks {
@@ -103,7 +108,7 @@ impl Wantlist {
                 priority,
                 cancel: false,
                 want_type: WantType::Have as _,
-                send_dont_have: true,
+                send_dont_have: false,
             };
             wantlist.entries.push(entry);
         }
