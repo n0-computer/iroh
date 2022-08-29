@@ -9,6 +9,7 @@ use std::time::Instant;
 use anyhow::{anyhow, bail, ensure, Context as _, Result};
 use async_trait::async_trait;
 use bytes::Bytes;
+use caches::Cache;
 use cid::Cid;
 use futures::Stream;
 use iroh_metrics::inc;
@@ -18,6 +19,7 @@ use libipld::prelude::Codec as _;
 use libipld::{Ipld, IpldCodec};
 use libp2p::PeerId;
 use tokio::io::AsyncRead;
+use tokio::sync::Mutex;
 use tracing::{debug, info, trace, warn};
 
 use iroh_metrics::{
@@ -395,22 +397,136 @@ pub enum Source {
 #[derive(Debug, Clone)]
 pub struct Resolver<T: ContentLoader> {
     loader: T,
+    metrics: Metrics,
+    provider_cache: ProviderCache,
 }
 
 #[derive(Debug, Clone)]
 pub struct LoaderContext {
+    provider_cache: ProviderCache,
     providers: HashSet<PeerId>,
     path: Path,
     root_cid: Option<Cid>,
 }
 
+#[derive(Debug, Clone)]
+pub struct ProviderCache {
+    providers: Arc<Mutex<caches::RawLRU<Cid, HashSet<PeerId>>>>,
+}
+
+impl ProviderCache {
+    pub fn new(cap: usize) -> Self {
+        ProviderCache {
+            providers: Arc::new(Mutex::new(caches::RawLRU::new(cap).unwrap())),
+        }
+    }
+
+    pub async fn get(&self, cid: &Cid) -> Option<HashSet<PeerId>> {
+        let mut cache = self.providers.lock().await;
+        match cache.get(cid) {
+            Some(providers) => {
+                if providers.is_empty() {
+                    cache.remove(cid);
+                    return None;
+                }
+                Some(providers.clone())
+            }
+            None => None,
+        }
+    }
+
+    pub async fn put(&self, cid: Cid, providers: HashSet<PeerId>) {
+        let mut cache = self.providers.lock().await;
+        match cache.peek_mut_or_put(cid, providers.clone()) {
+            (Some(old_providers), _) => {
+                // extend existing providers list
+                old_providers.extend(providers);
+            }
+            (None, _) => {
+                // Nothing to do
+            }
+        }
+    }
+}
+
 impl LoaderContext {
-    pub fn from_path(path: Path) -> Self {
+    pub fn from_path(provider_cache: ProviderCache, path: Path) -> Self {
         LoaderContext {
+            provider_cache,
             providers: Default::default(),
             path,
             root_cid: None,
         }
+    }
+
+    pub async fn load_providers(&self, client: &Client, cid: &Cid) -> Result<HashSet<PeerId>> {
+        // Check caches
+        if let Some(providers) = self.provider_cache.get(cid).await {
+            return Ok(providers);
+        }
+
+        let p2p = client.try_p2p()?;
+
+        let a = p2p.fetch_providers_dht(cid);
+        let b = p2p.fetch_providers_bitswap(cid);
+        tokio::pin!(a);
+        tokio::pin!(b);
+
+        let providers = match futures::future::try_select(a, b).await {
+            Ok(futures::future::Either::Left((providers, fut))) => {
+                if providers.is_empty() {
+                    fut.await?
+                } else {
+                    info!(
+                        "found providers for {} on the dht ({})",
+                        cid,
+                        providers.len()
+                    );
+
+                    providers
+                }
+            }
+            Ok(futures::future::Either::Right((providers, fut))) => {
+                if providers.is_empty() {
+                    fut.await?
+                } else {
+                    info!(
+                        "found providers for {} on bitswap ({})",
+                        cid,
+                        providers.len()
+                    );
+                    providers
+                }
+            }
+            Err(futures::future::Either::Left((e, fut))) => {
+                warn!("failed to fetch providers dht: {:?}", e);
+
+                let providers = fut.await?;
+                info!(
+                    "found providers for {} on bitswap ({})",
+                    cid,
+                    providers.len()
+                );
+                providers
+            }
+            Err(futures::future::Either::Right((e, fut))) => {
+                warn!("failed to fetch providers bitswap: {:?}", e);
+
+                let providers = fut.await?;
+                info!(
+                    "found providers for {} on the dht ({})",
+                    cid,
+                    providers.len()
+                );
+                providers
+            }
+        };
+
+        ensure!(!providers.is_empty(), "no providers found");
+
+        self.provider_cache.put(*cid, providers.clone()).await;
+
+        Ok(providers)
     }
 }
 
@@ -449,20 +565,18 @@ impl ContentLoader for Client {
 
         let ctx_ref = &ctx;
         let (base_providers, root_providers) =
-            futures::future::join(load_providers(self, &cid), async move {
+            futures::future::join(ctx.load_providers(self, &cid), async move {
                 if let Some(ref cid) = ctx_ref.root_cid {
                     // if there is a root cid, try the providers for that
                     info!("fetching providers from root {}", cid);
-                    load_providers(self, cid).await
-                } else {
-                    if let CidOrDomain::Cid(ref cid) = ctx_ref.path.root() {
-                        info!("fetching providers from path {}", ctx_ref.path);
-                        // if there is a root cid in the path, try the providers for that
+                    ctx_ref.load_providers(self, cid).await
+                } else if let CidOrDomain::Cid(ref cid) = ctx_ref.path.root() {
+                    info!("fetching providers from path {}", ctx_ref.path);
+                    // if there is a root cid in the path, try the providers for that
 
-                        load_providers(self, cid).await
-                    } else {
-                        Ok(HashSet::new())
-                    }
+                    ctx_ref.load_providers(self, cid).await
+                } else {
+                    Ok(HashSet::new())
                 }
             })
             .await;
@@ -525,69 +639,20 @@ impl ContentLoader for Client {
     }
 }
 
-async fn load_providers(client: &Client, cid: &Cid) -> Result<HashSet<PeerId>> {
-    let p2p = client.try_p2p()?;
-
-    let a = p2p.fetch_providers_dht(&cid);
-    let b = p2p.fetch_providers_bitswap(&cid);
-    tokio::pin!(a);
-    tokio::pin!(b);
-    match futures::future::try_select(a, b).await {
-        Ok(futures::future::Either::Left((providers, fut))) => {
-            if providers.is_empty() {
-                return Ok(fut.await?);
-            }
-            info!(
-                "found providers for {} on the dht ({})",
-                cid,
-                providers.len()
-            );
-
-            Ok(providers)
-        }
-        Ok(futures::future::Either::Right((providers, fut))) => {
-            if providers.is_empty() {
-                return Ok(fut.await?);
-            }
-            info!(
-                "found providers for {} on bitswap ({})",
-                cid,
-                providers.len()
-            );
-            Ok(providers)
-        }
-        Err(futures::future::Either::Left((e, fut))) => {
-            warn!("failed to fetch providers dht: {:?}", e);
-
-            let providers = fut.await?;
-            info!(
-                "found providers for {} on bitswap ({})",
-                cid,
-                providers.len()
-            );
-            Ok(providers)
-        }
-        Err(futures::future::Either::Right((e, fut))) => {
-            warn!("failed to fetch providers bitswap: {:?}", e);
-
-            let providers = fut.await?;
-            info!(
-                "found providers for {} on the dht ({})",
-                cid,
-                providers.len()
-            );
-            Ok(providers)
-        }
-    }
-}
-
 impl<T: ContentLoader> Resolver<T> {
     pub fn new(loader: T) -> Self {
-        Resolver { loader }
+        Resolver {
+            provider_cache: ProviderCache::new(1024),
+            loader,
+        }
     }
 
     pub fn loader(&self) -> &T {
         &self.loader
+    }
+
+    pub fn provider_cache(&self) -> &ProviderCache {
+        &self.provider_cache
     }
 
     #[tracing::instrument(skip(self))]
@@ -627,11 +692,7 @@ impl<T: ContentLoader> Resolver<T> {
     #[tracing::instrument(skip(self))]
     pub async fn resolve(&self, path: Path) -> Result<Out> {
         // Resolve the root block.
-        let mut ctx = LoaderContext {
-            providers: Default::default(),
-            path: path.clone(),
-            root_cid: None,
-        };
+        let mut ctx = LoaderContext::from_path(self.provider_cache.clone(), path.clone());
         let (root_cid, loaded_cid) = self.resolve_root(&path, &mut ctx).await?;
         if loaded_cid.source == Source::Bitswap {
             inc!(ResolverMetrics::CacheMiss);

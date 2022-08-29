@@ -456,7 +456,7 @@ impl<T: ContentLoader + Unpin + 'static> AsyncRead for UnixfsContentReader<T> {
                     UnixfsNode::File(node) => poll_read_file_at(
                         cx,
                         node,
-                        loader.loader().clone(),
+                        loader.clone(),
                         pos,
                         buf,
                         current_links,
@@ -521,7 +521,7 @@ impl Debug for CurrentNodeState {
 fn load_next_node<T: ContentLoader + 'static>(
     current_node: &mut CurrentNodeState,
     current_links: &mut Vec<VecDeque<Link>>,
-    loader: T,
+    loader: Resolver<T>,
     ctx: std::sync::Arc<tokio::sync::Mutex<Option<LoaderContext>>>,
 ) -> bool {
     // Load next node
@@ -544,10 +544,13 @@ fn load_next_node<T: ContentLoader + 'static>(
     let fut = async move {
         let mut ctx = ctx.lock().await;
         if ctx.is_none() {
-            *ctx = Some(LoaderContext::from_path(Path::from_cid(link.cid)));
+            *ctx = Some(LoaderContext::from_path(
+                loader.provider_cache().clone(),
+                Path::from_cid(link.cid),
+            ));
         }
-        let mut ctx = ctx.as_mut().unwrap();
-        let loaded_cid = loader.load_cid(&link.cid, &mut ctx).await?;
+        let ctx = ctx.as_mut().unwrap();
+        let loaded_cid = loader.loader().load_cid(&link.cid, ctx).await?;
         let node = UnixfsNode::decode(&link.cid, loaded_cid.data)?;
 
         Ok(node)
@@ -561,7 +564,7 @@ fn load_next_node<T: ContentLoader + 'static>(
 fn poll_read_file_at<T: ContentLoader + 'static>(
     cx: &mut Context<'_>,
     root_node: &Node,
-    loader: T,
+    loader: Resolver<T>,
     pos: &mut usize,
     buf: &mut tokio::io::ReadBuf<'_>,
     current_links: &mut Vec<VecDeque<Link>>,
