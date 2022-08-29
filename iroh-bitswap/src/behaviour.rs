@@ -228,7 +228,7 @@ impl Bitswap {
 
     /// Notifies about a peer that speaks the bitswap protocol.
     pub fn add_peer(&mut self, peer: PeerId) {
-        // TODO: inc known peers
+        inc!(BitswapMetrics::KnownPeers);
         self.known_peers.put(peer, PeerState::default());
     }
 
@@ -236,12 +236,13 @@ impl Bitswap {
     #[instrument(skip(self))]
     pub fn want_block<'a>(&mut self, cid: Cid, priority: Priority, providers: HashSet<PeerId>) {
         debug!("want_block: {}", cid);
-        // TODO: inc wanted blocks
+        inc!(BitswapMetrics::WantedBlocks);
+        record!(BitswapMetrics::Providers, providers.len() as u64);
         for provider in providers.iter() {
             if let Some(peer) = self.known_peers.get_mut(provider) {
                 peer.want_block(&cid, priority);
             } else {
-                // TODO: inc known peers
+                inc!(BitswapMetrics::KnownPeers);
                 let mut peer = PeerState::default();
                 peer.want_block(&cid, priority);
                 self.known_peers.put(*provider, peer);
@@ -260,7 +261,7 @@ impl Bitswap {
         if let Some(peer) = self.known_peers.get_mut(peer_id) {
             peer.send_block(cid, data);
         } else {
-            // TODO: inc known peers
+            inc!(BitswapMetrics::KnownPeers);
             let mut peer = PeerState::default();
             peer.send_block(cid, data);
             self.known_peers.put(*peer_id, peer);
@@ -274,7 +275,7 @@ impl Bitswap {
         if let Some(peer) = self.known_peers.get_mut(peer_id) {
             peer.send_have_block(cid);
         } else {
-            // TODO: inc known peers
+            inc!(BitswapMetrics::KnownPeers);
             let mut peer = PeerState::default();
             peer.send_have_block(cid);
             self.known_peers.put(*peer_id, peer);
@@ -284,7 +285,7 @@ impl Bitswap {
     #[instrument(skip(self))]
     pub fn find_providers(&mut self, cid: Cid, priority: Priority) {
         debug!("find_providers: {}", cid);
-        // TODO: inc want have blocks
+        inc!(BitswapMetrics::WantHaveBlocks);
 
         // TODO: better strategies, than just all peers.
         // TODO: use peers that connect later
@@ -307,7 +308,7 @@ impl Bitswap {
     /// Can be either a user request or be called when the block was received.
     #[instrument(skip(self))]
     pub fn cancel_block(&mut self, cid: &Cid) {
-        // TODO: dec want block
+        inc!(BitswapMetrics::CancelBlocks);
 
         debug!("cancel_block: {}", cid);
         for state in self.known_peers.values_mut() {
@@ -317,7 +318,7 @@ impl Bitswap {
 
     #[instrument(skip(self))]
     pub fn cancel_want_block(&mut self, cid: &Cid) {
-        // TODO: dec want have block
+        inc!(BitswapMetrics::CancelWantBlocks);
 
         debug!("cancel_block: {}", cid);
         for state in self.known_peers.values_mut() {
@@ -376,18 +377,19 @@ impl NetworkBehaviour for Bitswap {
         let peer_state = if let Some(peer) = self.known_peers.get_mut(peer_id) {
             peer
         } else {
-            // TODO: inc known peers
+            inc!(BitswapMetrics::KnownPeers);
             self.known_peers.put(*peer_id, PeerState::default());
             self.known_peers.get_mut(peer_id).unwrap()
         };
 
         peer_state.conn = ConnState::Connected;
-        // TODO: inc connected peers
+        inc!(BitswapMetrics::ConnectedPeers);
 
         if other_established == 0 && !peer_state.is_empty() {
             // queue up message to be sent as soon as we are connected
             let msg = peer_state.send_message();
-            // TODO: inc messages sent
+            inc!(BitswapMetrics::MessagesSent);
+            inc!(BitswapMetrics::EventsBackpressureIn);
             self.events
                 .push_back(NetworkBehaviourAction::NotifyHandler {
                     peer_id: *peer_id,
@@ -407,7 +409,7 @@ impl NetworkBehaviour for Bitswap {
         remaining_established: usize,
     ) {
         if remaining_established == 0 {
-            // TODO: dec connected peers
+            inc!(BitswapMetrics::DisconnectedPeers);
             if let Some(val) = self.known_peers.get_mut(peer_id) {
                 val.conn = ConnState::Disconnected;
             }
@@ -427,18 +429,18 @@ impl NetworkBehaviour for Bitswap {
                 let state = if let Some(peer) = self.known_peers.get_mut(peer_id) {
                     peer
                 } else {
-                    // TODO: inc known peers
+                    inc!(BitswapMetrics::KnownPeers);
                     self.known_peers.put(*peer_id, PeerState::default());
                     self.known_peers.get_mut(peer_id).unwrap()
                 };
 
-                // TODO: dec connected peers
+                inc!(BitswapMetrics::DisconnectedPeers);
                 state.conn = ConnState::Disconnected;
             } else {
                 trace!("dial failure {:?}: {:?}", peer_id, error);
 
                 // remove peers we can't dial
-                // TODO: dec known peers
+                inc!(BitswapMetrics::ForgottenPeers);
                 self.known_peers.remove(peer_id);
             }
         }
@@ -473,6 +475,7 @@ impl NetworkBehaviour for Bitswap {
                         }),
                     };
 
+                    inc!(BitswapMetrics::EventsBackpressureIn);
                     self.events
                         .push_back(NetworkBehaviourAction::GenerateEvent(event));
                 }
@@ -488,7 +491,7 @@ impl NetworkBehaviour for Bitswap {
                             provider: peer_id,
                         }),
                     };
-
+                    inc!(BitswapMetrics::EventsBackpressureIn);
                     self.events
                         .push_back(NetworkBehaviourAction::GenerateEvent(event));
                 }
@@ -502,6 +505,7 @@ impl NetworkBehaviour for Bitswap {
                             priority,
                         },
                     };
+                    inc!(BitswapMetrics::EventsBackpressureIn);
                     self.events
                         .push_back(NetworkBehaviourAction::GenerateEvent(event));
                 }
@@ -515,6 +519,7 @@ impl NetworkBehaviour for Bitswap {
                             priority,
                         },
                     };
+                    inc!(BitswapMetrics::EventsBackpressureIn);
                     self.events
                         .push_back(NetworkBehaviourAction::GenerateEvent(event));
                 }
@@ -531,6 +536,7 @@ impl NetworkBehaviour for Bitswap {
                         },
                     };
 
+                    inc!(BitswapMetrics::EventsBackpressureIn);
                     self.events
                         .push_back(NetworkBehaviourAction::GenerateEvent(event));
                 }
@@ -545,6 +551,7 @@ impl NetworkBehaviour for Bitswap {
         _: &mut impl PollParameters,
     ) -> Poll<NetworkBehaviourAction<Self::OutEvent, Self::ConnectionHandler>> {
         if let Some(event) = self.events.pop_front() {
+            inc!(BitswapMetrics::EventsBackpressureOut);
             return Poll::Ready(event);
         }
 
@@ -554,6 +561,7 @@ impl NetworkBehaviour for Bitswap {
             .iter_mut()
             .find(|(_, s)| s.is_connected() && s.has_blocks())
         {
+            inc!(BitswapMetrics::PollActionConnectedWants);
             // connected, send message
             // TODO: limit size
             // TODO: limit how ofen we send
@@ -573,6 +581,7 @@ impl NetworkBehaviour for Bitswap {
             .iter_mut()
             .find(|(_, s)| s.is_connected() && !s.is_empty())
         {
+            inc!(BitswapMetrics::PollActionConnected);
             // connected, send message
             // TODO: limit size
             // TODO: limit how ofen we send
@@ -592,6 +601,8 @@ impl NetworkBehaviour for Bitswap {
             .iter_mut()
             .find(|(_, s)| s.needs_connection())
         {
+            inc!(BitswapMetrics::PollActionNotConnected);
+
             // not connected, need to dial
             peer_state.conn = ConnState::Dialing;
             let handler = Default::default();
