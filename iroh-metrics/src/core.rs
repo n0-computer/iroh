@@ -98,11 +98,11 @@ impl Core {
 }
 
 pub trait MetricType {
-    fn name(&self) -> &str;
+    fn name(&self) -> &'static str;
 }
 
 pub trait HistogramType {
-    fn name(&self) -> &str;
+    fn name(&self) -> &'static str;
 }
 
 pub trait MetricsRecorder {

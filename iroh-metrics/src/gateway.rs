@@ -182,7 +182,7 @@ pub enum GatewayMetrics {
 }
 
 impl MetricType for GatewayMetrics {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         match self {
             GatewayMetrics::Requests => METRICS_CNT_REQUESTS_TOTAL,
             GatewayMetrics::BytesStreamed => METRICS_BYTES_STREAMED,
@@ -215,7 +215,7 @@ pub enum GatewayHistograms {
 }
 
 impl HistogramType for GatewayHistograms {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         match self {
             GatewayHistograms::TimeToFetchFirstBlock => METRICS_HIST_TTFB,
             GatewayHistograms::TimeToFetchFirstBlockCached => METRICS_HIST_TTFB_CACHED,

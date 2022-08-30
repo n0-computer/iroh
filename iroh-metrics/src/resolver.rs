@@ -80,7 +80,7 @@ pub enum ResolverMetrics {
 }
 
 impl MetricType for ResolverMetrics {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         match self {
             ResolverMetrics::CacheHit => METRICS_CACHE_HIT,
             ResolverMetrics::CacheMiss => METRICS_CACHE_MISS,

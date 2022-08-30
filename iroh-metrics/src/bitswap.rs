@@ -109,7 +109,7 @@ pub enum BitswapMetrics {
 }
 
 impl MetricType for BitswapMetrics {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         match self {
             BitswapMetrics::Requests => METRICS_CNT_REQUESTS_TOTAL,
             BitswapMetrics::Cancels => METRICS_CNT_CANCEL_TOTAL,

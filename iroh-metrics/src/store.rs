@@ -208,7 +208,7 @@ pub enum StoreMetrics {
 }
 
 impl MetricType for StoreMetrics {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         match self {
             StoreMetrics::GetRequests => METRICS_CNT_GET_REQUESTS_TOTAL,
             StoreMetrics::StoreHit => METRICS_CNT_GET_STORE_HIT,
@@ -243,7 +243,7 @@ pub enum StoreHistograms {
 }
 
 impl HistogramType for StoreHistograms {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         match self {
             StoreHistograms::GetRequests => METRICS_HIST_GET_REQUEST_TIME,
             StoreHistograms::PutRequests => METRICS_HIST_PUT_REQUEST_TIME,
