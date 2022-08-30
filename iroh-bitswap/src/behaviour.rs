@@ -437,6 +437,7 @@ impl NetworkBehaviour for Bitswap {
 
                 // remove peers we can't dial
                 inc!(BitswapMetrics::ForgottenPeers);
+                inc!(BitswapMetrics::DisconnectedPeers);
                 self.known_peers.remove(peer_id);
             }
         }
