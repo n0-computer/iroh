@@ -6,9 +6,9 @@ use std::path::PathBuf;
 #[derive(Parser, Debug, Clone)]
 #[clap(author, version, about, long_about = None)]
 pub struct Args {
-    //Gateway
-    #[clap(short, long)]
-    port: Option<u16>,
+    /// Gateway
+    #[clap(short = 'p', long = "gateway-port")]
+    gateway_port: Option<u16>,
     #[clap(short, long)]
     writeable: Option<bool>,
     #[clap(short, long)]
@@ -21,12 +21,12 @@ pub struct Args {
     tracing: bool,
     #[clap(long)]
     denylist: bool,
+    #[cfg(feature = "uds-gateway")]
+    #[clap(long = "gateway-uds-path")]
+    pub gateway_uds_path: Option<PathBuf>,
     /// Path to the store
     #[clap(long = "store-path")]
     pub store_path: Option<PathBuf>,
-    #[cfg(feature = "uds-gateway")]
-    #[clap(long = "uds-path")]
-    pub uds_path: Option<PathBuf>,
     #[clap(long)]
     pub cfg: Option<PathBuf>,
 }
@@ -34,7 +34,7 @@ pub struct Args {
 impl Args {
     pub fn make_overrides_map(&self) -> HashMap<&str, String> {
         let mut map: HashMap<&str, String> = HashMap::new();
-        if let Some(port) = self.port {
+        if let Some(port) = self.gateway_port {
             map.insert("gateway.port", port.to_string());
         }
         if let Some(writable) = self.writeable {
@@ -53,8 +53,8 @@ impl Args {
             map.insert("store.path", path.to_str().unwrap_or("").to_string());
         }
         #[cfg(feature = "uds-gateway")]
-        if let Some(path) = self.uds_path.clone() {
-            map.insert("uds_path", path.to_str().unwrap_or("").to_string());
+        if let Some(path) = self.gateway_uds_path.clone() {
+            map.insert("gateway_uds_path", path.to_str().unwrap_or("").to_string());
         }
         map
     }

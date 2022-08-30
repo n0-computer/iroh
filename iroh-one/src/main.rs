@@ -14,6 +14,8 @@ use iroh_one::{
 use iroh_rpc_types::Addr;
 use iroh_util::{iroh_home_path, make_config};
 use prometheus_client::registry::Registry;
+#[cfg(feature = "uds-gateway")]
+use tempdir::TempDir;
 use tokio::sync::RwLock;
 
 #[tokio::main(flavor = "multi_thread")]
@@ -93,8 +95,8 @@ async fn main() -> Result<()> {
 
     #[cfg(feature = "uds-gateway")]
     let uds_server_task = {
-        let mut path = std::env::temp_dir().join("ipfsd.http");
-        if let Some(uds_path) = config.uds_path {
+        let mut path = TempDir::new("iroh")?.path().join("ipfsd.http");
+        if let Some(uds_path) = config.gateway_uds_path {
             path = uds_path;
         }
         let uds_server = uds::uds_server(shared_state, path);

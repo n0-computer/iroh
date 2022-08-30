@@ -168,16 +168,16 @@ impl Source for Config {
 }
 
 impl crate::handlers::StateConfig for Config {
-    fn rpc_client(&self) -> iroh_rpc_client::Config {
-        self.rpc_client.clone()
+    fn rpc_client(&self) -> &iroh_rpc_client::Config {
+        &self.rpc_client
     }
 
     fn port(&self) -> u16 {
         self.port
     }
 
-    fn user_headers(&self) -> HeaderMap<HeaderValue> {
-        self.headers.clone()
+    fn user_headers(&self) -> &HeaderMap<HeaderValue> {
+        &self.headers
     }
 }
 

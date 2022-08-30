@@ -1,28 +1,24 @@
-# Iroh One Gateway
+# Iroh One
 
-A rust implementation of an IPFS gateway.
+Single binary of iroh services (gateway, p2p, store) communicating via mem channels.
 
 ## Running / Building
 
-`cargo run --release -- -p 10000`
+`cargo run --release -- -p 10000 --store-path=tmpstore`
 
 ### Options
 
 - Run with `cargo run --release -- -h` for details
 - `-wcf` Writeable, Cache, Fetch (options to toggle write enable, caching mechanics and fetching from the network); currently exists but is not implemented
 - `-p` Port the gateway should listen on
+- `--store-path` Path for the iroh-store
 
-## ENV Variables
+### Features
 
-- `IROH_INSTANCE_ID` - unique instance identifier, preferably some name than hard id (default: generated lower & snake case name)
-- `IROH_ENV` - indicates the service environment (default: `dev`)
+- `uds-gateway` - enables the usage and binding of the gateway over UDS.
 
-## Endpoints
+### Reference
 
-| Endpoint                          | Flag                                       | Description                                                                             | Default     |
-|-----------------------------------|--------------------------------------------|-----------------------------------------------------------------------------------------|-------------|
-| `/ipfs/:cid` & `/ipfs/:cid/:path` | `?format={"", "fs", "raw", "car"}`         | Specifies the serving format & content-type                                             | `""/fs`     |
-|                                   | `?filename=DESIRED_FILE_NAME`              | Specifies a filename for the attachment                                                 | `{cid}.bin` |
-|                                   | `?download={true, false}`                  | Sets content-disposition to attachment, browser prompts to save file instead of loading | `false`     |
-|                                   | `?force_dir={true, false}`                 | Lists unixFS directories even if they contain an `index.html` file                      | `false`     |
-|                                   | `?uri=ENCODED_URL`                         | Query parameter to handle navigator.registerProtocolHandler Web API ie. ipfs://         | `""`        |
+- [Gateway](../iroh-gateway/README.md)
+- [P2P](../iroh-p2p/README.md)
+- [Store](../iroh-store/README.md)

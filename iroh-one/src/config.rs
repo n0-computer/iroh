@@ -10,6 +10,8 @@ use iroh_rpc_types::Addr;
 use iroh_util::insert_into_config_map;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+#[cfg(feature = "uds-gateway")]
+use tempdir::TempDir;
 
 /// CONFIG_FILE_NAME is the name of the optional config file located in the iroh home directory
 pub const CONFIG_FILE_NAME: &str = "one.config.toml";
@@ -23,11 +25,11 @@ pub const DEFAULT_PORT: u16 = 9050;
 /// as well as the common rpc & metrics ones.
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct Config {
-    // Gateway specific configuration.
+    /// Gateway specific configuration.
     pub gateway: iroh_gateway::config::Config,
-    // Store specific configuration.
+    /// Store specific configuration.
     pub store: iroh_store::config::Config,
-    // P2P specific configuration.
+    /// P2P specific configuration.
     pub p2p: iroh_p2p::config::Config,
 
     /// rpc addresses for the gateway & addresses for the rpc client to dial
@@ -36,7 +38,7 @@ pub struct Config {
     pub metrics: MetricsConfig,
     /// Path for the UDS socket for the gateway.
     #[cfg(feature = "uds-gateway")]
-    pub uds_path: Option<PathBuf>,
+    pub gateway_uds_path: Option<PathBuf>,
 }
 
 impl Config {
@@ -45,7 +47,7 @@ impl Config {
         store: iroh_store::config::Config,
         p2p: iroh_p2p::config::Config,
         rpc_client: RpcClientConfig,
-        #[cfg(feature = "uds-gateway")] uds_path: Option<PathBuf>,
+        #[cfg(feature = "uds-gateway")] gateway_uds_path: Option<PathBuf>,
     ) -> Self {
         Self {
             gateway,
@@ -54,18 +56,17 @@ impl Config {
             rpc_client,
             metrics: MetricsConfig::default(),
             #[cfg(feature = "uds-gateway")]
-            uds_path,
+            gateway_uds_path,
         }
     }
 
-    // When running in ipfsd mode, the resolver will use memory channels to
-    // communicate with the p2p and store modules.
-    // The gateway itself is exposing a UDS rpc endpoint to be also usable
-    // as a single entry point for other system services if feature enabled.
+    /// When running in ipfsd mode, the resolver will use memory channels to
+    /// communicate with the p2p and store modules.
+    /// The gateway itself is exposing a UDS rpc endpoint to be also usable
+    /// as a single entry point for other system services if feature enabled.
     pub fn default_ipfsd() -> RpcClientConfig {
         #[cfg(feature = "uds-gateway")]
-        let path: PathBuf =
-            format!("{}", std::env::temp_dir().join("ipfsd.gateway").display()).into();
+        let path: PathBuf = TempDir::new("iroh").unwrap().path().join("ipfsd.http");
 
         RpcClientConfig {
             #[cfg(feature = "uds-gateway")]
@@ -88,8 +89,7 @@ impl Config {
 impl Default for Config {
     fn default() -> Self {
         #[cfg(feature = "uds-gateway")]
-        let uds_path: PathBuf =
-            format!("{}", std::env::temp_dir().join("ipfsd.gateway").display()).into();
+        let gateway_uds_path: PathBuf = TempDir::new("iroh").unwrap().path().join("ipfsd.http");
         let ipfsd = Self::default_ipfsd();
         let metrics_config = MetricsConfig::default();
         Self {
@@ -99,7 +99,7 @@ impl Default for Config {
             store: default_store_config(ipfsd.clone(), metrics_config.clone()),
             p2p: default_p2p_config(ipfsd, metrics_config),
             #[cfg(feature = "uds-gateway")]
-            uds_path: Some(uds_path),
+            gateway_uds_path: Some(gateway_uds_path),
         }
     }
 }
@@ -140,23 +140,27 @@ impl Source for Config {
         insert_into_config_map(&mut map, "rpc_client", self.rpc_client.collect()?);
         insert_into_config_map(&mut map, "metrics", self.metrics.collect()?);
         #[cfg(feature = "uds-gateway")]
-        if let Some(uds_path) = self.uds_path.as_ref() {
-            insert_into_config_map(&mut map, "uds_path", uds_path.to_str().unwrap().to_string());
+        if let Some(uds_path) = self.gateway_uds_path.as_ref() {
+            insert_into_config_map(
+                &mut map,
+                "gateway_uds_path",
+                uds_path.to_str().unwrap().to_string(),
+            );
         }
         Ok(map)
     }
 }
 
 impl iroh_gateway::handlers::StateConfig for Config {
-    fn rpc_client(&self) -> iroh_rpc_client::Config {
-        self.rpc_client.clone()
+    fn rpc_client(&self) -> &iroh_rpc_client::Config {
+        &self.rpc_client
     }
 
     fn port(&self) -> u16 {
         self.gateway.port
     }
 
-    fn user_headers(&self) -> HeaderMap<HeaderValue> {
-        self.gateway.headers.clone()
+    fn user_headers(&self) -> &HeaderMap<HeaderValue> {
+        &self.gateway.headers
     }
 }

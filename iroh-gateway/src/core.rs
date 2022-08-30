@@ -41,7 +41,7 @@ impl Core {
             // TODO: handle error
             rpc::new(rpc_addr, Gateway::default()).await
         });
-        let rpc_client = RpcClient::new(config.rpc_client()).await?;
+        let rpc_client = RpcClient::new(config.rpc_client().clone()).await?;
         let mut templates = HashMap::new();
         templates.insert("dir_list".to_string(), templates::DIR_LIST.to_string());
         templates.insert("not_found".to_string(), templates::NOT_FOUND.to_string());
@@ -75,7 +75,7 @@ impl Core {
         registry: &mut Registry,
         bad_bits: Arc<Option<RwLock<BadBits>>>,
     ) -> anyhow::Result<Arc<State>> {
-        let rpc_client = RpcClient::new(config.rpc_client()).await?;
+        let rpc_client = RpcClient::new(config.rpc_client().clone()).await?;
         let mut templates = HashMap::new();
         templates.insert("dir_list".to_string(), templates::DIR_LIST.to_string());
         templates.insert("not_found".to_string(), templates::NOT_FOUND.to_string());

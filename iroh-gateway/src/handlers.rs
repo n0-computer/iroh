@@ -47,11 +47,11 @@ use crate::{
 /// Trait describing what needs to be accessed on the configuration
 /// from the shared state.
 pub trait StateConfig: std::fmt::Debug + Sync + Send {
-    fn rpc_client(&self) -> iroh_rpc_client::Config;
+    fn rpc_client(&self) -> &iroh_rpc_client::Config;
 
     fn port(&self) -> u16;
 
-    fn user_headers(&self) -> HeaderMap<HeaderValue>;
+    fn user_headers(&self) -> &HeaderMap<HeaderValue>;
 }
 
 pub fn get_app_routes(state: &Arc<State>) -> Router {
@@ -183,7 +183,7 @@ pub async fn get_handler(
 
     // init headers
     format.write_headers(&mut headers);
-    add_user_headers(&mut headers, state.config.user_headers());
+    add_user_headers(&mut headers, state.config.user_headers().clone());
     headers.insert(
         &HEADER_X_IPFS_PATH,
         HeaderValue::from_str(&full_content_path).unwrap(),
