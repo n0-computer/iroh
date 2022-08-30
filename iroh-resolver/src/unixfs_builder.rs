@@ -1,10 +1,14 @@
-use std::{fmt::Debug, path::Path, pin::Pin};
+use std::{
+    fmt::Debug,
+    path::{Path, PathBuf},
+    pin::Pin,
+};
 
 use anyhow::{anyhow, ensure, Result};
 use async_trait::async_trait;
 use bytes::{Bytes, BytesMut};
 use cid::{multihash::MultihashDigest, Cid};
-use futures::{Stream, StreamExt};
+use futures::{stream::LocalBoxStream, Stream, StreamExt};
 use iroh_rpc_client::Client;
 use prost::Message;
 use tokio::io::AsyncRead;
@@ -31,11 +35,19 @@ enum DirectoryType {
     Hamt,
 }
 
+/// Entry is the kind of entry in a directory can be either a file or a
+/// folder (if recursive directories are allowed)
+#[derive(Debug)]
+enum Entry {
+    File(File),
+    Directory(Directory),
+}
+
 /// Construct a UnixFS directory.
 #[derive(Debug)]
 pub struct DirectoryBuilder {
     name: Option<String>,
-    files: Vec<File>,
+    entries: Vec<Entry>,
     typ: DirectoryType,
     // estimated_size is used to compare the size of the directory
     // to the chunk size.
@@ -52,7 +64,7 @@ impl Default for DirectoryBuilder {
     fn default() -> Self {
         Self {
             name: None,
-            files: Default::default(),
+            entries: Default::default(),
             typ: DirectoryType::Basic,
             estimated_size: 0,
             chunker: Chunker::fixed_size(),
@@ -70,14 +82,27 @@ impl DirectoryBuilder {
         self
     }
 
-    pub fn add_file(&mut self, file: File) -> &mut Self {
-        self.estimated_size += self.estimated_size + file.name().len() + CID_LEN;
+    pub fn add_dir(&mut self, dir: Directory) -> &mut Self {
+        let name = dir.name();
+        self.estimated_size += self.estimated_size + name.len() + CID_LEN;
         if self.typ == DirectoryType::Basic
             && self.estimated_size + BUFFER > self.chunker.chunk_size()
         {
             self.typ = DirectoryType::Hamt;
         }
-        self.files.push(file);
+        self.entries.push(Entry::Directory(dir));
+        self
+    }
+
+    pub fn add_file(&mut self, file: File) -> &mut Self {
+        let name = file.name();
+        self.estimated_size += self.estimated_size + name.len() + CID_LEN;
+        if self.typ == DirectoryType::Basic
+            && self.estimated_size + BUFFER > self.chunker.chunk_size()
+        {
+            self.typ = DirectoryType::Hamt;
+        }
+        self.entries.push(Entry::File(file));
         self
     }
 
@@ -85,11 +110,11 @@ impl DirectoryBuilder {
         if self.typ == DirectoryType::Hamt {
             anyhow::bail!("too many links to fit into one chunk, must be encoded as a HAMT. However, HAMT creation has not yet been implemented.");
         }
-        let DirectoryBuilder { name, files, .. } = self;
+        let DirectoryBuilder { name, entries, .. } = self;
 
         let name = name.unwrap_or_default();
 
-        Ok(Directory { name, files })
+        Ok(Directory { name, entries })
     }
 }
 
@@ -97,7 +122,7 @@ impl DirectoryBuilder {
 #[derive(Debug)]
 pub struct Directory {
     name: String,
-    files: Vec<File>,
+    entries: Vec<Entry>,
 }
 
 impl Directory {
@@ -117,26 +142,43 @@ impl Directory {
         current.expect("must not be empty")
     }
 
-    pub fn encode(self) -> impl Stream<Item = Result<(Cid, Bytes)>> {
+    pub fn encode<'a>(self) -> LocalBoxStream<'a, Result<(Cid, Bytes)>> {
         async_stream::try_stream! {
             let mut links = Vec::new();
-            for file in self.files {
-                let name = file.name.clone();
-                let parts = file.encode();
-                tokio::pin!(parts);
-
-                let mut root = None;
-                while let Some(part) = parts.next().await {
-                    let (cid, bytes) = part?;
-                    root = Some((cid, bytes.clone()));
-                    yield (cid, bytes);
-                }
+            for entry in self.entries {
+                let (name, root) = match entry {
+                    Entry::File(file) => {
+                        let name = file.name();
+                        let parts = file.encode();
+                        tokio::pin!(parts);
+                        let mut root = None;
+                        while let Some(part) = parts.next().await {
+                            let (cid, bytes) = part?;
+                            root = Some((cid, bytes.clone()));
+                            yield (cid, bytes);
+                        }
+                         (name, root)
+                    }
+                    Entry::Directory(dir) => {
+                        let name = dir.name.clone();
+                        let parts = dir.encode();
+                        tokio::pin!(parts);
+                        let mut root = None;
+                        while let Some(part) = parts.next().await {
+                            let (cid, bytes) = part?;
+                            root = Some((cid, bytes.clone()));
+                            yield (cid, bytes);
+                        }
+                         (name, root)
+                    }
+                };
                 let (cid, bytes) = root.expect("file must not be empty");
                 links.push(dag_pb::PbLink {
                     hash: Some(cid.to_bytes()),
                     name: Some(name),
                     tsize: Some(bytes.len() as u64),
                 });
+
             }
 
             // directory itself comes last
@@ -149,6 +191,7 @@ impl Directory {
             let node = UnixfsNode::Directory(Node { outer, inner });
             yield node.encode()?;
         }
+        .boxed_local()
     }
 }
 
@@ -157,6 +200,7 @@ pub struct FileBuilder {
     name: Option<String>,
     content: Option<Pin<Box<dyn AsyncRead>>>,
     chunker: Chunker,
+    path: Option<PathBuf>,
 }
 
 impl Debug for FileBuilder {
@@ -175,6 +219,57 @@ impl Debug for FileBuilder {
     }
 }
 
+impl Default for FileBuilder {
+    fn default() -> Self {
+        Self {
+            name: None,
+            content: None,
+            chunker: chunker::Chunker::fixed_size(),
+            path: None,
+        }
+    }
+}
+
+/// FileBuilder separates uses a reader or bytes to chunk the data into raw unixfs nodes
+impl FileBuilder {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_path(&mut self, path: PathBuf) -> &mut Self {
+        self.path = Some(path);
+        self
+    }
+
+    pub fn name(&mut self, name: impl Into<String>) -> &mut Self {
+        self.name = Some(name.into());
+        self
+    }
+
+    pub fn content_bytes<B: Into<Bytes>>(&mut self, content: B) -> &mut Self {
+        let bytes = content.into();
+        self.content = Some(Box::pin(std::io::Cursor::new(bytes)));
+        self
+    }
+
+    pub fn content_reader<T: tokio::io::AsyncRead + 'static>(&mut self, content: T) -> &mut Self {
+        self.content = Some(Box::pin(content));
+        self
+    }
+
+    pub async fn build(self) -> Result<File> {
+        // encodes files as raw
+
+        let name = self.name.ok_or_else(|| anyhow!("missing name"))?;
+        let reader = self.content.ok_or_else(|| anyhow!("missing content"))?;
+
+        Ok(File {
+            name,
+            nodes: Box::pin(self.chunker.chunks(reader)),
+            tree_builder: TreeBuilder::balanced_tree(),
+        })
+    }
+}
 /// Representation of a constructed File.
 pub struct File {
     name: String,
@@ -270,52 +365,6 @@ pub(crate) fn encode_unixfs_pb(
     })
 }
 
-impl Default for FileBuilder {
-    fn default() -> Self {
-        Self {
-            name: None,
-            content: None,
-            chunker: chunker::Chunker::fixed_size(),
-        }
-    }
-}
-
-/// FileBuilder separates uses a reader or bytes to chunk the data into raw unixfs nodes
-impl FileBuilder {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn name(&mut self, name: impl Into<String>) -> &mut Self {
-        self.name = Some(name.into());
-        self
-    }
-
-    pub fn content_bytes<B: Into<Bytes>>(&mut self, content: B) -> &mut Self {
-        let bytes = content.into();
-        self.content = Some(Box::pin(std::io::Cursor::new(bytes)));
-        self
-    }
-
-    pub fn content_reader<T: tokio::io::AsyncRead + 'static>(&mut self, content: T) -> &mut Self {
-        self.content = Some(Box::pin(content));
-        self
-    }
-
-    pub async fn build(self) -> Result<File> {
-        // encodes files as raw
-
-        let name = self.name.ok_or_else(|| anyhow!("missing name"))?;
-        let reader = self.content.ok_or_else(|| anyhow!("missing content"))?;
-
-        Ok(File {
-            name,
-            nodes: Box::pin(self.chunker.chunks(reader)),
-            tree_builder: TreeBuilder::balanced_tree(),
-        })
-    }
-}
-
 #[async_trait]
 pub trait Store {
     async fn put(&self, cid: Cid, blob: Bytes, links: Vec<Cid>) -> Result<()>;
@@ -363,6 +412,47 @@ pub async fn add_file<S: Store>(path: &Path, rpc: Option<S>) -> Result<Cid> {
     // encode and store
     let mut root = None;
     let parts = dir.encode();
+    tokio::pin!(parts);
+
+    while let Some(part) = parts.next().await {
+        let (cid, bytes) = part?;
+        if let Some(ref rpc) = rpc {
+            rpc.put(cid, bytes, vec![]).await?;
+        }
+        root = Some(cid);
+    }
+
+    Ok(root.expect("missing root"))
+}
+
+/// Adds a directory.
+/// - storing the content using `rpc.store`
+/// - returns the root Cid
+/// - wraps into a UnixFs directory to preserve the filename
+pub async fn add_dir<S: Store>(path: &Path, rpc: Option<S>, _recursive: bool) -> Result<Cid> {
+    ensure!(path.is_dir(), "provided path was not a directory");
+
+    // wrap dir in dir to preserve file name
+    let mut wrap = DirectoryBuilder::new();
+    wrap.name("");
+    let mut dir = DirectoryBuilder::new();
+    dir.name(
+        path.file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or_default(),
+    );
+
+    // iterate through dir
+    // if also a dir, check if recursive == false, if so, error
+    //
+    let dir = dir.build().await?;
+    wrap.add_dir(dir);
+
+    let wrap = wrap.build().await?;
+
+    // encode and store
+    let mut root = None;
+    let parts = wrap.encode();
     tokio::pin!(parts);
 
     while let Some(part) = parts.next().await {
@@ -571,6 +661,7 @@ mod tests {
         let file = File {
             name: "foo.bar".into(),
             nodes,
+            tree_builder: TreeBuilder::balanced_tree(),
         };
         builder.add_file(file);
         assert_eq!(DirectoryType::Basic, builder.typ);
@@ -581,6 +672,7 @@ mod tests {
         let file = File {
             name: "foo.bar".into(),
             nodes,
+            tree_builder: TreeBuilder::balanced_tree(),
         };
         builder.add_file(file);
         assert_eq!(DirectoryType::Hamt, builder.typ);
