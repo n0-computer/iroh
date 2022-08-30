@@ -3,7 +3,10 @@ use std::fmt;
 use prometheus_client::{metrics::counter::Counter, registry::Registry};
 use tracing::error;
 
-use crate::core::{HistogramType, MetricType, MetricsRecorder};
+use crate::{
+    core::{HistogramType, MRecorder, MetricType, MetricsRecorder},
+    Collector,
+};
 
 #[derive(Clone)]
 pub(crate) struct Metrics {
@@ -70,6 +73,7 @@ impl MetricsRecorder for Metrics {
     }
 }
 
+#[derive(Clone)]
 pub enum ResolverMetrics {
     CacheHit,
     CacheMiss,
@@ -81,6 +85,12 @@ impl MetricType for ResolverMetrics {
             ResolverMetrics::CacheHit => METRICS_CACHE_HIT,
             ResolverMetrics::CacheMiss => METRICS_CACHE_MISS,
         }
+    }
+}
+
+impl MRecorder for ResolverMetrics {
+    fn record(&self, value: u64) {
+        crate::record(Collector::Resolver, self.clone(), value);
     }
 }
 

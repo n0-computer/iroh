@@ -1,5 +1,6 @@
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use prometheus_client::{encoding::text::encode, registry::Registry};
-use tokio::sync::RwLock;
 
 #[cfg(feature = "bitswap")]
 use crate::bitswap;
@@ -13,11 +14,11 @@ use crate::resolver;
 use crate::store;
 
 lazy_static! {
-    pub(crate) static ref CORE: RwLock<Core> = RwLock::new(Core::default());
+    pub(crate) static ref CORE: Core = Core::default();
 }
 
 pub(crate) struct Core {
-    enabled: bool,
+    enabled: AtomicBool,
     registry: Registry,
     #[cfg(feature = "gateway")]
     gateway_metrics: gateway::Metrics,
@@ -35,7 +36,7 @@ impl Default for Core {
     fn default() -> Self {
         let mut reg = Registry::default();
         Core {
-            enabled: false,
+            enabled: AtomicBool::new(false),
             #[cfg(feature = "gateway")]
             gateway_metrics: gateway::Metrics::new(&mut reg),
             #[cfg(feature = "resolver")]
@@ -87,12 +88,12 @@ impl Core {
         buf
     }
 
-    pub(crate) fn set_enabled(&mut self, enabled: bool) {
-        self.enabled = enabled;
+    pub(crate) fn set_enabled(&self, enabled: bool) {
+        self.enabled.swap(enabled, Ordering::Relaxed);
     }
 
     pub(crate) fn enabled(&self) -> bool {
-        self.enabled
+        self.enabled.load(Ordering::Relaxed)
     }
 }
 
@@ -111,4 +112,12 @@ pub trait MetricsRecorder {
     fn observe<M>(&self, m: M, value: f64)
     where
         M: HistogramType + std::fmt::Display;
+}
+
+pub trait MRecorder {
+    fn record(&self, value: u64);
+}
+
+pub trait MObserver {
+    fn observe(&self, value: f64);
 }

@@ -6,8 +6,9 @@ use bytes::Bytes;
 use futures::{StreamExt, TryStream};
 use http::HeaderMap;
 use iroh_metrics::{
+    core::{MObserver, MRecorder},
     gateway::{GatewayHistograms, GatewayMetrics},
-    observe, record, Collector,
+    observe, record,
 };
 use iroh_resolver::resolver::{
     CidOrDomain, Metadata, Out, OutMetrics, OutPrettyReader, Resolver, Source,
@@ -87,27 +88,21 @@ impl Client {
             .resolve(path)
             .await
             .map_err(|e| e.to_string())?;
-        record(
-            Collector::Gateway,
+        record!(
             GatewayMetrics::TimeToFetchFirstBlock,
-            start_time.elapsed().as_millis() as u64,
-        )
-        .await;
+            start_time.elapsed().as_millis() as u64
+        );
         let metadata = res.metadata().clone();
         if metadata.source == Source::Bitswap {
-            observe(
-                Collector::Gateway,
+            observe!(
                 GatewayHistograms::TimeToFetchFirstBlock,
-                start_time.elapsed().as_millis() as f64,
-            )
-            .await;
+                start_time.elapsed().as_millis() as f64
+            );
         } else {
-            observe(
-                Collector::Gateway,
+            observe!(
                 GatewayHistograms::TimeToFetchFirstBlockCached,
-                start_time.elapsed().as_millis() as f64,
-            )
-            .await;
+                start_time.elapsed().as_millis() as f64
+            );
         }
 
         if res.is_dir() {
@@ -141,27 +136,21 @@ impl Client {
             while let Some(res) = res.next().await {
                 match res {
                     Ok(res) => {
-                        record(
-                            Collector::Gateway,
+                        record!(
                             GatewayMetrics::TimeToFetchFirstBlock,
-                            start_time.elapsed().as_millis() as u64,
-                        )
-                        .await;
+                            start_time.elapsed().as_millis() as u64
+                        );
                         let metadata = res.metadata().clone();
                         if metadata.source == Source::Bitswap {
-                            observe(
-                                Collector::Gateway,
+                            observe!(
                                 GatewayHistograms::TimeToFetchFirstBlock,
-                                start_time.elapsed().as_millis() as f64,
-                            )
-                            .await;
+                                start_time.elapsed().as_millis() as f64
+                            );
                         } else {
-                            observe(
-                                Collector::Gateway,
+                            observe!(
                                 GatewayHistograms::TimeToFetchFirstBlockCached,
-                                start_time.elapsed().as_millis() as f64,
-                            )
-                            .await;
+                                start_time.elapsed().as_millis() as f64
+                            );
                         }
                         let reader =
                             res.pretty(self.resolver.clone(), OutMetrics { start: start_time });

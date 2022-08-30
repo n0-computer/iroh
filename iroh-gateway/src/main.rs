@@ -40,7 +40,7 @@ async fn main() -> Result<()> {
     let rpc_addr = config
         .server_rpc_addr()?
         .ok_or_else(|| anyhow!("missing gateway rpc addr"))?;
-    let handler = Core::new(config, rpc_addr, Arc::clone(&bad_bits)).await?;
+    let handler = Core::new(Arc::new(config), rpc_addr, Arc::clone(&bad_bits)).await?;
 
     let bad_bits_handle = bad_bits::spawn_bad_bits_updater(Arc::clone(&bad_bits));
 

@@ -11,8 +11,7 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use cid::Cid;
 use futures::Stream;
-use iroh_metrics::gateway::{GatewayHistograms, GatewayMetrics};
-use iroh_metrics::{observe_sync, record_sync};
+use iroh_metrics::inc;
 use iroh_rpc_client::Client;
 use libipld::codec::{Decode, Encode};
 use libipld::prelude::Codec as _;
@@ -20,7 +19,12 @@ use libipld::{Ipld, IpldCodec};
 use tokio::io::AsyncRead;
 use tracing::{debug, trace, warn};
 
-use iroh_metrics::{record, resolver::ResolverMetrics, Collector};
+use iroh_metrics::{
+    core::{MObserver, MRecorder},
+    gateway::{GatewayHistograms, GatewayMetrics},
+    observe, record,
+    resolver::ResolverMetrics,
+};
 
 use crate::codecs::Codec;
 use crate::unixfs::{
@@ -326,29 +330,22 @@ pub struct OutMetrics {
 impl OutMetrics {
     pub fn observe_bytes_read(&self, pos: usize, bytes_read: usize) {
         if pos == 0 && bytes_read > 0 {
-            record_sync(
-                Collector::Gateway,
+            record!(
                 GatewayMetrics::TimeToServeFirstBlock,
-                self.start.elapsed().as_millis() as u64,
+                self.start.elapsed().as_millis() as u64
             );
         }
         if bytes_read == 0 {
-            record_sync(
-                Collector::Gateway,
+            record!(
                 GatewayMetrics::TimeToServeFullFile,
-                self.start.elapsed().as_millis() as u64,
+                self.start.elapsed().as_millis() as u64
             );
-            observe_sync(
-                Collector::Gateway,
+            observe!(
                 GatewayHistograms::TimeToServeFullFile,
-                self.start.elapsed().as_millis() as f64,
+                self.start.elapsed().as_millis() as f64
             );
         }
-        record_sync(
-            Collector::Gateway,
-            GatewayMetrics::BytesStreamed,
-            bytes_read as u64,
-        );
+        record!(GatewayMetrics::BytesStreamed, bytes_read as u64);
     }
 }
 
@@ -516,9 +513,9 @@ impl<T: ContentLoader> Resolver<T> {
         // Resolve the root block.
         let (root_cid, loaded_cid) = self.resolve_root(&path).await?;
         if loaded_cid.source == Source::Bitswap {
-            record(Collector::Resolver, ResolverMetrics::CacheMiss, 1).await;
+            inc!(ResolverMetrics::CacheMiss);
         } else {
-            record(Collector::Resolver, ResolverMetrics::CacheHit, 1).await;
+            inc!(ResolverMetrics::CacheHit);
         }
 
         let codec = Codec::try_from(root_cid.codec()).context("unknown codec")?;

@@ -1,3 +1,5 @@
+#[macro_use]
+mod macros;
 #[cfg(feature = "bitswap")]
 pub mod bitswap;
 pub mod config;
@@ -66,7 +68,7 @@ impl MetricsHandle {
 /// Initialize the metrics subsystem.
 async fn init_metrics(cfg: Config) -> Option<JoinHandle<()>> {
     if cfg.collect {
-        enable().await;
+        CORE.set_enabled(true);
         let prom_gateway_uri = format!(
             "{}/metrics/job/{}/instance/{}",
             cfg.prom_gateway_endpoint, cfg.service_name, cfg.instance_id
@@ -75,8 +77,7 @@ async fn init_metrics(cfg: Config) -> Option<JoinHandle<()>> {
         return Some(tokio::spawn(async move {
             loop {
                 tokio::time::sleep(Duration::from_secs(5)).await;
-                let r = CORE.read().await;
-                let buff = r.encode();
+                let buff = CORE.encode();
                 let res = match push_client.post(&prom_gateway_uri).body(buff).send().await {
                     Ok(res) => res,
                     Err(e) => {
@@ -96,16 +97,7 @@ async fn init_metrics(cfg: Config) -> Option<JoinHandle<()>> {
                 }
             }
         }));
-    } else {
-        //TODO this just debug stuff
-        tokio::spawn(async move {
-            loop {
-                tokio::time::sleep(Duration::from_secs(5)).await;
-                print().await;
-            }
-        });
     }
-    disable().await;
     None
 }
 
@@ -167,83 +159,46 @@ pub enum Collector {
 }
 
 #[allow(unused_variables, unreachable_patterns)]
-pub async fn record<M>(c: Collector, m: M, v: u64)
+pub fn record<M>(c: Collector, m: M, v: u64)
 where
     M: MetricType + std::fmt::Display,
 {
-    let r = CORE.read().await;
-    if r.enabled() {
+    if CORE.enabled() {
         match c {
             #[cfg(feature = "gateway")]
-            Collector::Gateway => r.gateway_metrics().record(m, v),
+            Collector::Gateway => CORE.gateway_metrics().record(m, v),
             #[cfg(feature = "resolver")]
-            Collector::Resolver => r.resolver_metrics().record(m, v),
+            Collector::Resolver => CORE.resolver_metrics().record(m, v),
             #[cfg(feature = "bitswap")]
-            Collector::Bitswap => r.bitswap_metrics().record(m, v),
+            Collector::Bitswap => CORE.bitswap_metrics().record(m, v),
             #[cfg(feature = "store")]
-            Collector::Store => r.store_metrics().record(m, v),
+            Collector::Store => CORE.store_metrics().record(m, v),
             _ => panic!("not enabled/implemented"),
         };
     }
 }
 
 #[allow(unused_variables, unreachable_patterns)]
-pub fn record_sync<M>(c: Collector, m: M, v: u64)
-where
-    M: 'static + MetricType + std::fmt::Display + Send,
-{
-    tokio::spawn(async move {
-        record(c, m, v).await;
-    });
-}
-
-#[allow(unused_variables, unreachable_patterns)]
-pub async fn observe<M>(c: Collector, m: M, v: f64)
+pub fn observe<M>(c: Collector, m: M, v: f64)
 where
     M: HistogramType + std::fmt::Display,
 {
-    let r = CORE.read().await;
-    if r.enabled() {
+    if CORE.enabled() {
         match c {
             #[cfg(feature = "gateway")]
-            Collector::Gateway => r.gateway_metrics().observe(m, v),
+            Collector::Gateway => CORE.gateway_metrics().observe(m, v),
             #[cfg(feature = "resolver")]
-            Collector::Resolver => r.resolver_metrics().observe(m, v),
+            Collector::Resolver => CORE.resolver_metrics().observe(m, v),
             #[cfg(feature = "bitswap")]
-            Collector::Bitswap => r.bitswap_metrics().observe(m, v),
+            Collector::Bitswap => CORE.bitswap_metrics().observe(m, v),
             #[cfg(feature = "store")]
-            Collector::Store => r.store_metrics().observe(m, v),
+            Collector::Store => CORE.store_metrics().observe(m, v),
             _ => panic!("not enabled/implemented"),
         };
     }
 }
 
-#[allow(unused_variables, unreachable_patterns)]
-pub fn observe_sync<M>(c: Collector, m: M, v: f64)
-where
-    M: 'static + HistogramType + std::fmt::Display + Send,
-{
-    tokio::spawn(async move {
-        observe(c, m, v).await;
-    });
-}
-
-async fn print() {
-    let r = CORE.read().await;
-    println!("{}", String::from_utf8(r.encode()).unwrap());
-}
-
-async fn enable() {
-    let mut r = CORE.write().await;
-    r.set_enabled(true);
-}
-
-async fn disable() {
-    let mut r = CORE.write().await;
-    r.set_enabled(false);
-}
-
-pub async fn p2p_metrics() -> p2p::Metrics {
-    let r = CORE.read().await;
-    r.p2p_metrics().clone()
+#[cfg(feature = "p2p")]
+pub async fn p2p_metrics() -> &'static p2p::Metrics {
+    CORE.p2p_metrics()
 }

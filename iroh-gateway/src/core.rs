@@ -1,5 +1,4 @@
 use axum::Router;
-use iroh_metrics::{gateway::GatewayMetrics, get_current_trace_id, record, record_sync, Collector};
 use iroh_rpc_client::Client as RpcClient;
 use iroh_rpc_types::gateway::GatewayServerAddr;
 
@@ -121,7 +120,7 @@ mod tests {
 
         let rpc_addr = "grpc://0.0.0.0:0".parse().unwrap();
         let handler = Core::new(
-            config,
+            Arc::new(config),
             rpc_addr,
             Arc::new(None),
         )

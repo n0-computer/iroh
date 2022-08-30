@@ -239,7 +239,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
             <NodeBehaviour as NetworkBehaviour>::OutEvent,
             <<<NodeBehaviour as NetworkBehaviour>::ConnectionHandler as IntoConnectionHandler>::Handler as ConnectionHandler>::Error>,
     ) -> Result<()> {
-        p2p_metrics().await.record(&event);
+        p2p_metrics().record(&event);
         match event {
             // outbound events
             SwarmEvent::Behaviour(event) => self.handle_node_event(event).await,
@@ -376,7 +376,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                 }
             }
             Event::Kademlia(e) => {
-                p2p_metrics().await.record(&e);
+                p2p_metrics().record(&e);
                 if let KademliaEvent::OutboundQueryProgressed {
                     id, result, step, ..
                 } = e
@@ -445,7 +445,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                 }
             }
             Event::Identify(e) => {
-                p2p_metrics().await.record(&*e);
+                p2p_metrics().record(&*e);
                 if let IdentifyEvent::Received {
                     peer_id,
                     info:
@@ -484,16 +484,16 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                 }
             }
             Event::Ping(e) => {
-                p2p_metrics().await.record(&e);
+                p2p_metrics().record(&e);
             }
             Event::Relay(e) => {
-                p2p_metrics().await.record(&e);
+                p2p_metrics().record(&e);
             }
             Event::Dcutr(e) => {
-                p2p_metrics().await.record(&e);
+                p2p_metrics().record(&e);
             }
             Event::Gossipsub(e) => {
-                p2p_metrics().await.record(&e);
+                p2p_metrics().record(&e);
                 if let libp2p::gossipsub::GossipsubEvent::Message {
                     propagation_source,
                     message_id,

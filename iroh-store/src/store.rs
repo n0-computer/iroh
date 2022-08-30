@@ -9,9 +9,9 @@ use std::{
 use anyhow::{anyhow, bail, Context, Result};
 use cid::Cid;
 use iroh_metrics::{
-    observe, observe_sync, record, record_sync,
+    core::{MObserver, MRecorder},
+    inc, observe, record,
     store::{StoreHistograms, StoreMetrics},
-    Collector,
 };
 use iroh_rpc_client::Client as RpcClient;
 use rocksdb::{
@@ -172,7 +172,7 @@ impl Store {
     where
         L: IntoIterator<Item = Cid>,
     {
-        record_sync(Collector::Store, StoreMetrics::PutRequests, 1);
+        inc!(StoreMetrics::PutRequests);
 
         if self.has(&cid).await? {
             return Ok(());
@@ -228,43 +228,32 @@ impl Store {
         batch.put_cf(cf_meta, &id_bytes, metadata_bytes);
         batch.put_cf(cf_graph, &id_bytes, graph_bytes);
         self.inner.content.write(batch)?;
-        observe_sync(
-            Collector::Store,
-            StoreHistograms::PutRequests,
-            start.elapsed().as_secs_f64(),
-        );
-        record_sync(Collector::Store, StoreMetrics::PutBytes, blob_size as u64);
+        observe!(StoreHistograms::PutRequests, start.elapsed().as_secs_f64());
+        record!(StoreMetrics::PutBytes, blob_size as u64);
 
         Ok(())
     }
 
     #[tracing::instrument(skip(self))]
     pub async fn get(&self, cid: &Cid) -> Result<Option<DBPinnableSlice<'_>>> {
-        record(Collector::Store, StoreMetrics::GetRequests, 1).await;
+        inc!(StoreMetrics::GetRequests);
         let start = std::time::Instant::now();
         let res = match self.get_id(cid).await? {
             Some(id) => {
                 let maybe_blob = self.get_by_id(id).await?;
-                record(Collector::Store, StoreMetrics::StoreHit, 1).await;
-                record(
-                    Collector::Store,
+                inc!(StoreMetrics::StoreHit);
+                record!(
                     StoreMetrics::GetBytes,
-                    maybe_blob.as_ref().map(|b| b.len()).unwrap_or(0) as u64,
-                )
-                .await;
+                    maybe_blob.as_ref().map(|b| b.len()).unwrap_or(0) as u64
+                );
                 Ok(maybe_blob)
             }
             None => {
-                record(Collector::Store, StoreMetrics::StoreMiss, 1).await;
+                inc!(StoreMetrics::StoreMiss);
                 Ok(None)
             }
         };
-        observe(
-            Collector::Store,
-            StoreHistograms::GetRequests,
-            start.elapsed().as_secs_f64(),
-        )
-        .await;
+        observe!(StoreHistograms::GetRequests, start.elapsed().as_secs_f64());
         res
     }
 
@@ -290,25 +279,23 @@ impl Store {
 
     #[tracing::instrument(skip(self))]
     pub async fn get_links(&self, cid: &Cid) -> Result<Option<Vec<Cid>>> {
-        record(Collector::Store, StoreMetrics::GetLinksRequests, 1).await;
+        inc!(StoreMetrics::GetLinksRequests);
         let start = std::time::Instant::now();
         let res = match self.get_id(cid).await? {
             Some(id) => {
                 let maybe_links = self.get_links_by_id(id).await?;
-                record(Collector::Store, StoreMetrics::GetLinksHit, 1).await;
+                inc!(StoreMetrics::GetLinksHit);
                 Ok(maybe_links)
             }
             None => {
-                record(Collector::Store, StoreMetrics::GetLinksMiss, 1).await;
+                inc!(StoreMetrics::GetLinksMiss);
                 Ok(None)
             }
         };
-        observe(
-            Collector::Store,
+        observe!(
             StoreHistograms::GetLinksRequests,
-            start.elapsed().as_secs_f64(),
-        )
-        .await;
+            start.elapsed().as_secs_f64()
+        );
         res
     }
 

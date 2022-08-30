@@ -9,7 +9,10 @@ use prometheus_client::{
 };
 use tracing::error;
 
-use crate::core::{HistogramType, MetricType, MetricsRecorder};
+use crate::{
+    core::{HistogramType, MObserver, MRecorder, MetricType, MetricsRecorder},
+    Collector,
+};
 
 #[derive(Clone)]
 pub(crate) struct Metrics {
@@ -191,6 +194,7 @@ impl MetricsRecorder for Metrics {
     }
 }
 
+#[derive(Clone)]
 pub enum StoreMetrics {
     GetRequests,
     StoreHit,
@@ -219,12 +223,19 @@ impl MetricType for StoreMetrics {
     }
 }
 
+impl MRecorder for StoreMetrics {
+    fn record(&self, value: u64) {
+        crate::record(Collector::Store, self.clone(), value);
+    }
+}
+
 impl std::fmt::Display for StoreMetrics {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.name())
     }
 }
 
+#[derive(Clone)]
 pub enum StoreHistograms {
     GetRequests,
     PutRequests,
@@ -238,6 +249,12 @@ impl HistogramType for StoreHistograms {
             StoreHistograms::PutRequests => METRICS_HIST_PUT_REQUEST_TIME,
             StoreHistograms::GetLinksRequests => METRICS_HIST_GET_LINKS_REQUEST_TIME,
         }
+    }
+}
+
+impl MObserver for StoreHistograms {
+    fn observe(&self, value: f64) {
+        crate::observe(Collector::Store, self.clone(), value);
     }
 }
 

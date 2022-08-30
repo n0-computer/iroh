@@ -3,7 +3,10 @@ use std::fmt;
 use prometheus_client::{metrics::counter::Counter, registry::Registry};
 use tracing::error;
 
-use crate::core::{HistogramType, MetricType, MetricsRecorder};
+use crate::{
+    core::{HistogramType, MRecorder, MetricType, MetricsRecorder},
+    Collector,
+};
 
 #[derive(Default, Clone)]
 pub(crate) struct Metrics {
@@ -96,6 +99,7 @@ impl MetricsRecorder for Metrics {
     }
 }
 
+#[derive(Clone)]
 pub enum BitswapMetrics {
     Requests,
     Cancels,
@@ -113,6 +117,12 @@ impl MetricType for BitswapMetrics {
             BitswapMetrics::BlockBytesIn => METRICS_CNT_BLOCK_BYTES_IN,
             BitswapMetrics::Providers => METRICS_CNT_PROVIDERS_TOTAL,
         }
+    }
+}
+
+impl MRecorder for BitswapMetrics {
+    fn record(&self, value: u64) {
+        crate::record(Collector::Bitswap, self.clone(), value);
     }
 }
 

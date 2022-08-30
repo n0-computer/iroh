@@ -11,8 +11,9 @@ use prometheus_client::{
 use tracing::error;
 
 use crate::{
-    core::MetricsRecorder,
     core::{HistogramType, MetricType},
+    core::{MObserver, MRecorder, MetricsRecorder},
+    Collector,
 };
 
 #[derive(Clone)]
@@ -169,6 +170,7 @@ impl MetricsRecorder for Metrics {
     }
 }
 
+#[derive(Clone)]
 pub enum GatewayMetrics {
     Requests,
     BytesStreamed,
@@ -193,12 +195,19 @@ impl MetricType for GatewayMetrics {
     }
 }
 
+impl MRecorder for GatewayMetrics {
+    fn record(&self, value: u64) {
+        crate::record(Collector::Gateway, self.clone(), value);
+    }
+}
+
 impl std::fmt::Display for GatewayMetrics {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.name())
     }
 }
 
+#[derive(Clone)]
 pub enum GatewayHistograms {
     TimeToFetchFirstBlock,
     TimeToFetchFirstBlockCached,
@@ -212,6 +221,12 @@ impl HistogramType for GatewayHistograms {
             GatewayHistograms::TimeToFetchFirstBlockCached => METRICS_HIST_TTFB_CACHED,
             GatewayHistograms::TimeToServeFullFile => METRICS_HIST_TTSERVE,
         }
+    }
+}
+
+impl MObserver for GatewayHistograms {
+    fn observe(&self, value: f64) {
+        crate::observe(Collector::Gateway, self.clone(), value);
     }
 }
 

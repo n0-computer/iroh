@@ -68,8 +68,6 @@ async fn main() -> Result<()> {
     println!("{:#?}", config);
 
     let metrics_config = config.metrics.clone();
-    let mut prom_registry = Registry::default();
-    let gw_metrics = Metrics::new(&mut prom_registry);
 
     #[cfg(feature = "uds-gateway")]
     let rpc_addr = config
@@ -84,8 +82,6 @@ async fn main() -> Result<()> {
 
     let shared_state = Core::make_state(
         Arc::new(config.clone()),
-        gw_metrics,
-        &mut prom_registry,
         Arc::clone(&bad_bits),
     )
     .await?;
