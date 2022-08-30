@@ -116,6 +116,8 @@ pub struct Bitswap {
     #[allow(dead_code)]
     config: BitswapConfig,
     known_peers: caches::RawLRU<PeerId, PeerState>,
+    /// List of peers we failed to dial and ignore immediately.
+    bad_peers: caches::RawLRU<PeerId, ()>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -218,10 +220,12 @@ impl Bitswap {
     /// Create a new `Bitswap`.
     pub fn new(config: BitswapConfig) -> Self {
         let known_peers = caches::RawLRU::new(config.max_cached_peers).unwrap();
+        let bad_peers = caches::RawLRU::new(config.max_cached_peers).unwrap();
 
         Bitswap {
             config,
             known_peers,
+            bad_peers,
             events: Default::default(),
         }
     }
@@ -229,7 +233,27 @@ impl Bitswap {
     /// Notifies about a peer that speaks the bitswap protocol.
     pub fn add_peer(&mut self, peer: PeerId) {
         inc!(BitswapMetrics::KnownPeers);
-        self.known_peers.put(peer, PeerState::default());
+        self.with_known_peer(peer, |_| {});
+    }
+
+    /// Adds a peer to the known_peers list, with the provided state.
+    /// If the peer is on the `bad_peers` list, returns `false` and does not add.
+    fn with_known_peer<F, T>(&mut self, peer: PeerId, f: F) -> Option<T>
+    where
+        F: FnOnce(&mut PeerState) -> T,
+    {
+        if self.bad_peers.contains(&peer) {
+            return None;
+        }
+        if let Some(state) = self.known_peers.get_mut(&peer) {
+            Some(f(state))
+        } else {
+            inc!(BitswapMetrics::KnownPeers);
+            let mut state = PeerState::default();
+            let res = f(&mut state);
+            self.known_peers.put(peer, state);
+            Some(res)
+        }
     }
 
     /// Request the given block from the list of providers.
@@ -239,14 +263,9 @@ impl Bitswap {
         inc!(BitswapMetrics::WantedBlocks);
         record!(BitswapMetrics::Providers, providers.len() as u64);
         for provider in providers.iter() {
-            if let Some(peer) = self.known_peers.get_mut(provider) {
-                peer.want_block(&cid, priority);
-            } else {
-                inc!(BitswapMetrics::KnownPeers);
-                let mut peer = PeerState::default();
-                peer.want_block(&cid, priority);
-                self.known_peers.put(*provider, peer);
-            }
+            self.with_known_peer(*provider, |state| {
+                state.want_block(&cid, priority);
+            });
         }
 
         record!(BitswapMetrics::Providers, providers.len() as u64);
@@ -258,28 +277,18 @@ impl Bitswap {
 
         record!(BitswapMetrics::BlockBytesOut, data.len() as u64);
 
-        if let Some(peer) = self.known_peers.get_mut(peer_id) {
-            peer.send_block(cid, data);
-        } else {
-            inc!(BitswapMetrics::KnownPeers);
-            let mut peer = PeerState::default();
-            peer.send_block(cid, data);
-            self.known_peers.put(*peer_id, peer);
-        }
+        self.with_known_peer(*peer_id, |state| {
+            state.send_block(cid, data);
+        });
     }
 
     #[instrument(skip(self))]
     pub fn send_have_block(&mut self, peer_id: &PeerId, cid: Cid) {
         debug!("send_have_block: {}", cid);
 
-        if let Some(peer) = self.known_peers.get_mut(peer_id) {
-            peer.send_have_block(cid);
-        } else {
-            inc!(BitswapMetrics::KnownPeers);
-            let mut peer = PeerState::default();
-            peer.send_have_block(cid);
-            self.known_peers.put(*peer_id, peer);
-        }
+        self.with_known_peer(*peer_id, |state| {
+            state.send_have_block(cid);
+        });
     }
 
     #[instrument(skip(self))]
@@ -366,31 +375,31 @@ impl NetworkBehaviour for Bitswap {
         _failed_addresses: Option<&Vec<Multiaddr>>,
         other_established: usize,
     ) {
-        let peer_state = if let Some(peer) = self.known_peers.get_mut(peer_id) {
-            peer
-        } else {
-            inc!(BitswapMetrics::KnownPeers);
-            self.known_peers.put(*peer_id, PeerState::default());
-            self.known_peers.get_mut(peer_id).unwrap()
-        };
-
-        peer_state.conn = ConnState::Connected;
-
         if other_established == 0 {
             inc!(BitswapMetrics::ConnectedPeers);
+        }
 
-            if !peer_state.is_empty() {
+        let msg = self.with_known_peer(*peer_id, |state| {
+            state.conn = ConnState::Connected;
+
+            if other_established == 0 && !state.is_empty() {
                 // queue up message to be sent as soon as we are connected
-                let msg = peer_state.send_message();
-                inc!(BitswapMetrics::MessagesSent);
-                inc!(BitswapMetrics::EventsBackpressureIn);
-                self.events
-                    .push_back(NetworkBehaviourAction::NotifyHandler {
-                        peer_id: *peer_id,
-                        handler: NotifyHandler::Any,
-                        event: msg,
-                    });
+                let msg = state.send_message();
+                return Some(NetworkBehaviourAction::NotifyHandler {
+                    peer_id: *peer_id,
+                    handler: NotifyHandler::Any,
+                    event: msg,
+                });
             }
+
+            None
+        });
+
+        if let Some(msg) = msg.flatten() {
+            inc!(BitswapMetrics::MessagesSent);
+            inc!(BitswapMetrics::EventsBackpressureIn);
+
+            self.events.push_back(msg);
         }
     }
 
@@ -422,16 +431,10 @@ impl NetworkBehaviour for Bitswap {
         if let Some(ref peer_id) = peer_id {
             if let DialError::ConnectionLimit(_) = error {
                 // we can retry later
-                let state = if let Some(peer) = self.known_peers.get_mut(peer_id) {
-                    peer
-                } else {
-                    inc!(BitswapMetrics::KnownPeers);
-                    self.known_peers.put(*peer_id, PeerState::default());
-                    self.known_peers.get_mut(peer_id).unwrap()
-                };
-
+                self.with_known_peer(*peer_id, |state| {
+                    state.conn = ConnState::Disconnected;
+                });
                 inc!(BitswapMetrics::DisconnectedPeers);
-                state.conn = ConnState::Disconnected;
             } else {
                 trace!("dial failure {:?}: {:?}", peer_id, error);
 
@@ -439,6 +442,7 @@ impl NetworkBehaviour for Bitswap {
                 inc!(BitswapMetrics::ForgottenPeers);
                 inc!(BitswapMetrics::DisconnectedPeers);
                 self.known_peers.remove(peer_id);
+                self.bad_peers.put(*peer_id, ());
             }
         }
     }
