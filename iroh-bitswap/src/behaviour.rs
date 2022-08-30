@@ -556,61 +556,52 @@ impl NetworkBehaviour for Bitswap {
             return Poll::Ready(event);
         }
 
-        // make progress on connected peers first, that have wants
-        if let Some((peer_id, peer_state)) = self
-            .known_peers
-            .iter_mut()
-            .find(|(_, s)| s.is_connected() && s.has_blocks())
-        {
-            inc!(BitswapMetrics::PollActionConnectedWants);
-            // connected, send message
-            // TODO: limit size
-            // TODO: limit how ofen we send
+        for (peer_id, peer_state) in self.known_peers.iter_mut() {
+            // make progress on connected peers first, that have wants
+            if peer_state.is_connected() {
+                if peer_state.has_blocks() {
+                    inc!(BitswapMetrics::PollActionConnectedWants);
+                    // connected, send message
+                    // TODO: limit size
+                    // TODO: limit how ofen we send
 
-            let msg = peer_state.send_message();
-            trace!("sending message to {} {:?}", peer_id, msg);
-            return Poll::Ready(NetworkBehaviourAction::NotifyHandler {
-                peer_id: *peer_id,
-                handler: NotifyHandler::Any,
-                event: msg,
-            });
-        }
+                    let msg = peer_state.send_message();
+                    trace!("sending message to {} {:?}", peer_id, msg);
+                    return Poll::Ready(NetworkBehaviourAction::NotifyHandler {
+                        peer_id: *peer_id,
+                        handler: NotifyHandler::Any,
+                        event: msg,
+                    });
+                }
 
-        // make progress on connected peers that have no wants
-        if let Some((peer_id, peer_state)) = self
-            .known_peers
-            .iter_mut()
-            .find(|(_, s)| s.is_connected() && !s.is_empty())
-        {
-            inc!(BitswapMetrics::PollActionConnected);
-            // connected, send message
-            // TODO: limit size
-            // TODO: limit how ofen we send
+                // make progress on connected peers that have no wants
+                if !peer_state.is_empty() {
+                    inc!(BitswapMetrics::PollActionConnected);
+                    // connected, send message
+                    // TODO: limit size
+                    // TODO: limit how ofen we send
 
-            let msg = peer_state.send_message();
-            trace!("sending message to {} {:?}", peer_id, msg);
-            return Poll::Ready(NetworkBehaviourAction::NotifyHandler {
-                peer_id: *peer_id,
-                handler: NotifyHandler::Any,
-                event: msg,
-            });
-        }
+                    let msg = peer_state.send_message();
+                    trace!("sending message to {} {:?}", peer_id, msg);
+                    return Poll::Ready(NetworkBehaviourAction::NotifyHandler {
+                        peer_id: *peer_id,
+                        handler: NotifyHandler::Any,
+                        event: msg,
+                    });
+                }
+            }
 
-        // trigger dials on all peers we need to
-        if let Some((peer_id, peer_state)) = self
-            .known_peers
-            .iter_mut()
-            .find(|(_, s)| s.needs_connection())
-        {
-            inc!(BitswapMetrics::PollActionNotConnected);
+            if peer_state.needs_connection() {
+                inc!(BitswapMetrics::PollActionNotConnected);
 
-            // not connected, need to dial
-            peer_state.conn = ConnState::Dialing;
-            let handler = self.new_handler();
-            return Poll::Ready(NetworkBehaviourAction::Dial {
-                opts: DialOpts::peer_id(*peer_id).build(),
-                handler,
-            });
+                // not connected, need to dial
+                peer_state.conn = ConnState::Dialing;
+                let handler = self.new_handler();
+                return Poll::Ready(NetworkBehaviourAction::Dial {
+                    opts: DialOpts::peer_id(*peer_id).build(),
+                    handler,
+                });
+            }
         }
 
         Poll::Pending
