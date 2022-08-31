@@ -18,7 +18,8 @@ use dirs::home_dir;
 use tracing::debug;
 
 const IROH_DIR: &str = ".iroh";
-const DEFAULT_NOFILE_LIMIT: u64 = 1 << 16;
+const DEFAULT_NOFILE_LIMIT: u64 = 65536;
+const MIN_NOFILE_LIMIT: u64 = 2048;
 
 /// Blocks current thread until ctrl-c is received
 pub async fn block_until_sigint() {
@@ -160,7 +161,7 @@ pub fn increase_fd_limit() -> std::io::Result<u64> {
     let target = std::cmp::min(hard, DEFAULT_NOFILE_LIMIT);
     rlimit::Resource::NOFILE.set(target, hard)?;
     let (soft, _) = rlimit::Resource::NOFILE.get()?;
-    if soft < DEFAULT_NOFILE_LIMIT >> 5 {
+    if soft < MIN_NOFILE_LIMIT {
         return Err(std::io::Error::new(
             std::io::ErrorKind::Other,
             format!("NOFILE limit too low: {}", soft),

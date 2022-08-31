@@ -5,7 +5,7 @@ use iroh_p2p::{cli::Args, metrics, DiskStorage, Keychain, Node};
 use iroh_util::{iroh_home_path, make_config};
 use prometheus_client::registry::Registry;
 use tokio::task;
-use tracing::{error, debug};
+use tracing::{debug, error};
 
 /// Starts daemon process
 #[tokio::main(flavor = "multi_thread")]

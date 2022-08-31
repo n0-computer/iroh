@@ -67,7 +67,7 @@ async fn main() -> Result<()> {
             Err(err) => error!("Error increasing NOFILE limit: {}", err),
         }
     }
-    
+
     let server = handler.server();
     println!("listening on {}", server.local_addr());
     let core_task = tokio::spawn(async move {

@@ -9,7 +9,7 @@ use iroh_store::{
 use iroh_util::{block_until_sigint, iroh_home_path, make_config};
 use prometheus_client::registry::Registry;
 use std::path::PathBuf;
-use tracing::{info, debug, error};
+use tracing::{debug, error, info};
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> anyhow::Result<()> {
