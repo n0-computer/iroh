@@ -116,8 +116,6 @@ pub struct Bitswap {
     #[allow(dead_code)]
     config: BitswapConfig,
     known_peers: caches::RawLRU<PeerId, PeerState>,
-    /// List of peers we failed to dial and ignore immediately.
-    bad_peers: caches::RawLRU<PeerId, ()>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -220,12 +218,10 @@ impl Bitswap {
     /// Create a new `Bitswap`.
     pub fn new(config: BitswapConfig) -> Self {
         let known_peers = caches::RawLRU::new(config.max_cached_peers).unwrap();
-        let bad_peers = caches::RawLRU::new(config.max_cached_peers).unwrap();
 
         Bitswap {
             config,
             known_peers,
-            bad_peers,
             events: Default::default(),
         }
     }
@@ -237,22 +233,18 @@ impl Bitswap {
     }
 
     /// Adds a peer to the known_peers list, with the provided state.
-    /// If the peer is on the `bad_peers` list, returns `false` and does not add.
-    fn with_known_peer<F, T>(&mut self, peer: PeerId, f: F) -> Option<T>
+    fn with_known_peer<F, T>(&mut self, peer: PeerId, f: F) -> T
     where
         F: FnOnce(&mut PeerState) -> T,
     {
-        if self.bad_peers.contains(&peer) {
-            return None;
-        }
         if let Some(state) = self.known_peers.get_mut(&peer) {
-            Some(f(state))
+            f(state)
         } else {
             inc!(BitswapMetrics::KnownPeers);
             let mut state = PeerState::default();
             let res = f(&mut state);
             self.known_peers.put(peer, state);
-            Some(res)
+            res
         }
     }
 
@@ -395,10 +387,9 @@ impl NetworkBehaviour for Bitswap {
             None
         });
 
-        if let Some(msg) = msg.flatten() {
+        if let Some(msg) = msg {
             inc!(BitswapMetrics::MessagesSent);
             inc!(BitswapMetrics::EventsBackpressureIn);
-
             self.events.push_back(msg);
         }
     }
@@ -442,7 +433,6 @@ impl NetworkBehaviour for Bitswap {
                 inc!(BitswapMetrics::ForgottenPeers);
                 inc!(BitswapMetrics::DisconnectedPeers);
                 self.known_peers.remove(peer_id);
-                self.bad_peers.put(*peer_id, ());
             }
         }
     }
