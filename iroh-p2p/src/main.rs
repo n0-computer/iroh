@@ -5,7 +5,7 @@ use iroh_p2p::{cli::Args, metrics, DiskStorage, Keychain, Node};
 use iroh_util::{iroh_home_path, make_config};
 use prometheus_client::registry::Registry;
 use tokio::task;
-use tracing::error;
+use tracing::{debug, error};
 
 /// Starts daemon process
 #[tokio::main(flavor = "multi_thread")]
@@ -33,6 +33,14 @@ async fn main() -> anyhow::Result<()> {
     let metrics_config =
         metrics::metrics_config_with_compile_time_info(network_config.metrics.clone());
     iroh_metrics::init_tracer(metrics_config.clone()).expect("failed to initialize tracer");
+
+    #[cfg(unix)]
+    {
+        match iroh_util::increase_fd_limit() {
+            Ok(soft) => debug!("NOFILE limit: soft = {}", soft),
+            Err(err) => error!("Error increasing NOFILE limit: {}", err),
+        }
+    }
 
     let kc = Keychain::<DiskStorage>::new().await?;
     let rpc_addr = network_config

@@ -17,6 +17,7 @@ use prometheus_client::registry::Registry;
 #[cfg(feature = "uds-gateway")]
 use tempdir::TempDir;
 use tokio::sync::RwLock;
+use tracing::{debug, error};
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<()> {
@@ -34,6 +35,14 @@ async fn main() -> Result<()> {
         args.make_overrides_map(),
     )
     .unwrap();
+
+    #[cfg(unix)]
+    {
+        match iroh_util::increase_fd_limit() {
+            Ok(soft) => debug!("NOFILE limit: soft = {}", soft),
+            Err(err) => error!("Error increasing NOFILE limit: {}", err),
+        }
+    }
 
     let (store_rpc, p2p_rpc) = {
         let (store_recv, store_sender) = Addr::new_mem();

@@ -13,6 +13,7 @@ use iroh_metrics::gateway::Metrics;
 use iroh_util::{iroh_home_path, make_config};
 use prometheus_client::registry::Registry;
 use tokio::sync::RwLock;
+use tracing::{debug, error};
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<()> {
@@ -58,6 +59,15 @@ async fn main() -> Result<()> {
         iroh_metrics::MetricsHandle::from_registry_with_tracer(metrics_config, prom_registry)
             .await
             .expect("failed to initialize metrics");
+
+    #[cfg(unix)]
+    {
+        match iroh_util::increase_fd_limit() {
+            Ok(soft) => debug!("NOFILE limit: soft = {}", soft),
+            Err(err) => error!("Error increasing NOFILE limit: {}", err),
+        }
+    }
+
     let server = handler.server();
     println!("listening on {}", server.local_addr());
     let core_task = tokio::spawn(async move {
