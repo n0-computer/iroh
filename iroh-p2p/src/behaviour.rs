@@ -22,9 +22,11 @@ use libp2p::{autonat, dcutr};
 use tracing::warn;
 
 pub(crate) use self::event::Event;
+use self::peer_manager::PeerManager;
 use crate::config::Libp2pConfig;
 
 mod event;
+mod peer_manager;
 
 /// Libp2p behaviour for the node.
 #[derive(NetworkBehaviour)]
@@ -40,6 +42,7 @@ pub(crate) struct NodeBehaviour {
     relay_client: Toggle<relay::v2::client::Client>,
     dcutr: Toggle<dcutr::behaviour::Behaviour>,
     pub(crate) gossipsub: Toggle<Gossipsub>,
+    peer_manager: PeerManager,
 }
 
 impl NodeBehaviour {
@@ -50,6 +53,7 @@ impl NodeBehaviour {
     ) -> Result<Self> {
         let bs_config = BitswapConfig::default();
         let bitswap = Bitswap::new(bs_config);
+        let peer_manager = PeerManager::default();
 
         let mdns = if config.mdns {
             Some(Mdns::new(Default::default()).await?)
@@ -156,6 +160,7 @@ impl NodeBehaviour {
             dcutr: dcutr.into(),
             relay_client: relay_client.into(),
             gossipsub,
+            peer_manager,
         })
     }
 
@@ -184,6 +189,10 @@ impl NodeBehaviour {
     pub fn find_providers(&mut self, cid: Cid, priority: Priority) -> Result<()> {
         self.bitswap.find_providers(cid, priority);
         Ok(())
+    }
+
+    pub fn is_bad_peer(&self, peer_id: &PeerId) -> bool {
+        self.peer_manager.is_bad_peer(peer_id)
     }
 
     /// Send a request for data over bitswap

@@ -94,7 +94,10 @@ enum BitswapQueryChannel {
 }
 
 enum KadQueryChannel {
-    GetProviders(Vec<mpsc::Sender<Result<HashSet<PeerId>, String>>>),
+    GetProviders {
+        provider_count: usize,
+        channels: Vec<mpsc::Sender<Result<HashSet<PeerId>, String>>>,
+    },
 }
 
 #[derive(Debug, Hash, PartialEq, Eq)]
@@ -471,12 +474,15 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                                 ..
                             }) = query
                             {
-                                *provider_count += 1;
-                                to_remove |= chan
-                                    .send(Ok([provider].into_iter().collect()))
-                                    .await
-                                    .is_err();
-                                to_remove |= *provider_count >= *expected_provider_count;
+                                // filter out bad providers
+                                if !self.swarm.behaviour().is_bad_peer(&provider) {
+                                    *provider_count += 1;
+                                    to_remove |= chan
+                                        .send(Ok([provider].into_iter().collect()))
+                                        .await
+                                        .is_err();
+                                    to_remove |= *provider_count >= *expected_provider_count;
+                                }
                             }
 
                             if to_remove {
@@ -525,30 +531,36 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                         QueryResult::GetProviders(Ok(GetProvidersOk {
                             key,
                             providers,
-                            providers_so_far,
                             ..
                         })) => {
                             if step.last {
                                 let _ = self.kad_queries.remove(&QueryKey::ProviderKey(key));
-                            } else {
-                                if providers_so_far >= PROVIDER_LIMIT {
+                            } else if let Some(KadQueryChannel::GetProviders {
+                                channels,
+                                provider_count,
+                            }) = self
+                                .kad_queries
+                                .get_mut(&QueryKey::ProviderKey(key.clone()))
+                            {
+                                // filter out bad providers
+                                let providers: HashSet<_> = providers.into_iter().filter(|provider| {
+                                    !self.swarm.behaviour().is_bad_peer(provider)
+                                }).collect();
+
+                                if !providers.is_empty()  {
+                                    for chan in channels.iter_mut() {
+                                        chan.send(Ok(providers.clone())).await.ok();
+                                    }
+                                }
+
+                                *provider_count += providers.len();
+                                if *provider_count >= PROVIDER_LIMIT {
                                     debug!(
                                         "finish provider query {}/{}",
-                                        providers_so_far, PROVIDER_LIMIT
+                                        provider_count, PROVIDER_LIMIT
                                     );
                                     // Finish query if we have enough providers.
                                     self.swarm.behaviour_mut().finish_query(&id);
-                                }
-
-                                if let Some(KadQueryChannel::GetProviders(chans)) = self
-                                    .kad_queries
-                                    .get_mut(&QueryKey::ProviderKey(key.clone()))
-                                {
-                                    for chan in chans.iter_mut() {
-                                        chan.send(Ok(providers.clone())).await.ok();
-                                    }
-                                } else {
-                                    debug!("No listeners");
                                 }
                             }
                         }
@@ -558,10 +570,10 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                                 GetProvidersError::Timeout { key, .. } => key,
                             };
                             debug!("GetProviders timeout {:?}", key);
-                            if let Some(KadQueryChannel::GetProviders(chans)) =
+                            if let Some(KadQueryChannel::GetProviders { channels, .. }) =
                                 self.kad_queries.remove(&QueryKey::ProviderKey(key))
                             {
-                                for chan in chans.into_iter() {
+                                for chan in channels.into_iter() {
                                     chan.send(Err("Timeout".into())).await.ok();
                                 }
                             }
@@ -709,7 +721,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
             } => match key {
                 ProviderRequestKey::Dht(key) => {
                     if let Some(kad) = self.swarm.behaviour_mut().kad.as_mut() {
-                        if let Some(KadQueryChannel::GetProviders(chans)) = self
+                        if let Some(KadQueryChannel::GetProviders { channels, .. }) = self
                             .kad_queries
                             .get_mut(&QueryKey::ProviderKey(key.clone()))
                         {
@@ -717,7 +729,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                                 "RpcMessage::ProviderRequest: already fetching providers for {:?}",
                                 key
                             );
-                            chans.push(response_channel);
+                            channels.push(response_channel);
                         } else {
                             debug!(
                                 "RpcMessage::ProviderRequest: getting providers for {:?}",
@@ -726,7 +738,10 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                             let _ = kad.get_providers(key.clone());
                             self.kad_queries.insert(
                                 QueryKey::ProviderKey(key),
-                                KadQueryChannel::GetProviders(vec![response_channel]),
+                                KadQueryChannel::GetProviders {
+                                    provider_count: 0,
+                                    channels: vec![response_channel],
+                                },
                             );
                         }
                     } else {
