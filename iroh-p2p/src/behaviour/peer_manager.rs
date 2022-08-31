@@ -1,5 +1,5 @@
-use std::task::{Context, Poll};
 use std::collections::HashSet;
+use std::task::{Context, Poll};
 
 use libp2p::{
     core::{connection::ConnectionId, transport::ListenerId, ConnectedPoint},
@@ -16,10 +16,8 @@ pub struct PeerManager {
     bad_peers: HashSet<PeerId>,
 }
 
-
 #[derive(Debug)]
 pub enum PeerManagerEvent {}
-
 
 impl PeerManager {
     pub fn is_bad_peer(&self, peer_id: &PeerId) -> bool {
@@ -83,10 +81,17 @@ impl NetworkBehaviour for PeerManager {
         &mut self,
         peer_id: Option<PeerId>,
         _handler: Self::ConnectionHandler,
-        _error: &DialError,
+        error: &DialError,
     ) {
         if let Some(peer_id) = peer_id {
-            self.bad_peers.insert(peer_id);
+            match error {
+                DialError::ConnectionLimit(_)
+                | DialError::DialPeerConditionFalse(_)
+                | DialError::NoAddresses => {}
+                _ => {
+                    self.bad_peers.insert(peer_id);
+                }
+            }
         }
     }
 
