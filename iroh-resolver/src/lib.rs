@@ -1,3 +1,4 @@
+pub mod balanced_tree;
 pub mod chunker;
 pub mod codecs;
 pub mod hamt;

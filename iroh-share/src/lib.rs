@@ -101,6 +101,7 @@ mod tests {
 
         // Check progress
         {
+            println!("waiting for progress");
             let progress = receiver_transfer.progress()?;
             let progress: Vec<_> = progress.try_collect().await.unwrap();
             assert_eq!(progress.len(), 22);
