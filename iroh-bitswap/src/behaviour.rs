@@ -26,7 +26,7 @@ use crate::protocol::{BitswapProtocol, Upgrade};
 // use crate::session::{Config as SessionConfig, SessionManager};
 use crate::Block;
 
-const MAX_PROVIDERS: usize = 1000; // yolo
+const MAX_PROVIDERS: usize = 10000; // yolo
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum BitswapEvent {
@@ -203,7 +203,7 @@ pub struct BitswapConfig {
 impl Default for BitswapConfig {
     fn default() -> Self {
         BitswapConfig {
-            max_cached_peers: 4096,
+            max_cached_peers: 20_000,
         }
     }
 }
@@ -291,7 +291,12 @@ impl Bitswap {
         // TODO: better strategies, than just all peers.
         // TODO: use peers that connect later
 
-        for peer in self.known_peers.values_mut().take(MAX_PROVIDERS) {
+        for peer in self
+            .known_peers
+            .values_mut()
+            .filter(|peer| matches!(peer.conn, ConnState::Connected | ConnState::Unknown))
+            .take(MAX_PROVIDERS)
+        {
             peer.want_have_block(&cid, priority);
         }
     }
