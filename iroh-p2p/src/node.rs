@@ -211,7 +211,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                     self.bitswap_queries.retain(|key, state| {
                         match (key, state) {
                             (BitswapQueryKey::FindProviders(cid), BitswapQueryChannel::FindProviders { timeout, .. }) => {
-                                if timeout.elapsed() < Duration::from_secs(20) {
+                                if timeout.elapsed() < Duration::from_secs(30) {
                                     true
                                 } else {
                                     err = self.swarm.behaviour_mut().cancel_want_block(cid);
@@ -529,9 +529,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                 {
                     match result {
                         QueryResult::GetProviders(Ok(GetProvidersOk {
-                            key,
-                            providers,
-                            ..
+                            key, providers, ..
                         })) => {
                             if step.last {
                                 let _ = self.kad_queries.remove(&QueryKey::ProviderKey(key));
@@ -543,11 +541,14 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                                 .get_mut(&QueryKey::ProviderKey(key.clone()))
                             {
                                 // filter out bad providers
-                                let providers: HashSet<_> = providers.into_iter().filter(|provider| {
-                                    !self.swarm.behaviour().is_bad_peer(provider)
-                                }).collect();
+                                let providers: HashSet<_> = providers
+                                    .into_iter()
+                                    .filter(|provider| {
+                                        !self.swarm.behaviour().is_bad_peer(provider)
+                                    })
+                                    .collect();
 
-                                if !providers.is_empty()  {
+                                if !providers.is_empty() {
                                     for chan in channels.iter_mut() {
                                         chan.send(Ok(providers.clone())).await.ok();
                                     }
