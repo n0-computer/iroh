@@ -1,43 +1,15 @@
-use std::collections::HashMap;
-use std::path::PathBuf;
-
 use anyhow::anyhow;
 use clap::Parser;
 use iroh_metrics::store::Metrics;
 use iroh_store::{
+    cli::Args,
     config::{CONFIG_FILE_NAME, ENV_PREFIX},
     metrics, rpc, Config, Store,
 };
 use iroh_util::{block_until_sigint, iroh_home_path, make_config};
 use prometheus_client::registry::Registry;
+use std::path::PathBuf;
 use tracing::info;
-
-#[derive(Parser, Debug)]
-#[clap(author, version, about)]
-struct Args {
-    /// Path to the store
-    #[clap(long, short)]
-    path: Option<PathBuf>,
-    #[clap(long = "metrics")]
-    metrics: bool,
-    #[clap(long = "tracing")]
-    tracing: bool,
-    /// Path to the config file
-    #[clap(long)]
-    cfg: Option<PathBuf>,
-}
-
-impl Args {
-    fn make_overrides_map(&self) -> HashMap<String, String> {
-        let mut map = HashMap::new();
-        if let Some(path) = self.path.clone() {
-            map.insert("path".to_string(), path.to_str().unwrap_or("").to_string());
-        }
-        map.insert("metrics.collect".to_string(), self.metrics.to_string());
-        map.insert("metrics.tracing".to_string(), self.tracing.to_string());
-        map
-    }
-}
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> anyhow::Result<()> {

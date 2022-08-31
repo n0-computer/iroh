@@ -538,7 +538,7 @@ impl<T: ContentLoader> Resolver<T> {
                 let next_link = current
                     .get_link_by_name(&part)
                     .await?
-                    .ok_or_else(|| anyhow!("link {} not found", part))?;
+                    .ok_or_else(|| anyhow!("UnixfsNode::Directory link '{}' not found", part))?;
                 let loaded_cid = self.load_cid(&next_link.cid).await?;
                 let next_node = UnixfsNode::decode(&next_link.cid, loaded_cid.data)?;
                 resolved_path.push(next_link.cid);
@@ -549,7 +549,7 @@ impl<T: ContentLoader> Resolver<T> {
                 let (next_link, next_node) = hamt
                     .get(self, part.as_bytes())
                     .await?
-                    .ok_or_else(|| anyhow!("link {} not found", part))?;
+                    .ok_or_else(|| anyhow!("UnixfsNode::HamtShard link '{}' not found", part))?;
                 // TODO: is this the right way to to resolved path here?
                 resolved_path.push(next_link.cid);
 

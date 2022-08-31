@@ -1,4 +1,5 @@
 mod behaviour;
+pub mod cli;
 pub mod config;
 mod keys;
 pub mod metrics;

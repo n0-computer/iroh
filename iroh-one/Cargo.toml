@@ -1,0 +1,42 @@
+[package]
+description = "all of iroh in a single binary"
+edition = "2021"
+license = "Apache-2.0/MIT"
+name = "iroh-one"
+readme = "README.md"
+repository = "https://github.com/dignifiedquire/iroh"
+version = "0.1.0"
+
+[dependencies]
+anyhow = "1"
+async-trait = "0.1.56"
+axum = "0.5.1"
+clap = {version = "3.1.14", features = ["derive"]}
+config = "0.13.1"
+futures = "0.3.21"
+headers = "0.3.7"
+http-serde = "1.1.0"
+hyper = "0.14.19"
+iroh-gateway = {path = "../iroh-gateway"}
+iroh-metrics = {path = "../iroh-metrics", default-features = false}
+iroh-p2p = {path = "../iroh-p2p", default-features = false, features = ["rpc-mem"]}
+iroh-resolver = {path = "../iroh-resolver"}
+iroh-rpc-client = {path = "../iroh-rpc-client", default-features = false}
+iroh-rpc-types = {path = "../iroh-rpc-types", default-features = false}
+iroh-store = {path = "../iroh-store", default-features = false, features = ["rpc-mem"]}
+iroh-util = {path = "../iroh-util"}
+prometheus-client = "0.18.0"
+serde = {version = "1.0", features = ["derive"]}
+tokio = {version = "1", features = ["macros", "rt-multi-thread", "process"]}
+tracing = "0.1.33"
+tempdir = "0.3.7"
+
+[dev-dependencies]
+axum-macros = "0.2.0" # use #[axum_macros::debug_handler] for better error messages on handlers
+http = "0.2" 
+
+[features]
+default = ["rpc-mem", "rpc-grpc"]
+rpc-grpc = ["iroh-rpc-types/grpc", "iroh-rpc-client/grpc", "iroh-metrics/rpc-grpc"]
+rpc-mem = ["iroh-rpc-types/mem", "iroh-rpc-client/mem"]
+uds-gateway = []

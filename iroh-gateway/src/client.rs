@@ -20,7 +20,7 @@ use tokio_util::io::ReaderStream;
 use tracing::info;
 use tracing::warn;
 
-use crate::core::GetParams;
+use crate::handlers::GetParams;
 use crate::response::ResponseFormat;
 
 #[derive(Debug, Clone)]

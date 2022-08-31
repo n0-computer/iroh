@@ -1,11 +1,13 @@
 pub mod bad_bits;
-mod client;
+pub mod cli;
+pub mod client;
 pub mod config;
-mod constants;
+pub mod constants;
 pub mod core;
 mod error;
-mod headers;
+pub mod handlers;
+pub mod headers;
 pub mod metrics;
-mod response;
+pub mod response;
 mod rpc;
-mod templates;
+pub mod templates;
