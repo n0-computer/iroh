@@ -4,7 +4,6 @@ use std::sync::Arc;
 use anyhow::{anyhow, Result};
 use clap::Parser;
 use iroh_gateway::{bad_bits::BadBits, core::Core, metrics};
-use iroh_metrics::gateway::Metrics;
 #[cfg(feature = "uds-gateway")]
 use iroh_one::uds;
 use iroh_one::{
@@ -13,7 +12,6 @@ use iroh_one::{
 };
 use iroh_rpc_types::Addr;
 use iroh_util::{iroh_home_path, make_config};
-use prometheus_client::registry::Registry;
 #[cfg(feature = "uds-gateway")]
 use tempdir::TempDir;
 use tokio::sync::RwLock;
@@ -80,18 +78,13 @@ async fn main() -> Result<()> {
         false => Arc::new(None),
     };
 
-    let shared_state = Core::make_state(
-        Arc::new(config.clone()),
-        Arc::clone(&bad_bits),
-    )
-    .await?;
+    let shared_state = Core::make_state(Arc::new(config.clone()), Arc::clone(&bad_bits)).await?;
 
     let handler = Core::new_with_state(rpc_addr, Arc::clone(&shared_state)).await?;
 
-    let metrics_handle =
-        iroh_metrics::MetricsHandle::from_registry_with_tracer(metrics_config, prom_registry)
-            .await
-            .expect("failed to initialize metrics");
+    let metrics_handle = iroh_metrics::MetricsHandle::new(metrics_config)
+        .await
+        .expect("failed to initialize metrics");
     let server = handler.server();
     println!("HTTP endpoint listening on {}", server.local_addr());
     let core_task = tokio::spawn(async move {

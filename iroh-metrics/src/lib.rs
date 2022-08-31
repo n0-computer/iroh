@@ -199,6 +199,6 @@ where
 }
 
 #[cfg(feature = "p2p")]
-pub async fn p2p_metrics() -> &'static p2p::Metrics {
+pub fn p2p_metrics() -> &'static p2p::Metrics {
     CORE.p2p_metrics()
 }

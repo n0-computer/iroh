@@ -189,9 +189,13 @@ mod tests {
         config.set_default_headers();
 
         let rpc_addr = "grpc://0.0.0.0:0".parse().unwrap();
-        let handler = crate::core::Core::new(Arc::new(config), rpc_addr, Arc::new(Some(RwLock::new(bbits))))
-            .await
-            .unwrap();
+        let handler = crate::core::Core::new(
+            Arc::new(config),
+            rpc_addr,
+            Arc::new(Some(RwLock::new(bbits))),
+        )
+        .await
+        .unwrap();
         let server = handler.server();
         let addr = server.local_addr();
         let core_task = tokio::spawn(async move {

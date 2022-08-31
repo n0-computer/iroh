@@ -47,8 +47,8 @@ async fn main() -> Result<()> {
     let metrics_handle = iroh_metrics::MetricsHandle::new(metrics_config)
         .await
         .expect("failed to initialize metrics");
-    
-        #[cfg(unix)]
+
+    #[cfg(unix)]
     {
         match iroh_util::increase_fd_limit() {
             Ok(soft) => debug!("NOFILE limit: soft = {}", soft),
