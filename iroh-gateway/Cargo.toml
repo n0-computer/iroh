@@ -31,13 +31,13 @@ opentelemetry = { version = "0.17.0", features = ["rt-tokio"] }
 time = "0.3.9"
 headers = "0.3.7"
 hyper = "0.14.19"
-libp2p = { version = "0.47", default-features = false }
+libp2p = { version = "0.48", default-features = false }
 iroh-util = { path = "../iroh-util" }
 anyhow = "1"
 futures = "0.3.21"
 tracing-subscriber = { version = "0.3.11", features = ["env-filter"] }
 iroh-resolver = { path = "../iroh-resolver" }
-prometheus-client = "0.17.0"
+prometheus-client = "0.18.0"
 tokio-util = { version = "0.7", features = ["io"] }
 bytes = "1.1.0"
 tower-layer = { version = "0.3" }
