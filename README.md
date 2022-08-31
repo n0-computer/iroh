@@ -7,7 +7,7 @@ IPFS is a networking protocol for exchanging _content-addressed_ blocks of immut
 - Iroh Cloud is an IPFS implementation purpose-built for running at scale on datacenter-grade infrastructure.
 - Iroh Mobile is an IPFS library for iOS & Android app development. Both libraries are operating system specific, written in Rust and wrapped in native language APIs. 
 
-It's early days for this project. Use at your own risk.
+Iroh has yet to publish a release. We're targeting the end of October 2022 for an initial version.
 
 Iroh is built & maintained by [number 0](https://n0.computer).
 
