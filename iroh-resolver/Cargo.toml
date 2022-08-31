@@ -27,7 +27,7 @@ async-stream = "0.3.3"
 fastmurmur3 = "0.1.2"
 once_cell = "1.13.0"
 tokio-util = { version = "0.7", features = ["io"] }
-libp2p = { version = "0.47", default-features = false }
+libp2p = { version = "0.48", default-features = false }
 caches = "0.2.2"
 
 [dev-dependencies]
