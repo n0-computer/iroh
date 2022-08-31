@@ -30,7 +30,7 @@ iroh-util = { path = "../iroh-util" }
 iroh-metrics = { path = "../iroh-metrics", default-features = false }
 names = { version = "0.14.0", default-features = false }
 git-version = "0.3.5"
-prometheus-client = "0.17.0"
+prometheus-client = "0.18.0"
 config = "0.13.1"
 dirs = "4.0.0"
 toml = "0.5.9"
@@ -41,7 +41,7 @@ async-stream = "0.3.3"
 tempfile = "3.3.0"
  
 [dependencies.libp2p]
-version = "0.47"
+version = "0.48"
 default-features = false
 features = [
   "gossipsub",
