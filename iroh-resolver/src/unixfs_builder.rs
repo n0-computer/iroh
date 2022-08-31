@@ -5,6 +5,7 @@ use std::{
 };
 
 use anyhow::{anyhow, ensure, Result};
+use async_recursion::async_recursion;
 use async_trait::async_trait;
 use bytes::{Bytes, BytesMut};
 use cid::{multihash::MultihashDigest, Cid};
@@ -46,6 +47,7 @@ enum Entry {
 /// Construct a UnixFS directory.
 #[derive(Debug)]
 pub struct DirectoryBuilder {
+    path: Option<PathBuf>,
     name: Option<String>,
     entries: Vec<Entry>,
     typ: DirectoryType,
@@ -63,6 +65,7 @@ pub struct DirectoryBuilder {
 impl Default for DirectoryBuilder {
     fn default() -> Self {
         Self {
+            path: None,
             name: None,
             entries: Default::default(),
             typ: DirectoryType::Basic,
@@ -77,7 +80,12 @@ impl DirectoryBuilder {
         Default::default()
     }
 
-    pub fn name(&mut self, name: impl Into<String>) -> &mut Self {
+    pub fn with_path(&mut self, path: PathBuf) -> &mut Self {
+        self.path = Some(path);
+        self
+    }
+
+    pub fn with_name(&mut self, name: impl Into<String>) -> &mut Self {
         self.name = Some(name.into());
         self
     }
@@ -106,8 +114,44 @@ impl DirectoryBuilder {
         self
     }
 
-    pub async fn build(self) -> Result<Directory> {
+    #[async_recursion(?Send)]
+    pub async fn build(mut self) -> Result<Directory> {
+        if let Some(path) = self.path {
+            let name = path
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or_default();
+
+            let mut builder = DirectoryBuilder::new();
+            builder.with_name(name);
+            let entries = std::fs::read_dir(path)?;
+            for entry in entries {
+                let entry = entry?;
+                let path = entry.path();
+                // TODO: this seems dumb, is this the only way to differentiate between
+                // files and dirs?
+                // TODO: what do we do with symlinks?
+                if path.is_file() {
+                    let mut file_builder = FileBuilder::new();
+                    file_builder.with_path(path);
+                    let f = file_builder.build().await?;
+                    builder.add_file(f);
+                } else if path.is_dir() {
+                    let mut dir_builder = DirectoryBuilder::new();
+                    dir_builder.with_path(path);
+                    let d = dir_builder.build().await?;
+                    builder.add_dir(d);
+                } else {
+                    anyhow::bail!("directory entry is neither file nor directory")
+                }
+            }
+            self = builder;
+        }
+
         if self.typ == DirectoryType::Hamt {
+            // Question: is it too late to be erroring here? should we be
+            // erroring when we add the entry? to catch this as soon as
+            // possible?
             anyhow::bail!("too many links to fit into one chunk, must be encoded as a HAMT. However, HAMT creation has not yet been implemented.");
         }
         let DirectoryBuilder { name, entries, .. } = self;
@@ -258,11 +302,22 @@ impl FileBuilder {
     }
 
     pub async fn build(self) -> Result<File> {
-        // encodes files as raw
+        if let Some(path) = self.path {
+            let f = tokio::fs::File::open(path.clone()).await?;
+            let reader = tokio::io::BufReader::new(f);
+            let name = path
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or_default();
+            return Ok(File {
+                name: String::from(name),
+                nodes: Box::pin(self.chunker.chunks(reader)),
+                tree_builder: TreeBuilder::balanced_tree(),
+            });
+        };
 
         let name = self.name.ok_or_else(|| anyhow!("missing name"))?;
         let reader = self.content.ok_or_else(|| anyhow!("missing content"))?;
-
         Ok(File {
             name,
             nodes: Box::pin(self.chunker.chunks(reader)),
@@ -394,7 +449,7 @@ pub async fn add_file<S: Store>(path: &Path, rpc: Option<S>) -> Result<Cid> {
 
     // wrap file in dir to preserve file name
     let mut dir = DirectoryBuilder::new();
-    dir.name("");
+    dir.with_name("");
     let mut file = FileBuilder::new();
     file.name(
         path.file_name()
@@ -432,22 +487,14 @@ pub async fn add_file<S: Store>(path: &Path, rpc: Option<S>) -> Result<Cid> {
 pub async fn add_dir<S: Store>(path: &Path, rpc: Option<S>, _recursive: bool) -> Result<Cid> {
     ensure!(path.is_dir(), "provided path was not a directory");
 
+    let mut dir = DirectoryBuilder::new();
+    dir.with_path(PathBuf::from(&path));
+    let dir = dir.build().await?;
+
     // wrap dir in dir to preserve file name
     let mut wrap = DirectoryBuilder::new();
-    wrap.name("");
-    let mut dir = DirectoryBuilder::new();
-    dir.name(
-        path.file_name()
-            .and_then(|s| s.to_str())
-            .unwrap_or_default(),
-    );
-
-    // iterate through dir
-    // if also a dir, check if recursive == false, if so, error
-    //
-    let dir = dir.build().await?;
+    wrap.with_name("");
     wrap.add_dir(dir);
-
     let wrap = wrap.build().await?;
 
     // encode and store
@@ -476,7 +523,7 @@ mod tests {
     async fn test_builder_basics() -> Result<()> {
         // Create a directory
         let mut dir = DirectoryBuilder::new();
-        dir.name("foo");
+        dir.with_name("foo");
 
         // Add a file
         let mut bar = FileBuilder::new();
@@ -525,7 +572,7 @@ mod tests {
     async fn test_builder_stream_small() -> Result<()> {
         // Create a directory
         let mut dir = DirectoryBuilder::new();
-        dir.name("foo");
+        dir.with_name("foo");
 
         // Add a file
         let mut bar = FileBuilder::new();
@@ -578,7 +625,7 @@ mod tests {
     async fn test_builder_stream_large() -> Result<()> {
         // Create a directory
         let mut dir = DirectoryBuilder::new();
-        dir.name("foo");
+        dir.with_name("foo");
 
         // Add a file
         let mut bar = FileBuilder::new();

@@ -137,7 +137,7 @@ mod tests {
         let sender = s::Sender::new(9990, &sender_db).await.context("s:new")?;
 
         let mut dir_builder = DirectoryBuilder::new();
-        dir_builder.name("foo");
+        dir_builder.with_name("foo");
         let mut file = FileBuilder::new();
         file.name("bar.txt").content_bytes(&b"bar"[..]);
         dir_builder.add_file(file.build().await?);
