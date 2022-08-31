@@ -25,20 +25,19 @@ pub const DEFAULT_PORT: u16 = 9050;
 /// as well as the common rpc & metrics ones.
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct Config {
+    /// Path for the UDS socket for the gateway.
+    #[cfg(feature = "uds-gateway")]
+    pub gateway_uds_path: Option<PathBuf>,
     /// Gateway specific configuration.
     pub gateway: iroh_gateway::config::Config,
     /// Store specific configuration.
     pub store: iroh_store::config::Config,
     /// P2P specific configuration.
     pub p2p: iroh_p2p::config::Config,
-
     /// rpc addresses for the gateway & addresses for the rpc client to dial
     pub rpc_client: RpcClientConfig,
     /// metrics configuration
     pub metrics: MetricsConfig,
-    /// Path for the UDS socket for the gateway.
-    #[cfg(feature = "uds-gateway")]
-    pub gateway_uds_path: Option<PathBuf>,
 }
 
 impl Config {
@@ -78,11 +77,14 @@ impl Config {
         }
     }
 
-    // synchronize the rpc config across subsystems
-    pub fn sync_rpc_client(&mut self) {
+    // synchronize the top level configs across subsystems
+    pub fn synchronize_subconfigs(&mut self) {
         self.gateway.rpc_client = self.rpc_client.clone();
         self.p2p.rpc_client = self.rpc_client.clone();
         self.store.rpc_client = self.rpc_client.clone();
+        self.gateway.metrics = self.metrics.clone();
+        self.p2p.metrics = self.metrics.clone();
+        self.store.metrics = self.metrics.clone();
     }
 }
 

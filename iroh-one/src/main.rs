@@ -53,7 +53,7 @@ async fn main() -> Result<()> {
         config.rpc_client.gateway_addr = Some(gw_sender);
     }
 
-    config.sync_rpc_client();
+    config.synchronize_subconfigs();
 
     config.metrics = metrics::metrics_config_with_compile_time_info(config.metrics);
     println!("{:#?}", config);

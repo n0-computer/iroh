@@ -29,17 +29,17 @@ pub struct Config {
     pub cache: bool,
     /// default port to listen on
     pub port: u16,
+    /// flag to toggle whether the gateway should use denylist on requests
+    pub denylist: bool,
+    /// rpc addresses for the gateway & addresses for the rpc client to dial
+    pub rpc_client: RpcClientConfig,
+    /// metrics configuration
+    pub metrics: MetricsConfig,
     // NOTE: for toml to serialize properly, the "table" values must be serialized at the end, and
     // so much come at the end of the `Config` struct
     /// set of user provided headers to attach to all responses
     #[serde(with = "http_serde::header_map")]
     pub headers: HeaderMap,
-    /// rpc addresses for the gateway & addresses for the rpc client to dial
-    pub rpc_client: RpcClientConfig,
-    /// metrics configuration
-    pub metrics: MetricsConfig,
-    /// flag to toggle whether the gateway should use denylist on requests
-    pub denylist: bool,
 }
 
 impl Config {
