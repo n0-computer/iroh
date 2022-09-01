@@ -9,7 +9,7 @@ use crate::block::Block;
 use crate::error::BitswapError;
 use crate::prefix::Prefix;
 
-mod pb {
+pub(crate) mod pb {
     #![allow(clippy::all)]
     include!(concat!(env!("OUT_DIR"), "/bitswap_pb.rs"));
 }
@@ -83,7 +83,7 @@ impl Wantlist {
         self.full = full;
     }
 
-    fn into_pb(self) -> pb::message::Wantlist {
+    pub fn into_pb(self) -> pb::message::Wantlist {
         use pb::message::wantlist::WantType;
 
         let mut wantlist = pb::message::Wantlist {
@@ -127,7 +127,7 @@ impl Wantlist {
         wantlist
     }
 
-    fn from_pb(proto: Option<pb::message::Wantlist>) -> Result<Self, BitswapError> {
+    pub fn from_pb(proto: Option<pb::message::Wantlist>) -> Result<Self, BitswapError> {
         let mut wantlist = Wantlist::default();
         let proto = proto.unwrap_or_default();
 
