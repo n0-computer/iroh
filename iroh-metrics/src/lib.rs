@@ -1,19 +1,42 @@
+#[macro_use]
+mod macros;
+#[cfg(feature = "bitswap")]
 pub mod bitswap;
 pub mod config;
+pub mod core;
+#[cfg(feature = "gateway")]
 pub mod gateway;
+#[cfg(feature = "p2p")]
+pub mod p2p;
 #[cfg(feature = "rpc-grpc")]
 pub mod req;
+#[cfg(feature = "resolver")]
 pub mod resolver;
+#[cfg(feature = "store")]
 pub mod store;
 
+#[macro_use]
+extern crate lazy_static;
+
 use crate::config::Config;
+use crate::core::HistogramType;
+use crate::core::MetricType;
+#[cfg(any(
+    feature = "bitswap",
+    feature = "gateway",
+    feature = "resolver",
+    feature = "store",
+    feature = "p2p"
+))]
+#[allow(unused_imports)]
+use crate::core::MetricsRecorder;
+use crate::core::CORE;
 use opentelemetry::{
     global,
     sdk::{propagation::TraceContextPropagator, trace, Resource},
     trace::{TraceContextExt, TraceId},
 };
 use opentelemetry_otlp::WithExportConfig;
-use prometheus_client::{encoding::text::encode, registry::Registry};
 use std::env::consts::{ARCH, OS};
 use std::time::Duration;
 use tokio::task::JoinHandle;
@@ -22,58 +45,39 @@ use tracing_opentelemetry::OpenTelemetrySpanExt;
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer};
 
 pub struct MetricsHandle {
-    metrics_task: JoinHandle<()>,
+    metrics_task: Option<JoinHandle<()>>,
 }
 
 impl MetricsHandle {
     /// Shutdown the tracing and metrics subsystems.
     pub fn shutdown(&self) {
         opentelemetry::global::shutdown_tracer_provider();
-        self.metrics_task.abort();
+        if let Some(mt) = &self.metrics_task {
+            mt.abort();
+        }
     }
 
     /// Initialize the tracing and metrics subsystems.
-    pub async fn new_with_tracer(cfg: Config) -> Result<Self, Box<dyn std::error::Error>> {
+    pub async fn new(cfg: Config) -> Result<Self, Box<dyn std::error::Error>> {
         init_tracer(cfg.clone())?;
-        let metrics_task = init_metrics(cfg, Registry::default()).await?;
-        Ok(MetricsHandle { metrics_task })
-    }
-
-    /// Initialize the tracing and metrics subsystems a with custom registry.
-    pub async fn from_registry_with_tracer(
-        cfg: Config,
-        registry: Registry,
-    ) -> Result<MetricsHandle, Box<dyn std::error::Error>> {
-        init_tracer(cfg.clone())?;
-        Self::from_registry(cfg, registry).await
-    }
-
-    /// Initialize the metrics subsystems with a custom registry.
-    pub async fn from_registry(
-        cfg: Config,
-        registry: Registry,
-    ) -> Result<MetricsHandle, Box<dyn std::error::Error>> {
-        let metrics_task = init_metrics(cfg, registry).await?;
+        let metrics_task = init_metrics(cfg).await;
         Ok(MetricsHandle { metrics_task })
     }
 }
 
 /// Initialize the metrics subsystem.
-pub async fn init_metrics(
-    cfg: Config,
-    registry: Registry,
-) -> Result<JoinHandle<()>, Box<dyn std::error::Error>> {
+async fn init_metrics(cfg: Config) -> Option<JoinHandle<()>> {
     if cfg.collect {
+        CORE.set_enabled(true);
         let prom_gateway_uri = format!(
             "{}/metrics/job/{}/instance/{}",
             cfg.prom_gateway_endpoint, cfg.service_name, cfg.instance_id
         );
         let push_client = reqwest::Client::new();
-        return Ok(tokio::spawn(async move {
+        return Some(tokio::spawn(async move {
             loop {
                 tokio::time::sleep(Duration::from_secs(5)).await;
-                let mut buff = Vec::new();
-                encode(&mut buff, &registry).unwrap();
+                let buff = CORE.encode();
                 let res = match push_client.post(&prom_gateway_uri).body(buff).send().await {
                     Ok(res) => res,
                     Err(e) => {
@@ -94,11 +98,11 @@ pub async fn init_metrics(
             }
         }));
     }
-    Ok(tokio::spawn(async move {}))
+    None
 }
 
 /// Initialize the tracing subsystem.
-pub fn init_tracer(cfg: Config) -> Result<(), Box<dyn std::error::Error>> {
+fn init_tracer(cfg: Config) -> Result<(), Box<dyn std::error::Error>> {
     let log_subscriber = fmt::layer()
         .pretty()
         .with_filter(EnvFilter::from_default_env());
@@ -140,4 +144,61 @@ pub fn get_current_trace_id() -> TraceId {
         .span()
         .span_context()
         .trace_id()
+}
+
+#[derive(PartialEq)]
+pub enum Collector {
+    #[cfg(feature = "gateway")]
+    Gateway,
+    #[cfg(feature = "resolver")]
+    Resolver,
+    #[cfg(feature = "bitswap")]
+    Bitswap,
+    #[cfg(feature = "store")]
+    Store,
+}
+
+#[allow(unused_variables, unreachable_patterns)]
+pub fn record<M>(c: Collector, m: M, v: u64)
+where
+    M: MetricType + std::fmt::Display,
+{
+    if CORE.enabled() {
+        match c {
+            #[cfg(feature = "gateway")]
+            Collector::Gateway => CORE.gateway_metrics().record(m, v),
+            #[cfg(feature = "resolver")]
+            Collector::Resolver => CORE.resolver_metrics().record(m, v),
+            #[cfg(feature = "bitswap")]
+            Collector::Bitswap => CORE.bitswap_metrics().record(m, v),
+            #[cfg(feature = "store")]
+            Collector::Store => CORE.store_metrics().record(m, v),
+            _ => panic!("not enabled/implemented"),
+        };
+    }
+}
+
+#[allow(unused_variables, unreachable_patterns)]
+pub fn observe<M>(c: Collector, m: M, v: f64)
+where
+    M: HistogramType + std::fmt::Display,
+{
+    if CORE.enabled() {
+        match c {
+            #[cfg(feature = "gateway")]
+            Collector::Gateway => CORE.gateway_metrics().observe(m, v),
+            #[cfg(feature = "resolver")]
+            Collector::Resolver => CORE.resolver_metrics().observe(m, v),
+            #[cfg(feature = "bitswap")]
+            Collector::Bitswap => CORE.bitswap_metrics().observe(m, v),
+            #[cfg(feature = "store")]
+            Collector::Store => CORE.store_metrics().observe(m, v),
+            _ => panic!("not enabled/implemented"),
+        };
+    }
+}
+
+#[cfg(feature = "p2p")]
+pub fn p2p_metrics() -> &'static p2p::Metrics {
+    CORE.p2p_metrics()
 }

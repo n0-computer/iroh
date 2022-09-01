@@ -7,21 +7,27 @@ use prometheus_client::{
     },
     registry::Registry,
 };
+use tracing::error;
+
+use crate::{
+    core::{HistogramType, MObserver, MRecorder, MetricType, MetricsRecorder},
+    Collector,
+};
 
 #[derive(Clone)]
-pub struct Metrics {
-    pub get_requests_total: Counter,
-    pub get_store_hit: Counter,
-    pub get_store_miss: Counter,
-    pub get_bytes: Counter,
-    pub get_request_time: Histogram,
-    pub put_requests_total: Counter,
-    pub put_bytes: Counter,
-    pub put_request_time: Histogram,
-    pub get_links_requests_total: Counter,
-    pub get_links_hit: Counter,
-    pub get_links_miss: Counter,
-    pub get_links_request_time: Histogram,
+pub(crate) struct Metrics {
+    get_requests_total: Counter,
+    get_store_hit: Counter,
+    get_store_miss: Counter,
+    get_bytes: Counter,
+    get_request_time: Histogram,
+    put_requests_total: Counter,
+    put_bytes: Counter,
+    put_request_time: Histogram,
+    get_links_requests_total: Counter,
+    get_links_hit: Counter,
+    get_links_miss: Counter,
+    get_links_request_time: Histogram,
 }
 
 impl fmt::Debug for Metrics {
@@ -141,6 +147,120 @@ impl Metrics {
             get_links_miss,
             get_links_request_time,
         }
+    }
+}
+
+impl MetricsRecorder for Metrics {
+    fn record<M>(&self, m: M, value: u64)
+    where
+        M: MetricType + std::fmt::Display,
+    {
+        if m.name() == StoreMetrics::GetRequests.name() {
+            self.get_requests_total.inc_by(value);
+        } else if m.name() == StoreMetrics::StoreHit.name() {
+            self.get_store_hit.inc_by(value);
+        } else if m.name() == StoreMetrics::StoreMiss.name() {
+            self.get_store_miss.inc_by(value);
+        } else if m.name() == StoreMetrics::GetBytes.name() {
+            self.get_bytes.inc_by(value);
+        } else if m.name() == StoreMetrics::PutRequests.name() {
+            self.put_requests_total.inc_by(value);
+        } else if m.name() == StoreMetrics::PutBytes.name() {
+            self.put_bytes.inc_by(value);
+        } else if m.name() == StoreMetrics::GetLinksRequests.name() {
+            self.get_links_requests_total.inc_by(value);
+        } else if m.name() == StoreMetrics::GetLinksHit.name() {
+            self.get_links_hit.inc_by(value);
+        } else if m.name() == StoreMetrics::GetLinksHit.name() {
+            self.get_links_miss.inc_by(value);
+        } else {
+            error!("record (store): unknown metric {}", m.name());
+        }
+    }
+
+    fn observe<M>(&self, m: M, value: f64)
+    where
+        M: HistogramType + std::fmt::Display,
+    {
+        if m.name() == StoreHistograms::GetRequests.name() {
+            self.get_request_time.observe(value);
+        } else if m.name() == StoreHistograms::PutRequests.name() {
+            self.put_request_time.observe(value);
+        } else if m.name() == StoreHistograms::GetLinksRequests.name() {
+            self.get_links_request_time.observe(value);
+        } else {
+            error!("observe (store): unknown metric {}", m.name());
+        }
+    }
+}
+
+#[derive(Clone)]
+pub enum StoreMetrics {
+    GetRequests,
+    StoreHit,
+    StoreMiss,
+    GetBytes,
+    PutRequests,
+    PutBytes,
+    GetLinksRequests,
+    GetLinksHit,
+    GetLinksMiss,
+}
+
+impl MetricType for StoreMetrics {
+    fn name(&self) -> &'static str {
+        match self {
+            StoreMetrics::GetRequests => METRICS_CNT_GET_REQUESTS_TOTAL,
+            StoreMetrics::StoreHit => METRICS_CNT_GET_STORE_HIT,
+            StoreMetrics::StoreMiss => METRICS_CNT_GET_STORE_MISS,
+            StoreMetrics::GetBytes => METRICS_CNT_GET_BYTES_TOTAL,
+            StoreMetrics::PutRequests => METRICS_CNT_PUT_REQUESTS_TOTAL,
+            StoreMetrics::PutBytes => METRICS_CNT_PUT_BYTES_TOTAL,
+            StoreMetrics::GetLinksRequests => METRICS_CNT_GET_LINKS_REQUESTS_TOTAL,
+            StoreMetrics::GetLinksHit => METRICS_CNT_GET_LINKS_HIT,
+            StoreMetrics::GetLinksMiss => METRICS_CNT_GET_LINKS_MISS,
+        }
+    }
+}
+
+impl MRecorder for StoreMetrics {
+    fn record(&self, value: u64) {
+        crate::record(Collector::Store, self.clone(), value);
+    }
+}
+
+impl std::fmt::Display for StoreMetrics {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.name())
+    }
+}
+
+#[derive(Clone)]
+pub enum StoreHistograms {
+    GetRequests,
+    PutRequests,
+    GetLinksRequests,
+}
+
+impl HistogramType for StoreHistograms {
+    fn name(&self) -> &'static str {
+        match self {
+            StoreHistograms::GetRequests => METRICS_HIST_GET_REQUEST_TIME,
+            StoreHistograms::PutRequests => METRICS_HIST_PUT_REQUEST_TIME,
+            StoreHistograms::GetLinksRequests => METRICS_HIST_GET_LINKS_REQUEST_TIME,
+        }
+    }
+}
+
+impl MObserver for StoreHistograms {
+    fn observe(&self, value: f64) {
+        crate::observe(Collector::Store, self.clone(), value);
+    }
+}
+
+impl std::fmt::Display for StoreHistograms {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.name())
     }
 }
 

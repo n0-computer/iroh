@@ -25,7 +25,38 @@ config = "0.13.1"
 iroh-util = { path = "../iroh-util" }
 names = { version = "0.14.0", default-features = false }
 serde = { version = "1.0", features = ["derive"] }
+lazy_static = "1.4.0"
+async-trait = "0.1.57"
+
+[dependencies.libp2p]
+version = "0.48"
+default-features = false
+features = [
+  "gossipsub",
+  "kad",
+  "identify",
+  "ping",
+  "mdns",
+  "noise",
+  "yamux",
+  "tcp-tokio",
+  "dns-tokio",
+  "mplex",
+  "request-response",
+  "websocket",
+  "serde",
+  "metrics",
+  "relay",
+  "dcutr",
+  "autonat",
+] 
+optional = true
 
 [features]
 default = ["rpc-grpc"]
 rpc-grpc = ["tonic"]
+gateway = []
+resolver = []
+bitswap = []
+store = []
+p2p = ["libp2p"]

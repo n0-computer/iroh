@@ -11,14 +11,20 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use cid::Cid;
 use futures::Stream;
-use iroh_metrics::resolver::Metrics;
+use iroh_metrics::inc;
 use iroh_rpc_client::Client;
 use libipld::codec::{Decode, Encode};
 use libipld::prelude::Codec as _;
 use libipld::{Ipld, IpldCodec};
-use prometheus_client::registry::Registry;
 use tokio::io::AsyncRead;
 use tracing::{debug, trace, warn};
+
+use iroh_metrics::{
+    core::{MObserver, MRecorder},
+    gateway::{GatewayHistograms, GatewayMetrics},
+    observe, record,
+    resolver::ResolverMetrics,
+};
 
 use crate::codecs::Codec;
 use crate::unixfs::{
@@ -319,25 +325,27 @@ impl BytesReader {
 
 pub struct OutMetrics {
     pub start: Instant,
-    pub metrics: iroh_metrics::gateway::Metrics,
 }
 
 impl OutMetrics {
     pub fn observe_bytes_read(&self, pos: usize, bytes_read: usize) {
         if pos == 0 && bytes_read > 0 {
-            self.metrics
-                .tts_block
-                .set(self.start.elapsed().as_millis() as u64);
+            record!(
+                GatewayMetrics::TimeToServeFirstBlock,
+                self.start.elapsed().as_millis() as u64
+            );
         }
         if bytes_read == 0 {
-            self.metrics
-                .tts_file
-                .set(self.start.elapsed().as_millis() as u64);
-            self.metrics
-                .hist_ttsf
-                .observe(self.start.elapsed().as_millis() as f64);
+            record!(
+                GatewayMetrics::TimeToServeFullFile,
+                self.start.elapsed().as_millis() as u64
+            );
+            observe!(
+                GatewayHistograms::TimeToServeFullFile,
+                self.start.elapsed().as_millis() as f64
+            );
         }
-        self.metrics.bytes_streamed.inc_by(bytes_read as u64);
+        record!(GatewayMetrics::BytesStreamed, bytes_read as u64);
     }
 }
 
@@ -345,7 +353,6 @@ impl Default for OutMetrics {
     fn default() -> Self {
         Self {
             start: Instant::now(),
-            metrics: iroh_metrics::gateway::Metrics::default(),
         }
     }
 }
@@ -387,7 +394,6 @@ pub enum Source {
 #[derive(Debug, Clone)]
 pub struct Resolver<T: ContentLoader> {
     loader: T,
-    metrics: Metrics,
 }
 
 #[async_trait]
@@ -460,9 +466,8 @@ impl ContentLoader for Client {
 }
 
 impl<T: ContentLoader> Resolver<T> {
-    pub fn new(loader: T, registry: &mut Registry) -> Self {
-        let metrics = Metrics::new(registry);
-        Resolver { loader, metrics }
+    pub fn new(loader: T) -> Self {
+        Resolver { loader }
     }
 
     pub fn loader(&self) -> &T {
@@ -508,9 +513,9 @@ impl<T: ContentLoader> Resolver<T> {
         // Resolve the root block.
         let (root_cid, loaded_cid) = self.resolve_root(&path).await?;
         if loaded_cid.source == Source::Bitswap {
-            self.metrics.cache_miss.inc();
+            inc!(ResolverMetrics::CacheMiss);
         } else {
-            self.metrics.cache_hit.inc();
+            inc!(ResolverMetrics::CacheHit);
         }
 
         let codec = Codec::try_from(root_cid.codec()).context("unknown codec")?;
@@ -1021,7 +1026,7 @@ mod tests {
             let bytes = Bytes::from(bytes);
 
             let loader: Arc<HashMap<_, _>> = Arc::new([(c, bytes)].into_iter().collect());
-            let resolver = Resolver::new(loader.clone(), &mut Registry::default());
+            let resolver = Resolver::new(loader.clone());
 
             {
                 let path = format!("/ipfs/{c}/name");
@@ -1126,7 +1131,7 @@ mod tests {
         .into_iter()
         .collect();
         let loader = Arc::new(loader);
-        let resolver = Resolver::new(loader.clone(), &mut Registry::default());
+        let resolver = Resolver::new(loader.clone());
 
         {
             let path = format!("/ipfs/{root_cid_str}");
@@ -1322,7 +1327,7 @@ mod tests {
         .into_iter()
         .collect();
         let loader = Arc::new(loader);
-        let resolver = Resolver::new(loader.clone(), &mut Registry::default());
+        let resolver = Resolver::new(loader.clone());
 
         let path = format!("/ipfs/{root_cid_str}");
         let results: Vec<_> = resolver
@@ -1400,7 +1405,7 @@ mod tests {
         .into_iter()
         .collect();
         let loader = Arc::new(loader);
-        let resolver = Resolver::new(loader.clone(), &mut Registry::default());
+        let resolver = Resolver::new(loader.clone());
 
         {
             let ipld_foo = resolver
@@ -1514,7 +1519,7 @@ mod tests {
         }
 
         let loader = Arc::new(loader);
-        let resolver = Resolver::new(loader.clone(), &mut Registry::default());
+        let resolver = Resolver::new(loader.clone());
 
         {
             let path = format!("/ipfs/{root_cid_str}");
@@ -1578,7 +1583,7 @@ mod tests {
         }
 
         let loader = Arc::new(loader);
-        let resolver = Resolver::new(loader.clone(), &mut Registry::default());
+        let resolver = Resolver::new(loader.clone());
 
         {
             let path = format!("/ipfs/{root_cid_str}");
@@ -1665,7 +1670,7 @@ mod tests {
         .into_iter()
         .collect();
         let loader = Arc::new(loader);
-        let resolver = Resolver::new(loader.clone(), &mut Registry::default());
+        let resolver = Resolver::new(loader.clone());
 
         {
             let path = format!("/ipfs/{root_cid_str}/hello.txt");
@@ -1930,7 +1935,7 @@ mod tests {
         assert_eq!(files.len(), 10938);
 
         let loader = Arc::new(files);
-        let resolver = Resolver::new(loader.clone(), &mut Registry::default());
+        let resolver = Resolver::new(loader.clone());
 
         // foo/bar/bar.txt
         {

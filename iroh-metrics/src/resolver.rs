@@ -1,11 +1,17 @@
 use std::fmt;
 
 use prometheus_client::{metrics::counter::Counter, registry::Registry};
+use tracing::error;
+
+use crate::{
+    core::{HistogramType, MRecorder, MetricType, MetricsRecorder},
+    Collector,
+};
 
 #[derive(Clone)]
-pub struct Metrics {
-    pub cache_hit: Counter,
-    pub cache_miss: Counter,
+pub(crate) struct Metrics {
+    cache_hit: Counter,
+    cache_miss: Counter,
 }
 
 impl fmt::Debug for Metrics {
@@ -42,6 +48,55 @@ impl Default for Metrics {
     fn default() -> Self {
         let mut registry = Registry::default();
         Metrics::new(&mut registry)
+    }
+}
+
+impl MetricsRecorder for Metrics {
+    fn record<M>(&self, m: M, value: u64)
+    where
+        M: MetricType + std::fmt::Display,
+    {
+        if m.name() == ResolverMetrics::CacheHit.name() {
+            self.cache_hit.inc_by(value);
+        } else if m.name() == ResolverMetrics::CacheMiss.name() {
+            self.cache_miss.inc_by(value);
+        } else {
+            error!("record (resolver): unknown metric {}", m.name());
+        }
+    }
+
+    fn observe<M>(&self, m: M, _value: f64)
+    where
+        M: HistogramType + std::fmt::Display,
+    {
+        error!("observe (resolver): unknown metric {}", m.name());
+    }
+}
+
+#[derive(Clone)]
+pub enum ResolverMetrics {
+    CacheHit,
+    CacheMiss,
+}
+
+impl MetricType for ResolverMetrics {
+    fn name(&self) -> &'static str {
+        match self {
+            ResolverMetrics::CacheHit => METRICS_CACHE_HIT,
+            ResolverMetrics::CacheMiss => METRICS_CACHE_MISS,
+        }
+    }
+}
+
+impl MRecorder for ResolverMetrics {
+    fn record(&self, value: u64) {
+        crate::record(Collector::Resolver, self.clone(), value);
+    }
+}
+
+impl std::fmt::Display for ResolverMetrics {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.name())
     }
 }
 

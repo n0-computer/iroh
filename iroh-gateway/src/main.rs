@@ -9,9 +9,7 @@ use iroh_gateway::{
     core::Core,
     metrics,
 };
-use iroh_metrics::gateway::Metrics;
 use iroh_util::{iroh_home_path, make_config};
-use prometheus_client::registry::Registry;
 use tokio::sync::RwLock;
 use tracing::{debug, error};
 
@@ -35,8 +33,6 @@ async fn main() -> Result<()> {
     println!("{:#?}", config);
 
     let metrics_config = config.metrics.clone();
-    let mut prom_registry = Registry::default();
-    let gw_metrics = Metrics::new(&mut prom_registry);
     let bad_bits = match config.denylist {
         true => Arc::new(Some(RwLock::new(BadBits::new()))),
         false => Arc::new(None),
@@ -44,21 +40,13 @@ async fn main() -> Result<()> {
     let rpc_addr = config
         .server_rpc_addr()?
         .ok_or_else(|| anyhow!("missing gateway rpc addr"))?;
-    let handler = Core::new(
-        Arc::new(config),
-        rpc_addr,
-        gw_metrics,
-        &mut prom_registry,
-        Arc::clone(&bad_bits),
-    )
-    .await?;
+    let handler = Core::new(Arc::new(config), rpc_addr, Arc::clone(&bad_bits)).await?;
 
     let bad_bits_handle = bad_bits::spawn_bad_bits_updater(Arc::clone(&bad_bits));
 
-    let metrics_handle =
-        iroh_metrics::MetricsHandle::from_registry_with_tracer(metrics_config, prom_registry)
-            .await
-            .expect("failed to initialize metrics");
+    let metrics_handle = iroh_metrics::MetricsHandle::new(metrics_config)
+        .await
+        .expect("failed to initialize metrics");
 
     #[cfg(unix)]
     {

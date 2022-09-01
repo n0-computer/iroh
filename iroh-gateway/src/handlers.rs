@@ -11,7 +11,7 @@ use axum::{
 use bytes::Bytes;
 use futures::TryStreamExt;
 use handlebars::Handlebars;
-use iroh_metrics::get_current_trace_id;
+use iroh_metrics::{core::MRecorder, gateway::GatewayMetrics, get_current_trace_id, inc};
 use iroh_resolver::{
     resolver::{CidOrDomain, OutMetrics, UnixfsType},
     unixfs::Link,
@@ -117,7 +117,7 @@ pub async fn get_handler(
     Query(query_params): Query<GetParams>,
     request_headers: HeaderMap,
 ) -> Result<GatewayResponse, GatewayError> {
-    state.metrics.requests_total.inc();
+    inc!(GatewayMetrics::Requests);
     let start_time = time::Instant::now();
     // parse path params
     let scheme = params.get("scheme").unwrap();
@@ -327,7 +327,7 @@ async fn serve_raw(
     // FIXME: we currently only retrieve full cids
     let (body, metadata) = state
         .client
-        .get_file(req.resolved_path.clone(), start_time, &state.metrics)
+        .get_file(req.resolved_path.clone(), start_time)
         .await
         .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, &e, &state))?;
 
@@ -361,7 +361,7 @@ async fn serve_car(
     // FIXME: we currently only retrieve full cids
     let (body, metadata) = state
         .client
-        .get_file(req.resolved_path.clone(), start_time, &state.metrics)
+        .get_file(req.resolved_path.clone(), start_time)
         .await
         .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, &e, &state))?;
 
@@ -400,7 +400,7 @@ async fn serve_car_recursive(
     let body = state
         .client
         .clone()
-        .get_file_recursive(req.resolved_path.clone(), start_time, state.metrics.clone())
+        .get_file_recursive(req.resolved_path.clone(), start_time)
         .await
         .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, &e, &state))?;
 
@@ -429,7 +429,7 @@ async fn serve_fs(
     // FIXME: we currently only retrieve full cids
     let (body, metadata) = state
         .client
-        .get_file(req.resolved_path.clone(), start_time, &state.metrics)
+        .get_file(req.resolved_path.clone(), start_time)
         .await
         .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, &e, &state))?;
 
@@ -437,13 +437,7 @@ async fn serve_fs(
     match body {
         FileResult::Directory(res) => {
             let dir_list: anyhow::Result<Vec<_>> = res
-                .unixfs_read_dir(
-                    &state.client.resolver,
-                    OutMetrics {
-                        metrics: state.metrics.clone(),
-                        start: start_time,
-                    },
-                )
+                .unixfs_read_dir(&state.client.resolver, OutMetrics { start: start_time })
                 .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string(), &state))?
                 .expect("already known this is a directory")
                 .try_collect()
@@ -572,7 +566,7 @@ where
 
 #[tracing::instrument()]
 fn error(status_code: StatusCode, message: &str, state: &State) -> GatewayError {
-    state.metrics.error_count.inc();
+    inc!(GatewayMetrics::ErrorCount);
     GatewayError {
         status_code,
         message: message.to_string(),
@@ -585,7 +579,7 @@ pub async fn middleware_error_handler(
     Extension(state): Extension<Arc<State>>,
     err: BoxError,
 ) -> impl IntoResponse {
-    state.metrics.fail_count.inc();
+    inc!(GatewayMetrics::FailCount);
     if err.is::<tower::timeout::error::Elapsed>() {
         return error(StatusCode::REQUEST_TIMEOUT, "request timed out", &state);
     }

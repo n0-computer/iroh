@@ -3,7 +3,6 @@ use clap::Parser;
 use iroh_p2p::config::{Config, CONFIG_FILE_NAME, ENV_PREFIX};
 use iroh_p2p::{cli::Args, metrics, DiskStorage, Keychain, Node};
 use iroh_util::{iroh_home_path, make_config};
-use prometheus_client::registry::Registry;
 use tokio::task;
 use tracing::{debug, error};
 
@@ -29,10 +28,12 @@ async fn main() -> anyhow::Result<()> {
     )
     .unwrap();
 
-    let mut prom_registry = Registry::default();
     let metrics_config =
         metrics::metrics_config_with_compile_time_info(network_config.metrics.clone());
-    iroh_metrics::init_tracer(metrics_config.clone()).expect("failed to initialize tracer");
+
+    let metrics_handle = iroh_metrics::MetricsHandle::new(metrics_config)
+        .await
+        .expect("failed to initialize metrics");
 
     #[cfg(unix)]
     {
@@ -46,11 +47,7 @@ async fn main() -> anyhow::Result<()> {
     let rpc_addr = network_config
         .server_rpc_addr()?
         .ok_or_else(|| anyhow!("missing p2p rpc addr"))?;
-    let mut p2p = Node::new(network_config, rpc_addr, kc, &mut prom_registry).await?;
-
-    let metrics_handle = iroh_metrics::MetricsHandle::from_registry(metrics_config, prom_registry)
-        .await
-        .expect("failed to initialize metrics");
+    let mut p2p = Node::new(network_config, rpc_addr, kc).await?;
 
     // Start services
     let p2p_task = task::spawn(async move {

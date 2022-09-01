@@ -23,8 +23,7 @@ iroh-rpc-types = { path = "../iroh-rpc-types", default-features = false }
 iroh-rpc-client = { path = "../iroh-rpc-client", default-features = false }
 iroh-util = { path = "../iroh-util" }
 bytes = "1.1.0"
-prometheus-client = "0.18.0"
-iroh-metrics = { path = "../iroh-metrics", default-features = false }
+iroh-metrics = { path = "../iroh-metrics", default-features = false, features=["store"] }
 tracing-opentelemetry = "0.17.2"
 opentelemetry = { version = "0.17.0", features = ["rt-tokio"] }
 names = { version = "0.14.0", default-features = false }

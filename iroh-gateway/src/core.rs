@@ -1,8 +1,7 @@
 use axum::Router;
-use iroh_metrics::gateway::Metrics;
 use iroh_rpc_client::Client as RpcClient;
 use iroh_rpc_types::gateway::GatewayServerAddr;
-use prometheus_client::registry::Registry;
+
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::RwLock;
 
@@ -25,7 +24,6 @@ pub struct State {
     pub config: Arc<dyn StateConfig>,
     pub client: Client,
     pub handlebars: HashMap<String, String>,
-    pub metrics: Metrics,
     pub bad_bits: Arc<Option<RwLock<BadBits>>>,
 }
 
@@ -33,8 +31,6 @@ impl Core {
     pub async fn new(
         config: Arc<dyn StateConfig>,
         rpc_addr: GatewayServerAddr,
-        metrics: Metrics,
-        registry: &mut Registry,
         bad_bits: Arc<Option<RwLock<BadBits>>>,
     ) -> anyhow::Result<Self> {
         tokio::spawn(async move {
@@ -45,13 +41,12 @@ impl Core {
         let mut templates = HashMap::new();
         templates.insert("dir_list".to_string(), templates::DIR_LIST.to_string());
         templates.insert("not_found".to_string(), templates::NOT_FOUND.to_string());
-        let client = Client::new(&rpc_client, registry);
+        let client = Client::new(&rpc_client);
 
         Ok(Self {
             state: Arc::new(State {
                 config,
                 client,
-                metrics,
                 handlebars: templates,
                 bad_bits,
             }),
@@ -71,19 +66,16 @@ impl Core {
 
     pub async fn make_state(
         config: Arc<dyn StateConfig>,
-        metrics: Metrics,
-        registry: &mut Registry,
         bad_bits: Arc<Option<RwLock<BadBits>>>,
     ) -> anyhow::Result<Arc<State>> {
         let rpc_client = RpcClient::new(config.rpc_client().clone()).await?;
         let mut templates = HashMap::new();
         templates.insert("dir_list".to_string(), templates::DIR_LIST.to_string());
         templates.insert("not_found".to_string(), templates::NOT_FOUND.to_string());
-        let client = Client::new(&rpc_client, registry);
+        let client = Client::new(&rpc_client);
         Ok(Arc::new(State {
             config,
             client,
-            metrics,
             handlebars: templates,
             bad_bits,
         }))
@@ -110,7 +102,6 @@ mod tests {
     use super::*;
     use crate::config::Config;
     use iroh_rpc_client::Config as RpcClientConfig;
-    use prometheus_client::registry::Registry;
 
     #[tokio::test]
     async fn gateway_health() {
@@ -127,18 +118,10 @@ mod tests {
         );
         config.set_default_headers();
 
-        let mut prom_registry = Registry::default();
-        let gw_metrics = Metrics::new(&mut prom_registry);
         let rpc_addr = "grpc://0.0.0.0:0".parse().unwrap();
-        let handler = Core::new(
-            Arc::new(config),
-            rpc_addr,
-            gw_metrics,
-            &mut prom_registry,
-            Arc::new(None),
-        )
-        .await
-        .unwrap();
+        let handler = Core::new(Arc::new(config), rpc_addr, Arc::new(None))
+            .await
+            .unwrap();
         let server = handler.server();
         let addr = server.local_addr();
         let core_task = tokio::spawn(async move {

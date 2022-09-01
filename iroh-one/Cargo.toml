@@ -25,7 +25,6 @@ iroh-rpc-client = {path = "../iroh-rpc-client", default-features = false}
 iroh-rpc-types = {path = "../iroh-rpc-types", default-features = false}
 iroh-store = {path = "../iroh-store", default-features = false, features = ["rpc-mem"]}
 iroh-util = {path = "../iroh-util"}
-prometheus-client = "0.18.0"
 serde = {version = "1.0", features = ["derive"]}
 tokio = {version = "1", features = ["macros", "rt-multi-thread", "process"]}
 tracing = "0.1.33"
