@@ -39,6 +39,7 @@ rand = "0.8.5"
 async-stream = "0.3.3"
 tempfile = "3.3.0"
 tokio-stream = "0.1.9"
+caches = "0.2.2"
  
 [dependencies.libp2p]
 version = "0.48"
