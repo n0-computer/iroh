@@ -1,8 +1,15 @@
 # iroh
 
-Iroh is a next-generation implementation the Interplanetary File System ([IPFS](https://ipfs.io)) for Cloud & Mobile platforms. IPFS is a networking protocol for exchanging _content-addressed_ blocks of immutable data. “content-addressed” means referring to data by the *hash of it’s content*, which makes the reference unique and verifiable. These two properties make it possible to get data from *any* node in the network that speaks the IPFS protocol, including IPFS content being served by other implementations of the protocol.
+Iroh is a next-generation implementation of the Interplanetary File System ([IPFS](https://ipfs.io)) for Cloud & Mobile platforms.
 
-Iroh is built & maintained by [number 0](https://n0.computer)
+IPFS is a networking protocol for exchanging _content-addressed_ blocks of immutable data. “Content-addressed” means referring to data by the *hash of its content*, which makes the reference unique and verifiable. These two properties make it possible to get data from *any* node in the network that speaks the IPFS protocol, including IPFS content being served by other implementations of the protocol.
+
+- Iroh Cloud is an IPFS implementation purpose-built for running at scale on datacenter-grade infrastructure.
+- Iroh Mobile is an IPFS library for iOS & Android app development. Both libraries are operating system specific, written in Rust and wrapped in native language APIs. 
+
+Iroh has yet to publish a release. We're targeting the end of October 2022 for an initial version.
+
+Iroh is built & maintained by [number 0](https://n0.computer).
 
 ## License
 
