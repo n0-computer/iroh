@@ -11,17 +11,17 @@ This guide will walk you through running iroh cloud on your local machine, using
 we’ve prepped a bash file one-liner for you:
 
 ```bash
-$ curl -fsSL http://sh.iroh.computer/setup.sh | sh -s -- quickstart
+$ curl -fsSL https://sh.iroh.computer/setup.sh | sh -s -- quickstart
 ```
 
-Running stuff from the internet directly on your terminal is generally a bad idea. Feel free to read through the script first 😄 by dropping the pipe `|` character and everything after it to print `[setup.sh](http://setup.sh)` to your terminal. The setup script takes a bit of time to fetch precompiled binaries. Once up and running you should see terminal output that looks like this:
+Running stuff from the internet directly on your terminal is generally a bad idea. Feel free to read through the script first 😄 by dropping the pipe `|` character and everything after it to print `[setup.sh](https://sh.iroh.computer/setup.sh)` to your terminal. The setup script takes a bit of time to fetch precompiled binaries. Once up and running you should see terminal output that looks like this:
 
 ```
-$ curl -fsSL http://sh.iroh.computer/setup.sh | sh-s--quickstart
-Fetching http: //vorc.gekko.sh:9055/bin/iroh-gateway/darwin/aarch64/latest
-Fetching http://vorc.gekko.sh:9055/bin/iroh-p2p/darwin/aarch64/latest
-Fetching http://vorc.gekko.sh:9055/bin/iroh-store/darwin/aarch64/latest
-Fetching http://vorc.gekko.sh:9055/bin/iroh-ctl/darwin/aarch64/latest
+$ curl -fsSL https://sh.iroh.computer/setup.sh | sh-s--quickstart
+Fetching https://vorc.iroh.computer/bin/iroh-gateway/darwin/aarch64/latest
+Fetching https://vorc.iroh.computer/bin/iroh-p2p/darwin/aarch64/latest
+Fetching https://vorc.iroh.computer/bin/iroh-store/darwin/aarch64/latest
+Fetching https://vorc.iroh.computer/bin/iroh-ctl/darwin/aarch64/latest
 starting iroh-store.
 iroh-store started
 view logs at ~/.iroh/log/iroh-store.log
@@ -37,7 +37,7 @@ you can run iroh-ctl from ~/.iroh/bin/iroh-ctl
 ```
 
 
-🚧 *currently [setup.sh](http://setup.sh) writes everything to `$HOME/.iroh`, Iroh cloud will be switching to use [standard directories](https://dirs.dev/) for config, cache, and application data. See [issue #142](https://github.com/n0-computer/iroh/issues/142) for more detail:*
+🚧 *currently [setup.sh](https://sh.iroh.computer/setup.sh) writes everything to `$HOME/.iroh`, Iroh cloud will be switching to use [standard directories](https://dirs.dev/) for config, cache, and application data. See [issue #142](https://github.com/n0-computer/iroh/issues/142) for more detail:*
 
 ## 2. Using the gateway
 
@@ -62,7 +62,7 @@ This indicates all three services are running & healthy.
 This setup script includes a few options, which you can see by replacing `quickstart` with `-h`:
 
 ```bash
-$ curl -fsSL http://sh.iroh.computer/setup.sh | sh -s -- -h
+$ curl -fsSL https://sh.iroh.computer/setup.sh | sh -s -- -h
 iroh quickstart
 
 USAGE:
@@ -81,13 +81,13 @@ FLAGS:
 The help text includes a reference to a `stop` command. Let’s run that:
 
 ```bash
-$ curl -fsSL http://sh.iroh.computer/setup.sh | sh -s -- stop
+$ curl -fsSL https://sh.iroh.computer/setup.sh | sh -s -- stop
 ```
 
 You should see output looking like this:
 
 ```
-$ curl -fsSL http://sh.iroh.computer/setup.sh | sh -s -- stop
+$ curl -fsSL https://sh.iroh.computer/setup.sh | sh -s -- stop
 stopping iroh-gateway...
 stopping iroh-p2p...
 stopping iroh-store...
