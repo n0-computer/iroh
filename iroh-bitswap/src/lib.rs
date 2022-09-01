@@ -9,6 +9,7 @@ mod prefix;
 mod protocol;
 // mod query;
 // mod session;
+mod handler;
 
 pub use crate::behaviour::{
     Bitswap, BitswapConfig, BitswapEvent, CancelResult, FindProvidersResult, InboundRequest,
@@ -19,5 +20,5 @@ pub use crate::block::Block;
 pub use crate::error::BitswapError;
 pub use crate::message::{BitswapMessage, Priority};
 pub use crate::metrics::*;
-pub use crate::protocol::PROTOCOLS;
+pub use crate::protocol::ProtocolId;
 // pub use crate::query::QueryId;

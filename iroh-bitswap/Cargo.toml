@@ -19,7 +19,7 @@ libp2p = { version = "0.48", default-features = false }
 multihash = "0.16.0"
 prost = "0.11"
 thiserror = "1.0.20"
-unsigned-varint = "0.7.0"
+unsigned-varint = { version = "0.7.0", features = ["asynchronous_codec"] }
 ahash = "0.7.6"
 tracing = "0.1.34"
 num_enum = "0.5.7"
@@ -27,6 +27,8 @@ iroh-metrics = { path = "../iroh-metrics", default-features = false, features = 
 names = { version = "0.14.0", default-features = false }
 git-version = "0.3.5"
 caches = "0.2.2"
+asynchronous-codec = "0.6.0"
+smallvec = "1.9.0"
 
 [dev-dependencies]
 criterion = "0.3.5"

@@ -9,7 +9,7 @@ use futures_util::stream::StreamExt;
 use iroh_metrics::p2p_metrics;
 use iroh_rpc_client::Client as RpcClient;
 use iroh_rpc_types::p2p::P2pServerAddr;
-use libp2p::core::Multiaddr;
+use libp2p::core::{Multiaddr, ProtocolName};
 use libp2p::gossipsub::{GossipsubMessage, MessageId, TopicHash};
 pub use libp2p::gossipsub::{IdentTopic, Topic};
 use libp2p::identify::{IdentifyEvent, IdentifyInfo};
@@ -623,10 +623,11 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
 
                     // Inform bitswap about identified peers
                     if protocols.iter().any(|p| {
-                        for protocol in &iroh_bitswap::PROTOCOLS {
-                            if &p.as_bytes() == protocol {
-                                return true;
-                            }
+                        let p = p.as_bytes();
+                        if p == iroh_bitswap::ProtocolId::Bitswap110.protocol_name()
+                            || p == iroh_bitswap::ProtocolId::Bitswap120.protocol_name()
+                        {
+                            return true;
                         }
                         false
                     }) {

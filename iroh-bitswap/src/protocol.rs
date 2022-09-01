@@ -1,125 +1,146 @@
-use core::future::Future;
-use core::pin::Pin;
-use std::io;
-use std::time::Instant;
+use std::future::Future;
+use std::pin::Pin;
 
-use bytes::BytesMut;
-use futures::io::{AsyncRead, AsyncReadExt, AsyncWrite};
-use futures::AsyncWriteExt;
-use libp2p::core::{upgrade, InboundUpgrade, OutboundUpgrade, UpgradeInfo};
-use tracing::trace;
+use asynchronous_codec::{Decoder, Encoder, Framed};
+use bytes::{Bytes, BytesMut};
+use futures::future;
+use futures::io::{AsyncRead, AsyncWrite};
+use libp2p::core::{InboundUpgrade, OutboundUpgrade, ProtocolName, UpgradeInfo};
+use unsigned_varint::codec;
 
-use crate::error::BitswapError;
-use crate::message::BitswapMessage;
+use crate::handler::{BitswapHandlerError, HandlerEvent};
+use crate::BitswapMessage;
 
 const MAX_BUF_SIZE: usize = 1024 * 1024 * 2;
 
-pub const PROTOCOLS: [&[u8]; 2] = [b"/ipfs/bitswap/1.2.0", b"/ipfs/bitswap/1.1.0"];
+#[derive(Clone, Debug, Copy)]
+pub enum ProtocolId {
+    Bitswap100,
+    Bitswap110,
+    Bitswap120,
+}
 
-#[derive(Default, Clone, Debug)]
-pub struct BitswapProtocol;
-
-impl UpgradeInfo for BitswapProtocol {
-    type Info = &'static [u8];
-    type InfoIter = core::array::IntoIter<Self::Info, 2>;
-
-    fn protocol_info(&self) -> Self::InfoIter {
-        PROTOCOLS.into_iter()
+impl ProtocolName for ProtocolId {
+    fn protocol_name(&self) -> &[u8] {
+        match self {
+            ProtocolId::Bitswap100 => b"/ipfs/bitswap/1.0.0",
+            ProtocolId::Bitswap110 => b"/ipfs/bitswap/1.1.0",
+            ProtocolId::Bitswap120 => b"/ipfs/bitswap/1.2.0",
+        }
     }
 }
 
-impl<TSocket> InboundUpgrade<TSocket> for BitswapProtocol
+#[derive(Clone, Debug)]
+pub struct ProtocolConfig {
+    /// The bitswap protocols to listen on.
+    protocol_ids: Vec<ProtocolId>,
+    /// Maximum size of a packet.
+    max_transmit_size: usize,
+}
+
+impl Default for ProtocolConfig {
+    fn default() -> Self {
+        ProtocolConfig {
+            protocol_ids: vec![ProtocolId::Bitswap120, ProtocolId::Bitswap110],
+            max_transmit_size: MAX_BUF_SIZE,
+        }
+    }
+}
+
+impl UpgradeInfo for ProtocolConfig {
+    type Info = ProtocolId;
+    type InfoIter = Vec<Self::Info>;
+
+    fn protocol_info(&self) -> Self::InfoIter {
+        self.protocol_ids.clone()
+    }
+}
+
+impl<TSocket> InboundUpgrade<TSocket> for ProtocolConfig
 where
     TSocket: AsyncRead + AsyncWrite + Send + Unpin + 'static,
 {
-    type Output = BitswapMessage;
-    type Error = BitswapError;
+    type Output = (Framed<TSocket, BitswapCodec>, ProtocolId);
+    type Error = BitswapHandlerError;
     #[allow(clippy::type_complexity)]
     type Future = Pin<Box<dyn Future<Output = Result<Self::Output, Self::Error>> + Send>>;
 
     #[inline]
-    fn upgrade_inbound(self, mut socket: TSocket, info: Self::Info) -> Self::Future {
-        Box::pin(async move {
-            trace!("upgrade_inbound: {}", std::str::from_utf8(info).unwrap());
-            let now = Instant::now();
-            let packet = read_length_prefixed(&mut socket, MAX_BUF_SIZE).await?;
-            let reading = now.elapsed();
-            let len = packet.len();
-            let message = BitswapMessage::from_bytes(packet)?;
-
-            // TODO: record inbound bytes
-
-            trace!(
-                "upgrade_inbound_done {} in {}ms ({} blocks, {} wants) - reading {}ms",
-                len,
-                now.elapsed().as_millis(),
-                message.blocks().len(),
-                message.wantlist().blocks().count(),
-                reading.as_millis(),
-            );
-            socket.close().await?;
-
-            Ok(message)
-        })
+    fn upgrade_inbound(self, socket: TSocket, protocol_id: Self::Info) -> Self::Future {
+        let mut length_codec = codec::UviBytes::default();
+        length_codec.set_max_len(self.max_transmit_size);
+        Box::pin(future::ok((
+            Framed::new(socket, BitswapCodec::new(length_codec)),
+            protocol_id,
+        )))
     }
 }
 
-pub async fn read_length_prefixed(
-    socket: &mut (impl AsyncRead + Unpin),
-    max_size: usize,
-) -> io::Result<BytesMut> {
-    let len = upgrade::read_varint(socket).await?;
-    if len > max_size {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!(
-                "Received data size ({} bytes) exceeds maximum ({} bytes)",
-                len, max_size
-            ),
-        ));
-    }
-
-    let mut buf = BytesMut::new();
-    buf.resize(len, 0);
-    socket.read_exact(&mut buf).await?;
-
-    Ok(buf)
-}
-
-impl UpgradeInfo for BitswapMessage {
-    type Info = &'static [u8];
-    type InfoIter = core::array::IntoIter<Self::Info, 2>;
-
-    fn protocol_info(&self) -> Self::InfoIter {
-        PROTOCOLS.into_iter()
-    }
-}
-
-pub struct Upgrade;
-
-impl<TSocket> OutboundUpgrade<TSocket> for BitswapMessage
+impl<TSocket> OutboundUpgrade<TSocket> for ProtocolConfig
 where
     TSocket: AsyncRead + AsyncWrite + Send + Unpin + 'static,
 {
-    type Output = Upgrade;
-    type Error = io::Error;
+    type Output = (Framed<TSocket, BitswapCodec>, ProtocolId);
+    type Error = BitswapHandlerError;
     #[allow(clippy::type_complexity)]
     type Future = Pin<Box<dyn Future<Output = Result<Self::Output, Self::Error>> + Send>>;
 
     #[inline]
-    fn upgrade_outbound(self, mut socket: TSocket, info: Self::Info) -> Self::Future {
-        Box::pin(async move {
-            trace!("upgrade_outbound: {}", std::str::from_utf8(info).unwrap());
-            let bytes = self.into_bytes();
-            let l = bytes.len();
-            upgrade::write_length_prefixed(&mut socket, bytes).await?;
-            // TODO: record outbound bytes
+    fn upgrade_outbound(self, socket: TSocket, protocol_id: Self::Info) -> Self::Future {
+        let mut length_codec = codec::UviBytes::default();
+        length_codec.set_max_len(self.max_transmit_size);
+        Box::pin(future::ok((
+            Framed::new(socket, BitswapCodec::new(length_codec)),
+            protocol_id,
+        )))
+    }
+}
 
-            trace!("upgrade_outbound_done {}", l);
-            socket.close().await?;
+/// Bitswap codec for the framing
+pub struct BitswapCodec {
+    /// Codec to encode/decode the Unsigned varint length prefix of the frames.
+    length_codec: codec::UviBytes,
+}
 
-            Ok(Upgrade)
-        })
+impl BitswapCodec {
+    pub fn new(length_codec: codec::UviBytes) -> Self {
+        BitswapCodec { length_codec }
+    }
+}
+
+impl Encoder for BitswapCodec {
+    type Item = BitswapMessage;
+    type Error = BitswapHandlerError;
+
+    fn encode(&mut self, item: Self::Item, dst: &mut BytesMut) -> Result<(), Self::Error> {
+        let buf = item.into_bytes();
+
+        // length prefix the protobuf message, ensuring the max limit is not hit
+        self.length_codec
+            .encode(Bytes::from(buf), dst)
+            .map_err(|_| BitswapHandlerError::MaxTransmissionSize)
+    }
+}
+
+impl Decoder for BitswapCodec {
+    type Item = HandlerEvent;
+    type Error = BitswapHandlerError;
+
+    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+        let packet = match self.length_codec.decode(src).map_err(|e| {
+            if let std::io::ErrorKind::PermissionDenied = e.kind() {
+                BitswapHandlerError::MaxTransmissionSize
+            } else {
+                BitswapHandlerError::Io(e)
+            }
+        })? {
+            Some(p) => p,
+            None => return Ok(None),
+        };
+
+        let message = BitswapMessage::from_bytes(&packet[..])?;
+
+        Ok(Some(HandlerEvent::Message { message }))
     }
 }
 
@@ -140,14 +161,14 @@ mod tests {
         let server = async move {
             let (incoming, _) = listener.accept().await.unwrap();
             let incoming = incoming.compat();
-            upgrade::apply_inbound(incoming, BitswapProtocol::default())
+            upgrade::apply_inbound(incoming, ProtocolConfig::default())
                 .await
                 .unwrap();
         };
 
         let client = async move {
             let stream = TcpStream::connect(&listener_addr).await.unwrap().compat();
-            upgrade::apply_outbound(stream, BitswapMessage::new(), upgrade::Version::V1Lazy)
+            upgrade::apply_outbound(stream, ProtocolConfig::default(), upgrade::Version::V1Lazy)
                 .await
                 .unwrap();
         };

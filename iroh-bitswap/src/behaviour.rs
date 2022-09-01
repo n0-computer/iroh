@@ -14,16 +14,15 @@ use iroh_metrics::{bitswap::BitswapMetrics, core::MRecorder, record};
 use libp2p::core::connection::ConnectionId;
 use libp2p::core::{ConnectedPoint, Multiaddr, PeerId};
 use libp2p::swarm::dial_opts::DialOpts;
-use libp2p::swarm::handler::OneShotHandler;
 use libp2p::swarm::{
     DialError, IntoConnectionHandler, NetworkBehaviour, NetworkBehaviourAction, NotifyHandler,
-    OneShotHandlerConfig, PollParameters, SubstreamProtocol,
+    PollParameters,
 };
 use tracing::{debug, instrument, trace, warn};
 
+use crate::handler::{BitswapHandler, BitswapHandlerIn, HandlerEvent};
 use crate::message::{BitswapMessage, BlockPresence, Priority};
-use crate::protocol::{BitswapProtocol, Upgrade};
-// use crate::session::{Config as SessionConfig, SessionManager};
+use crate::protocol::ProtocolConfig;
 use crate::Block;
 
 const MAX_PROVIDERS: usize = 10000; // yolo
@@ -106,8 +105,6 @@ pub enum InboundRequest {
         cid: Cid,
     },
 }
-
-pub type BitswapHandler = OneShotHandler<BitswapProtocol, BitswapMessage, HandlerEvent>;
 
 /// Network behaviour that handles sending and receiving IPFS blocks.
 pub struct Bitswap {
@@ -198,12 +195,14 @@ enum ConnState {
 #[derive(Debug, Clone, PartialEq)]
 pub struct BitswapConfig {
     pub max_cached_peers: usize,
+    pub idle_timeout: Duration,
 }
 
 impl Default for BitswapConfig {
     fn default() -> Self {
         BitswapConfig {
             max_cached_peers: 20_000,
+            idle_timeout: Duration::from_secs(30),
         }
     }
 }
@@ -325,38 +324,13 @@ impl Bitswap {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
-#[allow(clippy::large_enum_variant)]
-pub enum HandlerEvent {
-    Upgrade,
-    Bitswap(BitswapMessage),
-}
-
-impl From<Upgrade> for HandlerEvent {
-    fn from(_: Upgrade) -> Self {
-        HandlerEvent::Upgrade
-    }
-}
-
-impl From<BitswapMessage> for HandlerEvent {
-    fn from(msg: BitswapMessage) -> Self {
-        HandlerEvent::Bitswap(msg)
-    }
-}
-
 impl NetworkBehaviour for Bitswap {
     type ConnectionHandler = BitswapHandler;
     type OutEvent = BitswapEvent;
 
     fn new_handler(&mut self) -> Self::ConnectionHandler {
-        OneShotHandler::new(
-            SubstreamProtocol::new(Default::default(), ()),
-            OneShotHandlerConfig {
-                keep_alive_timeout: Duration::from_secs(30),
-                outbound_substream_timeout: Duration::from_secs(30),
-                max_dial_negotiated: 64,
-            },
-        )
+        let protocol_config = ProtocolConfig::default();
+        BitswapHandler::new(protocol_config, self.config.idle_timeout)
     }
 
     fn addresses_of_peer(&mut self, _peer_id: &PeerId) -> Vec<Multiaddr> {
@@ -385,7 +359,7 @@ impl NetworkBehaviour for Bitswap {
                 return Some(NetworkBehaviourAction::NotifyHandler {
                     peer_id: *peer_id,
                     handler: NotifyHandler::Any,
-                    event: msg,
+                    event: BitswapHandlerIn::Message(msg),
                 });
             }
 
@@ -445,10 +419,7 @@ impl NetworkBehaviour for Bitswap {
     #[instrument(skip(self))]
     fn inject_event(&mut self, peer_id: PeerId, connection: ConnectionId, message: HandlerEvent) {
         match message {
-            HandlerEvent::Upgrade => {
-                // outbound upgrade
-            }
-            HandlerEvent::Bitswap(mut message) => {
+            HandlerEvent::Message { mut message } => {
                 inc!(BitswapMetrics::Requests);
 
                 // Process incoming message.
@@ -565,7 +536,7 @@ impl NetworkBehaviour for Bitswap {
                     return Poll::Ready(NetworkBehaviourAction::NotifyHandler {
                         peer_id: *peer_id,
                         handler: NotifyHandler::Any,
-                        event: msg,
+                        event: BitswapHandlerIn::Message(msg),
                     });
                 }
 
@@ -581,7 +552,7 @@ impl NetworkBehaviour for Bitswap {
                     return Poll::Ready(NetworkBehaviourAction::NotifyHandler {
                         peer_id: *peer_id,
                         handler: NotifyHandler::Any,
-                        event: msg,
+                        event: BitswapHandlerIn::Message(msg),
                     });
                 }
             }
