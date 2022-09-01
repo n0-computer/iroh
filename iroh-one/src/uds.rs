@@ -8,6 +8,7 @@ use hyper::{
     server::accept::Accept,
 };
 use iroh_gateway::{core::State, handlers::get_app_routes};
+use iroh_resolver::resolver::ContentLoader;
 use std::path::PathBuf;
 use std::{
     io,
@@ -97,8 +98,8 @@ impl connect_info::Connected<&UnixStream> for UdsConnectInfo {
     }
 }
 
-pub fn uds_server(
-    state: Arc<State>,
+pub fn uds_server<T: ContentLoader + std::marker::Unpin>(
+    state: Arc<State<T>>,
     path: PathBuf,
 ) -> Option<
     Server<
