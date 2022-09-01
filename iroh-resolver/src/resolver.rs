@@ -11,8 +11,8 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use caches::Cache;
 use cid::Cid;
-use iroh_metrics::inc;
 use futures::{Stream, StreamExt};
+use iroh_metrics::inc;
 use iroh_rpc_client::Client;
 use libipld::codec::{Decode, Encode};
 use libipld::prelude::Codec as _;
@@ -397,7 +397,6 @@ pub enum Source {
 #[derive(Debug, Clone)]
 pub struct Resolver<T: ContentLoader> {
     loader: T,
-    metrics: Metrics,
     provider_cache: ProviderCache,
 }
 
