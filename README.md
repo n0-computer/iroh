@@ -2,14 +2,26 @@
 
 Iroh is a next-generation implementation of the Interplanetary File System ([IPFS](https://ipfs.io)) for Cloud & Mobile platforms.
 
-IPFS is a networking protocol for exchanging _content-addressed_ blocks of immutable data. “Content-addressed” means referring to data by the *hash of its content*, which makes the reference unique and verifiable. These two properties make it possible to get data from *any* node in the network that speaks the IPFS protocol, including IPFS content being served by other implementations of the protocol.
+IPFS is a networking protocol for exchanging _content-addressed_ blocks of immutable data. “Content-addressed” means referring to data by the *hash of its content*, which makes the reference unique and verifiable. These two properties make it possible to get data from *any* node in the network that speaks the IPFS protocol, including IPFS content being served by other implementations of IPFS.
 
-- Iroh Cloud is an IPFS implementation purpose-built for running at scale on datacenter-grade infrastructure.
-- Iroh Mobile is an IPFS library for iOS & Android app development. Both libraries are operating system specific, written in Rust and wrapped in native language APIs. 
+This repo is a common core for three distributions of iroh:
+- **Iroh Cloud:** core features of iroh split into configurable microservices, optimized for running at datacenter scale.
+- **Iroh One:** A select set of iroh cloud features packaged as a single binary for simplified deployment.
+- **Iroh Mobile:** iOS & Android libraries that bring efficient data distribution to mobile apps.
 
-Iroh has yet to publish a release. We're targeting the end of October 2022 for an initial version.
+## Project Status: Early Days
 
-Iroh is built & maintained by [number 0](https://n0.computer).
+Iroh has yet to publish a release. We are targeting the end of October 2022 for an initial version, which will coincide with the launch of a proper web site & documentation. Before iroh's first release we're in build-from-source and read-source-to-understand-how-it-works territory.
+
+In the meantime, there's a [quickstart guide](./quickstart.md) if you'd like to get a feel for running an iroh cloud gateway. 
+
+## Benchmarks
+
+A full suite of automated benchmarks is in the works. [this talk](https://www.youtube.com/watch?v=qPBR2K2X6cs&t=161s) goes into some early numbers.
+
+## Who's behind this?
+
+Iroh is built & maintained by [number 0](https://n0.computer). We're a founder-backed startup hell-bent on building efficient distributed systems software.
 
 ## License
 
