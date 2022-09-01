@@ -463,6 +463,19 @@ async fn fetch_providers(
     Ok(futures::stream::select(a, b))
 }
 
+impl InnerLoaderContext {
+    pub fn root(&self) -> Option<Cid> {
+        if let Some(ref root) = self.root_cid {
+            return Some(*root);
+        }
+        if let CidOrDomain::Cid(ref root) = self.path.root() {
+            return Some(*root);
+        }
+
+        None
+    }
+}
+
 impl LoaderContext {
     pub fn from_path(provider_cache: ProviderCache, path: Path) -> Self {
         LoaderContext(Arc::new(Mutex::new(InnerLoaderContext {
@@ -487,25 +500,18 @@ impl LoaderContext {
         if let Some(provs) = this.provider_cache.get(cid).await {
             this.providers.extend(provs);
         }
-        if let Some(ref root) = this.root_cid {
+        if let Some(ref root) = this.root() {
             if let Some(provs) = this.provider_cache.get(root).await {
-                this.providers.extend(provs);
-            }
-        }
-        if let CidOrDomain::Cid(ref cid) = this.path.root() {
-            if let Some(provs) = this.provider_cache.get(cid).await {
                 this.providers.extend(provs);
             }
         }
 
         let mut streams = vec![];
-        if this.providers.len() < 2 {
+        if this.providers.len() < 20 {
             streams.push(fetch_providers(client, cid).await?);
-            if let Some(ref root) = this.root_cid {
+
+            if let Some(ref root) = this.root() {
                 streams.push(fetch_providers(client, root).await?);
-            }
-            if let CidOrDomain::Cid(ref cid) = this.path.root() {
-                streams.push(fetch_providers(client, cid).await?);
             }
         }
 
