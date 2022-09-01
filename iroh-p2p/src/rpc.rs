@@ -62,8 +62,6 @@ impl RpcP2p for P2p {
             .map(|p| PeerId::from_bytes(&p).context("invalid provider"))
             .collect::<Result<_>>()?;
 
-        ensure!(!providers.is_empty(), "missing providers for: {}", cid);
-
         let (s, r) = oneshot::channel();
         let msg = RpcMessage::BitswapRequest {
             cids: vec![cid],
