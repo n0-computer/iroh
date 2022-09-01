@@ -14,7 +14,7 @@ pub struct PeerManager {
     bad_peers: caches::RawLRU<PeerId, ()>,
 }
 
-const DEFAULT_BAD_PEER_CAP: usize = 4096;
+const DEFAULT_BAD_PEER_CAP: usize = 10 * 4096;
 
 impl Default for PeerManager {
     fn default() -> Self {
@@ -93,11 +93,7 @@ impl NetworkBehaviour for PeerManager {
     ) {
         if let Some(peer_id) = peer_id {
             match error {
-                DialError::ConnectionLimit(_)
-                | DialError::DialPeerConditionFalse(_)
-                | DialError::Aborted
-                | DialError::ConnectionIo(_)
-                | DialError::NoAddresses => {}
+                DialError::ConnectionLimit(_) | DialError::DialPeerConditionFalse(_) => {}
                 _ => {
                     self.bad_peers.put(peer_id, ());
                 }
