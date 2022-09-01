@@ -236,7 +236,7 @@ impl std::fmt::Display for GatewayHistograms {
     }
 }
 
-const METRICS_CNT_REQUESTS_TOTAL: &str = "requests_total";
+const METRICS_CNT_REQUESTS_TOTAL: &str = "requests";
 const METRICS_TIME_TO_FETCH_FIRST_BLOCK: &str = "time_to_fetch_first_block";
 const METRICS_TIME_TO_SERVE_FIRST_BLOCK: &str = "time_to_serve_first_block";
 const METRICS_TIME_TO_SERVE_FULL_FILE: &str = "time_to_serve_full_file";
