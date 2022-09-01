@@ -1,6 +1,6 @@
-use std::collections::HashSet;
 use std::task::{Context, Poll};
 
+use caches::Cache;
 use libp2p::{
     core::{connection::ConnectionId, transport::ListenerId, ConnectedPoint},
     swarm::{
@@ -10,10 +10,18 @@ use libp2p::{
     Multiaddr, PeerId,
 };
 
-#[derive(Default)]
 pub struct PeerManager {
-    // TODO: limit size
-    bad_peers: HashSet<PeerId>,
+    bad_peers: caches::RawLRU<PeerId, ()>,
+}
+
+const DEFAULT_BAD_PEER_CAP: usize = 4096;
+
+impl Default for PeerManager {
+    fn default() -> Self {
+        PeerManager {
+            bad_peers: caches::RawLRU::new(DEFAULT_BAD_PEER_CAP).unwrap(),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -87,9 +95,11 @@ impl NetworkBehaviour for PeerManager {
             match error {
                 DialError::ConnectionLimit(_)
                 | DialError::DialPeerConditionFalse(_)
+                | DialError::Aborted
+                | DialError::ConnectionIo(_)
                 | DialError::NoAddresses => {}
                 _ => {
-                    self.bad_peers.insert(peer_id);
+                    self.bad_peers.put(peer_id, ());
                 }
             }
         }
