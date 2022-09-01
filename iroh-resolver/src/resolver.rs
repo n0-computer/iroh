@@ -408,7 +408,6 @@ struct InnerLoaderContext {
     provider_cache: ProviderCache,
     providers: HashSet<PeerId>,
     path: Path,
-    root_cid: Option<Cid>,
 }
 
 #[derive(Debug, Clone)]
@@ -465,14 +464,11 @@ async fn fetch_providers(
 
 impl InnerLoaderContext {
     pub fn root(&self) -> Option<Cid> {
-        if let Some(ref root) = self.root_cid {
-            return Some(*root);
+        if let CidOrDomain::Cid(root) = self.path.root() {
+            Some(*root)
+        } else {
+            None
         }
-        if let CidOrDomain::Cid(ref root) = self.path.root() {
-            return Some(*root);
-        }
-
-        None
     }
 }
 
@@ -482,7 +478,6 @@ impl LoaderContext {
             provider_cache,
             providers: Default::default(),
             path,
-            root_cid: None,
         })))
     }
 
@@ -507,7 +502,7 @@ impl LoaderContext {
         }
 
         let mut streams = vec![];
-        if this.providers.len() < 20 {
+        if this.providers.len() < 5 {
             streams.push(fetch_providers(client, cid).await?);
 
             if let Some(ref root) = this.root() {
