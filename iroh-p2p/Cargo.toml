@@ -38,6 +38,7 @@ ssh-key = { version = "0.4.2", features = ["ed25519", "std", "rand_core"], defau
 rand = "0.8.5"
 async-stream = "0.3.3"
 tempfile = "3.3.0"
+tokio-stream = "0.1.9"
  
 [dependencies.libp2p]
 version = "0.48"

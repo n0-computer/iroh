@@ -716,6 +716,21 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                     );
                 }
             }
+            RpcMessage::BitswapInjectProviders {
+                cid,
+                response_channel,
+                providers,
+            } => {
+                let res = self
+                    .swarm
+                    .behaviour_mut()
+                    .want_block(cid, 1000, providers) // TODO: priority?
+                    .map_err(|e| anyhow!("Failed to send a bitswap want_block: {:?}", e));
+
+                if response_channel.send(res).is_err() {
+                    warn!("failed to send inject provider for {}", cid);
+                }
+            }
             RpcMessage::ProviderRequest {
                 key,
                 response_channel,
@@ -920,6 +935,7 @@ mod tests {
 
     use super::*;
     use anyhow::Result;
+    use futures::TryStreamExt;
     use iroh_rpc_types::{
         p2p::{P2pClientAddr, P2pServerAddr},
         Addr,
@@ -1018,16 +1034,50 @@ mod tests {
                 .parse()
                 .unwrap();
             if dht {
-                let providers = client.p2p.unwrap().fetch_providers_dht(&c).await?;
+                let providers: Vec<PeerId> = client
+                    .p2p
+                    .unwrap()
+                    .fetch_providers_dht(&c)
+                    .await?
+                    .try_collect::<Vec<_>>()
+                    .await?
+                    .into_iter()
+                    .flat_map(|p| p.into_iter())
+                    .collect();
+                println!("{:?}", providers);
                 assert!(!providers.is_empty());
-                assert!(providers.len() >= PROVIDER_LIMIT);
+                assert!(
+                    providers.len() >= PROVIDER_LIMIT,
+                    "{} < {}",
+                    providers.len(),
+                    PROVIDER_LIMIT
+                );
             } else {
                 // force to connect to providers, so we have a chance
-                let providers = client.p2p.clone().unwrap().fetch_providers_dht(&c).await?;
+                let providers: Vec<_> = client
+                    .p2p
+                    .clone()
+                    .unwrap()
+                    .fetch_providers_dht(&c)
+                    .await?
+                    .try_collect::<Vec<_>>()
+                    .await?
+                    .into_iter()
+                    .flat_map(|p| p.into_iter())
+                    .collect();
                 assert!(!providers.is_empty());
                 println!("found providers dht: {:?}", providers);
 
-                let providers = client.p2p.unwrap().fetch_providers_bitswap(&c).await?;
+                let providers: Vec<_> = client
+                    .p2p
+                    .unwrap()
+                    .fetch_providers_bitswap(&c)
+                    .await?
+                    .try_collect::<Vec<_>>()
+                    .await?
+                    .into_iter()
+                    .flat_map(|p| p.into_iter())
+                    .collect();
                 assert!(!providers.is_empty());
                 println!("found providers bitswap: {:?}", providers);
             }

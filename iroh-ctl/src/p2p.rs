@@ -1,4 +1,5 @@
 use anyhow::Error;
+use futures::StreamExt;
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -262,9 +263,12 @@ pub async fn run_command(rpc: Client, cmd: P2p) -> Result<()> {
         }
         P2pCommands::Dht(d) => match d.command {
             DhtCommands::FindProvs { cid } => {
-                let providers = rpc.try_p2p()?.fetch_providers_dht(&cid).await?;
-                for prov in providers {
-                    println!("{}", prov);
+                let mut res = rpc.try_p2p()?.fetch_providers_dht(&cid).await?;
+                while let Some(providers) = res.next().await {
+                    let providers = providers?;
+                    for provider in providers {
+                        println!("{:#?}", provider);
+                    }
                 }
             }
             _ => todo!("not yet implemented - {:?}", d.command),
@@ -279,12 +283,22 @@ pub async fn run_command(rpc: Client, cmd: P2p) -> Result<()> {
                 println!("{:#?}", res);
             }
             DevCommands::FetchProvidersDht { cid } => {
-                let res = rpc.try_p2p()?.fetch_providers_dht(&cid).await?;
-                println!("{:#?}", res);
+                let mut res = rpc.try_p2p()?.fetch_providers_dht(&cid).await?;
+                while let Some(providers) = res.next().await {
+                    let providers = providers?;
+                    for provider in providers {
+                        println!("{:#?}", provider);
+                    }
+                }
             }
             DevCommands::FetchProvidersBitswap { cid } => {
-                let res = rpc.try_p2p()?.fetch_providers_bitswap(&cid).await?;
-                println!("{:#?}", res);
+                let mut res = rpc.try_p2p()?.fetch_providers_bitswap(&cid).await?;
+                while let Some(providers) = res.next().await {
+                    let providers = providers?;
+                    for provider in providers {
+                        println!("{:#?}", provider);
+                    }
+                }
             }
             DevCommands::Gossipsub(g) => match g.command {
                 GossipsubCommands::Publish { topic, file } => {

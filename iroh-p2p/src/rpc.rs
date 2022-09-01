@@ -1,10 +1,11 @@
 use std::collections::{HashMap, HashSet};
 use std::io;
+use std::pin::Pin;
 
-use anyhow::{bail, ensure, Context, Result};
+use anyhow::{anyhow, ensure, Context, Result};
 use bytes::Bytes;
 use cid::Cid;
-use futures::channel::oneshot;
+use futures::{channel::oneshot, Stream, StreamExt};
 use libp2p::gossipsub::{
     error::{PublishError, SubscriptionError},
     MessageId, TopicHash,
@@ -14,7 +15,7 @@ use libp2p::Multiaddr;
 use libp2p::PeerId;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::Sender;
-use tracing::{trace, warn};
+use tracing::trace;
 
 use async_trait::async_trait;
 use iroh_bitswap::{Block, QueryError};
@@ -85,9 +86,42 @@ impl RpcP2p for P2p {
     }
 
     #[tracing::instrument(skip(self, req))]
-    async fn fetch_provider_dht(&self, req: ProviderKey) -> Result<Providers> {
+    async fn inject_provider_bitswap(&self, req: BitswapRequest) -> Result<()> {
+        let cid = Cid::read_bytes(io::Cursor::new(req.cid))?;
+
+        trace!("received BitswapRequest: {:?}", cid);
+        let providers = req
+            .providers
+            .with_context(|| format!("missing providers for: {}", cid))?;
+
+        let providers: HashSet<PeerId> = providers
+            .providers
+            .into_iter()
+            .map(|p| PeerId::from_bytes(&p).context("invalid provider"))
+            .collect::<Result<_>>()?;
+
+        ensure!(!providers.is_empty(), "missing providers for: {}", cid);
+
+        let (s, r) = oneshot::channel();
+        let msg = RpcMessage::BitswapInjectProviders {
+            cid,
+            providers,
+            response_channel: s,
+        };
+
+        self.sender.send(msg).await?;
+        r.await?.context("bitswap inject provider")?;
+
+        Ok(())
+    }
+
+    #[tracing::instrument(skip(self, req))]
+    async fn fetch_provider_dht(
+        &self,
+        req: ProviderKey,
+    ) -> Result<Pin<Box<dyn Stream<Item = Result<Providers>> + Send>>> {
         trace!("received ProviderRequest: {:?}", req.key);
-        let (s, mut r) = mpsc::channel(1024);
+        let (s, r) = mpsc::channel(1024);
         let msg = RpcMessage::ProviderRequest {
             key: ProviderRequestKey::Dht(req.key.clone().into()),
             response_channel: s,
@@ -95,33 +129,22 @@ impl RpcP2p for P2p {
 
         self.sender.send(msg).await?;
 
-        // TODO: streaming response
-        let mut providers = Vec::new();
-        while let Some(provider) = r.recv().await {
-            match provider {
-                Ok(new_providers) => {
-                    for provider in new_providers {
-                        providers.push(provider.to_bytes());
-                    }
-                }
-                Err(e) => {
-                    if providers.is_empty() {
-                        bail!("{}", e);
-                    } else {
-                        warn!("error fetching providers for key {:?}: {:?}", req.key, e);
-                        break;
-                    }
-                }
-            }
-        }
+        let r = tokio_stream::wrappers::ReceiverStream::new(r);
+        Ok(Box::pin(r.map(|providers| {
+            let providers = providers.map_err(|e| anyhow!(e))?;
+            let providers = providers.into_iter().map(|p| p.to_bytes()).collect();
 
-        Ok(Providers { providers })
+            Ok(Providers { providers })
+        })))
     }
 
     #[tracing::instrument(skip(self, req))]
-    async fn fetch_provider_bitswap(&self, req: ProviderKey) -> Result<Providers> {
+    async fn fetch_provider_bitswap(
+        &self,
+        req: ProviderKey,
+    ) -> Result<Pin<Box<dyn Stream<Item = Result<Providers>> + Send>>> {
         trace!("received ProviderRequest: {:?}", req.key);
-        let (s, mut r) = mpsc::channel(1024);
+        let (s, r) = mpsc::channel(1024);
         let msg = RpcMessage::ProviderRequest {
             key: ProviderRequestKey::Bitswap(Cid::try_from(&req.key[..])?),
             response_channel: s,
@@ -129,27 +152,13 @@ impl RpcP2p for P2p {
 
         self.sender.send(msg).await?;
 
-        // TODO: streaming response
-        let mut providers = Vec::new();
-        while let Some(provider) = r.recv().await {
-            match provider {
-                Ok(new_providers) => {
-                    for provider in new_providers {
-                        providers.push(provider.to_bytes());
-                    }
-                }
-                Err(e) => {
-                    if providers.is_empty() {
-                        bail!("{}", e);
-                    } else {
-                        warn!("error fetching providers for key {:?}: {:?}", req.key, e);
-                        break;
-                    }
-                }
-            }
-        }
+        let r = tokio_stream::wrappers::ReceiverStream::new(r);
+        Ok(Box::pin(r.map(|providers| {
+            let providers = providers.map_err(|e| anyhow!(e))?;
+            let providers = providers.into_iter().map(|p| p.to_bytes()).collect();
 
-        Ok(Providers { providers })
+            Ok(Providers { providers })
+        })))
     }
 
     #[tracing::instrument(skip(self))]
@@ -374,6 +383,11 @@ pub enum RpcMessage {
     BitswapRequest {
         cids: Vec<Cid>,
         response_channels: Vec<oneshot::Sender<Result<Block, QueryError>>>,
+        providers: HashSet<PeerId>,
+    },
+    BitswapInjectProviders {
+        cid: Cid,
+        response_channel: oneshot::Sender<Result<()>>,
         providers: HashSet<PeerId>,
     },
     ProviderRequest {

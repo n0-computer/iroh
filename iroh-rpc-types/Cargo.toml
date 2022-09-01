@@ -21,6 +21,7 @@ tonic-health = { version = "0.7", optional = true }
 tokio = { version = "1", features = ["net", "sync"] }
 tokio-stream = { version = "0.1.9", optional = true, features = ["net"] }
 paste = "1.0.7"
+futures = "0.3.24"
 
 [build-dependencies]
 prost-build = "0.11.1"
