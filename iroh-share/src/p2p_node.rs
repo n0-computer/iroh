@@ -63,7 +63,7 @@ impl Loader {
 
 #[async_trait]
 impl ContentLoader for Loader {
-    async fn load_cid(&self, cid: &Cid, _ctx: &mut LoaderContext) -> Result<LoadedCid> {
+    async fn load_cid(&self, cid: &Cid, _ctx: &LoaderContext) -> Result<LoadedCid> {
         let cid = *cid;
         let providers = self.providers.lock().await.clone();
 

@@ -11,8 +11,8 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use caches::Cache;
 use cid::Cid;
-use futures::Stream;
 use iroh_metrics::inc;
+use futures::{Stream, StreamExt};
 use iroh_rpc_client::Client;
 use libipld::codec::{Decode, Encode};
 use libipld::prelude::Codec as _;
@@ -402,7 +402,10 @@ pub struct Resolver<T: ContentLoader> {
 }
 
 #[derive(Debug, Clone)]
-pub struct LoaderContext {
+pub struct LoaderContext(Arc<Mutex<InnerLoaderContext>>);
+
+#[derive(Debug)]
+struct InnerLoaderContext {
     provider_cache: ProviderCache,
     providers: HashSet<PeerId>,
     path: Path,
@@ -449,134 +452,90 @@ impl ProviderCache {
     }
 }
 
-async fn fetch_providers(client: &Client, cid: &Cid) -> Result<HashSet<PeerId>> {
+async fn fetch_providers(
+    client: &Client,
+    cid: &Cid,
+) -> Result<impl Stream<Item = Result<HashSet<PeerId>>>> {
     let p2p = client.try_p2p()?;
 
-    let a = p2p.fetch_providers_dht(cid);
-    let b = p2p.fetch_providers_bitswap(cid);
-    tokio::pin!(a);
-    tokio::pin!(b);
+    let a = p2p.fetch_providers_dht(cid).await?;
+    let b = p2p.fetch_providers_bitswap(cid).await?;
 
-    let providers = match futures::future::try_select(a, b).await {
-        Ok(futures::future::Either::Left((providers, fut))) => {
-            if providers.is_empty() {
-                fut.await?
-            } else {
-                info!(
-                    "found providers for {} on the dht ({})",
-                    cid,
-                    providers.len()
-                );
-
-                providers
-            }
-        }
-        Ok(futures::future::Either::Right((providers, fut))) => {
-            if providers.is_empty() {
-                fut.await?
-            } else {
-                info!(
-                    "found providers for {} on bitswap ({})",
-                    cid,
-                    providers.len()
-                );
-                providers
-            }
-        }
-        Err(futures::future::Either::Left((e, fut))) => {
-            warn!("failed to fetch providers dht: {:?}", e);
-
-            let providers = fut.await?;
-            info!(
-                "found providers for {} on bitswap ({})",
-                cid,
-                providers.len()
-            );
-            providers
-        }
-        Err(futures::future::Either::Right((e, fut))) => {
-            warn!("failed to fetch providers bitswap: {:?}", e);
-
-            let providers = fut.await?;
-            info!(
-                "found providers for {} on the dht ({})",
-                cid,
-                providers.len()
-            );
-            providers
-        }
-    };
-
-    Ok(providers)
+    Ok(futures::stream::select(a, b))
 }
 
 impl LoaderContext {
     pub fn from_path(provider_cache: ProviderCache, path: Path) -> Self {
-        LoaderContext {
+        LoaderContext(Arc::new(Mutex::new(InnerLoaderContext {
             provider_cache,
             providers: Default::default(),
             path,
             root_cid: None,
-        }
+        })))
     }
 
-    pub async fn load_providers(&mut self, client: &Client, cid: &Cid) -> Result<()> {
+    pub async fn providers(&self) -> HashSet<PeerId> {
+        self.0.lock().await.providers.clone()
+    }
+
+    pub async fn load_providers(
+        &self,
+        client: &Client,
+        cid: &Cid,
+    ) -> Result<impl Stream<Item = Result<HashSet<PeerId>>>> {
+        let this = &mut *self.0.lock().await;
         // Check caches
-        if let Some(provs) = self.provider_cache.get(cid).await {
-            self.providers.extend(provs);
+        if let Some(provs) = this.provider_cache.get(cid).await {
+            this.providers.extend(provs);
         }
-        if let Some(ref root) = self.root_cid {
-            if let Some(provs) = self.provider_cache.get(root).await {
-                self.providers.extend(provs);
+        if let Some(ref root) = this.root_cid {
+            if let Some(provs) = this.provider_cache.get(root).await {
+                this.providers.extend(provs);
             }
         }
-        if let CidOrDomain::Cid(ref cid) = self.path.root() {
-            if let Some(provs) = self.provider_cache.get(cid).await {
-                self.providers.extend(provs);
+        if let CidOrDomain::Cid(ref cid) = this.path.root() {
+            if let Some(provs) = this.provider_cache.get(cid).await {
+                this.providers.extend(provs);
             }
         }
 
-        if self.providers.len() > 2 {
-            return Ok(());
+        let mut streams = vec![];
+        if this.providers.len() < 2 {
+            streams.push(fetch_providers(client, cid).await?);
+            if let Some(ref root) = this.root_cid {
+                streams.push(fetch_providers(client, root).await?);
+            }
+            if let CidOrDomain::Cid(ref cid) = this.path.root() {
+                streams.push(fetch_providers(client, cid).await?);
+            }
         }
 
-        let mut futs = vec![fetch_providers(client, cid)];
-        if let Some(ref root) = self.root_cid {
-            futs.push(fetch_providers(client, root));
-        }
-        if let CidOrDomain::Cid(ref cid) = self.path.root() {
-            futs.push(fetch_providers(client, cid));
-        }
+        Ok(futures::stream::select_all(streams))
+    }
 
-        let provider_list = futures::future::try_join_all(futs).await?;
-        let providers: HashSet<PeerId> = provider_list.into_iter().flatten().collect();
-
-        if !providers.is_empty() {
-            self.provider_cache.put(*cid, providers.clone()).await;
-        }
-
-        self.providers.extend(providers);
-
-        Ok(())
+    async fn put_providers(&self, cid: Cid, providers: HashSet<PeerId>) {
+        let this = &mut self.0.lock().await;
+        this.provider_cache.put(cid, providers.clone()).await;
+        this.providers.extend(providers);
     }
 }
 
 #[async_trait]
 pub trait ContentLoader: Sync + Send + std::fmt::Debug + Clone + 'static {
     /// Loads the actual content of a given cid.
-    async fn load_cid(&self, cid: &Cid, ctx: &mut LoaderContext) -> Result<LoadedCid>;
+    async fn load_cid(&self, cid: &Cid, ctx: &LoaderContext) -> Result<LoadedCid>;
 }
 
 #[async_trait]
 impl<T: ContentLoader> ContentLoader for Arc<T> {
-    async fn load_cid(&self, cid: &Cid, ctx: &mut LoaderContext) -> Result<LoadedCid> {
+    async fn load_cid(&self, cid: &Cid, ctx: &LoaderContext) -> Result<LoadedCid> {
         self.as_ref().load_cid(cid, ctx).await
     }
 }
 
 #[async_trait]
 impl ContentLoader for Client {
-    async fn load_cid(&self, cid: &Cid, ctx: &mut LoaderContext) -> Result<LoadedCid> {
+    async fn load_cid(&self, cid: &Cid, ctx: &LoaderContext) -> Result<LoadedCid> {
         // TODO: better strategy
 
         let cid = *cid;
@@ -594,29 +553,51 @@ impl ContentLoader for Client {
             }
         }
 
-        ctx.load_providers(self, &cid).await?;
-        info!("total providers count: {}", ctx.providers.len());
+        let mut providers_stream = ctx.load_providers(self, &cid).await?;
+        let p2p = self.try_p2p()?.clone();
+        let providers = ctx.providers().await;
+        let ctx = ctx.clone();
 
-        let bytes = self
-            .try_p2p()?
-            .fetch_bitswap(cid, ctx.providers.clone())
-            .await?;
+        let providers_task = tokio::spawn(async move {
+            while let Some(providers) = providers_stream.next().await {
+                match providers {
+                    Ok(providers) => {
+                        info!("found providers {} for: {}", providers.len(), cid);
+                        // update cache
+                        ctx.put_providers(cid, providers.clone()).await;
+                        if let Err(e) = p2p.inject_provider_bitswap(cid, providers).await {
+                            warn!("failed to inject providers: {}: {:?}", cid, e);
+                        }
+                    }
+                    Err(e) => {
+                        warn!("provider fetch failed for: {}: {:?}", cid, e);
+                        // ignoring errors, as we try to collect as many providers as possible
+                    }
+                }
+            }
+        });
+
+        // launch fetching using the initial set of cached providers
+        let bytes = self.try_p2p()?.fetch_bitswap(cid, providers).await?;
 
         // trigger storage in the background
-        let cloned = bytes.clone();
-        let rpc = self.clone();
+        let clone = bytes.clone();
+        let store = self.store.as_ref().cloned();
+
         tokio::spawn(async move {
-            let clone2 = cloned.clone();
+            let clone2 = clone.clone();
             let links =
                 tokio::task::spawn_blocking(move || parse_links(&cid, &clone2).unwrap_or_default())
                     .await
                     .unwrap_or_default();
 
-            let len = cloned.len();
+            let len = clone.len();
             let links_len = links.len();
-            if let Some(store_rpc) = rpc.store.as_ref() {
-                match store_rpc.put(cid, cloned, links).await {
-                    Ok(_) => debug!("stored {} ({}bytes, {}links)", cid, len, links_len),
+            if let Some(store_rpc) = store.as_ref() {
+                match store_rpc.put(cid, clone, links).await {
+                    Ok(_) => {
+                        debug!("stored {} ({}bytes, {}links)", cid, len, links_len)
+                    }
                     Err(err) => {
                         warn!("failed to store {}: {:?}", cid, err);
                     }
@@ -627,6 +608,7 @@ impl ContentLoader for Client {
         });
 
         trace!("retrieved from p2p");
+        providers_task.abort();
 
         Ok(LoadedCid {
             data: bytes,
@@ -1097,7 +1079,7 @@ mod tests {
 
     #[async_trait]
     impl ContentLoader for HashMap<Cid, Bytes> {
-        async fn load_cid(&self, cid: &Cid, _ctx: &mut LoaderContext) -> Result<LoadedCid> {
+        async fn load_cid(&self, cid: &Cid, _ctx: &LoaderContext) -> Result<LoadedCid> {
             match self.get(cid) {
                 Some(b) => Ok(LoadedCid {
                     data: b.clone(),

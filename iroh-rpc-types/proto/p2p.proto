@@ -7,8 +7,9 @@ import "google/protobuf/empty.proto";
 service P2p {
   rpc Version(google.protobuf.Empty) returns (VersionResponse) {}
   rpc FetchBitswap(BitswapRequest) returns (BitswapResponse) {}
-  rpc FetchProviderDht(Key) returns (Providers) {}
-  rpc FetchProviderBitswap(Key) returns (Providers) {}
+  rpc FetchProviderDht(Key) returns (stream Providers) {}
+  rpc FetchProviderBitswap(Key) returns (stream Providers) {}
+  rpc InjectProviderBitswap(BitswapRequest) returns (google.protobuf.Empty) {}
   rpc GetListeningAddrs(google.protobuf.Empty) returns (GetListeningAddrsResponse) {}
   rpc GetPeers(google.protobuf.Empty) returns (GetPeersResponse) {}
   rpc PeerConnect(ConnectRequest) returns (ConnectResponse) {}
