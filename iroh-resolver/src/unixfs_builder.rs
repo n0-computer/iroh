@@ -36,7 +36,7 @@ enum DirectoryType {
 }
 
 /// Representation of a constructed Directory.
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct Directory {
     name: String,
     entries: Vec<Entry>,
@@ -136,7 +136,18 @@ impl Debug for Content {
     }
 }
 
+impl PartialEq for Content {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Content::Reader(_), Content::Reader(_)) => true,
+            (Content::Path(self_path), Content::Path(other_path)) => self_path == other_path,
+            _ => false,
+        }
+    }
+}
+
 /// Representation of a constructed File.
+#[derive(PartialEq)]
 pub struct File {
     name: String,
     content: Content,
@@ -270,7 +281,7 @@ impl FileBuilder {
 
 /// Entry is the kind of entry in a directory can be either a file or a
 /// folder (if recursive directories are allowed)
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 enum Entry {
     File(File),
     Directory(Directory),
@@ -282,6 +293,7 @@ pub struct DirectoryBuilder {
     name: Option<String>,
     entries: Vec<Entry>,
     typ: DirectoryType,
+    recursive: bool,
 }
 
 impl Default for DirectoryBuilder {
@@ -290,6 +302,7 @@ impl Default for DirectoryBuilder {
             name: None,
             entries: Default::default(),
             typ: DirectoryType::Basic,
+            recursive: false,
         }
     }
 }
@@ -304,17 +317,26 @@ impl DirectoryBuilder {
         self
     }
 
+    pub fn allow_recursive(&mut self) -> &mut Self {
+        self.recursive = true;
+        self
+    }
+
     pub fn with_name<N: Into<String>>(&mut self, name: N) -> &mut Self {
         self.name = Some(name.into());
         self
     }
 
-    pub fn add_dir(&mut self, dir: Directory) -> &mut Self {
+    pub fn add_dir(&mut self, dir: Directory) -> Result<&mut Self> {
+        if !self.recursive {
+            anyhow::bail!("recursive directories not allowed");
+        }
+
         if self.typ == DirectoryType::Basic && self.entries.len() >= DIRECTORY_LINK_LIMIT {
             self.typ = DirectoryType::Hamt;
         }
         self.entries.push(Entry::Directory(dir));
-        self
+        Ok(self)
     }
 
     pub fn add_file(&mut self, file: File) -> &mut Self {
@@ -326,7 +348,9 @@ impl DirectoryBuilder {
     }
 
     pub fn build(self) -> Result<Directory> {
-        let DirectoryBuilder { name, entries, typ } = self;
+        let DirectoryBuilder {
+            name, entries, typ, ..
+        } = self;
 
         if typ == DirectoryType::Hamt {
             anyhow::bail!("too many links to fit into one chunk, must be encoded as a HAMT. However, HAMT creation has not yet been implemented.");
@@ -406,10 +430,10 @@ pub async fn add_file<S: Store>(path: &Path, rpc: Option<S>) -> Result<Cid> {
 /// - storing the content using `rpc.store`
 /// - returns the root Cid
 /// - wraps into a UnixFs directory to preserve the filename
-pub async fn add_dir<S: Store>(path: &Path, rpc: Option<S>, _recursive: bool) -> Result<Cid> {
+pub async fn add_dir<S: Store>(path: &Path, rpc: Option<S>, recursive: bool) -> Result<Cid> {
     ensure!(path.is_dir(), "provided path was not a directory");
 
-    let dir = make_dir_from_path(path).await?;
+    let dir = make_dir_from_path(path, recursive).await?;
     // encode and store
     let mut root = None;
     // wrap dir in dir to preserve file name
@@ -428,7 +452,7 @@ pub async fn add_dir<S: Store>(path: &Path, rpc: Option<S>, _recursive: bool) ->
 }
 
 #[async_recursion(?Send)]
-async fn make_dir_from_path<P: Into<PathBuf>>(path: P) -> Result<Directory> {
+async fn make_dir_from_path<P: Into<PathBuf>>(path: P, recursive: bool) -> Result<Directory> {
     let path = path.into();
     let mut dir = DirectoryBuilder::new();
     dir.with_name(
@@ -436,6 +460,9 @@ async fn make_dir_from_path<P: Into<PathBuf>>(path: P) -> Result<Directory> {
             .and_then(|s| s.to_str())
             .unwrap_or_default(),
     );
+    if recursive {
+        dir.allow_recursive();
+    }
     let entries = std::fs::read_dir(path.clone())?;
     for entry in entries {
         let entry = entry?;
@@ -444,8 +471,8 @@ async fn make_dir_from_path<P: Into<PathBuf>>(path: P) -> Result<Directory> {
             let f = FileBuilder::new().with_path(path).build().await?;
             dir.add_file(f);
         } else if path.is_dir() {
-            let d = make_dir_from_path(path).await?;
-            dir.add_dir(d);
+            let d = make_dir_from_path(path, recursive).await?;
+            dir.add_dir(d)?;
         } else {
             anyhow::bail!("directory entry is neither file nor directory")
         }
@@ -458,6 +485,7 @@ mod tests {
     use super::*;
     use anyhow::Result;
     use futures::TryStreamExt;
+    use std::io::prelude::*;
 
     #[tokio::test]
     async fn test_builder_basics() -> Result<()> {
@@ -503,8 +531,27 @@ mod tests {
         assert_eq!(links[1].cid, baz_encoded[0].0);
 
         // TODO: check content
-        // TODO: add nested directory
+        Ok(())
+    }
 
+    #[tokio::test]
+    async fn test_recursive_dir_builder() -> Result<()> {
+        let dir = DirectoryBuilder::new();
+        let dir = dir.build()?;
+
+        let mut no_recursive = DirectoryBuilder::new();
+        if no_recursive.add_dir(dir).is_ok() {
+            panic!("shouldn't be able to add a directory to a non-recursive directory builder");
+        }
+
+        let dir = DirectoryBuilder::new();
+        let dir = dir.build()?;
+
+        let mut recursive_dir_builder = DirectoryBuilder::new();
+        recursive_dir_builder.allow_recursive();
+        recursive_dir_builder
+            .add_dir(dir)
+            .expect("recursive directories allowed");
         Ok(())
     }
 
@@ -556,8 +603,6 @@ mod tests {
         assert_eq!(links[1].cid, baz_encoded[0].0);
 
         // TODO: check content
-        // TODO: add nested directory
-
         Ok(())
     }
 
@@ -633,41 +678,90 @@ mod tests {
         Ok(())
     }
 
-    //     fn test_chunk_stream(num_chunks: usize) -> impl Stream<Item = std::io::Result<BytesMut>> {
-    //         futures::stream::iter((0..num_chunks).map(|n| Ok(BytesMut::from(&n.to_be_bytes()[..]))))
-    //     }
+    #[tokio::test]
+    async fn test_hamt_detection() -> Result<()> {
+        // allow hamt override
+        let mut builder = DirectoryBuilder::new();
+        builder.as_hamt();
+        assert_eq!(DirectoryType::Hamt, builder.typ);
 
-    //     #[tokio::test]
-    //     async fn test_chunk_size_overflow() -> Result<()> {
-    //         let chunker = Chunker::FixedSize { chunk_size: 1200 };
-    //         let mut builder = DirectoryBuilder::new();
-    //         builder.chunker = chunker;
+        let mut builder = DirectoryBuilder::new();
 
-    //         // add one file
-    //         let nodes = Box::pin(test_chunk_stream(1));
-    //         let file = File {
-    //             name: "foo.bar".into(),
-    //             nodes,
-    //             tree_builder: TreeBuilder::balanced_tree(),
-    //         };
-    //         builder.add_file(file);
-    //         assert_eq!(DirectoryType::Basic, builder.typ);
+        for _i in 0..DIRECTORY_LINK_LIMIT {
+            let mut file_builder = FileBuilder::new();
+            file_builder.with_name("foo.txt");
+            file_builder.content_bytes(Bytes::from("hello world"));
+            let file = file_builder.build().await?;
+            builder.add_file(file);
+        }
 
-    //         // add second file. this should cause us to try and convert
-    //         // the directory to a hamt
-    //         let nodes = Box::pin(test_chunk_stream(1));
-    //         let file = File {
-    //             name: "foo.bar".into(),
-    //             nodes,
-    //             tree_builder: TreeBuilder::balanced_tree(),
-    //         };
-    //         builder.add_file(file);
-    //         assert_eq!(DirectoryType::Hamt, builder.typ);
+        // under DIRECTORY_LINK_LIMIT should still be a basic directory
+        assert_eq!(DirectoryType::Basic, builder.typ);
 
-    //         if (builder.build().await).is_ok() {
-    //             panic!("expected builder to error when attempting to build a hamt directory")
-    //         }
+        let mut file_builder = FileBuilder::new();
+        file_builder.with_name("foo.txt");
+        file_builder.content_bytes(Bytes::from("hello world"));
+        let file = file_builder.build().await?;
+        builder.add_file(file);
 
-    //         Ok(())
-    //     }
+        // at directory link limit should be processed as a hamt
+        assert_eq!(DirectoryType::Hamt, builder.typ);
+        if (builder.build()).is_ok() {
+            panic!("expected builder to error when attempting to build a hamt directory")
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_make_dir_from_path() -> Result<()> {
+        let temp_dir = std::env::temp_dir();
+        let dir = temp_dir.join("test_dir");
+        std::fs::DirBuilder::new()
+            .recursive(true)
+            .create(dir.clone())
+            .unwrap();
+
+        let file_path = dir.join("foo.txt");
+        let nested_dir_path = dir.join("nested_dir");
+        let nested_file_path = nested_dir_path.join("bar.txt");
+        let mut file = std::fs::File::create(file_path.clone()).unwrap();
+
+        file.write_all(b"hello world").unwrap();
+
+        std::fs::DirBuilder::new()
+            .recursive(true)
+            .create(nested_dir_path.clone())
+            .unwrap();
+
+        let mut file = std::fs::File::create(nested_file_path.clone()).unwrap();
+        file.write_all(b"hello world again").unwrap();
+
+        // create directory manually
+        let nested_file = FileBuilder::new()
+            .with_path(nested_file_path)
+            .build()
+            .await?;
+        let nested_dir = Directory {
+            name: String::from(
+                nested_dir_path
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .unwrap(),
+            ),
+            entries: vec![Entry::File(nested_file)],
+        };
+
+        let file = FileBuilder::new().with_path(file_path).build().await?;
+
+        let expected = Directory {
+            name: String::from(dir.clone().file_name().and_then(|s| s.to_str()).unwrap()),
+            entries: vec![Entry::Directory(nested_dir), Entry::File(file)],
+        };
+
+        let got = make_dir_from_path(dir, true).await?;
+
+        assert_eq!(expected, got);
+
+        Ok(())
+    }
 }
