@@ -30,7 +30,7 @@ iroh-p2p started
 view logs at ~/.iroh/log/iroh-p2p.log
 starting iroh-gateway.
 iroh-gateway started
-view logs at ~/.iroh/loq/iroh-gatewau.log
+view logs at ~/.iroh/log/iroh-gateway.log
 iroh started
 iroh-gateway available at http: //localhost:9050
 you can run iroh-ctl from ~/.iroh/bin/iroh-ctl
