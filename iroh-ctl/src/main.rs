@@ -53,7 +53,8 @@ enum Commands {
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
-    let sources = vec![iroh_config_path(CONFIG_FILE_NAME), cli.cfg.clone()];
+    let cfg_path = iroh_config_path(CONFIG_FILE_NAME)?;
+    let sources = vec![Some(cfg_path), cli.cfg.clone()];
     let config = make_config(
         // default
         Config::default(),

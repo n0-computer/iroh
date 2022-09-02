@@ -8,7 +8,7 @@ use std::{
     },
 };
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use cid::{
     multihash::{Code, MultihashDigest},
     Cid,
@@ -53,15 +53,16 @@ pub async fn block_until_sigint() {
 /// | Linux    | `$XDG_CONFIG_HOME` or `$HOME`/.config/iroh | /home/alice/.config/iroh              |
 /// | macOS    | `$HOME`/Library/Application Support/iroh   | /Users/Alice/Library/Application Support/iroh |
 /// | Windows  | `{FOLDERID_RoamingAppData}`/iroh           | C:\Users\Alice\AppData\Roaming\iroh   |
-pub fn iroh_config_root() -> Option<PathBuf> {
-    let cfg = dirs_next::config_dir()?;
-    Some(cfg.join(&IROH_DIR))
+pub fn iroh_config_root() -> Result<PathBuf> {
+    let cfg = dirs_next::config_dir()
+        .ok_or_else(|| anyhow!("operating environment provides no directory for configuration"))?;
+    Ok(cfg.join(&IROH_DIR))
 }
 
 // Path that leads to a file in the iroh config directory.
-pub fn iroh_config_path(file_name: &str) -> Option<PathBuf> {
+pub fn iroh_config_path(file_name: &str) -> Result<PathBuf> {
     let path = iroh_config_root()?.join(file_name);
-    Some(path)
+    Ok(path)
 }
 
 /// Returns the path to the user's iroh data directory.
@@ -73,15 +74,17 @@ pub fn iroh_config_path(file_name: &str) -> Option<PathBuf> {
 /// | Linux    | `$XDG_DATA_HOME`/iroh or `$HOME`/.local/share/iroh | /home/alice/.local/share/iroh                 |
 /// | macOS    | `$HOME`/Library/Application Support/iroh      | /Users/Alice/Library/Application Support/iroh |
 /// | Windows  | `{FOLDERID_RoamingAppData}/iroh`              | C:\Users\Alice\AppData\Roaming\iroh           |
-pub fn iroh_data_root() -> Option<PathBuf> {
-    let path = dirs_next::data_dir()?;
-    Some(path.join(&IROH_DIR))
+pub fn iroh_data_root() -> Result<PathBuf> {
+    let path = dirs_next::data_dir().ok_or_else(|| {
+        anyhow!("operating environment provides no directory for application data")
+    })?;
+    Ok(path.join(&IROH_DIR))
 }
 
-// Path that leads to a file in the iroh data directory.
-pub fn iroh_data_path(file_name: &str) -> Option<PathBuf> {
+/// Path that leads to a file in the iroh data directory.
+pub fn iroh_data_path(file_name: &str) -> Result<PathBuf> {
     let path = iroh_data_root()?.join(file_name);
-    Some(path)
+    Ok(path)
 }
 
 /// insert a value into a `config::Map`

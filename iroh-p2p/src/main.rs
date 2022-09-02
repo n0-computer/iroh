@@ -15,7 +15,8 @@ async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
 
     // TODO: configurable network
-    let sources = vec![iroh_config_path(CONFIG_FILE_NAME), args.cfg.clone()];
+    let cfg_path = iroh_config_path(CONFIG_FILE_NAME)?;
+    let sources = vec![Some(cfg_path), args.cfg.clone()];
     let network_config = make_config(
         // default
         Config::default_grpc(),

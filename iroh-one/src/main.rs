@@ -21,7 +21,8 @@ use tracing::{debug, error};
 async fn main() -> Result<()> {
     let args = Args::parse();
 
-    let sources = vec![iroh_config_path(CONFIG_FILE_NAME), args.cfg.clone()];
+    let cfg_path = iroh_config_path(CONFIG_FILE_NAME)?;
+    let sources = vec![Some(cfg_path), args.cfg.clone()];
     let mut config = make_config(
         // default
         Config::default(),

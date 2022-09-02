@@ -115,7 +115,7 @@ impl Keychain<MemoryStorage> {
 impl Keychain<DiskStorage> {
     /// Creates a new on disk keychain, with the root defaulting to the iroh config directory
     pub async fn new() -> Result<Self> {
-        let root = iroh_config_root().ok_or_else(|| anyhow!("missing iroh configuration path"))?;
+        let root = iroh_config_root()?;
         Self::with_root(root).await
     }
 

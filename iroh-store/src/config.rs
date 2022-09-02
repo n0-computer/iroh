@@ -19,10 +19,11 @@ pub const ENV_PREFIX: &str = "IROH_STORE";
 
 /// the path to data directory. If arg_path is `None`, the default iroh_data_path()/store is used
 /// iroh_data_path() returns an operating system-specific directory
-/// falls back to an empty path in the unlikely scenario where iroh_data_path() is `None`
-/// likely b/c iroh is not running on a Linux/Windows/MacOS system
-pub fn config_data_path(arg_path: Option<PathBuf>) -> PathBuf {
-    arg_path.unwrap_or_else(|| iroh_data_path("store").unwrap_or_else(|| PathBuf::from("")))
+pub fn config_data_path(arg_path: Option<PathBuf>) -> Result<PathBuf> {
+    match arg_path {
+        Some(p) => Ok(p),
+        None => iroh_data_path("store"),
+    }
 }
 
 /// The configuration for the store.
@@ -141,10 +142,13 @@ mod tests {
     #[test]
     fn test_config_data_path() {
         let path = PathBuf::new().join("arg_path");
-        let path_given = config_data_path(Some(path.clone()));
+        let path_given = config_data_path(Some(path.clone())).expect("config data path error");
         assert_eq!(path_given.display().to_string(), path.display().to_string());
 
-        let no_path_given = config_data_path(None).display().to_string();
+        let no_path_given = config_data_path(None)
+            .expect("config data path error")
+            .display()
+            .to_string();
         assert!(no_path_given.ends_with("store"));
     }
 }

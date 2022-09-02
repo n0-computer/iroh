@@ -15,10 +15,12 @@ async fn main() -> anyhow::Result<()> {
     let version = env!("CARGO_PKG_VERSION");
     println!("Starting iroh-store, version {version}");
 
-    let sources = vec![iroh_config_path(CONFIG_FILE_NAME), args.cfg.clone()];
+    let config_path = iroh_config_path(CONFIG_FILE_NAME)?;
+    let sources = vec![Some(config_path), args.cfg.clone()];
+    let config_data_path = config_data_path(args.path.clone())?;
     let config = make_config(
         // default
-        Config::new_grpc(config_data_path(args.path.clone())),
+        Config::new_grpc(config_data_path),
         // potential config files
         sources,
         // env var prefix for this config
