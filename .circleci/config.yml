@@ -377,7 +377,7 @@ jobs:
           profile-name: default
       - run:
           name: build aarch64 release
-          command: cargo build --release -v
+          command: cargo build --release -v --features=uds-gateway
       - push-to-s3:
           path: ./target/release/
           os: linux
@@ -405,7 +405,7 @@ jobs:
       - run:
           name: build x86_64_darwin
           no_output_timeout: 20m
-          command: cargo build --release -v
+          command: cargo build --release -v --features=uds-gateway
       - push-to-s3:
           path: ./target/release/
           os: darwin
@@ -423,7 +423,7 @@ jobs:
       - run:
           name: build aarch64_darwin
           no_output_timeout: 20m
-          command: cargo build --release -v --target aarch64-apple-darwin
+          command: cargo build --release -v --target aarch64-apple-darwin --features=uds-gateway
       - push-to-s3:
           path: ./target/aarch64-apple-darwin/release/
           os: darwin
