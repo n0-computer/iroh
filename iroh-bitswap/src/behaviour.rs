@@ -233,10 +233,16 @@ impl Bitswap {
     /// Checks if the given peer is currently connected.
     #[allow(clippy::wrong_self_convention)]
     fn is_connected(&mut self, peer_id: &PeerId) -> bool {
-        self.connections
-            .get(peer_id)
-            .map(|s| matches!(s, ConnState::Connected))
-            .unwrap_or_default()
+        match self.connections.get(peer_id) {
+            Some(conn) => {
+                matches!(conn, ConnState::Connected)
+            }
+            None => {
+                self.connections.put(*peer_id, ConnState::Disconnected);
+                inc!(BitswapMetrics::DisconnectedPeers);
+                false
+            }
+        }
     }
 
     /// Adds a peer to the known_peers list, with the provided state.
@@ -265,8 +271,6 @@ impl Bitswap {
                 state.want_block(&cid, priority);
             });
         }
-
-        record!(BitswapMetrics::Providers, providers.len() as u64);
     }
 
     #[instrument(skip(self, data))]
