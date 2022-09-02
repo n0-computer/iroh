@@ -245,6 +245,21 @@ impl Bitswap {
         }
     }
 
+    /// Checks if the given peer is currently disconnected.
+    #[allow(clippy::wrong_self_convention)]
+    fn is_disconnected(&mut self, peer_id: &PeerId) -> bool {
+        match self.connections.get(peer_id) {
+            Some(conn) => {
+                matches!(conn, ConnState::Disconnected)
+            }
+            None => {
+                self.connections.put(*peer_id, ConnState::Disconnected);
+                inc!(BitswapMetrics::DisconnectedPeers);
+                true
+            }
+        }
+    }
+
     /// Adds a peer to the known_peers list, with the provided state.
     fn with_ledger<F, T>(&mut self, peer: PeerId, f: F) -> T
     where
@@ -549,7 +564,7 @@ impl NetworkBehaviour for Bitswap {
                     });
                     break;
                 }
-            } else if !peer_state.is_empty() {
+            } else if !peer_state.is_empty() && self.is_disconnected(peer_id) {
                 inc!(BitswapMetrics::PollActionNotConnected);
 
                 // not connected, need to dial
