@@ -268,16 +268,15 @@ fn record_ttfb_metrics(start_time: std::time::Instant, source: &Source) {
         GatewayMetrics::TimeToFetchFirstBlock,
         start_time.elapsed().as_millis() as u64
     );
-    if *source == Source::Bitswap {
-        observe!(
-            GatewayHistograms::TimeToFetchFirstBlock,
-            start_time.elapsed().as_millis() as f64
-        );
-    } else {
-        observe!(
+    match *source {
+        Source::Store(_) => observe!(
             GatewayHistograms::TimeToFetchFirstBlockCached,
             start_time.elapsed().as_millis() as f64
-        );
+        ),
+        _ => observe!(
+            GatewayHistograms::TimeToFetchFirstBlock,
+            start_time.elapsed().as_millis() as f64
+        ),
     }
 }
 
