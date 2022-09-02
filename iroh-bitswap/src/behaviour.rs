@@ -7,7 +7,7 @@ use std::task::{Context, Poll};
 use std::time::Duration;
 
 use bytes::Bytes;
-use caches::Cache;
+use caches::{Cache, PutResult};
 use cid::Cid;
 use iroh_metrics::inc;
 use iroh_metrics::{bitswap::BitswapMetrics, core::MRecorder, record};
@@ -112,24 +112,20 @@ pub struct Bitswap {
     events: VecDeque<NetworkBehaviourAction<BitswapEvent, BitswapHandler>>,
     #[allow(dead_code)]
     config: BitswapConfig,
-    known_peers: caches::RawLRU<PeerId, PeerState>,
+    /// Peers we know about that we can talk bitswap to.
+    known_peers: caches::RawLRU<PeerId, ()>,
+    /// Current ledgers.
+    ledgers: caches::RawLRU<PeerId, Ledger>,
+    /// Current connections.
+    connections: caches::RawLRU<PeerId, ConnState>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-struct PeerState {
-    conn: ConnState,
+struct Ledger {
     msg: BitswapMessage,
 }
 
-impl PeerState {
-    fn is_connected(&self) -> bool {
-        matches!(self.conn, ConnState::Connected)
-    }
-
-    fn needs_connection(&self) -> bool {
-        !self.is_empty() && matches!(self.conn, ConnState::Disconnected | ConnState::Unknown)
-    }
-
+impl Ledger {
     fn is_empty(&self) -> bool {
         self.msg.is_empty()
     }
@@ -171,22 +167,18 @@ impl PeerState {
     }
 }
 
-impl Default for PeerState {
+impl Default for Ledger {
     fn default() -> Self {
         // default to full for the first one
         let mut msg = BitswapMessage::default();
         msg.wantlist_mut().set_full(true);
 
-        PeerState {
-            conn: ConnState::Unknown,
-            msg,
-        }
+        Ledger { msg }
     }
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
 enum ConnState {
-    Unknown,
     Connected,
     Disconnected,
     Dialing,
@@ -195,6 +187,7 @@ enum ConnState {
 #[derive(Debug, Clone, PartialEq)]
 pub struct BitswapConfig {
     pub max_cached_peers: usize,
+    pub max_ledgers: usize,
     pub idle_timeout: Duration,
 }
 
@@ -202,6 +195,7 @@ impl Default for BitswapConfig {
     fn default() -> Self {
         BitswapConfig {
             max_cached_peers: 20_000,
+            max_ledgers: 1024,
             idle_timeout: Duration::from_secs(30),
         }
     }
@@ -217,32 +211,45 @@ impl Bitswap {
     /// Create a new `Bitswap`.
     pub fn new(config: BitswapConfig) -> Self {
         let known_peers = caches::RawLRU::new(config.max_cached_peers).unwrap();
+        let ledgers = caches::RawLRU::new(config.max_ledgers).unwrap();
+        let connections = caches::RawLRU::new(config.max_cached_peers).unwrap();
 
         Bitswap {
             config,
             known_peers,
+            ledgers,
+            connections,
             events: Default::default(),
         }
     }
 
     /// Notifies about a peer that speaks the bitswap protocol.
     pub fn add_peer(&mut self, peer: PeerId) {
-        inc!(BitswapMetrics::KnownPeers);
-        self.with_known_peer(peer, |_| {});
+        if let PutResult::Put = self.known_peers.put(peer, ()) {
+            inc!(BitswapMetrics::KnownPeers);
+        }
+    }
+
+    /// Checks if the given peer is currently connected.
+    #[allow(clippy::wrong_self_convention)]
+    fn is_connected(&mut self, peer_id: &PeerId) -> bool {
+        self.connections
+            .get(peer_id)
+            .map(|s| matches!(s, ConnState::Connected))
+            .unwrap_or_default()
     }
 
     /// Adds a peer to the known_peers list, with the provided state.
-    fn with_known_peer<F, T>(&mut self, peer: PeerId, f: F) -> T
+    fn with_ledger<F, T>(&mut self, peer: PeerId, f: F) -> T
     where
-        F: FnOnce(&mut PeerState) -> T,
+        F: FnOnce(&mut Ledger) -> T,
     {
-        if let Some(state) = self.known_peers.get_mut(&peer) {
+        if let Some(state) = self.ledgers.get_mut(&peer) {
             f(state)
         } else {
-            inc!(BitswapMetrics::KnownPeers);
-            let mut state = PeerState::default();
-            let res = f(&mut state);
-            self.known_peers.put(peer, state);
+            let mut ledger = Ledger::default();
+            let res = f(&mut ledger);
+            self.ledgers.put(peer, ledger);
             res
         }
     }
@@ -254,7 +261,7 @@ impl Bitswap {
         inc!(BitswapMetrics::WantedBlocks);
         record!(BitswapMetrics::Providers, providers.len() as u64);
         for provider in providers.iter() {
-            self.with_known_peer(*provider, |state| {
+            self.with_ledger(*provider, |state| {
                 state.want_block(&cid, priority);
             });
         }
@@ -268,7 +275,7 @@ impl Bitswap {
 
         record!(BitswapMetrics::BlockBytesOut, data.len() as u64);
 
-        self.with_known_peer(*peer_id, |state| {
+        self.with_ledger(*peer_id, |state| {
             state.send_block(cid, data);
         });
     }
@@ -277,7 +284,7 @@ impl Bitswap {
     pub fn send_have_block(&mut self, peer_id: &PeerId, cid: Cid) {
         debug!("send_have_block: {}", cid);
 
-        self.with_known_peer(*peer_id, |state| {
+        self.with_ledger(*peer_id, |state| {
             state.send_have_block(cid);
         });
     }
@@ -290,13 +297,16 @@ impl Bitswap {
         // TODO: better strategies, than just all peers.
         // TODO: use peers that connect later
 
-        for peer in self
+        let providers: Vec<_> = self
             .known_peers
-            .values_mut()
-            .filter(|peer| matches!(peer.conn, ConnState::Connected | ConnState::Unknown))
+            .keys()
             .take(MAX_PROVIDERS)
-        {
-            peer.want_have_block(&cid, priority);
+            .copied()
+            .collect();
+        for provider in providers {
+            self.with_ledger(provider, |peer| {
+                peer.want_have_block(&cid, priority);
+            });
         }
     }
 
@@ -308,7 +318,7 @@ impl Bitswap {
         inc!(BitswapMetrics::CancelBlocks);
 
         debug!("cancel_block: {}", cid);
-        for state in self.known_peers.values_mut() {
+        for state in self.ledgers.values_mut() {
             state.cancel_block(cid);
         }
     }
@@ -318,7 +328,7 @@ impl Bitswap {
         inc!(BitswapMetrics::CancelWantBlocks);
 
         debug!("cancel_block: {}", cid);
-        for state in self.known_peers.values_mut() {
+        for state in self.ledgers.values_mut() {
             state.remove_want_block(cid);
         }
     }
@@ -348,28 +358,27 @@ impl NetworkBehaviour for Bitswap {
     ) {
         if other_established == 0 {
             inc!(BitswapMetrics::ConnectedPeers);
-        }
+            self.add_peer(*peer_id);
+            self.connections.put(*peer_id, ConnState::Connected);
 
-        let msg = self.with_known_peer(*peer_id, |state| {
-            state.conn = ConnState::Connected;
+            let msg = self.with_ledger(*peer_id, |state| {
+                if !state.is_empty() {
+                    // queue up message to be sent as soon as we are connected
+                    return Some(NetworkBehaviourAction::NotifyHandler {
+                        peer_id: *peer_id,
+                        handler: NotifyHandler::Any,
+                        event: BitswapHandlerIn::Message(state.send_message()),
+                    });
+                }
 
-            if other_established == 0 && !state.is_empty() {
-                // queue up message to be sent as soon as we are connected
-                let msg = state.send_message();
-                return Some(NetworkBehaviourAction::NotifyHandler {
-                    peer_id: *peer_id,
-                    handler: NotifyHandler::Any,
-                    event: BitswapHandlerIn::Message(msg),
-                });
+                None
+            });
+
+            if let Some(msg) = msg {
+                inc!(BitswapMetrics::MessagesSent);
+                inc!(BitswapMetrics::EventsBackpressureIn);
+                self.events.push_back(msg);
             }
-
-            None
-        });
-
-        if let Some(msg) = msg {
-            inc!(BitswapMetrics::MessagesSent);
-            inc!(BitswapMetrics::EventsBackpressureIn);
-            self.events.push_back(msg);
         }
     }
 
@@ -383,11 +392,8 @@ impl NetworkBehaviour for Bitswap {
         remaining_established: usize,
     ) {
         if remaining_established == 0 {
-            if let Some(val) = self.known_peers.get_mut(peer_id) {
-                inc!(BitswapMetrics::DisconnectedPeers);
-
-                val.conn = ConnState::Disconnected;
-            }
+            inc!(BitswapMetrics::DisconnectedPeers);
+            self.connections.put(*peer_id, ConnState::Disconnected);
         }
     }
 
@@ -399,19 +405,22 @@ impl NetworkBehaviour for Bitswap {
         error: &DialError,
     ) {
         if let Some(ref peer_id) = peer_id {
-            if let DialError::ConnectionLimit(_) = error {
-                // we can retry later
-                self.with_known_peer(*peer_id, |state| {
-                    state.conn = ConnState::Disconnected;
-                });
-                inc!(BitswapMetrics::DisconnectedPeers);
-            } else {
-                trace!("dial failure {:?}: {:?}", peer_id, error);
+            inc!(BitswapMetrics::DisconnectedPeers);
 
-                // remove peers we can't dial
-                inc!(BitswapMetrics::ForgottenPeers);
-                inc!(BitswapMetrics::DisconnectedPeers);
-                self.known_peers.remove(peer_id);
+            match error {
+                DialError::ConnectionLimit(_) => {
+                    // we can retry later
+                    self.connections.put(*peer_id, ConnState::Disconnected);
+                }
+                _ => {
+                    trace!("dial failure {:?}: {:?}", peer_id, error);
+
+                    // remove peers we can't dial
+                    inc!(BitswapMetrics::ForgottenPeers);
+                    self.known_peers.remove(peer_id);
+                    self.ledgers.remove(peer_id);
+                    self.connections.remove(peer_id);
+                }
             }
         }
     }
@@ -427,7 +436,7 @@ impl NetworkBehaviour for Bitswap {
                 while let Some(block) = message.pop_block() {
                     record!(BitswapMetrics::BlockBytesIn, block.data.len() as u64);
 
-                    for (id, state) in self.known_peers.iter_mut() {
+                    for (id, state) in self.ledgers.iter_mut() {
                         if id == &peer_id {
                             state.remove_block(&block.cid);
                         } else {
@@ -449,7 +458,7 @@ impl NetworkBehaviour for Bitswap {
                 }
 
                 for bp in message.block_presences() {
-                    for (_, state) in self.known_peers.iter_mut() {
+                    for (_, state) in self.ledgers.iter_mut() {
                         state.remove_want_block(&bp.cid);
                     }
 
@@ -523,22 +532,26 @@ impl NetworkBehaviour for Bitswap {
             return Poll::Ready(event);
         }
 
-        for (peer_id, peer_state) in self.known_peers.iter_mut() {
+        let mut msg = None;
+        let mut to_remove = None;
+
+        for (peer_id, peer_state) in self.ledgers.iter_mut() {
             // make progress on connected peers first, that have wants
-            if peer_state.is_connected() {
+            if self.is_connected(peer_id) {
                 if peer_state.has_blocks() {
                     inc!(BitswapMetrics::PollActionConnectedWants);
                     // connected, send message
                     // TODO: limit size
                     // TODO: limit how ofen we send
 
-                    let msg = peer_state.send_message();
-                    trace!("sending message to {} {:?}", peer_id, msg);
-                    return Poll::Ready(NetworkBehaviourAction::NotifyHandler {
+                    trace!("sending message to {}", peer_id);
+                    msg = Some(Poll::Ready(NetworkBehaviourAction::NotifyHandler {
                         peer_id: *peer_id,
                         handler: NotifyHandler::Any,
-                        event: BitswapHandlerIn::Message(msg),
-                    });
+                        event: BitswapHandlerIn::Message(peer_state.send_message()),
+                    }));
+                    to_remove = Some(*peer_id);
+                    break;
                 }
 
                 // make progress on connected peers that have no wants
@@ -548,27 +561,35 @@ impl NetworkBehaviour for Bitswap {
                     // TODO: limit size
                     // TODO: limit how ofen we send
 
-                    let msg = peer_state.send_message();
-                    trace!("sending message to {} {:?}", peer_id, msg);
-                    return Poll::Ready(NetworkBehaviourAction::NotifyHandler {
+                    trace!("sending message to {}", peer_id);
+                    msg = Some(Poll::Ready(NetworkBehaviourAction::NotifyHandler {
                         peer_id: *peer_id,
                         handler: NotifyHandler::Any,
-                        event: BitswapHandlerIn::Message(msg),
-                    });
+                        event: BitswapHandlerIn::Message(peer_state.send_message()),
+                    }));
+                    to_remove = Some(*peer_id);
+                    break;
                 }
-            }
-
-            if peer_state.needs_connection() {
+            } else if !peer_state.is_empty() {
                 inc!(BitswapMetrics::PollActionNotConnected);
-
                 // not connected, need to dial
-                peer_state.conn = ConnState::Dialing;
+
+                self.connections.put(*peer_id, ConnState::Dialing);
                 let handler = self.new_handler();
-                return Poll::Ready(NetworkBehaviourAction::Dial {
+                msg = Some(Poll::Ready(NetworkBehaviourAction::Dial {
                     opts: DialOpts::peer_id(*peer_id).build(),
                     handler,
-                });
+                }));
+                break;
             }
+        }
+
+        if let Some(to_remove) = to_remove {
+            self.ledgers.remove(&to_remove);
+        }
+
+        if let Some(msg) = msg {
+            return msg;
         }
 
         Poll::Pending
@@ -693,7 +714,9 @@ mod tests {
         };
 
         let peer2 = async move {
-            Swarm::dial(&mut swarm2, rx.next().await.unwrap()).unwrap();
+            let addr = rx.next().await.unwrap();
+            trace!("peer2: dialing peer1 at {}", addr);
+            Swarm::dial(&mut swarm2, addr).unwrap();
 
             let orig_cid = cid;
             loop {
