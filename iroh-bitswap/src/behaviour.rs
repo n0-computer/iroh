@@ -256,6 +256,7 @@ impl Bitswap {
             let mut ledger = Ledger::default();
             let res = f(&mut ledger);
             self.ledgers.put(peer, ledger);
+            self.add_peer(peer);
             res
         }
     }
@@ -266,6 +267,7 @@ impl Bitswap {
         debug!("want_block: {}", cid);
         inc!(BitswapMetrics::WantedBlocks);
         record!(BitswapMetrics::Providers, providers.len() as u64);
+
         for provider in providers.iter() {
             self.with_ledger(*provider, |state| {
                 state.want_block(&cid, priority);
