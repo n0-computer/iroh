@@ -6,7 +6,7 @@ use anyhow::{anyhow, Context, Result};
 use cid::Cid;
 use futures::channel::oneshot::Sender as OneShotSender;
 use futures_util::stream::StreamExt;
-use iroh_metrics::p2p_metrics;
+use iroh_metrics::{core::MRecorder, inc, libp2p_metrics, p2p::P2PMetrics};
 use iroh_rpc_client::Client as RpcClient;
 use iroh_rpc_types::p2p::P2pServerAddr;
 use libp2p::core::{Multiaddr, ProtocolName};
@@ -294,7 +294,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
             <NodeBehaviour as NetworkBehaviour>::OutEvent,
             <<<NodeBehaviour as NetworkBehaviour>::ConnectionHandler as IntoConnectionHandler>::Handler as ConnectionHandler>::Error>,
     ) -> Result<()> {
-        p2p_metrics().record(&event);
+        libp2p_metrics().record(&event);
         match event {
             // outbound events
             SwarmEvent::Behaviour(event) => self.handle_node_event(event).await,
@@ -483,6 +483,8 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                                         .is_err();
                                     to_remove |= *provider_count >= *expected_provider_count;
                                 }
+                            } else {
+                                inc!(P2PMetrics::SkippedPeerBitswap);
                             }
 
                             if to_remove {
@@ -522,7 +524,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                 }
             }
             Event::Kademlia(e) => {
-                p2p_metrics().record(&e);
+                libp2p_metrics().record(&e);
                 if let KademliaEvent::OutboundQueryProgressed {
                     id, result, step, ..
                 } = e
@@ -544,6 +546,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                                 let providers: HashSet<_> = providers
                                     .into_iter()
                                     .filter(|provider| {
+                                        inc!(P2PMetrics::SkippedPeerKad);
                                         !self.swarm.behaviour().is_bad_peer(provider)
                                     })
                                     .collect();
@@ -598,7 +601,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                 }
             }
             Event::Identify(e) => {
-                p2p_metrics().record(&*e);
+                libp2p_metrics().record(&*e);
                 if let IdentifyEvent::Received {
                     peer_id,
                     info:
@@ -650,16 +653,16 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                 }
             }
             Event::Ping(e) => {
-                p2p_metrics().record(&e);
+                libp2p_metrics().record(&e);
             }
             Event::Relay(e) => {
-                p2p_metrics().record(&e);
+                libp2p_metrics().record(&e);
             }
             Event::Dcutr(e) => {
-                p2p_metrics().record(&e);
+                libp2p_metrics().record(&e);
             }
             Event::Gossipsub(e) => {
-                p2p_metrics().record(&e);
+                libp2p_metrics().record(&e);
                 if let libp2p::gossipsub::GossipsubEvent::Message {
                     propagation_source,
                     message_id,

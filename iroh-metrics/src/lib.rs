@@ -171,6 +171,8 @@ pub enum Collector {
     Bitswap,
     #[cfg(feature = "store")]
     Store,
+    #[cfg(feature = "p2p")]
+    P2P,
 }
 
 #[allow(unused_variables, unreachable_patterns)]
@@ -188,6 +190,8 @@ where
             Collector::Bitswap => CORE.bitswap_metrics().record(m, v),
             #[cfg(feature = "store")]
             Collector::Store => CORE.store_metrics().record(m, v),
+            #[cfg(feature = "p2p")]
+            Collector::P2P => CORE.p2p_metrics().record(m, v),
             _ => panic!("not enabled/implemented"),
         };
     }
@@ -208,12 +212,14 @@ where
             Collector::Bitswap => CORE.bitswap_metrics().observe(m, v),
             #[cfg(feature = "store")]
             Collector::Store => CORE.store_metrics().observe(m, v),
+            #[cfg(feature = "p2p")]
+            Collector::P2P => CORE.p2p_metrics().observe(m, v),
             _ => panic!("not enabled/implemented"),
         };
     }
 }
 
 #[cfg(feature = "p2p")]
-pub fn p2p_metrics() -> &'static p2p::Metrics {
-    CORE.p2p_metrics()
+pub fn libp2p_metrics() -> &'static p2p::Libp2pMetrics {
+    CORE.libp2p_metrics()
 }
