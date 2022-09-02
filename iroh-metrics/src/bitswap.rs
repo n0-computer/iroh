@@ -26,6 +26,7 @@ pub(crate) struct Metrics {
     connected_peers: Counter,
     disconnected_peers: Counter,
     messages_sent: Counter,
+    messages_received: Counter,
     events_backpressure_in: Counter,
     events_backpressure_out: Counter,
     poll_action_connected_wants: Counter,
@@ -104,6 +105,8 @@ impl Metrics {
         );
         let messages_sent = Counter::default();
         sub_registry.register("messages_sent", "", Box::new(messages_sent.clone()));
+        let messages_received = Counter::default();
+        sub_registry.register("messages_received", "", Box::new(messages_received.clone()));
         let events_backpressure_in = Counter::default();
         sub_registry.register(
             "events_backpressure_in",
@@ -150,6 +153,7 @@ impl Metrics {
             connected_peers,
             disconnected_peers,
             messages_sent,
+            messages_received,
             events_backpressure_in,
             events_backpressure_out,
             poll_action_connected_wants,
@@ -192,6 +196,8 @@ impl MetricsRecorder for Metrics {
             self.disconnected_peers.inc_by(value);
         } else if m.name() == BitswapMetrics::MessagesSent.name() {
             self.messages_sent.inc_by(value);
+        } else if m.name() == BitswapMetrics::MessagesReceived.name() {
+            self.messages_received.inc_by(value);
         } else if m.name() == BitswapMetrics::EventsBackpressureIn.name() {
             self.events_backpressure_in.inc_by(value);
         } else if m.name() == BitswapMetrics::EventsBackpressureOut.name() {
@@ -232,6 +238,7 @@ pub enum BitswapMetrics {
     ConnectedPeers,
     DisconnectedPeers,
     MessagesSent,
+    MessagesReceived,
     EventsBackpressureIn,
     EventsBackpressureOut,
     PollActionConnectedWants,
@@ -257,6 +264,7 @@ impl MetricType for BitswapMetrics {
             BitswapMetrics::ConnectedPeers => METRICS_CNT_CONNECTED_PEERS,
             BitswapMetrics::DisconnectedPeers => METRICS_CNT_DISCONNECTED_PEERS,
             BitswapMetrics::MessagesSent => METRICS_CNT_MESSAGES_SENT,
+            BitswapMetrics::MessagesReceived => METRICS_CNT_MESSAGES_RECEIVED,
             BitswapMetrics::EventsBackpressureIn => METRICS_CNT_EVENTS_BACKPRESSURE_IN,
             BitswapMetrics::EventsBackpressureOut => METRICS_CNT_EVENTS_BACKPRESSURE_OUT,
             BitswapMetrics::PollActionConnectedWants => METRICS_CNT_POLL_ACTION_CONNECTED_WANTS,
@@ -292,6 +300,7 @@ pub const METRICS_CNT_CANCEL_WANT_BLOCKS: &str = "cancel_want_blocks";
 pub const METRICS_CNT_CONNECTED_PEERS: &str = "connected_peers";
 pub const METRICS_CNT_DISCONNECTED_PEERS: &str = "disconnected_peers";
 pub const METRICS_CNT_MESSAGES_SENT: &str = "messages_sent";
+pub const METRICS_CNT_MESSAGES_RECEIVED: &str = "messages_received";
 pub const METRICS_CNT_EVENTS_BACKPRESSURE_IN: &str = "events_backpressure_in";
 pub const METRICS_CNT_EVENTS_BACKPRESSURE_OUT: &str = "events_backpressure_out";
 pub const METRICS_CNT_POLL_ACTION_CONNECTED_WANTS: &str = "poll_action_connected_wants";

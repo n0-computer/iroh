@@ -418,6 +418,7 @@ impl NetworkBehaviour for Bitswap {
 
     #[instrument(skip(self))]
     fn inject_event(&mut self, peer_id: PeerId, connection: ConnectionId, message: HandlerEvent) {
+        inc!(BitswapMetrics::MessagesReceived);
         match message {
             HandlerEvent::Message { mut message } => {
                 inc!(BitswapMetrics::Requests);
