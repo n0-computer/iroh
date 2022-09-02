@@ -55,8 +55,10 @@ impl NetworkBehaviour for PeerManager {
         other_established: usize,
     ) {
         if other_established == 0 {
-            inc!(P2PMetrics::BadPeerRemoved);
-            self.bad_peers.remove(peer_id);
+            let p = self.bad_peers.remove(peer_id);
+            if let Some(_) = p {
+                inc!(P2PMetrics::BadPeerRemoved);
+            }
         }
     }
 
