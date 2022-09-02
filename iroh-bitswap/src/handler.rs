@@ -9,6 +9,7 @@ use std::{
 use asynchronous_codec::Framed;
 use futures::prelude::*;
 use futures::StreamExt;
+use iroh_metrics::{inc, bitswap::BitswapMetrics, core::MRecorder};
 use libp2p::core::upgrade::{
     InboundUpgrade, NegotiationError, OutboundUpgrade, ProtocolError, UpgradeError,
 };
@@ -230,6 +231,8 @@ impl ConnectionHandler for BitswapHandler {
                     self.keep_alive = KeepAlive::Until(Instant::now() + self.idle_timeout);
                 }
             }
+        } else {
+            inc!(BitswapMetrics::ProtocolUnsupported);
         }
     }
 

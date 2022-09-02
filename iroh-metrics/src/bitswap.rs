@@ -32,6 +32,7 @@ pub(crate) struct Metrics {
     poll_action_connected_wants: Counter,
     poll_action_connected: Counter,
     poll_action_not_connected: Counter,
+    protocol_unsupported: Counter,
 }
 
 impl fmt::Debug for Metrics {
@@ -138,6 +139,13 @@ impl Metrics {
             Box::new(poll_action_not_connected.clone()),
         );
 
+        let protocol_unsupported = Counter::default();
+        sub_registry.register(
+            "protocol_unsupported",
+            "",
+            Box::new(protocol_unsupported.clone()),
+        );
+
         Self {
             requests_total,
             canceled_total,
@@ -159,6 +167,7 @@ impl Metrics {
             poll_action_connected_wants,
             poll_action_connected,
             poll_action_not_connected,
+            protocol_unsupported,
         }
     }
 }
@@ -208,6 +217,8 @@ impl MetricsRecorder for Metrics {
             self.poll_action_connected.inc_by(value);
         } else if m.name() == BitswapMetrics::PollActionNotConnected.name() {
             self.poll_action_not_connected.inc_by(value);
+        } else if m.name() == BitswapMetrics::ProtocolUnsupported.name() {
+            self.protocol_unsupported.inc_by(value);
         } else {
             error!("record (bitswap): unknown metric {}", m.name());
         }
@@ -244,6 +255,8 @@ pub enum BitswapMetrics {
     PollActionConnectedWants,
     PollActionConnected,
     PollActionNotConnected,
+
+    ProtocolUnsupported,
 }
 
 impl MetricType for BitswapMetrics {
@@ -270,6 +283,8 @@ impl MetricType for BitswapMetrics {
             BitswapMetrics::PollActionConnectedWants => METRICS_CNT_POLL_ACTION_CONNECTED_WANTS,
             BitswapMetrics::PollActionConnected => METRICS_CNT_POLL_ACTION_CONNECTED,
             BitswapMetrics::PollActionNotConnected => METRICS_CNT_POLL_ACTION_NOT_CONNECTED,
+
+            BitswapMetrics::ProtocolUnsupported => METRICS_CNT_PROTOCOL_UNSUPPORTED,
         }
     }
 }
@@ -306,3 +321,5 @@ pub const METRICS_CNT_EVENTS_BACKPRESSURE_OUT: &str = "events_backpressure_out";
 pub const METRICS_CNT_POLL_ACTION_CONNECTED_WANTS: &str = "poll_action_connected_wants";
 pub const METRICS_CNT_POLL_ACTION_CONNECTED: &str = "poll_action_connected";
 pub const METRICS_CNT_POLL_ACTION_NOT_CONNECTED: &str = "poll_action_not_connected";
+
+pub const METRICS_CNT_PROTOCOL_UNSUPPORTED: &str = "protocol_unsupported";
