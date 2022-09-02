@@ -65,9 +65,7 @@ impl Wantlist {
 
     /// Adds a block to the cancel list.
     pub fn cancel_block(&mut self, cid: &Cid) {
-        if self.want_blocks.remove(cid).is_some() {
-            self.cancel_blocks.insert(*cid);
-        }
+        self.cancel_blocks.insert(*cid);
     }
 
     pub fn remove_block(&mut self, cid: &Cid) {

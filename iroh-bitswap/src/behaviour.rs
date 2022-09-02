@@ -360,25 +360,6 @@ impl NetworkBehaviour for Bitswap {
             inc!(BitswapMetrics::ConnectedPeers);
             self.add_peer(*peer_id);
             self.connections.put(*peer_id, ConnState::Connected);
-
-            let msg = self.with_ledger(*peer_id, |state| {
-                if !state.is_empty() {
-                    // queue up message to be sent as soon as we are connected
-                    return Some(NetworkBehaviourAction::NotifyHandler {
-                        peer_id: *peer_id,
-                        handler: NotifyHandler::Any,
-                        event: BitswapHandlerIn::Message(state.send_message()),
-                    });
-                }
-
-                None
-            });
-
-            if let Some(msg) = msg {
-                inc!(BitswapMetrics::MessagesSent);
-                inc!(BitswapMetrics::EventsBackpressureIn);
-                self.events.push_back(msg);
-            }
         }
     }
 
@@ -435,6 +416,7 @@ impl NetworkBehaviour for Bitswap {
                 // Process incoming message.
                 while let Some(block) = message.pop_block() {
                     record!(BitswapMetrics::BlockBytesIn, block.data.len() as u64);
+                    inc!(BitswapMetrics::CancelBlocks);
 
                     for (id, state) in self.ledgers.iter_mut() {
                         if id == &peer_id {
@@ -457,8 +439,9 @@ impl NetworkBehaviour for Bitswap {
                         .push_back(NetworkBehaviourAction::GenerateEvent(event));
                 }
 
-                for bp in message.block_presences() {
-                    for (_, state) in self.ledgers.iter_mut() {
+                for bp in message.block_presences().iter().filter(|bp| bp.is_have()) {
+                    inc!(BitswapMetrics::CancelWantBlocks);
+                    for state in self.ledgers.values_mut() {
                         state.remove_want_block(&bp.cid);
                     }
 
@@ -532,67 +515,49 @@ impl NetworkBehaviour for Bitswap {
             return Poll::Ready(event);
         }
 
-        let mut msg = None;
-        let mut to_remove = None;
+        let mut msg = Poll::Pending;
 
         for (peer_id, peer_state) in self.ledgers.iter_mut() {
-            // make progress on connected peers first, that have wants
             if self.is_connected(peer_id) {
-                if peer_state.has_blocks() {
+                let should_send = if peer_state.has_blocks() {
+                    // make progress on connected peers first, that have wants
                     inc!(BitswapMetrics::PollActionConnectedWants);
-                    // connected, send message
-                    // TODO: limit size
-                    // TODO: limit how ofen we send
-
-                    trace!("sending message to {}", peer_id);
-                    msg = Some(Poll::Ready(NetworkBehaviourAction::NotifyHandler {
-                        peer_id: *peer_id,
-                        handler: NotifyHandler::Any,
-                        event: BitswapHandlerIn::Message(peer_state.send_message()),
-                    }));
-                    to_remove = Some(*peer_id);
-                    break;
-                }
-
-                // make progress on connected peers that have no wants
-                if !peer_state.is_empty() {
+                    true
+                } else if !peer_state.is_empty() {
+                    // make progress on connected peers that have no wants
                     inc!(BitswapMetrics::PollActionConnected);
+                    true
+                } else {
+                    false
+                };
+
+                if should_send {
+                    trace!("sending message to {}", peer_id);
                     // connected, send message
                     // TODO: limit size
                     // TODO: limit how ofen we send
-
-                    trace!("sending message to {}", peer_id);
-                    msg = Some(Poll::Ready(NetworkBehaviourAction::NotifyHandler {
+                    msg = Poll::Ready(NetworkBehaviourAction::NotifyHandler {
                         peer_id: *peer_id,
                         handler: NotifyHandler::Any,
                         event: BitswapHandlerIn::Message(peer_state.send_message()),
-                    }));
-                    to_remove = Some(*peer_id);
+                    });
                     break;
                 }
             } else if !peer_state.is_empty() {
                 inc!(BitswapMetrics::PollActionNotConnected);
-                // not connected, need to dial
 
+                // not connected, need to dial
                 self.connections.put(*peer_id, ConnState::Dialing);
                 let handler = self.new_handler();
-                msg = Some(Poll::Ready(NetworkBehaviourAction::Dial {
+                msg = Poll::Ready(NetworkBehaviourAction::Dial {
                     opts: DialOpts::peer_id(*peer_id).build(),
                     handler,
-                }));
+                });
                 break;
             }
         }
 
-        if let Some(to_remove) = to_remove {
-            self.ledgers.remove(&to_remove);
-        }
-
-        if let Some(msg) = msg {
-            return msg;
-        }
-
-        Poll::Pending
+        msg
     }
 }
 
