@@ -23,7 +23,7 @@ use tracing::{debug, instrument, trace, warn};
 use crate::handler::{BitswapHandler, BitswapHandlerIn, HandlerEvent};
 use crate::message::{BitswapMessage, BlockPresence, Priority};
 use crate::protocol::ProtocolConfig;
-use crate::Block;
+use crate::{Block, ProtocolId};
 
 const MAX_PROVIDERS: usize = 10000; // yolo
 
@@ -179,7 +179,7 @@ impl Default for Ledger {
 
 #[derive(Debug, Copy, Clone, PartialEq)]
 enum ConnState {
-    Connected,
+    Connected(Option<ProtocolId>),
     Disconnected,
     Dialing,
 }
@@ -189,6 +189,7 @@ pub struct BitswapConfig {
     pub max_cached_peers: usize,
     pub max_ledgers: usize,
     pub idle_timeout: Duration,
+    pub protocol_config: ProtocolConfig,
 }
 
 impl Default for BitswapConfig {
@@ -197,6 +198,7 @@ impl Default for BitswapConfig {
             max_cached_peers: 20_000,
             max_ledgers: 1024,
             idle_timeout: Duration::from_secs(30),
+            protocol_config: ProtocolConfig::default(),
         }
     }
 }
@@ -223,6 +225,10 @@ impl Bitswap {
         }
     }
 
+    pub fn supported_protocols(&self) -> &[ProtocolId] {
+        &self.config.protocol_config.protocol_ids
+    }
+
     /// Notifies about a peer that speaks the bitswap protocol.
     pub fn add_peer(&mut self, peer: PeerId) {
         if let PutResult::Put = self.known_peers.put(peer, ()) {
@@ -235,7 +241,7 @@ impl Bitswap {
     fn is_connected(&mut self, peer_id: &PeerId) -> bool {
         match self.connections.get(peer_id) {
             Some(conn) => {
-                matches!(conn, ConnState::Connected)
+                matches!(conn, ConnState::Connected(_))
             }
             None => {
                 self.connections.put(*peer_id, ConnState::Disconnected);
@@ -360,7 +366,7 @@ impl NetworkBehaviour for Bitswap {
     type OutEvent = BitswapEvent;
 
     fn new_handler(&mut self) -> Self::ConnectionHandler {
-        let protocol_config = ProtocolConfig::default();
+        let protocol_config = self.config.protocol_config.clone();
         BitswapHandler::new(protocol_config, self.config.idle_timeout)
     }
 
@@ -380,7 +386,7 @@ impl NetworkBehaviour for Bitswap {
         if other_established == 0 {
             inc!(BitswapMetrics::ConnectedPeers);
             self.add_peer(*peer_id);
-            self.connections.put(*peer_id, ConnState::Connected);
+            self.connections.put(*peer_id, ConnState::Connected(None));
         }
     }
 
@@ -431,6 +437,10 @@ impl NetworkBehaviour for Bitswap {
     fn inject_event(&mut self, peer_id: PeerId, connection: ConnectionId, message: HandlerEvent) {
         inc!(BitswapMetrics::MessagesReceived);
         match message {
+            HandlerEvent::Connected { protocol } => {
+                self.connections
+                    .put(peer_id, ConnState::Connected(Some(protocol)));
+            }
             HandlerEvent::Message { mut message } => {
                 inc!(BitswapMetrics::Requests);
 
@@ -603,7 +613,7 @@ mod tests {
 
     use super::*;
     use crate::block::tests::create_block;
-    use crate::Block;
+    use crate::{Block, ProtocolId};
 
     fn mk_transport() -> (PeerId, Boxed<(PeerId, StreamMuxerBox)>) {
         let local_key = Keypair::generate_ed25519();
@@ -630,10 +640,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_bitswap_behaviour() {
-        tracing_subscriber::registry()
-            .with(fmt::layer().pretty())
-            .with(EnvFilter::from_default_env())
-            .init();
+        // tracing_subscriber::registry()
+        //     .with(fmt::layer().pretty())
+        //     .with(EnvFilter::from_default_env())
+        //     .init();
 
         let (peer1_id, trans) = mk_transport();
         let mut swarm1 = SwarmBuilder::new(trans, Bitswap::default(), peer1_id)
@@ -754,5 +764,230 @@ mod tests {
 
         assert!(received_have.load(std::sync::atomic::Ordering::SeqCst));
         assert_eq!(&block[..], b"hello world");
+    }
+
+    #[tokio::test]
+    async fn test_bitswap_multiprotocol() {
+        tracing_subscriber::registry()
+            .with(fmt::layer().pretty())
+            .with(EnvFilter::from_default_env())
+            .init();
+
+        struct TestCase {
+            peer1_protocols: Vec<ProtocolId>,
+            peer2_protocols: Vec<ProtocolId>,
+            expected_protocol: ProtocolId,
+        }
+
+        let tests = [
+            // All with only, 1.2.0
+            TestCase {
+                peer1_protocols: vec![ProtocolId::Bitswap120],
+                peer2_protocols: vec![ProtocolId::Bitswap120],
+                expected_protocol: ProtocolId::Bitswap120,
+            },
+            // Prefer 1.2.0 over others
+            TestCase {
+                peer1_protocols: vec![
+                    ProtocolId::Bitswap120,
+                    ProtocolId::Bitswap110,
+                    ProtocolId::Bitswap100,
+                ],
+                peer2_protocols: vec![
+                    ProtocolId::Bitswap120,
+                    ProtocolId::Bitswap110,
+                    ProtocolId::Bitswap100,
+                ],
+                expected_protocol: ProtocolId::Bitswap120,
+            },
+            // Prefer 1.1.0 over others
+            TestCase {
+                peer1_protocols: vec![
+                    ProtocolId::Bitswap120,
+                    ProtocolId::Bitswap110,
+                    ProtocolId::Bitswap100,
+                ],
+                peer2_protocols: vec![ProtocolId::Bitswap110, ProtocolId::Bitswap100],
+                expected_protocol: ProtocolId::Bitswap110,
+            },
+            // Fallback
+            TestCase {
+                peer1_protocols: vec![
+                    ProtocolId::Bitswap120,
+                    ProtocolId::Bitswap110,
+                    ProtocolId::Bitswap100,
+                ],
+                peer2_protocols: vec![ProtocolId::Bitswap100],
+                expected_protocol: ProtocolId::Bitswap100,
+            },
+            // Fallback
+            TestCase {
+                peer1_protocols: vec![
+                    ProtocolId::Bitswap120,
+                    ProtocolId::Bitswap110,
+                    ProtocolId::Bitswap100,
+                ],
+                peer2_protocols: vec![ProtocolId::Bitswap120],
+                expected_protocol: ProtocolId::Bitswap120,
+            },
+            // Fallback
+            TestCase {
+                peer1_protocols: vec![
+                    ProtocolId::Bitswap120,
+                    ProtocolId::Bitswap110,
+                    ProtocolId::Bitswap100,
+                    ProtocolId::Legacy,
+                ],
+                peer2_protocols: vec![ProtocolId::Legacy],
+                expected_protocol: ProtocolId::Legacy,
+            },
+        ];
+
+        for case in tests {
+            let expected_protocol = case.expected_protocol;
+            let peer1_config = BitswapConfig {
+                protocol_config: ProtocolConfig {
+                    protocol_ids: case.peer1_protocols.clone(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            let (peer1_id, trans) = mk_transport();
+            let mut swarm1 = SwarmBuilder::new(trans, Bitswap::new(peer1_config), peer1_id)
+                .executor(Box::new(|fut| {
+                    tokio::spawn(fut);
+                }))
+                .build();
+
+            let peer2_config = BitswapConfig {
+                protocol_config: ProtocolConfig {
+                    protocol_ids: case.peer2_protocols.clone(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            let (peer2_id, trans) = mk_transport();
+            let mut swarm2 = SwarmBuilder::new(trans, Bitswap::new(peer2_config), peer2_id)
+                .executor(Box::new(|fut| {
+                    tokio::spawn(fut);
+                }))
+                .build();
+
+            let (mut tx, mut rx) = mpsc::channel::<Multiaddr>(1);
+            Swarm::listen_on(&mut swarm1, "/ip4/127.0.0.1/tcp/0".parse().unwrap()).unwrap();
+
+            let Block {
+                cid: cid_orig,
+                data: data_orig,
+            } = create_block(&b"hello world"[..]);
+            let cid = cid_orig;
+
+            let received_have_orig = AtomicBool::new(false);
+
+            let received_have = &received_have_orig;
+            let peer1 = async move {
+                while swarm1.next().now_or_never().is_some() {}
+
+                for l in Swarm::listeners(&swarm1) {
+                    tx.send(l.clone()).await.unwrap();
+                }
+
+                loop {
+                    match swarm1.next().await {
+                        Some(SwarmEvent::Behaviour(BitswapEvent::InboundRequest {
+                            request:
+                                InboundRequest::WantHave {
+                                    sender,
+                                    cid,
+                                    priority,
+                                },
+                        })) => {
+                            trace!("peer1: wanthave: {}", cid);
+                            assert_eq!(cid_orig, cid);
+                            assert_eq!(priority, 1000);
+                            swarm1.behaviour_mut().send_have_block(&sender, cid_orig);
+                            received_have.store(true, std::sync::atomic::Ordering::SeqCst);
+                        }
+                        Some(SwarmEvent::Behaviour(BitswapEvent::InboundRequest {
+                            request: InboundRequest::Want { sender, cid, .. },
+                        })) => {
+                            assert_eq!(
+                                swarm1.behaviour_mut().connections.get(&peer2_id).unwrap(),
+                                &ConnState::Connected(Some(expected_protocol))
+                            );
+
+                            trace!("peer1: want: {}", cid);
+                            assert_eq!(cid_orig, cid);
+
+                            swarm1
+                                .behaviour_mut()
+                                .send_block(&sender, cid_orig, data_orig.clone());
+                        }
+                        ev => trace!("peer1: {:?}", ev),
+                    }
+                }
+            };
+
+            let peer2 = async move {
+                let addr = rx.next().await.unwrap();
+                trace!("peer2: dialing peer1 at {}", addr);
+                Swarm::dial(&mut swarm2, addr).unwrap();
+
+                let orig_cid = cid;
+                loop {
+                    match swarm2.next().await {
+                        Some(SwarmEvent::ConnectionEstablished {
+                            peer_id,
+                            num_established,
+                            ..
+                        }) => {
+                            assert_eq!(u32::from(num_established), 1);
+                            assert_eq!(peer_id, peer1_id);
+
+                            // wait for the connection to send the want
+                            swarm2.behaviour_mut().find_providers(cid, 1000);
+                        }
+                        Some(SwarmEvent::Behaviour(BitswapEvent::OutboundQueryCompleted {
+                            result:
+                                QueryResult::FindProviders(FindProvidersResult::Ok { cid, provider }),
+                        })) => {
+                            assert_eq!(
+                                swarm2.behaviour_mut().connections.get(&peer1_id).unwrap(),
+                                &ConnState::Connected(Some(expected_protocol))
+                            );
+
+                            trace!("peer2: findproviders: {}", cid);
+                            assert_eq!(orig_cid, cid);
+
+                            assert_eq!(provider, peer1_id);
+
+                            assert!(received_have.load(std::sync::atomic::Ordering::SeqCst));
+
+                            swarm2.behaviour_mut().want_block(
+                                cid,
+                                1000,
+                                [peer1_id].into_iter().collect(),
+                            );
+                        }
+                        Some(SwarmEvent::Behaviour(BitswapEvent::OutboundQueryCompleted {
+                            result: QueryResult::Want(WantResult::Ok { sender, cid, data }),
+                        })) => {
+                            assert_eq!(sender, peer1_id);
+                            assert_eq!(orig_cid, cid);
+                            return data;
+                        }
+                        ev => trace!("peer2: {:?}", ev),
+                    }
+                }
+            };
+
+            let block = future::select(Box::pin(peer1), Box::pin(peer2))
+                .await
+                .factor_first()
+                .0;
+
+            assert!(received_have.load(std::sync::atomic::Ordering::SeqCst));
+            assert_eq!(&block[..], b"hello world");
+        }
     }
 }

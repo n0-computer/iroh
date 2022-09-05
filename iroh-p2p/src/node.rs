@@ -624,13 +624,14 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                         }
                     }
 
+                    let supported_protocols = self.swarm.behaviour().bitswap.supported_protocols();
                     // Inform bitswap about identified peers
                     if protocols.iter().any(|p| {
                         let p = p.as_bytes();
-                        if p == iroh_bitswap::ProtocolId::Bitswap110.protocol_name()
-                            || p == iroh_bitswap::ProtocolId::Bitswap120.protocol_name()
-                        {
-                            return true;
+                        for sp in supported_protocols {
+                            if p == sp.protocol_name() {
+                                return true;
+                            }
                         }
                         false
                     }) {
