@@ -159,9 +159,9 @@ impl Sender {
         // wrap in directory to preserve the name
         let mut root_dir = iroh_resolver::unixfs_builder::DirectoryBuilder::new();
         let mut file = iroh_resolver::unixfs_builder::FileBuilder::new();
-        file.with_name(name).content_bytes(data);
+        file.name(name).content_bytes(data);
         let file = file.build().await?;
-        root_dir.add_file(file);
+        root_dir.file(file);
 
         self.transfer_from_dir_builder(root_dir).await
     }

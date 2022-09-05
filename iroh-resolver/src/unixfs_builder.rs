@@ -47,9 +47,8 @@ impl Directory {
         &self.name
     }
 
-    /// wrap an entry in an unnamed directory
-    /// used when adding a unixfs file or top level directory to
-    /// iroh in order to preserve the file or directory's name
+    /// Wrap an entry in an unnamed directory. Used when adding a unixfs file or top level directory to
+    /// Iroh in order to preserve the file or directory's name.
     pub fn wrap(self) -> Self {
         Directory {
             name: "".into(),
@@ -75,7 +74,7 @@ impl Directory {
             for entry in self.entries {
                 let (name, root) = match entry {
                     Entry::File(file) => {
-                        let name = file.name();
+                        let name = file.name().to_string();
                         let parts = file.encode().await?;
                         tokio::pin!(parts);
                         let mut root = None;
@@ -139,7 +138,7 @@ impl Debug for Content {
 impl PartialEq for Content {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
-            (Content::Reader(_), Content::Reader(_)) => true,
+            (Content::Reader(_), Content::Reader(_)) => false,
             (Content::Path(self_path), Content::Path(other_path)) => self_path == other_path,
             _ => false,
         }
@@ -160,13 +159,15 @@ impl Debug for File {
         f.debug_struct("File")
             .field("name", &self.name)
             .field("content", &self.content)
+            .field("tree_builder", &self.tree_builder)
+            .field("chunker", &self.chunker)
             .finish()
     }
 }
 
 impl File {
-    pub fn name(&self) -> String {
-        self.name.clone()
+    pub fn name(&self) -> &str {
+        &self.name
     }
 
     pub fn wrap(self) -> Directory {
@@ -212,8 +213,15 @@ pub struct FileBuilder {
 
 impl Debug for FileBuilder {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let reader = if self.reader.is_some() {
+            "Some(Box<AsyncRead>)"
+        } else {
+            "None"
+        };
         f.debug_struct("FileBuilder")
             .field("path", &self.path)
+            .field("name", &self.name)
+            .field("reader", &reader)
             .finish()
     }
 }
@@ -224,12 +232,12 @@ impl FileBuilder {
         Default::default()
     }
 
-    pub fn with_path<P: Into<PathBuf>>(mut self, path: P) -> Self {
+    pub fn path<P: Into<PathBuf>>(mut self, path: P) -> Self {
         self.path = Some(path.into());
         self
     }
 
-    pub fn with_name<N: Into<String>>(&mut self, name: N) -> &mut Self {
+    pub fn name<N: Into<String>>(&mut self, name: N) -> &mut Self {
         self.name = Some(name.into());
         self
     }
@@ -312,38 +320,35 @@ impl DirectoryBuilder {
         Default::default()
     }
 
-    pub fn as_hamt(&mut self) -> &mut Self {
+    pub fn hamt(&mut self) -> &mut Self {
         self.typ = DirectoryType::Hamt;
         self
     }
 
-    pub fn allow_recursive(&mut self) -> &mut Self {
+    pub fn recursive(&mut self) -> &mut Self {
         self.recursive = true;
         self
     }
 
-    pub fn with_name<N: Into<String>>(&mut self, name: N) -> &mut Self {
+    pub fn name<N: Into<String>>(&mut self, name: N) -> &mut Self {
         self.name = Some(name.into());
         self
     }
 
-    pub fn add_dir(&mut self, dir: Directory) -> Result<&mut Self> {
-        if !self.recursive {
-            anyhow::bail!("recursive directories not allowed");
-        }
-
-        if self.typ == DirectoryType::Basic && self.entries.len() >= DIRECTORY_LINK_LIMIT {
-            self.typ = DirectoryType::Hamt;
-        }
-        self.entries.push(Entry::Directory(dir));
-        Ok(self)
+    pub fn dir(&mut self, dir: Directory) -> Result<&mut Self> {
+        ensure!(self.recursive, "recursive directories not allowed");
+        Ok(self.entry(Entry::Directory(dir)))
     }
 
-    pub fn add_file(&mut self, file: File) -> &mut Self {
+    pub fn file(&mut self, file: File) -> &mut Self {
+        self.entry(Entry::File(file))
+    }
+
+    fn entry(&mut self, entry: Entry) -> &mut Self {
         if self.typ == DirectoryType::Basic && self.entries.len() >= DIRECTORY_LINK_LIMIT {
             self.typ = DirectoryType::Hamt
         }
-        self.entries.push(Entry::File(file));
+        self.entries.push(entry);
         self
     }
 
@@ -352,9 +357,7 @@ impl DirectoryBuilder {
             name, entries, typ, ..
         } = self;
 
-        if typ == DirectoryType::Hamt {
-            anyhow::bail!("too many links to fit into one chunk, must be encoded as a HAMT. However, HAMT creation has not yet been implemented.");
-        }
+        ensure!(typ == DirectoryType::Basic, "too many links to fit into one chunk, must be encoded as a HAMT. However, HAMT creation has not yet been implemented.");
 
         let name = name.unwrap_or_default();
 
@@ -406,7 +409,7 @@ impl Store for &tokio::sync::Mutex<std::collections::HashMap<Cid, Bytes>> {
 pub async fn add_file<S: Store>(path: &Path, rpc: Option<S>) -> Result<Cid> {
     ensure!(path.is_file(), "provided path was not a file");
 
-    let file = FileBuilder::new().with_path(path).build().await?;
+    let file = FileBuilder::new().path(path).build().await?;
 
     // encode and store
     let mut root = None;
@@ -455,24 +458,23 @@ pub async fn add_dir<S: Store>(path: &Path, rpc: Option<S>, recursive: bool) -> 
 async fn make_dir_from_path<P: Into<PathBuf>>(path: P, recursive: bool) -> Result<Directory> {
     let path = path.into();
     let mut dir = DirectoryBuilder::new();
-    dir.with_name(
+    dir.name(
         path.file_name()
             .and_then(|s| s.to_str())
             .unwrap_or_default(),
     );
     if recursive {
-        dir.allow_recursive();
+        dir.recursive();
     }
-    let entries = std::fs::read_dir(path.clone())?;
-    for entry in entries {
-        let entry = entry?;
+    let mut directory_reader = tokio::fs::read_dir(path.clone()).await?;
+    while let Some(entry) = directory_reader.next_entry().await? {
         let path = entry.path();
         if path.is_file() {
-            let f = FileBuilder::new().with_path(path).build().await?;
-            dir.add_file(f);
+            let f = FileBuilder::new().path(path).build().await?;
+            dir.file(f);
         } else if path.is_dir() {
             let d = make_dir_from_path(path, recursive).await?;
-            dir.add_dir(d)?;
+            dir.dir(d)?;
         } else {
             anyhow::bail!("directory entry is neither file nor directory")
         }
@@ -491,15 +493,15 @@ mod tests {
     async fn test_builder_basics() -> Result<()> {
         // Create a directory
         let mut dir = DirectoryBuilder::new();
-        dir.with_name("foo");
+        dir.name("foo");
 
         // Add a file
         let mut bar = FileBuilder::new();
-        bar.with_name("bar.txt").content_bytes(b"bar".to_vec());
+        bar.name("bar.txt").content_bytes(b"bar".to_vec());
         let bar = bar.build().await?;
         let bar_encoded: Vec<_> = {
             let mut bar = FileBuilder::new();
-            bar.with_name("bar.txt").content_bytes(b"bar".to_vec());
+            bar.name("bar.txt").content_bytes(b"bar".to_vec());
             let bar = bar.build().await?;
             bar.encode().await?.try_collect().await?
         };
@@ -507,17 +509,17 @@ mod tests {
 
         // Add a file
         let mut baz = FileBuilder::new();
-        baz.with_name("baz.txt").content_bytes(b"baz".to_vec());
+        baz.name("baz.txt").content_bytes(b"baz".to_vec());
         let baz = baz.build().await?;
         let baz_encoded: Vec<_> = {
             let mut baz = FileBuilder::new();
-            baz.with_name("baz.txt").content_bytes(b"baz".to_vec());
+            baz.name("baz.txt").content_bytes(b"baz".to_vec());
             let baz = baz.build().await?;
             baz.encode().await?.try_collect().await?
         };
         assert_eq!(baz_encoded.len(), 1);
 
-        dir.add_file(bar).add_file(baz);
+        dir.file(bar).file(baz);
 
         let dir = dir.build()?;
 
@@ -540,7 +542,7 @@ mod tests {
         let dir = dir.build()?;
 
         let mut no_recursive = DirectoryBuilder::new();
-        if no_recursive.add_dir(dir).is_ok() {
+        if no_recursive.dir(dir).is_ok() {
             panic!("shouldn't be able to add a directory to a non-recursive directory builder");
         }
 
@@ -548,9 +550,9 @@ mod tests {
         let dir = dir.build()?;
 
         let mut recursive_dir_builder = DirectoryBuilder::new();
-        recursive_dir_builder.allow_recursive();
+        recursive_dir_builder.recursive();
         recursive_dir_builder
-            .add_dir(dir)
+            .dir(dir)
             .expect("recursive directories allowed");
         Ok(())
     }
@@ -559,17 +561,17 @@ mod tests {
     async fn test_builder_stream_small() -> Result<()> {
         // Create a directory
         let mut dir = DirectoryBuilder::new();
-        dir.with_name("foo");
+        dir.name("foo");
 
         // Add a file
         let mut bar = FileBuilder::new();
         let bar_reader = std::io::Cursor::new(b"bar");
-        bar.with_name("bar.txt").content_reader(bar_reader);
+        bar.name("bar.txt").content_reader(bar_reader);
         let bar = bar.build().await?;
         let bar_encoded: Vec<_> = {
             let mut bar = FileBuilder::new();
             let bar_reader = std::io::Cursor::new(b"bar");
-            bar.with_name("bar.txt").content_reader(bar_reader);
+            bar.name("bar.txt").content_reader(bar_reader);
             let bar = bar.build().await?;
             bar.encode().await?.try_collect().await?
         };
@@ -578,18 +580,18 @@ mod tests {
         // Add a file
         let mut baz = FileBuilder::new();
         let baz_reader = std::io::Cursor::new(b"bazz");
-        baz.with_name("baz.txt").content_reader(baz_reader);
+        baz.name("baz.txt").content_reader(baz_reader);
         let baz = baz.build().await?;
         let baz_encoded: Vec<_> = {
             let mut baz = FileBuilder::new();
             let baz_reader = std::io::Cursor::new(b"bazz");
-            baz.with_name("baz.txt").content_reader(baz_reader);
+            baz.name("baz.txt").content_reader(baz_reader);
             let baz = baz.build().await?;
             baz.encode().await?.try_collect().await?
         };
         assert_eq!(baz_encoded.len(), 1);
 
-        dir.add_file(bar).add_file(baz);
+        dir.file(bar).file(baz);
 
         let dir = dir.build()?;
 
@@ -610,17 +612,17 @@ mod tests {
     async fn test_builder_stream_large() -> Result<()> {
         // Create a directory
         let mut dir = DirectoryBuilder::new();
-        dir.with_name("foo");
+        dir.name("foo");
 
         // Add a file
         let mut bar = FileBuilder::new();
         let bar_reader = std::io::Cursor::new(vec![1u8; 1024 * 1024]);
-        bar.with_name("bar.txt").content_reader(bar_reader);
+        bar.name("bar.txt").content_reader(bar_reader);
         let bar = bar.build().await?;
         let bar_encoded: Vec<_> = {
             let mut bar = FileBuilder::new();
             let bar_reader = std::io::Cursor::new(vec![1u8; 1024 * 1024]);
-            bar.with_name("bar.txt").content_reader(bar_reader);
+            bar.name("bar.txt").content_reader(bar_reader);
             let bar = bar.build().await?;
             bar.encode().await?.try_collect().await?
         };
@@ -636,18 +638,18 @@ mod tests {
         }
 
         let baz_reader = std::io::Cursor::new(baz_content.clone());
-        baz.with_name("baz.txt").content_reader(baz_reader);
+        baz.name("baz.txt").content_reader(baz_reader);
         let baz = baz.build().await?;
         let baz_encoded: Vec<_> = {
             let mut baz = FileBuilder::new();
             let baz_reader = std::io::Cursor::new(baz_content);
-            baz.with_name("baz.txt").content_reader(baz_reader);
+            baz.name("baz.txt").content_reader(baz_reader);
             let baz = baz.build().await?;
             baz.encode().await?.try_collect().await?
         };
         assert_eq!(baz_encoded.len(), 9);
 
-        dir.add_file(bar).add_file(baz);
+        dir.file(bar).file(baz);
 
         let dir = dir.build()?;
 
@@ -682,27 +684,27 @@ mod tests {
     async fn test_hamt_detection() -> Result<()> {
         // allow hamt override
         let mut builder = DirectoryBuilder::new();
-        builder.as_hamt();
+        builder.hamt();
         assert_eq!(DirectoryType::Hamt, builder.typ);
 
         let mut builder = DirectoryBuilder::new();
 
         for _i in 0..DIRECTORY_LINK_LIMIT {
             let mut file_builder = FileBuilder::new();
-            file_builder.with_name("foo.txt");
+            file_builder.name("foo.txt");
             file_builder.content_bytes(Bytes::from("hello world"));
             let file = file_builder.build().await?;
-            builder.add_file(file);
+            builder.file(file);
         }
 
         // under DIRECTORY_LINK_LIMIT should still be a basic directory
         assert_eq!(DirectoryType::Basic, builder.typ);
 
         let mut file_builder = FileBuilder::new();
-        file_builder.with_name("foo.txt");
+        file_builder.name("foo.txt");
         file_builder.content_bytes(Bytes::from("hello world"));
         let file = file_builder.build().await?;
-        builder.add_file(file);
+        builder.file(file);
 
         // at directory link limit should be processed as a hamt
         assert_eq!(DirectoryType::Hamt, builder.typ);
@@ -721,12 +723,9 @@ mod tests {
             .create(dir.clone())
             .unwrap();
 
-        let file_path = dir.join("foo.txt");
+        // create directory and nested file
         let nested_dir_path = dir.join("nested_dir");
         let nested_file_path = nested_dir_path.join("bar.txt");
-        let mut file = std::fs::File::create(file_path.clone()).unwrap();
-
-        file.write_all(b"hello world").unwrap();
 
         std::fs::DirBuilder::new()
             .recursive(true)
@@ -736,11 +735,13 @@ mod tests {
         let mut file = std::fs::File::create(nested_file_path.clone()).unwrap();
         file.write_all(b"hello world again").unwrap();
 
+        // create another file in the "test_dir" directory
+        let file_path = dir.join("foo.txt");
+        let mut file = std::fs::File::create(file_path.clone()).unwrap();
+        file.write_all(b"hello world").unwrap();
+
         // create directory manually
-        let nested_file = FileBuilder::new()
-            .with_path(nested_file_path)
-            .build()
-            .await?;
+        let nested_file = FileBuilder::new().path(nested_file_path).build().await?;
         let nested_dir = Directory {
             name: String::from(
                 nested_dir_path
@@ -751,7 +752,7 @@ mod tests {
             entries: vec![Entry::File(nested_file)],
         };
 
-        let file = FileBuilder::new().with_path(file_path).build().await?;
+        let file = FileBuilder::new().path(file_path).build().await?;
 
         let expected = Directory {
             name: String::from(dir.clone().file_name().and_then(|s| s.to_str()).unwrap()),
