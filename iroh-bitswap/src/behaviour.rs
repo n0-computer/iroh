@@ -136,7 +136,9 @@ impl Ledger {
     }
 
     fn send_message(&mut self) -> BitswapMessage {
-        std::mem::take(&mut self.msg)
+        let mut new_msg = BitswapMessage::default();
+        new_msg.wantlist_mut().set_full(false);
+        std::mem::replace(&mut self.msg, new_msg)
     }
 
     fn want_block(&mut self, cid: &Cid, priority: Priority) {
@@ -383,7 +385,7 @@ impl Bitswap {
     pub fn cancel_want_block(&mut self, cid: &Cid) {
         inc!(BitswapMetrics::CancelWantBlocks);
 
-        debug!("cancel_block: {}", cid);
+        debug!("cancel_want_block: {}", cid);
         self.ledger.remove_want_block(&cid);
 
         for state in self.ledgers.values_mut() {
@@ -500,6 +502,7 @@ impl NetworkBehaviour for Bitswap {
                     record!(BitswapMetrics::BlockBytesIn, block.data.len() as u64);
                     inc!(BitswapMetrics::CancelBlocks);
 
+                    self.ledger.cancel_block(&block.cid);
                     for (id, state) in self.ledgers.iter_mut() {
                         if id == &peer_id {
                             state.remove_block(&block.cid);
@@ -523,6 +526,7 @@ impl NetworkBehaviour for Bitswap {
 
                 for bp in message.block_presences().iter().filter(|bp| bp.is_have()) {
                     inc!(BitswapMetrics::CancelWantBlocks);
+                    self.ledger.remove_want_block(&bp.cid);
                     for state in self.ledgers.values_mut() {
                         state.remove_want_block(&bp.cid);
                     }

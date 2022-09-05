@@ -502,9 +502,9 @@ impl LoaderContext {
         }
 
         let mut streams = vec![];
-        if this.providers.len() < 5 {
-            streams.push(fetch_providers(client, cid).await?);
+        streams.push(fetch_providers(client, cid).await?);
 
+        if this.providers.len() < 5 {
             if let Some(ref root) = this.root() {
                 streams.push(fetch_providers(client, root).await?);
             }
