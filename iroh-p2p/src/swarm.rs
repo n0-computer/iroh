@@ -27,12 +27,13 @@ async fn build_transport(
 ) {
     // TODO: make transports configurable
 
+    let tcp_config = libp2p::tcp::GenTcpConfig::default()
+        .port_reuse(true)
+        .nodelay(true);
+    let transport = libp2p::tcp::TokioTcpTransport::new(tcp_config.clone());
     let transport =
-        libp2p::tcp::TokioTcpTransport::new(libp2p::tcp::GenTcpConfig::default().nodelay(true));
-    let transport = libp2p::websocket::WsConfig::new(libp2p::tcp::TokioTcpTransport::new(
-        libp2p::tcp::GenTcpConfig::default().nodelay(true),
-    ))
-    .or_transport(transport);
+        libp2p::websocket::WsConfig::new(libp2p::tcp::TokioTcpTransport::new(tcp_config))
+            .or_transport(transport);
 
     // TODO: configurable
     let transport = TransportTimeout::new(transport, Duration::from_secs(10));
