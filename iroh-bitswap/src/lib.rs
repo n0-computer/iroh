@@ -15,7 +15,9 @@ pub use crate::behaviour::{
     Bitswap, BitswapConfig, BitswapEvent, CancelResult, FindProvidersResult, InboundRequest,
     QueryError, QueryResult, SendHaveResult, SendResult, WantResult,
 };
-pub use crate::block::tests::create_block as create_test_block;
+pub use crate::block::tests::{
+    create_block_v0 as create_test_block_v0, create_block_v1 as create_test_block_v1,
+};
 pub use crate::block::Block;
 pub use crate::error::BitswapError;
 pub use crate::message::{BitswapMessage, Priority};

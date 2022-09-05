@@ -8,6 +8,7 @@ use prost::Message;
 use crate::block::Block;
 use crate::error::BitswapError;
 use crate::prefix::Prefix;
+use crate::ProtocolId;
 
 pub(crate) mod pb {
     include!(concat!(env!("OUT_DIR"), "/bitswap_pb.rs"));
@@ -80,7 +81,7 @@ impl Wantlist {
         self.full = full;
     }
 
-    pub fn into_pb(self) -> pb::message::Wantlist {
+    pub fn into_pb(self, protocol: ProtocolId) -> pb::message::Wantlist {
         use pb::message::wantlist::WantType;
 
         let mut wantlist = pb::message::Wantlist {
@@ -99,15 +100,18 @@ impl Wantlist {
             wantlist.entries.push(entry);
         }
 
-        for (cid, &priority) in &self.want_have_blocks {
-            let entry = pb::message::wantlist::Entry {
-                block: cid.to_bytes(),
-                priority,
-                cancel: false,
-                want_type: WantType::Have as _,
-                send_dont_have: false,
-            };
-            wantlist.entries.push(entry);
+        if protocol == ProtocolId::Bitswap120 {
+            // Only 1.2.0 introduces the notion of want haves
+            for (cid, &priority) in &self.want_have_blocks {
+                let entry = pb::message::wantlist::Entry {
+                    block: cid.to_bytes(),
+                    priority,
+                    cancel: false,
+                    want_type: WantType::Have as _,
+                    send_dont_have: false,
+                };
+                wantlist.entries.push(entry);
+            }
         }
 
         for cid in &self.cancel_blocks {
@@ -124,9 +128,8 @@ impl Wantlist {
         wantlist
     }
 
-    pub fn from_pb(proto: Option<pb::message::Wantlist>) -> Result<Self, BitswapError> {
+    pub fn from_pb(proto: pb::message::Wantlist) -> Result<Self, BitswapError> {
         let mut wantlist = Wantlist::default();
-        let proto = proto.unwrap_or_default();
 
         for entry in proto.entries {
             let cid = Cid::try_from(entry.block)?;
@@ -252,33 +255,52 @@ impl BitswapMessage {
     }
 
     /// Turns this `Message` into a message that can be sent to a substream.
-    pub fn to_bytes(&self) -> BytesMut {
-        self.clone().into_bytes()
+    pub fn to_bytes(&self, protocol: ProtocolId) -> BytesMut {
+        self.clone().into_bytes(protocol)
     }
 
-    pub fn into_bytes(self) -> BytesMut {
-        let mut payload = Vec::with_capacity(self.blocks.len());
-        for block in self.blocks.into_iter() {
-            let prefix: Prefix = block.cid().into();
-            let b = pb::message::Block {
-                prefix: prefix.to_bytes(),
-                data: block.data,
-            };
-            payload.push(b);
-        }
-
-        let block_presences = self.block_presences.into_iter().map(|p| p.into()).collect();
-
-        let proto = pb::Message {
-            wantlist: if self.wantlist.is_empty() {
-                None
-            } else {
-                Some(self.wantlist.into_pb())
-            },
-            payload,
-            block_presences,
-            blocks: Default::default(),        // unused
-            pending_bytes: Default::default(), // unused
+    pub fn into_bytes(self, protocol: ProtocolId) -> BytesMut {
+        let proto = match protocol {
+            ProtocolId::Bitswap100 | ProtocolId::Legacy => {
+                let mut blocks = Vec::with_capacity(self.blocks.len());
+                for block in self.blocks.into_iter() {
+                    blocks.push(block.data);
+                }
+                pb::Message {
+                    wantlist: if self.wantlist.is_empty() {
+                        None
+                    } else {
+                        Some(self.wantlist.into_pb(protocol))
+                    },
+                    payload: Vec::new(),
+                    block_presences: Vec::new(),
+                    blocks,
+                    pending_bytes: Default::default(), // unused
+                }
+            }
+            _ => {
+                let mut payload = Vec::with_capacity(self.blocks.len());
+                for block in self.blocks.into_iter() {
+                    let prefix: Prefix = block.cid().into();
+                    let b = pb::message::Block {
+                        prefix: prefix.to_bytes(),
+                        data: block.data,
+                    };
+                    payload.push(b);
+                }
+                let block_presences = self.block_presences.into_iter().map(|p| p.into()).collect();
+                pb::Message {
+                    wantlist: if self.wantlist.is_empty() {
+                        None
+                    } else {
+                        Some(self.wantlist.into_pb(protocol))
+                    },
+                    payload,
+                    block_presences,
+                    blocks: Vec::new(),
+                    pending_bytes: Default::default(), // unused
+                }
+            }
         };
 
         let mut res = BytesMut::with_capacity(proto.encoded_len());
@@ -290,89 +312,146 @@ impl BitswapMessage {
     }
 
     /// Creates a `Message` from bytes that were received from a substream.
-    pub fn from_bytes<B: Buf>(bytes: B) -> Result<Self, BitswapError> {
+    pub fn from_bytes<B: Buf>(protocol: ProtocolId, bytes: B) -> Result<Self, BitswapError> {
         let proto = pb::Message::decode(bytes)?;
-        let wantlist = Wantlist::from_pb(proto.wantlist)?;
+        let proto_wantlist = proto.wantlist.unwrap_or_default();
 
-        let mut blocks = Vec::with_capacity(proto.payload.len());
-        for payload in proto.payload {
-            let prefix = Prefix::new(&payload.prefix)?;
-            let cid = prefix.to_cid(&payload.data)?;
-            let block = Block {
-                cid,
-                data: payload.data,
-            };
-            blocks.push(block);
+        match protocol {
+            ProtocolId::Bitswap100 | ProtocolId::Legacy => {
+                let mut blocks = Vec::with_capacity(proto.payload.len());
+                for data in proto.blocks.into_iter() {
+                    let block = Block::from_v0_data(data)?;
+                    blocks.push(block);
+                }
+
+                let mut block_presences = Vec::with_capacity(proto.block_presences.len());
+                let wantlist = Wantlist::from_pb(proto_wantlist)?;
+
+                for bp in proto.block_presences {
+                    let cid = Cid::try_from(bp.cid)?;
+                    let entry = BlockPresence {
+                        cid,
+                        typ: bp.r#type.try_into()?,
+                    };
+                    block_presences.push(entry);
+                }
+
+                Ok(BitswapMessage {
+                    wantlist,
+                    blocks,
+                    block_presences,
+                })
+            }
+            _ => {
+                let mut blocks = Vec::with_capacity(proto.payload.len());
+                for payload in proto.payload {
+                    let prefix = Prefix::new(&payload.prefix)?;
+                    let cid = prefix.to_cid(&payload.data)?;
+                    let block = Block::new(payload.data, cid);
+                    blocks.push(block);
+                }
+
+                let mut block_presences = Vec::with_capacity(proto.block_presences.len());
+                let wantlist = Wantlist::from_pb(proto_wantlist)?;
+                for bp in proto.block_presences {
+                    let cid = Cid::try_from(bp.cid)?;
+                    let entry = BlockPresence {
+                        cid,
+                        typ: bp.r#type.try_into()?,
+                    };
+                    block_presences.push(entry);
+                }
+
+                Ok(BitswapMessage {
+                    wantlist,
+                    blocks,
+                    block_presences,
+                })
+            }
         }
-
-        let mut block_presences = Vec::with_capacity(proto.block_presences.len());
-        for bp in proto.block_presences {
-            let cid = Cid::try_from(bp.cid)?;
-            let entry = BlockPresence {
-                cid,
-                typ: bp.r#type.try_into()?,
-            };
-            block_presences.push(entry);
-        }
-
-        Ok(BitswapMessage {
-            wantlist,
-            blocks,
-            block_presences,
-        })
     }
 }
 #[cfg(test)]
 mod tests {
-
     use super::*;
-    use crate::block::tests::create_block;
+    use crate::block::tests::*;
+    use bytes::Bytes;
+
+    const PROTOCOLS: [ProtocolId; 4] = [
+        ProtocolId::Bitswap120,
+        ProtocolId::Bitswap110,
+        ProtocolId::Bitswap100,
+        ProtocolId::Legacy,
+    ];
+
+    fn create_block<B: Into<Bytes>>(protocol: ProtocolId, b: B) -> Block {
+        match protocol {
+            ProtocolId::Legacy | ProtocolId::Bitswap100 => create_block_v0(b),
+            _ => create_block_v1(b),
+        }
+    }
 
     #[test]
     fn test_empty_message_to_from_bytes() {
-        let message = BitswapMessage::new();
-        let bytes = message.to_bytes();
-        let new_message = BitswapMessage::from_bytes(bytes).unwrap();
-        assert_eq!(message, new_message);
+        for protocol in PROTOCOLS {
+            let message = BitswapMessage::new();
+            let bytes = message.to_bytes(protocol);
+            let new_message = BitswapMessage::from_bytes(protocol, bytes).unwrap();
+            assert_eq!(message, new_message);
+        }
     }
 
     #[test]
     fn test_want_message_to_from_bytes() {
-        let mut message = BitswapMessage::new();
-        let block = create_block(&b"hello world"[..]);
-        message.wantlist_mut().want_block(block.cid(), 1);
-        let bytes = message.to_bytes();
-        let new_message = BitswapMessage::from_bytes(bytes).unwrap();
-        assert_eq!(message, new_message);
+        for protocol in PROTOCOLS {
+            let mut message = BitswapMessage::new();
+            let block = create_block(protocol, &b"hello world"[..]);
+            message.wantlist_mut().want_block(block.cid(), 1);
+            let bytes = message.to_bytes(protocol);
+            let new_message = BitswapMessage::from_bytes(protocol, bytes).unwrap();
+            assert_eq!(message, new_message);
+        }
     }
 
     #[test]
     fn test_want_have_message_to_from_bytes() {
-        let mut message = BitswapMessage::new();
-        let block = create_block(&b"hello world"[..]);
-        message.wantlist_mut().want_have_block(block.cid(), 1);
-        let bytes = message.to_bytes();
-        let new_message = BitswapMessage::from_bytes(bytes).unwrap();
-        assert_eq!(message, new_message);
+        for protocol in PROTOCOLS {
+            let mut message = BitswapMessage::new();
+            let block = create_block(protocol, &b"hello world"[..]);
+            message.wantlist_mut().want_have_block(block.cid(), 1);
+            let bytes = message.to_bytes(protocol);
+            let new_message = BitswapMessage::from_bytes(protocol, bytes).unwrap();
+
+            // want haves are only supported in 1.2.0
+            if protocol == ProtocolId::Bitswap120 {
+                assert_eq!(message, new_message);
+            } else {
+                assert!(new_message.is_empty());
+            }
+        }
     }
 
     #[test]
     fn test_cancel_message_to_from_bytes() {
-        let mut message = BitswapMessage::new();
-        let block = create_block(&b"hello world"[..]);
-        message.wantlist_mut().cancel_block(block.cid());
-        let bytes = message.to_bytes();
-        let new_message = BitswapMessage::from_bytes(bytes).unwrap();
-        assert_eq!(message, new_message);
+        for protocol in PROTOCOLS {
+            let mut message = BitswapMessage::new();
+            let block = create_block(protocol, &b"hello world"[..]);
+            message.wantlist_mut().cancel_block(block.cid());
+            let bytes = message.to_bytes(protocol);
+            let new_message = BitswapMessage::from_bytes(protocol, bytes).unwrap();
+            assert_eq!(message, new_message);
+        }
     }
 
     #[test]
     fn test_payload_message_to_from_bytes() {
-        let mut message = BitswapMessage::new();
-        let block = create_block(&b"hello world"[..]);
-        message.add_block(block);
-        let bytes = message.to_bytes();
-        let new_message = BitswapMessage::from_bytes(bytes).unwrap();
-        assert_eq!(message, new_message);
+        for protocol in PROTOCOLS {
+            let mut message = BitswapMessage::new();
+            let block = create_block(protocol, &b"hello world"[..]);
+            message.add_block(block);
+            let bytes = message.to_bytes(protocol);
+            let new_message = BitswapMessage::from_bytes(protocol, bytes).unwrap();
+            assert_eq!(message, new_message);
+        }
     }
 }

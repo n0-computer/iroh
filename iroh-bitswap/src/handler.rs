@@ -197,15 +197,16 @@ impl ConnectionHandler for BitswapHandler {
         if self.protocol_unsupported {
             return;
         }
+        let protocol_id = substream.codec().protocol;
         self.events
             .push(ConnectionHandlerEvent::Custom(HandlerEvent::Connected {
-                protocol: substream.codec().protocol,
+                protocol: protocol_id,
             }));
 
         self.inbound_substreams_created += 1;
 
         // new inbound substream. Replace the current one, if it exists.
-        trace!("New inbound substream request");
+        trace!("New inbound substream request: {:?}", protocol_id);
         self.inbound_substream = Some(InboundSubstreamState::WaitingInput(substream));
     }
 
@@ -221,6 +222,7 @@ impl ConnectionHandler for BitswapHandler {
             return;
         }
 
+        let protocol_id = substream.codec().protocol;
         self.events
             .push(ConnectionHandlerEvent::Custom(HandlerEvent::Connected {
                 protocol: substream.codec().protocol,
@@ -236,6 +238,7 @@ impl ConnectionHandler for BitswapHandler {
             // Add the message back to the send queue
             self.send_queue.push(message);
         } else {
+            trace!("New outbound substream: {:?}", protocol_id);
             self.outbound_substream = Some(OutboundSubstreamState::PendingSend(substream, message));
         }
     }

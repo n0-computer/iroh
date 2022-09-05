@@ -113,7 +113,7 @@ pub struct Bitswap {
     #[allow(dead_code)]
     config: BitswapConfig,
     /// Peers we know about that we can talk bitswap to.
-    known_peers: caches::RawLRU<PeerId, ()>,
+    known_peers: caches::RawLRU<PeerId, Option<ProtocolId>>,
     /// Current ledgers.
     ledgers: caches::RawLRU<PeerId, Ledger>,
     /// Current connections.
@@ -230,8 +230,8 @@ impl Bitswap {
     }
 
     /// Notifies about a peer that speaks the bitswap protocol.
-    pub fn add_peer(&mut self, peer: PeerId) {
-        if let PutResult::Put = self.known_peers.put(peer, ()) {
+    pub fn add_peer(&mut self, peer: PeerId, protocol: Option<ProtocolId>) {
+        if let PutResult::Put = self.known_peers.put(peer, protocol) {
             inc!(BitswapMetrics::KnownPeers);
         }
     }
@@ -277,7 +277,7 @@ impl Bitswap {
             let mut ledger = Ledger::default();
             let res = f(&mut ledger);
             self.ledgers.put(peer, ledger);
-            self.add_peer(peer);
+            self.add_peer(peer, None);
             res
         }
     }
@@ -326,10 +326,18 @@ impl Bitswap {
 
         let providers: Vec<_> = self
             .known_peers
-            .keys()
+            .iter()
+            .filter_map(|(key, value)| {
+                // Only supported on 1.2.0
+                if value == &None || value == &Some(ProtocolId::Bitswap120) {
+                    return Some(key);
+                }
+                None
+            })
             .take(MAX_PROVIDERS)
             .copied()
             .collect();
+
         for provider in providers {
             self.with_ledger(provider, |peer| {
                 peer.want_have_block(&cid, priority);
@@ -385,7 +393,7 @@ impl NetworkBehaviour for Bitswap {
     ) {
         if other_established == 0 {
             inc!(BitswapMetrics::ConnectedPeers);
-            self.add_peer(*peer_id);
+            self.add_peer(*peer_id, None);
             self.connections.put(*peer_id, ConnState::Connected(None));
         }
     }
@@ -440,6 +448,7 @@ impl NetworkBehaviour for Bitswap {
             HandlerEvent::Connected { protocol } => {
                 self.connections
                     .put(peer_id, ConnState::Connected(Some(protocol)));
+                self.known_peers.put(peer_id, Some(protocol));
             }
             HandlerEvent::Message { mut message } => {
                 inc!(BitswapMetrics::Requests);
@@ -612,7 +621,7 @@ mod tests {
     use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
     use super::*;
-    use crate::block::tests::create_block;
+    use crate::block::tests::*;
     use crate::{Block, ProtocolId};
 
     fn mk_transport() -> (PeerId, Boxed<(PeerId, StreamMuxerBox)>) {
@@ -665,7 +674,7 @@ mod tests {
         let Block {
             cid: cid_orig,
             data: data_orig,
-        } = create_block(&b"hello world"[..]);
+        } = create_block_v1(&b"hello world"[..]);
         let cid = cid_orig;
 
         let received_have_orig = AtomicBool::new(false);
@@ -773,6 +782,7 @@ mod tests {
             .with(EnvFilter::from_default_env())
             .init();
 
+        #[derive(Debug)]
         struct TestCase {
             peer1_protocols: Vec<ProtocolId>,
             peer2_protocols: Vec<ProtocolId>,
@@ -844,7 +854,10 @@ mod tests {
         ];
 
         for case in tests {
+            println!("case: {:?}", case);
             let expected_protocol = case.expected_protocol;
+            let supports_providers = expected_protocol == ProtocolId::Bitswap120;
+
             let peer1_config = BitswapConfig {
                 protocol_config: ProtocolConfig {
                     protocol_ids: case.peer1_protocols.clone(),
@@ -879,10 +892,17 @@ mod tests {
             let Block {
                 cid: cid_orig,
                 data: data_orig,
-            } = create_block(&b"hello world"[..]);
+            } = {
+                match expected_protocol {
+                    ProtocolId::Legacy | ProtocolId::Bitswap100 => {
+                        create_block_v0(&b"hello world"[..])
+                    }
+                    _ => create_block_v1(&b"hello world"[..]),
+                }
+            };
             let cid = cid_orig;
 
-            let received_have_orig = AtomicBool::new(false);
+            let received_have_orig = AtomicBool::new(!supports_providers);
 
             let received_have = &received_have_orig;
             let peer1 = async move {
@@ -944,13 +964,26 @@ mod tests {
                             assert_eq!(u32::from(num_established), 1);
                             assert_eq!(peer_id, peer1_id);
 
-                            // wait for the connection to send the want
-                            swarm2.behaviour_mut().find_providers(cid, 1000);
+                            // wait for the connection
+
+                            if supports_providers {
+                                swarm2.behaviour_mut().find_providers(cid, 1000);
+                            } else {
+                                swarm2.behaviour_mut().want_block(
+                                    cid,
+                                    1000,
+                                    [peer1_id].into_iter().collect(),
+                                );
+                            }
                         }
                         Some(SwarmEvent::Behaviour(BitswapEvent::OutboundQueryCompleted {
                             result:
                                 QueryResult::FindProviders(FindProvidersResult::Ok { cid, provider }),
                         })) => {
+                            assert!(
+                                supports_providers,
+                                "must not be executed when providers are not supported"
+                            );
                             assert_eq!(
                                 swarm2.behaviour_mut().connections.get(&peer1_id).unwrap(),
                                 &ConnState::Connected(Some(expected_protocol))
@@ -972,6 +1005,11 @@ mod tests {
                         Some(SwarmEvent::Behaviour(BitswapEvent::OutboundQueryCompleted {
                             result: QueryResult::Want(WantResult::Ok { sender, cid, data }),
                         })) => {
+                            assert_eq!(
+                                swarm2.behaviour_mut().connections.get(&peer1_id).unwrap(),
+                                &ConnState::Connected(Some(expected_protocol))
+                            );
+
                             assert_eq!(sender, peer1_id);
                             assert_eq!(orig_cid, cid);
                             return data;
