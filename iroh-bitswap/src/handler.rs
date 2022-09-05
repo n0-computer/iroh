@@ -9,7 +9,7 @@ use std::{
 use asynchronous_codec::Framed;
 use futures::prelude::*;
 use futures::StreamExt;
-use iroh_metrics::{inc, bitswap::BitswapMetrics, core::MRecorder};
+use iroh_metrics::{bitswap::BitswapMetrics, core::MRecorder, inc};
 use libp2p::core::upgrade::{
     InboundUpgrade, NegotiationError, OutboundUpgrade, ProtocolError, UpgradeError,
 };
@@ -22,7 +22,7 @@ use tracing::{error, trace, warn};
 
 use crate::{
     protocol::{BitswapCodec, ProtocolConfig},
-    BitswapError, BitswapMessage,
+    BitswapError, BitswapMessage, ProtocolId,
 };
 
 /// The initial time (in seconds) we set the keep alive for protocol negotiations to occur.
@@ -62,6 +62,9 @@ pub enum HandlerEvent {
         /// The Bitswap message.
         message: BitswapMessage,
     },
+    Connected {
+        protocol: ProtocolId,
+    },
 }
 
 /// A message sent from the behaviour to the handler.
@@ -89,6 +92,12 @@ pub struct BitswapHandler {
 
     /// The single long-lived inbound substream.
     inbound_substream: Option<InboundSubstreamState>,
+
+    /// Pending events to yield.
+    events: SmallVec<
+        [ConnectionHandlerEvent<ProtocolConfig, BitswapMessage, HandlerEvent, BitswapHandlerError>;
+            4],
+    >,
 
     /// Queue of values that we want to send to the remote.
     send_queue: SmallVec<[BitswapMessage; 16]>,
@@ -159,6 +168,7 @@ impl BitswapHandler {
             idle_timeout,
             upgrade_errors: VecDeque::new(),
             keep_alive: KeepAlive::Until(Instant::now() + Duration::from_secs(INITIAL_KEEP_ALIVE)),
+            events: Default::default(),
         }
     }
 }
@@ -181,12 +191,16 @@ impl ConnectionHandler for BitswapHandler {
         protocol: <Self::InboundProtocol as InboundUpgrade<NegotiatedSubstream>>::Output,
         _info: Self::InboundOpenInfo,
     ) {
-        let (substream, _peer_kind) = protocol;
+        let substream = protocol;
 
         // If the peer doesn't support the protocol, reject all substreams
         if self.protocol_unsupported {
             return;
         }
+        self.events
+            .push(ConnectionHandlerEvent::Custom(HandlerEvent::Connected {
+                protocol: substream.codec().protocol,
+            }));
 
         self.inbound_substreams_created += 1;
 
@@ -200,12 +214,17 @@ impl ConnectionHandler for BitswapHandler {
         protocol: <Self::OutboundProtocol as OutboundUpgrade<NegotiatedSubstream>>::Output,
         message: Self::OutboundOpenInfo,
     ) {
-        let (substream, _peer_kind) = protocol;
+        let substream = protocol;
 
         // If the peer doesn't support the protocol, reject all substreams
         if self.protocol_unsupported {
             return;
         }
+
+        self.events
+            .push(ConnectionHandlerEvent::Custom(HandlerEvent::Connected {
+                protocol: substream.codec().protocol,
+            }));
 
         self.outbound_substream_establishing = false;
         self.outbound_substreams_created += 1;
@@ -263,6 +282,10 @@ impl ConnectionHandler for BitswapHandler {
             Self::Error,
         >,
     > {
+        if !self.events.is_empty() {
+            return Poll::Ready(self.events.remove(0));
+        }
+
         // Handle any upgrade errors
         if let Some(error) = self.upgrade_errors.pop_front() {
             let reported_error = match error {

@@ -13,8 +13,9 @@ use crate::BitswapMessage;
 
 const MAX_BUF_SIZE: usize = 1024 * 1024 * 2;
 
-#[derive(Clone, Debug, Copy)]
+#[derive(Clone, Debug, Copy, PartialEq, Eq)]
 pub enum ProtocolId {
+    Legacy,
     Bitswap100,
     Bitswap110,
     Bitswap120,
@@ -23,6 +24,7 @@ pub enum ProtocolId {
 impl ProtocolName for ProtocolId {
     fn protocol_name(&self) -> &[u8] {
         match self {
+            ProtocolId::Legacy => b"/ipfs/bitswap",
             ProtocolId::Bitswap100 => b"/ipfs/bitswap/1.0.0",
             ProtocolId::Bitswap110 => b"/ipfs/bitswap/1.1.0",
             ProtocolId::Bitswap120 => b"/ipfs/bitswap/1.2.0",
@@ -30,18 +32,23 @@ impl ProtocolName for ProtocolId {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProtocolConfig {
     /// The bitswap protocols to listen on.
-    protocol_ids: Vec<ProtocolId>,
+    pub protocol_ids: Vec<ProtocolId>,
     /// Maximum size of a packet.
-    max_transmit_size: usize,
+    pub max_transmit_size: usize,
 }
 
 impl Default for ProtocolConfig {
     fn default() -> Self {
         ProtocolConfig {
-            protocol_ids: vec![ProtocolId::Bitswap120, ProtocolId::Bitswap110],
+            protocol_ids: vec![
+                ProtocolId::Bitswap120,
+                ProtocolId::Bitswap110,
+                ProtocolId::Bitswap100,
+                ProtocolId::Legacy,
+            ],
             max_transmit_size: MAX_BUF_SIZE,
         }
     }
@@ -60,7 +67,7 @@ impl<TSocket> InboundUpgrade<TSocket> for ProtocolConfig
 where
     TSocket: AsyncRead + AsyncWrite + Send + Unpin + 'static,
 {
-    type Output = (Framed<TSocket, BitswapCodec>, ProtocolId);
+    type Output = Framed<TSocket, BitswapCodec>;
     type Error = BitswapHandlerError;
     #[allow(clippy::type_complexity)]
     type Future = Pin<Box<dyn Future<Output = Result<Self::Output, Self::Error>> + Send>>;
@@ -69,9 +76,9 @@ where
     fn upgrade_inbound(self, socket: TSocket, protocol_id: Self::Info) -> Self::Future {
         let mut length_codec = codec::UviBytes::default();
         length_codec.set_max_len(self.max_transmit_size);
-        Box::pin(future::ok((
-            Framed::new(socket, BitswapCodec::new(length_codec)),
-            protocol_id,
+        Box::pin(future::ok(Framed::new(
+            socket,
+            BitswapCodec::new(length_codec, protocol_id),
         )))
     }
 }
@@ -80,7 +87,7 @@ impl<TSocket> OutboundUpgrade<TSocket> for ProtocolConfig
 where
     TSocket: AsyncRead + AsyncWrite + Send + Unpin + 'static,
 {
-    type Output = (Framed<TSocket, BitswapCodec>, ProtocolId);
+    type Output = Framed<TSocket, BitswapCodec>;
     type Error = BitswapHandlerError;
     #[allow(clippy::type_complexity)]
     type Future = Pin<Box<dyn Future<Output = Result<Self::Output, Self::Error>> + Send>>;
@@ -89,9 +96,9 @@ where
     fn upgrade_outbound(self, socket: TSocket, protocol_id: Self::Info) -> Self::Future {
         let mut length_codec = codec::UviBytes::default();
         length_codec.set_max_len(self.max_transmit_size);
-        Box::pin(future::ok((
-            Framed::new(socket, BitswapCodec::new(length_codec)),
-            protocol_id,
+        Box::pin(future::ok(Framed::new(
+            socket,
+            BitswapCodec::new(length_codec, protocol_id),
         )))
     }
 }
@@ -99,12 +106,16 @@ where
 /// Bitswap codec for the framing
 pub struct BitswapCodec {
     /// Codec to encode/decode the Unsigned varint length prefix of the frames.
-    length_codec: codec::UviBytes,
+    pub length_codec: codec::UviBytes,
+    pub protocol: ProtocolId,
 }
 
 impl BitswapCodec {
-    pub fn new(length_codec: codec::UviBytes) -> Self {
-        BitswapCodec { length_codec }
+    pub fn new(length_codec: codec::UviBytes, protocol: ProtocolId) -> Self {
+        BitswapCodec {
+            length_codec,
+            protocol,
+        }
     }
 }
 
