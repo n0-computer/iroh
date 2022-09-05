@@ -118,6 +118,7 @@ pub struct Bitswap {
     ledgers: caches::RawLRU<PeerId, Ledger>,
     /// Current connections.
     connections: caches::RawLRU<PeerId, ConnState>,
+    ledger: Ledger,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -222,6 +223,7 @@ impl Bitswap {
             ledgers,
             connections,
             events: Default::default(),
+            ledger: Ledger::default(),
         }
     }
 
@@ -233,6 +235,17 @@ impl Bitswap {
     pub fn add_peer(&mut self, peer: PeerId, protocol: Option<ProtocolId>) {
         if let PutResult::Put = self.known_peers.put(peer, protocol) {
             inc!(BitswapMetrics::KnownPeers);
+        }
+
+        if (protocol == None || protocol == Some(ProtocolId::Bitswap120))
+            && !self.ledgers.contains(&peer)
+        {
+            let mut ledger = Ledger::default();
+            // new peer
+            for (want, priority) in self.ledger.msg.wantlist().want_have_blocks() {
+                ledger.want_have_block(want, priority);
+            }
+            self.ledgers.put(peer, ledger);
         }
     }
 
@@ -289,6 +302,7 @@ impl Bitswap {
         inc!(BitswapMetrics::WantedBlocks);
         record!(BitswapMetrics::Providers, providers.len() as u64);
 
+        self.ledger.want_block(&cid, priority);
         for provider in providers.iter() {
             self.with_ledger(*provider, |state| {
                 state.want_block(&cid, priority);
@@ -342,7 +356,12 @@ impl Bitswap {
             self.with_ledger(provider, |peer| {
                 peer.want_have_block(&cid, priority);
             });
+            // trigger dials
+            if let Some(dial) = self.dial(provider) {
+                self.events.push_back(dial);
+            }
         }
+        self.ledger.want_have_block(&cid, priority);
     }
 
     /// Removes the block from our want list and updates all peers.
@@ -353,6 +372,8 @@ impl Bitswap {
         inc!(BitswapMetrics::CancelBlocks);
 
         debug!("cancel_block: {}", cid);
+        self.ledger.cancel_block(&cid);
+
         for state in self.ledgers.values_mut() {
             state.cancel_block(cid);
         }
@@ -363,9 +384,30 @@ impl Bitswap {
         inc!(BitswapMetrics::CancelWantBlocks);
 
         debug!("cancel_block: {}", cid);
+        self.ledger.remove_want_block(&cid);
+
         for state in self.ledgers.values_mut() {
             state.remove_want_block(cid);
         }
+    }
+
+    fn dial(
+        &mut self,
+        peer: PeerId,
+    ) -> Option<NetworkBehaviourAction<BitswapEvent, BitswapHandler>> {
+        if let Some(conn_state) = self.connections.get(&peer) {
+            if matches!(conn_state, ConnState::Connected(_) | ConnState::Dialing) {
+                // No need to dial, already connected
+                return None;
+            }
+        }
+
+        self.connections.put(peer, ConnState::Dialing);
+        let handler = self.new_handler();
+        Some(NetworkBehaviourAction::Dial {
+            opts: DialOpts::peer_id(peer).build(),
+            handler,
+        })
     }
 }
 
@@ -424,7 +466,7 @@ impl NetworkBehaviour for Bitswap {
             inc!(BitswapMetrics::DisconnectedPeers);
 
             match error {
-                DialError::ConnectionLimit(_) => {
+                DialError::ConnectionLimit(_) | DialError::DialPeerConditionFalse(_) => {
                     // we can retry later
                     self.connections.put(*peer_id, ConnState::Disconnected);
                 }
@@ -587,13 +629,10 @@ impl NetworkBehaviour for Bitswap {
                 inc!(BitswapMetrics::PollActionNotConnected);
 
                 // not connected, need to dial
-                self.connections.put(*peer_id, ConnState::Dialing);
-                let handler = self.new_handler();
-                msg = Poll::Ready(NetworkBehaviourAction::Dial {
-                    opts: DialOpts::peer_id(*peer_id).build(),
-                    handler,
-                });
-                break;
+                if let Some(event) = self.dial(*peer_id) {
+                    msg = Poll::Ready(event);
+                    break;
+                }
             }
         }
 
