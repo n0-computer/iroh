@@ -1,22 +1,25 @@
 use bytes::Bytes;
 use criterion::{black_box, criterion_group, criterion_main, BatchSize, Criterion};
-use iroh_bitswap::{create_test_block, BitswapMessage, Priority};
+use iroh_bitswap::{
+    create_test_block_v1 as create_test_block, BitswapMessage, Priority, ProtocolId,
+};
 
 pub fn criterion_benchmark(c: &mut Criterion) {
     {
         let message = BitswapMessage::new();
-        let packet = message.to_bytes();
+        let packet = message.to_bytes(ProtocolId::Bitswap120);
 
         c.bench_function("BitswapMessage::from_bytes - empty", |b| {
             b.iter(|| {
-                let res = BitswapMessage::from_bytes(packet.clone()).unwrap();
+                let res =
+                    BitswapMessage::from_bytes(ProtocolId::Bitswap120, packet.clone()).unwrap();
                 black_box(res);
             })
         });
 
         c.bench_function("BitswapMessage::to_bytes - empty", |b| {
             b.iter(|| {
-                let res = message.to_bytes();
+                let res = message.to_bytes(ProtocolId::Bitswap120);
                 black_box(res);
             })
         });
@@ -31,13 +34,13 @@ pub fn criterion_benchmark(c: &mut Criterion) {
             .wantlist_mut()
             .want_block(block0.cid(), Priority::default());
 
-        let packet = message.to_bytes();
+        let packet = message.to_bytes(ProtocolId::Bitswap120);
 
         c.bench_function("BitswapMessage::from_bytes - tiny - want", |b| {
             b.iter_batched(
                 || packet.clone(),
                 |packet| {
-                    let res = BitswapMessage::from_bytes(packet).unwrap();
+                    let res = BitswapMessage::from_bytes(ProtocolId::Bitswap120, packet).unwrap();
                     black_box(res);
                 },
                 BatchSize::SmallInput,
@@ -48,7 +51,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
             b.iter_batched(
                 || message.clone(),
                 |message| {
-                    let res = message.into_bytes();
+                    let res = message.into_bytes(ProtocolId::Bitswap120);
                     black_box(res);
                 },
                 BatchSize::SmallInput,
@@ -57,13 +60,13 @@ pub fn criterion_benchmark(c: &mut Criterion) {
 
         let mut message = BitswapMessage::new();
         message.add_block(block1);
-        let packet = message.to_bytes();
+        let packet = message.to_bytes(ProtocolId::Bitswap120);
 
         c.bench_function("BitswapMessage::from_bytes - tiny - get", |b| {
             b.iter_batched(
                 || packet.clone(),
                 |packet| {
-                    let res = BitswapMessage::from_bytes(packet).unwrap();
+                    let res = BitswapMessage::from_bytes(ProtocolId::Bitswap120, packet).unwrap();
                     black_box(res);
                 },
                 BatchSize::SmallInput,
@@ -74,7 +77,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
             b.iter_batched(
                 || message.clone(),
                 |message| {
-                    let res = message.into_bytes();
+                    let res = message.into_bytes(ProtocolId::Bitswap120);
                     black_box(res);
                 },
                 BatchSize::SmallInput,
@@ -94,18 +97,19 @@ pub fn criterion_benchmark(c: &mut Criterion) {
             message.add_block(block1);
         }
 
-        let packet = message.to_bytes();
+        let packet = message.to_bytes(ProtocolId::Bitswap120);
 
         c.bench_function("BitswapMessage::from_bytes - small", |b| {
             b.iter(|| {
-                let res = BitswapMessage::from_bytes(packet.clone()).unwrap();
+                let res =
+                    BitswapMessage::from_bytes(ProtocolId::Bitswap120, packet.clone()).unwrap();
                 black_box(res);
             })
         });
 
         c.bench_function("BitswapMessage::to_bytes - small", |b| {
             b.iter(|| {
-                let res = message.to_bytes();
+                let res = message.to_bytes(ProtocolId::Bitswap120);
                 black_box(res);
             })
         });

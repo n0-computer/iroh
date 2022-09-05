@@ -612,42 +612,42 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                         },
                 } = *e
                 {
-                    // Inform kademlia about identified peers
-                    if protocols
-                        .iter()
-                        .any(|p| p.as_bytes() == kad::protocol::DEFAULT_PROTO_NAME)
-                    {
-                        for addr in &listen_addrs {
-                            if let Some(kad) = self.swarm.behaviour_mut().kad.as_mut() {
-                                kad.add_address(&peer_id, addr.clone());
-                            }
-                        }
-                    }
+                    let supported_bs_protocols = self
+                        .swarm
+                        .behaviour()
+                        .bitswap
+                        .supported_protocols()
+                        .to_vec();
+                    let mut protocol_bs_name = None;
+                    for protocol in protocols {
+                        let p = protocol.as_bytes();
 
-                    let supported_protocols = self.swarm.behaviour().bitswap.supported_protocols();
-                    // Inform bitswap about identified peers
-                    if protocols.iter().any(|p| {
-                        let p = p.as_bytes();
-                        for sp in supported_protocols {
-                            if p == sp.protocol_name() {
-                                return true;
+                        if p == kad::protocol::DEFAULT_PROTO_NAME {
+                            for addr in &listen_addrs {
+                                if let Some(kad) = self.swarm.behaviour_mut().kad.as_mut() {
+                                    kad.add_address(&peer_id, addr.clone());
+                                }
                             }
-                        }
-                        false
-                    }) {
-                        self.swarm.behaviour_mut().bitswap.add_peer(peer_id);
-                    }
-
-                    // Inform autonat about identified peers
-                    // TODO: expose protocol name on `libp2p::autonat`.
-                    // TODO: should we remove them at some point?
-                    if protocols
-                        .iter()
-                        .any(|p| p.as_bytes() == b"/libp2p/autonat/1.0.0")
-                    {
-                        for addr in listen_addrs {
-                            if let Some(autonat) = self.swarm.behaviour_mut().autonat.as_mut() {
-                                autonat.add_server(peer_id, Some(addr));
+                        } else if protocol_bs_name.is_none() {
+                            for sp in &supported_bs_protocols {
+                                if p == sp.protocol_name() {
+                                    protocol_bs_name = Some(*sp);
+                                    break;
+                                }
+                            }
+                            if protocol_bs_name.is_some() {
+                                self.swarm
+                                    .behaviour_mut()
+                                    .bitswap
+                                    .add_peer(peer_id, protocol_bs_name);
+                            }
+                        } else if p == b"/libp2p/autonat/1.0.0" {
+                            // TODO: expose protocol name on `libp2p::autonat`.
+                            // TODO: should we remove them at some point?
+                            for addr in &listen_addrs {
+                                if let Some(autonat) = self.swarm.behaviour_mut().autonat.as_mut() {
+                                    autonat.add_server(peer_id, Some(addr.clone()));
+                                }
                             }
                         }
                     }

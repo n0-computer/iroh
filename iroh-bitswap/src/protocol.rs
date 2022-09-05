@@ -124,7 +124,7 @@ impl Encoder for BitswapCodec {
     type Error = BitswapHandlerError;
 
     fn encode(&mut self, item: Self::Item, dst: &mut BytesMut) -> Result<(), Self::Error> {
-        let buf = item.into_bytes();
+        let buf = item.into_bytes(self.protocol);
 
         // length prefix the protobuf message, ensuring the max limit is not hit
         self.length_codec
@@ -149,7 +149,7 @@ impl Decoder for BitswapCodec {
             None => return Ok(None),
         };
 
-        let message = BitswapMessage::from_bytes(&packet[..])?;
+        let message = BitswapMessage::from_bytes(self.protocol, &packet[..])?;
 
         Ok(Some(HandlerEvent::Message { message }))
     }
