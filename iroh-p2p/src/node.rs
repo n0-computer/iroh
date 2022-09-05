@@ -420,9 +420,13 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                     BitswapEvent::OutboundQueryCompleted { result } => match result {
                         BitswapQueryResult::Want(WantResult::Ok { sender, cid, data }) => {
                             info!("got block {} from {}", cid, sender);
-                            match tokio::task::block_in_place(|| {
-                                iroh_util::verify_hash(&cid, &data)
-                            }) {
+                            let cid2 = cid;
+                            let data2 = data.clone();
+                            match tokio::task::spawn_blocking(move || {
+                                iroh_util::verify_hash(&cid2, &data2)
+                            })
+                            .await?
+                            {
                                 Some(true) => {
                                     let b = Block::new(data, cid);
                                     if let Some(BitswapQueryChannel::Want { chan, .. }) =
