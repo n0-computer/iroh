@@ -184,10 +184,17 @@ pub async fn get_handler(
     // init headers
     format.write_headers(&mut headers);
     add_user_headers(&mut headers, state.config.user_headers().clone());
-    headers.insert(
-        &HEADER_X_IPFS_PATH,
-        HeaderValue::from_str(&full_content_path).unwrap(),
-    );
+    let hv = match HeaderValue::from_str(&full_content_path) {
+        Ok(hv) => hv,
+        Err(err) => {
+            return Err(error(
+                StatusCode::BAD_REQUEST,
+                &format!("invalid header: {}", err),
+                &state,
+            ));
+        }
+    };
+    headers.insert(&HEADER_X_IPFS_PATH, hv);
 
     // handle request and fetch data
     let req = Request {
