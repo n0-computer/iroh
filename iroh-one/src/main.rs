@@ -96,10 +96,20 @@ async fn main() -> Result<()> {
         let mut path = TempDir::new("iroh")?.path().join("ipfsd.http");
         if let Some(uds_path) = config.gateway_uds_path {
             path = uds_path;
+        } else {
+            // Create the parent path when using the default value since it's likely
+            // it won't exist yet.
+            if let Some(parent) = path.parent() {
+                let _ = std::fs::create_dir_all(&parent);
+            }
         }
-        let uds_server = uds::uds_server(shared_state, path);
+
         tokio::spawn(async move {
-            uds_server.await.unwrap();
+            if let Some(uds_server) = uds::uds_server(shared_state, path) {
+                if let Err(err) = uds_server.await {
+                    tracing::error!("Failure in http uds handler: {}", err);
+                }
+            }
         })
     };
 

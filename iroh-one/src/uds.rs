@@ -100,14 +100,29 @@ impl connect_info::Connected<&UnixStream> for UdsConnectInfo {
 pub fn uds_server(
     state: Arc<State>,
     path: PathBuf,
-) -> Server<
-    ServerAccept,
-    axum::extract::connect_info::IntoMakeServiceWithConnectInfo<Router, UdsConnectInfo>,
+) -> Option<
+    Server<
+        ServerAccept,
+        axum::extract::connect_info::IntoMakeServiceWithConnectInfo<Router, UdsConnectInfo>,
+    >,
 > {
     let _ = std::fs::remove_file(&path);
-    let uds = UnixListener::bind(&path).unwrap();
-    println!("Binding to UDS at {}", path.display());
-    let app = get_app_routes(&state);
-    Server::builder(ServerAccept { uds })
-        .serve(app.into_make_service_with_connect_info::<UdsConnectInfo>())
+    match UnixListener::bind(&path) {
+        Ok(uds) => {
+            tracing::debug!("Binding to UDS at {}", path.display());
+            let app = get_app_routes(&state);
+            Some(
+                Server::builder(ServerAccept { uds })
+                    .serve(app.into_make_service_with_connect_info::<UdsConnectInfo>()),
+            )
+        }
+        Err(err) => {
+            tracing::error!(
+                "Failed to bind http uds socket at {}: {}",
+                path.display(),
+                err
+            );
+            None
+        }
+    }
 }

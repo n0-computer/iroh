@@ -59,11 +59,11 @@ impl Config {
         }
     }
 
-    /// When running in ipfsd mode, the resolver will use memory channels to
+    /// When running in single binary mode, the resolver will use memory channels to
     /// communicate with the p2p and store modules.
     /// The gateway itself is exposing a UDS rpc endpoint to be also usable
     /// as a single entry point for other system services if feature enabled.
-    pub fn default_ipfsd() -> RpcClientConfig {
+    pub fn default_rpc_config() -> RpcClientConfig {
         #[cfg(feature = "uds-gateway")]
         let path: PathBuf = TempDir::new("iroh").unwrap().path().join("ipfsd.http");
 
@@ -92,14 +92,14 @@ impl Default for Config {
     fn default() -> Self {
         #[cfg(feature = "uds-gateway")]
         let gateway_uds_path: PathBuf = TempDir::new("iroh").unwrap().path().join("ipfsd.http");
-        let ipfsd = Self::default_ipfsd();
+        let rpc_client = Self::default_rpc_config();
         let metrics_config = MetricsConfig::default();
         Self {
-            rpc_client: ipfsd.clone(),
+            rpc_client: rpc_client.clone(),
             metrics: metrics_config.clone(),
             gateway: iroh_gateway::config::Config::default(),
-            store: default_store_config(ipfsd.clone(), metrics_config.clone()),
-            p2p: default_p2p_config(ipfsd, metrics_config),
+            store: default_store_config(rpc_client.clone(), metrics_config.clone()),
+            p2p: default_p2p_config(rpc_client, metrics_config),
             #[cfg(feature = "uds-gateway")]
             gateway_uds_path: Some(gateway_uds_path),
         }

@@ -34,8 +34,9 @@ impl Core {
         bad_bits: Arc<Option<RwLock<BadBits>>>,
     ) -> anyhow::Result<Self> {
         tokio::spawn(async move {
-            // TODO: handle error
-            rpc::new(rpc_addr, Gateway::default()).await
+            if let Err(err) = rpc::new(rpc_addr, Gateway::default()).await {
+                tracing::error!("Failed to run gateway rpc handler: {}", err);
+            }
         });
         let rpc_client = RpcClient::new(config.rpc_client().clone()).await?;
         let mut templates = HashMap::new();
@@ -58,8 +59,9 @@ impl Core {
         state: Arc<State>,
     ) -> anyhow::Result<Self> {
         tokio::spawn(async move {
-            // TODO: handle error
-            rpc::new(rpc_addr, Gateway::default()).await
+            if let Err(err) = rpc::new(rpc_addr, Gateway::default()).await {
+                tracing::error!("Failed to run gateway rpc handler: {}", err);
+            }
         });
         Ok(Self { state })
     }
