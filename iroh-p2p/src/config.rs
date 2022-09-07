@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use anyhow::{bail, Result};
 use config::{ConfigError, Map, Source, Value};
 use iroh_metrics::config::Config as MetricsConfig;
@@ -6,7 +8,7 @@ use iroh_rpc_types::{
     p2p::{P2pClientAddr, P2pServerAddr},
     Addr,
 };
-use iroh_util::insert_into_config_map;
+use iroh_util::{insert_into_config_map, iroh_data_root};
 use libp2p::Multiaddr;
 use serde::{Deserialize, Serialize};
 
@@ -66,6 +68,7 @@ pub struct Config {
     pub libp2p: Libp2pConfig,
     pub rpc_client: RpcClientConfig,
     pub metrics: MetricsConfig,
+    pub key_store_path: PathBuf,
 }
 
 impl Source for Libp2pConfig {
@@ -139,6 +142,7 @@ impl Source for Config {
         insert_into_config_map(&mut map, "libp2p", self.libp2p.collect()?);
         insert_into_config_map(&mut map, "rpc_client", self.rpc_client.collect()?);
         insert_into_config_map(&mut map, "metrics", self.metrics.collect()?);
+        insert_into_config_map(&mut map, "key_store_path", self.key_store_path.to_str());
         Ok(map)
     }
 }
@@ -180,6 +184,7 @@ impl Config {
                 ..Default::default()
             },
             metrics: MetricsConfig::default(),
+            key_store_path: iroh_data_root().unwrap(),
         }
     }
 
@@ -237,6 +242,10 @@ mod tests {
         expect.insert(
             "metrics".to_string(),
             Value::new(None, default.metrics.collect().unwrap()),
+        );
+        expect.insert(
+            "key_store_path".to_string(),
+            Value::new(None, iroh_data_root().unwrap().to_str()),
         );
 
         let got = default.collect().unwrap();

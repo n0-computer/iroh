@@ -1,12 +1,14 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+use cid::Cid;
 use clap::{Parser, Subcommand};
 use iroh_ctl::{
     gateway::{run_command as run_gateway_command, Gateway},
     p2p::{run_command as run_p2p_command, P2p},
     store::{run_command as run_store_command, Store},
 };
+use iroh_resolver::{resolver::OutMetrics, unixfs_builder};
 use iroh_rpc_client::Client;
 use iroh_util::{iroh_config_path, make_config};
 
@@ -47,6 +49,19 @@ enum Commands {
     P2p(P2p),
     Store(Store),
     Gateway(Gateway),
+    #[clap(about = "break up a file into block and provide those blocks on the ipfs network")]
+    Add {
+        path: PathBuf,
+        recursive: bool,
+    },
+    #[clap(
+        about = "get content based on a Content Identifier from the ipfs network, and save it "
+    )]
+    Get {
+        cid: Cid,
+        #[clap(long, short)]
+        path: PathBuf,
+    },
 }
 
 #[tokio::main(flavor = "multi_thread")]
@@ -79,6 +94,31 @@ async fn main() -> anyhow::Result<()> {
         Commands::P2p(p2p) => run_p2p_command(client, p2p).await?,
         Commands::Store(store) => run_store_command(client, store).await?,
         Commands::Gateway(gateway) => run_gateway_command(client, gateway).await?,
+        Commands::Add { path, recursive } => {
+            if path.is_dir() {
+                let cid = unixfs_builder::add_dir(&path, Some(&client), recursive).await?;
+                // TODO add start_providing
+                client.try_p2p()?.start_providing(&cid).await?;
+                println!("/ipfs/{}", cid);
+            } else if path.is_file() {
+                let cid = unixfs_builder::add_file(&path, Some(&client)).await?;
+                // TODO add start_providing
+                client.try_p2p()?.start_providing(&cid).await?;
+                println!("/ipfs/{}", cid);
+            } else {
+                anyhow::bail!("can only add files or directories");
+            }
+        }
+        Commands::Get { cid, path } => {
+            let resolver = iroh_resolver::resolver::Resolver::new(client.clone());
+            let out = resolver
+                .resolve(iroh_resolver::resolver::Path::from_cid(cid))
+                .await?;
+            let mut r = out.pretty(resolver, OutMetrics::default())?;
+            let mut file = tokio::fs::File::create(path.clone()).await?;
+            tokio::io::copy(&mut r, &mut file).await?;
+            println!("cid {:?} write to {:?}", cid, path);
+        }
     };
 
     Ok(())

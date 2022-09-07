@@ -139,6 +139,8 @@ impl P2pNode {
             },
             rpc_client: rpc_p2p_client_config.clone(),
             metrics: Default::default(),
+            //what goes here
+            key_store_path: db_path.parent().unwrap().to_path_buf(),
         };
 
         let rpc = Client::new(rpc_p2p_client_config).await?;
