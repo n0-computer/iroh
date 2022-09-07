@@ -3,12 +3,14 @@
 //! - `/ipfs/bitswap/1.2.0`.
 
 use std::collections::{HashSet, VecDeque};
+use std::pin::Pin;
 use std::task::{Context, Poll};
 use std::time::Duration;
 
 use bytes::Bytes;
 use caches::{Cache, PutResult};
 use cid::Cid;
+use futures::Future;
 use iroh_metrics::inc;
 use iroh_metrics::{bitswap::BitswapMetrics, core::MRecorder, record};
 use libp2p::core::connection::ConnectionId;
@@ -18,6 +20,7 @@ use libp2p::swarm::{
     DialError, IntoConnectionHandler, NetworkBehaviour, NetworkBehaviourAction, NotifyHandler,
     PollParameters,
 };
+use tokio::time::{Instant, Sleep};
 use tracing::{debug, instrument, trace, warn};
 
 use crate::handler::{BitswapHandler, BitswapHandlerIn, HandlerEvent};
@@ -26,6 +29,7 @@ use crate::protocol::ProtocolConfig;
 use crate::{Block, ProtocolId};
 
 const MAX_PROVIDERS: usize = 10000; // yolo
+const MESSAGE_DELAY: Duration = Duration::from_millis(250);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum BitswapEvent {
@@ -119,11 +123,13 @@ pub struct Bitswap {
     /// Current connections.
     connections: caches::RawLRU<PeerId, ConnState>,
     ledger: Ledger,
+    connection_limit: bool,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug)]
 struct Ledger {
     msg: BitswapMessage,
+    last_send: Pin<Box<Sleep>>,
 }
 
 impl Ledger {
@@ -135,9 +141,11 @@ impl Ledger {
         !self.msg.blocks().is_empty()
     }
 
-    fn send_message(&mut self) -> BitswapMessage {
+    fn send_message(mut self: Pin<&mut Self>) -> BitswapMessage {
         let mut new_msg = BitswapMessage::default();
         new_msg.wantlist_mut().set_full(false);
+
+        Pin::as_mut(&mut self.last_send).reset(Instant::now() + MESSAGE_DELAY);
         std::mem::replace(&mut self.msg, new_msg)
     }
 
@@ -176,7 +184,10 @@ impl Default for Ledger {
         let mut msg = BitswapMessage::default();
         msg.wantlist_mut().set_full(true);
 
-        Ledger { msg }
+        Ledger {
+            msg,
+            last_send: Box::pin(tokio::time::sleep(Duration::from_millis(0))),
+        }
     }
 }
 
@@ -226,6 +237,7 @@ impl Bitswap {
             connections,
             events: Default::default(),
             ledger: Ledger::default(),
+            connection_limit: false,
         }
     }
 
@@ -397,6 +409,10 @@ impl Bitswap {
         &mut self,
         peer: PeerId,
     ) -> Option<NetworkBehaviourAction<BitswapEvent, BitswapHandler>> {
+        if self.connection_limit {
+            return None;
+        }
+
         if let Some(conn_state) = self.connections.get(&peer) {
             if matches!(conn_state, ConnState::Connected(_) | ConnState::Dialing) {
                 // No need to dial, already connected
@@ -454,6 +470,7 @@ impl NetworkBehaviour for Bitswap {
         if remaining_established == 0 {
             inc!(BitswapMetrics::DisconnectedPeers);
             self.connections.put(*peer_id, ConnState::Disconnected);
+            self.connection_limit = false;
         }
     }
 
@@ -468,10 +485,11 @@ impl NetworkBehaviour for Bitswap {
             inc!(BitswapMetrics::DisconnectedPeers);
 
             match error {
-                DialError::ConnectionLimit(_) | DialError::DialPeerConditionFalse(_) => {
-                    // we can retry later
+                DialError::ConnectionLimit(_) => {
+                    self.connection_limit = true;
                     self.connections.put(*peer_id, ConnState::Disconnected);
                 }
+                DialError::DialPeerConditionFalse(_) => {}
                 _ => {
                     trace!("dial failure {:?}: {:?}", peer_id, error);
 
@@ -593,7 +611,7 @@ impl NetworkBehaviour for Bitswap {
     #[allow(clippy::type_complexity)]
     fn poll(
         &mut self,
-        _: &mut Context,
+        cx: &mut Context,
         _: &mut impl PollParameters,
     ) -> Poll<NetworkBehaviourAction<Self::OutEvent, Self::ConnectionHandler>> {
         if let Some(event) = self.events.pop_front() {
@@ -604,38 +622,44 @@ impl NetworkBehaviour for Bitswap {
         let mut msg = Poll::Pending;
 
         for (peer_id, peer_state) in self.ledgers.iter_mut() {
-            if self.is_connected(peer_id) {
-                let should_send = if peer_state.has_blocks() {
-                    // make progress on connected peers first, that have wants
-                    inc!(BitswapMetrics::PollActionConnectedWants);
-                    true
-                } else if !peer_state.is_empty() {
-                    // make progress on connected peers that have no wants
-                    inc!(BitswapMetrics::PollActionConnected);
-                    true
-                } else {
-                    false
-                };
+            let _ = Pin::new(&mut peer_state.last_send).poll(cx);
+            if peer_state.last_send.is_elapsed() {
+                if self.is_connected(peer_id) {
+                    let should_send = if peer_state.has_blocks() {
+                        // make progress on connected peers first, that have wants
+                        inc!(BitswapMetrics::PollActionConnectedWants);
+                        true
+                    } else if !peer_state.is_empty() {
+                        // make progress on connected peers that have no wants
+                        inc!(BitswapMetrics::PollActionConnected);
+                        true
+                    } else {
+                        false
+                    };
 
-                if should_send {
-                    trace!("sending message to {}", peer_id);
-                    // connected, send message
-                    // TODO: limit size
-                    // TODO: limit how ofen we send
-                    msg = Poll::Ready(NetworkBehaviourAction::NotifyHandler {
-                        peer_id: *peer_id,
-                        handler: NotifyHandler::Any,
-                        event: BitswapHandlerIn::Message(peer_state.send_message()),
-                    });
-                    break;
-                }
-            } else if !peer_state.is_empty() && self.is_disconnected(peer_id) {
-                inc!(BitswapMetrics::PollActionNotConnected);
+                    if should_send {
+                        trace!("sending message to {}", peer_id);
+                        // connected, send message
+                        // TODO: limit size
+                        // TODO: limit how ofen we send
 
-                // not connected, need to dial
-                if let Some(event) = self.dial(*peer_id) {
-                    msg = Poll::Ready(event);
-                    break;
+                        msg = Poll::Ready(NetworkBehaviourAction::NotifyHandler {
+                            peer_id: *peer_id,
+                            handler: NotifyHandler::Any,
+                            event: BitswapHandlerIn::Message(
+                                Pin::new(&mut *peer_state).send_message(),
+                            ),
+                        });
+                        break;
+                    }
+                } else if !peer_state.is_empty() && self.is_disconnected(peer_id) {
+                    inc!(BitswapMetrics::PollActionNotConnected);
+
+                    // not connected, need to dial
+                    if let Some(event) = self.dial(*peer_id) {
+                        msg = Poll::Ready(event);
+                        break;
+                    }
                 }
             }
         }
