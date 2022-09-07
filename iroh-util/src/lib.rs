@@ -1,23 +1,23 @@
 use std::{
     cell::RefCell,
     collections::HashMap,
-    path::{Path, PathBuf},
+    path::PathBuf,
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
     },
 };
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use cid::{
     multihash::{Code, MultihashDigest},
     Cid,
 };
 use config::{Config, ConfigError, Environment, File, Map, Source, Value, ValueKind};
-use dirs::home_dir;
 use tracing::debug;
 
-const IROH_DIR: &str = ".iroh";
+/// name of directory that wraps all iroh files in a given application directory
+const IROH_DIR: &str = "iroh";
 const DEFAULT_NOFILE_LIMIT: u64 = 65536;
 const MIN_NOFILE_LIMIT: u64 = 2048;
 
@@ -44,16 +44,47 @@ pub async fn block_until_sigint() {
     ctrlc_oneshot.await.unwrap();
 }
 
-/// Path to the iroh home directory.
-pub fn iroh_home_root() -> Option<PathBuf> {
-    let home = home_dir()?;
-    Some(Path::new(&home).join(IROH_DIR))
+/// Returns the path to the user's iroh config directory.
+///
+/// The returned value depends on the operating system and is either a `Some`, containing a value from the following table, or a `None`.
+///
+/// | Platform | Value                                 | Example                          |
+/// | -------- | ------------------------------------- | -------------------------------- |
+/// | Linux    | `$XDG_CONFIG_HOME` or `$HOME`/.config/iroh | /home/alice/.config/iroh              |
+/// | macOS    | `$HOME`/Library/Application Support/iroh   | /Users/Alice/Library/Application Support/iroh |
+/// | Windows  | `{FOLDERID_RoamingAppData}`/iroh           | C:\Users\Alice\AppData\Roaming\iroh   |
+pub fn iroh_config_root() -> Result<PathBuf> {
+    let cfg = dirs_next::config_dir()
+        .ok_or_else(|| anyhow!("operating environment provides no directory for configuration"))?;
+    Ok(cfg.join(&IROH_DIR))
 }
 
-/// Path that leads to a file in the iroh home directory.
-pub fn iroh_home_path(file_name: &str) -> Option<PathBuf> {
-    let path = iroh_home_root()?.join(file_name);
-    Some(path)
+// Path that leads to a file in the iroh config directory.
+pub fn iroh_config_path(file_name: &str) -> Result<PathBuf> {
+    let path = iroh_config_root()?.join(file_name);
+    Ok(path)
+}
+
+/// Returns the path to the user's iroh data directory.
+///
+/// The returned value depends on the operating system and is either a `Some`, containing a value from the following table, or a `None`.
+///
+/// | Platform | Value                                         | Example                                  |
+/// | -------- | --------------------------------------------- | ---------------------------------------- |
+/// | Linux    | `$XDG_DATA_HOME`/iroh or `$HOME`/.local/share/iroh | /home/alice/.local/share/iroh                 |
+/// | macOS    | `$HOME`/Library/Application Support/iroh      | /Users/Alice/Library/Application Support/iroh |
+/// | Windows  | `{FOLDERID_RoamingAppData}/iroh`              | C:\Users\Alice\AppData\Roaming\iroh           |
+pub fn iroh_data_root() -> Result<PathBuf> {
+    let path = dirs_next::data_dir().ok_or_else(|| {
+        anyhow!("operating environment provides no directory for application data")
+    })?;
+    Ok(path.join(&IROH_DIR))
+}
+
+/// Path that leads to a file in the iroh data directory.
+pub fn iroh_data_path(file_name: &str) -> Result<PathBuf> {
+    let path = iroh_data_root()?.join(file_name);
+    Ok(path)
 }
 
 /// insert a value into a `config::Map`
@@ -174,9 +205,9 @@ pub fn increase_fd_limit() -> std::io::Result<u64> {
 mod tests {
     use super::*;
     #[test]
-    fn test_iroh_home_path() {
-        let got = iroh_home_path("foo.bar").unwrap();
+    fn test_iroh_config_path() {
+        let got = iroh_config_path("foo.bar").unwrap();
         let got = got.to_str().unwrap().to_string();
-        assert!(got.ends_with("/.iroh/foo.bar"));
+        assert!(got.ends_with("/iroh/foo.bar"));
     }
 }

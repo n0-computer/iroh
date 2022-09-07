@@ -8,7 +8,7 @@ use iroh_ctl::{
     store::{run_command as run_store_command, Store},
 };
 use iroh_rpc_client::Client;
-use iroh_util::{iroh_home_path, make_config};
+use iroh_util::{iroh_config_path, make_config};
 
 use iroh_ctl::{
     config::{Config, CONFIG_FILE_NAME, ENV_PREFIX},
@@ -53,7 +53,8 @@ enum Commands {
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
-    let sources = vec![iroh_home_path(CONFIG_FILE_NAME), cli.cfg.clone()];
+    let cfg_path = iroh_config_path(CONFIG_FILE_NAME)?;
+    let sources = vec![Some(cfg_path), cli.cfg.clone()];
     let config = make_config(
         // default
         Config::default(),

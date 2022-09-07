@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use futures::{Stream, StreamExt, TryStreamExt};
-use iroh_util::iroh_home_root;
+use iroh_util::iroh_config_root;
 use ssh_key::LineEnding;
 use tokio::fs;
 use tracing::warn;
@@ -113,9 +113,9 @@ impl Keychain<MemoryStorage> {
 }
 
 impl Keychain<DiskStorage> {
-    /// Creates a new on disk keychain, with the root defaulting to `.iroh`.
+    /// Creates a new on disk keychain, with the root defaulting to the iroh config directory
     pub async fn new() -> Result<Self> {
-        let root = iroh_home_root().ok_or_else(|| anyhow!("missing home path"))?;
+        let root = iroh_config_root()?;
         Self::with_root(root).await
     }
 

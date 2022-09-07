@@ -6,7 +6,7 @@ use iroh_rpc_types::{
     store::{StoreClientAddr, StoreServerAddr},
     Addr,
 };
-use iroh_util::insert_into_config_map;
+use iroh_util::{insert_into_config_map, iroh_data_path};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -16,6 +16,15 @@ pub const CONFIG_FILE_NAME: &str = "store.config.toml";
 /// environment variables
 /// For example, `IROH_STORE_PATH=/path/to/config` would set the value of the `Config.path` field
 pub const ENV_PREFIX: &str = "IROH_STORE";
+
+/// the path to data directory. If arg_path is `None`, the default iroh_data_path()/store is used
+/// iroh_data_path() returns an operating system-specific directory
+pub fn config_data_path(arg_path: Option<PathBuf>) -> Result<PathBuf> {
+    match arg_path {
+        Some(p) => Ok(p),
+        None => iroh_data_path("store"),
+    }
+}
 
 /// The configuration for the store.
 #[derive(PartialEq, Debug, Deserialize, Serialize, Clone)]
@@ -128,5 +137,18 @@ mod tests {
             .unwrap();
 
         assert_eq!(expect, got);
+    }
+
+    #[test]
+    fn test_config_data_path() {
+        let path = PathBuf::new().join("arg_path");
+        let path_given = config_data_path(Some(path.clone())).expect("config data path error");
+        assert_eq!(path_given.display().to_string(), path.display().to_string());
+
+        let no_path_given = config_data_path(None)
+            .expect("config data path error")
+            .display()
+            .to_string();
+        assert!(no_path_given.ends_with("store"));
     }
 }

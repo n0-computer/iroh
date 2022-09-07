@@ -11,7 +11,7 @@ use iroh_one::{
     config::{Config, CONFIG_FILE_NAME, ENV_PREFIX},
 };
 use iroh_rpc_types::Addr;
-use iroh_util::{iroh_home_path, make_config};
+use iroh_util::{iroh_config_path, make_config};
 #[cfg(feature = "uds-gateway")]
 use tempdir::TempDir;
 use tokio::sync::RwLock;
@@ -21,7 +21,8 @@ use tracing::{debug, error};
 async fn main() -> Result<()> {
     let args = Args::parse();
 
-    let sources = vec![iroh_home_path(CONFIG_FILE_NAME), args.cfg.clone()];
+    let cfg_path = iroh_config_path(CONFIG_FILE_NAME)?;
+    let sources = vec![Some(cfg_path), args.cfg.clone()];
     let mut config = make_config(
         // default
         Config::default(),

@@ -2,11 +2,10 @@ use anyhow::anyhow;
 use clap::Parser;
 use iroh_store::{
     cli::Args,
-    config::{CONFIG_FILE_NAME, ENV_PREFIX},
+    config::{config_data_path, CONFIG_FILE_NAME, ENV_PREFIX},
     metrics, rpc, Config, Store,
 };
-use iroh_util::{block_until_sigint, iroh_home_path, make_config};
-use std::path::PathBuf;
+use iroh_util::{block_until_sigint, iroh_config_path, make_config};
 use tracing::{debug, error, info};
 
 #[tokio::main(flavor = "multi_thread")]
@@ -16,10 +15,12 @@ async fn main() -> anyhow::Result<()> {
     let version = env!("CARGO_PKG_VERSION");
     println!("Starting iroh-store, version {version}");
 
-    let sources = vec![iroh_home_path(CONFIG_FILE_NAME), args.cfg.clone()];
+    let config_path = iroh_config_path(CONFIG_FILE_NAME)?;
+    let sources = vec![Some(config_path), args.cfg.clone()];
+    let config_data_path = config_data_path(args.path.clone())?;
     let config = make_config(
         // default
-        Config::new_grpc(args.path.clone().unwrap_or_else(|| PathBuf::from(""))),
+        Config::new_grpc(config_data_path),
         // potential config files
         sources,
         // env var prefix for this config

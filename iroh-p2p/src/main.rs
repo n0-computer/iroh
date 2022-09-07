@@ -2,7 +2,7 @@ use anyhow::anyhow;
 use clap::Parser;
 use iroh_p2p::config::{Config, CONFIG_FILE_NAME, ENV_PREFIX};
 use iroh_p2p::{cli::Args, metrics, DiskStorage, Keychain, Node};
-use iroh_util::{iroh_home_path, make_config};
+use iroh_util::{iroh_config_path, make_config};
 use tokio::task;
 use tracing::{debug, error};
 
@@ -15,7 +15,8 @@ async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
 
     // TODO: configurable network
-    let sources = vec![iroh_home_path(CONFIG_FILE_NAME), args.cfg.clone()];
+    let cfg_path = iroh_config_path(CONFIG_FILE_NAME)?;
+    let sources = vec![Some(cfg_path), args.cfg.clone()];
     let network_config = make_config(
         // default
         Config::default_grpc(),
