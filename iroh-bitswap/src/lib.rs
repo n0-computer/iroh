@@ -7,8 +7,6 @@ mod message;
 mod metrics;
 mod prefix;
 mod protocol;
-// mod query;
-// mod session;
 mod handler;
 
 pub use crate::behaviour::{
