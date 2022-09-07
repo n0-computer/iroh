@@ -17,7 +17,7 @@ pub fn add_content_type_headers(headers: &mut HeaderMap, name: &str) {
         // todo(arqu): if mime type starts with text/html; strip encoding to let browser detect
         headers.insert(
             CONTENT_TYPE,
-            HeaderValue::from_str(&content_type.to_string()).unwrap(),
+            HeaderValue::from_str(content_type.as_ref()).unwrap(),
         );
     }
 }
