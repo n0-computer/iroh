@@ -37,6 +37,15 @@ macro_rules! proxy {
                                 anyhow::bail!("cannot bind socket: already exists: {}", path.display());
                             }
                         }
+
+                        // If the parent directory doesn't exist, we'll fail to bind.
+                        // Create a more precise error to recognize that case.
+                        if let Some(parent) = path.parent() {
+                            if !parent.exists() {
+                                anyhow::bail!("socket parent directory doesn't exist: {}", parent.display());
+                            }
+                        }
+
                         // Delete file on close
                         struct UdsGuard(std::path::PathBuf);
                         impl Drop for UdsGuard {
