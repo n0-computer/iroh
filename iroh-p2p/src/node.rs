@@ -26,7 +26,7 @@ use libp2p::{PeerId, Swarm};
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio::task::JoinHandle;
-use tracing::{debug, info, trace, warn};
+use tracing::{debug, error, info, trace, warn};
 
 use iroh_bitswap::{
     BitswapEvent, Block, FindProvidersResult, InboundRequest, QueryError,
@@ -273,6 +273,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
     }
 
     /// Check the next node in the DHT.
+    #[tracing::instrument(skip(self))]
     async fn dht_nice_tick(&mut self) {
         let mut to_dial = None;
         if let Some(kad) = self.swarm.behaviour_mut().kad.as_mut() {
@@ -315,12 +316,14 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
     }
 
     /// Subscribe to [`NetworkEvent`]s.
+    #[tracing::instrument(skip(self))]
     pub fn network_events(&mut self) -> Receiver<NetworkEvent> {
         let (s, r) = channel(512);
         self.network_events.push(s);
         r
     }
 
+    #[tracing::instrument(skip(self))]
     async fn handle_swarm_event(
         &mut self,
         event: SwarmEvent<
@@ -375,6 +378,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
         }
     }
 
+    #[tracing::instrument(skip(self))]
     async fn emit_network_event(&mut self, ev: NetworkEvent) {
         for sender in &mut self.network_events {
             if let Err(e) = sender.send(ev.clone()).await {
@@ -383,6 +387,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
         }
     }
 
+    #[tracing::instrument(skip(self))]
     async fn handle_node_event(&mut self, event: Event) -> Result<()> {
         match event {
             Event::Bitswap(e) => {
@@ -735,6 +740,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
         Ok(())
     }
 
+    #[tracing::instrument(skip(self))]
     async fn handle_rpc_message(&mut self, message: RpcMessage) -> Result<bool> {
         // Inbound messages
         match message {
@@ -964,7 +970,7 @@ async fn load_identity<S: Storage>(kc: &mut Keychain<S>) -> Result<Keypair> {
     let first_key = kc.keys().next().await;
     if let Some(keypair) = first_key {
         let keypair: Keypair = keypair?.into();
-        info!("identity loaded: {}", PeerId::from(keypair.public()));
+        error!("identity loaded: {}", PeerId::from(keypair.public()));
         return Ok(keypair);
     }
 
