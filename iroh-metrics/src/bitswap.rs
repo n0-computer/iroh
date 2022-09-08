@@ -33,6 +33,15 @@ pub(crate) struct Metrics {
     poll_action_connected: Counter,
     poll_action_not_connected: Counter,
     protocol_unsupported: Counter,
+    handler_poll_count: Counter,
+    handler_poll_event_count: Counter,
+    handler_conn_upgrade_errors: Counter,
+    inbound_substreams_created_limit: Counter,
+    outbount_substreams_event: Counter,
+    outbound_substreams_created_limit: Counter,
+    handler_inbound_loop_count: Counter,
+    handler_outbound_loop_count: Counter,
+
 }
 
 impl fmt::Debug for Metrics {
@@ -146,6 +155,59 @@ impl Metrics {
             Box::new(protocol_unsupported.clone()),
         );
 
+        let handler_poll_count = Counter::default();
+        sub_registry.register(
+            "handler_poll_count",
+            "",
+            Box::new(handler_poll_count.clone()),
+        );
+        let handler_poll_event_count = Counter::default();
+        sub_registry.register(
+            "handler_poll_event_count",
+            "",
+            Box::new(handler_poll_event_count.clone()),
+        );
+
+        let handler_conn_upgrade_errors = Counter::default();
+        sub_registry.register(
+            "handler_conn_upgrade_errors",
+            "",
+            Box::new(handler_conn_upgrade_errors.clone()),
+        );
+
+        let inbound_substreams_created_limit = Counter::default();
+        sub_registry.register(
+            "inbound_substreams_created_limit",
+            "",
+            Box::new(inbound_substreams_created_limit.clone()),
+        );
+
+        let outbount_substreams_event = Counter::default();
+        sub_registry.register(
+            "outbount_substreams_event",
+            "",
+            Box::new(outbount_substreams_event.clone()),
+        );
+        let outbound_substreams_created_limit = Counter::default();
+        sub_registry.register(
+            "outbound_substreams_created_limit",
+            "",
+            Box::new(outbound_substreams_created_limit.clone()),
+        );
+        let handler_inbound_loop_count = Counter::default();
+        sub_registry.register(
+            "handler_inbound_loop_count",
+            "",
+            Box::new(handler_inbound_loop_count.clone()),
+        );
+
+        let handler_outbound_loop_count = Counter::default();
+        sub_registry.register(
+            "handler_outbound_loop_count",
+            "",
+            Box::new(handler_outbound_loop_count.clone()),
+        );
+
         Self {
             requests_total,
             canceled_total,
@@ -168,6 +230,14 @@ impl Metrics {
             poll_action_connected,
             poll_action_not_connected,
             protocol_unsupported,
+            handler_poll_count,
+            handler_poll_event_count,
+            handler_conn_upgrade_errors,
+            inbound_substreams_created_limit,
+            outbount_substreams_event,
+            outbound_substreams_created_limit,
+            handler_inbound_loop_count,
+            handler_outbound_loop_count,
         }
     }
 }
@@ -219,6 +289,22 @@ impl MetricsRecorder for Metrics {
             self.poll_action_not_connected.inc_by(value);
         } else if m.name() == BitswapMetrics::ProtocolUnsupported.name() {
             self.protocol_unsupported.inc_by(value);
+        } else if m.name() == BitswapMetrics::HandlerPollCount.name() {
+            self.handler_poll_count.inc_by(value);
+        } else if m.name() == BitswapMetrics::HandlerPollEventCount.name() {
+            self.handler_poll_event_count.inc_by(value);
+        } else if m.name() == BitswapMetrics::HandlerConnUpgradeErrors.name() {
+            self.handler_conn_upgrade_errors.inc_by(value);
+        } else if m.name() == BitswapMetrics::InboundSubstreamsCreatedLimit.name() {
+            self.inbound_substreams_created_limit.inc_by(value);
+        } else if m.name() == BitswapMetrics::OutboundSubstreamsEvent.name() {
+            self.outbount_substreams_event.inc_by(value);
+        } else if m.name() == BitswapMetrics::OutboundSubstreamsCreatedLimit.name() {
+            self.outbound_substreams_created_limit.inc_by(value);
+        } else if m.name() == BitswapMetrics::HandlerInboundLoopCount.name() {
+            self.handler_inbound_loop_count.inc_by(value);
+        } else if m.name() == BitswapMetrics::HandlerOutboundLoopCount.name() {
+            self.handler_outbound_loop_count.inc_by(value);
         } else {
             error!("record (bitswap): unknown metric {}", m.name());
         }
@@ -257,6 +343,15 @@ pub enum BitswapMetrics {
     PollActionNotConnected,
 
     ProtocolUnsupported,
+
+    HandlerPollCount,
+    HandlerPollEventCount,
+    HandlerConnUpgradeErrors,
+    InboundSubstreamsCreatedLimit,
+    OutboundSubstreamsEvent,
+    OutboundSubstreamsCreatedLimit,
+    HandlerInboundLoopCount,
+    HandlerOutboundLoopCount,
 }
 
 impl MetricType for BitswapMetrics {
@@ -285,6 +380,15 @@ impl MetricType for BitswapMetrics {
             BitswapMetrics::PollActionNotConnected => METRICS_CNT_POLL_ACTION_NOT_CONNECTED,
 
             BitswapMetrics::ProtocolUnsupported => METRICS_CNT_PROTOCOL_UNSUPPORTED,
+
+            BitswapMetrics::HandlerPollCount => "handler_poll_count",
+            BitswapMetrics::HandlerPollEventCount => "handler_poll_event_count",
+            BitswapMetrics::HandlerConnUpgradeErrors => "handler_conn_upgrade_errors",
+            BitswapMetrics::InboundSubstreamsCreatedLimit => "inbound_substreams_created_limit",
+            BitswapMetrics::OutboundSubstreamsEvent => "outbound_substreams_event",
+            BitswapMetrics::OutboundSubstreamsCreatedLimit => "outbound_substreams_created_limit",
+            BitswapMetrics::HandlerInboundLoopCount => "handler_inbound_loop_count",
+            BitswapMetrics::HandlerOutboundLoopCount => "handler_outbound_loop_count",
         }
     }
 }
