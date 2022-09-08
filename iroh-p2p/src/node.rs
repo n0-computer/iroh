@@ -658,8 +658,9 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                         .swarm
                         .behaviour()
                         .bitswap
-                        .supported_protocols()
-                        .to_vec();
+                        .as_ref()
+                        .map(|bs| bs.supported_protocols().to_vec())
+                        .unwrap_or_default();
                     let mut protocol_bs_name = None;
                     for protocol in protocols {
                         let p = protocol.as_bytes();
@@ -678,10 +679,9 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                                 }
                             }
                             if protocol_bs_name.is_some() {
-                                self.swarm
-                                    .behaviour_mut()
-                                    .bitswap
-                                    .add_peer(peer_id, protocol_bs_name);
+                                if let Some(bs) = self.swarm.behaviour_mut().bitswap.as_mut() {
+                                    bs.add_peer(peer_id, protocol_bs_name);
+                                }
                             }
                         } else if p == b"/libp2p/autonat/1.0.0" {
                             // TODO: expose protocol name on `libp2p::autonat`.
