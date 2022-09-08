@@ -186,6 +186,7 @@ impl Ledger {
 
             if should_send {
                 trace!("sending message to {}", self.peer_id);
+                inc!(BitswapMetrics::MessagesSent);
                 // connected, send message
                 // TODO: limit size
 
