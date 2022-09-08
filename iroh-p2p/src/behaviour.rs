@@ -19,7 +19,7 @@ use libp2p::relay;
 use libp2p::swarm::behaviour::toggle::Toggle;
 use libp2p::NetworkBehaviour;
 use libp2p::{autonat, dcutr};
-use tracing::warn;
+use tracing::{info, warn};
 
 pub(crate) use self::event::Event;
 use self::peer_manager::PeerManager;
@@ -54,6 +54,7 @@ impl NodeBehaviour {
         let peer_manager = PeerManager::default();
 
         let bitswap = if config.bitswap {
+            info!("init bitswap");
             let bs_config = BitswapConfig::default();
             Some(Bitswap::new(bs_config))
         } else {
@@ -62,6 +63,7 @@ impl NodeBehaviour {
         .into();
 
         let mdns = if config.mdns {
+            info!("init mdns");
             Some(Mdns::new(Default::default()).await?)
         } else {
             None
@@ -69,6 +71,7 @@ impl NodeBehaviour {
         .into();
 
         let kad = if config.kademlia {
+            info!("init kademlia");
             let pub_key = local_key.public();
 
             // TODO: persist to store
@@ -104,6 +107,7 @@ impl NodeBehaviour {
         .into();
 
         let autonat = if config.autonat {
+            info!("init autonat");
             let pub_key = local_key.public();
             let config = autonat::Config {
                 use_connected: true,
@@ -120,6 +124,7 @@ impl NodeBehaviour {
         .into();
 
         let relay = if config.relay_server {
+            info!("init relay server");
             let config = relay::v2::relay::Config::default();
             let r = relay::v2::relay::Relay::new(local_key.public().to_peer_id(), config);
             Some(r)
@@ -129,6 +134,7 @@ impl NodeBehaviour {
         .into();
 
         let (dcutr, relay_client) = if config.relay_client {
+            info!("init relay client");
             let relay_client =
                 relay_client.expect("missing relay client even though it was enabled");
             let dcutr = dcutr::behaviour::Behaviour::new();
@@ -144,6 +150,7 @@ impl NodeBehaviour {
         };
 
         let gossipsub = if config.gossipsub {
+            info!("init gossipsub");
             let gossipsub_config = GossipsubConfig::default();
             let message_authenticity = MessageAuthenticity::Signed(local_key.clone());
             Some(
