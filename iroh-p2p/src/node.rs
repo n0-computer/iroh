@@ -23,9 +23,9 @@ use libp2p::metrics::Recorder;
 use libp2p::swarm::dial_opts::{DialOpts, PeerCondition};
 use libp2p::swarm::{ConnectionHandler, IntoConnectionHandler, NetworkBehaviour, SwarmEvent};
 use libp2p::{PeerId, Swarm};
+use tokio::sync::mpsc;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio::task::JoinHandle;
-use tokio::{sync::mpsc, time};
 use tracing::{debug, info, trace, warn};
 
 use iroh_bitswap::{
@@ -171,12 +171,9 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
     pub async fn run(&mut self) -> anyhow::Result<()> {
         info!("Local Peer ID: {}", self.swarm.local_peer_id());
 
-        let nice_interval = time::sleep(NICE_INTERVAL);
-        tokio::pin!(nice_interval);
-        let bootstrap_interval = time::sleep(BOOTSTRAP_INTERVAL);
-        tokio::pin!(bootstrap_interval);
-        let expiry_interval = time::sleep(Duration::from_secs(1));
-        tokio::pin!(expiry_interval);
+        let mut nice_interval = Instant::now();
+        let mut bootstrap_interval = Instant::now();
+        let mut expiry_interval = Instant::now();
 
         let mut rpc_msgs = 0;
 
@@ -206,11 +203,9 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
             rpc_msgs = 0;
 
             // check timers
-            if nice_interval.is_elapsed() {
+            if nice_interval.elapsed() >= NICE_INTERVAL {
                 trace!("tick:timer: nice");
-                nice_interval
-                    .as_mut()
-                    .reset(time::Instant::now() + NICE_INTERVAL);
+                nice_interval = Instant::now();
                 // Print peer count on an interval.
                 info!(
                     "Peers connected: {:?}",
@@ -220,20 +215,16 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                 self.dht_nice_tick().await;
             }
 
-            if bootstrap_interval.is_elapsed() {
+            if bootstrap_interval.elapsed() >= BOOTSTRAP_INTERVAL {
                 trace!("tick:bootstrap: nice");
-                bootstrap_interval
-                    .as_mut()
-                    .reset(time::Instant::now() + BOOTSTRAP_INTERVAL);
+                bootstrap_interval = Instant::now();
                 if let Err(e) = self.swarm.behaviour_mut().kad_bootstrap() {
                     warn!("kad bootstrap failed: {:?}", e);
                 }
             }
-            if expiry_interval.is_elapsed() {
+            if expiry_interval.elapsed() >= Duration::from_secs(1) {
                 trace!("tick:expiry: nice");
-                expiry_interval
-                    .as_mut()
-                    .reset(time::Instant::now() + Duration::from_secs(1));
+                expiry_interval = Instant::now();
 
                 if let Err(err) = self.expiry() {
                     warn!("expiry error {:?}", err);
