@@ -390,10 +390,6 @@ impl Bitswap {
             self.with_ledger(provider, |peer| {
                 peer.want_have_block(&cid, priority);
             });
-            // trigger dials
-            if let Some(dial) = self.dial(provider) {
-                self.events.push_back(dial);
-            }
         }
         self.wantlist.want_have_block(&cid, priority);
     }
