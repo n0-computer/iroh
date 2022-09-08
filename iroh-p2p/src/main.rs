@@ -1,4 +1,4 @@
-use anyhow::anyhow;
+use anyhow::{anyhow, Context};
 use clap::Parser;
 use iroh_p2p::config::{Config, CONFIG_FILE_NAME, ENV_PREFIX};
 use iroh_p2p::{cli::Args, metrics, DiskStorage, Keychain, Node};
@@ -27,14 +27,14 @@ async fn main() -> anyhow::Result<()> {
         // map of present command line arguments
         args.make_overrides_map(),
     )
-    .unwrap();
+    .context("invalid config")?;
 
     let metrics_config =
         metrics::metrics_config_with_compile_time_info(network_config.metrics.clone());
 
     let metrics_handle = iroh_metrics::MetricsHandle::new(metrics_config)
         .await
-        .expect("failed to initialize metrics");
+        .map_err(|e| anyhow!("metrics init failed: {:?}", e))?;
 
     #[cfg(unix)]
     {
