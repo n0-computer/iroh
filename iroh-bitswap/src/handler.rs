@@ -65,6 +65,7 @@ pub enum HandlerEvent {
     Connected {
         protocol: ProtocolId,
     },
+    ProtocolNotSuppported,
 }
 
 /// A message sent from the behaviour to the handler.
@@ -119,6 +120,12 @@ pub struct BitswapHandler {
     /// This value is set to true to indicate the peer doesn't support bitswap.
     protocol_unsupported: bool,
 
+    /// Keeps track on whether we have sent the protocol version to the behaviour.
+    //
+    // NOTE: Use this flag rather than checking the substream count each poll.
+    protocol_sent: bool,
+    protocol: Option<ProtocolId>,
+
     /// The amount of time we allow idle connections before disconnecting.
     idle_timeout: Duration,
 
@@ -165,6 +172,8 @@ impl BitswapHandler {
             inbound_substreams_created: 0,
             send_queue: SmallVec::new(),
             protocol_unsupported: false,
+            protocol: None,
+            protocol_sent: false,
             idle_timeout,
             upgrade_errors: VecDeque::new(),
             keep_alive: KeepAlive::Until(Instant::now() + Duration::from_secs(INITIAL_KEEP_ALIVE)),
@@ -198,10 +207,9 @@ impl ConnectionHandler for BitswapHandler {
             return;
         }
         let protocol_id = substream.codec().protocol;
-        self.events
-            .push(ConnectionHandlerEvent::Custom(HandlerEvent::Connected {
-                protocol: protocol_id,
-            }));
+        if self.protocol.is_none() {
+            self.protocol = Some(protocol_id);
+        }
 
         self.inbound_substreams_created += 1;
 
@@ -223,10 +231,9 @@ impl ConnectionHandler for BitswapHandler {
         }
 
         let protocol_id = substream.codec().protocol;
-        self.events
-            .push(ConnectionHandlerEvent::Custom(HandlerEvent::Connected {
-                protocol: substream.codec().protocol,
-            }));
+        if self.protocol.is_none() {
+            self.protocol = Some(protocol_id);
+        }
 
         self.outbound_substream_establishing = false;
         self.outbound_substreams_created += 1;
@@ -306,7 +313,18 @@ impl ConnectionHandler for BitswapHandler {
                         NegotiationError::Failed => {
                             // The protocol is not supported
                             self.protocol_unsupported = true;
-                            None
+                            if !self.protocol_sent {
+                                self.protocol_sent = true;
+                                // clear all substreams so the keep alive returns false
+                                self.inbound_substream = None;
+                                self.outbound_substream = None;
+                                self.keep_alive = KeepAlive::No;
+                                return Poll::Ready(ConnectionHandlerEvent::Custom(
+                                    HandlerEvent::ProtocolNotSuppported,
+                                ));
+                            } else {
+                                None
+                            }
                         }
                         NegotiationError::ProtocolError(e) => {
                             Some(BitswapHandlerError::NegotiationProtocolError(e))
@@ -318,6 +336,15 @@ impl ConnectionHandler for BitswapHandler {
             // If there was a fatal error, close the connection.
             if let Some(error) = reported_error {
                 return Poll::Ready(ConnectionHandlerEvent::Close(error));
+            }
+        }
+
+        if !self.protocol_sent {
+            if let Some(protocol) = self.protocol.as_ref() {
+                self.protocol_sent = true;
+                return Poll::Ready(ConnectionHandlerEvent::Custom(HandlerEvent::Connected {
+                    protocol: *protocol,
+                }));
             }
         }
 

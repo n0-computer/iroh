@@ -521,6 +521,11 @@ impl NetworkBehaviour for Bitswap {
     #[instrument(skip(self))]
     fn inject_event(&mut self, peer_id: PeerId, connection: ConnectionId, message: HandlerEvent) {
         match message {
+            HandlerEvent::ProtocolNotSuppported => {
+                inc!(BitswapMetrics::ForgottenPeers);
+                self.known_peers.remove(&peer_id);
+                self.ledgers.remove(&peer_id);
+            }
             HandlerEvent::Connected { protocol } => {
                 self.with_ledger(peer_id, |state| {
                     state.conn = ConnState::Connected(Some(protocol));
