@@ -157,28 +157,26 @@ impl Decoder for BitswapCodec {
 
 #[cfg(test)]
 mod tests {
+    use async_std::net::{TcpListener, TcpStream};
     use futures::prelude::*;
     use libp2p::core::upgrade;
-    use tokio::net::{TcpListener, TcpStream};
-    use tokio_util::compat::TokioAsyncReadCompatExt;
 
     use super::*;
 
-    #[tokio::test]
+    #[async_std::test]
     async fn test_upgrade() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let listener_addr = listener.local_addr().unwrap();
 
         let server = async move {
             let (incoming, _) = listener.accept().await.unwrap();
-            let incoming = incoming.compat();
             upgrade::apply_inbound(incoming, ProtocolConfig::default())
                 .await
                 .unwrap();
         };
 
         let client = async move {
-            let stream = TcpStream::connect(&listener_addr).await.unwrap().compat();
+            let stream = TcpStream::connect(&listener_addr).await.unwrap();
             upgrade::apply_outbound(stream, ProtocolConfig::default(), upgrade::Version::V1Lazy)
                 .await
                 .unwrap();
