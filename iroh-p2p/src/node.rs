@@ -179,6 +179,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
 
         loop {
             trace!("tick");
+            inc!(P2PMetrics::LoopCounter);
             // TODO: avoid starvaition of the swarm
             if rpc_msgs < 100 {
                 if let Ok(rpc_message) = self.net_receiver_in.try_recv() {
