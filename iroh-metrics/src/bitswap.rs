@@ -17,6 +17,7 @@ pub(crate) struct Metrics {
     providers_total: Counter,
 
     // new metrics
+    attempted_dials: Counter,
     known_peers: Counter,
     forgotten_peers: Counter,
     wanted_blocks: Counter,
@@ -89,6 +90,8 @@ impl Metrics {
         );
 
         // new metrics
+        let attempted_dials = Counter::default();
+        sub_registry.register("attempted_dials", "", Box::new(attempted_dials.clone()));
         let known_peers = Counter::default();
         sub_registry.register("known_peers", "", Box::new(known_peers.clone()));
         let forgotten_peers = Counter::default();
@@ -214,6 +217,7 @@ impl Metrics {
             sent_block_bytes,
             received_block_bytes,
             providers_total,
+            attempted_dials,
             known_peers,
             forgotten_peers,
             wanted_blocks,
@@ -257,6 +261,8 @@ impl MetricsRecorder for Metrics {
             self.received_block_bytes.inc_by(value);
         } else if m.name() == BitswapMetrics::Providers.name() {
             self.providers_total.inc_by(value);
+        } else if m.name() == BitswapMetrics::AttemptedDials.name() {
+            self.attempted_dials.inc_by(value);
         } else if m.name() == BitswapMetrics::KnownPeers.name() {
             self.known_peers.inc_by(value);
         } else if m.name() == BitswapMetrics::ForgottenPeers.name() {
@@ -326,6 +332,7 @@ pub enum BitswapMetrics {
     BlockBytesIn,
     Providers,
 
+    AttemptedDials,
     KnownPeers,
     ForgottenPeers,
     WantedBlocks,
@@ -363,6 +370,7 @@ impl MetricType for BitswapMetrics {
             BitswapMetrics::BlockBytesIn => METRICS_CNT_BLOCK_BYTES_IN,
             BitswapMetrics::Providers => METRICS_CNT_PROVIDERS_TOTAL,
 
+            BitswapMetrics::AttemptedDials => METRICS_CNT_ATTEMPTED_DIALS,
             BitswapMetrics::KnownPeers => METRICS_CNT_KNOWN_PEERS,
             BitswapMetrics::ForgottenPeers => METRICS_CNT_FORGOTTEN_PEERS,
             BitswapMetrics::WantedBlocks => METRICS_CNT_WANTED_BLOCKS,
@@ -410,6 +418,7 @@ pub const METRICS_CNT_CANCEL_TOTAL: &str = "canceled";
 pub const METRICS_CNT_BLOCK_BYTES_OUT: &str = "block_bytes_out";
 pub const METRICS_CNT_BLOCK_BYTES_IN: &str = "block_bytes_in";
 pub const METRICS_CNT_PROVIDERS_TOTAL: &str = "providers";
+pub const METRICS_CNT_ATTEMPTED_DIALS: &str = "attempted_dials";
 pub const METRICS_CNT_KNOWN_PEERS: &str = "known_peers";
 pub const METRICS_CNT_FORGOTTEN_PEERS: &str = "forgotten_peers";
 pub const METRICS_CNT_WANTED_BLOCKS: &str = "wanted_blocks";
