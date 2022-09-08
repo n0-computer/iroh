@@ -3,6 +3,7 @@ use std::io;
 use std::pin::Pin;
 
 use anyhow::{anyhow, ensure, Context, Result};
+use async_std::channel::{bounded as channel, Sender};
 use bytes::Bytes;
 use cid::Cid;
 use futures::{channel::oneshot, Stream, StreamExt};
@@ -13,8 +14,6 @@ use libp2p::gossipsub::{
 use libp2p::kad::record::Key;
 use libp2p::Multiaddr;
 use libp2p::PeerId;
-use tokio::sync::mpsc;
-use tokio::sync::mpsc::Sender;
 use tracing::trace;
 
 use async_trait::async_trait;
@@ -119,7 +118,7 @@ impl RpcP2p for P2p {
         req: ProviderKey,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<Providers>> + Send>>> {
         trace!("received ProviderRequest: {:?}", req.key);
-        let (s, r) = mpsc::channel(1024);
+        let (s, r) = channel(1024);
         let msg = RpcMessage::ProviderRequest {
             key: ProviderRequestKey::Dht(req.key.clone().into()),
             response_channel: s,
@@ -127,7 +126,6 @@ impl RpcP2p for P2p {
 
         self.sender.send(msg).await?;
 
-        let r = tokio_stream::wrappers::ReceiverStream::new(r);
         Ok(Box::pin(r.map(|providers| {
             let providers = providers.map_err(|e| anyhow!(e))?;
             let providers = providers.into_iter().map(|p| p.to_bytes()).collect();
@@ -142,7 +140,7 @@ impl RpcP2p for P2p {
         req: ProviderKey,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<Providers>> + Send>>> {
         trace!("received ProviderRequest: {:?}", req.key);
-        let (s, r) = mpsc::channel(1024);
+        let (s, r) = channel(1024);
         let msg = RpcMessage::ProviderRequest {
             key: ProviderRequestKey::Bitswap(Cid::try_from(&req.key[..])?),
             response_channel: s,
@@ -150,7 +148,6 @@ impl RpcP2p for P2p {
 
         self.sender.send(msg).await?;
 
-        let r = tokio_stream::wrappers::ReceiverStream::new(r);
         Ok(Box::pin(r.map(|providers| {
             let providers = providers.map_err(|e| anyhow!(e))?;
             let providers = providers.into_iter().map(|p| p.to_bytes()).collect();
@@ -390,7 +387,7 @@ pub enum RpcMessage {
     },
     ProviderRequest {
         key: ProviderRequestKey,
-        response_channel: mpsc::Sender<Result<HashSet<PeerId>, String>>,
+        response_channel: Sender<Result<HashSet<PeerId>, String>>,
     },
     NetListeningAddrs(oneshot::Sender<(PeerId, Vec<Multiaddr>)>),
     NetPeers(oneshot::Sender<HashMap<PeerId, Vec<Multiaddr>>>),

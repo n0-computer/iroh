@@ -20,7 +20,6 @@ use libp2p::swarm::{
     DialError, IntoConnectionHandler, NetworkBehaviour, NetworkBehaviourAction, NotifyHandler,
     PollParameters,
 };
-use tokio::time::{Instant, Sleep};
 use tracing::{debug, instrument, trace, warn};
 
 use crate::handler::{BitswapHandler, BitswapHandlerIn, HandlerEvent};
@@ -124,11 +123,10 @@ pub struct Bitswap {
     connection_limit: bool,
 }
 
-#[derive(Debug)]
 struct Ledger {
     peer_id: PeerId,
     msg: BitswapMessage,
-    last_send: Pin<Box<Sleep>>,
+    last_send: Option<Pin<Box<dyn Future<Output = ()> + Send + 'static>>>,
     conn: ConnState,
 }
 
@@ -138,10 +136,13 @@ impl Ledger {
         let mut msg = BitswapMessage::default();
         msg.wantlist_mut().set_full(true);
 
+        let last_send: Pin<Box<_>> = Box::pin(async_std::task::sleep(Duration::from_millis(0)))
+            as Pin<Box<dyn Future<Output = ()> + Send + 'static>>;
+
         Ledger {
             peer_id,
             msg,
-            last_send: Box::pin(tokio::time::sleep(Duration::from_millis(0))),
+            last_send: Some(last_send),
             conn: ConnState::Disconnected,
         }
     }
@@ -158,12 +159,15 @@ impl Ledger {
         cx: &mut Context,
         bs: &mut Bitswap,
     ) -> Poll<NetworkBehaviourAction<BitswapEvent, BitswapHandler>> {
-        match Pin::new(&mut self.last_send).poll(cx) {
-            Poll::Pending => {
-                return Poll::Pending;
-            }
-            Poll::Ready(_) => {
-                // timer elapsed, lets check if we have work to do
+        if let Some(mut last_send) = self.last_send.take() {
+            match Pin::new(&mut last_send).poll(cx) {
+                Poll::Pending => {
+                    self.last_send = Some(last_send);
+                    return Poll::Pending;
+                }
+                Poll::Ready(_) => {
+                    // timer elapsed, lets check if we have work to do
+                }
             }
         }
 
@@ -214,7 +218,10 @@ impl Ledger {
         let mut new_msg = BitswapMessage::default();
         new_msg.wantlist_mut().set_full(false);
 
-        Pin::as_mut(&mut self.last_send).reset(Instant::now() + MESSAGE_DELAY);
+        let x = Box::pin(async_std::task::sleep(MESSAGE_DELAY))
+            as Pin<Box<dyn Future<Output = ()> + Send + 'static>>;
+        self.last_send = Some(x);
+
         std::mem::replace(&mut self.msg, new_msg)
     }
 
@@ -664,7 +671,7 @@ mod tests {
     use libp2p::core::transport::Boxed;
     use libp2p::identity::Keypair;
     use libp2p::swarm::{SwarmBuilder, SwarmEvent};
-    use libp2p::tcp::{GenTcpConfig, TokioTcpTransport};
+    use libp2p::tcp::{GenTcpConfig, TcpTransport};
     use libp2p::yamux::YamuxConfig;
     use libp2p::{noise, PeerId, Swarm, Transport};
     use tracing::trace;
@@ -686,7 +693,7 @@ mod tests {
         };
 
         let peer_id = local_key.public().to_peer_id();
-        let transport = TokioTcpTransport::new(GenTcpConfig::default().nodelay(true))
+        let transport = TcpTransport::new(GenTcpConfig::default().nodelay(true))
             .upgrade(Version::V1)
             .authenticate(auth_config)
             .multiplex(YamuxConfig::default())
@@ -697,7 +704,7 @@ mod tests {
         (peer_id, transport)
     }
 
-    #[tokio::test]
+    #[async_std::test]
     async fn test_bitswap_behaviour() {
         // tracing_subscriber::registry()
         //     .with(fmt::layer().pretty())
@@ -707,14 +714,14 @@ mod tests {
         let (peer1_id, trans) = mk_transport();
         let mut swarm1 = SwarmBuilder::new(trans, Bitswap::default(), peer1_id)
             .executor(Box::new(|fut| {
-                tokio::spawn(fut);
+                async_std::task::spawn(fut);
             }))
             .build();
 
         let (peer2_id, trans) = mk_transport();
         let mut swarm2 = SwarmBuilder::new(trans, Bitswap::default(), peer2_id)
             .executor(Box::new(|fut| {
-                tokio::spawn(fut);
+                async_std::task::spawn(fut);
             }))
             .build();
 
@@ -825,7 +832,7 @@ mod tests {
         assert_eq!(&block[..], b"hello world");
     }
 
-    #[tokio::test]
+    #[async_std::test]
     async fn test_bitswap_multiprotocol() {
         tracing_subscriber::registry()
             .with(fmt::layer().pretty())
@@ -918,7 +925,7 @@ mod tests {
             let (peer1_id, trans) = mk_transport();
             let mut swarm1 = SwarmBuilder::new(trans, Bitswap::new(peer1_config), peer1_id)
                 .executor(Box::new(|fut| {
-                    tokio::spawn(fut);
+                    async_std::task::spawn(fut);
                 }))
                 .build();
 
@@ -932,7 +939,7 @@ mod tests {
             let (peer2_id, trans) = mk_transport();
             let mut swarm2 = SwarmBuilder::new(trans, Bitswap::new(peer2_config), peer2_id)
                 .executor(Box::new(|fut| {
-                    tokio::spawn(fut);
+                    async_std::task::spawn(fut);
                 }))
                 .build();
 

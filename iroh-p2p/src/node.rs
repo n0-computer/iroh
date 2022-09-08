@@ -3,6 +3,8 @@ use std::time::{Duration, Instant};
 
 use ahash::AHashMap;
 use anyhow::{anyhow, Context, Result};
+use async_std::channel::{bounded as channel, Receiver, Sender};
+use async_std::task::JoinHandle;
 use cid::Cid;
 use futures::channel::oneshot::Sender as OneShotSender;
 use futures_util::stream::StreamExt;
@@ -23,9 +25,6 @@ use libp2p::metrics::Recorder;
 use libp2p::swarm::dial_opts::{DialOpts, PeerCondition};
 use libp2p::swarm::{ConnectionHandler, IntoConnectionHandler, NetworkBehaviour, SwarmEvent};
 use libp2p::{PeerId, Swarm};
-use tokio::sync::mpsc;
-use tokio::sync::mpsc::{channel, Receiver, Sender};
-use tokio::task::JoinHandle;
 use tracing::{debug, error, info, trace, warn};
 
 use iroh_bitswap::{
@@ -89,14 +88,14 @@ enum BitswapQueryChannel {
         timeout: Instant,
         provider_count: usize,
         expected_provider_count: usize,
-        chan: mpsc::Sender<Result<HashSet<PeerId>, String>>,
+        chan: Sender<Result<HashSet<PeerId>, String>>,
     },
 }
 
 enum KadQueryChannel {
     GetProviders {
         provider_count: usize,
-        channels: Vec<mpsc::Sender<Result<HashSet<PeerId>, String>>>,
+        channels: Vec<Sender<Result<HashSet<PeerId>, String>>>,
     },
 }
 
@@ -117,7 +116,7 @@ const BOOTSTRAP_INTERVAL: Duration = Duration::from_secs(5 * 60);
 
 impl<KeyStorage: Storage> Drop for Node<KeyStorage> {
     fn drop(&mut self) {
-        self.rpc_task.abort();
+        // self.rpc_task.cancel();
     }
 }
 
@@ -142,7 +141,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
             ..
         } = config;
 
-        let rpc_task = tokio::spawn(async move {
+        let rpc_task = async_std::task::spawn(async move {
             // TODO: handle error
             rpc::new(rpc_addr, network_sender_in).await.unwrap()
         });
@@ -461,10 +460,10 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                             info!("got block {} from {}", cid, sender);
                             let cid2 = cid;
                             let data2 = data.clone();
-                            match tokio::task::spawn_blocking(move || {
+                            match async_std::task::spawn_blocking(move || {
                                 iroh_util::verify_hash(&cid2, &data2)
                             })
-                            .await?
+                            .await
                             {
                                 Some(true) => {
                                     let b = Block::new(data, cid);
@@ -992,7 +991,7 @@ mod tests {
     use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
     #[cfg(feature = "rpc-grpc")]
-    #[tokio::test]
+    #[async_std::test]
     async fn test_fetch_providers_grpc_dht() -> Result<()> {
         let server_addr = "grpc://0.0.0.0:4401".parse().unwrap();
         let client_addr = "grpc://0.0.0.0:4401".parse().unwrap();
@@ -1007,7 +1006,7 @@ mod tests {
     }
 
     #[cfg(all(feature = "rpc-grpc", unix))]
-    #[tokio::test]
+    #[async_std::test]
     async fn test_fetch_providers_uds_dht() -> Result<()> {
         let dir = tempfile::tempdir()?;
         let file = dir.path().join("cool.iroh");
@@ -1025,7 +1024,7 @@ mod tests {
     }
 
     #[cfg(feature = "rpc-mem")]
-    #[tokio::test]
+    #[async_std::test]
     async fn test_fetch_providers_mem_dht() -> Result<()> {
         let (server_addr, client_addr) = Addr::new_mem();
         fetch_providers(
@@ -1039,7 +1038,7 @@ mod tests {
     }
 
     #[cfg(feature = "rpc-mem")]
-    #[tokio::test]
+    #[async_std::test]
     async fn test_fetch_providers_mem_bitswap() -> Result<()> {
         tracing_subscriber::registry()
             .with(fmt::layer().pretty())
@@ -1073,7 +1072,7 @@ mod tests {
             p2p_addr: Some(rpc_client_addr),
             ..Default::default()
         };
-        let p2p_task = tokio::task::spawn(async move {
+        let p2p_task = async_std::task::spawn(async move {
             p2p.run().await.unwrap();
         });
 
@@ -1132,7 +1131,7 @@ mod tests {
             }
         };
 
-        p2p_task.abort();
+        p2p_task.cancel().await;
         Ok(())
     }
 }

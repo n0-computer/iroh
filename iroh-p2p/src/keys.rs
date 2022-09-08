@@ -3,11 +3,11 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, Result};
+use async_std::fs;
 use async_trait::async_trait;
 use futures::{Stream, StreamExt, TryStreamExt};
 use iroh_util::iroh_config_root;
 use ssh_key::LineEnding;
-use tokio::fs;
 use tracing::warn;
 use zeroize::Zeroizing;
 
@@ -161,7 +161,7 @@ impl DiskStorage {
     async fn next_count_for_alg(&self, alg: ssh_key::Algorithm) -> Result<usize> {
         let matcher = format!("id_{}", print_algorithm(alg));
         let key_files = self.key_files();
-        tokio::pin!(key_files);
+        futures::pin_mut!(key_files);
 
         let mut counts = Vec::new();
         while let Some(file) = key_files.next().await {
@@ -184,12 +184,13 @@ impl DiskStorage {
         async_stream::try_stream! {
             let mut reader = fs::read_dir(&self.path).await?;
 
-            while let Some(entry) = reader.next_entry().await? {
+            while let Some(entry) = reader.next().await {
+                let entry = entry?;
                 let path = entry.path();
                 if path.extension().is_none()
                     && path.file_name().is_some()
                     && path.file_name().unwrap().to_string_lossy().starts_with("id_") {
-                        yield path;
+                        yield PathBuf::from(path.as_path());
                 }
             }
         }
@@ -246,7 +247,8 @@ impl Storage for DiskStorage {
         let s = async_stream::try_stream! {
             let mut reader = fs::read_dir(&self.path).await?;
 
-            while let Some(entry) = reader.next_entry().await? {
+            while let Some(entry) = reader.next().await {
+                let entry = entry?;
                 let path = entry.path();
                 if path_is_private_key(&path) {
                     let content = fs::read_to_string(&path).await?;
@@ -311,7 +313,7 @@ mod tests {
 
     use super::*;
 
-    #[tokio::test]
+    #[async_std::test]
     async fn basics_memory_keychain() {
         let mut kc = Keychain::<MemoryStorage>::new();
         assert_eq!(kc.len().await.unwrap(), 0);
@@ -324,7 +326,7 @@ mod tests {
         assert_eq!(keys.len(), 2);
     }
 
-    #[tokio::test]
+    #[async_std::test]
     async fn basics_disk_keychain() {
         let dir = tempfile::tempdir().unwrap();
 

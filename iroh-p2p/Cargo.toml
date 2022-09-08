@@ -21,7 +21,7 @@ lazy_static = "1.4"
 iroh-bitswap = { path = "../iroh-bitswap" }
 iroh-rpc-types = { path = "../iroh-rpc-types", default-features = false }
 iroh-rpc-client = { path = "../iroh-rpc-client", default-features = false }
-tokio = { version = "1", features = ["time", "sync", "macros"] }
+# tokio = { version = "1", features = ["time", "sync", "macros"] }
 ahash = "0.7.6"
 tracing = "0.1.34"
 clap = { version = "3.1.14", features = ["derive"] }
@@ -38,8 +38,9 @@ ssh-key = { version = "0.4.2", features = ["ed25519", "std", "rand_core"], defau
 rand = "0.8.5"
 async-stream = "0.3.3"
 tempfile = "3.3.0"
-tokio-stream = "0.1.9"
+# tokio-stream = "0.1.9"
 caches = "0.2.2"
+async-std = { version = "1", features = ["unstable", "attributes", "tokio1"]}
  
 [dependencies.libp2p]
 version = "0.48"
@@ -52,8 +53,8 @@ features = [
   "mdns",
   "noise",
   "yamux",
-  "tcp-tokio",
-  "dns-tokio",
+  "tcp-async-io",
+  "dns-async-std",
   "mplex",
   "request-response",
   "websocket",
@@ -70,7 +71,7 @@ default-features = false
 features = ["std", "multihash-impl", "identity", "sha2"]
 
 [dev-dependencies]
-tokio = { version = "1" }
+# tokio = { version = "1" }
 #car = { path = "../car" }
 
 [features]

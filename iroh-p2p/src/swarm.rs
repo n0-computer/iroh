@@ -110,7 +110,7 @@ pub(crate) async fn build_swarm(
         .connection_event_buffer_size(config.connection_event_buffer_size)
         .dial_concurrency_factor(config.dial_concurrency_factor.try_into().unwrap())
         .executor(Box::new(|fut| {
-            tokio::spawn(fut);
+            async_std::task::spawn(fut);
         }))
         .build();
 
