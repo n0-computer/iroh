@@ -34,7 +34,7 @@ mod peer_manager;
 pub(crate) struct NodeBehaviour {
     ping: Ping,
     identify: Identify,
-    pub(crate) bitswap: Bitswap,
+    pub(crate) bitswap: Toggle<Bitswap>,
     pub(crate) kad: Toggle<Kademlia<MemoryStore>>,
     mdns: Toggle<Mdns>,
     pub(crate) autonat: Toggle<autonat::Behaviour>,
@@ -51,9 +51,15 @@ impl NodeBehaviour {
         config: &Libp2pConfig,
         relay_client: Option<relay::v2::client::Client>,
     ) -> Result<Self> {
-        let bs_config = BitswapConfig::default();
-        let bitswap = Bitswap::new(bs_config);
         let peer_manager = PeerManager::default();
+
+        let bitswap = if config.bitswap {
+            let bs_config = BitswapConfig::default();
+            Some(Bitswap::new(bs_config))
+        } else {
+            None
+        }
+        .into();
 
         let mdns = if config.mdns {
             Some(Mdns::new(Default::default()).await?)
@@ -166,28 +172,38 @@ impl NodeBehaviour {
 
     /// Send a block to a peer over bitswap
     pub fn send_block(&mut self, peer_id: &PeerId, cid: Cid, data: Bytes) -> Result<()> {
-        self.bitswap.send_block(peer_id, cid, data);
+        if let Some(bs) = self.bitswap.as_mut() {
+            bs.send_block(peer_id, cid, data);
+        }
         Ok(())
     }
 
     pub fn cancel_block(&mut self, cid: &Cid) -> Result<()> {
-        self.bitswap.cancel_block(cid);
+        if let Some(bs) = self.bitswap.as_mut() {
+            bs.cancel_block(cid);
+        }
         Ok(())
     }
 
     pub fn cancel_want_block(&mut self, cid: &Cid) -> Result<()> {
-        self.bitswap.cancel_want_block(cid);
+        if let Some(bs) = self.bitswap.as_mut() {
+            bs.cancel_want_block(cid);
+        }
         Ok(())
     }
 
     /// Send a block have to a peer over bitswap
     pub fn send_have_block(&mut self, peer_id: &PeerId, cid: Cid) -> Result<()> {
-        self.bitswap.send_have_block(peer_id, cid);
+        if let Some(bs) = self.bitswap.as_mut() {
+            bs.send_have_block(peer_id, cid);
+        }
         Ok(())
     }
 
     pub fn find_providers(&mut self, cid: Cid, priority: Priority) -> Result<()> {
-        self.bitswap.find_providers(cid, priority);
+        if let Some(bs) = self.bitswap.as_mut() {
+            bs.find_providers(cid, priority);
+        }
         Ok(())
     }
 
@@ -202,7 +218,9 @@ impl NodeBehaviour {
         priority: Priority,
         providers: HashSet<PeerId>,
     ) -> Result<(), Box<dyn Error>> {
-        self.bitswap.want_block(cid, priority, providers);
+        if let Some(bs) = self.bitswap.as_mut() {
+            bs.want_block(cid, priority, providers);
+        }
         Ok(())
     }
 
