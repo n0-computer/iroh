@@ -285,12 +285,15 @@ impl ConnectionHandler for BitswapHandler {
             Self::Error,
         >,
     > {
+        inc!(BitswapMetrics::HandlerPollCount);
         if !self.events.is_empty() {
             return Poll::Ready(self.events.remove(0));
         }
 
+        inc!(BitswapMetrics::HandlerPollEventCount);
         // Handle any upgrade errors
         if let Some(error) = self.upgrade_errors.pop_front() {
+            inc!(BitswapMetrics::HandlerConnUpgradeErrors);
             let reported_error = match error {
                 // Timeout errors get mapped to NegotiationTimeout and we close the connection.
                 ConnectionHandlerUpgrErr::Timeout | ConnectionHandlerUpgrErr::Timer => {
@@ -319,6 +322,7 @@ impl ConnectionHandler for BitswapHandler {
         }
 
         if self.inbound_substreams_created > MAX_SUBSTREAM_CREATION {
+            inc!(BitswapMetrics::InboundSubstreamsCreatedLimit);
             // Too many inbound substreams have been created, end the connection.
             return Poll::Ready(ConnectionHandlerEvent::Close(
                 BitswapHandlerError::MaxInboundSubstreams,
@@ -330,7 +334,9 @@ impl ConnectionHandler for BitswapHandler {
             && self.outbound_substream.is_none()
             && !self.outbound_substream_establishing
         {
+            inc!(BitswapMetrics::OutboundSubstreamsEvent);
             if self.outbound_substreams_created >= MAX_SUBSTREAM_CREATION {
+                inc!(BitswapMetrics::OutboundSubstreamsCreatedLimit);
                 return Poll::Ready(ConnectionHandlerEvent::Close(
                     BitswapHandlerError::MaxOutboundSubstreams,
                 ));
@@ -344,6 +350,7 @@ impl ConnectionHandler for BitswapHandler {
         }
 
         loop {
+            inc!(BitswapMetrics::HandlerInboundLoopCount);
             match std::mem::replace(
                 &mut self.inbound_substream,
                 Some(InboundSubstreamState::Poisoned),
@@ -422,6 +429,7 @@ impl ConnectionHandler for BitswapHandler {
 
         // process outbound stream
         loop {
+            inc!(BitswapMetrics::HandlerOutboundLoopCount);
             match std::mem::replace(
                 &mut self.outbound_substream,
                 Some(OutboundSubstreamState::Poisoned),
