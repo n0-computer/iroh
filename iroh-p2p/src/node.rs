@@ -25,7 +25,7 @@ use libp2p::swarm::{ConnectionHandler, IntoConnectionHandler, NetworkBehaviour, 
 use libp2p::{PeerId, Swarm};
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio::task::JoinHandle;
-use tokio::{select, sync::mpsc, time};
+use tokio::{sync::mpsc, time};
 use tracing::{debug, info, trace, warn};
 
 use iroh_bitswap::{
@@ -170,73 +170,115 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
     /// Starts the libp2p service networking stack. This Future resolves when shutdown occurs.
     pub async fn run(&mut self) -> anyhow::Result<()> {
         info!("Local Peer ID: {}", self.swarm.local_peer_id());
-        let mut nice_interval = time::interval(NICE_INTERVAL);
-        let mut bootstrap_interval = time::interval(BOOTSTRAP_INTERVAL);
 
-        let mut expiry_interval = time::interval(Duration::from_secs(1));
+        let nice_interval = time::sleep(NICE_INTERVAL);
+        tokio::pin!(nice_interval);
+        let bootstrap_interval = time::sleep(BOOTSTRAP_INTERVAL);
+        tokio::pin!(bootstrap_interval);
+        let expiry_interval = time::sleep(Duration::from_secs(1));
+        tokio::pin!(expiry_interval);
+
+        let mut rpc_msgs = 0;
 
         loop {
-            select! {
-                swarm_event = self.swarm.select_next_some() => {
-                    if let Err(err) = self.handle_swarm_event(swarm_event).await {
-                        warn!("swarm: {:?}", err);
-                    }
-                }
-                rpc_message = self.net_receiver_in.recv() => {
-                    let rpc_message = rpc_message.ok_or_else(|| anyhow!("unexpected close"))?;
+            trace!("tick");
+            // TODO: avoid starvaition of the swarm
+            if rpc_msgs < 100 {
+                if let Ok(rpc_message) = self.net_receiver_in.try_recv() {
+                    trace!("tick: rpc message");
+                    rpc_msgs += 1;
                     match self.handle_rpc_message(rpc_message).await {
                         Ok(true) => {
                             // shutdown
                             return Ok(());
                         }
-                        Ok(false) => {}
+                        Ok(false) => {
+                            continue;
+                        }
                         Err(err) => {
                             warn!("rpc: {:?}", err);
                         }
                     }
                 }
-                _interval_event = nice_interval.tick() => {
-                    // Print peer count on an interval.
-                    info!("Peers connected: {:?}", self.swarm.connected_peers().count());
+            }
 
-                    self.dht_nice_tick().await;
-                }
-                _interval_event = bootstrap_interval.tick() => {
-                    if let Err(e) = self.swarm.behaviour_mut().kad_bootstrap() {
-                        warn!("kad bootstrap failed: {:?}", e);
-                    }
-                }
-                _internal_event = expiry_interval.tick() => {
-                    let mut err = Ok(());
-                    self.bitswap_queries.retain(|key, state| {
-                        match (key, state) {
-                            (BitswapQueryKey::FindProviders(cid), BitswapQueryChannel::FindProviders { timeout, .. }) => {
-                                if timeout.elapsed() < Duration::from_secs(30) {
-                                    true
-                                } else {
-                                    err = self.swarm.behaviour_mut().cancel_want_block(cid);
-                                    false
-                                }
-                            }
-                            (BitswapQueryKey::Want(cid), BitswapQueryChannel::Want { timeout, .. })=> {
-                                if timeout.elapsed() < Duration::from_secs(60) {
-                                    true
-                                } else {
-                                    err = self.swarm.behaviour_mut().cancel_block(cid);
-                                    false
-                                }
-                            }
-                            _ => {
-                                err = Err(anyhow!("invalid bitswap query state"));
-                                false
-                            }
-                        }
-                    });
+            // reset continous rpc msg handling
+            rpc_msgs = 0;
 
-                    err?;
+            // check timers
+            if nice_interval.is_elapsed() {
+                trace!("tick:timer: nice");
+                nice_interval
+                    .as_mut()
+                    .reset(time::Instant::now() + NICE_INTERVAL);
+                // Print peer count on an interval.
+                info!(
+                    "Peers connected: {:?}",
+                    self.swarm.connected_peers().count()
+                );
+
+                self.dht_nice_tick().await;
+            }
+
+            if bootstrap_interval.is_elapsed() {
+                trace!("tick:bootstrap: nice");
+                bootstrap_interval
+                    .as_mut()
+                    .reset(time::Instant::now() + BOOTSTRAP_INTERVAL);
+                if let Err(e) = self.swarm.behaviour_mut().kad_bootstrap() {
+                    warn!("kad bootstrap failed: {:?}", e);
+                }
+            }
+            if expiry_interval.is_elapsed() {
+                trace!("tick:expiry: nice");
+                expiry_interval
+                    .as_mut()
+                    .reset(time::Instant::now() + Duration::from_secs(1));
+
+                if let Err(err) = self.expiry() {
+                    warn!("expiry error {:?}", err);
+                }
+            }
+
+            if let Some(swarm_event) = self.swarm.next().await {
+                trace!("tick: swarm event");
+                if let Err(err) = self.handle_swarm_event(swarm_event).await {
+                    warn!("swarm: {:?}", err);
                 }
             }
         }
+    }
+
+    fn expiry(&mut self) -> Result<()> {
+        let mut err = Ok(());
+        self.bitswap_queries
+            .retain(|key, state| match (key, state) {
+                (
+                    BitswapQueryKey::FindProviders(cid),
+                    BitswapQueryChannel::FindProviders { timeout, .. },
+                ) => {
+                    if timeout.elapsed() < Duration::from_secs(30) {
+                        true
+                    } else {
+                        err = self.swarm.behaviour_mut().cancel_want_block(cid);
+                        false
+                    }
+                }
+                (BitswapQueryKey::Want(cid), BitswapQueryChannel::Want { timeout, .. }) => {
+                    if timeout.elapsed() < Duration::from_secs(60) {
+                        true
+                    } else {
+                        err = self.swarm.behaviour_mut().cancel_block(cid);
+                        false
+                    }
+                }
+                _ => {
+                    err = Err(anyhow!("invalid bitswap query state"));
+                    false
+                }
+            });
+
+        err
     }
 
     /// Check the next node in the DHT.
