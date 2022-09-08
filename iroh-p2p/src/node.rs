@@ -232,7 +232,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
             }
 
             if let Some(swarm_event) = self.swarm.next().await {
-                trace!("tick: swarm event");
+                trace!("tick: swarm event: {:?}", swarm_event);
                 if let Err(err) = self.handle_swarm_event(swarm_event).await {
                     warn!("swarm: {:?}", err);
                 }
