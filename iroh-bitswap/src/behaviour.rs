@@ -519,7 +519,6 @@ impl NetworkBehaviour for Bitswap {
 
     #[instrument(skip(self))]
     fn inject_event(&mut self, peer_id: PeerId, connection: ConnectionId, message: HandlerEvent) {
-        inc!(BitswapMetrics::MessagesReceived);
         match message {
             HandlerEvent::Connected { protocol } => {
                 self.with_ledger(peer_id, |state| {
@@ -528,6 +527,7 @@ impl NetworkBehaviour for Bitswap {
                 self.known_peers.put(peer_id, Some(protocol));
             }
             HandlerEvent::Message { mut message } => {
+                inc!(BitswapMetrics::MessagesReceived);
                 inc!(BitswapMetrics::Requests);
 
                 // Process incoming message.
