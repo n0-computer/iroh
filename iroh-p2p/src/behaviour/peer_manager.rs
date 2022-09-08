@@ -1,6 +1,6 @@
 use std::task::{Context, Poll};
 
-use caches::Cache;
+use caches::{Cache, PutResult};
 use iroh_metrics::{core::MRecorder, inc, p2p::P2PMetrics};
 use libp2p::{
     core::{connection::ConnectionId, transport::ListenerId, ConnectedPoint},
@@ -99,8 +99,9 @@ impl NetworkBehaviour for PeerManager {
             match error {
                 DialError::ConnectionLimit(_) | DialError::DialPeerConditionFalse(_) => {}
                 _ => {
-                    inc!(P2PMetrics::BadPeer);
-                    self.bad_peers.put(peer_id, ());
+                    if PutResult::Put == self.bad_peers.put(peer_id, ()) {
+                        inc!(P2PMetrics::BadPeer);
+                    }
                 }
             }
         }
