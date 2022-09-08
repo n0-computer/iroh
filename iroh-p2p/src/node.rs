@@ -223,7 +223,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                 }
             }
             if expiry_interval.elapsed() >= Duration::from_secs(1) {
-                trace!("tick:expiry: nice");
+                trace!("tick:expiry: expiry");
                 expiry_interval = Instant::now();
 
                 if let Err(err) = self.expiry() {
