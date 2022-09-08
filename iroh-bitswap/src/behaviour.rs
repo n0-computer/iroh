@@ -429,6 +429,7 @@ impl Bitswap {
                 return None;
             }
             state.conn = ConnState::Dialing;
+            inc!(BitswapMetrics::AttemptedDials);
             let handler = BitswapHandler::new(config.protocol_config, config.idle_timeout);
             Some(NetworkBehaviourAction::Dial {
                 opts: DialOpts::peer_id(peer).build(),
