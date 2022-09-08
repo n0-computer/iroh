@@ -149,10 +149,6 @@ impl Ledger {
         matches!(self.conn, ConnState::Connected(_))
     }
 
-    fn is_disconnected(&self) -> bool {
-        matches!(self.conn, ConnState::Disconnected)
-    }
-
     fn needs_dial(&self) -> bool {
         matches!(self.conn, ConnState::Disconnected)
     }
@@ -171,39 +167,35 @@ impl Ledger {
             }
         }
 
+        if self.is_empty() {
+            return Poll::Pending;
+        }
+
         if self.is_connected() {
-            let should_send = if self.has_blocks() {
+            if self.has_blocks() {
                 // make progress on connected peers first, that have wants
                 inc!(BitswapMetrics::PollActionConnectedWants);
-                true
-            } else if !self.is_empty() {
+            } else {
                 // make progress on connected peers that have no wants
                 inc!(BitswapMetrics::PollActionConnected);
-                true
-            } else {
-                false
-            };
-
-            if should_send {
-                trace!("sending message to {}", self.peer_id);
-                inc!(BitswapMetrics::MessagesSent);
-                // connected, send message
-                // TODO: limit size
-
-                let bs_msg = Pin::new(&mut *self).send_message();
-                return Poll::Ready(NetworkBehaviourAction::NotifyHandler {
-                    peer_id: self.peer_id,
-                    handler: NotifyHandler::Any,
-                    event: BitswapHandlerIn::Message(bs_msg),
-                });
             }
 
+            trace!("sending message to {}", self.peer_id);
+            inc!(BitswapMetrics::MessagesSent);
+            // connected, send message
+            // TODO: limit size
+
+            let bs_msg = Pin::new(&mut *self).send_message();
+            return Poll::Ready(NetworkBehaviourAction::NotifyHandler {
+                peer_id: self.peer_id,
+                handler: NotifyHandler::Any,
+                event: BitswapHandlerIn::Message(bs_msg),
+            });
+        } else {
             // not connected, but have content to send, need to dial
-            if !self.is_empty() && self.is_disconnected() {
-                inc!(BitswapMetrics::PollActionNotConnected);
-                if let Some(event) = bs.dial(self.peer_id) {
-                    return Poll::Ready(event);
-                }
+            inc!(BitswapMetrics::PollActionNotConnected);
+            if let Some(event) = bs.try_dial(self.peer_id) {
+                return Poll::Ready(event);
             }
         }
 
@@ -422,7 +414,7 @@ impl Bitswap {
         }
     }
 
-    fn dial(
+    fn try_dial(
         &mut self,
         peer: PeerId,
     ) -> Option<NetworkBehaviourAction<BitswapEvent, BitswapHandler>> {
