@@ -7,8 +7,8 @@ use std::pin::Pin;
 use std::task::{Context, Poll};
 use std::time::Duration;
 
+use ahash::AHashMap;
 use bytes::Bytes;
-use caches::{Cache, PutResult};
 use cid::Cid;
 use futures::Future;
 use iroh_metrics::inc;
@@ -116,18 +116,24 @@ pub struct Bitswap {
     #[allow(dead_code)]
     config: BitswapConfig,
     /// Peers we know about that we can talk bitswap to.
-    known_peers: caches::RawLRU<PeerId, Option<ProtocolId>>,
+    known_peers: AHashMap<PeerId, Option<ProtocolId>>,
     /// Current ledgers.
-    ledgers: caches::RawLRU<PeerId, Ledger>,
+    ledgers: AHashMap<PeerId, Ledger>,
     wantlist: Wantlist,
     connection_limit: bool,
 }
 
 struct Ledger {
+    is_empty: bool,
     peer_id: PeerId,
     msg: BitswapMessage,
     last_send: Option<Pin<Box<dyn Future<Output = ()> + Send + 'static>>>,
     conn: ConnState,
+}
+
+enum Action {
+    Dial(PeerId),
+    Message(PeerId, BitswapMessage),
 }
 
 impl Ledger {
@@ -140,6 +146,7 @@ impl Ledger {
             as Pin<Box<dyn Future<Output = ()> + Send + 'static>>;
 
         Ledger {
+            is_empty: true,
             peer_id,
             msg,
             last_send: Some(last_send),
@@ -154,11 +161,7 @@ impl Ledger {
         matches!(self.conn, ConnState::Disconnected)
     }
 
-    fn poll(
-        &mut self,
-        cx: &mut Context,
-        bs: &mut Bitswap,
-    ) -> Poll<NetworkBehaviourAction<BitswapEvent, BitswapHandler>> {
+    fn poll(&mut self, cx: &mut Context) -> Poll<Action> {
         if let Some(mut last_send) = self.last_send.take() {
             match Pin::new(&mut last_send).poll(cx) {
                 Poll::Pending => {
@@ -190,24 +193,16 @@ impl Ledger {
             // TODO: limit size
 
             let bs_msg = Pin::new(&mut *self).send_message();
-            return Poll::Ready(NetworkBehaviourAction::NotifyHandler {
-                peer_id: self.peer_id,
-                handler: NotifyHandler::Any,
-                event: BitswapHandlerIn::Message(bs_msg),
-            });
+            Poll::Ready(Action::Message(self.peer_id, bs_msg))
         } else {
             // not connected, but have content to send, need to dial
             inc!(BitswapMetrics::PollActionNotConnected);
-            if let Some(event) = bs.try_dial(self.peer_id) {
-                return Poll::Ready(event);
-            }
+            Poll::Ready(Action::Dial(self.peer_id))
         }
-
-        Poll::Pending
     }
 
     fn is_empty(&self) -> bool {
-        self.msg.is_empty()
+        self.is_empty
     }
 
     fn has_blocks(&self) -> bool {
@@ -221,36 +216,44 @@ impl Ledger {
         let x = Box::pin(async_std::task::sleep(MESSAGE_DELAY))
             as Pin<Box<dyn Future<Output = ()> + Send + 'static>>;
         self.last_send = Some(x);
+        self.is_empty = true;
 
         std::mem::replace(&mut self.msg, new_msg)
     }
 
     fn want_block(&mut self, cid: &Cid, priority: Priority) {
         self.msg.wantlist_mut().want_block(cid, priority);
+        self.is_empty = self.msg.is_empty();
     }
 
     fn cancel_block(&mut self, cid: &Cid) {
         self.msg.wantlist_mut().cancel_block(cid);
+        self.is_empty = self.msg.is_empty();
     }
 
     fn remove_block(&mut self, cid: &Cid) {
         self.msg.wantlist_mut().remove_block(cid);
+        self.is_empty = self.msg.is_empty();
     }
 
     fn send_block(&mut self, cid: Cid, data: Bytes) {
         self.msg.add_block(Block { cid, data });
+        self.is_empty = self.msg.is_empty();
     }
 
     fn want_have_block(&mut self, cid: &Cid, priority: Priority) {
         self.msg.wantlist_mut().want_have_block(cid, priority);
+        self.is_empty = self.msg.is_empty();
     }
 
     fn remove_want_block(&mut self, cid: &Cid) {
         self.msg.wantlist_mut().remove_want_block(cid);
+        self.is_empty = self.msg.is_empty();
     }
 
     fn send_have_block(&mut self, cid: Cid) {
         self.msg.add_block_presence(BlockPresence::have(cid));
+        self.is_empty = self.msg.is_empty();
     }
 }
 
@@ -289,13 +292,10 @@ impl Default for Bitswap {
 impl Bitswap {
     /// Create a new `Bitswap`.
     pub fn new(config: BitswapConfig) -> Self {
-        let known_peers = caches::RawLRU::new(config.max_cached_peers).unwrap();
-        let ledgers = caches::RawLRU::new(config.max_ledgers).unwrap();
-
         Bitswap {
             config,
-            known_peers,
-            ledgers,
+            known_peers: Default::default(),
+            ledgers: Default::default(),
             events: Default::default(),
             wantlist: Wantlist::default(),
             connection_limit: false,
@@ -308,9 +308,8 @@ impl Bitswap {
 
     /// Notifies about a peer that speaks the bitswap protocol.
     pub fn add_peer(&mut self, peer: PeerId, protocol: Option<ProtocolId>) {
-        if let PutResult::Put = self.known_peers.put(peer, protocol) {
-            inc!(BitswapMetrics::KnownPeers);
-        }
+        self.known_peers.insert(peer, protocol);
+        inc!(BitswapMetrics::KnownPeers);
     }
 
     /// Adds a peer to the known_peers list, with the provided state.
@@ -323,7 +322,7 @@ impl Bitswap {
         } else {
             let mut ledger = Ledger::new(peer);
             let res = f(&mut ledger);
-            self.ledgers.put(peer, ledger);
+            self.ledgers.insert(peer, ledger);
             self.add_peer(peer, None);
             res
         }
@@ -420,30 +419,6 @@ impl Bitswap {
             state.remove_want_block(cid);
         }
     }
-
-    fn try_dial(
-        &mut self,
-        peer: PeerId,
-    ) -> Option<NetworkBehaviourAction<BitswapEvent, BitswapHandler>> {
-        if self.connection_limit {
-            return None;
-        }
-
-        let config = self.config.clone();
-        self.with_ledger(peer, |state| {
-            if !state.needs_dial() {
-                // No need to dial, already connected
-                return None;
-            }
-            state.conn = ConnState::Dialing;
-            inc!(BitswapMetrics::AttemptedDials);
-            let handler = BitswapHandler::new(config.protocol_config, config.idle_timeout);
-            Some(NetworkBehaviourAction::Dial {
-                opts: DialOpts::peer_id(peer).build(),
-                handler,
-            })
-        })
-    }
 }
 
 impl NetworkBehaviour for Bitswap {
@@ -537,7 +512,7 @@ impl NetworkBehaviour for Bitswap {
                 self.with_ledger(peer_id, |state| {
                     state.conn = ConnState::Connected(Some(protocol));
                 });
-                self.known_peers.put(peer_id, Some(protocol));
+                self.known_peers.insert(peer_id, Some(protocol));
             }
             HandlerEvent::Message { mut message } => {
                 inc!(BitswapMetrics::MessagesReceived);
@@ -648,8 +623,31 @@ impl NetworkBehaviour for Bitswap {
         }
 
         for peer_state in self.ledgers.values_mut() {
-            match peer_state.poll(cx, self) {
-                Poll::Ready(action) => return Poll::Ready(action),
+            match peer_state.poll(cx) {
+                Poll::Ready(action) => match action {
+                    Action::Dial(peer_id) => {
+                        if self.connection_limit || !peer_state.needs_dial() {
+                            continue;
+                        }
+                        peer_state.conn = ConnState::Dialing;
+                        inc!(BitswapMetrics::AttemptedDials);
+                        let handler = BitswapHandler::new(
+                            self.config.protocol_config.clone(),
+                            self.config.idle_timeout,
+                        );
+                        return Poll::Ready(NetworkBehaviourAction::Dial {
+                            opts: DialOpts::peer_id(peer_id).build(),
+                            handler,
+                        });
+                    }
+                    Action::Message(peer_id, bs_msg) => {
+                        return Poll::Ready(NetworkBehaviourAction::NotifyHandler {
+                            peer_id,
+                            handler: NotifyHandler::Any,
+                            event: BitswapHandlerIn::Message(bs_msg),
+                        });
+                    }
+                },
                 _ => {}
             }
         }
