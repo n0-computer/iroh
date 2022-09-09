@@ -3,8 +3,6 @@ use std::time::{Duration, Instant};
 
 use ahash::AHashMap;
 use anyhow::{anyhow, Context, Result};
-use async_std::channel::{bounded as channel, Receiver, Sender};
-use async_std::task::JoinHandle;
 use cid::Cid;
 use futures::channel::oneshot::Sender as OneShotSender;
 use futures_util::stream::StreamExt;
@@ -25,6 +23,8 @@ use libp2p::metrics::Recorder;
 use libp2p::swarm::dial_opts::{DialOpts, PeerCondition};
 use libp2p::swarm::{ConnectionHandler, IntoConnectionHandler, NetworkBehaviour, SwarmEvent};
 use libp2p::{PeerId, Swarm};
+use tokio::sync::mpsc::{channel, Receiver, Sender};
+use tokio::task::JoinHandle;
 use tracing::{debug, error, info, trace, warn};
 
 use iroh_bitswap::{
@@ -141,7 +141,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
             ..
         } = config;
 
-        let rpc_task = async_std::task::spawn(async move {
+        let rpc_task = tokio::task::spawn(async move {
             // TODO: handle error
             rpc::new(rpc_addr, network_sender_in).await.unwrap()
         });
@@ -274,7 +274,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                     Some(BitswapQueryChannel::FindProviders { chan, .. }),
                 ) => {
                     self.swarm.behaviour_mut().cancel_want_block(&cid).ok();
-                    async_std::task::spawn(async move {
+                    tokio::task::spawn(async move {
                         chan.send(Err("timeout".to_string())).await.ok();
                     });
                 }
@@ -400,7 +400,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
         for sender in &mut self.network_events {
             let ev = ev.clone();
             let sender = sender.clone();
-            async_std::task::spawn(async move {
+            tokio::task::spawn(async move {
                 if let Err(e) = sender.send(ev.clone()).await {
                     warn!("failed to send network event: {:?}", e);
                 }
@@ -524,7 +524,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                                 if !self.swarm.behaviour().is_bad_peer(&provider) {
                                     *provider_count += 1;
                                     let chan = chan.clone();
-                                    async_std::task::spawn(async move {
+                                    tokio::task::spawn(async move {
                                         if let Err(err) =
                                             chan.send(Ok([provider].into_iter().collect())).await
                                         {
@@ -554,7 +554,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
 
                             let to_remove = query.is_none();
                             if let Some(BitswapQueryChannel::FindProviders { chan, .. }) = query {
-                                async_std::task::spawn(async move {
+                                tokio::task::spawn(async move {
                                     if let Err(err) = chan.send(Err(error.to_string())).await {
                                         warn!("failed to send: {:?}", err);
                                     }
@@ -609,7 +609,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                                 if !providers.is_empty() {
                                     let providers = providers.clone();
                                     let channels = channels.clone();
-                                    async_std::task::spawn(async move {
+                                    tokio::task::spawn(async move {
                                         for chan in channels.into_iter() {
                                             chan.send(Ok(providers.clone())).await.ok();
                                         }
@@ -636,7 +636,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                             if let Some(KadQueryChannel::GetProviders { channels, .. }) =
                                 self.kad_queries.remove(&QueryKey::ProviderKey(key))
                             {
-                                async_std::task::spawn(async move {
+                                tokio::task::spawn(async move {
                                     for chan in channels.into_iter() {
                                         chan.send(Err("Timeout".into())).await.ok();
                                     }
@@ -825,7 +825,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                             );
                         }
                     } else {
-                        async_std::task::spawn(async move {
+                        tokio::task::spawn(async move {
                             response_channel
                                 .send(Err("kademlia is not available".into()))
                                 .await
@@ -852,7 +852,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                             );
                         }
                         Err(e) => {
-                            async_std::task::spawn(async move {
+                            tokio::task::spawn(async move {
                                 response_channel.send(Err(e.to_string())).await.ok();
                             });
                         }
@@ -1011,7 +1011,7 @@ mod tests {
     use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
     #[cfg(feature = "rpc-grpc")]
-    #[async_std::test]
+    #[tokio::test]
     async fn test_fetch_providers_grpc_dht() -> Result<()> {
         let server_addr = "grpc://0.0.0.0:4401".parse().unwrap();
         let client_addr = "grpc://0.0.0.0:4401".parse().unwrap();
@@ -1026,7 +1026,7 @@ mod tests {
     }
 
     #[cfg(all(feature = "rpc-grpc", unix))]
-    #[async_std::test]
+    #[tokio::test]
     async fn test_fetch_providers_uds_dht() -> Result<()> {
         let dir = tempfile::tempdir()?;
         let file = dir.path().join("cool.iroh");
@@ -1044,7 +1044,7 @@ mod tests {
     }
 
     #[cfg(feature = "rpc-mem")]
-    #[async_std::test]
+    #[tokio::test]
     async fn test_fetch_providers_mem_dht() -> Result<()> {
         let (server_addr, client_addr) = Addr::new_mem();
         fetch_providers(
@@ -1058,7 +1058,7 @@ mod tests {
     }
 
     #[cfg(feature = "rpc-mem")]
-    #[async_std::test]
+    #[tokio::test]
     async fn test_fetch_providers_mem_bitswap() -> Result<()> {
         tracing_subscriber::registry()
             .with(fmt::layer().pretty())
@@ -1092,7 +1092,7 @@ mod tests {
             p2p_addr: Some(rpc_client_addr),
             ..Default::default()
         };
-        let p2p_task = async_std::task::spawn(async move {
+        let p2p_task = tokio::task::spawn(async move {
             p2p.run().await.unwrap();
         });
 
@@ -1151,7 +1151,7 @@ mod tests {
             }
         };
 
-        p2p_task.cancel().await;
+        p2p_task.abort();
         Ok(())
     }
 }

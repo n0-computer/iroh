@@ -3,11 +3,11 @@
 mod behaviour;
 mod block;
 mod error;
+mod handler;
 mod message;
 mod metrics;
 mod prefix;
 mod protocol;
-mod handler;
 
 pub use crate::behaviour::{
     Bitswap, BitswapConfig, BitswapEvent, CancelResult, FindProvidersResult, InboundRequest,
@@ -21,4 +21,3 @@ pub use crate::error::BitswapError;
 pub use crate::message::{BitswapMessage, Priority};
 pub use crate::metrics::*;
 pub use crate::protocol::ProtocolId;
-// pub use crate::query::QueryId;

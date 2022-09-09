@@ -3,7 +3,6 @@ use std::io;
 use std::pin::Pin;
 
 use anyhow::{anyhow, ensure, Context, Result};
-use async_std::channel::{bounded as channel, Sender};
 use bytes::Bytes;
 use cid::Cid;
 use futures::{channel::oneshot, Stream, StreamExt};
@@ -14,6 +13,7 @@ use libp2p::gossipsub::{
 use libp2p::kad::record::Key;
 use libp2p::Multiaddr;
 use libp2p::PeerId;
+use tokio::sync::mpsc::{channel, Sender};
 use tracing::trace;
 
 use async_trait::async_trait;
@@ -125,6 +125,7 @@ impl RpcP2p for P2p {
         };
 
         self.sender.send(msg).await?;
+        let r = tokio_stream::wrappers::ReceiverStream::new(r);
 
         Ok(Box::pin(r.map(|providers| {
             let providers = providers.map_err(|e| anyhow!(e))?;
@@ -147,6 +148,7 @@ impl RpcP2p for P2p {
         };
 
         self.sender.send(msg).await?;
+        let r = tokio_stream::wrappers::ReceiverStream::new(r);
 
         Ok(Box::pin(r.map(|providers| {
             let providers = providers.map_err(|e| anyhow!(e))?;
