@@ -3,11 +3,11 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, Result};
-use async_std::fs;
 use async_trait::async_trait;
 use futures::{Stream, StreamExt, TryStreamExt};
 use iroh_util::iroh_config_root;
 use ssh_key::LineEnding;
+use tokio::fs;
 use tracing::warn;
 use zeroize::Zeroizing;
 
@@ -184,8 +184,7 @@ impl DiskStorage {
         async_stream::try_stream! {
             let mut reader = fs::read_dir(&self.path).await?;
 
-            while let Some(entry) = reader.next().await {
-                let entry = entry?;
+            while let Some(entry) = reader.next_entry().await? {
                 let path = entry.path();
                 if path.extension().is_none()
                     && path.file_name().is_some()
@@ -247,8 +246,7 @@ impl Storage for DiskStorage {
         let s = async_stream::try_stream! {
             let mut reader = fs::read_dir(&self.path).await?;
 
-            while let Some(entry) = reader.next().await {
-                let entry = entry?;
+            while let Some(entry) = reader.next_entry().await? {
                 let path = entry.path();
                 if path_is_private_key(&path) {
                     let content = fs::read_to_string(&path).await?;
@@ -313,7 +311,7 @@ mod tests {
 
     use super::*;
 
-    #[async_std::test]
+    #[tokio::test]
     async fn basics_memory_keychain() {
         let mut kc = Keychain::<MemoryStorage>::new();
         assert_eq!(kc.len().await.unwrap(), 0);
@@ -326,7 +324,7 @@ mod tests {
         assert_eq!(keys.len(), 2);
     }
 
-    #[async_std::test]
+    #[tokio::test]
     async fn basics_disk_keychain() {
         let dir = tempfile::tempdir().unwrap();
 

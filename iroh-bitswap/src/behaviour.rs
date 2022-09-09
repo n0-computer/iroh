@@ -8,10 +8,8 @@ use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 
 use ahash::AHashMap;
-use async_std::stream::Interval;
 use bytes::Bytes;
 use cid::Cid;
-use futures::StreamExt;
 use iroh_metrics::inc;
 use iroh_metrics::{bitswap::BitswapMetrics, core::MRecorder, record};
 use libp2p::core::connection::ConnectionId;
@@ -21,6 +19,7 @@ use libp2p::swarm::{
     DialError, IntoConnectionHandler, NetworkBehaviour, NetworkBehaviourAction, NotifyHandler,
     PollParameters,
 };
+use tokio::time::Interval;
 use tracing::{debug, instrument, trace, warn};
 
 use crate::handler::{BitswapHandler, BitswapHandlerIn, HandlerEvent};
@@ -289,7 +288,10 @@ impl Bitswap {
             events: Default::default(),
             wantlist: Wantlist::default(),
             connection_limit: false,
-            heartbeat: async_std::stream::interval(Duration::from_millis(200)),
+            heartbeat: tokio::time::interval_at(
+                tokio::time::Instant::now() + Duration::from_millis(100),
+                Duration::from_millis(100),
+            ),
         }
     }
 
@@ -630,7 +632,7 @@ impl NetworkBehaviour for Bitswap {
             return Poll::Ready(event);
         }
 
-        while let Poll::Ready(Some(())) = self.heartbeat.poll_next_unpin(cx) {
+        while let Poll::Ready(_) = self.heartbeat.poll_tick(cx) {
             for peer_state in self.ledgers.values_mut() {
                 match peer_state.poll(cx) {
                     Poll::Ready(action) => match action {
@@ -679,7 +681,7 @@ mod tests {
     use libp2p::core::transport::Boxed;
     use libp2p::identity::Keypair;
     use libp2p::swarm::{SwarmBuilder, SwarmEvent};
-    use libp2p::tcp::{GenTcpConfig, TcpTransport};
+    use libp2p::tcp::{GenTcpConfig, TokioTcpTransport};
     use libp2p::yamux::YamuxConfig;
     use libp2p::{noise, PeerId, Swarm, Transport};
     use tracing::trace;
@@ -701,7 +703,7 @@ mod tests {
         };
 
         let peer_id = local_key.public().to_peer_id();
-        let transport = TcpTransport::new(GenTcpConfig::default().nodelay(true))
+        let transport = TokioTcpTransport::new(GenTcpConfig::default().nodelay(true))
             .upgrade(Version::V1)
             .authenticate(auth_config)
             .multiplex(YamuxConfig::default())
@@ -712,7 +714,7 @@ mod tests {
         (peer_id, transport)
     }
 
-    #[async_std::test]
+    #[tokio::test]
     async fn test_bitswap_behaviour() {
         // tracing_subscriber::registry()
         //     .with(fmt::layer().pretty())
@@ -722,14 +724,14 @@ mod tests {
         let (peer1_id, trans) = mk_transport();
         let mut swarm1 = SwarmBuilder::new(trans, Bitswap::default(), peer1_id)
             .executor(Box::new(|fut| {
-                async_std::task::spawn(fut);
+                tokio::task::spawn(fut);
             }))
             .build();
 
         let (peer2_id, trans) = mk_transport();
         let mut swarm2 = SwarmBuilder::new(trans, Bitswap::default(), peer2_id)
             .executor(Box::new(|fut| {
-                async_std::task::spawn(fut);
+                tokio::task::spawn(fut);
             }))
             .build();
 
@@ -840,7 +842,7 @@ mod tests {
         assert_eq!(&block[..], b"hello world");
     }
 
-    #[async_std::test]
+    #[tokio::test]
     async fn test_bitswap_multiprotocol() {
         tracing_subscriber::registry()
             .with(fmt::layer().pretty())
@@ -933,7 +935,7 @@ mod tests {
             let (peer1_id, trans) = mk_transport();
             let mut swarm1 = SwarmBuilder::new(trans, Bitswap::new(peer1_config), peer1_id)
                 .executor(Box::new(|fut| {
-                    async_std::task::spawn(fut);
+                    tokio::task::spawn(fut);
                 }))
                 .build();
 
@@ -947,7 +949,7 @@ mod tests {
             let (peer2_id, trans) = mk_transport();
             let mut swarm2 = SwarmBuilder::new(trans, Bitswap::new(peer2_config), peer2_id)
                 .executor(Box::new(|fut| {
-                    async_std::task::spawn(fut);
+                    tokio::task::spawn(fut);
                 }))
                 .build();
 
