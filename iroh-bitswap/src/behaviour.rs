@@ -514,6 +514,23 @@ impl NetworkBehaviour for Bitswap {
                     record!(BitswapMetrics::BlockBytesIn, block.data.len() as u64);
                     inc!(BitswapMetrics::CancelBlocks);
 
+                    let now = Instant::now();
+                    let is_valid = iroh_util::verify_hash(&block.cid, &block.data);
+                    trace!("block validated in {}ms", now.elapsed().as_millis());
+                    match is_valid {
+                        Some(true) => {
+                            // all good
+                        }
+                        Some(false) => {
+                            // TODO: maybe blacklist peer?
+                            warn!("invalid block received");
+                            continue;
+                        }
+                        None => {
+                            warn!("unknown hash function {}", block.cid.hash().code());
+                        }
+                    }
+
                     self.wantlist.cancel_block(&block.cid);
                     for (id, state) in self.ledgers.iter_mut() {
                         if id == &peer_id {

@@ -184,7 +184,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                 if let Ok(rpc_message) = self.net_receiver_in.try_recv() {
                     trace!("tick: rpc message");
                     rpc_msgs += 1;
-                    match self.handle_rpc_message(rpc_message).await {
+                    match self.handle_rpc_message(rpc_message) {
                         Ok(true) => {
                             // shutdown
                             return Ok(());
@@ -233,7 +233,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
 
             if let Some(swarm_event) = self.swarm.next().await {
                 trace!("tick: swarm event: {:?}", swarm_event);
-                if let Err(err) = self.handle_swarm_event(swarm_event).await {
+                if let Err(err) = self.handle_swarm_event(swarm_event) {
                     warn!("swarm: {:?}", err);
                 }
             }
@@ -324,7 +324,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
     }
 
     #[tracing::instrument(skip(self))]
-    async fn handle_swarm_event(
+    fn handle_swarm_event(
         &mut self,
         event: SwarmEvent<
             <NodeBehaviour as NetworkBehaviour>::OutEvent,
@@ -333,7 +333,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
         libp2p_metrics().record(&event);
         match event {
             // outbound events
-            SwarmEvent::Behaviour(event) => self.handle_node_event(event).await,
+            SwarmEvent::Behaviour(event) => self.handle_node_event(event),
             SwarmEvent::ConnectionEstablished {
                 peer_id,
                 num_established,
@@ -346,8 +346,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                 }
 
                 if num_established == 1.try_into().unwrap() {
-                    self.emit_network_event(NetworkEvent::PeerConnected(peer_id))
-                        .await;
+                    self.emit_network_event(NetworkEvent::PeerConnected(peer_id));
                 }
                 Ok(())
             }
@@ -357,8 +356,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                 ..
             } => {
                 if num_established == 0 {
-                    self.emit_network_event(NetworkEvent::PeerDisconnected(peer_id))
-                        .await;
+                    self.emit_network_event(NetworkEvent::PeerDisconnected(peer_id));
                 }
                 Ok(())
             }
@@ -379,22 +377,28 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
     }
 
     #[tracing::instrument(skip(self))]
-    async fn emit_network_event(&mut self, ev: NetworkEvent) {
+    fn emit_network_event(&mut self, ev: NetworkEvent) {
         for sender in &mut self.network_events {
-            if let Err(e) = sender.send(ev.clone()).await {
-                warn!("failed to send network event: {:?}", e);
-            }
+            let ev = ev.clone();
+            let sender = sender.clone();
+            async_std::task::spawn(async move {
+                if let Err(e) = sender.send(ev.clone()).await {
+                    warn!("failed to send network event: {:?}", e);
+                }
+            });
         }
     }
 
     #[tracing::instrument(skip(self))]
-    async fn handle_node_event(&mut self, event: Event) -> Result<()> {
+    fn handle_node_event(&mut self, event: Event) -> Result<()> {
         match event {
             Event::Bitswap(e) => {
                 match e {
                     BitswapEvent::InboundRequest { request } => match request {
                         InboundRequest::Want { cid, sender, .. } => {
                             info!("bitswap want {}", cid);
+                            // TODO
+                            /*
                             match self.rpc_client.try_store() {
                                 Ok(rpc_store) => match rpc_store.get(cid).await {
                                     Ok(Some(data)) => {
@@ -420,11 +424,12 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                                 Err(e) => {
                                     warn!("Failed to get data for: {}: {:?}", cid, e);
                                 }
-                            }
+                            }*/
                         }
                         InboundRequest::WantHave { cid, sender, .. } => {
                             trace!("bitswap want have {}", cid);
-                            if let Some(rpc_store) = self.rpc_client.store.as_ref() {
+                            // TODO
+                            /*if let Some(rpc_store) = self.rpc_client.store.as_ref() {
                                 match rpc_store.has(cid).await {
                                     Ok(true) => {
                                         trace!("Have data for: {}", cid);
@@ -449,7 +454,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                                     "Failed to check for data for: {}: missing store rpc conn",
                                     cid
                                 );
-                            }
+                            }*/
                         }
                         InboundRequest::Cancel { .. } => {
                             // nothing to do atm
@@ -458,36 +463,16 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                     BitswapEvent::OutboundQueryCompleted { result } => match result {
                         BitswapQueryResult::Want(WantResult::Ok { sender, cid, data }) => {
                             info!("got block {} from {}", cid, sender);
-                            let cid2 = cid;
-                            let data2 = data.clone();
-                            match async_std::task::spawn_blocking(move || {
-                                iroh_util::verify_hash(&cid2, &data2)
-                            })
-                            .await
+                            let b = Block::new(data, cid);
+                            if let Some(BitswapQueryChannel::Want { chan, .. }) =
+                                self.bitswap_queries.remove(&BitswapQueryKey::Want(cid))
                             {
-                                Some(true) => {
-                                    let b = Block::new(data, cid);
-                                    if let Some(BitswapQueryChannel::Want { chan, .. }) =
-                                        self.bitswap_queries.remove(&BitswapQueryKey::Want(cid))
-                                    {
-                                        if chan.send(Ok(b)).is_err() {
-                                            debug!("Bitswap response channel send failed");
-                                        }
-                                        trace!("Saved Bitswap block with cid {:?}", cid);
-                                    } else {
-                                        debug!("Received Bitswap response, but response channel cannot be found");
-                                    }
+                                if chan.send(Ok(b)).is_err() {
+                                    debug!("Bitswap response channel send failed");
                                 }
-                                Some(false) => {
-                                    warn!("Invalid data received, ignoring");
-                                }
-                                None => {
-                                    warn!(
-                                        "unable to verify hash, unknown hash function {} for {}, ignoring",
-                                        cid.hash().code(),
-                                        cid
-                                    );
-                                }
+                                trace!("Saved Bitswap block with cid {:?}", cid);
+                            } else {
+                                debug!("Received Bitswap response, but response channel cannot be found");
                             }
                         }
                         BitswapQueryResult::Want(WantResult::Err { cid, error }) => {
@@ -519,10 +504,15 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                                 // filter out bad providers
                                 if !self.swarm.behaviour().is_bad_peer(&provider) {
                                     *provider_count += 1;
-                                    to_remove |= chan
-                                        .send(Ok([provider].into_iter().collect()))
-                                        .await
-                                        .is_err();
+                                    let chan = chan.clone();
+                                    async_std::task::spawn(async move {
+                                        if let Err(err) =
+                                            chan.send(Ok([provider].into_iter().collect())).await
+                                        {
+                                            warn!("failed to send: {:?}", err);
+                                        }
+                                    });
+
                                     to_remove |= *provider_count >= *expected_provider_count;
                                 }
                             } else {
@@ -543,9 +533,13 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                                 .bitswap_queries
                                 .remove(&BitswapQueryKey::FindProviders(cid));
 
-                            let mut to_remove = query.is_none();
+                            let to_remove = query.is_none();
                             if let Some(BitswapQueryChannel::FindProviders { chan, .. }) = query {
-                                to_remove |= chan.send(Err(error.to_string())).await.is_err();
+                                async_std::task::spawn(async move {
+                                    if let Err(err) = chan.send(Err(error.to_string())).await {
+                                        warn!("failed to send: {:?}", err);
+                                    }
+                                });
                             }
                             if to_remove {
                                 self.swarm.behaviour_mut().cancel_want_block(&cid).ok();
@@ -594,9 +588,13 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                                     .collect();
 
                                 if !providers.is_empty() {
-                                    for chan in channels.iter_mut() {
-                                        chan.send(Ok(providers.clone())).await.ok();
-                                    }
+                                    let providers = providers.clone();
+                                    let channels = channels.clone();
+                                    async_std::task::spawn(async move {
+                                        for chan in channels.into_iter() {
+                                            chan.send(Ok(providers.clone())).await.ok();
+                                        }
+                                    });
                                 }
 
                                 *provider_count += providers.len();
@@ -619,9 +617,11 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                             if let Some(KadQueryChannel::GetProviders { channels, .. }) =
                                 self.kad_queries.remove(&QueryKey::ProviderKey(key))
                             {
-                                for chan in channels.into_iter() {
-                                    chan.send(Err("Timeout".into())).await.ok();
-                                }
+                                async_std::task::spawn(async move {
+                                    for chan in channels.into_iter() {
+                                        chan.send(Err("Timeout".into())).await.ok();
+                                    }
+                                });
                             }
                         }
                         QueryResult::Bootstrap(Ok(BootstrapOk {
@@ -716,20 +716,17 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                         from: propagation_source,
                         id: message_id,
                         message,
-                    }))
-                    .await;
+                    }));
                 } else if let libp2p::gossipsub::GossipsubEvent::Subscribed { peer_id, topic } = e {
                     self.emit_network_event(NetworkEvent::Gossipsub(GossipsubEvent::Subscribed {
                         peer_id,
                         topic,
-                    }))
-                    .await;
+                    }));
                 } else if let libp2p::gossipsub::GossipsubEvent::Unsubscribed { peer_id, topic } = e
                 {
                     self.emit_network_event(NetworkEvent::Gossipsub(
                         GossipsubEvent::Unsubscribed { peer_id, topic },
-                    ))
-                    .await;
+                    ));
                 }
             }
             _ => {
@@ -741,7 +738,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
     }
 
     #[tracing::instrument(skip(self))]
-    async fn handle_rpc_message(&mut self, message: RpcMessage) -> Result<bool> {
+    fn handle_rpc_message(&mut self, message: RpcMessage) -> Result<bool> {
         // Inbound messages
         match message {
             RpcMessage::BitswapRequest {
@@ -809,10 +806,12 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                             );
                         }
                     } else {
-                        response_channel
-                            .send(Err("kademlia is not available".into()))
-                            .await
-                            .ok();
+                        async_std::task::spawn(async move {
+                            response_channel
+                                .send(Err("kademlia is not available".into()))
+                                .await
+                                .ok();
+                        });
                     }
                 }
                 ProviderRequestKey::Bitswap(cid) => {
@@ -834,7 +833,9 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                             );
                         }
                         Err(e) => {
-                            response_channel.send(Err(e.to_string())).await.ok();
+                            async_std::task::spawn(async move {
+                                response_channel.send(Err(e.to_string())).await.ok();
+                            });
                         }
                     }
                 }
