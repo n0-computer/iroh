@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Context};
+use anyhow::{anyhow, Context, Result};
 use clap::Parser;
 use iroh_p2p::config::{Config, CONFIG_FILE_NAME, ENV_PREFIX};
 use iroh_p2p::{cli::Args, metrics, DiskStorage, Keychain, Node};
@@ -7,8 +7,7 @@ use tokio::task;
 use tracing::{debug, error};
 
 /// Starts daemon process
-#[tokio::main(flavor = "multi_thread")]
-async fn main() -> anyhow::Result<()> {
+async fn main_inner() -> Result<()> {
     let version = option_env!("IROH_VERSION").unwrap_or(env!("CARGO_PKG_VERSION"));
     println!("Starting iroh-p2p, version {version}");
 
@@ -61,8 +60,22 @@ async fn main() -> anyhow::Result<()> {
 
     // Cancel all async services
     // TODO: proper shutdown
-    // p2p_task();
+    p2p_task.await;
 
     metrics_handle.shutdown();
     Ok(())
+}
+
+fn main() -> Result<()> {
+    tokio::runtime::Builder::new_multi_thread()
+        // .disable_lifo_slot()
+        // .global_queue_interval(1024*1024)
+        // .event_interval(2048)
+        // .unhandled_panic(UnhandledPanic::ShutdownRuntime)
+        .max_blocking_threads(2048)
+        .thread_stack_size(16 * 1024 * 1024)
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(main_inner())
 }
