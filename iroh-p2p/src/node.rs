@@ -104,7 +104,7 @@ enum QueryKey {
     ProviderKey(Key),
 }
 
-#[derive(Debug, Hash, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 enum BitswapQueryKey {
     Want(Cid),
     FindProviders(Cid),
@@ -241,35 +241,54 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
     }
 
     fn expiry(&mut self) -> Result<()> {
-        let mut err = Ok(());
-        self.bitswap_queries
-            .retain(|key, state| match (key, state) {
+        let to_remove: Vec<BitswapQueryKey> = self
+            .bitswap_queries
+            .iter()
+            .filter_map(|(key, state)| match (key, state) {
                 (
-                    BitswapQueryKey::FindProviders(cid),
+                    BitswapQueryKey::FindProviders(_),
                     BitswapQueryChannel::FindProviders { timeout, .. },
                 ) => {
-                    if timeout.elapsed() < Duration::from_secs(30) {
-                        true
+                    if timeout.elapsed() >= Duration::from_secs(50) {
+                        Some(*key)
                     } else {
-                        err = self.swarm.behaviour_mut().cancel_want_block(cid);
-                        false
+                        None
                     }
                 }
-                (BitswapQueryKey::Want(cid), BitswapQueryChannel::Want { timeout, .. }) => {
-                    if timeout.elapsed() < Duration::from_secs(60) {
-                        true
+                (BitswapQueryKey::Want(_), BitswapQueryChannel::Want { timeout, .. }) => {
+                    if timeout.elapsed() >= Duration::from_secs(60) {
+                        Some(*key)
                     } else {
-                        err = self.swarm.behaviour_mut().cancel_block(cid);
-                        false
+                        None
                     }
                 }
-                _ => {
-                    err = Err(anyhow!("invalid bitswap query state"));
-                    false
-                }
-            });
+                _ => None,
+            })
+            .collect();
 
-        err
+        for key in to_remove.into_iter() {
+            let el = self.bitswap_queries.remove(&key);
+            match (key, el) {
+                (
+                    BitswapQueryKey::Want(cid),
+                    Some(BitswapQueryChannel::FindProviders { chan, .. }),
+                ) => {
+                    self.swarm.behaviour_mut().cancel_want_block(&cid).ok();
+                    async_std::task::spawn(async move {
+                        chan.send(Err("timeout".to_string())).await.ok();
+                    });
+                }
+                (
+                    BitswapQueryKey::FindProviders(cid),
+                    Some(BitswapQueryChannel::Want { chan, .. }),
+                ) => {
+                    self.swarm.behaviour_mut().cancel_block(&cid).ok();
+                    chan.send(Err(QueryError::Timeout)).ok();
+                }
+                _ => {}
+            }
+        }
+        Ok(())
     }
 
     /// Check the next node in the DHT.
