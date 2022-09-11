@@ -54,6 +54,14 @@ macro_rules! proxy {
                             }
                         }
 
+                        // We still need to remove the file before binding, because the above
+                        // guard won't run in some situations:
+                        // - crash
+                        // - Android start/stop
+                        // - device power loss
+                        // ...
+                        let _ = std::fs::remove_file(&path);
+
                         let uds = UnixListener::bind(&path)
                             .with_context(|| format!("failed to bind to {}", path.display()))?;
                         let _guard = UdsGuard(path.clone().into());
