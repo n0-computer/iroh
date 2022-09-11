@@ -5,7 +5,7 @@ use std::pin::Pin;
 use anyhow::{anyhow, ensure, Context, Result};
 use bytes::Bytes;
 use cid::Cid;
-use futures::{channel::oneshot, Stream, StreamExt};
+use futures::{Stream, StreamExt};
 use libp2p::gossipsub::{
     error::{PublishError, SubscriptionError},
     MessageId, TopicHash,
@@ -14,6 +14,7 @@ use libp2p::kad::record::Key;
 use libp2p::Multiaddr;
 use libp2p::PeerId;
 use tokio::sync::mpsc::{channel, Sender};
+use tokio::sync::oneshot;
 use tracing::trace;
 
 use async_trait::async_trait;
