@@ -559,14 +559,26 @@ impl ContentLoader for Client {
         let ctx = ctx.clone();
 
         let providers_task = tokio::spawn(async move {
-            while let Some(providers) = providers_stream.next().await {
-                match providers {
-                    Ok(providers) => {
-                        info!("found providers {} for: {}", providers.len(), cid);
-                        // update cache
-                        ctx.put_providers(cid, providers.clone()).await;
-                        if let Err(e) = p2p.inject_provider_bitswap(cid, providers).await {
-                            warn!("failed to inject providers: {}: {:?}", cid, e);
+            let mut seen_providers = HashSet::new();
+            while let Some(new_providers) = providers_stream.next().await {
+                match new_providers {
+                    Ok(new_providers) => {
+                        let actual_new_providers: HashSet<_> =
+                            new_providers.difference(&seen_providers).copied().collect();
+                        if !actual_new_providers.is_empty() {
+                            info!(
+                                "found providers {} for: {}",
+                                actual_new_providers.len(),
+                                cid
+                            );
+                            seen_providers.extend(actual_new_providers.clone());
+                            // update cache
+                            ctx.put_providers(cid, actual_new_providers.clone()).await;
+                            if let Err(e) =
+                                p2p.inject_provider_bitswap(cid, actual_new_providers).await
+                            {
+                                warn!("failed to inject providers: {}: {:?}", cid, e);
+                            }
                         }
                     }
                     Err(e) => {

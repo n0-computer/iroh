@@ -4,7 +4,6 @@ use std::time::{Duration, Instant};
 use ahash::AHashMap;
 use anyhow::{anyhow, Context, Result};
 use cid::Cid;
-use futures::channel::oneshot::Sender as OneShotSender;
 use futures_util::stream::StreamExt;
 use iroh_metrics::{core::MRecorder, inc, libp2p_metrics, p2p::P2PMetrics};
 use iroh_rpc_client::Client as RpcClient;
@@ -24,6 +23,7 @@ use libp2p::swarm::dial_opts::{DialOpts, PeerCondition};
 use libp2p::swarm::{ConnectionHandler, IntoConnectionHandler, NetworkBehaviour, SwarmEvent};
 use libp2p::{PeerId, Swarm};
 use tokio::sync::mpsc::{channel, Receiver, Sender};
+use tokio::sync::oneshot::Sender as OneShotSender;
 use tokio::task::JoinHandle;
 use tracing::{debug, error, info, trace, warn};
 
