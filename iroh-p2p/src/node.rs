@@ -69,7 +69,7 @@ pub enum GossipsubEvent {
 pub struct Node<KeyStorage: Storage> {
     swarm: Swarm<NodeBehaviour>,
     net_receiver_in: Receiver<RpcMessage>,
-    bitswap_queries: AHashMap<BitswapQueryKey, BitswapQueryChannel>,
+    bitswap_queries: AHashMap<Cid, BitswapQueryChannel>,
     kad_queries: AHashMap<QueryKey, KadQueryChannel>,
     dial_queries: AHashMap<PeerId, Vec<OneShotSender<bool>>>,
     network_events: Vec<Sender<NetworkEvent>>,
@@ -79,17 +79,21 @@ pub struct Node<KeyStorage: Storage> {
     rpc_task: JoinHandle<()>,
 }
 
-enum BitswapQueryChannel {
-    Want {
-        timeout: Instant,
-        chan: OneShotSender<Result<Block, QueryError>>,
-    },
-    FindProviders {
-        timeout: Instant,
-        provider_count: usize,
-        expected_provider_count: usize,
-        chan: Sender<Result<HashSet<PeerId>, String>>,
-    },
+#[derive(Default)]
+struct BitswapQueryChannel {
+    wants: Vec<WantState>,
+    find_providers: Vec<FindProviderState>,
+}
+
+struct WantState {
+    timeout: Instant,
+    chan: OneShotSender<Result<Block, QueryError>>,
+}
+struct FindProviderState {
+    timeout: Instant,
+    provider_count: usize,
+    expected_provider_count: usize,
+    chan: Sender<Result<HashSet<PeerId>, String>>,
 }
 
 enum KadQueryChannel {
@@ -102,12 +106,6 @@ enum KadQueryChannel {
 #[derive(Debug, Hash, PartialEq, Eq)]
 enum QueryKey {
     ProviderKey(Key),
-}
-
-#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
-enum BitswapQueryKey {
-    Want(Cid),
-    FindProviders(Cid),
 }
 
 const PROVIDER_LIMIT: usize = 20;
@@ -241,48 +239,36 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
     }
 
     fn expiry(&mut self) -> Result<()> {
-        let to_remove: Vec<BitswapQueryKey> = self
-            .bitswap_queries
-            .iter()
-            .filter_map(|(key, state)| match (key, state) {
-                (
-                    BitswapQueryKey::FindProviders(_),
-                    BitswapQueryChannel::FindProviders { timeout, .. },
-                ) => {
-                    if timeout.elapsed() >= Duration::from_secs(50) {
-                        Some(*key)
-                    } else {
-                        None
+        for (cid, state) in &mut self.bitswap_queries {
+            {
+                let mut to_remove = Vec::new();
+                for (i, want) in state.wants.iter().enumerate() {
+                    if want.timeout.elapsed() >= Duration::from_secs(60) {
+                        self.swarm.behaviour_mut().cancel_want_block(&cid).ok();
+                        to_remove.push(i);
                     }
                 }
-                (BitswapQueryKey::Want(_), BitswapQueryChannel::Want { timeout, .. }) => {
-                    if timeout.elapsed() >= Duration::from_secs(60) {
-                        Some(*key)
-                    } else {
-                        None
-                    }
-                }
-                _ => None,
-            })
-            .collect();
-
-        for key in to_remove.into_iter() {
-            let el = self.bitswap_queries.remove(&key);
-            match (key, el) {
-                (
-                    BitswapQueryKey::FindProviders(cid),
-                    Some(BitswapQueryChannel::FindProviders { chan, .. }),
-                ) => {
-                    self.swarm.behaviour_mut().cancel_want_block(&cid).ok();
+                for i in to_remove.into_iter().rev() {
+                    let state = state.wants.remove(i);
                     tokio::task::spawn(async move {
-                        chan.send(Err("timeout".to_string())).await.ok();
+                        state.chan.send(Err(QueryError::Timeout)).ok();
                     });
                 }
-                (BitswapQueryKey::Want(cid), Some(BitswapQueryChannel::Want { chan, .. })) => {
-                    self.swarm.behaviour_mut().cancel_block(&cid).ok();
-                    chan.send(Err(QueryError::Timeout)).ok();
+            }
+            {
+                let mut to_remove = Vec::new();
+                for (i, fp) in state.find_providers.iter().enumerate() {
+                    if fp.timeout.elapsed() >= Duration::from_secs(60) {
+                        self.swarm.behaviour_mut().cancel_want_block(&cid).ok();
+                        to_remove.push(i);
+                    }
                 }
-                _ => {}
+                for i in to_remove.into_iter().rev() {
+                    let state = state.find_providers.remove(i);
+                    tokio::task::spawn(async move {
+                        state.chan.send(Err("timeout".to_string())).await.ok();
+                    });
+                }
             }
         }
         Ok(())
@@ -480,11 +466,11 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                         BitswapQueryResult::Want(WantResult::Ok { sender, cid, data }) => {
                             info!("got block {} from {}", cid, sender);
                             let b = Block::new(data, cid);
-                            if let Some(BitswapQueryChannel::Want { chan, .. }) =
-                                self.bitswap_queries.remove(&BitswapQueryKey::Want(cid))
-                            {
-                                if chan.send(Ok(b)).is_err() {
-                                    debug!("Bitswap response channel send failed");
+                            if let Some(ref mut q) = self.bitswap_queries.get_mut(&cid) {
+                                while let Some(want) = q.wants.pop() {
+                                    if want.chan.send(Ok(b.clone())).is_err() {
+                                        debug!("Bitswap response channel send failed");
+                                    }
                                 }
                                 trace!("Saved Bitswap block with cid {:?}", cid);
                             } else {
@@ -492,11 +478,11 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                             }
                         }
                         BitswapQueryResult::Want(WantResult::Err { cid, error }) => {
-                            if let Some(BitswapQueryChannel::Want { chan, .. }) =
-                                self.bitswap_queries.remove(&BitswapQueryKey::Want(cid))
-                            {
-                                if chan.send(Err(error)).is_err() {
-                                    debug!("Bitswap response channel send failed");
+                            if let Some(ref mut q) = self.bitswap_queries.get_mut(&cid) {
+                                while let Some(want) = q.wants.pop() {
+                                    if want.chan.send(Err(error.clone())).is_err() {
+                                        debug!("Bitswap response channel send failed");
+                                    }
                                 }
                             }
                         }
@@ -505,20 +491,25 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                             provider,
                         }) => {
                             info!("Bitswap found provider for {}", cid);
-                            let query = self
-                                .bitswap_queries
-                                .get_mut(&BitswapQueryKey::FindProviders(cid));
-                            let mut to_remove = query.is_none();
 
-                            if let Some(BitswapQueryChannel::FindProviders {
-                                provider_count,
-                                expected_provider_count,
-                                chan,
-                                ..
-                            }) = query
-                            {
-                                // filter out bad providers
-                                if !self.swarm.behaviour().is_bad_peer(&provider) {
+                            // filter out bad providers
+                            if self.swarm.behaviour().is_bad_peer(&provider) {
+                                inc!(P2PMetrics::SkippedPeerBitswap);
+                                return Ok(());
+                            }
+
+                            if let Some(q) = self.bitswap_queries.get_mut(&cid) {
+                                let mut to_remove = Vec::new();
+                                for (
+                                    i,
+                                    FindProviderState {
+                                        provider_count,
+                                        expected_provider_count,
+                                        chan,
+                                        ..
+                                    },
+                                ) in q.find_providers.iter_mut().enumerate()
+                                {
                                     *provider_count += 1;
                                     let chan = chan.clone();
                                     tokio::task::spawn(async move {
@@ -529,38 +520,36 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                                         }
                                     });
 
-                                    to_remove |= *provider_count >= *expected_provider_count;
+                                    if *provider_count >= *expected_provider_count {
+                                        to_remove.push(i);
+                                    }
                                 }
-                            } else {
-                                inc!(P2PMetrics::SkippedPeerBitswap);
-                            }
 
-                            if to_remove {
-                                self.swarm.behaviour_mut().cancel_want_block(&cid).ok();
-                                self.bitswap_queries
-                                    .remove(&BitswapQueryKey::FindProviders(cid));
+                                for i in to_remove.into_iter().rev() {
+                                    q.find_providers.remove(i);
+                                }
+
+                                // cancel want blocks if no more outstanding queries
+                                if q.find_providers.is_empty() {
+                                    self.swarm.behaviour_mut().cancel_want_block(&cid).ok();
+                                }
                             }
                         }
                         BitswapQueryResult::FindProviders(FindProvidersResult::Err {
                             cid,
                             error,
                         }) => {
-                            let query = self
-                                .bitswap_queries
-                                .remove(&BitswapQueryKey::FindProviders(cid));
-
-                            let to_remove = query.is_none();
-                            if let Some(BitswapQueryChannel::FindProviders { chan, .. }) = query {
-                                tokio::task::spawn(async move {
-                                    if let Err(err) = chan.send(Err(error.to_string())).await {
-                                        warn!("failed to send: {:?}", err);
-                                    }
-                                });
-                            }
-                            if to_remove {
-                                self.swarm.behaviour_mut().cancel_want_block(&cid).ok();
-                                self.bitswap_queries
-                                    .remove(&BitswapQueryKey::FindProviders(cid));
+                            self.swarm.behaviour_mut().cancel_want_block(&cid).ok();
+                            let error = error.to_string();
+                            if let Some(ref mut q) = self.bitswap_queries.get_mut(&cid) {
+                                while let Some(fp) = q.find_providers.pop() {
+                                    let error = error.clone();
+                                    tokio::task::spawn(async move {
+                                        if let Err(err) = fp.chan.send(Err(error)).await {
+                                            warn!("failed to send: {:?}", err);
+                                        }
+                                    });
+                                }
                             }
                         }
                         BitswapQueryResult::Send(_) => {
@@ -768,13 +757,11 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                         .want_block(cid, 1000, providers.clone()) // TODO: priority?
                         .map_err(|err| anyhow!("Failed to send a bitswap want_block: {:?}", err))?;
 
-                    self.bitswap_queries.insert(
-                        BitswapQueryKey::Want(cid),
-                        BitswapQueryChannel::Want {
-                            timeout: Instant::now(),
-                            chan: response_channel,
-                        },
-                    );
+                    let entry = self.bitswap_queries.entry(cid).or_default();
+                    entry.wants.push(WantState {
+                        timeout: Instant::now(),
+                        chan: response_channel,
+                    });
                 }
             }
             RpcMessage::BitswapInjectProviders {
@@ -838,15 +825,13 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
 
                     match self.swarm.behaviour_mut().find_providers(cid, 1000) {
                         Ok(()) => {
-                            self.bitswap_queries.insert(
-                                BitswapQueryKey::FindProviders(cid),
-                                BitswapQueryChannel::FindProviders {
-                                    timeout: Instant::now(),
-                                    expected_provider_count: PROVIDER_LIMIT,
-                                    provider_count: 0,
-                                    chan: response_channel,
-                                },
-                            );
+                            let entry = self.bitswap_queries.entry(cid).or_default();
+                            entry.find_providers.push(FindProviderState {
+                                timeout: Instant::now(),
+                                expected_provider_count: PROVIDER_LIMIT,
+                                provider_count: 0,
+                                chan: response_channel,
+                            });
                         }
                         Err(e) => {
                             tokio::task::spawn(async move {
