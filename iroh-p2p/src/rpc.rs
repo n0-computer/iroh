@@ -15,7 +15,7 @@ use libp2p::Multiaddr;
 use libp2p::PeerId;
 use tokio::sync::mpsc::{channel, Sender};
 use tokio::sync::oneshot;
-use tracing::trace;
+use tracing::{error, trace};
 
 use async_trait::async_trait;
 use iroh_bitswap::{Block, QueryError};
@@ -68,9 +68,13 @@ impl RpcP2p for P2p {
             providers,
             response_channels: vec![s],
         };
+
         trace!("making bitswap request for {:?}", cid);
         self.sender.send(msg).await?;
-        let block = r.await?.context("bitswap")?;
+        let block = r
+            .await
+            .expect("should not drop accidentially")
+            .context("bitswap")?;
 
         ensure!(
             cid == block.cid,
@@ -80,6 +84,7 @@ impl RpcP2p for P2p {
         );
 
         trace!("bitswap response for {:?}", cid);
+
         Ok(BitswapResponse { data: block.data })
     }
 

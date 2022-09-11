@@ -270,7 +270,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
             let el = self.bitswap_queries.remove(&key);
             match (key, el) {
                 (
-                    BitswapQueryKey::Want(cid),
+                    BitswapQueryKey::FindProviders(cid),
                     Some(BitswapQueryChannel::FindProviders { chan, .. }),
                 ) => {
                     self.swarm.behaviour_mut().cancel_want_block(&cid).ok();
@@ -278,10 +278,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                         chan.send(Err("timeout".to_string())).await.ok();
                     });
                 }
-                (
-                    BitswapQueryKey::FindProviders(cid),
-                    Some(BitswapQueryChannel::Want { chan, .. }),
-                ) => {
+                (BitswapQueryKey::Want(cid), Some(BitswapQueryChannel::Want { chan, .. })) => {
                     self.swarm.behaviour_mut().cancel_block(&cid).ok();
                     chan.send(Err(QueryError::Timeout)).ok();
                 }
