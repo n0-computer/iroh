@@ -244,10 +244,14 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                 let mut to_remove = Vec::new();
                 for (i, want) in state.wants.iter().enumerate() {
                     if want.timeout.elapsed() >= Duration::from_secs(60) {
-                        self.swarm.behaviour_mut().cancel_want_block(&cid).ok();
                         to_remove.push(i);
                     }
                 }
+                if !to_remove.is_empty() {
+                    info!("expired wants {} ({})", cid, to_remove.len());
+                    self.swarm.behaviour_mut().cancel_want_block(&cid).ok();
+                }
+
                 for i in to_remove.into_iter().rev() {
                     let state = state.wants.remove(i);
                     tokio::task::spawn(async move {
@@ -258,10 +262,14 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
             {
                 let mut to_remove = Vec::new();
                 for (i, fp) in state.find_providers.iter().enumerate() {
-                    if fp.timeout.elapsed() >= Duration::from_secs(60) {
+                    if fp.timeout.elapsed() >= Duration::from_secs(30) {
                         self.swarm.behaviour_mut().cancel_want_block(&cid).ok();
                         to_remove.push(i);
                     }
+                }
+                if !to_remove.is_empty() {
+                    info!("expired find provs {} ({})", cid, to_remove.len());
+                    self.swarm.behaviour_mut().cancel_want_block(&cid).ok();
                 }
                 for i in to_remove.into_iter().rev() {
                     let state = state.find_providers.remove(i);
@@ -649,6 +657,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
             }
             Event::Identify(e) => {
                 libp2p_metrics().record(&*e);
+                trace!("tick: identify {:?}", e);
                 if let IdentifyEvent::Received {
                     peer_id,
                     info:
