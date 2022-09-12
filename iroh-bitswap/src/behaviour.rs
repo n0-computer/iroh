@@ -27,8 +27,8 @@ use crate::message::{BitswapMessage, BlockPresence, Priority, Wantlist};
 use crate::protocol::ProtocolConfig;
 use crate::{Block, ProtocolId};
 
-const MAX_PROVIDERS: usize = 10000; // yolo
-const MESSAGE_DELAY: Duration = Duration::from_millis(250);
+const MAX_PROVIDERS: usize = 100; // yolo
+const MESSAGE_DELAY: Duration = Duration::from_millis(100);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum BitswapEvent {
@@ -289,8 +289,8 @@ impl Bitswap {
             wantlist: Wantlist::default(),
             connection_limit: false,
             heartbeat: tokio::time::interval_at(
-                tokio::time::Instant::now() + Duration::from_millis(100),
-                Duration::from_millis(100),
+                tokio::time::Instant::now() + Duration::from_millis(25),
+                Duration::from_millis(25),
             ),
         }
     }
@@ -411,6 +411,13 @@ impl Bitswap {
         for state in self.ledgers.values_mut() {
             state.remove_want_block(cid);
         }
+    }
+
+    fn num_current_dials(&self) -> usize {
+        self.ledgers
+            .values()
+            .map(|s| matches!(s.conn, ConnState::Dialing))
+            .count()
     }
 }
 
@@ -633,6 +640,7 @@ impl NetworkBehaviour for Bitswap {
         }
 
         while let Poll::Ready(_) = self.heartbeat.poll_tick(cx) {
+            let num_current_dials = self.num_current_dials();
             for peer_state in self.ledgers.values_mut() {
                 match peer_state.poll(cx) {
                     Poll::Ready(action) => match action {
@@ -640,6 +648,10 @@ impl NetworkBehaviour for Bitswap {
                             if self.connection_limit || !peer_state.needs_dial() {
                                 continue;
                             }
+                            if num_current_dials > 50 {
+                                continue;
+                            }
+
                             peer_state.conn = ConnState::Dialing;
                             inc!(BitswapMetrics::AttemptedDials);
                             let handler = BitswapHandler::new(
