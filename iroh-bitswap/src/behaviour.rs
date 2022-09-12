@@ -134,7 +134,7 @@ struct Ledger {
 
 enum Action {
     Dial(PeerId),
-    Message(PeerId, BitswapMessage),
+    Message(PeerId, BitswapMessage, ConnectionId),
 }
 
 impl Ledger {
@@ -151,9 +151,6 @@ impl Ledger {
             conn: ConnState::Disconnected,
         }
     }
-    fn is_connected(&self) -> bool {
-        matches!(self.conn, ConnState::Connected(_))
-    }
 
     fn needs_dial(&self) -> bool {
         matches!(self.conn, ConnState::Disconnected)
@@ -169,26 +166,30 @@ impl Ledger {
             return Poll::Pending;
         }
 
-        if self.is_connected() {
-            if self.has_blocks() {
-                // make progress on connected peers first, that have wants
-                inc!(BitswapMetrics::PollActionConnectedWants);
-            } else {
-                // make progress on connected peers that have no wants
-                inc!(BitswapMetrics::PollActionConnected);
+        match self.conn {
+            ConnState::Connected(_protocol, conn_id) => {
+                if self.has_blocks() {
+                    // make progress on connected peers first, that have wants
+                    inc!(BitswapMetrics::PollActionConnectedWants);
+                } else {
+                    // make progress on connected peers that have no wants
+                    inc!(BitswapMetrics::PollActionConnected);
+                }
+
+                trace!("sending message to {}", self.peer_id);
+                inc!(BitswapMetrics::MessagesSent);
+                // connected, send message
+                // TODO: limit size
+
+                let bs_msg = Pin::new(&mut *self).send_message();
+                Poll::Ready(Action::Message(self.peer_id, bs_msg, conn_id))
             }
-
-            trace!("sending message to {}", self.peer_id);
-            inc!(BitswapMetrics::MessagesSent);
-            // connected, send message
-            // TODO: limit size
-
-            let bs_msg = Pin::new(&mut *self).send_message();
-            Poll::Ready(Action::Message(self.peer_id, bs_msg))
-        } else {
-            // not connected, but have content to send, need to dial
-            inc!(BitswapMetrics::PollActionNotConnected);
-            Poll::Ready(Action::Dial(self.peer_id))
+            ConnState::Disconnected => {
+                // not connected, but have content to send, need to dial
+                inc!(BitswapMetrics::PollActionNotConnected);
+                Poll::Ready(Action::Dial(self.peer_id))
+            }
+            ConnState::Dialing => Poll::Pending,
         }
     }
 
@@ -248,7 +249,7 @@ impl Ledger {
 
 #[derive(Debug, Copy, Clone, PartialEq)]
 enum ConnState {
-    Connected(Option<ProtocolId>),
+    Connected(Option<ProtocolId>, ConnectionId),
     Disconnected,
     Dialing,
 }
@@ -438,7 +439,7 @@ impl NetworkBehaviour for Bitswap {
     fn inject_connection_established(
         &mut self,
         peer_id: &PeerId,
-        _conn: &ConnectionId,
+        conn: &ConnectionId,
         _endpoint: &ConnectedPoint,
         _failed_addresses: Option<&Vec<Multiaddr>>,
         other_established: usize,
@@ -447,7 +448,7 @@ impl NetworkBehaviour for Bitswap {
             inc!(BitswapMetrics::ConnectedPeers);
             self.add_peer(*peer_id, None);
             self.with_ledger(*peer_id, |state| {
-                state.conn = ConnState::Connected(None);
+                state.conn = ConnState::Connected(None, *conn);
             });
         }
     }
@@ -510,7 +511,7 @@ impl NetworkBehaviour for Bitswap {
             }
             HandlerEvent::Connected { protocol } => {
                 self.with_ledger(peer_id, |state| {
-                    state.conn = ConnState::Connected(Some(protocol));
+                    state.conn = ConnState::Connected(Some(protocol), connection);
                 });
                 self.known_peers.insert(peer_id, Some(protocol));
             }
@@ -663,10 +664,10 @@ impl NetworkBehaviour for Bitswap {
                                 handler,
                             });
                         }
-                        Action::Message(peer_id, bs_msg) => {
+                        Action::Message(peer_id, bs_msg, conn_id) => {
                             return Poll::Ready(NetworkBehaviourAction::NotifyHandler {
                                 peer_id,
-                                handler: NotifyHandler::Any,
+                                handler: NotifyHandler::One(conn_id),
                                 event: BitswapHandlerIn::Message(bs_msg),
                             });
                         }
@@ -1010,10 +1011,14 @@ mod tests {
                         Some(SwarmEvent::Behaviour(BitswapEvent::InboundRequest {
                             request: InboundRequest::Want { sender, cid, .. },
                         })) => {
-                            assert_eq!(
-                                swarm1.behaviour_mut().ledgers.get(&peer2_id).unwrap().conn,
-                                ConnState::Connected(Some(expected_protocol))
-                            );
+                            match swarm1.behaviour_mut().ledgers.get(&peer2_id).unwrap().conn {
+                                ConnState::Connected(Some(p), _) => {
+                                    assert_eq!(p, expected_protocol);
+                                }
+                                other => {
+                                    panic!("invalid state: {:?}", other);
+                                }
+                            }
 
                             trace!("peer1: want: {}", cid);
                             assert_eq!(cid_orig, cid);
@@ -1063,10 +1068,14 @@ mod tests {
                                 supports_providers,
                                 "must not be executed when providers are not supported"
                             );
-                            assert_eq!(
-                                swarm2.behaviour_mut().ledgers.get(&peer1_id).unwrap().conn,
-                                ConnState::Connected(Some(expected_protocol))
-                            );
+                            match swarm2.behaviour_mut().ledgers.get(&peer1_id).unwrap().conn {
+                                ConnState::Connected(Some(p), _) => {
+                                    assert_eq!(p, expected_protocol);
+                                }
+                                other => {
+                                    panic!("invalid state: {:?}", other);
+                                }
+                            }
 
                             trace!("peer2: findproviders: {}", cid);
                             assert_eq!(orig_cid, cid);
@@ -1084,10 +1093,14 @@ mod tests {
                         Some(SwarmEvent::Behaviour(BitswapEvent::OutboundQueryCompleted {
                             result: QueryResult::Want(WantResult::Ok { sender, cid, data }),
                         })) => {
-                            assert_eq!(
-                                swarm2.behaviour_mut().ledgers.get(&peer1_id).unwrap().conn,
-                                ConnState::Connected(Some(expected_protocol))
-                            );
+                            match swarm2.behaviour_mut().ledgers.get(&peer1_id).unwrap().conn {
+                                ConnState::Connected(Some(p), _) => {
+                                    assert_eq!(p, expected_protocol);
+                                }
+                                other => {
+                                    panic!("invalid state: {:?}", other);
+                                }
+                            }
 
                             assert_eq!(sender, peer1_id);
                             assert_eq!(orig_cid, cid);
