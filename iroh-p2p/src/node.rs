@@ -111,6 +111,7 @@ enum QueryKey {
 const PROVIDER_LIMIT: usize = 20;
 const NICE_INTERVAL: Duration = Duration::from_secs(6);
 const BOOTSTRAP_INTERVAL: Duration = Duration::from_secs(5 * 60);
+const EXPIRY_INTERVAL: Duration = Duration::from_secs(1);
 
 impl<KeyStorage: Storage> Drop for Node<KeyStorage> {
     fn drop(&mut self) {
@@ -168,71 +169,62 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
     pub async fn run(&mut self) -> anyhow::Result<()> {
         info!("Local Peer ID: {}", self.swarm.local_peer_id());
 
-        let mut nice_interval = Instant::now();
-        let mut bootstrap_interval = Instant::now();
-        let mut expiry_interval = Instant::now();
-
-        let mut rpc_msgs = 0;
+        let mut nice_interval = tokio::time::interval(NICE_INTERVAL);
+        let mut bootstrap_interval = tokio::time::interval(BOOTSTRAP_INTERVAL);
+        let mut expiry_interval = tokio::time::interval(EXPIRY_INTERVAL);
 
         loop {
             trace!("tick");
             inc!(P2PMetrics::LoopCounter);
-            // TODO: avoid starvaition of the swarm
-            if rpc_msgs < 100 {
-                if let Ok(rpc_message) = self.net_receiver_in.try_recv() {
-                    trace!("tick: rpc message");
-                    rpc_msgs += 1;
-                    match self.handle_rpc_message(rpc_message) {
-                        Ok(true) => {
+
+            tokio::select! {
+                swarm_event = self.swarm.next() => {
+                    let swarm_event = swarm_event.expect("the swarm will never die");
+                    trace!("tick: swarm event: {:?}", swarm_event);
+                    if let Err(err) = self.handle_swarm_event(swarm_event) {
+                        error!("swarm error: {:?}", err);
+                    }
+                }
+                rpc_message = self.net_receiver_in.recv() => {
+                    match rpc_message {
+                        Some(rpc_message) => {
+                            trace!("tick: rpc message");
+                            match self.handle_rpc_message(rpc_message) {
+                                Ok(true) => {
+                                    // shutdown
+                                    return Ok(());
+                                }
+                                Ok(false) => {
+                                    continue;
+                                }
+                                Err(err) => {
+                                    warn!("rpc: {:?}", err);
+                                }
+                            }
+                        }
+                        None => {
                             // shutdown
                             return Ok(());
                         }
-                        Ok(false) => {
-                            continue;
-                        }
-                        Err(err) => {
-                            warn!("rpc: {:?}", err);
-                        }
                     }
                 }
-            }
+                _ = expiry_interval.tick() => {
+                    trace!("tick:expiry: expiry");
 
-            // reset continous rpc msg handling
-            rpc_msgs = 0;
-
-            // check timers
-            if nice_interval.elapsed() >= NICE_INTERVAL {
-                trace!("tick:timer: nice");
-                nice_interval = Instant::now();
-                // Print peer count on an interval.
-                info!(
-                    "Peers connected: {:?}",
-                    self.swarm.connected_peers().count()
-                );
-
-                self.dht_nice_tick().await;
-            }
-
-            if bootstrap_interval.elapsed() >= BOOTSTRAP_INTERVAL {
-                trace!("tick:bootstrap: nice");
-                bootstrap_interval = Instant::now();
-                if let Err(e) = self.swarm.behaviour_mut().kad_bootstrap() {
-                    warn!("kad bootstrap failed: {:?}", e);
+                    if let Err(err) = self.expiry() {
+                        warn!("expiry error {:?}", err);
+                    }
                 }
-            }
-            if expiry_interval.elapsed() >= Duration::from_secs(1) {
-                trace!("tick:expiry: expiry");
-                expiry_interval = Instant::now();
-
-                if let Err(err) = self.expiry() {
-                    warn!("expiry error {:?}", err);
+                _ = nice_interval.tick() => {
+                    trace!("tick:timer: nice");
+                    info!("Peers connected: {:?}", self.swarm.connected_peers().count());
+                    self.dht_nice_tick().await;
                 }
-            }
-
-            if let Some(swarm_event) = self.swarm.next().await {
-                trace!("tick: swarm event: {:?}", swarm_event);
-                if let Err(err) = self.handle_swarm_event(swarm_event) {
-                    warn!("swarm: {:?}", err);
+                _ = bootstrap_interval.tick() => {
+                    trace!("tick:bootstrap: nice");
+                    if let Err(e) = self.swarm.behaviour_mut().kad_bootstrap() {
+                        warn!("kad bootstrap failed: {:?}", e);
+                    }
                 }
             }
         }
