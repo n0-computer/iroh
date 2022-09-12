@@ -30,6 +30,7 @@ caches = "0.2.2"
 asynchronous-codec = "0.6.0"
 smallvec = "1.9.0"
 iroh-util = { path = "../iroh-util" }
+wasm-timer = "0.2.5"
 
 [dev-dependencies]
 criterion = "0.3.5"
