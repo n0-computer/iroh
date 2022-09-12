@@ -116,7 +116,7 @@ const BOOTSTRAP_INTERVAL: Duration = Duration::from_secs(5 * 60);
 
 impl<KeyStorage: Storage> Drop for Node<KeyStorage> {
     fn drop(&mut self) {
-        // self.rpc_task.cancel();
+        self.rpc_task.abort();
     }
 }
 
