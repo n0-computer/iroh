@@ -7,9 +7,10 @@ use std::pin::Pin;
 use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 
-use ahash::AHashMap;
+use ahash::{AHashMap, AHashSet};
 use bytes::Bytes;
 use cid::Cid;
+use futures::StreamExt;
 use iroh_metrics::inc;
 use iroh_metrics::{bitswap::BitswapMetrics, core::MRecorder, record};
 use libp2p::core::connection::ConnectionId;
@@ -19,16 +20,18 @@ use libp2p::swarm::{
     DialError, IntoConnectionHandler, NetworkBehaviour, NetworkBehaviourAction, NotifyHandler,
     PollParameters,
 };
-use tokio::time::Interval;
-use tracing::{debug, instrument, trace, warn};
+use tracing::{debug, error, instrument, trace, warn};
+use wasm_timer::Interval;
 
 use crate::handler::{BitswapHandler, BitswapHandlerIn, HandlerEvent};
 use crate::message::{BitswapMessage, BlockPresence, Priority, Wantlist};
 use crate::protocol::ProtocolConfig;
 use crate::{Block, ProtocolId};
 
-const MAX_PROVIDERS: usize = 100; // yolo
-const MESSAGE_DELAY: Duration = Duration::from_millis(100);
+const MAX_CONCURRENT_DIALS: usize = 50;
+const MAX_PROVIDERS: usize = 1000;
+const MESSAGE_DELAY: Duration = Duration::from_millis(150);
+const HEARTBEAT_DELAY: Duration = Duration::from_millis(100);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum BitswapEvent {
@@ -119,6 +122,9 @@ pub struct Bitswap {
     known_peers: AHashMap<PeerId, Option<ProtocolId>>,
     /// Current ledgers.
     ledgers: AHashMap<PeerId, Ledger>,
+    /// Index into connected peers.
+    connected_peers: AHashSet<PeerId>,
+    num_current_dials: usize,
     wantlist: Wantlist,
     connection_limit: bool,
     heartbeat: Interval,
@@ -150,10 +156,6 @@ impl Ledger {
             last_send: Instant::now(),
             conn: ConnState::Disconnected,
         }
-    }
-
-    fn needs_dial(&self) -> bool {
-        matches!(self.conn, ConnState::Disconnected)
     }
 
     fn poll(&mut self, cx: &mut Context) -> Poll<Action> {
@@ -286,13 +288,12 @@ impl Bitswap {
             config,
             known_peers: Default::default(),
             ledgers: Default::default(),
+            connected_peers: Default::default(),
+            num_current_dials: 0,
             events: Default::default(),
             wantlist: Wantlist::default(),
             connection_limit: false,
-            heartbeat: tokio::time::interval_at(
-                tokio::time::Instant::now() + Duration::from_millis(25),
-                Duration::from_millis(25),
-            ),
+            heartbeat: Interval::new(HEARTBEAT_DELAY),
         }
     }
 
@@ -413,13 +414,6 @@ impl Bitswap {
             state.remove_want_block(cid);
         }
     }
-
-    fn num_current_dials(&self) -> usize {
-        self.ledgers
-            .values()
-            .map(|s| matches!(s.conn, ConnState::Dialing))
-            .count()
-    }
 }
 
 impl NetworkBehaviour for Bitswap {
@@ -444,9 +438,16 @@ impl NetworkBehaviour for Bitswap {
         _failed_addresses: Option<&Vec<Multiaddr>>,
         other_established: usize,
     ) {
+        if let Some(state) = self.ledgers.get_mut(peer_id) {
+            if let ConnState::Dialing = state.conn {
+                self.num_current_dials -= 1;
+            }
+        }
+
         if other_established == 0 {
             inc!(BitswapMetrics::ConnectedPeers);
             self.add_peer(*peer_id, None);
+            self.connected_peers.insert(*peer_id);
             self.with_ledger(*peer_id, |state| {
                 state.conn = ConnState::Connected(None, *conn);
             });
@@ -464,6 +465,7 @@ impl NetworkBehaviour for Bitswap {
     ) {
         if remaining_established == 0 {
             inc!(BitswapMetrics::DisconnectedPeers);
+            self.connected_peers.remove(peer_id);
             self.with_ledger(*peer_id, |state| {
                 state.conn = ConnState::Disconnected;
             });
@@ -480,7 +482,7 @@ impl NetworkBehaviour for Bitswap {
     ) {
         if let Some(ref peer_id) = peer_id {
             inc!(BitswapMetrics::DisconnectedPeers);
-
+            self.connected_peers.remove(peer_id);
             match error {
                 DialError::ConnectionLimit(_) => {
                     self.connection_limit = true;
@@ -640,39 +642,57 @@ impl NetworkBehaviour for Bitswap {
             return Poll::Ready(event);
         }
 
-        while let Poll::Ready(_) = self.heartbeat.poll_tick(cx) {
-            let num_current_dials = self.num_current_dials();
-            for peer_state in self.ledgers.values_mut() {
-                match peer_state.poll(cx) {
-                    Poll::Ready(action) => match action {
-                        Action::Dial(peer_id) => {
-                            if self.connection_limit || !peer_state.needs_dial() {
-                                continue;
+        while let Poll::Ready(_) = self.heartbeat.poll_next_unpin(cx) {
+            for peer_id in &self.connected_peers {
+                match self.ledgers.get_mut(peer_id) {
+                    Some(peer_state) => match peer_state.poll(cx) {
+                        Poll::Ready(action) => match action {
+                            Action::Dial(_) => {
+                                error!("peer should be connected, not dialing {}", peer_id);
                             }
-                            if num_current_dials > 50 {
-                                continue;
+                            Action::Message(peer_id, bs_msg, conn_id) => {
+                                return Poll::Ready(NetworkBehaviourAction::NotifyHandler {
+                                    peer_id,
+                                    handler: NotifyHandler::One(conn_id),
+                                    event: BitswapHandlerIn::Message(bs_msg),
+                                });
                             }
-
-                            peer_state.conn = ConnState::Dialing;
-                            inc!(BitswapMetrics::AttemptedDials);
-                            let handler = BitswapHandler::new(
-                                self.config.protocol_config.clone(),
-                                self.config.idle_timeout,
-                            );
-                            return Poll::Ready(NetworkBehaviourAction::Dial {
-                                opts: DialOpts::peer_id(peer_id).build(),
-                                handler,
-                            });
-                        }
-                        Action::Message(peer_id, bs_msg, conn_id) => {
-                            return Poll::Ready(NetworkBehaviourAction::NotifyHandler {
-                                peer_id,
-                                handler: NotifyHandler::One(conn_id),
-                                event: BitswapHandlerIn::Message(bs_msg),
-                            });
-                        }
+                        },
+                        _ => {}
                     },
-                    _ => {}
+                    None => {
+                        error!("missing ledger state for connected peer: {}", peer_id);
+                    }
+                }
+            }
+
+            if !self.connection_limit && self.num_current_dials < MAX_CONCURRENT_DIALS {
+                for peer_state in self.ledgers.values_mut() {
+                    match peer_state.poll(cx) {
+                        Poll::Ready(action) => match action {
+                            Action::Dial(peer_id) => {
+                                self.num_current_dials += 1;
+                                peer_state.conn = ConnState::Dialing;
+                                inc!(BitswapMetrics::AttemptedDials);
+                                let handler = BitswapHandler::new(
+                                    self.config.protocol_config.clone(),
+                                    self.config.idle_timeout,
+                                );
+                                return Poll::Ready(NetworkBehaviourAction::Dial {
+                                    opts: DialOpts::peer_id(peer_id).build(),
+                                    handler,
+                                });
+                            }
+                            Action::Message(peer_id, bs_msg, conn_id) => {
+                                return Poll::Ready(NetworkBehaviourAction::NotifyHandler {
+                                    peer_id,
+                                    handler: NotifyHandler::One(conn_id),
+                                    event: BitswapHandlerIn::Message(bs_msg),
+                                });
+                            }
+                        },
+                        _ => {}
+                    }
                 }
             }
         }
