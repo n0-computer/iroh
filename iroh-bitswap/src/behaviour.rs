@@ -29,7 +29,7 @@ use crate::protocol::ProtocolConfig;
 use crate::{Block, ProtocolId};
 
 const MAX_CONCURRENT_DIALS: usize = 50;
-const MAX_PROVIDERS: usize = 1000;
+const MAX_PROVIDERS: usize = 500;
 const MESSAGE_DELAY: Duration = Duration::from_millis(150);
 const HEARTBEAT_DELAY: Duration = Duration::from_millis(100);
 
@@ -124,7 +124,7 @@ pub struct Bitswap {
     ledgers: AHashMap<PeerId, Ledger>,
     /// Index into connected peers.
     connected_peers: AHashSet<PeerId>,
-    num_current_dials: usize,
+    dialing_peers: AHashSet<PeerId>,
     wantlist: Wantlist,
     connection_limit: bool,
     heartbeat: Interval,
@@ -289,7 +289,7 @@ impl Bitswap {
             known_peers: Default::default(),
             ledgers: Default::default(),
             connected_peers: Default::default(),
-            num_current_dials: 0,
+            dialing_peers: Default::default(),
             events: Default::default(),
             wantlist: Wantlist::default(),
             connection_limit: false,
@@ -366,22 +366,26 @@ impl Bitswap {
         // TODO: better strategies, than just all peers.
         // TODO: use peers that connect later
 
-        let providers: Vec<_> = self
-            .known_peers
+        let mut peers = AHashSet::new();
+        for peer in self
+            .connected_peers
             .iter()
-            .filter_map(|(key, value)| {
+            .chain(self.known_peers.iter().filter_map(|(key, value)| {
                 // Only supported on 1.2.0
                 if value == &None || value == &Some(ProtocolId::Bitswap120) {
                     return Some(key);
                 }
                 None
-            })
-            .take(MAX_PROVIDERS)
-            .copied()
-            .collect();
+            }))
+        {
+            if peers.len() == MAX_PROVIDERS {
+                break;
+            }
+            peers.insert(*peer);
+        }
 
-        for provider in providers {
-            self.with_ledger(provider, |peer| {
+        for peer in peers {
+            self.with_ledger(peer, |peer| {
                 peer.want_have_block(&cid, priority);
             });
         }
@@ -438,16 +442,11 @@ impl NetworkBehaviour for Bitswap {
         _failed_addresses: Option<&Vec<Multiaddr>>,
         other_established: usize,
     ) {
-        if let Some(state) = self.ledgers.get_mut(peer_id) {
-            if let ConnState::Dialing = state.conn {
-                self.num_current_dials -= 1;
-            }
-        }
-
         if other_established == 0 {
             inc!(BitswapMetrics::ConnectedPeers);
             self.add_peer(*peer_id, None);
             self.connected_peers.insert(*peer_id);
+            self.dialing_peers.remove(peer_id);
             self.with_ledger(*peer_id, |state| {
                 state.conn = ConnState::Connected(None, *conn);
             });
@@ -466,6 +465,7 @@ impl NetworkBehaviour for Bitswap {
         if remaining_established == 0 {
             inc!(BitswapMetrics::DisconnectedPeers);
             self.connected_peers.remove(peer_id);
+            self.dialing_peers.remove(peer_id);
             self.with_ledger(*peer_id, |state| {
                 state.conn = ConnState::Disconnected;
             });
@@ -483,6 +483,8 @@ impl NetworkBehaviour for Bitswap {
         if let Some(ref peer_id) = peer_id {
             inc!(BitswapMetrics::DisconnectedPeers);
             self.connected_peers.remove(peer_id);
+            self.dialing_peers.remove(peer_id);
+
             match error {
                 DialError::ConnectionLimit(_) => {
                     self.connection_limit = true;
@@ -666,14 +668,14 @@ impl NetworkBehaviour for Bitswap {
                 }
             }
 
-            if !self.connection_limit && self.num_current_dials < MAX_CONCURRENT_DIALS {
+            if !self.connection_limit && self.dialing_peers.len() < MAX_CONCURRENT_DIALS {
                 for peer_state in self.ledgers.values_mut() {
                     match peer_state.poll(cx) {
                         Poll::Ready(action) => match action {
                             Action::Dial(peer_id) => {
-                                self.num_current_dials += 1;
-                                peer_state.conn = ConnState::Dialing;
                                 inc!(BitswapMetrics::AttemptedDials);
+                                self.dialing_peers.insert(peer_id);
+                                peer_state.conn = ConnState::Dialing;
                                 let handler = BitswapHandler::new(
                                     self.config.protocol_config.clone(),
                                     self.config.idle_timeout,
