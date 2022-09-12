@@ -50,18 +50,17 @@ async fn main_inner() -> Result<()> {
     let mut p2p = Node::new(network_config, rpc_addr, kc).await?;
 
     // Start services
-    task::unconstrained(async move {
+    let p2p_task = task::spawn(async move {
         if let Err(err) = p2p.run().await {
             error!("{:?}", err);
         }
-    })
-    .await;
+    });
 
     iroh_util::block_until_sigint().await;
 
     // Cancel all async services
-    // TODO: proper shutdown
-    // p2p_task.await;
+    p2p_task.abort();
+    p2p_task.await.ok();
 
     metrics_handle.shutdown();
     Ok(())
@@ -69,10 +68,6 @@ async fn main_inner() -> Result<()> {
 
 fn main() -> Result<()> {
     tokio::runtime::Builder::new_multi_thread()
-        // .disable_lifo_slot()
-        // .global_queue_interval(1024*1024)
-        // .event_interval(2048)
-        // .unhandled_panic(UnhandledPanic::ShutdownRuntime)
         .max_blocking_threads(2048)
         .thread_stack_size(16 * 1024 * 1024)
         .enable_all()
