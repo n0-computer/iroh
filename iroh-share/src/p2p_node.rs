@@ -82,10 +82,11 @@ impl ContentLoader for Loader {
 
         ensure!(!providers.is_empty(), "no providers supplied");
 
+        // TODO: track context id
         let res = self
             .client
             .try_p2p()?
-            .fetch_bitswap(cid, providers.clone())
+            .fetch_bitswap(0, cid, providers.clone())
             .await;
         let bytes = match res {
             Ok(bytes) => bytes,
