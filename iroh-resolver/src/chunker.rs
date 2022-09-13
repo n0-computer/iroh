@@ -10,7 +10,7 @@ pub const DEFAULT_CHUNKS_SIZE: usize = 1024 * 256;
 /// Chunks are limited to 1MiB by default
 pub const DEFAULT_CHUNK_SIZE_LIMIT: usize = 1024 * 1024;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Chunker {
     /// Chunker that splits the given content
     FixedSize { chunk_size: usize },

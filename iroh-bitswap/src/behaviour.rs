@@ -91,7 +91,7 @@ pub struct Bitswap {
     config: BitswapConfig,
 }
 
-#[derive(Default, Debug, Clone, PartialEq)]
+#[derive(Default, Debug, Clone, PartialEq, Eq)]
 pub struct BitswapConfig {
     pub session: SessionConfig,
 }
@@ -144,7 +144,7 @@ impl Bitswap {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[allow(clippy::large_enum_variant)]
 pub enum HandlerEvent {
     Upgrade,

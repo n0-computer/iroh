@@ -2,7 +2,7 @@ use config::{ConfigError, Map, Source, Value};
 use iroh_util::insert_into_config_map;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Config {
     /// The name of the service. Should be the same as the Cargo package name.
     pub service_name: String,
