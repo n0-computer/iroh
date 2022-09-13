@@ -21,10 +21,12 @@ use crate::{
 };
 
 pub(crate) mod unixfs_pb {
+    #![allow(clippy::all)]
     include!(concat!(env!("OUT_DIR"), "/unixfs_pb.rs"));
 }
 
 pub(crate) mod dag_pb {
+    #![allow(clippy::all)]
     include!(concat!(env!("OUT_DIR"), "/merkledag_pb.rs"));
 }
 

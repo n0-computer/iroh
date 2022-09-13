@@ -10,13 +10,14 @@ use crate::error::BitswapError;
 use crate::prefix::Prefix;
 
 mod pb {
+    #![allow(clippy::all)]
     include!(concat!(env!("OUT_DIR"), "/bitswap_pb.rs"));
 }
 
 /// Priority of a wanted block.
 pub type Priority = i32;
 
-#[derive(Default, Clone, Debug, PartialEq)]
+#[derive(Default, Clone, Debug, PartialEq, Eq)]
 pub struct Wantlist {
     /// Wanted blocks.
     want_blocks: AHashMap<Cid, Priority>,
@@ -112,7 +113,7 @@ impl Wantlist {
 }
 
 /// A bitswap message.
-#[derive(Default, Clone, Debug, PartialEq)]
+#[derive(Default, Clone, Debug, PartialEq, Eq)]
 pub struct BitswapMessage {
     wantlist: Wantlist,
     /// List of blocks to send.
@@ -120,13 +121,15 @@ pub struct BitswapMessage {
     block_presences: Vec<BlockPresence>,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BlockPresence {
     pub cid: Cid,
     pub typ: BlockPresenceType,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, num_enum::IntoPrimitive, num_enum::TryFromPrimitive)]
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, num_enum::IntoPrimitive, num_enum::TryFromPrimitive,
+)]
 #[repr(i32)]
 pub enum BlockPresenceType {
     Have = 0,

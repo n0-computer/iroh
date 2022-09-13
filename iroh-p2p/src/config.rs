@@ -32,7 +32,7 @@ pub const DEFAULT_BOOTSTRAP: &[&str] = &[
 // "/ip4/104.131.131.82/udp/4001/quic/p2p/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ", // mars.i.ipfs.io
 
 /// Libp2p config for the node.
-#[derive(PartialEq, Debug, Clone, Deserialize, Serialize)]
+#[derive(PartialEq, Eq, Debug, Clone, Deserialize, Serialize)]
 pub struct Libp2pConfig {
     /// Local address.
     pub listening_multiaddr: Multiaddr,

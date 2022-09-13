@@ -16,7 +16,7 @@ use tokio::sync::mpsc::Receiver;
 use tokio::{sync::Mutex, task::JoinHandle};
 use tracing::{error, warn};
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Ticket {
     pub peer_id: PeerId,
     pub addrs: Vec<Multiaddr>,

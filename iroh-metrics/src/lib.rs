@@ -146,7 +146,7 @@ pub fn get_current_trace_id() -> TraceId {
         .trace_id()
 }
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Eq)]
 pub enum Collector {
     #[cfg(feature = "gateway")]
     Gateway,

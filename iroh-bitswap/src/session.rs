@@ -21,7 +21,7 @@ pub struct SessionManager {
     config: Config,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Config {
     /// Limit of how many providers are concurrently dialed.
     pub dial_concurrency_factor_providers: NonZeroU8,

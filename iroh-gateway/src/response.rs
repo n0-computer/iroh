@@ -8,7 +8,7 @@ use crate::constants::*;
 
 pub const ERR_UNSUPPORTED_FORMAT: &str = "unsuported format";
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ResponseFormat {
     Raw,
     Car,
