@@ -147,7 +147,8 @@ struct Ledger {
     msg: BitswapMessage,
     last_send: Instant,
     conn: ConnState,
-    ctx: Vec<u64>,
+    ctx_wants: AHashMap<Cid, Vec<u64>>,
+    ctx_want_haves: AHashMap<Cid, Vec<u64>>,
 }
 
 enum Action {
@@ -167,7 +168,8 @@ impl Ledger {
             msg,
             last_send: Instant::now(),
             conn: ConnState::Disconnected,
-            ctx: Default::default(),
+            ctx_wants: Default::default(),
+            ctx_want_haves: Default::default(),
         }
     }
 
@@ -230,19 +232,23 @@ impl Ledger {
     fn want_block(&mut self, ctx: u64, cid: &Cid, priority: Priority) {
         self.msg.wantlist_mut().want_block(cid, priority);
         self.is_empty = self.msg.is_empty();
-        self.ctx.push(ctx);
+        self.ctx_wants.entry(*cid).or_default().push(ctx);
     }
 
     fn cancel_block(&mut self, ctx: &[u64], cid: &Cid) {
         self.msg.wantlist_mut().cancel_block(cid);
         self.is_empty = self.msg.is_empty();
-        self.ctx.retain(|i| !ctx.contains(i));
+        if let Some(list) = self.ctx_wants.get_mut(cid) {
+            list.retain(|i| !ctx.contains(i));
+        }
     }
 
     fn remove_block(&mut self, ctx: &[u64], cid: &Cid) {
         self.msg.wantlist_mut().remove_block(cid);
         self.is_empty = self.msg.is_empty();
-        self.ctx.retain(|i| !ctx.contains(i));
+        if let Some(list) = self.ctx_wants.get_mut(cid) {
+            list.retain(|i| !ctx.contains(i));
+        }
     }
 
     fn send_block(&mut self, cid: Cid, data: Bytes) {
@@ -253,13 +259,15 @@ impl Ledger {
     fn want_have_block(&mut self, ctx: u64, cid: &Cid, priority: Priority) {
         self.msg.wantlist_mut().want_have_block(cid, priority);
         self.is_empty = self.msg.is_empty();
-        self.ctx.push(ctx);
+        self.ctx_want_haves.entry(*cid).or_default().push(ctx);
     }
 
     fn remove_want_block(&mut self, ctx: &[u64], cid: &Cid) {
         self.msg.wantlist_mut().remove_want_block(cid);
         self.is_empty = self.msg.is_empty();
-        self.ctx.retain(|i| !ctx.contains(i));
+        if let Some(list) = self.ctx_want_haves.get_mut(cid) {
+            list.retain(|i| !ctx.contains(i));
+        }
     }
 
     fn send_have_block(&mut self, cid: Cid) {
@@ -687,7 +695,7 @@ impl NetworkBehaviour for Bitswap {
                                 error!("peer should be connected, not dialing {}", peer_id);
                             }
                             Action::Message(peer_id, bs_msg, conn_id) => {
-                                trace!("sending message for context:{:?}", peer_state.ctx);
+                                trace!("sending message for context:{:?} {:?}", peer_state.ctx_wants, peer_state.ctx_want_haves);
                                 return Poll::Ready(NetworkBehaviourAction::NotifyHandler {
                                     peer_id,
                                     handler: NotifyHandler::One(conn_id),
@@ -709,7 +717,7 @@ impl NetworkBehaviour for Bitswap {
                         Poll::Ready(action) => match action {
                             Action::Dial(peer_id) => {
                                 inc!(BitswapMetrics::AttemptedDials);
-                                trace!("dialing for context:{:?}", peer_state.ctx);
+                                trace!("dialing for context:{:?} {:?}", peer_state.ctx_wants, peer_state.ctx_want_haves);
                                 self.dialing_peers.insert(peer_id);
                                 peer_state.conn = ConnState::Dialing;
                                 let handler = BitswapHandler::new(
@@ -722,7 +730,7 @@ impl NetworkBehaviour for Bitswap {
                                 });
                             }
                             Action::Message(peer_id, bs_msg, conn_id) => {
-                                trace!("sending message for context:{:?}", peer_state.ctx);
+                                trace!("sending message for context:{:?} {:?}", peer_state.ctx_wants, peer_state.ctx_want_haves);
                                 return Poll::Ready(NetworkBehaviourAction::NotifyHandler {
                                     peer_id,
                                     handler: NotifyHandler::One(conn_id),

@@ -473,13 +473,14 @@ impl ProviderCache {
 }
 
 async fn fetch_providers(
+    ctx: ContextId,
     client: &Client,
     cid: &Cid,
 ) -> Result<impl Stream<Item = Result<HashSet<PeerId>>>> {
     let p2p = client.try_p2p()?;
 
     let a = p2p.fetch_providers_dht(cid).await?;
-    let b = p2p.fetch_providers_bitswap(0, cid).await?;
+    let b = p2p.fetch_providers_bitswap(ctx.into(), cid).await?;
 
     Ok(futures::stream::select(a, b))
 }
@@ -532,11 +533,11 @@ impl LoaderContext {
         }
 
         let mut streams = vec![];
-        streams.push(fetch_providers(client, cid).await?);
+        streams.push(fetch_providers(self.id, client, cid).await?);
 
         if this.providers.len() < 5 {
             if let Some(ref root) = this.root() {
-                streams.push(fetch_providers(client, root).await?);
+                streams.push(fetch_providers(self.id, client, root).await?);
             }
         }
 
