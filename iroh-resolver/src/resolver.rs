@@ -479,7 +479,7 @@ async fn fetch_providers(
     let p2p = client.try_p2p()?;
 
     let a = p2p.fetch_providers_dht(cid).await?;
-    let b = p2p.fetch_providers_bitswap(cid).await?;
+    let b = p2p.fetch_providers_bitswap(0, cid).await?;
 
     Ok(futures::stream::select(a, b))
 }
@@ -596,8 +596,8 @@ impl ContentLoader for Client {
         let ctx = ctx.clone();
         let ctx_id = ctx.id();
 
+        let mut seen_providers = providers.clone();
         let providers_task = tokio::spawn(async move {
-            let mut seen_providers = HashSet::new();
             while let Some(new_providers) = providers_stream.next().await {
                 match new_providers {
                     Ok(new_providers) => {
@@ -632,6 +632,11 @@ impl ContentLoader for Client {
                     }
                 }
             }
+            trace!(
+                "{:?} finished fetching providers, total found {}",
+                ctx.id(),
+                seen_providers.len()
+            );
         });
 
         // launch fetching using the initial set of cached providers

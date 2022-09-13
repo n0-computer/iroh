@@ -8,7 +8,7 @@ service P2p {
   rpc Version(google.protobuf.Empty) returns (VersionResponse) {}
   rpc FetchBitswap(BitswapRequest) returns (BitswapResponse) {}
   rpc FetchProviderDht(Key) returns (stream Providers) {}
-  rpc FetchProviderBitswap(Key) returns (stream Providers) {}
+  rpc FetchProviderBitswap(BitswapKey) returns (stream BitswapProviders) {}
   rpc InjectProviderBitswap(BitswapRequest) returns (google.protobuf.Empty) {}
   rpc GetListeningAddrs(google.protobuf.Empty) returns (GetListeningAddrsResponse) {}
   rpc GetPeers(google.protobuf.Empty) returns (GetPeersResponse) {}
@@ -48,8 +48,19 @@ message Providers {
   repeated bytes providers = 1;
 }
 
+message BitswapProviders {
+  uint64 ctx = 1;
+  // List of providers. Serialized PeerIds
+  repeated bytes providers = 2;
+}
+
 message Key {
   bytes key = 1;
+}
+
+message BitswapKey {
+  bytes key = 1;
+  uint64 ctx = 2;
 }
 
 message GetListeningAddrsResponse {
