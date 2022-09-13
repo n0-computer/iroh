@@ -236,6 +236,10 @@ impl BitswapMessage {
         self.blocks.pop()
     }
 
+    pub fn pop_block_presence(&mut self) -> Option<BlockPresence> {
+        self.block_presences.pop()
+    }
+
     pub fn wantlist(&self) -> &Wantlist {
         &self.wantlist
     }
