@@ -57,7 +57,7 @@ impl Sender {
         } = self;
 
         let t = Sha256Topic::new(format!("iroh-share-{}", id));
-        let root_dir = dir_builder.build().await?;
+        let root_dir = dir_builder.build()?;
 
         let (done_sender, done_receiver) = oneshot();
 
@@ -159,7 +159,7 @@ impl Sender {
         // wrap in directory to preserve the name
         let mut root_dir = iroh_resolver::unixfs_builder::DirectoryBuilder::new();
         let mut file = iroh_resolver::unixfs_builder::FileBuilder::new();
-        file.name(&name).content_bytes(data);
+        file.name(name).content_bytes(data);
         let file = file.build().await?;
         root_dir.add_file(file);
 
