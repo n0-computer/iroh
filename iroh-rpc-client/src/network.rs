@@ -35,7 +35,12 @@ impl P2pClient {
 
     // Fetches a block directly from the network.
     #[tracing::instrument(skip(self))]
-    pub async fn fetch_bitswap(&self, cid: Cid, providers: HashSet<PeerId>) -> Result<Bytes> {
+    pub async fn fetch_bitswap(
+        &self,
+        ctx: u64,
+        cid: Cid,
+        providers: HashSet<PeerId>,
+    ) -> Result<Bytes> {
         debug!("rpc p2p client fetch_bitswap: {:?}", cid);
         let providers = Providers {
             providers: providers.into_iter().map(|id| id.to_bytes()).collect(),
@@ -44,6 +49,7 @@ impl P2pClient {
         let req = BitswapRequest {
             cid: cid.to_bytes(),
             providers: Some(providers),
+            ctx,
         };
         let res = self.backend.fetch_bitswap(req).await?;
         Ok(res.data)
@@ -53,6 +59,7 @@ impl P2pClient {
     #[tracing::instrument(skip(self))]
     pub async fn inject_provider_bitswap(
         &self,
+        ctx: u64,
         cid: Cid,
         providers: HashSet<PeerId>,
     ) -> Result<()> {
@@ -63,6 +70,7 @@ impl P2pClient {
         let req = BitswapRequest {
             cid: cid.to_bytes(),
             providers: Some(providers),
+            ctx,
         };
         self.backend.inject_provider_bitswap(req).await?;
         Ok(())

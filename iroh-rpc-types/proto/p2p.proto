@@ -35,10 +35,12 @@ message BitswapRequest {
   // Serialized CID of the requested block.
   bytes cid = 1;
   Providers providers = 2;
+  uint64 ctx = 3;
 }
 
 message BitswapResponse {
   bytes data = 1;
+  uint64 ctx = 2;
 }
 
 message Providers {

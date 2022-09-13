@@ -613,8 +613,9 @@ impl ContentLoader for Client {
                             seen_providers.extend(actual_new_providers.clone());
                             // update cache
                             ctx.put_providers(cid, actual_new_providers.clone()).await;
-                            if let Err(e) =
-                                p2p.inject_provider_bitswap(cid, actual_new_providers).await
+                            if let Err(e) = p2p
+                                .inject_provider_bitswap(ctx.id().into(), cid, actual_new_providers)
+                                .await
                             {
                                 warn!(
                                     "{:?} failed to inject providers: {}: {:?}",
@@ -634,7 +635,10 @@ impl ContentLoader for Client {
         });
 
         // launch fetching using the initial set of cached providers
-        let bytes = self.try_p2p()?.fetch_bitswap(cid, providers).await?;
+        let bytes = self
+            .try_p2p()?
+            .fetch_bitswap(ctx_id.into(), cid, providers)
+            .await?;
 
         // trigger storage in the background
         let clone = bytes.clone();
