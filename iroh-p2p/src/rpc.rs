@@ -15,7 +15,7 @@ use libp2p::Multiaddr;
 use libp2p::PeerId;
 use tokio::sync::mpsc::{channel, Sender};
 use tokio::sync::oneshot;
-use tracing::{error, trace};
+use tracing::trace;
 
 use async_trait::async_trait;
 use iroh_bitswap::{Block, QueryError};
@@ -49,9 +49,10 @@ impl RpcP2p for P2p {
     // forward right now
     #[tracing::instrument(skip(self, req))]
     async fn fetch_bitswap(&self, req: BitswapRequest) -> Result<BitswapResponse> {
+        let ctx = req.ctx;
         let cid = Cid::read_bytes(io::Cursor::new(req.cid))?;
 
-        trace!("received BitswapRequest: {:?}", cid);
+        trace!("context:{}, received BitswapRequest: {:?}", ctx, cid);
         let providers = req
             .providers
             .with_context(|| format!("missing providers for: {}", cid))?;
@@ -64,12 +65,13 @@ impl RpcP2p for P2p {
 
         let (s, r) = oneshot::channel();
         let msg = RpcMessage::BitswapRequest {
+            ctx,
             cids: vec![cid],
             providers,
             response_channels: vec![s],
         };
 
-        trace!("making bitswap request for {:?}", cid);
+        trace!("context:{}making bitswap request for {:?}", ctx, cid);
         self.sender.send(msg).await?;
         let block = r
             .await
@@ -83,16 +85,20 @@ impl RpcP2p for P2p {
             block.cid
         );
 
-        trace!("bitswap response for {:?}", cid);
+        trace!("context:{} got bitswap response for {:?}", ctx, cid);
 
-        Ok(BitswapResponse { data: block.data })
+        Ok(BitswapResponse {
+            data: block.data,
+            ctx,
+        })
     }
 
     #[tracing::instrument(skip(self, req))]
     async fn inject_provider_bitswap(&self, req: BitswapRequest) -> Result<()> {
+        let ctx = req.ctx;
         let cid = Cid::read_bytes(io::Cursor::new(req.cid))?;
 
-        trace!("received BitswapRequest: {:?}", cid);
+        trace!("context:{} received BitswapRequest: {:?}", ctx, cid);
         let providers = req
             .providers
             .with_context(|| format!("missing providers for: {}", cid))?;
@@ -107,6 +113,7 @@ impl RpcP2p for P2p {
 
         let (s, r) = oneshot::channel();
         let msg = RpcMessage::BitswapInjectProviders {
+            ctx,
             cid,
             providers,
             response_channel: s,
@@ -384,11 +391,13 @@ pub enum ProviderRequestKey {
 #[derive(Debug)]
 pub enum RpcMessage {
     BitswapRequest {
+        ctx: u64,
         cids: Vec<Cid>,
         response_channels: Vec<oneshot::Sender<Result<Block, QueryError>>>,
         providers: HashSet<PeerId>,
     },
     BitswapInjectProviders {
+        ctx: u64,
         cid: Cid,
         response_channel: oneshot::Sender<Result<()>>,
         providers: HashSet<PeerId>,

@@ -748,10 +748,12 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
         // Inbound messages
         match message {
             RpcMessage::BitswapRequest {
+                ctx,
                 cids,
                 response_channels,
                 providers,
             } => {
+                trace!("context:{} bitswap_request", ctx);
                 for (cid, response_channel) in cids.into_iter().zip(response_channels.into_iter()) {
                     self.swarm
                         .behaviour_mut()
@@ -766,10 +768,12 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                 }
             }
             RpcMessage::BitswapInjectProviders {
+                ctx,
                 cid,
                 response_channel,
                 providers,
             } => {
+                trace!("context:{} bitswap_inject_providers", ctx);
                 let res = self
                     .swarm
                     .behaviour_mut()
