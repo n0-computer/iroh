@@ -279,7 +279,7 @@ pub async fn run_command(rpc: Client, cmd: P2p) -> Result<()> {
         P2pCommands::Dev(dev) => match dev.command {
             DevCommands::FetchBitswap { cid, providers } => {
                 let providers = HashSet::from_iter(providers.into_iter());
-                let res = rpc.try_p2p()?.fetch_bitswap(cid, providers).await?;
+                let res = rpc.try_p2p()?.fetch_bitswap(0, cid, providers).await?;
                 println!("{:#?}", res);
             }
             DevCommands::FetchProvidersDht { cid } => {
