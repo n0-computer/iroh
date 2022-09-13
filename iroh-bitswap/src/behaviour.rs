@@ -723,7 +723,6 @@ impl NetworkBehaviour for Bitswap {
                                 for cid in self.want_haves.keys() {
                                     wants.want_have_block(cid, 1000);
                                 }
-                                dbg!(&bs_msg);
                                 return Poll::Ready(NetworkBehaviourAction::NotifyHandler {
                                     peer_id,
                                     handler: NotifyHandler::One(conn_id),
@@ -782,7 +781,6 @@ impl NetworkBehaviour for Bitswap {
                                 for cid in self.want_haves.keys() {
                                     wants.want_have_block(cid, 1000);
                                 }
-                                dbg!(&bs_msg);
                                 return Poll::Ready(NetworkBehaviourAction::NotifyHandler {
                                     peer_id,
                                     handler: NotifyHandler::One(conn_id),
