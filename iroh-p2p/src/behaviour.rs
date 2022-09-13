@@ -185,16 +185,16 @@ impl NodeBehaviour {
         Ok(())
     }
 
-    pub fn cancel_block(&mut self, cid: &Cid) -> Result<()> {
+    pub fn cancel_block(&mut self, ctx: u64, cid: &Cid) -> Result<()> {
         if let Some(bs) = self.bitswap.as_mut() {
-            bs.cancel_block(cid);
+            bs.cancel_block(ctx, cid);
         }
         Ok(())
     }
 
-    pub fn cancel_want_block(&mut self, cid: &Cid) -> Result<()> {
+    pub fn cancel_want_block(&mut self, ctx: u64, cid: &Cid) -> Result<()> {
         if let Some(bs) = self.bitswap.as_mut() {
-            bs.cancel_want_block(cid);
+            bs.cancel_want_block(ctx, cid);
         }
         Ok(())
     }
@@ -207,9 +207,9 @@ impl NodeBehaviour {
         Ok(())
     }
 
-    pub fn find_providers(&mut self, cid: Cid, priority: Priority) -> Result<()> {
+    pub fn find_providers(&mut self, ctx: u64, cid: Cid, priority: Priority) -> Result<()> {
         if let Some(bs) = self.bitswap.as_mut() {
-            bs.find_providers(cid, priority);
+            bs.find_providers(ctx, cid, priority);
         }
         Ok(())
     }
@@ -221,12 +221,13 @@ impl NodeBehaviour {
     /// Send a request for data over bitswap
     pub fn want_block(
         &mut self,
+        ctx: u64,
         cid: Cid,
         priority: Priority,
         providers: HashSet<PeerId>,
     ) -> Result<(), Box<dyn Error>> {
         if let Some(bs) = self.bitswap.as_mut() {
-            bs.want_block(cid, priority, providers);
+            bs.want_block(ctx, cid, priority, providers);
         }
         Ok(())
     }

@@ -20,11 +20,12 @@ use tracing::trace;
 use async_trait::async_trait;
 use iroh_bitswap::{Block, QueryError};
 use iroh_rpc_types::p2p::{
-    BitswapRequest, BitswapResponse, ConnectRequest, ConnectResponse, DisconnectRequest,
-    GetListeningAddrsResponse, GetPeersResponse, GossipsubAllPeersResponse, GossipsubPeerAndTopics,
-    GossipsubPeerIdMsg, GossipsubPeersResponse, GossipsubPublishRequest, GossipsubPublishResponse,
-    GossipsubSubscribeResponse, GossipsubTopicHashMsg, GossipsubTopicsResponse, Key as ProviderKey,
-    Multiaddrs, P2p as RpcP2p, P2pServerAddr, Providers, VersionResponse,
+    BitswapKey, BitswapProviders, BitswapRequest, BitswapResponse, ConnectRequest, ConnectResponse,
+    DisconnectRequest, GetListeningAddrsResponse, GetPeersResponse, GossipsubAllPeersResponse,
+    GossipsubPeerAndTopics, GossipsubPeerIdMsg, GossipsubPeersResponse, GossipsubPublishRequest,
+    GossipsubPublishResponse, GossipsubSubscribeResponse, GossipsubTopicHashMsg,
+    GossipsubTopicsResponse, Key as ProviderKey, Multiaddrs, P2p as RpcP2p, P2pServerAddr,
+    Providers, VersionResponse,
 };
 
 struct P2p {
@@ -71,7 +72,7 @@ impl RpcP2p for P2p {
             response_channels: vec![s],
         };
 
-        trace!("context:{}making bitswap request for {:?}", ctx, cid);
+        trace!("context:{} making bitswap request for {:?}", ctx, cid);
         self.sender.send(msg).await?;
         let block = r
             .await
@@ -151,23 +152,25 @@ impl RpcP2p for P2p {
     #[tracing::instrument(skip(self, req))]
     async fn fetch_provider_bitswap(
         &self,
-        req: ProviderKey,
-    ) -> Result<Pin<Box<dyn Stream<Item = Result<Providers>> + Send>>> {
-        trace!("received ProviderRequest: {:?}", req.key);
+        req: BitswapKey,
+    ) -> Result<Pin<Box<dyn Stream<Item = Result<BitswapProviders>> + Send>>> {
+        let ctx = req.ctx;
+        trace!("context:{} received ProviderRequest: {:?}", ctx, req.key);
+
         let (s, r) = channel(1024);
         let msg = RpcMessage::ProviderRequest {
-            key: ProviderRequestKey::Bitswap(Cid::try_from(&req.key[..])?),
+            key: ProviderRequestKey::Bitswap(ctx, Cid::try_from(&req.key[..])?),
             response_channel: s,
         };
 
         self.sender.send(msg).await?;
         let r = tokio_stream::wrappers::ReceiverStream::new(r);
 
-        Ok(Box::pin(r.map(|providers| {
+        Ok(Box::pin(r.map(move |providers| {
             let providers = providers.map_err(|e| anyhow!(e))?;
             let providers = providers.into_iter().map(|p| p.to_bytes()).collect();
 
-            Ok(Providers { providers })
+            Ok(BitswapProviders { ctx, providers })
         })))
     }
 
@@ -384,7 +387,7 @@ fn addrs_from_bytes(a: Vec<Vec<u8>>) -> Result<Vec<Multiaddr>> {
 pub enum ProviderRequestKey {
     // TODO: potentially change this to Cid, as that is the only key we use for providers
     Dht(Key),
-    Bitswap(Cid),
+    Bitswap(u64, Cid),
 }
 
 /// Rpc specific messages handled by the p2p node

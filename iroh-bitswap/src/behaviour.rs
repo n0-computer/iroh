@@ -24,7 +24,7 @@ use tracing::{debug, error, instrument, trace, warn};
 use wasm_timer::Interval;
 
 use crate::handler::{BitswapHandler, BitswapHandlerIn, HandlerEvent};
-use crate::message::{BitswapMessage, BlockPresence, Priority, Wantlist};
+use crate::message::{BitswapMessage, BlockPresence, Priority};
 use crate::protocol::ProtocolConfig;
 use crate::{Block, ProtocolId};
 
@@ -53,11 +53,13 @@ pub enum QueryResult {
 #[allow(clippy::large_enum_variant)]
 pub enum WantResult {
     Ok {
+        ctx: Vec<u64>,
         sender: PeerId,
         cid: Cid,
         data: Bytes,
     },
     Err {
+        ctx: Vec<u64>,
         cid: Cid,
         error: QueryError,
     },
@@ -66,8 +68,16 @@ pub enum WantResult {
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[allow(clippy::large_enum_variant)]
 pub enum FindProvidersResult {
-    Ok { cid: Cid, provider: PeerId },
-    Err { cid: Cid, error: QueryError },
+    Ok {
+        ctx: Vec<u64>,
+        cid: Cid,
+        provider: PeerId,
+    },
+    Err {
+        ctx: Vec<u64>,
+        cid: Cid,
+        error: QueryError,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -125,7 +135,8 @@ pub struct Bitswap {
     /// Index into connected peers.
     connected_peers: AHashSet<PeerId>,
     dialing_peers: AHashSet<PeerId>,
-    wantlist: Wantlist,
+    wants: AHashMap<Cid, Vec<u64>>,
+    want_haves: AHashMap<Cid, Vec<u64>>,
     connection_limit: bool,
     heartbeat: Interval,
 }
@@ -291,7 +302,8 @@ impl Bitswap {
             connected_peers: Default::default(),
             dialing_peers: Default::default(),
             events: Default::default(),
-            wantlist: Wantlist::default(),
+            wants: Default::default(),
+            want_haves: Default::default(),
             connection_limit: false,
             heartbeat: Interval::new(HEARTBEAT_DELAY),
         }
@@ -325,12 +337,18 @@ impl Bitswap {
 
     /// Request the given block from the list of providers.
     #[instrument(skip(self))]
-    pub fn want_block<'a>(&mut self, cid: Cid, priority: Priority, providers: HashSet<PeerId>) {
-        debug!("want_block: {}", cid);
+    pub fn want_block<'a>(
+        &mut self,
+        ctx: u64,
+        cid: Cid,
+        priority: Priority,
+        providers: HashSet<PeerId>,
+    ) {
+        debug!("context:{} want_block: {}", ctx, cid);
         inc!(BitswapMetrics::WantedBlocks);
         record!(BitswapMetrics::Providers, providers.len() as u64);
 
-        self.wantlist.want_block(&cid, priority);
+        self.wants.entry(cid).or_default().push(ctx);
         for provider in providers.iter() {
             self.with_ledger(*provider, |state| {
                 state.want_block(&cid, priority);
@@ -359,8 +377,8 @@ impl Bitswap {
     }
 
     #[instrument(skip(self))]
-    pub fn find_providers(&mut self, cid: Cid, priority: Priority) {
-        debug!("find_providers: {}", cid);
+    pub fn find_providers(&mut self, ctx: u64, cid: Cid, priority: Priority) {
+        debug!("context:{} find_providers: {}", ctx, cid);
         inc!(BitswapMetrics::WantHaveBlocks);
 
         // TODO: better strategies, than just all peers.
@@ -389,18 +407,20 @@ impl Bitswap {
                 peer.want_have_block(&cid, priority);
             });
         }
-        self.wantlist.want_have_block(&cid, priority);
+        self.want_haves.entry(cid).or_default().push(ctx);
     }
 
     /// Removes the block from our want list and updates all peers.
     ///
     /// Can be either a user request or be called when the block was received.
     #[instrument(skip(self))]
-    pub fn cancel_block(&mut self, cid: &Cid) {
+    pub fn cancel_block(&mut self, ctx: u64, cid: &Cid) {
         inc!(BitswapMetrics::CancelBlocks);
 
-        debug!("cancel_block: {}", cid);
-        self.wantlist.cancel_block(&cid);
+        debug!("context:{} cancel_block: {}", ctx, cid);
+        if let Some(list) = self.wants.get_mut(cid) {
+            list.retain(|i| i != &ctx);
+        }
 
         for state in self.ledgers.values_mut() {
             state.cancel_block(cid);
@@ -408,11 +428,13 @@ impl Bitswap {
     }
 
     #[instrument(skip(self))]
-    pub fn cancel_want_block(&mut self, cid: &Cid) {
+    pub fn cancel_want_block(&mut self, ctx: u64, cid: &Cid) {
         inc!(BitswapMetrics::CancelWantBlocks);
 
         debug!("cancel_want_block: {}", cid);
-        self.wantlist.remove_want_block(&cid);
+        if let Some(list) = self.want_haves.get_mut(cid) {
+            list.retain(|i| i != &ctx);
+        }
 
         for state in self.ledgers.values_mut() {
             state.remove_want_block(cid);
@@ -545,7 +567,6 @@ impl NetworkBehaviour for Bitswap {
                         }
                     }
 
-                    self.wantlist.cancel_block(&block.cid);
                     for (id, state) in self.ledgers.iter_mut() {
                         if id == &peer_id {
                             state.remove_block(&block.cid);
@@ -553,36 +574,40 @@ impl NetworkBehaviour for Bitswap {
                             state.cancel_block(&block.cid);
                         }
                     }
+                    if let Some(ctx) = self.wants.remove(&block.cid) {
+                        let event = BitswapEvent::OutboundQueryCompleted {
+                            result: QueryResult::Want(WantResult::Ok {
+                                ctx,
+                                sender: peer_id,
+                                cid: block.cid,
+                                data: block.data.clone(),
+                            }),
+                        };
 
-                    let event = BitswapEvent::OutboundQueryCompleted {
-                        result: QueryResult::Want(WantResult::Ok {
-                            sender: peer_id,
-                            cid: block.cid,
-                            data: block.data.clone(),
-                        }),
-                    };
-
-                    inc!(BitswapMetrics::EventsBackpressureIn);
-                    self.events
-                        .push_back(NetworkBehaviourAction::GenerateEvent(event));
+                        inc!(BitswapMetrics::EventsBackpressureIn);
+                        self.events
+                            .push_back(NetworkBehaviourAction::GenerateEvent(event));
+                    }
                 }
 
                 for bp in message.block_presences().iter().filter(|bp| bp.is_have()) {
                     inc!(BitswapMetrics::CancelWantBlocks);
-                    self.wantlist.remove_want_block(&bp.cid);
                     for state in self.ledgers.values_mut() {
                         state.remove_want_block(&bp.cid);
                     }
 
-                    let event = BitswapEvent::OutboundQueryCompleted {
-                        result: QueryResult::FindProviders(FindProvidersResult::Ok {
-                            cid: bp.cid,
-                            provider: peer_id,
-                        }),
-                    };
-                    inc!(BitswapMetrics::EventsBackpressureIn);
-                    self.events
-                        .push_back(NetworkBehaviourAction::GenerateEvent(event));
+                    if let Some(ctx) = self.want_haves.remove(&bp.cid) {
+                        let event = BitswapEvent::OutboundQueryCompleted {
+                            result: QueryResult::FindProviders(FindProvidersResult::Ok {
+                                ctx,
+                                cid: bp.cid,
+                                provider: peer_id,
+                            }),
+                        };
+                        inc!(BitswapMetrics::EventsBackpressureIn);
+                        self.events
+                            .push_back(NetworkBehaviourAction::GenerateEvent(event));
+                    }
                 }
 
                 // Propagate Want Events
@@ -825,6 +850,8 @@ mod tests {
             trace!("peer2: dialing peer1 at {}", addr);
             Swarm::dial(&mut swarm2, addr).unwrap();
 
+            let find_ctx = 0;
+            let want_ctx = 1;
             let orig_cid = cid;
             loop {
                 match swarm2.next().await {
@@ -837,28 +864,36 @@ mod tests {
                         assert_eq!(peer_id, peer1_id);
 
                         // wait for the connection to send the want
-                        swarm2.behaviour_mut().find_providers(cid, 1000);
+                        swarm2.behaviour_mut().find_providers(find_ctx, cid, 1000);
                     }
                     Some(SwarmEvent::Behaviour(BitswapEvent::OutboundQueryCompleted {
                         result:
-                            QueryResult::FindProviders(FindProvidersResult::Ok { cid, provider }),
+                            QueryResult::FindProviders(FindProvidersResult::Ok { ctx, cid, provider }),
                     })) => {
                         trace!("peer2: findproviders: {}", cid);
                         assert_eq!(orig_cid, cid);
-
+                        assert_eq!(vec![find_ctx], ctx);
                         assert_eq!(provider, peer1_id);
 
                         assert!(received_have.load(std::sync::atomic::Ordering::SeqCst));
 
                         swarm2.behaviour_mut().want_block(
+                            want_ctx,
                             cid,
                             1000,
                             [peer1_id].into_iter().collect(),
                         );
                     }
                     Some(SwarmEvent::Behaviour(BitswapEvent::OutboundQueryCompleted {
-                        result: QueryResult::Want(WantResult::Ok { sender, cid, data }),
+                        result:
+                            QueryResult::Want(WantResult::Ok {
+                                ctx,
+                                sender,
+                                cid,
+                                data,
+                            }),
                     })) => {
+                        assert_eq!(vec![want_ctx], ctx);
                         assert_eq!(sender, peer1_id);
                         assert_eq!(orig_cid, cid);
                         return data;
@@ -1073,9 +1108,10 @@ mod tests {
                             // wait for the connection
 
                             if supports_providers {
-                                swarm2.behaviour_mut().find_providers(cid, 1000);
+                                swarm2.behaviour_mut().find_providers(0, cid, 1000);
                             } else {
                                 swarm2.behaviour_mut().want_block(
+                                    0,
                                     cid,
                                     1000,
                                     [peer1_id].into_iter().collect(),
@@ -1084,7 +1120,11 @@ mod tests {
                         }
                         Some(SwarmEvent::Behaviour(BitswapEvent::OutboundQueryCompleted {
                             result:
-                                QueryResult::FindProviders(FindProvidersResult::Ok { cid, provider }),
+                                QueryResult::FindProviders(FindProvidersResult::Ok {
+                                    ctx: _,
+                                    cid,
+                                    provider,
+                                }),
                         })) => {
                             assert!(
                                 supports_providers,
@@ -1107,13 +1147,20 @@ mod tests {
                             assert!(received_have.load(std::sync::atomic::Ordering::SeqCst));
 
                             swarm2.behaviour_mut().want_block(
+                                0,
                                 cid,
                                 1000,
                                 [peer1_id].into_iter().collect(),
                             );
                         }
                         Some(SwarmEvent::Behaviour(BitswapEvent::OutboundQueryCompleted {
-                            result: QueryResult::Want(WantResult::Ok { sender, cid, data }),
+                            result:
+                                QueryResult::Want(WantResult::Ok {
+                                    ctx: _,
+                                    sender,
+                                    cid,
+                                    data,
+                                }),
                         })) => {
                             match swarm2.behaviour_mut().ledgers.get(&peer1_id).unwrap().conn {
                                 ConnState::Connected(Some(p), _) => {

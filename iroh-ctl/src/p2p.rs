@@ -292,7 +292,7 @@ pub async fn run_command(rpc: Client, cmd: P2p) -> Result<()> {
                 }
             }
             DevCommands::FetchProvidersBitswap { cid } => {
-                let mut res = rpc.try_p2p()?.fetch_providers_bitswap(&cid).await?;
+                let mut res = rpc.try_p2p()?.fetch_providers_bitswap(0, &cid).await?;
                 while let Some(providers) = res.next().await {
                     let providers = providers?;
                     for provider in providers {
