@@ -17,7 +17,7 @@ use crate::{
     chunker::DEFAULT_CHUNK_SIZE_LIMIT,
     codecs::Codec,
     hamt::Hamt,
-    resolver::{ContentLoader, LoaderContext, OutMetrics, Path, Resolver},
+    resolver::{ContentLoader, LoaderContext, OutMetrics, Resolver},
 };
 
 pub(crate) mod unixfs_pb {
@@ -348,6 +348,7 @@ impl UnixfsNode {
 
     pub fn into_content_reader<T: ContentLoader>(
         self,
+        ctx: LoaderContext,
         loader: Resolver<T>,
         om: OutMetrics,
     ) -> Result<Option<UnixfsContentReader<T>>> {
@@ -365,7 +366,7 @@ impl UnixfsNode {
                     current_links,
                     loader,
                     out_metrics: om,
-                    ctx: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
+                    ctx: std::sync::Arc::new(tokio::sync::Mutex::new(ctx)),
                 }))
             }
             UnixfsNode::HamtShard(_, _) | UnixfsNode::Directory(_) => Ok(None),
@@ -396,7 +397,7 @@ pub enum UnixfsContentReader<T: ContentLoader> {
         current_links: Vec<VecDeque<Link>>,
         loader: Resolver<T>,
         out_metrics: OutMetrics,
-        ctx: std::sync::Arc<tokio::sync::Mutex<Option<LoaderContext>>>,
+        ctx: std::sync::Arc<tokio::sync::Mutex<LoaderContext>>,
     },
 }
 
@@ -522,7 +523,7 @@ fn load_next_node<T: ContentLoader + 'static>(
     current_node: &mut CurrentNodeState,
     current_links: &mut Vec<VecDeque<Link>>,
     loader: Resolver<T>,
-    ctx: std::sync::Arc<tokio::sync::Mutex<Option<LoaderContext>>>,
+    ctx: std::sync::Arc<tokio::sync::Mutex<LoaderContext>>,
 ) -> bool {
     // Load next node
     if current_links.is_empty() {
@@ -543,14 +544,7 @@ fn load_next_node<T: ContentLoader + 'static>(
 
     let fut = async move {
         let mut ctx = ctx.lock().await;
-        if ctx.is_none() {
-            *ctx = Some(LoaderContext::from_path(
-                loader.provider_cache().clone(),
-                Path::from_cid(link.cid),
-            ));
-        }
-        let ctx = ctx.as_mut().unwrap();
-        let loaded_cid = loader.loader().load_cid(&link.cid, ctx).await?;
+        let loaded_cid = loader.loader().load_cid(&link.cid, &mut ctx).await?;
         let node = UnixfsNode::decode(&link.cid, loaded_cid.data)?;
 
         Ok(node)
@@ -569,7 +563,7 @@ fn poll_read_file_at<T: ContentLoader + 'static>(
     buf: &mut tokio::io::ReadBuf<'_>,
     current_links: &mut Vec<VecDeque<Link>>,
     current_node: &mut CurrentNodeState,
-    ctx: std::sync::Arc<tokio::sync::Mutex<Option<LoaderContext>>>,
+    ctx: std::sync::Arc<tokio::sync::Mutex<LoaderContext>>,
 ) -> Poll<std::io::Result<()>> {
     loop {
         match current_node {
