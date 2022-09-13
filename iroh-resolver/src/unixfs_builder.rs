@@ -335,12 +335,12 @@ impl DirectoryBuilder {
         self
     }
 
-    pub fn dir(&mut self, dir: Directory) -> Result<&mut Self> {
+    pub fn add_dir(&mut self, dir: Directory) -> Result<&mut Self> {
         ensure!(self.recursive, "recursive directories not allowed");
         Ok(self.entry(Entry::Directory(dir)))
     }
 
-    pub fn file(&mut self, file: File) -> &mut Self {
+    pub fn add_file(&mut self, file: File) -> &mut Self {
         self.entry(Entry::File(file))
     }
 
@@ -471,10 +471,10 @@ async fn make_dir_from_path<P: Into<PathBuf>>(path: P, recursive: bool) -> Resul
         let path = entry.path();
         if path.is_file() {
             let f = FileBuilder::new().path(path).build().await?;
-            dir.file(f);
+            dir.add_file(f);
         } else if path.is_dir() {
             let d = make_dir_from_path(path, recursive).await?;
-            dir.dir(d)?;
+            dir.add_dir(d)?;
         } else {
             anyhow::bail!("directory entry is neither file nor directory")
         }
@@ -519,7 +519,7 @@ mod tests {
         };
         assert_eq!(baz_encoded.len(), 1);
 
-        dir.file(bar).file(baz);
+        dir.add_file(bar).add_file(baz);
 
         let dir = dir.build()?;
 
@@ -542,7 +542,7 @@ mod tests {
         let dir = dir.build()?;
 
         let mut no_recursive = DirectoryBuilder::new();
-        if no_recursive.dir(dir).is_ok() {
+        if no_recursive.add_dir(dir).is_ok() {
             panic!("shouldn't be able to add a directory to a non-recursive directory builder");
         }
 
@@ -552,7 +552,7 @@ mod tests {
         let mut recursive_dir_builder = DirectoryBuilder::new();
         recursive_dir_builder.recursive();
         recursive_dir_builder
-            .dir(dir)
+            .add_dir(dir)
             .expect("recursive directories allowed");
         Ok(())
     }
@@ -591,7 +591,7 @@ mod tests {
         };
         assert_eq!(baz_encoded.len(), 1);
 
-        dir.file(bar).file(baz);
+        dir.add_file(bar).add_file(baz);
 
         let dir = dir.build()?;
 
@@ -649,7 +649,7 @@ mod tests {
         };
         assert_eq!(baz_encoded.len(), 9);
 
-        dir.file(bar).file(baz);
+        dir.add_file(bar).add_file(baz);
 
         let dir = dir.build()?;
 
@@ -694,7 +694,7 @@ mod tests {
             file_builder.name("foo.txt");
             file_builder.content_bytes(Bytes::from("hello world"));
             let file = file_builder.build().await?;
-            builder.file(file);
+            builder.add_file(file);
         }
 
         // under DIRECTORY_LINK_LIMIT should still be a basic directory
@@ -704,7 +704,7 @@ mod tests {
         file_builder.name("foo.txt");
         file_builder.content_bytes(Bytes::from("hello world"));
         let file = file_builder.build().await?;
-        builder.file(file);
+        builder.add_file(file);
 
         // at directory link limit should be processed as a hamt
         assert_eq!(DirectoryType::Hamt, builder.typ);
