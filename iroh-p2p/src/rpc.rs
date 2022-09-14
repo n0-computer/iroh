@@ -53,7 +53,7 @@ impl RpcP2p for P2p {
         let ctx = req.ctx;
         let cid = Cid::read_bytes(io::Cursor::new(req.cid))?;
 
-        trace!("context:{}, received BitswapRequest: {:?}", ctx, cid);
+        trace!("context:{}, received fetch_bitswap: {:?}", ctx, cid);
         let providers = req
             .providers
             .with_context(|| format!("missing providers for: {}", cid))?;
@@ -99,7 +99,7 @@ impl RpcP2p for P2p {
         let ctx = req.ctx;
         let cid = Cid::read_bytes(io::Cursor::new(req.cid))?;
 
-        trace!("context:{} received BitswapRequest: {:?}", ctx, cid);
+        trace!("context:{} received inject_provider_bitswap: {:?}", ctx, cid);
         let providers = req
             .providers
             .with_context(|| format!("missing providers for: {}", cid))?;
@@ -131,7 +131,7 @@ impl RpcP2p for P2p {
         &self,
         req: ProviderKey,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<Providers>> + Send>>> {
-        trace!("received ProviderRequest: {:?}", req.key);
+        trace!("received fetch_provider_dht: {:?}", req.key);
         let (s, r) = channel(1024);
         let msg = RpcMessage::ProviderRequest {
             key: ProviderRequestKey::Dht(req.key.clone().into()),
@@ -155,7 +155,7 @@ impl RpcP2p for P2p {
         req: BitswapKey,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<BitswapProviders>> + Send>>> {
         let ctx = req.ctx;
-        trace!("context:{} received ProviderRequest: {:?}", ctx, req.key);
+        trace!("context:{} received fetch_provider_bitswap: {:?}", ctx, req.key);
 
         let (s, r) = channel(1024);
         let msg = RpcMessage::ProviderRequest {

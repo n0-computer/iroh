@@ -537,7 +537,10 @@ impl LoaderContext {
 
         if this.providers.len() < 5 {
             if let Some(ref root) = this.root() {
-                streams.push(fetch_providers(self.id, client, root).await?);
+                // only load if the root is actually different from the current cid
+                if root != cid {
+                    streams.push(fetch_providers(self.id, client, root).await?);
+                }
             }
         }
 
@@ -598,45 +601,60 @@ impl ContentLoader for Client {
         let ctx_id = ctx.id();
 
         let mut seen_providers = providers.clone();
+        let (s, mut r) = tokio::sync::oneshot::channel();
         let providers_task = tokio::spawn(async move {
-            while let Some(new_providers) = providers_stream.next().await {
-                match new_providers {
-                    Ok(new_providers) => {
-                        let actual_new_providers: HashSet<_> =
-                            new_providers.difference(&seen_providers).copied().collect();
-                        if !actual_new_providers.is_empty() {
-                            info!(
-                                "{:?} found providers {} for: {}",
-                                ctx_id,
-                                actual_new_providers.len(),
-                                cid
-                            );
-                            seen_providers.extend(actual_new_providers.clone());
-                            // update cache
-                            ctx.put_providers(cid, actual_new_providers.clone()).await;
-                            if let Err(e) = p2p
-                                .inject_provider_bitswap(ctx.id().into(), cid, actual_new_providers)
-                                .await
-                            {
-                                warn!(
-                                    "{:?} failed to inject providers: {}: {:?}",
-                                    ctx.id(),
-                                    cid,
-                                    e
-                                );
+            let mut num_new_providers = 0;
+            loop {
+                tokio::select! {
+                    _ = &mut r => {
+                        // shutdown
+                        break;
+                    }
+                    new_providers = providers_stream.next() => {
+                        match new_providers {
+                            Some(Ok(new_providers)) => {
+                                let actual_new_providers: HashSet<_> =
+                                    new_providers.difference(&seen_providers).copied().collect();
+                                if !actual_new_providers.is_empty() {
+                                    info!(
+                                        "{:?} found providers {} for: {}",
+                                        ctx_id,
+                                        actual_new_providers.len(),
+                                        cid
+                                    );
+                                    num_new_providers += actual_new_providers.len();
+                                    seen_providers.extend(actual_new_providers.clone());
+                                    // update cache
+                                    ctx.put_providers(cid, actual_new_providers.clone()).await;
+                                    if let Err(e) = p2p
+                                        .inject_provider_bitswap(ctx.id().into(), cid, actual_new_providers)
+                                        .await
+                                    {
+                                        warn!(
+                                            "{:?} failed to inject providers: {}: {:?}",
+                                            ctx.id(),
+                                            cid,
+                                            e
+                                        );
+                                    }
+                                }
+                            }
+                            Some(Err(e)) => {
+                                warn!("{:?} provider fetch failed for: {}: {:?}", ctx.id(), cid, e);
+                                // ignoring errors, as we try to collect as many providers as possible
+                            }
+                            None => {
+                                // stream is done
+                                break;
                             }
                         }
-                    }
-                    Err(e) => {
-                        warn!("{:?} provider fetch failed for: {}: {:?}", ctx.id(), cid, e);
-                        // ignoring errors, as we try to collect as many providers as possible
                     }
                 }
             }
             trace!(
                 "{:?} finished fetching providers, total found {}",
                 ctx.id(),
-                seen_providers.len()
+                num_new_providers,
             );
         });
 
@@ -645,6 +663,9 @@ impl ContentLoader for Client {
             .try_p2p()?
             .fetch_bitswap(ctx_id.into(), cid, providers)
             .await?;
+
+        // shutdown providers
+        s.send(()).ok();
 
         // trigger storage in the background
         let clone = bytes.clone();
@@ -677,7 +698,8 @@ impl ContentLoader for Client {
         });
 
         trace!("retrieved from p2p");
-        providers_task.abort();
+        // makes sure we properly shutdown
+        providers_task.await?;
 
         Ok(LoadedCid {
             data: bytes,
