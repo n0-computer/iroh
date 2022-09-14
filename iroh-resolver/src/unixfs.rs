@@ -321,6 +321,7 @@ impl UnixfsNode {
     /// If this is a directory or hamt shard, returns a stream that yields all children of it.
     pub fn as_child_reader<'a, 'b: 'a, T: ContentLoader>(
         &'a self,
+        ctx: LoaderContext,
         loader: &'b Resolver<T>,
         om: OutMetrics,
     ) -> Result<Option<UnixfsChildStream<'a>>> {
@@ -339,7 +340,7 @@ impl UnixfsNode {
                 }))
             }
             UnixfsNode::HamtShard(_, hamt) => Ok(Some(UnixfsChildStream::Hamt {
-                stream: hamt.children(loader).boxed(),
+                stream: hamt.children(ctx, loader).boxed(),
                 pos: 0,
                 out_metrics: om,
             })),

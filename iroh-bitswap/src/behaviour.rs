@@ -414,19 +414,16 @@ impl Bitswap {
         // TODO: better strategies, than just all peers.
         // TODO: use peers that connect later
 
-        let mut peers = AHashSet::new();
-        for peer in self
-            .connected_peers
-            .iter()
-            .chain(self.known_peers.iter().filter_map(|(key, value)| {
-                // Only supported on 1.2.0
-                if value == &None || value == &Some(ProtocolId::Bitswap120) {
-                    return Some(key);
-                }
-                None
-            }))
-        {
-            if peers.len() == MAX_PROVIDERS {
+        let mut peers: AHashSet<PeerId> = self.connected_peers.iter().take(500).copied().collect();
+
+        for peer in self.known_peers.iter().filter_map(|(key, value)| {
+            // Only supported on 1.2.0
+            if value == &None || value == &Some(ProtocolId::Bitswap120) {
+                return Some(key);
+            }
+            None
+        }) {
+            if peers.len() >= MAX_PROVIDERS {
                 break;
             }
             peers.insert(*peer);
@@ -501,7 +498,6 @@ impl NetworkBehaviour for Bitswap {
         if other_established == 0 {
             inc!(BitswapMetrics::ConnectedPeers);
             self.add_peer(*peer_id, None);
-            self.connected_peers.insert(*peer_id);
             self.dialing_peers.remove(peer_id);
             self.with_ledger(*peer_id, |state| {
                 state.conn = ConnState::Connected(None, *conn);
@@ -765,7 +761,8 @@ impl NetworkBehaviour for Bitswap {
                                 }
                                 peer_state.full = false;
                                 trace!(
-                                    "sending message for context:{:?} {:?}",
+                                    "sending message for {:?} context:{:?} {:?}",
+                                    peer_state.conn,
                                     peer_state.ctx_wants,
                                     peer_state.ctx_want_haves,
                                 );
