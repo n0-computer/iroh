@@ -4,7 +4,7 @@ use futures::{stream::BoxStream, Stream, StreamExt};
 use once_cell::sync::OnceCell;
 
 use crate::{
-    resolver::{ContentLoader, OutContent, Path, Resolver},
+    resolver::{ContentLoader, LoaderContext, OutContent, Path, Resolver},
     unixfs::{self, HamtHashFunction, Link, Links, PbLinks, UnixfsNode},
 };
 
@@ -55,10 +55,11 @@ impl Hamt {
 
     pub async fn get<C: ContentLoader>(
         &self,
+        ctx: LoaderContext,
         loader: &Resolver<C>,
         key: &[u8],
     ) -> Result<Option<(&Link, &UnixfsNode)>> {
-        self.root.get(loader, key).await
+        self.root.get(ctx, loader, key).await
     }
 
     pub fn padding_len(&self) -> usize {
@@ -74,19 +75,21 @@ impl Hamt {
 
     pub fn children<'a, 'b: 'a, C: ContentLoader>(
         &'a self,
+        ctx: LoaderContext,
         loader: &'b Resolver<C>,
     ) -> impl Stream<Item = Result<Link>> + 'a {
-        self.root.children(loader)
+        self.root.children(ctx, loader)
     }
 }
 
 impl InnerNode {
     pub async fn load_from_link<C: ContentLoader>(
+        ctx: crate::resolver::LoaderContext,
         link: &Link,
         loader: &Resolver<C>,
     ) -> Result<Self> {
         let path = Path::from_cid(link.cid);
-        let out = loader.resolve(path).await?;
+        let out = loader.resolve_with_ctx(ctx, path).await?;
 
         match out.content {
             OutContent::Unixfs(value) => match value {
@@ -116,12 +119,13 @@ impl InnerNode {
     }
     fn children<'a, 'b: 'a, C: ContentLoader>(
         &'a self,
+        ctx: LoaderContext,
         loader: &'b Resolver<C>,
     ) -> impl Stream<Item = Result<Link>> + 'a {
         async_stream::try_stream! {
             match self {
                 InnerNode::Node { node, .. } => {
-                    let mut children = node.children(loader);
+                    let mut children = node.children(ctx, loader);
                     while let Some(link) = children.next().await {
                         let link = link?;
                         yield link;
@@ -136,7 +140,7 @@ impl InnerNode {
                         }
                     }
                     UnixfsNode::HamtShard(_, hamt) => {
-                        let mut children = hamt.children(loader);
+                        let mut children = hamt.children(ctx, loader);
                         while let Some(link) = children.next().await {
                             let link = link?;
                             yield link;
@@ -186,12 +190,13 @@ impl Node {
 
     pub async fn get<C: ContentLoader>(
         &self,
+        ctx: LoaderContext,
         loader: &Resolver<C>,
         key: &[u8],
     ) -> Result<Option<(&Link, &UnixfsNode)>> {
         let hashed_key = hash_key(key);
         let res = self
-            .get_value(loader, &mut HashBits::new(&hashed_key), key, 0)
+            .get_value(ctx, loader, &mut HashBits::new(&hashed_key), key, 0)
             .await?;
 
         Ok(res)
@@ -200,6 +205,7 @@ impl Node {
     #[async_recursion]
     pub async fn get_value<C: ContentLoader>(
         &self,
+        ctx: LoaderContext,
         loader: &Resolver<C>,
         hashed_key: &mut HashBits<'_, HASH_BIT_LENGTH>,
         key: &[u8],
@@ -213,7 +219,7 @@ impl Node {
 
         let cindex = self.index_for_bit_pos(idx);
         let child = self.get_child(cindex);
-        let cached_node = self.load_child(loader, child).await?;
+        let cached_node = self.load_child(ctx.clone(), loader, child).await?;
         match cached_node {
             InnerNode::Node { node, value } => {
                 let name = child
@@ -226,7 +232,8 @@ impl Node {
                 if key == name {
                     Ok(Some((&child.link, value)))
                 } else {
-                    node.get_value(loader, hashed_key, key, depth + 1).await
+                    node.get_value(ctx, loader, hashed_key, key, depth + 1)
+                        .await
                 }
             }
             InnerNode::Leaf { link, value } => {
@@ -246,13 +253,14 @@ impl Node {
 
     async fn load_child<'a, C: ContentLoader>(
         &self,
+        ctx: LoaderContext,
         loader: &Resolver<C>,
         child: &'a NodeLink,
     ) -> Result<&'a InnerNode> {
         if let Some(cached_node) = child.cache.get() {
             Ok(cached_node)
         } else {
-            let node = InnerNode::load_from_link(&child.link, loader).await?;
+            let node = InnerNode::load_from_link(ctx, &child.link, loader).await?;
             Ok(child.cache.get_or_init(|| Box::new(node)))
         }
     }
@@ -269,6 +277,7 @@ impl Node {
 
     fn children<'a, 'b: 'a, C: ContentLoader>(
         &'a self,
+        ctx: LoaderContext,
         loader: &'b Resolver<C>,
     ) -> BoxStream<'a, Result<Link>> {
         async_stream::try_stream! {
@@ -285,8 +294,8 @@ impl Node {
                         };
                     } else {
                         // recurse
-                        let child = self.load_child(loader, pointer).await?;
-                        let children = child.children(loader);
+                        let child = self.load_child(ctx.clone(), loader, pointer).await?;
+                        let children = child.children(ctx.clone(), loader);
                         tokio::pin!(children);
                         while let Some(link) = children.next().await {
                             let link = link?;

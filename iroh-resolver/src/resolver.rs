@@ -193,7 +193,7 @@ impl Out {
         om: OutMetrics,
     ) -> Result<Option<UnixfsChildStream<'a>>> {
         match &self.content {
-            OutContent::Unixfs(node) => node.as_child_reader(loader, om),
+            OutContent::Unixfs(node) => node.as_child_reader(self.context.clone(), loader, om),
             _ => Ok(None),
         }
     }
@@ -768,9 +768,14 @@ impl<T: ContentLoader> Resolver<T> {
     /// Resolves through a given path, returning the [`Cid`] and raw bytes of the final leaf.
     #[tracing::instrument(skip(self))]
     pub async fn resolve(&self, path: Path) -> Result<Out> {
-        // Resolve the root block.
-        let mut ctx =
+        let ctx =
             LoaderContext::from_path(self.next_id(), self.provider_cache.clone(), path.clone());
+
+        self.resolve_with_ctx(ctx, path).await
+    }
+
+    pub async fn resolve_with_ctx(&self, mut ctx: LoaderContext, path: Path) -> Result<Out> {
+        // Resolve the root block.
         let (root_cid, loaded_cid) = self.resolve_root(&path, &mut ctx).await?;
         if loaded_cid.source == Source::Bitswap {
             inc!(ResolverMetrics::CacheMiss);
@@ -813,7 +818,7 @@ impl<T: ContentLoader> Resolver<T> {
             }
             UnixfsNode::HamtShard(_, hamt) => {
                 let (next_link, next_node) = hamt
-                    .get(self, part.as_bytes())
+                    .get(ctx.clone(), self, part.as_bytes())
                     .await?
                     .ok_or_else(|| anyhow!("UnixfsNode::HamtShard link '{}' not found", part))?;
                 // TODO: is this the right way to to resolved path here?
