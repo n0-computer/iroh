@@ -13,6 +13,7 @@ use crate::unixfs_builder::encode_unixfs_pb;
 /// https://github.com/ipfs/specs/blob/main/UNIXFS.md#layout
 pub const DEFAULT_DEGREE: usize = 174;
 
+#[derive(Debug, PartialEq, Eq)]
 pub enum TreeBuilder {
     /// TreeBuilder that builds a "balanced tree" with a max degree size of
     /// degree

@@ -329,7 +329,7 @@ jobs:
       - restore-sccache-cache
       - run:
           name: Run cargo clippy (default features)
-          command: cargo clippy --all --all-targets -- -A clippy::derive-partial-eq-without-eq -D warnings
+          command: cargo clippy --all --all-targets -- -D warnings
       - save-sccache-cache
 
   build_release_x86_64:
