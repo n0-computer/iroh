@@ -124,6 +124,8 @@ impl Encoder for BitswapCodec {
     type Error = BitswapHandlerError;
 
     fn encode(&mut self, item: Self::Item, dst: &mut BytesMut) -> Result<(), Self::Error> {
+        tracing::trace!("sending message protocol: {:?}\n{:?}", self.protocol, item);
+
         let buf = item.into_bytes(self.protocol);
 
         // length prefix the protobuf message, ensuring the max limit is not hit

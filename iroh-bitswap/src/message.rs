@@ -1,197 +1,45 @@
 use core::convert::TryFrom;
 
 use ahash::{AHashMap, AHashSet};
-use bytes::{Buf, BytesMut};
+use anyhow::{Context, Result};
+use bytes::Bytes;
 use cid::Cid;
+use multihash::{Code, MultihashDigest};
+use once_cell::sync::Lazy;
 use prost::Message;
 
 use crate::block::Block;
-use crate::error::BitswapError;
 use crate::prefix::Prefix;
-use crate::ProtocolId;
 
-pub(crate) mod pb {
+mod pb {
     #![allow(clippy::all)]
     include!(concat!(env!("OUT_DIR"), "/bitswap_pb.rs"));
 }
 
-/// Priority of a wanted block.
-pub type Priority = i32;
+/// The maximum size a single entry inside a wantlist can have.
+static MAX_ENTRY_SIZE: Lazy<usize> = Lazy::new(|| {
+    let cid = Cid::new_v0(Code::Sha2_256.digest(b"cid")).unwrap();
+    let entry = Entry {
+        cid,
+        priority: i32::MAX,
+        want_type: WantType::Have,
+        send_dont_have: true,
+        cancel: true,
+    };
+    entry.encoded_len()
+});
 
-#[derive(Default, Clone, Debug, PartialEq, Eq)]
-pub struct Wantlist {
-    /// Wanted blocks.
-    want_blocks: AHashMap<Cid, Priority>,
-    /// Blocks to cancel.
-    cancel_blocks: AHashSet<Cid>,
-    /// Blocks this peer provides.
-    want_have_blocks: AHashMap<Cid, Priority>,
-    full: bool,
-}
-
-impl Wantlist {
-    pub fn is_empty(&self) -> bool {
-        self.want_blocks.is_empty()
-            && self.cancel_blocks.is_empty()
-            && self.want_have_blocks.is_empty()
-    }
-
-    /// Returns the list of wanted blocks.
-    pub fn blocks(&self) -> impl Iterator<Item = (&Cid, Priority)> {
-        self.want_blocks
-            .iter()
-            .map(|(cid, priority)| (cid, *priority))
-    }
-
-    pub fn want_have_blocks(&self) -> impl Iterator<Item = (&Cid, Priority)> {
-        self.want_have_blocks
-            .iter()
-            .map(|(cid, priority)| (cid, *priority))
-    }
-
-    /// Returns the list of cancelled blocks.
-    pub fn cancels(&self) -> impl Iterator<Item = &Cid> {
-        self.cancel_blocks.iter()
-    }
-
-    /// Adds a block to the want list.
-    pub fn want_block(&mut self, cid: &Cid, priority: Priority) {
-        self.cancel_blocks.remove(cid);
-        self.want_blocks.insert(*cid, priority);
-    }
-
-    /// Adds a block to the have want list.
-    pub fn want_have_block(&mut self, cid: &Cid, priority: Priority) {
-        if !self.want_blocks.contains_key(cid) {
-            self.want_have_blocks.insert(*cid, priority);
-        }
-    }
-
-    /// Adds a block to the cancel list.
-    pub fn cancel_block(&mut self, cid: &Cid) {
-        self.want_blocks.remove(cid);
-        self.cancel_blocks.insert(*cid);
-    }
-
-    pub fn remove_block(&mut self, cid: &Cid) {
-        self.want_blocks.remove(cid);
-    }
-
-    pub fn remove_want_block(&mut self, cid: &Cid) {
-        self.want_have_blocks.remove(cid);
-    }
-
-    pub fn set_full(&mut self, full: bool) {
-        self.full = full;
-    }
-
-    pub fn into_pb(self, protocol: ProtocolId) -> pb::message::Wantlist {
-        use pb::message::wantlist::WantType;
-
-        let mut wantlist = pb::message::Wantlist {
-            entries: Vec::with_capacity(self.want_blocks.len() + self.cancel_blocks.len()),
-            full: self.full,
-        };
-
-        for (cid, &priority) in &self.want_blocks {
-            let entry = pb::message::wantlist::Entry {
-                block: cid.to_bytes(),
-                priority,
-                cancel: false,
-                want_type: WantType::Block as _,
-                send_dont_have: false,
-            };
-            wantlist.entries.push(entry);
-        }
-
-        if protocol == ProtocolId::Bitswap120 {
-            // Only 1.2.0 introduces the notion of want haves
-            for (cid, &priority) in &self.want_have_blocks {
-                let entry = pb::message::wantlist::Entry {
-                    block: cid.to_bytes(),
-                    priority,
-                    cancel: false,
-                    want_type: WantType::Have as _,
-                    send_dont_have: false,
-                };
-                wantlist.entries.push(entry);
-            }
-        }
-
-        for cid in &self.cancel_blocks {
-            let entry = pb::message::wantlist::Entry {
-                block: cid.to_bytes(),
-                priority: 1,
-                cancel: true,
-                want_type: WantType::Block as _,
-                send_dont_have: false,
-            };
-            wantlist.entries.push(entry);
-        }
-
-        wantlist
-    }
-
-    pub fn from_pb(proto: pb::message::Wantlist) -> Result<Self, BitswapError> {
-        let mut wantlist = Wantlist::default();
-
-        for entry in proto.entries {
-            let cid = Cid::try_from(entry.block)?;
-            match entry.want_type {
-                ty if pb::message::wantlist::WantType::Block as i32 == ty => {
-                    if entry.cancel {
-                        wantlist.cancel_blocks.insert(cid);
-                    } else {
-                        wantlist.want_blocks.insert(cid, entry.priority);
-                    }
-                }
-                ty if pb::message::wantlist::WantType::Have as i32 == ty => {
-                    if !entry.cancel {
-                        wantlist.want_have_blocks.insert(cid, entry.priority);
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        Ok(wantlist)
-    }
-}
-
-/// A bitswap message.
-#[derive(Default, Clone, Debug, PartialEq, Eq)]
-pub struct BitswapMessage {
-    wantlist: Wantlist,
-    /// List of blocks to send.
-    blocks: Vec<Block>,
-    block_presences: Vec<BlockPresence>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// Represents a HAVE / DONT_HAVE for a given Cid.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BlockPresence {
     pub cid: Cid,
     pub typ: BlockPresenceType,
 }
 
-#[derive(
-    Clone, Copy, Debug, PartialEq, Eq, num_enum::IntoPrimitive, num_enum::TryFromPrimitive,
-)]
-#[repr(i32)]
-pub enum BlockPresenceType {
-    Have = 0,
-    DontHave = 1,
-}
-
 impl BlockPresence {
-    pub fn have(cid: Cid) -> Self {
-        BlockPresence {
-            cid,
-            typ: BlockPresenceType::Have,
-        }
-    }
-
-    pub fn is_have(&self) -> bool {
-        matches!(self.typ, BlockPresenceType::Have)
+    pub fn encoded_len(&self) -> usize {
+        let bpm: pb::message::BlockPresence = self.clone().into();
+        bpm.encoded_len()
     }
 }
 
@@ -204,6 +52,15 @@ impl From<BlockPresence> for pb::message::BlockPresence {
     }
 }
 
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, num_enum::IntoPrimitive, num_enum::TryFromPrimitive,
+)]
+#[repr(i32)]
+pub enum BlockPresenceType {
+    Have = 0,
+    DontHave = 1,
+}
+
 impl From<BlockPresenceType> for pb::message::BlockPresenceType {
     fn from(ty: BlockPresenceType) -> Self {
         match ty {
@@ -213,255 +70,325 @@ impl From<BlockPresenceType> for pb::message::BlockPresenceType {
     }
 }
 
-impl BitswapMessage {
-    pub fn new() -> Self {
-        Self::default()
-    }
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, num_enum::IntoPrimitive, num_enum::TryFromPrimitive,
+)]
+#[repr(i32)]
+pub enum WantType {
+    Block = 0,
+    Have = 1,
+}
 
-    /// Is message empty.
-    pub fn is_empty(&self) -> bool {
-        self.wantlist.is_empty() && self.blocks.is_empty() && self.block_presences.is_empty()
-    }
-
-    /// Returns the list of blocks.
-    pub fn blocks(&self) -> &[Block] {
-        &self.blocks
-    }
-
-    /// Returns the list of blocks.
-    pub fn block_presences(&self) -> &[BlockPresence] {
-        &self.block_presences
-    }
-
-    pub fn remove_block(&mut self, i: usize) -> Block {
-        self.blocks.remove(i)
-    }
-
-    /// Pops a block from the message.
-    pub fn pop_block(&mut self) -> Option<Block> {
-        self.blocks.pop()
-    }
-
-    pub fn pop_block_presence(&mut self) -> Option<BlockPresence> {
-        self.block_presences.pop()
-    }
-
-    pub fn wantlist(&self) -> &Wantlist {
-        &self.wantlist
-    }
-
-    pub fn wantlist_mut(&mut self) -> &mut Wantlist {
-        &mut self.wantlist
-    }
-
-    /// Adds a `Block` to the message.
-    pub fn add_block(&mut self, block: Block) {
-        self.blocks.push(block);
-    }
-
-    /// Adds a `BlockPresence` to the message.
-    pub fn add_block_presence(&mut self, bp: BlockPresence) {
-        self.block_presences.push(bp);
-    }
-
-    /// Turns this `Message` into a message that can be sent to a substream.
-    pub fn to_bytes(&self, protocol: ProtocolId) -> BytesMut {
-        self.clone().into_bytes(protocol)
-    }
-
-    pub fn into_bytes(self, protocol: ProtocolId) -> BytesMut {
-        let proto = match protocol {
-            ProtocolId::Bitswap100 | ProtocolId::Legacy => {
-                let mut blocks = Vec::with_capacity(self.blocks.len());
-                for block in self.blocks.into_iter() {
-                    blocks.push(block.data);
-                }
-                pb::Message {
-                    wantlist: if self.wantlist.is_empty() {
-                        None
-                    } else {
-                        Some(self.wantlist.into_pb(protocol))
-                    },
-                    payload: Vec::new(),
-                    block_presences: Vec::new(),
-                    blocks,
-                    pending_bytes: Default::default(), // unused
-                }
-            }
-            _ => {
-                let mut payload = Vec::with_capacity(self.blocks.len());
-                for block in self.blocks.into_iter() {
-                    let prefix: Prefix = block.cid().into();
-                    let b = pb::message::Block {
-                        prefix: prefix.to_bytes(),
-                        data: block.data,
-                    };
-                    payload.push(b);
-                }
-                let block_presences = self.block_presences.into_iter().map(|p| p.into()).collect();
-                pb::Message {
-                    wantlist: if self.wantlist.is_empty() {
-                        None
-                    } else {
-                        Some(self.wantlist.into_pb(protocol))
-                    },
-                    payload,
-                    block_presences,
-                    blocks: Vec::new(),
-                    pending_bytes: Default::default(), // unused
-                }
-            }
-        };
-
-        let mut res = BytesMut::with_capacity(proto.encoded_len());
-        proto
-            .encode(&mut res)
-            .expect("there is no situation in which the protobuf message can be invalid");
-
-        res
-    }
-
-    /// Creates a `Message` from bytes that were received from a substream.
-    pub fn from_bytes<B: Buf>(protocol: ProtocolId, bytes: B) -> Result<Self, BitswapError> {
-        let proto = pb::Message::decode(bytes)?;
-        let proto_wantlist = proto.wantlist.unwrap_or_default();
-
-        match protocol {
-            ProtocolId::Bitswap100 | ProtocolId::Legacy => {
-                let mut blocks = Vec::with_capacity(proto.payload.len());
-                for data in proto.blocks.into_iter() {
-                    let block = Block::from_v0_data(data)?;
-                    blocks.push(block);
-                }
-
-                let mut block_presences = Vec::with_capacity(proto.block_presences.len());
-                let wantlist = Wantlist::from_pb(proto_wantlist)?;
-
-                for bp in proto.block_presences {
-                    let cid = Cid::try_from(bp.cid)?;
-                    let entry = BlockPresence {
-                        cid,
-                        typ: bp.r#type.try_into()?,
-                    };
-                    block_presences.push(entry);
-                }
-
-                Ok(BitswapMessage {
-                    wantlist,
-                    blocks,
-                    block_presences,
-                })
-            }
-            _ => {
-                let mut blocks = Vec::with_capacity(proto.payload.len());
-                for payload in proto.payload {
-                    let prefix = Prefix::new(&payload.prefix)?;
-                    let cid = prefix.to_cid(&payload.data)?;
-                    let block = Block::new(payload.data, cid);
-                    blocks.push(block);
-                }
-
-                let mut block_presences = Vec::with_capacity(proto.block_presences.len());
-                let wantlist = Wantlist::from_pb(proto_wantlist)?;
-                for bp in proto.block_presences {
-                    let cid = Cid::try_from(bp.cid)?;
-                    let entry = BlockPresence {
-                        cid,
-                        typ: bp.r#type.try_into()?,
-                    };
-                    block_presences.push(entry);
-                }
-
-                Ok(BitswapMessage {
-                    wantlist,
-                    blocks,
-                    block_presences,
-                })
-            }
+impl From<WantType> for pb::message::wantlist::WantType {
+    fn from(want: WantType) -> Self {
+        match want {
+            WantType::Block => pb::message::wantlist::WantType::Block,
+            WantType::Have => pb::message::wantlist::WantType::Have,
         }
     }
 }
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::block::tests::*;
-    use bytes::Bytes;
 
-    const PROTOCOLS: [ProtocolId; 4] = [
-        ProtocolId::Bitswap120,
-        ProtocolId::Bitswap110,
-        ProtocolId::Bitswap100,
-        ProtocolId::Legacy,
-    ];
+// A wantlist entry in a Bitswap message, with flags indicating
+// - whether message is a cancel
+// - whether requester wants a DONT_HAVE message
+// - whether requester wants a HAVE message (instead of the block)
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Entry {
+    pub cid: Cid,
+    pub priority: Priority,
+    pub want_type: WantType,
+    pub cancel: bool,
+    pub send_dont_have: bool,
+}
 
-    fn create_block<B: Into<Bytes>>(protocol: ProtocolId, b: B) -> Block {
-        match protocol {
-            ProtocolId::Legacy | ProtocolId::Bitswap100 => create_block_v0(b),
-            _ => create_block_v1(b),
+impl Entry {
+    /// Returns the encoded length of this entry.
+    pub fn encoded_len(&self) -> usize {
+        let pb: pb::message::wantlist::Entry = self.into();
+        pb.encoded_len()
+    }
+}
+
+impl From<&Entry> for pb::message::wantlist::Entry {
+    fn from(e: &Entry) -> Self {
+        pb::message::wantlist::Entry {
+            block: e.cid.to_bytes(),
+            priority: e.priority,
+            want_type: e.want_type.into(),
+            cancel: e.cancel,
+            send_dont_have: e.send_dont_have,
+        }
+    }
+}
+
+/// Priority of a wanted block.
+pub type Priority = i32;
+
+/// A bitswap message.
+#[derive(Default, Clone, Debug, PartialEq, Eq)]
+pub struct BitswapMessage {
+    full: bool,
+    wantlist: AHashMap<Cid, Entry>,
+    blocks: AHashMap<Cid, Block>,
+    block_presences: AHashMap<Cid, BlockPresenceType>,
+    pending_bytes: i32,
+}
+
+impl BitswapMessage {
+    pub fn new(full: bool) -> Self {
+        BitswapMessage {
+            full,
+            ..Default::default()
         }
     }
 
-    #[test]
-    fn test_empty_message_to_from_bytes() {
-        for protocol in PROTOCOLS {
-            let message = BitswapMessage::new();
-            let bytes = message.to_bytes(protocol);
-            let new_message = BitswapMessage::from_bytes(protocol, bytes).unwrap();
-            assert_eq!(message, new_message);
-        }
+    /// Clears all contents of this message for it to be reused.
+    pub fn clear(&mut self, full: bool) {
+        self.full = full;
+        self.wantlist.clear();
+        self.blocks.clear();
+        self.block_presences.clear();
+        self.pending_bytes = 0;
     }
 
-    #[test]
-    fn test_want_message_to_from_bytes() {
-        for protocol in PROTOCOLS {
-            let mut message = BitswapMessage::new();
-            let block = create_block(protocol, &b"hello world"[..]);
-            message.wantlist_mut().want_block(block.cid(), 1);
-            let bytes = message.to_bytes(protocol);
-            let new_message = BitswapMessage::from_bytes(protocol, bytes).unwrap();
-            assert_eq!(message, new_message);
-        }
+    pub fn full(&self) -> bool {
+        self.full
     }
 
-    #[test]
-    fn test_want_have_message_to_from_bytes() {
-        for protocol in PROTOCOLS {
-            let mut message = BitswapMessage::new();
-            let block = create_block(protocol, &b"hello world"[..]);
-            message.wantlist_mut().want_have_block(block.cid(), 1);
-            let bytes = message.to_bytes(protocol);
-            let new_message = BitswapMessage::from_bytes(protocol, bytes).unwrap();
+    pub fn is_empty(&self) -> bool {
+        self.blocks.is_empty() && self.wantlist.is_empty() && self.block_presences.is_empty()
+    }
 
-            // want haves are only supported in 1.2.0
-            if protocol == ProtocolId::Bitswap120 {
-                assert_eq!(message, new_message);
-            } else {
-                assert!(new_message.is_empty());
+    pub fn wantlist(&self) -> impl Iterator<Item = &Entry> {
+        self.wantlist.values()
+    }
+
+    pub fn blocks(&self) -> impl Iterator<Item = &Block> {
+        self.blocks.values()
+    }
+
+    pub fn block_presences(&self) -> impl Iterator<Item = BlockPresence> + '_ {
+        self.block_presences.iter().map(|(cid, typ)| BlockPresence {
+            cid: *cid,
+            typ: *typ,
+        })
+    }
+
+    pub fn haves(&self) -> impl Iterator<Item = &Cid> {
+        self.get_block_presence_by_type(BlockPresenceType::Have)
+    }
+
+    pub fn dont_haves(&self) -> impl Iterator<Item = &Cid> {
+        self.get_block_presence_by_type(BlockPresenceType::DontHave)
+    }
+
+    fn get_block_presence_by_type(&self, typ: BlockPresenceType) -> impl Iterator<Item = &Cid> {
+        self.block_presences
+            .iter()
+            .filter_map(move |(cid, t)| if *t == typ { Some(cid) } else { None })
+    }
+
+    pub fn pending_bytes(&self) -> i32 {
+        self.pending_bytes
+    }
+
+    pub fn set_pending_bytes(&mut self, bytes: i32) {
+        self.pending_bytes = bytes;
+    }
+
+    pub fn remove(&mut self, cid: &Cid) {
+        self.wantlist.remove(cid);
+    }
+
+    pub fn cancel(&mut self, cid: Cid) {
+        self.add_full_entry(cid, 0, true, WantType::Block, false);
+    }
+
+    pub fn add_entry(
+        &mut self,
+        cid: Cid,
+        priority: Priority,
+        want_type: WantType,
+        send_dont_have: bool,
+    ) {
+        self.add_full_entry(cid, priority, false, want_type, send_dont_have);
+    }
+
+    fn add_full_entry(
+        &mut self,
+        cid: Cid,
+        priority: Priority,
+        cancel: bool,
+        want_type: WantType,
+        send_dont_have: bool,
+    ) -> usize {
+        if let Some(entry) = self.wantlist.get_mut(&cid) {
+            // only change priority if want is of the same type
+            if entry.want_type == want_type {
+                entry.priority = priority;
+            }
+
+            // only change from dont cancel to cancel
+            if cancel {
+                entry.cancel = cancel;
+            }
+
+            // only change from dont send to do send DONT_HAVE
+            if send_dont_have {
+                entry.send_dont_have = send_dont_have;
+            }
+
+            // want block overrides existing want have
+            if want_type == WantType::Block && entry.want_type == WantType::Have {
+                entry.want_type = want_type;
+            }
+
+            return 0;
+        }
+
+        let entry = Entry {
+            cid,
+            priority,
+            want_type,
+            send_dont_have,
+            cancel,
+        };
+        let size = entry.encoded_len();
+        self.wantlist.insert(cid, entry);
+        size
+    }
+
+    pub fn add_block(&mut self, block: Block) {
+        self.block_presences.remove(block.cid());
+        self.blocks.insert(*block.cid(), block);
+    }
+
+    pub fn add_block_presence(&mut self, cid: Cid, typ: BlockPresenceType) {
+        if self.blocks.contains_key(&cid) {
+            return;
+        }
+        self.block_presences.insert(cid, typ);
+    }
+
+    pub fn add_have(&mut self, cid: Cid) {
+        self.add_block_presence(cid, BlockPresenceType::Have);
+    }
+
+    pub fn add_dont_have(&mut self, cid: Cid) {
+        self.add_block_presence(cid, BlockPresenceType::DontHave);
+    }
+
+    pub fn encoded_len(&self) -> usize {
+        let block_size: usize = self.blocks.values().map(|b| b.data.len()).sum();
+        let block_presence_size: usize = self.block_presences().map(|bp| bp.encoded_len()).sum();
+
+        let wantlist_size: usize = self.wantlist.values().map(|e| e.encoded_len()).sum();
+
+        block_size + block_presence_size + wantlist_size
+    }
+
+    pub fn encode_as_proto_v0(&self) -> pb::Message {
+        let mut message = pb::Message::default();
+
+        // wantlist
+        let mut wantlist = pb::message::Wantlist::default();
+        for entry in self.wantlist.values() {
+            wantlist.entries.push(entry.into());
+        }
+        wantlist.full = self.full;
+        message.wantlist = Some(wantlist);
+
+        // blocks
+        for block in self.blocks.values() {
+            message.blocks.push(block.data().clone());
+        }
+
+        message
+    }
+
+    pub fn encode_as_proto_v1(&self) -> pb::Message {
+        let mut message = pb::Message::default();
+
+        // wantlist
+        let mut wantlist = pb::message::Wantlist::default();
+        for entry in self.wantlist.values() {
+            wantlist.entries.push(entry.into());
+        }
+        wantlist.full = self.full;
+        message.wantlist = Some(wantlist);
+
+        // blocks
+        for block in self.blocks.values() {
+            message.payload.push(pb::message::Block {
+                prefix: Prefix::from(block.cid()).to_bytes(),
+                data: block.data().clone(),
+            });
+        }
+
+        // block presences
+        for (cid, typ) in &self.block_presences {
+            message.block_presences.push(pb::message::BlockPresence {
+                cid: cid.to_bytes(),
+                r#type: (*typ).into(),
+            });
+        }
+
+        message.pending_bytes = self.pending_bytes();
+
+        message
+    }
+}
+
+impl TryFrom<pb::Message> for BitswapMessage {
+    type Error = anyhow::Error;
+
+    fn try_from(pbm: pb::Message) -> Result<Self, Self::Error> {
+        let full = pbm.wantlist.as_ref().map(|w| w.full).unwrap_or_default();
+        let mut message = BitswapMessage::new(full);
+
+        if let Some(wantlist) = pbm.wantlist {
+            for entry in wantlist.entries {
+                let cid = Cid::try_from(entry.block).context("invalid cid")?;
+                message.add_full_entry(
+                    cid,
+                    entry.priority,
+                    entry.cancel,
+                    entry.want_type.try_into()?,
+                    entry.send_dont_have,
+                );
             }
         }
-    }
 
-    #[test]
-    fn test_cancel_message_to_from_bytes() {
-        for protocol in PROTOCOLS {
-            let mut message = BitswapMessage::new();
-            let block = create_block(protocol, &b"hello world"[..]);
-            message.wantlist_mut().cancel_block(block.cid());
-            let bytes = message.to_bytes(protocol);
-            let new_message = BitswapMessage::from_bytes(protocol, bytes).unwrap();
-            assert_eq!(message, new_message);
-        }
-    }
-
-    #[test]
-    fn test_payload_message_to_from_bytes() {
-        for protocol in PROTOCOLS {
-            let mut message = BitswapMessage::new();
-            let block = create_block(protocol, &b"hello world"[..]);
+        // deprecated
+        for data in pbm.blocks {
+            // CID v0, SHA26
+            let block = Block::from_v0_data(data)?;
             message.add_block(block);
-            let bytes = message.to_bytes(protocol);
-            let new_message = BitswapMessage::from_bytes(protocol, bytes).unwrap();
-            assert_eq!(message, new_message);
         }
+
+        for block in pbm.payload {
+            let prefix = Prefix::new(&block.prefix)?;
+            let cid = prefix.to_cid(&block.data)?;
+            let block = Block::new(block.data, cid);
+            message.add_block(block);
+        }
+
+        for block_presence in pbm.block_presences {
+            let cid = Cid::try_from(block_presence.cid).context("invalid cid")?;
+            message.add_block_presence(cid, block_presence.r#type.try_into()?);
+        }
+
+        message.pending_bytes = pbm.pending_bytes;
+
+        Ok(message)
+    }
+}
+
+impl TryFrom<Bytes> for BitswapMessage {
+    type Error = anyhow::Error;
+
+    fn try_from(value: Bytes) -> Result<Self, Self::Error> {
+        let pbm = pb::Message::decode(value)?;
+        pbm.try_into()
     }
 }

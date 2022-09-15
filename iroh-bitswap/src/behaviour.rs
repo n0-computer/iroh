@@ -1,7 +1,3 @@
-//! Implements handling of
-//! - `/ipfs/bitswap/1.1.0` and
-//! - `/ipfs/bitswap/1.2.0`.
-
 use std::collections::{HashSet, VecDeque};
 use std::pin::Pin;
 use std::task::{Context, Poll};
