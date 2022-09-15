@@ -2,7 +2,6 @@ use anyhow::Result;
 use async_trait::async_trait;
 use cid::Cid;
 use iroh_resolver::resolver;
-use iroh_resolver::resolver::LoadedCid;
 use iroh_resolver::resolver::{ContentLoader, OutMetrics, Resolver};
 use iroh_resolver::unixfs_builder;
 use iroh_rpc_client::Client;
@@ -48,12 +47,14 @@ struct Api<'a> {
 
 #[async_trait]
 impl P2p for Client {
-    async fn start_providing(&self, key: &Cid) -> Result<()> {
+    async fn start_providing(&self, cid: &Cid) -> Result<()> {
         // self.try_p2p().start_providing(key).await
         Ok(())
     }
 }
 
+// testing this directly means we need a full-fledged client, which is
+// more difficult than testing the underlying functions
 impl<'a> Api<'a> {
     fn new(client: &'a Client) -> Self {
         Self { client }
