@@ -1,6 +1,11 @@
 # Iroh One
 
-Single binary of iroh services (gateway, p2p, store) communicating via mem channels.
+Single binary of [iroh](https://github.com/n0-computer/iroh) services
+([gateway](https://github.com/n0-computer/iroh/tree/main/iroh-gateway),
+[p2p](https://github.com/n0-computer/iroh/tree/main/iroh-p2p),
+[store](https://github.com/n0-computer/iroh/tree/main/iroh-store))
+communicating via mem channels. This is an alternative to deploying the iroh
+services as micro services.
 
 ## Running / Building
 

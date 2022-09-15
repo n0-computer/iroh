@@ -1,6 +1,9 @@
 # Iroh Gateway
 
-A rust implementation of an IPFS gateway.
+A Rust implementation of an [IPFS
+gateway](https://docs.ipfs.tech/concepts/ipfs-gateway/) based on
+[iroh](https://github.com/n0-computer/iroh). An IPFS gateway allows you to
+access content on the IPFS network over HTTP.
 
 ## Running / Building
 

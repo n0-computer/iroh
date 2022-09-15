@@ -1,7 +1,11 @@
 # iroh-p2p
 
-> Implementation of the IPFS bitswap protocol.
+This contains an implementation of the [IPFS bitswap
+protocol](https://docs.ipfs.tech/concepts/bitswap/). It sends blocks of data to
+other peers in the IPFS network who want them, and receives blocks requested by
+the client from the network.
 
+It is part of [iroh](https://github.com/n0-computer/iroh).
 
 ## License
 

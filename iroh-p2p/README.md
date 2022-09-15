@@ -1,7 +1,8 @@
 # iroh-p2p
 
-> P2P networking for iroh.
-
+P2P networking for [iroh](https://github.com/n0-computer/iroh). This implements
+an [IPFS node](https://docs.ipfs.tech/concepts/nodes/). The IPFS network
+consists of a collection of nodes.
 
 ## How to run
 
