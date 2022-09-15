@@ -18,6 +18,12 @@ pub trait P2p {
 
 // XXX not sure why Unpin is needed
 // XXX doesn't handle a directory yet, should it?
+
+// get needs to support directories and files
+// it appears to need some kind of resume; and does not download everything
+// again if it's restarted
+// the original ipfs get also seems to support getting cids, not just paths,
+// unless a cid is a path somehow?
 async fn get<T: ContentLoader + std::marker::Unpin>(
     content_loader: T,
     cid: Cid,
@@ -61,11 +67,16 @@ impl<'a> Api<'a> {
     }
 
     async fn get(&self, cid: Cid, path: &Path) -> Result<()> {
-        // XXX ugh clone. Should we have an Arc client?
+        // XXX ugh clone. Should we have an Arc client? the trait
+        // appears to be defined for it
         get(self.client.clone(), cid, path).await
     }
 
     async fn add(&self, path: &Path) -> Result<Cid> {
+        // XXX passing the client twice here is weird, but we really want
+        // different traits that just happen to be implemented by the same thing
+        // alternatively we could request a Store + P2p, and perhaps they
+        // are as easy to construct for testing purposes.
         add(self.client, self.client, path).await
     }
 }
