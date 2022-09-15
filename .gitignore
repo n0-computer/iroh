@@ -3,3 +3,4 @@
 .env
 Cargo.lock
 foo
+.vscode
