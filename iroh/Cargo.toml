@@ -7,4 +7,12 @@ readme = "README.md"
 description = "comming soon"
 
 [dependencies]
+cid = "0.8.5"
+iroh-resolver = { path = "../iroh-resolver" }
+anyhow = "1"
+async-trait = "0.1.53"
+tokio = { version = "1" }
+bytes = "1.1.0"
 
+[dev-dependencies]
+tempfile = "3.3.0"
