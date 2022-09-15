@@ -62,11 +62,14 @@ impl Wantlist {
 
     /// Adds a block to the have want list.
     pub fn want_have_block(&mut self, cid: &Cid, priority: Priority) {
-        self.want_have_blocks.insert(*cid, priority);
+        if !self.want_blocks.contains_key(cid) {
+            self.want_have_blocks.insert(*cid, priority);
+        }
     }
 
     /// Adds a block to the cancel list.
     pub fn cancel_block(&mut self, cid: &Cid) {
+        self.want_blocks.remove(cid);
         self.cancel_blocks.insert(*cid);
     }
 

@@ -133,17 +133,34 @@ pub struct Bitswap {
     /// Current ledgers.
     ledgers: AHashMap<PeerId, Ledger>,
     /// Index into connected peers.
-    connected_peers: AHashSet<PeerId>,
+    connected_peers: AHashMap<PeerId, ConnectionId>,
+    /// List of peers to dial
+    dial_peers: AHashSet<PeerId>,
+    /// List of peers being dialed
     dialing_peers: AHashSet<PeerId>,
-    wants: AHashMap<Cid, Vec<u64>>,
-    want_haves: AHashMap<Cid, Vec<u64>>,
+    wants: AHashMap<Cid, Want>,
+    want_haves: AHashMap<Cid, WantHave>,
     connection_limit: bool,
     heartbeat: Interval,
+    providers: AHashMap<Cid, AHashSet<PeerId>>,
+    wants_for_peer: AHashMap<PeerId, AHashMap<Cid, Want>>,
+    want_haves_for_peer: AHashMap<PeerId, AHashMap<Cid, WantHave>>,
 }
 
+#[derive(Default, Debug, Clone, PartialEq, Eq)]
+struct Want {
+    ctx: Vec<u64>,
+    priority: Priority,
+}
+
+#[derive(Default, Debug, Clone, PartialEq, Eq)]
+struct WantHave {
+    ctx: Vec<u64>,
+    priority: Priority,
+}
+
+#[derive(Debug)]
 struct Ledger {
-    is_empty: bool,
-    peer_id: PeerId,
     msg: BitswapMessage,
     last_send: Instant,
     conn: ConnState,
@@ -152,20 +169,13 @@ struct Ledger {
     full: bool,
 }
 
-enum Action {
-    Dial(PeerId),
-    Message(PeerId, ConnectionId),
-}
-
 impl Ledger {
-    fn new(peer_id: PeerId) -> Self {
+    fn new() -> Self {
         // default to full for the first one
         let mut msg = BitswapMessage::default();
         msg.wantlist_mut().set_full(true);
 
         Ledger {
-            is_empty: true,
-            peer_id,
             msg,
             last_send: Instant::now(),
             conn: ConnState::Disconnected,
@@ -175,118 +185,43 @@ impl Ledger {
         }
     }
 
-    fn poll(&mut self, cx: &mut Context) -> Poll<Action> {
+    fn poll_timer(&mut self, cx: &mut Context) -> Poll<()> {
         if self.last_send.elapsed() < MESSAGE_DELAY {
             cx.waker().wake_by_ref();
             return Poll::Pending;
         }
-
-        if self.is_empty() {
-            return Poll::Pending;
-        }
-
-        match self.conn {
-            ConnState::Connected(_protocol, conn_id) => {
-                if self.has_blocks() {
-                    // make progress on connected peers first, that have wants
-                    inc!(BitswapMetrics::PollActionConnectedWants);
-                } else {
-                    // make progress on connected peers that have no wants
-                    inc!(BitswapMetrics::PollActionConnected);
-                }
-
-                trace!("sending message to {}", self.peer_id);
-                inc!(BitswapMetrics::MessagesSent);
-                // connected, send message
-                // TODO: limit size
-
-                let _bs_msg = Pin::new(&mut *self).send_message();
-                Poll::Ready(Action::Message(self.peer_id, conn_id))
-            }
-            ConnState::Disconnected => {
-                // not connected, but have content to send, need to dial
-                inc!(BitswapMetrics::PollActionNotConnected);
-                Poll::Ready(Action::Dial(self.peer_id))
-            }
-            ConnState::Dialing => Poll::Pending,
-        }
-    }
-
-    fn is_empty(&self) -> bool {
-        self.is_empty
+        Poll::Ready(())
     }
 
     fn has_blocks(&self) -> bool {
         !self.msg.blocks().is_empty() || !self.msg.block_presences().is_empty()
     }
 
-    fn send_message(mut self: Pin<&mut Self>) {
-        let mut new_msg = BitswapMessage::default();
-        new_msg.wantlist_mut().set_full(false);
+    fn send_message(mut self: Pin<&mut Self>) -> BitswapMessage {
+        let full = if self.full {
+            self.full = false;
+            true
+        } else {
+            false
+        };
 
+        self.msg.wantlist_mut().set_full(full);
         self.last_send = Instant::now();
-        self.is_empty = true;
 
         // some cleanup
         self.ctx_wants.retain(|_, c| !c.is_empty());
         self.ctx_want_haves.retain(|_, c| !c.is_empty());
 
-        // std::mem::replace(&mut self.msg, new_msg)
-        // self.msg.clone()
-    }
-
-    fn want_block(&mut self, ctx: u64, cid: &Cid, priority: Priority) {
-        self.msg.wantlist_mut().want_block(cid, priority);
-        self.is_empty = self.msg.is_empty();
-        self.ctx_wants.entry(*cid).or_default().push(ctx);
-    }
-
-    fn cancel_block(&mut self, ctx: &[u64], cid: &Cid) -> Vec<u64> {
-        self.msg.wantlist_mut().cancel_block(cid);
-        self.is_empty = self.msg.is_empty();
-
-        let mut matches = Vec::new();
-        if let Some(list) = self.ctx_wants.get_mut(cid) {
-            for ctx in ctx {
-                if let Some(i) = list.iter().position(|x| x == ctx) {
-                    matches.push(list.remove(i));
-                }
-            }
-        }
-
-        matches
+        let new_msg = BitswapMessage::default();
+        std::mem::replace(&mut self.msg, new_msg)
     }
 
     fn send_block(&mut self, cid: Cid, data: Bytes) {
         self.msg.add_block(Block { cid, data });
-        self.is_empty = self.msg.is_empty();
-    }
-
-    fn want_have_block(&mut self, ctx: u64, cid: &Cid, priority: Priority) {
-        self.msg.wantlist_mut().want_have_block(cid, priority);
-        self.is_empty = self.msg.is_empty();
-        self.ctx_want_haves.entry(*cid).or_default().push(ctx);
-    }
-
-    fn remove_want_block(&mut self, ctx: &[u64], cid: &Cid) -> Vec<u64> {
-        self.msg.wantlist_mut().remove_want_block(cid);
-        self.is_empty = self.msg.is_empty();
-
-        let mut matches = Vec::new();
-        if let Some(list) = self.ctx_want_haves.get_mut(cid) {
-            for ctx in ctx {
-                if let Some(i) = list.iter().position(|x| x == ctx) {
-                    matches.push(list.remove(i));
-                }
-            }
-        }
-
-        matches
     }
 
     fn send_have_block(&mut self, cid: Cid) {
         self.msg.add_block_presence(BlockPresence::have(cid));
-        self.is_empty = self.msg.is_empty();
     }
 }
 
@@ -331,11 +266,15 @@ impl Bitswap {
             ledgers: Default::default(),
             connected_peers: Default::default(),
             dialing_peers: Default::default(),
+            dial_peers: Default::default(),
             events: Default::default(),
             wants: Default::default(),
             want_haves: Default::default(),
             connection_limit: false,
             heartbeat: Interval::new(HEARTBEAT_DELAY),
+            providers: Default::default(),
+            wants_for_peer: Default::default(),
+            want_haves_for_peer: Default::default(),
         }
     }
 
@@ -357,7 +296,7 @@ impl Bitswap {
         if let Some(state) = self.ledgers.get_mut(&peer) {
             f(state)
         } else {
-            let mut ledger = Ledger::new(peer);
+            let mut ledger = Ledger::new();
             let res = f(&mut ledger);
             self.ledgers.insert(peer, ledger);
             self.add_peer(peer, None);
@@ -378,11 +317,20 @@ impl Bitswap {
         inc!(BitswapMetrics::WantedBlocks);
         record!(BitswapMetrics::Providers, providers.len() as u64);
 
-        self.wants.entry(cid).or_default().push(ctx);
-        for provider in providers.iter() {
-            self.with_ledger(*provider, |state| {
-                state.want_block(ctx, &cid, priority);
-            });
+        let entry = self.wants.entry(cid).or_default();
+        entry.ctx.push(ctx);
+        entry.priority = priority;
+
+        let entry = self.providers.entry(cid).or_default();
+        for provider in providers.into_iter() {
+            entry.insert(provider);
+            let entry = self.wants_for_peer.entry(provider).or_default();
+            let inner_entry = entry.entry(cid).or_default();
+            inner_entry.ctx.push(ctx);
+            inner_entry.priority = priority;
+            if !self.connected_peers.contains_key(&provider) {
+                self.dial_peers.insert(provider);
+            }
         }
     }
 
@@ -391,7 +339,9 @@ impl Bitswap {
         debug!("send_block: {}", cid);
 
         record!(BitswapMetrics::BlockBytesOut, data.len() as u64);
-
+        if !self.connected_peers.contains_key(peer_id) {
+            self.dial_peers.insert(*peer_id);
+        }
         self.with_ledger(*peer_id, |state| {
             state.send_block(cid, data);
         });
@@ -400,6 +350,10 @@ impl Bitswap {
     #[instrument(skip(self))]
     pub fn send_have_block(&mut self, peer_id: &PeerId, cid: Cid) {
         debug!("send_have_block: {}", cid);
+
+        if !self.connected_peers.contains_key(peer_id) {
+            self.dial_peers.insert(*peer_id);
+        }
 
         self.with_ledger(*peer_id, |state| {
             state.send_have_block(cid);
@@ -414,7 +368,7 @@ impl Bitswap {
         // TODO: better strategies, than just all peers.
         // TODO: use peers that connect later
 
-        let mut peers: AHashSet<PeerId> = self.connected_peers.iter().take(500).copied().collect();
+        let mut peers: AHashSet<PeerId> = self.connected_peers.keys().take(500).copied().collect();
 
         for peer in self.known_peers.iter().filter_map(|(key, value)| {
             // Only supported on 1.2.0
@@ -429,12 +383,20 @@ impl Bitswap {
             peers.insert(*peer);
         }
 
+        let entry = self.want_haves.entry(cid).or_default();
+        entry.ctx.push(ctx);
+        entry.priority = priority;
+
         for peer in peers {
-            self.with_ledger(peer, |peer| {
-                peer.want_have_block(ctx, &cid, priority);
-            });
+            let entry = self.want_haves_for_peer.entry(peer).or_default();
+            let inner_entry = entry.entry(cid).or_default();
+            inner_entry.ctx.push(ctx);
+            inner_entry.priority = priority;
+
+            if !self.connected_peers.contains_key(&peer) {
+                self.dial_peers.insert(peer);
+            }
         }
-        self.want_haves.entry(cid).or_default().push(ctx);
     }
 
     /// Removes the block from our want list and updates all peers.
@@ -445,15 +407,21 @@ impl Bitswap {
         inc!(BitswapMetrics::CancelBlocks);
 
         debug!("context:{} cancel_block: {}", ctx, cid);
-        if let Some(list) = self.wants.get_mut(cid) {
-            if let Some(i) = list.iter().position(|x| *x == ctx) {
-                list.remove(i);
+        let mut remove = false;
+        if let Some(wants) = self.wants.get_mut(cid) {
+            if let Some(i) = wants.ctx.iter().position(|x| *x == ctx) {
+                wants.ctx.remove(i);
+                if wants.ctx.is_empty() {
+                    remove = true;
+                }
             }
         }
-
-        for state in self.ledgers.values_mut() {
-            state.cancel_block(&[ctx][..], cid);
+        // clear out empty
+        if remove {
+            self.wants.remove(cid);
         }
+
+        // TODO: send out cancels
     }
 
     #[instrument(skip(self))]
@@ -461,15 +429,22 @@ impl Bitswap {
         inc!(BitswapMetrics::CancelWantBlocks);
 
         debug!("cancel_want_block: {}", cid);
-        if let Some(list) = self.want_haves.get_mut(cid) {
-            if let Some(i) = list.iter().position(|x| *x == ctx) {
-                list.remove(i);
+        let mut remove = false;
+        if let Some(want_haves) = self.want_haves.get_mut(cid) {
+            if let Some(i) = want_haves.ctx.iter().position(|x| *x == ctx) {
+                want_haves.ctx.remove(i);
+                if want_haves.ctx.is_empty() {
+                    remove = true;
+                }
             }
         }
 
-        for state in self.ledgers.values_mut() {
-            state.remove_want_block(&[ctx][..], cid);
+        // clear out empty
+        if remove {
+            self.want_haves.remove(cid);
         }
+
+        // TODO: send out cancels
     }
 }
 
@@ -495,10 +470,13 @@ impl NetworkBehaviour for Bitswap {
         _failed_addresses: Option<&Vec<Multiaddr>>,
         other_established: usize,
     ) {
+        trace!("base connection to {}", peer_id);
         if other_established == 0 {
             inc!(BitswapMetrics::ConnectedPeers);
             self.add_peer(*peer_id, None);
             self.dialing_peers.remove(peer_id);
+            self.dial_peers.remove(peer_id);
+            self.connected_peers.insert(*peer_id, *conn);
             self.with_ledger(*peer_id, |state| {
                 state.conn = ConnState::Connected(None, *conn);
             });
@@ -553,6 +531,7 @@ impl NetworkBehaviour for Bitswap {
                     self.known_peers.remove(peer_id);
                     self.ledgers.remove(peer_id);
                     self.connected_peers.remove(peer_id);
+                    self.dial_peers.remove(peer_id);
                 }
             }
         }
@@ -566,13 +545,15 @@ impl NetworkBehaviour for Bitswap {
                 self.known_peers.remove(&peer_id);
                 self.ledgers.remove(&peer_id);
                 self.connected_peers.remove(&peer_id);
+                self.dial_peers.remove(&peer_id);
             }
             HandlerEvent::Connected { protocol } => {
+                trace!("connected to {} with {:?}", peer_id, protocol);
                 self.with_ledger(peer_id, |state| {
                     state.conn = ConnState::Connected(Some(protocol), connection);
                 });
                 self.known_peers.insert(peer_id, Some(protocol));
-                self.connected_peers.insert(peer_id);
+                self.connected_peers.insert(peer_id, connection);
             }
             HandlerEvent::Message { mut message } => {
                 inc!(BitswapMetrics::MessagesReceived);
@@ -603,24 +584,10 @@ impl NetworkBehaviour for Bitswap {
                     }
 
                     cancel_wants.push(block.cid);
-                    if let Some(ctx) = self.wants.get_mut(&block.cid) {
-                        // remove the want from the peer we received an answer from
-                        let matches = if let Some(state) = self.ledgers.get_mut(&peer_id) {
-                            state.cancel_block(&ctx, &block.cid)
-                        } else {
-                            Vec::new()
-                        };
-
-                        // remove the context id matches
-                        for m in &matches {
-                            if let Some(i) = ctx.iter().position(|x| x == m) {
-                                ctx.remove(i);
-                            }
-                        }
-
+                    if let Some(wants) = self.wants.remove(&block.cid) {
                         let event = BitswapEvent::OutboundQueryCompleted {
                             result: QueryResult::Want(WantResult::Ok {
-                                ctx: matches,
+                                ctx: wants.ctx,
                                 sender: peer_id,
                                 cid: block.cid,
                                 data: block.data.clone(),
@@ -645,24 +612,10 @@ impl NetworkBehaviour for Bitswap {
                         }))
                 {
                     inc!(BitswapMetrics::CancelWantBlocks);
-                    if let Some(ctx) = self.want_haves.get_mut(&cid) {
-                        // remove the want from the peer we received an answer from
-                        let matches = if let Some(state) = self.ledgers.get_mut(&peer_id) {
-                            state.remove_want_block(&ctx, &cid)
-                        } else {
-                            Vec::new()
-                        };
-
-                        // remove the context id matches
-                        for m in &matches {
-                            if let Some(i) = ctx.iter().position(|x| x == m) {
-                                ctx.remove(i);
-                            }
-                        }
-
+                    if let Some(want_haves) = self.want_haves.remove(&cid) {
                         let event = BitswapEvent::OutboundQueryCompleted {
                             result: QueryResult::FindProviders(FindProvidersResult::Ok {
-                                ctx: matches,
+                                ctx: want_haves.ctx,
                                 cid,
                                 provider: peer_id,
                             }),
@@ -727,54 +680,48 @@ impl NetworkBehaviour for Bitswap {
         cx: &mut Context,
         _: &mut impl PollParameters,
     ) -> Poll<NetworkBehaviourAction<Self::OutEvent, Self::ConnectionHandler>> {
+        trace!("tick");
         if let Some(event) = self.events.pop_front() {
             inc!(BitswapMetrics::EventsBackpressureOut);
             return Poll::Ready(event);
         }
 
         while let Poll::Ready(_) = self.heartbeat.poll_next_unpin(cx) {
-            for peer_id in &self.connected_peers {
+            trace!("tick:heartbeat");
+
+            for (peer_id, conn_id) in &self.connected_peers {
                 match self.ledgers.get_mut(peer_id) {
-                    Some(peer_state) => match peer_state.poll(cx) {
-                        Poll::Ready(action) => match action {
-                            Action::Dial(_) => {
-                                error!("peer should be connected, not dialing {}", peer_id);
-                            }
-                            Action::Message(peer_id, conn_id) => {
-                                let mut bs_msg = BitswapMessage::default();
-                                while let Some(block) = peer_state.msg.pop_block() {
-                                    bs_msg.add_block(block);
+                    Some(peer_state) => match peer_state.poll_timer(cx) {
+                        Poll::Ready(()) => {
+                            trace!("tick:timer:{}", peer_id);
+                            // Do we have any blocks for this peer, or do we have any wants for this peer?
+                            let wants = self.wants_for_peer.remove(peer_id);
+                            let want_haves = self.want_haves_for_peer.remove(peer_id);
+                            if peer_state.has_blocks() || wants.is_some() || want_haves.is_some() {
+                                let mut bs_msg = Pin::new(peer_state).send_message();
+                                let wantlist = bs_msg.wantlist_mut();
+                                if let Some(wants) = wants {
+                                    for (cid, want) in wants {
+                                        wantlist.want_block(&cid, want.priority);
+                                    }
                                 }
-                                while let Some(bp) = peer_state.msg.pop_block_presence() {
-                                    bs_msg.add_block_presence(bp);
+
+                                if let Some(want_haves) = want_haves {
+                                    for (cid, want_have) in want_haves {
+                                        wantlist.want_have_block(&cid, want_have.priority);
+                                    }
                                 }
-                                let wants = bs_msg.wantlist_mut();
-                                wants.set_full(peer_state.full);
-                                for cid in self.wants.keys() {
-                                    wants.want_block(cid, 1000);
-                                }
-                                for cid in self.want_haves.keys() {
-                                    wants.want_have_block(cid, 1000);
-                                }
-                                for cid in peer_state.msg.wantlist().cancels() {
-                                    wants.cancel_block(cid);
-                                }
-                                peer_state.full = false;
-                                trace!(
-                                    "sending message for {:?} context:{:?} {:?}",
-                                    peer_state.conn,
-                                    peer_state.ctx_wants,
-                                    peer_state.ctx_want_haves,
-                                );
 
                                 return Poll::Ready(NetworkBehaviourAction::NotifyHandler {
-                                    peer_id,
-                                    handler: NotifyHandler::One(conn_id),
+                                    peer_id: *peer_id,
+                                    handler: NotifyHandler::One(*conn_id),
                                     event: BitswapHandlerIn::Message(bs_msg),
                                 });
                             }
-                        },
-                        _ => {}
+                        }
+                        Poll::Pending => {
+                            continue;
+                        }
                     },
                     None => {
                         error!("missing ledger state for connected peer: {}", peer_id);
@@ -782,63 +729,29 @@ impl NetworkBehaviour for Bitswap {
                 }
             }
 
+            // Nothing to do on connected peers, establish new connections
             if !self.connection_limit && self.dialing_peers.len() < MAX_CONCURRENT_DIALS {
-                for peer_state in self.ledgers.values_mut() {
-                    match peer_state.poll(cx) {
-                        Poll::Ready(action) => match action {
-                            Action::Dial(peer_id) => {
-                                inc!(BitswapMetrics::AttemptedDials);
-                                trace!(
-                                    "dialing for context:{:?} {:?}",
-                                    peer_state.ctx_wants,
-                                    peer_state.ctx_want_haves
-                                );
-                                self.dialing_peers.insert(peer_id);
-                                peer_state.conn = ConnState::Dialing;
-                                let handler = BitswapHandler::new(
-                                    self.config.protocol_config.clone(),
-                                    self.config.idle_timeout,
-                                );
-                                return Poll::Ready(NetworkBehaviourAction::Dial {
-                                    opts: DialOpts::peer_id(peer_id).build(),
-                                    handler,
-                                });
-                            }
-                            Action::Message(peer_id, conn_id) => {
-                                let mut bs_msg = BitswapMessage::default();
-                                while let Some(block) = peer_state.msg.pop_block() {
-                                    bs_msg.add_block(block);
-                                }
-                                while let Some(bp) = peer_state.msg.pop_block_presence() {
-                                    bs_msg.add_block_presence(bp);
-                                }
-                                let wants = bs_msg.wantlist_mut();
-                                wants.set_full(peer_state.full);
-                                for cid in self.wants.keys() {
-                                    wants.want_block(cid, 1000);
-                                }
-                                for cid in self.want_haves.keys() {
-                                    wants.want_have_block(cid, 1000);
-                                }
-                                for cid in peer_state.msg.wantlist().cancels() {
-                                    wants.cancel_block(cid);
-                                }
-                                trace!(
-                                    "sending message for context:{:?} {:?}",
-                                    peer_state.ctx_wants,
-                                    peer_state.ctx_want_haves
-                                );
-                                peer_state.full = false;
-
-                                return Poll::Ready(NetworkBehaviourAction::NotifyHandler {
-                                    peer_id,
-                                    handler: NotifyHandler::One(conn_id),
-                                    event: BitswapHandlerIn::Message(bs_msg),
-                                });
-                            }
-                        },
-                        _ => {}
+                for peer_id in &self.dial_peers {
+                    if !self.ledgers.contains_key(peer_id) {
+                        self.ledgers.insert(*peer_id, Ledger::new());
                     }
+                    let peer_state = self.ledgers.get_mut(peer_id).unwrap();
+
+                    inc!(BitswapMetrics::AttemptedDials);
+                    trace!("dialing {}", peer_id);
+                    let peer_id = *peer_id;
+                    self.dialing_peers.insert(peer_id);
+                    self.dial_peers.remove(&peer_id);
+                    peer_state.conn = ConnState::Dialing;
+                    let handler = BitswapHandler::new(
+                        self.config.protocol_config.clone(),
+                        self.config.idle_timeout,
+                    );
+
+                    return Poll::Ready(NetworkBehaviourAction::Dial {
+                        opts: DialOpts::peer_id(peer_id).build(),
+                        handler,
+                    });
                 }
             }
         }
@@ -895,10 +808,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_bitswap_behaviour() {
-        // tracing_subscriber::registry()
-        //     .with(fmt::layer().pretty())
-        //     .with(EnvFilter::from_default_env())
-        //     .init();
+        tracing_subscriber::registry()
+            .with(fmt::layer().pretty())
+            .with(EnvFilter::from_default_env())
+            .init();
 
         let (peer1_id, trans) = mk_transport();
         let mut swarm1 = SwarmBuilder::new(trans, Bitswap::default(), peer1_id)
@@ -1033,10 +946,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_bitswap_multiprotocol() {
-        tracing_subscriber::registry()
-            .with(fmt::layer().pretty())
-            .with(EnvFilter::from_default_env())
-            .init();
+        // tracing_subscriber::registry()
+        //     .with(fmt::layer().pretty())
+        //     .with(EnvFilter::from_default_env())
+        //     .init();
 
         #[derive(Debug)]
         struct TestCase {
