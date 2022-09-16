@@ -17,6 +17,7 @@ mod block;
 mod client;
 mod message;
 mod network;
+mod peer_task_queue;
 mod prefix;
 mod server;
 

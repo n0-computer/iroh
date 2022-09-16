@@ -19,6 +19,7 @@ mod ewma;
 mod ledger;
 mod peer_ledger;
 mod score_ledger;
+mod task_merger;
 
 const PROVIDE_KEYS_BUFFER_SIZE: usize = 2048;
 const PROVIDE_WORKER_MAX: usize = 6;

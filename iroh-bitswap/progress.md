@@ -1,14 +1,21 @@
 # Porting go-bitswap 
 
+## General Steps
+
+- [~] (1) Implement everything sync, not libp2p integration
+- [ ] (2) Integrate with libp2p
+- [ ] (3) Make async what is needed/where it makes sense
+
 ## Source Files
 
 - [x] `./bitswap.go` (181)
 
 ### Client
 
+- [ ] `./client/client.go` (479)
 - [ ] `./client/stat.go` (30)
 - [x] `./client/wantlist/wantlist.go` (142)
-- [ ] `./client/client.go` (479)
+- [ ] `./client/internal/getter/getter.go` (138)
 - [ ] `./client/internal/session/sessionwants.go` (193)
 - [ ] `./client/internal/session/cidqueue.go` (63)
 - [ ] `./client/internal/session/peerresponsetracker.go` (70)
@@ -26,19 +33,19 @@
 - [ ] `./client/internal/tracing.go` (13)
 - [ ] `./client/internal/sessioninterestmanager/sessioninterestmanager.go` (201)
 - [ ] `./client/internal/blockpresencemanager/blockpresencemanager.go` (121)
-- [ ] `./client/internal/getter/getter.go` (138)
 
 ### Server 
 
-- [ ] `./server/internal/decision/blockstoremanager.go` (149)
-- [ ] `./server/forward.go` (14)
-- [ ] `./server/internal/decision/ewma.go` (5)
-- [ ] `./server/internal/decision/taskmerger.go` (87)
-- [x] `./server/internal/decision/ledger.go` (46)
+- [ ] `./server/server.go` (536)
+- [x] `./server/forward.go` (14)
+    - skip, legacy
 - [ ] `./server/internal/decision/engine.go` (1026)
+- [ ] `./server/internal/decision/blockstoremanager.go` (149)
+- [x] `./server/internal/decision/ewma.go` (5)
+- [x] `./server/internal/decision/taskmerger.go` (87)
+- [x] `./server/internal/decision/ledger.go` (46)
 - [x] `./server/internal/decision/scoreledger.go` (353)
 - [x] `./server/internal/decision/peer_ledger.go` (46)
-- [ ] `./server/server.go` (536)
 
 ### Network
 
@@ -80,6 +87,10 @@
 - [x] `./wantlist/forward.go` (23)
   - deprecated, skipping
 
+## Dependencies
+
+- [ ] https://github.com/ipfs/go-peertaskqueue
+  - will be ported to `bitswap::peer_task_queue`
 
 ## Tests
 
@@ -90,3 +101,4 @@ Will be ported as it makes sense.
 ### Testnet
 
 This would definitely be useful to port for correctness testing, but likely needs a lot of changes.
+
