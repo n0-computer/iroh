@@ -1,6 +1,6 @@
 use core::convert::TryFrom;
 
-use ahash::{AHashMap, AHashSet};
+use ahash::AHashMap;
 use anyhow::{Context, Result};
 use bytes::Bytes;
 use cid::Cid;

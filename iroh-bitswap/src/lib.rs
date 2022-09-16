@@ -27,7 +27,7 @@ pub struct Bitswap {
     network: Network,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct Config {
     pub client: ClientConfig,
     pub server: ServerConfig,

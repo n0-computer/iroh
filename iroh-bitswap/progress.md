@@ -7,7 +7,7 @@
 ### Client
 
 - [ ] `./client/stat.go` (30)
-- [ ] `./client/wantlist/wantlist.go` (142)
+- [x] `./client/wantlist/wantlist.go` (142)
 - [ ] `./client/client.go` (479)
 - [ ] `./client/internal/session/sessionwants.go` (193)
 - [ ] `./client/internal/session/cidqueue.go` (63)
@@ -43,8 +43,11 @@
 ### Network
 
 - [ ] `./network/connecteventmanager.go` (218)
+  - will be tracked inside the ConnectionHandler
 - [ ] `./network/internal/default.go` (23)
+  - just the list of supported protocols
 - [ ] `./network/ipfs_impl.go` (472)
+  - mostly ConnectionHandler & interface
 - [ ] `./network/interface.go` (111)
 - [ ] `./network/options.go` (22)
 
@@ -56,14 +59,34 @@
 
 ### Other
 
-- [ ] `./internal/testutil/testutil.go` (140)
 - [ ] `./internal/defaults/defaults.go` (27)
-- [ ] `./internal/tracing.go` (13)
+  - default values for the config
 - [ ] `./options.go` (79)
-- [ ] `./testnet/virtual.go` (428)
-- [ ] `./tracer/tracer.go` (13)
+  - list of options
 - [ ] `./metrics/metrics.go` (46)
-- [ ] `./decision/forward.go` (12)
-- [ ] `./sendOnlyTracer.go` (20)
-- [ ] `./forward.go` (17)
-- [ ] `./wantlist/forward.go` (23)
+
+
+  - list of metrics
+- [x] `./internal/tracing.go` (13)
+  - not needed, skipping
+- [x] `./tracer/tracer.go` (13)
+  - not needed, skipping
+- [x] `./decision/forward.go` (12)
+  - deprecated, skipping
+- [x] `./sendOnlyTracer.go` (20)
+  - not needed, skipping
+- [x] `./forward.go` (17)
+  - deprecated, skipping
+- [x] `./wantlist/forward.go` (23)
+  - deprecated, skipping
+
+
+## Tests
+
+### Unit Tests
+
+Will be ported as it makes sense.
+
+### Testnet
+
+This would definitely be useful to port for correctness testing, but likely needs a lot of changes.

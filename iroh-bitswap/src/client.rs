@@ -4,6 +4,8 @@ use libp2p::PeerId;
 
 use crate::{block::Block, message::BitswapMessage, network::Network, Store};
 
+pub(crate) mod wantlist;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Config {}
 
