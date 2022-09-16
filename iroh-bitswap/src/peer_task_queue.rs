@@ -7,6 +7,12 @@ use cid::Cid;
 #[derive(Debug)]
 pub struct PeerTaskQueue {}
 
+impl PeerTaskQueue {
+    pub fn new() -> Self {
+        todo!()
+    }
+}
+
 #[derive(Debug)]
 pub struct Task<T: Topic, D: Data> {
     pub topic: T,

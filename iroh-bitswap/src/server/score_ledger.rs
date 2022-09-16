@@ -1,4 +1,5 @@
 use std::{
+    fmt::Debug,
     sync::{
         mpsc::{sync_channel, SyncSender},
         Arc, RwLock,
@@ -111,13 +112,22 @@ pub struct DefaultScoreLedger {
     worker: Option<JoinHandle<()>>,
 }
 
-#[derive(Debug)]
 struct State {
     /// The scoring function.
     score_peer: Box<dyn ScorePeerFunc>,
     ledger_map: RwLock<AHashMap<PeerId, IndividualScoreLedger>>,
     /// How frequently the engine should sample peer usefulness.
     peer_sample_interval: Duration,
+}
+
+impl Debug for State {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("State")
+            .field("score_peer", &"Box<dyn ScorePeerFunc>")
+            .field("ledger_map", &self.ledger_map)
+            .field("peer_sample_interval", &self.peer_sample_interval)
+            .finish()
+    }
 }
 
 impl DefaultScoreLedger {
