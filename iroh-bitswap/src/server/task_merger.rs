@@ -1,6 +1,6 @@
 use cid::Cid;
 
-use crate::peer_task_queue::{Data, Task, Topic};
+use crate::peer_task_queue::{Data, Task};
 
 /// Extra data associated with each task in the request queue.
 #[derive(Debug, Clone, PartialEq, Eq)]

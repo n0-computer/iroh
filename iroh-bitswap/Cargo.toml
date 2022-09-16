@@ -33,6 +33,7 @@ iroh-util = { path = "../iroh-util" }
 wasm-timer = "0.2.5"
 anyhow = "1.0.65"
 once_cell = "1.14.0"
+crossbeam = "0.8.2"
 
 [dev-dependencies]
 criterion = "0.3.5"

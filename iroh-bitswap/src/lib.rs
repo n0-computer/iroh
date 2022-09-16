@@ -36,6 +36,15 @@ pub struct Config {
 
 #[derive(Debug, Clone)]
 pub struct Store {}
+impl Store {
+    pub fn get_size(&self, cid: &Cid) -> Result<usize> {
+        todo!()
+    }
+
+    pub fn get(&self, cid: &Cid) -> Result<Block> {
+        todo!()
+    }
+}
 
 impl Bitswap {
     pub fn new(network: Network, store: Store, config: Config) -> Self {
