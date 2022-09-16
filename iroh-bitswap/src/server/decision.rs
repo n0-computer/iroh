@@ -42,6 +42,10 @@ pub trait PeerBlockRequestFilter: Fn(&PeerId, &Cid) -> bool + Debug {}
 
 impl<F: Fn(&PeerId, &Cid) -> bool + Debug> PeerBlockRequestFilter for F {}
 
+/// Assigns a specifc score to a peer.
+pub trait ScorePeerFunc: Fn(&PeerId, usize) + Send + Sync + Debug {}
+impl<F: Fn(&PeerId, usize) + Send + Sync + Debug> ScorePeerFunc for F {}
+
 #[derive(Debug)]
 pub struct Config {
     pub peer_block_request_filter: Option<Box<dyn PeerBlockRequestFilter>>,

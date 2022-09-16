@@ -34,9 +34,9 @@
 - [ ] `./server/forward.go` (14)
 - [ ] `./server/internal/decision/ewma.go` (5)
 - [ ] `./server/internal/decision/taskmerger.go` (87)
-- [ ] `./server/internal/decision/ledger.go` (46)
+- [x] `./server/internal/decision/ledger.go` (46)
 - [ ] `./server/internal/decision/engine.go` (1026)
-- [ ] `./server/internal/decision/scoreledger.go` (353)
+- [x] `./server/internal/decision/scoreledger.go` (353)
 - [x] `./server/internal/decision/peer_ledger.go` (46)
 - [ ] `./server/server.go` (536)
 
