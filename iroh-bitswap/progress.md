@@ -37,7 +37,7 @@
 - [ ] `./server/internal/decision/ledger.go` (46)
 - [ ] `./server/internal/decision/engine.go` (1026)
 - [ ] `./server/internal/decision/scoreledger.go` (353)
-- [ ] `./server/internal/decision/peer_ledger.go` (46)
+- [x] `./server/internal/decision/peer_ledger.go` (46)
 - [ ] `./server/server.go` (536)
 
 ### Network

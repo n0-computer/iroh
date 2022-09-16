@@ -10,7 +10,10 @@ use libp2p::PeerId;
 
 use crate::Store;
 
-use super::{blockstore_manager::BlockstoreManager, ledger::Ledger, score_ledger::Receipt};
+use super::{
+    blockstore_manager::BlockstoreManager, ledger::Ledger, peer_ledger::PeerLedger,
+    score_ledger::Receipt,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TaskInfo {
@@ -75,7 +78,7 @@ pub struct Engine {
     peer_tagger: (), //PeerTagger,
     ledger_map: RwLock<AHashMap<PeerId, Ledger>>,
     /// Tracks which peers are waiting for a Cid,
-    peer_ledger: (), //PeerLedger,
+    peer_ledger: PeerLedger,
     /// Tracks scores for peers.
     score_ledger: (), //ScoreLedger,
     ticker: Duration,

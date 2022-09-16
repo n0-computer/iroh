@@ -16,6 +16,7 @@ use crate::{block::Block, message::BitswapMessage, network::Network, Store};
 mod blockstore_manager;
 mod decision;
 mod ledger;
+mod peer_ledger;
 mod score_ledger;
 
 const PROVIDE_KEYS_BUFFER_SIZE: usize = 2048;
