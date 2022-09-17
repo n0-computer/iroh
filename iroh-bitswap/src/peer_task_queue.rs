@@ -23,7 +23,15 @@ impl<T: Topic, D: Data> PeerTaskQueue<T, D> {
         todo!()
     }
 
+    pub fn tasks_done(&self, peer: PeerId, tasks: &[Task<T, D>]) {
+        todo!()
+    }
+
     pub fn remove(&self, cid: Cid, peer: PeerId) {
+        todo!()
+    }
+
+    pub fn thaw_round(&self) {
         todo!()
     }
 }

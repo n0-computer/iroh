@@ -8,7 +8,7 @@ use cid::Cid;
 use libp2p::PeerId;
 
 use self::{
-    decision::{Config as DecisionConfig, Engine as DecisionEngine},
+    decision::{Config as DecisionConfig, Engine as DecisionEngine, Envelope},
     score_ledger::Receipt,
 };
 use crate::{block::Block, message::BitswapMessage, network::Network, Store};
@@ -123,5 +123,15 @@ impl Server {
 
     pub fn receive_message(&self, peer: &PeerId, message: &BitswapMessage) {
         todo!()
+    }
+
+    fn send_blocks(&self, envelope: Envelope) {
+        let res = self.network.send_message(envelope.peer, envelope.message);
+
+        // trigger sent updates
+        envelope
+            .queue
+            .tasks_done(envelope.peer, &envelope.sent_tasks);
+        envelope.work_signal.send(()).ok();
     }
 }

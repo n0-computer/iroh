@@ -39,7 +39,7 @@
 - [ ] `./server/server.go` (536)
 - [x] `./server/forward.go` (14)
     - skip, legacy
-- [ ] `./server/internal/decision/engine.go` (1026)
+- [x] `./server/internal/decision/engine.go` (1026)
 - [x] `./server/internal/decision/blockstoremanager.go` (149)
 - [x] `./server/internal/decision/ewma.go` (5)
 - [x] `./server/internal/decision/taskmerger.go` (87)

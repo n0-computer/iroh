@@ -2,7 +2,7 @@ use std::{
     fmt::Debug,
     sync::{Arc, Mutex, RwLock},
     thread::JoinHandle,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use ahash::{AHashMap, AHashSet};
@@ -89,13 +89,13 @@ pub struct Engine {
     /// Priority queue of requests received from peers.
     peer_task_queue: PeerTaskQueue<Cid, TaskData>,
     outbox: (Sender<Result<Envelope>>, Receiver<Result<Envelope>>),
-    blockstore_manager: BlockstoreManager,
+    blockstore_manager: Arc<RwLock<BlockstoreManager>>,
     ledger_map: RwLock<AHashMap<PeerId, Arc<Mutex<Ledger>>>>,
     /// Tracks which peers are waiting for a Cid,
     peer_ledger: Mutex<PeerLedger>,
     /// Tracks scores for peers.
     score_ledger: DefaultScoreLedger,
-    ticker: Duration,
+    ticker: Receiver<Instant>,
     task_worker_count: usize,
     target_message_size: usize,
     /// The maximum size of the block, in bytes, up to which we will
@@ -114,6 +114,7 @@ pub struct Engine {
     worker_closer: bus::Bus<()>,
     /// List of handles to worker threads.
     workers: Vec<JoinHandle<()>>,
+    work_signal: (Sender<()>, Receiver<()>),
 }
 
 impl Engine {
@@ -122,14 +123,16 @@ impl Engine {
 
         // TODO: limit?
         let outbox = crossbeam::channel::bounded(1024);
+        let work_signal = crossbeam::channel::bounded(1024);
+        let ticker = crossbeam::channel::tick(Duration::from_millis(100));
 
         Engine {
             peer_task_queue: PeerTaskQueue::new(),
             outbox,
-            blockstore_manager: BlockstoreManager::new(
+            blockstore_manager: Arc::new(RwLock::new(BlockstoreManager::new(
                 store,
                 config.engine_blockstore_worker_count,
-            ),
+            ))),
             ledger_map: Default::default(),
             peer_ledger: Mutex::new(PeerLedger::default()),
             score_ledger: DefaultScoreLedger::new(Box::new(|peer, score| {
@@ -139,7 +142,7 @@ impl Engine {
                     // tag peer("useful", score)
                 }
             })),
-            ticker: Duration::from_millis(100),
+            ticker,
             task_worker_count: config.engine_task_worker_count,
             target_message_size: config.target_message_size,
             max_block_size_replace_has_with_block: config.max_replace_size,
@@ -152,6 +155,7 @@ impl Engine {
             max_outstanding_bytes_per_peer: config.max_outstanding_bytes_per_peer,
             worker_closer: bus::Bus::new(config.engine_task_worker_count),
             workers: Vec::with_capacity(config.engine_task_worker_count),
+            work_signal,
         }
     }
 
@@ -168,20 +172,30 @@ impl Engine {
 
     /// Start up workers to handle requests from other nodes for the data on this node.
     pub fn start_workers(&mut self) {
-        self.blockstore_manager.start();
+        self.blockstore_manager.write().unwrap().start();
         self.score_ledger.start();
 
         for _ in 0..self.task_worker_count {
             let outbox = self.outbox.0.clone();
             let mut outer_close = self.worker_closer.add_rx();
-            let inner_close = self.worker_closer.add_rx();
+            let mut inner_close = self.worker_closer.add_rx();
             let target_message_size = self.target_message_size;
             let peer_task_queue = self.peer_task_queue.clone();
+            let ticker = self.ticker.clone();
+            let work_signal = self.work_signal.clone();
+            let blockstore_manager = self.blockstore_manager.clone();
 
             let handle = std::thread::spawn(move || {
-                while close.try_recv().is_err() {
-                    let envelope =
-                        next_envelope(inner_close, target_message_size, &peer_task_queue);
+                while outer_close.try_recv().is_err() {
+                    let envelope = next_envelope(
+                        work_signal.0.clone(),
+                        &work_signal.1,
+                        &ticker,
+                        &mut inner_close,
+                        target_message_size,
+                        peer_task_queue.clone(),
+                        blockstore_manager.clone(),
+                    );
                     outbox.send(envelope).ok();
                 }
             });
@@ -191,7 +205,7 @@ impl Engine {
 
     /// Shuts down workers.
     pub fn stop_workers(&mut self) -> Result<()> {
-        self.blockstore_manager.stop()?;
+        self.blockstore_manager.write().unwrap().stop()?;
         self.score_ledger.stop()?;
 
         // TODO: should this just be called on drop?
@@ -231,7 +245,12 @@ impl Engine {
             want_ks.insert(entry.cid);
         }
         let want_ks: Vec<_> = want_ks.into_iter().collect();
-        let block_sizes = match self.blockstore_manager.get_block_sizes(&want_ks) {
+        let block_sizes = match self
+            .blockstore_manager
+            .read()
+            .unwrap()
+            .get_block_sizes(&want_ks)
+        {
             Ok(s) => s,
             Err(err) => {
                 warn!("failed to fetch block sizes: {:?}", err);
@@ -408,7 +427,7 @@ impl Engine {
     }
 
     fn signal_new_work(&self) {
-        todo!()
+        self.work_signal.0.send(()).ok();
     }
 
     fn send_as_block(&self, want_type: WantType, block_size: usize) -> bool {
@@ -442,38 +461,106 @@ impl Engine {
 /// Contains a message for a specific peer.
 #[derive(Debug)]
 pub struct Envelope {
-    peer: PeerId,
-    message: BitswapMessage,
-    /// Channel to notify on, once the task is completed.
-    sent: Sender<()>,
+    pub peer: PeerId,
+    pub message: BitswapMessage,
+    pub sent_tasks: Vec<Task<Cid, TaskData>>,
+    pub queue: PeerTaskQueue<Cid, TaskData>,
+    pub work_signal: Sender<()>,
 }
 
 /// The work being executed in the task workers.
 fn next_envelope(
-    mut inner_close: bus::BusReader<()>,
+    work_signal_sender: Sender<()>,
+    work_signal_receiver: &Receiver<()>,
+    ticker: &Receiver<Instant>,
+    inner_close: &mut bus::BusReader<()>,
     target_message_size: usize,
-    peer_task_queue: &PeerTaskQueue<Cid, TaskData>,
+    peer_task_queue: PeerTaskQueue<Cid, TaskData>,
+    blockstore_manager: Arc<RwLock<BlockstoreManager>>,
 ) -> Result<Envelope> {
-    // pop some tasks off the request queue
-    let (mut peer, mut next_tasks, mut pending_bytes) =
-        peer_task_queue.pop_tasks(target_message_size);
-    // self.update_metrics();
+    loop {
+        // pop some tasks off the request queue
+        let (mut peer, mut next_tasks, mut pending_bytes) =
+            peer_task_queue.pop_tasks(target_message_size);
+        // self.update_metrics();
 
-    while next_tasks.is_empty() {
-        if inner_close.try_recv().is_ok() {
-            bail!("closed before finishing")
-        }
-        if let Ok(()) = work_signal.try_recv() {
-            let (new_peer, new_tasks, new_pending_bytes) =
-                peer_task_queue.pop_tasks(target_message_size);
-            // self.update_metrics();
-            peer = new_peer;
-            next_tasks = new_tasks;
-            pending_bytes = new_pending_bytes;
+        while next_tasks.is_empty() {
+            if inner_close.try_recv().is_ok() {
+                bail!("closed before finishing")
+            }
+            if let Ok(()) = work_signal_receiver.try_recv() {
+                let (new_peer, new_tasks, new_pending_bytes) =
+                    peer_task_queue.pop_tasks(target_message_size);
+                // self.update_metrics();
+                peer = new_peer;
+                next_tasks = new_tasks;
+                pending_bytes = new_pending_bytes;
+            }
+
+            if ticker.try_recv().is_ok() {
+                // When a task is cancelled, the qeue may be "frozen"
+                // for a period of time. We periodically "thaw" the queue
+                // to make sure it doesn't get suck in a frozen state.
+                peer_task_queue.thaw_round();
+
+                let (new_peer, new_tasks, new_pending_bytes) =
+                    peer_task_queue.pop_tasks(target_message_size);
+                // self.update_metrics();
+                peer = new_peer;
+                next_tasks = new_tasks;
+                pending_bytes = new_pending_bytes;
+            }
         }
 
-        // TODO: ticker
+        // create a new message
+        let mut msg = BitswapMessage::new(false);
+        msg.set_pending_bytes(pending_bytes.unwrap_or_default() as _);
+
+        // split out want-blocks, want-have and DONT_HAVEs
+        let mut block_cids = Vec::new();
+        let mut block_tasks = AHashMap::new();
+
+        for task in &next_tasks {
+            if task.data.have_block {
+                if task.data.is_want_block {
+                    block_cids.push(task.topic);
+                    block_tasks.insert(task.topic, task);
+                } else {
+                    // add HAVEs to the message
+                    msg.add_have(task.topic);
+                }
+            } else {
+                // add DONT_HAVEs to the message
+                msg.add_dont_have(task.topic);
+            }
+        }
+
+        // Fetch blocks from the store
+        let mut blocks = blockstore_manager.read().unwrap().get_blocks(&block_cids)?;
+
+        for (cid, task) in block_tasks {
+            if let Some(block) = blocks.remove(&cid) {
+                msg.add_block(block);
+            } else {
+                // block was not found
+                if task.data.send_dont_have {
+                    msg.add_dont_have(cid);
+                }
+            }
+        }
+
+        // nothing to see here
+        if msg.is_empty() {
+            peer_task_queue.tasks_done(peer, &next_tasks);
+            continue;
+        }
+
+        return Ok(Envelope {
+            peer,
+            message: msg,
+            sent_tasks: next_tasks,
+            queue: peer_task_queue,
+            work_signal: work_signal_sender,
+        });
     }
-
-    todo!()
 }
