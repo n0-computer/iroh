@@ -93,7 +93,7 @@ impl Server {
         todo!()
     }
 
-    pub fn ledger_for_peer(&self, peer: &PeerId) -> &Receipt {
+    pub fn ledger_for_peer(&self, peer: &PeerId) -> Option<Receipt> {
         self.engine.ledger_for_peer(peer)
     }
 

@@ -7,7 +7,7 @@ use std::{
 };
 
 use ahash::AHashMap;
-use anyhow::{ensure, Result};
+use anyhow::{anyhow, ensure, Result};
 use cid::Cid;
 use crossbeam::channel::{bounded, Receiver, Sender};
 use crossbeam::sync::WaitGroup;
@@ -59,6 +59,14 @@ impl BlockstoreManager {
             });
             self.workers.push(handle);
         }
+    }
+
+    pub fn stop(&mut self) -> Result<()> {
+        self.should_stop.store(true, Ordering::SeqCst);
+        while let Some(handle) = self.workers.pop() {
+            handle.join().map_err(|e| anyhow!("{:?}", e))?;
+        }
+        Ok(())
     }
 
     pub fn add_job<F: FnOnce() + Send + Sync + 'static>(&self, job: F) -> Result<()> {

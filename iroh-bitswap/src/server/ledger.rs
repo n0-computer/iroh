@@ -15,6 +15,25 @@ pub struct Ledger {
 }
 
 impl Ledger {
+    pub fn new(partner: PeerId) -> Self {
+        Ledger {
+            partner,
+            wantlist: Wantlist::default(),
+        }
+    }
+
+    pub fn wantlist_mut(&mut self) -> &mut Wantlist {
+        &mut self.wantlist
+    }
+
+    pub fn partner(&self) -> &PeerId {
+        &self.partner
+    }
+
+    pub fn clear_wantlist(&mut self) {
+        self.wantlist.clear();
+    }
+
     pub fn wants(&mut self, cid: Cid, priority: Priority, want_type: WantType) {
         self.wantlist.add(cid, priority, want_type);
     }

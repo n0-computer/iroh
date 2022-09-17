@@ -1,20 +1,29 @@
 use std::{
     fmt::Debug,
-    sync::{Mutex, RwLock},
+    sync::{Arc, Mutex, RwLock},
+    thread::JoinHandle,
     time::Duration,
 };
 
-use ahash::AHashMap;
+use ahash::{AHashMap, AHashSet};
+use anyhow::{anyhow, bail, Result};
 use cid::Cid;
+use crossbeam::channel::{Receiver, Sender};
 use libp2p::PeerId;
+use tracing::{info, warn};
 
-use crate::{peer_task_queue::PeerTaskQueue, Store};
+use crate::{
+    message::{BitswapMessage, BlockPresence, BlockPresenceType, Entry, WantType},
+    peer_task_queue::{PeerTaskQueue, Task},
+    Store,
+};
 
 use super::{
     blockstore_manager::BlockstoreManager,
     ledger::Ledger,
     peer_ledger::PeerLedger,
     score_ledger::{DefaultScoreLedger, Receipt},
+    task_merger::TaskData,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -78,12 +87,12 @@ pub struct Config {
 #[derive(Debug)]
 pub struct Engine {
     /// Priority queue of requests received from peers.
-    peer_task_queue: PeerTaskQueue,
-    outbox: (),
+    peer_task_queue: PeerTaskQueue<Cid, TaskData>,
+    outbox: (Sender<Result<Envelope>>, Receiver<Result<Envelope>>),
     blockstore_manager: BlockstoreManager,
-    ledger_map: RwLock<AHashMap<PeerId, Ledger>>,
+    ledger_map: RwLock<AHashMap<PeerId, Arc<Mutex<Ledger>>>>,
     /// Tracks which peers are waiting for a Cid,
-    peer_ledger: PeerLedger,
+    peer_ledger: Mutex<PeerLedger>,
     /// Tracks scores for peers.
     score_ledger: DefaultScoreLedger,
     ticker: Duration,
@@ -101,21 +110,28 @@ pub struct Engine {
     peer_block_request_filter: Option<Box<dyn PeerBlockRequestFilter>>,
     bstore_worker_count: usize,
     max_outstanding_bytes_per_peer: usize,
+    /// Bus to signal shutdown to all worker threads.
+    worker_closer: bus::Bus<()>,
+    /// List of handles to worker threads.
+    workers: Vec<JoinHandle<()>>,
 }
 
 impl Engine {
     pub fn new(store: Store, self_id: PeerId, config: Config) -> Self {
         // TODO: insert options for peertaskqueue
 
+        // TODO: limit?
+        let outbox = crossbeam::channel::bounded(1024);
+
         Engine {
             peer_task_queue: PeerTaskQueue::new(),
-            outbox: (),
+            outbox,
             blockstore_manager: BlockstoreManager::new(
                 store,
                 config.engine_blockstore_worker_count,
             ),
             ledger_map: Default::default(),
-            peer_ledger: PeerLedger::default(),
+            peer_ledger: Mutex::new(PeerLedger::default()),
             score_ledger: DefaultScoreLedger::new(Box::new(|peer, score| {
                 if score == 0 {
                     // untag peer("useful")
@@ -134,6 +150,8 @@ impl Engine {
             peer_block_request_filter: config.peer_block_request_filter,
             bstore_worker_count: config.engine_blockstore_worker_count,
             max_outstanding_bytes_per_peer: config.max_outstanding_bytes_per_peer,
+            worker_closer: bus::Bus::new(config.engine_task_worker_count),
+            workers: Vec::with_capacity(config.engine_task_worker_count),
         }
     }
 
@@ -148,29 +166,314 @@ impl Engine {
         }
     }
 
-    fn start_score_ledger(&mut self) {
-        self.score_ledger.start();
-        // TODO: call stop on drop/close
-    }
-
-    fn start_blockstore_manager(&mut self) {
-        self.blockstore_manager.start();
-        // TODO: call stop on drop/close
-    }
-
     /// Start up workers to handle requests from other nodes for the data on this node.
     pub fn start_workers(&mut self) {
-        self.start_blockstore_manager();
-        self.start_score_ledger();
+        self.blockstore_manager.start();
+        self.score_ledger.start();
 
-        for i in 0..self.task_worker_count {
-            todo!()
+        for _ in 0..self.task_worker_count {
+            let outbox = self.outbox.0.clone();
+            let mut outer_close = self.worker_closer.add_rx();
+            let inner_close = self.worker_closer.add_rx();
+            let target_message_size = self.target_message_size;
+            let peer_task_queue = self.peer_task_queue.clone();
+
+            let handle = std::thread::spawn(move || {
+                while close.try_recv().is_err() {
+                    let envelope =
+                        next_envelope(inner_close, target_message_size, &peer_task_queue);
+                    outbox.send(envelope).ok();
+                }
+            });
+            self.workers.push(handle);
         }
     }
 
-    /// Returns the aggregated data communication for the given peer.
-    pub fn ledger_for_peer(&self, peer: &PeerId) -> &Receipt {
-        todo!()
-        // self.score_ledger.get_receipt(peer)
+    /// Shuts down workers.
+    pub fn stop_workers(&mut self) -> Result<()> {
+        self.blockstore_manager.stop()?;
+        self.score_ledger.stop()?;
+
+        // TODO: should this just be called on drop?
+        self.worker_closer.broadcast(());
+        while let Some(handle) = self.workers.pop() {
+            handle.join().map_err(|e| anyhow!("{:?}", e))?;
+        }
+
+        Ok(())
     }
+
+    /// Returns the aggregated data communication for the given peer.
+    pub fn ledger_for_peer(&self, peer: &PeerId) -> Option<Receipt> {
+        self.score_ledger.receipt(peer)
+    }
+
+    /// Returns a list of peers with whom the local node has active sessions.
+    pub fn peers(&self) -> AHashSet<PeerId> {
+        // TODO: can this avoid the allocation?
+        self.ledger_map.read().unwrap().keys().copied().collect()
+    }
+
+    /// MessageReceived is called when a message is received from a remote peer.
+    /// For each item in the wantlist, add a want-have or want-block entry to the
+    /// request queue (this is later popped off by the workerTasks)
+    pub fn message_received(&self, peer: &PeerId, message: &BitswapMessage) {
+        if message.is_empty() {
+            info!("received empty message from {}", peer);
+        }
+
+        let mut new_work_exists = false;
+        let (wants, cancels, denials) = self.split_wants(peer, message.wantlist());
+
+        // get block sizes
+        let mut want_ks = AHashSet::new();
+        for entry in &wants {
+            want_ks.insert(entry.cid);
+        }
+        let want_ks: Vec<_> = want_ks.into_iter().collect();
+        let block_sizes = match self.blockstore_manager.get_block_sizes(&want_ks) {
+            Ok(s) => s,
+            Err(err) => {
+                warn!("failed to fetch block sizes: {:?}", err);
+                return;
+            }
+        };
+
+        {
+            let mut peer_ledger = self.peer_ledger.lock().unwrap();
+            for want in &wants {
+                peer_ledger.wants(*peer, want.cid);
+            }
+            for canel in &cancels {
+                peer_ledger.cancel_want(peer, &canel.cid);
+            }
+        }
+
+        // get the ledger for the peer
+        let l = self.find_or_create(peer);
+        let mut ledger = l.lock().unwrap();
+
+        // if the peer sent a full wantlist, clear the existing wantlist.
+        if message.full() {
+            ledger.clear_wantlist();
+        }
+        let mut active_entries = Vec::new();
+        for entry in &cancels {
+            if ledger.cancel_want(&entry.cid).is_some() {
+                self.peer_task_queue.remove(entry.cid, *peer);
+            }
+        }
+
+        let send_dont_have = |entries: &mut Vec<_>, new_work_exists: &mut bool, entry: &Entry| {
+            // only add the task to the queue if the requester wants DONT_HAVE
+            if self.send_dont_haves && entry.send_dont_have {
+                let cid = entry.cid;
+                *new_work_exists = true;
+                let is_want_block = entry.want_type == WantType::Block;
+                entries.push(Task {
+                    topic: cid,
+                    priority: entry.priority as isize,
+                    work: BlockPresence::encoded_len_for_cid(cid),
+                    data: TaskData {
+                        block_size: 0,
+                        have_block: false,
+                        is_want_block,
+                        send_dont_have: entry.send_dont_have,
+                    },
+                });
+            }
+        };
+
+        // deny access to blocks
+        for entry in &denials {
+            send_dont_have(&mut active_entries, &mut new_work_exists, entry);
+        }
+
+        // for each want-have/want-block
+        for entry in &wants {
+            let cid = entry.cid;
+
+            // add each want-have/want-block to the ledger
+            ledger.wants(cid, entry.priority, entry.want_type);
+
+            if let Some(block_size) = block_sizes.get(&cid) {
+                // the block was found
+                new_work_exists = true;
+                let is_want_block = self.send_as_block(entry.want_type, *block_size);
+                let entry_size = if is_want_block {
+                    *block_size
+                } else {
+                    BlockPresence::encoded_len_for_cid(cid)
+                };
+
+                active_entries.push(Task {
+                    topic: cid,
+                    priority: entry.priority as isize,
+                    work: entry_size,
+                    data: TaskData {
+                        is_want_block,
+                        send_dont_have: entry.send_dont_have,
+                        block_size: *block_size,
+                        have_block: true,
+                    },
+                });
+            } else {
+                // if the block was not found
+                send_dont_have(&mut active_entries, &mut new_work_exists, entry);
+            }
+        }
+
+        if !active_entries.is_empty() {
+            self.peer_task_queue.push_tasks(*peer, active_entries);
+            self.update_metrics();
+        }
+
+        if new_work_exists {
+            self.signal_new_work();
+        }
+    }
+
+    pub fn message_sent(&self, peer: &PeerId, message: &BitswapMessage) {
+        let l = self.find_or_create(peer);
+        let mut ledger = l.lock().unwrap();
+
+        // remove sent blocks from the want list for the peer
+        for block in message.blocks() {
+            self.score_ledger
+                .add_to_sent_bytes(*ledger.partner(), block.data().len());
+            ledger
+                .wantlist_mut()
+                .remove_type(block.cid(), WantType::Block);
+        }
+
+        // remove sent block presences from the wantlist for the peer
+        for bp in message.block_presences() {
+            // don't record sent data, we reserve that for data blocks
+            if bp.typ == BlockPresenceType::Have {
+                ledger.wantlist_mut().remove_type(&bp.cid, WantType::Have);
+            }
+        }
+    }
+
+    fn split_wants<'a>(
+        &self,
+        peer: &PeerId,
+        entries: impl Iterator<Item = &'a Entry>,
+    ) -> (Vec<&'a Entry>, Vec<&'a Entry>, Vec<&'a Entry>) {
+        let mut wants = Vec::new();
+        let mut cancels = Vec::new();
+        let mut denials = Vec::new();
+
+        for entry in entries {
+            if entry.cancel {
+                cancels.push(entry);
+            } else {
+                if let Some(ref filter) = self.peer_block_request_filter {
+                    if (filter)(peer, &entry.cid) {
+                        wants.push(entry);
+                    } else {
+                        denials.push(entry);
+                    }
+                } else {
+                    wants.push(entry);
+                }
+            }
+        }
+
+        (wants, cancels, denials)
+    }
+
+    /// Called when a new peer connects, which means we will start sending blocks to this peer.
+    pub fn peer_connected(&self, peer: PeerId) {
+        let mut ledger_map = self.ledger_map.write().unwrap();
+        let _ = ledger_map
+            .entry(peer)
+            .or_insert_with(|| Arc::new(Mutex::new(Ledger::new(peer))));
+
+        self.score_ledger.peer_connected(peer);
+    }
+
+    /// Called when a peer is disconnected.
+    pub fn peer_disconnected(&self, peer: PeerId) {
+        let mut ledger_map = self.ledger_map.write().unwrap();
+        if let Some(e) = ledger_map.remove(&peer) {
+            let mut entry = e.lock().unwrap();
+            let mut peer_ledger = self.peer_ledger.lock().unwrap();
+            for want in entry.entries() {
+                peer_ledger.cancel_want(&peer, &want.cid);
+            }
+        }
+
+        self.score_ledger.peer_disconnected(&peer);
+    }
+
+    fn signal_new_work(&self) {
+        todo!()
+    }
+
+    fn send_as_block(&self, want_type: WantType, block_size: usize) -> bool {
+        let is_want_block = want_type == WantType::Block;
+        is_want_block || block_size <= self.max_block_size_replace_has_with_block
+    }
+
+    fn find_or_create(&self, peer: &PeerId) -> Arc<Mutex<Ledger>> {
+        if !self.ledger_map.read().unwrap().contains_key(peer) {
+            self.ledger_map
+                .write()
+                .unwrap()
+                .insert(*peer, Arc::new(Mutex::new(Ledger::new(*peer))));
+        }
+        self.ledger_map.read().unwrap().get(peer).unwrap().clone()
+    }
+
+    fn num_bytes_sent_to(&self, peer: &PeerId) -> u64 {
+        self.ledger_for_peer(peer)
+            .map(|l| l.sent)
+            .unwrap_or_default()
+    }
+
+    fn num_bytes_recv_from(&self, peer: &PeerId) -> u64 {
+        self.ledger_for_peer(peer)
+            .map(|l| l.recv)
+            .unwrap_or_default()
+    }
+}
+
+/// Contains a message for a specific peer.
+#[derive(Debug)]
+pub struct Envelope {
+    peer: PeerId,
+    message: BitswapMessage,
+    /// Channel to notify on, once the task is completed.
+    sent: Sender<()>,
+}
+
+/// The work being executed in the task workers.
+fn next_envelope(
+    mut inner_close: bus::BusReader<()>,
+    target_message_size: usize,
+    peer_task_queue: &PeerTaskQueue<Cid, TaskData>,
+) -> Result<Envelope> {
+    // pop some tasks off the request queue
+    let (mut peer, mut next_tasks, mut pending_bytes) =
+        peer_task_queue.pop_tasks(target_message_size);
+    // self.update_metrics();
+
+    while next_tasks.is_empty() {
+        if inner_close.try_recv().is_ok() {
+            bail!("closed before finishing")
+        }
+        if let Ok(()) = work_signal.try_recv() {
+            let (new_peer, new_tasks, new_pending_bytes) =
+                peer_task_queue.pop_tasks(target_message_size);
+            // self.update_metrics();
+            peer = new_peer;
+            next_tasks = new_tasks;
+            pending_bytes = new_pending_bytes;
+        }
+
+        // TODO: ticker
+    }
+
+    todo!()
 }

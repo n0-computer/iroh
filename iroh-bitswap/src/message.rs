@@ -41,6 +41,14 @@ impl BlockPresence {
         let bpm: pb::message::BlockPresence = self.clone().into();
         bpm.encoded_len()
     }
+
+    pub fn encoded_len_for_cid(cid: Cid) -> usize {
+        pb::message::BlockPresence {
+            cid: cid.to_bytes(),
+            r#type: BlockPresenceType::Have.into(),
+        }
+        .encoded_len()
+    }
 }
 
 impl From<BlockPresence> for pb::message::BlockPresence {

@@ -9,6 +9,7 @@ use std::{
 };
 
 use ahash::AHashMap;
+use anyhow::{anyhow, Result};
 use libp2p::PeerId;
 
 use crate::server::ewma::ewma;
@@ -208,21 +209,20 @@ impl DefaultScoreLedger {
         }));
     }
 
-    pub fn stop(&mut self) {
-        self.closer
-            .take()
-            .expect("not started")
-            .send(())
-            .expect("send err");
+    pub fn stop(&mut self) -> Result<()> {
+        self.closer.take().expect("not started").send(())?;
+
         self.worker
             .take()
             .expect("not started")
             .join()
-            .expect("task err");
+            .map_err(|e| anyhow!("{:?}", e))?;
+
+        Ok(())
     }
 
     /// Increments the sent counter.
-    pub fn add_to_sent_bytes(&mut self, peer: PeerId, n: usize) {
+    pub fn add_to_sent_bytes(&self, peer: PeerId, n: usize) {
         let mut ledger = self.state.ledger_map.write().unwrap();
         let entry = ledger
             .entry(peer)
@@ -231,7 +231,7 @@ impl DefaultScoreLedger {
     }
 
     /// Increments the received counters.
-    pub fn add_to_recv_bytes(&mut self, peer: PeerId, n: usize) {
+    pub fn add_to_recv_bytes(&self, peer: PeerId, n: usize) {
         let mut ledger = self.state.ledger_map.write().unwrap();
         let entry = ledger
             .entry(peer)

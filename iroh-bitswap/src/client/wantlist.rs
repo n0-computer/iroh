@@ -22,6 +22,11 @@ impl Wantlist {
         self.set.is_empty()
     }
 
+    pub fn clear(&mut self) {
+        self.set.clear();
+        self.cached.clear();
+    }
+
     /// Adds an entry to thew wantlist, if not already present.
     pub fn add(&mut self, cid: Cid, priority: Priority, want_type: WantType) -> bool {
         if let Some(entry) = self.set.get(&cid) {

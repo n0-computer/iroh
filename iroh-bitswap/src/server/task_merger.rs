@@ -6,13 +6,13 @@ use crate::peer_task_queue::{Data, Task};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TaskData {
     /// Tasks can be either want-have or want-block.
-    is_want_block: bool,
+    pub is_want_block: bool,
     /// Wether to immediately send a response if teh block is not found.
-    send_dont_have: bool,
+    pub send_dont_have: bool,
     /// The size of the block corresponding to the task.
-    block_size: usize,
+    pub block_size: usize,
     /// Wether the block was found.
-    have_block: bool,
+    pub have_block: bool,
 }
 
 impl Data for TaskData {}
