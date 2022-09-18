@@ -1,4 +1,4 @@
-use std::{ops::Deref, rc::Rc};
+use std::{ops::Deref, sync::Arc};
 
 use ahash::AHashMap;
 use cid::Cid;
@@ -94,7 +94,7 @@ impl Wantlist {
 
 /// An entry in a wantlist.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Entry(Rc<InnerEntry>);
+pub struct Entry(Arc<InnerEntry>);
 
 impl Deref for Entry {
     type Target = InnerEntry;
@@ -112,7 +112,7 @@ pub struct InnerEntry {
 
 impl Entry {
     pub fn new(cid: Cid, priority: Priority, want_type: WantType) -> Self {
-        Entry(Rc::new(InnerEntry {
+        Entry(Arc::new(InnerEntry {
             cid,
             priority,
             want_type,

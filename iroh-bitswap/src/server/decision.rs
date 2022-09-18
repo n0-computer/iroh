@@ -13,6 +13,8 @@ use libp2p::PeerId;
 use tracing::{info, warn};
 
 use crate::{
+    block::Block,
+    client::wantlist,
     message::{BitswapMessage, BlockPresence, BlockPresenceType, Entry, WantType},
     peer_task_queue::{PeerTaskQueue, Task},
     Store,
@@ -43,15 +45,18 @@ pub struct TaskInfo {
 
 /// Used for task prioritization.
 /// It should return true if task 'ta' has higher priority than task 'tb'
-pub trait TaskComparator: Fn(&TaskInfo, &TaskInfo) -> bool + Debug {}
+pub trait TaskComparator: Fn(&TaskInfo, &TaskInfo) -> bool + Debug + 'static + Sync + Send {}
 
-impl<F: Fn(&TaskInfo, &TaskInfo) -> bool + Debug> TaskComparator for F {}
+impl<F: Fn(&TaskInfo, &TaskInfo) -> bool + Debug + 'static + Sync + Send> TaskComparator for F {}
 
 // Used to accept / deny requests for a CID coming from a PeerID
 // It should return true if the request should be fullfilled.
-pub trait PeerBlockRequestFilter: Fn(&PeerId, &Cid) -> bool + Debug {}
+pub trait PeerBlockRequestFilter:
+    Fn(&PeerId, &Cid) -> bool + Debug + 'static + Sync + Send
+{
+}
 
-impl<F: Fn(&PeerId, &Cid) -> bool + Debug> PeerBlockRequestFilter for F {}
+impl<F: Fn(&PeerId, &Cid) -> bool + Debug + 'static + Sync + Send> PeerBlockRequestFilter for F {}
 
 /// Assigns a specifc score to a peer.
 pub trait ScorePeerFunc: Fn(&PeerId, usize) + Send + Sync {}
@@ -80,6 +85,21 @@ pub struct Config {
     /// Setting it to 0 will disable any limiting.
     pub max_outstanding_bytes_per_peer: usize,
     pub max_replace_size: usize,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Config {
+            peer_block_request_filter: None,
+            task_comparator: None,
+            engine_task_worker_count: 8,
+            send_dont_haves: true,
+            engine_blockstore_worker_count: 128,
+            target_message_size: 16 * 1024,
+            max_outstanding_bytes_per_peer: 1 << 20,
+            max_replace_size: 1024,
+        }
+    }
 }
 
 // Note: tagging peers is not supported by rust-libp2p, so currently not implemented
@@ -203,6 +223,10 @@ impl Engine {
         }
     }
 
+    pub fn outbox(&self) -> Receiver<Result<Envelope>> {
+        self.outbox.1.clone()
+    }
+
     /// Shuts down workers.
     pub fn stop_workers(&mut self) -> Result<()> {
         self.blockstore_manager.write().unwrap().stop()?;
@@ -215,6 +239,12 @@ impl Engine {
         }
 
         Ok(())
+    }
+
+    pub fn wantlist_for_peer(&self, peer: &PeerId) -> Vec<wantlist::Entry> {
+        let p = self.find_or_create(peer);
+        let mut partner = p.lock().unwrap();
+        partner.wantlist_mut().entries().collect()
     }
 
     /// Returns the aggregated data communication for the given peer.
@@ -359,7 +389,7 @@ impl Engine {
         // remove sent blocks from the want list for the peer
         for block in message.blocks() {
             self.score_ledger
-                .add_to_sent_bytes(*ledger.partner(), block.data().len());
+                .add_to_sent_bytes(ledger.partner(), block.data().len());
             ledger
                 .wantlist_mut()
                 .remove_type(block.cid(), WantType::Block);
@@ -402,28 +432,129 @@ impl Engine {
         (wants, cancels, denials)
     }
 
+    pub fn received_blocks(&self, from: &PeerId, blocks: &[Block]) {
+        if blocks.is_empty() {
+            return;
+        }
+
+        let l = self.find_or_create(from);
+        let ledger = l.lock().unwrap();
+        for block in blocks {
+            self.score_ledger
+                .add_to_recv_bytes(ledger.partner(), block.data().len());
+        }
+    }
+
+    pub fn notify_new_blocks(&self, blocks: &[Block]) {
+        if blocks.is_empty() {
+            return;
+        }
+
+        // get the sizes of each block
+        let block_sizes: AHashMap<_, _> = blocks
+            .iter()
+            .map(|block| (block.cid(), block.data().len()))
+            .collect();
+
+        let mut work = false;
+        let mut missing_wants: AHashMap<PeerId, Vec<Cid>> = AHashMap::new();
+        for block in blocks {
+            let cid = block.cid();
+            let peer_ledger = self.peer_ledger.lock().unwrap();
+            let peers = peer_ledger.peers(cid);
+            if peers.is_none() {
+                continue;
+            }
+            for peer in peers.unwrap() {
+                let l = self.ledger_map.read().unwrap().get(peer).cloned();
+                if l.is_none() {
+                    missing_wants.entry(*peer).or_default().push(*cid);
+                    continue;
+                }
+                let l = l.unwrap();
+                let ledger = l.lock().unwrap();
+                let entry = ledger.wantlist_get(cid);
+                if entry.is_none() {
+                    missing_wants.entry(*peer).or_default().push(*cid);
+                    continue;
+                }
+                let entry = entry.unwrap();
+
+                work = true;
+                let block_size = block_sizes.get(cid).copied().unwrap_or_default();
+                let is_want_block = self.send_as_block(entry.want_type, block_size);
+                let entry_size = if is_want_block {
+                    block_size
+                } else {
+                    BlockPresence::encoded_len_for_cid(*cid)
+                };
+
+                self.peer_task_queue.push_task(
+                    *peer,
+                    Task {
+                        topic: entry.cid,
+                        priority: entry.priority as isize,
+                        work: entry_size,
+                        data: TaskData {
+                            block_size,
+                            have_block: true,
+                            is_want_block,
+                            send_dont_have: false,
+                        },
+                    },
+                );
+                self.update_metrics();
+            }
+        }
+
+        // If we found missing wants remove them from the list
+        if !missing_wants.is_empty() {
+            let ledger_map = self.ledger_map.read().unwrap();
+            let mut peer_ledger = self.peer_ledger.lock().unwrap();
+            for (peer, wants) in missing_wants.into_iter() {
+                if let Some(l) = ledger_map.get(&peer) {
+                    let ledger = l.lock().unwrap();
+                    for cid in wants {
+                        if ledger.wantlist_get(&cid).is_some() {
+                            continue;
+                        }
+                        peer_ledger.cancel_want(&peer, &cid);
+                    }
+                } else {
+                    for cid in wants {
+                        peer_ledger.cancel_want(&peer, &cid);
+                    }
+                }
+            }
+        }
+
+        if work {
+            self.signal_new_work();
+        }
+    }
+
     /// Called when a new peer connects, which means we will start sending blocks to this peer.
-    pub fn peer_connected(&self, peer: PeerId) {
+    pub fn peer_connected(&self, peer: &PeerId) {
         let mut ledger_map = self.ledger_map.write().unwrap();
         let _ = ledger_map
-            .entry(peer)
-            .or_insert_with(|| Arc::new(Mutex::new(Ledger::new(peer))));
+            .entry(*peer)
+            .or_insert_with(|| Arc::new(Mutex::new(Ledger::new(*peer))));
 
         self.score_ledger.peer_connected(peer);
     }
 
     /// Called when a peer is disconnected.
-    pub fn peer_disconnected(&self, peer: PeerId) {
+    pub fn peer_disconnected(&self, peer: &PeerId) {
         let mut ledger_map = self.ledger_map.write().unwrap();
-        if let Some(e) = ledger_map.remove(&peer) {
+        if let Some(e) = ledger_map.remove(peer) {
             let mut entry = e.lock().unwrap();
             let mut peer_ledger = self.peer_ledger.lock().unwrap();
             for want in entry.entries() {
-                peer_ledger.cancel_want(&peer, &want.cid);
+                peer_ledger.cancel_want(peer, &want.cid);
             }
         }
 
-        self.score_ledger.peer_disconnected(&peer);
+        self.score_ledger.peer_disconnected(peer);
     }
 
     fn signal_new_work(&self) {

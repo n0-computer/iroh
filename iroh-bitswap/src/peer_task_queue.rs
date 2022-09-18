@@ -23,6 +23,10 @@ impl<T: Topic, D: Data> PeerTaskQueue<T, D> {
         todo!()
     }
 
+    pub fn push_task(&self, peer: PeerId, task: Task<T, D>) {
+        todo!()
+    }
+
     pub fn tasks_done(&self, peer: PeerId, tasks: &[Task<T, D>]) {
         todo!()
     }

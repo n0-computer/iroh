@@ -222,31 +222,31 @@ impl DefaultScoreLedger {
     }
 
     /// Increments the sent counter.
-    pub fn add_to_sent_bytes(&self, peer: PeerId, n: usize) {
+    pub fn add_to_sent_bytes(&self, peer: &PeerId, n: usize) {
         let mut ledger = self.state.ledger_map.write().unwrap();
         let entry = ledger
-            .entry(peer)
-            .or_insert_with(|| IndividualScoreLedger::new(peer));
+            .entry(*peer)
+            .or_insert_with(|| IndividualScoreLedger::new(*peer));
         entry.add_to_sent_bytes(n);
     }
 
     /// Increments the received counters.
-    pub fn add_to_recv_bytes(&self, peer: PeerId, n: usize) {
+    pub fn add_to_recv_bytes(&self, peer: &PeerId, n: usize) {
         let mut ledger = self.state.ledger_map.write().unwrap();
         let entry = ledger
-            .entry(peer)
-            .or_insert_with(|| IndividualScoreLedger::new(peer));
+            .entry(*peer)
+            .or_insert_with(|| IndividualScoreLedger::new(*peer));
         entry.add_to_recv_bytes(n);
     }
 
     /// Start accounting when a peer connects.
-    pub fn peer_connected(&self, peer: PeerId) {
+    pub fn peer_connected(&self, peer: &PeerId) {
         self.state
             .ledger_map
             .write()
             .unwrap()
-            .entry(peer)
-            .or_insert_with(|| IndividualScoreLedger::new(peer));
+            .entry(*peer)
+            .or_insert_with(|| IndividualScoreLedger::new(*peer));
     }
 
     /// Clean up accounting when a peer disconnects.
