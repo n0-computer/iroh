@@ -17,17 +17,11 @@ pub struct TaskData {
 
 impl Data for TaskData {}
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TaskMerger {}
 
-impl TaskMerger {
-    /// The request queue uses this method to decide if a newly pushed task has
-    /// any new information beyond the tasks with the same topic (Cid) in the queue.
-    pub fn has_new_info(
-        &self,
-        task: &Task<Cid, TaskData>,
-        existing: &[Task<Cid, TaskData>],
-    ) -> bool {
+impl crate::peer_task_queue::TaskMerger<Cid, TaskData> for TaskMerger {
+    fn has_new_info(&self, task: &Task<Cid, TaskData>, existing: &[Task<Cid, TaskData>]) -> bool {
         let mut have_size = false;
         let mut is_want_block = false;
 
@@ -56,9 +50,7 @@ impl TaskMerger {
         false
     }
 
-    /// The request queue uses this method to merge a newly pushed task with an existing
-    /// task with the same topic (Cid).
-    pub fn merge(&self, task: &Task<Cid, TaskData>, existing: &mut Task<Cid, TaskData>) {
+    fn merge(&self, task: &Task<Cid, TaskData>, existing: &mut Task<Cid, TaskData>) {
         let new_task = &task.data;
         let existing_task = &mut existing.data;
 

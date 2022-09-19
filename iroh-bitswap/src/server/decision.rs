@@ -25,7 +25,7 @@ use super::{
     ledger::Ledger,
     peer_ledger::PeerLedger,
     score_ledger::{DefaultScoreLedger, Receipt},
-    task_merger::TaskData,
+    task_merger::{TaskData, TaskMerger},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -107,7 +107,7 @@ impl Default for Config {
 #[derive(Debug)]
 pub struct Engine {
     /// Priority queue of requests received from peers.
-    peer_task_queue: PeerTaskQueue<Cid, TaskData>,
+    peer_task_queue: PeerTaskQueue<Cid, TaskData, TaskMerger>,
     outbox: Receiver<Result<Envelope>>,
     blockstore_manager: Arc<RwLock<BlockstoreManager>>,
     ledger_map: RwLock<AHashMap<PeerId, Arc<Mutex<Ledger>>>>,
@@ -596,7 +596,7 @@ pub struct Envelope {
     pub peer: PeerId,
     pub message: BitswapMessage,
     pub sent_tasks: Vec<Task<Cid, TaskData>>,
-    pub queue: PeerTaskQueue<Cid, TaskData>,
+    pub queue: PeerTaskQueue<Cid, TaskData, TaskMerger>,
     pub work_signal: Sender<()>,
 }
 
@@ -607,7 +607,7 @@ fn next_envelope(
     ticker: &Receiver<Instant>,
     inner_close: &Receiver<()>,
     target_message_size: usize,
-    peer_task_queue: PeerTaskQueue<Cid, TaskData>,
+    peer_task_queue: PeerTaskQueue<Cid, TaskData, TaskMerger>,
     blockstore_manager: Arc<RwLock<BlockstoreManager>>,
 ) -> Result<Envelope> {
     loop {

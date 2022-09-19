@@ -48,6 +48,19 @@ impl Store {
 
 impl Bitswap {
     pub fn new(network: Network, store: Store, config: Config) -> Self {
+        // Default options from go-ipfs
+        // DefaultEngineBlockstoreWorkerCount = 128
+        // DefaultTaskWorkerCount             = 8
+        // DefaultEngineTaskWorkerCount       = 8
+        // DefaultMaxOutstandingBytesPerPeer  = 1 << 20
+
+        // Options passed on from go-ipfs
+        // ProvideEnabled
+        // EngineBlockstoreWorkerCount
+        // TaskWorkerCount
+        // EngineTaskWorkerCount
+        // MaxOutstandingBytesPerPeer
+
         let server = Server::new(network.clone(), store.clone(), config.server);
         let client = Client::new(network.clone(), store, config.client);
 
