@@ -28,6 +28,7 @@ impl FakeApi {
 #[async_trait]
 impl GetAdd for FakeApi {
     async fn get(&self, cid: Cid, output: &Path) -> Result<()> {
+        // XXX should really affect the file system
         Ok(())
     }
 
