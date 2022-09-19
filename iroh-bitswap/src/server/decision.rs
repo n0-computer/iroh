@@ -10,7 +10,7 @@ use anyhow::{anyhow, bail, Result};
 use cid::Cid;
 use crossbeam::channel::{Receiver, Sender};
 use libp2p::PeerId;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use crate::{
     block::Block,
@@ -149,9 +149,9 @@ impl Engine {
             PTQConfig {
                 max_outstanding_work_per_peer: config.max_outstanding_bytes_per_peer,
                 ignore_freezing: true,
-                // TODO: hooks
             },
         );
+        let peer_task_hook = peer_task_queue.add_hook(64);
         let blockstore_manager = Arc::new(RwLock::new(BlockstoreManager::new(
             store,
             config.engine_blockstore_worker_count,
@@ -175,11 +175,16 @@ impl Engine {
             let ticker = ticker.clone();
             let work_signal = work_signal.clone();
             let blockstore_manager = blockstore_manager.clone();
+            let peer_task_hook = peer_task_hook.clone();
 
             let handle = std::thread::spawn(move || loop {
                 crossbeam::channel::select! {
                     recv(outer_closer_r) -> _ => {
                         break;
+                    }
+                    recv(peer_task_hook) -> event => {
+                        debug!("peer queue event: {:?}", event);
+                        // TODO: tag/untag peer
                     }
                     default => {
                         let envelope = next_envelope(
