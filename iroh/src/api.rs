@@ -1,3 +1,10 @@
+use anyhow::Result;
+use async_trait::async_trait;
+use bytes::Bytes;
+use cid::Cid;
+use libp2p::gossipsub::MessageId;
+use libp2p::{Multiaddr, PeerId};
+use std::path::Path;
 
 pub struct Id {
     peer_id: PeerId,
@@ -5,12 +12,17 @@ pub struct Id {
     local_addrs: Vec<Multiaddr>,
 }
 
+pub enum Ping {
+    PeerId(PeerId),
+    Multiaddr(Multiaddr),
+}
+
 #[async_trait]
 pub trait Main {
     async fn version(&self) -> Result<String>;
     // these are really on p2p
     async fn peers(&self) -> Result<Vec<PeerId>>;
-    async fn ping(&self, peer_id: PeerId, multi_addr: Multiaddr, count: usize) -> Result<()>;
+    async fn ping(&self, ping_args: &[Ping], count: usize) -> Result<()>;
 }
 
 #[async_trait]
@@ -24,7 +36,7 @@ pub trait GetAdd {
 
 #[async_trait]
 pub trait ConnectDisconnect {
-    async fn connect(&self, peer_id: PeerId, addrs: &[Multiaddress]) -> Result<()>;
+    async fn connect(&self, peer_id: PeerId, addrs: &[Multiaddr]) -> Result<()>;
     async fn disconnect(&self, peer_id: PeerId) -> Result<()>;
 }
 
