@@ -16,7 +16,7 @@ use crate::{
     block::Block,
     client::wantlist,
     message::{BitswapMessage, BlockPresence, BlockPresenceType, Entry, WantType},
-    peer_task_queue::{PeerTaskQueue, Task},
+    peer_task_queue::{Config as PTQConfig, PeerTaskQueue, Task},
     Store,
 };
 
@@ -143,7 +143,15 @@ impl Engine {
         let work_signal = crossbeam::channel::bounded(1024);
         let ticker = crossbeam::channel::tick(Duration::from_millis(100));
 
-        let peer_task_queue = PeerTaskQueue::new();
+        let task_merger = TaskMerger::default();
+        let peer_task_queue = PeerTaskQueue::new(
+            task_merger,
+            PTQConfig {
+                max_outstanding_work_per_peer: config.max_outstanding_bytes_per_peer,
+                ignore_freezing: true,
+                // TODO: hooks
+            },
+        );
         let blockstore_manager = Arc::new(RwLock::new(BlockstoreManager::new(
             store,
             config.engine_blockstore_worker_count,
@@ -310,7 +318,7 @@ impl Engine {
         let mut active_entries = Vec::new();
         for entry in &cancels {
             if ledger.cancel_want(&entry.cid).is_some() {
-                self.peer_task_queue.remove(entry.cid, *peer);
+                self.peer_task_queue.remove(&entry.cid, *peer);
             }
         }
 
@@ -612,22 +620,33 @@ fn next_envelope(
 ) -> Result<Envelope> {
     loop {
         // pop some tasks off the request queue
-        let (mut peer, mut next_tasks, mut pending_bytes) =
-            peer_task_queue.pop_tasks(target_message_size);
+        let mut peer = None;
+        let mut next_tasks = None;
+        let mut pending_bytes = None;
+
+        if let Some((p, t, b)) = peer_task_queue.pop_tasks(target_message_size) {
+            peer = Some(p);
+            if !t.is_empty() {
+                next_tasks = Some(t);
+            }
+            pending_bytes = Some(b);
+        }
         // self.update_metrics();
 
-        while next_tasks.is_empty() {
+        while next_tasks.is_none() {
             crossbeam::channel::select! {
                 recv(inner_close) -> _ => {
                     bail!("closed before finishing")
                 }
                 recv(work_signal_receiver) -> _ => {
-                    let (new_peer, new_tasks, new_pending_bytes) =
-                        peer_task_queue.pop_tasks(target_message_size);
+                    if let Some((p, t, b)) = peer_task_queue.pop_tasks(target_message_size) {
+                        peer = Some(p);
+                        if !t.is_empty() {
+                            next_tasks = Some(t);
+                        }
+                        pending_bytes = Some(b);
+                    }
                     // self.update_metrics();
-                    peer = new_peer;
-                    next_tasks = new_tasks;
-                    pending_bytes = new_pending_bytes;
                 }
             }
 
@@ -636,13 +655,14 @@ fn next_envelope(
                 // for a period of time. We periodically "thaw" the queue
                 // to make sure it doesn't get suck in a frozen state.
                 peer_task_queue.thaw_round();
-
-                let (new_peer, new_tasks, new_pending_bytes) =
-                    peer_task_queue.pop_tasks(target_message_size);
+                if let Some((p, t, b)) = peer_task_queue.pop_tasks(target_message_size) {
+                    peer = Some(p);
+                    if !t.is_empty() {
+                        next_tasks = Some(t);
+                    }
+                    pending_bytes = Some(b);
+                }
                 // self.update_metrics();
-                peer = new_peer;
-                next_tasks = new_tasks;
-                pending_bytes = new_pending_bytes;
             }
         }
 
@@ -653,6 +673,8 @@ fn next_envelope(
         // split out want-blocks, want-have and DONT_HAVEs
         let mut block_cids = Vec::new();
         let mut block_tasks = AHashMap::new();
+        let next_tasks = next_tasks.unwrap();
+        let peer = peer.unwrap();
 
         for task in &next_tasks {
             if task.data.have_block {

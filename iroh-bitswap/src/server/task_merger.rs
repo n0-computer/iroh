@@ -1,6 +1,6 @@
 use cid::Cid;
 
-use crate::peer_task_queue::{Data, Task};
+use crate::peer_task_queue::Task;
 
 /// Extra data associated with each task in the request queue.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -15,7 +15,7 @@ pub struct TaskData {
     pub have_block: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Default, Debug, Clone, PartialEq, Eq)]
 pub struct TaskMerger {}
 
 impl crate::peer_task_queue::TaskMerger<Cid, TaskData> for TaskMerger {

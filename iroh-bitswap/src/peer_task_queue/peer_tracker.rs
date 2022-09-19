@@ -42,7 +42,7 @@ impl<T: Topic, D: Data, TM: TaskMerger<T, D>> PartialEq for PeerTracker<T, D, TM
 impl<T: Topic, D: Data, TM: TaskMerger<T, D>> Eq for PeerTracker<T, D, TM> {}
 
 impl<T: Topic, D: Data, TM: TaskMerger<T, D>> PeerTracker<T, D, TM> {
-    fn new(target: PeerId, task_merger: TM, max_active_work_per_peer: usize) -> Self {
+    pub fn new(target: PeerId, task_merger: TM, max_active_work_per_peer: usize) -> Self {
         PeerTracker {
             target,
             pending_tasks: Default::default(),
@@ -55,18 +55,18 @@ impl<T: Topic, D: Data, TM: TaskMerger<T, D>> PeerTracker<T, D, TM> {
     }
 
     /// Returns true if the peer has no active or queue tasks.
-    fn is_idle(&self) -> bool {
+    pub fn is_idle(&self) -> bool {
         self.pending_tasks.is_empty() && self.active_tasks.is_empty()
     }
 
-    fn stats(&self) -> Stats {
+    pub fn stats(&self) -> Stats {
         Stats {
             num_pending: self.pending_tasks.len(),
             num_active: self.active_tasks.len(),
         }
     }
 
-    fn topics(&self) -> Topics<T> {
+    pub fn topics(&self) -> Topics<T> {
         let mut pending: Vec<_> = self
             .pending_tasks
             .iter()
@@ -82,7 +82,7 @@ impl<T: Topic, D: Data, TM: TaskMerger<T, D>> PeerTracker<T, D, TM> {
         Topics { pending, active }
     }
 
-    fn push_tasks(&mut self, tasks: Vec<Task<T, D>>) {
+    pub fn push_tasks(&mut self, tasks: Vec<Task<T, D>>) {
         let now = Instant::now();
         for task in tasks {
             // If the new task doesn't add any more information over waht we already
@@ -118,7 +118,7 @@ impl<T: Topic, D: Data, TM: TaskMerger<T, D>> PeerTracker<T, D, TM> {
     /// Pops off as many tasks as necessary to cover `target_min_work`, in priority order.
     /// If there are not enough tasks to cover `target_min_work`, it just returns everything
     /// available.
-    fn pop_tasks(&mut self, target_min_work: usize) -> Vec<Task<T, D>> {
+    pub fn pop_tasks(&mut self, target_min_work: usize) -> Vec<Task<T, D>> {
         let mut out = Vec::new();
         let mut work = 0;
 
@@ -143,7 +143,7 @@ impl<T: Topic, D: Data, TM: TaskMerger<T, D>> PeerTracker<T, D, TM> {
         out
     }
 
-    fn start_task(&mut self, task: Task<T, D>) {
+    pub fn start_task(&mut self, task: Task<T, D>) {
         // Add task to active queue
         self.active_work += task.work;
         self.active_tasks
@@ -152,12 +152,12 @@ impl<T: Topic, D: Data, TM: TaskMerger<T, D>> PeerTracker<T, D, TM> {
             .push(task);
     }
 
-    fn get_pending_work(&self) -> usize {
+    pub fn get_pending_work(&self) -> usize {
         self.pending_tasks.iter().map(|(_, qt)| qt.task.work).sum()
     }
 
     /// Signals that the given task was completed for this peer.
-    fn task_done(&mut self, task: &Task<T, D>) {
+    pub fn task_done(&mut self, task: &Task<T, D>) {
         // remove tasks from active tasks
         if let Some(active_tasks) = self.active_tasks.get_mut(&task.topic) {
             let mut work_done = 0;
@@ -182,28 +182,28 @@ impl<T: Topic, D: Data, TM: TaskMerger<T, D>> PeerTracker<T, D, TM> {
         }
     }
 
-    fn remove(&mut self, topic: &T) -> bool {
+    pub fn remove(&mut self, topic: &T) -> bool {
         self.pending_tasks.remove(topic).is_some()
     }
 
-    fn freeze(&mut self) {
+    pub fn freeze(&mut self) {
         self.freeze_val += 1;
     }
 
     /// Decrements the freeze value for this peer. While a peer is frozen
     /// it will not execute any tasks.
-    fn thaw(&mut self) -> bool {
+    pub fn thaw(&mut self) -> bool {
         self.freeze_val -= (self.freeze_val + 1) / 2;
         self.freeze_val <= 0
     }
 
     /// Completely unfreezes this peer so it can execute tasks.
-    fn full_thaw(&mut self) {
+    pub fn full_thaw(&mut self) {
         self.freeze_val = 0;
     }
 
     /// Returns whether this peer is frozen and unable to execute tasks.
-    fn is_frozen(&self) -> bool {
+    pub fn is_frozen(&self) -> bool {
         self.freeze_val > 0
     }
 
@@ -220,15 +220,15 @@ impl<T: Topic, D: Data, TM: TaskMerger<T, D>> PeerTracker<T, D, TM> {
 }
 
 #[derive(Debug)]
-struct Stats {
-    num_pending: usize,
-    num_active: usize,
+pub struct Stats {
+    pub num_pending: usize,
+    pub num_active: usize,
 }
 
 #[derive(Debug)]
-struct Topics<T: Topic> {
-    pending: Vec<T>,
-    active: Vec<T>,
+pub struct Topics<T: Topic> {
+    pub pending: Vec<T>,
+    pub active: Vec<T>,
 }
 
 impl<T: Topic, D: Data, TM: TaskMerger<T, D>> PartialOrd for PeerTracker<T, D, TM> {
