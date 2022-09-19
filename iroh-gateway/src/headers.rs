@@ -61,7 +61,6 @@ pub fn add_cache_control_headers(headers: &mut HeaderMap, metadata: Metadata) {
             HeaderValue::from_str(&lmdt.to_string()).unwrap(),
         );
     } else {
-        headers.insert(LAST_MODIFIED, HeaderValue::from_str("0").unwrap());
         headers.insert(CACHE_CONTROL, VAL_IMMUTABLE_MAX_AGE.clone());
     }
 }
