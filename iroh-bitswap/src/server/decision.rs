@@ -108,7 +108,7 @@ impl Default for Config {
 pub struct Engine {
     /// Priority queue of requests received from peers.
     peer_task_queue: PeerTaskQueue<Cid, TaskData>,
-    outbox: (Sender<Result<Envelope>>, Receiver<Result<Envelope>>),
+    outbox: Receiver<Result<Envelope>>,
     blockstore_manager: Arc<RwLock<BlockstoreManager>>,
     ledger_map: RwLock<AHashMap<PeerId, Arc<Mutex<Ledger>>>>,
     /// Tracks which peers are waiting for a Cid,
@@ -128,13 +128,10 @@ pub struct Engine {
     metrics_update_counter: Mutex<usize>, // ?? atomic
     task_comparator: Option<Box<dyn TaskComparator>>,
     peer_block_request_filter: Option<Box<dyn PeerBlockRequestFilter>>,
-    bstore_worker_count: usize,
     max_outstanding_bytes_per_peer: usize,
-    /// Bus to signal shutdown to all worker threads.
-    worker_closer: bus::Bus<()>,
     /// List of handles to worker threads.
-    workers: Vec<JoinHandle<()>>,
-    work_signal: (Sender<()>, Receiver<()>),
+    workers: Vec<(Sender<()>, Sender<()>, JoinHandle<()>)>,
+    work_signal: Sender<()>,
 }
 
 impl Engine {
@@ -146,36 +143,72 @@ impl Engine {
         let work_signal = crossbeam::channel::bounded(1024);
         let ticker = crossbeam::channel::tick(Duration::from_millis(100));
 
+        let peer_task_queue = PeerTaskQueue::new();
+        let blockstore_manager = Arc::new(RwLock::new(BlockstoreManager::new(
+            store,
+            config.engine_blockstore_worker_count,
+        )));
+        let score_ledger = DefaultScoreLedger::new(Box::new(|peer, score| {
+            if score == 0 {
+                // untag peer("useful")
+            } else {
+                // tag peer("useful", score)
+            }
+        }));
+        let target_message_size = config.target_message_size;
+        let task_worker_count = config.engine_task_worker_count;
+        let mut workers = Vec::with_capacity(task_worker_count);
+
+        for _ in 0..task_worker_count {
+            let outbox = outbox.0.clone();
+            let (outer_closer_s, outer_closer_r) = crossbeam::channel::bounded(1);
+            let (inner_closer_s, inner_closer_r) = crossbeam::channel::bounded(1);
+            let peer_task_queue = peer_task_queue.clone();
+            let ticker = ticker.clone();
+            let work_signal = work_signal.clone();
+            let blockstore_manager = blockstore_manager.clone();
+
+            let handle = std::thread::spawn(move || loop {
+                crossbeam::channel::select! {
+                    recv(outer_closer_r) -> _ => {
+                        break;
+                    }
+                    default => {
+                        let envelope = next_envelope(
+                            work_signal.0.clone(),
+                            &work_signal.1,
+                            &ticker,
+                            &inner_closer_r,
+                            target_message_size,
+                            peer_task_queue.clone(),
+                            blockstore_manager.clone(),
+                        );
+                        outbox.send(envelope).ok();
+                    }
+                }
+            });
+            workers.push((outer_closer_s, inner_closer_s, handle));
+        }
+
         Engine {
-            peer_task_queue: PeerTaskQueue::new(),
-            outbox,
-            blockstore_manager: Arc::new(RwLock::new(BlockstoreManager::new(
-                store,
-                config.engine_blockstore_worker_count,
-            ))),
+            peer_task_queue,
+            outbox: outbox.1,
+            blockstore_manager,
             ledger_map: Default::default(),
             peer_ledger: Mutex::new(PeerLedger::default()),
-            score_ledger: DefaultScoreLedger::new(Box::new(|peer, score| {
-                if score == 0 {
-                    // untag peer("useful")
-                } else {
-                    // tag peer("useful", score)
-                }
-            })),
+            score_ledger,
             ticker,
-            task_worker_count: config.engine_task_worker_count,
-            target_message_size: config.target_message_size,
+            task_worker_count,
+            target_message_size,
             max_block_size_replace_has_with_block: config.max_replace_size,
             send_dont_haves: config.send_dont_haves,
             self_id,
             metrics_update_counter: Default::default(),
             task_comparator: config.task_comparator,
             peer_block_request_filter: config.peer_block_request_filter,
-            bstore_worker_count: config.engine_blockstore_worker_count,
             max_outstanding_bytes_per_peer: config.max_outstanding_bytes_per_peer,
-            worker_closer: bus::Bus::new(config.engine_task_worker_count),
-            workers: Vec::with_capacity(config.engine_task_worker_count),
-            work_signal,
+            workers,
+            work_signal: work_signal.0,
         }
     }
 
@@ -190,51 +223,19 @@ impl Engine {
         }
     }
 
-    /// Start up workers to handle requests from other nodes for the data on this node.
-    pub fn start_workers(&mut self) {
-        self.blockstore_manager.write().unwrap().start();
-        self.score_ledger.start();
-
-        for _ in 0..self.task_worker_count {
-            let outbox = self.outbox.0.clone();
-            let mut outer_close = self.worker_closer.add_rx();
-            let mut inner_close = self.worker_closer.add_rx();
-            let target_message_size = self.target_message_size;
-            let peer_task_queue = self.peer_task_queue.clone();
-            let ticker = self.ticker.clone();
-            let work_signal = self.work_signal.clone();
-            let blockstore_manager = self.blockstore_manager.clone();
-
-            let handle = std::thread::spawn(move || {
-                while outer_close.try_recv().is_err() {
-                    let envelope = next_envelope(
-                        work_signal.0.clone(),
-                        &work_signal.1,
-                        &ticker,
-                        &mut inner_close,
-                        target_message_size,
-                        peer_task_queue.clone(),
-                        blockstore_manager.clone(),
-                    );
-                    outbox.send(envelope).ok();
-                }
-            });
-            self.workers.push(handle);
-        }
-    }
-
     pub fn outbox(&self) -> Receiver<Result<Envelope>> {
-        self.outbox.1.clone()
+        self.outbox.clone()
     }
 
-    /// Shuts down workers.
-    pub fn stop_workers(&mut self) -> Result<()> {
+    /// Shuts down.
+    pub fn stop(mut self) -> Result<()> {
         self.blockstore_manager.write().unwrap().stop()?;
         self.score_ledger.stop()?;
 
         // TODO: should this just be called on drop?
-        self.worker_closer.broadcast(());
-        while let Some(handle) = self.workers.pop() {
+        while let Some((outer_closer, inner_closer, handle)) = self.workers.pop() {
+            outer_closer.send(()).ok();
+            inner_closer.send(()).ok();
             handle.join().map_err(|e| anyhow!("{:?}", e))?;
         }
 
@@ -558,7 +559,7 @@ impl Engine {
     }
 
     fn signal_new_work(&self) {
-        self.work_signal.0.send(()).ok();
+        self.work_signal.send(()).ok();
     }
 
     fn send_as_block(&self, want_type: WantType, block_size: usize) -> bool {
@@ -604,7 +605,7 @@ fn next_envelope(
     work_signal_sender: Sender<()>,
     work_signal_receiver: &Receiver<()>,
     ticker: &Receiver<Instant>,
-    inner_close: &mut bus::BusReader<()>,
+    inner_close: &Receiver<()>,
     target_message_size: usize,
     peer_task_queue: PeerTaskQueue<Cid, TaskData>,
     blockstore_manager: Arc<RwLock<BlockstoreManager>>,
@@ -616,16 +617,18 @@ fn next_envelope(
         // self.update_metrics();
 
         while next_tasks.is_empty() {
-            if inner_close.try_recv().is_ok() {
-                bail!("closed before finishing")
-            }
-            if let Ok(()) = work_signal_receiver.try_recv() {
-                let (new_peer, new_tasks, new_pending_bytes) =
-                    peer_task_queue.pop_tasks(target_message_size);
-                // self.update_metrics();
-                peer = new_peer;
-                next_tasks = new_tasks;
-                pending_bytes = new_pending_bytes;
+            crossbeam::channel::select! {
+                recv(inner_close) -> _ => {
+                    bail!("closed before finishing")
+                }
+                recv(work_signal_receiver) -> _ => {
+                    let (new_peer, new_tasks, new_pending_bytes) =
+                        peer_task_queue.pop_tasks(target_message_size);
+                    // self.update_metrics();
+                    peer = new_peer;
+                    next_tasks = new_tasks;
+                    pending_bytes = new_pending_bytes;
+                }
             }
 
             if ticker.try_recv().is_ok() {

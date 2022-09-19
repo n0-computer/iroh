@@ -1,15 +1,13 @@
 use std::{
     fmt::Debug,
-    sync::{
-        mpsc::{sync_channel, SyncSender},
-        Arc, RwLock,
-    },
+    sync::{Arc, RwLock},
     thread::JoinHandle,
     time::{Duration, Instant},
 };
 
 use ahash::AHashMap;
 use anyhow::{anyhow, Result};
+use crossbeam::channel::Sender;
 use libp2p::PeerId;
 
 use crate::server::ewma::ewma;
@@ -109,8 +107,8 @@ impl IndividualScoreLedger {
 #[derive(Debug)]
 pub struct DefaultScoreLedger {
     state: Arc<State>,
-    closer: Option<SyncSender<()>>,
-    worker: Option<JoinHandle<()>>,
+    closer: Sender<()>,
+    worker: JoinHandle<()>,
 }
 
 struct State {
@@ -133,90 +131,90 @@ impl Debug for State {
 
 impl DefaultScoreLedger {
     pub fn new(score_peer: Box<dyn ScorePeerFunc>) -> Self {
-        DefaultScoreLedger {
-            state: Arc::new(State {
-                score_peer,
-                ledger_map: Default::default(),
-                peer_sample_interval: SHORT_TERM,
-            }),
-            closer: None,
-            worker: None,
-        }
-    }
+        let state = Arc::new(State {
+            score_peer,
+            ledger_map: Default::default(),
+            peer_sample_interval: SHORT_TERM,
+        });
+        let (closer, r) = crossbeam::channel::bounded(1);
+        let state_worker = state.clone();
+        let worker = std::thread::spawn(move || {
+            let state = state_worker;
+            let ticker = crossbeam::channel::tick(state.peer_sample_interval);
 
-    pub fn start(&mut self) {
-        assert!(self.worker.is_none(), "already running");
-        let (s, r) = sync_channel(1);
-        let state = self.state.clone();
-        self.closer = Some(s);
-        self.worker = Some(std::thread::spawn(move || {
             let mut updates = Vec::new();
             let mut last_short_update = Instant::now();
             let mut last_long_update = Instant::now();
-
             let mut i = 0;
-            while r.try_recv().is_err() {
-                // limit to ticks every peer_sample_interval
-                std::thread::sleep(state.peer_sample_interval);
-                i = (i + 1) % LONG_TERM_RATIO;
 
-                let is_update_long = i == 0;
-                let mut ledger_map = state.ledger_map.write().unwrap();
-                for ledger in ledger_map.values_mut() {
-                    // update the short term score
-                    ledger.short_score = if ledger.last_exchange > last_short_update {
-                        ewma(ledger.short_score, SHORT_TERM_SCORE, SHORT_TERM_ALPHA)
-                    } else {
-                        ewma(ledger.short_score, 0., SHORT_TERM_ALPHA)
-                    };
-
-                    if is_update_long {
-                        ledger.long_score = if ledger.last_exchange > last_long_update {
-                            ewma(ledger.long_score, LONG_TERM_SCORE, LONG_TERM_ALPHA)
-                        } else {
-                            ewma(ledger.long_score, 0., LONG_TERM_ALPHA)
-                        };
+            loop {
+                crossbeam::channel::select! {
+                    recv(r) -> _ => {
+                        break;
                     }
+                    recv(ticker) -> _ => {
+                        i = (i + 1) % LONG_TERM_RATIO;
 
-                    // calculate the new score
+                        let is_update_long = i == 0;
+                        let mut ledger_map = state.ledger_map.write().unwrap();
+                        for ledger in ledger_map.values_mut() {
+                            // update the short term score
+                            ledger.short_score = if ledger.last_exchange > last_short_update {
+                                ewma(ledger.short_score, SHORT_TERM_SCORE, SHORT_TERM_ALPHA)
+                            } else {
+                                ewma(ledger.short_score, 0., SHORT_TERM_ALPHA)
+                            };
 
-                    let lscore = if ledger.bytes_recv == 0 {
-                        0.
-                    } else {
-                        ledger.bytes_recv as f64 / (ledger.bytes_recv + ledger.bytes_sent) as f64
-                    };
-                    let score =
-                        ((ledger.short_score + ledger.long_score) * (lscore * 0.5 + 0.75)) as usize;
+                            if is_update_long {
+                                ledger.long_score = if ledger.last_exchange > last_long_update {
+                                    ewma(ledger.long_score, LONG_TERM_SCORE, LONG_TERM_ALPHA)
+                                } else {
+                                    ewma(ledger.long_score, 0., LONG_TERM_ALPHA)
+                                };
+                            }
 
-                    // store global updates if need, to be sent out outside of the lock
-                    if ledger.score != score {
-                        updates.push((ledger.partner, score));
-                        ledger.score = score;
+                            // calculate the new score
+
+                            let lscore = if ledger.bytes_recv == 0 {
+                                0.
+                            } else {
+                                ledger.bytes_recv as f64 / (ledger.bytes_recv + ledger.bytes_sent) as f64
+                            };
+                            let score =
+                                ((ledger.short_score + ledger.long_score) * (lscore * 0.5 + 0.75)) as usize;
+
+                            // store global updates if need, to be sent out outside of the lock
+                            if ledger.score != score {
+                                updates.push((ledger.partner, score));
+                                ledger.score = score;
+                            }
+                        }
+
+                        // record times
+                        last_short_update = Instant::now();
+                        if is_update_long {
+                            last_long_update = Instant::now();
+                        }
+
+                        // apply updates
+                        while let Some((peer, score)) = updates.pop() {
+                            (state.score_peer)(&peer, score);
+                        }
                     }
-                }
-
-                // record times
-                last_short_update = Instant::now();
-                if is_update_long {
-                    last_long_update = Instant::now();
-                }
-
-                // apply updates
-                while let Some((peer, score)) = updates.pop() {
-                    (state.score_peer)(&peer, score);
                 }
             }
-        }));
+        });
+
+        DefaultScoreLedger {
+            state,
+            closer,
+            worker,
+        }
     }
 
-    pub fn stop(&mut self) -> Result<()> {
-        self.closer.take().expect("not started").send(())?;
-
-        self.worker
-            .take()
-            .expect("not started")
-            .join()
-            .map_err(|e| anyhow!("{:?}", e))?;
+    pub fn stop(self) -> Result<()> {
+        self.closer.send(())?;
+        self.worker.join().map_err(|e| anyhow!("{:?}", e))?;
 
         Ok(())
     }

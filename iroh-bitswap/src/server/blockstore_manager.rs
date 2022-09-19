@@ -1,13 +1,7 @@
-use std::{
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc,
-    },
-    thread::JoinHandle,
-};
+use std::thread::JoinHandle;
 
 use ahash::AHashMap;
-use anyhow::{anyhow, ensure, Result};
+use anyhow::{anyhow, Result};
 use cid::Cid;
 use crossbeam::channel::{bounded, Receiver, Sender};
 use crossbeam::sync::WaitGroup;
@@ -18,61 +12,59 @@ use crate::{block::Block, Store};
 #[derive(Debug)]
 pub struct BlockstoreManager {
     store: Store,
-    worker_count: usize,
     // pending_gauge -> iroh-metrics
     // active_gauge -> iroh-metrics
-    jobs: (
-        Sender<Box<dyn FnOnce() + Send + Sync>>,
-        Receiver<Box<dyn FnOnce() + Send + Sync>>,
-    ),
-    workers: Vec<JoinHandle<()>>,
-    should_stop: Arc<AtomicBool>,
+    jobs: Sender<Box<dyn FnOnce() + Send + Sync>>,
+    workers: Vec<(Sender<()>, JoinHandle<()>)>,
 }
 
 impl BlockstoreManager {
     /// Creates a new manager.
     pub fn new(store: Store, worker_count: usize) -> Self {
-        let jobs = bounded(1024);
-        BlockstoreManager {
-            store,
-            jobs,
-            worker_count,
-            workers: Vec::with_capacity(worker_count),
-            should_stop: Arc::new(AtomicBool::new(true)),
-        }
-    }
+        let jobs: (Sender<_>, Receiver<Box<dyn FnOnce() + Send + Sync>>) = bounded(1024);
+        let mut workers = Vec::with_capacity(worker_count);
 
-    pub fn start(&mut self) {
-        self.should_stop.store(false, Ordering::SeqCst);
-        for _ in 0..self.worker_count {
-            let should_stop = self.should_stop.clone();
-            let jobs_receiver = self.jobs.1.clone();
+        for _ in 0..worker_count {
+            let jobs_receiver = jobs.1.clone();
+            let (closer_s, closer_r) = crossbeam::channel::bounded(1);
+
             let handle = std::thread::spawn(move || {
-                while !should_stop.load(Ordering::SeqCst) {
-                    if let Ok(job) = jobs_receiver.recv() {
-                        // dec!(pending);
-                        // inc!(active);
-                        (job)();
-                        // dec!(active);
+                loop {
+                    crossbeam::channel::select! {
+                        recv(closer_r) -> _ => {
+                            break;
+                        }
+                        recv(jobs_receiver) -> job => {
+                            if let Ok(job) = job {
+                                // dec!(pending);
+                                // inc!(active);
+                                (job)();
+                                // dec!(active);
+                            }
+                        }
                     }
                 }
             });
-            self.workers.push(handle);
+            workers.push((closer_s, handle));
+        }
+
+        BlockstoreManager {
+            store,
+            jobs: jobs.0,
+            workers,
         }
     }
 
     pub fn stop(&mut self) -> Result<()> {
-        self.should_stop.store(true, Ordering::SeqCst);
-        while let Some(handle) = self.workers.pop() {
+        while let Some((closer, handle)) = self.workers.pop() {
+            closer.send(()).ok();
             handle.join().map_err(|e| anyhow!("{:?}", e))?;
         }
         Ok(())
     }
 
     pub fn add_job<F: FnOnce() + Send + Sync + 'static>(&self, job: F) -> Result<()> {
-        ensure!(!self.should_stop.load(Ordering::SeqCst), "shutting down");
-
-        self.jobs.0.send(Box::new(job))?;
+        self.jobs.send(Box::new(job))?;
         // inc!(pending);
 
         Ok(())
