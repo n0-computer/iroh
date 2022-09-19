@@ -91,10 +91,10 @@
 
 - [ ] https://github.com/ipfs/go-peertaskqueue (will be ported to `bitswap::peer_task_queue`)
   - [ ] `./peertaskqueue.go` (346)
-  - [ ] `./peertask/peertask.go` (81)
   - [ ] `./peertaskqueue_test.go` (340)
-  - [ ] `./peertracker/peertracker.go` (378)
-  - [ ] `./peertracker/peertracker_test.go` (720)
+  - [x] `./peertask/peertask.go` (81)
+  - [x] `./peertracker/peertracker.go` (378)
+  - [x] `./peertracker/peertracker_test.go` (720)
 
 
 ## Tests

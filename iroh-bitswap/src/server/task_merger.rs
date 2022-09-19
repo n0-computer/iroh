@@ -15,8 +15,6 @@ pub struct TaskData {
     pub have_block: bool,
 }
 
-impl Data for TaskData {}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TaskMerger {}
 
