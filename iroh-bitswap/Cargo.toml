@@ -42,6 +42,7 @@ tracing-subscriber = { version = "0.3.11", features = ["env-filter"] }
 libp2p = { version = "0.48", features = ["yamux", "noise", "tcp-tokio"], default-features = false }
 tokio = { version = "1", features = ["macros", "net", "rt"] }
 tokio-util = { version = "0.7", features = ["compat"] }
+rand = "0.8.5"
 
 [[bench]]
 name = "message"

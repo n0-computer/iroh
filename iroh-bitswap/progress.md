@@ -89,9 +89,9 @@
 
 ## Dependencies
 
-- [ ] https://github.com/ipfs/go-peertaskqueue (will be ported to `bitswap::peer_task_queue`)
-  - [ ] `./peertaskqueue.go` (346)
-  - [ ] `./peertaskqueue_test.go` (340)
+- [x] https://github.com/ipfs/go-peertaskqueue (will be ported to `bitswap::peer_task_queue`)
+  - [x] `./peertaskqueue.go` (346)
+  - [x] `./peertaskqueue_test.go` (340)
   - [x] `./peertask/peertask.go` (81)
   - [x] `./peertracker/peertracker.go` (378)
   - [x] `./peertracker/peertracker_test.go` (720)

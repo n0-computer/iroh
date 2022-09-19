@@ -277,10 +277,6 @@ mod tests {
 
     const MAX_ACTIVE_WORK_PER_PEER: usize = 100;
 
-    fn gen_peers(n: usize) -> Vec<PeerId> {
-        (0..n).map(|_| PeerId::random()).collect()
-    }
-
     #[test]
     fn test_empty() {
         let partner = PeerId::random();

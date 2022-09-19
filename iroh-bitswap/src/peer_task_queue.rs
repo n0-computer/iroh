@@ -6,6 +6,7 @@ use std::{
 };
 
 use ahash::AHashSet;
+use crossbeam::channel::{Receiver, Sender};
 use keyed_priority_queue::{Entry, KeyedPriorityQueue};
 use libp2p::PeerId;
 
@@ -13,12 +14,15 @@ mod peer_task;
 mod peer_tracker;
 
 pub use self::peer_task::{Task, TaskMerger};
-use self::peer_tracker::{PeerTracker, Topics};
+use self::{
+    peer_task::DefaultTaskMerger,
+    peer_tracker::{PeerTracker, Topics},
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Event {
-    PeerAdded,
-    PeerRemoved,
+    PeerAdded(PeerId),
+    PeerRemoved(PeerId),
 }
 
 /// Prioritzed list of tasks to be executed on peers.
@@ -27,8 +31,13 @@ pub enum Event {
 /// to execute the block with the highest priority, or otherwise the one added first
 /// if priorities are equal.
 #[derive(Debug, Clone)]
-pub struct PeerTaskQueue<T: Topic, D: Data, TM: TaskMerger<T, D>> {
+pub struct PeerTaskQueue<T: Topic, D: Data, TM: TaskMerger<T, D> = DefaultTaskMerger> {
     inner: Arc<Mutex<Inner<T, D, TM>>>,
+}
+impl<T: Topic, D: Data, TM: TaskMerger<T, D> + Default> Default for PeerTaskQueue<T, D, TM> {
+    fn default() -> Self {
+        Self::new(TM::default(), Config::default())
+    }
 }
 
 #[derive(Debug)]
@@ -38,6 +47,7 @@ struct Inner<T: Topic, D: Data, TM: TaskMerger<T, D>> {
     ignore_freezing: bool,
     task_merger: TM,
     max_outstanding_work_per_peer: usize,
+    hooks: Vec<Sender<Event>>,
 }
 
 #[derive(Debug, Clone)]
@@ -66,7 +76,6 @@ pub struct Stats {
 
 impl<T: Topic, D: Data, TM: TaskMerger<T, D>> PeerTaskQueue<T, D, TM> {
     pub fn new(task_merger: TM, config: Config) -> Self {
-        // TODO: hooks
         PeerTaskQueue {
             inner: Arc::new(Mutex::new(Inner::<T, D, TM> {
                 peer_queue: Default::default(),
@@ -74,8 +83,18 @@ impl<T: Topic, D: Data, TM: TaskMerger<T, D>> PeerTaskQueue<T, D, TM> {
                 ignore_freezing: config.ignore_freezing,
                 task_merger,
                 max_outstanding_work_per_peer: config.max_outstanding_work_per_peer,
+                hooks: Vec::new(),
             })),
         }
+    }
+
+    /// Adds a hook to be notified on `Event`s.
+    pub fn add_hook(&self, cap: usize) -> Receiver<Event> {
+        let (s, r) = crossbeam::channel::bounded(cap);
+        let mut this = self.inner.lock().unwrap();
+        this.hooks.push(s);
+
+        r
     }
 
     /// Returns stats about the queue.
@@ -119,7 +138,7 @@ impl<T: Topic, D: Data, TM: TaskMerger<T, D>> PeerTaskQueue<T, D, TM> {
                     this.task_merger.clone(),
                     this.max_outstanding_work_per_peer,
                 );
-                // callHook(peer, Event::PeerAdded)
+                this.call_hook(Event::PeerAdded(peer));
                 peer_tracker
             }
         };
@@ -154,7 +173,7 @@ impl<T: Topic, D: Data, TM: TaskMerger<T, D>> PeerTaskQueue<T, D, TM> {
         if peer_tracker.is_idle() {
             // Cleanup if no more tasks
             this.frozen_peers.remove(&peer);
-            // callHook(peer, Event::PeerRemoved)
+            this.call_hook(Event::PeerRemoved(peer));
         } else {
             // otherwise, reinsert updated tracker
             this.peer_queue.push(peer, peer_tracker);
@@ -185,9 +204,8 @@ impl<T: Topic, D: Data, TM: TaskMerger<T, D>> PeerTaskQueue<T, D, TM> {
     pub fn remove(&self, topic: &T, peer: PeerId) {
         let mut this = self.inner.lock().unwrap();
 
-        match this.peer_queue.remove(&peer) {
-            Some(mut peer_tracker) => {
-                peer_tracker.remove(topic);
+        if let Some(mut peer_tracker) = this.peer_queue.remove(&peer) {
+            if peer_tracker.remove(topic) {
                 // freeze that partner, if they sent us a cancle for a block we are about to send them
                 // we should wait a short period of time to make sure we receive any other in flight cancels before sending them a block they already potentially have
                 if !this.ignore_freezing {
@@ -196,9 +214,8 @@ impl<T: Topic, D: Data, TM: TaskMerger<T, D>> PeerTaskQueue<T, D, TM> {
                     }
                     peer_tracker.freeze();
                 }
-                this.peer_queue.push(peer, peer_tracker);
             }
-            None => return,
+            this.peer_queue.push(peer, peer_tracker);
         }
     }
 
@@ -232,6 +249,14 @@ impl<T: Topic, D: Data, TM: TaskMerger<T, D>> PeerTaskQueue<T, D, TM> {
     }
 }
 
+impl<T: Topic, D: Data, TM: TaskMerger<T, D>> Inner<T, D, TM> {
+    fn call_hook(&self, event: Event) {
+        for hook in &self.hooks {
+            hook.send(event.clone()).ok();
+        }
+    }
+}
+
 /// A non-unique name for a task. It's used by the client library
 /// to act on a task once it exits the queue.
 pub trait Topic:
@@ -244,3 +269,384 @@ impl<T: Sized + Debug + PartialEq + Clone + Eq + PartialOrd + Ord + std::hash::H
 /// Metadata that can be attached to a task.
 pub trait Data: Sized + Debug + Clone + PartialEq + Eq {}
 impl<D: Sized + Debug + Clone + PartialEq + Eq> Data for D {}
+
+#[cfg(test)]
+mod tests {
+    use rand::seq::SliceRandom;
+    use rand::thread_rng;
+
+    use super::{peer_task::DefaultTaskMerger, *};
+
+    #[test]
+    fn test_push_pop() {
+        let ptq = PeerTaskQueue::<_, _, DefaultTaskMerger>::default();
+        let partner = PeerId::random();
+        let mut alphabet: Vec<char> = "abcdefghijklmnopqrstuvwxyz".chars().collect();
+        let mut vowels: Vec<char> = "aeiou".chars().collect();
+        let mut consonants: Vec<char> = alphabet
+            .iter()
+            .filter(|c| !vowels.contains(c))
+            .copied()
+            .collect();
+        alphabet.sort();
+        vowels.sort();
+        consonants.sort();
+
+        // Add blocks, cancel some, drain the queue.
+        // The queue should only have the kept tasks at the end.
+
+        let mut shuffled_alphabet = alphabet.clone();
+        let mut rng = thread_rng();
+        shuffled_alphabet.shuffle(&mut rng);
+        // add blocks for all letters
+        for letter in shuffled_alphabet {
+            let i = alphabet.iter().position(|c| *c == letter).unwrap();
+            println!("{} - {}", letter, i);
+            ptq.push_task(
+                partner,
+                Task {
+                    topic: letter,
+                    priority: i32::MAX as isize - i as isize,
+                    work: 0,
+                    data: (),
+                },
+            );
+        }
+
+        for consonant in &consonants {
+            ptq.remove(consonant, partner);
+        }
+
+        ptq.full_thaw();
+
+        let mut out = Vec::new();
+        while let Some((_, received, _)) = ptq.pop_tasks(100) {
+            if received.is_empty() {
+                break;
+            }
+            for task in received {
+                out.push(task.topic);
+            }
+        }
+
+        assert_eq!(out.len(), vowels.len());
+
+        // should be in correct order
+        for (i, expected) in vowels.into_iter().enumerate() {
+            assert_eq!(out[i], expected);
+        }
+    }
+
+    #[test]
+    fn test_freeze_unfreeze() {
+        let ptq = PeerTaskQueue::<_, _, DefaultTaskMerger>::default();
+        let a = PeerId::random();
+        let b = PeerId::random();
+        let c = PeerId::random();
+        let d = PeerId::random();
+
+        for i in 0..5 {
+            let task = Task {
+                topic: i,
+                work: 1,
+                priority: 0,
+                data: (),
+            };
+
+            ptq.push_task(a, task.clone());
+            ptq.push_task(b, task.clone());
+            ptq.push_task(c, task.clone());
+            ptq.push_task(d, task);
+        }
+
+        println!("all four");
+        match_n_tasks(&ptq, 4, &[a, b, c, d][..]);
+        ptq.remove(&1, b);
+
+        // b should be frozen
+        println!("frozen b");
+        match_n_tasks(&ptq, 3, &[a, c, d][..]);
+
+        ptq.thaw_round();
+
+        println!("unfrozen b");
+        match_n_tasks(&ptq, 1, &[b][..]);
+
+        // remove non existent task
+        ptq.remove(&9, b);
+
+        // b should not be frozen
+        println!("all four again");
+        match_n_tasks(&ptq, 4, &[a, b, c, d][..]);
+    }
+
+    #[test]
+    fn test_freeze_unfreeze_no_freezing() {
+        let config = Config {
+            ignore_freezing: true,
+            ..Default::default()
+        };
+        let ptq =
+            PeerTaskQueue::<_, _, DefaultTaskMerger>::new(DefaultTaskMerger::default(), config);
+        let a = PeerId::random();
+        let b = PeerId::random();
+        let c = PeerId::random();
+        let d = PeerId::random();
+
+        for i in 0..5 {
+            let task = Task {
+                topic: i,
+                work: 1,
+                priority: 0,
+                data: (),
+            };
+
+            ptq.push_task(a, task.clone());
+            ptq.push_task(b, task.clone());
+            ptq.push_task(c, task.clone());
+            ptq.push_task(d, task);
+        }
+
+        match_n_tasks(&ptq, 4, &[a, b, c, d][..]);
+        ptq.remove(&1, b);
+
+        // b should not be frozen
+        match_n_tasks(&ptq, 4, &[a, b, c, d][..]);
+    }
+
+    #[test]
+    fn test_peer_order() {
+        let ptq = PeerTaskQueue::<_, _, DefaultTaskMerger>::default();
+        let a = PeerId::random();
+        let b = PeerId::random();
+        let c = PeerId::random();
+
+        ptq.push_task(
+            a,
+            Task {
+                topic: 1,
+                work: 3,
+                priority: 2,
+                data: (),
+            },
+        );
+        ptq.push_task(
+            a,
+            Task {
+                topic: 2,
+                work: 1,
+                priority: 1,
+                data: (),
+            },
+        );
+
+        ptq.push_task(
+            b,
+            Task {
+                topic: 3,
+                work: 1,
+                priority: 3,
+                data: (),
+            },
+        );
+        ptq.push_task(
+            b,
+            Task {
+                topic: 4,
+                work: 3,
+                priority: 2,
+                data: (),
+            },
+        );
+        ptq.push_task(
+            b,
+            Task {
+                topic: 5,
+                work: 1,
+                priority: 1,
+                data: (),
+            },
+        );
+
+        ptq.push_task(
+            c,
+            Task {
+                topic: 6,
+                work: 2,
+                priority: 2,
+                data: (),
+            },
+        );
+        ptq.push_task(
+            c,
+            Task {
+                topic: 7,
+                work: 2,
+                priority: 1,
+                data: (),
+            },
+        );
+
+        // all peers have nothing in their active so equal of any peer being chosen
+
+        let mut peers = Vec::new();
+        let mut ids = Vec::new();
+        for _i in 0..3 {
+            let (peer, tasks, _) = ptq.pop_tasks(1).unwrap();
+            peers.push(peer);
+            assert_eq!(tasks.len(), 1);
+            ids.push(tasks[0].topic);
+        }
+
+        assert_eq_unordered(peers, [a, b, c]);
+        assert_eq_unordered(ids, [1, 3, 6]);
+
+        // Active queues:
+        // a: 3            Pending: [1]
+        // b: 1            Pending: [3, 1]
+        // c: 2            Pending: [2]
+        // So next peer should be b (least work in active queue)
+        let (peer, task, pending) = ptq.pop_tasks(1).unwrap();
+        assert_eq!(task.len(), 1);
+        assert_eq!(peer, b);
+        assert_eq!(task[0].topic, 4);
+        assert_eq!(pending, 1);
+
+        // Active queues:
+        // a: 3            Pending: [1]
+        // b: 1 + 3        Pending: [1]
+        // c: 2            Pending: [2]
+        // So next peer should be c (least work in active queue)
+        let (peer, task, _) = ptq.pop_tasks(1).unwrap();
+        assert_eq!(task.len(), 1);
+        assert_eq!(peer, c);
+        assert_eq!(task[0].topic, 7);
+
+        // Active queues:
+        // a: 3            Pending: [1]
+        // b: 1 + 3        Pending: [1]
+        // c: 2 + 2
+        // So next peer should be a (least work in active queue)
+        let (peer, task, pending) = ptq.pop_tasks(1).unwrap();
+        assert_eq!(task.len(), 1);
+        assert_eq!(peer, a);
+        assert_eq!(task[0].topic, 2);
+        assert_eq!(pending, 0);
+
+        // Active queues:
+        // a: 3 + 1
+        // b: 1 + 3        Pending: [1]
+        // c: 2 + 2
+        // a & c have no more pending tasks, so next peer should be b
+        let (peer, task, pending) = ptq.pop_tasks(1).unwrap();
+        assert_eq!(task.len(), 1);
+        assert_eq!(peer, b);
+        assert_eq!(task[0].topic, 5);
+        assert_eq!(pending, 0);
+
+        // Active queues:
+        // a: 3 + 1
+        // b: 1 + 3 + 1
+        // c: 2 + 2
+        // No more pending tasks, so next pop should return nothing
+        let (_peer, task, pending) = ptq.pop_tasks(1).unwrap();
+        assert!(task.is_empty());
+        assert_eq!(pending, 0);
+    }
+
+    #[test]
+    fn test_hooks() {
+        let ptq = PeerTaskQueue::<_, _, DefaultTaskMerger>::default();
+        let hook = ptq.add_hook(5);
+
+        let a = PeerId::random();
+        let b = PeerId::random();
+
+        ptq.push_task(
+            a,
+            Task {
+                topic: 1,
+                priority: 0,
+                work: 0,
+                data: (),
+            },
+        );
+        ptq.push_task(
+            b,
+            Task {
+                topic: 2,
+                priority: 0,
+                work: 0,
+                data: (),
+            },
+        );
+
+        assert_eq!(hook.recv().unwrap(), Event::PeerAdded(a));
+        assert_eq!(hook.recv().unwrap(), Event::PeerAdded(b));
+
+        let (peer, tasks, _) = ptq.pop_tasks(100).unwrap();
+        ptq.tasks_done(peer, &tasks);
+        let (peer, tasks, _) = ptq.pop_tasks(100).unwrap();
+        ptq.tasks_done(peer, &tasks);
+        ptq.pop_tasks(100);
+        ptq.pop_tasks(100);
+
+        assert_eq!(hook.recv().unwrap(), Event::PeerRemoved(b));
+        assert_eq!(hook.recv().unwrap(), Event::PeerRemoved(a));
+        assert!(hook.try_recv().is_err());
+    }
+
+    #[test]
+    fn test_cleaning_up() {
+        let ptq = PeerTaskQueue::<_, _, DefaultTaskMerger>::default();
+        let peer = PeerId::random();
+
+        let peer_tasks: Vec<_> = (0..5)
+            .map(|i| Task {
+                topic: i,
+                priority: 0,
+                work: 0,
+                data: (),
+            })
+            .collect();
+        // push a block, pop a block,  complete eerything, should be removed
+
+        ptq.push_tasks(peer, peer_tasks.clone());
+        let (peer, tasks, _) = ptq.pop_tasks(100).unwrap();
+        ptq.tasks_done(peer, &tasks);
+        let (_, tasks, _) = ptq.pop_tasks(100).unwrap();
+        assert!(tasks.is_empty());
+        assert!(ptq.inner.lock().unwrap().peer_queue.is_empty());
+
+        // push a block, remove each of its entries, should be removed
+        ptq.push_tasks(peer, peer_tasks.clone());
+        for task in peer_tasks {
+            ptq.remove(&task.topic, peer);
+        }
+        let (_, tasks, _) = ptq.pop_tasks(100).unwrap();
+        assert!(tasks.is_empty());
+        assert!(ptq.inner.lock().unwrap().peer_queue.is_empty());
+    }
+
+    fn match_n_tasks<T: Topic, D: Data, TM: TaskMerger<T, D>>(
+        ptq: &PeerTaskQueue<T, D, TM>,
+        n: usize,
+        expected: &[PeerId],
+    ) {
+        let mut targets = Vec::new();
+        for i in 0..n {
+            let (peer, tasks, _) = ptq.pop_tasks(1).unwrap();
+            assert_eq!(tasks.len(), 1, "task {} did not match: {:?}", i, tasks);
+            targets.push(peer);
+        }
+        assert_eq_unordered(expected, targets);
+    }
+
+    fn assert_eq_unordered<T: Ord + Eq + Debug + Clone>(a: impl AsRef<[T]>, b: impl AsRef<[T]>) {
+        let mut a: Vec<_> = a.as_ref().iter().collect();
+        a.sort();
+        let mut b: Vec<_> = b.as_ref().iter().collect();
+        b.sort();
+        assert_eq!(a, b);
+    }
+}
