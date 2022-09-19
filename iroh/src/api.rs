@@ -8,7 +8,24 @@ pub struct Id {
 #[async_trait]
 pub trait Main {
     async fn version(&self) -> Result<String>;
-    // add, get, connect, disconnect, peers, ping
+    // these are really on p2p
+    async fn peers(&self) -> Result<Vec<PeerId>>;
+    async fn ping(&self, peer_id: PeerId, multi_addr: Multiaddr, count: usize) -> Result<()>;
+}
+
+#[async_trait]
+pub trait GetAdd {
+    // XXX get and add are centered around the filesystem.
+    // We can imagine an underlying version that produces a stream of
+    // Out as well.
+    async fn get(&self, cid: Cid, path: &Path) -> Result<()>;
+    async fn add(&self, path: &Path) -> Result<Cid>;
+}
+
+#[async_trait]
+pub trait ConnectDisconnect {
+    async fn connect(&self, peer_id: PeerId, addrs: &[Multiaddress]) -> Result<()>;
+    async fn disconnect(&self, peer_id: PeerId) -> Result<()>;
 }
 
 #[async_trait]
@@ -25,7 +42,7 @@ pub trait P2pId {
 
 #[async_trait]
 pub trait P2pFetch {
-    async fn fetch_bitswap(&self, cid: Cid, providers: Vec<PeerId>) -> Result<Bytes>;
+    async fn fetch_bitswap(&self, cid: Cid, providers: &[PeerId]) -> Result<Bytes>;
     async fn fetch_providers(&self, cid: Cid) -> Result<Vec<PeerId>>;
 }
 
