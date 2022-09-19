@@ -1,0 +1,5 @@
+```
+$ iroh-ctl add fixtures/test.txt
+/ipfs/baeaaaaa
+
+```

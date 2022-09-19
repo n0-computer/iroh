@@ -1,10 +1,11 @@
+use std::path::Path;
+
 use anyhow::Result;
 use async_trait::async_trait;
 use bytes::Bytes;
 use cid::Cid;
 use libp2p::gossipsub::MessageId;
 use libp2p::{Multiaddr, PeerId};
-use std::path::Path;
 
 pub struct Id {
     peer_id: PeerId,

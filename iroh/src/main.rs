@@ -1,17 +1,39 @@
-mod api;
-mod cli;
+use std::path::Path;
 
 use anyhow::Result;
 use async_trait::async_trait;
 use cid::Cid;
+use iroh::api::GetAdd;
+use iroh::cli::run_cli_command;
 use iroh_resolver::resolver;
 use iroh_resolver::resolver::{ContentLoader, OutMetrics, Resolver};
 use iroh_resolver::unixfs_builder;
 use iroh_rpc_client::Client;
-use std::path::Path;
 
-fn main() {
-    println!("Hello world!");
+#[tokio::main(flavor = "multi_thread")]
+async fn main() -> Result<()> {
+    let fake_api = FakeApi::new();
+    run_cli_command(&fake_api).await?;
+    Ok(())
+}
+
+struct FakeApi {}
+
+impl FakeApi {
+    fn new() -> Self {
+        Self {}
+    }
+}
+
+#[async_trait]
+impl GetAdd for FakeApi {
+    async fn get(&self, cid: Cid, output: &Path) -> Result<()> {
+        Ok(())
+    }
+
+    async fn add(&self, path: &Path) -> Result<Cid> {
+        Ok(Cid::default())
+    }
 }
 
 #[async_trait]
@@ -51,6 +73,7 @@ async fn get<T: ContentLoader + std::marker::Unpin>(
     cid: Cid,
     path: &Path,
 ) -> Result<()> {
+    // XXX this should loop through blocks for paths like in PR
     let resolver = Resolver::new(content_loader);
     let out = resolver.resolve(resolver::Path::from_cid(cid)).await?;
     let mut r = out.pretty(resolver, OutMetrics::default())?;

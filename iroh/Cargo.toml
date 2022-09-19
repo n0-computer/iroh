@@ -16,6 +16,13 @@ async-trait = "0.1.53"
 tokio = { version = "1" }
 bytes = "1.1.0"
 libp2p = "0.48"
+clap = { version = "3.1.14", features = ["derive"] }
 
 [dev-dependencies]
 tempfile = "3.3.0"
+trycmd = "0.13.6"
+
+[[bin]]
+bench = false
+path = "src/main.rs"
+name = "iroh-ctl"
