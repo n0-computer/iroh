@@ -35,11 +35,7 @@ pub struct Block {
 pub enum BlockCommands {
     #[clap(about = "Get a raw IPFS block from the store & print the content to stdout")]
     Get { cid: Cid },
-    #[clap(
-        about = "Store input as an IPFS block.
-Not yet implemented.",
-        hide = true
-    )]
+    #[clap(about = "Store input as an IPFS block.")]
     Put { path: PathBuf },
     #[clap(
         about = "Remove IPFS block(s).
@@ -67,7 +63,7 @@ pub async fn run_command(rpc: Client, cmd: Store) -> Result<()> {
                 }
             }
             BlockCommands::Put { path } => {
-                let cid = unixfs_builder::add_file(path.as_path(), Some(&rpc)).await?;
+                let cid = unixfs_builder::add_file(Some(&rpc), path.as_path(), false).await?;
                 println!("/ipfs/{}\n", cid);
             }
             BlockCommands::Rm { cid } => {

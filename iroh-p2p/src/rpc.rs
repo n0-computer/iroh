@@ -87,6 +87,8 @@ impl RpcP2p for P2p {
             .providers
             .with_context(|| format!("missing providers for: {}", cid))?;
 
+        tracing::debug!(target: "kad", "providers: {:?}", providers);
+
         let providers: HashSet<PeerId> = providers
             .providers
             .into_iter()
@@ -133,6 +135,7 @@ impl RpcP2p for P2p {
             match provider {
                 Ok(new_providers) => {
                     for provider in new_providers {
+                        tracing::debug!(target: "kad", "provider: {}", provider);
                         providers.push(provider.to_bytes());
                     }
                 }

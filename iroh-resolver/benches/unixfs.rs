@@ -51,7 +51,7 @@ pub fn add_benchmark(c: &mut Criterion) {
                 });
                 let rpc_ref = &rpc;
                 b.to_async(&executor).iter(|| async move {
-                    let c = iroh_resolver::unixfs_builder::add_file(path, Some(rpc_ref))
+                    let c = iroh_resolver::unixfs_builder::add_file(Some(rpc_ref), path, false)
                         .await
                         .unwrap();
                     black_box(c)

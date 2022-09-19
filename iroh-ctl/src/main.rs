@@ -1,14 +1,20 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+use anyhow::Result;
 use cid::Cid;
 use clap::{Parser, Subcommand};
+use futures::Stream;
+use futures::StreamExt;
 use iroh_ctl::{
     gateway::{run_command as run_gateway_command, Gateway},
     p2p::{run_command as run_p2p_command, P2p},
     store::{run_command as run_store_command, Store},
 };
-use iroh_resolver::{resolver::OutMetrics, unixfs_builder};
+use iroh_resolver::{
+    resolver::{Out, OutMetrics},
+    unixfs_builder,
+};
 use iroh_rpc_client::Client;
 use iroh_util::{iroh_config_path, make_config};
 
@@ -16,6 +22,8 @@ use iroh_ctl::{
     config::{Config, CONFIG_FILE_NAME, ENV_PREFIX},
     status,
 };
+
+use iroh_metrics::config::Config as MetricsConfig;
 
 #[derive(Parser, Debug, Clone)]
 #[clap(version, about, long_about = None, propagate_version = true)]
@@ -52,7 +60,10 @@ enum Commands {
     #[clap(about = "break up a file into block and provide those blocks on the ipfs network")]
     Add {
         path: PathBuf,
+        #[clap(long, short)]
         recursive: bool,
+        #[clap(long, short)]
+        wrap: bool,
     },
     #[clap(
         about = "get content based on a Content Identifier from the ipfs network, and save it "
@@ -60,7 +71,7 @@ enum Commands {
     Get {
         cid: Cid,
         #[clap(long, short)]
-        path: PathBuf,
+        output: Option<PathBuf>,
     },
 }
 
@@ -82,6 +93,10 @@ async fn main() -> anyhow::Result<()> {
     )
     .unwrap();
 
+    let metrics_handle = iroh_metrics::MetricsHandle::new(MetricsConfig::default())
+        .await
+        .expect("failed to initialize metrics");
+
     let client = Client::new(config.rpc_client).await?;
 
     match cli.command {
@@ -94,32 +109,53 @@ async fn main() -> anyhow::Result<()> {
         Commands::P2p(p2p) => run_p2p_command(client, p2p).await?,
         Commands::Store(store) => run_store_command(client, store).await?,
         Commands::Gateway(gateway) => run_gateway_command(client, gateway).await?,
-        Commands::Add { path, recursive } => {
+        Commands::Add {
+            path,
+            recursive,
+            wrap,
+        } => {
+            let providing_client = iroh_resolver::unixfs_builder::StoreAndProvideClient {
+                client: Box::new(&client),
+            };
             if path.is_dir() {
-                let cid = unixfs_builder::add_dir(&path, Some(&client), recursive).await?;
-                // TODO add start_providing
-                client.try_p2p()?.start_providing(&cid).await?;
+                let cid = unixfs_builder::add_dir(Some(&providing_client), &path, wrap, recursive)
+                    .await?;
                 println!("/ipfs/{}", cid);
             } else if path.is_file() {
-                let cid = unixfs_builder::add_file(&path, Some(&client)).await?;
-                // TODO add start_providing
-                client.try_p2p()?.start_providing(&cid).await?;
+                let cid = unixfs_builder::add_file(Some(&providing_client), &path, wrap).await?;
                 println!("/ipfs/{}", cid);
             } else {
                 anyhow::bail!("can only add files or directories");
             }
         }
-        Commands::Get { cid, path } => {
-            let resolver = iroh_resolver::resolver::Resolver::new(client.clone());
-            let out = resolver
-                .resolve(iroh_resolver::resolver::Path::from_cid(cid))
-                .await?;
-            let mut r = out.pretty(resolver, OutMetrics::default())?;
-            let mut file = tokio::fs::File::create(path.clone()).await?;
-            tokio::io::copy(&mut r, &mut file).await?;
-            println!("cid {:?} write to {:?}", cid, path);
+        Commands::Get { cid, output } => {
+            let blocks = get(client.clone(), cid, output).await;
+            tokio::pin!(blocks);
+            while let Some(block) = blocks.next().await {
+                let (path, out) = block?;
+                if out.is_dir() {
+                    tokio::fs::create_dir_all(path).await?;
+                } else {
+                    let resolver = iroh_resolver::resolver::Resolver::new(client.clone());
+                    let mut f = tokio::fs::File::create(path).await?;
+                    let mut reader = out.pretty(resolver, OutMetrics::default())?;
+                    tokio::io::copy(&mut reader, &mut f).await?;
+                }
+            }
         }
     };
 
+    metrics_handle.shutdown();
+
     Ok(())
+}
+
+async fn get(
+    client: Client,
+    cid: Cid,
+    outpath: Option<PathBuf>,
+) -> impl Stream<Item = Result<(PathBuf, Out)>> {
+    tracing::debug!(target: "resolve", "get cid {:?}", cid);
+    let resolver = iroh_resolver::resolver::Resolver::new(client);
+    resolver.resolve_recursive_with_filepaths(iroh_resolver::resolver::Path::from_cid(cid), outpath)
 }
