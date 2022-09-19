@@ -36,7 +36,7 @@
 
 ### Server 
 
-- [ ] `./server/server.go` (536)
+- [x] `./server/server.go` (536)
 - [x] `./server/forward.go` (14)
     - skip, legacy
 - [x] `./server/internal/decision/engine.go` (1026)

@@ -1,21 +1,19 @@
 use std::{
-    sync::{
-        mpsc::{sync_channel, Receiver, SyncSender},
-        Arc, Mutex,
-    },
+    sync::{Arc, Mutex},
     thread::JoinHandle,
 };
 
 use anyhow::{anyhow, Result};
 use cid::Cid;
 use libp2p::PeerId;
-use tracing::debug;
+use tracing::{debug, error, warn};
 
 use self::{
     decision::{Config as DecisionConfig, Engine as DecisionEngine, Envelope},
     score_ledger::Receipt,
 };
 use crate::{block::Block, message::BitswapMessage, network::Network, Store};
+use crossbeam::channel::{Receiver, Sender};
 
 mod blockstore_manager;
 mod decision;
@@ -70,15 +68,17 @@ pub struct Server {
     /// Channel for newly added blocks, which are to be provided to the network.
     /// Blocks in this channel get buffered and fed to the `provider_keys` channel
     /// later on to avoid too much network activiy.
-    new_blocks: (SyncSender<Cid>, Receiver<Cid>),
+    new_blocks: (Sender<Cid>, Receiver<Cid>),
     /// Directly feeds provide workers.
-    provide_keys: (SyncSender<Cid>, Receiver<Cid>),
+    provide_keys: (Sender<Cid>, Receiver<Cid>),
     /// The size of the channel buffer to use.
     has_block_buffer_size: usize,
     /// Wether or not to make provide announcements.
     provide_enabled: bool,
     closer: bus::Bus<()>,
     workers: Vec<JoinHandle<()>>,
+    provide_worker: Option<JoinHandle<()>>,
+    provide_collector: Option<JoinHandle<()>>,
 }
 
 /// The total number of simultaneous threads sending outgoing messages.
@@ -87,8 +87,8 @@ const DEFAULT_BITSWAP_TASK_WORKER_COUNT: usize = 8;
 impl Server {
     pub fn new(network: Network, store: Store, config: Config) -> Self {
         let engine = DecisionEngine::new(store, *network.self_id(), config.decision_config);
-        let provide_keys = sync_channel(PROVIDE_KEYS_BUFFER_SIZE);
-        let new_blocks = sync_channel(config.has_block_buffer_size);
+        let provide_keys = crossbeam::channel::bounded(PROVIDE_KEYS_BUFFER_SIZE);
+        let new_blocks = crossbeam::channel::bounded(config.has_block_buffer_size);
 
         let mut server = Server {
             engine: Arc::new(engine),
@@ -101,6 +101,8 @@ impl Server {
             provide_enabled: config.provide_enabled,
             closer: bus::Bus::new(config.task_worker_count),
             workers: Vec::with_capacity(config.task_worker_count),
+            provide_worker: None,
+            provide_collector: None,
         };
 
         server.start_workers();
@@ -159,7 +161,50 @@ impl Server {
         }
 
         if self.provide_enabled {
-            todo!()
+            let mut closer = self.closer.add_rx();
+            let new_blocks = self.new_blocks.1.clone();
+            let provide_keys = self.provide_keys.0.clone();
+
+            // worker managing sending out provide messages
+            self.provide_collector = Some(std::thread::spawn(move || {
+                loop {
+                    if closer.try_recv().is_ok() {
+                        break;
+                    }
+
+                    if let Ok(block_key) = new_blocks.recv() {
+                        if let Err(err) = provide_keys.send(block_key) {
+                            error!("failed to send provide key: {:?}", err);
+                            break;
+                        }
+                    } else {
+                        // channel got closed
+                        break;
+                    }
+                }
+            }));
+
+            let mut closer = self.closer.add_rx();
+            let provide_keys = self.provide_keys.1.clone();
+            let network = self.network.clone();
+            self.provide_worker = Some(std::thread::spawn(move || {
+                // originally spawns a limited amount of workers per key
+                loop {
+                    if closer.try_recv().is_ok() {
+                        break;
+                    }
+
+                    if let Ok(key) = provide_keys.recv() {
+                        // TODO: timeout
+                        if let Err(err) = network.provide(key) {
+                            warn!("failed to provide: {}: {:?}", key, err);
+                        }
+                    } else {
+                        // channel closed
+                        break;
+                    }
+                }
+            }));
         }
     }
 
@@ -172,6 +217,14 @@ impl Server {
             handle.join().map_err(|e| anyhow!("{:?}", e))?;
         }
 
+        if let Some(handle) = self.provide_collector.take() {
+            handle.join().map_err(|e| anyhow!("{:?}", e))?;
+        }
+
+        if let Some(handle) = self.provide_worker.take() {
+            handle.join().map_err(|e| anyhow!("{:?}", e))?;
+        }
+
         // stop the decision engine
         Arc::get_mut(&mut self.engine)
             .ok_or_else(|| anyhow!("engine refs not shutdown yet"))?
@@ -180,12 +233,30 @@ impl Server {
         Ok(())
     }
 
-    pub fn notify_new_blocks(&self, blocks: &[Block]) -> Result<()> {
-        todo!()
+    /// Returns aggregated stats about the server operations.
+    pub fn stat(&self) -> Result<Stat> {
+        let mut counters = self.counters.lock().unwrap();
+        counters.provide_buf_len = self.new_blocks.0.len();
+        counters.peers = self.engine.peers().into_iter().collect();
+        counters.peers.sort();
+
+        Ok(counters.clone())
     }
 
-    pub fn stat(&self) -> Result<Stat> {
-        todo!()
+    /// Announces the existence of blocks to the bitswap server.
+    /// Potentially it will notify its peers about it.
+    /// The blocks are not stored by bitswap, so the caller has to ensure to
+    /// store them in the store, befor calling this method.
+    pub fn notify_new_blocks(&self, blocks: &[Block]) -> Result<()> {
+        //  send wanted blocks to the decision engine
+        self.engine.notify_new_blocks(blocks);
+        if self.provide_enabled {
+            for block in blocks {
+                self.new_blocks.0.send(*block.cid()).ok();
+            }
+        }
+
+        Ok(())
     }
 
     pub fn receive_message(&self, peer: &PeerId, message: &BitswapMessage) {
