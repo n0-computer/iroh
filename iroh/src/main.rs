@@ -1,6 +1,6 @@
 mod api;
 mod cli;
-mod cloud;
+mod clientapi;
 mod fake;
 
 use std::collections::HashMap;
@@ -10,7 +10,7 @@ use std::path::Path;
 use crate::api::Api;
 use crate::cli::run_cli_command;
 use crate::cli::Cli;
-use crate::cloud::{create_client, CloudApi};
+use crate::clientapi::{create_client, CloudApi};
 use crate::fake::{FakeApi, FakeP2p, FakeStore};
 use anyhow::Result;
 use async_trait::async_trait;
