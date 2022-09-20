@@ -512,14 +512,6 @@ async fn make_dir_from_path<P: Into<PathBuf>>(path: P, recursive: bool) -> Resul
     dir.build()
 }
 
-pub async fn get_file(_cid: Cid, _rpc: &Client) -> Result<Bytes> {
-    // let resolver = Resolver::new(rpc, &mut Registry::default());
-    // let out = resolver.resolve(Path::from_str(&path));
-
-    // println!("{:#?}", out);
-    todo!();
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

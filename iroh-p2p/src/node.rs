@@ -159,7 +159,6 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                 }
                 rpc_message = self.net_receiver_in.recv() => {
                     let rpc_message = rpc_message.ok_or_else(|| anyhow!("unexpected close"))?;
-                    debug!(target: "kad", "rpc message: {:?}", rpc_message);
                     match self.handle_rpc_message(rpc_message).await {
                         Ok(true) => {
                             // shutdown
@@ -260,7 +259,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                     self.emit_network_event(NetworkEvent::PeerConnected(peer_id))
                         .await;
                 }
-                debug!(target: "dial", "ConnectionEstablished: {:}", peer_id);
+                debug!("ConnectionEstablished: {:}", peer_id);
                 Ok(())
             }
             SwarmEvent::ConnectionClosed {
@@ -273,11 +272,11 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                         .await;
                 }
 
-                debug!(target: "dial", "ConnectionClosed: {:}", peer_id);
+                debug!("ConnectionClosed: {:}", peer_id);
                 Ok(())
             }
             SwarmEvent::OutgoingConnectionError { peer_id, error } => {
-                debug!(target: "dial", "failed to dial: {:?}, {:?}", peer_id, error);
+                debug!("failed to dial: {:?}, {:?}", peer_id, error);
 
                 if let Some(peer_id) = peer_id {
                     if let Some(channels) = self.dial_queries.get_mut(&peer_id) {
@@ -397,7 +396,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                                 let _ = self.kad_queries.remove(&QueryKey::ProviderKey(key));
                             } else {
                                 if providers_so_far >= PROVIDER_LIMIT {
-                                    debug!(target: "kad",
+                                    debug!(
                                         "finish provider query {}/{}",
                                         providers_so_far, PROVIDER_LIMIT
                                     );
@@ -413,7 +412,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                                         chan.send(Ok(providers.clone())).await.ok();
                                     }
                                 } else {
-                                    debug!(target: "kad", "No listeners");
+                                    debug!("No listeners");
                                 }
                             }
                         }
@@ -422,7 +421,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                             let key = match err {
                                 GetProvidersError::Timeout { key, .. } => key,
                             };
-                            debug!(target: "kad", "GetProviders timeout {:?}", key);
+                            debug!("GetProviders timeout {:?}", key);
                             if let Some(QueryChannel::GetProviders(chans)) =
                                 self.kad_queries.remove(&QueryKey::ProviderKey(key))
                             {
@@ -435,16 +434,16 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                             peer,
                             num_remaining,
                         })) => {
-                            debug!(target: "kad",
+                            debug!(
                                 "kad bootstrap done {:?}, remaining: {}",
                                 peer, num_remaining
                             );
                         }
                         QueryResult::Bootstrap(Err(e)) => {
-                            warn!(target: "kad", "kad bootstrap error: {:?}", e);
+                            warn!("kad bootstrap error: {:?}", e);
                         }
                         other => {
-                            debug!(target: "kad", "Libp2p => Unhandled Kademlia query result: {:?}", other)
+                            debug!("Libp2p => Unhandled Kademlia query result: {:?}", other)
                         }
                     }
                 }
@@ -574,14 +573,12 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                         .get_mut(&QueryKey::ProviderKey(key.clone()))
                     {
                         debug!(
-                            target: "kad",
                             "RpcMessage::ProviderRequest: already fetching providers for {:?}",
                             key
                         );
                         chans.push(response_channel);
                     } else {
                         debug!(
-                            target: "kad",
                             "RpcMessage::ProviderRequest: getting providers for {:?}",
                             key
                         );

@@ -1,6 +1,5 @@
 use std::collections::VecDeque;
 use std::fmt::{self, Debug, Display, Formatter};
-use std::path::PathBuf;
 use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -65,6 +64,14 @@ impl Path {
 
     pub fn push(&mut self, str: impl AsRef<str>) {
         self.tail.push(str.as_ref().to_owned());
+    }
+
+    pub fn to_string_without_type(&self) -> String {
+        let mut s = format!("{}", self.root);
+        for part in &self.tail {
+            s.push_str(&format!("/{}", part)[..]);
+        }
+        s
     }
 }
 
@@ -500,15 +507,14 @@ impl<T: ContentLoader> Resolver<T> {
     }
 
     #[tracing::instrument(skip(self))]
-    pub fn resolve_recursive_with_filepaths(
+    pub fn resolve_recursive_with_paths(
         &self,
         root: Path,
-        output: Option<PathBuf>,
-    ) -> impl Stream<Item = Result<(PathBuf, Out)>> {
+    ) -> impl Stream<Item = Result<(Path, Out)>> {
         let mut blocks = VecDeque::new();
         let this = self.clone();
         async_stream::try_stream! {
-            let output_path = output.unwrap_or_else(|| PathBuf::from(root.root.to_string()));
+            let output_path = root.clone();
             blocks.push_back((output_path, this.resolve(root).await));
             loop {
                 if let Some((current_output_path, current_out)) = blocks.pop_front() {
@@ -2103,7 +2109,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_resolve_recursive_with_name() {
+    async fn test_resolve_recursive_with_path() {
         // Test content
         // ------------
         // QmaRGe7bVmVaLmxbrMiVNXqW4pRNNp3xq7hFtyRKA3mtJL foo/bar/bar.txt
@@ -2150,49 +2156,24 @@ mod tests {
 
         let path = format!("/ipfs/{root_cid_str}");
         let results: Vec<_> = resolver
-            .resolve_recursive_with_filepaths(path.parse().unwrap(), None)
+            .resolve_recursive_with_paths(path.parse().unwrap())
             .try_collect()
             .await
             .unwrap();
         assert_eq!(results.len(), 4);
 
+        assert_eq!(results[0].0.to_string(), format!("/ipfs/{root_cid_str}"));
         assert_eq!(
-            results[0].0.to_str().unwrap().to_string(),
-            format!("{root_cid_str}")
+            results[1].0.to_string(),
+            format!("/ipfs/{root_cid_str}/bar")
         );
         assert_eq!(
-            results[1].0.to_str().unwrap().to_string(),
-            format!("{root_cid_str}/bar")
+            results[2].0.to_string(),
+            format!("/ipfs/{root_cid_str}/hello.txt")
         );
         assert_eq!(
-            results[2].0.to_str().unwrap().to_string(),
-            format!("{root_cid_str}/hello.txt")
-        );
-        assert_eq!(
-            results[3].0.to_str().unwrap().to_string(),
-            format!("{root_cid_str}/bar/bar.txt")
-        );
-
-        let path = format!("/ipfs/{root_cid_str}");
-        let results: Vec<_> = resolver
-            .resolve_recursive_with_filepaths(path.parse().unwrap(), Some(PathBuf::from("foo")))
-            .try_collect()
-            .await
-            .unwrap();
-        assert_eq!(results.len(), 4);
-
-        assert_eq!(results[0].0.to_str().unwrap().to_string(), format!("foo"));
-        assert_eq!(
-            results[1].0.to_str().unwrap().to_string(),
-            format!("foo/bar")
-        );
-        assert_eq!(
-            results[2].0.to_str().unwrap().to_string(),
-            format!("foo/hello.txt")
-        );
-        assert_eq!(
-            results[3].0.to_str().unwrap().to_string(),
-            format!("foo/bar/bar.txt")
+            results[3].0.to_string(),
+            format!("/ipfs/{root_cid_str}/bar/bar.txt")
         );
     }
 }

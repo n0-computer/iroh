@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use cid::Cid;
 use clap::{Parser, Subcommand};
 use futures::Stream;
@@ -11,10 +11,7 @@ use iroh_ctl::{
     p2p::{run_command as run_p2p_command, P2p},
     store::{run_command as run_store_command, Store},
 };
-use iroh_resolver::{
-    resolver::{Out, OutMetrics},
-    unixfs_builder,
-};
+use iroh_resolver::{resolver, unixfs_builder};
 use iroh_rpc_client::Client;
 use iroh_util::{iroh_config_path, make_config};
 
@@ -69,7 +66,7 @@ enum Commands {
         about = "get content based on a Content Identifier from the ipfs network, and save it "
     )]
     Get {
-        cid: Cid,
+        path: resolver::Path,
         #[clap(long, short)]
         output: Option<PathBuf>,
     },
@@ -114,32 +111,26 @@ async fn main() -> anyhow::Result<()> {
             recursive,
             wrap,
         } => {
-            let providing_client = iroh_resolver::unixfs_builder::StoreAndProvideClient {
-                client: Box::new(&client),
-            };
-            if path.is_dir() {
-                let cid = unixfs_builder::add_dir(Some(&providing_client), &path, wrap, recursive)
-                    .await?;
-                println!("/ipfs/{}", cid);
-            } else if path.is_file() {
-                let cid = unixfs_builder::add_file(Some(&providing_client), &path, wrap).await?;
-                println!("/ipfs/{}", cid);
-            } else {
-                anyhow::bail!("can only add files or directories");
-            }
+            let cid = add(client, path, recursive, wrap).await?;
+            println!("/ipfs/{}", cid);
         }
-        Commands::Get { cid, output } => {
-            let blocks = get(client.clone(), cid, output).await;
+        Commands::Get { path, output } => {
+            let blocks = get(client.clone(), path, output);
             tokio::pin!(blocks);
             while let Some(block) = blocks.next().await {
                 let (path, out) = block?;
-                if out.is_dir() {
-                    tokio::fs::create_dir_all(path).await?;
-                } else {
-                    let resolver = iroh_resolver::resolver::Resolver::new(client.clone());
-                    let mut f = tokio::fs::File::create(path).await?;
-                    let mut reader = out.pretty(resolver, OutMetrics::default())?;
-                    tokio::io::copy(&mut reader, &mut f).await?;
+                match out {
+                    OutType::Dir => {
+                        println!("dir {:?}", path);
+                        tokio::fs::create_dir_all(path).await?;
+                    }
+                    OutType::Reader(mut reader) => {
+                        if let Some(parent) = path.parent() {
+                            tokio::fs::create_dir_all(parent).await?;
+                        }
+                        let mut f = tokio::fs::File::create(path).await?;
+                        tokio::io::copy(&mut reader, &mut f).await?;
+                    }
                 }
             }
         }
@@ -150,12 +141,114 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn get(
+// TODO(ramfox): move to the `iroh` api package
+async fn add(client: Client, path: PathBuf, recursive: bool, wrap: bool) -> Result<Cid> {
+    let providing_client = iroh_resolver::unixfs_builder::StoreAndProvideClient {
+        client: Box::new(&client),
+    };
+    if path.is_dir() {
+        unixfs_builder::add_dir(Some(&providing_client), &path, wrap, recursive).await
+    } else if path.is_file() {
+        unixfs_builder::add_file(Some(&providing_client), &path, wrap).await
+    } else {
+        anyhow::bail!("can only add files or directories");
+    }
+}
+
+// TODO(ramfox): move to the `iroh` api package
+enum OutType<T: resolver::ContentLoader> {
+    Dir,
+    Reader(resolver::OutPrettyReader<T>),
+}
+
+// TODO(ramfox): move to the `iroh` api package
+fn get(
     client: Client,
-    cid: Cid,
-    outpath: Option<PathBuf>,
-) -> impl Stream<Item = Result<(PathBuf, Out)>> {
-    tracing::debug!(target: "resolve", "get cid {:?}", cid);
-    let resolver = iroh_resolver::resolver::Resolver::new(client);
-    resolver.resolve_recursive_with_filepaths(iroh_resolver::resolver::Path::from_cid(cid), outpath)
+    root: resolver::Path,
+    output: Option<PathBuf>,
+) -> impl Stream<Item = Result<(PathBuf, OutType<Client>)>> {
+    tracing::debug!("get {:?}", root);
+    let resolver = iroh_resolver::resolver::Resolver::new(client.clone());
+    let results = resolver.resolve_recursive_with_paths(root.clone());
+    async_stream::try_stream! {
+        tokio::pin!(results);
+        while let Some(res) = results.next().await {
+            let (path, out) = res?;
+            let path = make_output_path(path, root.clone(), output.clone())?;
+            if out.is_dir() {
+                yield (path, OutType::Dir);
+            } else {
+                let resolver = resolver::Resolver::new(client.clone());
+                let reader = out.pretty(resolver, Default::default())?;
+                yield (path, OutType::Reader(reader));
+            }
+        }
+    }
+}
+
+// move to the `iroh` api package
+// make_output_path adjusts the full path to replace the root with any given output path
+// if it exists
+fn make_output_path(
+    full: resolver::Path,
+    root: resolver::Path,
+    output: Option<PathBuf>,
+) -> Result<PathBuf> {
+    if let Some(ref output) = output {
+        let root_str = &root.to_string()[..];
+        let full_as_path = PathBuf::from(full.to_string());
+        let path_str = full_as_path.to_str().context("invalid root path")?;
+        let output_str = output.to_str().context("invalid output path")?;
+        Ok(PathBuf::from(path_str.replace(root_str, output_str)))
+    } else {
+        // returns path as a string
+        Ok(PathBuf::from(full.to_string_without_type()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::str::FromStr;
+
+    #[test]
+    fn test_make_output_path() {
+        // test with output dir
+        let root = resolver::Path::from_str("/ipfs/QmYbcW4tXLXHWw753boCK8Y7uxLu5abXjyYizhLznq9PUR")
+            .unwrap();
+        let full = resolver::Path::from_str(
+            "/ipfs/QmYbcW4tXLXHWw753boCK8Y7uxLu5abXjyYizhLznq9PUR/bar.txt",
+        )
+        .unwrap();
+        let output = Some(PathBuf::from("foo"));
+        let expect = PathBuf::from("foo/bar.txt");
+        let got = make_output_path(full, root, output).unwrap();
+        assert_eq!(expect, got);
+
+        // test with output filepath
+        let root = resolver::Path::from_str(
+            "/ipfs/QmYbcW4tXLXHWw753boCK8Y7uxLu5abXjyYizhLznq9PUR/bar.txt",
+        )
+        .unwrap();
+        let full = resolver::Path::from_str(
+            "/ipfs/QmYbcW4tXLXHWw753boCK8Y7uxLu5abXjyYizhLznq9PUR/bar.txt",
+        )
+        .unwrap();
+        let output = Some(PathBuf::from("foo/baz.txt"));
+        let expect = PathBuf::from("foo/baz.txt");
+        let got = make_output_path(full, root, output).unwrap();
+        assert_eq!(expect, got);
+
+        // test no output path
+        let root = resolver::Path::from_str("/ipfs/QmYbcW4tXLXHWw753boCK8Y7uxLu5abXjyYizhLznq9PUR")
+            .unwrap();
+        let full = resolver::Path::from_str(
+            "/ipfs/QmYbcW4tXLXHWw753boCK8Y7uxLu5abXjyYizhLznq9PUR/bar.txt",
+        )
+        .unwrap();
+        let output = None;
+        let expect = PathBuf::from("QmYbcW4tXLXHWw753boCK8Y7uxLu5abXjyYizhLznq9PUR/bar.txt");
+        let got = make_output_path(full, root, output).unwrap();
+        assert_eq!(expect, got);
+    }
 }
