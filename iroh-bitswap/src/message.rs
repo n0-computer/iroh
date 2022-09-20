@@ -1,7 +1,6 @@
 use core::convert::TryFrom;
 
 use ahash::AHashMap;
-use anyhow::{Context, Result};
 use bytes::Bytes;
 use cid::Cid;
 use multihash::{Code, MultihashDigest};
@@ -9,6 +8,7 @@ use once_cell::sync::Lazy;
 use prost::Message;
 
 use crate::block::Block;
+use crate::error::Error;
 use crate::prefix::Prefix;
 
 mod pb {
@@ -348,7 +348,7 @@ impl BitswapMessage {
 }
 
 impl TryFrom<pb::Message> for BitswapMessage {
-    type Error = anyhow::Error;
+    type Error = Error;
 
     fn try_from(pbm: pb::Message) -> Result<Self, Self::Error> {
         let full = pbm.wantlist.as_ref().map(|w| w.full).unwrap_or_default();
@@ -356,7 +356,7 @@ impl TryFrom<pb::Message> for BitswapMessage {
 
         if let Some(wantlist) = pbm.wantlist {
             for entry in wantlist.entries {
-                let cid = Cid::try_from(entry.block).context("invalid cid")?;
+                let cid = Cid::try_from(entry.block)?;
                 message.add_full_entry(
                     cid,
                     entry.priority,
@@ -382,7 +382,7 @@ impl TryFrom<pb::Message> for BitswapMessage {
         }
 
         for block_presence in pbm.block_presences {
-            let cid = Cid::try_from(block_presence.cid).context("invalid cid")?;
+            let cid = Cid::try_from(block_presence.cid)?;
             message.add_block_presence(cid, block_presence.r#type.try_into()?);
         }
 
@@ -393,7 +393,7 @@ impl TryFrom<pb::Message> for BitswapMessage {
 }
 
 impl TryFrom<Bytes> for BitswapMessage {
-    type Error = anyhow::Error;
+    type Error = Error;
 
     fn try_from(value: Bytes) -> Result<Self, Self::Error> {
         let pbm = pb::Message::decode(value)?;

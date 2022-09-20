@@ -28,6 +28,7 @@ const PROVIDE_WORKER_MAX: usize = 6;
 
 #[derive(Debug)]
 pub struct Config {
+    /// The total number of threads sending outgoing messages.
     pub task_worker_count: usize,
     pub provide_enabled: bool,
     pub has_block_buffer_size: usize,
@@ -73,9 +74,6 @@ pub struct Server {
     provide_worker: Option<(Sender<()>, JoinHandle<()>)>,
     provide_collector: Option<(Sender<()>, JoinHandle<()>)>,
 }
-
-/// The total number of simultaneous threads sending outgoing messages.
-const DEFAULT_BITSWAP_TASK_WORKER_COUNT: usize = 8;
 
 impl Server {
     pub fn new(network: Network, store: Store, config: Config) -> Self {
@@ -271,6 +269,7 @@ impl Server {
     /// and gave us usefull data, potentially increasing it's score and making us
     /// send them more data in exchange.
     pub fn received_blocks(&self, from: &PeerId, blks: &[Block]) {
+        // Called by the client
         self.engine.received_blocks(from, blks);
     }
 

@@ -6,6 +6,7 @@ use bytes::{Bytes, BytesMut};
 use futures::future;
 use futures::io::{AsyncRead, AsyncWrite};
 use libp2p::core::{InboundUpgrade, OutboundUpgrade, ProtocolName, UpgradeInfo};
+use prost::Message;
 use unsigned_varint::codec;
 
 use crate::handler::{BitswapHandlerError, HandlerEvent};
@@ -29,6 +30,12 @@ impl ProtocolName for ProtocolId {
             ProtocolId::Bitswap110 => b"/ipfs/bitswap/1.1.0",
             ProtocolId::Bitswap120 => b"/ipfs/bitswap/1.2.0",
         }
+    }
+}
+
+impl ProtocolId {
+    pub fn supports_have(self) -> bool {
+        matches!(self, ProtocolId::Bitswap120)
     }
 }
 
@@ -126,7 +133,12 @@ impl Encoder for BitswapCodec {
     fn encode(&mut self, item: Self::Item, dst: &mut BytesMut) -> Result<(), Self::Error> {
         tracing::trace!("sending message protocol: {:?}\n{:?}", self.protocol, item);
 
-        let buf = item.into_bytes(self.protocol);
+        let message = match self.protocol {
+            ProtocolId::Legacy | ProtocolId::Bitswap100 => item.encode_as_proto_v0(),
+            ProtocolId::Bitswap110 | ProtocolId::Bitswap120 => item.encode_as_proto_v1(),
+        };
+        let mut buf = BytesMut::with_capacity(message.encoded_len());
+        message.encode(&mut buf).expect("fixed target");
 
         // length prefix the protobuf message, ensuring the max limit is not hit
         self.length_codec
@@ -151,7 +163,7 @@ impl Decoder for BitswapCodec {
             None => return Ok(None),
         };
 
-        let message = BitswapMessage::from_bytes(self.protocol, &packet[..])?;
+        let message = BitswapMessage::try_from(packet.freeze())?;
 
         Ok(Some(HandlerEvent::Message { message }))
     }

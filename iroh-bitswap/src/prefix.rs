@@ -1,9 +1,10 @@
 use std::convert::TryFrom;
 
-use anyhow::Result;
 use cid::{self, Cid, Version};
 use multihash::{Code, MultihashDigest};
 use unsigned_varint::{decode as varint_decode, encode as varint_encode};
+
+use crate::error::Error;
 
 /// Prefix represents all metadata of a CID, without the actual content.
 #[derive(PartialEq, Eq, Clone, Debug)]
@@ -20,7 +21,7 @@ pub struct Prefix {
 
 impl Prefix {
     /// Create a new prefix from encoded bytes.
-    pub fn new(data: &[u8]) -> Result<Prefix> {
+    pub fn new(data: &[u8]) -> Result<Prefix, Error> {
         let (raw_version, remain) = varint_decode::u64(data).map_err(Into::<cid::Error>::into)?;
         let version = Version::try_from(raw_version)?;
         let (codec, remain) = varint_decode::u64(remain).map_err(Into::<cid::Error>::into)?;

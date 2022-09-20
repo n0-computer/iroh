@@ -43,12 +43,6 @@ pub struct TaskInfo {
     have_block: bool,
 }
 
-/// Used for task prioritization.
-/// It should return true if task 'ta' has higher priority than task 'tb'
-pub trait TaskComparator: Fn(&TaskInfo, &TaskInfo) -> bool + Debug + 'static + Sync + Send {}
-
-impl<F: Fn(&TaskInfo, &TaskInfo) -> bool + Debug + 'static + Sync + Send> TaskComparator for F {}
-
 // Used to accept / deny requests for a CID coming from a PeerID
 // It should return true if the request should be fullfilled.
 pub trait PeerBlockRequestFilter:
@@ -65,7 +59,6 @@ impl<F: Fn(&PeerId, usize) + Send + Sync> ScorePeerFunc for F {}
 #[derive(Debug)]
 pub struct Config {
     pub peer_block_request_filter: Option<Box<dyn PeerBlockRequestFilter>>,
-    pub task_comparator: Option<Box<dyn TaskComparator>>,
     // TODO: check if this needs to be configurable
     // pub score_ledger: Option<ScoreLedger>,
     pub engine_task_worker_count: usize,
@@ -91,7 +84,6 @@ impl Default for Config {
     fn default() -> Self {
         Config {
             peer_block_request_filter: None,
-            task_comparator: None,
             engine_task_worker_count: 8,
             send_dont_haves: true,
             engine_blockstore_worker_count: 128,
@@ -115,9 +107,6 @@ pub struct Engine {
     peer_ledger: Mutex<PeerLedger>,
     /// Tracks scores for peers.
     score_ledger: DefaultScoreLedger,
-    ticker: Receiver<Instant>,
-    task_worker_count: usize,
-    target_message_size: usize,
     /// The maximum size of the block, in bytes, up to which we will
     /// replace a want-have with a want-block.
     max_block_size_replace_has_with_block: usize,
@@ -126,7 +115,6 @@ pub struct Engine {
     // pending_gauge -> iroh-metrics
     // active_guage -> iroh-metrics
     metrics_update_counter: Mutex<usize>, // ?? atomic
-    task_comparator: Option<Box<dyn TaskComparator>>,
     peer_block_request_filter: Option<Box<dyn PeerBlockRequestFilter>>,
     max_outstanding_bytes_per_peer: usize,
     /// List of handles to worker threads.
@@ -156,7 +144,7 @@ impl Engine {
             store,
             config.engine_blockstore_worker_count,
         )));
-        let score_ledger = DefaultScoreLedger::new(Box::new(|peer, score| {
+        let score_ledger = DefaultScoreLedger::new(Box::new(|_peer, score| {
             if score == 0 {
                 // untag peer("useful")
             } else {
@@ -210,14 +198,10 @@ impl Engine {
             ledger_map: Default::default(),
             peer_ledger: Mutex::new(PeerLedger::default()),
             score_ledger,
-            ticker,
-            task_worker_count,
-            target_message_size,
             max_block_size_replace_has_with_block: config.max_replace_size,
             send_dont_haves: config.send_dont_haves,
             self_id,
             metrics_update_counter: Default::default(),
-            task_comparator: config.task_comparator,
             peer_block_request_filter: config.peer_block_request_filter,
             max_outstanding_bytes_per_peer: config.max_outstanding_bytes_per_peer,
             workers,

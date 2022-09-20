@@ -15,7 +15,7 @@ tokio = { version = "1", features = ["sync"] }
 bytes = "1.1.0"
 cid = "0.8.0"
 futures = "0.3.21"
-libp2p = { version = "0.48", default-features = false }
+libp2p = { version = "0.48", default-features = false, features = ["ping"] }
 multihash = "0.16.0"
 prost = "0.11"
 thiserror = "1.0.20"

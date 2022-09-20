@@ -21,8 +21,9 @@ use smallvec::SmallVec;
 use tracing::{error, trace, warn};
 
 use crate::{
-    protocol::{BitswapCodec, ProtocolConfig},
-    BitswapError, BitswapMessage, ProtocolId,
+    error::Error,
+    protocol::{BitswapCodec, ProtocolConfig, ProtocolId},
+    BitswapMessage,
 };
 
 /// The initial time (in seconds) we set the keep alive for protocol negotiations to occur.
@@ -50,7 +51,7 @@ pub enum BitswapHandlerError {
     #[error("io {0}")]
     Io(#[from] std::io::Error),
     #[error("bitswap {0}")]
-    Bitswap(#[from] BitswapError),
+    Bitswap(#[from] Error),
 }
 
 /// The event emitted by the Handler. This informs the behaviour of various events created
