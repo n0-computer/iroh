@@ -11,9 +11,9 @@ use libp2p::{Multiaddr, PeerId};
 
 #[derive(Parser, Debug, Clone)]
 #[clap(version, about, long_about = None, propagate_version = true)]
-struct Cli {
+pub struct Cli {
     #[clap(long)]
-    cfg: Option<PathBuf>,
+    pub cfg: Option<PathBuf>,
     #[clap(long = "no-metrics")]
     no_metrics: bool,
     #[clap(subcommand)]
@@ -44,8 +44,10 @@ enum Commands {
     },
 }
 
-pub async fn run_cli_command<A: Api<P, S>, P: P2p, S: Store>(api: &A) -> anyhow::Result<()> {
-    let cli = Cli::parse();
+pub async fn run_cli_command<A: Api<P, S>, P: P2p, S: Store>(
+    cli: Cli,
+    api: &A,
+) -> anyhow::Result<()> {
     match cli.command {
         Commands::P2p(p2p_sub_command) => run_p2p_command(api.p2p()?, p2p_sub_command).await?,
         Commands::Add { path } => {

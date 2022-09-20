@@ -1,27 +1,43 @@
-use std::collections::HashSet;
-use std::path::Path;
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 
 use crate::api;
 use anyhow::Result;
 use async_trait::async_trait;
 use bytes::Bytes;
 use cid::Cid;
+use iroh_ctl::config::{Config, CONFIG_FILE_NAME, ENV_PREFIX};
 use iroh_rpc_client::{Client, P2pClient, StoreClient};
+use iroh_util::{iroh_config_path, make_config};
 use libp2p::{
     gossipsub::{MessageId, TopicHash},
     Multiaddr, PeerId,
 };
 use tokio::{fs::File, io::stdin, io::AsyncReadExt};
 
-struct CloudApi<'a> {
+pub struct CloudApi<'a> {
     rpc: &'a Client,
 }
 
-struct CloudP2p<'a> {
+// api.connect()
+// api.p2p_connect()
+
+// api.p2p().connect() // could fail because no p2p, or because connect fails
+
+// api.try_p2p()?.connect()
+
+impl<'a> CloudApi<'a> {
+    // what are the Rust conventions for an async new?
+    pub async fn new(client: &'a Client) -> Result<CloudApi<'a>> {
+        Ok(CloudApi { rpc: client })
+    }
+}
+
+pub struct CloudP2p<'a> {
     rpc: &'a P2pClient,
 }
 
-struct CloudStore<'a> {
+pub struct CloudStore<'a> {
     rpc: &'a StoreClient,
 }
 
@@ -183,3 +199,26 @@ impl<'a> api::StoreBlock for CloudStore<'a> {
 
 #[async_trait]
 impl<'a> api::Store for CloudStore<'a> {}
+
+pub async fn create_client(
+    cli_path: Option<PathBuf>,
+    overrides_map: HashMap<String, String>,
+) -> Result<Client> {
+    let cfg_path = iroh_config_path(CONFIG_FILE_NAME)?;
+    let sources = vec![Some(cfg_path), cli_path];
+    let config = make_config(
+        // default
+        Config::default(),
+        // potential config files
+        sources,
+        // env var prefix for this config
+        ENV_PREFIX,
+        // map of present command line arguments
+        overrides_map,
+    )
+    .unwrap();
+    // let metrics_handle = iroh_metrics::MetricsHandle::new(MetricsConfig::default())
+    //     .await
+    //     .expect("failed to initialize metrics");
+    Client::new(config.rpc_client).await
+}

@@ -3,23 +3,40 @@ mod cli;
 mod cloud;
 mod fake;
 
+use std::collections::HashMap;
+use std::env;
 use std::path::Path;
 
 use crate::api::Api;
 use crate::cli::run_cli_command;
+use crate::cli::Cli;
+use crate::cloud::{create_client, CloudApi};
 use crate::fake::{FakeApi, FakeP2p, FakeStore};
 use anyhow::Result;
 use async_trait::async_trait;
 use cid::Cid;
+use clap::Parser;
+use iroh_ctl::config::{Config, CONFIG_FILE_NAME, ENV_PREFIX};
 use iroh_resolver::resolver;
 use iroh_resolver::resolver::{ContentLoader, OutMetrics, Resolver};
 use iroh_resolver::unixfs_builder;
 use iroh_rpc_client::Client;
+use iroh_util::{iroh_config_path, make_config};
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<()> {
-    let fake_api = FakeApi::default();
-    run_cli_command(&fake_api).await?;
+    let cli = Cli::parse();
+    match env::var("IROH_CTL_TESTING") {
+        Ok(_) => {
+            let fake_api = FakeApi::default();
+            run_cli_command(cli, &fake_api).await?;
+        }
+        Err(_) => {
+            let client = create_client(cli.cfg.clone(), HashMap::new()).await?;
+            let api = CloudApi::new(&client).await?;
+            run_cli_command(cli, &api).await?;
+        }
+    }
     Ok(())
 }
 
