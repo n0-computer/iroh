@@ -24,6 +24,7 @@ pub enum Ping {
 }
 
 pub trait Api<P: P2p, S: Store>: Main + GetAdd {
+    // XXX should these be renamed to try_p2p as they're fallible?
     fn p2p(&self) -> Result<P>;
     fn store(&self) -> Result<S>;
 }
