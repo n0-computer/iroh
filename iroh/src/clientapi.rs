@@ -15,7 +15,7 @@ use libp2p::{
 };
 use tokio::{fs::File, io::stdin, io::AsyncReadExt};
 
-pub struct CloudApi<'a> {
+pub struct ClientApi<'a> {
     rpc: &'a Client,
 }
 
@@ -26,38 +26,38 @@ pub struct CloudApi<'a> {
 
 // api.try_p2p()?.connect()
 
-impl<'a> CloudApi<'a> {
+impl<'a> ClientApi<'a> {
     // what are the Rust conventions for an async new?
-    pub async fn new(client: &'a Client) -> Result<CloudApi<'a>> {
-        Ok(CloudApi { rpc: client })
+    pub async fn new(client: &'a Client) -> Result<ClientApi<'a>> {
+        Ok(ClientApi { rpc: client })
     }
 }
 
-pub struct CloudP2p<'a> {
+pub struct ClientP2p<'a> {
     rpc: &'a P2pClient,
 }
 
-pub struct CloudStore<'a> {
+pub struct ClientStore<'a> {
     rpc: &'a StoreClient,
 }
 
 #[async_trait]
-impl<'a> api::Api<CloudP2p<'a>, CloudStore<'a>> for CloudApi<'a> {
-    fn p2p(&self) -> Result<CloudP2p<'a>> {
-        Ok(CloudP2p {
+impl<'a> api::Api<ClientP2p<'a>, ClientStore<'a>> for ClientApi<'a> {
+    fn p2p(&self) -> Result<ClientP2p<'a>> {
+        Ok(ClientP2p {
             rpc: self.rpc.try_p2p()?,
         })
     }
 
-    fn store(&self) -> Result<CloudStore<'a>> {
-        Ok(CloudStore {
+    fn store(&self) -> Result<ClientStore<'a>> {
+        Ok(ClientStore {
             rpc: self.rpc.try_store()?,
         })
     }
 }
 
 #[async_trait]
-impl<'a> api::Main for CloudApi<'a> {
+impl<'a> api::Main for ClientApi<'a> {
     // XXX what's up with version in the existing implementation? some clap version thing?
     async fn version(&self) -> Result<String> {
         Ok("0.0.0".to_string())
@@ -65,7 +65,7 @@ impl<'a> api::Main for CloudApi<'a> {
 }
 
 #[async_trait]
-impl<'a> api::GetAdd for CloudApi<'a> {
+impl<'a> api::GetAdd for ClientApi<'a> {
     // XXX this awaits ramfox's work in the resolver
     async fn get(&self, cid: Cid, output: &Path) -> Result<()> {
         todo!("{:?} {:?}", cid, output);
@@ -77,7 +77,7 @@ impl<'a> api::GetAdd for CloudApi<'a> {
 }
 
 #[async_trait]
-impl<'a> api::P2pConnectDisconnect for CloudP2p<'a> {
+impl<'a> api::P2pConnectDisconnect for ClientP2p<'a> {
     async fn connect(&self, peer_id: PeerId, addrs: &[Multiaddr]) -> Result<()> {
         // XXX why does the client want a vec instead of a &[Multiaddr]?
         self.rpc.connect(peer_id, addrs.to_vec()).await
@@ -89,7 +89,7 @@ impl<'a> api::P2pConnectDisconnect for CloudP2p<'a> {
 }
 
 #[async_trait]
-impl<'a> api::P2pId for CloudP2p<'a> {
+impl<'a> api::P2pId for ClientP2p<'a> {
     async fn p2p_version(&self) -> Result<String> {
         self.rpc.version().await
     }
@@ -127,7 +127,7 @@ impl<'a> api::P2pId for CloudP2p<'a> {
 }
 
 #[async_trait]
-impl<'a> api::P2pFetch for CloudP2p<'a> {
+impl<'a> api::P2pFetch for ClientP2p<'a> {
     async fn fetch_bitswap(&self, cid: Cid, providers: &[PeerId]) -> Result<Bytes> {
         let providers: HashSet<PeerId> = providers.iter().cloned().collect();
         self.rpc.fetch_bitswap(cid, providers).await
@@ -140,7 +140,7 @@ impl<'a> api::P2pFetch for CloudP2p<'a> {
 }
 
 #[async_trait]
-impl<'a> api::P2pGossipsub for CloudP2p<'a> {
+impl<'a> api::P2pGossipsub for ClientP2p<'a> {
     async fn publish(&self, topic: &str, file: Option<&Path>) -> Result<MessageId> {
         let mut v: Vec<u8> = Vec::new();
         if let Some(file) = file {
@@ -168,10 +168,10 @@ impl<'a> api::P2pGossipsub for CloudP2p<'a> {
 }
 
 #[async_trait]
-impl<'a> api::P2p for CloudP2p<'a> {}
+impl<'a> api::P2p for ClientP2p<'a> {}
 
 #[async_trait]
-impl<'a> api::StoreMain for CloudStore<'a> {
+impl<'a> api::StoreMain for ClientStore<'a> {
     async fn store_version(&self) -> Result<String> {
         self.rpc.version().await
     }
@@ -182,7 +182,7 @@ impl<'a> api::StoreMain for CloudStore<'a> {
 }
 
 #[async_trait]
-impl<'a> api::StoreBlock for CloudStore<'a> {
+impl<'a> api::StoreBlock for ClientStore<'a> {
     async fn block_get(&self, cid: Cid) -> Result<Option<Bytes>> {
         self.rpc.get(cid).await
     }
@@ -198,7 +198,7 @@ impl<'a> api::StoreBlock for CloudStore<'a> {
 }
 
 #[async_trait]
-impl<'a> api::Store for CloudStore<'a> {}
+impl<'a> api::Store for ClientStore<'a> {}
 
 pub async fn create_client(
     cli_path: Option<PathBuf>,

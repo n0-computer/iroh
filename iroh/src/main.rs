@@ -10,7 +10,7 @@ use std::path::Path;
 use crate::api::Api;
 use crate::cli::run_cli_command;
 use crate::cli::Cli;
-use crate::clientapi::{create_client, CloudApi};
+use crate::clientapi::{create_client, ClientApi};
 use crate::fake::{FakeApi, FakeP2p, FakeStore};
 use anyhow::Result;
 use async_trait::async_trait;
@@ -33,7 +33,7 @@ async fn main() -> Result<()> {
         }
         Err(_) => {
             let client = create_client(cli.cfg.clone(), HashMap::new()).await?;
-            let api = CloudApi::new(&client).await?;
+            let api = ClientApi::new(&client).await?;
             run_cli_command(cli, &api).await?;
         }
     }
