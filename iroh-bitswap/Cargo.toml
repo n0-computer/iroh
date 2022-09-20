@@ -35,6 +35,7 @@ anyhow = "1.0.65"
 once_cell = "1.14.0"
 crossbeam = "0.8.2"
 keyed_priority_queue = "0.4.1"
+async-trait = "0.1.57"
 
 [dev-dependencies]
 criterion = "0.3.5"

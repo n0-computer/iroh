@@ -9,6 +9,13 @@ pub(crate) mod wantlist;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Config {}
 
+impl Default for Config {
+    fn default() -> Self {
+        Config {
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Stat {
     pub wantlist: Vec<Cid>,
@@ -20,11 +27,14 @@ pub struct Stat {
 }
 
 #[derive(Debug)]
-pub struct Client {}
+pub struct Client<S: Store> {
+    network: Network,
+    store: S,
+}
 
-impl Client {
-    pub fn new(network: Network, store: Store, config: Config) -> Self {
-        todo!()
+impl<S: Store> Client<S> {
+    pub fn new(network: Network, store: S, config: Config) -> Self {
+        Client { network, store }
     }
 
     pub fn close(self) -> Result<()> {

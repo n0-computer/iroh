@@ -72,7 +72,13 @@ impl Network {
     }
 
     pub fn provide(&self, key: Cid) -> Result<()> {
-        todo!()
+        self.network_out_sender
+            .send(NetworkBehaviourAction::GenerateEvent(
+                BitswapEvent::Provide { key },
+            ))
+            .map_err(|e| anyhow!("channel send: {:?}", e))?;
+
+        Ok(())
     }
 
     pub fn poll(

@@ -258,6 +258,22 @@ impl Store {
     }
 
     #[tracing::instrument(skip(self))]
+    pub async fn get_size(&self, cid: &Cid) -> Result<Option<usize>> {
+        let res = match self.get_id(cid).await? {
+            Some(id) => {
+                inc!(StoreMetrics::StoreHit);
+                let maybe_size = self.get_size_by_id(id).await?;
+                Ok(maybe_size)
+            }
+            None => {
+                inc!(StoreMetrics::StoreMiss);
+                Ok(None)
+            }
+        };
+        res
+    }
+
+    #[tracing::instrument(skip(self))]
     pub async fn has(&self, cid: &Cid) -> Result<bool> {
         match self.get_id(cid).await? {
             Some(id) => {
@@ -331,6 +347,22 @@ impl Store {
 
         Ok(maybe_blob)
     }
+
+    #[tracing::instrument(skip(self))]
+    async fn get_size_by_id(&self, id: u64) -> Result<Option<usize>> {
+        let cf_blobs = self
+            .inner
+            .content
+            .cf_handle(CF_BLOBS_V0)
+            .ok_or_else(|| anyhow!("missing column family: blobs"))?;
+        let maybe_blob = self
+            .inner
+            .content
+            .get_pinned_cf(cf_blobs, id.to_be_bytes())?;
+        let maybe_size = maybe_blob.map(|b| b.len());
+        Ok(maybe_size)
+    }
+
 
     #[tracing::instrument(skip(self))]
     async fn get_links_by_id(&self, id: u64) -> Result<Option<Vec<Cid>>> {

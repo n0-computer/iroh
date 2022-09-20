@@ -97,11 +97,11 @@ impl Default for Config {
 // Note: tagging peers is not supported by rust-libp2p, so currently not implemented
 
 #[derive(Debug)]
-pub struct Engine {
+pub struct Engine<S: Store> {
     /// Priority queue of requests received from peers.
     peer_task_queue: PeerTaskQueue<Cid, TaskData, TaskMerger>,
     outbox: Receiver<Result<Envelope>>,
-    blockstore_manager: Arc<RwLock<BlockstoreManager>>,
+    blockstore_manager: Arc<RwLock<BlockstoreManager<S>>>,
     ledger_map: RwLock<AHashMap<PeerId, Arc<Mutex<Ledger>>>>,
     /// Tracks which peers are waiting for a Cid,
     peer_ledger: Mutex<PeerLedger>,
@@ -122,8 +122,8 @@ pub struct Engine {
     work_signal: Sender<()>,
 }
 
-impl Engine {
-    pub fn new(store: Store, self_id: PeerId, config: Config) -> Self {
+impl<S: Store> Engine<S> {
+    pub fn new(store: S, self_id: PeerId, config: Config) -> Self {
         // TODO: insert options for peertaskqueue
 
         // TODO: limit?
@@ -598,14 +598,14 @@ pub struct Envelope {
 }
 
 /// The work being executed in the task workers.
-fn next_envelope(
+fn next_envelope<S: Store>(
     work_signal_sender: Sender<()>,
     work_signal_receiver: &Receiver<()>,
     ticker: &Receiver<Instant>,
     inner_close: &Receiver<()>,
     target_message_size: usize,
     peer_task_queue: PeerTaskQueue<Cid, TaskData, TaskMerger>,
-    blockstore_manager: Arc<RwLock<BlockstoreManager>>,
+    blockstore_manager: Arc<RwLock<BlockstoreManager<S>>>,
 ) -> Result<Envelope> {
     loop {
         // pop some tasks off the request queue

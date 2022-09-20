@@ -6,5 +6,6 @@ proxy!(
     put: PutRequest => () => (),
     get: GetRequest => GetResponse => GetResponse,
     has: HasRequest => HasResponse => HasResponse,
-    get_links: GetLinksRequest => GetLinksResponse => GetLinksResponse
+    get_links: GetLinksRequest => GetLinksResponse => GetLinksResponse,
+    get_size: GetSizeRequest => GetSizeResponse => GetSizeResponse
 );

@@ -27,10 +27,7 @@ use tokio::sync::oneshot::Sender as OneShotSender;
 use tokio::task::JoinHandle;
 use tracing::{debug, error, info, trace, warn};
 
-use iroh_bitswap::{
-    BitswapEvent, Block, FindProvidersResult, InboundRequest, QueryError,
-    QueryResult as BitswapQueryResult, WantResult,
-};
+use iroh_bitswap::{BitswapEvent, Block};
 
 use crate::keys::{Keychain, Storage};
 use crate::rpc::ProviderRequestKey;
@@ -88,7 +85,7 @@ struct BitswapQueryChannel {
 struct WantState {
     ctx: u64,
     timeout: Instant,
-    chan: OneShotSender<Result<Block, QueryError>>,
+    chan: OneShotSender<Result<Block, String>>,
 }
 struct FindProviderState {
     ctx: u64,
@@ -129,19 +126,14 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
     ) -> Result<Self> {
         let (network_sender_in, network_receiver_in) = channel(1024); // TODO: configurable
 
-        let keypair = load_identity(&mut keychain).await?;
-        let mut swarm = build_swarm(&config.libp2p, &keypair).await?;
 
         let Config {
-            libp2p:
-                Libp2pConfig {
-                    listening_multiaddr,
-                    ..
-                },
+            libp2p: libp2p_config,
             rpc_client,
             ..
         } = config;
 
+        let listening_multiaddr = libp2p_config.listening_multiaddr.clone();
         let rpc_task = tokio::task::spawn(async move {
             // TODO: handle error
             rpc::new(rpc_addr, network_sender_in).await.unwrap()
@@ -150,6 +142,9 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
         let rpc_client = RpcClient::new(rpc_client)
             .await
             .context("failed to create rpc client")?;
+
+        let keypair = load_identity(&mut keychain).await?;
+        let mut swarm = build_swarm(&libp2p_config, &keypair, rpc_client.clone()).await?;
 
         Swarm::listen_on(&mut swarm, listening_multiaddr).unwrap();
 
@@ -233,7 +228,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
     }
 
     fn expiry(&mut self) -> Result<()> {
-        for (cid, state) in &mut self.bitswap_queries {
+        /*for (cid, state) in &mut self.bitswap_queries {
             {
                 let mut to_remove = Vec::new();
                 for (i, want) in state.wants.iter().enumerate() {
@@ -278,7 +273,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                     });
                 }
             }
-        }
+        }*/
         Ok(())
     }
 
@@ -404,183 +399,19 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
         match event {
             Event::Bitswap(e) => {
                 match e {
-                    BitswapEvent::InboundRequest { request } => match request {
-                        InboundRequest::Want { cid, sender: _, .. } => {
-                            info!("bitswap want {}", cid);
-                            // TODO
-                            /*
-                            match self.rpc_client.try_store() {
-                                Ok(rpc_store) => match rpc_store.get(cid).await {
-                                    Ok(Some(data)) => {
-                                        trace!("Found data for: {}", cid);
-                                        if let Err(e) = self
-                                            .swarm
-                                            .behaviour_mut()
-                                            .send_block(&sender, cid, data)
-                                        {
-                                            warn!(
-                                                "failed to send block for {} to {}: {:?}",
-                                                cid, sender, e
-                                            );
-                                        }
-                                    }
-                                    Ok(None) => {
-                                        trace!("Don't have data for: {}", cid);
-                                    }
-                                    Err(e) => {
-                                        warn!("Failed to get data for: {}: {:?}", cid, e);
-                                    }
-                                },
-                                Err(e) => {
-                                    warn!("Failed to get data for: {}: {:?}", cid, e);
+                    BitswapEvent::Provide { key } => {
+                        info!("bitswap provide {}", key);
+                        if let Some(kad) = self.swarm.behaviour_mut().kad.as_mut() {
+                            match kad.start_providing(key.hash().to_bytes().into()) {
+                                Ok(query_id) => {
+                                    // TODO: track query?
                                 }
-                            }*/
-                        }
-                        InboundRequest::WantHave { cid, sender: _, .. } => {
-                            trace!("bitswap want have {}", cid);
-                            // TODO
-                            /*if let Some(rpc_store) = self.rpc_client.store.as_ref() {
-                                match rpc_store.has(cid).await {
-                                    Ok(true) => {
-                                        trace!("Have data for: {}", cid);
-                                        if let Err(e) =
-                                            self.swarm.behaviour_mut().send_have_block(&sender, cid)
-                                        {
-                                            warn!(
-                                                "failed to send block have for {} to {}: {:?}",
-                                                cid, sender, e
-                                            );
-                                        }
-                                    }
-                                    Ok(false) => {
-                                        trace!("Don't have data for: {}", cid);
-                                    }
-                                    Err(e) => {
-                                        warn!("Failed to check for data for: {}: {:?}", cid, e);
-                                    }
-                                }
-                            } else {
-                                warn!(
-                                    "Failed to check for data for: {}: missing store rpc conn",
-                                    cid
-                                );
-                            }*/
-                        }
-                        InboundRequest::Cancel { .. } => {
-                            // nothing to do atm
-                        }
-                    },
-                    BitswapEvent::OutboundQueryCompleted { result } => match result {
-                        BitswapQueryResult::Want(WantResult::Ok {
-                            ctx,
-                            sender,
-                            cid,
-                            data,
-                        }) => {
-                            info!("context:{:?}, got block {} from {}", ctx, cid, sender);
-                            let b = Block::new(data, cid);
-                            if let Some(ref mut q) = self.bitswap_queries.get_mut(&cid) {
-                                while let Some(want) = q.wants.pop() {
-                                    trace!("context:{} bitswap want response", want.ctx);
-                                    if want.chan.send(Ok(b.clone())).is_err() {
-                                        debug!("Bitswap response channel send failed");
-                                    }
-                                }
-                            } else {
-                                debug!("Received Bitswap response, but response channel cannot be found");
-                            }
-                        }
-                        BitswapQueryResult::Want(WantResult::Err { ctx: _, cid, error }) => {
-                            if let Some(ref mut q) = self.bitswap_queries.get_mut(&cid) {
-                                while let Some(want) = q.wants.pop() {
-                                    if want.chan.send(Err(error.clone())).is_err() {
-                                        debug!("Bitswap response channel send failed");
-                                    }
+                                Err(err) => {
+                                    error!("failed to provide {}: {:?}", key, err);
                                 }
                             }
                         }
-                        BitswapQueryResult::FindProviders(FindProvidersResult::Ok {
-                            ctx,
-                            cid,
-                            provider,
-                        }) => {
-                            info!("context:{:?} Bitswap found provider for {}", ctx, cid);
-
-                            // filter out bad providers
-                            if self.swarm.behaviour().is_bad_peer(&provider) {
-                                inc!(P2PMetrics::SkippedPeerBitswap);
-                                return Ok(());
-                            }
-
-                            if let Some(q) = self.bitswap_queries.get_mut(&cid) {
-                                let mut to_remove = Vec::new();
-                                for (
-                                    i,
-                                    FindProviderState {
-                                        provider_count,
-                                        expected_provider_count,
-                                        chan,
-                                        ctx,
-                                        ..
-                                    },
-                                ) in q.find_providers.iter_mut().enumerate()
-                                {
-                                    let ctx = *ctx;
-                                    *provider_count += 1;
-                                    let chan = chan.clone();
-                                    tokio::task::spawn(async move {
-                                        trace!("context:{} find providers response", ctx);
-                                        if let Err(err) =
-                                            chan.send(Ok([provider].into_iter().collect())).await
-                                        {
-                                            warn!("failed to send: {:?}", err);
-                                        }
-                                    });
-
-                                    if *provider_count >= *expected_provider_count {
-                                        to_remove.push(i);
-                                        self.swarm
-                                            .behaviour_mut()
-                                            .cancel_want_block(ctx, &cid)
-                                            .ok();
-                                    }
-                                }
-
-                                for i in to_remove.into_iter().rev() {
-                                    q.find_providers.remove(i);
-                                }
-                            }
-                        }
-                        BitswapQueryResult::FindProviders(FindProvidersResult::Err {
-                            ctx,
-                            cid,
-                            error,
-                        }) => {
-                            for ctx in ctx {
-                                self.swarm.behaviour_mut().cancel_want_block(ctx, &cid).ok();
-                            }
-                            let error = error.to_string();
-                            if let Some(ref mut q) = self.bitswap_queries.get_mut(&cid) {
-                                while let Some(fp) = q.find_providers.pop() {
-                                    let error = error.clone();
-                                    tokio::task::spawn(async move {
-                                        if let Err(err) = fp.chan.send(Err(error)).await {
-                                            warn!("failed to send: {:?}", err);
-                                        }
-                                    });
-                                }
-                            }
-                        }
-                        BitswapQueryResult::Send(_) => {
-                            // Nothing to do yet
-                        }
-                        BitswapQueryResult::SendHave(_) => {
-                            // Nothing to do yet
-                        }
-                        BitswapQueryResult::Cancel(_) => {
-                            // Nothing to do yet
-                        }
-                    },
+                    }
                 }
             }
             Event::Kademlia(e) => {
@@ -679,14 +510,14 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                         },
                 } = *e
                 {
-                    let supported_bs_protocols = self
-                        .swarm
-                        .behaviour()
-                        .bitswap
-                        .as_ref()
-                        .map(|bs| bs.supported_protocols().to_vec())
-                        .unwrap_or_default();
-                    let mut protocol_bs_name = None;
+                    // let supported_bs_protocols = self
+                    //     .swarm
+                    //     .behaviour()
+                    //     .bitswap
+                    //     .as_ref()
+                    //     .map(|bs| bs.supported_protocols().to_vec())
+                    //     .unwrap_or_default();
+                    // let mut protocol_bs_name = None;
                     for protocol in protocols {
                         let p = protocol.as_bytes();
 
@@ -696,7 +527,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                                     kad.add_address(&peer_id, addr.clone());
                                 }
                             }
-                        } else if protocol_bs_name.is_none() {
+                        } /*else if protocol_bs_name.is_none() {
                             for sp in &supported_bs_protocols {
                                 if p == sp.protocol_name() {
                                     protocol_bs_name = Some(*sp);
@@ -708,7 +539,8 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                                     bs.add_peer(peer_id, protocol_bs_name);
                                 }
                             }
-                        } else if p == b"/libp2p/autonat/1.0.0" {
+                        } */
+                        else if p == b"/libp2p/autonat/1.0.0" {
                             // TODO: expose protocol name on `libp2p::autonat`.
                             // TODO: should we remove them at some point?
                             for addr in &listen_addrs {

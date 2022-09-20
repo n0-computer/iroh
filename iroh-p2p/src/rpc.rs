@@ -18,7 +18,7 @@ use tokio::sync::oneshot;
 use tracing::trace;
 
 use async_trait::async_trait;
-use iroh_bitswap::{Block, QueryError};
+use iroh_bitswap::Block;
 use iroh_rpc_types::p2p::{
     BitswapKey, BitswapProviders, BitswapRequest, BitswapResponse, ConnectRequest, ConnectResponse,
     DisconnectRequest, GetListeningAddrsResponse, GetPeersResponse, GossipsubAllPeersResponse,
@@ -77,7 +77,7 @@ impl RpcP2p for P2p {
         let block = r
             .await
             .expect("should not drop accidentially")
-            .context("bitswap")?;
+            .map_err(|e| anyhow::anyhow!("bitswap: {}", e))?;
 
         ensure!(
             cid == block.cid,
@@ -406,7 +406,7 @@ pub enum RpcMessage {
     BitswapRequest {
         ctx: u64,
         cids: Vec<Cid>,
-        response_channels: Vec<oneshot::Sender<Result<Block, QueryError>>>,
+        response_channels: Vec<oneshot::Sender<Result<Block, String>>>,
         providers: HashSet<PeerId>,
     },
     BitswapInjectProviders {

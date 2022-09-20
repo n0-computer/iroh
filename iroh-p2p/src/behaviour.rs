@@ -2,10 +2,12 @@ use std::collections::HashSet;
 use std::error::Error;
 use std::time::Duration;
 
+use async_trait::async_trait;
 use anyhow::Result;
 use bytes::Bytes;
 use cid::Cid;
-use iroh_bitswap::{Bitswap, BitswapConfig, Priority};
+use iroh_bitswap::{Bitswap, Store, Config as BitswapConfig, Priority, Block};
+use iroh_rpc_client::Client;
 use libp2p::core::identity::Keypair;
 use libp2p::core::PeerId;
 use libp2p::gossipsub::{Gossipsub, GossipsubConfig, MessageAuthenticity};
@@ -34,7 +36,7 @@ mod peer_manager;
 pub(crate) struct NodeBehaviour {
     ping: Ping,
     identify: Identify,
-    pub(crate) bitswap: Toggle<Bitswap>,
+    pub(crate) bitswap: Toggle<Bitswap<BitswapStore>>,
     pub(crate) kad: Toggle<Kademlia<MemoryStore>>,
     mdns: Toggle<Mdns>,
     pub(crate) autonat: Toggle<autonat::Behaviour>,
@@ -45,18 +47,39 @@ pub(crate) struct NodeBehaviour {
     peer_manager: PeerManager,
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct BitswapStore(Client);
+
+#[async_trait]
+impl Store for BitswapStore {
+    async fn get(&self, cid: &Cid) -> Result<Block> {
+        let data = self.0.try_store()?.get(*cid).await?
+            .ok_or_else(|| anyhow::anyhow!("not found"))?;
+        Ok(Block::new(data, *cid))        
+    }
+
+    async fn get_size(&self, cid: &Cid) -> Result<usize> {
+        let size = self.0.try_store()?.get_size(*cid).await?
+            .ok_or_else(|| anyhow::anyhow!("not found"))?;
+        Ok(size as usize)
+    }
+}
+
 impl NodeBehaviour {
     pub async fn new(
         local_key: &Keypair,
         config: &Libp2pConfig,
         relay_client: Option<relay::v2::client::Client>,
+        rpc_client: Client,
     ) -> Result<Self> {
         let peer_manager = PeerManager::default();
+        let pub_key = local_key.public();
+        let peer_id = pub_key.to_peer_id();
 
         let bitswap = if config.bitswap {
             info!("init bitswap");
             let bs_config = BitswapConfig::default();
-            Some(Bitswap::new(bs_config))
+            Some(Bitswap::new(peer_id, BitswapStore(rpc_client), bs_config))
         } else {
             None
         }
@@ -72,10 +95,8 @@ impl NodeBehaviour {
 
         let kad = if config.kademlia {
             info!("init kademlia");
-            let pub_key = local_key.public();
-
             // TODO: persist to store
-            let store = MemoryStore::new(pub_key.to_peer_id());
+            let store = MemoryStore::new(peer_id);
 
             // TODO: make user configurable
             let mut kad_config = KademliaConfig::default();
@@ -177,40 +198,18 @@ impl NodeBehaviour {
         })
     }
 
-    /// Send a block to a peer over bitswap
-    pub fn send_block(&mut self, peer_id: &PeerId, cid: Cid, data: Bytes) -> Result<()> {
-        if let Some(bs) = self.bitswap.as_mut() {
-            bs.send_block(peer_id, cid, data);
-        }
-        Ok(())
-    }
-
-    pub fn cancel_block(&mut self, ctx: u64, cid: &Cid) -> Result<()> {
-        if let Some(bs) = self.bitswap.as_mut() {
-            bs.cancel_block(ctx, cid);
-        }
-        Ok(())
-    }
-
-    pub fn cancel_want_block(&mut self, ctx: u64, cid: &Cid) -> Result<()> {
-        if let Some(bs) = self.bitswap.as_mut() {
-            bs.cancel_want_block(ctx, cid);
-        }
-        Ok(())
-    }
-
     /// Send a block have to a peer over bitswap
     pub fn send_have_block(&mut self, peer_id: &PeerId, cid: Cid) -> Result<()> {
-        if let Some(bs) = self.bitswap.as_mut() {
-            bs.send_have_block(peer_id, cid);
-        }
+        // if let Some(bs) = self.bitswap.as_mut() {
+        //     bs.send_have_block(peer_id, cid);
+        // }
         Ok(())
     }
 
     pub fn find_providers(&mut self, ctx: u64, cid: Cid, priority: Priority) -> Result<()> {
-        if let Some(bs) = self.bitswap.as_mut() {
-            bs.find_providers(ctx, cid, priority);
-        }
+        // if let Some(bs) = self.bitswap.as_mut() {
+        //     bs.find_providers(ctx, cid, priority);
+        // }
         Ok(())
     }
 
@@ -226,9 +225,9 @@ impl NodeBehaviour {
         priority: Priority,
         providers: HashSet<PeerId>,
     ) -> Result<(), Box<dyn Error>> {
-        if let Some(bs) = self.bitswap.as_mut() {
-            bs.want_block(ctx, cid, priority, providers);
-        }
+        // if let Some(bs) = self.bitswap.as_mut() {
+        //     bs.want_block(ctx, cid, priority, providers);
+        // }
         Ok(())
     }
 

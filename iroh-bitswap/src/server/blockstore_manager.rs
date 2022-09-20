@@ -10,17 +10,17 @@ use crate::{block::Block, Store};
 
 /// Maintains a pool of workers that make requests to the blockstore.
 #[derive(Debug)]
-pub struct BlockstoreManager {
-    store: Store,
+pub struct BlockstoreManager<S: Store> {
+    store: S,
     // pending_gauge -> iroh-metrics
     // active_gauge -> iroh-metrics
     jobs: Sender<Box<dyn FnOnce() + Send + Sync>>,
     workers: Vec<(Sender<()>, JoinHandle<()>)>,
 }
 
-impl BlockstoreManager {
+impl<S: Store> BlockstoreManager<S> {
     /// Creates a new manager.
-    pub fn new(store: Store, worker_count: usize) -> Self {
+    pub fn new(store: S, worker_count: usize) -> Self {
         let jobs: (Sender<_>, Receiver<Box<dyn FnOnce() + Send + Sync>>) = bounded(1024);
         let mut workers = Vec::with_capacity(worker_count);
 
@@ -79,7 +79,10 @@ impl BlockstoreManager {
 
         let store = self.store.clone();
         self.job_per_key(keys, move |cid: Cid| {
-            if let Ok(size) = store.get_size(&cid) {
+            let size = tokio::runtime::Handle::current().block_on(async move {
+                store.get_size(&cid).await
+            });
+            if let Ok(size) = size {
                 s.send(Some((cid, size))).ok();
             } else {
                 s.send(None).ok();
@@ -104,7 +107,10 @@ impl BlockstoreManager {
 
         let store = self.store.clone();
         self.job_per_key(keys, move |cid: Cid| {
-            if let Ok(block) = store.get(&cid) {
+            let block = tokio::runtime::Handle::current().block_on(async move {
+                store.get(&cid).await
+            });
+            if let Ok(block) = block {
                 s.send(Some((cid, block))).ok();
             } else {
                 s.send(None).ok();

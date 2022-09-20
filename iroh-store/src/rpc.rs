@@ -5,6 +5,7 @@ use async_trait::async_trait;
 use bytes::BytesMut;
 use cid::Cid;
 use iroh_rpc_types::store::{
+    GetSizeRequest, GetSizeResponse,
     GetLinksRequest, GetLinksResponse, GetRequest, GetResponse, HasRequest, HasResponse,
     PutRequest, Store as RpcStore, StoreServerAddr, VersionResponse,
 };
@@ -65,6 +66,19 @@ impl RpcStore for Store {
             Ok(GetLinksResponse { links: Vec::new() })
         }
     }
+    
+    #[tracing::instrument(skip(self))]
+    async fn get_size(&self, req: GetSizeRequest) -> Result<GetSizeResponse> {
+        let cid = cid_from_bytes(req.cid)?;
+        if let Some(size) = self.get_size(&cid).await? {
+            Ok(GetSizeResponse {
+                size: Some(size as u64),
+            })
+        } else {
+            Ok(GetSizeResponse { size: None })
+        }
+    }
+
 }
 
 #[tracing::instrument(skip(store))]

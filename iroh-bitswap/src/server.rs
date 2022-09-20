@@ -55,11 +55,11 @@ pub struct Stat {
 }
 
 #[derive(Debug)]
-pub struct Server {
+pub struct Server<S: Store> {
     // sent_histogram -> iroh-metrics
     // send_time_histogram -> iroh-metric
     /// Decision engine for which who to send which blocks to.
-    engine: Arc<DecisionEngine>,
+    engine: Arc<DecisionEngine<S>>,
     /// Provides interaction with the network.
     network: Network,
     /// Counters for various statistics.
@@ -75,8 +75,8 @@ pub struct Server {
     provide_collector: Option<(Sender<()>, JoinHandle<()>)>,
 }
 
-impl Server {
-    pub fn new(network: Network, store: Store, config: Config) -> Self {
+impl<S: Store> Server<S> {
+    pub fn new(network: Network, store: S, config: Config) -> Self {
         let engine = DecisionEngine::new(store, *network.self_id(), config.decision_config);
         let provide_keys = crossbeam::channel::bounded(PROVIDE_KEYS_BUFFER_SIZE);
         let new_blocks = crossbeam::channel::bounded(config.has_block_buffer_size);

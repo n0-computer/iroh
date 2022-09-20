@@ -2,9 +2,11 @@
 //!
 //! Supports the versions `1.0.0`, `1.1.0` and `1.2.0`.
 
+use std::fmt::Debug;
 use std::task::{Context, Poll};
 use std::time::Duration;
 
+use async_trait::async_trait;
 use anyhow::Result;
 use cid::Cid;
 use handler::{BitswapHandler, HandlerEvent};
@@ -18,7 +20,6 @@ use message::BitswapMessage;
 use protocol::ProtocolConfig;
 use tracing::info;
 
-use self::block::Block;
 use self::client::{Client, Config as ClientConfig};
 use self::network::Network;
 use self::server::{Config as ServerConfig, Server};
@@ -34,11 +35,13 @@ mod protocol;
 mod server;
 
 pub mod peer_task_queue;
+pub use self::block::Block;
+pub use self::message::Priority;
 
 #[derive(Debug)]
-pub struct Bitswap {
-    client: Client,
-    server: Server,
+pub struct Bitswap<S: Store> {
+    client: Client<S>,
+    server: Server<S>,
     network: Network,
     protocol_config: ProtocolConfig,
     idle_timeout: Duration,
@@ -52,20 +55,25 @@ pub struct Config {
     pub idle_timeout: Duration,
 }
 
-#[derive(Debug, Clone)]
-pub struct Store {}
-impl Store {
-    pub fn get_size(&self, cid: &Cid) -> Result<usize> {
-        todo!()
-    }
-
-    pub fn get(&self, cid: &Cid) -> Result<Block> {
-        todo!()
+impl Default for Config {
+    fn default() -> Self {
+        Config {
+            client: ClientConfig::default(),
+            server: ServerConfig::default(),
+            protocol: ProtocolConfig::default(),
+            idle_timeout: Duration::from_secs(30),
+        }
     }
 }
 
-impl Bitswap {
-    pub fn new(self_id: PeerId, store: Store, config: Config) -> Self {
+#[async_trait]
+pub trait Store: Debug + Clone + Send + Sync + 'static {
+    async fn get_size(&self, cid: &Cid) -> Result<usize>;
+    async fn get(&self, cid: &Cid) -> Result<Block>;
+}
+
+impl<S: Store> Bitswap<S> {
+    pub fn new(self_id: PeerId, store: S, config: Config) -> Self {
         // Default options from go-ipfs
         // DefaultEngineBlockstoreWorkerCount = 128
         // DefaultTaskWorkerCount             = 8
@@ -169,9 +177,12 @@ pub struct Stat {
 }
 
 #[derive(Debug)]
-pub enum BitswapEvent {}
+pub enum BitswapEvent {
+    /// We have this content, and want it to be provided.
+    Provide { key: Cid },
+}
 
-impl NetworkBehaviour for Bitswap {
+impl<S: Store> NetworkBehaviour for Bitswap<S> {
     type ConnectionHandler = BitswapHandler;
     type OutEvent = BitswapEvent;
 
@@ -192,7 +203,7 @@ impl NetworkBehaviour for Bitswap {
         _failed_addresses: Option<&Vec<Multiaddr>>,
         _other_established: usize,
     ) {
-        todo!()
+        // TODO
     }
 
     fn inject_connection_closed(
@@ -203,7 +214,7 @@ impl NetworkBehaviour for Bitswap {
         _handler: <Self::ConnectionHandler as IntoConnectionHandler>::Handler,
         _remaining_established: usize,
     ) {
-        todo!()
+        // TODO
     }
 
     fn inject_dial_failure(
@@ -212,7 +223,7 @@ impl NetworkBehaviour for Bitswap {
         _handler: Self::ConnectionHandler,
         _error: &DialError,
     ) {
-        todo!()
+        // TODO
     }
 
     fn inject_event(&mut self, peer_id: PeerId, _connection: ConnectionId, event: HandlerEvent) {

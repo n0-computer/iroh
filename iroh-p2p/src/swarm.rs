@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use iroh_rpc_client::Client;
 use anyhow::Result;
 use libp2p::{
     core::{
@@ -92,11 +93,12 @@ async fn build_transport(
 pub(crate) async fn build_swarm(
     config: &Libp2pConfig,
     keypair: &Keypair,
+    rpc_client: Client,
 ) -> Result<Swarm<NodeBehaviour>> {
     let peer_id = keypair.public().to_peer_id();
 
     let (transport, relay_client) = build_transport(keypair, config).await;
-    let behaviour = NodeBehaviour::new(keypair, config, relay_client).await?;
+    let behaviour = NodeBehaviour::new(keypair, config, relay_client, rpc_client).await?;
 
     let limits = ConnectionLimits::default()
         .with_max_pending_incoming(Some(config.max_conns_pending_in))
