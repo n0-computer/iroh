@@ -22,7 +22,7 @@
 - [ ] `./client/internal/messagequeue/messagequeue.go` (843)
 - [ ] `./client/internal/messagequeue/donthavetimeoutmgr.go` (398)
 
-- [ ] `./client/internal/peermanager/peerwantmanager.go` (464)
+- [x] `./client/internal/peermanager/peerwantmanager.go` (464)
 - [ ] `./client/internal/peermanager/peermanager.go` (246)
 
 - [ ] `./client/internal/session/sessionwants.go` (193)
