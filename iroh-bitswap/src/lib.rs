@@ -6,8 +6,9 @@ use std::fmt::Debug;
 use std::task::{Context, Poll};
 use std::time::Duration;
 
-use async_trait::async_trait;
+use ahash::AHashMap;
 use anyhow::Result;
+use async_trait::async_trait;
 use cid::Cid;
 use handler::{BitswapHandler, HandlerEvent};
 use libp2p::core::connection::ConnectionId;
@@ -45,6 +46,20 @@ pub struct Bitswap<S: Store> {
     network: Network,
     protocol_config: ProtocolConfig,
     idle_timeout: Duration,
+    peers: AHashMap<PeerId, PeerState>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PeerState {
+    Responsive,
+    Unresponsive,
+    Disconnected,
+}
+
+impl Default for PeerState {
+    fn default() -> Self {
+        PeerState::Disconnected
+    }
 }
 
 #[derive(Debug)]
@@ -97,6 +112,7 @@ impl<S: Store> Bitswap<S> {
             network,
             protocol_config: config.protocol,
             idle_timeout: config.idle_timeout,
+            peers: Default::default(),
         }
     }
 
@@ -142,23 +158,53 @@ impl<S: Store> Bitswap<S> {
         self.server.wantlist_for_peer(peer)
     }
 
-    pub fn peer_connected(&self, peer: &PeerId) {
+    fn peer_connected(&self, peer: &PeerId) {
         self.client.peer_connected(peer);
         self.server.peer_connected(peer);
     }
 
-    pub fn peer_disconnected(&self, peer: &PeerId) {
+    fn peer_disconnected(&self, peer: &PeerId) {
         self.client.peer_disconnected(peer);
         self.server.peer_disconnected(peer);
     }
 
-    pub fn receive_error(&self, error: anyhow::Error) {
+    fn receive_error(&self, error: anyhow::Error) {
         info!("Bitswap client receive error: {:?}", error);
     }
 
-    pub fn receive_message(&self, peer: &PeerId, message: &BitswapMessage) {
+    fn receive_message(&self, peer: &PeerId, message: &BitswapMessage) {
         self.client.receive_message(peer, &message);
         self.server.receive_message(peer, &message);
+    }
+
+    fn get_peer_state(&self, peer: &PeerId) -> PeerState {
+        self.peers
+            .get(peer)
+            .copied()
+            .unwrap_or(PeerState::Disconnected)
+    }
+
+    fn set_peer_state(&mut self, peer: &PeerId, new_state: PeerState) {
+        let peer_state = self.peers.entry(*peer).or_default();
+        let old_state = *peer_state;
+        *peer_state = new_state;
+
+        match peer_state {
+            PeerState::Disconnected => {
+                self.peers.remove(peer);
+                if old_state == PeerState::Responsive {
+                    self.peer_disconnected(peer);
+                }
+            }
+            PeerState::Unresponsive => {
+                if old_state == PeerState::Responsive {
+                    self.peer_disconnected(peer);
+                }
+            }
+            PeerState::Responsive => {
+                self.peer_connected(peer);
+            }
+        }
     }
 }
 
@@ -197,24 +243,33 @@ impl<S: Store> NetworkBehaviour for Bitswap<S> {
 
     fn inject_connection_established(
         &mut self,
-        _peer_id: &PeerId,
+        peer_id: &PeerId,
         _conn: &ConnectionId,
         _endpoint: &ConnectedPoint,
         _failed_addresses: Option<&Vec<Multiaddr>>,
         _other_established: usize,
     ) {
-        // TODO
+        if self.get_peer_state(peer_id) == PeerState::Responsive {
+            return;
+        }
+
+        self.set_peer_state(peer_id, PeerState::Responsive);
     }
 
     fn inject_connection_closed(
         &mut self,
-        _peer_id: &PeerId,
+        peer_id: &PeerId,
         _conn: &ConnectionId,
         _endpoint: &ConnectedPoint,
         _handler: <Self::ConnectionHandler as IntoConnectionHandler>::Handler,
-        _remaining_established: usize,
+        remaining_established: usize,
     ) {
-        // TODO
+        if remaining_established == 0 {
+            if self.get_peer_state(peer_id) == PeerState::Disconnected {
+                return;
+            }
+            self.set_peer_state(peer_id, PeerState::Disconnected)
+        }
     }
 
     fn inject_dial_failure(
@@ -229,12 +284,17 @@ impl<S: Store> NetworkBehaviour for Bitswap<S> {
     fn inject_event(&mut self, peer_id: PeerId, _connection: ConnectionId, event: HandlerEvent) {
         match event {
             HandlerEvent::Connected { protocol: _ } => {
-                // TODO
+                self.peer_connected(&peer_id);
             }
             HandlerEvent::ProtocolNotSuppported => {
                 // TODO
             }
             HandlerEvent::Message { message } => {
+                // mark peer as responsive
+                if self.get_peer_state(&peer_id) == PeerState::Unresponsive {
+                    self.set_peer_state(&peer_id, PeerState::Responsive);
+                }
+
                 self.server.receive_message(&peer_id, &message);
                 self.client.receive_message(&peer_id, &message);
             }

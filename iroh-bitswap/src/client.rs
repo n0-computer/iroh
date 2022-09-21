@@ -11,8 +11,7 @@ pub struct Config {}
 
 impl Default for Config {
     fn default() -> Self {
-        Config {
-        }
+        Config {}
     }
 }
 
@@ -38,11 +37,13 @@ impl<S: Store> Client<S> {
     }
 
     pub fn close(self) -> Result<()> {
-        todo!()
+        // TODO
+        Ok(())
     }
 
     pub fn notify_new_blocks(&self, blocks: &[Block]) -> Result<()> {
-        todo!()
+        // TODO
+        Ok(())
     }
 
     pub fn stat(&self) -> Result<Stat> {
@@ -54,14 +55,14 @@ impl<S: Store> Client<S> {
     }
 
     pub fn peer_connected(&self, peer: &PeerId) {
-        todo!()
+        // TODO
     }
 
     pub fn peer_disconnected(&self, peer: &PeerId) {
-        todo!()
+        // TODO
     }
 
     pub fn receive_message(&self, peer: &PeerId, message: &BitswapMessage) {
-        todo!()
+        // todo!()
     }
 }

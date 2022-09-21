@@ -5,6 +5,7 @@ use anyhow::{anyhow, Result};
 use cid::Cid;
 use crossbeam::channel::{bounded, Receiver, Sender};
 use crossbeam::sync::WaitGroup;
+use tokio::runtime::Runtime;
 
 use crate::{block::Block, Store};
 
@@ -14,14 +15,14 @@ pub struct BlockstoreManager<S: Store> {
     store: S,
     // pending_gauge -> iroh-metrics
     // active_gauge -> iroh-metrics
-    jobs: Sender<Box<dyn FnOnce() + Send + Sync>>,
+    jobs: Sender<Box<dyn FnOnce(&Runtime) + Send + Sync>>,
     workers: Vec<(Sender<()>, JoinHandle<()>)>,
 }
 
 impl<S: Store> BlockstoreManager<S> {
     /// Creates a new manager.
     pub fn new(store: S, worker_count: usize) -> Self {
-        let jobs: (Sender<_>, Receiver<Box<dyn FnOnce() + Send + Sync>>) = bounded(1024);
+        let jobs: (Sender<_>, Receiver<Box<dyn FnOnce(&Runtime) + Send + Sync>>) = bounded(1024);
         let mut workers = Vec::with_capacity(worker_count);
 
         for _ in 0..worker_count {
@@ -29,6 +30,7 @@ impl<S: Store> BlockstoreManager<S> {
             let (closer_s, closer_r) = crossbeam::channel::bounded(1);
 
             let handle = std::thread::spawn(move || {
+                let rt = tokio::runtime::Runtime::new().unwrap();
                 loop {
                     crossbeam::channel::select! {
                         recv(closer_r) -> _ => {
@@ -38,7 +40,7 @@ impl<S: Store> BlockstoreManager<S> {
                             if let Ok(job) = job {
                                 // dec!(pending);
                                 // inc!(active);
-                                (job)();
+                                (job)(&rt);
                                 // dec!(active);
                             }
                         }
@@ -63,7 +65,7 @@ impl<S: Store> BlockstoreManager<S> {
         Ok(())
     }
 
-    pub fn add_job<F: FnOnce() + Send + Sync + 'static>(&self, job: F) -> Result<()> {
+    pub fn add_job<F: FnOnce(&Runtime) + Send + Sync + 'static>(&self, job: F) -> Result<()> {
         self.jobs.send(Box::new(job))?;
         // inc!(pending);
 
@@ -78,8 +80,8 @@ impl<S: Store> BlockstoreManager<S> {
         let (s, r) = bounded(keys.len());
 
         let store = self.store.clone();
-        self.job_per_key(keys, move |cid: Cid| {
-            let size = tokio::runtime::Handle::current().block_on(async move {
+        self.job_per_key(keys, move |rt: &Runtime, cid: Cid| {
+            let size = rt.block_on(async move {
                 store.get_size(&cid).await
             });
             if let Ok(size) = size {
@@ -106,8 +108,8 @@ impl<S: Store> BlockstoreManager<S> {
         let (s, r) = bounded(keys.len());
 
         let store = self.store.clone();
-        self.job_per_key(keys, move |cid: Cid| {
-            let block = tokio::runtime::Handle::current().block_on(async move {
+        self.job_per_key(keys, move |rt: &Runtime, cid: Cid| {
+            let block = rt.block_on(async move {
                 store.get(&cid).await
             });
             if let Ok(block) = block {
@@ -130,7 +132,7 @@ impl<S: Store> BlockstoreManager<S> {
     /// if queuing any of the jobs fails.
     fn job_per_key<F>(&self, keys: &[Cid], job_fn: F) -> Result<()>
     where
-        F: FnOnce(Cid) + Send + Sync + Clone + 'static,
+        F: FnOnce(&Runtime, Cid) + Send + Sync + Clone + 'static,
     {
         let wg = WaitGroup::new();
 
@@ -138,8 +140,8 @@ impl<S: Store> BlockstoreManager<S> {
             let key = *key;
             let wg = wg.clone();
             let job_fn = job_fn.clone();
-            self.add_job(move || {
-                job_fn(key);
+            self.add_job(move |rt| {
+                job_fn(rt, key);
                 drop(wg);
             })?;
         }
