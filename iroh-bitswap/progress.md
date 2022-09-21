@@ -15,24 +15,32 @@
 - [ ] `./client/client.go` (479)
 - [ ] `./client/stat.go` (30)
 - [x] `./client/wantlist/wantlist.go` (142)
+
 - [ ] `./client/internal/getter/getter.go` (138)
+- [ ] `./client/internal/blockpresencemanager/blockpresencemanager.go` (121)
+
+- [ ] `./client/internal/messagequeue/messagequeue.go` (843)
+- [ ] `./client/internal/messagequeue/donthavetimeoutmgr.go` (398)
+
+- [ ] `./client/internal/peermanager/peerwantmanager.go` (464)
+- [ ] `./client/internal/peermanager/peermanager.go` (246)
+
 - [ ] `./client/internal/session/sessionwants.go` (193)
 - [ ] `./client/internal/session/cidqueue.go` (63)
 - [ ] `./client/internal/session/peerresponsetracker.go` (70)
 - [ ] `./client/internal/session/sentwantblockstracker.go` (33)
 - [ ] `./client/internal/session/session.go` (508)
+- [ ] `./client/internal/session/sessionwantsender.go` (766)
+
+- [ ] `./client/internal/sessionmanager/sessionmanager.go` (196)
+- [ ] `./client/internal/sessionpeermanager/sessionpeermanager.go` (150)
+- [ ] `./client/internal/sessioninterestmanager/sessioninterestmanager.go` (201)
 - [ ] `./client/internal/providerquerymanager/providerquerymanager.go` (430)
 - [ ] `./client/internal/notifications/notifications.go` (139)
-- [ ] `./client/internal/messagequeue/messagequeue.go` (843)
-- [ ] `./client/internal/messagequeue/donthavetimeoutmgr.go` (398)
-- [ ] `./client/internal/sessionmanager/sessionmanager.go` (196)
-- [ ] `./client/internal/session/sessionwantsender.go` (766)
-- [ ] `./client/internal/peermanager/peerwantmanager.go` (464)
-- [ ] `./client/internal/peermanager/peermanager.go` (246)
-- [ ] `./client/internal/sessionpeermanager/sessionpeermanager.go` (150)
-- [ ] `./client/internal/tracing.go` (13)
-- [ ] `./client/internal/sessioninterestmanager/sessioninterestmanager.go` (201)
-- [ ] `./client/internal/blockpresencemanager/blockpresencemanager.go` (121)
+
+
+
+
 
 ### Server 
 

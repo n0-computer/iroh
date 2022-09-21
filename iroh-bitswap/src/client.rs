@@ -1,17 +1,38 @@
+use std::time::Duration;
+
 use anyhow::Result;
 use cid::Cid;
 use libp2p::PeerId;
 
 use crate::{block::Block, message::BitswapMessage, network::Network, Store};
 
+mod block_presence_manager;
+mod message_queue;
+mod peer_manager;
+mod peer_want_manager;
+mod provider_query_manager;
+mod session;
+mod session_interest_manager;
+mod session_manager;
+mod session_peer_manager;
 pub(crate) mod wantlist;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Config {}
+pub struct Config {
+    /// Overwrites the global provider search delay
+    pub provider_search_delay: Duration,
+    /// Overwrites the global rebroadcast delay
+    pub rebroadcast_delay: Duration,
+    pub simluate_donthaves_on_timeout: bool,
+}
 
 impl Default for Config {
     fn default() -> Self {
-        Config {}
+        Config {
+            provider_search_delay: Duration::from_secs(1),
+            rebroadcast_delay: Duration::from_secs(60),
+            simluate_donthaves_on_timeout: true,
+        }
     }
 }
 
