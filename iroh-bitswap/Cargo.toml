@@ -36,6 +36,7 @@ once_cell = "1.14.0"
 crossbeam = "0.8.2"
 keyed_priority_queue = "0.4.1"
 async-trait = "0.1.57"
+rand = "0.8.5"
 
 [dev-dependencies]
 criterion = "0.3.5"
@@ -43,7 +44,7 @@ tracing-subscriber = { version = "0.3.11", features = ["env-filter"] }
 libp2p = { version = "0.48", features = ["yamux", "noise", "tcp-tokio"], default-features = false }
 tokio = { version = "1", features = ["macros", "net", "rt"] }
 tokio-util = { version = "0.7", features = ["compat"] }
-rand = "0.8.5"
+
 
 [[bench]]
 name = "message"

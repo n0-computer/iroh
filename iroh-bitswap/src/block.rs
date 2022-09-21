@@ -30,10 +30,18 @@ impl Block {
 }
 
 pub mod tests {
-
     use super::*;
+    use bytes::BytesMut;
+    use rand::{thread_rng, Rng};
 
     const RAW: u64 = 0x55;
+
+    pub fn create_random_block_v1() -> Block {
+        let mut bytes = BytesMut::with_capacity(64);
+        bytes.resize(64, 0);
+        thread_rng().fill(&mut bytes[..]);
+        create_block_v1(bytes)
+    }
 
     pub fn create_block_v1<B: Into<Bytes>>(bytes: B) -> Block {
         let bytes = bytes.into();
