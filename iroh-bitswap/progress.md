@@ -2,9 +2,15 @@
 
 ## General Steps
 
-- [~] (1) Implement everything sync, not libp2p integration
+- [ ] (1) Implement everything sync, not libp2p integration
+  - [x] Server
+  - [ ] Client
 - [ ] (2) Integrate with libp2p
+  - [x] Server
+  - [ ] Client
 - [ ] (3) Make async what is needed/where it makes sense
+  - [ ] Server
+  - [ ] Client
 
 ## Source Files
 
