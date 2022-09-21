@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 // should we use anyhow errors in the public API? or should we
@@ -49,8 +49,10 @@ pub trait P2pConnectDisconnect {
     async fn disconnect(&self, peer_id: PeerId) -> Result<()>;
 }
 
+// XXX the std::marker::Sync worries me - it's required to be able to use
+// peers from the implementation of peer_ids
 #[async_trait]
-pub trait P2pId {
+pub trait P2pId: std::marker::Sync {
     async fn p2p_version(&self) -> Result<String>;
     async fn local_peer_id(&self) -> Result<PeerId>;
     async fn addrs_listen(&self) -> Result<Vec<Multiaddr>>;
@@ -58,7 +60,11 @@ pub trait P2pId {
     // can be implemented on the trait itself as it combines others
     async fn id(&self) -> Result<Id>;
     // async fn addrs gets a map right now
-    async fn peers(&self) -> Result<Vec<PeerId>>;
+    async fn peers(&self) -> Result<HashMap<PeerId, Vec<Multiaddr>>>;
+    async fn peer_ids(&self) -> Result<Vec<PeerId>> {
+        let map = self.peers().await?;
+        Ok(map.into_keys().collect())
+    }
     async fn ping(&self, ping_args: &[Ping], count: usize) -> Result<()>;
 }
 

@@ -99,8 +99,13 @@ impl<'a> api::P2pId for ClientP2p<'a> {
         // self.rpc.try_p2p()?.local_peer_id().await
     }
 
-    async fn peers(&self) -> Result<Vec<PeerId>> {
-        Ok(self.rpc.get_peers().await?.into_keys().collect())
+    async fn peers(&self) -> Result<HashMap<PeerId, Vec<Multiaddr>>> {
+        self.rpc.get_peers().await
+    }
+
+    async fn peer_ids(&self) -> Result<Vec<PeerId>> {
+        let map = self.peers().await?;
+        Ok(map.into_keys().collect())
     }
 
     async fn addrs_listen(&self) -> Result<Vec<Multiaddr>> {

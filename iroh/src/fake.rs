@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use crate::api;
@@ -149,18 +149,41 @@ impl api::P2pId for FakeP2p {
         })
     }
 
-    async fn peers(&self) -> Result<Vec<PeerId>> {
-        Ok(vec![
+    async fn peers(&self) -> Result<HashMap<PeerId, Vec<Multiaddr>>> {
+        let mut m: HashMap<PeerId, Vec<Multiaddr>> = HashMap::new();
+        let addr1: Multiaddr = "/ip4/127.0.0.1".parse().unwrap();
+        let addr2: Multiaddr = "/ip4/192.168.1.1".parse().unwrap();
+        let addr3: Multiaddr = "/ip4/192.168.1.2".parse().unwrap();
+        let addr4: Multiaddr = "/ip4/192.168.1.4".parse().unwrap();
+        m.insert(
             PeerId::from_bytes(&[
                 0, 32, 15, 231, 162, 148, 52, 155, 40, 187, 217, 170, 125, 185, 68, 142, 156, 196,
                 145, 178, 64, 74, 19, 27, 9, 171, 111, 35, 88, 236, 103, 150, 96, 66,
             ])?,
+            vec![addr1, addr2],
+        );
+        m.insert(
             PeerId::from_bytes(&[
                 0, 32, 144, 137, 53, 144, 57, 13, 191, 157, 254, 110, 136, 212, 131, 241, 179, 29,
                 38, 29, 207, 62, 126, 215, 213, 49, 248, 43, 143, 40, 123, 93, 248, 222,
             ])?,
-        ])
+            vec![addr3, addr4],
+        );
+        Ok(m)
     }
+
+    // async fn peer_ids(&self) -> Result<Vec<PeerId>> {
+    //     Ok(vec![
+    //         PeerId::from_bytes(&[
+    //             0, 32, 15, 231, 162, 148, 52, 155, 40, 187, 217, 170, 125, 185, 68, 142, 156, 196,
+    //             145, 178, 64, 74, 19, 27, 9, 171, 111, 35, 88, 236, 103, 150, 96, 66,
+    //         ])?,
+    //         PeerId::from_bytes(&[
+    //             0, 32, 144, 137, 53, 144, 57, 13, 191, 157, 254, 110, 136, 212, 131, 241, 179, 29,
+    //             38, 29, 207, 62, 126, 215, 213, 49, 248, 43, 143, 40, 123, 93, 248, 222,
+    //         ])?,
+    //     ])
+    // }
 
     async fn ping(&self, ping_args: &[api::Ping], count: usize) -> Result<()> {
         Ok(())

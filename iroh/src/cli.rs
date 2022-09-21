@@ -69,8 +69,8 @@ async fn run_p2p_command<P: P2p>(p2p: P, cmd: P2pSubCommand) -> anyhow::Result<(
         }
         P2pCommands::Addrs(addrs) => match addrs.command {
             None => {
-                let addrs = p2p.peers().await?;
-                println!("{:#?}", addrs);
+                let peer_map = p2p.peers().await?;
+                println!("{:#?}", peer_map);
             }
             Some(AddrsCommands::Listen) => {
                 let addrs = p2p.addrs_listen().await?;
@@ -83,7 +83,7 @@ async fn run_p2p_command<P: P2p>(p2p: P, cmd: P2pSubCommand) -> anyhow::Result<(
             }
         },
         P2pCommands::Peers => {
-            let peer_ids = p2p.peers().await?;
+            let peer_ids = p2p.peer_ids().await?;
             for peer_id in peer_ids {
                 println!("{}", peer_id);
             }
