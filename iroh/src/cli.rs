@@ -83,8 +83,10 @@ async fn run_p2p_command<P: P2p>(p2p: P, cmd: P2pSubCommand) -> anyhow::Result<(
             }
         },
         P2pCommands::Peers => {
-            let peers = p2p.peers().await?;
-            println!("{:#?}", peers);
+            let peer_ids = p2p.peers().await?;
+            for peer_id in peer_ids {
+                println!("{}", peer_id);
+            }
         }
         P2pCommands::Ping { ping_args, count } => {
             todo!("{:?} {:?}", ping_args, count);
