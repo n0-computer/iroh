@@ -2,11 +2,11 @@ use std::collections::HashSet;
 use std::error::Error;
 use std::time::Duration;
 
-use async_trait::async_trait;
 use anyhow::Result;
+use async_trait::async_trait;
 use bytes::Bytes;
 use cid::Cid;
-use iroh_bitswap::{Bitswap, Store, Config as BitswapConfig, Priority, Block};
+use iroh_bitswap::{Bitswap, Block, Config as BitswapConfig, Priority, Store};
 use iroh_rpc_client::Client;
 use libp2p::core::identity::Keypair;
 use libp2p::core::PeerId;
@@ -53,13 +53,21 @@ pub(crate) struct BitswapStore(Client);
 #[async_trait]
 impl Store for BitswapStore {
     async fn get(&self, cid: &Cid) -> Result<Block> {
-        let data = self.0.try_store()?.get(*cid).await?
+        let data = self
+            .0
+            .try_store()?
+            .get(*cid)
+            .await?
             .ok_or_else(|| anyhow::anyhow!("not found"))?;
-        Ok(Block::new(data, *cid))        
+        Ok(Block::new(data, *cid))
     }
 
     async fn get_size(&self, cid: &Cid) -> Result<usize> {
-        let size = self.0.try_store()?.get_size(*cid).await?
+        let size = self
+            .0
+            .try_store()?
+            .get_size(*cid)
+            .await?
             .ok_or_else(|| anyhow::anyhow!("not found"))?;
         Ok(size as usize)
     }

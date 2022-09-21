@@ -52,11 +52,7 @@ impl Metrics {
         );
 
         let loops = Counter::default();
-        sub_registry.register(
-            P2PMetrics::LoopCounter.name(),
-            "",
-            Box::new(loops.clone()),
-        );
+        sub_registry.register(P2PMetrics::LoopCounter.name(), "", Box::new(loops.clone()));
 
         Self {
             bad_peers,

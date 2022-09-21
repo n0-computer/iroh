@@ -363,7 +363,6 @@ impl Store {
         Ok(maybe_size)
     }
 
-
     #[tracing::instrument(skip(self))]
     async fn get_links_by_id(&self, id: u64) -> Result<Option<Vec<Cid>>> {
         let cf_graph = self

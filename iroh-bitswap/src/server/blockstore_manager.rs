@@ -81,9 +81,7 @@ impl<S: Store> BlockstoreManager<S> {
 
         let store = self.store.clone();
         self.job_per_key(keys, move |rt: &Runtime, cid: Cid| {
-            let size = rt.block_on(async move {
-                store.get_size(&cid).await
-            });
+            let size = rt.block_on(async move { store.get_size(&cid).await });
             if let Ok(size) = size {
                 s.send(Some((cid, size))).ok();
             } else {
@@ -109,9 +107,7 @@ impl<S: Store> BlockstoreManager<S> {
 
         let store = self.store.clone();
         self.job_per_key(keys, move |rt: &Runtime, cid: Cid| {
-            let block = rt.block_on(async move {
-                store.get(&cid).await
-            });
+            let block = rt.block_on(async move { store.get(&cid).await });
             if let Ok(block) = block {
                 s.send(Some((cid, block))).ok();
             } else {

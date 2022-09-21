@@ -1,7 +1,7 @@
 use std::time::Duration;
 
-use iroh_rpc_client::Client;
 use anyhow::Result;
+use iroh_rpc_client::Client;
 use libp2p::{
     core::{
         self,

@@ -126,7 +126,6 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
     ) -> Result<Self> {
         let (network_sender_in, network_receiver_in) = channel(1024); // TODO: configurable
 
-
         let Config {
             libp2p: libp2p_config,
             rpc_client,
@@ -527,7 +526,8 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                                     kad.add_address(&peer_id, addr.clone());
                                 }
                             }
-                        } /*else if protocol_bs_name.is_none() {
+                        }
+                        /*else if protocol_bs_name.is_none() {
                             for sp in &supported_bs_protocols {
                                 if p == sp.protocol_name() {
                                     protocol_bs_name = Some(*sp);

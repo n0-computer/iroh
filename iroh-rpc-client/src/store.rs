@@ -8,7 +8,8 @@ use futures::Stream;
 #[cfg(feature = "grpc")]
 use iroh_rpc_types::store::store_client::StoreClient as GrpcStoreClient;
 use iroh_rpc_types::store::{
-    GetLinksRequest, GetRequest, HasRequest, PutRequest, Store, StoreClientAddr, StoreClientBackend, GetSizeRequest
+    GetLinksRequest, GetRequest, GetSizeRequest, HasRequest, PutRequest, Store, StoreClientAddr,
+    StoreClientBackend,
 };
 use iroh_rpc_types::Addr;
 #[cfg(feature = "grpc")]

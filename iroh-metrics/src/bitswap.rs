@@ -42,7 +42,6 @@ pub(crate) struct Metrics {
     outbound_substreams_created_limit: Counter,
     handler_inbound_loop_count: Counter,
     handler_outbound_loop_count: Counter,
-
 }
 
 impl fmt::Debug for Metrics {
