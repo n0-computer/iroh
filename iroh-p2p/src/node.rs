@@ -76,6 +76,7 @@ pub struct Node<KeyStorage: Storage> {
     _keychain: Keychain<KeyStorage>,
     kad_last_range: Option<(Distance, Distance)>,
     rpc_task: JoinHandle<()>,
+    use_dht: bool,
 }
 
 enum QueryChannel {
@@ -112,6 +113,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
             libp2p:
                 Libp2pConfig {
                     listening_multiaddr,
+                    kademlia,
                     ..
                 },
             rpc_client,
@@ -140,13 +142,18 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
             _keychain: keychain,
             kad_last_range: None,
             rpc_task,
+            use_dht: kademlia,
         })
     }
 
     /// Starts the libp2p service networking stack. This Future resolves when shutdown occurs.
     pub async fn run(&mut self) -> anyhow::Result<()> {
         info!("Local Peer ID: {}", self.swarm.local_peer_id());
-        let mut nice_interval = time::interval(NICE_INTERVAL);
+        let mut nice_interval = if self.use_dht {
+            Some(time::interval(NICE_INTERVAL))
+        } else {
+            None
+        };
         let mut bootstrap_interval = time::interval(BOOTSTRAP_INTERVAL);
 
         loop {
@@ -169,7 +176,13 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                         }
                     }
                 }
-                _interval_event = nice_interval.tick() => {
+                _ = async {
+                    if let Some(ref mut nice_interval) = nice_interval {
+                        nice_interval.tick().await
+                    } else {
+                        unreachable!()
+                    }
+                }, if nice_interval.is_some() => {
                     // Print peer count on an interval.
                     info!("Peers connected: {:?}", self.swarm.connected_peers().count());
 
