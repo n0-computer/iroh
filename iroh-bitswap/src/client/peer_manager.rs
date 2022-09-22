@@ -4,6 +4,8 @@ use ahash::{AHashMap, AHashSet};
 use cid::Cid;
 use libp2p::PeerId;
 
+use crate::network::Network;
+
 use super::{message_queue::MessageQueue, peer_want_manager::PeerWantManager, session::Session};
 
 #[derive(Debug)]
@@ -11,14 +13,16 @@ pub struct PeerManager {
     peers: RwLock<(AHashMap<PeerId, MessageQueue>, PeerWantManager)>,
     sessions: RwLock<(AHashMap<u64, Session>, AHashMap<PeerId, AHashSet<u64>>)>,
     self_id: PeerId,
+    network: Network,
 }
 
 impl PeerManager {
-    pub fn new(self_id: PeerId) -> Self {
+    pub fn new(self_id: PeerId, network: Network) -> Self {
         PeerManager {
             peers: Default::default(),
             sessions: Default::default(),
             self_id,
+            network,
         }
     }
 
@@ -36,7 +40,7 @@ impl PeerManager {
         let (peer_queues, peer_want_manager) = &mut *self.peers.write().unwrap();
 
         let peer_queue = peer_queues.entry(*peer).or_insert_with(|| {
-            let mut mq = MessageQueue::new();
+            let mut mq = MessageQueue::new(*peer, self.network.clone());
             mq.startup();
             mq
         });
@@ -163,8 +167,9 @@ mod tests {
         let peer3 = PeerId::random();
         let peer4 = PeerId::random();
         let peer5 = PeerId::random();
+        let network = Network::new(this);
 
-        let peer_manager = PeerManager::new(this);
+        let peer_manager = PeerManager::new(this, network);
         peer_manager.connected(&peer1);
         peer_manager.connected(&peer2);
         peer_manager.connected(&peer3);
@@ -192,8 +197,9 @@ mod tests {
     fn test_broadcast_on_connect() {
         let this = PeerId::random();
         let peer1 = PeerId::random();
+        let network = Network::new(this);
 
-        let peer_manager = PeerManager::new(this);
+        let peer_manager = PeerManager::new(this, network);
         let cids: AHashSet<_> = gen_cids(2).into_iter().collect();
 
         peer_manager.broadcast_want_haves(&cids);
