@@ -102,7 +102,7 @@ async fn init_metrics(cfg: Config) -> Option<JoinHandle<()>> {
 }
 
 /// Initialize the tracing subsystem.
-pub fn init_tracer(cfg: Config) -> Result<(), Box<dyn std::error::Error>> {
+fn init_tracer(cfg: Config) -> Result<(), Box<dyn std::error::Error>> {
     let log_subscriber = fmt::layer()
         .pretty()
         .with_filter(EnvFilter::from_default_env());

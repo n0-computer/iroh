@@ -90,7 +90,9 @@ async fn main() -> anyhow::Result<()> {
     )
     .unwrap();
 
-    iroh_metrics::init_tracer(MetricsConfig::default()).expect("failed to initialize logging");
+    let metrics_handler = iroh_metrics::MetricsHandle::new(MetricsConfig::default())
+        .await
+        .expect("failed to initialize metrics");
 
     let client = Client::new(config.rpc_client).await?;
 
@@ -134,6 +136,7 @@ async fn main() -> anyhow::Result<()> {
         }
     };
 
+    metrics_handler.shutdown();
     Ok(())
 }
 
@@ -164,7 +167,7 @@ fn get(
     output: Option<PathBuf>,
 ) -> impl Stream<Item = Result<(PathBuf, OutType<Client>)>> {
     tracing::debug!("get {:?}", root);
-    let resolver = iroh_resolver::resolver::Resolver::new(client.clone());
+    let resolver = iroh_resolver::resolver::Resolver::new(client);
     let results = resolver.resolve_recursive_with_paths(root.clone());
     async_stream::try_stream! {
         tokio::pin!(results);
@@ -174,8 +177,7 @@ fn get(
             if out.is_dir() {
                 yield (path, OutType::Dir);
             } else {
-                let resolver = resolver::Resolver::new(client.clone());
-                let reader = out.pretty(resolver, Default::default())?;
+                let reader = out.pretty(resolver.clone(), Default::default())?;
                 yield (path, OutType::Reader(reader));
             }
         }

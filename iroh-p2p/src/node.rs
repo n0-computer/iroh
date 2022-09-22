@@ -598,6 +598,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
             RpcMessage::StartProviding(response_channel, key) => {
                 if let Some(kad) = self.swarm.behaviour_mut().kad.as_mut() {
                     let res: Result<QueryId> = kad.start_providing(key).map_err(|e| e.into());
+                    // TODO: wait for kad to process the query request before returning
                     response_channel.send(res).ok();
                 } else {
                     response_channel
