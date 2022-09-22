@@ -1,7 +1,7 @@
 # iroh-store
 
-> Storage for iroh.
-
+Storage for [iroh](https://github.com/n0-computer/iroh). This provides an gRPC
+API for storing IPFS data in a [RocksDB database](http://rocksdb.org/).
 
 ## How to run
 

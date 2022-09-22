@@ -1,13 +1,7 @@
-# iroh-ctl
+# iroh-util
 
-> Communicate with the different iroh processes
-
-## usage
-
-```
-// Track the status of your different iroh processes
-$ iroh-ctl status --watch
-```
+Utility functions for [iroh](https://github.com/n0-computer/iroh). This
+provides shared functionality to be used in other iroh crates.
 
 ## License
 
@@ -23,3 +17,4 @@ Unless you explicitly state otherwise, any contribution intentionally submitted
 for inclusion in this crate by you, as defined in the Apache-2.0 license, shall
 be dual licensed as above, without any additional terms or conditions.
 </sub>
+
