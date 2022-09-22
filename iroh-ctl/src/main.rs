@@ -90,7 +90,7 @@ async fn main() -> anyhow::Result<()> {
     )
     .unwrap();
 
-    iroh_metrics::init_tracer(MetricsConfig::default()).expect("failed to initialize metrics");
+    iroh_metrics::init_tracer(MetricsConfig::default()).expect("failed to initialize logging");
 
     let client = Client::new(config.rpc_client).await?;
 
