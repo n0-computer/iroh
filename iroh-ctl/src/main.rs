@@ -60,7 +60,7 @@ enum Commands {
         #[clap(long, short)]
         recursive: bool,
         #[clap(long, short)]
-        wrap: bool,
+        no_wrap: bool,
     },
     #[clap(
         about = "get content based on a Content Identifier from the ipfs network, and save it "
@@ -109,9 +109,9 @@ async fn main() -> anyhow::Result<()> {
         Commands::Add {
             path,
             recursive,
-            wrap,
+            no_wrap,
         } => {
-            let cid = add(client, path, recursive, wrap).await?;
+            let cid = add(client, path, recursive, !no_wrap).await?;
             println!("/ipfs/{}", cid);
         }
         Commands::Get { path, output } => {
