@@ -23,6 +23,7 @@ use tracing::{error, trace, warn};
 
 use crate::{
     error::Error,
+    network,
     protocol::{BitswapCodec, ProtocolConfig, ProtocolId},
     BitswapMessage,
 };
@@ -70,11 +71,13 @@ pub enum HandlerEvent {
     ProtocolNotSuppported,
 }
 
+type BitswapMessageResponse = Sender<Result<(), network::SendError>>;
+
 /// A message sent from the behaviour to the handler.
 #[derive(Debug, Clone)]
 pub enum BitswapHandlerIn {
     /// A bitswap message to send.
-    Message(BitswapMessage, Sender<std::result::Result<(), String>>),
+    Message(BitswapMessage, BitswapMessageResponse),
     // TODO: do we need a close?
 }
 
@@ -100,14 +103,14 @@ pub struct BitswapHandler {
     events: SmallVec<
         [ConnectionHandlerEvent<
             ProtocolConfig,
-            (BitswapMessage, Sender<Result<(), String>>),
+            (BitswapMessage, BitswapMessageResponse),
             HandlerEvent,
             BitswapHandlerError,
         >; 4],
     >,
 
     /// Queue of values that we want to send to the remote.
-    send_queue: SmallVec<[(BitswapMessage, Sender<Result<(), String>>); 16]>,
+    send_queue: SmallVec<[(BitswapMessage, BitswapMessageResponse); 16]>,
 
     /// Flag indicating that an outbound substream is being established to prevent duplicate
     /// requests.
@@ -159,7 +162,7 @@ enum OutboundSubstreamState {
     /// Waiting to send a message to the remote.
     PendingSend(
         Framed<NegotiatedSubstream, BitswapCodec>,
-        (BitswapMessage, Sender<Result<(), String>>),
+        (BitswapMessage, BitswapMessageResponse),
     ),
     /// Waiting to flush the substream so that the data arrives to the remote.
     PendingFlush(Framed<NegotiatedSubstream, BitswapCodec>),
@@ -197,7 +200,7 @@ impl ConnectionHandler for BitswapHandler {
     type Error = BitswapHandlerError;
     type InboundOpenInfo = ();
     type InboundProtocol = ProtocolConfig;
-    type OutboundOpenInfo = (BitswapMessage, Sender<Result<(), String>>);
+    type OutboundOpenInfo = (BitswapMessage, BitswapMessageResponse);
     type OutboundProtocol = ProtocolConfig;
 
     fn listen_protocol(&self) -> SubstreamProtocol<Self::InboundProtocol, Self::InboundOpenInfo> {
@@ -260,17 +263,20 @@ impl ConnectionHandler for BitswapHandler {
     }
 
     fn inject_event(&mut self, message: BitswapHandlerIn) {
-        if !self.protocol_unsupported {
-            match message {
-                BitswapHandlerIn::Message(m, response) => {
+        match message {
+            BitswapHandlerIn::Message(m, response) => {
+                if self.protocol_unsupported {
+                    inc!(BitswapMetrics::ProtocolUnsupported);
+                    response
+                        .send(Err(network::SendError::ProtocolNotSupported))
+                        .ok();
+                } else {
                     self.send_queue.push((m, response));
                     // received a message, reset keepalive
                     // TODO: should we permanently keep this open instead, until we remove from all sessions?
                     self.keep_alive = KeepAlive::Until(Instant::now() + self.idle_timeout);
                 }
             }
-        } else {
-            inc!(BitswapMetrics::ProtocolUnsupported);
         }
     }
 
@@ -494,13 +500,19 @@ impl ConnectionHandler for BitswapHandler {
                                 }
                                 e @ Err(BitswapHandlerError::MaxTransmissionSize) => {
                                     error!("Message exceeded the maximum transmission size and was not sent.");
-                                    response.send(Err(e.unwrap_err().to_string())).ok();
+                                    response
+                                        .send(Err(network::SendError::Other(
+                                            e.unwrap_err().to_string(),
+                                        )))
+                                        .ok();
                                     self.outbound_substream =
                                         Some(OutboundSubstreamState::WaitingOutput(substream));
                                 }
                                 Err(e) => {
                                     error!("Error sending message: {}", e);
-                                    response.send(Err(e.to_string())).ok();
+                                    response
+                                        .send(Err(network::SendError::Other(e.to_string())))
+                                        .ok();
                                     return Poll::Ready(ConnectionHandlerEvent::Close(e));
                                 }
                             }

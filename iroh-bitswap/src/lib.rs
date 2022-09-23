@@ -22,7 +22,7 @@ use libp2p::swarm::{
 use libp2p::{Multiaddr, PeerId};
 use message::BitswapMessage;
 use network::OutEvent;
-use protocol::ProtocolConfig;
+use protocol::{ProtocolConfig, ProtocolId};
 use tracing::info;
 
 use self::client::{Client, Config as ClientConfig};
@@ -51,7 +51,7 @@ pub struct Bitswap<S: Store> {
     protocol_config: ProtocolConfig,
     idle_timeout: Duration,
     peers: AHashMap<PeerId, PeerState>,
-    dials: AHashMap<PeerId, Vec<Sender<std::result::Result<(), String>>>>,
+    dials: AHashMap<PeerId, Vec<Sender<std::result::Result<(ConnectionId, ProtocolId), String>>>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -198,12 +198,12 @@ impl<S: Store> Bitswap<S> {
         match peer_state {
             PeerState::Disconnected => {
                 self.peers.remove(peer);
-                if old_state == PeerState::Responsive {
+                if matches!(old_state, PeerState::Responsive) {
                     self.peer_disconnected(peer);
                 }
             }
             PeerState::Unresponsive => {
-                if old_state == PeerState::Responsive {
+                if matches!(old_state, PeerState::Responsive) {
                     self.peer_disconnected(peer);
                 }
             }
@@ -250,21 +250,16 @@ impl<S: Store> NetworkBehaviour for Bitswap<S> {
     fn inject_connection_established(
         &mut self,
         peer_id: &PeerId,
-        _conn: &ConnectionId,
+        conn: &ConnectionId,
         _endpoint: &ConnectedPoint,
         _failed_addresses: Option<&Vec<Multiaddr>>,
         _other_established: usize,
     ) {
-        if self.get_peer_state(peer_id) == PeerState::Responsive {
+        if matches!(self.get_peer_state(peer_id), PeerState::Responsive) {
             return;
         }
 
         self.set_peer_state(peer_id, PeerState::Responsive);
-        if let Some(mut dials) = self.dials.remove(peer_id) {
-            while let Some(sender) = dials.pop() {
-                sender.send(Ok(())).ok();
-            }
-        }
     }
 
     fn inject_connection_closed(
@@ -290,26 +285,36 @@ impl<S: Store> NetworkBehaviour for Bitswap<S> {
         error: &DialError,
     ) {
         if let Some(peer_id) = peer_id {
-            let ev = match error {
-                DialError::DialPeerConditionFalse(_) => Ok(()),
-                _ => Err(error.to_string()),
-            };
-
             if let Some(mut dials) = self.dials.remove(&peer_id) {
                 while let Some(sender) = dials.pop() {
-                    sender.send(ev.clone()).ok();
+                    sender.send(Err(error.to_string())).ok();
                 }
             }
         }
     }
 
-    fn inject_event(&mut self, peer_id: PeerId, _connection: ConnectionId, event: HandlerEvent) {
+    fn inject_event(&mut self, peer_id: PeerId, connection: ConnectionId, event: HandlerEvent) {
         match event {
-            HandlerEvent::Connected { protocol: _ } => {
+            HandlerEvent::Connected { protocol } => {
                 self.peer_connected(&peer_id);
+
+                if let Some(mut dials) = self.dials.remove(&peer_id) {
+                    while let Some(sender) = dials.pop() {
+                        sender.send(Ok((connection, protocol))).ok();
+                    }
+                }
             }
             HandlerEvent::ProtocolNotSuppported => {
                 // TODO
+                if matches!(self.get_peer_state(&peer_id), PeerState::Responsive) {
+                    self.set_peer_state(&peer_id, PeerState::Unresponsive);
+                }
+
+                if let Some(mut dials) = self.dials.remove(&peer_id) {
+                    while let Some(sender) = dials.pop() {
+                        sender.send(Err("protocol not supported".into())).ok();
+                    }
+                }
             }
             HandlerEvent::Message { message } => {
                 // mark peer as responsive
@@ -343,11 +348,22 @@ impl<S: Store> NetworkBehaviour for Bitswap<S> {
                 OutEvent::GenerateEvent(ev) => {
                     Poll::Ready(NetworkBehaviourAction::GenerateEvent(ev))
                 }
-                OutEvent::SendMessage(peer, msg, response) => {
+                OutEvent::SendMessage {
+                    peer,
+                    message,
+                    response,
+                    connection_id,
+                } => {
+                    let handler = if let Some(id) = connection_id {
+                        NotifyHandler::One(id)
+                    } else {
+                        NotifyHandler::Any
+                    };
+
                     Poll::Ready(NetworkBehaviourAction::NotifyHandler {
                         peer_id: peer,
-                        handler: NotifyHandler::Any,
-                        event: handler::BitswapHandlerIn::Message(msg, response),
+                        handler,
+                        event: handler::BitswapHandlerIn::Message(message, response),
                     })
                 }
             },

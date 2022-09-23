@@ -1,5 +1,6 @@
 use std::{
     sync::{Arc, Mutex},
+    thread::JoinHandle,
     time::{Duration, Instant},
 };
 
@@ -10,7 +11,7 @@ use libp2p::{ping::PingResult, PeerId};
 
 use crate::{
     message::{BitswapMessage, Entry, WantType},
-    network::{MessageSender, Network},
+    network::{MessageSender, MessageSenderConfig, Network},
     Priority,
 };
 
@@ -23,7 +24,7 @@ mod dont_have_timeout_manager;
 #[derive(Debug, Clone)]
 pub struct MessageQueue {
     // TODO: likely need an Arc<lock>
-    self_id: PeerId,
+    peer: PeerId,
     network: Network,
     send_error_backoff: Duration,
     max_valid_latency: Duration,
@@ -139,6 +140,8 @@ pub struct Config {
     pub send_message_max_delay: Duration,
     pub send_message_cutoff: usize,
     pub send_message_debounce: Duration,
+    pub send_timeout: Duration,
+    pub max_retries: usize,
 }
 
 impl Default for Config {
@@ -152,17 +155,19 @@ impl Default for Config {
             send_message_max_delay: Duration::from_millis(20),
             send_message_cutoff: 256,
             send_message_debounce: Duration::from_millis(1),
+            send_timeout: Duration::from_secs(30),
+            max_retries: 3,
         }
     }
 }
 
 impl MessageQueue {
-    pub fn new(self_id: PeerId, network: Network) -> Self {
+    pub fn new(peer: PeerId, network: Network) -> Self {
         // TODO: register on_donthave_timeout
-        Self::with_config(self_id, network, Config::default())
+        Self::with_config(peer, network, Config::default())
     }
 
-    pub fn with_config(self_id: PeerId, network: Network, config: Config) -> Self {
+    pub fn with_config(peer: PeerId, network: Network, config: Config) -> Self {
         let (closer_sender, closer_receiver) = crossbeam::channel::bounded(1);
         let (responses_sender, responses_receiver) = crossbeam::channel::bounded(8);
         let (outgoing_work_sender, outgoing_work_receiver) = crossbeam::channel::bounded(1);
@@ -176,22 +181,35 @@ impl MessageQueue {
         let send_message_cutoff = config.send_message_cutoff;
         let send_message_debounce = config.send_message_debounce;
         let dh_timeout_manager = DontHaveTimeoutManager::new();
+        let max_retries = config.max_retries;
+        let send_timeout = config.send_timeout;
+        let send_error_backoff = config.send_error_backof;
         let closer = closer_sender.clone();
 
         let dhtm = dh_timeout_manager.clone();
         let wants_thread = wants.clone();
-        let handle = std::thread::spawn(move || {
+        let nt = network.clone();
+
+        let handle: JoinHandle<anyhow::Result<()>> = std::thread::spawn(move || {
             let mut work_scheduled: Option<Instant> = None;
             let rebroadcast_timer = crossbeam::channel::tick(config.rebroadcast_interval);
             let mut schedule_work = crossbeam::channel::after(Duration::from_secs(0));
-            let mut msg = BitswapMessage::default();
             let wants = wants_thread;
             let dh_timeout_manager = dhtm;
+            let network = nt;
+            let sender = network.new_message_sender(
+                peer,
+                MessageSenderConfig {
+                    max_retries,
+                    send_timeout,
+                    send_error_backoff,
+                },
+            )?;
 
             loop {
                 crossbeam::channel::select! {
                     recv(rebroadcast_timer) -> _ => {
-                        rebroadcast_wantlist(&mut msg, &wants, &closer, &dh_timeout_manager);
+                        rebroadcast_wantlist(&wants, &closer, &dh_timeout_manager, &sender);
                     }
                     recv(outgoing_work_receiver) -> when => {
                         if work_scheduled.is_none() {
@@ -201,7 +219,7 @@ impl MessageQueue {
                         let pending_work_count = wants.lock().unwrap().pending_work_count();
                         if pending_work_count > send_message_cutoff
                             || work_scheduled.unwrap().elapsed() >= send_message_max_delay {
-                                send_if_ready(&mut msg, &wants, &closer, &dh_timeout_manager);
+                                send_if_ready(&wants, &closer, &dh_timeout_manager, &sender);
                                 work_scheduled = None;
                             } else {
                                 // Extend the timer
@@ -210,7 +228,7 @@ impl MessageQueue {
                     }
                     recv(schedule_work) -> _ => {
                         work_scheduled = None;
-                        send_if_ready(&mut msg, &wants, &closer, &dh_timeout_manager);
+                        send_if_ready(&wants, &closer, &dh_timeout_manager, &sender);
                     }
                     recv(responses_receiver) -> response => {
                         // Received a response from the peer, calculate latency.
@@ -221,10 +239,13 @@ impl MessageQueue {
                     }
                 }
             }
+            Ok(())
         });
 
+        // TODO: track thread
+
         MessageQueue {
-            self_id,
+            peer,
             network,
             send_error_backoff: config.send_error_backof,
             max_valid_latency: config.max_valid_latency,
@@ -329,13 +350,13 @@ impl MessageQueue {
 }
 
 fn rebroadcast_wantlist(
-    msg: &mut BitswapMessage,
     wants: &Arc<Mutex<Wants>>,
     closer: &Sender<()>,
     dh_timeout_manager: &DontHaveTimeoutManager,
+    sender: &MessageSender,
 ) {
     if transfer_rebroadcast_wants(wants) {
-        send_message(msg, wants, closer, dh_timeout_manager);
+        send_message(wants, closer, dh_timeout_manager, sender);
     }
 }
 
@@ -356,24 +377,21 @@ fn transfer_rebroadcast_wants(wants: &Arc<Mutex<Wants>>) -> bool {
 }
 
 fn send_message(
-    msg: &mut BitswapMessage,
     wants: &Arc<Mutex<Wants>>,
     closer: &Sender<()>,
     dh_timeout_manager: &DontHaveTimeoutManager,
+    sender: &MessageSender,
 ) {
-    msg.clear(false);
-    let sender = initialize_sender();
-
     // TODO: check donthave timeout manager is running
 
     // Convert want lists to a bitswap message
-    let on_sent = extract_outgoing_message(msg, sender.supports_have());
+    let (msg, on_sent) = extract_outgoing_message(sender.supports_have());
     if msg.is_empty() {
         return;
     }
 
-    let wantlist: Vec<_> = msg.wantlist().collect();
-    if let Err(err) = sender.send_msg(msg) {
+    let wantlist: Vec<_> = msg.wantlist().cloned().collect();
+    if let Err(err) = sender.send_message(msg) {
         closer.send(()).ok();
         return;
     }
@@ -392,7 +410,7 @@ fn send_message(
 }
 
 fn simulate_dont_have_with_timeout(
-    wantlist: &[&Entry],
+    wantlist: &[Entry],
     wants: &Arc<Mutex<Wants>>,
     dh_timeout_manager: &DontHaveTimeoutManager,
 ) {
@@ -419,13 +437,13 @@ fn simulate_dont_have_with_timeout(
 }
 
 fn send_if_ready(
-    msg: &mut BitswapMessage,
     wants: &Arc<Mutex<Wants>>,
     closer: &Sender<()>,
     dh_timeout_manager: &DontHaveTimeoutManager,
+    sender: &MessageSender,
 ) {
     if wants.lock().unwrap().has_pending_work() {
-        send_message(msg, wants, closer, dh_timeout_manager);
+        send_message(wants, closer, dh_timeout_manager, sender);
     }
 }
 
@@ -433,16 +451,13 @@ fn handle_response(response: Vec<Cid>) {
     todo!()
 }
 
-fn extract_outgoing_message(msg: &mut BitswapMessage, supports_have: bool) -> impl Fn() -> () {
+fn extract_outgoing_message(supports_have: bool) -> (BitswapMessage, impl Fn() -> ()) {
+    let mut msg = BitswapMessage::default();
     // TODO
 
-    || {}
+    (msg, || {})
 }
 
 fn signal_work_ready() {
-    todo!()
-}
-
-fn initialize_sender() -> MessageSender {
     todo!()
 }
