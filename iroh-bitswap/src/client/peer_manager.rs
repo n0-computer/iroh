@@ -39,11 +39,9 @@ impl PeerManager {
     pub fn connected(&self, peer: &PeerId) {
         let (peer_queues, peer_want_manager) = &mut *self.peers.write().unwrap();
 
-        let peer_queue = peer_queues.entry(*peer).or_insert_with(|| {
-            let mut mq = MessageQueue::new(*peer, self.network.clone());
-            mq.startup();
-            mq
-        });
+        let peer_queue = peer_queues
+            .entry(*peer)
+            .or_insert_with(|| MessageQueue::new(*peer, self.network.clone()));
 
         // Inform the peer want manager that there's a new peer.
         peer_want_manager.add_peer(&peer_queue, peer);
@@ -69,7 +67,7 @@ impl PeerManager {
     pub fn response_received(&self, peer: &PeerId, cids: &[Cid]) {
         let peer_queues = &*self.peers.read().unwrap().0;
         if let Some(peer_queue) = peer_queues.get(peer) {
-            peer_queue.response_received(cids);
+            peer_queue.response_received(cids.to_vec());
         }
     }
 

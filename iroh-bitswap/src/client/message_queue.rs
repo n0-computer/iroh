@@ -5,11 +5,12 @@ use std::{
 
 use ahash::{AHashMap, AHashSet};
 use cid::Cid;
+use crossbeam::channel::Sender;
 use libp2p::{ping::PingResult, PeerId};
 
 use crate::{
     message::{BitswapMessage, Entry, WantType},
-    network::Network,
+    network::{MessageSender, Network},
     Priority,
 };
 
@@ -26,10 +27,9 @@ pub struct MessageQueue {
     network: Network,
     send_error_backoff: Duration,
     max_valid_latency: Duration,
+    responses: Sender<Vec<Cid>>,
+    closer: Sender<()>,
     wants: Arc<Mutex<Wants>>,
-
-    /// Cached message to reuse memory
-    msg: BitswapMessage,
 
     dh_timeout_manager: DontHaveTimeoutManager,
 }
@@ -40,6 +40,18 @@ struct Wants {
     peer_wants: RecallWantlist,
     cancels: AHashSet<Cid>,
     priority: i32,
+}
+
+impl Wants {
+    /// Wether there is work to be processed.
+    fn has_pending_work(&self) -> bool {
+        self.pending_work_count() > 0
+    }
+
+    /// The amount of work that is waiting to be processed.
+    fn pending_work_count(&self) -> usize {
+        self.bcst_wants.pending.len() + self.peer_wants.pending.len() + self.cancels.len()
+    }
 }
 
 #[derive(Debug, Default, Clone)]
@@ -123,6 +135,10 @@ pub struct Config {
     pub max_valid_latency: Duration,
     /// Maximum priority allowed in the network.
     pub max_priority: i32,
+    pub rebroadcast_interval: Duration,
+    pub send_message_max_delay: Duration,
+    pub send_message_cutoff: usize,
+    pub send_message_debounce: Duration,
 }
 
 impl Default for Config {
@@ -132,6 +148,10 @@ impl Default for Config {
             send_error_backof: Duration::from_millis(100),
             max_valid_latency: Duration::from_secs(30),
             max_priority: i32::MAX,
+            rebroadcast_interval: Duration::from_secs(30),
+            send_message_max_delay: Duration::from_millis(20),
+            send_message_cutoff: 256,
+            send_message_debounce: Duration::from_millis(1),
         }
     }
 }
@@ -143,19 +163,75 @@ impl MessageQueue {
     }
 
     pub fn with_config(self_id: PeerId, network: Network, config: Config) -> Self {
+        let (closer_sender, closer_receiver) = crossbeam::channel::bounded(1);
+        let (responses_sender, responses_receiver) = crossbeam::channel::bounded(8);
+        let (outgoing_work_sender, outgoing_work_receiver) = crossbeam::channel::bounded(1);
+        let wants = Arc::new(Mutex::new(Wants {
+            bcst_wants: Default::default(),
+            peer_wants: Default::default(),
+            cancels: Default::default(),
+            priority: config.max_priority,
+        }));
+        let send_message_max_delay = config.send_message_max_delay;
+        let send_message_cutoff = config.send_message_cutoff;
+        let send_message_debounce = config.send_message_debounce;
+        let dh_timeout_manager = DontHaveTimeoutManager::new();
+        let closer = closer_sender.clone();
+
+        let dhtm = dh_timeout_manager.clone();
+        let wants_thread = wants.clone();
+        let handle = std::thread::spawn(move || {
+            let mut work_scheduled: Option<Instant> = None;
+            let rebroadcast_timer = crossbeam::channel::tick(config.rebroadcast_interval);
+            let mut schedule_work = crossbeam::channel::after(Duration::from_secs(0));
+            let mut msg = BitswapMessage::default();
+            let wants = wants_thread;
+            let dh_timeout_manager = dhtm;
+
+            loop {
+                crossbeam::channel::select! {
+                    recv(rebroadcast_timer) -> _ => {
+                        rebroadcast_wantlist(&mut msg, &wants, &closer, &dh_timeout_manager);
+                    }
+                    recv(outgoing_work_receiver) -> when => {
+                        if work_scheduled.is_none() {
+                            work_scheduled = when.ok();
+                        }
+
+                        let pending_work_count = wants.lock().unwrap().pending_work_count();
+                        if pending_work_count > send_message_cutoff
+                            || work_scheduled.unwrap().elapsed() >= send_message_max_delay {
+                                send_if_ready(&mut msg, &wants, &closer, &dh_timeout_manager);
+                                work_scheduled = None;
+                            } else {
+                                // Extend the timer
+                                schedule_work = crossbeam::channel::after(send_message_debounce);
+                            }
+                    }
+                    recv(schedule_work) -> _ => {
+                        work_scheduled = None;
+                        send_if_ready(&mut msg, &wants, &closer, &dh_timeout_manager);
+                    }
+                    recv(responses_receiver) -> response => {
+                        // Received a response from the peer, calculate latency.
+                        handle_response(response.unwrap());
+                    }
+                    recv(closer_receiver) -> _ => {
+                        break;
+                    }
+                }
+            }
+        });
+
         MessageQueue {
             self_id,
             network,
             send_error_backoff: config.send_error_backof,
             max_valid_latency: config.max_valid_latency,
-            wants: Arc::new(Mutex::new(Wants {
-                bcst_wants: Default::default(),
-                peer_wants: Default::default(),
-                cancels: Default::default(),
-                priority: config.max_priority,
-            })),
-            msg: Default::default(),
-            dh_timeout_manager: DontHaveTimeoutManager::new(),
+            responses: responses_sender,
+            wants,
+            closer: closer_sender,
+            dh_timeout_manager,
         }
     }
 
@@ -173,7 +249,7 @@ impl MessageQueue {
             wants.cancels.remove(cid);
         }
 
-        self.signal_work_ready()
+        signal_work_ready()
     }
 
     /// Add want-haves and want-blocks for the peer for this queue.
@@ -209,23 +285,164 @@ impl MessageQueue {
         // Cancel any outstanding DONT_HAVE timers
         self.dh_timeout_manager.cancel_pending(cancels);
 
-        // TODO
+        let mut work_ready = false;
+        let wants = &mut *self.wants.lock().unwrap();
+
+        // Remove keys from broadcast and peer wants, and add to cancels.
+        for cid in cancels {
+            // Check if a want for the key was sent
+            let was_sent_bcst = wants.bcst_wants.sent.contains(cid);
+            let was_sent_peer = wants.peer_wants.sent.contains(cid);
+
+            // Remove the want from tracking wantlist
+            wants.bcst_wants.remove(cid);
+            wants.peer_wants.remove(cid);
+
+            // Only send a cancel if a want was sent
+            if was_sent_bcst || was_sent_peer {
+                wants.cancels.insert(*cid);
+                work_ready = true;
+            }
+        }
+        drop(wants);
+
+        // Schedule a message send
+        if work_ready {
+            signal_work_ready();
+        }
     }
 
-    // TODO: merge into new
-    pub fn startup(&mut self) {
-        // TODO
-    }
+    /// Called when a message is received from the network.
+    /// `cids` is the set of blocks, HAVEs and DONT_HAVEs in the message.
+    /// Note: this is only use to calculate latency currently.
+    pub fn response_received(&self, cids: Vec<Cid>) {
+        if cids.is_empty() {
+            return;
+        }
 
-    pub fn response_received(&self, cids: &[Cid]) {
-        // TODO
+        self.responses.send(cids).ok();
     }
 
     pub fn shutdown(self) {
-        // TODO
+        self.closer.send(()).ok();
+    }
+}
+
+fn rebroadcast_wantlist(
+    msg: &mut BitswapMessage,
+    wants: &Arc<Mutex<Wants>>,
+    closer: &Sender<()>,
+    dh_timeout_manager: &DontHaveTimeoutManager,
+) {
+    if transfer_rebroadcast_wants(wants) {
+        send_message(msg, wants, closer, dh_timeout_manager);
+    }
+}
+
+/// Transfer wants from the rebroadcast lists into the pending lists.
+fn transfer_rebroadcast_wants(wants: &Arc<Mutex<Wants>>) -> bool {
+    let wants = &mut *wants.lock().unwrap();
+
+    // Check if there are any wants to rebroadcast.
+    if wants.bcst_wants.sent.is_empty() && wants.peer_wants.sent.is_empty() {
+        return false;
     }
 
-    fn signal_work_ready(&self) {
-        todo!()
+    // Copy sent wants into pending wants lists
+    wants.bcst_wants.pending.extend(&wants.bcst_wants.sent);
+    wants.peer_wants.pending.extend(&wants.peer_wants.sent);
+
+    true
+}
+
+fn send_message(
+    msg: &mut BitswapMessage,
+    wants: &Arc<Mutex<Wants>>,
+    closer: &Sender<()>,
+    dh_timeout_manager: &DontHaveTimeoutManager,
+) {
+    msg.clear(false);
+    let sender = initialize_sender();
+
+    // TODO: check donthave timeout manager is running
+
+    // Convert want lists to a bitswap message
+    let on_sent = extract_outgoing_message(msg, sender.supports_have());
+    if msg.is_empty() {
+        return;
     }
+
+    let wantlist: Vec<_> = msg.wantlist().collect();
+    if let Err(err) = sender.send_msg(msg) {
+        closer.send(()).ok();
+        return;
+    }
+
+    // Record sent time so as to calculate message latency.
+    on_sent();
+
+    // Set a timer to wait for responses.
+    simulate_dont_have_with_timeout(&wantlist, wants, dh_timeout_manager);
+
+    // If the message was too big and only a subset of wants could be sent
+    // schedule sending the rest of the wants in the next iteration of the event loop.
+    if wants.lock().unwrap().has_pending_work() {
+        signal_work_ready();
+    }
+}
+
+fn simulate_dont_have_with_timeout(
+    wantlist: &[&Entry],
+    wants: &Arc<Mutex<Wants>>,
+    dh_timeout_manager: &DontHaveTimeoutManager,
+) {
+    let wants = &mut *wants.lock().unwrap();
+
+    // Get the Cid of each want-block that expects a DONT_HAVE reponse.
+    let pending_wants: Vec<Cid> = wantlist
+        .iter()
+        .filter_map(|entry| {
+            if entry.want_type == WantType::Block && entry.send_dont_have {
+                // check if the block was already sent
+                if wants.peer_wants.sent.contains(&entry.cid) {
+                    return Some(entry.cid);
+                }
+            }
+            None
+        })
+        .collect();
+
+    drop(wants);
+
+    // Add wants to DONT_HAVE timeout manger
+    dh_timeout_manager.add_pending(&pending_wants);
+}
+
+fn send_if_ready(
+    msg: &mut BitswapMessage,
+    wants: &Arc<Mutex<Wants>>,
+    closer: &Sender<()>,
+    dh_timeout_manager: &DontHaveTimeoutManager,
+) {
+    if wants.lock().unwrap().has_pending_work() {
+        send_message(msg, wants, closer, dh_timeout_manager);
+    }
+}
+
+fn handle_response(response: Vec<Cid>) {
+    todo!()
+}
+
+fn extract_outgoing_message(msg: &mut BitswapMessage, supports_have: bool) -> impl Fn() -> () {
+    // TODO
+
+    || {}
+}
+
+fn signal_work_ready() {
+    todo!()
+}
+
+fn initialize_sender() -> MessageSender {
+    todo!()
 }

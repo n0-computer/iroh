@@ -7,6 +7,7 @@ use std::{
 };
 
 use asynchronous_codec::Framed;
+use crossbeam::channel::Sender;
 use futures::prelude::*;
 use futures::StreamExt;
 use iroh_metrics::{bitswap::BitswapMetrics, core::MRecorder, inc};
@@ -73,7 +74,7 @@ pub enum HandlerEvent {
 #[derive(Debug, Clone)]
 pub enum BitswapHandlerIn {
     /// A bitswap message to send.
-    Message(BitswapMessage),
+    Message(BitswapMessage, Sender<std::result::Result<(), String>>),
     // TODO: do we need a close?
 }
 
@@ -97,12 +98,16 @@ pub struct BitswapHandler {
 
     /// Pending events to yield.
     events: SmallVec<
-        [ConnectionHandlerEvent<ProtocolConfig, BitswapMessage, HandlerEvent, BitswapHandlerError>;
-            4],
+        [ConnectionHandlerEvent<
+            ProtocolConfig,
+            (BitswapMessage, Sender<Result<(), String>>),
+            HandlerEvent,
+            BitswapHandlerError,
+        >; 4],
     >,
 
     /// Queue of values that we want to send to the remote.
-    send_queue: SmallVec<[BitswapMessage; 16]>,
+    send_queue: SmallVec<[(BitswapMessage, Sender<Result<(), String>>); 16]>,
 
     /// Flag indicating that an outbound substream is being established to prevent duplicate
     /// requests.
@@ -152,7 +157,10 @@ enum OutboundSubstreamState {
     /// Waiting for the user to send a message. The idle state for an outbound substream.
     WaitingOutput(Framed<NegotiatedSubstream, BitswapCodec>),
     /// Waiting to send a message to the remote.
-    PendingSend(Framed<NegotiatedSubstream, BitswapCodec>, BitswapMessage),
+    PendingSend(
+        Framed<NegotiatedSubstream, BitswapCodec>,
+        (BitswapMessage, Sender<Result<(), String>>),
+    ),
     /// Waiting to flush the substream so that the data arrives to the remote.
     PendingFlush(Framed<NegotiatedSubstream, BitswapCodec>),
     /// The substream is being closed. Used by either substream.
@@ -189,7 +197,7 @@ impl ConnectionHandler for BitswapHandler {
     type Error = BitswapHandlerError;
     type InboundOpenInfo = ();
     type InboundProtocol = ProtocolConfig;
-    type OutboundOpenInfo = BitswapMessage;
+    type OutboundOpenInfo = (BitswapMessage, Sender<Result<(), String>>);
     type OutboundProtocol = ProtocolConfig;
 
     fn listen_protocol(&self) -> SubstreamProtocol<Self::InboundProtocol, Self::InboundOpenInfo> {
@@ -254,8 +262,8 @@ impl ConnectionHandler for BitswapHandler {
     fn inject_event(&mut self, message: BitswapHandlerIn) {
         if !self.protocol_unsupported {
             match message {
-                BitswapHandlerIn::Message(m) => {
-                    self.send_queue.push(m);
+                BitswapHandlerIn::Message(m, response) => {
+                    self.send_queue.push((m, response));
                     // received a message, reset keepalive
                     // TODO: should we permanently keep this open instead, until we remove from all sessions?
                     self.keep_alive = KeepAlive::Until(Instant::now() + self.idle_timeout);
@@ -475,21 +483,24 @@ impl ConnectionHandler for BitswapHandler {
                         break;
                     }
                 }
-                Some(OutboundSubstreamState::PendingSend(mut substream, message)) => {
+                Some(OutboundSubstreamState::PendingSend(mut substream, (message, response))) => {
                     match Sink::poll_ready(Pin::new(&mut substream), cx) {
                         Poll::Ready(Ok(())) => {
                             match Sink::start_send(Pin::new(&mut substream), message) {
                                 Ok(()) => {
+                                    response.send(Ok(())).ok();
                                     self.outbound_substream =
                                         Some(OutboundSubstreamState::PendingFlush(substream))
                                 }
-                                Err(BitswapHandlerError::MaxTransmissionSize) => {
+                                e @ Err(BitswapHandlerError::MaxTransmissionSize) => {
                                     error!("Message exceeded the maximum transmission size and was not sent.");
+                                    response.send(Err(e.unwrap_err().to_string())).ok();
                                     self.outbound_substream =
                                         Some(OutboundSubstreamState::WaitingOutput(substream));
                                 }
                                 Err(e) => {
                                     error!("Error sending message: {}", e);
+                                    response.send(Err(e.to_string())).ok();
                                     return Poll::Ready(ConnectionHandlerEvent::Close(e));
                                 }
                             }
@@ -500,8 +511,10 @@ impl ConnectionHandler for BitswapHandler {
                         }
                         Poll::Pending => {
                             self.keep_alive = KeepAlive::Yes;
-                            self.outbound_substream =
-                                Some(OutboundSubstreamState::PendingSend(substream, message));
+                            self.outbound_substream = Some(OutboundSubstreamState::PendingSend(
+                                substream,
+                                (message, response),
+                            ));
                             break;
                         }
                     }

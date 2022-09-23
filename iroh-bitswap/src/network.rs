@@ -6,17 +6,9 @@ use std::{
 use anyhow::{anyhow, Result};
 use cid::Cid;
 use crossbeam::channel::{Receiver, Sender};
-use libp2p::{
-    ping::PingResult,
-    swarm::{NetworkBehaviourAction, NotifyHandler},
-    PeerId,
-};
+use libp2p::{ping::PingResult, PeerId};
 
-use crate::{
-    handler::{BitswapHandler, BitswapHandlerIn},
-    message::BitswapMessage,
-    BitswapEvent,
-};
+use crate::{message::BitswapMessage, BitswapEvent};
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_SEND_TIMEOUT: Duration = Duration::from_secs(2 * 60);
@@ -26,9 +18,19 @@ const MIN_SEND_RATE: usize = (100 * 1000) / 8;
 
 #[derive(Debug, Clone)]
 pub struct Network {
-    network_out_receiver: Receiver<NetworkBehaviourAction<BitswapEvent, BitswapHandler>>,
-    network_out_sender: Sender<NetworkBehaviourAction<BitswapEvent, BitswapHandler>>,
+    network_out_receiver: Receiver<OutEvent>,
+    network_out_sender: Sender<OutEvent>,
     self_id: PeerId,
+}
+
+pub enum OutEvent {
+    Dial(PeerId, Sender<std::result::Result<(), String>>),
+    SendMessage(
+        PeerId,
+        BitswapMessage,
+        Sender<std::result::Result<(), String>>,
+    ),
+    GenerateEvent(BitswapEvent),
 }
 
 impl Network {
@@ -59,36 +61,50 @@ impl Network {
         // nothing to do yet
     }
 
-    pub fn send_message(&self, peer: PeerId, message: BitswapMessage) -> Result<()> {
+    fn dial(&self, peer: PeerId) -> Result<()> {
+        let (s, r) = crossbeam::channel::bounded(1);
         self.network_out_sender
-            .send(NetworkBehaviourAction::NotifyHandler {
-                peer_id: peer,
-                handler: NotifyHandler::Any,
-                event: BitswapHandlerIn::Message(message),
-            })
+            .send(OutEvent::Dial(peer, s))
+            .map_err(|e| anyhow!("channel send: {:?}", e))?;
+        let res = r.recv()?.map_err(|e| anyhow!("Dial Error: {}", e))?;
+        Ok(res)
+    }
+
+    pub fn send_message(&self, peer: PeerId, message: BitswapMessage) -> Result<()> {
+        let (s, r) = crossbeam::channel::bounded(1);
+        self.network_out_sender
+            .send(OutEvent::SendMessage(peer, message, s))
             .map_err(|e| anyhow!("channel send: {:?}", e))?;
 
-        Ok(())
+        let res = r.recv()?.map_err(|e| anyhow!("Send Error: {}", e))?;
+        Ok(res)
     }
 
     pub fn provide(&self, key: Cid) -> Result<()> {
         self.network_out_sender
-            .send(NetworkBehaviourAction::GenerateEvent(
-                BitswapEvent::Provide { key },
-            ))
+            .send(OutEvent::GenerateEvent(BitswapEvent::Provide { key }))
             .map_err(|e| anyhow!("channel send: {:?}", e))?;
 
         Ok(())
     }
 
-    pub fn poll(
-        &mut self,
-        _cx: &mut Context,
-    ) -> Poll<NetworkBehaviourAction<BitswapEvent, BitswapHandler>> {
+    pub fn poll(&mut self, _cx: &mut Context) -> Poll<OutEvent> {
         if let Ok(event) = self.network_out_receiver.try_recv() {
             return Poll::Ready(event);
         }
 
         Poll::Pending
+    }
+}
+
+pub struct MessageSender {}
+
+impl MessageSender {
+    pub fn supports_have(&self) -> bool {
+        todo!()
+    }
+
+    pub fn send_msg(&self, message: &BitswapMessage) -> Result<()> {
+        todo!()
     }
 }

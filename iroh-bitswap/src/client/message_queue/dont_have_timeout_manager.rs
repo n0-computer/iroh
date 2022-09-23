@@ -9,6 +9,10 @@ impl DontHaveTimeoutManager {
         todo!()
     }
 
+    pub fn add_pending(&self, wants: &[Cid]) {
+        todo!()
+    }
+
     pub fn cancel_pending(&self, cancels: &AHashSet<Cid>) {
         todo!()
     }

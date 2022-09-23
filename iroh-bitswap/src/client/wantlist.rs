@@ -53,6 +53,10 @@ impl Wantlist {
         self.set.get(cid)
     }
 
+    pub fn contains(&self, cid: &Cid) -> bool {
+        self.set.contains_key(cid)
+    }
+
     /// Removes the given Cid from the wantlist, respecting the type.
     pub fn remove_type(&mut self, cid: &Cid, want_type: WantType) -> Option<Entry> {
         if !self.set.contains_key(cid) {
@@ -82,7 +86,7 @@ impl Wantlist {
         self.cached.iter().map(|c| c.clone())
     }
 
-    /// Merges the second wantlist into thise one.
+    /// Merges the second wantlist into this one.
     pub fn extend(&mut self, other: &Self) {
         self.cached.clear();
 

@@ -10,14 +10,18 @@ use ahash::AHashMap;
 use anyhow::Result;
 use async_trait::async_trait;
 use cid::Cid;
+use crossbeam::channel::Sender;
 use handler::{BitswapHandler, HandlerEvent};
 use libp2p::core::connection::ConnectionId;
 use libp2p::core::ConnectedPoint;
+use libp2p::swarm::dial_opts::DialOpts;
 use libp2p::swarm::{
-    DialError, IntoConnectionHandler, NetworkBehaviour, NetworkBehaviourAction, PollParameters,
+    DialError, IntoConnectionHandler, NetworkBehaviour, NetworkBehaviourAction, NotifyHandler,
+    PollParameters,
 };
 use libp2p::{Multiaddr, PeerId};
 use message::BitswapMessage;
+use network::OutEvent;
 use protocol::ProtocolConfig;
 use tracing::info;
 
@@ -47,6 +51,7 @@ pub struct Bitswap<S: Store> {
     protocol_config: ProtocolConfig,
     idle_timeout: Duration,
     peers: AHashMap<PeerId, PeerState>,
+    dials: AHashMap<PeerId, Vec<Sender<std::result::Result<(), String>>>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -113,6 +118,7 @@ impl<S: Store> Bitswap<S> {
             protocol_config: config.protocol,
             idle_timeout: config.idle_timeout,
             peers: Default::default(),
+            dials: Default::default(),
         }
     }
 
@@ -254,6 +260,11 @@ impl<S: Store> NetworkBehaviour for Bitswap<S> {
         }
 
         self.set_peer_state(peer_id, PeerState::Responsive);
+        if let Some(mut dials) = self.dials.remove(peer_id) {
+            while let Some(sender) = dials.pop() {
+                sender.send(Ok(())).ok();
+            }
+        }
     }
 
     fn inject_connection_closed(
@@ -274,11 +285,22 @@ impl<S: Store> NetworkBehaviour for Bitswap<S> {
 
     fn inject_dial_failure(
         &mut self,
-        _peer_id: Option<PeerId>,
+        peer_id: Option<PeerId>,
         _handler: Self::ConnectionHandler,
-        _error: &DialError,
+        error: &DialError,
     ) {
-        // TODO
+        if let Some(peer_id) = peer_id {
+            let ev = match error {
+                DialError::DialPeerConditionFalse(_) => Ok(()),
+                _ => Err(error.to_string()),
+            };
+
+            if let Some(mut dials) = self.dials.remove(&peer_id) {
+                while let Some(sender) = dials.pop() {
+                    sender.send(ev.clone()).ok();
+                }
+            }
+        }
     }
 
     fn inject_event(&mut self, peer_id: PeerId, _connection: ConnectionId, event: HandlerEvent) {
@@ -307,6 +329,28 @@ impl<S: Store> NetworkBehaviour for Bitswap<S> {
         cx: &mut Context,
         _: &mut impl PollParameters,
     ) -> Poll<NetworkBehaviourAction<Self::OutEvent, Self::ConnectionHandler>> {
-        self.network.poll(cx)
+        match self.network.poll(cx) {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(ev) => match ev {
+                OutEvent::Dial(peer, response) => {
+                    self.dials.entry(peer).or_default().push(response);
+
+                    Poll::Ready(NetworkBehaviourAction::Dial {
+                        opts: DialOpts::peer_id(peer).build(),
+                        handler: self.new_handler(),
+                    })
+                }
+                OutEvent::GenerateEvent(ev) => {
+                    Poll::Ready(NetworkBehaviourAction::GenerateEvent(ev))
+                }
+                OutEvent::SendMessage(peer, msg, response) => {
+                    Poll::Ready(NetworkBehaviourAction::NotifyHandler {
+                        peer_id: peer,
+                        handler: NotifyHandler::Any,
+                        event: handler::BitswapHandlerIn::Message(msg, response),
+                    })
+                }
+            },
+        }
     }
 }
