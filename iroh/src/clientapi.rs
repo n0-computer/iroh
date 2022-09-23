@@ -174,7 +174,7 @@ impl<'a> api::StoreBlock for ClientStore<'a> {
         self.rpc.get(*cid).await
     }
 
-    async fn block_put(&self, data: &Bytes) -> Result<Cid> {
+    async fn block_put(&self, _data: &Bytes) -> Result<Cid> {
         // this awaits ramfox's work in the resolver
         // would be nice if that work only relied on the store and not
         // on the full client
