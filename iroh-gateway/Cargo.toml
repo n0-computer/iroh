@@ -26,8 +26,8 @@ tracing = "0.1.33"
 names = { version = "0.14.0", default-features = false }
 git-version = "0.3.5"
 rand = "0.8.5"
-tracing-opentelemetry = "0.17.2"
-opentelemetry = { version = "0.17.0", features = ["rt-tokio"] }
+tracing-opentelemetry = "0.18"
+opentelemetry = { version = "0.18.0", features = ["rt-tokio"] }
 time = "0.3.9"
 headers = "0.3.7"
 hyper = "0.14.19"
