@@ -121,7 +121,6 @@ async fn main() -> anyhow::Result<()> {
                 let (path, out) = block?;
                 match out {
                     OutType::Dir => {
-                        println!("dir {:?}", path);
                         tokio::fs::create_dir_all(path).await?;
                     }
                     OutType::Reader(mut reader) => {
