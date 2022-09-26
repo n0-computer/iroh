@@ -23,7 +23,7 @@ use iroh_rpc_types::p2p::{
     GetListeningAddrsResponse, GetPeersResponse, GossipsubAllPeersResponse, GossipsubPeerAndTopics,
     GossipsubPeerIdMsg, GossipsubPeersResponse, GossipsubPublishRequest, GossipsubPublishResponse,
     GossipsubSubscribeResponse, GossipsubTopicHashMsg, GossipsubTopicsResponse, Key as ProviderKey,
-    Multiaddrs, P2p as RpcP2p, P2pServerAddr, Providers, VersionResponse,
+    Multiaddrs, P2p as RpcP2p, P2pServerAddr, PeerIdResponse, Providers, VersionResponse,
 };
 
 struct P2p {
@@ -44,6 +44,38 @@ impl RpcP2p for P2p {
         Ok(())
     }
 
+    #[tracing::instrument(skip(self))]
+    async fn external_addrs(&self, _: ()) -> Result<Multiaddrs> {
+        trace!("received ExternalAddrs request");
+
+        let (s, r) = oneshot::channel();
+        let msg = RpcMessage::ExternalAddrs(s);
+
+        self.sender.send(msg).await?;
+
+        let addrs = r.await?;
+
+        Ok(Multiaddrs {
+            addrs: addrs.into_iter().map(|addr| addr.to_vec()).collect(),
+        })
+    }
+
+    #[tracing::instrument(skip(self))]
+    async fn local_peer_id(&self, _: ()) -> Result<PeerIdResponse> {
+        trace!("received LocalPeerId request");
+
+        let (s, r) = oneshot::channel();
+        let msg = RpcMessage::LocalPeerId(s);
+
+        self.sender.send(msg).await?;
+
+        let peer_id = r.await?;
+
+        Ok(PeerIdResponse {
+            peer_id: peer_id.to_bytes(),
+        })
+    }
+
     // TODO: expand to handle multiple cids at once. Probably not a tough fix, just want to push
     // forward right now
     #[tracing::instrument(skip(self, req))]
@@ -54,6 +86,8 @@ impl RpcP2p for P2p {
         let providers = req
             .providers
             .with_context(|| format!("missing providers for: {}", cid))?;
+
+        tracing::debug!("providers: {:?}", providers);
 
         let providers: HashSet<PeerId> = providers
             .providers
@@ -101,6 +135,7 @@ impl RpcP2p for P2p {
             match provider {
                 Ok(new_providers) => {
                     for provider in new_providers {
+                        tracing::debug!("provider: {}", provider);
                         providers.push(provider.to_bytes());
                     }
                 }
@@ -116,6 +151,32 @@ impl RpcP2p for P2p {
         }
 
         Ok(Providers { providers })
+    }
+
+    #[tracing::instrument(skip(self, req))]
+    async fn start_providing(&self, req: ProviderKey) -> Result<()> {
+        trace!("received StartProviding request: {:?}", req.key);
+        let (s, r) = oneshot::channel();
+        let msg = RpcMessage::StartProviding(s, req.key.clone().into());
+
+        self.sender.send(msg).await?;
+
+        let query_id = r.await??;
+
+        tracing::debug!("StartProviding query_id: {:?}", query_id);
+        Ok(())
+    }
+
+    #[tracing::instrument(skip(self, req))]
+    async fn stop_providing(&self, req: ProviderKey) -> Result<()> {
+        trace!("received StopProviding request: {:?}", req.key);
+        let (s, r) = oneshot::channel();
+        let msg = RpcMessage::StopProviding(s, req.key.clone().into());
+
+        self.sender.send(msg).await?;
+
+        r.await??;
+        Ok(())
     }
 
     #[tracing::instrument(skip(self))]
@@ -330,6 +391,8 @@ fn addrs_from_bytes(a: Vec<Vec<u8>>) -> Result<Vec<Multiaddr>> {
 /// Rpc specific messages handled by the p2p node
 #[derive(Debug)]
 pub enum RpcMessage {
+    ExternalAddrs(oneshot::Sender<Vec<Multiaddr>>),
+    LocalPeerId(oneshot::Sender<PeerId>),
     BitswapRequest {
         cids: Vec<Cid>,
         response_channels: Vec<oneshot::Sender<Result<Block, QueryError>>>,
@@ -340,6 +403,8 @@ pub enum RpcMessage {
         key: Key,
         response_channel: mpsc::Sender<Result<HashSet<PeerId>, String>>,
     },
+    StartProviding(oneshot::Sender<Result<libp2p::kad::QueryId>>, Key),
+    StopProviding(oneshot::Sender<Result<()>>, Key),
     NetListeningAddrs(oneshot::Sender<(PeerId, Vec<Multiaddr>)>),
     NetPeers(oneshot::Sender<HashMap<PeerId, Vec<Multiaddr>>>),
     NetConnect(oneshot::Sender<bool>, PeerId, Vec<Multiaddr>),

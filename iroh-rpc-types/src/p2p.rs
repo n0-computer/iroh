@@ -3,6 +3,10 @@ include_proto!("p2p");
 proxy!(
     P2p,
     version: () => VersionResponse,
+    local_peer_id: () => PeerIdResponse,
+    external_addrs: () => Multiaddrs,
+    start_providing: Key => (),
+    stop_providing: Key => (),
     shutdown: () => (),
     fetch_bitswap: BitswapRequest => BitswapResponse,
     fetch_provider: Key => Providers,

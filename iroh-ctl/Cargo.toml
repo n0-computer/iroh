@@ -17,6 +17,7 @@ clap = { version = "3.1.14", features = ["derive"] }
 crossterm = "0.24"
 tonic = "0.8"
 iroh-rpc-client = { path = "../iroh-rpc-client", default-features = false, features = ["grpc", "mem"] }
+iroh-resolver = { path = "../iroh-resolver" }
 config = "0.13.1"
 iroh-util = { path = "../iroh-util" }
 serde = { version = "1.0", features = ["derive"] }
@@ -26,3 +27,4 @@ libp2p = { version = "0.48", default-features = false }
 cid = "0.8.5"
 multiaddr = "0.14.0"
 bytes = "1.1.0"
+async-stream = "0.3.3"

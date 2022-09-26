@@ -1,12 +1,17 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+use anyhow::{Context, Result};
+use cid::Cid;
 use clap::{Parser, Subcommand};
+use futures::Stream;
+use futures::StreamExt;
 use iroh_ctl::{
     gateway::{run_command as run_gateway_command, Gateway},
     p2p::{run_command as run_p2p_command, P2p},
     store::{run_command as run_store_command, Store},
 };
+use iroh_resolver::{resolver, unixfs_builder};
 use iroh_rpc_client::Client;
 use iroh_util::{iroh_config_path, make_config};
 
@@ -14,6 +19,8 @@ use iroh_ctl::{
     config::{Config, CONFIG_FILE_NAME, ENV_PREFIX},
     status,
 };
+
+use iroh_metrics::config::Config as MetricsConfig;
 
 #[derive(Parser, Debug, Clone)]
 #[clap(version, about, long_about = None, propagate_version = true)]
@@ -47,6 +54,22 @@ enum Commands {
     P2p(P2p),
     Store(Store),
     Gateway(Gateway),
+    #[clap(about = "break up a file into block and provide those blocks on the ipfs network")]
+    Add {
+        path: PathBuf,
+        #[clap(long, short)]
+        recursive: bool,
+        #[clap(long, short)]
+        no_wrap: bool,
+    },
+    #[clap(
+        about = "get content based on a Content Identifier from the ipfs network, and save it "
+    )]
+    Get {
+        path: resolver::Path,
+        #[clap(long, short)]
+        output: Option<PathBuf>,
+    },
 }
 
 #[tokio::main(flavor = "multi_thread")]
@@ -67,6 +90,10 @@ async fn main() -> anyhow::Result<()> {
     )
     .unwrap();
 
+    let metrics_handler = iroh_metrics::MetricsHandle::new(MetricsConfig::default())
+        .await
+        .expect("failed to initialize metrics");
+
     let client = Client::new(config.rpc_client).await?;
 
     match cli.command {
@@ -79,7 +106,146 @@ async fn main() -> anyhow::Result<()> {
         Commands::P2p(p2p) => run_p2p_command(client, p2p).await?,
         Commands::Store(store) => run_store_command(client, store).await?,
         Commands::Gateway(gateway) => run_gateway_command(client, gateway).await?,
+        Commands::Add {
+            path,
+            recursive,
+            no_wrap,
+        } => {
+            let cid = add(client, path, recursive, !no_wrap).await?;
+            println!("/ipfs/{}", cid);
+        }
+        Commands::Get { path, output } => {
+            let blocks = get(client.clone(), path, output);
+            tokio::pin!(blocks);
+            while let Some(block) = blocks.next().await {
+                let (path, out) = block?;
+                match out {
+                    OutType::Dir => {
+                        tokio::fs::create_dir_all(path).await?;
+                    }
+                    OutType::Reader(mut reader) => {
+                        if let Some(parent) = path.parent() {
+                            tokio::fs::create_dir_all(parent).await?;
+                        }
+                        let mut f = tokio::fs::File::create(path).await?;
+                        tokio::io::copy(&mut reader, &mut f).await?;
+                    }
+                }
+            }
+        }
     };
 
+    metrics_handler.shutdown();
     Ok(())
+}
+
+// TODO(ramfox): move to the `iroh` api package
+async fn add(client: Client, path: PathBuf, recursive: bool, wrap: bool) -> Result<Cid> {
+    let providing_client = iroh_resolver::unixfs_builder::StoreAndProvideClient {
+        client: Box::new(&client),
+    };
+    if path.is_dir() {
+        unixfs_builder::add_dir(Some(&providing_client), &path, wrap, recursive).await
+    } else if path.is_file() {
+        unixfs_builder::add_file(Some(&providing_client), &path, wrap).await
+    } else {
+        anyhow::bail!("can only add files or directories");
+    }
+}
+
+// TODO(ramfox): move to the `iroh` api package
+enum OutType<T: resolver::ContentLoader> {
+    Dir,
+    Reader(resolver::OutPrettyReader<T>),
+}
+
+// TODO(ramfox): move to the `iroh` api package
+fn get(
+    client: Client,
+    root: resolver::Path,
+    output: Option<PathBuf>,
+) -> impl Stream<Item = Result<(PathBuf, OutType<Client>)>> {
+    tracing::debug!("get {:?}", root);
+    let resolver = iroh_resolver::resolver::Resolver::new(client);
+    let results = resolver.resolve_recursive_with_paths(root.clone());
+    async_stream::try_stream! {
+        tokio::pin!(results);
+        while let Some(res) = results.next().await {
+            let (path, out) = res?;
+            let path = make_output_path(path, root.clone(), output.clone())?;
+            if out.is_dir() {
+                yield (path, OutType::Dir);
+            } else {
+                let reader = out.pretty(resolver.clone(), Default::default())?;
+                yield (path, OutType::Reader(reader));
+            }
+        }
+    }
+}
+
+// move to the `iroh` api package
+// make_output_path adjusts the full path to replace the root with any given output path
+// if it exists
+fn make_output_path(
+    full: resolver::Path,
+    root: resolver::Path,
+    output: Option<PathBuf>,
+) -> Result<PathBuf> {
+    if let Some(ref output) = output {
+        let root_str = &root.to_string()[..];
+        let full_as_path = PathBuf::from(full.to_string());
+        let path_str = full_as_path.to_str().context("invalid root path")?;
+        let output_str = output.to_str().context("invalid output path")?;
+        Ok(PathBuf::from(path_str.replace(root_str, output_str)))
+    } else {
+        // returns path as a string
+        Ok(PathBuf::from(full.to_string_without_type()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::str::FromStr;
+
+    #[test]
+    fn test_make_output_path() {
+        // test with output dir
+        let root = resolver::Path::from_str("/ipfs/QmYbcW4tXLXHWw753boCK8Y7uxLu5abXjyYizhLznq9PUR")
+            .unwrap();
+        let full = resolver::Path::from_str(
+            "/ipfs/QmYbcW4tXLXHWw753boCK8Y7uxLu5abXjyYizhLznq9PUR/bar.txt",
+        )
+        .unwrap();
+        let output = Some(PathBuf::from("foo"));
+        let expect = PathBuf::from("foo/bar.txt");
+        let got = make_output_path(full, root, output).unwrap();
+        assert_eq!(expect, got);
+
+        // test with output filepath
+        let root = resolver::Path::from_str(
+            "/ipfs/QmYbcW4tXLXHWw753boCK8Y7uxLu5abXjyYizhLznq9PUR/bar.txt",
+        )
+        .unwrap();
+        let full = resolver::Path::from_str(
+            "/ipfs/QmYbcW4tXLXHWw753boCK8Y7uxLu5abXjyYizhLznq9PUR/bar.txt",
+        )
+        .unwrap();
+        let output = Some(PathBuf::from("foo/baz.txt"));
+        let expect = PathBuf::from("foo/baz.txt");
+        let got = make_output_path(full, root, output).unwrap();
+        assert_eq!(expect, got);
+
+        // test no output path
+        let root = resolver::Path::from_str("/ipfs/QmYbcW4tXLXHWw753boCK8Y7uxLu5abXjyYizhLznq9PUR")
+            .unwrap();
+        let full = resolver::Path::from_str(
+            "/ipfs/QmYbcW4tXLXHWw753boCK8Y7uxLu5abXjyYizhLznq9PUR/bar.txt",
+        )
+        .unwrap();
+        let output = None;
+        let expect = PathBuf::from("QmYbcW4tXLXHWw753boCK8Y7uxLu5abXjyYizhLznq9PUR/bar.txt");
+        let got = make_output_path(full, root, output).unwrap();
+        assert_eq!(expect, got);
+    }
 }

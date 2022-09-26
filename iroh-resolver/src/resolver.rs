@@ -1,5 +1,5 @@
 use std::collections::VecDeque;
-use std::fmt::{self, Display, Formatter};
+use std::fmt::{self, Debug, Display, Formatter};
 use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -65,6 +65,14 @@ impl Path {
     pub fn push(&mut self, str: impl AsRef<str>) {
         self.tail.push(str.as_ref().to_owned());
     }
+
+    pub fn to_string_without_type(&self) -> String {
+        let mut s = format!("{}", self.root);
+        for part in &self.tail {
+            s.push_str(&format!("/{}", part)[..]);
+        }
+        s
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -76,8 +84,8 @@ pub enum CidOrDomain {
 impl Display for CidOrDomain {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
-            CidOrDomain::Cid(c) => c.fmt(f),
-            CidOrDomain::Domain(s) => s.fmt(f),
+            CidOrDomain::Cid(c) => std::fmt::Display::fmt(&c, f),
+            CidOrDomain::Domain(s) => std::fmt::Display::fmt(&s, f),
         }
     }
 }
@@ -178,6 +186,18 @@ impl Out {
 
     pub fn links(&self) -> Result<Vec<Cid>> {
         self.content.links()
+    }
+
+    /// Returns links with an associated file or directory name if the content
+    /// is unixfs
+    pub fn named_links(&self) -> Result<Vec<(Option<&str>, Cid)>> {
+        match &self.content {
+            OutContent::Unixfs(node) => node.links().map(|l| l.map(|l| (l.name, l.cid))).collect(),
+            _ => {
+                let links = self.content.links();
+                links.map(|l| l.into_iter().map(|l| (None, l)).collect())
+            }
+        }
     }
 
     /// Returns a stream over the content of this directory.
@@ -295,6 +315,18 @@ pub enum OutPrettyReader<T: ContentLoader> {
     DagCbor(BytesReader),
     DagJson(BytesReader),
     Raw(BytesReader),
+}
+
+impl<T: ContentLoader> Debug for OutPrettyReader<T> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            OutPrettyReader::DagPb(_) => write!(f, "OutPrettyReader::DabPb"),
+            OutPrettyReader::Unixfs(_) => write!(f, "OutPrettyReader::Unixfs"),
+            OutPrettyReader::DagCbor(_) => write!(f, "OutPrettyReader::DagCbor"),
+            OutPrettyReader::DagJson(_) => write!(f, "OutPrettyReader::DagJson"),
+            OutPrettyReader::Raw(_) => write!(f, "OutPrettyReader::Raw"),
+        }
+    }
 }
 
 impl<T: ContentLoader> OutPrettyReader<T> {
@@ -472,6 +504,48 @@ impl<T: ContentLoader> Resolver<T> {
 
     pub fn loader(&self) -> &T {
         &self.loader
+    }
+
+    #[tracing::instrument(skip(self))]
+    pub fn resolve_recursive_with_paths(
+        &self,
+        root: Path,
+    ) -> impl Stream<Item = Result<(Path, Out)>> {
+        let mut blocks = VecDeque::new();
+        let this = self.clone();
+        async_stream::try_stream! {
+            let output_path = root.clone();
+            blocks.push_back((output_path, this.resolve(root).await));
+            loop {
+                if let Some((current_output_path, current_out)) = blocks.pop_front() {
+                    let current = current_out?;
+                    let links = current.named_links()?;
+                    // TODO: configurable limit
+                    for link_chunk in links.chunks(8) {
+                        let next = futures::future::join_all(
+                            link_chunk.iter().map(|(link_name, link)| {
+                                let this = this.clone();
+                                let mut this_path = current_output_path.clone();
+                                match link_name {
+                                    None => this_path.push(link.to_string()),
+                                    Some(p) =>  this_path.push(p),
+                                };
+                                async move {
+                                    (this_path, this.resolve(Path::from_cid(*link)).await)
+                                }
+                            })
+                        ).await;
+                        for res in next.into_iter() {
+                            blocks.push_back(res);
+                        }
+                    }
+                    yield (current_output_path, current);
+                } else {
+                    // no links left to resolve
+                    break;
+                }
+            }
+        }
     }
 
     #[tracing::instrument(skip(self))]
@@ -2032,5 +2106,74 @@ mod tests {
                 panic!("invalid result: {:?}", ipld_txt);
             }
         }
+    }
+
+    #[tokio::test]
+    async fn test_resolve_recursive_with_path() {
+        // Test content
+        // ------------
+        // QmaRGe7bVmVaLmxbrMiVNXqW4pRNNp3xq7hFtyRKA3mtJL foo/bar/bar.txt
+        //   contains: "world"
+        // QmZULkCELmmk5XNfCgTnCyFgAVxBRBXyDHGGMVoLFLiXEN foo/hello.txt
+        //   contains: "hello"
+        // QmcHTZfwWWYG2Gbv9wR6bWZBvAgpFV5BcDoLrC2XMCkggn foo/bar
+        // QmdkGfDx42RNdAZFALHn5hjHqUq7L9o6Ef4zLnFEu3Y4Go foo
+
+        let bar_txt_cid_str = "QmaRGe7bVmVaLmxbrMiVNXqW4pRNNp3xq7hFtyRKA3mtJL";
+        let bar_txt_block_bytes = load_fixture(bar_txt_cid_str).await;
+
+        let bar_cid_str = "QmcHTZfwWWYG2Gbv9wR6bWZBvAgpFV5BcDoLrC2XMCkggn";
+        let bar_block_bytes = load_fixture(bar_cid_str).await;
+
+        let hello_txt_cid_str = "QmZULkCELmmk5XNfCgTnCyFgAVxBRBXyDHGGMVoLFLiXEN";
+        let hello_txt_block_bytes = load_fixture(hello_txt_cid_str).await;
+
+        // read root
+        let root_cid_str = "QmdkGfDx42RNdAZFALHn5hjHqUq7L9o6Ef4zLnFEu3Y4Go";
+        let root_cid: Cid = root_cid_str.parse().unwrap();
+        let root_block_bytes = load_fixture(root_cid_str).await;
+        let root_block = UnixfsNode::decode(&root_cid, root_block_bytes.clone()).unwrap();
+
+        let links: Vec<_> = root_block.links().collect::<Result<_>>().unwrap();
+        assert_eq!(links.len(), 2);
+
+        assert_eq!(links[0].cid, bar_cid_str.parse().unwrap());
+        assert_eq!(links[0].name.unwrap(), "bar");
+
+        assert_eq!(links[1].cid, hello_txt_cid_str.parse().unwrap());
+        assert_eq!(links[1].name.unwrap(), "hello.txt");
+
+        let loader: HashMap<Cid, Bytes> = [
+            (root_cid, root_block_bytes.clone()),
+            (hello_txt_cid_str.parse().unwrap(), hello_txt_block_bytes),
+            (bar_cid_str.parse().unwrap(), bar_block_bytes),
+            (bar_txt_cid_str.parse().unwrap(), bar_txt_block_bytes),
+        ]
+        .into_iter()
+        .collect();
+        let loader = Arc::new(loader);
+        let resolver = Resolver::new(loader.clone());
+
+        let path = format!("/ipfs/{root_cid_str}");
+        let results: Vec<_> = resolver
+            .resolve_recursive_with_paths(path.parse().unwrap())
+            .try_collect()
+            .await
+            .unwrap();
+        assert_eq!(results.len(), 4);
+
+        assert_eq!(results[0].0.to_string(), format!("/ipfs/{root_cid_str}"));
+        assert_eq!(
+            results[1].0.to_string(),
+            format!("/ipfs/{root_cid_str}/bar")
+        );
+        assert_eq!(
+            results[2].0.to_string(),
+            format!("/ipfs/{root_cid_str}/hello.txt")
+        );
+        assert_eq!(
+            results[3].0.to_string(),
+            format!("/ipfs/{root_cid_str}/bar/bar.txt")
+        );
     }
 }
