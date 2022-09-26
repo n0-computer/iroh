@@ -1,15 +1,11 @@
-use anyhow::Error;
-use std::collections::HashSet;
 use std::path::PathBuf;
 use std::str::FromStr;
 
-use anyhow::Result;
-use bytes::Bytes;
+use anyhow::{Error, Result};
 use cid::Cid;
 use clap::{Args, Subcommand};
-use iroh_rpc_client::Client;
-use libp2p::{gossipsub::TopicHash, Multiaddr, PeerId};
-use tokio::{fs::File, io::stdin, io::AsyncReadExt};
+use iroh::api;
+use libp2p::{Multiaddr, PeerId};
 
 #[derive(Args, Debug, Clone)]
 #[clap(about = "Manage peer-2-peer networking.")]
@@ -224,49 +220,51 @@ pub enum GossipsubCommands {
     },
 }
 
-pub async fn run_command(rpc: Client, cmd: P2p) -> Result<()> {
+pub async fn run_command<P: api::P2p>(p2p: P, cmd: P2p) -> Result<()> {
     match cmd.command {
         P2pCommands::Version => {
-            let v = rpc.try_p2p()?.version().await?;
-            println!("v{}", v);
+            let version = p2p.p2p_version().await?;
+            println!("v{}", version);
         }
         P2pCommands::PeerId => {
-            let peer_id = rpc.try_p2p()?.local_peer_id().await?;
+            let peer_id = p2p.local_peer_id().await?;
             println!("{}", peer_id);
         }
         P2pCommands::Addrs(addrs) => match addrs.command {
             None => {
-                let addrs = rpc.try_p2p()?.get_peers().await?;
-                println!("{:#?}", addrs);
+                let peer_map = p2p.peers().await?;
+                println!("{:#?}", peer_map);
             }
             Some(AddrsCommands::Listen) => {
-                let addrs = rpc.try_p2p()?.get_listening_addrs().await?;
+                let addrs = p2p.addrs_listen().await?;
                 println!("{:#?}", addrs);
             }
             Some(AddrsCommands::Local) => {
-                let addrs = rpc.try_p2p()?.external_addresses().await?;
+                let addrs = p2p.addrs_local().await?;
                 println!("external addressses:");
                 addrs.iter().for_each(|a| println!("\t:{:?}", a));
             }
         },
         P2pCommands::Connect { peer_id, addrs } => {
-            rpc.try_p2p()?.connect(peer_id, addrs).await?;
+            p2p.connect(&peer_id, &addrs).await?;
             println!("connected to {}", peer_id);
         }
         P2pCommands::Disconnect { peer_id } => {
-            rpc.try_p2p()?.disconnect(peer_id).await?;
+            p2p.disconnect(&peer_id).await?;
             println!("disconnected from {}", peer_id);
         }
         P2pCommands::Peers => {
-            let peers: Vec<PeerId> = rpc.try_p2p()?.get_peers().await?.into_keys().collect();
-            println!("{:#?}", peers);
+            let peer_ids = p2p.peer_ids().await?;
+            for peer_id in peer_ids {
+                println!("{}", peer_id);
+            }
         }
         P2pCommands::Ping { ping_args, count } => {
             todo!("{:?} {:?}", ping_args, count);
         }
         P2pCommands::Dht(d) => match d.command {
             DhtCommands::FindProvs { cid } => {
-                let providers = rpc.try_p2p()?.fetch_providers(&cid).await?;
+                let providers = p2p.fetch_providers(&cid).await?;
                 for prov in providers {
                     println!("{}", prov);
                 }
@@ -278,40 +276,33 @@ pub async fn run_command(rpc: Client, cmd: P2p) -> Result<()> {
         }
         P2pCommands::Dev(dev) => match dev.command {
             DevCommands::FetchBitswap { cid, providers } => {
-                let providers = HashSet::from_iter(providers.into_iter());
-                let res = rpc.try_p2p()?.fetch_bitswap(cid, providers).await?;
+                let res = p2p.fetch_bitswap(&cid, &providers).await?;
                 println!("{:#?}", res);
             }
             DevCommands::FetchProviders { cid } => {
-                let res = rpc.try_p2p()?.fetch_providers(&cid).await?;
+                let res = p2p.fetch_providers(&cid).await?;
                 println!("{:#?}", res);
             }
             DevCommands::Gossipsub(g) => match g.command {
                 GossipsubCommands::Publish { topic, file } => {
-                    let mut v: Vec<u8> = Vec::new();
-                    if let Some(file) = file {
-                        let mut f = File::open(file).await?;
-                        f.read_to_end(&mut v).await?;
-                    } else {
-                        stdin().read_to_end(&mut v).await?;
-                    }
-                    let message_id = rpc
-                        .try_p2p()?
-                        .gossipsub_publish(TopicHash::from_raw(topic), Bytes::from(v))
-                        .await?;
+                    let message_id = p2p.publish(&topic, file.as_deref()).await?;
                     println!("Message Id: {}", message_id);
                 }
                 GossipsubCommands::Subscribe { topic } => {
-                    rpc.try_p2p()?
-                        .gossipsub_subscribe(TopicHash::from_raw(topic.clone()))
-                        .await?;
-                    println!("Subscribed to {}", topic);
+                    let success = p2p.subscribe(&topic).await?;
+                    if success {
+                        println!("Subscribed to {}", topic);
+                    } else {
+                        println!("Failed to subscribe to {}", topic);
+                    }
                 }
                 GossipsubCommands::Unsubscribe { topic } => {
-                    rpc.try_p2p()?
-                        .gossipsub_unsubscribe(TopicHash::from_raw(topic.clone()))
-                        .await?;
-                    println!("Unsubscribed from {}", topic);
+                    let success = p2p.unsubscribe(&topic).await?;
+                    if success {
+                        println!("Unsubscribed from {}", topic);
+                    } else {
+                        println!("Failed to unsubscribe from {}", topic);
+                    }
                 }
             },
         },

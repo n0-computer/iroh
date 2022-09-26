@@ -2,10 +2,16 @@
 name = "iroh-ctl"
 version = "0.1.0"
 edition = "2021"
-authors = ["Kasey Huizinga <klhuizinga@gmail.com>"]
+authors = ["Kasey Huizinga <klhuizinga@gmail.com>", "Martijn Faassen <faassen@startifact.com>"]
 license = "Apache-2.0/MIT"
 repository = "https://github.com/n0-computer/iroh"
 description = "Client for interacting with running iroh processes."
+default-run = "iroh-ctl"
+
+[[bin]]
+bench = false
+path = "src/main.rs"
+name = "iroh-ctl"
 
 [dependencies]
 anyhow = "1.0"
@@ -23,6 +29,7 @@ iroh-util = { path = "../iroh-util" }
 serde = { version = "1.0", features = ["derive"] }
 git-version = "0.3.5"
 iroh-metrics = { path = "../iroh-metrics", default-features = false, features = ["rpc-grpc"] }
+iroh = { path = "../iroh"}
 libp2p = { version = "0.49", default-features = false }
 cid = "0.8.5"
 multiaddr = "0.14.0"

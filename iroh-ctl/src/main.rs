@@ -6,6 +6,7 @@ use cid::Cid;
 use clap::{Parser, Subcommand};
 use futures::Stream;
 use futures::StreamExt;
+use iroh::{api, Api};
 use iroh_ctl::{
     gateway::{run_command as run_gateway_command, Gateway},
     p2p::{run_command as run_p2p_command, P2p},
@@ -44,12 +45,12 @@ impl Cli {
 #[derive(Subcommand, Debug, Clone)]
 enum Commands {
     /// status checks the health of the different processes
-    #[clap(about = "Check the health of the different iroh processes.")]
-    Status {
-        #[clap(short, long)]
-        /// when true, updates the status table whenever a change in a process's status occurs
-        watch: bool,
-    },
+    // #[clap(about = "Check the health of the different iroh processes.")]
+    // Status {
+    //     #[clap(short, long)]
+    //     /// when true, updates the status table whenever a change in a process's status occurs
+    //     watch: bool,
+    // },
     Version,
     P2p(P2p),
     Store(Store),
@@ -96,46 +97,60 @@ async fn main() -> anyhow::Result<()> {
 
     let client = Client::new(config.rpc_client).await?;
 
+    let api = Api::new(&client);
+
+    run_cli_command(&api, cli).await?;
+
+    metrics_handler.shutdown();
+
+    Ok(())
+}
+
+async fn run_cli_command<A: api::Api<P, S>, P: api::P2p, S: api::Store>(
+    api: &A,
+    cli: Cli,
+) -> Result<()> {
     match cli.command {
-        Commands::Status { watch } => {
-            crate::status::status(client, watch).await?;
-        }
+        // Commands::Status { watch } => {
+        //     crate::status::status(client, watch).await?;
+        // }
         Commands::Version => {
             println!("v{}", env!("CARGO_PKG_VERSION"));
         }
-        Commands::P2p(p2p) => run_p2p_command(client, p2p).await?,
-        Commands::Store(store) => run_store_command(client, store).await?,
-        Commands::Gateway(gateway) => run_gateway_command(client, gateway).await?,
+        Commands::P2p(p2p) => run_p2p_command(api.p2p()?, p2p).await?,
+        Commands::Store(store) => run_store_command(api.store()?, store).await?,
+        Commands::Gateway(gateway) => run_gateway_command(gateway).await?,
         Commands::Add {
             path,
             recursive,
             no_wrap,
         } => {
-            let cid = add(client, path, recursive, !no_wrap).await?;
-            println!("/ipfs/{}", cid);
+            todo!("Requires ClientApi modifications");
+            // let cid = add(client, path, recursive, !no_wrap).await?;
+            // println!("/ipfs/{}", cid);
         }
         Commands::Get { path, output } => {
-            let blocks = get(client.clone(), path, output);
-            tokio::pin!(blocks);
-            while let Some(block) = blocks.next().await {
-                let (path, out) = block?;
-                match out {
-                    OutType::Dir => {
-                        tokio::fs::create_dir_all(path).await?;
-                    }
-                    OutType::Reader(mut reader) => {
-                        if let Some(parent) = path.parent() {
-                            tokio::fs::create_dir_all(parent).await?;
-                        }
-                        let mut f = tokio::fs::File::create(path).await?;
-                        tokio::io::copy(&mut reader, &mut f).await?;
-                    }
-                }
-            }
+            todo!("Requires ClientApi modifications");
+            // let blocks = get(client.clone(), path, output);
+            // tokio::pin!(blocks);
+            // while let Some(block) = blocks.next().await {
+            //     let (path, out) = block?;
+            //     match out {
+            //         OutType::Dir => {
+            //             tokio::fs::create_dir_all(path).await?;
+            //         }
+            //         OutType::Reader(mut reader) => {
+            //             if let Some(parent) = path.parent() {
+            //                 tokio::fs::create_dir_all(parent).await?;
+            //             }
+            //             let mut f = tokio::fs::File::create(path).await?;
+            //             tokio::io::copy(&mut reader, &mut f).await?;
+            //         }
+            //     }
+            // }
         }
     };
 
-    metrics_handler.shutdown();
     Ok(())
 }
 
