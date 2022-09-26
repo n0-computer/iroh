@@ -24,5 +24,9 @@ proxy!(
     gossipsub_remove_explicit_peer: GossipsubPeerIdMsg => () =>  (),
     gossipsub_subscribe: GossipsubTopicHashMsg => GossipsubSubscribeResponse =>  GossipsubSubscribeResponse,
     gossipsub_topics: () => GossipsubTopicsResponse =>  GossipsubTopicsResponse,
-    gossipsub_unsubscribe: GossipsubTopicHashMsg => GossipsubSubscribeResponse => GossipsubSubscribeResponse
+    gossipsub_unsubscribe: GossipsubTopicHashMsg => GossipsubSubscribeResponse => GossipsubSubscribeResponse,
+    start_providing: Key => () => (),
+    stop_providing: Key => () => (),
+    local_peer_id: () => PeerIdResponse => PeerIdResponse,
+    external_addrs: () => Multiaddrs => Multiaddrs
 );

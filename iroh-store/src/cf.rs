@@ -24,6 +24,7 @@ pub struct Versioned<T>(#[with(AsBox)] pub T);
 #[repr(C)]
 #[archive_attr(repr(C), derive(CheckBytes))]
 pub struct MetadataV0 {
+    /// The codec of the original CID.
     pub codec: u64,
     pub multihash: Vec<u8>,
 }
@@ -32,6 +33,5 @@ pub struct MetadataV0 {
 #[repr(C)]
 #[archive_attr(repr(C), derive(CheckBytes))]
 pub struct GraphV0 {
-    /// The codec of the original CID.
     pub children: Vec<u64>,
 }

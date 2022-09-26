@@ -16,7 +16,7 @@ use libp2p::identity::Keypair;
 use libp2p::kad::kbucket::{Distance, NodeStatus};
 use libp2p::kad::BootstrapOk;
 use libp2p::kad::{
-    self, record::Key, GetProvidersError, GetProvidersOk, KademliaEvent, QueryResult,
+    self, record::Key, GetProvidersError, GetProvidersOk, KademliaEvent, QueryId, QueryResult,
 };
 use libp2p::metrics::Recorder;
 use libp2p::swarm::dial_opts::{DialOpts, PeerCondition};
@@ -74,6 +74,7 @@ pub struct Node<KeyStorage: Storage> {
     _keychain: Keychain<KeyStorage>,
     kad_last_range: Option<(Distance, Distance)>,
     rpc_task: JoinHandle<()>,
+    use_dht: bool,
 }
 
 #[derive(Default)]
@@ -132,7 +133,6 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
             ..
         } = config;
 
-        let listening_multiaddr = libp2p_config.listening_multiaddr.clone();
         let rpc_task = tokio::task::spawn(async move {
             // TODO: handle error
             rpc::new(rpc_addr, network_sender_in).await.unwrap()
@@ -145,7 +145,8 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
         let keypair = load_identity(&mut keychain).await?;
         let mut swarm = build_swarm(&libp2p_config, &keypair, rpc_client.clone()).await?;
 
-        Swarm::listen_on(&mut swarm, listening_multiaddr).unwrap();
+        Swarm::listen_on(&mut swarm, libp2p_config.listening_multiaddr.clone()).unwrap();
+        println!("{}", libp2p_config.listening_multiaddr);
 
         Ok(Node {
             swarm,
@@ -158,6 +159,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
             _keychain: keychain,
             kad_last_range: None,
             rpc_task,
+            use_dht: libp2p_config.kademlia,
         })
     }
 
@@ -165,7 +167,11 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
     pub async fn run(&mut self) -> anyhow::Result<()> {
         info!("Local Peer ID: {}", self.swarm.local_peer_id());
 
-        let mut nice_interval = tokio::time::interval(NICE_INTERVAL);
+        let mut nice_interval = if self.use_dht {
+            Some(tokio::time::interval(NICE_INTERVAL))
+        } else {
+            None
+        };
         let mut bootstrap_interval = tokio::time::interval(BOOTSTRAP_INTERVAL);
         let mut expiry_interval = tokio::time::interval(EXPIRY_INTERVAL);
 
@@ -204,22 +210,27 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                         }
                     }
                 }
-                _ = expiry_interval.tick() => {
-                    trace!("tick:expiry: expiry");
-
-                    if let Err(err) = self.expiry() {
-                        warn!("expiry error {:?}", err);
+                _ = async {
+                    if let Some(ref mut nice_interval) = nice_interval {
+                        nice_interval.tick().await
+                    } else {
+                        unreachable!()
                     }
-                }
-                _ = nice_interval.tick() => {
-                    trace!("tick:timer: nice");
+                }, if nice_interval.is_some() => {
+                    // Print peer count on an interval.
                     info!("Peers connected: {:?}", self.swarm.connected_peers().count());
-                    self.dht_nice_tick().await;
                 }
                 _ = bootstrap_interval.tick() => {
                     trace!("tick:bootstrap: nice");
                     if let Err(e) = self.swarm.behaviour_mut().kad_bootstrap() {
                         warn!("kad bootstrap failed: {:?}", e);
+                    }
+                }
+                _ = expiry_interval.tick() => {
+                    trace!("tick:expiry: expiry");
+
+                    if let Err(err) = self.expiry() {
+                        warn!("expiry error {:?}", err);
                     }
                 }
             }
@@ -352,6 +363,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                 if num_established == 1.try_into().unwrap() {
                     self.emit_network_event(NetworkEvent::PeerConnected(peer_id));
                 }
+                debug!("ConnectionEstablished: {:}", peer_id);
                 Ok(())
             }
             SwarmEvent::ConnectionClosed {
@@ -362,6 +374,8 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                 if num_established == 0 {
                     self.emit_network_event(NetworkEvent::PeerDisconnected(peer_id));
                 }
+
+                debug!("ConnectionClosed: {:}", peer_id);
                 Ok(())
             }
             SwarmEvent::OutgoingConnectionError { peer_id, error } => {
@@ -598,6 +612,19 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
     fn handle_rpc_message(&mut self, message: RpcMessage) -> Result<bool> {
         // Inbound messages
         match message {
+            RpcMessage::ExternalAddrs(response_channel) => {
+                response_channel
+                    .send(
+                        self.swarm
+                            .external_addresses()
+                            .map(|r| r.addr.clone())
+                            .collect(),
+                    )
+                    .ok();
+            }
+            RpcMessage::LocalPeerId(response_channel) => {
+                response_channel.send(*self.swarm.local_peer_id()).ok();
+            }
             RpcMessage::BitswapRequest {
                 ctx,
                 cids,
@@ -699,6 +726,27 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                     }
                 }
             },
+            RpcMessage::StartProviding(response_channel, key) => {
+                if let Some(kad) = self.swarm.behaviour_mut().kad.as_mut() {
+                    let res: Result<QueryId> = kad.start_providing(key).map_err(|e| e.into());
+                    // TODO: wait for kad to process the query request before returning
+                    response_channel.send(res).ok();
+                } else {
+                    response_channel
+                        .send(Err(anyhow!("kademlia is not available")))
+                        .ok();
+                }
+            }
+            RpcMessage::StopProviding(response_channel, key) => {
+                if let Some(kad) = self.swarm.behaviour_mut().kad.as_mut() {
+                    kad.stop_providing(&key);
+                    response_channel.send(Ok(())).ok();
+                } else {
+                    response_channel
+                        .send(Err(anyhow!("kademlia is not availalbe")))
+                        .ok();
+                }
+            }
             RpcMessage::NetListeningAddrs(response_channel) => {
                 let mut listeners: Vec<_> = Swarm::listeners(&self.swarm).cloned().collect();
                 let peer_id = *Swarm::local_peer_id(&self.swarm);

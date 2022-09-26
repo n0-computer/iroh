@@ -11,9 +11,9 @@ repository = "https://github.com/n0-computer/iroh"
 tracing = "0.1.33"
 tracing-futures = "0.2.5"
 tracing-subscriber = { version = "0.3.11", features = ["env-filter"] }
-tracing-opentelemetry = "0.17.2"
-opentelemetry = { version = "0.17.0", features = ["rt-tokio"] }
-opentelemetry-otlp = { version = "0.10.0", features = ["tonic"] }
+tracing-opentelemetry = "0.18"
+opentelemetry = { version = "0.18.0", features = ["rt-tokio"] }
+opentelemetry-otlp = { version = "0.11.0", features = ["tonic"] }
 metrics = "0.20.1"
 metrics-util = "0.14"
 metrics-exporter-prometheus = { version = "0.11", features = ["push-gateway"]}

@@ -43,7 +43,7 @@ async fn main_inner() -> Result<()> {
         }
     }
 
-    let kc = Keychain::<DiskStorage>::new().await?;
+    let kc = Keychain::<DiskStorage>::new(network_config.key_store_path.clone()).await?;
     let rpc_addr = network_config
         .server_rpc_addr()?
         .ok_or_else(|| anyhow!("missing p2p rpc addr"))?;

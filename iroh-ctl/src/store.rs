@@ -1,8 +1,10 @@
+use std::io::prelude::*;
 use std::path::PathBuf;
 
 use anyhow::Result;
 use cid::Cid;
 use clap::{Args, Subcommand};
+use iroh_resolver::unixfs_builder;
 use iroh_rpc_client::Client;
 
 #[derive(Args, Debug, Clone)]
@@ -31,13 +33,9 @@ pub struct Block {
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum BlockCommands {
-    #[clap(about = "Get a raw IPFS block.")]
+    #[clap(about = "Get a raw IPFS block from the store & print the content to stdout")]
     Get { cid: Cid },
-    #[clap(
-        about = "Store input as an IPFS block.
-Not yet implemented.",
-        hide = true
-    )]
+    #[clap(about = "Store input as an IPFS block.")]
     Put { path: PathBuf },
     #[clap(
         about = "Remove IPFS block(s).
@@ -58,10 +56,15 @@ pub async fn run_command(rpc: Client, cmd: Store) -> Result<()> {
         StoreCommands::Block(block) => match block.command {
             BlockCommands::Get { cid } => {
                 let b = rpc.try_store()?.get(cid).await?;
-                println!("{:?}\n", b);
+                if let Some(b) = b {
+                    std::io::stdout().write_all(&b)?;
+                } else {
+                    println!("local store does not contain block {}", cid);
+                }
             }
             BlockCommands::Put { path } => {
-                todo!("`block put` command not yet implemented - path {:?}", path);
+                let cid = unixfs_builder::add_file(Some(&rpc), path.as_path(), false).await?;
+                println!("/ipfs/{}\n", cid);
             }
             BlockCommands::Rm { cid } => {
                 todo!(
