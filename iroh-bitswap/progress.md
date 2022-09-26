@@ -63,14 +63,16 @@
 
 ### Network
 
-- [ ] `./network/connecteventmanager.go` (218)
+- [x] `./network/connecteventmanager.go` (218)
   - will be tracked inside the ConnectionHandler
-- [ ] `./network/internal/default.go` (23)
+- [x] `./network/internal/default.go` (23)
   - just the list of supported protocols
 - [ ] `./network/ipfs_impl.go` (472)
   - mostly ConnectionHandler & interface
-- [ ] `./network/interface.go` (111)
-- [ ] `./network/options.go` (22)
+- [x] `./network/interface.go` (111)
+  - not really needed
+- [x] `./network/options.go` (22)
+  - not needed
 
 ### Message
 

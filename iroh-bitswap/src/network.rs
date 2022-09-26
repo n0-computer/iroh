@@ -14,8 +14,9 @@ use crate::{message::BitswapMessage, protocol::ProtocolId, BitswapEvent};
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_SEND_TIMEOUT: Duration = Duration::from_secs(2 * 60);
 const MIN_SEND_TIMEOUT: Duration = Duration::from_secs(2);
+const SEND_LATENCY: Duration = Duration::from_secs(2);
 // 100kbit/s
-const MIN_SEND_RATE: usize = (100 * 1000) / 8;
+const MIN_SEND_RATE: u64 = (100 * 1000) / 8;
 
 #[derive(Debug, Clone)]
 pub struct Network {
@@ -84,7 +85,6 @@ impl Network {
         backoff: Duration,
     ) -> Result<()> {
         let timeout = crossbeam::channel::after(timeout);
-        self.dial(peer)?;
         let (s, r) = crossbeam::channel::bounded(1);
         self.network_out_sender
             .send(OutEvent::SendMessage {
@@ -126,13 +126,22 @@ impl Network {
         bail!("Failed to send message to {}: {:?}", peer, errors);
     }
 
-    fn dial(&self, peer: PeerId) -> Result<(ConnectionId, ProtocolId)> {
+    fn dial(&self, peer: PeerId, timeout: Duration) -> Result<(ConnectionId, ProtocolId)> {
+        let timeout = crossbeam::channel::after(timeout);
         let (s, r) = crossbeam::channel::bounded(1);
         self.network_out_sender
             .send(OutEvent::Dial(peer, s))
             .map_err(|e| anyhow!("channel send: {:?}", e))?;
-        let res = r.recv()?.map_err(|e| anyhow!("Dial Error: {}", e))?;
-        Ok(res)
+
+        crossbeam::channel::select! {
+            recv(timeout) -> _ => {
+                bail!("Dialing {} timeout", peer);
+            }
+            recv(r) -> res => {
+                let res = res?.map_err(|e| anyhow!("Dial Error: {}", e))?;
+                Ok(res)
+            }
+        }
     }
 
     pub fn new_message_sender(
@@ -140,7 +149,7 @@ impl Network {
         to: PeerId,
         config: MessageSenderConfig,
     ) -> Result<MessageSender> {
-        let (connection_id, protocol_id) = self.dial(to)?;
+        let (connection_id, protocol_id) = self.dial(to, CONNECT_TIMEOUT)?;
 
         Ok(MessageSender {
             to,
@@ -152,12 +161,14 @@ impl Network {
     }
 
     pub fn send_message(&self, peer: PeerId, message: BitswapMessage) -> Result<()> {
+        self.dial(peer, CONNECT_TIMEOUT)?;
+        let timeout = send_timeout(message.encoded_len());
         self.send_message_with_retry_and_timeout(
             peer,
             None,
             message,
             1,
-            CONNECT_TIMEOUT,
+            timeout,
             Duration::from_millis(0),
         )
     }
@@ -193,6 +204,19 @@ impl Default for MessageSenderConfig {
             send_timeout: MAX_SEND_TIMEOUT,
             send_error_backoff: Duration::from_millis(100),
         }
+    }
+}
+
+/// Calculates an appropriate timeout based on the message size.
+fn send_timeout(size: usize) -> Duration {
+    let mut timeout = SEND_LATENCY;
+    timeout += Duration::from_secs(size as u64 / MIN_SEND_RATE);
+    if timeout > MAX_SEND_TIMEOUT {
+        MAX_SEND_TIMEOUT
+    } else if timeout < MIN_SEND_TIMEOUT {
+        MIN_SEND_TIMEOUT
+    } else {
+        timeout
     }
 }
 

@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use ahash::AHashSet;
 use cid::Cid;
 
@@ -14,6 +16,10 @@ impl DontHaveTimeoutManager {
     }
 
     pub fn cancel_pending(&self, cancels: &AHashSet<Cid>) {
+        todo!()
+    }
+
+    pub fn update_message_latency(&self, latency: Duration) {
         todo!()
     }
 }

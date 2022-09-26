@@ -208,8 +208,8 @@ impl BitswapMessage {
         self.wantlist.remove(cid);
     }
 
-    pub fn cancel(&mut self, cid: Cid) {
-        self.add_full_entry(cid, 0, true, WantType::Block, false);
+    pub fn cancel(&mut self, cid: Cid) -> usize {
+        self.add_full_entry(cid, 0, true, WantType::Block, false)
     }
 
     pub fn add_entry(
@@ -218,8 +218,8 @@ impl BitswapMessage {
         priority: Priority,
         want_type: WantType,
         send_dont_have: bool,
-    ) {
-        self.add_full_entry(cid, priority, false, want_type, send_dont_have);
+    ) -> usize {
+        self.add_full_entry(cid, priority, false, want_type, send_dont_have)
     }
 
     fn add_full_entry(

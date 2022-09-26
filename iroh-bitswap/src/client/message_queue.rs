@@ -8,6 +8,7 @@ use ahash::{AHashMap, AHashSet};
 use cid::Cid;
 use crossbeam::channel::Sender;
 use libp2p::{ping::PingResult, PeerId};
+use tracing::warn;
 
 use crate::{
     message::{BitswapMessage, Entry, WantType},
@@ -23,16 +24,20 @@ mod dont_have_timeout_manager;
 
 #[derive(Debug, Clone)]
 pub struct MessageQueue {
-    // TODO: likely need an Arc<lock>
+    inner: Arc<Inner>,
+    dh_timeout_manager: DontHaveTimeoutManager,
+    wants: Arc<Mutex<Wants>>,
+}
+
+#[derive(Debug)]
+struct Inner {
     peer: PeerId,
     network: Network,
     send_error_backoff: Duration,
     max_valid_latency: Duration,
     responses: Sender<Vec<Cid>>,
     closer: Sender<()>,
-    wants: Arc<Mutex<Wants>>,
-
-    dh_timeout_manager: DontHaveTimeoutManager,
+    worker: JoinHandle<anyhow::Result<()>>,
 }
 
 #[derive(Debug, Clone)]
@@ -90,7 +95,7 @@ impl RecallWantlist {
     ///
     /// Returns true if the want was marked as sent, false if the want wasn't
     /// pending to begin with.
-    fn mark_sent(&mut self, e: Entry) -> bool {
+    fn mark_sent(&mut self, e: &crate::client::wantlist::Entry) -> bool {
         if self.pending.remove_type(&e.cid, e.want_type).is_none() {
             return false;
         }
@@ -180,8 +185,10 @@ impl MessageQueue {
         let send_message_max_delay = config.send_message_max_delay;
         let send_message_cutoff = config.send_message_cutoff;
         let send_message_debounce = config.send_message_debounce;
+        let max_valid_latency = config.max_valid_latency;
         let dh_timeout_manager = DontHaveTimeoutManager::new();
         let max_retries = config.max_retries;
+        let max_message_size = config.max_message_size;
         let send_timeout = config.send_timeout;
         let send_error_backoff = config.send_error_backof;
         let closer = closer_sender.clone();
@@ -190,7 +197,7 @@ impl MessageQueue {
         let wants_thread = wants.clone();
         let nt = network.clone();
 
-        let handle: JoinHandle<anyhow::Result<()>> = std::thread::spawn(move || {
+        let worker = std::thread::spawn(move || {
             let mut work_scheduled: Option<Instant> = None;
             let rebroadcast_timer = crossbeam::channel::tick(config.rebroadcast_interval);
             let mut schedule_work = crossbeam::channel::after(Duration::from_secs(0));
@@ -209,7 +216,7 @@ impl MessageQueue {
             loop {
                 crossbeam::channel::select! {
                     recv(rebroadcast_timer) -> _ => {
-                        rebroadcast_wantlist(&wants, &closer, &dh_timeout_manager, &sender);
+                        rebroadcast_wantlist(&wants, &closer, &dh_timeout_manager, max_message_size, &sender);
                     }
                     recv(outgoing_work_receiver) -> when => {
                         if work_scheduled.is_none() {
@@ -219,7 +226,7 @@ impl MessageQueue {
                         let pending_work_count = wants.lock().unwrap().pending_work_count();
                         if pending_work_count > send_message_cutoff
                             || work_scheduled.unwrap().elapsed() >= send_message_max_delay {
-                                send_if_ready(&wants, &closer, &dh_timeout_manager, &sender);
+                                send_if_ready(&wants, &closer, &dh_timeout_manager, max_message_size, &sender);
                                 work_scheduled = None;
                             } else {
                                 // Extend the timer
@@ -228,11 +235,11 @@ impl MessageQueue {
                     }
                     recv(schedule_work) -> _ => {
                         work_scheduled = None;
-                        send_if_ready(&wants, &closer, &dh_timeout_manager, &sender);
+                        send_if_ready(&wants, &closer, &dh_timeout_manager, max_message_size, &sender);
                     }
                     recv(responses_receiver) -> response => {
                         // Received a response from the peer, calculate latency.
-                        handle_response(response.unwrap());
+                        handle_response(&wants, max_valid_latency, &dh_timeout_manager,  response.unwrap());
                     }
                     recv(closer_receiver) -> _ => {
                         break;
@@ -245,14 +252,17 @@ impl MessageQueue {
         // TODO: track thread
 
         MessageQueue {
-            peer,
-            network,
-            send_error_backoff: config.send_error_backof,
-            max_valid_latency: config.max_valid_latency,
-            responses: responses_sender,
-            wants,
-            closer: closer_sender,
+            inner: Arc::new(Inner {
+                peer,
+                network,
+                send_error_backoff: config.send_error_backof,
+                max_valid_latency: config.max_valid_latency,
+                responses: responses_sender,
+                closer: closer_sender,
+                worker,
+            }),
             dh_timeout_manager,
+            wants,
         }
     }
 
@@ -341,11 +351,11 @@ impl MessageQueue {
             return;
         }
 
-        self.responses.send(cids).ok();
+        self.inner.responses.send(cids).ok();
     }
 
     pub fn shutdown(self) {
-        self.closer.send(()).ok();
+        self.inner.closer.send(()).ok();
     }
 }
 
@@ -353,10 +363,11 @@ fn rebroadcast_wantlist(
     wants: &Arc<Mutex<Wants>>,
     closer: &Sender<()>,
     dh_timeout_manager: &DontHaveTimeoutManager,
+    max_message_size: usize,
     sender: &MessageSender,
 ) {
     if transfer_rebroadcast_wants(wants) {
-        send_message(wants, closer, dh_timeout_manager, sender);
+        send_message(wants, closer, dh_timeout_manager, max_message_size, sender);
     }
 }
 
@@ -380,18 +391,20 @@ fn send_message(
     wants: &Arc<Mutex<Wants>>,
     closer: &Sender<()>,
     dh_timeout_manager: &DontHaveTimeoutManager,
+    max_message_size: usize,
     sender: &MessageSender,
 ) {
     // TODO: check donthave timeout manager is running
 
     // Convert want lists to a bitswap message
-    let (msg, on_sent) = extract_outgoing_message(sender.supports_have());
+    let (msg, on_sent) = extract_outgoing_message(wants, max_message_size, sender.supports_have());
     if msg.is_empty() {
         return;
     }
 
     let wantlist: Vec<_> = msg.wantlist().cloned().collect();
     if let Err(err) = sender.send_message(msg) {
+        warn!("failed to send message {:?}", err);
         closer.send(()).ok();
         return;
     }
@@ -440,20 +453,161 @@ fn send_if_ready(
     wants: &Arc<Mutex<Wants>>,
     closer: &Sender<()>,
     dh_timeout_manager: &DontHaveTimeoutManager,
+    max_message_size: usize,
     sender: &MessageSender,
 ) {
     if wants.lock().unwrap().has_pending_work() {
-        send_message(wants, closer, dh_timeout_manager, sender);
+        send_message(wants, closer, dh_timeout_manager, max_message_size, sender);
     }
 }
 
-fn handle_response(response: Vec<Cid>) {
-    todo!()
+fn handle_response(
+    wants: &Arc<Mutex<Wants>>,
+    max_valid_latency: Duration,
+    dh_timeout_manager: &DontHaveTimeoutManager,
+    response: Vec<Cid>,
+) {
+    let now = Instant::now();
+    let wants = &mut *wants.lock().unwrap();
+
+    // Check if the keys in the response correspond to any request that was sent to the peer.
+    //
+    // - Finde the earliest request so as to calculate the longest latency as we want
+    //   to be conservative when setting the timeout.
+    // - Ignore latencies that are very long, as these are likely to be outliers caused when
+    //   - we send a want to pere A
+    //   - peer A does not have the block
+    //   - peer A later receives the block from peer B
+    //   - peer A sends us HAVE/block
+
+    let mut earliest = None;
+    for cid in response {
+        if let Some(at) = wants.bcst_wants.sent_at.get(&cid) {
+            if (earliest.is_none() || at < earliest.as_ref().unwrap())
+                && now - *at < max_valid_latency
+            {
+                earliest = Some(*at);
+            }
+            wants.bcst_wants.clear_sent_at(&cid);
+        }
+        if let Some(at) = wants.peer_wants.sent_at.get(&cid) {
+            if (earliest.is_none() || at < earliest.as_ref().unwrap())
+                && now - *at < max_valid_latency
+            {
+                earliest = Some(*at);
+                // Clear out the sent time, as we want to only record the latency
+                // between the request and the first response.
+                wants.peer_wants.clear_sent_at(&cid);
+            }
+        }
+    }
+
+    drop(wants);
+
+    if let Some(earliest) = earliest {
+        dh_timeout_manager.update_message_latency(now - earliest);
+    }
 }
 
-fn extract_outgoing_message(supports_have: bool) -> (BitswapMessage, impl Fn() -> ()) {
+/// Convert the lists of wants into a bitswap message
+fn extract_outgoing_message(
+    wants: &Arc<Mutex<Wants>>,
+    max_message_size: usize,
+    supports_have: bool,
+) -> (BitswapMessage, impl Fn() -> ()) {
+    let (mut peer_entries, bcst_entries, cancels) = {
+        let wants = &mut *wants.lock().unwrap();
+        let mut peer_entries: Vec<_> = wants.peer_wants.pending.entries().collect();
+        if !supports_have {
+            // Remove want haves
+            peer_entries.retain(|entry| {
+                if entry.want_type == WantType::Have {
+                    wants.peer_wants.remove_type(&entry.cid, WantType::Have);
+                    false
+                } else {
+                    true
+                }
+            });
+        }
+        let bcst_entries: Vec<_> = wants.bcst_wants.pending.entries().collect();
+        let cancels: Vec<_> = wants.cancels.iter().cloned().collect();
+        (peer_entries, bcst_entries, cancels)
+    };
+
+    // We prioritize cancels, then regular wants, then broadcast wants.
+
+    let mut msg_size = 0;
+    let mut sent_cancels = 0;
+    let mut sent_peer_entries = 0;
+    let mut sent_bcst_entries = 0;
+    let mut done = false;
+
     let mut msg = BitswapMessage::default();
-    // TODO
+
+    // add cancels
+    for c in &cancels {
+        msg_size += msg.cancel(*c);
+        sent_cancels += 1;
+
+        if msg_size >= max_message_size {
+            done = true;
+            break;
+        }
+    }
+
+    if !done {
+        // add wants, if there are too many entires for a single message, sort by
+        // by priority.
+        for entry in &peer_entries {
+            msg_size += msg.add_entry(entry.cid, entry.priority, entry.want_type, true);
+            sent_peer_entries += 1;
+
+            if msg_size >= max_message_size {
+                done = true;
+                break;
+            }
+        }
+    }
+
+    if !done {
+        // add each broadcast want-have to the message
+
+        for entry in &bcst_entries {
+            // Broadcast wants are sent as want-have
+            let want_type = if supports_have {
+                WantType::Have
+            } else {
+                WantType::Block
+            };
+
+            msg_size += msg.add_entry(entry.cid, entry.priority, want_type, false);
+            sent_bcst_entries += 1;
+
+            if msg_size >= max_message_size {
+                break;
+            }
+        }
+    }
+
+    // Finally  retake the lock, makr sent and remove any entries from our message
+    // that we've decided to cancel at the last minute.
+    {
+        let wants = &mut *wants.lock().unwrap();
+
+        // shorten to actually sent
+        peer_entries.truncate(sent_peer_entries);
+        peer_entries.retain(|entry| {
+            if !wants.peer_wants.mark_sent(entry) {
+                // It changed
+                msg.remove(&entry.cid);
+                false
+            } else {
+                true
+            }
+        });
+
+        todo!()
+    }
 
     (msg, || {})
 }
