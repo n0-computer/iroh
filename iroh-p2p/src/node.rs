@@ -16,7 +16,7 @@ use libp2p::identity::Keypair;
 use libp2p::kad::kbucket::{Distance, NodeStatus};
 use libp2p::kad::BootstrapOk;
 use libp2p::kad::{
-    self, record::Key, GetProvidersError, GetProvidersOk, KademliaEvent, QueryResult,
+    self, record::Key, GetProvidersError, GetProvidersOk, KademliaEvent, QueryId, QueryResult,
 };
 use libp2p::metrics::Recorder;
 use libp2p::swarm::dial_opts::{DialOpts, PeerCondition};
@@ -129,6 +129,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
             .await
             .context("failed to create rpc client")?;
 
+        println!("{}", listening_multiaddr);
         Swarm::listen_on(&mut swarm, listening_multiaddr).unwrap();
 
         Ok(Node {
@@ -271,6 +272,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                     self.emit_network_event(NetworkEvent::PeerConnected(peer_id))
                         .await;
                 }
+                debug!("ConnectionEstablished: {:}", peer_id);
                 Ok(())
             }
             SwarmEvent::ConnectionClosed {
@@ -282,6 +284,8 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                     self.emit_network_event(NetworkEvent::PeerDisconnected(peer_id))
                         .await;
                 }
+
+                debug!("ConnectionClosed: {:}", peer_id);
                 Ok(())
             }
             SwarmEvent::OutgoingConnectionError { peer_id, error } => {
@@ -544,6 +548,19 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
     async fn handle_rpc_message(&mut self, message: RpcMessage) -> Result<bool> {
         // Inbound messages
         match message {
+            RpcMessage::ExternalAddrs(response_channel) => {
+                response_channel
+                    .send(
+                        self.swarm
+                            .external_addresses()
+                            .map(|r| r.addr.clone())
+                            .collect(),
+                    )
+                    .ok();
+            }
+            RpcMessage::LocalPeerId(response_channel) => {
+                response_channel.send(*self.swarm.local_peer_id()).ok();
+            }
             RpcMessage::BitswapRequest {
                 cids,
                 response_channels,
@@ -588,6 +605,27 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                     response_channel
                         .send(Err("kademlia is not available".into()))
                         .await
+                        .ok();
+                }
+            }
+            RpcMessage::StartProviding(response_channel, key) => {
+                if let Some(kad) = self.swarm.behaviour_mut().kad.as_mut() {
+                    let res: Result<QueryId> = kad.start_providing(key).map_err(|e| e.into());
+                    // TODO: wait for kad to process the query request before returning
+                    response_channel.send(res).ok();
+                } else {
+                    response_channel
+                        .send(Err(anyhow!("kademlia is not available")))
+                        .ok();
+                }
+            }
+            RpcMessage::StopProviding(response_channel, key) => {
+                if let Some(kad) = self.swarm.behaviour_mut().kad.as_mut() {
+                    kad.stop_providing(&key);
+                    response_channel.send(Ok(())).ok();
+                } else {
+                    response_channel
+                        .send(Err(anyhow!("kademlia is not availalbe")))
                         .ok();
                 }
             }

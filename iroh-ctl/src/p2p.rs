@@ -21,6 +21,8 @@ pub struct P2p {
 #[derive(Subcommand, Debug, Clone)]
 pub enum P2pCommands {
     Version,
+    #[clap(about = "The local peer id of this node")]
+    PeerId,
     Addrs(Addrs),
     #[clap(about = "Open a new direct connection to one or more peer addresses.
 The address format is a Multiaddress.")]
@@ -94,8 +96,7 @@ pub enum AddrsCommands {
     Listen,
     #[clap(
         about = "Show addresses this node has broadcast for other peers to connect to this process. Addresses are listed in multiaddress format.
-A number of factors can change the set of addresses, including a change in IP address, discovery of additional IP addresses outside of NAT layers, and changes in addresses announced to the network.
-Not yet implemented.",
+A number of factors can change the set of addresses, including a change in IP address, discovery of additional IP addresses outside of NAT layers, and changes in addresses announced to the network.",
         hide = true
     )]
     Local,
@@ -229,6 +230,10 @@ pub async fn run_command(rpc: Client, cmd: P2p) -> Result<()> {
             let v = rpc.try_p2p()?.version().await?;
             println!("v{}", v);
         }
+        P2pCommands::PeerId => {
+            let peer_id = rpc.try_p2p()?.local_peer_id().await?;
+            println!("{}", peer_id);
+        }
         P2pCommands::Addrs(addrs) => match addrs.command {
             None => {
                 let addrs = rpc.try_p2p()?.get_peers().await?;
@@ -239,7 +244,9 @@ pub async fn run_command(rpc: Client, cmd: P2p) -> Result<()> {
                 println!("{:#?}", addrs);
             }
             Some(AddrsCommands::Local) => {
-                todo!("Local not yet implemented.");
+                let addrs = rpc.try_p2p()?.external_addresses().await?;
+                println!("external addressses:");
+                addrs.iter().for_each(|a| println!("\t:{:?}", a));
             }
         },
         P2pCommands::Connect { peer_id, addrs } => {

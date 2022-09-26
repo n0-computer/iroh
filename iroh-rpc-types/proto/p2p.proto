@@ -6,8 +6,12 @@ import "google/protobuf/empty.proto";
 
 service P2p {
   rpc Version(google.protobuf.Empty) returns (VersionResponse) {}
+  rpc LocalPeerId(google.protobuf.Empty) returns (PeerIdResponse) {}
+  rpc ExternalAddrs(google.protobuf.Empty) returns (Multiaddrs) {}
   rpc FetchBitswap(BitswapRequest) returns (BitswapResponse) {}
   rpc FetchProvider(Key) returns (Providers) {}
+  rpc StartProviding(Key) returns (google.protobuf.Empty) {}
+  rpc StopProviding(Key) returns (google.protobuf.Empty) {}
   rpc GetListeningAddrs(google.protobuf.Empty) returns (GetListeningAddrsResponse) {}
   rpc GetPeers(google.protobuf.Empty) returns (GetPeersResponse) {}
   rpc PeerConnect(ConnectRequest) returns (ConnectResponse) {}
@@ -27,6 +31,10 @@ service P2p {
 
 message VersionResponse {
   string version = 1;
+}
+
+message PeerIdResponse {
+  bytes peer_id = 1;
 }
 
 message BitswapRequest {

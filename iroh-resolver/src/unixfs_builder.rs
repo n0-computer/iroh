@@ -394,6 +394,19 @@ impl Store for &Client {
     }
 }
 
+#[derive(Debug)]
+pub struct StoreAndProvideClient<'a> {
+    pub client: Box<&'a Client>,
+}
+
+#[async_trait]
+impl<'a> Store for &StoreAndProvideClient<'a> {
+    async fn put(&self, cid: Cid, blob: Bytes, links: Vec<Cid>) -> Result<()> {
+        self.client.try_store()?.put(cid, blob, links).await?;
+        self.client.try_p2p()?.start_providing(&cid).await
+    }
+}
+
 #[async_trait]
 impl Store for &tokio::sync::Mutex<std::collections::HashMap<Cid, Bytes>> {
     async fn put(&self, cid: Cid, blob: Bytes, _links: Vec<Cid>) -> Result<()> {
@@ -405,8 +418,8 @@ impl Store for &tokio::sync::Mutex<std::collections::HashMap<Cid, Bytes>> {
 /// Adds a single file.
 /// - storing the content using `rpc.store`
 /// - returns the root Cid
-/// - wraps into a UnixFs directory to preserve the filename
-pub async fn add_file<S: Store>(path: &Path, rpc: Option<S>) -> Result<Cid> {
+/// - optionally wraps into a UnixFs directory to preserve the filename
+pub async fn add_file<S: Store>(store: Option<S>, path: &Path, wrap: bool) -> Result<Cid> {
     ensure!(path.is_file(), "provided path was not a file");
 
     let file = FileBuilder::new().path(path).build().await?;
@@ -414,14 +427,20 @@ pub async fn add_file<S: Store>(path: &Path, rpc: Option<S>) -> Result<Cid> {
     // encode and store
     let mut root = None;
 
-    // wrap file in dir to preserve file name
-    let parts = file.wrap().encode();
+    let parts = {
+        if wrap {
+            // wrap file in dir to preserve file name
+            file.wrap().encode()
+        } else {
+            Box::pin(file.encode().await?)
+        }
+    };
     tokio::pin!(parts);
 
     while let Some(part) = parts.next().await {
         let (cid, bytes) = part?;
-        if let Some(ref rpc) = rpc {
-            rpc.put(cid, bytes, vec![]).await?;
+        if let Some(ref store) = store {
+            store.put(cid, bytes, vec![]).await?;
         }
         root = Some(cid);
     }
@@ -432,21 +451,32 @@ pub async fn add_file<S: Store>(path: &Path, rpc: Option<S>) -> Result<Cid> {
 /// Adds a directory.
 /// - storing the content using `rpc.store`
 /// - returns the root Cid
-/// - wraps into a UnixFs directory to preserve the filename
-pub async fn add_dir<S: Store>(path: &Path, rpc: Option<S>, recursive: bool) -> Result<Cid> {
+/// - optionally wraps into a UnixFs directory to preserve the directory name
+pub async fn add_dir<S: Store>(
+    store: Option<S>,
+    path: &Path,
+    wrap: bool,
+    recursive: bool,
+) -> Result<Cid> {
     ensure!(path.is_dir(), "provided path was not a directory");
 
     let dir = make_dir_from_path(path, recursive).await?;
     // encode and store
     let mut root = None;
-    // wrap dir in dir to preserve file name
-    let parts = dir.wrap().encode();
+    let parts = {
+        if wrap {
+            // wrap dir in dir to preserve file name
+            dir.wrap().encode()
+        } else {
+            dir.encode()
+        }
+    };
     tokio::pin!(parts);
 
     while let Some(part) = parts.next().await {
         let (cid, bytes) = part?;
-        if let Some(ref rpc) = rpc {
-            rpc.put(cid, bytes, vec![]).await?;
+        if let Some(ref store) = store {
+            store.put(cid, bytes, vec![]).await?;
         }
         root = Some(cid);
     }
