@@ -38,6 +38,7 @@ struct Inner {
     responses: Sender<Vec<Cid>>,
     closer: Sender<()>,
     worker: JoinHandle<anyhow::Result<()>>,
+    outgoing_work_sender: Sender<Instant>,
 }
 
 #[derive(Debug, Clone)]
@@ -107,25 +108,11 @@ impl RecallWantlist {
     fn clear_sent_at(&mut self, cid: &Cid) {
         self.sent_at.remove(cid);
     }
-}
 
-#[derive(Debug)]
-struct PeerConn {
-    peer: PeerId,
-    network: Network,
-}
-
-impl PeerConn {
-    fn new(peer: PeerId, network: Network) -> Self {
-        PeerConn { peer, network }
-    }
-
-    fn ping(&self) -> PingResult {
-        self.network.ping(&self.peer)
-    }
-
-    fn latency(&self) -> Duration {
-        self.network.latency(&self.peer)
+    fn sent_at(&mut self, cid: Cid, at: Instant) {
+        if !self.sent.contains(&cid) {
+            self.sent_at.insert(cid, at);
+        }
     }
 }
 
@@ -186,7 +173,7 @@ impl MessageQueue {
         let send_message_cutoff = config.send_message_cutoff;
         let send_message_debounce = config.send_message_debounce;
         let max_valid_latency = config.max_valid_latency;
-        let dh_timeout_manager = DontHaveTimeoutManager::new();
+        let dh_timeout_manager = DontHaveTimeoutManager::new(peer, network.clone());
         let max_retries = config.max_retries;
         let max_message_size = config.max_message_size;
         let send_timeout = config.send_timeout;
@@ -196,6 +183,7 @@ impl MessageQueue {
         let dhtm = dh_timeout_manager.clone();
         let wants_thread = wants.clone();
         let nt = network.clone();
+        let outgoing_work_sender_thread = outgoing_work_sender.clone();
 
         let worker = std::thread::spawn(move || {
             let mut work_scheduled: Option<Instant> = None;
@@ -204,6 +192,7 @@ impl MessageQueue {
             let wants = wants_thread;
             let dh_timeout_manager = dhtm;
             let network = nt;
+            let outgoing_work_sender = outgoing_work_sender_thread;
             let sender = network.new_message_sender(
                 peer,
                 MessageSenderConfig {
@@ -216,7 +205,14 @@ impl MessageQueue {
             loop {
                 crossbeam::channel::select! {
                     recv(rebroadcast_timer) -> _ => {
-                        rebroadcast_wantlist(&wants, &closer, &dh_timeout_manager, max_message_size, &sender);
+                        rebroadcast_wantlist(
+                            &wants,
+                            &closer,
+                            &dh_timeout_manager,
+                            max_message_size,
+                            &outgoing_work_sender,
+                            &sender
+                        );
                     }
                     recv(outgoing_work_receiver) -> when => {
                         if work_scheduled.is_none() {
@@ -226,7 +222,14 @@ impl MessageQueue {
                         let pending_work_count = wants.lock().unwrap().pending_work_count();
                         if pending_work_count > send_message_cutoff
                             || work_scheduled.unwrap().elapsed() >= send_message_max_delay {
-                                send_if_ready(&wants, &closer, &dh_timeout_manager, max_message_size, &sender);
+                                send_if_ready(
+                                    &wants,
+                                    &closer,
+                                    &dh_timeout_manager,
+                                    max_message_size,
+                                    &outgoing_work_sender,
+                                    &sender,
+                                );
                                 work_scheduled = None;
                             } else {
                                 // Extend the timer
@@ -235,7 +238,14 @@ impl MessageQueue {
                     }
                     recv(schedule_work) -> _ => {
                         work_scheduled = None;
-                        send_if_ready(&wants, &closer, &dh_timeout_manager, max_message_size, &sender);
+                        send_if_ready(
+                            &wants,
+                            &closer,
+                            &dh_timeout_manager,
+                            max_message_size,
+                            &outgoing_work_sender,
+                            &sender
+                        );
                     }
                     recv(responses_receiver) -> response => {
                         // Received a response from the peer, calculate latency.
@@ -260,6 +270,7 @@ impl MessageQueue {
                 responses: responses_sender,
                 closer: closer_sender,
                 worker,
+                outgoing_work_sender,
             }),
             dh_timeout_manager,
             wants,
@@ -280,7 +291,7 @@ impl MessageQueue {
             wants.cancels.remove(cid);
         }
 
-        signal_work_ready()
+        self.inner.outgoing_work_sender.send(Instant::now()).ok();
     }
 
     /// Add want-haves and want-blocks for the peer for this queue.
@@ -339,7 +350,7 @@ impl MessageQueue {
 
         // Schedule a message send
         if work_ready {
-            signal_work_ready();
+            self.inner.outgoing_work_sender.send(Instant::now()).ok();
         }
     }
 
@@ -364,10 +375,18 @@ fn rebroadcast_wantlist(
     closer: &Sender<()>,
     dh_timeout_manager: &DontHaveTimeoutManager,
     max_message_size: usize,
+    outgoing_work_sender: &Sender<Instant>,
     sender: &MessageSender,
 ) {
     if transfer_rebroadcast_wants(wants) {
-        send_message(wants, closer, dh_timeout_manager, max_message_size, sender);
+        send_message(
+            wants,
+            closer,
+            dh_timeout_manager,
+            max_message_size,
+            outgoing_work_sender,
+            sender,
+        );
     }
 }
 
@@ -392,6 +411,7 @@ fn send_message(
     closer: &Sender<()>,
     dh_timeout_manager: &DontHaveTimeoutManager,
     max_message_size: usize,
+    outgoing_work_sender: &Sender<Instant>,
     sender: &MessageSender,
 ) {
     // TODO: check donthave timeout manager is running
@@ -418,7 +438,7 @@ fn send_message(
     // If the message was too big and only a subset of wants could be sent
     // schedule sending the rest of the wants in the next iteration of the event loop.
     if wants.lock().unwrap().has_pending_work() {
-        signal_work_ready();
+        outgoing_work_sender.send(Instant::now()).ok();
     }
 }
 
@@ -454,10 +474,18 @@ fn send_if_ready(
     closer: &Sender<()>,
     dh_timeout_manager: &DontHaveTimeoutManager,
     max_message_size: usize,
+    outgoing_work_sender: &Sender<Instant>,
     sender: &MessageSender,
 ) {
     if wants.lock().unwrap().has_pending_work() {
-        send_message(wants, closer, dh_timeout_manager, max_message_size, sender);
+        send_message(
+            wants,
+            closer,
+            dh_timeout_manager,
+            max_message_size,
+            outgoing_work_sender,
+            sender,
+        );
     }
 }
 
@@ -514,8 +542,8 @@ fn extract_outgoing_message(
     wants: &Arc<Mutex<Wants>>,
     max_message_size: usize,
     supports_have: bool,
-) -> (BitswapMessage, impl Fn() -> ()) {
-    let (mut peer_entries, bcst_entries, cancels) = {
+) -> (BitswapMessage, impl FnOnce() -> ()) {
+    let (mut peer_entries, mut bcst_entries, mut cancels) = {
         let wants = &mut *wants.lock().unwrap();
         let mut peer_entries: Vec<_> = wants.peer_wants.pending.entries().collect();
         if !supports_have {
@@ -606,12 +634,41 @@ fn extract_outgoing_message(
             }
         });
 
-        todo!()
+        // shorten to actually sent
+        bcst_entries.truncate(sent_bcst_entries);
+        bcst_entries.retain(|entry| {
+            if !wants.bcst_wants.mark_sent(entry) {
+                // It changed
+                msg.remove(&entry.cid);
+                false
+            } else {
+                true
+            }
+        });
+
+        // shorten to actually sent
+        cancels.truncate(sent_cancels);
+        for cancel in &cancels {
+            if !wants.cancels.contains(cancel) {
+                msg.remove(&cancel);
+            } else {
+                wants.cancels.remove(cancel);
+            }
+        }
     }
 
-    (msg, || {})
-}
+    // Update state after the message has been sent.
+    let wants = wants.clone();
+    let on_sent = move || {
+        let now = Instant::now();
+        let wants = &mut *wants.lock().unwrap();
 
-fn signal_work_ready() {
-    todo!()
+        for e in peer_entries {
+            wants.peer_wants.sent_at(e.cid, now);
+        }
+        for e in bcst_entries {
+            wants.bcst_wants.sent_at(e.cid, now);
+        }
+    };
+    (msg, on_sent)
 }

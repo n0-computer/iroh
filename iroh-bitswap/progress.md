@@ -25,7 +25,7 @@
 - [ ] `./client/internal/getter/getter.go` (138)
 - [ ] `./client/internal/blockpresencemanager/blockpresencemanager.go` (121)
 
-- [ ] `./client/internal/messagequeue/messagequeue.go` (843)
+- [x] `./client/internal/messagequeue/messagequeue.go` (843)
 - [ ] `./client/internal/messagequeue/donthavetimeoutmgr.go` (398)
 
 - [x] `./client/internal/peermanager/peerwantmanager.go` (464)
