@@ -10,79 +10,67 @@ use iroh_resolver::resolver::Path as IpfsPath;
 use libp2p::gossipsub::MessageId;
 use libp2p::{Multiaddr, PeerId};
 
-pub struct FakeApi {
-    failing: bool,
-}
+pub struct FakeApi {}
 
-pub struct FakeP2p {
-    failing: bool,
-}
+pub struct FakeP2p {}
 
-pub struct FakeStore {
-    failing: bool,
-}
+pub struct FakeStore {}
 
 impl FakeApi {
-    pub fn new(failing: bool) -> Self {
-        Self { failing }
+    pub fn new() -> Self {
+        Self {}
     }
 }
 
 impl Default for FakeApi {
     fn default() -> Self {
-        Self::new(false)
+        Self::new()
     }
 }
 
 impl FakeP2p {
-    fn new(failing: bool) -> Self {
-        Self { failing }
+    fn new() -> Self {
+        Self {}
     }
 }
 
 impl Default for FakeP2p {
     fn default() -> Self {
-        Self::new(false)
+        Self::new()
     }
 }
 
 impl FakeStore {
-    fn new(failing: bool) -> Self {
-        Self { failing }
+    fn new() -> Self {
+        Self {}
     }
 }
 
 impl Default for FakeStore {
     fn default() -> Self {
-        Self::new(false)
+        Self::new()
     }
 }
 
 #[async_trait]
 impl api::Accessors<FakeP2p, FakeStore> for FakeApi {
     fn p2p(&self) -> Result<FakeP2p> {
-        Ok(FakeP2p::new(self.failing))
+        Ok(FakeP2p::new())
     }
 
     fn store(&self) -> Result<FakeStore> {
-        Ok(FakeStore::new(self.failing))
+        Ok(FakeStore::new())
     }
 }
 
 #[async_trait]
 impl api::GetAdd for FakeApi {
     async fn get(&self, ipfs_path: &IpfsPath, output: Option<&Path>) -> Result<()> {
-        if self.failing {
-            return Err(anyhow::anyhow!("failing"));
-        }
         // XXX should really affect the file system
         Ok(())
     }
 
     async fn add(&self, path: &Path, recursive: bool, no_wrap: bool) -> Result<Cid> {
-        if self.failing {
-            return Err(anyhow::anyhow!("failing"));
-        }
         Ok(Cid::default())
     }
 }
