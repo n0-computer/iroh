@@ -5,6 +5,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use bytes::Bytes;
 use cid::Cid;
+use iroh_resolver::resolver::Path as IpfsPath;
 use libp2p::gossipsub::MessageId;
 use libp2p::{Multiaddr, PeerId};
 
@@ -29,8 +30,8 @@ pub trait Accessors<P: P2p, S: Store> {
 
 #[async_trait]
 pub trait GetAdd {
-    async fn get(&self, cid: &Cid, path: &Path) -> Result<()>;
-    async fn add(&self, path: &Path) -> Result<Cid>;
+    async fn get(&self, ipfs_path: &IpfsPath, output_path: Option<&Path>) -> Result<()>;
+    async fn add(&self, path: &Path, recursive: bool, no_wrap: bool) -> Result<Cid>;
 }
 
 impl<T: Accessors<P, S> + GetAdd, P: P2p, S: Store> Api<P, S> for T {}

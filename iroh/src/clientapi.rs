@@ -6,6 +6,8 @@ use anyhow::Result;
 use async_trait::async_trait;
 use bytes::Bytes;
 use cid::Cid;
+use iroh_resolver::resolver::Path as IpfsPath;
+use iroh_resolver::{resolver, unixfs_builder};
 use iroh_rpc_client::{Client, P2pClient, StoreClient};
 use libp2p::{
     gossipsub::{MessageId, TopicHash},
@@ -47,13 +49,12 @@ impl<'a> api::Accessors<ClientP2p<'a>, ClientStore<'a>> for ClientApi<'a> {
 
 #[async_trait]
 impl<'a> api::GetAdd for ClientApi<'a> {
-    // XXX this awaits ramfox's work in the resolver
-    async fn get(&self, cid: &Cid, output: &Path) -> Result<()> {
-        todo!("{:?} {:?}", cid, output);
+    async fn get(&self, ipfs_path: &IpfsPath, output: Option<&Path>) -> Result<()> {
+        todo!("awaits integration");
     }
 
-    async fn add(&self, path: &Path) -> Result<Cid> {
-        todo!("{:?}", path);
+    async fn add(&self, path: &Path, recursive: bool, no_wrap: bool) -> Result<Cid> {
+        todo!("awaits integration");
     }
 }
 
