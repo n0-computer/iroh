@@ -40,7 +40,7 @@ iroh-resolver = { path = "../iroh-resolver" }
 tokio-util = { version = "0.7", features = ["io"] }
 bytes = "1.1.0"
 tower-layer = { version = "0.3" }
-tower-http = { version = "0.3", features = ["trace"] }
+tower-http = { version = "0.3", features = ["trace", "compression-full"] }
 http = "0.2"
 async-recursion = "1.0.0"
 handlebars = "4"

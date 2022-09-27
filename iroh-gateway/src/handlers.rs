@@ -30,7 +30,7 @@ use std::{
     time::{self, Duration},
 };
 use tower::ServiceBuilder;
-use tower_http::trace::TraceLayer;
+use tower_http::{compression::CompressionLayer, trace::TraceLayer};
 use tracing::info_span;
 use url::Url;
 use urlencoding::encode;
@@ -65,6 +65,7 @@ pub fn get_app_routes(state: &Arc<State>) -> Router {
             ServiceBuilder::new()
                 // Handle errors from middleware
                 .layer(Extension(Arc::clone(state)))
+                .layer(CompressionLayer::new())
                 .layer(HandleErrorLayer::new(middleware_error_handler))
                 .load_shed()
                 .concurrency_limit(2048)
