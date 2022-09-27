@@ -71,7 +71,7 @@ enum Commands {
     },
 }
 
-#[cfg(not(test))]
+#[cfg(not(feature = "fake"))]
 pub async fn run_cli(cli: Cli) -> Result<()> {
     run_cli_impl(cli).await
 }
@@ -109,7 +109,7 @@ pub async fn run_cli_impl(cli: Cli) -> Result<()> {
     Ok(())
 }
 
-#[cfg(test)]
+#[cfg(feature = "fake")]
 pub async fn run_cli(cli: Cli) -> Result<()> {
     let api = crate::fake::FakeApi::default();
     run_cli_command(&api, cli).await

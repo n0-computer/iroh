@@ -1,5 +1,5 @@
 pub mod config;
-#[cfg(test)]
+#[cfg(feature = "fake")]
 mod fake;
 pub mod gateway;
 pub mod metrics;

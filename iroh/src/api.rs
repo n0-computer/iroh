@@ -60,7 +60,9 @@ pub trait P2pId: Sync {
     async fn peers(&self) -> Result<HashMap<PeerId, Vec<Multiaddr>>>;
     async fn peer_ids(&self) -> Result<Vec<PeerId>> {
         let map = self.peers().await?;
-        Ok(map.into_keys().collect())
+        let mut peer_ids: Vec<PeerId> = map.into_keys().collect();
+        peer_ids.sort();
+        Ok(peer_ids)
     }
     async fn ping(&self, ping_args: &[Ping], count: usize) -> Result<()>;
 }

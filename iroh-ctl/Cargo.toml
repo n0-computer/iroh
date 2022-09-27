@@ -8,6 +8,9 @@ repository = "https://github.com/n0-computer/iroh"
 description = "Client for interacting with running iroh processes."
 default-run = "iroh-ctl"
 
+[features]
+fake = []
+
 [[bin]]
 bench = false
 path = "src/main.rs"
@@ -35,3 +38,9 @@ cid = "0.8.5"
 multiaddr = "0.14.0"
 bytes = "1.1.0"
 async-stream = "0.3.3"
+
+[dev-dependencies]
+trycmd = "0.13.6"
+# this is a workaround based on for enabling features only during test: 
+# https://github.com/DesmondWillowbrook/cargo-optional-features-for-testing-and-examples
+iroh-ctl = { path = ".", features = ["fake"] }
