@@ -18,9 +18,8 @@ pub struct ClientApi<'a> {
 }
 
 impl<'a> ClientApi<'a> {
-    // what are the Rust conventions for an async new?
-    pub async fn new(client: &'a Client) -> Result<ClientApi<'a>> {
-        Ok(ClientApi { rpc: client })
+    pub fn new(client: &'a Client) -> ClientApi<'a> {
+        ClientApi { rpc: client }
     }
 }
 
@@ -32,7 +31,6 @@ pub struct ClientStore<'a> {
     rpc: &'a StoreClient,
 }
 
-#[async_trait]
 impl<'a> api::Accessors<ClientP2p<'a>, ClientStore<'a>> for ClientApi<'a> {
     fn p2p(&self) -> Result<ClientP2p<'a>> {
         Ok(ClientP2p {
@@ -44,15 +42,6 @@ impl<'a> api::Accessors<ClientP2p<'a>, ClientStore<'a>> for ClientApi<'a> {
         Ok(ClientStore {
             rpc: self.rpc.try_store()?,
         })
-    }
-}
-
-#[async_trait]
-impl<'a> api::Main for ClientApi<'a> {
-    // XXX what's up with version in the existing iroh-cli implementation? is it automatically
-    // implemented by clap? What should it be?
-    async fn version(&self) -> Result<String> {
-        Ok("0.0.0".to_string())
     }
 }
 
@@ -95,7 +84,7 @@ impl<'a> api::P2pId for ClientP2p<'a> {
     }
 
     async fn addrs_listen(&self) -> Result<Vec<Multiaddr>> {
-        let (_peer_id, addrs) = self.rpc.get_listening_addrs().await?;
+        let (_, addrs) = self.rpc.get_listening_addrs().await?;
         Ok(addrs)
     }
 

@@ -20,14 +20,8 @@ pub enum Ping {
     Multiaddr(Multiaddr),
 }
 
-pub trait Api<P: P2p, S: Store>: Main + Accessors<P, S> + GetAdd {}
+pub trait Api<P: P2p, S: Store>: Accessors<P, S> + GetAdd {}
 
-#[async_trait]
-pub trait Main {
-    async fn version(&self) -> Result<String>;
-}
-
-#[async_trait]
 pub trait Accessors<P: P2p, S: Store> {
     fn p2p(&self) -> Result<P>;
     fn store(&self) -> Result<S>;
@@ -35,14 +29,11 @@ pub trait Accessors<P: P2p, S: Store> {
 
 #[async_trait]
 pub trait GetAdd {
-    // XXX get and add are centered around the filesystem.
-    // We can imagine an underlying version that produces a stream of
-    // Out as well.
     async fn get(&self, cid: &Cid, path: &Path) -> Result<()>;
     async fn add(&self, path: &Path) -> Result<Cid>;
 }
 
-impl<T: Main + Accessors<P, S> + GetAdd, P: P2p, S: Store> Api<P, S> for T {}
+impl<T: Accessors<P, S> + GetAdd, P: P2p, S: Store> Api<P, S> for T {}
 
 #[async_trait]
 pub trait P2pConnectDisconnect {
@@ -50,17 +41,14 @@ pub trait P2pConnectDisconnect {
     async fn disconnect(&self, peer_id: &PeerId) -> Result<()>;
 }
 
-// XXX the std::marker::Sync worries me - it's required to be able to use
-// peers from the implementation of peer_ids
 #[async_trait]
 pub trait P2pId: std::marker::Sync {
     async fn p2p_version(&self) -> Result<String>;
     async fn local_peer_id(&self) -> Result<PeerId>;
     async fn addrs_listen(&self) -> Result<Vec<Multiaddr>>;
     async fn addrs_local(&self) -> Result<Vec<Multiaddr>>;
-    // can be implemented on the trait itself as it combines others
+    // in the future, can be implemented on the trait itself as it combines others
     async fn id(&self) -> Result<Id>;
-    // async fn addrs gets a map right now
     async fn peers(&self) -> Result<HashMap<PeerId, Vec<Multiaddr>>>;
     async fn peer_ids(&self) -> Result<Vec<PeerId>> {
         let map = self.peers().await?;
