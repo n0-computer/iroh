@@ -9,6 +9,7 @@ use iroh_gateway::{
     core::Core,
     metrics,
 };
+use iroh_rpc_client::Client as RpcClient;
 use iroh_util::{iroh_config_path, make_config};
 use tokio::sync::RwLock;
 use tracing::{debug, error};
@@ -41,7 +42,14 @@ async fn main() -> Result<()> {
     let rpc_addr = config
         .server_rpc_addr()?
         .ok_or_else(|| anyhow!("missing gateway rpc addr"))?;
-    let handler = Core::new(Arc::new(config), rpc_addr, Arc::clone(&bad_bits)).await?;
+    let content_loader = RpcClient::new(config.rpc_client.clone()).await?;
+    let handler = Core::new(
+        Arc::new(config),
+        rpc_addr,
+        Arc::clone(&bad_bits),
+        content_loader,
+    )
+    .await?;
 
     let bad_bits_handle = bad_bits::spawn_bad_bits_updater(Arc::clone(&bad_bits));
 
