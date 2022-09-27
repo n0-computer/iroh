@@ -473,18 +473,18 @@ workflows:
           filters:
             branches:
               only: main
-      - test_darwin:
-          name: "test_darwin_x86_64"
-          cargo-args: "--workspace"
-      - test_darwin:
-          name: "test_darwin_x86_64--no-default-features"
-          cargo-args: "--workspace --no-default-features"
-      - build_release_osx:
-          name: "build mac release"
-          context: aws_s3
-          requires:
-            - test_darwin_x86_64
-            - test_darwin_x86_64--no-default-features
-          filters:
-            branches:
-              only: main
+      # - test_darwin:
+      #     name: "test_darwin_x86_64"
+      #     cargo-args: "--workspace"
+      # - test_darwin:
+      #     name: "test_darwin_x86_64--no-default-features"
+      #     cargo-args: "--workspace --no-default-features"
+      # - build_release_osx:
+      #     name: "build mac release"
+      #     context: aws_s3
+      #     requires:
+      #       - test_darwin_x86_64
+      #       - test_darwin_x86_64--no-default-features
+      #     filters:
+      #       branches:
+      #         only: main
