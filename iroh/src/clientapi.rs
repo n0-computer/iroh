@@ -76,8 +76,7 @@ impl<'a> api::P2pId for ClientP2p<'a> {
     }
 
     async fn local_peer_id(&self) -> Result<PeerId> {
-        todo!("Need to port local_peer_id from branch");
-        // self.rpc.try_p2p()?.local_peer_id().await
+        self.rpc.local_peer_id().await
     }
 
     async fn peers(&self) -> Result<HashMap<PeerId, Vec<Multiaddr>>> {
@@ -90,8 +89,7 @@ impl<'a> api::P2pId for ClientP2p<'a> {
     }
 
     async fn addrs_local(&self) -> Result<Vec<Multiaddr>> {
-        todo!("Need to port external_addresses from branch");
-        // self.rpc.try_p2p()?.external_addresses().await
+        self.rpc.external_addresses().await
     }
 
     async fn id(&self) -> Result<api::Id> {
