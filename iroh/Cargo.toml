@@ -12,7 +12,6 @@ iroh-resolver = { path = "../iroh-resolver" }
 iroh-rpc-types = { path = "../iroh-rpc-types" }
 iroh-rpc-client = { path = "../iroh-rpc-client" }
 anyhow = "1"
-async-trait = "0.1.53"
 tokio = { version = "1" }
 bytes = "1.1.0"
 libp2p = "0.48"
