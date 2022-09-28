@@ -6,7 +6,7 @@ use std::{
 use anyhow::{anyhow, bail, Result};
 use cid::Cid;
 use crossbeam::channel::{Receiver, Sender};
-use libp2p::{core::connection::ConnectionId, ping::PingResult, PeerId};
+use libp2p::{core::connection::ConnectionId, PeerId};
 use tracing::debug;
 
 use crate::{message::BitswapMessage, protocol::ProtocolId, BitswapEvent};
@@ -62,8 +62,8 @@ impl Network {
         &self.self_id
     }
 
-    pub fn ping(&self, peer: &PeerId) -> PingResult {
-        todo!()
+    pub fn ping(&self, peer: &PeerId) -> Result<Duration> {
+        Err(anyhow!("not available yet"))
     }
 
     pub fn latency(&self, peer: &PeerId) -> Duration {

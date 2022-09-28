@@ -18,19 +18,24 @@
 
 ### Client
 
+651
 - [ ] `./client/client.go` (479)
 - [ ] `./client/stat.go` (30)
 - [x] `./client/wantlist/wantlist.go` (142)
 
+259
 - [ ] `./client/internal/getter/getter.go` (138)
 - [ ] `./client/internal/blockpresencemanager/blockpresencemanager.go` (121)
 
+1241
 - [x] `./client/internal/messagequeue/messagequeue.go` (843)
-- [ ] `./client/internal/messagequeue/donthavetimeoutmgr.go` (398)
+- [x] `./client/internal/messagequeue/donthavetimeoutmgr.go` (398)
 
+710
 - [x] `./client/internal/peermanager/peerwantmanager.go` (464)
 - [x] `./client/internal/peermanager/peermanager.go` (246)
 
+1633
 - [ ] `./client/internal/session/sessionwants.go` (193)
 - [ ] `./client/internal/session/cidqueue.go` (63)
 - [ ] `./client/internal/session/peerresponsetracker.go` (70)
@@ -38,14 +43,12 @@
 - [ ] `./client/internal/session/session.go` (508)
 - [ ] `./client/internal/session/sessionwantsender.go` (766)
 
+1116
 - [ ] `./client/internal/sessionmanager/sessionmanager.go` (196)
 - [ ] `./client/internal/sessionpeermanager/sessionpeermanager.go` (150)
 - [ ] `./client/internal/sessioninterestmanager/sessioninterestmanager.go` (201)
 - [ ] `./client/internal/providerquerymanager/providerquerymanager.go` (430)
 - [ ] `./client/internal/notifications/notifications.go` (139)
-
-
-
 
 
 ### Server 

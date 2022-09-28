@@ -7,8 +7,8 @@ use std::{
 use ahash::{AHashMap, AHashSet};
 use cid::Cid;
 use crossbeam::channel::Sender;
-use libp2p::{ping::PingResult, PeerId};
-use tracing::warn;
+use libp2p::PeerId;
+use tracing::{error, info, warn};
 
 use crate::{
     message::{BitswapMessage, Entry, WantType},
@@ -18,7 +18,7 @@ use crate::{
 
 use self::dont_have_timeout_manager::DontHaveTimeoutManager;
 
-use super::wantlist::Wantlist;
+use super::{peer_manager::DontHaveTimeout, wantlist::Wantlist};
 
 mod dont_have_timeout_manager;
 
@@ -26,7 +26,7 @@ mod dont_have_timeout_manager;
 pub struct MessageQueue {
     inner: Arc<Inner>,
     dh_timeout_manager: DontHaveTimeoutManager,
-    wants: Arc<Mutex<Wants>>,
+    pub(crate) wants: Arc<Mutex<Wants>>,
 }
 
 #[derive(Debug)]
@@ -37,16 +37,16 @@ struct Inner {
     max_valid_latency: Duration,
     responses: Sender<Vec<Cid>>,
     closer: Sender<()>,
-    worker: JoinHandle<anyhow::Result<()>>,
+    worker: Option<JoinHandle<anyhow::Result<()>>>,
     outgoing_work_sender: Sender<Instant>,
 }
 
 #[derive(Debug, Clone)]
-struct Wants {
-    bcst_wants: RecallWantlist,
-    peer_wants: RecallWantlist,
-    cancels: AHashSet<Cid>,
-    priority: i32,
+pub(crate) struct Wants {
+    pub(crate) bcst_wants: RecallWantlist,
+    pub(crate) peer_wants: RecallWantlist,
+    pub(crate) cancels: AHashSet<Cid>,
+    pub(crate) priority: i32,
 }
 
 impl Wants {
@@ -62,13 +62,13 @@ impl Wants {
 }
 
 #[derive(Debug, Default, Clone)]
-struct RecallWantlist {
+pub(crate) struct RecallWantlist {
     /// List of wants that have not yet been sent.
-    pending: Wantlist,
+    pub(crate) pending: Wantlist,
     /// The list of wants that have been sent.
-    sent: Wantlist,
+    pub(crate) sent: Wantlist,
     /// The time at which each want was sent.
-    sent_at: AHashMap<Cid, Instant>,
+    pub(crate) sent_at: AHashMap<Cid, Instant>,
 }
 
 impl RecallWantlist {
@@ -154,12 +154,21 @@ impl Default for Config {
 }
 
 impl MessageQueue {
-    pub fn new(peer: PeerId, network: Network) -> Self {
+    pub fn new(
+        peer: PeerId,
+        network: Network,
+        on_dont_have_timeout: Arc<dyn DontHaveTimeout>,
+    ) -> Self {
         // TODO: register on_donthave_timeout
-        Self::with_config(peer, network, Config::default())
+        Self::with_config(peer, network, Config::default(), on_dont_have_timeout)
     }
 
-    pub fn with_config(peer: PeerId, network: Network, config: Config) -> Self {
+    pub fn with_config(
+        peer: PeerId,
+        network: Network,
+        config: Config,
+        on_dont_have_timeout: Arc<dyn DontHaveTimeout>,
+    ) -> Self {
         let (closer_sender, closer_receiver) = crossbeam::channel::bounded(1);
         let (responses_sender, responses_receiver) = crossbeam::channel::bounded(8);
         let (outgoing_work_sender, outgoing_work_receiver) = crossbeam::channel::bounded(1);
@@ -173,7 +182,8 @@ impl MessageQueue {
         let send_message_cutoff = config.send_message_cutoff;
         let send_message_debounce = config.send_message_debounce;
         let max_valid_latency = config.max_valid_latency;
-        let dh_timeout_manager = DontHaveTimeoutManager::new(peer, network.clone());
+        let dh_timeout_manager =
+            DontHaveTimeoutManager::new(peer, network.clone(), on_dont_have_timeout);
         let max_retries = config.max_retries;
         let max_message_size = config.max_message_size;
         let send_timeout = config.send_timeout;
@@ -186,6 +196,7 @@ impl MessageQueue {
         let outgoing_work_sender_thread = outgoing_work_sender.clone();
 
         let worker = std::thread::spawn(move || {
+            dbg!("spawn worker");
             let mut work_scheduled: Option<Instant> = None;
             let rebroadcast_timer = crossbeam::channel::tick(config.rebroadcast_interval);
             let mut schedule_work = crossbeam::channel::after(Duration::from_secs(0));
@@ -193,16 +204,15 @@ impl MessageQueue {
             let dh_timeout_manager = dhtm;
             let network = nt;
             let outgoing_work_sender = outgoing_work_sender_thread;
-            let sender = network.new_message_sender(
-                peer,
-                MessageSenderConfig {
-                    max_retries,
-                    send_timeout,
-                    send_error_backoff,
-                },
-            )?;
+            let mut sender = None;
+            let msg_sender_config = MessageSenderConfig {
+                max_retries,
+                send_timeout,
+                send_error_backoff,
+            };
 
             loop {
+                dbg!("tick");
                 crossbeam::channel::select! {
                     recv(rebroadcast_timer) -> _ => {
                         rebroadcast_wantlist(
@@ -211,7 +221,10 @@ impl MessageQueue {
                             &dh_timeout_manager,
                             max_message_size,
                             &outgoing_work_sender,
-                            &sender
+                            &mut sender,
+                            &network,
+                            &msg_sender_config,
+                            peer,
                         );
                     }
                     recv(outgoing_work_receiver) -> when => {
@@ -228,7 +241,10 @@ impl MessageQueue {
                                     &dh_timeout_manager,
                                     max_message_size,
                                     &outgoing_work_sender,
-                                    &sender,
+                                    &mut sender,
+                                    &network,
+                                    &msg_sender_config,
+                                    peer,
                                 );
                                 work_scheduled = None;
                             } else {
@@ -244,22 +260,32 @@ impl MessageQueue {
                             &dh_timeout_manager,
                             max_message_size,
                             &outgoing_work_sender,
-                            &sender
+                            &mut sender,
+                            &network,
+                            &msg_sender_config,
+                            peer,
                         );
                     }
                     recv(responses_receiver) -> response => {
-                        // Received a response from the peer, calculate latency.
-                        handle_response(&wants, max_valid_latency, &dh_timeout_manager,  response.unwrap());
+                        match response {
+                            Ok(response) => {
+                                // Received a response from the peer, calculate latency.
+                                handle_response(&wants, max_valid_latency, &dh_timeout_manager,  response);
+                            }
+                            Err(err) => {
+                                error!("shutting down, repsonse receiver error: {:?}", err);
+                                break;
+                            }
+                        }
                     }
                     recv(closer_receiver) -> _ => {
+                        info!("shutting down, close received");
                         break;
                     }
                 }
             }
             Ok(())
         });
-
-        // TODO: track thread
 
         MessageQueue {
             inner: Arc::new(Inner {
@@ -269,7 +295,7 @@ impl MessageQueue {
                 max_valid_latency: config.max_valid_latency,
                 responses: responses_sender,
                 closer: closer_sender,
-                worker,
+                worker: Some(worker),
                 outgoing_work_sender,
             }),
             dh_timeout_manager,
@@ -364,9 +390,12 @@ impl MessageQueue {
 
         self.inner.responses.send(cids).ok();
     }
+}
 
-    pub fn shutdown(self) {
-        self.inner.closer.send(()).ok();
+impl Drop for Inner {
+    fn drop(&mut self) {
+        self.closer.send(()).ok();
+        self.worker.take().unwrap().join().unwrap().unwrap();
     }
 }
 
@@ -376,7 +405,10 @@ fn rebroadcast_wantlist(
     dh_timeout_manager: &DontHaveTimeoutManager,
     max_message_size: usize,
     outgoing_work_sender: &Sender<Instant>,
-    sender: &MessageSender,
+    sender: &mut Option<MessageSender>,
+    network: &Network,
+    msg_sender_config: &MessageSenderConfig,
+    peer: PeerId,
 ) {
     if transfer_rebroadcast_wants(wants) {
         send_message(
@@ -386,6 +418,9 @@ fn rebroadcast_wantlist(
             max_message_size,
             outgoing_work_sender,
             sender,
+            network,
+            msg_sender_config,
+            peer,
         );
     }
 }
@@ -412,10 +447,22 @@ fn send_message(
     dh_timeout_manager: &DontHaveTimeoutManager,
     max_message_size: usize,
     outgoing_work_sender: &Sender<Instant>,
-    sender: &MessageSender,
+    sender: &mut Option<MessageSender>,
+    network: &Network,
+    msg_sender_config: &MessageSenderConfig,
+    peer: PeerId,
 ) {
     // TODO: check donthave timeout manager is running
-
+    if sender.is_none() {
+        match network.new_message_sender(peer, msg_sender_config.clone()) {
+            Ok(s) => *sender = Some(s),
+            Err(err) => {
+                error!("failed to dial, unable to send message: {:?}", err);
+                return;
+            }
+        }
+    }
+    let sender = sender.as_ref().unwrap();
     // Convert want lists to a bitswap message
     let (msg, on_sent) = extract_outgoing_message(wants, max_message_size, sender.supports_have());
     if msg.is_empty() {
@@ -475,7 +522,10 @@ fn send_if_ready(
     dh_timeout_manager: &DontHaveTimeoutManager,
     max_message_size: usize,
     outgoing_work_sender: &Sender<Instant>,
-    sender: &MessageSender,
+    sender: &mut Option<MessageSender>,
+    network: &Network,
+    msg_sender_config: &MessageSenderConfig,
+    peer: PeerId,
 ) {
     if wants.lock().unwrap().has_pending_work() {
         send_message(
@@ -485,6 +535,9 @@ fn send_if_ready(
             max_message_size,
             outgoing_work_sender,
             sender,
+            network,
+            msg_sender_config,
+            peer,
         );
     }
 }
