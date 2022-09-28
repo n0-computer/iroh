@@ -2,12 +2,12 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use crate::api;
+use crate::getadd::{add, get};
 use anyhow::Result;
 use async_trait::async_trait;
 use bytes::Bytes;
 use cid::Cid;
 use iroh_resolver::resolver::Path as IpfsPath;
-use iroh_resolver::{resolver, unixfs_builder};
 use iroh_rpc_client::{Client, P2pClient, StoreClient};
 use libp2p::{
     gossipsub::{MessageId, TopicHash},
@@ -47,14 +47,14 @@ impl<'a> api::Accessors<ClientP2p<'a>, ClientStore<'a>> for ClientApi<'a> {
     }
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl<'a> api::GetAdd for ClientApi<'a> {
     async fn get(&self, ipfs_path: &IpfsPath, output: Option<&Path>) -> Result<()> {
-        todo!("awaits integration");
+        get(self.rpc, ipfs_path, output).await
     }
 
     async fn add(&self, path: &Path, recursive: bool, no_wrap: bool) -> Result<Cid> {
-        todo!("awaits integration");
+        add(self.rpc, path, recursive, no_wrap).await
     }
 }
 

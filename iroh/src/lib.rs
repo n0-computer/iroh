@@ -1,5 +1,6 @@
 pub mod api;
 mod clientapi;
+mod getadd;
 
 pub use crate::clientapi::ClientApi as Api;
 pub use bytes::Bytes;
