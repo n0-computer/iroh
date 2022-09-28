@@ -17,6 +17,7 @@ members = [
   "stores/*",
   "examples"
 ]
+resolver = "2"
 
 [patch.crates-io]
 libp2p = { git = "https://github.com/dignifiedquire/rust-libp2p", branch = "iroh-0-49" }
