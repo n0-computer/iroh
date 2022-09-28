@@ -25,7 +25,7 @@
 
 259
 - [ ] `./client/internal/getter/getter.go` (138)
-- [ ] `./client/internal/blockpresencemanager/blockpresencemanager.go` (121)
+- [x] `./client/internal/blockpresencemanager/blockpresencemanager.go` (121)
 
 1241
 - [x] `./client/internal/messagequeue/messagequeue.go` (843)
@@ -46,7 +46,7 @@
 1116
 - [ ] `./client/internal/sessionmanager/sessionmanager.go` (196)
 - [ ] `./client/internal/sessionpeermanager/sessionpeermanager.go` (150)
-- [ ] `./client/internal/sessioninterestmanager/sessioninterestmanager.go` (201)
+- [x] `./client/internal/sessioninterestmanager/sessioninterestmanager.go` (201)
 - [ ] `./client/internal/providerquerymanager/providerquerymanager.go` (430)
 - [ ] `./client/internal/notifications/notifications.go` (139)
 

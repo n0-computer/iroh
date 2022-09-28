@@ -7,7 +7,8 @@ use libp2p::PeerId;
 use crate::{block::Block, message::BitswapMessage, network::Network, Store};
 
 use self::{
-    peer_manager::PeerManager, provider_query_manager::ProviderQueryManager, session::Session,
+    block_presence_manager::BlockPresenceManager, peer_manager::PeerManager,
+    provider_query_manager::ProviderQueryManager, session::Session,
     session_interest_manager::SessionInterestManager, session_manager::SessionManager,
 };
 
@@ -20,6 +21,8 @@ mod session;
 mod session_interest_manager;
 mod session_manager;
 mod session_peer_manager;
+mod session_want_sender;
+mod session_wants;
 pub(crate) mod wantlist;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -67,16 +70,26 @@ pub struct Client<S: Store> {
 
 impl<S: Store> Client<S> {
     pub fn new(network: Network, store: S, config: Config) -> Self {
-        let self_id = network.self_id();
+        let self_id = *network.self_id();
 
-        let session_manager = SessionManager::new();
-        let sm = session_manager.clone();
-        let peer_manager = PeerManager::with_cb(
-            *self_id,
+        let session_interest_manager = SessionInterestManager::new();
+        let block_presence_manager = BlockPresenceManager::new();
+        let peer_manager = PeerManager::new(self_id, network.clone());
+        // TODO: resolve cycle
+        // let peer_manager = PeerManager::with_cb(
+        //     self_id,
+        //     network.clone(),
+        //     move |peer: &PeerId, dont_haves: &[Cid]| {
+        //         sm.receive_from(peer, &[][..], &[][..], dont_haves)
+        //     },
+        // );
+
+        let session_manager = SessionManager::new(
+            self_id,
+            session_interest_manager,
+            block_presence_manager,
+            peer_manager.clone(),
             network.clone(),
-            move |peer: &PeerId, dont_haves: &[Cid]| {
-                sm.receive_from(peer, &[][..], &[][..], dont_haves)
-            },
         );
         let provider_query_manager = ProviderQueryManager::new();
         let counters = Mutex::new(Stat::default());
@@ -124,7 +137,7 @@ impl<S: Store> Client<S> {
         // todo!()
     }
 
-    fn update_receive_countesr(&self, blocks: &[Block]) {
+    fn update_receive_counters(&self, blocks: &[Block]) {
         todo!()
     }
 

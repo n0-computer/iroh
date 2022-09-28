@@ -11,7 +11,12 @@ use crate::network::Network;
 
 use super::{message_queue::MessageQueue, peer_want_manager::PeerWantManager, session::Session};
 
+#[derive(Debug, Clone)]
 pub struct PeerManager {
+    inner: Arc<Inner>,
+}
+
+struct Inner {
     peers: RwLock<(AHashMap<PeerId, MessageQueue>, PeerWantManager)>,
     sessions: RwLock<(AHashMap<u64, Session>, AHashMap<PeerId, AHashSet<u64>>)>,
     self_id: PeerId,
@@ -19,9 +24,9 @@ pub struct PeerManager {
     on_dont_have_timeout: Arc<dyn DontHaveTimeout>,
 }
 
-impl Debug for PeerManager {
+impl Debug for Inner {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("PeerManager")
+        f.debug_struct("Inner")
             .field("peers", &self.peers)
             .field("sessions", &self.sessions)
             .field("self_id", &self.self_id)
@@ -45,11 +50,13 @@ impl PeerManager {
         F: DontHaveTimeout,
     {
         PeerManager {
-            peers: Default::default(),
-            sessions: Default::default(),
-            self_id,
-            network,
-            on_dont_have_timeout: Arc::new(on_dont_have_timeout),
+            inner: Arc::new(Inner {
+                peers: Default::default(),
+                sessions: Default::default(),
+                self_id,
+                network,
+                on_dont_have_timeout: Arc::new(on_dont_have_timeout),
+            }),
         }
     }
 
@@ -59,18 +66,18 @@ impl PeerManager {
 
     /// Returns a list of peers this peer manager is managing.
     pub fn connected_peers(&self) -> Vec<PeerId> {
-        self.peers.read().unwrap().0.keys().copied().collect()
+        self.inner.peers.read().unwrap().0.keys().copied().collect()
     }
 
     /// Called to a new peer to the pool, and send it an initial set of wants.
     pub fn connected(&self, peer: &PeerId) {
-        let (peer_queues, peer_want_manager) = &mut *self.peers.write().unwrap();
+        let (peer_queues, peer_want_manager) = &mut *self.inner.peers.write().unwrap();
 
         let peer_queue = peer_queues.entry(*peer).or_insert_with(|| {
             MessageQueue::new(
                 *peer,
-                self.network.clone(),
-                self.on_dont_have_timeout.clone(),
+                self.inner.network.clone(),
+                self.inner.on_dont_have_timeout.clone(),
             )
         });
 
@@ -83,7 +90,7 @@ impl PeerManager {
 
     /// Called to remove a peer from the pool.
     pub fn disconnected(&self, peer: &PeerId) {
-        let (peer_queues, peer_want_manager) = &mut *self.peers.write().unwrap();
+        let (peer_queues, peer_want_manager) = &mut *self.inner.peers.write().unwrap();
         if let Some(_peer_queue) = peer_queues.remove(peer) {
             // inform the sessions that the peer has disconnected
             self.signal_availability(peer, false);
@@ -95,7 +102,7 @@ impl PeerManager {
     /// The set of blocks, HAVEs and DONT_HAVEs, is `cids`.
     /// Currently only used to calculate latency.
     pub fn response_received(&self, peer: &PeerId, cids: &[Cid]) {
-        let peer_queues = &*self.peers.read().unwrap().0;
+        let peer_queues = &*self.inner.peers.read().unwrap().0;
         if let Some(peer_queue) = peer_queues.get(peer) {
             peer_queue.response_received(cids.to_vec());
         }
@@ -105,7 +112,8 @@ impl PeerManager {
     /// (used by the session to discover seeds).
     /// For each peer it filters out want-haves that have previously been sent to the peer.
     pub fn broadcast_want_haves(&self, want_haves: &AHashSet<Cid>) {
-        self.peers
+        self.inner
+            .peers
             .write()
             .unwrap()
             .1
@@ -115,7 +123,7 @@ impl PeerManager {
     /// Sends the given want-blocks and want-haves to the given peer.
     /// It filters out wants that have been previously sent to the peer.
     pub fn send_wants(&self, peer: &PeerId, want_blocks: &[Cid], want_haves: &[Cid]) {
-        let (peer_queues, peer_want_manager) = &mut *self.peers.write().unwrap();
+        let (peer_queues, peer_want_manager) = &mut *self.inner.peers.write().unwrap();
         if peer_queues.contains_key(peer) {
             peer_want_manager.send_wants(peer, want_blocks, want_haves);
         }
@@ -123,27 +131,27 @@ impl PeerManager {
 
     /// Sends cancels for the given keys to all peers who had previously received a want for those keys.
     pub fn send_cancels(&self, cancels: &[Cid]) {
-        self.peers.write().unwrap().1.send_cancels(cancels);
+        self.inner.peers.write().unwrap().1.send_cancels(cancels);
     }
 
     /// Returns a list of pending wants (both want-haves and want-blocks).
     pub fn current_wants(&self) -> AHashSet<Cid> {
-        self.peers.read().unwrap().1.get_wants()
+        self.inner.peers.read().unwrap().1.get_wants()
     }
 
     /// Returns a list of pending want-blocks.
     pub fn current_want_blocks(&self) -> AHashSet<Cid> {
-        self.peers.read().unwrap().1.get_want_blocks()
+        self.inner.peers.read().unwrap().1.get_want_blocks()
     }
 
     /// Returns a list of pending want-haves
     pub fn current_want_haves(&self) -> AHashSet<Cid> {
-        self.peers.read().unwrap().1.get_want_haves()
+        self.inner.peers.read().unwrap().1.get_want_haves()
     }
 
     /// Informst the `PeerManager` that the given session is interested in events about the given peer.
     pub fn register_session(&self, peer: &PeerId, session: &Session) {
-        let (sessions, peer_sessions) = &mut *self.sessions.write().unwrap();
+        let (sessions, peer_sessions) = &mut *self.inner.sessions.write().unwrap();
         if !sessions.contains_key(&session.id()) {
             sessions.insert(session.id(), session.clone());
         }
@@ -152,7 +160,7 @@ impl PeerManager {
     }
 
     pub fn unregister_session(&self, session_id: u64) {
-        let (sessions, peer_sessions) = &mut *self.sessions.write().unwrap();
+        let (sessions, peer_sessions) = &mut *self.inner.sessions.write().unwrap();
         let mut to_remove = Vec::new();
         for (peer_id, session_ids) in peer_sessions.iter_mut() {
             session_ids.remove(&session_id);
@@ -170,7 +178,7 @@ impl PeerManager {
 
     /// Called when a peers connectivity changes, informs the interested sessions.
     fn signal_availability(&self, peer: &PeerId, is_connected: bool) {
-        let (sessions, peer_sessions) = &*self.sessions.read().unwrap();
+        let (sessions, peer_sessions) = &*self.inner.sessions.read().unwrap();
         if let Some(session_ids) = peer_sessions.get(peer) {
             for session_id in session_ids {
                 if let Some(session) = sessions.get(session_id) {
@@ -238,7 +246,7 @@ mod tests {
         peer_manager.connected(&peer1);
 
         // check messages in MessageQueue
-        let peers = peer_manager.peers.read().unwrap();
+        let peers = peer_manager.inner.peers.read().unwrap();
         let mq = peers.0.get(&peer1).unwrap();
         let mq = &*mq.wants.lock().unwrap();
         assert_eq!(mq.bcst_wants.pending.len(), 2);
@@ -263,7 +271,7 @@ mod tests {
         peer_manager.connected(&peer1);
 
         {
-            let peers = peer_manager.peers.read().unwrap();
+            let peers = peer_manager.inner.peers.read().unwrap();
             let mq = peers.0.get(&peer1).unwrap();
             let mq = &*mq.wants.lock().unwrap();
             assert_eq!(mq.bcst_wants.pending.len(), 2);
@@ -279,7 +287,7 @@ mod tests {
         peer_manager.broadcast_want_haves(&[cids[0], cids[2]].into_iter().collect::<AHashSet<_>>());
 
         {
-            let peers = peer_manager.peers.read().unwrap();
+            let peers = peer_manager.inner.peers.read().unwrap();
             // peer 1 now has all three
             {
                 let mq = peers.0.get(&peer1).unwrap();
@@ -314,7 +322,7 @@ mod tests {
         peer_manager.send_wants(&peer1, &[cids[0]][..], &[cids[2]][..]);
 
         {
-            let peers = peer_manager.peers.read().unwrap();
+            let peers = peer_manager.inner.peers.read().unwrap();
             let mq = peers.0.get(&peer1).unwrap();
             let mq = &*mq.wants.lock().unwrap();
             assert!(mq.bcst_wants.pending.is_empty());
@@ -332,7 +340,7 @@ mod tests {
         peer_manager.send_wants(&peer1, &[cids[0], cids[1]][..], &[cids[2], cids[3]][..]);
 
         {
-            let peers = peer_manager.peers.read().unwrap();
+            let peers = peer_manager.inner.peers.read().unwrap();
             let mq = peers.0.get(&peer1).unwrap();
             let mq = &*mq.wants.lock().unwrap();
             assert!(mq.bcst_wants.pending.is_empty());
@@ -373,7 +381,7 @@ mod tests {
         std::thread::sleep(Duration::from_millis(100));
 
         {
-            let peers = peer_manager.peers.read().unwrap();
+            let peers = peer_manager.inner.peers.read().unwrap();
             let mq = peers.0.get(&peer1).unwrap();
             let mq = &*mq.wants.lock().unwrap();
             assert!(mq.bcst_wants.pending.is_empty());
@@ -387,7 +395,7 @@ mod tests {
         peer_manager.send_cancels(&[cids[0], cids[2]][..]);
         std::thread::sleep(Duration::from_millis(100));
         {
-            let peers = peer_manager.peers.read().unwrap();
+            let peers = peer_manager.inner.peers.read().unwrap();
 
             // check that no cancels went to peer2
             {
