@@ -13,8 +13,10 @@ use libp2p::PeerId;
 use crate::network::Network;
 
 use super::{
-    block_presence_manager::BlockPresenceManager, peer_manager::PeerManager, session::Session,
-    session_interest_manager::SessionInterestManager,
+    block_presence_manager::BlockPresenceManager, peer_manager::PeerManager,
+    provider_query_manager::ProviderQueryManager, session::Session,
+    session_interest_manager::SessionInterestManager, session_peer_manager::SessionPeerManager,
+    session_wants::SessionWants,
 };
 
 #[derive(Debug, Clone)]
@@ -28,7 +30,9 @@ struct Inner {
     session_interest_manager: SessionInterestManager,
     block_presence_manager: BlockPresenceManager,
     peer_manager: PeerManager,
-    // TODO: check if we can just use a Vec
+    session_peer_manager: SessionPeerManager,
+    session_wants: SessionWants,
+    provider_finder: ProviderQueryManager,
     sessions: RwLock<AHashMap<u64, Session>>,
     session_index: AtomicU64,
     network: Network,
@@ -40,6 +44,9 @@ impl SessionManager {
         session_interest_manager: SessionInterestManager,
         block_presence_manager: BlockPresenceManager,
         peer_manager: PeerManager,
+        session_peer_manager: SessionPeerManager,
+        session_wants: SessionWants,
+        provider_finder: ProviderQueryManager,
         network: Network,
     ) -> Self {
         SessionManager {
@@ -48,6 +55,9 @@ impl SessionManager {
                 session_interest_manager,
                 block_presence_manager,
                 peer_manager,
+                session_peer_manager,
+                session_wants,
+                provider_finder,
                 sessions: Default::default(),
                 session_index: Default::default(),
                 network,
@@ -63,7 +73,18 @@ impl SessionManager {
     ) -> Session {
         let id = self.get_next_session_id();
         let peer_manger = PeerManager::new(self.inner.self_id, self.inner.network.clone());
-        let session = Session::new();
+        let session = Session::new(
+            self.inner.self_id,
+            id,
+            self.clone(),
+            self.inner.peer_manager.clone(),
+            self.inner.session_peer_manager.clone(),
+            self.inner.provider_finder.clone(),
+            self.inner.session_interest_manager.clone(),
+            self.inner.session_wants.clone(),
+            provider_search_delay,
+            rebroadcast_delay,
+        );
 
         self.inner
             .sessions

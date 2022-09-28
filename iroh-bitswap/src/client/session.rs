@@ -54,8 +54,41 @@ struct Inner {
 }
 
 impl Session {
-    pub fn new() -> Self {
-        todo!()
+    pub fn new(
+        self_id: PeerId,
+        id: u64,
+        session_manager: SessionManager,
+        peer_manager: PeerManager,
+        session_peer_manager: SessionPeerManager,
+        provider_finder: ProviderQueryManager,
+        session_interest_manager: SessionInterestManager,
+        session_wants: SessionWants,
+        initial_search_delay: Duration,
+        periodic_search_delay: Duration,
+    ) -> Self {
+        let base_tick_delay = Duration::from_millis(500);
+        let session_want_sender = SessionWantSender::new();
+
+        let worker = std::thread::spawn(move || {
+            // Session run loop
+
+            // TODO
+        });
+
+        let inner = Arc::new(Inner {
+            self_id,
+            id,
+            session_manager,
+            peer_manager,
+            session_peer_manager,
+            provider_finder,
+            session_interest_manager,
+            session_wants,
+            session_want_sender,
+            latency_tracker: Default::default(),
+        });
+
+        Session { inner }
     }
 
     pub fn id(&self) -> u64 {
@@ -67,7 +100,7 @@ impl Session {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 struct LatencyTracker {
     total_latency: Duration,
     count: usize,

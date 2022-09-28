@@ -10,6 +10,7 @@ use self::{
     block_presence_manager::BlockPresenceManager, peer_manager::PeerManager,
     provider_query_manager::ProviderQueryManager, session::Session,
     session_interest_manager::SessionInterestManager, session_manager::SessionManager,
+    session_peer_manager::SessionPeerManager, session_wants::SessionWants,
 };
 
 mod block_presence_manager;
@@ -83,12 +84,18 @@ impl<S: Store> Client<S> {
         //         sm.receive_from(peer, &[][..], &[][..], dont_haves)
         //     },
         // );
+        let session_peer_manager = SessionPeerManager::new();
+        let session_wants = SessionWants::new();
+        let provider_finder = ProviderQueryManager::new();
 
         let session_manager = SessionManager::new(
             self_id,
             session_interest_manager,
             block_presence_manager,
             peer_manager.clone(),
+            session_peer_manager,
+            session_wants,
+            provider_finder,
             network.clone(),
         );
         let provider_query_manager = ProviderQueryManager::new();
