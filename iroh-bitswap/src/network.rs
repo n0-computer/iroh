@@ -181,6 +181,22 @@ impl Network {
         Ok(())
     }
 
+    pub fn tag_peer(&self, peer: &PeerId, tag: &str, value: usize) {
+        todo!()
+    }
+
+    pub fn untag_peer(&self, peer: &PeerId, tag: &str) {
+        todo!()
+    }
+
+    pub fn protect_peer(&self, peer: &PeerId, tag: &str) {
+        todo!()
+    }
+
+    pub fn unprotect_peer(&self, peer: &PeerId, tag: &str) -> bool {
+        todo!()
+    }
+
     pub fn poll(&mut self, _cx: &mut Context) -> Poll<OutEvent> {
         if let Ok(event) = self.network_out_receiver.try_recv() {
             return Poll::Ready(event);

@@ -84,7 +84,6 @@ impl<S: Store> Client<S> {
         //         sm.receive_from(peer, &[][..], &[][..], dont_haves)
         //     },
         // );
-        let session_peer_manager = SessionPeerManager::new();
         let session_wants = SessionWants::new();
         let provider_finder = ProviderQueryManager::new();
 
@@ -93,7 +92,6 @@ impl<S: Store> Client<S> {
             session_interest_manager,
             block_presence_manager,
             peer_manager.clone(),
-            session_peer_manager,
             session_wants,
             provider_finder,
             network.clone(),

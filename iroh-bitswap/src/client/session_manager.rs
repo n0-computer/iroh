@@ -30,7 +30,6 @@ struct Inner {
     session_interest_manager: SessionInterestManager,
     block_presence_manager: BlockPresenceManager,
     peer_manager: PeerManager,
-    session_peer_manager: SessionPeerManager,
     session_wants: SessionWants,
     provider_finder: ProviderQueryManager,
     sessions: RwLock<AHashMap<u64, Session>>,
@@ -44,7 +43,6 @@ impl SessionManager {
         session_interest_manager: SessionInterestManager,
         block_presence_manager: BlockPresenceManager,
         peer_manager: PeerManager,
-        session_peer_manager: SessionPeerManager,
         session_wants: SessionWants,
         provider_finder: ProviderQueryManager,
         network: Network,
@@ -55,7 +53,6 @@ impl SessionManager {
                 session_interest_manager,
                 block_presence_manager,
                 peer_manager,
-                session_peer_manager,
                 session_wants,
                 provider_finder,
                 sessions: Default::default(),
@@ -72,13 +69,14 @@ impl SessionManager {
         rebroadcast_delay: Duration,
     ) -> Session {
         let id = self.get_next_session_id();
-        let peer_manger = PeerManager::new(self.inner.self_id, self.inner.network.clone());
+        let session_peer_manager = SessionPeerManager::new(id, self.inner.network.clone());
+
         let session = Session::new(
             self.inner.self_id,
             id,
             self.clone(),
             self.inner.peer_manager.clone(),
-            self.inner.session_peer_manager.clone(),
+            session_peer_manager,
             self.inner.provider_finder.clone(),
             self.inner.session_interest_manager.clone(),
             self.inner.session_wants.clone(),
