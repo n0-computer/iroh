@@ -16,7 +16,7 @@ prost = "0.11"
 bytes = "1.1.0"
 iroh-rpc-client = { path = "../iroh-rpc-client", default-features = false }
 iroh-util = { path = "../iroh-util", default-features = false }
-tokio = { version = "1" }
+tokio = { version = "1", features = ["fs"] }
 futures = "0.3.21"
 tracing = "0.1.34"
 async-trait = "0.1.53"
