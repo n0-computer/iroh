@@ -29,7 +29,7 @@ pub trait Accessors<P: P2p, S: Store> {
 }
 
 #[async_trait(?Send)]
-pub trait GetAdd: std::marker::Sync + std::marker::Send {
+pub trait GetAdd {
     async fn get(&self, ipfs_path: &IpfsPath, output_path: Option<&Path>) -> Result<()>;
     async fn add(&self, path: &Path, recursive: bool, no_wrap: bool) -> Result<Cid>;
 }
