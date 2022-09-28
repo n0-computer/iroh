@@ -1,23 +1,23 @@
 #[macro_export]
 macro_rules! impl_client {
-    ($label:ident) => {
+    ($package:ident : $($service:ident),+) => {
         paste::paste! {
             /// Name that the health service registers the client,
             /// as this is derived from the protobuf definition.
             #[cfg(feature = "grpc")]
-            pub(crate) const SERVICE_NAME: &str = stringify!([<$label:lower>].[<$label>]);
+            pub(crate) const SERVICE_NAME: &str = stringify!([<$package:lower>].[<$package>]);
 
             /// The display name that we expect to see in the StatusTable.
             #[cfg(feature = "grpc")]
-            pub(crate) const NAME: &str = stringify!([<$label:lower>]);
+            pub(crate) const NAME: &str = stringify!([<$package:lower>]);
 
             #[derive(Debug, Clone)]
-            pub struct [<$label Client>] {
-                backend: [<$label ClientBackend>],
+            pub struct [<$package Client>] {
+                pub backend: [<$package:camel ClientBackend>],
             }
 
-            impl [<$label Client>] {
-                pub async fn new(addr: [<$label ClientAddr>]) -> Result<Self> {
+            impl [<$package Client>] {
+                pub async fn new(addr: [<$package ClientAddr>]) -> Result<Self> {
                     match addr {
                         #[cfg(feature = "grpc")]
                         Addr::GrpcHttp2(addr) => {
@@ -25,11 +25,14 @@ macro_rules! impl_client {
                                 .keep_alive_while_idle(true)
                                 .connect_lazy();
 
-                            let client = [<Grpc $label Client>]::new(conn.clone());
+                            $(
+                              let [<$service:snake _client>] = [<Grpc $package Client>]::new(conn.clone());
+                            )+
+
                             let health = HealthClient::new(conn);
 
-                            Ok([<$label Client>] {
-                                backend: [<$label ClientBackend>]::Grpc { client, health },
+                            Ok([<$package Client>] {
+                                backend: [<$package ClientBackend>]::Grpc { $([<$service:snake _client>])+, health },
                             })
                         }
                         #[cfg(all(feature = "grpc", unix))]
@@ -46,16 +49,18 @@ macro_rules! impl_client {
                                     UnixStream::connect(path.as_ref().clone())
                                 }));
 
-                            let client = [<Grpc $label Client>]::new(conn.clone());
+                            $(
+                                let [<$service:snake _client>] = [<Grpc $package Client>]::new(conn.clone());
+                            )+
                             let health = HealthClient::new(conn);
 
-                            Ok([<$label Client>] {
-                                backend: [<$label ClientBackend>]::Grpc { client, health },
+                            Ok([<$package Client>] {
+                                backend: [<$package ClientBackend>]::Grpc { $([<$service:snake _client>],)+ health },
                             })
                         }
                         #[cfg(feature = "mem")]
-                        Addr::Mem(s) => Ok([<$label Client>] {
-                            backend: [<$label ClientBackend>]::Mem(s),
+                        Addr::Mem(s) => Ok([<$package Client>] {
+                            backend: [<$package ClientBackend>]::Mem(s),
                         }),
                     }
                 }
@@ -64,7 +69,7 @@ macro_rules! impl_client {
                 #[tracing::instrument(skip(self))]
                 pub async fn check(&self) -> StatusRow {
                     match &self.backend {
-                        [<$label ClientBackend>]::Grpc { health, .. } => {
+                        [<$package ClientBackend>]::Grpc { health, .. } => {
                             status::check(health.clone(), SERVICE_NAME, NAME).await
                         }
                         _ => {
@@ -77,7 +82,7 @@ macro_rules! impl_client {
                 #[tracing::instrument(skip(self))]
                 pub async fn watch(&self) -> impl Stream<Item = StatusRow> {
                     match &self.backend {
-                        [<$label ClientBackend>]::Grpc { health, .. } => {
+                        [<$package ClientBackend>]::Grpc { health, .. } => {
                             status::watch(health.clone(), SERVICE_NAME, NAME).await
                         }
                         _ => {

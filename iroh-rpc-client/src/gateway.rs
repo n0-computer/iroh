@@ -6,7 +6,7 @@ use futures::Stream;
 #[cfg(feature = "grpc")]
 use iroh_rpc_types::gateway::gateway_client::GatewayClient as GrpcGatewayClient;
 use iroh_rpc_types::{
-    gateway::{Gateway, GatewayClientAddr, GatewayClientBackend},
+    gateway::{GatewayClientAddr, GatewayClientBackend, GatewayGateway},
     Addr,
 };
 #[cfg(feature = "grpc")]
@@ -14,7 +14,7 @@ use tonic::transport::Endpoint;
 #[cfg(feature = "grpc")]
 use tonic_health::proto::health_client::HealthClient;
 
-impl_client!(Gateway);
+impl_client!(Gateway: Gateway);
 
 impl GatewayClient {
     #[tracing::instrument(skip(self))]

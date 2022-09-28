@@ -45,11 +45,19 @@ async fn main() -> Result<()> {
     let content_loader = RpcClient::new(config.rpc_client.clone()).await?;
     let handler = Core::new(
         Arc::new(config),
-        rpc_addr,
         Arc::clone(&bad_bits),
         content_loader,
     )
     .await?;
+
+    // Start the rpc handler.
+    tokio::spawn(async move {
+        if let Err(err) =
+            iroh_gateway::rpc::new(rpc_addr, iroh_gateway::rpc::Gateway::default()).await
+        {
+            tracing::error!("Failed to run gateway rpc handler: {}", err);
+        }
+    });
 
     let bad_bits_handle = bad_bits::spawn_bad_bits_updater(Arc::clone(&bad_bits));
 

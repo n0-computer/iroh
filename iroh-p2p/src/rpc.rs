@@ -23,7 +23,7 @@ use iroh_rpc_types::p2p::{
     GetListeningAddrsResponse, GetPeersResponse, GossipsubAllPeersResponse, GossipsubPeerAndTopics,
     GossipsubPeerIdMsg, GossipsubPeersResponse, GossipsubPublishRequest, GossipsubPublishResponse,
     GossipsubSubscribeResponse, GossipsubTopicHashMsg, GossipsubTopicsResponse, Key as ProviderKey,
-    Multiaddrs, P2p as RpcP2p, P2pServerAddr, PeerIdResponse, Providers, VersionResponse,
+    Multiaddrs, P2pP2p as RpcP2p, P2pServerAddr, PeerIdResponse, Providers, VersionResponse,
 };
 
 struct P2p {

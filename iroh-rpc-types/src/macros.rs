@@ -1,19 +1,22 @@
+/// Create all the scaffolding needed to implement the grpc services for a given package.
 #[macro_export]
 macro_rules! proxy {
-    ($label:ident, $($name:ident: $req:ty => $res:ty),+) => {
+    ($package:ident, $(($service:ident, $($func:ident: $req:ty => $res:ty),+)),+) => {
         paste::paste! {
-            pub async fn serve<T: $label>(addr: [<$label ServerAddr>], source: T) -> anyhow::Result<()> {
+            pub async fn serve<$([<T $service:lower>]: [<$package:camel $service:camel>],)+>(addr: [<$package:camel ServerAddr>], $([<$service:snake _source>]: [<T $service:lower>],)+) -> anyhow::Result<()> {
                 match addr {
                     #[cfg(feature = "grpc")]
                     $crate::Addr::GrpcHttp2(addr) => {
-                        let (mut health_reporter, health_service) = tonic_health::server::health_reporter();
+                        $(
+                        let (mut health_reporter, [<$service:snake health_service>]) = tonic_health::server::health_reporter();
                         health_reporter
-                            .set_serving::<[<$label:lower _server>]::[<$label Server>]<T>>()
+                        .set_serving::<[<$service:snake _server>]::[<$service:camel Server>]<[<T $service:lower>]>>()
                             .await;
+                        )+
 
                         tonic::transport::Server::builder()
-                            .add_service(health_service)
-                            .add_service([<$label:lower _server>]::[<$label Server>]::new(source))
+                            $(.add_service([<$service:snake health_service>]))+
+                            $(.add_service([<$service:snake _server>]::[<$service:camel Server>]::new([<$service:snake _source>])))+
                             .serve(addr)
                             .await?;
 
@@ -25,10 +28,12 @@ macro_rules! proxy {
                         use tokio::net::UnixListener;
                         use tokio_stream::wrappers::UnixListenerStream;
 
-                        let (mut health_reporter, health_service) = tonic_health::server::health_reporter();
+                        $(
+                        let (mut health_reporter, [<$service:snake health_service>]) = tonic_health::server::health_reporter();
                         health_reporter
-                            .set_serving::<[<$label:lower _server>]::[<$label Server>]<T>>()
+                            .set_serving::<[<$service:snake _server>]::[<$service:camel Server>]<[<T $service:lower>]>>()
                             .await;
+                        )+
 
                         if path.exists() {
                             if path.is_dir() {
@@ -61,8 +66,8 @@ macro_rules! proxy {
                         let uds_stream = UnixListenerStream::new(uds);
 
                         tonic::transport::Server::builder()
-                            .add_service(health_service)
-                            .add_service([<$label:lower _server>]::[<$label Server>]::new(source))
+                            $(.add_service([<$service:snake health_service>]))+
+                            $(.add_service([<$service:snake _server>]::[<$service:camel Server>]::new([<$service:snake _source>])))+
                             .serve_with_incoming(uds_stream)
                             .await?;
 
@@ -72,12 +77,12 @@ macro_rules! proxy {
                     $crate::Addr::Mem(mut receiver) => {
                         while let Some((msg, sender)) = receiver.recv().await {
                             match msg {
-                                $(
-                                    [<$label Request>]::$name(req) => {
-                                        let res = source.$name(req).await.map_err(|e| e.to_string());
-                                        sender.send([<$label Response>]::$name(res)).ok();
+                                $($(
+                                    [<$package:camel Request>]::[<$service:camel $func:camel>](req) => {
+                                        let res = [<$service:snake _source>].$func(req).await.map_err(|e| e.to_string());
+                                        sender.send([<$package:camel Response>]::[<$service:camel $func:camel>](res)).ok();
                                     }
-                                )+
+                                )+)+
                             }
                         }
 
@@ -86,80 +91,78 @@ macro_rules! proxy {
                 }
             }
 
-
-            pub type [<$label ServerAddr>] = $crate::Addr<
+            pub type [<$package:camel ServerAddr>] = $crate::Addr<
                 tokio::sync::mpsc::Receiver<
-                  ([<$label Request>], tokio::sync::oneshot::Sender<[<$label Response>]>),
+                  ([<$package:camel Request>], tokio::sync::oneshot::Sender<[<$package:camel Response>]>),
                 >
             >;
-            pub type [<$label ClientAddr>] = $crate::Addr<
+            pub type [<$package:camel ClientAddr>] = $crate::Addr<
                 tokio::sync::mpsc::Sender<
-                  ([<$label Request>], tokio::sync::oneshot::Sender<[<$label Response>]>),
+                  ([<$package:camel Request>], tokio::sync::oneshot::Sender<[<$package:camel Response>]>),
                 >
             >;
 
             #[derive(Debug, Clone)]
             #[allow(clippy::large_enum_variant)]
-            pub enum [<$label ClientBackend>] {
+            pub enum [<$package:camel ClientBackend>] {
                 #[cfg(feature = "grpc")]
                 Grpc {
-                    client: [<$label:lower _client>]::[<$label Client>]<tonic::transport::Channel>,
+                    $(
+                      [<$service:snake _client>]: [<$service:snake _client>]::[<$service:camel Client>]<tonic::transport::Channel>,
+                    )+
                     health: tonic_health::proto::health_client::HealthClient<tonic::transport::Channel>,
                 },
                 #[cfg(feature = "mem")]
                 Mem(
                     tokio::sync::mpsc::Sender<(
-                        [<$label Request>],
-                        tokio::sync::oneshot::Sender<[<$label Response>]>
+                        [<$package:camel Request>],
+                        tokio::sync::oneshot::Sender<[<$package:camel Response>]>
                     )>
                 ),
             }
 
-            #[allow(non_camel_case_types)]
+
             #[derive(Debug, Clone)]
-            pub enum [<$label Request>] {
-                $(
-                    $name($req),
-                )+
+            pub enum [<$package:camel Request>]
+            {
+                $($([<$service:camel $func:camel>]($req),)+)+
             }
 
-            #[allow(non_camel_case_types)]
             #[derive(Debug, Clone)]
-            pub enum [<$label Response>] {
+            pub enum [<$package:camel Response>] {
+                $($([<$service:camel $func:camel>](Result<$res, String>),)+)+
+            }
+
+            $(
+            #[async_trait::async_trait]
+            pub trait [<$package:camel $service:camel>]: Send + Sync + 'static {
                 $(
-                    $name(Result<$res, String>),
+                    async fn [<$func:snake>](&self, request: $req) -> anyhow::Result<$res>;
                 )+
             }
 
             #[async_trait::async_trait]
-            pub trait $label: Send + Sync + 'static {
+            impl [<$package:camel $service:camel>] for [<$package ClientBackend>] {
                 $(
-                    async fn $name(&self, request: $req) -> anyhow::Result<$res>;
-                )+
-            }
-
-            #[async_trait::async_trait]
-            impl $label for [<$label ClientBackend>] {
-                $(
-                    async fn $name(&self, req: $req) -> anyhow::Result<$res> {
+                    async fn $func(&self, req: $req) -> anyhow::Result<$res> {
                         match self {
                             #[cfg(feature = "grpc")]
-                            Self::Grpc { client, .. } => {
+                            Self::Grpc { [<$service:snake _client>], .. } => {
                                 let req = iroh_metrics::req::trace_tonic_req(req);
-                                let mut c = client.clone();
-                                let res = [<$label:lower _client>]::[<$label Client>]::$name(&mut c, req).await?;
+                                let mut c = [<$service:snake _client>].clone();
+                                let res = [<$service:snake _client>]::[<$service:camel Client>]::[<$func:snake>](&mut c, req).await?;
 
                                 Ok(res.into_inner())
                             }
                             #[cfg(feature = "mem")]
                             Self::Mem(s) => {
                                 let (s_res, r_res) = tokio::sync::oneshot::channel();
-                                s.send(([<$label Request>]::$name(req), s_res)).await?;
+                                s.send(([<$package:camel Request>]::[<$service:camel $func:camel>](req), s_res)).await?;
 
                                 let res = r_res.await?;
                                 #[allow(irrefutable_let_patterns)]
-                                if let [<$label Response>]::$name(res) = res {
-                                    return res.map_err(|e| anyhow::anyhow!(e))
+                                if let [<$package:camel Response>]::[<$service:camel $func:camel>](res) = res {
+                                    return res.map_err(|e| anyhow::anyhow!(e));
                                 } else {
                                     anyhow::bail!("invalid response: {:?}", res);
                                 }
@@ -168,6 +171,7 @@ macro_rules! proxy {
                     }
                 )+
             }
+        )+
         }
 
         #[cfg(feature = "grpc")]
@@ -175,22 +179,23 @@ macro_rules! proxy {
             use super::*;
             use tonic::{Request, Response, Status};
 
-
-            paste::paste! {
-                #[async_trait::async_trait]
-                impl<P: $label> [<$label:lower _server>]::$label for P {
-                    $(
-                        async fn $name(
-                            &self,
-                            req: Request<$req>,
-                        ) -> Result<Response<$res>, Status> {
-                            let req = req.into_inner();
-                            let res = $label::$name(self, req).await.map_err(|err| Status::internal(err.to_string()))?;
-                            Ok(Response::new(res))
-                        }
-                    )+
+            $(
+                paste::paste! {
+                    #[async_trait::async_trait]
+                    impl<P: [<$package:camel $service:camel>]> [<$service:snake _server>]::$service for P {
+                        $(
+                            async fn [<$func:snake>](
+                                &self,
+                                req: Request<$req>,
+                            ) -> Result<Response<$res>, Status> {
+                                let req = req.into_inner();
+                                let res = self.[<$func:snake>](req).await.map_err(|err| Status::internal(err.to_string()))?;
+                                Ok(Response::new(res))
+                            }
+                        )+
+                    }
                 }
-            }
+            )+
         }
     }
 }

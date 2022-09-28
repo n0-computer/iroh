@@ -1,6 +1,5 @@
 use axum::Router;
 use iroh_resolver::resolver::ContentLoader;
-use iroh_rpc_types::gateway::GatewayServerAddr;
 
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::RwLock;
@@ -9,8 +8,6 @@ use crate::{
     bad_bits::BadBits,
     client::Client,
     handlers::{get_app_routes, StateConfig},
-    rpc,
-    rpc::Gateway,
     templates,
 };
 
@@ -30,39 +27,15 @@ pub struct State<T: ContentLoader> {
 impl<T: ContentLoader + std::marker::Unpin> Core<T> {
     pub async fn new(
         config: Arc<dyn StateConfig>,
-        rpc_addr: GatewayServerAddr,
         bad_bits: Arc<Option<RwLock<BadBits>>>,
         content_loader: T,
     ) -> anyhow::Result<Self> {
-        tokio::spawn(async move {
-            if let Err(err) = rpc::new(rpc_addr, Gateway::default()).await {
-                tracing::error!("Failed to run gateway rpc handler: {}", err);
-            }
-        });
-        let mut templates = HashMap::new();
-        templates.insert("dir_list".to_string(), templates::DIR_LIST.to_string());
-        templates.insert("not_found".to_string(), templates::NOT_FOUND.to_string());
-        let client = Client::<T>::new(&content_loader);
-
         Ok(Self {
-            state: Arc::new(State {
-                config,
-                client,
-                handlebars: templates,
-                bad_bits,
-            }),
+            state: Self::make_state(config, bad_bits, content_loader).await?
         })
     }
 
-    pub async fn new_with_state(
-        rpc_addr: GatewayServerAddr,
-        state: Arc<State<T>>,
-    ) -> anyhow::Result<Self> {
-        tokio::spawn(async move {
-            if let Err(err) = rpc::new(rpc_addr, Gateway::default()).await {
-                tracing::error!("Failed to run gateway rpc handler: {}", err);
-            }
-        });
+    pub async fn new_with_state(state: Arc<State<T>>) -> anyhow::Result<Self> {
         Ok(Self { state })
     }
 
@@ -123,9 +96,14 @@ mod tests {
 
         let rpc_addr = "grpc://0.0.0.0:0".parse().unwrap();
         let content_loader = RpcClient::new(config.rpc_client().clone()).await.unwrap();
-        let handler = Core::new(Arc::new(config), rpc_addr, Arc::new(None), content_loader)
+        let handler = Core::new(Arc::new(config), Arc::new(None), content_loader)
             .await
             .unwrap();
+        tokio::spawn(async move {
+            if let Err(err) = crate::rpc::new(rpc_addr, crate::rpc::Gateway::default()).await {
+                tracing::error!("Failed to run gateway rpc handler: {}", err);
+            }
+        });
         let server = handler.server();
         let addr = server.local_addr();
         let core_task = tokio::spawn(async move {

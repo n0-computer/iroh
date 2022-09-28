@@ -1,6 +1,8 @@
 include_proto!("gateway");
 
-proxy!(
+proxy!(Gateway,
+(
     Gateway,
     version: () => VersionResponse
+)
 );

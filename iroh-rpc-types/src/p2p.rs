@@ -1,6 +1,7 @@
 include_proto!("p2p");
 
-proxy!(
+proxy!(P2p,
+(
     P2p,
     version: () => VersionResponse,
     local_peer_id: () => PeerIdResponse,
@@ -23,4 +24,5 @@ proxy!(
     gossipsub_subscribe: GossipsubTopicHashMsg => GossipsubSubscribeResponse,
     gossipsub_topics: () => GossipsubTopicsResponse,
     gossipsub_unsubscribe: GossipsubTopicHashMsg => GossipsubSubscribeResponse
+)
 );

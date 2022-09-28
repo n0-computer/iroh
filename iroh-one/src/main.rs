@@ -63,7 +63,6 @@ async fn main() -> Result<()> {
     let metrics_config = config.metrics.clone();
 
     let gateway_rpc_addr = config
-        .gateway
         .server_rpc_addr()?
         .ok_or_else(|| anyhow!("missing gateway rpc addr"))?;
 
@@ -72,7 +71,6 @@ async fn main() -> Result<()> {
         false => Arc::new(None),
     };
 
-    // let content_loader = RpcClient::new(config.rpc_client.clone()).await?;
     let content_loader = iroh_one::content_loader::RacingLoader::new(
         RpcClient::new(config.rpc_client.clone()).await?,
     );
@@ -83,11 +81,21 @@ async fn main() -> Result<()> {
     )
     .await?;
 
-    let handler = Core::new_with_state(gateway_rpc_addr, Arc::clone(&shared_state)).await?;
+    let handler = Core::new_with_state(Arc::clone(&shared_state)).await?;
 
     let metrics_handle = iroh_metrics::MetricsHandle::new(metrics_config)
         .await
         .expect("failed to initialize metrics");
+
+    // Start the rpc handler.
+    tokio::spawn(async move {
+        if let Err(err) =
+            iroh_one::rpc::new(gateway_rpc_addr, &config).await
+        {
+            tracing::error!("Failed to run gateway rpc handler: {}", err);
+        }
+    });
+
     let server = handler.server();
     println!("HTTP endpoint listening on {}", server.local_addr());
     let core_task = tokio::spawn(async move {

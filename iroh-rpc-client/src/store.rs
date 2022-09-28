@@ -8,7 +8,8 @@ use futures::Stream;
 #[cfg(feature = "grpc")]
 use iroh_rpc_types::store::store_client::StoreClient as GrpcStoreClient;
 use iroh_rpc_types::store::{
-    GetLinksRequest, GetRequest, HasRequest, PutRequest, Store, StoreClientAddr, StoreClientBackend,
+    GetLinksRequest, GetRequest, HasRequest, PutRequest, StoreClientAddr, StoreClientBackend,
+    StoreStore,
 };
 use iroh_rpc_types::Addr;
 #[cfg(feature = "grpc")]
@@ -19,7 +20,7 @@ use tonic_health::proto::health_client::HealthClient;
 #[cfg(feature = "grpc")]
 use crate::status::{self, StatusRow};
 
-impl_client!(Store);
+impl_client!(Store: Store);
 
 impl StoreClient {
     #[tracing::instrument(skip(self))]

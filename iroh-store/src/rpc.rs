@@ -6,7 +6,7 @@ use bytes::BytesMut;
 use cid::Cid;
 use iroh_rpc_types::store::{
     GetLinksRequest, GetLinksResponse, GetRequest, GetResponse, HasRequest, HasResponse,
-    PutRequest, Store as RpcStore, StoreServerAddr, VersionResponse,
+    PutRequest, StoreServerAddr, StoreStore as RpcStore, VersionResponse,
 };
 use tracing::info;
 

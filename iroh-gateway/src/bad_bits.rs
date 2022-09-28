@@ -191,14 +191,14 @@ mod tests {
 
         let rpc_addr = "grpc://0.0.0.0:0".parse().unwrap();
         let content_loader = RpcClient::new(config.rpc_client.clone()).await.unwrap();
-        let handler = crate::core::Core::new(
-            Arc::new(config),
-            rpc_addr,
-            Arc::new(Some(RwLock::new(bbits))),
-            content_loader,
-        )
-        .await
-        .unwrap();
+        tokio::spawn(async move {
+            if let Err(err) = crate::rpc::new(rpc_addr, crate::rpc::Gateway::default()).await {
+                tracing::error!("Failed to run gateway rpc handler: {}", err);
+            }
+        });
+        let handler = crate::core::Core::new(Arc::new(config), Arc::new(Some(RwLock::new(bbits))), content_loader)
+            .await
+            .unwrap();
         let server = handler.server();
         let addr = server.local_addr();
         let core_task = tokio::spawn(async move {

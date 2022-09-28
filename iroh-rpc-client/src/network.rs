@@ -9,7 +9,7 @@ use futures::Stream;
 use iroh_rpc_types::p2p::p2p_client::P2pClient as GrpcP2pClient;
 use iroh_rpc_types::p2p::{
     BitswapRequest, ConnectRequest, DisconnectRequest, GossipsubPeerAndTopics, GossipsubPeerIdMsg,
-    GossipsubPublishRequest, GossipsubTopicHashMsg, Key, P2p, P2pClientAddr, P2pClientBackend,
+    GossipsubPublishRequest, GossipsubTopicHashMsg, Key, P2pClientAddr, P2pClientBackend, P2pP2p,
     Providers,
 };
 use iroh_rpc_types::Addr;
@@ -24,7 +24,7 @@ use tracing::{debug, warn};
 #[cfg(feature = "grpc")]
 use crate::status::{self, StatusRow};
 
-impl_client!(P2p);
+impl_client!(P2p: P2p);
 
 impl P2pClient {
     #[tracing::instrument(skip(self))]

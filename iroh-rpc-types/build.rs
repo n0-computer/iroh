@@ -11,6 +11,7 @@ fn main() {
         "proto/p2p.proto",
         "proto/store.proto",
         "proto/gateway.proto",
+        "proto/gateway_one.proto",
         "proto/test.proto",
     ];
     let source_dirs = ["proto"];

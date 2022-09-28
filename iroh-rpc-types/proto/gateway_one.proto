@@ -1,0 +1,40 @@
+syntax = "proto3";
+
+package gatewayone;
+
+import "google/protobuf/empty.proto";
+
+import "gateway.proto";
+import "store.proto";
+import "p2p.proto";
+
+service Gateway {
+  rpc Version(google.protobuf.Empty) returns (gateway.VersionResponse) {}
+}
+
+service Store {
+  rpc Put(store.PutRequest) returns (google.protobuf.Empty) {}
+  rpc Get(store.GetRequest) returns (store.GetResponse) {}
+  rpc Has(store.HasRequest) returns (store.HasResponse) {}
+  rpc GetLinks(store.GetLinksRequest) returns(store.GetLinksResponse) {}
+}
+
+service P2p {
+  rpc FetchBitswap(p2p.BitswapRequest) returns (p2p.BitswapResponse) {}
+  rpc FetchProvider(p2p.Key) returns (p2p.Providers) {}
+  rpc GetListeningAddrs(google.protobuf.Empty) returns (p2p.GetListeningAddrsResponse) {}
+  rpc GetPeers(google.protobuf.Empty) returns (p2p.GetPeersResponse) {}
+  rpc PeerConnect(p2p.ConnectRequest) returns (p2p.ConnectResponse) {}
+  rpc PeerDisconnect(p2p.DisconnectRequest) returns (google.protobuf.Empty) {}
+  rpc Shutdown(google.protobuf.Empty) returns (google.protobuf.Empty) {}
+
+  rpc GossipsubAddExplicitPeer(p2p.GossipsubPeerIdMsg) returns (google.protobuf.Empty) {}
+  rpc GossipsubAllMeshPeers(google.protobuf.Empty) returns (p2p.GossipsubPeersResponse) {}
+  rpc GossipsubAllPeers(google.protobuf.Empty) returns (p2p.GossipsubAllPeersResponse) {}
+  rpc GossipsubMeshPeers(p2p.GossipsubTopicHashMsg) returns (p2p.GossipsubPeersResponse) {}
+  rpc GossipsubPublish(p2p.GossipsubPublishRequest) returns (p2p.GossipsubPublishResponse) {}
+  rpc GossipsubRemoveExplicitPeer(p2p.GossipsubPeerIdMsg) returns (google.protobuf.Empty) {}
+  rpc GossipsubSubscribe(p2p.GossipsubTopicHashMsg) returns (p2p.GossipsubSubscribeResponse) {}
+  rpc GossipsubTopics(google.protobuf.Empty) returns (p2p.GossipsubTopicsResponse) {}
+  rpc GossipsubUnsubscribe(p2p.GossipsubTopicHashMsg) returns (p2p.GossipsubSubscribeResponse) {}
+}
