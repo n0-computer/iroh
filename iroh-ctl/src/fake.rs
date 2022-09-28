@@ -63,7 +63,7 @@ impl api::Accessors<FakeP2p, FakeStore> for FakeApi {
     }
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl api::GetAdd for FakeApi {
     async fn get(&self, ipfs_path: &IpfsPath, output: Option<&Path>) -> Result<()> {
         // XXX should really affect the file system
