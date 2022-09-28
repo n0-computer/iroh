@@ -43,7 +43,7 @@ pub trait P2pConnectDisconnect {
 }
 
 #[async_trait]
-pub trait P2pId: std::marker::Sync {
+pub trait P2pId: Sync {
     async fn p2p_version(&self) -> Result<String>;
     async fn local_peer_id(&self) -> Result<PeerId>;
     async fn addrs_listen(&self) -> Result<Vec<Multiaddr>>;
