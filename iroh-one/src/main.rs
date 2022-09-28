@@ -55,13 +55,6 @@ async fn main() -> Result<()> {
         (store_rpc, p2p_rpc)
     };
 
-    #[cfg(not(feature = "uds-gateway"))]
-    let (rpc_addr, gw_sender) = Addr::new_mem();
-    #[cfg(not(feature = "uds-gateway"))]
-    {
-        config.rpc_client.gateway_addr = Some(gw_sender);
-    }
-
     config.synchronize_subconfigs();
 
     config.metrics = metrics::metrics_config_with_compile_time_info(config.metrics);
@@ -69,8 +62,7 @@ async fn main() -> Result<()> {
 
     let metrics_config = config.metrics.clone();
 
-    #[cfg(feature = "uds-gateway")]
-    let rpc_addr = config
+    let gateway_rpc_addr = config
         .gateway
         .server_rpc_addr()?
         .ok_or_else(|| anyhow!("missing gateway rpc addr"))?;
@@ -91,7 +83,7 @@ async fn main() -> Result<()> {
     )
     .await?;
 
-    let handler = Core::new_with_state(rpc_addr, Arc::clone(&shared_state)).await?;
+    let handler = Core::new_with_state(gateway_rpc_addr, Arc::clone(&shared_state)).await?;
 
     let metrics_handle = iroh_metrics::MetricsHandle::new(metrics_config)
         .await

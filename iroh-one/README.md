@@ -15,7 +15,7 @@ Single binary of iroh services (gateway, p2p, store) communicating via mem chann
 
 ### Features
 
-- `uds-gateway` - enables the usage and binding of the gateway over UDS.
+- `uds-gateway` - enables the usage and binding of the http gateway over UDS.
 
 ### Reference
 

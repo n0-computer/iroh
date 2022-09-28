@@ -27,9 +27,9 @@ iroh-rpc-types = {path = "../iroh-rpc-types", default-features = false}
 iroh-store = {path = "../iroh-store", default-features = false, features = ["rpc-mem"]}
 iroh-util = {path = "../iroh-util"}
 serde = {version = "1.0", features = ["derive"]}
+tempdir = "0.3.7"
 tokio = {version = "1", features = ["macros", "rt-multi-thread", "process"]}
 tracing = "0.1.33"
-tempdir = "0.3.7"
 
 [dev-dependencies]
 axum-macros = "0.2.0" # use #[axum_macros::debug_handler] for better error messages on handlers
@@ -39,4 +39,6 @@ http = "0.2"
 default = ["rpc-mem", "rpc-grpc"]
 rpc-grpc = ["iroh-rpc-types/grpc", "iroh-rpc-client/grpc", "iroh-metrics/rpc-grpc"]
 rpc-mem = ["iroh-rpc-types/mem", "iroh-rpc-client/mem"]
+# uds-gateway controls whether http over uds is enabled. This is independent of the
+# rpc-grpc control endpoint.
 uds-gateway = []

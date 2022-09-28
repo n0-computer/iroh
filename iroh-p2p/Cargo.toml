@@ -21,7 +21,7 @@ lazy_static = "1.4"
 iroh-bitswap = { path = "../iroh-bitswap" }
 iroh-rpc-types = { path = "../iroh-rpc-types", default-features = false }
 iroh-rpc-client = { path = "../iroh-rpc-client", default-features = false }
-tokio = { version = "1", features = ["time", "sync", "macros"] }
+tokio = { version = "1", features = ["fs", "time", "sync", "macros"] }
 ahash = "0.7.6"
 tracing = "0.1.34"
 clap = { version = "3.1.14", features = ["derive"] }
