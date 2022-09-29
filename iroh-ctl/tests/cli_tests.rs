@@ -1,5 +1,3 @@
-use assert_cmd::Command;
-
 // #[test]
 // fn cli_tests() {
 //     let mut cmd = Command::cargo_bin("iroh-ctl-fixture").unwrap();

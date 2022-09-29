@@ -14,7 +14,6 @@ use iroh_rpc_client::{Client, P2pClient, StoreClient};
 use libp2p::gossipsub::{MessageId, TopicHash};
 use libp2p::{Multiaddr, PeerId};
 use mockall::automock;
-use mockall_double::double;
 use tokio::{fs::File, io::stdin, io::AsyncReadExt};
 
 pub struct ClientApi<'a> {

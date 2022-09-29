@@ -261,9 +261,6 @@ mod tests {
         assert_eq!(expect, got);
     }
 
-    use assert_cmd::Command;
-    use libp2p::core::PeerRecord;
-
     // #[test]
     // fn test_p2p_peers() {
     //     let api = Api::default();
