@@ -1,15 +1,18 @@
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
+use std::rc::Rc;
 
+use crate::getadd::{add, get};
 use anyhow::Result;
-use async_trait::async_trait;
 use bytes::Bytes;
 use cid::Cid;
 use iroh_resolver::resolver::Path as IpfsPath;
-use libp2p::gossipsub::MessageId;
+use iroh_rpc_client::{Client, P2pClient, StoreClient};
+use libp2p::gossipsub::{MessageId, TopicHash};
 use libp2p::{Multiaddr, PeerId};
-#[cfg(fake)]
 use mockall::automock;
+use tokio::fs::File;
+use tokio::io::stdin;
 
 pub struct Id {
     pub peer_id: PeerId,
@@ -23,86 +26,153 @@ pub enum Ping {
     Multiaddr(Multiaddr),
 }
 
-#[cfg_attr(fake, automock)]
-pub trait Api<P: P2p, S: Store>: Accessors<P, S> + GetAdd {}
-
-#[cfg_attr(fake, automock)]
-pub trait Accessors<P: P2p, S: Store> {
-    fn p2p(&self) -> Result<P>;
-    fn store(&self) -> Result<S>;
+pub struct Api {
+    client: Rc<Client>,
 }
 
-#[cfg_attr(fake, automock)]
-#[async_trait(?Send)]
-pub trait GetAdd {
-    async fn get(&self, ipfs_path: &IpfsPath, output_path: Option<&Path>) -> Result<()>;
-    async fn add(&self, path: &Path, recursive: bool, no_wrap: bool) -> Result<Cid>;
-}
-
-impl<T: Accessors<P, S> + GetAdd, P: P2p, S: Store> Api<P, S> for T {}
-
-#[cfg_attr(fake, automock)]
-#[async_trait]
-pub trait P2pConnectDisconnect {
-    async fn connect(&self, peer_id: &PeerId, addrs: &[Multiaddr]) -> Result<()>;
-    async fn disconnect(&self, peer_id: &PeerId) -> Result<()>;
-}
-
-#[cfg_attr(fake, automock)]
-#[async_trait]
-pub trait P2pId: Sync {
-    async fn p2p_version(&self) -> Result<String>;
-    async fn local_peer_id(&self) -> Result<PeerId>;
-    async fn addrs_listen(&self) -> Result<Vec<Multiaddr>>;
-    async fn addrs_local(&self) -> Result<Vec<Multiaddr>>;
-    // in the future, can be implemented on the trait itself as it combines others
-    async fn id(&self) -> Result<Id>;
-    async fn peers(&self) -> Result<HashMap<PeerId, Vec<Multiaddr>>>;
-    async fn peer_ids(&self) -> Result<Vec<PeerId>> {
-        let map = self.peers().await?;
-        let mut peer_ids: Vec<PeerId> = map.into_keys().collect();
-        peer_ids.sort();
-        Ok(peer_ids)
+#[automock]
+impl Api {
+    pub fn new(client: Client) -> Api {
+        let client = Rc::new(client);
+        Api { client }
     }
-    async fn ping(&self, ping_args: &[Ping], count: usize) -> Result<()>;
+
+    pub fn p2p(&self) -> Result<P2p> {
+        let p2p_client = self.client.try_p2p()?;
+        Ok(P2p::new(p2p_client))
+    }
+
+    pub fn store(&self) -> Result<Store> {
+        let store_client = self.client.try_store()?;
+        Ok(Store::new(store_client))
+    }
+
+    pub async fn get<'a>(&self, ipfs_path: &IpfsPath, output: Option<&'a Path>) -> Result<()> {
+        get(&self.client, ipfs_path, output).await
+    }
+
+    pub async fn add(&self, path: &Path, recursive: bool, no_wrap: bool) -> Result<Cid> {
+        add(&self.client, path, recursive, no_wrap).await
+    }
 }
 
-#[cfg_attr(fake, automock)]
-#[async_trait]
-pub trait P2pFetch {
-    async fn fetch_bitswap(&self, cid: &Cid, providers: &[PeerId]) -> Result<Bytes>;
-    async fn fetch_providers(&self, cid: &Cid) -> Result<HashSet<PeerId>>;
+pub struct P2p {
+    client: Rc<P2pClient>,
 }
 
-#[cfg_attr(fake, automock)]
-#[async_trait]
-pub trait P2pGossipsub {
-    async fn publish(&self, topic: &str, file: Option<&Path>) -> Result<MessageId>;
-    async fn subscribe(&self, topic: &str) -> Result<bool>;
-    async fn unsubscribe(&self, topic: &str) -> Result<bool>;
+#[automock]
+impl P2p {
+    fn new(client: &P2pClient) -> Self {
+        let client = Rc::new(client.clone());
+        Self { client }
+    }
+    pub async fn p2p_version(&self) -> Result<String> {
+        self.client.version().await
+    }
+
+    pub async fn connect(&self, peer_id: &PeerId, addrs: &[Multiaddr]) -> Result<()> {
+        self.client.connect(*peer_id, addrs.to_vec()).await
+    }
+
+    pub async fn disconnect(&self, peer_id: &PeerId) -> Result<()> {
+        self.client.disconnect(*peer_id).await
+    }
+
+    pub async fn local_peer_id(&self) -> Result<PeerId> {
+        self.client.local_peer_id().await
+    }
+
+    pub async fn peers(&self) -> Result<HashMap<PeerId, Vec<Multiaddr>>> {
+        self.client.get_peers().await
+    }
+
+    pub async fn addrs_listen(&self) -> Result<Vec<Multiaddr>> {
+        let (_, addrs) = self.client.get_listening_addrs().await?;
+        Ok(addrs)
+    }
+
+    pub async fn addrs_local(&self) -> Result<Vec<Multiaddr>> {
+        self.client.external_addresses().await
+    }
+
+    pub async fn id(&self) -> Result<Id> {
+        Ok(Id {
+            peer_id: self.local_peer_id().await?,
+            listen_addrs: self.addrs_listen().await?,
+            local_addrs: self.addrs_local().await?,
+        })
+    }
+
+    pub async fn ping(&self, ping_args: &[Ping], count: usize) -> Result<()> {
+        todo!("{:?} {:?}", ping_args, count);
+    }
+
+    pub async fn fetch_bitswap(&self, cid: &Cid, providers: &[PeerId]) -> Result<Bytes> {
+        let providers: HashSet<PeerId> = providers.iter().cloned().collect();
+        self.client.fetch_bitswap(*cid, providers).await
+    }
+
+    pub async fn fetch_providers(&self, cid: &Cid) -> Result<HashSet<PeerId>> {
+        self.client.fetch_providers(cid).await
+    }
+
+    pub async fn publish<'a>(&self, topic: &str, file: Option<&'a Path>) -> Result<MessageId> {
+        let mut v: Vec<u8> = Vec::new();
+        if let Some(file) = file {
+            let mut f = File::open(file).await?;
+            f.read_to_end(&mut v).await?;
+        } else {
+            stdin().read_to_end(&mut v).await?;
+        }
+        self.client
+            .gossipsub_publish(TopicHash::from_raw(topic), Bytes::from(v))
+            .await
+    }
+
+    pub async fn subscribe(&self, topic: &str) -> Result<bool> {
+        self.client
+            .gossipsub_subscribe(TopicHash::from_raw(topic))
+            .await
+    }
+
+    pub async fn unsubscribe(&self, topic: &str) -> Result<bool> {
+        self.client
+            .gossipsub_unsubscribe(TopicHash::from_raw(topic))
+            .await
+    }
 }
 
-#[cfg_attr(fake, automock)]
-pub trait P2p: P2pConnectDisconnect + P2pId + P2pFetch + P2pGossipsub {}
-
-impl<T: P2pConnectDisconnect + P2pId + P2pFetch + P2pGossipsub> P2p for T {}
-
-#[cfg_attr(fake, automock)]
-#[async_trait]
-pub trait StoreMain {
-    async fn store_version(&self) -> Result<String>;
-    async fn get_links(&self, cid: &Cid) -> Result<Option<Vec<Cid>>>;
+pub struct Store {
+    client: Rc<StoreClient>,
 }
 
-#[cfg_attr(fake, automock)]
-#[async_trait]
-pub trait StoreBlock {
-    async fn block_get(&self, cid: &Cid) -> Result<Option<Bytes>>;
-    async fn block_put(&self, data: &Bytes) -> Result<Cid>;
-    async fn block_has(&self, cid: &Cid) -> Result<bool>;
+#[automock]
+impl Store {
+    fn new(client: &StoreClient) -> Self {
+        let client = Rc::new(client.clone());
+        Self { client }
+    }
+
+    pub async fn store_version(&self) -> Result<String> {
+        self.client.version().await
+    }
+
+    pub async fn get_links(&self, cid: &Cid) -> Result<Option<Vec<Cid>>> {
+        self.client.get_links(*cid).await
+    }
+
+    pub async fn block_get(&self, cid: &Cid) -> Result<Option<Bytes>> {
+        self.client.get(*cid).await
+    }
+
+    pub async fn block_put(&self, _data: &Bytes) -> Result<Cid> {
+        // this awaits ramfox's work in the resolver
+        // would be nice if that work only relied on the store and not
+        // on the full client
+        todo!("not yet")
+    }
+
+    pub async fn block_has(&self, cid: &Cid) -> Result<bool> {
+        self.client.has(*cid).await
+    }
 }
-
-#[cfg_attr(fake, automock)]
-pub trait Store: StoreMain + StoreBlock {}
-
-impl<T: StoreMain + StoreBlock> Store for T {}

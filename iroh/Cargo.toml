@@ -19,10 +19,10 @@ libp2p = "0.48"
 tracing = "0.1.34"
 futures = "0.3.21"
 async-stream = "0.3.3"
+mockall = "0.11.2"
 
 [features]
 fake = []
 
 [dev.dependencies]
-mockall = "0.11.2"
 
