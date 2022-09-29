@@ -11,13 +11,13 @@ pub struct PeerResponseTracker {
 
 impl PeerResponseTracker {
     /// Ccalled when a block is received from a peer (only called first time block is received)
-    fn received_block_from(&mut self, from: &PeerId) {
+    pub fn received_block_from(&mut self, from: &PeerId) {
         *self.first_responder.entry(*from).or_default() += 1;
     }
 
     // Picks a peer from the list of candidate peers, favouring those peers
     // that were first to send us previous blocks.
-    fn choose(&self, peers: &[PeerId]) -> Option<PeerId> {
+    pub fn choose(&self, peers: &[PeerId]) -> Option<PeerId> {
         if peers.is_empty() {
             return None;
         }
@@ -45,7 +45,7 @@ impl PeerResponseTracker {
     }
 
     /// Returns the number of times the peer was first to send us a block.
-    fn get_peer_count(&self, peer: &PeerId) -> usize {
+    pub fn get_peer_count(&self, peer: &PeerId) -> usize {
         // Make sure there is always at least a small chance a new peer
         // will be chosen
         self.first_responder.get(peer).copied().unwrap_or(1)
