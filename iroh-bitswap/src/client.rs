@@ -10,7 +10,7 @@ use self::{
     block_presence_manager::BlockPresenceManager, peer_manager::PeerManager,
     provider_query_manager::ProviderQueryManager, session::Session,
     session_interest_manager::SessionInterestManager, session_manager::SessionManager,
-    session_peer_manager::SessionPeerManager, session_wants::SessionWants,
+    session_wants::SessionWants,
 };
 
 mod block_presence_manager;
@@ -85,7 +85,7 @@ impl<S: Store> Client<S> {
         //     },
         // );
         let session_wants = SessionWants::new();
-        let provider_finder = ProviderQueryManager::new();
+        let provider_query_manager = ProviderQueryManager::new(network.clone());
 
         let session_manager = SessionManager::new(
             self_id,
@@ -93,10 +93,9 @@ impl<S: Store> Client<S> {
             block_presence_manager,
             peer_manager.clone(),
             session_wants,
-            provider_finder,
+            provider_query_manager.clone(),
             network.clone(),
         );
-        let provider_query_manager = ProviderQueryManager::new();
         let counters = Mutex::new(Stat::default());
 
         let session_interest_manager = SessionInterestManager::new();

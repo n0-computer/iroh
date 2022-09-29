@@ -47,7 +47,7 @@
 - [x] `./client/internal/sessionmanager/sessionmanager.go` (196)
 - [x] `./client/internal/sessionpeermanager/sessionpeermanager.go` (150)
 - [x] `./client/internal/sessioninterestmanager/sessioninterestmanager.go` (201)
-- [ ] `./client/internal/providerquerymanager/providerquerymanager.go` (430)
+- [x] `./client/internal/providerquerymanager/providerquerymanager.go` (430)
 - [ ] `./client/internal/notifications/notifications.go` (139)
 
 

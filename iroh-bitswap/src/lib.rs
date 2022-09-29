@@ -2,6 +2,7 @@
 //!
 //! Supports the versions `1.0.0`, `1.1.0` and `1.2.0`.
 
+use std::collections::HashSet;
 use std::fmt::Debug;
 use std::task::{Context, Poll};
 use std::time::Duration;
@@ -232,6 +233,10 @@ pub struct Stat {
 pub enum BitswapEvent {
     /// We have this content, and want it to be provided.
     Provide { key: Cid },
+    FindProviders {
+        key: Cid,
+        response: tokio::sync::mpsc::Sender<std::result::Result<HashSet<PeerId>, String>>,
+    },
 }
 
 impl<S: Store> NetworkBehaviour for Bitswap<S> {

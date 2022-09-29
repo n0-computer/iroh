@@ -1,4 +1,5 @@
 use std::{
+    collections::HashSet,
     task::{Context, Poll},
     time::Duration,
 };
@@ -126,7 +127,35 @@ impl Network {
         bail!("Failed to send message to {}: {:?}", peer, errors);
     }
 
-    fn dial(&self, peer: PeerId, timeout: Duration) -> Result<(ConnectionId, ProtocolId)> {
+    pub fn find_providers(
+        &self,
+        key: Cid,
+    ) -> Result<Receiver<std::result::Result<HashSet<PeerId>, String>>> {
+        let (s, r) = crossbeam::channel::bounded(16);
+        let (s_tokio, mut r_tokio) = tokio::sync::mpsc::channel(16);
+        self.network_out_sender
+            .send(OutEvent::GenerateEvent(BitswapEvent::FindProviders {
+                key,
+                response: s_tokio,
+            }))
+            .map_err(|e| anyhow!("channel send: {:?}", e))?;
+
+        // Sad face. Adapter into async world.
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(async move {
+                while let Some(res) = r_tokio.recv().await {
+                    if s.send(res).is_err() {
+                        break;
+                    }
+                }
+            });
+        });
+
+        Ok(r)
+    }
+
+    pub fn dial(&self, peer: PeerId, timeout: Duration) -> Result<(ConnectionId, ProtocolId)> {
         let timeout = crossbeam::channel::after(timeout);
         let (s, r) = crossbeam::channel::bounded(1);
         self.network_out_sender

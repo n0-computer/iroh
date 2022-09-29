@@ -425,6 +425,13 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                             }
                         }
                     }
+                    BitswapEvent::FindProviders { key, response } => {
+                        info!("bitswap find providers {}", key);
+                        self.handle_rpc_message(RpcMessage::ProviderRequest {
+                            key: ProviderRequestKey::Dht(key.hash().to_bytes().into()),
+                            response_channel: response,
+                        })?;
+                    }
                 }
             }
             Event::Kademlia(e) => {
