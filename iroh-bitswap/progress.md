@@ -36,10 +36,10 @@
 - [x] `./client/internal/peermanager/peermanager.go` (246)
 
 1633
-- [ ] `./client/internal/session/sessionwants.go` (193)
-- [ ] `./client/internal/session/cidqueue.go` (63)
-- [ ] `./client/internal/session/peerresponsetracker.go` (70)
-- [ ] `./client/internal/session/sentwantblockstracker.go` (33)
+- [x] `./client/internal/session/sessionwants.go` (193)
+- [x] `./client/internal/session/cidqueue.go` (63)
+- [x] `./client/internal/session/peerresponsetracker.go` (70)
+- [x] `./client/internal/session/sentwantblockstracker.go` (33)
 - [ ] `./client/internal/session/session.go` (508)
 - [ ] `./client/internal/session/sessionwantsender.go` (766)
 

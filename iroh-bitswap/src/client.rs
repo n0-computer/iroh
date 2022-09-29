@@ -10,7 +10,6 @@ use self::{
     block_presence_manager::BlockPresenceManager, peer_manager::PeerManager,
     provider_query_manager::ProviderQueryManager, session::Session,
     session_interest_manager::SessionInterestManager, session_manager::SessionManager,
-    session_wants::SessionWants,
 };
 
 mod block_presence_manager;
@@ -23,7 +22,6 @@ mod session_interest_manager;
 mod session_manager;
 mod session_peer_manager;
 mod session_want_sender;
-mod session_wants;
 pub(crate) mod wantlist;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -84,7 +82,6 @@ impl<S: Store> Client<S> {
         //         sm.receive_from(peer, &[][..], &[][..], dont_haves)
         //     },
         // );
-        let session_wants = SessionWants::new();
         let provider_query_manager = ProviderQueryManager::new(network.clone());
 
         let session_manager = SessionManager::new(
@@ -92,7 +89,6 @@ impl<S: Store> Client<S> {
             session_interest_manager,
             block_presence_manager,
             peer_manager.clone(),
-            session_wants,
             provider_query_manager.clone(),
             network.clone(),
         );

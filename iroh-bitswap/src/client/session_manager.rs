@@ -16,7 +16,6 @@ use super::{
     block_presence_manager::BlockPresenceManager, peer_manager::PeerManager,
     provider_query_manager::ProviderQueryManager, session::Session,
     session_interest_manager::SessionInterestManager, session_peer_manager::SessionPeerManager,
-    session_wants::SessionWants,
 };
 
 #[derive(Debug, Clone)]
@@ -30,7 +29,6 @@ struct Inner {
     session_interest_manager: SessionInterestManager,
     block_presence_manager: BlockPresenceManager,
     peer_manager: PeerManager,
-    session_wants: SessionWants,
     provider_finder: ProviderQueryManager,
     sessions: RwLock<AHashMap<u64, Session>>,
     session_index: AtomicU64,
@@ -43,7 +41,6 @@ impl SessionManager {
         session_interest_manager: SessionInterestManager,
         block_presence_manager: BlockPresenceManager,
         peer_manager: PeerManager,
-        session_wants: SessionWants,
         provider_finder: ProviderQueryManager,
         network: Network,
     ) -> Self {
@@ -53,7 +50,6 @@ impl SessionManager {
                 session_interest_manager,
                 block_presence_manager,
                 peer_manager,
-                session_wants,
                 provider_finder,
                 sessions: Default::default(),
                 session_index: Default::default(),
@@ -79,7 +75,6 @@ impl SessionManager {
             session_peer_manager,
             self.inner.provider_finder.clone(),
             self.inner.session_interest_manager.clone(),
-            self.inner.session_wants.clone(),
             provider_search_delay,
             rebroadcast_delay,
         );

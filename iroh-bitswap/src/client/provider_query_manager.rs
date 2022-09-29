@@ -1,6 +1,5 @@
 use std::{sync::Arc, thread::JoinHandle, time::Duration};
 
-use ahash::AHashSet;
 use anyhow::Result;
 use cid::Cid;
 use crossbeam::channel::{Receiver, Sender};

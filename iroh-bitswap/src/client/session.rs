@@ -3,12 +3,21 @@ use std::{sync::Arc, time::Duration};
 use cid::Cid;
 use libp2p::PeerId;
 
+use self::session_wants::SessionWants;
+
 use super::{
     peer_manager::PeerManager, provider_query_manager::ProviderQueryManager,
     session_interest_manager::SessionInterestManager, session_manager::SessionManager,
     session_peer_manager::SessionPeerManager, session_want_sender::SessionWantSender,
-    session_wants::SessionWants,
 };
+
+mod cid_queue;
+mod peer_response_tracker;
+mod sent_want_blocks_tracker;
+mod session_want_sender;
+mod session_wants;
+
+const BROADCAST_LIVE_WANTS_LIMIT: usize = 64;
 
 /// The kind of operation being executed in the event loop.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -62,7 +71,6 @@ impl Session {
         session_peer_manager: SessionPeerManager,
         provider_finder: ProviderQueryManager,
         session_interest_manager: SessionInterestManager,
-        session_wants: SessionWants,
         initial_search_delay: Duration,
         periodic_search_delay: Duration,
     ) -> Self {
@@ -83,7 +91,7 @@ impl Session {
             session_peer_manager,
             provider_finder,
             session_interest_manager,
-            session_wants,
+            session_wants: SessionWants::new(BROADCAST_LIVE_WANTS_LIMIT),
             session_want_sender,
             latency_tracker: Default::default(),
         });
