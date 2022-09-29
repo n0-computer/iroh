@@ -1,8 +1,7 @@
-mod clientapi;
+mod api;
 mod getadd;
 
-pub mod api;
-pub use crate::clientapi::ClientApi as Api;
+pub use crate::api::Api;
 pub use bytes::Bytes;
 pub use cid::Cid;
 pub use iroh_resolver::resolver::Path as IpfsPath;

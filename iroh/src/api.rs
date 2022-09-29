@@ -11,8 +11,7 @@ use iroh_rpc_client::{Client, P2pClient, StoreClient};
 use libp2p::gossipsub::{MessageId, TopicHash};
 use libp2p::{Multiaddr, PeerId};
 use mockall::automock;
-use tokio::fs::File;
-use tokio::io::stdin;
+use tokio::{fs::File, io::stdin, io::AsyncReadExt};
 
 pub struct Id {
     pub peer_id: PeerId,
