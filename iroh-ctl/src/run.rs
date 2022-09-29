@@ -15,7 +15,7 @@ use cid::Cid;
 use clap::{Parser, Subcommand};
 use futures::Stream;
 use futures::StreamExt;
-use iroh::api::{Api, ClientApi};
+use iroh::api::{Api, ClientApi, MockApi};
 use iroh::p2p;
 use iroh::store;
 use iroh_metrics::config::Config as MetricsConfig;
@@ -73,7 +73,15 @@ enum Commands {
     },
 }
 
+#[cfg(not(feature = "fake"))]
 pub async fn run_cli(cli: Cli) -> Result<()> {
+    run_cli_impl(cli).await
+}
+
+// extracted this into a public function so that we don't get a lot of
+// rust analyzer unused code errors, which we do if we inline this code inside
+// of run_cli
+pub async fn run_cli_impl(cli: Cli) -> Result<()> {
     let cfg_path = iroh_config_path(CONFIG_FILE_NAME)?;
     let sources = vec![Some(cfg_path), cli.cfg.clone()];
     let config = make_config(
@@ -101,6 +109,29 @@ pub async fn run_cli(cli: Cli) -> Result<()> {
     metrics_handler.shutdown();
 
     Ok(())
+}
+
+#[cfg(feature = "fake")]
+pub async fn run_cli(cli: Cli) -> Result<()> {
+    let mut api = MockApi::<p2p::MockP2p, store::MockStore>::default();
+    api.expect_p2p().returning(|| {
+        use libp2p::PeerId;
+        let mut mock_p2p = p2p::MockP2p::default();
+
+        mock_p2p.expect_peer_ids().returning(|| {
+            let peer_id0 = PeerId::from_bytes(&[
+                0, 32, 15, 231, 162, 148, 52, 155, 40, 187, 217, 170, 125, 185, 68, 142, 156, 196,
+                145, 178, 64, 74, 19, 27, 9, 171, 111, 35, 88, 236, 103, 150, 96, 66,
+            ])?;
+            let peer_id1 = PeerId::from_bytes(&[
+                0, 32, 144, 137, 53, 144, 57, 13, 191, 157, 254, 110, 136, 212, 131, 241, 179, 29,
+                38, 29, 207, 62, 126, 215, 213, 49, 248, 43, 143, 40, 123, 93, 248, 222,
+            ])?;
+            Ok(vec![peer_id0, peer_id1])
+        });
+        Ok(mock_p2p)
+    });
+    run_cli_command(&api, cli).await
 }
 
 pub async fn run_cli_command<A: Api<P, S>, P: p2p::P2p, S: store::Store>(
@@ -281,9 +312,7 @@ mod tests {
         let mut api = MockApi::<p2p::MockP2p, store::MockStore>::default();
         api.expect_p2p().returning(|| {
             let mut mock_p2p = p2p::MockP2p::default();
-            mock_p2p
-                .expect_peer_ids()
-                .returning(|| Ok(vec![PeerId::random()]));
+            mock_p2p.expect_peer_ids().returning(|| Ok(vec![]));
             Ok(mock_p2p)
         });
         // api.p2p().unwrap().peer_ids().await.unwrap();
