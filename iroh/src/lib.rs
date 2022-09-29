@@ -1,7 +1,9 @@
-mod api;
+pub mod api;
 mod getadd;
+pub mod p2p;
+pub mod store;
 
-pub use crate::api::Api;
+// pub use crate::api::{Api, MockApi, P2p, Store};
 pub use bytes::Bytes;
 pub use cid::Cid;
 pub use iroh_resolver::resolver::Path as IpfsPath;

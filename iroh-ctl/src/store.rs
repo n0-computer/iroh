@@ -4,9 +4,6 @@ use std::path::PathBuf;
 use anyhow::Result;
 use cid::Cid;
 use clap::{Args, Subcommand};
-use iroh::api;
-use iroh_resolver::unixfs_builder;
-use iroh_rpc_client::Client;
 
 #[derive(Args, Debug, Clone)]
 pub struct Store {
@@ -48,7 +45,7 @@ Not yet implemented.",
     Has { cid: Cid },
 }
 
-pub async fn run_command<S: api::Store>(store: S, cmd: Store) -> Result<()> {
+pub async fn run_command<S: iroh::store::Store>(store: S, cmd: Store) -> Result<()> {
     match cmd.command {
         StoreCommands::Version => {
             let v = store.store_version().await?;

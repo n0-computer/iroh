@@ -4,7 +4,6 @@ use std::str::FromStr;
 use anyhow::{Error, Result};
 use cid::Cid;
 use clap::{Args, Subcommand};
-use iroh::api;
 use libp2p::{Multiaddr, PeerId};
 
 #[derive(Args, Debug, Clone)]
@@ -220,7 +219,7 @@ pub enum GossipsubCommands {
     },
 }
 
-pub async fn run_command<P: api::P2p>(p2p: P, cmd: P2p) -> Result<()> {
+pub async fn run_command<P: iroh::p2p::P2p>(p2p: P, cmd: P2p) -> Result<()> {
     match cmd.command {
         P2pCommands::Version => {
             let version = p2p.p2p_version().await?;

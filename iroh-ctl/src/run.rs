@@ -15,7 +15,9 @@ use cid::Cid;
 use clap::{Parser, Subcommand};
 use futures::Stream;
 use futures::StreamExt;
-use iroh::{api, Api};
+use iroh::api::{Api, ClientApi};
+use iroh::p2p;
+use iroh::store;
 use iroh_metrics::config::Config as MetricsConfig;
 use iroh_resolver::{resolver, unixfs_builder};
 use iroh_rpc_client::Client;
@@ -71,15 +73,7 @@ enum Commands {
     },
 }
 
-#[cfg(not(feature = "fake"))]
 pub async fn run_cli(cli: Cli) -> Result<()> {
-    run_cli_impl(cli).await
-}
-
-// extracted this into a public function so that we don't get a lot of
-// rust analyzer unused code errors, which we do if we inline this code inside
-// of run_cli
-pub async fn run_cli_impl(cli: Cli) -> Result<()> {
     let cfg_path = iroh_config_path(CONFIG_FILE_NAME)?;
     let sources = vec![Some(cfg_path), cli.cfg.clone()];
     let config = make_config(
@@ -100,7 +94,7 @@ pub async fn run_cli_impl(cli: Cli) -> Result<()> {
 
     let client = Client::new(config.rpc_client).await?;
 
-    let api = Api::new(&client);
+    let api = ClientApi::new(&client);
 
     run_cli_command(&api, cli).await?;
 
@@ -109,13 +103,7 @@ pub async fn run_cli_impl(cli: Cli) -> Result<()> {
     Ok(())
 }
 
-#[cfg(feature = "fake")]
-pub async fn run_cli(cli: Cli) -> Result<()> {
-    let api = crate::fake::FakeApi::default();
-    run_cli_command(&api, cli).await
-}
-
-async fn run_cli_command<A: api::Api<P, S>, P: api::P2p, S: api::Store>(
+pub async fn run_cli_command<A: Api<P, S>, P: p2p::P2p, S: store::Store>(
     api: &A,
     cli: Cli,
 ) -> Result<()> {
@@ -271,5 +259,38 @@ mod tests {
         let expect = PathBuf::from("QmYbcW4tXLXHWw753boCK8Y7uxLu5abXjyYizhLznq9PUR/bar.txt");
         let got = make_output_path(full, root, output).unwrap();
         assert_eq!(expect, got);
+    }
+
+    use assert_cmd::Command;
+    use libp2p::core::PeerRecord;
+
+    // #[test]
+    // fn test_p2p_peers() {
+    //     let api = Api::default();
+    //     let mut cmd = Command::cargo_bin("iroh-ctl-fixture").unwrap();
+    //     cmd.arg("p2p").arg("peers").assert().success();
+    // }
+
+    #[tokio::test]
+    async fn test_do_stuff() {
+        let cli = Cli::try_parse_from(
+            std::iter::once("iroh-ctl").chain(["p2p", "peers"].iter().cloned()),
+        )
+        .unwrap();
+        use iroh::api::MockApi;
+        use iroh::p2p::P2p;
+        use libp2p::PeerId;
+
+        let mut api = MockApi::<p2p::MockP2p, store::MockStore>::default();
+        api.expect_p2p().returning(|| {
+            let mut mock_p2p = p2p::MockP2p::default();
+            mock_p2p
+                .expect_peer_ids()
+                .returning(|| Ok(vec![PeerId::random()]));
+            Ok(mock_p2p)
+        });
+        // api.p2p().unwrap().peer_ids().await.unwrap();
+
+        run_cli_command(&api, cli).await.unwrap();
     }
 }
