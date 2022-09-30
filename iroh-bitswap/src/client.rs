@@ -21,7 +21,6 @@ mod session;
 mod session_interest_manager;
 mod session_manager;
 mod session_peer_manager;
-mod session_want_sender;
 pub(crate) mod wantlist;
 
 #[derive(Debug, Clone, PartialEq, Eq)]

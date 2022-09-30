@@ -1,9 +1,13 @@
-use std::thread::JoinHandle;
+use std::{
+    sync::{Arc, Mutex},
+    thread::JoinHandle,
+};
 
 use ahash::{AHashMap, AHashSet};
 use cid::Cid;
-use crossbeam::channel::Sender;
+use crossbeam::channel::{Receiver, Sender};
 use libp2p::PeerId;
+use tracing::info;
 
 use crate::client::{
     block_presence_manager::BlockPresenceManager, peer_manager::PeerManager,
@@ -36,6 +40,7 @@ pub enum BlockPresence {
 }
 
 /// Encapsulates a message received by the session.
+#[derive(Debug)]
 struct Update {
     /// Which peer sent the update
     from: PeerId,
@@ -48,22 +53,24 @@ struct Update {
 }
 
 /// Indicates a peer's connection state
+#[derive(Debug)]
 struct PeerAvailability {
     target: PeerId,
-    available: bool,
+    is_available: bool,
 }
 
 /// Can be new wants, a new message received by the session, or a change in the
 /// connect status of a peer.
-struct Change {
+#[derive(Debug)]
+enum Change {
     /// New wants requested.
-    add: Vec<Cid>,
+    Add(Vec<Cid>),
     /// Wants cancelled.
-    cancel: Vec<Cid>,
+    Cancel(Vec<Cid>),
     /// New message received by session (blocks / HAVEs / DONT_HAVEs).
-    update: Update,
+    Update(Update),
     /// Peer has connected / disconnected.
-    availability: PeerAvailability,
+    Availability(PeerAvailability),
 }
 
 /// Convenience structs for passing around want-blocks and want-haves for a peer.
@@ -77,8 +84,8 @@ struct WantSets {
 struct AllWants(AHashMap<PeerId, WantSets>);
 
 impl AllWants {
-    fn for_peer(&mut self, peer: &PeerId) -> &WantSets {
-        &*self.0.entry(*peer).or_default()
+    fn for_peer(&mut self, peer: &PeerId) -> &mut WantSets {
+        &mut *self.0.entry(*peer).or_default()
     }
 }
 
@@ -91,16 +98,21 @@ impl AllWants {
 /// To choose the best peer for the optimistic want-block it maintains a list
 /// of how peers have responded to each want (HAVE / DONT_HAVE / Unknown) and
 /// consults the peer response tracker (records which peers sent us blocks).
+#[derive(Debug, Clone)]
+pub struct SessionWantSender {
+    inner: Arc<Inner>,
+}
+
 #[derive(Debug)]
-struct SessionWantSender {
+struct Inner {
     /// The session ID
     session_id: u64,
     /// A channel that collects incoming changes (events)
     changes: Sender<Change>,
     /// Information about each want indexed by CID.
-    wants: AHashMap<Cid, WantInfo>,
+    wants: Mutex<AHashMap<Cid, WantInfo>>,
     /// Keeps track of how many consecutive DONT_HAVEs a peer has sent.
-    peer_consecutive_dont_haves: AHashMap<PeerId, usize>,
+    peer_consecutive_dont_haves: Mutex<AHashMap<PeerId, usize>>,
     /// Tracks which peers we have send want-block to.
     sent_want_blocks_tracker: SentWantBlocksTracker,
     /// Tracks the number of blocks each peer sent us
@@ -121,7 +133,7 @@ struct SessionWantSender {
     worker: Option<JoinHandle<()>>,
 }
 
-impl Drop for SessionWantSender {
+impl Drop for Inner {
     fn drop(&mut self) {
         self.closer.send(()).ok();
         self.worker
@@ -146,6 +158,24 @@ impl SessionWantSender {
         let (changes_s, changes_r) = crossbeam::channel::bounded(64);
         let (closer_s, closer_r) = crossbeam::channel::bounded(1);
 
+        let session_want_sender = SessionWantSender {
+            inner: Arc::new(Inner {
+                session_id,
+                changes: changes_s,
+                wants: Default::default(),
+                peer_consecutive_dont_haves: Default::default(),
+                sent_want_blocks_tracker: SentWantBlocksTracker::default(),
+                peer_response_tracker: PeerResponseTracker::default(),
+                peer_manager,
+                session_peer_manager,
+                session_manager,
+                block_presence_manager,
+                worker: None,
+                closer: closer_s,
+            }),
+        };
+
+        let this = session_want_sender.clone();
         let worker = std::thread::spawn(move || {
             // The main loop for processing incoming changes
             loop {
@@ -155,7 +185,7 @@ impl SessionWantSender {
                     }
                     recv(changes_r) -> change => {
                         match change {
-                            Ok(change) => {/*on_change(change)*/},
+                            Ok(change) => { this.on_change(change, &changes_r) },
                             Err(err) => {
                                 // sender gone
                                 break;
@@ -166,526 +196,546 @@ impl SessionWantSender {
             }
         });
 
-        SessionWantSender {
-            session_id,
-            changes: changes_s,
-            wants: Default::default(),
-            peer_consecutive_dont_haves: Default::default(),
-            sent_want_blocks_tracker: SentWantBlocksTracker::default(),
-            peer_response_tracker: PeerResponseTracker::default(),
-            peer_manager,
-            session_peer_manager,
-            session_manager,
-            block_presence_manager,
-            worker: Some(worker),
-            closer: closer_s,
-        }
+        // TODO:
+        // session_want_sender.inner.worker = Some(worker);
+
+        session_want_sender
     }
 
     pub fn id(&self) -> u64 {
-        self.session_id
+        self.inner.session_id
     }
 
-    // /// Called when new wants are added to the session
-    // pub fn add(&self, ks []cid.Cid) {
-    //     if len(ks) == 0 {
-    //         return
-    //     }
-    //     sws.addChange(change{add: ks})
-    // }
-
-    // /// Called when a request is cancelled
-    // pub fn cancel(&self, ks []cid.Cid) {
-    //     if len(ks) == 0 {
-    //         return
-    //     }
-    //     sws.addChange(change{cancel: ks})
-    // }
-
-    // // Called when the session receives a message with incoming blocks or HAVE / DONT_HAVE.
-    // pub fn update(&self, from peer.ID, ks []cid.Cid, haves []cid.Cid, dontHaves []cid.Cid) {
-    //     hasUpdate := len(ks) > 0 || len(haves) > 0 || len(dontHaves) > 0
-    //         if !hasUpdate {
-    //     	return
-    //         }
-
-    //     sws.addChange(change{
-    //         update: update{from, ks, haves, dontHaves},
-    //     })
-    // }
-
-    // // SignalAvailability is called by the PeerManager to signal that a peer has
-    // // connected / disconnected
-    // pub fn signal_availability(&self, p peer.ID, isAvailable bool) {
-    //     availability := peerAvailability{p, isAvailable}
-    //     // Add the change in a non-blocking manner to avoid the possibility of a
-    //     // deadlock
-    //     sws.addChangeNonBlocking(change{availability: availability})
-    // }
-
-    // // Shutdown the sessionWantSender
-    // pub fn shutdown(&self) {
-    //     // Signal to the run loop to stop processing
-    //     sws.shutdown()
-    //     // Wait for run loop to complete
-    //         <-sws.closed
-    // }
-
-    // // addChange adds a new change to the queue
-    // fn add_change(&self, c change) {
-    //     select {
-    //         case sws.changes <- c;
-    //         case <-sws.ctx.Done();
-    //     }
-    // }
-
-    // // addChangeNonBlocking adds a new change to the queue, using a go-routine
-    // // if the change blocks, so as to avoid potential deadlocks
-    // fn addChangeNonBlocking(&self, c change) {
-    //     select {
-    //         case sws.changes <- c:;
-    //         default:
-    //         // changes channel is full, so add change in a go routine instead
-    //         go func() {
-    //     	select {
-    //     	    case sws.changes <- c:;
-    //     	    case <-sws.ctx.Done():;
-    //     	}
-    //         }()
-    //     }
-    // }
-
-    // // collectChanges collects all the changes that have occurred since the last
-    // // invocation of onChange
-    // fn collectChanges(&self, changes []change) []change {
-    //     for len(changes) < changesBufferSize {
-    //         select {
-    //     	case next := <-sws.changes:;
-    //     		      changes = append(changes, next)
-    //     	              default:;
-    //     		      return changes
-    //     	}
-    //         }
-    //         return changes
-    //     }
-    // }
-
-    // /// Processes the next set of changes
-    // fn onChange(&self, changes []change) {
-    //     // Several changes may have been recorded since the last time we checked,
-    //     // so pop all outstanding changes from the channel
-    //     changes = sws.collectChanges(changes)
-
-    //     // Apply each change
-    //                  availability := make(map[peer.ID]bool, len(changes))
-    //         cancels := make([]cid.Cid, 0)
-    //         var updates []update
-    //         for _, chng := range changes {
-    //     	// Initialize info for new wants
-    //     	for _, c := range chng.add {
-    //     	    sws.trackWant(c)
-    //     	}
-
-    //     	// Remove cancelled wants
-    //     	for _, c := range chng.cancel {
-    //     	    sws.untrackWant(c)
-    //     	       cancels = append(cancels, c)
-    //     	}
-
-    //     	// Consolidate updates and changes to availability
-    //     	if chng.update.from != "" {
-    //     	    // If the update includes blocks or haves, treat it as signaling that
-    //     	    // the peer is available
-    //     	    if len(chng.update.ks) > 0 || len(chng.update.haves) > 0 {
-    //     		p := chng.update.from
-    //     			        availability[p] = true
-
-    //     		// Register with the PeerManager
-    //     		    sws.pm.RegisterSession(p, sws)
-    //     	    }
-
-    //     	    updates = append(updates, chng.update)
-    //     	}
-    //     	if chng.availability.target != "" {
-    //     	    availability[chng.availability.target] = chng.availability.available
-    //     	}
-    //         }
-
-    //     // Update peer availability
-    //     newlyAvailable, newlyUnavailable := sws.processAvailability(availability)
-
-    //     // Update wants
-    //                                            dontHaves := sws.processUpdates(updates)
-
-    //     // Check if there are any wants for which all peers have indicated they
-    //     // don't have the want
-    //                                                            sws.checkForExhaustedWants(dontHaves, newlyUnavailable)
-
-    //     // If there are any cancels, send them
-    //                                                               if len(cancels) > 0 {
-    //     	                                                      sws.canceller.CancelSessionWants(sws.sessionID, cancels)
-    //                                                               }
-
-    //     // If there are some connected peers, send any pending wants
-    //     if sws.spm.HasPeers() {
-    //         sws.sendNextWants(newlyAvailable)
-    //     }
-    // }
-
-    // // processAvailability updates the want queue with any changes in
-    // // peer availability
-    // // It returns the peers that have become
-    // // - newly available
-    // // - newly unavailable
-    // fn  processAvailability(&self, availability map[peer.ID]bool) (avail []peer.ID, unavail []peer.ID) {
-    //     var newlyAvailable []peer.ID;
-    //     var newlyUnavailable []peer.ID;
-    //     for p, isNowAvailable := range availability {
-    //         stateChange := false
-    //     	if isNowAvailable {
-    //     	    isNewPeer := sws.spm.AddPeer(p)
-    //     		                if isNewPeer {
-    //     			            stateChange = true
-    //     			                newlyAvailable = append(newlyAvailable, p)
-    //     		                }
-    //     	} else {
-    //     	    wasAvailable := sws.spm.RemovePeer(p)
-    //     		                   if wasAvailable {
-    //     			               stateChange = true
-    //     			                   newlyUnavailable = append(newlyUnavailable, p)
-    //     		                   }
-    //     	}
-
-    //         // If the state has changed
-    //         if stateChange {
-    //     	sws.updateWantsPeerAvailability(p, isNowAvailable)
-    //     	// Reset the count of consecutive DONT_HAVEs received from the
-    //     	// peer
-    //     	   delete(sws.peerConsecutiveDontHaves, p)
-    //         }
-    //     }
-
-    //     return newlyAvailable, newlyUnavailable
-    // }
-
-    // // trackWant creates a new entry in the map of CID -> want info
-    // fn  trackWant(&self, c cid.Cid) {
-    //     if _, ok := sws.wants[c]; ok {
-    //         return
-    //     }
-
-    //     // Create the want info
-    //     wi := newWantInfo(sws.peerRspTrkr)
-    //         sws.wants[c] = wi
-
-    //     // For each available peer, register any information we know about
-    //     // whether the peer has the block
-    //         for _, p := range sws.spm.Peers() {
-    //     	sws.updateWantBlockPresence(c, p)
-    //         }
-    // }
-
-    // // untrackWant removes an entry from the map of CID -> want info
-    // fn  untrackWant(&self, c cid.Cid) {
-    //     delete(sws.wants, c)
-    // }
-
-    // // processUpdates processes incoming blocks and HAVE / DONT_HAVEs.
-    // // It returns all DONT_HAVEs.
-    // fn  processUpdates(&self, updates []update) []cid.Cid {
-    //     // Process received blocks keys
-    //     blkCids := cid.NewSet()
-    //                   for _, upd := range updates {
-    //     	          for _, c := range upd.ks {
-    //     		      blkCids.Add(c)
-
-    //     		      // Remove the want
-    //     		             removed := sws.removeWant(c)
-    //     		                           if removed != nil {
-    //     			                       // Inform the peer tracker that this peer was the first to send
-    //     			                       // us the block
-    //     			                       sws.peerRspTrkr.receivedBlockFrom(upd.from)
-
-    //     			                       // Protect the connection to this peer so that we can ensure
-    //     			                       // that the connection doesn't get pruned by the connection
-    //     			                       // manager
-    //     			                                      sws.spm.ProtectConnection(upd.from)
-    //     		                           }
-    //     		      delete(sws.peerConsecutiveDontHaves, upd.from)
-    //     	          }
-    //                   }
-
-    //     // Process received DONT_HAVEs
-    //     dontHaves := cid.NewSet()
-    //                     prunePeers := make(map[peer.ID]struct{})
-    //         for _, upd := range updates {
-    //     	for _, c := range upd.dontHaves {
-    //     	    // Track the number of consecutive DONT_HAVEs each peer receives
-    //     	    if sws.peerConsecutiveDontHaves[upd.from] == peerDontHaveLimit {
-    //     		prunePeers[upd.from] = struct{}{}
-    //     	    } else {
-    //     		sws.peerConsecutiveDontHaves[upd.from]++
-    //     	    }
-
-    //     	    // If we already received a block for the want, there's no need to
-    //     	    // update block presence etc
-    //     	    if blkCids.Has(c) {
-    //     		continue
-    //     	    }
-
-    //     	    dontHaves.Add(c)
-
-    //     	    // Update the block presence for the peer
-    //     		     sws.updateWantBlockPresence(c, upd.from)
-
-    //     	    // Check if the DONT_HAVE is in response to a want-block
-    //     	    // (could also be in response to want-have)
-    //     		        if sws.swbt.haveSentWantBlockTo(upd.from, c) {
-    //     			    // If we were waiting for a response from this peer, clear
-    //     			    // sentTo so that we can send the want to another peer
-    //     			    if sentTo, ok := sws.getWantSentTo(c); ok && sentTo == upd.from {
-    //     				sws.setWantSentTo(c, "")
-    //     			    }
-    //     		        }
-    //     	}
-    //         }
-
-    //     // Process received HAVEs
-    //     for _, upd := range updates {
-    //         for _, c := range upd.haves {
-    //     	// If we haven't already received a block for the want
-    //     	if !blkCids.Has(c) {
-    //     	    // Update the block presence for the peer
-    //     	    sws.updateWantBlockPresence(c, upd.from)
-    //     	}
-
-    //     	// Clear the consecutive DONT_HAVE count for the peer
-    //     	delete(sws.peerConsecutiveDontHaves, upd.from)
-    //     	    delete(prunePeers, upd.from)
-    //         }
-    //     }
-
-    //     // If any peers have sent us too many consecutive DONT_HAVEs, remove them
-    //     // from the session
-    //     for p := range prunePeers {
-    //         // Before removing the peer from the session, check if the peer
-    //         // sent us a HAVE for a block that we want
-    //         for c := range sws.wants {
-    //     	if sws.bpm.PeerHasBlock(p, c) {
-    //     	    delete(prunePeers, p)
-    //     		break
-    //     	}
-    //         }
-    //     }
-    //     if len(prunePeers) > 0 {
-    //         go func() {
-    //     	for p := range prunePeers {
-    //     	    // Peer doesn't have anything we want, so remove it
-    //     	    log.Infof("peer %s sent too many dont haves, removing from session %d", p, sws.ID())
-    //     	       sws.SignalAvailability(p, false)
-    //     	}
-    //         }()
-    //     }
-
-    //     return dontHaves.Keys()
-    // }
-
-    // // checkForExhaustedWants checks if there are any wants for which all peers
-    // // have sent a DONT_HAVE. We call these "exhausted" wants.
-    // fn  checkForExhaustedWants(&self, dontHaves []cid.Cid, newlyUnavailable []peer.ID) {
-    //     // If there are no new DONT_HAVEs, and no peers became unavailable, then
-    //     // we don't need to check for exhausted wants
-    //     if len(dontHaves) == 0 && len(newlyUnavailable) == 0 {
-    //         return
-    //     }
-
-    //     // We need to check each want for which we just received a DONT_HAVE
-    //     wants := dontHaves
-
-    //     // If a peer just became unavailable, then we need to check all wants
-    //     // (because it may be the last peer who hadn't sent a DONT_HAVE for a CID)
-    //         if len(newlyUnavailable) > 0 {
-    //     	// Collect all pending wants
-    //     	wants = make([]cid.Cid, len(sws.wants))
-    //     	    for c := range sws.wants {
-    //     		wants = append(wants, c)
-    //     	    }
-
-    //     	// If the last available peer in the session has become unavailable
-    //     	// then we need to broadcast all pending wants
-    //     	if !sws.spm.HasPeers() {
-    //     	    sws.processExhaustedWants(wants)
-    //     	       return
-    //     	}
-    //         }
-
-    //     // If all available peers for a cid sent a DONT_HAVE, signal to the session
-    //     // that we've exhausted available peers
-    //     if len(wants) > 0 {
-    //         exhausted := sws.bpm.AllPeersDoNotHaveBlock(sws.spm.Peers(), wants)
-    //     	                sws.processExhaustedWants(exhausted)
-    //     }
-    // }
-
-    // // processExhaustedWants filters the list so that only those wants that haven't
-    // // already been marked as exhausted are passed to onPeersExhausted()
-    // fn processExhaustedWants(&self, exhausted []cid.Cid) {
-    //     newlyExhausted := sws.newlyExhausted(exhausted);
-    //     if len(newlyExhausted) > 0 {
-    //         sws.onPeersExhausted(newlyExhausted);
-    //     }
-    // }
-
-    // // sendNextWants sends wants to peers according to the latest information
-    // // about which peers have / dont have blocks
-    // fn sendNextWants(&self, newlyAvailable []peer.ID) {
-    //     toSend := make(allWants);
-
-    //     for c, wi := range sws.wants {
-    //         // Ensure we send want-haves to any newly available peers
-    //         for _, p := range newlyAvailable {
-    //     	toSend.forPeer(p).wantHaves.Add(c)
-    //         }
-
-    //         // We already sent a want-block to a peer and haven't yet received a
-    //         // response yet
-    //         if wi.sentTo != "" {
-    //     	continue
-    //         }
-
-    //         // All the peers have indicated that they don't have the block
-    //         // corresponding to this want, so we must wait to discover more peers
-    //         if wi.bestPeer == "" {
-    //     	// TODO: work this out in real time instead of using bestP?
-    //     	continue
-    //         }
-
-    //         // Record that we are sending a want-block for this want to the peer
-    //         sws.setWantSentTo(c, wi.bestPeer)
-
-    //         // Send a want-block to the chosen peer
-    //            toSend.forPeer(wi.bestPeer).wantBlocks.Add(c)
-
-    //         // Send a want-have to each other peer
-    //     	                                     for _, op := range sws.spm.Peers() {
-    //     		                                 if op != wi.bestPeer {
-    //     			                             toSend.forPeer(op).wantHaves.Add(c)
-    //     		                                 }
-    //     	                                     }
-    //     }
-
-    //     // Send any wants we've collected
-    //     sws.sendWants(toSend)
-    // }
-
-    // // sendWants sends want-have and want-blocks to the appropriate peers
-    // fn sendWants(&self, sends allWants) {
-    //     // For each peer we're sending a request to
-    //     for p, snd := range sends {
-    //         // Piggyback some other want-haves onto the request to the peer
-    //         for _, c := range sws.getPiggybackWantHaves(p, snd.wantBlocks) {
-    //     	snd.wantHaves.Add(c)
-    //         }
-
-    //         // Send the wants to the peer.
-    //         // Note that the PeerManager ensures that we don't sent duplicate
-    //         // want-haves / want-blocks to a peer, and that want-blocks take
-    //         // precedence over want-haves.
-    //         wblks := snd.wantBlocks.Keys()
-    //     	                   whaves := snd.wantHaves.Keys()
-    //     	                                          sws.pm.SendWants(sws.ctx, p, wblks, whaves)
-
-    //         // Inform the session that we've sent the wants
-    //     	                                                sws.onSend(p, wblks, whaves)
-
-    //         // Record which peers we send want-block to
-    //     	                                                   sws.swbt.addSentWantBlocksTo(p, wblks)
-    //     }
-    // }
-
-    // // getPiggybackWantHaves gets the want-haves that should be piggybacked onto
-    // // a request that we are making to send want-blocks to a peer
-    // fn  getPiggybackWantHaves(&self, p peer.ID, wantBlocks *cid.Set) []cid.Cid {
-    //     var whs []cid.Cid
-    //                  for c := range sws.wants {
-    //     	         // Don't send want-have if we're already sending a want-block
-    //     	         // (or have previously)
-    //     	         if !wantBlocks.Has(c) && !sws.swbt.haveSentWantBlockTo(p, c) {
-    //     		     whs = append(whs, c)
-    //     	         }
-    //                  }
-    //     return whs
-    // }
-
-    // // newlyExhausted filters the list of keys for wants that have not already
-    // // been marked as exhausted (all peers indicated they don't have the block)
-    // fn  newlyExhausted(&self, ks []cid.Cid) []cid.Cid {
-    //     var res []cid.Cid
-    //                  for _, c := range ks {
-    //     	         if wi, ok := sws.wants[c]; ok {
-    //     		     if !wi.exhausted {
-    //     			 res = append(res, c)
-    //     			     wi.exhausted = true
-    //     		     }
-    //     	         }
-    //                  }
-    //     return res
-    // }
-
-    // // removeWant is called when the corresponding block is received
-    // fn  removeWant(&self, c cid.Cid) *wantInfo {
-    //     if wi, ok := sws.wants[c]; ok {
-    //         delete(sws.wants, c)
-    //     	return wi
-    //     }
-    //     return nil
-    // }
-
-    // // updateWantsPeerAvailability is called when the availability changes for a
-    // // peer. It updates all the wants accordingly.
-    // fn  updateWantsPeerAvailability(&self, p peer.ID, isNowAvailable bool) {
-    //     for c, wi := range sws.wants {
-    //         if isNowAvailable {
-    //     	sws.updateWantBlockPresence(c, p)
-    //         } else {
-    //     	wi.removePeer(p)
-    //         }
-    //     }
-    // }
-
-    // // updateWantBlockPresence is called when a HAVE / DONT_HAVE is received for the given
-    // // want / peer
-    // fn  updateWantBlockPresence(&self, c cid.Cid, p peer.ID) {
-    //     wi, ok := sws.wants[c]
-    //         if !ok {
-    //     	return
-    //         }
-
-    //     // If the peer sent us a HAVE or DONT_HAVE for the cid, adjust the
-    //     // block presence for the peer / cid combination
-    //     if sws.bpm.PeerHasBlock(p, c) {
-    //         wi.setPeerBlockPresence(p, BPHave)
-    //     } else if sws.bpm.PeerDoesNotHaveBlock(p, c) {
-    //         wi.setPeerBlockPresence(p, BPDontHave)
-    //     } else {
-    //         wi.setPeerBlockPresence(p, BPUnknown)
-    //     }
-    // }
-
-    // // Which peer was the want sent to
-    // fn getWantSentTo(&self, c cid.Cid) (peer.ID, bool) {
-    //     if wi, ok := sws.wants[c]; ok {
-    //         return wi.sentTo, true
-    //     }
-    //     return "", false
-    // }
-
-    // // Record which peer the want was sent to
-    // fn setWantSentTo(&self, c cid.Cid, p peer.ID) {
-    //     if wi, ok := sws.wants[c]; ok {
-    //         wi.sentTo = p
-    //     }
-    // }
+    /// Called when new wants are added to the session
+    pub fn add(&self, keys: Vec<Cid>) {
+        if keys.is_empty() {
+            return;
+        }
+        self.add_change(Change::Add(keys));
+    }
+
+    /// Called when a request is cancelled
+    pub fn cancel(&self, keys: Vec<Cid>) {
+        if keys.is_empty() {
+            return;
+        }
+        self.add_change(Change::Cancel(keys));
+    }
+
+    // Called when the session receives a message with incoming blocks or HAVE / DONT_HAVE.
+    pub fn update(&self, from: PeerId, keys: Vec<Cid>, haves: Vec<Cid>, dont_haves: Vec<Cid>) {
+        let has_update = !keys.is_empty() || !haves.is_empty() || !dont_haves.is_empty();
+        if !has_update {
+            return;
+        }
+
+        self.add_change(Change::Update(Update {
+            from,
+            keys,
+            haves,
+            dont_haves,
+        }));
+    }
+
+    /// Called by the `PeerManager` to signal that a peer has connected / disconnected.
+    pub fn signal_availability(&self, peer: PeerId, is_available: bool) {
+        let availability = PeerAvailability {
+            target: peer,
+            is_available,
+        };
+        // Add the change in a non-blocking manner to avoid the possibility of a deadlock.
+        // TODO: this is bad, fix it
+        let changes = self.inner.changes.clone();
+        std::thread::spawn(move || {
+            changes
+                .send(Change::Availability(availability))
+                .expect("sender vanished");
+        });
+    }
+
+    // Adds a new change to the queue.
+    fn add_change(&self, change: Change) {
+        self.inner.changes.send(change).ok();
+    }
+
+    /// Collects all the changes that have occurred since the last invocation of `on_change`.
+    fn collect_changes(changes_r: &Receiver<Change>, changes: &mut Vec<Change>) {
+        while changes.len() < CHANGES_BUFFER_SIZE {
+            if let Ok(change) = changes_r.recv() {
+                changes.push(change);
+            } else {
+                break;
+            }
+        }
+    }
+
+    /// Processes the next set of changes
+    fn on_change(&self, change: Change, changes_r: &Receiver<Change>) {
+        // Several changes may have been recorded since the last time we checked,
+        // so pop all outstanding changes from the channel
+        let mut changes = vec![change];
+        Self::collect_changes(changes_r, &mut changes);
+
+        // Apply each change
+
+        let mut availability = AHashMap::with_capacity(changes.len());
+        let mut cancels = Vec::new();
+        let mut updates = Vec::new();
+        for change in changes {
+            match change {
+                Change::Add(cids) => {
+                    // Initialize info for new wants
+                    for cid in cids {
+                        self.track_want(cid);
+                    }
+                }
+                Change::Cancel(cids) => {
+                    // Remove cancelled wants
+                    for cid in cids {
+                        self.untrack_want(&cid);
+                        cancels.push(cid);
+                    }
+                }
+                Change::Update(update) => {
+                    // Consolidate updates and changes to availability
+                    // If the update includes blocks or haves, treat it as signaling that
+                    // the peer is available
+                    if !update.keys.is_empty() || !update.haves.is_empty() {
+                        availability.insert(update.from, true);
+
+                        // Register with the PeerManager
+                        self.inner
+                            .peer_manager
+                            .register_session(&update.from, self.clone());
+                    }
+
+                    updates.push(update);
+                }
+                Change::Availability(PeerAvailability {
+                    target,
+                    is_available,
+                }) => {
+                    availability.insert(target, is_available);
+                }
+            }
+        }
+
+        // Update peer availability
+        let (newly_available, newly_unavailable) = self.process_availability(&availability);
+
+        // Update wants
+        let dont_haves = self.process_updates(updates);
+
+        // Check if there are any wants for which all peers have indicated they don't have the want.
+        self.check_for_exhausted_wants(dont_haves, newly_unavailable);
+
+        // If there are any cancels, send them
+        if !cancels.is_empty() {
+            self.inner
+                .session_manager
+                .cancel_session_wants(self.inner.session_id, &cancels);
+        }
+
+        // If there are some connected peers, send any pending wants
+        if self.inner.session_peer_manager.has_peers() {
+            self.send_next_wants(newly_available);
+        }
+    }
+
+    // Updates the want queue with any changes in peer availability
+    // It returns the peers that have become
+    // - newly available
+    // - newly unavailable
+    fn process_availability(
+        &self,
+        availability: &AHashMap<PeerId, bool>,
+    ) -> (Vec<PeerId>, Vec<PeerId>) {
+        let mut newly_available = Vec::new();
+        let mut newly_unavailable = Vec::new();
+        for (peer, is_now_available) in availability {
+            let mut state_change = false;
+            if *is_now_available {
+                let is_new_peer = self.inner.session_peer_manager.add_peer(peer);
+                if is_new_peer {
+                    state_change = true;
+                    newly_available.push(*peer);
+                }
+            } else {
+                let was_available = self.inner.session_peer_manager.remove_peer(peer);
+                if was_available {
+                    state_change = true;
+                    newly_unavailable.push(*peer);
+                }
+            }
+
+            // If the state has changed
+            if state_change {
+                self.update_wants_peer_availability(peer, *is_now_available);
+                // Reset the count of consecutive DONT_HAVEs received from the peer.
+                self.inner
+                    .peer_consecutive_dont_haves
+                    .lock()
+                    .unwrap()
+                    .remove(peer);
+            }
+        }
+
+        (newly_available, newly_unavailable)
+    }
+
+    /// Creates a new entry in the map of cid -> want info.
+    fn track_want(&self, cid: Cid) {
+        let wants = &mut *self.inner.wants.lock().unwrap();
+        if wants.contains_key(&cid) {
+            return;
+        }
+
+        // Create the want info
+        let want_info = WantInfo::new(self.inner.peer_response_tracker.clone());
+        wants.insert(cid, want_info);
+
+        // For each available peer, register any information we know about
+        // whether the peer has the block
+        for peer in self.inner.session_peer_manager.peers() {
+            self.update_want_block_presence(&cid, peer)
+        }
+    }
+
+    // Removes an entry from the map of cid -> want info.
+    fn untrack_want(&self, cid: &Cid) {
+        self.inner.wants.lock().unwrap().remove(cid);
+    }
+
+    /// Processes incoming blocks and HAVE / DONT_HAVEs. It returns all DONT_HAVEs.
+    fn process_updates(&self, updates: Vec<Update>) -> AHashSet<Cid> {
+        // Process received blocks keys
+        let mut block_cids = AHashSet::new();
+        for update in &updates {
+            for cid in &update.keys {
+                block_cids.insert(*cid);
+
+                // Remove the want
+                if self.remove_want(cid).is_some() {
+                    // Inform the peer tracker that this peer was the first to send us the block.
+                    self.inner
+                        .peer_response_tracker
+                        .received_block_from(&update.from);
+
+                    // Protect the connection to this peer so that we can ensure
+                    // that the connection doesn't get pruned by the connection manager.
+                    self.inner
+                        .session_peer_manager
+                        .protect_connection(&update.from);
+                    self.inner
+                        .peer_consecutive_dont_haves
+                        .lock()
+                        .unwrap()
+                        .remove(&update.from);
+                }
+            }
+        }
+
+        // Process received DONT_HAVEs
+        let mut dont_haves = AHashSet::new();
+        let mut prune_peers = AHashSet::new();
+
+        for update in &updates {
+            for cid in &update.dont_haves {
+                // Track the number of consecutive DONT_HAVEs each peer receives.
+                let tracker = &mut *self.inner.peer_consecutive_dont_haves.lock().unwrap();
+                let entry = tracker.entry(update.from).or_default();
+                if *entry == PEER_DONT_HAVE_LIMIT {
+                    prune_peers.insert(update.from);
+                } else {
+                    *entry += 1;
+                }
+
+                // If we already received a block for the want, there's no need to update block presence etc.
+                if block_cids.contains(cid) {
+                    continue;
+                }
+
+                dont_haves.insert(*cid);
+
+                // Update the block presence for the peer
+                self.update_want_block_presence(cid, update.from);
+
+                // Check if the DONT_HAVE is in response to a want-block
+                // (could also be in response to want-have)
+                if self
+                    .inner
+                    .sent_want_blocks_tracker
+                    .have_sent_want_block_to(&update.from, cid)
+                {
+                    // If we were waiting for a response from this peer, clear
+                    // sentTo so that we can send the want to another peer
+                    if let Some(sent_to) = self.get_want_sent_to(cid) {
+                        if sent_to == update.from {
+                            self.set_want_sent_to(cid, None);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Process received HAVEs
+        for update in &updates {
+            for cid in &update.haves {
+                // If we haven't already received a block for the want
+                if !block_cids.contains(cid) {
+                    // Update the block presence for the peer
+                    self.update_want_block_presence(cid, update.from);
+                }
+
+                // Clear the consecutive DONT_HAVE count for the peer
+                self.inner
+                    .peer_consecutive_dont_haves
+                    .lock()
+                    .unwrap()
+                    .remove(&update.from);
+                prune_peers.remove(&update.from);
+            }
+        }
+
+        // If any peers have sent us too many consecutive DONT_HAVEs, remove them from the session.
+        {
+            let wants = &*self.inner.wants.lock().unwrap();
+            // Before removing the peer from the session, check if the peer
+            // sent us a HAVE for a block that we want
+            prune_peers.retain(|peer| {
+                for cid in wants.keys() {
+                    if self.inner.block_presence_manager.peer_has_block(&peer, cid) {
+                        return false;
+                    }
+                }
+                true
+            });
+        }
+        if !prune_peers.is_empty() {
+            // TODO: no spawning
+            let this = self.clone();
+            std::thread::spawn(move || {
+                for peer in prune_peers {
+                    // Peer doesn't have anything we want, so remove it
+                    info!(
+                        "peer {} sent too many dont haves, removing from session {}",
+                        peer,
+                        this.id()
+                    );
+                    this.signal_availability(peer, false);
+                }
+            });
+        }
+
+        dont_haves
+    }
+
+    /// Checks if there are any wants for which all peers have sent a DONT_HAVE. We call these "exhausted" wants.
+    fn check_for_exhausted_wants(&self, dont_haves: AHashSet<Cid>, newly_unavailable: Vec<PeerId>) {
+        // If there are no new DONT_HAVEs, and no peers became unavailable, then
+        // we don't need to check for exhausted wants
+        if dont_haves.is_empty() && newly_unavailable.is_empty() {
+            return;
+        }
+
+        // We need to check each want for which we just received a DONT_HAVE
+        let mut wants = dont_haves;
+
+        // If a peer just became unavailable, then we need to check all wants
+        // (because it may be the last peer who hadn't sent a DONT_HAVE for a CID)
+        let this_wants = &mut *self.inner.wants.lock().unwrap();
+        if !newly_unavailable.is_empty() {
+            // Collect all pending wants
+            for cid in this_wants.keys() {
+                wants.insert(*cid);
+            }
+
+            // If the last available peer in the session has become unavailable
+            // then we need to broadcast all pending wants
+            if !self.inner.session_peer_manager.has_peers() {
+                self.process_exhausted_wants(wants);
+                return;
+            }
+        }
+
+        // If all available peers for a cid sent a DONT_HAVE, signal to the session
+        // that we've exhausted available peers
+        if !wants.is_empty() {
+            let exhausted = self
+                .inner
+                .block_presence_manager
+                .all_peers_do_not_have_block(&self.inner.session_peer_manager.peers(), wants);
+            self.process_exhausted_wants(exhausted);
+        }
+    }
+
+    /// Filters the list so that only those wants that haven't already been marked as exhausted
+    /// are passed to `on_peers_exhausted`.
+    fn process_exhausted_wants(&self, exhausted: impl IntoIterator<Item = Cid>) {
+        let newly_exhausted = self.newly_exhausted(exhausted.into_iter());
+        if !newly_exhausted.is_empty() {
+            todo!()
+            // self.on_peers_exhausted(newly_exhausted);
+        }
+    }
+
+    /// Sends wants to peers according to the latest information about which peers have / dont have blocks.
+    fn send_next_wants(&self, newly_available: Vec<PeerId>) {
+        let mut to_send = AllWants::default();
+        let wants = &mut *self.inner.wants.lock().unwrap();
+
+        for (cid, wi) in wants {
+            // Ensure we send want-haves to any newly available peers
+            for peer in &newly_available {
+                to_send.for_peer(peer).want_haves.insert(*cid);
+            }
+
+            // We already sent a want-block to a peer and haven't yet received a response yet.
+            if wi.sent_to.is_some() {
+                continue;
+            }
+
+            // All the peers have indicated that they don't have the block
+            // corresponding to this want, so we must wait to discover more peers
+            if let Some(ref best_peer) = wi.best_peer {
+                // Record that we are sending a want-block for this want to the peer
+                self.set_want_sent_to(cid, Some(*best_peer));
+
+                // Send a want-block to the chosen peer.
+                to_send.for_peer(best_peer).want_blocks.insert(*cid);
+
+                // Send a want-have to each other peer.
+                for op in self.inner.session_peer_manager.peers() {
+                    if &op != best_peer {
+                        to_send.for_peer(&op).want_haves.insert(*cid);
+                    }
+                }
+            }
+        }
+
+        // Send any wants we've collected
+        self.send_wants(to_send);
+    }
+
+    /// Sends want-have and want-blocks to the appropriate peers.
+    fn send_wants(&self, sends: AllWants) {
+        // For each peer we're sending a request to
+        for (peer, mut snd) in sends.0 {
+            // Piggyback some other want-haves onto the request to the peer.
+            for cid in self.get_piggyback_want_haves(&peer, &snd.want_blocks) {
+                snd.want_haves.insert(cid);
+            }
+
+            // Send the wants to the peer.
+            // Note that the PeerManager ensures that we don't sent duplicate
+            // want-haves / want-blocks to a peer, and that want-blocks take
+            // precedence over want-haves.
+            let want_blocks: Vec<_> = snd.want_blocks.into_iter().collect();
+            let want_haves: Vec<_> = snd.want_haves.into_iter().collect();
+            self.inner
+                .peer_manager
+                .send_wants(&peer, &want_blocks, &want_haves);
+
+            // Inform the session that we've sent the wants.
+            todo!();
+            // self.on_send(peer, want_blocks, want_haves);
+
+            // Record which peers we send want-block to
+            self.inner
+                .sent_want_blocks_tracker
+                .add_sent_want_blocks_to(&peer, &want_blocks);
+        }
+    }
+
+    /// Gets the want-haves that should be piggybacked onto a request that we are making to send
+    /// want-blocks to a peer.
+    fn get_piggyback_want_haves(&self, peer: &PeerId, want_blocks: &AHashSet<Cid>) -> Vec<Cid> {
+        let wants = &*self.inner.wants.lock().unwrap();
+        let mut res = Vec::new();
+
+        for cid in wants.keys() {
+            // Don't send want-have if we're already sending a want-block (or have previously).
+            if !want_blocks.contains(cid)
+                && !self
+                    .inner
+                    .sent_want_blocks_tracker
+                    .have_sent_want_block_to(peer, cid)
+            {
+                res.push(*cid);
+            }
+        }
+        res
+    }
+
+    /// Filters the list of keys for wants that have not already been marked as exhausted
+    /// (all peers indicated they don't have the block).
+    fn newly_exhausted(&self, keys: impl Iterator<Item = Cid>) -> Vec<Cid> {
+        let wants = &mut *self.inner.wants.lock().unwrap();
+
+        keys.filter(|cid| {
+            if let Some(wi) = wants.get_mut(&cid) {
+                if !wi.exhausted {
+                    wi.exhausted = true;
+                    return true;
+                }
+            }
+            false
+        })
+        .collect()
+    }
+
+    /// Called when the corresponding block is received.
+    fn remove_want(&self, cid: &Cid) -> Option<WantInfo> {
+        let wants = &mut *self.inner.wants.lock().unwrap();
+        wants.remove(cid)
+    }
+
+    /// Called when the availability changes for a peer. It updates all the wants accordingly.
+    fn update_wants_peer_availability(&self, peer: &PeerId, is_now_available: bool) {
+        let wants = &mut *self.inner.wants.lock().unwrap();
+        for (cid, wi) in wants {
+            if is_now_available {
+                self.update_want_block_presence(cid, *peer);
+            } else {
+                wi.remove_peer(peer);
+            }
+        }
+    }
+
+    /// Called when a HAVE / DONT_HAVE is received for the given want / peer.
+    fn update_want_block_presence(&self, cid: &Cid, peer: PeerId) {
+        let wants = &mut *self.inner.wants.lock().unwrap();
+        if let Some(want_info) = wants.get_mut(cid) {
+            // If the peer sent us a HAVE or DONT_HAVE for the cid, adjust the
+            // block presence for the peer / cid combination
+            let info = if self.inner.block_presence_manager.peer_has_block(&peer, cid) {
+                BlockPresence::Have
+            } else if self
+                .inner
+                .block_presence_manager
+                .peer_does_not_have_block(&peer, cid)
+            {
+                BlockPresence::DontHave
+            } else {
+                BlockPresence::Unknown
+            };
+            want_info.set_peer_block_presence(peer, info);
+        }
+    }
+
+    // Which peer was the want sent to.
+    fn get_want_sent_to(&self, cid: &Cid) -> Option<PeerId> {
+        let wants = &*self.inner.wants.lock().unwrap();
+        wants.get(cid).and_then(|wi| wi.sent_to)
+    }
+
+    // Record which peer the want was sent to
+    fn set_want_sent_to(&self, cid: &Cid, peer: Option<PeerId>) {
+        let wants = &mut *self.inner.wants.lock().unwrap();
+        if let Some(wi) = wants.get_mut(cid) {
+            wi.sent_to = peer;
+        }
+    }
 }
 
 /// Keeps track of the information for a want

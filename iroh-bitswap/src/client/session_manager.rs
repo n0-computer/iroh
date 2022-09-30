@@ -75,6 +75,7 @@ impl SessionManager {
             session_peer_manager,
             self.inner.provider_finder.clone(),
             self.inner.session_interest_manager.clone(),
+            self.inner.block_presence_manager.clone(),
             provider_search_delay,
             rebroadcast_delay,
         );

@@ -1,12 +1,12 @@
-use std::sync::RwLock;
+use std::sync::{Arc, RwLock};
 
 use ahash::AHashMap;
 use cid::Cid;
 use libp2p::PeerId;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct BlockPresenceManager {
-    presence: RwLock<AHashMap<Cid, AHashMap<PeerId, bool>>>,
+    presence: Arc<RwLock<AHashMap<Cid, AHashMap<PeerId, bool>>>>,
 }
 
 impl BlockPresenceManager {
@@ -52,12 +52,16 @@ impl BlockPresenceManager {
     ///
     /// This allows us to know if we've exhauseed all possibilities of finding the key
     /// with the peers we know about.
-    pub fn all_peers_do_not_have_block(&self, peers: &[PeerId], keys: &[Cid]) -> Vec<Cid> {
+    pub fn all_peers_do_not_have_block(
+        &self,
+        peers: &[PeerId],
+        keys: impl IntoIterator<Item = Cid>,
+    ) -> Vec<Cid> {
         let presence = &*self.presence.read().unwrap();
         let mut res = Vec::new();
-        for key in keys {
-            if all_dont_have(presence, peers, key) {
-                res.push(*key);
+        for key in keys.into_iter() {
+            if all_dont_have(presence, peers, &key) {
+                res.push(key);
             }
         }
 

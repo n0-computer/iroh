@@ -6,9 +6,9 @@ use libp2p::PeerId;
 use self::session_wants::SessionWants;
 
 use super::{
-    peer_manager::PeerManager, provider_query_manager::ProviderQueryManager,
-    session_interest_manager::SessionInterestManager, session_manager::SessionManager,
-    session_peer_manager::SessionPeerManager, session_want_sender::SessionWantSender,
+    block_presence_manager::BlockPresenceManager, peer_manager::PeerManager,
+    provider_query_manager::ProviderQueryManager, session_interest_manager::SessionInterestManager,
+    session_manager::SessionManager, session_peer_manager::SessionPeerManager,
 };
 
 mod cid_queue;
@@ -16,6 +16,8 @@ mod peer_response_tracker;
 mod sent_want_blocks_tracker;
 mod session_want_sender;
 mod session_wants;
+
+pub use self::session_want_sender::SessionWantSender;
 
 const BROADCAST_LIVE_WANTS_LIMIT: usize = 64;
 
@@ -71,11 +73,18 @@ impl Session {
         session_peer_manager: SessionPeerManager,
         provider_finder: ProviderQueryManager,
         session_interest_manager: SessionInterestManager,
+        block_presence_manager: BlockPresenceManager,
         initial_search_delay: Duration,
         periodic_search_delay: Duration,
     ) -> Self {
         let base_tick_delay = Duration::from_millis(500);
-        let session_want_sender = SessionWantSender::new();
+        let session_want_sender = SessionWantSender::new(
+            id,
+            peer_manager.clone(),
+            session_peer_manager.clone(),
+            session_manager.clone(),
+            block_presence_manager,
+        );
 
         let worker = std::thread::spawn(move || {
             // Session run loop

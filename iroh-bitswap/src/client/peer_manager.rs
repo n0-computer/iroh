@@ -9,7 +9,9 @@ use libp2p::PeerId;
 
 use crate::network::Network;
 
-use super::{message_queue::MessageQueue, peer_want_manager::PeerWantManager, session::Session};
+use super::{
+    message_queue::MessageQueue, peer_want_manager::PeerWantManager, session::SessionWantSender,
+};
 
 #[derive(Debug, Clone)]
 pub struct PeerManager {
@@ -18,7 +20,10 @@ pub struct PeerManager {
 
 struct Inner {
     peers: RwLock<(AHashMap<PeerId, MessageQueue>, PeerWantManager)>,
-    sessions: RwLock<(AHashMap<u64, Session>, AHashMap<PeerId, AHashSet<u64>>)>,
+    sessions: RwLock<(
+        AHashMap<u64, SessionWantSender>,
+        AHashMap<PeerId, AHashSet<u64>>,
+    )>,
     self_id: PeerId,
     network: Network,
     on_dont_have_timeout: Arc<dyn DontHaveTimeout>,
@@ -150,13 +155,14 @@ impl PeerManager {
     }
 
     /// Informst the `PeerManager` that the given session is interested in events about the given peer.
-    pub fn register_session(&self, peer: &PeerId, session: &Session) {
+    pub fn register_session(&self, peer: &PeerId, session: SessionWantSender) {
         let (sessions, peer_sessions) = &mut *self.inner.sessions.write().unwrap();
-        if !sessions.contains_key(&session.id()) {
-            sessions.insert(session.id(), session.clone());
+        let id = session.id();
+        if !sessions.contains_key(&id) {
+            sessions.insert(session.id(), session);
         }
 
-        peer_sessions.entry(*peer).or_default().insert(session.id());
+        peer_sessions.entry(*peer).or_default().insert(id);
     }
 
     pub fn unregister_session(&self, session_id: u64) {
@@ -182,7 +188,7 @@ impl PeerManager {
         if let Some(session_ids) = peer_sessions.get(peer) {
             for session_id in session_ids {
                 if let Some(session) = sessions.get(session_id) {
-                    session.signal_availability(peer, is_connected);
+                    session.signal_availability(*peer, is_connected);
                 }
             }
         }

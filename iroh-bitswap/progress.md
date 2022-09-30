@@ -41,7 +41,7 @@
 - [x] `./client/internal/session/peerresponsetracker.go` (70)
 - [x] `./client/internal/session/sentwantblockstracker.go` (33)
 - [ ] `./client/internal/session/session.go` (508)
-- [ ] `./client/internal/session/sessionwantsender.go` (766)
+- [x] `./client/internal/session/sessionwantsender.go` (766)
 
 1116
 - [x] `./client/internal/sessionmanager/sessionmanager.go` (196)

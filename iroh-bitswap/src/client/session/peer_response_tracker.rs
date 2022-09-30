@@ -1,18 +1,25 @@
+use std::sync::{Arc, RwLock};
+
 use ahash::AHashMap;
 use libp2p::PeerId;
 use rand::{thread_rng, Rng};
 
 /// Keeps track of how many times each peer was the first to send us a block for a
 /// given cid (used to rank peers)
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Clone)]
 pub struct PeerResponseTracker {
-    first_responder: AHashMap<PeerId, usize>,
+    first_responder: Arc<RwLock<AHashMap<PeerId, usize>>>,
 }
 
 impl PeerResponseTracker {
     /// Ccalled when a block is received from a peer (only called first time block is received)
-    pub fn received_block_from(&mut self, from: &PeerId) {
-        *self.first_responder.entry(*from).or_default() += 1;
+    pub fn received_block_from(&self, from: &PeerId) {
+        *self
+            .first_responder
+            .write()
+            .unwrap()
+            .entry(*from)
+            .or_default() += 1;
     }
 
     // Picks a peer from the list of candidate peers, favouring those peers
@@ -48,6 +55,11 @@ impl PeerResponseTracker {
     pub fn get_peer_count(&self, peer: &PeerId) -> usize {
         // Make sure there is always at least a small chance a new peer
         // will be chosen
-        self.first_responder.get(peer).copied().unwrap_or(1)
+        self.first_responder
+            .read()
+            .unwrap()
+            .get(peer)
+            .copied()
+            .unwrap_or(1)
     }
 }
