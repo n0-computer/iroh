@@ -3,7 +3,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use ahash::AHashMap;
+use ahash::{AHashMap, AHashSet};
 use cid::Cid;
 use rand::{thread_rng, Rng};
 
@@ -61,18 +61,18 @@ impl SessionWants {
     /// the live wants queue as possible (given the broadcast limit).
     ///
     /// Returns the newly live wants.
-    fn get_next_wants(&mut self) -> Vec<Cid> {
+    pub fn get_next_wants(&mut self) -> AHashSet<Cid> {
         let now = Instant::now();
 
         // Move cids from fetch queue to the live wants queue (up to the broadcast limit)
         let current_live_count = self.live_wants.len();
         let to_add = self.broadcast_limit - current_live_count;
 
-        let mut live = Vec::new();
+        let mut live = AHashSet::new();
 
         for _ in 0..to_add {
             if let Some(cid) = self.to_fetch.pop() {
-                live.push(cid);
+                live.insert(cid);
                 self.live_wants_order.push(cid);
                 self.live_wants.insert(cid, now);
             } else {
@@ -134,15 +134,15 @@ impl SessionWants {
 
     /// Saves the current time for each live want and returns the live want cids up
     /// to the broadcast limit.
-    pub fn prepare_broadcast(&mut self) -> Vec<Cid> {
+    pub fn prepare_broadcast(&mut self) -> AHashSet<Cid> {
         let now = Instant::now();
-        let mut live = Vec::with_capacity(self.live_wants.len());
+        let mut live = AHashSet::with_capacity(self.live_wants.len());
         for key in &self.live_wants_order {
             if let Some(want) = self.live_wants.get_mut(key) {
                 // No response was received for the want, so reset the sent time
                 // to now as we're about to broadcast
                 *want = now;
-                live.push(*key);
+                live.insert(*key);
                 if live.len() == self.broadcast_limit {
                     break;
                 }

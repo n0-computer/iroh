@@ -82,6 +82,7 @@ impl SessionManager {
             self.inner.provider_finder.clone(),
             self.inner.session_interest_manager.clone(),
             self.inner.block_presence_manager.clone(),
+            self.inner.provider_finder.clone(),
             self.inner.notify.clone(),
             provider_search_delay,
             rebroadcast_delay,

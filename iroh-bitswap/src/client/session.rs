@@ -1,4 +1,8 @@
-use std::{sync::Arc, thread::JoinHandle, time::Duration};
+use std::{
+    sync::Arc,
+    thread::JoinHandle,
+    time::{Duration, Instant},
+};
 
 use ahash::AHashSet;
 use anyhow::{ensure, Result};
@@ -63,13 +67,9 @@ struct Inner {
     self_id: PeerId,
     id: u64,
     session_manager: SessionManager,
-    peer_manager: PeerManager,
-    session_peer_manager: SessionPeerManager,
     provider_finder: ProviderQueryManager,
     session_interest_manager: SessionInterestManager,
-    session_wants: SessionWants,
     session_want_sender: SessionWantSender,
-    latency_tracker: LatencyTracker,
     incoming: Sender<Op>,
     closer: Sender<()>,
     worker: Option<JoinHandle<()>>,
@@ -100,11 +100,11 @@ impl Session {
         provider_finder: ProviderQueryManager,
         session_interest_manager: SessionInterestManager,
         block_presence_manager: BlockPresenceManager,
+        provider_query_manager: ProviderQueryManager,
         notify: bus::BusReadHandle<Block>,
         initial_search_delay: Duration,
         periodic_search_delay: Duration,
     ) -> Self {
-        let base_tick_delay = Duration::from_millis(500);
         let session_want_sender = SessionWantSender::new(
             id,
             peer_manager.clone(),
@@ -113,16 +113,24 @@ impl Session {
             block_presence_manager,
         );
 
+        let session_wants = SessionWants::new(BROADCAST_LIVE_WANTS_LIMIT);
         let (closer_s, closer_r) = crossbeam::channel::bounded(1);
         let (incoming_s, incoming_r) = crossbeam::channel::bounded(128);
+        let mut loop_state = LoopState::new(
+            id,
+            session_wants,
+            session_want_sender.clone(),
+            session_interest_manager.clone(),
+            provider_query_manager,
+            session_peer_manager,
+            peer_manager,
+            initial_search_delay,
+        );
 
         let worker = std::thread::spawn(move || {
             // Session run loop
 
-            let idle_tick = crossbeam::channel::tick(initial_search_delay);
             let periodic_search_timer = crossbeam::channel::tick(periodic_search_delay);
-            let mut loop_state = LoopState::new();
-
             loop {
                 crossbeam::channel::select! {
                     recv(incoming_r) -> oper => {
@@ -143,7 +151,7 @@ impl Session {
                             }
                         }
                     }
-                    recv(idle_tick) -> _ => {
+                    recv(loop_state.idle_tick) -> _ => {
                         // The session hasn't received blocks for a while, broadcast
                         //loop_state.broadacast();
                     }
@@ -163,13 +171,9 @@ impl Session {
             self_id,
             id,
             session_manager,
-            peer_manager,
-            session_peer_manager,
             provider_finder,
             session_interest_manager,
-            session_wants: SessionWants::new(BROADCAST_LIVE_WANTS_LIMIT),
             session_want_sender,
-            latency_tracker: Default::default(),
             incoming: incoming_s,
             notify,
             closer: closer_s,
@@ -285,146 +289,187 @@ impl Session {
 }
 
 #[derive(Debug)]
-struct LoopState {}
+struct LoopState {
+    id: u64,
+    consecutive_ticks: usize,
+    session_wants: SessionWants,
+    session_interest_manager: SessionInterestManager,
+    session_want_sender: SessionWantSender,
+    provider_query_manager: ProviderQueryManager,
+    session_peer_manager: SessionPeerManager,
+    peer_manager: PeerManager,
+    latency_tracker: LatencyTracker,
+    idle_tick: Receiver<Instant>,
+    base_tick_delay: Duration,
+    initial_search_delay: Duration,
+}
 
 impl LoopState {
-    fn new() -> Self {
-        LoopState {}
+    fn new(
+        id: u64,
+        session_wants: SessionWants,
+        session_want_sender: SessionWantSender,
+        session_interest_manager: SessionInterestManager,
+        provider_query_manager: ProviderQueryManager,
+        session_peer_manager: SessionPeerManager,
+        peer_manager: PeerManager,
+        initial_search_delay: Duration,
+    ) -> Self {
+        LoopState {
+            id,
+            consecutive_ticks: 0,
+            session_wants,
+            session_want_sender,
+            session_interest_manager,
+            provider_query_manager,
+            session_peer_manager,
+            peer_manager,
+            latency_tracker: Default::default(),
+            base_tick_delay: Duration::from_millis(500),
+            initial_search_delay,
+            idle_tick: crossbeam::channel::after(initial_search_delay),
+        }
     }
 
-    //     // Called when the session hasn't received any blocks for some time, or when
-    //     // all peers in the session have sent DONT_HAVE for a particular set of CIDs.
-    //     // Send want-haves to all connected peers, and search for new peers with the CID.
-    //     fn broadcast(ctx context.Context, wants []cid.Cid) {
-    // 	// If this broadcast is because of an idle timeout (we haven't received
-    // 	// any blocks for a while) then broadcast all pending wants
-    // 	if wants == nil {
-    // 	    wants = s.sw.PrepareBroadcast()
-    // 	}
+    /// Called when the session hasn't received any blocks for some time, or when
+    /// all peers in the session have sent DONT_HAVE for a particular set of CIDs.
+    /// Send want-haves to all connected peers, and search for new peers with the CID.
+    fn broadcast(&mut self, wants: Option<AHashSet<Cid>>) {
+        // If this broadcast is because of an idle timeout (we haven't received
+        // any blocks for a while) then broadcast all pending wants.
+        let wants = wants.unwrap_or_else(|| self.session_wants.prepare_broadcast());
 
-    // 	// Broadcast a want-have for the live wants to everyone we're connected to
-    // 	s.broadcastWantHaves(ctx, wants)
+        // Broadcast a want-have for the live wants to everyone we're connected to.
+        self.broadcast_want_haves(&wants);
 
-    // 	// do not find providers on consecutive ticks
-    // 	// -- just rely on periodic search widening
-    // 	 if len(wants) > 0 && (s.consecutiveTicks == 0) {
-    // 	     // Search for providers who have the first want in the list.
-    // 	     // Typically if the provider has the first block they will have
-    // 	     // the rest of the blocks also.
-    // 	     log.Debugw("FindMorePeers", "session", s.id, "cid", wants[0], "pending", len(wants))
-    // 		 s.findMorePeers(ctx, wants[0])
-    // 	 }
-    // 	s.resetIdleTick()
+        // Do not find providers on consecutive ticks -- just rely on periodic search widening.
+        if !wants.is_empty() && (self.consecutive_ticks == 0) {
+            // Search for providers who have the first want in the list.
+            // Typically if the provider has the first block they will have
+            // the rest of the blocks also.
+            self.find_more_peers(wants.iter().next().unwrap());
+        }
 
-    // 	// If we have live wants record a consecutive tick
-    // 	 if s.sw.HasLiveWants() {
-    // 	     s.consecutiveTicks++
-    // 	 }
-    //     }
+        self.reset_idle_tick();
 
-    //     // handlePeriodicSearch is called periodically to search for providers of a
-    //     // randomly chosen CID in the sesssion.
-    //     fn handlePeriodicSearch(ctx context.Context) {
-    // 	randomWant := s.sw.RandomLiveWant()
-    // 	                  if !randomWant.Defined() {
-    // 		              return
-    // 	                  }
+        // If we have live wants record a consecutive tick
+        if self.session_wants.has_live_wants() {
+            self.consecutive_ticks += 1;
+        }
+    }
 
-    // 	// TODO: come up with a better strategy for determining when to search
-    // 	// for new providers for blocks.
-    // 	s.findMorePeers(ctx, randomWant)
+    /// Called periodically to search for providers of a randomly chosen CID in the sesssion.
+    fn handle_periodic_search(&self) {
+        if let Some(random_want) = self.session_wants.random_live_want() {
+            // TODO: come up with a better strategy for determining when to search
+            // for new providers for blocks.
+            self.find_more_peers(&random_want);
+            self.broadcast_want_haves(&[random_want].into_iter().collect());
+        }
+    }
 
-    // 	    s.broadcastWantHaves(ctx, []cid.Cid{randomWant})
+    /// Attempts to find more peers for a session by searching for providers for the given cid.
+    fn find_more_peers(&self, cid: &Cid) {
+        // TODO: track thread
+        let sws = self.session_want_sender.clone();
+        let cid = *cid;
+        let provider_query_manager = self.provider_query_manager.clone();
+        let _worker = std::thread::spawn(move || {
+            match provider_query_manager.find_providers_async(&cid) {
+                Ok(r) => {
+                    while let Ok(provider) = r.recv() {
+                        match provider {
+                            Ok(provider) => {
+                                // When a provider indicates that it has a cid, it's equivalent to
+                                // the providing peer sending a HAVE.
+                                sws.update(provider, Vec::new(), vec![cid], Vec::new());
+                            }
+                            Err(err) => {
+                                warn!("provider error: {:?}", err);
+                            }
+                        }
+                    }
+                }
+                Err(err) => {
+                    warn!("failed to start finding providers: {:?}", err);
+                }
+            }
+        });
+    }
 
-    // 	    s.periodicSearchTimer.Reset(s.periodicSearchDelay.NextWaitTime())
-    //     }
+    // Called when the session receives blocks from a peer
+    fn handle_receive(&mut self, keys: Vec<Cid>) {
+        // Record which blocks have been received and figure out the total latency
+        // for fetching the blocks
+        let (wanted, total_latency) = self.session_wants.blocks_received(&keys);
+        if wanted.is_empty() {
+            return;
+        }
 
-    //     // findMorePeers attempts to find more peers for a session by searching for
-    //     // providers for the given Cid
-    //     fn findMorePeers(ctx context.Context, c cid.Cid) {
-    // 	go func(k cid.Cid) {
-    // 	    for p := range s.providerFinder.FindProvidersAsync(ctx, k) {
-    // 		// When a provider indicates that it has a cid, it's equivalent to
-    // 		// the providing peer sending a HAVE
-    // 		s.sws.Update(p, nil, []cid.Cid{c}, nil)
-    // 	    }
-    // 	}(c)
-    //     }
+        // Record latency
+        self.latency_tracker
+            .receive_update(wanted.len(), total_latency);
 
-    // // handleReceive is called when the session receives blocks from a peer
-    // fn handleReceive(ks []cid.Cid) {
-    // 	// Record which blocks have been received and figure out the total latency
-    // 	// for fetching the blocks
-    // 	wanted, totalLatency := s.sw.BlocksReceived(ks)
-    // 	if len(wanted) == 0 {
-    // 		return
-    // 	}
+        // Inform the SessionInterestManager that this session is no longer
+        // expecting to receive the wanted keys
+        self.session_interest_manager
+            .remove_session_wants(self.id, &wanted);
 
-    // 	// Record latency
-    // 	s.latencyTrkr.receiveUpdate(len(wanted), totalLatency)
+        // We've received new wanted blocks, so reset the number of ticks
+        // that have occurred since the last new block
+        self.consecutive_ticks = 0;
 
-    // 	// Inform the SessionInterestManager that this session is no longer
-    // 	// expecting to receive the wanted keys
-    // 	s.sim.RemoveSessionWants(s.id, wanted)
+        self.reset_idle_tick();
+    }
 
-    // 	s.idleTick.Stop()
+    /// Called when blocks are requested by the client
+    fn want_blocks(&mut self, new_keys: Vec<Cid>) {
+        if !new_keys.is_empty() {
+            // Inform the SessionInterestManager that this session is interested in the keys
+            self.session_interest_manager
+                .record_session_interest(self.id, &new_keys);
+            // Tell the sessionWants tracker that that the wants have been requested
+            self.session_wants.blocks_requested(&new_keys);
+            // Tell the sessionWantSender that the blocks have been requested
+            self.session_want_sender.add(new_keys);
+        }
 
-    // 	// We've received new wanted blocks, so reset the number of ticks
-    // 	// that have occurred since the last new block
-    // 	s.consecutiveTicks = 0
+        // If we have discovered peers already, the sessionWantSender will
+        // send wants to them.
+        if self.session_peer_manager.peers_discovered() {
+            return;
+        }
 
-    // 	s.resetIdleTick()
-    // }
+        // No peers discovered yet, broadcast some want-haves
+        let keys = self.session_wants.get_next_wants();
+        if !keys.is_empty() {
+            self.broadcast_want_haves(&keys);
+        }
+    }
 
-    // // wantBlocks is called when blocks are requested by the client
-    // fn wantBlocks(ctx context.Context, newks []cid.Cid) {
-    // 	if len(newks) > 0 {
-    // 		// Inform the SessionInterestManager that this session is interested in the keys
-    // 		s.sim.RecordSessionInterest(s.id, newks)
-    // 		// Tell the sessionWants tracker that that the wants have been requested
-    // 		s.sw.BlocksRequested(newks)
-    // 		// Tell the sessionWantSender that the blocks have been requested
-    // 		s.sws.Add(newks)
-    // 	}
+    // Send want-haves to all connected peers
+    fn broadcast_want_haves(&self, wants: &AHashSet<Cid>) {
+        self.peer_manager.broadcast_want_haves(wants);
+    }
 
-    // 	// If we have discovered peers already, the sessionWantSender will
-    // 	// send wants to them
-    // 	if s.sprm.PeersDiscovered() {
-    // 		return
-    // 	}
-
-    // 	// No peers discovered yet, broadcast some want-haves
-    // 	ks := s.sw.GetNextWants()
-    // 	if len(ks) > 0 {
-    // 		log.Infow("No peers - broadcasting", "session", s.id, "want-count", len(ks))
-    // 		s.broadcastWantHaves(ctx, ks)
-    // 	}
-    // }
-
-    // // Send want-haves to all connected peers
-    // fn broadcastWantHaves(ctx context.Context, wants []cid.Cid) {
-    // 	log.Debugw("broadcastWantHaves", "session", s.id, "cids", wants)
-    // 	s.pm.BroadcastWantHaves(ctx, wants)
-    // }
-
-    // // The session will broadcast if it has outstanding wants and doesn't receive
-    // // any blocks for some time.
-    // // The length of time is calculated
-    // //   - initially
-    // //     as a fixed delay
-    // //   - once some blocks are received
-    // //     from a base delay and average latency, with a backoff
-    // fn resetIdleTick() {
-    // 	var tickDelay time.Duration
-    // 	if !s.latencyTrkr.hasLatency() {
-    // 		tickDelay = s.initialSearchDelay
-    // 	} else {
-    // 		avLat := s.latencyTrkr.averageLatency()
-    // 		tickDelay = s.baseTickDelay + (3 * avLat)
-    // 	}
-    // 	tickDelay = tickDelay * time.Duration(1+s.consecutiveTicks)
-    // 	s.idleTick.Reset(tickDelay)
-    // }
+    /// The session will broadcast if it has outstanding wants and doesn't receive
+    /// any blocks for some time. The length of time is calculated
+    ///   - initially
+    ///     as a fixed delay
+    ///   - once some blocks are received
+    ///     from a base delay and average latency, with a backoff
+    fn reset_idle_tick(&mut self) {
+        let tick_delay = if !self.latency_tracker.has_latency() {
+            self.initial_search_delay
+        } else {
+            let average_latency = self.latency_tracker.average_latency();
+            self.base_tick_delay + (3 * average_latency)
+        };
+        let tick_delay = Duration::from_secs_f64(
+            tick_delay.as_secs_f64() * (1. + self.consecutive_ticks as f64),
+        );
+        self.idle_tick = crossbeam::channel::after(tick_delay);
+    }
 }
 
 #[derive(Debug, Default)]
