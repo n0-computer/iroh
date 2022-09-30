@@ -2,6 +2,7 @@ use std::{sync::Mutex, time::Duration};
 
 use anyhow::Result;
 use cid::Cid;
+use derivative::Derivative;
 use libp2p::PeerId;
 
 use crate::{block::Block, message::BitswapMessage, network::Network, Store};
@@ -52,7 +53,8 @@ pub struct Stat {
     pub messages_received: u64,
 }
 
-#[derive(Debug)]
+#[derive(Derivative)]
+#[derivative(Debug)]
 pub struct Client<S: Store> {
     peer_manager: PeerManager,
     provider_query_manager: ProviderQueryManager,
@@ -64,6 +66,8 @@ pub struct Client<S: Store> {
     provider_search_delay: Duration,
     rebroadcast_delay: Duration,
     simulate_dont_haves_on_timeout: bool,
+    #[derivative(Debug = "ignore")]
+    notify: bus::Bus<Block>,
 }
 
 impl<S: Store> Client<S> {
@@ -82,6 +86,7 @@ impl<S: Store> Client<S> {
         //     },
         // );
         let provider_query_manager = ProviderQueryManager::new(network.clone());
+        let notify = bus::Bus::new(64);
 
         let session_manager = SessionManager::new(
             self_id,
@@ -90,6 +95,7 @@ impl<S: Store> Client<S> {
             peer_manager.clone(),
             provider_query_manager.clone(),
             network.clone(),
+            notify.read_handle(),
         );
         let counters = Mutex::new(Stat::default());
 
@@ -106,6 +112,7 @@ impl<S: Store> Client<S> {
             provider_search_delay: config.provider_search_delay,
             rebroadcast_delay: config.rebroadcast_delay,
             simulate_dont_haves_on_timeout: config.simluate_donthaves_on_timeout,
+            notify,
         }
     }
 

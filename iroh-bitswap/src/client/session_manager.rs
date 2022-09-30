@@ -8,9 +8,10 @@ use std::{
 
 use ahash::AHashMap;
 use cid::Cid;
+use derivative::Derivative;
 use libp2p::PeerId;
 
-use crate::network::Network;
+use crate::{network::Network, Block};
 
 use super::{
     block_presence_manager::BlockPresenceManager, peer_manager::PeerManager,
@@ -23,7 +24,8 @@ pub struct SessionManager {
     inner: Arc<Inner>,
 }
 
-#[derive(Debug)]
+#[derive(Derivative)]
+#[derivative(Debug)]
 struct Inner {
     self_id: PeerId,
     session_interest_manager: SessionInterestManager,
@@ -33,6 +35,8 @@ struct Inner {
     sessions: RwLock<AHashMap<u64, Session>>,
     session_index: AtomicU64,
     network: Network,
+    #[derivative(Debug = "ignore")]
+    notify: bus::BusReadHandle<Block>,
 }
 
 impl SessionManager {
@@ -43,6 +47,7 @@ impl SessionManager {
         peer_manager: PeerManager,
         provider_finder: ProviderQueryManager,
         network: Network,
+        notify: bus::BusReadHandle<Block>,
     ) -> Self {
         SessionManager {
             inner: Arc::new(Inner {
@@ -54,6 +59,7 @@ impl SessionManager {
                 sessions: Default::default(),
                 session_index: Default::default(),
                 network,
+                notify,
             }),
         }
     }
@@ -76,6 +82,7 @@ impl SessionManager {
             self.inner.provider_finder.clone(),
             self.inner.session_interest_manager.clone(),
             self.inner.block_presence_manager.clone(),
+            self.inner.notify.clone(),
             provider_search_delay,
             rebroadcast_delay,
         );

@@ -37,6 +37,8 @@ crossbeam = "0.8.2"
 keyed_priority_queue = "0.4.1"
 async-trait = "0.1.57"
 rand = "0.8.5"
+bus = { git = "https://github.com/agausmann/bus", branch = "read_handle/lock" }
+derivative = "2.2.0"
 
 [dev-dependencies]
 criterion = "0.3.5"

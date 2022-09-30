@@ -24,7 +24,7 @@
 - [x] `./client/wantlist/wantlist.go` (142)
 
 259
-- [ ] `./client/internal/getter/getter.go` (138)
+- [x] `./client/internal/getter/getter.go` (138)
 - [x] `./client/internal/blockpresencemanager/blockpresencemanager.go` (121)
 
 1241
@@ -48,7 +48,7 @@
 - [x] `./client/internal/sessionpeermanager/sessionpeermanager.go` (150)
 - [x] `./client/internal/sessioninterestmanager/sessioninterestmanager.go` (201)
 - [x] `./client/internal/providerquerymanager/providerquerymanager.go` (430)
-- [ ] `./client/internal/notifications/notifications.go` (139)
+- [x] `./client/internal/notifications/notifications.go` (139)
 
 
 ### Server 
