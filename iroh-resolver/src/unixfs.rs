@@ -279,6 +279,19 @@ impl UnixfsNode {
         }
     }
 
+    /// Returns the blocksizes of the links
+    /// Should only be set for File
+    pub fn blocksizes(&self) -> Option<&[u64]> {
+        match self {
+            UnixfsNode::Raw(_)
+            | UnixfsNode::Directory(_)
+            | UnixfsNode::RawNode(_)
+            | UnixfsNode::Symlink(_)
+            | UnixfsNode::HamtShard(_, _) => None,
+            UnixfsNode::File(node) => Some(node.blocksizes()),
+        }
+    }
+
     pub fn links(&self) -> Links<'_> {
         match self {
             UnixfsNode::Raw(_) => Links::Raw,
