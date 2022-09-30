@@ -126,7 +126,6 @@ impl<S: Store> Bitswap<S> {
     pub fn close(self) -> Result<()> {
         self.network.stop();
 
-        self.client.close()?;
         self.server.close()?;
 
         Ok(())
@@ -159,7 +158,7 @@ impl<S: Store> Bitswap<S> {
 
     pub fn wantlist_for_peer(&self, peer: &PeerId) -> Vec<Cid> {
         if peer == self.network.self_id() {
-            return self.client.get_wantlist();
+            return self.client.get_wantlist().into_iter().collect();
         }
 
         self.server.wantlist_for_peer(peer)

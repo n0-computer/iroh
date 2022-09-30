@@ -115,7 +115,13 @@ impl SessionManager {
         self.inner.session_index.fetch_add(1, Ordering::SeqCst)
     }
 
-    pub fn receive_from(&self, peer: &PeerId, blocks: &[Cid], haves: &[Cid], dont_haves: &[Cid]) {
+    pub fn receive_from(
+        &self,
+        peer: Option<PeerId>,
+        blocks: &[Cid],
+        haves: &[Cid],
+        dont_haves: &[Cid],
+    ) {
         todo!()
     }
 

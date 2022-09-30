@@ -228,8 +228,8 @@ impl Session {
     }
 
     // Fetches a single block.
-    pub fn get_block(&self, key: Cid) -> Result<Block> {
-        let r = self.get_blocks(vec![key])?;
+    pub fn get_block(&self, key: &Cid) -> Result<Block> {
+        let r = self.get_blocks(&[*key][..])?;
         let block = r.recv()?;
         Ok(block)
     }
@@ -237,7 +237,7 @@ impl Session {
     // Fetches a set of blocks within the context of this session and
     // returns a channel that found blocks will be returned on. No order is
     // guaranteed on the returned blocks.
-    pub fn get_blocks(&self, keys: Vec<Cid>) -> Result<Receiver<Block>> {
+    pub fn get_blocks(&self, keys: &[Cid]) -> Result<Receiver<Block>> {
         ensure!(!keys.is_empty(), "missing keys");
 
         let (s, r) = crossbeam::channel::bounded(8);
@@ -266,7 +266,7 @@ impl Session {
                 .ok();
         });
 
-        self.inner.incoming.send(Op::Want(keys))?;
+        self.inner.incoming.send(Op::Want(keys.to_vec()))?;
 
         Ok(r)
     }
