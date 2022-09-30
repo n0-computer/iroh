@@ -20,7 +20,7 @@
 
 651
 - [ ] `./client/client.go` (479)
-- [ ] `./client/stat.go` (30)
+- [x] `./client/stat.go` (30)
 - [x] `./client/wantlist/wantlist.go` (142)
 
 259
@@ -40,7 +40,7 @@
 - [x] `./client/internal/session/cidqueue.go` (63)
 - [x] `./client/internal/session/peerresponsetracker.go` (70)
 - [x] `./client/internal/session/sentwantblockstracker.go` (33)
-- [ ] `./client/internal/session/session.go` (508)
+- [x] `./client/internal/session/session.go` (508)
 - [x] `./client/internal/session/sessionwantsender.go` (766)
 
 1116
