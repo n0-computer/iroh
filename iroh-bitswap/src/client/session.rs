@@ -14,7 +14,7 @@ use tracing::warn;
 
 use crate::Block;
 
-use self::session_wants::SessionWants;
+use self::{session_want_sender::SessionWantSender, session_wants::SessionWants};
 
 use super::{
     block_presence_manager::BlockPresenceManager, peer_manager::PeerManager,
@@ -28,7 +28,7 @@ mod sent_want_blocks_tracker;
 mod session_want_sender;
 mod session_wants;
 
-pub use self::session_want_sender::SessionWantSender;
+pub use self::session_want_sender::Signaler;
 
 const BROADCAST_LIVE_WANTS_LIMIT: usize = 64;
 
@@ -38,20 +38,8 @@ enum Op {
     Receive(Vec<Cid>),
     Want(Vec<Cid>),
     Cancel(Vec<Cid>),
-    Broadcast(Vec<Cid>),
+    Broadcast(AHashSet<Cid>),
     WantsSent(Vec<Cid>),
-}
-
-impl Op {
-    fn keys(&self) -> &[Cid] {
-        match self {
-            Op::Receive(ref keys) => keys,
-            Op::Want(ref keys) => keys,
-            Op::Cancel(ref keys) => keys,
-            Op::Broadcast(ref keys) => keys,
-            Op::WantsSent(ref keys) => keys,
-        }
-    }
 }
 
 /// Holds state for an individual bitswap transfer operation.
@@ -105,17 +93,36 @@ impl Session {
         initial_search_delay: Duration,
         periodic_search_delay: Duration,
     ) -> Self {
+        let (incoming_s, incoming_r) = crossbeam::channel::bounded(128);
+
         let session_want_sender = SessionWantSender::new(
             id,
             peer_manager.clone(),
             session_peer_manager.clone(),
             session_manager.clone(),
             block_presence_manager,
+            {
+                let incoming = incoming_s.clone();
+                Box::new(
+                    move |_peer_id: PeerId, mut want_blocks: Vec<Cid>, want_haves: Vec<Cid>| {
+                        want_blocks.extend(want_haves);
+                        incoming.send(Op::WantsSent(want_blocks)).ok();
+                    },
+                )
+            },
+            {
+                let incoming = incoming_s.clone();
+                Box::new(move |keys: Vec<Cid>| {
+                    incoming
+                        .send(Op::Broadcast(keys.into_iter().collect()))
+                        .ok();
+                })
+            },
         );
 
         let session_wants = SessionWants::new(BROADCAST_LIVE_WANTS_LIMIT);
         let (closer_s, closer_r) = crossbeam::channel::bounded(1);
-        let (incoming_s, incoming_r) = crossbeam::channel::bounded(128);
+
         let mut loop_state = LoopState::new(
             id,
             session_wants,
@@ -135,15 +142,22 @@ impl Session {
                 crossbeam::channel::select! {
                     recv(incoming_r) -> oper => {
                         match oper {
-                            Ok(Op::Receive(keys)) => {}/*loop_state.handle_receive(keys)*/,
-                            Ok(Op::Want(keys)) => {}/*loop_state.want_blocks(keys)*/,
+                            Ok(Op::Receive(keys)) => {
+                                loop_state.handle_receive(keys);
+                            },
+                            Ok(Op::Want(keys)) => {
+                                loop_state.want_blocks(keys);
+                            },
                             Ok(Op::Cancel(keys)) => {
-                                /*
-                                loop_state.cancel_pending(&keys);
-                                loop_state.cancel(&keys)*/
+                                loop_state.session_wants.cancel_pending(&keys);
+                                loop_state.session_want_sender.cancel(keys);
                             }
-                            Ok(Op::WantsSent(keys)) => {/*loop_state.wants_sent(keys)*/},
-                            Ok(Op::Broadcast(keys)) => {/*loop_state.broadcast(keys)*/},
+                            Ok(Op::WantsSent(keys)) => {
+                                loop_state.session_wants.wants_sent(&keys);
+                            },
+                            Ok(Op::Broadcast(keys)) => {
+                                loop_state.broadcast(Some(keys));
+                            },
                             Err(err) => {
                                 // incoming channel gone, shutdown/panic
                                 warn!("incoming channel error: {:?}", err);
@@ -153,11 +167,11 @@ impl Session {
                     }
                     recv(loop_state.idle_tick) -> _ => {
                         // The session hasn't received blocks for a while, broadcast
-                        //loop_state.broadacast();
+                        loop_state.broadcast(None);
                     }
                     recv(periodic_search_timer) -> _ => {
                         // Periodically search for a random live want
-                        // loop_state.handle_periodic_search();
+                        loop_state.handle_periodic_search();
                     }
                     recv(closer_r) -> _ => {
                         // Shutdown

@@ -9,9 +9,7 @@ use libp2p::PeerId;
 
 use crate::network::Network;
 
-use super::{
-    message_queue::MessageQueue, peer_want_manager::PeerWantManager, session::SessionWantSender,
-};
+use super::{message_queue::MessageQueue, peer_want_manager::PeerWantManager, session::Signaler};
 
 #[derive(Debug, Clone)]
 pub struct PeerManager {
@@ -20,10 +18,7 @@ pub struct PeerManager {
 
 struct Inner {
     peers: RwLock<(AHashMap<PeerId, MessageQueue>, PeerWantManager)>,
-    sessions: RwLock<(
-        AHashMap<u64, SessionWantSender>,
-        AHashMap<PeerId, AHashSet<u64>>,
-    )>,
+    sessions: RwLock<(AHashMap<u64, Signaler>, AHashMap<PeerId, AHashSet<u64>>)>,
     self_id: PeerId,
     network: Network,
     on_dont_have_timeout: Arc<dyn DontHaveTimeout>,
@@ -155,7 +150,7 @@ impl PeerManager {
     }
 
     /// Informst the `PeerManager` that the given session is interested in events about the given peer.
-    pub fn register_session(&self, peer: &PeerId, session: SessionWantSender) {
+    pub fn register_session(&self, peer: &PeerId, session: Signaler) {
         let (sessions, peer_sessions) = &mut *self.inner.sessions.write().unwrap();
         let id = session.id();
         if !sessions.contains_key(&id) {
