@@ -167,7 +167,7 @@ impl MessageQueue {
     ) -> Self {
         let (closer_sender, closer_receiver) = crossbeam::channel::bounded(1);
         let (responses_sender, responses_receiver) = crossbeam::channel::bounded(8);
-        let (outgoing_work_sender, outgoing_work_receiver) = crossbeam::channel::bounded(1);
+        let (outgoing_work_sender, outgoing_work_receiver) = crossbeam::channel::bounded(4);
         let wants = Arc::new(Mutex::new(Wants {
             bcst_wants: Default::default(),
             peer_wants: Default::default(),
