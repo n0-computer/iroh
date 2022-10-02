@@ -96,10 +96,6 @@ impl SessionManager {
         session
     }
 
-    pub fn shutdown(self) {
-        todo!()
-    }
-
     pub fn remove_session(&self, session_id: u64) {
         let cancels = self
             .inner
@@ -122,7 +118,26 @@ impl SessionManager {
         haves: &[Cid],
         dont_haves: &[Cid],
     ) {
-        todo!()
+        // Record block presence for HAVE/DONT_HAVE.
+        if let Some(ref peer) = peer {
+            self.inner
+                .block_presence_manager
+                .receive_from(peer, haves, dont_haves);
+        }
+
+        for id in &self
+            .inner
+            .session_interest_manager
+            .interested_sessions(blocks, haves, dont_haves)
+        {
+            let sessions = &*self.inner.sessions.read().unwrap();
+            if let Some(session) = sessions.get(id) {
+                session.receive_from(peer, blocks, haves, dont_haves);
+            }
+        }
+
+        // Send CANCELs to all peers with want-have/want-block
+        self.inner.peer_manager.send_cancels(blocks);
     }
 
     pub fn cancel_session_wants(&self, session_id: u64, wants: &[Cid]) {

@@ -9,6 +9,7 @@ use ahash::{AHashMap, AHashSet};
 use anyhow::{anyhow, Result};
 use cid::Cid;
 use crossbeam::channel::Sender;
+use derivative::Derivative;
 use libp2p::PeerId;
 use tracing::warn;
 
@@ -42,42 +43,21 @@ struct PendingWant {
     sent: Instant,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct DontHaveTimeoutManager {
-    /// The target peer we are tracking.
-    target: PeerId,
     default_timeout: Duration,
     max_timeout: Duration,
     ping_latency_multiplier: f64,
     message_latency_multiplier: f64,
     max_expected_want_process_time: Duration,
     inner: Arc<Mutex<Inner>>,
-    on_dont_have_timeout: Arc<dyn DontHaveTimeout>,
 }
 
-impl Debug for DontHaveTimeoutManager {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("DontHaveTimeoutManager")
-            .field("target", &self.target)
-            .field("default_timeout", &self.default_timeout)
-            .field("max_timeout", &self.max_timeout)
-            .field("ping_latency_multiplier", &self.ping_latency_multiplier)
-            .field(
-                "messaeg_latency_multiplier",
-                &self.message_latency_multiplier,
-            )
-            .field(
-                "max_expected_want_process_time",
-                &self.max_expected_want_process_time,
-            )
-            .field("inner", &self.inner)
-            .field("on_dont_have_timeout", &"Box<Fn>")
-            .finish()
-    }
-}
-
-#[derive(Debug)]
+#[derive(Derivative)]
+#[derivative(Debug)]
 struct Inner {
+    /// The target peer we are tracking.
+    target: PeerId,
     active_wants: AHashMap<Cid, PendingWant>,
     /// Queue of wants from oldest to newest.
     want_queue: Vec<PendingWant>,
@@ -86,6 +66,8 @@ struct Inner {
     message_latency: LatencyEwma,
     check_for_timeouts_timer: Option<(JoinHandle<()>, Sender<()>)>,
     worker: Option<JoinHandle<()>>,
+    #[derivative(Debug = "ignore")]
+    on_dont_have_timeout: Arc<dyn DontHaveTimeout>,
 }
 
 impl DontHaveTimeoutManager {
@@ -95,6 +77,7 @@ impl DontHaveTimeoutManager {
         on_dont_have_timeout: Arc<dyn DontHaveTimeout>,
     ) -> Self {
         let inner = Arc::new(Mutex::new(Inner {
+            target,
             timeout: DONT_HAVE_TIMEOUT,
             active_wants: Default::default(),
             want_queue: Default::default(),
@@ -105,6 +88,7 @@ impl DontHaveTimeoutManager {
             },
             check_for_timeouts_timer: None,
             worker: None,
+            on_dont_have_timeout,
         }));
 
         // TODO: store latencies somewhere central and retrieve them here
@@ -141,14 +125,12 @@ impl DontHaveTimeoutManager {
         }
 
         DontHaveTimeoutManager {
-            target,
             default_timeout: DONT_HAVE_TIMEOUT,
             max_timeout: MAX_TIMEOUT,
             ping_latency_multiplier: PING_LATENCY_MULTIPLIER,
             message_latency_multiplier: MESSAGE_LATENCY_MULTIPLIER,
             max_expected_want_process_time: MAX_EXPECTED_WANT_PROCESS_TIME,
             inner,
-            on_dont_have_timeout,
         }
     }
 
@@ -230,13 +212,6 @@ impl DontHaveTimeoutManager {
             }
         }
     }
-
-    /// Triggers on_dont_have_timeout with matching keys.
-    fn fire_timeout(&self, pending: &[Cid]) {
-        (self.on_dont_have_timeout)(&self.target, pending);
-
-        todo!()
-    }
 }
 
 impl Inner {
@@ -268,7 +243,7 @@ impl Inner {
 
         // Fire timeout
         if !expired.is_empty() {
-            // TODO
+            self.fire_timeout(&expired);
         }
 
         // Schedule the next check for the moment when the oldest pending want will timeout.
@@ -298,6 +273,11 @@ impl Inner {
 
             self.check_for_timeouts_timer = Some((worker, cancel_s));
         }
+    }
+
+    /// Triggers on_dont_have_timeout with matching keys.
+    fn fire_timeout(&self, pending: &[Cid]) {
+        (self.on_dont_have_timeout)(&self.target, pending);
     }
 }
 

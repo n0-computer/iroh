@@ -6,6 +6,7 @@ use cid::Cid;
 use crossbeam::channel::Receiver;
 use derivative::Derivative;
 use libp2p::PeerId;
+use tracing::{debug, warn};
 
 use crate::{block::Block, message::BitswapMessage, network::Network, Store};
 
@@ -158,19 +159,82 @@ impl<S: Store> Client<S> {
         haves: &[Cid],
         dont_haves: &[Cid],
     ) -> Result<()> {
-        todo!();
+        let (wanted, not_wanted) = self.session_interest_manager.split_wanted_unwanted(blocks);
+        for block in not_wanted {
+            debug!("recv block not in wantlist: {} from {}", block.cid(), from);
+        }
+        let all_keys: Vec<Cid> = blocks.iter().map(|b| *b.cid()).collect();
+
+        // Inform the PeerManager so that we can calculate per-peer latency.
+        let mut combined = all_keys.clone();
+        combined.extend_from_slice(haves);
+        combined.extend_from_slice(dont_haves);
+
+        self.peer_manager.response_received(from, &combined);
+
+        // Send all block keys (including duplicates to any sessions that want them for accounting purposes).
+        self.session_manager
+            .receive_from(Some(*from), &all_keys, haves, dont_haves);
+
+        // TODO: block_received_notifier?
+
+        // Publish the block
+        let notify = &mut *self.notify.lock().unwrap();
+        for block in wanted {
+            notify.broadcast(block.clone());
+        }
+
+        Ok(())
     }
 
-    pub fn receive_message(&self, peer: &PeerId, message: &BitswapMessage) {
-        // todo!()
+    /// Called by the network interface when a new message is received.
+    pub fn receive_message(&self, peer: &PeerId, incoming: &BitswapMessage) {
+        self.counters.lock().unwrap().messages_received += 1;
+
+        if incoming.blocks_len() > 0 {
+            self.update_receive_counters(incoming.blocks());
+            for block in incoming.blocks() {
+                debug!("recv block; {} from {}", block.cid(), peer);
+            }
+        }
+
+        // TODO: investigate if the allocations below can be avoided.
+
+        let haves: Vec<Cid> = incoming.haves().copied().collect();
+        let dont_haves: Vec<Cid> = incoming.dont_haves().copied().collect();
+
+        if incoming.blocks_len() > 0 || !haves.is_empty() || !dont_haves.is_empty() {
+            let incoming_blocks: Vec<Block> = incoming.blocks().cloned().collect();
+            // Process blocks
+            if let Err(err) = self.receive_blocks_from(peer, &incoming_blocks, &haves, &dont_haves)
+            {
+                warn!("ReceiveMessage recvBlockFrom error: {:?}", err);
+            }
+        }
     }
 
-    fn update_receive_counters(&self, blocks: &[Block]) {
-        todo!()
-    }
+    fn update_receive_counters<'a>(&self, blocks: impl Iterator<Item = &'a Block>) {
+        // Check which blocks are in the datastore
+        // (Note: any errors from the blockstore are simply logged out in store_has())
+        let store = &self.store;
+        for block in blocks {
+            // TODO: this is a call to the store for each block just to update metrics, should be avoided.
+            let has_block = tokio::runtime::Handle::current()
+                .block_on(async { store.has(block.cid()).await.unwrap_or_default() });
+            let block_len = block.data().len();
+            // TODO: bs.allMetric.Observe(float64(blkLen))
+            if has_block {
+                // TODO: bs.dupMetric.Observe(float64(blkLen))
+            }
 
-    fn store_has(&self, blocks: &[Cid]) -> Vec<bool> {
-        todo!()
+            let counters = &mut *self.counters.lock().unwrap();
+            counters.blocks_received += 1;
+            counters.data_received += block_len as u64;
+            if has_block {
+                counters.dup_blks_received += 1;
+                counters.dup_data_received += block_len as u64;
+            }
+        }
     }
 
     /// Called by the network interface when a peer initiates a new connection to bitswap.

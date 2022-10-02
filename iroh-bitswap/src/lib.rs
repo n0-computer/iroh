@@ -91,6 +91,7 @@ impl Default for Config {
 pub trait Store: Debug + Clone + Send + Sync + 'static {
     async fn get_size(&self, cid: &Cid) -> Result<usize>;
     async fn get(&self, cid: &Cid) -> Result<Block>;
+    async fn has(&self, cid: &Cid) -> Result<bool>;
 }
 
 impl<S: Store> Bitswap<S> {

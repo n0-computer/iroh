@@ -202,7 +202,13 @@ impl Session {
     }
 
     /// Receives incoming blocks from the given peer.
-    pub fn receive_from(&self, from: &PeerId, keys: &[Cid], haves: &[Cid], dont_haves: &[Cid]) {
+    pub fn receive_from(
+        &self,
+        from: Option<PeerId>,
+        keys: &[Cid],
+        haves: &[Cid],
+        dont_haves: &[Cid],
+    ) {
         // The SessionManager tells each Session about all keys that it may be
         // interested in. Here the Session filters the keys to the ones that this
         // particular Session is interested in.
@@ -215,9 +221,11 @@ impl Session {
         let keys = interested_res.pop().unwrap();
 
         // Inform the session want sender that a message has been received
-        self.inner
-            .session_want_sender
-            .update(*from, keys.clone(), haves, dont_haves);
+        if let Some(from) = from {
+            self.inner
+                .session_want_sender
+                .update(from, keys.clone(), haves, dont_haves);
+        }
 
         if keys.is_empty() {
             return;

@@ -171,6 +171,10 @@ impl BitswapMessage {
         self.wantlist.values()
     }
 
+    pub fn blocks_len(&self) -> usize {
+        self.blocks.len()
+    }
+
     pub fn blocks(&self) -> impl Iterator<Item = &Block> {
         self.blocks.values()
     }

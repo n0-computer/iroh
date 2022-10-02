@@ -8,7 +8,7 @@ use anyhow::{anyhow, bail, Result};
 use cid::Cid;
 use crossbeam::channel::{Receiver, Sender};
 use libp2p::{core::connection::ConnectionId, PeerId};
-use tracing::debug;
+use tracing::{debug, info};
 
 use crate::{message::BitswapMessage, protocol::ProtocolId, BitswapEvent};
 
@@ -65,11 +65,6 @@ impl Network {
 
     pub fn ping(&self, peer: &PeerId) -> Result<Duration> {
         Err(anyhow!("not available yet"))
-    }
-
-    pub fn latency(&self, peer: &PeerId) -> Duration {
-        // weighted average of latency of this peers from all pings
-        todo!()
     }
 
     pub fn stop(self) {
@@ -211,19 +206,24 @@ impl Network {
     }
 
     pub fn tag_peer(&self, peer: &PeerId, tag: &str, value: usize) {
-        todo!()
+        // TODO: is this needed?
+        info!("tag {}: {} - {}", peer, tag, value);
     }
 
     pub fn untag_peer(&self, peer: &PeerId, tag: &str) {
-        todo!()
+        // TODO: is this needed?
+        info!("untag {}: {}", peer, tag);
     }
 
     pub fn protect_peer(&self, peer: &PeerId, tag: &str) {
-        todo!()
+        // TODO: is this needed?
+        info!("protect {}: {}", peer, tag);
     }
 
     pub fn unprotect_peer(&self, peer: &PeerId, tag: &str) -> bool {
-        todo!()
+        // TODO: is this needed?
+        info!("unprotect {}: {}", peer, tag);
+        false
     }
 
     pub fn poll(&mut self, _cx: &mut Context) -> Poll<OutEvent> {
