@@ -192,7 +192,6 @@ impl MessageQueue {
         let outgoing_work_sender_thread = outgoing_work_sender.clone();
 
         let worker = std::thread::spawn(move || {
-            dbg!("spawn worker");
             let mut work_scheduled: Option<Instant> = None;
             let rebroadcast_timer = crossbeam::channel::tick(config.rebroadcast_interval);
             let mut schedule_work = crossbeam::channel::after(Duration::from_secs(0));
@@ -208,7 +207,6 @@ impl MessageQueue {
             };
 
             loop {
-                dbg!("tick");
                 crossbeam::channel::select! {
                     recv(rebroadcast_timer) -> _ => {
                         rebroadcast_wantlist(

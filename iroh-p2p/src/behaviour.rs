@@ -4,7 +4,6 @@ use std::time::Duration;
 
 use anyhow::Result;
 use async_trait::async_trait;
-use bytes::Bytes;
 use cid::Cid;
 use iroh_bitswap::{Bitswap, Block, Config as BitswapConfig, Priority, Store};
 use iroh_rpc_client::Client;
@@ -71,6 +70,17 @@ impl Store for BitswapStore {
             .ok_or_else(|| anyhow::anyhow!("not found"))?;
         Ok(size as usize)
     }
+
+    async fn has(&self, cid: &Cid) -> Result<bool> {
+        let res = self
+            .0
+            .try_store()?
+            .has(*cid)
+            .await?;
+
+        Ok(res)
+    }
+
 }
 
 impl NodeBehaviour {

@@ -8,7 +8,7 @@ use futures_util::stream::StreamExt;
 use iroh_metrics::{core::MRecorder, inc, libp2p_metrics, p2p::P2PMetrics};
 use iroh_rpc_client::Client as RpcClient;
 use iroh_rpc_types::p2p::P2pServerAddr;
-use libp2p::core::{Multiaddr, ProtocolName};
+use libp2p::core::Multiaddr;
 use libp2p::gossipsub::{GossipsubMessage, MessageId, TopicHash};
 pub use libp2p::gossipsub::{IdentTopic, Topic};
 use libp2p::identify::{IdentifyEvent, IdentifyInfo};
@@ -35,7 +35,7 @@ use crate::swarm::build_swarm;
 use crate::{
     behaviour::{Event, NodeBehaviour},
     rpc::{self, RpcMessage},
-    Config, Libp2pConfig,
+    Config,
 };
 
 #[allow(clippy::large_enum_variant)]
