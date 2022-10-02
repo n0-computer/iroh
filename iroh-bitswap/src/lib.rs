@@ -24,7 +24,6 @@ use libp2p::{Multiaddr, PeerId};
 use message::BitswapMessage;
 use network::OutEvent;
 use protocol::{ProtocolConfig, ProtocolId};
-use tracing::info;
 
 use self::client::{Client, Config as ClientConfig};
 use self::network::Network;
@@ -111,7 +110,12 @@ impl<S: Store> Bitswap<S> {
 
         let network = Network::new(self_id);
         let server = Server::new(network.clone(), store.clone(), config.server);
-        let client = Client::new(network.clone(), store, config.client);
+        let client = Client::new(
+            network.clone(),
+            store,
+            server.received_blocks_cb(),
+            config.client,
+        );
 
         Bitswap {
             server,
@@ -124,9 +128,16 @@ impl<S: Store> Bitswap<S> {
         }
     }
 
+    pub fn server(&self) -> &Server<S> {
+        &self.server
+    }
+
+    pub fn client(&self) -> &Client<S> {
+        &self.client
+    }
+
     pub fn close(self) -> Result<()> {
         self.network.stop();
-
         self.server.close()?;
 
         Ok(())
@@ -173,10 +184,6 @@ impl<S: Store> Bitswap<S> {
     fn peer_disconnected(&self, peer: &PeerId) {
         self.client.peer_disconnected(peer);
         self.server.peer_disconnected(peer);
-    }
-
-    fn receive_error(&self, error: anyhow::Error) {
-        info!("Bitswap client receive error: {:?}", error);
     }
 
     fn receive_message(&self, peer: &PeerId, message: &BitswapMessage) {
@@ -255,7 +262,7 @@ impl<S: Store> NetworkBehaviour for Bitswap<S> {
     fn inject_connection_established(
         &mut self,
         peer_id: &PeerId,
-        conn: &ConnectionId,
+        _conn: &ConnectionId,
         _endpoint: &ConnectedPoint,
         _failed_addresses: Option<&Vec<Multiaddr>>,
         _other_established: usize,
@@ -327,8 +334,7 @@ impl<S: Store> NetworkBehaviour for Bitswap<S> {
                     self.set_peer_state(&peer_id, PeerState::Responsive);
                 }
 
-                self.server.receive_message(&peer_id, &message);
-                self.client.receive_message(&peer_id, &message);
+                self.receive_message(&peer_id, &message);
             }
         }
     }

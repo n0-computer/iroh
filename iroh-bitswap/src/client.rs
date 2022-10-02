@@ -70,11 +70,18 @@ pub struct Client<S: Store> {
     rebroadcast_delay: Duration,
     simulate_dont_haves_on_timeout: bool,
     #[derivative(Debug = "ignore")]
+    blocks_received_cb: Box<dyn Fn(&PeerId, &[&Block]) + 'static + Send + Sync>,
+    #[derivative(Debug = "ignore")]
     notify: Mutex<bus::Bus<Block>>,
 }
 
 impl<S: Store> Client<S> {
-    pub fn new(network: Network, store: S, config: Config) -> Self {
+    pub fn new(
+        network: Network,
+        store: S,
+        blocks_received_cb: Box<dyn Fn(&PeerId, &[&Block]) + 'static + Send + Sync>,
+        config: Config,
+    ) -> Self {
         let self_id = *network.self_id();
 
         let session_interest_manager = SessionInterestManager::new();
@@ -115,6 +122,7 @@ impl<S: Store> Client<S> {
             provider_search_delay: config.provider_search_delay,
             rebroadcast_delay: config.rebroadcast_delay,
             simulate_dont_haves_on_timeout: config.simluate_donthaves_on_timeout,
+            blocks_received_cb,
             notify: Mutex::new(notify),
         }
     }
@@ -176,7 +184,7 @@ impl<S: Store> Client<S> {
         self.session_manager
             .receive_from(Some(*from), &all_keys, haves, dont_haves);
 
-        // TODO: block_received_notifier?
+        (self.blocks_received_cb)(from, &wanted);
 
         // Publish the block
         let notify = &mut *self.notify.lock().unwrap();

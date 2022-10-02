@@ -159,11 +159,6 @@ impl SessionWants {
         }
     }
 
-    /// Returns a list of live wants
-    pub fn live_wants(&self) -> Vec<Cid> {
-        self.live_wants.keys().copied().collect()
-    }
-
     /// Returns a randomly selected live want
     pub fn random_live_want(&self) -> Option<Cid> {
         if self.live_wants.is_empty() {

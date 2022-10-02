@@ -29,7 +29,6 @@ pub struct ProviderQueryManager {
 
 #[derive(Debug)]
 struct Inner {
-    network: Network,
     provider_query_messages: Sender<ProviderQueryMessage>,
     workers: Vec<(JoinHandle<()>, Sender<()>)>,
 }
@@ -56,7 +55,7 @@ impl ProviderQueryManager {
                         recv(provider_query_message_r) -> msg => {
                             match msg {
                                 Ok(ProviderQueryMessage::NewProvider { cid, response }) => {
-                                    match network.find_providers(cid) {
+                                   match network.find_providers(cid) {
                                         Ok(providers_r) => {
                                             loop {
                                                 crossbeam::channel::select! {
@@ -113,7 +112,6 @@ impl ProviderQueryManager {
 
         ProviderQueryManager {
             inner: Arc::new(Inner {
-                network,
                 provider_query_messages: provider_query_message_s,
                 workers,
             }),

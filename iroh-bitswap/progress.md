@@ -4,7 +4,7 @@
 
 - [ ] (1) Implement everything sync, not libp2p integration
   - [x] Server
-  - [ ] Client
+  - [x] Client
 - [ ] (2) Integrate with libp2p
   - [x] Server
   - [ ] Client
@@ -19,7 +19,7 @@
 ### Client
 
 651
-- [ ] `./client/client.go` (479)
+- [x] `./client/client.go` (479)
 - [x] `./client/stat.go` (30)
 - [x] `./client/wantlist/wantlist.go` (142)
 

@@ -31,10 +31,6 @@ pub struct MessageQueue {
 
 #[derive(Debug)]
 struct Inner {
-    peer: PeerId,
-    network: Network,
-    send_error_backoff: Duration,
-    max_valid_latency: Duration,
     responses: Sender<Vec<Cid>>,
     closer: Sender<()>,
     worker: Option<JoinHandle<anyhow::Result<()>>>,
@@ -289,10 +285,6 @@ impl MessageQueue {
 
         MessageQueue {
             inner: Arc::new(Inner {
-                peer,
-                network,
-                send_error_backoff: config.send_error_backof,
-                max_valid_latency: config.max_valid_latency,
                 responses: responses_sender,
                 closer: closer_sender,
                 worker: Some(worker),

@@ -6,7 +6,6 @@ use std::{
 };
 
 use ahash::{AHashMap, AHashSet};
-use anyhow::{anyhow, Result};
 use cid::Cid;
 use crossbeam::channel::Sender;
 use derivative::Derivative;
@@ -47,9 +46,7 @@ struct PendingWant {
 pub struct DontHaveTimeoutManager {
     default_timeout: Duration,
     max_timeout: Duration,
-    ping_latency_multiplier: f64,
     message_latency_multiplier: f64,
-    max_expected_want_process_time: Duration,
     inner: Arc<Mutex<Inner>>,
 }
 
@@ -68,6 +65,18 @@ struct Inner {
     worker: Option<JoinHandle<()>>,
     #[derivative(Debug = "ignore")]
     on_dont_have_timeout: Arc<dyn DontHaveTimeout>,
+}
+
+impl Drop for Inner {
+    fn drop(&mut self) {
+        if let Some((worker, closer)) = self.check_for_timeouts_timer.take() {
+            closer.send(()).ok();
+            worker.join().expect("worker error");
+        }
+        if let Some(worker) = self.worker.take() {
+            worker.join().expect("worker error");
+        }
+    }
 }
 
 impl DontHaveTimeoutManager {
@@ -127,27 +136,9 @@ impl DontHaveTimeoutManager {
         DontHaveTimeoutManager {
             default_timeout: DONT_HAVE_TIMEOUT,
             max_timeout: MAX_TIMEOUT,
-            ping_latency_multiplier: PING_LATENCY_MULTIPLIER,
             message_latency_multiplier: MESSAGE_LATENCY_MULTIPLIER,
-            max_expected_want_process_time: MAX_EXPECTED_WANT_PROCESS_TIME,
             inner,
         }
-    }
-
-    pub fn shutdown(self) -> Result<()> {
-        let inner = &mut *self.inner.lock().unwrap();
-        if let Some((worker, closer)) = inner.check_for_timeouts_timer.take() {
-            closer.send(()).ok();
-            worker
-                .join()
-                .map_err(|e| anyhow!("failed to shutdown timer worker: {:?}", e))?;
-        }
-        if let Some(worker) = inner.worker.take() {
-            worker
-                .join()
-                .map_err(|e| anyhow!("failed to shutdown worker: {:?}", e))?;
-        }
-        Ok(())
     }
 
     /// Called when we receive a response from the peer. It is the time between

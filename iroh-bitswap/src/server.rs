@@ -60,8 +60,6 @@ pub struct Server<S: Store> {
     // send_time_histogram -> iroh-metric
     /// Decision engine for which who to send which blocks to.
     engine: Arc<DecisionEngine<S>>,
-    /// Provides interaction with the network.
-    network: Network,
     /// Counters for various statistics.
     counters: Mutex<Stat>,
     /// Channel for newly added blocks, which are to be provided to the network.
@@ -137,7 +135,7 @@ impl<S: Store> Server<S> {
                                 break;
                             }
                             recv(new_blocks) -> block_key => {
-                                if let Ok(block_key) = new_blocks.recv() {
+                                if let Ok(block_key) = block_key {
                                     if let Err(err) = provide_keys.send(block_key) {
                                         error!("failed to send provide key: {:?}", err);
                                         break;
@@ -186,7 +184,6 @@ impl<S: Store> Server<S> {
 
         Server {
             engine,
-            network,
             counters: Mutex::new(Stat::default()),
             new_blocks: new_blocks.0,
             provide_enabled,
@@ -196,10 +193,12 @@ impl<S: Store> Server<S> {
         }
     }
 
+    /// Returns aggregated data about blocks swapped and communication with a given peer.
     pub fn ledger_for_peer(&self, peer: &PeerId) -> Option<Receipt> {
         self.engine.ledger_for_peer(peer)
     }
 
+    /// Returns the currently understood list of blocks requested by a given peer.
     pub fn wantlist_for_peer(&self, peer: &PeerId) -> Vec<Cid> {
         self.engine
             .wantlist_for_peer(peer)
@@ -268,9 +267,12 @@ impl<S: Store> Server<S> {
     /// Notifies the decision engine that a peer is well behaving
     /// and gave us usefull data, potentially increasing it's score and making us
     /// send them more data in exchange.
-    pub fn received_blocks(&self, from: &PeerId, blks: &[Block]) {
-        // Called by the client
-        self.engine.received_blocks(from, blks);
+    pub fn received_blocks_cb(&self) -> Box<dyn Fn(&PeerId, &[&Block]) + 'static + Send + Sync> {
+        let engine = self.engine.clone();
+
+        Box::new(move |from: &PeerId, blocks: &[&Block]| {
+            engine.received_blocks(from, blocks);
+        })
     }
 
     pub fn peer_connected(&self, peer: &PeerId) {

@@ -5,7 +5,7 @@ use cid::Cid;
 use crossbeam::channel::{Receiver, Sender};
 use derivative::Derivative;
 use libp2p::PeerId;
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::client::{
     block_presence_manager::BlockPresenceManager, peer_manager::PeerManager,
@@ -192,6 +192,7 @@ impl SessionWantSender {
                             Ok(change) => { loop_state.on_change(change) },
                             Err(err) => {
                                 // sender gone
+                                warn!("changes sender error: {:?}", err);
                                 break;
                             }
                         }
@@ -248,10 +249,6 @@ impl SessionWantSender {
     // Adds a new change to the queue.
     fn add_change(&self, change: Change) {
         self.inner.changes.send(change).ok();
-    }
-
-    fn signal_availability(&self, peer: PeerId, is_available: bool) {
-        signal_availability(self.inner.changes.clone(), peer, is_available);
     }
 }
 

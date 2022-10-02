@@ -26,13 +26,6 @@ struct PeerWant {
 }
 
 impl PeerWantManager {
-    pub fn new() -> Self {
-        // want_gauge: wantlist_total
-        // want_block_gauge: want_blocks_total
-
-        Self::default()
-    }
-
     /// Adds a peer whose wants we need to keep track of.
     /// Sends the current list of broadcasts to this peer.
     pub fn add_peer(&mut self, peer_queue: &MessageQueue, peer: &PeerId) {
@@ -62,14 +55,22 @@ impl PeerWantManager {
             // Clean up want-block
             for cid in peer_wants.want_blocks {
                 self.reverse_index_remove(&cid, peer);
-                // TODO: update gauges
+                let peer_counts = self.want_peer_counts(&cid);
+                if peer_counts.want_block == 0 {
+                    // TODO: wantBlockGauge dec
+                }
+                if !peer_counts.wanted() {
+                    // TODO: wantGauge dec
+                }
             }
 
             // Clean up want-haves
             for cid in peer_wants.want_haves {
                 self.reverse_index_remove(&cid, peer);
-
-                // TODO: update gauges
+                let peer_counts = self.want_peer_counts(&cid);
+                if !peer_counts.wanted() {
+                    // TODO: wantGauge dec
+                }
             }
         }
     }
@@ -114,7 +115,14 @@ impl PeerWantManager {
                     continue;
                 }
 
-                // TODO increment gauges
+                /* TODO:
+                let peer_counts = self.want_peer_counts(&cid);
+                if peer_counts.want_block == 0 {
+                    // TODO: wantBlockGauge inc
+                }
+                if !peer_counts.wanted() {
+                    // TODO: wantGauge inc
+                }*/
 
                 // make sure the cid is no longer recorded as want-have
                 peer_wants.want_haves.remove(cid);
@@ -135,7 +143,11 @@ impl PeerWantManager {
 
                 // Onliy if the cid has not been sent as want-block or want-have
                 if !peer_wants.want_blocks.contains(cid) && !peer_wants.want_haves.contains(cid) {
-                    // TODO increment gauges
+                    /* TODO:
+                    let peer_counts = self.want_peer_counts(&cid);
+                    if !peer_counts.wanted() {
+                        // TODO: wantGauge inc
+                    }*/
 
                     // record that the cid was sent as a want-have
                     peer_wants.want_haves.insert(*cid);
@@ -165,7 +177,8 @@ impl PeerWantManager {
 
         // record how many peers have a pending want-block and wan-thave for each key to
         // be cancelled
-        let peer_counts: AHashMap<Cid, WantPeerCounts> = cancels
+        // TODO: for gauges
+        let _peer_counts: AHashMap<Cid, WantPeerCounts> = cancels
             .iter()
             .map(|cid| (*cid, self.want_peer_counts(cid)))
             .collect();
@@ -176,7 +189,7 @@ impl PeerWantManager {
             .copied()
             .collect();
 
-        let send = |peer: _, peer_wants: &mut PeerWant| {
+        let send = |_peer: _, peer_wants: &mut PeerWant| {
             // start from the broadcast cancels
             let mut to_cancel = broadcast_cancels.clone();
             // for each key to cancel
@@ -224,14 +237,20 @@ impl PeerWantManager {
             }
         }
 
-        // TODO: decrement gauges
-
         // remove cancelled broadcast wants
         self.broadcast_wants = &self.broadcast_wants - &broadcast_cancels;
 
         // batch remove the reverse-index
         for cancel in cancels {
             self.want_peers.remove(cancel);
+
+            let peer_counts = self.want_peer_counts(cancel);
+            if peer_counts.want_block == 0 {
+                // TODO: wantBlockGauge dec
+            }
+            if !peer_counts.wanted() {
+                // TODO: wantGauge dec
+            }
         }
     }
 
@@ -258,10 +277,6 @@ impl PeerWantManager {
         }
 
         counts
-    }
-
-    fn reverse_index_add(&mut self, cid: &Cid, peer: &PeerId) {
-        self.want_peers.entry(*cid).or_default().insert(*peer);
     }
 
     /// Remove the peer from the list of peers that have sent a want with the cid.

@@ -64,7 +64,7 @@ impl Network {
     }
 
     pub fn ping(&self, peer: &PeerId) -> Result<Duration> {
-        Err(anyhow!("not available yet"))
+        todo!();
     }
 
     pub fn stop(self) {

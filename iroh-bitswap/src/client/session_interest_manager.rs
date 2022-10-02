@@ -131,7 +131,7 @@ impl SessionInterestManager {
         for block in blocks {
             let cid = block.cid();
             if let Some(wants) = wants.get(cid) {
-                for (session, wanted) in wants {
+                for wanted in wants.values() {
                     if *wanted {
                         wanted_keys.insert(*cid);
                     }

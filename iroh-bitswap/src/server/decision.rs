@@ -430,7 +430,7 @@ impl<S: Store> Engine<S> {
         (wants, cancels, denials)
     }
 
-    pub fn received_blocks(&self, from: &PeerId, blocks: &[Block]) {
+    pub fn received_blocks(&self, from: &PeerId, blocks: &[&Block]) {
         if blocks.is_empty() {
             return;
         }
@@ -572,18 +572,6 @@ impl<S: Store> Engine<S> {
                 .insert(*peer, Arc::new(Mutex::new(Ledger::new(*peer))));
         }
         self.ledger_map.read().unwrap().get(peer).unwrap().clone()
-    }
-
-    fn num_bytes_sent_to(&self, peer: &PeerId) -> u64 {
-        self.ledger_for_peer(peer)
-            .map(|l| l.sent)
-            .unwrap_or_default()
-    }
-
-    fn num_bytes_recv_from(&self, peer: &PeerId) -> u64 {
-        self.ledger_for_peer(peer)
-            .map(|l| l.recv)
-            .unwrap_or_default()
     }
 }
 
