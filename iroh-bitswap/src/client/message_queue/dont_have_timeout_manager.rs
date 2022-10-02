@@ -47,6 +47,7 @@ pub struct DontHaveTimeoutManager {
     default_timeout: Duration,
     max_timeout: Duration,
     message_latency_multiplier: f64,
+    trigger_timeouts_check: Sender<()>,
     inner: Arc<Mutex<Inner>>,
 }
 
@@ -61,7 +62,7 @@ struct Inner {
     timeout: Duration,
     /// Ewma of message latency
     message_latency: LatencyEwma,
-    check_for_timeouts_timer: Option<(JoinHandle<()>, Sender<()>)>,
+    closer: Sender<()>,
     worker: Option<JoinHandle<()>>,
     #[derivative(Debug = "ignore")]
     on_dont_have_timeout: Arc<dyn DontHaveTimeout>,
@@ -69,12 +70,12 @@ struct Inner {
 
 impl Drop for Inner {
     fn drop(&mut self) {
-        if let Some((worker, closer)) = self.check_for_timeouts_timer.take() {
-            closer.send(()).ok();
-            worker.join().expect("worker error");
-        }
-        if let Some(worker) = self.worker.take() {
-            worker.join().expect("worker error");
+        if self.closer.send(()).is_ok() {
+            self.worker
+                .take()
+                .expect("missing worker")
+                .join()
+                .expect("worker paniced");
         }
     }
 }
@@ -85,6 +86,7 @@ impl DontHaveTimeoutManager {
         network: Network,
         on_dont_have_timeout: Arc<dyn DontHaveTimeout>,
     ) -> Self {
+        let (closer_s, closer_r) = crossbeam::channel::bounded(1);
         let inner = Arc::new(Mutex::new(Inner {
             target,
             timeout: DONT_HAVE_TIMEOUT,
@@ -95,7 +97,7 @@ impl DontHaveTimeoutManager {
                 samples: 0,
                 latency: Duration::default(),
             },
-            check_for_timeouts_timer: None,
+            closer: closer_s,
             worker: None,
             on_dont_have_timeout,
         }));
@@ -104,12 +106,16 @@ impl DontHaveTimeoutManager {
 
         // measure ping latency
         let i = inner.clone();
+        let (trigger_s, trigger_r) = crossbeam::channel::bounded(16);
+
+        let ts = trigger_s.clone();
         let worker = std::thread::spawn(move || {
-            // TODO: add abort method
+            let inner = i;
+            let mut timeout_r = crossbeam::channel::after(DONT_HAVE_TIMEOUT);
 
             match network.ping(&target) {
                 Ok(latency) => {
-                    let inner = &mut *i.lock().unwrap();
+                    let inner = &mut *inner.lock().unwrap();
                     if inner.message_latency.samples == 0 {
                         inner.timeout = calculate_timeout_from_ping_latency(
                             latency,
@@ -119,12 +125,31 @@ impl DontHaveTimeoutManager {
                         );
 
                         // update timeouts
-                        inner.check_for_timeouts();
+                        ts.send(()).ok();
                     }
                 }
                 Err(err) => {
                     warn!("failed to ping {}: {:?}", target, err);
                     // we leave the default timeout
+                }
+            }
+
+            loop {
+                crossbeam::channel::select! {
+                    recv(closer_r) -> _ => {
+                        // Shutdown
+                        break;
+                    }
+                    recv(trigger_r) -> _ => {
+                        if let Some(next) = inner.lock().unwrap().check_for_timeouts() {
+                            timeout_r = crossbeam::channel::after(next);
+                        }
+                    }
+                    recv(timeout_r) -> _ => {
+                        if let Some(next) = inner.lock().unwrap().check_for_timeouts() {
+                            timeout_r = crossbeam::channel::after(next);
+                        }
+                    }
                 }
             }
         });
@@ -137,6 +162,7 @@ impl DontHaveTimeoutManager {
             default_timeout: DONT_HAVE_TIMEOUT,
             max_timeout: MAX_TIMEOUT,
             message_latency_multiplier: MESSAGE_LATENCY_MULTIPLIER,
+            trigger_timeouts_check: trigger_s,
             inner,
         }
     }
@@ -159,7 +185,7 @@ impl DontHaveTimeoutManager {
         if inner.timeout < old_timeout {
             // Check if after changing the timeout there are any pending wants
             // that are now over the timeout
-            inner.check_for_timeouts();
+            self.trigger_timeouts_check.send(()).ok();
         }
     }
 
@@ -188,7 +214,7 @@ impl DontHaveTimeoutManager {
         // If there was alread an earlier pending item in the queue, timeouts
         // are already scheduled. Otherwise start a timeout check.
         if queue_was_empty {
-            inner.check_for_timeouts();
+            self.trigger_timeouts_check.send(()).ok();
         }
     }
 
@@ -207,9 +233,9 @@ impl DontHaveTimeoutManager {
 
 impl Inner {
     /// Checks pending wants to see if any are over the timeout.
-    fn check_for_timeouts(&mut self) {
+    fn check_for_timeouts(&mut self) -> Option<Duration> {
         if self.want_queue.is_empty() {
-            return;
+            return None;
         }
 
         // Figure out which of the blocks that were wanted were not received within
@@ -243,27 +269,10 @@ impl Inner {
             // TODO: verify this is  correct
             let until = (oldest_start + self.timeout) - Instant::now();
 
-            if let Some((worker, cancel)) = self.check_for_timeouts_timer.take() {
-                cancel.send(()).ok();
-                worker.join().unwrap();
-            }
-
-            let timer = crossbeam::channel::after(until);
-            let (cancel_s, cancel_r) = crossbeam::channel::bounded(1);
-            let worker = std::thread::spawn(move || loop {
-                crossbeam::channel::select! {
-                    recv(cancel_r) -> _ => {
-                        break;
-                    }
-                    recv(timer) -> _ => {
-                        // TODO
-                        // self.check_for_timeouts();
-                    }
-                }
-            });
-
-            self.check_for_timeouts_timer = Some((worker, cancel_s));
+            return Some(until);
         }
+
+        None
     }
 
     /// Triggers on_dont_have_timeout with matching keys.
