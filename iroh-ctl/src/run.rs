@@ -15,9 +15,7 @@ use crate::{
 };
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use iroh::api::{Api, ClientApi};
-use iroh::p2p;
-use iroh::store;
+use iroh::{Api, Iroh, P2pApi, StoreApi};
 use iroh_metrics::config::Config as MetricsConfig;
 use iroh_resolver::resolver;
 use iroh_rpc_client::Client;
@@ -44,13 +42,13 @@ impl Cli {
 
 #[derive(Subcommand, Debug, Clone)]
 enum Commands {
-    /// status checks the health of the different processes
-    // #[clap(about = "Check the health of the different iroh processes.")]
-    // Status {
-    //     #[clap(short, long)]
-    //     /// when true, updates the status table whenever a change in a process's status occurs
-    //     watch: bool,
-    // },
+    // status checks the health of the different processes
+    #[clap(about = "Check the health of the different iroh processes.")]
+    Status {
+        #[clap(short, long)]
+        /// when true, updates the status table whenever a change in a process's status occurs
+        watch: bool,
+    },
     Version,
     P2p(P2p),
     Store(Store),
@@ -102,7 +100,7 @@ pub async fn run_cli_impl(cli: Cli) -> Result<()> {
 
     let client = Client::new(config.rpc_client).await?;
 
-    let api = ClientApi::new(&client);
+    let api = Iroh::new(&client);
 
     run_cli_command(&api, cli).await?;
 
@@ -117,19 +115,16 @@ pub async fn run_cli(cli: Cli) -> Result<()> {
     run_cli_command(&api, cli).await
 }
 
-pub async fn run_cli_command(
-    api: &impl Api<P = impl p2p::P2p, S = impl store::Store>,
-    cli: Cli,
-) -> Result<()> {
+pub async fn run_cli_command(api: &impl Api, cli: Cli) -> Result<()> {
     match cli.command {
-        // Commands::Status { watch } => {
-        //     crate::status::status(client, watch).await?;
-        // }
+        Commands::Status { watch } => {
+            crate::status::status(api, watch).await?;
+        }
         Commands::Version => {
             println!("v{}", env!("CARGO_PKG_VERSION"));
         }
-        Commands::P2p(p2p) => run_p2p_command(api.p2p()?, p2p).await?,
-        Commands::Store(store) => run_store_command(api.store()?, store).await?,
+        Commands::P2p(p2p) => run_p2p_command(&api.p2p()?, p2p).await?,
+        Commands::Store(store) => run_store_command(&api.store()?, store).await?,
         Commands::Gateway(gateway) => run_gateway_command(gateway).await?,
         Commands::Add {
             path,

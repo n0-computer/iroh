@@ -4,28 +4,29 @@ use anyhow::Result;
 use crossterm::terminal::{Clear, ClearType};
 use crossterm::{cursor, style, style::Stylize, QueueableCommand};
 use futures::StreamExt;
-use iroh_rpc_client::{Client, ServiceStatus, StatusRow, StatusTable};
+use iroh::{Api, ServiceStatus, StatusRow, StatusTable};
 
-pub async fn status(client: Client, watch: bool) -> Result<()> {
+pub async fn status(api: &impl Api, watch: bool) -> Result<()> {
     let mut stdout = stdout();
     if watch {
-        let status_stream = client.watch().await;
-        tokio::pin!(status_stream);
-        stdout.queue(Clear(ClearType::All))?;
-        while let Some(table) = status_stream.next().await {
-            stdout
-                .queue(cursor::RestorePosition)?
-                .queue(Clear(ClearType::FromCursorUp))?
-                .queue(cursor::MoveTo(0, 1))?;
-            queue_table(&table, &stdout)?;
-            stdout
-                .queue(cursor::SavePosition)?
-                .queue(style::Print("\n"))?
-                .flush()?;
-        }
+        // XXX this requires an implementation of watch on the API
+        // let status_stream = api.watch().await;
+        // tokio::pin!(status_stream);
+        // stdout.queue(Clear(ClearType::All))?;
+        // while let Some(table) = status_stream.next().await {
+        //     stdout
+        //         .queue(cursor::RestorePosition)?
+        //         .queue(Clear(ClearType::FromCursorUp))?
+        //         .queue(cursor::MoveTo(0, 1))?;
+        //     queue_table(&table, &stdout)?;
+        //     stdout
+        //         .queue(cursor::SavePosition)?
+        //         .queue(style::Print("\n"))?
+        //         .flush()?;
+        // }
         Ok(())
     } else {
-        let table = client.check().await;
+        let table = api.check().await;
         queue_table(&table, &stdout)?;
         stdout.flush()?;
         Ok(())

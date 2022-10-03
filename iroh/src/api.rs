@@ -11,7 +11,7 @@ use iroh_rpc_client::Client;
 use iroh_rpc_client::{StatusRow, StatusTable};
 use mockall::automock;
 
-pub struct ClientApi<'a> {
+pub struct Iroh<'a> {
     client: &'a Client,
 }
 
@@ -32,14 +32,14 @@ pub trait Api {
     // async fn watch(&self) -> Self::StatusTableStream;
 }
 
-impl<'a> ClientApi<'a> {
+impl<'a> Iroh<'a> {
     pub fn new(client: &'a Client) -> Self {
         Self { client }
     }
 }
 
 #[async_trait(?Send)]
-impl<'a> Api for ClientApi<'a> {
+impl<'a> Api for Iroh<'a> {
     type P = ClientP2p<'a>;
     type S = ClientStore<'a>;
     // type StatusTableStream = Box<dyn Stream<Item = StatusRow>>;

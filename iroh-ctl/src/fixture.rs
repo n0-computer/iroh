@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 use std::env;
 
-use iroh::api::MockApi;
-use iroh::p2p;
+use iroh::{MockApi, MockP2p};
+use libp2p::PeerId;
 
 type GetFixture = fn() -> MockApi;
 type FixtureRegistry = HashMap<String, GetFixture>;
@@ -10,8 +10,7 @@ type FixtureRegistry = HashMap<String, GetFixture>;
 fn fixture_peer_ids() -> MockApi {
     let mut api = MockApi::default();
     api.expect_p2p().returning(|| {
-        use libp2p::PeerId;
-        let mut mock_p2p = p2p::MockP2p::default();
+        let mut mock_p2p = MockP2p::default();
 
         mock_p2p.expect_peer_ids().returning(|| {
             let peer_id0 = PeerId::from_bytes(&[
