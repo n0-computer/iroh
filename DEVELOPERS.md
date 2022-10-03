@@ -2,6 +2,7 @@
 
 * [Development Setup](#setup)
 * [Coding Rules](#rules)
+* [Pull Request Guidlines](#prs)
 * [Commit Message Guidelines](#commits)
 * [Troubleshooting](#troubleshooting)
 
@@ -19,6 +20,8 @@ machine:
   Installing Git][git-setup] is a good source of information.
 
 * [The Rust Programming Language](https://www.rust-lang.org/): see https://www.rust-lang.org/learn/get-started to get started
+
+* [Protobuf compiler](https://github.com/protocolbuffers/protobuf#protocol-compiler-installation): Download it from the [Protobuf Releases page](https://github.com/protocolbuffers/protobuf/releases); you need to get the `protoc-` release for your platform. To install, make sure the `protoc` compiler is on your path. If you get errors during build about `experimental_allow_proto3_optional` or inability to import `/google/protobuf/empty.proto` you're likely using a version of the compiler that's too old.
 
 
 ### Forking Iroh on Github
@@ -40,10 +43,6 @@ $ cargo run -p iroh-store
 $ cargo run -p iroh-ctl -- status --watch
 ```
 
-You also need a recent version of the [Protobuf compiler](https://github.com/protocolbuffers/protobuf#protocol-compiler-installation).
-
-Download it from the [Protobuf Releases page](https://github.com/protocolbuffers/protobuf/releases); you need to get the `protoc-` release for your platform. To install, make sure the `protoc` compiler is on your path. If you get errors during build about `experimental_allow_proto3_optional` or inability to import `/google/protobuf/empty.proto` you're likely using a version of the compiler that's too old.
-
 ## <a name="rules"></a> Coding Rules
 
 When you push your branch to github and open up a pull request, it will automatically trigger  [CircleCI](https://circleci.com/about/) to lint and test your code.
@@ -61,11 +60,12 @@ Setting up a [git hook][git-hook] to run these commands can save you many headac
 cargo clippy --workspace --examples --tests --benches && cargo test --workspace --examples
 ```
 
-## <a name="Pull Requests"></a> Pull Request Guidelines
+## <a name="prs"></a> Pull Request Guidelines
 The tests must pass and you must get an approval from someone on the Iroh team before you can merge your PR.
 
 Depending on your permissions in the `iroh` repo, you may not have the the ability to "request a review". Instead, please tag your selected reviewers in the PR itself (using the `@`) and specify that you would like them to review. If you are apart of our discord community, you can and should ping your reviewer(s) there as well.
 
+If you don't know who to tag for review, here are some good guidelines. For any markdown documentations changes, tag `ramfox` or `b5`. If your PR solves an issue that someone else created, tag that person in review. If it's an issue you have created, tag team members who have been discussing the issue. Otherwise, create the PR and note that you aren't sure who to tag! Someone will drop in to give you guidance. If you are apart of our discord community, ask who should be tagged in the `iroh` channel.
 
 ### A note about our current CI testing set up
 The MacOS testing infrastructure currently does not work on forked branches of `iroh`. If you are working on a forked branch, you will notice that the MacOS tests on your PRs will always fail (because they will not run). This is the only case where you may have a "failing" test and still merge your PR. 

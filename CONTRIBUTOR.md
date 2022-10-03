@@ -100,6 +100,7 @@ Before you submit your pull request consider the following guidelines:
     ```
 
 * In GitHub, send a pull request to ` iroh:main`. 
+* Follow our [Pull Request Guidelines](developers.prs) to understand who to tag for review and how best to merge your work.
 
 * If we suggest changes, then:
 
