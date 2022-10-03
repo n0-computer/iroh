@@ -1,20 +1,14 @@
-use std::collections::{HashMap, HashSet};
 use std::path::Path;
-use std::rc::Rc;
 
 use crate::getadd::{add, get};
 use crate::p2p::{ClientP2p, P2p};
 use crate::store::{ClientStore, Store};
 use anyhow::Result;
 use async_trait::async_trait;
-use bytes::Bytes;
 use cid::Cid;
 use iroh_resolver::resolver::Path as IpfsPath;
-use iroh_rpc_client::{Client, P2pClient, StoreClient};
-use libp2p::gossipsub::{MessageId, TopicHash};
-use libp2p::{Multiaddr, PeerId};
+use iroh_rpc_client::Client;
 use mockall::automock;
-use tokio::{fs::File, io::stdin, io::AsyncReadExt};
 
 pub struct ClientApi<'a> {
     client: &'a Client,

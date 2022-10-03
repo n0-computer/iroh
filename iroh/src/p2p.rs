@@ -1,14 +1,11 @@
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
-use std::rc::Rc;
 
-use crate::getadd::{add, get};
 use anyhow::Result;
 use async_trait::async_trait;
 use bytes::Bytes;
 use cid::Cid;
-use iroh_resolver::resolver::Path as IpfsPath;
-use iroh_rpc_client::{Client, P2pClient, StoreClient};
+use iroh_rpc_client::P2pClient;
 use libp2p::gossipsub::{MessageId, TopicHash};
 use libp2p::{Multiaddr, PeerId};
 use mockall::automock;
