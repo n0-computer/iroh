@@ -14,7 +14,7 @@ futures = "0.3.21"
 tokio = { version = "1", features = ["fs", "io-util"] }
 tracing = "0.1.34"
 clap = { version = "3.1.14", features = ["derive"] }
-crossterm = "0.24"
+crossterm = "0.25"
 tonic = "0.8"
 iroh-rpc-client = { path = "../iroh-rpc-client", default-features = false, features = ["grpc", "mem"] }
 iroh-resolver = { path = "../iroh-resolver" }
