@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::env;
 use std::path::PathBuf;
 
 use crate::{
@@ -111,8 +112,11 @@ pub async fn run_cli_impl(cli: Cli) -> Result<()> {
     Ok(())
 }
 
-#[cfg(feature = "fake")]
-pub async fn run_cli(cli: Cli) -> Result<()> {
+type FixtureApi = MockApi<p2p::MockP2p, store::MockStore>;
+type GetFixture = fn() -> FixtureApi;
+type FixtureRegistry = HashMap<String, GetFixture>;
+
+fn fixture_peer_ids() -> FixtureApi {
     let mut api = MockApi::<p2p::MockP2p, store::MockStore>::default();
     api.expect_p2p().returning(|| {
         use libp2p::PeerId;
@@ -131,6 +135,24 @@ pub async fn run_cli(cli: Cli) -> Result<()> {
         });
         Ok(mock_p2p)
     });
+    api
+}
+
+#[cfg(feature = "fake")]
+fn register_fixtures() -> FixtureRegistry {
+    let mut registry = FixtureRegistry::new();
+    registry.insert("peer_ids".to_string(), fixture_peer_ids);
+    registry
+}
+
+#[cfg(feature = "fake")]
+pub async fn run_cli(cli: Cli) -> Result<()> {
+    let registry = register_fixtures();
+    let fixture_name = env::var("IROH_CTL_FIXTURE").expect("IROH_CTL_FIXTURE must be set");
+    let fixture = registry
+        .get(&fixture_name)
+        .unwrap_or_else(|| panic!("unknown fixture: {}", fixture_name));
+    let api = fixture();
     run_cli_command(&api, cli).await
 }
 
