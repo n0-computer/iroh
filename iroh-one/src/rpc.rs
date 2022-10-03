@@ -10,8 +10,8 @@ use iroh_rpc_types::{
     p2p::{P2pClientAddr, P2pP2p},
     store::{StoreClientAddr, StoreStore},
 };
-use std::mem::transmute;
 use paste::paste;
+use std::mem::transmute;
 
 /// This macro generates the implementation for a service trait in iroh-one. This works
 /// by relaying the calls to the "real" client's backend.
@@ -36,6 +36,8 @@ macro_rules! relay {
                 $(
                     #[tracing::instrument(skip(self))]
                     async fn [<$func:snake>](&self, req: $req) -> Result<$res> {
+                        // Needed to prevent clippy warning when req or res are ()
+                        #[allow(clippy::useless_transmute)]
                         unsafe { transmute(self.client.backend.[<$func:snake>](transmute(req)).await) }
                     }
                 )+
@@ -44,13 +46,8 @@ macro_rules! relay {
     }
 }
 
+#[derive(Default)]
 pub struct GatewayOne {}
-
-impl GatewayOne {
-    pub fn new() -> Self {
-        Self {}
-    }
-}
 
 #[async_trait]
 impl RpcGateway for GatewayOne {
@@ -97,5 +94,5 @@ impl iroh_rpc_types::NamedService for GatewayOne {
 pub async fn new(addr: GatewayOneServerAddr, config: &Config) -> Result<()> {
     let store = StoreOne::new(config.rpc_client.store_addr.as_ref().unwrap().clone()).await?;
     let p2p = P2pOne::new(config.rpc_client.p2p_addr.as_ref().unwrap().clone()).await?;
-    iroh_rpc_types::gateway_one::serve(addr, GatewayOne::new(), store, p2p).await
+    iroh_rpc_types::gateway_one::serve(addr, GatewayOne::default(), store, p2p).await
 }

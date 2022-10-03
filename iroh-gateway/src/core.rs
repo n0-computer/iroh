@@ -31,7 +31,7 @@ impl<T: ContentLoader + std::marker::Unpin> Core<T> {
         content_loader: T,
     ) -> anyhow::Result<Self> {
         Ok(Self {
-            state: Self::make_state(config, bad_bits, content_loader).await?
+            state: Self::make_state(config, bad_bits, content_loader).await?,
         })
     }
 

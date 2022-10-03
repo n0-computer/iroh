@@ -43,12 +43,7 @@ async fn main() -> Result<()> {
         .server_rpc_addr()?
         .ok_or_else(|| anyhow!("missing gateway rpc addr"))?;
     let content_loader = RpcClient::new(config.rpc_client.clone()).await?;
-    let handler = Core::new(
-        Arc::new(config),
-        Arc::clone(&bad_bits),
-        content_loader,
-    )
-    .await?;
+    let handler = Core::new(Arc::new(config), Arc::clone(&bad_bits), content_loader).await?;
 
     // Start the rpc handler.
     tokio::spawn(async move {

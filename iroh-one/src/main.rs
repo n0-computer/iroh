@@ -89,9 +89,7 @@ async fn main() -> Result<()> {
 
     // Start the rpc handler.
     tokio::spawn(async move {
-        if let Err(err) =
-            iroh_one::rpc::new(gateway_rpc_addr, &config).await
-        {
+        if let Err(err) = iroh_one::rpc::new(gateway_rpc_addr, &config).await {
             tracing::error!("Failed to run gateway rpc handler: {}", err);
         }
     });
