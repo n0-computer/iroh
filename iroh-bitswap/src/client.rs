@@ -100,7 +100,7 @@ impl<S: Store> Client<S> {
 
         let session_manager = SessionManager::new(
             self_id,
-            session_interest_manager,
+            session_interest_manager.clone(),
             block_presence_manager,
             peer_manager.clone(),
             provider_query_manager.clone(),
@@ -108,8 +108,6 @@ impl<S: Store> Client<S> {
             notify.read_handle(),
         );
         let counters = Mutex::new(Stat::default());
-
-        let session_interest_manager = SessionInterestManager::new();
 
         Client {
             peer_manager,
@@ -227,8 +225,12 @@ impl<S: Store> Client<S> {
         let store = &self.store;
         for block in blocks {
             // TODO: this is a call to the store for each block just to update metrics, should be avoided.
+            let has_block = false;
+            // TODO:
+            /*
             let has_block = tokio::runtime::Handle::current()
                 .block_on(async { store.has(block.cid()).await.unwrap_or_default() });
+            */
             let block_len = block.data().len();
             // TODO: bs.allMetric.Observe(float64(blkLen))
             if has_block {

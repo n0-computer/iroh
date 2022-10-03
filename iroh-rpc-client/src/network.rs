@@ -313,8 +313,8 @@ mod tests {
     use iroh_rpc_types::p2p::{
         p2p_server, BitswapProviders, BitswapResponse, ConnectResponse, GetListeningAddrsResponse,
         GetPeersResponse, GossipsubAllPeersResponse, GossipsubPeersResponse,
-        GossipsubPublishResponse, GossipsubSubscribeResponse, GossipsubTopicsResponse,
-        VersionResponse,
+        GossipsubPublishResponse, GossipsubSubscribeResponse, GossipsubTopicsResponse, Multiaddrs,
+        PeerIdResponse, VersionResponse,
     };
     use libp2p::gossipsub::IdentTopic;
     use tokio::net::TcpListener;

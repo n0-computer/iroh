@@ -2,6 +2,7 @@ use std::sync::{Arc, RwLock};
 
 use ahash::{AHashMap, AHashSet};
 use cid::Cid;
+use tracing::debug;
 
 use crate::Block;
 
@@ -27,6 +28,7 @@ impl SessionInterestManager {
 
     /// When the client asks the session for blocks, the session calls this methods.
     pub fn record_session_interest(&self, session: u64, keys: &[Cid]) {
+        debug!("record_session_interest {}: {:?}", session, keys);
         let wants = &mut *self.wants.write().unwrap();
 
         for key in keys {
@@ -38,6 +40,7 @@ impl SessionInterestManager {
     /// When the session shuts down, this is called.
     /// Returns the keys that no session is interested in anymore.
     pub fn remove_session(&self, session: u64) -> Vec<Cid> {
+        debug!("remove_session {}", session);
         let wants = &mut *self.wants.write().unwrap();
 
         let mut deleted_keys = Vec::new();
@@ -58,6 +61,7 @@ impl SessionInterestManager {
 
     /// Called when the session receives blocks.
     pub fn remove_session_wants(&self, session: u64, keys: &[Cid]) {
+        debug!("remove_session_wants {}: {:?}", session, keys);
         let wants = &mut *self.wants.write().unwrap();
 
         for key in keys {
@@ -73,8 +77,9 @@ impl SessionInterestManager {
     }
 
     /// Called when a request is cancelled.
-    /// Retuns the keys taht no session is interested in anymore.
+    /// Retuns the keys that no session is interested in anymore.
     pub fn remove_session_interested(&self, session: u64, keys: &[Cid]) -> Vec<Cid> {
+        debug!("remove_session_interested {}: {:?}", session, keys);
         let wants = &mut *self.wants.write().unwrap();
 
         let mut deleted_keys = Vec::new();
@@ -125,6 +130,11 @@ impl SessionInterestManager {
         blocks: &'a [Block],
     ) -> (Vec<&'a Block>, Vec<&'a Block>) {
         let wants = &*self.wants.read().unwrap();
+
+        dbg!(&wants);
+        for (cid, ws) in wants {
+            println!("wanting {}: {:?}", cid, ws);
+        }
 
         // Get the wanted bock keys as a set
         let mut wanted_keys = AHashSet::new();

@@ -344,25 +344,26 @@ impl MessageQueue {
         self.dh_timeout_manager.cancel_pending(cancels);
 
         let mut work_ready = false;
-        let wants = &mut *self.wants.lock().unwrap();
+        {
+            let wants = &mut *self.wants.lock().unwrap();
 
-        // Remove keys from broadcast and peer wants, and add to cancels.
-        for cid in cancels {
-            // Check if a want for the key was sent
-            let was_sent_bcst = wants.bcst_wants.sent.contains(cid);
-            let was_sent_peer = wants.peer_wants.sent.contains(cid);
+            // Remove keys from broadcast and peer wants, and add to cancels.
+            for cid in cancels {
+                // Check if a want for the key was sent
+                let was_sent_bcst = wants.bcst_wants.sent.contains(cid);
+                let was_sent_peer = wants.peer_wants.sent.contains(cid);
 
-            // Remove the want from tracking wantlist
-            wants.bcst_wants.remove(cid);
-            wants.peer_wants.remove(cid);
+                // Remove the want from tracking wantlist
+                wants.bcst_wants.remove(cid);
+                wants.peer_wants.remove(cid);
 
-            // Only send a cancel if a want was sent
-            if was_sent_bcst || was_sent_peer {
-                wants.cancels.insert(*cid);
-                work_ready = true;
+                // Only send a cancel if a want was sent
+                if was_sent_bcst || was_sent_peer {
+                    wants.cancels.insert(*cid);
+                    work_ready = true;
+                }
             }
         }
-        drop(wants);
 
         // Schedule a message send
         if work_ready {
