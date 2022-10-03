@@ -111,6 +111,7 @@ mod tests {
     use super::*;
     use hex_literal::hex;
     use http::StatusCode;
+    use iroh_rpc_client::Client as RpcClient;
     use iroh_rpc_client::Config as RpcClientConfig;
 
     #[tokio::test]
@@ -189,10 +190,12 @@ mod tests {
         config.set_default_headers();
 
         let rpc_addr = "grpc://0.0.0.0:0".parse().unwrap();
+        let content_loader = RpcClient::new(config.rpc_client.clone()).await.unwrap();
         let handler = crate::core::Core::new(
             Arc::new(config),
             rpc_addr,
             Arc::new(Some(RwLock::new(bbits))),
+            content_loader,
         )
         .await
         .unwrap();

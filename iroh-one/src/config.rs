@@ -5,12 +5,10 @@ use config::{ConfigError, Map, Source, Value};
 use iroh_metrics::config::Config as MetricsConfig;
 use iroh_p2p::Libp2pConfig;
 use iroh_rpc_client::Config as RpcClientConfig;
-#[cfg(feature = "uds-gateway")]
 use iroh_rpc_types::Addr;
 use iroh_util::insert_into_config_map;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-#[cfg(feature = "uds-gateway")]
 use tempdir::TempDir;
 
 /// CONFIG_FILE_NAME is the name of the optional config file located in the iroh home directory
@@ -64,14 +62,10 @@ impl Config {
     /// The gateway itself is exposing a UDS rpc endpoint to be also usable
     /// as a single entry point for other system services if feature enabled.
     pub fn default_rpc_config() -> RpcClientConfig {
-        #[cfg(feature = "uds-gateway")]
         let path: PathBuf = TempDir::new("iroh").unwrap().path().join("ipfsd.http");
 
         RpcClientConfig {
-            #[cfg(feature = "uds-gateway")]
             gateway_addr: Some(Addr::GrpcUds(path)),
-            #[cfg(not(feature = "uds-gateway"))]
-            gateway_addr: None,
             p2p_addr: None,
             store_addr: None,
         }
@@ -95,7 +89,7 @@ impl Default for Config {
         let rpc_client = Self::default_rpc_config();
         let metrics_config = MetricsConfig::default();
         let store_config = default_store_config(rpc_client.clone(), metrics_config.clone());
-        let key_store_path = store_config.path.clone();
+        let key_store_path = iroh_util::iroh_data_root().unwrap();
         Self {
             rpc_client: rpc_client.clone(),
             metrics: metrics_config.clone(),

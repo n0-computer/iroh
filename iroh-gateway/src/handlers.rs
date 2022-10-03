@@ -13,7 +13,7 @@ use futures::TryStreamExt;
 use handlebars::Handlebars;
 use iroh_metrics::{core::MRecorder, gateway::GatewayMetrics, get_current_trace_id, inc};
 use iroh_resolver::{
-    resolver::{CidOrDomain, OutMetrics, UnixfsType},
+    resolver::{CidOrDomain, ContentLoader, OutMetrics, UnixfsType},
     unixfs::Link,
 };
 use serde::{Deserialize, Serialize};
@@ -30,7 +30,7 @@ use std::{
     time::{self, Duration},
 };
 use tower::ServiceBuilder;
-use tower_http::trace::TraceLayer;
+use tower_http::{compression::CompressionLayer, trace::TraceLayer};
 use tracing::info_span;
 use url::Url;
 use urlencoding::encode;
@@ -54,18 +54,19 @@ pub trait StateConfig: std::fmt::Debug + Sync + Send {
     fn user_headers(&self) -> &HeaderMap<HeaderValue>;
 }
 
-pub fn get_app_routes(state: &Arc<State>) -> Router {
+pub fn get_app_routes<T: ContentLoader + std::marker::Unpin>(state: &Arc<State<T>>) -> Router {
     // todo(arqu): ?uri=... https://github.com/ipfs/go-ipfs/pull/7802
     Router::new()
-        .route("/:scheme/:cid", get(get_handler))
-        .route("/:scheme/:cid/*cpath", get(get_handler))
+        .route("/:scheme/:cid", get(get_handler::<T>))
+        .route("/:scheme/:cid/*cpath", get(get_handler::<T>))
         .route("/health", get(health_check))
         .layer(Extension(Arc::clone(state)))
         .layer(
             ServiceBuilder::new()
                 // Handle errors from middleware
                 .layer(Extension(Arc::clone(state)))
-                .layer(HandleErrorLayer::new(middleware_error_handler))
+                .layer(CompressionLayer::new())
+                .layer(HandleErrorLayer::new(middleware_error_handler::<T>))
                 .load_shed()
                 .concurrency_limit(2048)
                 .timeout(Duration::from_secs(60))
@@ -111,8 +112,8 @@ impl GetParams {
 }
 
 #[tracing::instrument(skip(state))]
-pub async fn get_handler(
-    Extension(state): Extension<Arc<State>>,
+pub async fn get_handler<T: ContentLoader + std::marker::Unpin>(
+    Extension(state): Extension<Arc<State<T>>>,
     Path(params): Path<HashMap<String, String>>,
     Query(query_params): Query<GetParams>,
     request_headers: HeaderMap,
@@ -224,9 +225,9 @@ pub async fn health_check() -> String {
 }
 
 #[tracing::instrument()]
-fn protocol_handler_redirect(
+fn protocol_handler_redirect<T: ContentLoader>(
     uri_param: String,
-    state: &State,
+    state: &State<T>,
 ) -> Result<GatewayResponse, GatewayError> {
     let u = match Url::parse(&uri_param) {
         Ok(u) => u,
@@ -259,10 +260,10 @@ fn protocol_handler_redirect(
 }
 
 #[tracing::instrument()]
-fn service_worker_check(
+fn service_worker_check<T: ContentLoader>(
     request_headers: &HeaderMap,
     cpath: String,
-    state: &State,
+    state: &State<T>,
 ) -> Result<(), GatewayError> {
     if request_headers.contains_key(&HEADER_SERVICE_WORKER) {
         let sw = request_headers.get(&HEADER_SERVICE_WORKER).unwrap();
@@ -278,7 +279,10 @@ fn service_worker_check(
 }
 
 #[tracing::instrument()]
-fn unsuported_header_check(request_headers: &HeaderMap, state: &State) -> Result<(), GatewayError> {
+fn unsuported_header_check<T: ContentLoader>(
+    request_headers: &HeaderMap,
+    state: &State<T>,
+) -> Result<(), GatewayError> {
     if request_headers.contains_key(&HEADER_X_IPFS_GATEWAY_PREFIX) {
         return Err(error(
             StatusCode::BAD_REQUEST,
@@ -289,7 +293,7 @@ fn unsuported_header_check(request_headers: &HeaderMap, state: &State) -> Result
     Ok(())
 }
 
-pub async fn check_bad_bits(state: &State, cid: &str, path: &str) -> bool {
+pub async fn check_bad_bits<T: ContentLoader>(state: &State<T>, cid: &str, path: &str) -> bool {
     // check if cid is in the denylist
     if state.bad_bits.is_some() {
         let bad_bits = state.bad_bits.as_ref();
@@ -303,11 +307,11 @@ pub async fn check_bad_bits(state: &State, cid: &str, path: &str) -> bool {
 }
 
 #[tracing::instrument()]
-fn etag_check(
+fn etag_check<T: ContentLoader>(
     request_headers: &HeaderMap,
     resolved_cid: &CidOrDomain,
     format: &ResponseFormat,
-    state: &State,
+    state: &State<T>,
 ) -> Option<GatewayResponse> {
     if request_headers.contains_key("If-None-Match") {
         // todo(arqu): handle dir etags
@@ -325,9 +329,9 @@ fn etag_check(
 }
 
 #[tracing::instrument()]
-async fn serve_raw(
+async fn serve_raw<T: ContentLoader + std::marker::Unpin>(
     req: &Request,
-    state: Arc<State>,
+    state: Arc<State<T>>,
     mut headers: HeaderMap,
     start_time: std::time::Instant,
 ) -> Result<GatewayResponse, GatewayError> {
@@ -359,9 +363,9 @@ async fn serve_raw(
 }
 
 #[tracing::instrument()]
-async fn serve_car(
+async fn serve_car<T: ContentLoader + std::marker::Unpin>(
     req: &Request,
-    state: Arc<State>,
+    state: Arc<State<T>>,
     mut headers: HeaderMap,
     start_time: std::time::Instant,
 ) -> Result<GatewayResponse, GatewayError> {
@@ -396,9 +400,9 @@ async fn serve_car(
 }
 
 #[tracing::instrument()]
-async fn serve_car_recursive(
+async fn serve_car_recursive<T: ContentLoader + std::marker::Unpin>(
     req: &Request,
-    state: Arc<State>,
+    state: Arc<State<T>>,
     mut headers: HeaderMap,
     start_time: std::time::Instant,
 ) -> Result<GatewayResponse, GatewayError> {
@@ -427,9 +431,9 @@ async fn serve_car_recursive(
 
 #[tracing::instrument()]
 #[async_recursion]
-async fn serve_fs(
+async fn serve_fs<T: ContentLoader + std::marker::Unpin>(
     req: &Request,
-    state: Arc<State>,
+    state: Arc<State<T>>,
     mut headers: HeaderMap,
     start_time: std::time::Instant,
 ) -> Result<GatewayResponse, GatewayError> {
@@ -495,10 +499,10 @@ async fn serve_fs(
 }
 
 #[tracing::instrument()]
-async fn serve_fs_dir(
+async fn serve_fs_dir<T: ContentLoader + std::marker::Unpin>(
     dir_list: &[Link],
     req: &Request,
-    state: Arc<State>,
+    state: Arc<State<T>>,
     mut headers: HeaderMap,
     start_time: std::time::Instant,
 ) -> Result<GatewayResponse, GatewayError> {
@@ -572,7 +576,11 @@ where
 }
 
 #[tracing::instrument()]
-fn error(status_code: StatusCode, message: &str, state: &State) -> GatewayError {
+fn error<T: ContentLoader>(
+    status_code: StatusCode,
+    message: &str,
+    state: &State<T>,
+) -> GatewayError {
     inc!(GatewayMetrics::ErrorCount);
     GatewayError {
         status_code,
@@ -582,8 +590,8 @@ fn error(status_code: StatusCode, message: &str, state: &State) -> GatewayError 
 }
 
 #[tracing::instrument()]
-pub async fn middleware_error_handler(
-    Extension(state): Extension<Arc<State>>,
+pub async fn middleware_error_handler<T: ContentLoader>(
+    Extension(state): Extension<Arc<State<T>>>,
     err: BoxError,
 ) -> impl IntoResponse {
     inc!(GatewayMetrics::FailCount);

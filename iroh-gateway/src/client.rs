@@ -11,7 +11,7 @@ use iroh_metrics::{
     observe, record,
 };
 use iroh_resolver::resolver::{
-    CidOrDomain, Metadata, Out, OutMetrics, OutPrettyReader, Resolver, Source,
+    CidOrDomain, ContentLoader, Metadata, Out, OutMetrics, OutPrettyReader, Resolver, Source,
 };
 use tokio::io::AsyncReadExt;
 use tokio_util::io::ReaderStream;
@@ -21,22 +21,19 @@ use crate::handlers::GetParams;
 use crate::response::ResponseFormat;
 
 #[derive(Debug, Clone)]
-pub struct Client {
-    pub(crate) resolver: Resolver<iroh_rpc_client::Client>,
+pub struct Client<T: ContentLoader> {
+    pub(crate) resolver: Resolver<T>,
 }
 
-pub struct PrettyStreamBody(
-    ReaderStream<OutPrettyReader<iroh_rpc_client::Client>>,
-    Option<u64>,
-);
+pub struct PrettyStreamBody<T: ContentLoader>(ReaderStream<OutPrettyReader<T>>, Option<u64>);
 
 #[allow(clippy::large_enum_variant)]
-pub enum FileResult {
-    File(PrettyStreamBody),
+pub enum FileResult<T: ContentLoader> {
+    File(PrettyStreamBody<T>),
     Directory(Out),
 }
 
-impl http_body::Body for PrettyStreamBody {
+impl<T: ContentLoader + std::marker::Unpin> http_body::Body for PrettyStreamBody<T> {
     type Data = Bytes;
     type Error = String;
 
@@ -69,8 +66,8 @@ impl http_body::Body for PrettyStreamBody {
     }
 }
 
-impl Client {
-    pub fn new(rpc_client: &iroh_rpc_client::Client) -> Self {
+impl<T: ContentLoader + std::marker::Unpin> Client<T> {
+    pub fn new(rpc_client: &T) -> Self {
         Self {
             resolver: Resolver::new(rpc_client.clone()),
         }
@@ -81,7 +78,7 @@ impl Client {
         &self,
         path: iroh_resolver::resolver::Path,
         start_time: std::time::Instant,
-    ) -> Result<(FileResult, Metadata), String> {
+    ) -> Result<(FileResult<T>, Metadata), String> {
         info!("get file {}", path);
         let res = self
             .resolver

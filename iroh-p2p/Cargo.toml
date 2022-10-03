@@ -21,7 +21,7 @@ lazy_static = "1.4"
 iroh-bitswap = { path = "../iroh-bitswap" }
 iroh-rpc-types = { path = "../iroh-rpc-types", default-features = false }
 iroh-rpc-client = { path = "../iroh-rpc-client", default-features = false }
-tokio = { version = "1", features = ["time", "sync", "macros", "fs"] }
+tokio = { version = "1", features = ["fs", "time", "sync", "macros"] }
 ahash = "0.7.6"
 tracing = "0.1.34"
 clap = { version = "3.1.14", features = ["derive"] }
@@ -42,14 +42,14 @@ caches = "0.2.2"
 tokio-stream = "0.1"
  
 [dependencies.libp2p]
-version = "0.48"
+version = "0.49"
 default-features = false
 features = [
   "gossipsub",
   "kad",
   "identify",
   "ping",
-  "mdns",
+  "mdns-tokio",
   "noise",
   "yamux",
   "tcp-tokio",

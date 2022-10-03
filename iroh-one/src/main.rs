@@ -10,6 +10,7 @@ use iroh_one::{
     cli::Args,
     config::{Config, CONFIG_FILE_NAME, ENV_PREFIX},
 };
+use iroh_rpc_client::Client as RpcClient;
 use iroh_rpc_types::Addr;
 use iroh_util::{iroh_config_path, make_config};
 #[cfg(feature = "uds-gateway")]
@@ -54,13 +55,6 @@ async fn main() -> Result<()> {
         (store_rpc, p2p_rpc)
     };
 
-    #[cfg(not(feature = "uds-gateway"))]
-    let (rpc_addr, gw_sender) = Addr::new_mem();
-    #[cfg(not(feature = "uds-gateway"))]
-    {
-        config.rpc_client.gateway_addr = Some(gw_sender);
-    }
-
     config.synchronize_subconfigs();
 
     config.metrics = metrics::metrics_config_with_compile_time_info(config.metrics);
@@ -68,8 +62,7 @@ async fn main() -> Result<()> {
 
     let metrics_config = config.metrics.clone();
 
-    #[cfg(feature = "uds-gateway")]
-    let rpc_addr = config
+    let gateway_rpc_addr = config
         .gateway
         .server_rpc_addr()?
         .ok_or_else(|| anyhow!("missing gateway rpc addr"))?;
@@ -79,9 +72,18 @@ async fn main() -> Result<()> {
         false => Arc::new(None),
     };
 
-    let shared_state = Core::make_state(Arc::new(config.clone()), Arc::clone(&bad_bits)).await?;
+    // let content_loader = RpcClient::new(config.rpc_client.clone()).await?;
+    let content_loader = iroh_one::content_loader::RacingLoader::new(
+        RpcClient::new(config.rpc_client.clone()).await?,
+    );
+    let shared_state = Core::make_state(
+        Arc::new(config.clone()),
+        Arc::clone(&bad_bits),
+        content_loader,
+    )
+    .await?;
 
-    let handler = Core::new_with_state(rpc_addr, Arc::clone(&shared_state)).await?;
+    let handler = Core::new_with_state(gateway_rpc_addr, Arc::clone(&shared_state)).await?;
 
     let metrics_handle = iroh_metrics::MetricsHandle::new(metrics_config)
         .await
