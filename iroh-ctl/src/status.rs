@@ -9,21 +9,20 @@ use iroh::{Api, ServiceStatus, StatusRow, StatusTable};
 pub async fn status(api: &impl Api, watch: bool) -> Result<()> {
     let mut stdout = stdout();
     if watch {
-        // XXX this requires an implementation of watch on the API
-        // let status_stream = api.watch().await;
-        // tokio::pin!(status_stream);
-        // stdout.queue(Clear(ClearType::All))?;
-        // while let Some(table) = status_stream.next().await {
-        //     stdout
-        //         .queue(cursor::RestorePosition)?
-        //         .queue(Clear(ClearType::FromCursorUp))?
-        //         .queue(cursor::MoveTo(0, 1))?;
-        //     queue_table(&table, &stdout)?;
-        //     stdout
-        //         .queue(cursor::SavePosition)?
-        //         .queue(style::Print("\n"))?
-        //         .flush()?;
-        // }
+        let status_stream = api.watch().await;
+        tokio::pin!(status_stream);
+        stdout.queue(Clear(ClearType::All))?;
+        while let Some(table) = status_stream.next().await {
+            stdout
+                .queue(cursor::RestorePosition)?
+                .queue(Clear(ClearType::FromCursorUp))?
+                .queue(cursor::MoveTo(0, 1))?;
+            queue_table(&table, &stdout)?;
+            stdout
+                .queue(cursor::SavePosition)?
+                .queue(style::Print("\n"))?
+                .flush()?;
+        }
         Ok(())
     } else {
         let table = api.check().await;
