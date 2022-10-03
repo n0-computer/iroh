@@ -6,6 +6,7 @@ use crate::store::{ClientStore, Store};
 use anyhow::Result;
 use async_trait::async_trait;
 use cid::Cid;
+use futures::Stream;
 use iroh_resolver::resolver::Path as IpfsPath;
 use iroh_rpc_client::Client;
 use mockall::automock;
@@ -21,6 +22,9 @@ pub trait Api<P: P2p, S: Store> {
     fn store(&self) -> Result<S>;
     async fn get<'a>(&self, ipfs_path: &IpfsPath, output: Option<&'a Path>) -> Result<()>;
     async fn add(&self, path: &Path, recursive: bool, no_wrap: bool) -> Result<Cid>;
+    async fn check(&self) -> iroh_rpc_client::StatusTable;
+    // This won't work
+    // async fn watch(&self) -> futures::Stream<Item = iroh_rpc_client::StatusTable>;
 }
 
 impl<'a> ClientApi<'a> {
@@ -31,6 +35,8 @@ impl<'a> ClientApi<'a> {
 
 #[async_trait(?Send)]
 impl<'a> Api<ClientP2p<'a>, ClientStore<'a>> for ClientApi<'a> {
+    type WatchStream = W; //  impl Stream<Item = iroh_rpc_client::StatusTable>;
+
     fn p2p(&self) -> Result<ClientP2p<'a>> {
         let p2p_client = self.client.try_p2p()?;
         Ok(ClientP2p::new(p2p_client))
@@ -48,4 +54,12 @@ impl<'a> Api<ClientP2p<'a>, ClientStore<'a>> for ClientApi<'a> {
     async fn add(&self, path: &Path, recursive: bool, no_wrap: bool) -> Result<Cid> {
         add(self.client, path, recursive, no_wrap).await
     }
+
+    async fn check(&self) -> iroh_rpc_client::StatusTable {
+        self.client.check().await
+    }
+
+    // async fn watch(&self) -> impl Stream<Item = iroh_rpc_client::StatusTable> {
+    //     self.client.watch()
+    // }
 }
