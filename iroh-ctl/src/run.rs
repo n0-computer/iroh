@@ -11,16 +11,13 @@ use crate::{
     p2p::{run_command as run_p2p_command, P2p},
     store::{run_command as run_store_command, Store},
 };
-use anyhow::{Context, Result};
-use cid::Cid;
+use anyhow::Result;
 use clap::{Parser, Subcommand};
-use futures::Stream;
-use futures::StreamExt;
 use iroh::api::{Api, ClientApi, MockApi};
 use iroh::p2p;
 use iroh::store;
 use iroh_metrics::config::Config as MetricsConfig;
-use iroh_resolver::{resolver, unixfs_builder};
+use iroh_resolver::resolver;
 use iroh_rpc_client::Client;
 use iroh_util::{iroh_config_path, make_config};
 
