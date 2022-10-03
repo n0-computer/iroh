@@ -15,7 +15,7 @@ cid = "0.8.4"
 rkyv = { version = "0.7.37", features = ["validation"] }
 bytecheck = "0.6.7"
 tracing-subscriber = { version = "0.3.11", features = ["env-filter"] }
-clap = { version = "3.1.15", features = ["derive"] }
+clap = { version = "4.0.8", features = ["derive"] }
 ctrlc = "3.2.2"
 futures = "0.3.21"
 tracing = "0.1.34"
