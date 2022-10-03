@@ -11,7 +11,7 @@ use iroh_rpc_types::p2p::P2pServerAddr;
 use libp2p::core::Multiaddr;
 use libp2p::gossipsub::{GossipsubMessage, MessageId, TopicHash};
 pub use libp2p::gossipsub::{IdentTopic, Topic};
-use libp2p::identify::{IdentifyEvent, IdentifyInfo};
+use libp2p::identify::IdentifyEvent;
 use libp2p::identity::Keypair;
 use libp2p::kad::kbucket::{Distance, NodeStatus};
 use libp2p::kad::BootstrapOk;
@@ -19,6 +19,7 @@ use libp2p::kad::{
     self, record::Key, GetProvidersError, GetProvidersOk, KademliaEvent, QueryId, QueryResult,
 };
 use libp2p::metrics::Recorder;
+use libp2p::ping::PingResult;
 use libp2p::swarm::dial_opts::{DialOpts, PeerCondition};
 use libp2p::swarm::{ConnectionHandler, IntoConnectionHandler, NetworkBehaviour, SwarmEvent};
 use libp2p::{PeerId, Swarm};
@@ -66,7 +67,6 @@ pub enum GossipsubEvent {
 pub struct Node<KeyStorage: Storage> {
     swarm: Swarm<NodeBehaviour>,
     net_receiver_in: Receiver<RpcMessage>,
-    bitswap_queries: AHashMap<Cid, BitswapQueryChannel>,
     kad_queries: AHashMap<QueryKey, KadQueryChannel>,
     dial_queries: AHashMap<PeerId, Vec<OneShotSender<bool>>>,
     network_events: Vec<Sender<NetworkEvent>>,
@@ -86,8 +86,8 @@ struct BitswapQueryChannel {
 struct WantState {
     ctx: u64,
     timeout: Instant,
-    chan: OneShotSender<Result<Block, String>>,
 }
+
 struct FindProviderState {
     ctx: u64,
     timeout: Instant,
@@ -151,7 +151,6 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
         Ok(Node {
             swarm,
             net_receiver_in: network_receiver_in,
-            bitswap_queries: Default::default(),
             kad_queries: Default::default(),
             dial_queries: Default::default(),
             network_events: Vec::new(),
@@ -432,6 +431,16 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                             response_channel: response,
                         })?;
                     }
+                    BitswapEvent::Ping { peer, response } => {
+                        match self.swarm.behaviour().peer_manager.info_for_peer(&peer) {
+                            Some(info) => {
+                                response.send(info.latency()).ok();
+                            }
+                            None => {
+                                response.send(None).ok();
+                            }
+                        }
+                    }
                 }
             }
             Event::Kademlia(e) => {
@@ -520,16 +529,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
             Event::Identify(e) => {
                 libp2p_metrics().record(&*e);
                 trace!("tick: identify {:?}", e);
-                if let IdentifyEvent::Received {
-                    peer_id,
-                    info:
-                        IdentifyInfo {
-                            listen_addrs,
-                            protocols,
-                            ..
-                        },
-                } = *e
-                {
+                if let IdentifyEvent::Received { peer_id, info } = *e {
                     // let supported_bs_protocols = self
                     //     .swarm
                     //     .behaviour()
@@ -538,11 +538,11 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                     //     .map(|bs| bs.supported_protocols().to_vec())
                     //     .unwrap_or_default();
                     // let mut protocol_bs_name = None;
-                    for protocol in protocols {
+                    for protocol in &info.protocols {
                         let p = protocol.as_bytes();
 
                         if p == kad::protocol::DEFAULT_PROTO_NAME {
-                            for addr in &listen_addrs {
+                            for addr in &info.listen_addrs {
                                 if let Some(kad) = self.swarm.behaviour_mut().kad.as_mut() {
                                     kad.add_address(&peer_id, addr.clone());
                                 }
@@ -564,17 +564,29 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                         else if p == b"/libp2p/autonat/1.0.0" {
                             // TODO: expose protocol name on `libp2p::autonat`.
                             // TODO: should we remove them at some point?
-                            for addr in &listen_addrs {
+                            for addr in &info.listen_addrs {
                                 if let Some(autonat) = self.swarm.behaviour_mut().autonat.as_mut() {
                                     autonat.add_server(peer_id, Some(addr.clone()));
                                 }
                             }
                         }
                     }
+
+                    self.swarm
+                        .behaviour_mut()
+                        .peer_manager
+                        .inject_identify_info(peer_id, info);
                 }
             }
             Event::Ping(e) => {
+                debug!("received ping from: {}", e.peer);
                 libp2p_metrics().record(&e);
+                if let PingResult::Ok(ping) = e.result {
+                    self.swarm
+                        .behaviour_mut()
+                        .peer_manager
+                        .inject_ping(e.peer, ping);
+                }
             }
             Event::Relay(e) => {
                 libp2p_metrics().record(&e);
@@ -642,15 +654,8 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                 for (cid, response_channel) in cids.into_iter().zip(response_channels.into_iter()) {
                     self.swarm
                         .behaviour_mut()
-                        .want_block(ctx, cid, 1000, providers.clone()) // TODO: priority?
+                        .want_block(ctx, cid, providers.clone(), response_channel)
                         .map_err(|err| anyhow!("Failed to send a bitswap want_block: {:?}", err))?;
-
-                    let entry = self.bitswap_queries.entry(cid).or_default();
-                    entry.wants.push(WantState {
-                        ctx,
-                        timeout: Instant::now(),
-                        chan: response_channel,
-                    });
                 }
             }
             RpcMessage::BitswapInjectProviders {
@@ -660,15 +665,12 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                 providers,
             } => {
                 trace!("context:{} bitswap_inject_providers", ctx);
-                let res = self
-                    .swarm
-                    .behaviour_mut()
-                    .want_block(ctx, cid, 1000, providers) // TODO: priority?
-                    .map_err(|e| anyhow!("Failed to send a bitswap want_block: {:?}", e));
-
-                if response_channel.send(res).is_err() {
-                    warn!("failed to send inject provider for {}", cid);
-                }
+                // TODO
+                /*let res = self
+                .swarm
+                .behaviour_mut()
+                .want_block(ctx, cid, providers, response_channel)
+                .map_err(|e| anyhow!("Failed to send a bitswap want_block: {:?}", e));*/
             }
             RpcMessage::ProviderRequest {
                 key,
@@ -714,23 +716,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                         key
                     );
 
-                    match self.swarm.behaviour_mut().find_providers(ctx, cid, 1000) {
-                        Ok(()) => {
-                            let entry = self.bitswap_queries.entry(cid).or_default();
-                            entry.find_providers.push(FindProviderState {
-                                ctx,
-                                timeout: Instant::now(),
-                                expected_provider_count: PROVIDER_LIMIT,
-                                provider_count: 0,
-                                chan: response_channel,
-                            });
-                        }
-                        Err(e) => {
-                            tokio::task::spawn(async move {
-                                response_channel.send(Err(e.to_string())).await.ok();
-                            });
-                        }
-                    }
+                    // TODO
                 }
             },
             RpcMessage::StartProviding(response_channel, key) => {

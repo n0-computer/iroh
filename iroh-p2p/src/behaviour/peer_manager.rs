@@ -1,9 +1,15 @@
-use std::task::{Context, Poll};
+use std::{
+    task::{Context, Poll},
+    time::Duration,
+};
 
+use ahash::{AHashMap, AHashSet};
 use caches::{Cache, PutResult};
 use iroh_metrics::{core::MRecorder, inc, p2p::P2PMetrics};
 use libp2p::{
     core::{connection::ConnectionId, transport::ListenerId, ConnectedPoint},
+    identify::IdentifyInfo,
+    ping::PingSuccess,
     swarm::{
         handler::DummyConnectionHandler, ConnectionHandler, DialError, IntoConnectionHandler,
         NetworkBehaviour, NetworkBehaviourAction, PollParameters,
@@ -12,7 +18,21 @@ use libp2p::{
 };
 
 pub struct PeerManager {
+    info: AHashMap<PeerId, Info>,
     bad_peers: caches::RawLRU<PeerId, ()>,
+}
+
+#[derive(Default, Debug, Clone)]
+pub struct Info {
+    pub last_rtt: Option<Duration>,
+    pub last_info: Option<IdentifyInfo>,
+}
+
+impl Info {
+    pub fn latency(&self) -> Option<Duration> {
+        // only approximation, this is wrong but the best we have for now
+        self.last_rtt.map(|rtt| rtt / 2)
+    }
 }
 
 const DEFAULT_BAD_PEER_CAP: usize = 10 * 4096;
@@ -20,6 +40,7 @@ const DEFAULT_BAD_PEER_CAP: usize = 10 * 4096;
 impl Default for PeerManager {
     fn default() -> Self {
         PeerManager {
+            info: Default::default(),
             bad_peers: caches::RawLRU::new(DEFAULT_BAD_PEER_CAP).unwrap(),
         }
     }
@@ -32,6 +53,20 @@ impl PeerManager {
     pub fn is_bad_peer(&self, peer_id: &PeerId) -> bool {
         self.bad_peers.contains(peer_id)
     }
+
+    pub fn inject_identify_info(&mut self, peer_id: PeerId, new_info: IdentifyInfo) {
+        self.info.entry(peer_id).or_default().last_info = Some(new_info);
+    }
+
+    pub fn inject_ping(&mut self, peer_id: PeerId, new_ping: PingSuccess) {
+        if let PingSuccess::Ping { rtt } = new_ping {
+            self.info.entry(peer_id).or_default().last_rtt = Some(rtt);
+        }
+    }
+
+    pub fn info_for_peer(&self, peer_id: &PeerId) -> Option<&Info> {
+        self.info.get(peer_id)
+    }
 }
 
 impl NetworkBehaviour for PeerManager {
@@ -42,8 +77,12 @@ impl NetworkBehaviour for PeerManager {
         DummyConnectionHandler::default()
     }
 
-    fn addresses_of_peer(&mut self, _: &PeerId) -> Vec<Multiaddr> {
-        vec![]
+    fn addresses_of_peer(&mut self, peer_id: &PeerId) -> Vec<Multiaddr> {
+        self.info
+            .get(peer_id)
+            .and_then(|i| i.last_info.as_ref())
+            .map(|i| i.listen_addrs.clone())
+            .unwrap_or_default()
     }
 
     fn inject_connection_established(

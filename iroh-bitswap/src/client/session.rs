@@ -10,7 +10,7 @@ use cid::Cid;
 use crossbeam::channel::{Receiver, Sender};
 use derivative::Derivative;
 use libp2p::PeerId;
-use tracing::warn;
+use tracing::{debug, warn};
 
 use crate::Block;
 
@@ -247,6 +247,7 @@ impl Session {
     // guaranteed on the returned blocks.
     pub fn get_blocks(&self, keys: &[Cid]) -> Result<Receiver<Block>> {
         ensure!(!keys.is_empty(), "missing keys");
+        debug!("get blocks: {:?}", keys);
 
         let (s, r) = crossbeam::channel::bounded(8);
         let mut remaining: AHashSet<Cid> = keys.iter().copied().collect();
@@ -255,6 +256,7 @@ impl Session {
         std::thread::spawn(move || {
             for block in blocks.iter() {
                 let cid = *block.cid();
+                debug!("received block {}", cid);
                 if remaining.contains(&cid) {
                     match s.send(block) {
                         Ok(_) => {

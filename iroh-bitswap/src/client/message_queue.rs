@@ -442,7 +442,6 @@ fn send_message(
     msg_sender_config: &MessageSenderConfig,
     peer: PeerId,
 ) {
-    // TODO: check donthave timeout manager is running
     if sender.is_none() {
         match network.new_message_sender(peer, msg_sender_config.clone()) {
             Ok(s) => *sender = Some(s),

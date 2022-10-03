@@ -24,6 +24,7 @@ use libp2p::{Multiaddr, PeerId};
 use message::BitswapMessage;
 use network::OutEvent;
 use protocol::{ProtocolConfig, ProtocolId};
+use tracing::debug;
 
 use self::client::{Client, Config as ClientConfig};
 use self::network::Network;
@@ -51,12 +52,12 @@ pub struct Bitswap<S: Store> {
     protocol_config: ProtocolConfig,
     idle_timeout: Duration,
     peers: AHashMap<PeerId, PeerState>,
-    dials: AHashMap<PeerId, Vec<Sender<std::result::Result<(ConnectionId, ProtocolId), String>>>>,
+    dials: AHashMap<PeerId, Vec<Sender<std::result::Result<ConnectionId, String>>>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PeerState {
-    Responsive,
+    Responsive(ConnectionId),
     Unresponsive,
     Disconnected,
 }
@@ -206,16 +207,16 @@ impl<S: Store> Bitswap<S> {
         match peer_state {
             PeerState::Disconnected => {
                 self.peers.remove(peer);
-                if matches!(old_state, PeerState::Responsive) {
+                if matches!(old_state, PeerState::Responsive(_)) {
                     self.peer_disconnected(peer);
                 }
             }
             PeerState::Unresponsive => {
-                if matches!(old_state, PeerState::Responsive) {
+                if matches!(old_state, PeerState::Responsive(_)) {
                     self.peer_disconnected(peer);
                 }
             }
-            PeerState::Responsive => {
+            PeerState::Responsive(_) => {
                 self.peer_connected(peer);
             }
         }
@@ -244,6 +245,10 @@ pub enum BitswapEvent {
         key: Cid,
         response: tokio::sync::mpsc::Sender<std::result::Result<HashSet<PeerId>, String>>,
     },
+    Ping {
+        peer: PeerId,
+        response: Sender<Option<Duration>>,
+    },
 }
 
 impl<S: Store> NetworkBehaviour for Bitswap<S> {
@@ -262,16 +267,23 @@ impl<S: Store> NetworkBehaviour for Bitswap<S> {
     fn inject_connection_established(
         &mut self,
         peer_id: &PeerId,
-        _conn: &ConnectionId,
+        connection: &ConnectionId,
         _endpoint: &ConnectedPoint,
         _failed_addresses: Option<&Vec<Multiaddr>>,
         _other_established: usize,
     ) {
-        if matches!(self.get_peer_state(peer_id), PeerState::Responsive) {
+        debug!("connection established {}", peer_id);
+        if matches!(self.get_peer_state(peer_id), PeerState::Responsive(_)) {
             return;
         }
 
-        self.set_peer_state(peer_id, PeerState::Responsive);
+        if let Some(mut dials) = self.dials.remove(peer_id) {
+            while let Some(sender) = dials.pop() {
+                sender.send(Ok(*connection)).ok();
+            }
+        }
+
+        self.set_peer_state(peer_id, PeerState::Responsive(*connection));
     }
 
     fn inject_connection_closed(
@@ -282,6 +294,7 @@ impl<S: Store> NetworkBehaviour for Bitswap<S> {
         _handler: <Self::ConnectionHandler as IntoConnectionHandler>::Handler,
         remaining_established: usize,
     ) {
+        debug!("connection closed {}", peer_id);
         if remaining_established == 0 {
             if self.get_peer_state(peer_id) == PeerState::Disconnected {
                 return;
@@ -297,28 +310,24 @@ impl<S: Store> NetworkBehaviour for Bitswap<S> {
         error: &DialError,
     ) {
         if let Some(peer_id) = peer_id {
+            debug!("dial failure {}: {:?}", peer_id, error);
             if let Some(mut dials) = self.dials.remove(&peer_id) {
                 while let Some(sender) = dials.pop() {
                     sender.send(Err(error.to_string())).ok();
                 }
             }
-        }
+        };
     }
 
     fn inject_event(&mut self, peer_id: PeerId, connection: ConnectionId, event: HandlerEvent) {
+        debug!("inject_event from {}, event: {:?}", peer_id, event);
         match event {
             HandlerEvent::Connected { protocol } => {
                 self.peer_connected(&peer_id);
-
-                if let Some(mut dials) = self.dials.remove(&peer_id) {
-                    while let Some(sender) = dials.pop() {
-                        sender.send(Ok((connection, protocol))).ok();
-                    }
-                }
             }
             HandlerEvent::ProtocolNotSuppported => {
                 // TODO
-                if matches!(self.get_peer_state(&peer_id), PeerState::Responsive) {
+                if matches!(self.get_peer_state(&peer_id), PeerState::Responsive(_)) {
                     self.set_peer_state(&peer_id, PeerState::Unresponsive);
                 }
 
@@ -331,7 +340,7 @@ impl<S: Store> NetworkBehaviour for Bitswap<S> {
             HandlerEvent::Message { message } => {
                 // mark peer as responsive
                 if self.get_peer_state(&peer_id) == PeerState::Unresponsive {
-                    self.set_peer_state(&peer_id, PeerState::Responsive);
+                    self.set_peer_state(&peer_id, PeerState::Responsive(connection));
                 }
 
                 self.receive_message(&peer_id, &message);
@@ -349,12 +358,18 @@ impl<S: Store> NetworkBehaviour for Bitswap<S> {
             Poll::Pending => Poll::Pending,
             Poll::Ready(ev) => match ev {
                 OutEvent::Dial(peer, response) => {
-                    self.dials.entry(peer).or_default().push(response);
+                    if let PeerState::Responsive(conn) = self.get_peer_state(&peer) {
+                        // already connected
+                        response.send(Ok(conn)).ok();
+                        Poll::Pending
+                    } else {
+                        self.dials.entry(peer).or_default().push(response);
 
-                    Poll::Ready(NetworkBehaviourAction::Dial {
-                        opts: DialOpts::peer_id(peer).build(),
-                        handler: self.new_handler(),
-                    })
+                        Poll::Ready(NetworkBehaviourAction::Dial {
+                            opts: DialOpts::peer_id(peer).build(),
+                            handler: self.new_handler(),
+                        })
+                    }
                 }
                 OutEvent::GenerateEvent(ev) => {
                     Poll::Ready(NetworkBehaviourAction::GenerateEvent(ev))

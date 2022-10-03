@@ -2,7 +2,8 @@ use std::collections::HashSet;
 use std::error::Error;
 use std::time::Duration;
 
-use anyhow::Result;
+use tokio::sync::oneshot::Sender as OneShotSender;
+use anyhow::{bail, Result};
 use async_trait::async_trait;
 use cid::Cid;
 use iroh_bitswap::{Bitswap, Block, Config as BitswapConfig, Priority, Store};
@@ -43,7 +44,7 @@ pub(crate) struct NodeBehaviour {
     relay_client: Toggle<relay::v2::client::Client>,
     dcutr: Toggle<dcutr::behaviour::Behaviour>,
     pub(crate) gossipsub: Toggle<Gossipsub>,
-    peer_manager: PeerManager,
+    pub(crate) peer_manager: PeerManager,
 }
 
 #[derive(Debug, Clone)]
@@ -72,15 +73,10 @@ impl Store for BitswapStore {
     }
 
     async fn has(&self, cid: &Cid) -> Result<bool> {
-        let res = self
-            .0
-            .try_store()?
-            .has(*cid)
-            .await?;
+        let res = self.0.try_store()?.has(*cid).await?;
 
         Ok(res)
     }
-
 }
 
 impl NodeBehaviour {
@@ -240,13 +236,27 @@ impl NodeBehaviour {
         &mut self,
         ctx: u64,
         cid: Cid,
-        priority: Priority,
         providers: HashSet<PeerId>,
-    ) -> Result<(), Box<dyn Error>> {
-        // if let Some(bs) = self.bitswap.as_mut() {
-        //     bs.want_block(ctx, cid, priority, providers);
-        // }
-        Ok(())
+        chan: OneShotSender<Result<Block, String>>,
+    ) -> Result<()> {
+        if let Some(bs) = self.bitswap.as_mut() {
+            let sync_receiver = bs.client().get_blocks(&[cid][..])?;
+            tokio::runtime::Handle::current().spawn_blocking(move || {
+                let res = if let Ok(block) = sync_receiver.recv() {
+                    chan.send(Ok(block))
+                } else {
+                    chan.send(Err("dropped".to_string()))
+                };
+
+                if let Err(e) = res {
+                    warn!("failed to send block response: {:?}", e);
+                }
+            });
+            
+            Ok(())
+        } else {
+            bail!("no bitswap available");
+        }
     }
 
     pub fn finish_query(&mut self, id: &libp2p::kad::QueryId) {

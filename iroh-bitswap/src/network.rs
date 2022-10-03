@@ -27,10 +27,7 @@ pub struct Network {
 }
 
 pub enum OutEvent {
-    Dial(
-        PeerId,
-        Sender<std::result::Result<(ConnectionId, ProtocolId), String>>,
-    ),
+    Dial(PeerId, Sender<std::result::Result<ConnectionId, String>>),
     SendMessage {
         peer: PeerId,
         message: BitswapMessage,
@@ -64,7 +61,24 @@ impl Network {
     }
 
     pub fn ping(&self, peer: &PeerId) -> Result<Duration> {
-        todo!();
+        let timeout = crossbeam::channel::after(Duration::from_secs(30));
+        let (s, r) = crossbeam::channel::bounded(1);
+        self.network_out_sender
+            .send(OutEvent::GenerateEvent(BitswapEvent::Ping {
+                peer: *peer,
+                response: s,
+            }))
+            .map_err(|e| anyhow!("channel send: {:?}", e))?;
+
+        crossbeam::channel::select! {
+            recv(timeout) -> _ => {
+                bail!("ping {} timeout", peer);
+            }
+            recv(r) -> res => {
+                let res = res?.ok_or_else(|| anyhow!("no ping available"))?;
+                Ok(res)
+            }
+        }
     }
 
     pub fn stop(self) {
@@ -150,16 +164,16 @@ impl Network {
         Ok(r)
     }
 
-    pub fn dial(&self, peer: PeerId, timeout: Duration) -> Result<(ConnectionId, ProtocolId)> {
-        let timeout = crossbeam::channel::after(timeout);
+    pub fn dial(&self, peer: PeerId, timeout: Duration) -> Result<ConnectionId> {
+        let timeout_r = crossbeam::channel::after(timeout);
         let (s, r) = crossbeam::channel::bounded(1);
         self.network_out_sender
             .send(OutEvent::Dial(peer, s))
             .map_err(|e| anyhow!("channel send: {:?}", e))?;
 
         crossbeam::channel::select! {
-            recv(timeout) -> _ => {
-                bail!("Dialing {} timeout", peer);
+            recv(timeout_r) -> _ => {
+                bail!("Dialing {} timeout ({}s)", peer, timeout.as_secs_f32());
             }
             recv(r) -> res => {
                 let res = res?.map_err(|e| anyhow!("Dial Error: {}", e))?;
@@ -173,14 +187,14 @@ impl Network {
         to: PeerId,
         config: MessageSenderConfig,
     ) -> Result<MessageSender> {
-        let (connection_id, protocol_id) = self.dial(to, CONNECT_TIMEOUT)?;
+        let connection_id = self.dial(to, CONNECT_TIMEOUT)?;
 
         Ok(MessageSender {
             to,
             config,
             network: self.clone(),
             connection_id,
-            protocol_id,
+            protocol_id: None,
         })
     }
 
@@ -271,12 +285,14 @@ pub struct MessageSender {
     network: Network,
     config: MessageSenderConfig,
     connection_id: ConnectionId,
-    protocol_id: ProtocolId,
+    protocol_id: Option<ProtocolId>,
 }
 
 impl MessageSender {
     pub fn supports_have(&self) -> bool {
-        self.protocol_id.supports_have()
+        self.protocol_id
+            .map(|p| p.supports_have())
+            .unwrap_or_default()
     }
 
     pub fn send_message(&self, message: BitswapMessage) -> Result<()> {
