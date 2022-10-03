@@ -9,7 +9,7 @@ description = "Client for interacting with running iroh processes."
 default-run = "iroh-ctl"
 
 [features]
-fake = []
+fixture = []
 
 [[bin]]
 bench = false
@@ -43,4 +43,4 @@ async-stream = "0.3.3"
 trycmd = "0.13.7"
 # this is a workaround based on for enabling features only during test: 
 # https://github.com/DesmondWillowbrook/cargo-optional-features-for-testing-and-examples
-iroh-ctl = { path = ".", features = ["fake"] }
+iroh-ctl = { path = ".", features = ["fixture"] }

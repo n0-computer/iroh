@@ -1,4 +1,6 @@
 pub mod config;
+#[cfg(feature = "fixture")]
+mod fixture;
 pub mod gateway;
 pub mod metrics;
 pub mod p2p;
