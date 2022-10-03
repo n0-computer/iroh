@@ -29,14 +29,14 @@ lazy_static = "1.4.0"
 async-trait = "0.1.57"
 
 [dependencies.libp2p]
-version = "0.49"
+version = "0.48"
 default-features = false
 features = [
   "gossipsub",
   "kad",
   "identify",
   "ping",
-  "mdns-tokio",
+  "mdns",
   "noise",
   "yamux",
   "tcp-tokio",
