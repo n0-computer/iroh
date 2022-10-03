@@ -35,8 +35,6 @@ impl<'a> ClientApi<'a> {
 
 #[async_trait(?Send)]
 impl<'a> Api<ClientP2p<'a>, ClientStore<'a>> for ClientApi<'a> {
-    type WatchStream = W; //  impl Stream<Item = iroh_rpc_client::StatusTable>;
-
     fn p2p(&self) -> Result<ClientP2p<'a>> {
         let p2p_client = self.client.try_p2p()?;
         Ok(ClientP2p::new(p2p_client))
