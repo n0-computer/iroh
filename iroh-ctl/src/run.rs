@@ -109,12 +109,12 @@ pub async fn run_cli_impl(cli: Cli) -> Result<()> {
     Ok(())
 }
 
-type FixtureApi = MockApi<p2p::MockP2p, store::MockStore>;
+type FixtureApi = MockApi;
 type GetFixture = fn() -> FixtureApi;
 type FixtureRegistry = HashMap<String, GetFixture>;
 
 fn fixture_peer_ids() -> FixtureApi {
-    let mut api = MockApi::<p2p::MockP2p, store::MockStore>::default();
+    let mut api = MockApi::default();
     api.expect_p2p().returning(|| {
         use libp2p::PeerId;
         let mut mock_p2p = p2p::MockP2p::default();
@@ -153,8 +153,8 @@ pub async fn run_cli(cli: Cli) -> Result<()> {
     run_cli_command(&api, cli).await
 }
 
-pub async fn run_cli_command<A: Api<P, S>, P: p2p::P2p, S: store::Store>(
-    api: &A,
+pub async fn run_cli_command(
+    api: &impl Api<P = impl p2p::P2p, S = impl store::Store>,
     cli: Cli,
 ) -> Result<()> {
     match cli.command {
