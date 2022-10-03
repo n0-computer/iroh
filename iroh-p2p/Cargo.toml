@@ -60,6 +60,7 @@ features = [
   "relay",
   "dcutr",
   "autonat",
+  "rsa",
 ] 
 
 [dependencies.multihash]
