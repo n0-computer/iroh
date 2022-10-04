@@ -3,9 +3,15 @@ mod getadd;
 mod p2p;
 mod store;
 
-pub use crate::api::{Api, Iroh, MockApi};
-pub use crate::p2p::{MockP2p, P2p as P2pApi};
-pub use crate::store::{MockStore, Store as StoreApi};
+#[cfg(feature = "fixture")]
+pub use crate::api::MockApi;
+pub use crate::api::{Api, Iroh};
+#[cfg(feature = "fixture")]
+pub use crate::p2p::MockP2p;
+pub use crate::p2p::P2p as P2pApi;
+#[cfg(feature = "fixture")]
+pub use crate::store::MockStore;
+pub use crate::store::Store as StoreApi;
 pub use bytes::Bytes;
 pub use cid::Cid;
 pub use iroh_resolver::resolver::Path as IpfsPath;

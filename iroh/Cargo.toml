@@ -6,6 +6,9 @@ license = "Apache-2.0/MIT"
 readme = "README.md"
 description = "coming soon"
 
+[features]
+fixture = []
+
 [dependencies]
 cid = "0.8.5"
 iroh-resolver = { path = "../iroh-resolver" }

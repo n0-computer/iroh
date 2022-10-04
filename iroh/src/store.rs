@@ -3,6 +3,7 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use cid::Cid;
 use iroh_rpc_client::StoreClient;
+#[cfg(feature = "fixture")]
 use mockall::automock;
 
 pub struct ClientStore<'a> {
@@ -15,7 +16,7 @@ impl<'a> ClientStore<'a> {
     }
 }
 
-#[automock]
+#[cfg_attr(feature = "fixture", automock)]
 #[async_trait]
 pub trait Store {
     async fn store_version(&self) -> Result<String>;
@@ -40,7 +41,6 @@ impl<'a> Store for ClientStore<'a> {
     }
 
     async fn block_put(&self, _data: &Bytes) -> Result<Cid> {
-        // this awaits ramfox's work in the resolver
         todo!("not yet")
     }
 
