@@ -28,7 +28,7 @@ names = { version = "0.14.0", default-features = false }
 git-version = "0.3.5"
 
 [dev-dependencies]
-criterion = "0.3.5"
+criterion = "0.4.0"
 tracing-subscriber = { version = "0.3.11", features = ["env-filter"] }
 libp2p = { version = "0.49", features = ["yamux", "noise", "tcp-tokio"], default-features = false }
 tokio = { version = "1", features = ["macros", "net", "rt"] }
