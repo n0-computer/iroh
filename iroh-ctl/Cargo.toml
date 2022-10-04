@@ -41,6 +41,6 @@ async-stream = "0.3.3"
 
 [dev-dependencies]
 trycmd = "0.13.7"
-# this is a workaround based on for enabling features only during test: 
+# this is a workaround for enabling features only during testing: 
 # https://github.com/DesmondWillowbrook/cargo-optional-features-for-testing-and-examples
 iroh-ctl = { path = ".", features = ["fixture"] }
