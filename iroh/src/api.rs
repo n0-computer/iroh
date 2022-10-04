@@ -1,10 +1,10 @@
 use std::path::Path;
 
 use crate::getadd::{add, get};
-#[cfg(feature = "fixture")]
+#[cfg(feature = "mock")]
 use crate::p2p::MockP2p;
 use crate::p2p::{ClientP2p, P2p};
-#[cfg(feature = "fixture")]
+#[cfg(feature = "mock")]
 use crate::store::MockStore;
 use crate::store::{ClientStore, Store};
 use anyhow::Result;
@@ -15,14 +15,14 @@ use futures::StreamExt;
 use iroh_resolver::resolver::Path as IpfsPath;
 use iroh_rpc_client::Client;
 use iroh_rpc_client::StatusTable;
-#[cfg(feature = "fixture")]
+#[cfg(feature = "mock")]
 use mockall::automock;
 
 pub struct Iroh<'a> {
     client: &'a Client,
 }
 
-#[cfg_attr(feature= "fixture", automock(type P = MockP2p; type S = MockStore;))]
+#[cfg_attr(feature= "mock", automock(type P = MockP2p; type S = MockStore;))]
 #[async_trait(?Send)]
 pub trait Api {
     type P: P2p;

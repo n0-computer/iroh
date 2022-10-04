@@ -3,13 +3,13 @@ mod getadd;
 mod p2p;
 mod store;
 
-#[cfg(feature = "fixture")]
+#[cfg(feature = "mock")]
 pub use crate::api::MockApi;
 pub use crate::api::{Api, Iroh};
-#[cfg(feature = "fixture")]
+#[cfg(feature = "mock")]
 pub use crate::p2p::MockP2p;
 pub use crate::p2p::P2p as P2pApi;
-#[cfg(feature = "fixture")]
+#[cfg(feature = "mock")]
 pub use crate::store::MockStore;
 pub use crate::store::Store as StoreApi;
 pub use bytes::Bytes;

@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use cid::Cid;
 use iroh_rpc_client::StoreClient;
-#[cfg(feature = "fixture")]
+#[cfg(feature = "mock")]
 use mockall::automock;
 
 pub struct ClientStore<'a> {
@@ -16,7 +16,7 @@ impl<'a> ClientStore<'a> {
     }
 }
 
-#[cfg_attr(feature = "fixture", automock)]
+#[cfg_attr(feature = "mock", automock)]
 #[async_trait]
 pub trait Store {
     async fn store_version(&self) -> Result<String>;
