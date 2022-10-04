@@ -61,7 +61,7 @@ pub async fn run_command(store: &impl StoreApi, cmd: Store) -> Result<()> {
                     println!("local store does not contain block {}", cid);
                 }
             }
-            BlockCommands::Put { path } => {
+            BlockCommands::Put { path: _ } => {
                 todo!("TBD");
                 // I think this shouldn't be in terms of a path but in terms of bytes or stdin
                 // let cid = unixfs_builder::add_file(Some(&rpc), path.as_path(), false).await?;
