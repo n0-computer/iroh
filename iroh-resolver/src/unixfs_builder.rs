@@ -514,10 +514,15 @@ async fn make_dir_from_path<P: Into<PathBuf>>(path: P, recursive: bool) -> Resul
 
 #[cfg(test)]
 mod tests {
+    use crate::resolver::{OutMetrics, Resolver};
+
     use super::*;
-    use anyhow::Result;
+    use anyhow::{Context, Result};
     use futures::TryStreamExt;
-    use std::io::prelude::*;
+    use rand::prelude::*;
+    use rand_chacha::ChaCha8Rng;
+    use std::{collections::HashMap, io::prelude::*};
+    use tokio::io::AsyncReadExt;
 
     #[tokio::test]
     async fn test_builder_basics() -> Result<()> {
@@ -635,6 +640,48 @@ mod tests {
         assert_eq!(links[1].cid, baz_encoded[0].0);
 
         // TODO: check content
+        Ok(())
+    }
+
+    // read an AsyncRead into a vec completely
+    async fn read_to_vec<T: AsyncRead + Unpin>(mut reader: T) -> Vec<u8> {
+        let mut out = Vec::new();
+        reader.read_to_end(&mut out).await.unwrap();
+        out
+    }
+
+    /// Read a stream of (cid, block) pairs into an in memory store and return the store and the root cid
+    async fn stream_to_resolver(
+        stream: impl Stream<Item = Result<(Cid, Bytes)>>,
+    ) -> Result<(Cid, Resolver<HashMap<Cid, Bytes>>)> {
+        tokio::pin!(stream);
+        let items: Vec<_> = stream.try_collect().await?;
+        let (root, _) = items.last().context("no root")?.clone();
+        let store: HashMap<Cid, Bytes> = items.into_iter().collect();
+        let resolver = Resolver::new(store);
+        Ok((root, resolver))
+    }
+
+    #[ignore]
+    #[tokio::test]
+    async fn test_builder_roundtrip_128m() -> Result<()> {
+        // fill with random data so we get distinct cids for all blocks
+        let mut rng = ChaCha8Rng::from_seed([0; 32]);
+        let mut data = vec![0u8; 128 * 1024 * 1024];
+        rng.fill(data.as_mut_slice());
+        let mut builder = FileBuilder::new();
+        builder
+            .name("128m.bin")
+            .content_reader(std::io::Cursor::new(data.clone()));
+        let file = builder.build().await?;
+        let stream = file.encode().await?;
+        let (root, resolver) = stream_to_resolver(stream).await?;
+        let out = resolver
+            .resolve(crate::resolver::Path::from_cid(root))
+            .await?;
+        let t = read_to_vec(out.pretty(resolver, OutMetrics::default())?).await;
+        assert_eq!(t.len(), data.len());
+        assert_eq!(t, data);
         Ok(())
     }
 
