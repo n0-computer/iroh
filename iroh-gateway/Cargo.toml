@@ -15,7 +15,7 @@ cid = "0.8.6"
 
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "process"] }
 axum = "0.5.1"
-clap = { version = "3.1.14", features = ["derive"] }
+clap = { version = "4.0.9", features = ["derive"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0.78"
 serde_qs = "0.10.1"
