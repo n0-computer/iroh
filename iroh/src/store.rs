@@ -41,8 +41,6 @@ impl<'a> Store for ClientStore<'a> {
 
     async fn block_put(&self, _data: &Bytes) -> Result<Cid> {
         // this awaits ramfox's work in the resolver
-        // would be nice if that work only relied on the store and not
-        // on the full client
         todo!("not yet")
     }
 
