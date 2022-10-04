@@ -16,12 +16,8 @@ Iroh has yet to publish a release. We are targeting the end of October 2022 for 
 
 In the meantime, there's a [quickstart guide](./quickstart.md) if you'd like to get a feel for running an iroh cloud gateway.
 
-## Building
-
-To build Iroh, you need a recent version of Rust installed. [Rustup](https://rustup.rs/) is the recommended way to do that.
-
-You also need a recent version of the [Protobuf compiler](https://github.com/protocolbuffers/protobuf#protocol-compiler-installation).
-Download it from the [Protobuf Releases page](https://github.com/protocolbuffers/protobuf/releases); you need to get the `protoc-` release for your platform. To install, make sure the `protoc` compiler is on your path. If you get errors during build about `experimental_allow_proto3_optional` or inability to import `/google/protobuf/empty.proto` you're likely using a version of the compiler that's too old.
+## Working on Iroh
+Check out the [CONTRIBUTOR docs](./CONTRIBUTOR.md) to get familiar with ways you can contribute to the Iroh project. The [DEVELOPERS docs](./DEVELOPERS.md) will help you get starting with building and developing Iroh.
 
 ## Benchmarks
 
