@@ -2,12 +2,9 @@ use std::collections::HashMap;
 use std::env;
 use std::path::PathBuf;
 
+use crate::config::{Config, CONFIG_FILE_NAME, ENV_PREFIX};
 #[cfg(feature = "fixture")]
 use crate::fixture::get_fixture_api;
-use crate::{
-    config::{Config, CONFIG_FILE_NAME, ENV_PREFIX},
-    status,
-};
 use crate::{
     gateway::{run_command as run_gateway_command, Gateway},
     p2p::{run_command as run_p2p_command, P2p},
@@ -15,7 +12,7 @@ use crate::{
 };
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use iroh::{Api, Iroh, P2pApi, StoreApi};
+use iroh::{Api, Iroh};
 use iroh_metrics::config::Config as MetricsConfig;
 use iroh_resolver::resolver;
 use iroh_rpc_client::Client;
