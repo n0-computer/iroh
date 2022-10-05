@@ -1,6 +1,5 @@
 use std::path::Path;
 
-use crate::getadd::{add, get};
 #[cfg(feature = "testing")]
 use crate::p2p::MockP2p;
 use crate::p2p::{ClientP2p, P2p};
@@ -13,6 +12,7 @@ use cid::Cid;
 use futures::stream::LocalBoxStream;
 use futures::StreamExt;
 use iroh_resolver::resolver::Path as IpfsPath;
+use iroh_resolver::{resolver, unixfs_builder};
 use iroh_rpc_client::Client;
 use iroh_rpc_client::StatusTable;
 #[cfg(feature = "testing")]
@@ -20,6 +20,11 @@ use mockall::automock;
 
 pub struct Iroh<'a> {
     client: &'a Client,
+}
+
+pub enum OutType<T: resolver::ContentLoader> {
+    Dir,
+    Reader(resolver::OutPrettyReader<T>),
 }
 
 #[cfg_attr(feature= "testing", automock(type P = MockP2p; type S = MockStore;))]
@@ -40,6 +45,10 @@ impl<'a> Iroh<'a> {
     pub fn new(client: &'a Client) -> Self {
         Self { client }
     }
+
+    pub(crate) fn get_client(&self) -> &Client {
+        self.client
+    }
 }
 
 #[async_trait(?Send)]
@@ -58,11 +67,37 @@ impl<'a> Api for Iroh<'a> {
     }
 
     async fn get<'b>(&self, ipfs_path: &IpfsPath, output: Option<&'b Path>) -> Result<()> {
-        get(self.client, ipfs_path, output).await
+        let blocks = self.get_stream(ipfs_path, output);
+        tokio::pin!(blocks);
+        while let Some(block) = blocks.next().await {
+            let (path, out) = block?;
+            match out {
+                OutType::Dir => {
+                    tokio::fs::create_dir_all(path).await?;
+                }
+                OutType::Reader(mut reader) => {
+                    if let Some(parent) = path.parent() {
+                        tokio::fs::create_dir_all(parent).await?;
+                    }
+                    let mut f = tokio::fs::File::create(path).await?;
+                    tokio::io::copy(&mut reader, &mut f).await?;
+                }
+            }
+        }
+        Ok(())
     }
 
     async fn add(&self, path: &Path, recursive: bool, no_wrap: bool) -> Result<Cid> {
-        add(self.client, path, recursive, no_wrap).await
+        let providing_client = iroh_resolver::unixfs_builder::StoreAndProvideClient {
+            client: Box::new(self.get_client()),
+        };
+        if path.is_dir() {
+            unixfs_builder::add_dir(Some(&providing_client), path, !no_wrap, recursive).await
+        } else if path.is_file() {
+            unixfs_builder::add_file(Some(&providing_client), path, !no_wrap).await
+        } else {
+            anyhow::bail!("can only add files or directories");
+        }
     }
 
     async fn check(&self) -> StatusTable {
