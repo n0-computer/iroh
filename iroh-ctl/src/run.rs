@@ -68,73 +68,75 @@ enum Commands {
     },
 }
 
-#[cfg(not(feature = "testing"))]
-pub async fn run_cli(cli: Cli) -> Result<()> {
-    run_cli_impl(cli).await
-}
+impl Cli {
+    #[cfg(not(feature = "testing"))]
+    pub async fn run(&self) -> Result<()> {
+        self.run_impl().await
+    }
 
-// extracted this into a public function so that we don't get a lot of
-// rust analyzer unused code errors, which we do if we inline this code inside
-// of run_cli
-pub async fn run_cli_impl(cli: Cli) -> Result<()> {
-    let cfg_path = iroh_config_path(CONFIG_FILE_NAME)?;
-    let sources = vec![Some(cfg_path), cli.cfg.clone()];
-    let config = make_config(
-        // default
-        Config::default(),
-        // potential config files
-        sources,
-        // env var prefix for this config
-        ENV_PREFIX,
-        // map of present command line arguments
-        cli.make_overrides_map(),
-    )
-    .unwrap();
+    #[cfg(feature = "testing")]
+    pub async fn run(&self) -> Result<()> {
+        let api = get_fixture_api();
+        self.cli_command(&api).await
+    }
 
-    let metrics_handler = iroh_metrics::MetricsHandle::new(MetricsConfig::default())
-        .await
-        .expect("failed to initialize metrics");
+    // extracted this into a public function so that we don't get a lot of
+    // rust analyzer unused code errors, which we do if we inline this code inside
+    // of run
+    pub async fn run_impl(&self) -> Result<()> {
+        let cfg_path = iroh_config_path(CONFIG_FILE_NAME)?;
+        let sources = vec![Some(cfg_path), self.cfg.clone()];
+        let config = make_config(
+            // default
+            Config::default(),
+            // potential config files
+            sources,
+            // env var prefix for this config
+            ENV_PREFIX,
+            // map of present command line arguments
+            self.make_overrides_map(),
+        )
+        .unwrap();
 
-    let client = Client::new(config.rpc_client).await?;
+        let metrics_handler = iroh_metrics::MetricsHandle::new(MetricsConfig::default())
+            .await
+            .expect("failed to initialize metrics");
 
-    let api = Iroh::new(&client);
+        let client = Client::new(config.rpc_client).await?;
 
-    run_cli_command(&api, cli).await?;
+        let api = Iroh::new(&client);
 
-    metrics_handler.shutdown();
+        self.cli_command(&api).await?;
 
-    Ok(())
-}
+        metrics_handler.shutdown();
 
-#[cfg(feature = "testing")]
-pub async fn run_cli(cli: Cli) -> Result<()> {
-    let api = get_fixture_api();
-    run_cli_command(&api, cli).await
-}
+        Ok(())
+    }
 
-pub async fn run_cli_command(api: &impl Api, cli: Cli) -> Result<()> {
-    match cli.command {
-        Commands::Status { watch } => {
-            crate::status::status(api, watch).await?;
-        }
-        Commands::Version => {
-            println!("v{}", env!("CARGO_PKG_VERSION"));
-        }
-        Commands::P2p(p2p) => run_p2p_command(&api.p2p()?, p2p).await?,
-        Commands::Store(store) => run_store_command(&api.store()?, store).await?,
-        Commands::Gateway(gateway) => run_gateway_command(gateway).await?,
-        Commands::Add {
-            path,
-            recursive,
-            no_wrap,
-        } => {
-            let cid = api.add(&path, recursive, no_wrap).await?;
-            println!("/ipfs/{}", cid);
-        }
-        Commands::Get { path, output } => {
-            api.get(&path, output.as_deref()).await?;
-        }
-    };
+    async fn cli_command(&self, api: &impl Api) -> Result<()> {
+        match &self.command {
+            Commands::Status { watch } => {
+                crate::status::status(api, *watch).await?;
+            }
+            Commands::Version => {
+                println!("v{}", env!("CARGO_PKG_VERSION"));
+            }
+            Commands::P2p(p2p) => run_p2p_command(&api.p2p()?, p2p).await?,
+            Commands::Store(store) => run_store_command(&api.store()?, store).await?,
+            Commands::Gateway(gateway) => run_gateway_command(gateway).await?,
+            Commands::Add {
+                path,
+                recursive,
+                no_wrap,
+            } => {
+                let cid = api.add(path, *recursive, *no_wrap).await?;
+                println!("/ipfs/{}", cid);
+            }
+            Commands::Get { path, output } => {
+                api.get(path, output.as_deref()).await?;
+            }
+        };
 
-    Ok(())
+        Ok(())
+    }
 }

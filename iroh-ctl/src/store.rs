@@ -46,8 +46,8 @@ Not yet implemented.",
     Has { cid: Cid },
 }
 
-pub async fn run_command(store: &impl StoreApi, cmd: Store) -> Result<()> {
-    match cmd.command {
+pub async fn run_command(store: &impl StoreApi, cmd: &Store) -> Result<()> {
+    match &cmd.command {
         StoreCommands::Version => {
             let v = store.store_version().await?;
             println!("v{}", v);

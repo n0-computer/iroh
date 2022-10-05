@@ -220,8 +220,8 @@ pub enum GossipsubCommands {
     },
 }
 
-pub async fn run_command(p2p: &impl P2pApi, cmd: P2p) -> Result<()> {
-    match cmd.command {
+pub async fn run_command(p2p: &impl P2pApi, cmd: &P2p) -> Result<()> {
+    match &cmd.command {
         P2pCommands::Version => {
             let version = p2p.p2p_version().await?;
             println!("v{}", version);
@@ -274,7 +274,7 @@ pub async fn run_command(p2p: &impl P2pApi, cmd: P2p) -> Result<()> {
         P2pCommands::Bitswap(d) => {
             todo!("Bitswap commands are not yet implemented - {:#?}", d);
         }
-        P2pCommands::Dev(dev) => match dev.command {
+        P2pCommands::Dev(dev) => match &dev.command {
             DevCommands::FetchBitswap { cid, providers } => {
                 let res = p2p.fetch_bitswap(&cid, &providers).await?;
                 println!("{:#?}", res);
@@ -283,7 +283,7 @@ pub async fn run_command(p2p: &impl P2pApi, cmd: P2p) -> Result<()> {
                 let res = p2p.fetch_providers(&cid).await?;
                 println!("{:#?}", res);
             }
-            DevCommands::Gossipsub(g) => match g.command {
+            DevCommands::Gossipsub(g) => match &g.command {
                 GossipsubCommands::Publish { topic, file } => {
                     let message_id = p2p.publish(&topic, file.as_deref()).await?;
                     println!("Message Id: {}", message_id);
