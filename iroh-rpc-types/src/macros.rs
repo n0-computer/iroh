@@ -109,7 +109,7 @@ macro_rules! proxy_serve_types {
                 #[cfg(feature = "grpc")]
                 Grpc {
                     // TODO(pool): make this connection pool
-                    client: [<$label:lower _client>]::[<$label Client>]<bb8::Pool<$crate::connection_pool::TonicConnectionManager>>,
+                    client: [<$label:lower _client>]::[<$label Client>]<$crate::connection_pool::TonicConnectionPool>,
                     health: tonic_health::proto::health_client::HealthClient<tonic::transport::Channel>,
                 },
                 #[cfg(feature = "mem")]
@@ -157,8 +157,7 @@ macro_rules! proxy_traits {
                             #[cfg(feature = "grpc")]
                             Self::Grpc { client, .. } => {
                                 let req = iroh_metrics::req::trace_tonic_req(req);
-                                // TODO(pool): client.get().clone()
-                                let mut c = client.get();
+                                let mut c = client.clone();
                                 let res = [<$label:lower _client>]::[<$label Client>]::$name(&mut c, req).await?;
                                 let res = res.into_inner();
                                 $(

@@ -5,7 +5,7 @@ pub mod gateway;
 pub mod p2p;
 pub mod store;
 
-mod connection_pool;
+pub mod connection_pool;
 
 #[macro_use]
 extern crate quick_error;

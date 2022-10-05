@@ -1,7 +1,20 @@
 use async_trait::async_trait;
-use tonic::transport::{Channel, Endpoint};
+use tonic::{transport::{Channel, Endpoint}};
 
 use crate::Addr;
+
+#[derive(Debug, Clone)]
+pub struct TonicConnectionPool {
+    inner: r2d2::Pool<TonicConnectionManager>,
+}
+
+impl TonicConnectionPool {
+    pub fn new(max_conns: u32, addr: Addr) -> anyhow::Result<Self> {
+        let manager = TonicConnectionManager{addr: addr.clone()};
+        let pool = r2d2::Pool::builder().max_size(max_conns).build(manager).unwrap();
+        Ok(Self { inner: pool })
+    }
+}
 
 #[derive(Debug)]
 pub struct TonicConnectionManager {
@@ -9,11 +22,11 @@ pub struct TonicConnectionManager {
 }
 
 #[async_trait]
-impl bb8::ManageConnection for TonicConnectionManager {
+impl r2d2::ManageConnection for TonicConnectionManager {
     type Connection = Channel;
     type Error = ConnectionManagerError;
 
-    async fn connect(&self) -> Result<Self::Connection, Self::Error> {
+    fn connect(&self) -> Result<Self::Connection, Self::Error> {
         match self.addr.clone() {
             #[cfg(feature = "grpc")]
             Addr::GrpcHttp2(addr) => {
@@ -45,7 +58,7 @@ impl bb8::ManageConnection for TonicConnectionManager {
         }
     }
 
-    async fn is_valid(&self, conn: &mut Self::Connection) -> Result<(), Self::Error> {
+    fn is_valid(&self, conn: &mut Self::Connection) -> Result<(), Self::Error> {
         // conn.execute_batch("").map_err(Into::into)
         Ok(())
     }
