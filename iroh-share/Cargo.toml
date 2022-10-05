@@ -24,7 +24,7 @@ futures = "0.3.21"
 bytes = "1.1.0"
 cid = { version = "0.8.5", features = ["serde-codec"] }
 async-trait = "0.1.56"
-clap = { version = "3.1.14", features = ["derive"] }
+clap = { version = "4.0.9", features = ["derive"] }
 bincode = "1.3.3"
 multibase = "0.9.1"
 tempfile = "3.3"

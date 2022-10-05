@@ -9,7 +9,7 @@ description = "Examples"
 
 [dependencies]
 anyhow = "1"
-clap = { version = "3.1.18", features = ["derive"] }
+clap = { version = "4.0.9", features = ["derive"] }
 iroh-rpc-client = { path = "../iroh-rpc-client" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 iroh-car = { path = "../iroh-car" }

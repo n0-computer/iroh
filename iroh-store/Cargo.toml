@@ -15,7 +15,7 @@ cid = "0.8.4"
 rkyv = { version = "0.7.37", features = ["validation"] }
 bytecheck = "0.6.7"
 tracing-subscriber = { version = "0.3.11", features = ["env-filter"] }
-clap = { version = "3.1.15", features = ["derive"] }
+clap = { version = "4.0.9", features = ["derive"] }
 ctrlc = "3.2.2"
 futures = "0.3.21"
 tracing = "0.1.34"
@@ -33,7 +33,7 @@ config = "0.13.1"
 async-trait = "0.1.56"
 
 [dev-dependencies]
-criterion = { version = "0.3.5", features = ["async_tokio"] }
+criterion = { version = "0.4.0", features = ["async_tokio"] }
 tempfile = "3.3.0"
 tokio = { version = "1", features = ["rt", "macros", "rt-multi-thread"] }
 

@@ -10,7 +10,7 @@ description = "Implementation of path resolution for iroh"
 [dependencies]
 anyhow = "1"
 cid = "0.8.4"
-libipld = "0.13.1"
+libipld = "0.14.0"
 num_enum = "0.5.7"
 prost = "0.11"
 bytes = "1.1.0"
@@ -21,7 +21,7 @@ futures = "0.3.21"
 tracing = "0.1.34"
 async-trait = "0.1.53"
 async-recursion = "1.0.0"
-trust-dns-resolver = { version = "0.21.2", features = ["tokio-runtime"] }
+trust-dns-resolver = { version = "0.22.0", features = ["tokio-runtime"] }
 iroh-metrics = { path = "../iroh-metrics", default-features = false, features = ["resolver", "gateway"] }
 async-stream = "0.3.3"
 fastmurmur3 = "0.1.2"
@@ -31,7 +31,7 @@ libp2p = { version = "0.49", default-features = false }
 caches = "0.2.2"
 
 [dev-dependencies]
-criterion = { version = "0.3.5", features = ["async_tokio"] }
+criterion = { version = "0.4.0", features = ["async_tokio"] }
 tempfile = "3.3.0"
 tokio = { version = "1", features = ["rt", "macros", "rt-multi-thread"] }
 iroh-store = { path = "../iroh-store", default-features = false }
