@@ -26,6 +26,7 @@ impl TreeBuilder {
     }
 
     pub fn balanced_tree_with_degree(degree: usize) -> Self {
+        assert!(degree > 1);
         TreeBuilder::Balanced { degree }
     }
 

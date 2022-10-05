@@ -15,8 +15,8 @@ use prost::Message;
 use tokio::io::AsyncRead;
 
 use crate::{
-    balanced_tree::TreeBuilder,
-    chunker::{Chunker, DEFAULT_CHUNK_SIZE_LIMIT},
+    balanced_tree::{TreeBuilder, DEFAULT_DEGREE},
+    chunker::{Chunker, DEFAULT_CHUNKS_SIZE, DEFAULT_CHUNK_SIZE_LIMIT},
     unixfs::{dag_pb, unixfs_pb, DataType, Node, UnixfsNode},
 };
 
@@ -209,6 +209,8 @@ pub struct FileBuilder {
     name: Option<String>,
     path: Option<PathBuf>,
     reader: Option<Pin<Box<dyn AsyncRead>>>,
+    chunk_size: Option<usize>,
+    degree: Option<usize>,
 }
 
 impl Debug for FileBuilder {
@@ -221,6 +223,7 @@ impl Debug for FileBuilder {
         f.debug_struct("FileBuilder")
             .field("path", &self.path)
             .field("name", &self.name)
+            .field("chunk_size", &self.chunk_size)
             .field("reader", &reader)
             .finish()
     }
@@ -242,6 +245,16 @@ impl FileBuilder {
         self
     }
 
+    pub fn chunk_size(&mut self, chunk_size: usize) -> &mut Self {
+        self.chunk_size = Some(chunk_size);
+        self
+    }
+
+    pub fn degree(&mut self, degree: usize) -> &mut Self {
+        self.degree = Some(degree);
+        self
+    }
+
     pub fn content_bytes<B: Into<Bytes>>(&mut self, content: B) -> &mut Self {
         let bytes = content.into();
         self.reader = Some(Box::pin(std::io::Cursor::new(bytes)));
@@ -254,6 +267,10 @@ impl FileBuilder {
     }
 
     pub async fn build(self) -> Result<File> {
+        let chunk_size = self.chunk_size.unwrap_or(DEFAULT_CHUNKS_SIZE);
+        let degree = self.degree.unwrap_or(DEFAULT_DEGREE);
+        let chunker = Chunker::fixed_with_size(chunk_size);
+        let tree_builder = TreeBuilder::balanced_tree_with_degree(degree);
         if let Some(path) = self.path {
             let name = match self.name {
                 Some(n) => n,
@@ -266,8 +283,8 @@ impl FileBuilder {
             return Ok(File {
                 content: Content::Path(path),
                 name,
-                chunker: Chunker::fixed_size(),
-                tree_builder: TreeBuilder::balanced_tree(),
+                chunker,
+                tree_builder,
             });
         }
 
@@ -279,8 +296,8 @@ impl FileBuilder {
             return Ok(File {
                 content: Content::Reader(reader),
                 name,
-                chunker: Chunker::fixed_size(),
-                tree_builder: TreeBuilder::balanced_tree(),
+                chunker,
+                tree_builder,
             });
         }
         anyhow::bail!("must have a path to the content or a reader for the content");
@@ -658,8 +675,35 @@ mod tests {
         let items: Vec<_> = stream.try_collect().await?;
         let (root, _) = items.last().context("no root")?.clone();
         let store: HashMap<Cid, Bytes> = items.into_iter().collect();
+        println!("{}", store.len());
         let resolver = Resolver::new(store);
         Ok((root, resolver))
+    }
+
+    #[ignore]
+    #[tokio::test]
+    async fn test_builder_roundtrip_complex_tree_1() -> Result<()> {
+        // fill with random data so we get distinct cids for all blocks
+        let mut rng = ChaCha8Rng::from_seed([0; 32]);
+        let mut data = vec![0u8; 1024 * 128];
+        rng.fill(data.as_mut_slice());
+        let data: Bytes = data.into();
+        let mut builder = FileBuilder::new();
+        builder
+            .name("128m.bin")
+            .chunk_size(1024)
+            .degree(4)
+            .content_bytes(data.clone());
+        let file = builder.build().await?;
+        let stream = file.encode().await?;
+        let (root, resolver) = stream_to_resolver(stream).await?;
+        let out = resolver
+            .resolve(crate::resolver::Path::from_cid(root))
+            .await?;
+        let t = read_to_vec(out.pretty(resolver, OutMetrics::default())?).await;
+        assert_eq!(t.len(), data.len());
+        assert_eq!(t, data);
+        Ok(())
     }
 
     #[ignore]
