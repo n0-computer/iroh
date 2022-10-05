@@ -12,7 +12,6 @@ default-run = "iroh-ctl"
 testing = []
 
 [[bin]]
-bench = false
 path = "src/main.rs"
 name = "iroh-ctl"
 
