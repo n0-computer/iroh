@@ -224,6 +224,7 @@ impl Debug for FileBuilder {
             .field("path", &self.path)
             .field("name", &self.name)
             .field("chunk_size", &self.chunk_size)
+            .field("degree", &self.degree)
             .field("reader", &reader)
             .finish()
     }
