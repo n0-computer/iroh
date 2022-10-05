@@ -21,7 +21,7 @@ futures = "0.3.21"
 tracing = "0.1.34"
 async-trait = "0.1.53"
 async-recursion = "1.0.0"
-trust-dns-resolver = { version = "0.21.2", features = ["tokio-runtime"] }
+trust-dns-resolver = { version = "0.22.0", features = ["tokio-runtime"] }
 iroh-metrics = { path = "../iroh-metrics", default-features = false, features = ["resolver", "gateway"] }
 async-stream = "0.3.3"
 fastmurmur3 = "0.1.2"
