@@ -691,7 +691,7 @@ mod tests {
         let data: Bytes = data.into();
         let mut builder = FileBuilder::new();
         builder
-            .name("128m.bin")
+            .name("file.bin")
             .chunk_size(1024)
             .degree(4)
             .content_bytes(data.clone());
