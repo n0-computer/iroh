@@ -27,9 +27,9 @@ fn fixture_peer_ids() -> MockApi {
 }
 
 fn register_fixtures() -> FixtureRegistry {
-    let mut registry = FixtureRegistry::new();
-    registry.insert("peer_ids".to_string(), fixture_peer_ids);
-    registry
+    [("peer_ids".to_string(), fixture_peer_ids as GetFixture)]
+        .into_iter()
+        .collect()
 }
 
 pub fn get_fixture_api() -> MockApi {
