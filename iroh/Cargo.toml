@@ -7,7 +7,7 @@ readme = "README.md"
 description = "coming soon"
 
 [features]
-mock = []
+testing = []
 
 [dependencies]
 cid = "0.8.5"

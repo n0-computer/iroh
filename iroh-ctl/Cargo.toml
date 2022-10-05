@@ -41,7 +41,7 @@ async-stream = "0.3.3"
 
 [dev-dependencies]
 trycmd = "0.13.7"
-iroh = { path = "../iroh", features = ["mock"] }
+iroh = { path = "../iroh", features = ["testing"] }
 # this is a workaround for enabling features only during testing: 
 # https://github.com/DesmondWillowbrook/cargo-optional-features-for-testing-and-examples
 iroh-ctl = { path = ".", features = ["fixture"] }

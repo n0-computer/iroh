@@ -8,7 +8,7 @@ use cid::Cid;
 use iroh_rpc_client::P2pClient;
 use libp2p::gossipsub::{MessageId, TopicHash};
 use libp2p::{Multiaddr, PeerId};
-#[cfg(feature = "mock")]
+#[cfg(feature = "testing")]
 use mockall::automock;
 use tokio::{fs::File, io::stdin, io::AsyncReadExt};
 
@@ -34,7 +34,7 @@ impl<'a> ClientP2p<'a> {
     }
 }
 
-#[cfg_attr(feature = "mock", automock)]
+#[cfg_attr(feature = "testing", automock)]
 #[async_trait]
 pub trait P2p: Sync {
     async fn p2p_version(&self) -> Result<String>;
