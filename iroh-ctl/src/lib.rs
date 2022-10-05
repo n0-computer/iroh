@@ -1,5 +1,5 @@
 pub mod config;
-#[cfg(feature = "fixture")]
+#[cfg(feature = "testing")]
 mod fixture;
 pub mod gateway;
 pub mod metrics;

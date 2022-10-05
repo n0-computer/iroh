@@ -3,7 +3,7 @@ use std::env;
 use std::path::PathBuf;
 
 use crate::config::{Config, CONFIG_FILE_NAME, ENV_PREFIX};
-#[cfg(feature = "fixture")]
+#[cfg(feature = "testing")]
 use crate::fixture::get_fixture_api;
 use crate::{
     gateway::{run_command as run_gateway_command, Gateway},
@@ -68,7 +68,7 @@ enum Commands {
     },
 }
 
-#[cfg(not(feature = "fixture"))]
+#[cfg(not(feature = "testing"))]
 pub async fn run_cli(cli: Cli) -> Result<()> {
     run_cli_impl(cli).await
 }
@@ -106,7 +106,7 @@ pub async fn run_cli_impl(cli: Cli) -> Result<()> {
     Ok(())
 }
 
-#[cfg(feature = "fixture")]
+#[cfg(feature = "testing")]
 pub async fn run_cli(cli: Cli) -> Result<()> {
     let api = get_fixture_api();
     run_cli_command(&api, cli).await
