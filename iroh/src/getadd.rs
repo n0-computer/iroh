@@ -70,8 +70,8 @@ pub fn get_stream<'a>(
     }
 }
 
-// make_output_path adjusts the full path to replace the root with any given output path
-// if it exists
+/// Adjusts the full path to replace the root with any given output path
+// if it exists.
 fn make_output_path(full: IpfsPath, root: IpfsPath, output: Option<PathBuf>) -> Result<PathBuf> {
     if let Some(ref output) = output {
         let root_str = &root.to_string()[..];
