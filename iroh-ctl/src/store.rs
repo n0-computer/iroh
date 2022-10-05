@@ -79,7 +79,7 @@ pub async fn run_command(store: &impl StoreApi, cmd: &Store) -> Result<()> {
             }
         },
         StoreCommands::GetLinks { cid } => {
-            let links = store.get_links(&cid).await?;
+            let links = store.get_links(cid).await?;
             println!("{:#?}", links);
         }
     };

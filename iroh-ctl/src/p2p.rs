@@ -246,11 +246,11 @@ pub async fn run_command(p2p: &impl P2pApi, cmd: &P2p) -> Result<()> {
             }
         },
         P2pCommands::Connect { peer_id, addrs } => {
-            p2p.connect(&peer_id, &addrs).await?;
+            p2p.connect(peer_id, addrs).await?;
             println!("connected to {}", peer_id);
         }
         P2pCommands::Disconnect { peer_id } => {
-            p2p.disconnect(&peer_id).await?;
+            p2p.disconnect(peer_id).await?;
             println!("disconnected from {}", peer_id);
         }
         P2pCommands::Peers => {
@@ -276,20 +276,20 @@ pub async fn run_command(p2p: &impl P2pApi, cmd: &P2p) -> Result<()> {
         }
         P2pCommands::Dev(dev) => match &dev.command {
             DevCommands::FetchBitswap { cid, providers } => {
-                let res = p2p.fetch_bitswap(&cid, &providers).await?;
+                let res = p2p.fetch_bitswap(cid, providers).await?;
                 println!("{:#?}", res);
             }
             DevCommands::FetchProviders { cid } => {
-                let res = p2p.fetch_providers(&cid).await?;
+                let res = p2p.fetch_providers(cid).await?;
                 println!("{:#?}", res);
             }
             DevCommands::Gossipsub(g) => match &g.command {
                 GossipsubCommands::Publish { topic, file } => {
-                    let message_id = p2p.publish(&topic, file.as_deref()).await?;
+                    let message_id = p2p.publish(topic, file.as_deref()).await?;
                     println!("Message Id: {}", message_id);
                 }
                 GossipsubCommands::Subscribe { topic } => {
-                    let success = p2p.subscribe(&topic).await?;
+                    let success = p2p.subscribe(topic).await?;
                     if success {
                         println!("Subscribed to {}", topic);
                     } else {
@@ -297,7 +297,7 @@ pub async fn run_command(p2p: &impl P2pApi, cmd: &P2p) -> Result<()> {
                     }
                 }
                 GossipsubCommands::Unsubscribe { topic } => {
-                    let success = p2p.unsubscribe(&topic).await?;
+                    let success = p2p.unsubscribe(topic).await?;
                     if success {
                         println!("Unsubscribed from {}", topic);
                     } else {
