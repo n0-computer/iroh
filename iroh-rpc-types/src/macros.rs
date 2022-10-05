@@ -109,7 +109,7 @@ macro_rules! proxy_serve_types {
                 #[cfg(feature = "grpc")]
                 Grpc {
                     // TODO(pool): make this connection pool
-                    client: [<$label:lower _client>]::[<$label Client>]<r2d2::Pool<$crate::connection_pool::TonicConnectionManager>>,
+                    client: [<$label:lower _client>]::[<$label Client>]<bb8::Pool<$crate::connection_pool::TonicConnectionManager>>,
                     health: tonic_health::proto::health_client::HealthClient<tonic::transport::Channel>,
                 },
                 #[cfg(feature = "mem")]

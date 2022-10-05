@@ -29,7 +29,7 @@ tonic-health = { version = "0.7", optional = true }
 async-trait = "0.1.56"
 tower = { version = "0.4.13", optional = true }
 paste = "1.0.7"
-r2d2 = "0.8.10"
+bb8 = "0.8.0"
 
 
 [dev-dependencies]

@@ -1,3 +1,4 @@
+use async_trait::async_trait;
 use tonic::transport::{Channel, Endpoint};
 
 use crate::Addr;
@@ -7,11 +8,12 @@ pub struct TonicConnectionManager {
     addr: Addr,
 }
 
-impl r2d2::ManageConnection for TonicConnectionManager {
+#[async_trait]
+impl bb8::ManageConnection for TonicConnectionManager {
     type Connection = Channel;
     type Error = ConnectionManagerError;
 
-    fn connect(&self) -> Result<Self::Connection, Self::Error> {
+    async fn connect(&self) -> Result<Self::Connection, Self::Error> {
         match self.addr.clone() {
             #[cfg(feature = "grpc")]
             Addr::GrpcHttp2(addr) => {
@@ -43,7 +45,7 @@ impl r2d2::ManageConnection for TonicConnectionManager {
         }
     }
 
-    fn is_valid(&self, conn: &mut Self::Connection) -> Result<(), Self::Error> {
+    async fn is_valid(&self, conn: &mut Self::Connection) -> Result<(), Self::Error> {
         // conn.execute_batch("").map_err(Into::into)
         Ok(())
     }

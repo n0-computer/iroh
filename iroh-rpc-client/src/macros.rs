@@ -22,9 +22,11 @@ macro_rules! impl_client {
                     match addr {
                         #[cfg(feature = "grpc")]
                         Addr::GrpcHttp2(addr) => {
-                            let conn_pool = r2d2::Pool::builder()
-                                .max_size(1)
-                                .build($crate::connection_pool::TonicConnectionManager { addr: Addr::GrpcHttp2(addr) })?;
+                            let conn_pool = bb8::Pool::builder()
+                                .max_size(32)
+                                .build($crate::connection_pool::TonicConnectionManager { addr: Addr::GrpcHttp2(addr) })
+                                .await
+                                .unwrap();
                             let client = [<Grpc $label Client>]::new(conn_pool);
                             let health = HealthClient::new(conn_pool);
 

@@ -22,7 +22,7 @@ tokio = { version = "1", features = ["net", "sync"] }
 tokio-stream = { version = "0.1.9", optional = true, features = ["net"] }
 paste = "1.0.7"
 futures = "0.3.24"
-r2d2 = "0.8.10"
+bb8 = "0.8.0"
 quick-error = "2.0.1"
 tower = { version = "0.4.13", optional = true }
 
