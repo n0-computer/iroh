@@ -680,6 +680,7 @@ mod tests {
         Ok((root, resolver))
     }
 
+    // test is ignored because it currently fails
     #[ignore]
     #[tokio::test]
     async fn test_builder_roundtrip_complex_tree_1() -> Result<()> {
@@ -706,6 +707,7 @@ mod tests {
         Ok(())
     }
 
+    // test is ignored because it currently fails
     #[ignore]
     #[tokio::test]
     async fn test_builder_roundtrip_128m() -> Result<()> {
