@@ -13,14 +13,12 @@ fn fixture_peer_ids() -> MockApi {
         let mut mock_p2p = MockP2p::default();
 
         mock_p2p.expect_peer_ids().returning(|| {
-            let peer_id0 = PeerId::from_bytes(&[
-                0, 32, 15, 231, 162, 148, 52, 155, 40, 187, 217, 170, 125, 185, 68, 142, 156, 196,
-                145, 178, 64, 74, 19, 27, 9, 171, 111, 35, 88, 236, 103, 150, 96, 66,
-            ])?;
-            let peer_id1 = PeerId::from_bytes(&[
-                0, 32, 144, 137, 53, 144, 57, 13, 191, 157, 254, 110, 136, 212, 131, 241, 179, 29,
-                38, 29, 207, 62, 126, 215, 213, 49, 248, 43, 143, 40, 123, 93, 248, 222,
-            ])?;
+            let peer_id0 = "1AXRDqR8jTkwzGqyu3qknicAC5X578zTMxhAi2brppK2bB"
+                .parse::<PeerId>()
+                .unwrap();
+            let peer_id1 = "1Ag5LvC3vwsQicTy1dxNdd1xiNxLUS4Aic4NtdHBqAHD3j"
+                .parse::<PeerId>()
+                .unwrap();
             Ok(vec![peer_id0, peer_id1])
         });
         Ok(mock_p2p)
