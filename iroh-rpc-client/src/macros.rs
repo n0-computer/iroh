@@ -22,12 +22,11 @@ macro_rules! impl_client {
                     match addr {
                         #[cfg(feature = "grpc")]
                         Addr::GrpcHttp2(addr) => {
-                            let conn = Endpoint::new(format!("http://{}", addr))?
-                                .keep_alive_while_idle(true)
-                                .connect_lazy();
-
-                            let client = [<Grpc $label Client>]::new(conn.clone());
-                            let health = HealthClient::new(conn);
+                            let conn_pool = r2d2::Pool::builder()
+                                .max_size(1)
+                                .build($crate::connection_pool::TonicConnectionManager { addr: Addr::GrpcHttp2(addr) })?;
+                            let client = [<Grpc $label Client>]::new(conn_pool);
+                            let health = HealthClient::new(conn_pool);
 
                             Ok([<$label Client>] {
                                 backend: [<$label ClientBackend>]::Grpc { client, health },
@@ -37,7 +36,7 @@ macro_rules! impl_client {
                         Addr::GrpcUds(path) => {
                             use tokio::net::UnixStream;
                             use tonic::transport::Uri;
-
+                            // TODO(pool): r2d2 conn pool
                             let path = std::sync::Arc::new(path);
                             // dummy addr
                             let conn = Endpoint::new("http://[..]:50051")?

@@ -22,6 +22,9 @@ tokio = { version = "1", features = ["net", "sync"] }
 tokio-stream = { version = "0.1.9", optional = true, features = ["net"] }
 paste = "1.0.7"
 futures = "0.3.24"
+r2d2 = "0.8.10"
+quick-error = "2.0.1"
+tower = { version = "0.4.13", optional = true }
 
 [build-dependencies]
 prost-build = "0.11.1"
@@ -35,7 +38,8 @@ grpc = [
   "tonic-build",
   "tonic-health",
   "iroh-metrics/rpc-grpc",
-  "tokio-stream"
+  "tokio-stream",
+  "tower"
 ]
 # Memory based transport
 mem = []
