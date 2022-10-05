@@ -29,6 +29,7 @@ lazy_static = "1.4.0"
 async-trait = "0.1.57"
 console-subscriber = { version = "0.1.7", optional = true }
 paste = "1.0.9"
+tracing-appender = "0.2"
 
 [dependencies.libp2p]
 version = "0.49"
