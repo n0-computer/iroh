@@ -669,10 +669,9 @@ mod tests {
         let mut rng = ChaCha8Rng::from_seed([0; 32]);
         let mut data = vec![0u8; 128 * 1024 * 1024];
         rng.fill(data.as_mut_slice());
+        let data: Bytes = data.into();
         let mut builder = FileBuilder::new();
-        builder
-            .name("128m.bin")
-            .content_reader(std::io::Cursor::new(data.clone()));
+        builder.name("128m.bin").content_bytes(data.clone());
         let file = builder.build().await?;
         let stream = file.encode().await?;
         let (root, resolver) = stream_to_resolver(stream).await?;
