@@ -21,7 +21,7 @@ struct Inner {
     sessions: RwLock<(AHashMap<u64, Signaler>, AHashMap<PeerId, AHashSet<u64>>)>,
     self_id: PeerId,
     network: Network,
-    on_dont_have_timeout: Arc<dyn DontHaveTimeout>,
+    on_dont_have_timeout: RwLock<Arc<dyn DontHaveTimeout>>,
 }
 
 impl Debug for Inner {
@@ -45,6 +45,13 @@ impl PeerManager {
         Self::with_cb(self_id, network, |_: &PeerId, _: &[Cid]| {})
     }
 
+    pub fn set_cb<F>(&self, on_dont_have_timeout: F)
+    where
+        F: DontHaveTimeout,
+    {
+        *self.inner.on_dont_have_timeout.write().unwrap() = Arc::new(on_dont_have_timeout);
+    }
+
     pub fn with_cb<F>(self_id: PeerId, network: Network, on_dont_have_timeout: F) -> Self
     where
         F: DontHaveTimeout,
@@ -55,7 +62,7 @@ impl PeerManager {
                 sessions: Default::default(),
                 self_id,
                 network,
-                on_dont_have_timeout: Arc::new(on_dont_have_timeout),
+                on_dont_have_timeout: RwLock::new(Arc::new(on_dont_have_timeout)),
             }),
         }
     }
@@ -77,7 +84,7 @@ impl PeerManager {
             MessageQueue::new(
                 *peer,
                 self.inner.network.clone(),
-                self.inner.on_dont_have_timeout.clone(),
+                self.inner.on_dont_have_timeout.read().unwrap().clone(),
             )
         });
 

@@ -64,6 +64,7 @@ pub enum HandlerEvent {
     Message {
         /// The Bitswap message.
         message: BitswapMessage,
+        protocol: ProtocolId,
     },
     Connected {
         protocol: ProtocolId,

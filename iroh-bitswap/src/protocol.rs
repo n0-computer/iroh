@@ -165,7 +165,10 @@ impl Decoder for BitswapCodec {
 
         let message = BitswapMessage::try_from(packet.freeze())?;
 
-        Ok(Some(HandlerEvent::Message { message }))
+        Ok(Some(HandlerEvent::Message {
+            message,
+            protocol: self.protocol,
+        }))
     }
 }
 

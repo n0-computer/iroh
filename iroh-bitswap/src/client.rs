@@ -87,14 +87,6 @@ impl<S: Store> Client<S> {
         let session_interest_manager = SessionInterestManager::new();
         let block_presence_manager = BlockPresenceManager::new();
         let peer_manager = PeerManager::new(self_id, network.clone());
-        // TODO: resolve cycle
-        // let peer_manager = PeerManager::with_cb(
-        //     self_id,
-        //     network.clone(),
-        //     move |peer: &PeerId, dont_haves: &[Cid]| {
-        //         sm.receive_from(peer, &[][..], &[][..], dont_haves)
-        //     },
-        // );
         let provider_query_manager = ProviderQueryManager::new(network.clone());
         let notify = bus::Bus::new(64);
 
@@ -107,6 +99,12 @@ impl<S: Store> Client<S> {
             network.clone(),
             notify.read_handle(),
         );
+        peer_manager.set_cb({
+            let sm = session_manager.clone();
+            move |peer: &PeerId, dont_haves: &[Cid]| {
+                sm.receive_from(Some(*peer), &[][..], &[][..], dont_haves)
+            }
+        });
         let counters = Mutex::new(Stat::default());
 
         Client {

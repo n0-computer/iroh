@@ -1,5 +1,6 @@
 use std::{
     collections::HashSet,
+    sync::Arc,
     task::{Context, Poll},
     time::Duration,
 };
@@ -24,10 +25,14 @@ pub struct Network {
     network_out_receiver: Receiver<OutEvent>,
     network_out_sender: Sender<OutEvent>,
     self_id: PeerId,
+    runtime: Arc<tokio::runtime::Runtime>,
 }
 
 pub enum OutEvent {
-    Dial(PeerId, Sender<std::result::Result<ConnectionId, String>>),
+    Dial(
+        PeerId,
+        Sender<std::result::Result<(ConnectionId, ProtocolId), String>>,
+    ),
     SendMessage {
         peer: PeerId,
         message: BitswapMessage,
@@ -47,12 +52,14 @@ pub enum SendError {
 
 impl Network {
     pub fn new(self_id: PeerId) -> Self {
+        let rt = tokio::runtime::Runtime::new().unwrap();
         let (network_out_sender, network_out_receiver) = crossbeam::channel::bounded(1024);
 
         Network {
             network_out_receiver,
             network_out_sender,
             self_id,
+            runtime: Arc::new(rt),
         }
     }
 
@@ -94,35 +101,45 @@ impl Network {
         timeout: Duration,
         backoff: Duration,
     ) -> Result<()> {
+        debug!("sending message to {}", peer);
         let timeout = crossbeam::channel::after(timeout);
-        let (s, r) = crossbeam::channel::bounded(1);
-        self.network_out_sender
-            .send(OutEvent::SendMessage {
-                peer,
-                message,
-                response: s,
-                connection_id,
-            })
-            .map_err(|e| anyhow!("channel send: {:?}", e))?;
 
-        let mut errors = Vec::new();
+        let mut errors: Vec<anyhow::Error> = Vec::new();
         for i in 0..retries {
+            debug!("try {}/{}", i, retries);
+            let (s, r) = crossbeam::channel::bounded(1);
+            self.network_out_sender
+                .send(OutEvent::SendMessage {
+                    peer,
+                    message: message.clone(),
+                    response: s,
+                    connection_id,
+                })
+                .map_err(|e| anyhow!("channel send failed: {:?}", e))?;
+
             crossbeam::channel::select! {
                 recv(timeout) -> _ => {
                     bail!("timeout");
                 }
                 recv(r) -> res => {
-                    let res = res?;
                     match res {
-                        Ok(res) => {
+                        Ok(Ok(res)) => {
                             return Ok(res);
                         }
-                        err @ Err(SendError::ProtocolNotSupported) => {
-                            return err.map_err(Into::into);
+                        Ok(Err(SendError::ProtocolNotSupported)) => {
+                            return Err(SendError::ProtocolNotSupported.into())
                         }
-                        Err(other) => {
+                        Err(channel_err) => {
+                            debug!("try {}/{} failed with: {:?}", i, retries, channel_err);
+                            errors.push(channel_err.into());
+                            if i < retries - 1 {
+                                // backoff until we retry
+                                std::thread::sleep(backoff);
+                            }
+                        }
+                        Ok(Err(other)) => {
                             debug!("try {}/{} failed with: {:?}", i, retries, other);
-                            errors.push(other);
+                            errors.push(other.into());
                             if i < retries - 1 {
                                 // backoff until we retry
                                 std::thread::sleep(backoff);
@@ -150,8 +167,8 @@ impl Network {
             .map_err(|e| anyhow!("channel send: {:?}", e))?;
 
         // Sad face. Adapter into async world.
+        let rt = self.runtime.clone();
         std::thread::spawn(move || {
-            let rt = tokio::runtime::Runtime::new().unwrap();
             rt.block_on(async move {
                 while let Some(res) = r_tokio.recv().await {
                     if s.send(res).is_err() {
@@ -164,7 +181,7 @@ impl Network {
         Ok(r)
     }
 
-    pub fn dial(&self, peer: PeerId, timeout: Duration) -> Result<ConnectionId> {
+    pub fn dial(&self, peer: PeerId, timeout: Duration) -> Result<(ConnectionId, ProtocolId)> {
         let timeout_r = crossbeam::channel::after(timeout);
         let (s, r) = crossbeam::channel::bounded(1);
         self.network_out_sender
@@ -187,14 +204,14 @@ impl Network {
         to: PeerId,
         config: MessageSenderConfig,
     ) -> Result<MessageSender> {
-        let connection_id = self.dial(to, CONNECT_TIMEOUT)?;
+        let (connection_id, protocol_id) = self.dial(to, CONNECT_TIMEOUT)?;
 
         Ok(MessageSender {
             to,
             config,
             network: self.clone(),
             connection_id,
-            protocol_id: None,
+            protocol_id,
         })
     }
 
@@ -285,14 +302,12 @@ pub struct MessageSender {
     network: Network,
     config: MessageSenderConfig,
     connection_id: ConnectionId,
-    protocol_id: Option<ProtocolId>,
+    protocol_id: ProtocolId,
 }
 
 impl MessageSender {
     pub fn supports_have(&self) -> bool {
-        self.protocol_id
-            .map(|p| p.supports_have())
-            .unwrap_or_default()
+        self.protocol_id.supports_have()
     }
 
     pub fn send_message(&self, message: BitswapMessage) -> Result<()> {

@@ -131,11 +131,6 @@ impl SessionInterestManager {
     ) -> (Vec<&'a Block>, Vec<&'a Block>) {
         let wants = &*self.wants.read().unwrap();
 
-        dbg!(&wants);
-        for (cid, ws) in wants {
-            println!("wanting {}: {:?}", cid, ws);
-        }
-
         // Get the wanted bock keys as a set
         let mut wanted_keys = AHashSet::new();
         for block in blocks {
