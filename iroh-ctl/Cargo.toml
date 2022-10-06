@@ -43,6 +43,8 @@ trycmd = "0.13.7"
 iroh = { path = "../iroh", features = ["testing"] }
 # this is a workaround for enabling features only during testing: 
 # https://github.com/DesmondWillowbrook/cargo-optional-features-for-testing-and-examples
+# This is needed to have trycmd invoke a version of the iroh CLI in testing
+# mode. trycmd needs to have an actual binary to invoke.
 # Unfortunately this also turns on the feature during development, which may be
 # confusing. See the comments in `run.rs` surrounding this.
 iroh-ctl = { path = ".", features = ["testing"] }
