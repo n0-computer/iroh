@@ -11,7 +11,6 @@ use crate::{
     store_cli::{run_command as run_store_command, Store},
 };
 use anyhow::Result;
-/// CLI arguments support.
 use clap::{Parser, Subcommand};
 use iroh::{Api, Iroh};
 use iroh_metrics::config::Config as MetricsConfig;
