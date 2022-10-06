@@ -80,15 +80,16 @@ impl Cli {
         self.run_impl().await
     }
 
+    // this version of the CLI runs in testing mode only
     #[cfg(feature = "testing")]
     pub async fn run(&self) -> Result<()> {
         let api = get_fixture_api();
         self.cli_command(&api).await
     }
 
-    // extracted this into function and marked it `allow[unused]` so that we don't get
-    // Rust analyzer unused code warnings, which we do get if we inline
-    // this code inside of run.
+    // this is a separate function and marked `allow[unused]` so
+    // that we don't get Rust analyzer unused code warnings, which we do get if
+    // we inline this code inside of run.
     #[allow(unused)]
     async fn run_impl(&self) -> Result<()> {
         let cfg_path = iroh_config_path(CONFIG_FILE_NAME)?;
