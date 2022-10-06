@@ -124,7 +124,7 @@ impl Cli {
     async fn cli_command(&self, api: &impl Api) -> Result<()> {
         match &self.command {
             Commands::Status { watch } => {
-                crate::status::status(api, *watch).await?;
+                iroh_one::status::status(api, *watch).await?;
             }
             Commands::Version => {
                 println!("v{}", env!("CARGO_PKG_VERSION"));
