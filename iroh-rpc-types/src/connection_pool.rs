@@ -25,6 +25,7 @@ impl TonicConnectionPool {
         let pool = bb8::Pool::builder()
             .max_size(max_conns)
             .build(manager)
+            .await
             .unwrap();
         Ok(Self { inner: pool })
     }
@@ -92,20 +93,26 @@ impl Service<tonic::codegen::http::Request<BoxBody>> for TonicConnectionPool {
     }
 
     fn call(&mut self, request: tonic::codegen::http::Request<BoxBody>) -> Self::Future {
-        // TODO: async
+        let this = self.clone();
         // TODO: error handling
-        let h = tokio::spawn(async move {
-            let conn = &mut *self.inner.get().await.unwrap();
-            let inner = Service::call(conn, request);
+        let fut = Box::pin(async move {
+            let conn = &mut *this.inner.get().await.unwrap();
+            Service::call(conn, request).await
+        }); // TODO: avoid box
 
-            ResponseFuture { inner }
-        });
-        ResponseFuture { inner: h }
+        ResponseFuture { inner: fut }
     }
 }
 
 pub struct ResponseFuture {
-    inner: tonic::transport::channel::ResponseFuture,
+    inner: Pin<
+        Box<
+            dyn Future<
+                    Output = Result<tonic::codegen::http::Response<Body>, tonic::transport::Error>,
+                > + Send
+                + 'static,
+        >,
+    >,
 }
 
 impl Future for ResponseFuture {
