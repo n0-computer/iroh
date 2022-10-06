@@ -7,7 +7,7 @@ use iroh_gateway::{bad_bits::BadBits, core::Core, metrics};
 #[cfg(feature = "uds-gateway")]
 use iroh_one::uds;
 use iroh_one::{
-    cli::Args,
+    cli::{Args, Cli, Commands},
     config_one::{Config, CONFIG_FILE_NAME, ENV_PREFIX},
 };
 use iroh_rpc_client::Client as RpcClient;
@@ -20,8 +20,14 @@ use tracing::{debug, error};
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<()> {
-    let args = Args::parse();
+    let cli = Cli::parse();
 
+    match cli.command {
+        Commands::Start(args) => run_start_command(args).await,
+    }
+}
+
+async fn run_start_command(args: Args) -> Result<()> {
     let cfg_path = iroh_config_path(CONFIG_FILE_NAME)?;
     let sources = vec![Some(cfg_path), args.cfg.clone()];
     let mut config = make_config(

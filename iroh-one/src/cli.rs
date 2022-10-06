@@ -1,7 +1,19 @@
 /// CLI arguments support.
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use std::collections::HashMap;
 use std::path::PathBuf;
+
+#[derive(Parser, Debug, Clone)]
+#[clap(version, about, long_about = None, propagate_version = true)]
+pub struct Cli {
+    #[clap(subcommand)]
+    pub command: Commands,
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum Commands {
+    Start(Args),
+}
 
 #[derive(Parser, Debug, Clone)]
 #[clap(author, version, about, long_about = None)]
