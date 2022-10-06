@@ -522,19 +522,22 @@ fn load_next_node<T: ContentLoader + 'static>(
     loader: T,
 ) -> bool {
     // Load next node
-    if current_links.is_empty() {
-        // no links left we are done
-        return true;
-    }
-    if current_links.last().unwrap().is_empty() {
-        // remove emtpy
-        current_links.pop();
-    }
 
-    let links = current_links.last_mut().unwrap();
-    if links.is_empty() {
-        return true;
-    }
+    // find non empty links
+    let links = loop {
+        if let Some(last_mut) = current_links.last_mut() {
+            if last_mut.is_empty() {
+                // ignore empty links
+                current_links.pop();
+            } else {
+                // found non empty links
+                break last_mut;
+            }
+        } else {
+            // no links left we are done
+            return true;
+        }
+    };
 
     let link = links.pop_front().unwrap();
 

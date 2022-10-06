@@ -682,7 +682,6 @@ mod tests {
     }
 
     // test is ignored because it currently fails
-    #[ignore]
     #[tokio::test]
     async fn test_builder_roundtrip_complex_tree_1() -> Result<()> {
         // fill with random data so we get distinct cids for all blocks
@@ -709,7 +708,6 @@ mod tests {
     }
 
     // test is ignored because it currently fails
-    #[ignore]
     #[tokio::test]
     async fn test_builder_roundtrip_128m() -> Result<()> {
         // fill with random data so we get distinct cids for all blocks
