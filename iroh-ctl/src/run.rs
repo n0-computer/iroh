@@ -86,10 +86,11 @@ impl Cli {
         self.cli_command(&api).await
     }
 
-    // extracted this into function and marked it `pub` so that we don't get
+    // extracted this into function and marked it `allow[unused]` so that we don't get
     // Rust analyzer unused code warnings, which we do get if we inline
-    // this code inside of run. `pub(crate)` unfortunately has the same effect.
-    pub async fn run_impl(&self) -> Result<()> {
+    // this code inside of run.
+    #[allow(unused)]
+    async fn run_impl(&self) -> Result<()> {
         let cfg_path = iroh_config_path(CONFIG_FILE_NAME)?;
         let sources = vec![Some(cfg_path), self.cfg.clone()];
         let config = make_config(
