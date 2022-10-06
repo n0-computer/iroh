@@ -93,11 +93,12 @@ impl Service<tonic::codegen::http::Request<BoxBody>> for TonicConnectionPool {
     }
 
     fn call(&mut self, request: tonic::codegen::http::Request<BoxBody>) -> Self::Future {
-        let this = self.clone();
+        let this = self.inner.clone();
+        let inner = std::mem::replace(&mut self.inner, this);
         // TODO: error handling
         let fut = Box::pin(async move {
-            let conn = &mut *this.inner.get().await.unwrap();
-            Service::call(conn, request).await
+            let mut conn = inner.get().await.unwrap();
+            Service::call(&mut *conn, request).await
         }); // TODO: avoid box
 
         ResponseFuture { inner: fut }
