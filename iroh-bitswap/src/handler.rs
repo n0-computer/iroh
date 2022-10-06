@@ -7,7 +7,6 @@ use std::{
 };
 
 use asynchronous_codec::Framed;
-use crossbeam::channel::Sender;
 use futures::prelude::*;
 use futures::StreamExt;
 use iroh_metrics::{bitswap::BitswapMetrics, core::MRecorder, inc};
@@ -19,6 +18,7 @@ use libp2p::swarm::{
     NegotiatedSubstream, SubstreamProtocol,
 };
 use smallvec::SmallVec;
+use tokio::sync::oneshot;
 use tracing::{error, trace, warn};
 
 use crate::{
@@ -72,10 +72,10 @@ pub enum HandlerEvent {
     ProtocolNotSuppported,
 }
 
-type BitswapMessageResponse = Sender<Result<(), network::SendError>>;
+type BitswapMessageResponse = oneshot::Sender<Result<(), network::SendError>>;
 
 /// A message sent from the behaviour to the handler.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum BitswapHandlerIn {
     /// A bitswap message to send.
     Message(BitswapMessage, BitswapMessageResponse),

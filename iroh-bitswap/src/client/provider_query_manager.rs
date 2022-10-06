@@ -69,7 +69,7 @@ impl ProviderQueryManager {
                                                             Some(Ok(providers)) => {
                                                                 // TODO: parallelize?
                                                                 for provider in providers {
-                                                                    if network.dial(provider, find_provider_timeout).is_ok() {
+                                                                    if network.dial(provider, find_provider_timeout).await.is_ok() {
                                                                         if let Err(err) = response.send(Ok(provider)).await {
                                                                             warn!("response channel error: {:?}", err);
                                                                             break;

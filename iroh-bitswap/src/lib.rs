@@ -11,7 +11,6 @@ use ahash::AHashMap;
 use anyhow::Result;
 use async_trait::async_trait;
 use cid::Cid;
-use crossbeam::channel::Sender;
 use futures::future::BoxFuture;
 use futures::stream::FuturesUnordered;
 use futures::{FutureExt, StreamExt};
@@ -54,7 +53,10 @@ pub struct Bitswap<S: Store> {
     protocol_config: ProtocolConfig,
     idle_timeout: Duration,
     peers: AHashMap<PeerId, PeerState>,
-    dials: AHashMap<PeerId, Vec<Sender<std::result::Result<(ConnectionId, ProtocolId), String>>>>,
+    dials: AHashMap<
+        PeerId,
+        Vec<oneshot::Sender<std::result::Result<(ConnectionId, ProtocolId), String>>>,
+    >,
     client: Client<S>,
     server: Server<S>,
     futures: FuturesUnordered<BoxFuture<'static, ()>>,
@@ -288,11 +290,10 @@ impl<S: Store> NetworkBehaviour for Bitswap<S> {
         connection: &ConnectionId,
         _endpoint: &ConnectedPoint,
         _failed_addresses: Option<&Vec<Multiaddr>>,
-        _other_established: usize,
+        other_established: usize,
     ) {
-        debug!("connection established {}", peer_id);
-        if matches!(self.get_peer_state(peer_id), PeerState::Responsive(_, _)) {
-            return;
+        if other_established == 0 {
+            // debug!("connection established {}", peer_id);
         }
     }
 
@@ -304,8 +305,8 @@ impl<S: Store> NetworkBehaviour for Bitswap<S> {
         _handler: <Self::ConnectionHandler as IntoConnectionHandler>::Handler,
         remaining_established: usize,
     ) {
-        debug!("connection closed {}", peer_id);
         if remaining_established == 0 {
+            // debug!("connection closed {}", peer_id);
             if self.get_peer_state(peer_id) == PeerState::Disconnected {
                 return;
             }

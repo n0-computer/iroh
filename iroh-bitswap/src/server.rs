@@ -319,7 +319,7 @@ async fn send_blocks(network: &Network, envelope: Envelope) {
         work_signal,
     } = envelope;
 
-    if let Err(err) = network.send_message(peer, message) {
+    if let Err(err) = network.send_message(peer, message).await {
         debug!("failed to send message {}: {:?}", peer, err);
     }
 

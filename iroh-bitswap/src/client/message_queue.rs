@@ -12,7 +12,7 @@ use tokio::{
     sync::{mpsc, Mutex},
     task::JoinHandle,
 };
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::{
     message::{BitswapMessage, Entry, WantType},
@@ -248,10 +248,10 @@ impl MessageQueue {
                                 work_scheduled = None;
                             } else {
                                 // Extend the timer
-                                Pin::set(&mut schedule_work, tokio::time::sleep(send_message_debounce));
+                                schedule_work.as_mut().reset(tokio::time::Instant::now() + send_message_debounce);
                             }
                     }
-                    _ = &mut schedule_work => {
+                    _ = &mut schedule_work, if work_scheduled.is_some() => {
                         work_scheduled = None;
                         send_if_ready(
                             &wants,
@@ -469,7 +469,10 @@ async fn send_message(
     peer: PeerId,
 ) {
     if sender.is_none() {
-        match network.new_message_sender(peer, msg_sender_config.clone()) {
+        match network
+            .new_message_sender(peer, msg_sender_config.clone())
+            .await
+        {
             Ok(s) => *sender = Some(s),
             Err(err) => {
                 error!("failed to dial, unable to send message: {:?}", err);
@@ -486,7 +489,7 @@ async fn send_message(
     }
 
     let wantlist: Vec<_> = msg.wantlist().cloned().collect();
-    if let Err(err) = sender.send_message(msg) {
+    if let Err(err) = sender.send_message(msg).await {
         warn!("failed to send message {:?}", err);
         closer.send(()).await.ok();
         return;
@@ -543,6 +546,7 @@ async fn send_if_ready(
     msg_sender_config: &MessageSenderConfig,
     peer: PeerId,
 ) {
+    debug!("send if ready {}", peer);
     if wants.lock().await.has_pending_work() {
         send_message(
             wants,

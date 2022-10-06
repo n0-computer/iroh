@@ -30,12 +30,12 @@ pub struct Network {
 pub enum OutEvent {
     Dial(
         PeerId,
-        Sender<std::result::Result<(ConnectionId, ProtocolId), String>>,
+        oneshot::Sender<std::result::Result<(ConnectionId, ProtocolId), String>>,
     ),
     SendMessage {
         peer: PeerId,
         message: BitswapMessage,
-        response: Sender<std::result::Result<(), SendError>>,
+        response: oneshot::Sender<std::result::Result<(), SendError>>,
         connection_id: Option<ConnectionId>,
     },
     GenerateEvent(BitswapEvent),
@@ -85,7 +85,7 @@ impl Network {
         // nothing to do yet
     }
 
-    pub fn send_message_with_retry_and_timeout(
+    pub async fn send_message_with_retry_and_timeout(
         &self,
         peer: PeerId,
         connection_id: Option<ConnectionId>,
@@ -95,55 +95,50 @@ impl Network {
         backoff: Duration,
     ) -> Result<()> {
         debug!("sending message to {}", peer);
-        let timeout = crossbeam::channel::after(timeout);
+        let res = tokio::time::timeout(timeout, async {
+            let mut errors: Vec<anyhow::Error> = Vec::new();
+            for i in 0..retries {
+                debug!("try {}/{}", i, retries);
+                let (s, r) = oneshot::channel();
+                self.network_out_sender
+                    .send(OutEvent::SendMessage {
+                        peer,
+                        message: message.clone(),
+                        response: s,
+                        connection_id,
+                    })
+                    .map_err(|e| anyhow!("channel send failed: {:?}", e))?;
 
-        let mut errors: Vec<anyhow::Error> = Vec::new();
-        for i in 0..retries {
-            debug!("try {}/{}", i, retries);
-            let (s, r) = crossbeam::channel::bounded(1);
-            self.network_out_sender
-                .send(OutEvent::SendMessage {
-                    peer,
-                    message: message.clone(),
-                    response: s,
-                    connection_id,
-                })
-                .map_err(|e| anyhow!("channel send failed: {:?}", e))?;
-
-            crossbeam::channel::select! {
-                recv(timeout) -> _ => {
-                    bail!("timeout");
-                }
-                recv(r) -> res => {
-                    match res {
-                        Ok(Ok(res)) => {
-                            return Ok(res);
+                match r.await {
+                    Ok(Ok(res)) => {
+                        return Ok(res);
+                    }
+                    Ok(Err(SendError::ProtocolNotSupported)) => {
+                        return Err(SendError::ProtocolNotSupported.into())
+                    }
+                    Err(channel_err) => {
+                        debug!("try {}/{} failed with: {:?}", i, retries, channel_err);
+                        errors.push(channel_err.into());
+                        if i < retries - 1 {
+                            // backoff until we retry
+                            tokio::time::sleep(backoff).await;
                         }
-                        Ok(Err(SendError::ProtocolNotSupported)) => {
-                            return Err(SendError::ProtocolNotSupported.into())
-                        }
-                        Err(channel_err) => {
-                            debug!("try {}/{} failed with: {:?}", i, retries, channel_err);
-                            errors.push(channel_err.into());
-                            if i < retries - 1 {
-                                // backoff until we retry
-                                std::thread::sleep(backoff);
-                            }
-                        }
-                        Ok(Err(other)) => {
-                            debug!("try {}/{} failed with: {:?}", i, retries, other);
-                            errors.push(other.into());
-                            if i < retries - 1 {
-                                // backoff until we retry
-                                std::thread::sleep(backoff);
-                            }
+                    }
+                    Ok(Err(other)) => {
+                        debug!("try {}/{} failed with: {:?}", i, retries, other);
+                        errors.push(other.into());
+                        if i < retries - 1 {
+                            // backoff until we retry
+                            tokio::time::sleep(backoff).await;
                         }
                     }
                 }
             }
-        }
+            bail!("Failed to send message to {}: {:?}", peer, errors);
+        })
+        .await??;
 
-        bail!("Failed to send message to {}: {:?}", peer, errors);
+        Ok(res)
     }
 
     pub fn find_providers(
@@ -161,30 +156,31 @@ impl Network {
         Ok(r)
     }
 
-    pub fn dial(&self, peer: PeerId, timeout: Duration) -> Result<(ConnectionId, ProtocolId)> {
-        let timeout_r = crossbeam::channel::after(timeout);
-        let (s, r) = crossbeam::channel::bounded(1);
-        self.network_out_sender
-            .send(OutEvent::Dial(peer, s))
-            .map_err(|e| anyhow!("channel send: {:?}", e))?;
+    pub async fn dial(
+        &self,
+        peer: PeerId,
+        timeout: Duration,
+    ) -> Result<(ConnectionId, ProtocolId)> {
+        let res = tokio::time::timeout(timeout, async move {
+            let (s, r) = oneshot::channel();
+            self.network_out_sender
+                .send(OutEvent::Dial(peer, s))
+                .map_err(|e| anyhow!("channel send: {:?}", e))?;
 
-        crossbeam::channel::select! {
-            recv(timeout_r) -> _ => {
-                bail!("Dialing {} timeout ({}s)", peer, timeout.as_secs_f32());
-            }
-            recv(r) -> res => {
-                let res = res?.map_err(|e| anyhow!("Dial Error: {}", e))?;
-                Ok(res)
-            }
-        }
+            let res = r.await?.map_err(|e| anyhow!("Dial Error: {}", e))?;
+            Ok::<_, anyhow::Error>(res)
+        })
+        .await??;
+
+        Ok(res)
     }
 
-    pub fn new_message_sender(
+    pub async fn new_message_sender(
         &self,
         to: PeerId,
         config: MessageSenderConfig,
     ) -> Result<MessageSender> {
-        let (connection_id, protocol_id) = self.dial(to, CONNECT_TIMEOUT)?;
+        let (connection_id, protocol_id) = self.dial(to, CONNECT_TIMEOUT).await?;
 
         Ok(MessageSender {
             to,
@@ -195,8 +191,8 @@ impl Network {
         })
     }
 
-    pub fn send_message(&self, peer: PeerId, message: BitswapMessage) -> Result<()> {
-        self.dial(peer, CONNECT_TIMEOUT)?;
+    pub async fn send_message(&self, peer: PeerId, message: BitswapMessage) -> Result<()> {
+        self.dial(peer, CONNECT_TIMEOUT).await?;
         let timeout = send_timeout(message.encoded_len());
         self.send_message_with_retry_and_timeout(
             peer,
@@ -206,6 +202,7 @@ impl Network {
             timeout,
             Duration::from_millis(0),
         )
+        .await
     }
 
     pub fn provide(&self, key: Cid) -> Result<()> {
@@ -290,14 +287,16 @@ impl MessageSender {
         self.protocol_id.supports_have()
     }
 
-    pub fn send_message(&self, message: BitswapMessage) -> Result<()> {
-        self.network.send_message_with_retry_and_timeout(
-            self.to,
-            Some(self.connection_id),
-            message,
-            self.config.max_retries,
-            self.config.send_timeout,
-            self.config.send_error_backoff,
-        )
+    pub async fn send_message(&self, message: BitswapMessage) -> Result<()> {
+        self.network
+            .send_message_with_retry_and_timeout(
+                self.to,
+                Some(self.connection_id),
+                message,
+                self.config.max_retries,
+                self.config.send_timeout,
+                self.config.send_error_backoff,
+            )
+            .await
     }
 }

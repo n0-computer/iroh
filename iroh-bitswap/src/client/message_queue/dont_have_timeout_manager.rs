@@ -13,7 +13,7 @@ use tokio::{
     sync::{oneshot, Mutex},
     task::JoinHandle,
 };
-use tracing::warn;
+use tracing::{debug, warn};
 
 use crate::{client::peer_manager::DontHaveTimeout, network::Network};
 
@@ -100,8 +100,6 @@ impl DontHaveTimeoutManager {
         let rt = tokio::runtime::Handle::current();
         let worker = rt.spawn(async move {
             let inner = i;
-            let delay = tokio::time::sleep(DONT_HAVE_TIMEOUT);
-            tokio::pin!(delay);
 
             tokio::select! {
                 ping = network.ping(&target) => {
@@ -132,6 +130,9 @@ impl DontHaveTimeoutManager {
                 }
             }
 
+            let delay = tokio::time::sleep(DONT_HAVE_TIMEOUT);
+            tokio::pin!(delay);
+
             loop {
                 tokio::select! {
                     _ = &mut closer_r => {
@@ -140,12 +141,14 @@ impl DontHaveTimeoutManager {
                     }
                     _ = trigger_r.recv() => {
                         if let Some(next) = inner.lock().await.check_for_timeouts().await {
-                            Pin::set(&mut delay, tokio::time::sleep(next));
+                            delay.as_mut().reset(tokio::time::Instant::now() + next);
                         }
                     }
                     _ = &mut delay => {
                         if let Some(next) = inner.lock().await.check_for_timeouts().await {
-                            Pin::set(&mut delay, tokio::time::sleep(next));
+                            delay.as_mut().reset(tokio::time::Instant::now() + next);
+                        } else {
+                            delay.as_mut().reset(tokio::time::Instant::now() + Duration::from_secs(60 * 5));
                         }
                     }
                 }
@@ -163,7 +166,6 @@ impl DontHaveTimeoutManager {
     }
 
     pub async fn stop(self) -> Result<()> {
-        println!("stopping dhtmgr {}", Arc::strong_count(&self.inner));
         let (closer, worker) = Arc::try_unwrap(self.worker)
             .map_err(|_| anyhow!("dont have timeout manager (worker) refs not shutdown"))?;
         closer
@@ -241,6 +243,7 @@ impl DontHaveTimeoutManager {
 impl Inner {
     /// Checks pending wants to see if any are over the timeout.
     async fn check_for_timeouts(&mut self) -> Option<Duration> {
+        debug!("check_for_timeouts: {}", self.target);
         if self.want_queue.is_empty() {
             return None;
         }
@@ -276,6 +279,7 @@ impl Inner {
             // TODO: verify this is  correct
             let until = (oldest_start + self.timeout) - Instant::now();
 
+            debug!("next timeout {}s", until.as_secs_f32());
             return Some(until);
         }
 
