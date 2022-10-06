@@ -1,14 +1,11 @@
 //! Based on https://github.com/ipfs/go-peertaskqueue.
 
-use std::{
-    fmt::Debug,
-    sync::{Arc, Mutex},
-};
+use std::{fmt::Debug, sync::Arc};
 
 use ahash::AHashSet;
-use crossbeam::channel::{Receiver, Sender};
 use keyed_priority_queue::{Entry, KeyedPriorityQueue};
 use libp2p::PeerId;
+use tokio::sync::Mutex;
 
 mod peer_task;
 mod peer_tracker;
@@ -47,7 +44,7 @@ struct Inner<T: Topic, D: Data, TM: TaskMerger<T, D>> {
     ignore_freezing: bool,
     task_merger: TM,
     max_outstanding_work_per_peer: usize,
-    hooks: Vec<Sender<Event>>,
+    hooks: Vec<async_channel::Sender<Event>>,
 }
 
 #[derive(Debug, Clone)]
@@ -89,17 +86,17 @@ impl<T: Topic, D: Data, TM: TaskMerger<T, D>> PeerTaskQueue<T, D, TM> {
     }
 
     /// Adds a hook to be notified on `Event`s.
-    pub fn add_hook(&self, cap: usize) -> Receiver<Event> {
-        let (s, r) = crossbeam::channel::bounded(cap);
-        let mut this = self.inner.lock().unwrap();
+    pub async fn add_hook(&self, cap: usize) -> async_channel::Receiver<Event> {
+        let (s, r) = async_channel::bounded(cap);
+        let mut this = self.inner.lock().await;
         this.hooks.push(s);
 
         r
     }
 
     /// Returns stats about the queue.
-    pub fn stats(&self) -> Stats {
-        let this = self.inner.lock().unwrap();
+    pub async fn stats(&self) -> Stats {
+        let this = self.inner.lock().await;
         let mut stats = Stats {
             num_peers: this.peer_queue.len(),
             num_active: 0,
@@ -116,8 +113,8 @@ impl<T: Topic, D: Data, TM: TaskMerger<T, D>> PeerTaskQueue<T, D, TM> {
     }
 
     /// List all topics for a specific peer
-    pub fn peer_topics(&self, peer: &PeerId) -> Option<Topics<T>> {
-        let mut this = self.inner.lock().unwrap();
+    pub async fn peer_topics(&self, peer: &PeerId) -> Option<Topics<T>> {
+        let mut this = self.inner.lock().await;
         if let Entry::Occupied(tracker) = this.peer_queue.entry(*peer) {
             let tracker = tracker.get_priority();
             return Some(tracker.topics());
@@ -127,8 +124,8 @@ impl<T: Topic, D: Data, TM: TaskMerger<T, D>> PeerTaskQueue<T, D, TM> {
     }
 
     /// Adds a new group of tasks for the given peer to the queue.
-    pub fn push_tasks(&self, peer: PeerId, tasks: Vec<Task<T, D>>) {
-        let mut this = self.inner.lock().unwrap();
+    pub async fn push_tasks(&self, peer: PeerId, tasks: Vec<Task<T, D>>) {
+        let mut this = self.inner.lock().await;
 
         let mut peer_tracker = match this.peer_queue.remove(&peer) {
             Some(peer_tracker) => peer_tracker,
@@ -138,7 +135,7 @@ impl<T: Topic, D: Data, TM: TaskMerger<T, D>> PeerTaskQueue<T, D, TM> {
                     this.task_merger.clone(),
                     this.max_outstanding_work_per_peer,
                 );
-                this.call_hook(Event::PeerAdded(peer));
+                this.call_hook(Event::PeerAdded(peer)).await;
                 peer_tracker
             }
         };
@@ -147,8 +144,8 @@ impl<T: Topic, D: Data, TM: TaskMerger<T, D>> PeerTaskQueue<T, D, TM> {
         this.peer_queue.push(peer, peer_tracker);
     }
 
-    pub fn push_task(&self, peer: PeerId, task: Task<T, D>) {
-        self.push_tasks(peer, vec![task]);
+    pub async fn push_task(&self, peer: PeerId, task: Task<T, D>) {
+        self.push_tasks(peer, vec![task]).await;
     }
 
     /// Finds the peer with the highest priority and pops as many tasks
@@ -163,9 +160,11 @@ impl<T: Topic, D: Data, TM: TaskMerger<T, D>> PeerTaskQueue<T, D, TM> {
     ///
     /// The third response argument is pending work: the amount of work in the
     /// queue for this peer.
-    pub fn pop_tasks(&self, target_min_work: usize) -> Option<(PeerId, Vec<Task<T, D>>, usize)> {
-        let mut this = self.inner.lock().unwrap();
-
+    pub async fn pop_tasks(
+        &self,
+        target_min_work: usize,
+    ) -> Option<(PeerId, Vec<Task<T, D>>, usize)> {
+        let mut this = self.inner.lock().await;
         let (peer, mut peer_tracker) = this.peer_queue.pop()?;
         let out = peer_tracker.pop_tasks(target_min_work);
         let pending_work = peer_tracker.get_pending_work();
@@ -173,7 +172,7 @@ impl<T: Topic, D: Data, TM: TaskMerger<T, D>> PeerTaskQueue<T, D, TM> {
         if peer_tracker.is_idle() {
             // Cleanup if no more tasks
             this.frozen_peers.remove(&peer);
-            this.call_hook(Event::PeerRemoved(peer));
+            this.call_hook(Event::PeerRemoved(peer)).await;
         } else {
             // otherwise, reinsert updated tracker
             this.peer_queue.push(peer, peer_tracker);
@@ -183,8 +182,8 @@ impl<T: Topic, D: Data, TM: TaskMerger<T, D>> PeerTaskQueue<T, D, TM> {
     }
 
     /// Called to indicate that the given tasks have completed.
-    pub fn tasks_done(&self, peer: PeerId, tasks: &[Task<T, D>]) {
-        let mut this = self.inner.lock().unwrap();
+    pub async fn tasks_done(&self, peer: PeerId, tasks: &[Task<T, D>]) {
+        let mut this = self.inner.lock().await;
 
         match this.peer_queue.remove(&peer) {
             Some(mut peer_tracker) => {
@@ -201,8 +200,8 @@ impl<T: Topic, D: Data, TM: TaskMerger<T, D>> PeerTaskQueue<T, D, TM> {
     }
 
     /// Removes a task from the queue
-    pub fn remove(&self, topic: &T, peer: PeerId) {
-        let mut this = self.inner.lock().unwrap();
+    pub async fn remove(&self, topic: &T, peer: PeerId) {
+        let mut this = self.inner.lock().await;
 
         if let Some(mut peer_tracker) = this.peer_queue.remove(&peer) {
             if peer_tracker.remove(topic) {
@@ -220,8 +219,8 @@ impl<T: Topic, D: Data, TM: TaskMerger<T, D>> PeerTaskQueue<T, D, TM> {
     }
 
     /// Completely thaws all peers in the queue so they can execute tasks.
-    pub fn full_thaw(&self) {
-        let mut this = self.inner.lock().unwrap();
+    pub async fn full_thaw(&self) {
+        let mut this = self.inner.lock().await;
         let frozen_peers: Vec<_> = this.frozen_peers.iter().copied().collect();
         for peer in frozen_peers {
             if let Some(mut peer_tracker) = this.peer_queue.remove(&peer) {
@@ -234,8 +233,8 @@ impl<T: Topic, D: Data, TM: TaskMerger<T, D>> PeerTaskQueue<T, D, TM> {
 
     /// Unthaws peers incrementally, so that those have been frozen the least become unfrozen
     /// and able to execute tasks first.
-    pub fn thaw_round(&self) {
-        let mut this = self.inner.lock().unwrap();
+    pub async fn thaw_round(&self) {
+        let mut this = self.inner.lock().await;
 
         let frozen_peers: Vec<_> = this.frozen_peers.iter().copied().collect();
         for peer in frozen_peers {
@@ -250,9 +249,9 @@ impl<T: Topic, D: Data, TM: TaskMerger<T, D>> PeerTaskQueue<T, D, TM> {
 }
 
 impl<T: Topic, D: Data, TM: TaskMerger<T, D>> Inner<T, D, TM> {
-    fn call_hook(&self, event: Event) {
+    async fn call_hook(&self, event: Event) {
         for hook in &self.hooks {
-            hook.send(event.clone()).ok();
+            hook.send(event.clone()).await.ok();
         }
     }
 }
@@ -267,8 +266,8 @@ pub trait Topic:
 impl<T: Sized + Debug + PartialEq + Clone + Eq + PartialOrd + Ord + std::hash::Hash> Topic for T {}
 
 /// Metadata that can be attached to a task.
-pub trait Data: Sized + Debug + Clone + PartialEq + Eq {}
-impl<D: Sized + Debug + Clone + PartialEq + Eq> Data for D {}
+pub trait Data: Sized + Debug + Clone + PartialEq + Eq + Send {}
+impl<D: Sized + Debug + Clone + PartialEq + Eq + Send> Data for D {}
 
 #[cfg(test)]
 mod tests {
@@ -277,8 +276,8 @@ mod tests {
 
     use super::{peer_task::DefaultTaskMerger, *};
 
-    #[test]
-    fn test_push_pop() {
+    #[tokio::test]
+    async fn test_push_pop() {
         let ptq = PeerTaskQueue::<_, _, DefaultTaskMerger>::default();
         let partner = PeerId::random();
         let mut alphabet: Vec<char> = "abcdefghijklmnopqrstuvwxyz".chars().collect();
@@ -310,17 +309,18 @@ mod tests {
                     work: 0,
                     data: (),
                 },
-            );
+            )
+            .await;
         }
 
         for consonant in &consonants {
-            ptq.remove(consonant, partner);
+            ptq.remove(consonant, partner).await;
         }
 
-        ptq.full_thaw();
+        ptq.full_thaw().await;
 
         let mut out = Vec::new();
-        while let Some((_, received, _)) = ptq.pop_tasks(100) {
+        while let Some((_, received, _)) = ptq.pop_tasks(100).await {
             if received.is_empty() {
                 break;
             }
@@ -337,8 +337,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_freeze_unfreeze() {
+    #[tokio::test]
+    async fn test_freeze_unfreeze() {
         let ptq = PeerTaskQueue::<_, _, DefaultTaskMerger>::default();
         let a = PeerId::random();
         let b = PeerId::random();
@@ -353,35 +353,35 @@ mod tests {
                 data: (),
             };
 
-            ptq.push_task(a, task.clone());
-            ptq.push_task(b, task.clone());
-            ptq.push_task(c, task.clone());
-            ptq.push_task(d, task);
+            ptq.push_task(a, task.clone()).await;
+            ptq.push_task(b, task.clone()).await;
+            ptq.push_task(c, task.clone()).await;
+            ptq.push_task(d, task).await;
         }
 
         println!("all four");
-        match_n_tasks(&ptq, 4, &[a, b, c, d][..]);
-        ptq.remove(&1, b);
+        match_n_tasks(&ptq, 4, &[a, b, c, d][..]).await;
+        ptq.remove(&1, b).await;
 
         // b should be frozen
         println!("frozen b");
-        match_n_tasks(&ptq, 3, &[a, c, d][..]);
+        match_n_tasks(&ptq, 3, &[a, c, d][..]).await;
 
-        ptq.thaw_round();
+        ptq.thaw_round().await;
 
         println!("unfrozen b");
-        match_n_tasks(&ptq, 1, &[b][..]);
+        match_n_tasks(&ptq, 1, &[b][..]).await;
 
         // remove non existent task
-        ptq.remove(&9, b);
+        ptq.remove(&9, b).await;
 
         // b should not be frozen
         println!("all four again");
-        match_n_tasks(&ptq, 4, &[a, b, c, d][..]);
+        match_n_tasks(&ptq, 4, &[a, b, c, d][..]).await;
     }
 
-    #[test]
-    fn test_freeze_unfreeze_no_freezing() {
+    #[tokio::test]
+    async fn test_freeze_unfreeze_no_freezing() {
         let config = Config {
             ignore_freezing: true,
             ..Default::default()
@@ -401,21 +401,21 @@ mod tests {
                 data: (),
             };
 
-            ptq.push_task(a, task.clone());
-            ptq.push_task(b, task.clone());
-            ptq.push_task(c, task.clone());
-            ptq.push_task(d, task);
+            ptq.push_task(a, task.clone()).await;
+            ptq.push_task(b, task.clone()).await;
+            ptq.push_task(c, task.clone()).await;
+            ptq.push_task(d, task).await;
         }
 
-        match_n_tasks(&ptq, 4, &[a, b, c, d][..]);
-        ptq.remove(&1, b);
+        match_n_tasks(&ptq, 4, &[a, b, c, d][..]).await;
+        ptq.remove(&1, b).await;
 
         // b should not be frozen
-        match_n_tasks(&ptq, 4, &[a, b, c, d][..]);
+        match_n_tasks(&ptq, 4, &[a, b, c, d][..]).await;
     }
 
-    #[test]
-    fn test_peer_order() {
+    #[tokio::test]
+    async fn test_peer_order() {
         let ptq = PeerTaskQueue::<_, _, DefaultTaskMerger>::default();
         let a = PeerId::random();
         let b = PeerId::random();
@@ -429,7 +429,8 @@ mod tests {
                 priority: 2,
                 data: (),
             },
-        );
+        )
+        .await;
         ptq.push_task(
             a,
             Task {
@@ -438,7 +439,8 @@ mod tests {
                 priority: 1,
                 data: (),
             },
-        );
+        )
+        .await;
 
         ptq.push_task(
             b,
@@ -448,7 +450,8 @@ mod tests {
                 priority: 3,
                 data: (),
             },
-        );
+        )
+        .await;
         ptq.push_task(
             b,
             Task {
@@ -457,7 +460,8 @@ mod tests {
                 priority: 2,
                 data: (),
             },
-        );
+        )
+        .await;
         ptq.push_task(
             b,
             Task {
@@ -466,7 +470,8 @@ mod tests {
                 priority: 1,
                 data: (),
             },
-        );
+        )
+        .await;
 
         ptq.push_task(
             c,
@@ -476,7 +481,8 @@ mod tests {
                 priority: 2,
                 data: (),
             },
-        );
+        )
+        .await;
         ptq.push_task(
             c,
             Task {
@@ -485,14 +491,15 @@ mod tests {
                 priority: 1,
                 data: (),
             },
-        );
+        )
+        .await;
 
         // all peers have nothing in their active so equal of any peer being chosen
 
         let mut peers = Vec::new();
         let mut ids = Vec::new();
         for _i in 0..3 {
-            let (peer, tasks, _) = ptq.pop_tasks(1).unwrap();
+            let (peer, tasks, _) = ptq.pop_tasks(1).await.unwrap();
             peers.push(peer);
             assert_eq!(tasks.len(), 1);
             ids.push(tasks[0].topic);
@@ -506,7 +513,7 @@ mod tests {
         // b: 1            Pending: [3, 1]
         // c: 2            Pending: [2]
         // So next peer should be b (least work in active queue)
-        let (peer, task, pending) = ptq.pop_tasks(1).unwrap();
+        let (peer, task, pending) = ptq.pop_tasks(1).await.unwrap();
         assert_eq!(task.len(), 1);
         assert_eq!(peer, b);
         assert_eq!(task[0].topic, 4);
@@ -517,7 +524,7 @@ mod tests {
         // b: 1 + 3        Pending: [1]
         // c: 2            Pending: [2]
         // So next peer should be c (least work in active queue)
-        let (peer, task, _) = ptq.pop_tasks(1).unwrap();
+        let (peer, task, _) = ptq.pop_tasks(1).await.unwrap();
         assert_eq!(task.len(), 1);
         assert_eq!(peer, c);
         assert_eq!(task[0].topic, 7);
@@ -527,7 +534,7 @@ mod tests {
         // b: 1 + 3        Pending: [1]
         // c: 2 + 2
         // So next peer should be a (least work in active queue)
-        let (peer, task, pending) = ptq.pop_tasks(1).unwrap();
+        let (peer, task, pending) = ptq.pop_tasks(1).await.unwrap();
         assert_eq!(task.len(), 1);
         assert_eq!(peer, a);
         assert_eq!(task[0].topic, 2);
@@ -538,7 +545,7 @@ mod tests {
         // b: 1 + 3        Pending: [1]
         // c: 2 + 2
         // a & c have no more pending tasks, so next peer should be b
-        let (peer, task, pending) = ptq.pop_tasks(1).unwrap();
+        let (peer, task, pending) = ptq.pop_tasks(1).await.unwrap();
         assert_eq!(task.len(), 1);
         assert_eq!(peer, b);
         assert_eq!(task[0].topic, 5);
@@ -549,15 +556,15 @@ mod tests {
         // b: 1 + 3 + 1
         // c: 2 + 2
         // No more pending tasks, so next pop should return nothing
-        let (_peer, task, pending) = ptq.pop_tasks(1).unwrap();
+        let (_peer, task, pending) = ptq.pop_tasks(1).await.unwrap();
         assert!(task.is_empty());
         assert_eq!(pending, 0);
     }
 
-    #[test]
-    fn test_hooks() {
+    #[tokio::test]
+    async fn test_hooks() {
         let ptq = PeerTaskQueue::<_, _, DefaultTaskMerger>::default();
-        let hook = ptq.add_hook(5);
+        let hook = ptq.add_hook(5).await;
 
         let a = PeerId::random();
         let b = PeerId::random();
@@ -570,7 +577,8 @@ mod tests {
                 work: 0,
                 data: (),
             },
-        );
+        )
+        .await;
         ptq.push_task(
             b,
             Task {
@@ -579,25 +587,26 @@ mod tests {
                 work: 0,
                 data: (),
             },
-        );
+        )
+        .await;
 
-        assert_eq!(hook.recv().unwrap(), Event::PeerAdded(a));
-        assert_eq!(hook.recv().unwrap(), Event::PeerAdded(b));
+        assert_eq!(hook.recv().await.unwrap(), Event::PeerAdded(a));
+        assert_eq!(hook.recv().await.unwrap(), Event::PeerAdded(b));
 
-        let (peer, tasks, _) = ptq.pop_tasks(100).unwrap();
-        ptq.tasks_done(peer, &tasks);
-        let (peer, tasks, _) = ptq.pop_tasks(100).unwrap();
-        ptq.tasks_done(peer, &tasks);
-        ptq.pop_tasks(100);
-        ptq.pop_tasks(100);
+        let (peer, tasks, _) = ptq.pop_tasks(100).await.unwrap();
+        ptq.tasks_done(peer, &tasks).await;
+        let (peer, tasks, _) = ptq.pop_tasks(100).await.unwrap();
+        ptq.tasks_done(peer, &tasks).await;
+        ptq.pop_tasks(100).await;
+        ptq.pop_tasks(100).await;
 
-        assert_eq!(hook.recv().unwrap(), Event::PeerRemoved(b));
-        assert_eq!(hook.recv().unwrap(), Event::PeerRemoved(a));
+        assert_eq!(hook.recv().await.unwrap(), Event::PeerRemoved(b));
+        assert_eq!(hook.recv().await.unwrap(), Event::PeerRemoved(a));
         assert!(hook.try_recv().is_err());
     }
 
-    #[test]
-    fn test_cleaning_up() {
+    #[tokio::test]
+    async fn test_cleaning_up() {
         let ptq = PeerTaskQueue::<_, _, DefaultTaskMerger>::default();
         let peer = PeerId::random();
 
@@ -611,31 +620,30 @@ mod tests {
             .collect();
         // push a block, pop a block,  complete eerything, should be removed
 
-        ptq.push_tasks(peer, peer_tasks.clone());
-        let (peer, tasks, _) = ptq.pop_tasks(100).unwrap();
-        ptq.tasks_done(peer, &tasks);
-        let (_, tasks, _) = ptq.pop_tasks(100).unwrap();
+        ptq.push_tasks(peer, peer_tasks.clone()).await;
+        let (peer, tasks, _) = ptq.pop_tasks(100).await.unwrap();
+        ptq.tasks_done(peer, &tasks).await;
+        let (_, tasks, _) = ptq.pop_tasks(100).await.unwrap();
         assert!(tasks.is_empty());
-        assert!(ptq.inner.lock().unwrap().peer_queue.is_empty());
-
+        assert!(ptq.inner.lock().await.peer_queue.is_empty());
         // push a block, remove each of its entries, should be removed
-        ptq.push_tasks(peer, peer_tasks.clone());
+        ptq.push_tasks(peer, peer_tasks.clone()).await;
         for task in peer_tasks {
-            ptq.remove(&task.topic, peer);
+            ptq.remove(&task.topic, peer).await;
         }
-        let (_, tasks, _) = ptq.pop_tasks(100).unwrap();
+        let (_, tasks, _) = ptq.pop_tasks(100).await.unwrap();
         assert!(tasks.is_empty());
-        assert!(ptq.inner.lock().unwrap().peer_queue.is_empty());
+        assert!(ptq.inner.lock().await.peer_queue.is_empty());
     }
 
-    fn match_n_tasks<T: Topic, D: Data, TM: TaskMerger<T, D>>(
+    async fn match_n_tasks<T: Topic, D: Data, TM: TaskMerger<T, D>>(
         ptq: &PeerTaskQueue<T, D, TM>,
         n: usize,
         expected: &[PeerId],
     ) {
         let mut targets = Vec::new();
         for i in 0..n {
-            let (peer, tasks, _) = ptq.pop_tasks(1).unwrap();
+            let (peer, tasks, _) = ptq.pop_tasks(1).await.unwrap();
             assert_eq!(tasks.len(), 1, "task {} did not match: {:?}", i, tasks);
             targets.push(peer);
         }

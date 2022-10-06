@@ -56,7 +56,9 @@ impl<T: Topic, D: Data> QueueTask<T, D> {
 }
 
 /// Trait that is used to merge new tasks into the active and pending queues.
-pub trait TaskMerger<T: Topic, D: Data>: PartialEq + Eq + Clone + std::fmt::Debug {
+pub trait TaskMerger<T: Topic, D: Data>:
+    PartialEq + Eq + Clone + std::fmt::Debug + Send + Sync + 'static
+{
     /// Indicates whether the given task has more information than
     /// the existing group of tasks (which have the same Topic), and thus should be merged.
     fn has_new_info(&self, task_info: &Task<T, D>, existing_tasks: &[Task<T, D>]) -> bool;

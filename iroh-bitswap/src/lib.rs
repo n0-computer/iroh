@@ -12,6 +12,9 @@ use anyhow::Result;
 use async_trait::async_trait;
 use cid::Cid;
 use crossbeam::channel::Sender;
+use futures::future::LocalBoxFuture;
+use futures::stream::FuturesUnordered;
+use futures::{FutureExt, StreamExt};
 use handler::{BitswapHandler, HandlerEvent};
 use libp2p::core::connection::ConnectionId;
 use libp2p::core::ConnectedPoint;
@@ -46,13 +49,14 @@ pub use self::message::Priority;
 
 #[derive(Debug)]
 pub struct Bitswap<S: Store> {
-    client: Client<S>,
-    server: Server<S>,
     network: Network,
     protocol_config: ProtocolConfig,
     idle_timeout: Duration,
     peers: AHashMap<PeerId, PeerState>,
     dials: AHashMap<PeerId, Vec<Sender<std::result::Result<(ConnectionId, ProtocolId), String>>>>,
+    client: Client<S>,
+    server: Server<S>,
+    futures: FuturesUnordered<LocalBoxFuture<'static, ()>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -95,9 +99,9 @@ pub trait Store: Debug + Clone + Send + Sync + 'static {
 }
 
 impl<S: Store> Bitswap<S> {
-    pub fn new(self_id: PeerId, store: S, config: Config) -> Self {
+    pub async fn new(self_id: PeerId, store: S, config: Config) -> Self {
         let network = Network::new(self_id);
-        let server = Server::new(network.clone(), store.clone(), config.server);
+        let server = Server::new(network.clone(), store.clone(), config.server).await;
         let client = Client::new(
             network.clone(),
             store,
@@ -106,13 +110,14 @@ impl<S: Store> Bitswap<S> {
         );
 
         Bitswap {
-            server,
-            client,
             network,
             protocol_config: config.protocol,
             idle_timeout: config.idle_timeout,
             peers: Default::default(),
             dials: Default::default(),
+            server,
+            client,
+            futures: FuturesUnordered::new(),
         }
     }
 
@@ -124,16 +129,16 @@ impl<S: Store> Bitswap<S> {
         &self.client
     }
 
-    pub fn close(self) -> Result<()> {
+    pub async fn close(self) -> Result<()> {
         self.network.stop();
-        self.server.close()?;
+        self.server.close().await?;
 
         Ok(())
     }
 
-    pub fn notify_new_blocks(&self, blocks: &[Block]) -> Result<()> {
+    pub async fn notify_new_blocks(&self, blocks: &[Block]) -> Result<()> {
         self.client.notify_new_blocks(blocks)?;
-        self.server.notify_new_blocks(blocks)?;
+        self.server.notify_new_blocks(blocks).await?;
 
         Ok(())
     }
@@ -174,9 +179,9 @@ impl<S: Store> Bitswap<S> {
         self.server.peer_disconnected(peer);
     }
 
-    fn receive_message(&self, peer: &PeerId, message: &BitswapMessage) {
+    async fn receive_message(&self, peer: &PeerId, message: &BitswapMessage) {
         self.client.receive_message(peer, &message);
-        self.server.receive_message(peer, &message);
+        self.server.receive_message(peer, &message).await;
     }
 
     fn get_peer_state(&self, peer: &PeerId) -> PeerState {
@@ -294,7 +299,7 @@ impl<S: Store> NetworkBehaviour for Bitswap<S> {
                     sender.send(Err(error.to_string())).ok();
                 }
             }
-        };
+        }
     }
 
     fn inject_event(&mut self, peer_id: PeerId, connection: ConnectionId, event: HandlerEvent) {
@@ -327,7 +332,15 @@ impl<S: Store> NetworkBehaviour for Bitswap<S> {
                     self.set_peer_state(&peer_id, PeerState::Responsive(connection, protocol));
                 }
 
-                self.receive_message(&peer_id, &message);
+                let client = self.client.clone();
+                let server = self.server.clone();
+                self.futures.push(
+                    async move {
+                        client.receive_message(&peer_id, &message);
+                        server.receive_message(&peer_id, &message).await;
+                    }
+                    .boxed_local(),
+                );
             }
         }
     }
@@ -338,6 +351,9 @@ impl<S: Store> NetworkBehaviour for Bitswap<S> {
         cx: &mut Context,
         _: &mut impl PollParameters,
     ) -> Poll<NetworkBehaviourAction<Self::OutEvent, Self::ConnectionHandler>> {
+        // poll local futures
+        let _ = self.futures.poll_next_unpin(cx);
+
         match self.network.poll(cx) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(ev) => match ev {

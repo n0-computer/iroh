@@ -1,16 +1,19 @@
 use std::{
     fmt::Debug,
     sync::{Arc, Mutex, RwLock},
-    thread::JoinHandle,
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use ahash::{AHashMap, AHashSet};
 use anyhow::{anyhow, bail, Result};
 use cid::Cid;
-use crossbeam::channel::{Receiver, Sender};
 use libp2p::PeerId;
-use tracing::{debug, info, warn};
+use tokio::{
+    sync::{oneshot, Notify},
+    task::JoinHandle,
+    time::Interval,
+};
+use tracing::{debug, error, info, warn};
 
 use crate::{
     block::Block,
@@ -100,7 +103,7 @@ impl Default for Config {
 pub struct Engine<S: Store> {
     /// Priority queue of requests received from peers.
     peer_task_queue: PeerTaskQueue<Cid, TaskData, TaskMerger>,
-    outbox: Receiver<Result<Envelope>>,
+    outbox: async_channel::Receiver<Result<Envelope>>,
     blockstore_manager: Arc<RwLock<BlockstoreManager<S>>>,
     ledger_map: RwLock<AHashMap<PeerId, Arc<Mutex<Ledger>>>>,
     /// Tracks which peers are waiting for a Cid,
@@ -118,18 +121,17 @@ pub struct Engine<S: Store> {
     peer_block_request_filter: Option<Box<dyn PeerBlockRequestFilter>>,
     max_outstanding_bytes_per_peer: usize,
     /// List of handles to worker threads.
-    workers: Vec<(Sender<()>, Sender<()>, JoinHandle<()>)>,
-    work_signal: Sender<()>,
+    workers: Vec<(oneshot::Sender<()>, oneshot::Sender<()>, JoinHandle<()>)>,
+    work_signal: Arc<Notify>,
 }
 
 impl<S: Store> Engine<S> {
-    pub fn new(store: S, self_id: PeerId, config: Config) -> Self {
+    pub async fn new(store: S, self_id: PeerId, config: Config) -> Self {
         // TODO: insert options for peertaskqueue
 
         // TODO: limit?
-        let outbox = crossbeam::channel::bounded(1024);
-        let work_signal = crossbeam::channel::bounded(1024);
-        let ticker = crossbeam::channel::tick(Duration::from_millis(100));
+        let outbox = async_channel::bounded(1024);
+        let work_signal = Arc::new(Notify::new());
 
         let task_merger = TaskMerger::default();
         let peer_task_queue = PeerTaskQueue::new(
@@ -139,7 +141,7 @@ impl<S: Store> Engine<S> {
                 ignore_freezing: true,
             },
         );
-        let peer_task_hook = peer_task_queue.add_hook(64);
+        let peer_task_hook = peer_task_queue.add_hook(64).await;
         let blockstore_manager = Arc::new(RwLock::new(BlockstoreManager::new(
             store,
             config.engine_blockstore_worker_count,
@@ -155,36 +157,41 @@ impl<S: Store> Engine<S> {
         let task_worker_count = config.engine_task_worker_count;
         let mut workers = Vec::with_capacity(task_worker_count);
 
+        let rt = tokio::runtime::Handle::current();
         for _ in 0..task_worker_count {
             let outbox = outbox.0.clone();
-            let (outer_closer_s, outer_closer_r) = crossbeam::channel::bounded(1);
-            let (inner_closer_s, inner_closer_r) = crossbeam::channel::bounded(1);
+            let (outer_closer_s, mut outer_closer_r) = oneshot::channel();
+            let (inner_closer_s, mut inner_closer_r) = oneshot::channel();
             let peer_task_queue = peer_task_queue.clone();
-            let ticker = ticker.clone();
+            let mut ticker = tokio::time::interval(Duration::from_millis(100));
             let work_signal = work_signal.clone();
             let blockstore_manager = blockstore_manager.clone();
             let peer_task_hook = peer_task_hook.clone();
 
-            let handle = std::thread::spawn(move || loop {
-                crossbeam::channel::select! {
-                    recv(outer_closer_r) -> _ => {
-                        break;
-                    }
-                    recv(peer_task_hook) -> event => {
-                        debug!("peer queue event: {:?}", event);
-                        // TODO: tag/untag peer
-                    }
-                    default => {
-                        let envelope = next_envelope(
-                            work_signal.0.clone(),
-                            &work_signal.1,
-                            &ticker,
-                            &inner_closer_r,
-                            target_message_size,
-                            peer_task_queue.clone(),
-                            blockstore_manager.clone(),
-                        );
-                        outbox.send(envelope).ok();
+            let handle = rt.spawn(async move {
+                loop {
+                    tokio::select! {
+                        _ = &mut outer_closer_r => {
+                            break;
+                        }
+                        event = peer_task_hook.recv() => {
+                            debug!("peer queue event: {:?}", event);
+                            // TODO: tag/untag peer
+                        }
+                        else => {
+                            let envelope = next_envelope(
+                                work_signal.clone(),
+                                &mut ticker,
+                                &mut inner_closer_r,
+                                target_message_size,
+                                peer_task_queue.clone(),
+                                blockstore_manager.clone(),
+                            ).await;
+                            if let Err(err) = outbox.send(envelope).await {
+                                error!("failed to deliver envelope: {:?}", err);
+                                break;
+                            }
+                        }
                     }
                 }
             });
@@ -205,7 +212,7 @@ impl<S: Store> Engine<S> {
             peer_block_request_filter: config.peer_block_request_filter,
             max_outstanding_bytes_per_peer: config.max_outstanding_bytes_per_peer,
             workers,
-            work_signal: work_signal.0,
+            work_signal,
         }
     }
 
@@ -220,12 +227,12 @@ impl<S: Store> Engine<S> {
         }
     }
 
-    pub fn outbox(&self) -> Receiver<Result<Envelope>> {
+    pub fn outbox(&self) -> async_channel::Receiver<Result<Envelope>> {
         self.outbox.clone()
     }
 
     /// Shuts down.
-    pub fn stop(mut self) -> Result<()> {
+    pub async fn stop(mut self) -> Result<()> {
         self.blockstore_manager.write().unwrap().stop()?;
         self.score_ledger.stop()?;
 
@@ -233,7 +240,7 @@ impl<S: Store> Engine<S> {
         while let Some((outer_closer, inner_closer, handle)) = self.workers.pop() {
             outer_closer.send(()).ok();
             inner_closer.send(()).ok();
-            handle.join().map_err(|e| anyhow!("{:?}", e))?;
+            handle.await.map_err(|e| anyhow!("{:?}", e))?;
         }
 
         Ok(())
@@ -259,7 +266,7 @@ impl<S: Store> Engine<S> {
     /// MessageReceived is called when a message is received from a remote peer.
     /// For each item in the wantlist, add a want-have or want-block entry to the
     /// request queue (this is later popped off by the workerTasks)
-    pub fn message_received(&self, peer: &PeerId, message: &BitswapMessage) {
+    pub async fn message_received(&self, peer: &PeerId, message: &BitswapMessage) {
         if message.is_empty() {
             info!("received empty message from {}", peer);
         }
@@ -307,7 +314,7 @@ impl<S: Store> Engine<S> {
         let mut active_entries = Vec::new();
         for entry in &cancels {
             if ledger.cancel_want(&entry.cid).is_some() {
-                self.peer_task_queue.remove(&entry.cid, *peer);
+                self.peer_task_queue.remove(&entry.cid, *peer).await;
             }
         }
 
@@ -371,7 +378,7 @@ impl<S: Store> Engine<S> {
         }
 
         if !active_entries.is_empty() {
-            self.peer_task_queue.push_tasks(*peer, active_entries);
+            self.peer_task_queue.push_tasks(*peer, active_entries).await;
             self.update_metrics();
         }
 
@@ -443,7 +450,7 @@ impl<S: Store> Engine<S> {
         }
     }
 
-    pub fn notify_new_blocks(&self, blocks: &[Block]) {
+    pub async fn notify_new_blocks(&self, blocks: &[Block]) {
         if blocks.is_empty() {
             return;
         }
@@ -487,20 +494,22 @@ impl<S: Store> Engine<S> {
                     BlockPresence::encoded_len_for_cid(*cid)
                 };
 
-                self.peer_task_queue.push_task(
-                    *peer,
-                    Task {
-                        topic: entry.cid,
-                        priority: entry.priority as isize,
-                        work: entry_size,
-                        data: TaskData {
-                            block_size,
-                            have_block: true,
-                            is_want_block,
-                            send_dont_have: false,
+                self.peer_task_queue
+                    .push_task(
+                        *peer,
+                        Task {
+                            topic: entry.cid,
+                            priority: entry.priority as isize,
+                            work: entry_size,
+                            data: TaskData {
+                                block_size,
+                                have_block: true,
+                                is_want_block,
+                                send_dont_have: false,
+                            },
                         },
-                    },
-                );
+                    )
+                    .await;
                 self.update_metrics();
             }
         }
@@ -556,7 +565,7 @@ impl<S: Store> Engine<S> {
     }
 
     fn signal_new_work(&self) {
-        self.work_signal.send(()).ok();
+        self.work_signal.notify_one();
     }
 
     fn send_as_block(&self, want_type: WantType, block_size: usize) -> bool {
@@ -582,15 +591,14 @@ pub struct Envelope {
     pub message: BitswapMessage,
     pub sent_tasks: Vec<Task<Cid, TaskData>>,
     pub queue: PeerTaskQueue<Cid, TaskData, TaskMerger>,
-    pub work_signal: Sender<()>,
+    pub work_signal: Arc<Notify>,
 }
 
 /// The work being executed in the task workers.
-fn next_envelope<S: Store>(
-    work_signal_sender: Sender<()>,
-    work_signal_receiver: &Receiver<()>,
-    ticker: &Receiver<Instant>,
-    inner_close: &Receiver<()>,
+async fn next_envelope<S: Store>(
+    work_signal: Arc<Notify>,
+    ticker: &mut Interval,
+    inner_close: &mut oneshot::Receiver<()>,
     target_message_size: usize,
     peer_task_queue: PeerTaskQueue<Cid, TaskData, TaskMerger>,
     blockstore_manager: Arc<RwLock<BlockstoreManager<S>>>,
@@ -601,7 +609,7 @@ fn next_envelope<S: Store>(
         let mut next_tasks = None;
         let mut pending_bytes = None;
 
-        if let Some((p, t, b)) = peer_task_queue.pop_tasks(target_message_size) {
+        if let Some((p, t, b)) = peer_task_queue.pop_tasks(target_message_size).await {
             peer = Some(p);
             if !t.is_empty() {
                 next_tasks = Some(t);
@@ -611,12 +619,12 @@ fn next_envelope<S: Store>(
         // self.update_metrics();
 
         while next_tasks.is_none() {
-            crossbeam::channel::select! {
-                recv(inner_close) -> _ => {
+            tokio::select! {
+                _ = &mut *inner_close => {
                     bail!("closed before finishing")
                 }
-                recv(work_signal_receiver) -> _ => {
-                    if let Some((p, t, b)) = peer_task_queue.pop_tasks(target_message_size) {
+                _ = work_signal.notified() => {
+                    if let Some((p, t, b)) = peer_task_queue.pop_tasks(target_message_size).await {
                         peer = Some(p);
                         if !t.is_empty() {
                             next_tasks = Some(t);
@@ -625,21 +633,20 @@ fn next_envelope<S: Store>(
                     }
                     // self.update_metrics();
                 }
-            }
-
-            if ticker.try_recv().is_ok() {
-                // When a task is cancelled, the qeue may be "frozen"
-                // for a period of time. We periodically "thaw" the queue
-                // to make sure it doesn't get suck in a frozen state.
-                peer_task_queue.thaw_round();
-                if let Some((p, t, b)) = peer_task_queue.pop_tasks(target_message_size) {
-                    peer = Some(p);
-                    if !t.is_empty() {
-                        next_tasks = Some(t);
+                _ = ticker.tick() => {
+                    // When a task is cancelled, the qeue may be "frozen"
+                    // for a period of time. We periodically "thaw" the queue
+                    // to make sure it doesn't get suck in a frozen state.
+                    peer_task_queue.thaw_round().await;
+                    if let Some((p, t, b)) = peer_task_queue.pop_tasks(target_message_size).await {
+                        peer = Some(p);
+                        if !t.is_empty() {
+                            next_tasks = Some(t);
+                        }
+                        pending_bytes = Some(b);
                     }
-                    pending_bytes = Some(b);
+                    // self.update_metrics();
                 }
-                // self.update_metrics();
             }
         }
 
@@ -684,7 +691,7 @@ fn next_envelope<S: Store>(
 
         // nothing to see here
         if msg.is_empty() {
-            peer_task_queue.tasks_done(peer, &next_tasks);
+            peer_task_queue.tasks_done(peer, &next_tasks).await;
             continue;
         }
 
@@ -693,7 +700,7 @@ fn next_envelope<S: Store>(
             message: msg,
             sent_tasks: next_tasks,
             queue: peer_task_queue,
-            work_signal: work_signal_sender,
+            work_signal,
         });
     }
 }

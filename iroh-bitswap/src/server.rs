@@ -1,11 +1,10 @@
-use std::{
-    sync::{Arc, Mutex},
-    thread::JoinHandle,
-};
+use std::sync::{Arc, Mutex};
 
 use anyhow::{anyhow, Result};
 use cid::Cid;
 use libp2p::PeerId;
+use tokio::sync::{mpsc, oneshot};
+use tokio::task::JoinHandle;
 use tracing::{debug, error, warn};
 
 use self::{
@@ -13,7 +12,6 @@ use self::{
     score_ledger::Receipt,
 };
 use crate::{block::Block, message::BitswapMessage, network::Network, Store};
-use crossbeam::channel::Sender;
 
 mod blockstore_manager;
 mod decision;
@@ -54,30 +52,35 @@ pub struct Stat {
     pub data_sent: u64,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Server<S: Store> {
     // sent_histogram -> iroh-metrics
     // send_time_histogram -> iroh-metric
     /// Decision engine for which who to send which blocks to.
     engine: Arc<DecisionEngine<S>>,
+    inner: Arc<Inner>,
+}
+
+#[derive(Debug)]
+struct Inner {
     /// Counters for various statistics.
     counters: Mutex<Stat>,
     /// Channel for newly added blocks, which are to be provided to the network.
     /// Blocks in this channel get buffered and fed to the `provider_keys` channel
     /// later on to avoid too much network activiy.
-    new_blocks: Sender<Cid>,
+    new_blocks: mpsc::Sender<Cid>,
     /// Wether or not to make provide announcements.
     provide_enabled: bool,
-    workers: Vec<(Sender<()>, JoinHandle<()>)>,
-    provide_worker: Option<(Sender<()>, JoinHandle<()>)>,
-    provide_collector: Option<(Sender<()>, JoinHandle<()>)>,
+    workers: Vec<(oneshot::Sender<()>, JoinHandle<()>)>,
+    provide_worker: Option<(oneshot::Sender<()>, JoinHandle<()>)>,
+    provide_collector: Option<(oneshot::Sender<()>, JoinHandle<()>)>,
 }
 
 impl<S: Store> Server<S> {
-    pub fn new(network: Network, store: S, config: Config) -> Self {
-        let engine = DecisionEngine::new(store, *network.self_id(), config.decision_config);
-        let provide_keys = crossbeam::channel::bounded(PROVIDE_KEYS_BUFFER_SIZE);
-        let new_blocks = crossbeam::channel::bounded(config.has_block_buffer_size);
+    pub async fn new(network: Network, store: S, config: Config) -> Self {
+        let engine = DecisionEngine::new(store, *network.self_id(), config.decision_config).await;
+        let provide_keys = mpsc::channel(PROVIDE_KEYS_BUFFER_SIZE);
+        let new_blocks = mpsc::channel(config.has_block_buffer_size);
         let task_worker_count = config.task_worker_count;
         let mut workers = Vec::with_capacity(config.task_worker_count);
         let provide_enabled = config.provide_enabled;
@@ -87,30 +90,33 @@ impl<S: Store> Server<S> {
         let engine = Arc::new(engine);
 
         // start up workers to handle requests from other nodes for the data on this node
+        let rt = tokio::runtime::Handle::current();
         for _ in 0..task_worker_count {
-            let (closer_s, closer_r) = crossbeam::channel::bounded(1);
+            let (closer_s, mut closer_r) = oneshot::channel();
             let outbox = engine.outbox();
             let engine = engine.clone();
             let network = network.clone();
 
-            let handle = std::thread::spawn(move || {
+            let handle = rt.spawn(async move {
                 loop {
-                    crossbeam::channel::select! {
-                        recv(closer_r) -> _ => {
+                    tokio::select! {
+                        _ = &mut closer_r => {
+                            // shutdown
                             break;
                         }
-                        recv(outbox) -> envelope => {
+                        envelope = outbox.recv() => {
                             match envelope {
                                 Ok(Ok(envelope)) => {
                                     // let start = Instant::now();
                                     engine.message_sent(&envelope.peer, &envelope.message);
-                                    send_blocks(&network, envelope);
+                                    send_blocks(&network, envelope).await;
                                     // self.send_time_histogram.observe(start.elapsed());
                                 }
                                 Ok(Err(_e)) => {
                                     continue;
                                 }
-                                Err(_e) => {
+                                Err(_) => {
+                                    // channel gone, shutdown
                                     break;
                                 }
                             }
@@ -123,26 +129,30 @@ impl<S: Store> Server<S> {
 
         if provide_enabled {
             {
-                let (closer_s, closer_r) = crossbeam::channel::bounded(1);
-                let new_blocks = new_blocks.1;
+                let (closer_s, mut closer_r) = oneshot::channel();
+                let mut new_blocks = new_blocks.1;
                 let provide_keys = provide_keys.0;
 
                 // worker managing sending out provide messages
-                let handle = std::thread::spawn(move || {
+                let handle = rt.spawn(async move {
                     loop {
-                        crossbeam::channel::select! {
-                            recv(closer_r) -> _ => {
+                        tokio::select! {
+                            _ = &mut closer_r => {
+                                // shutdown
                                 break;
                             }
-                            recv(new_blocks) -> block_key => {
-                                if let Ok(block_key) = block_key {
-                                    if let Err(err) = provide_keys.send(block_key) {
-                                        error!("failed to send provide key: {:?}", err);
+                            block_key = new_blocks.recv() => {
+                                match block_key {
+                                    Some(block_key) => {
+                                        if let Err(err) = provide_keys.send(block_key).await {
+                                            error!("failed to send provide key: {:?}", err);
+                                            break;
+                                        }
+                                    }
+                                    None => {
+                                        // channel got closed
                                         break;
                                     }
-                                } else {
-                                    // channel got closed
-                                    break;
                                 }
                             }
                         }
@@ -151,25 +161,26 @@ impl<S: Store> Server<S> {
                 provide_collector = Some((closer_s, handle));
             }
             {
-                let (closer_s, closer_r) = crossbeam::channel::bounded(1);
-                let provide_keys = provide_keys.1;
+                let (closer_s, mut closer_r) = oneshot::channel();
+                let mut provide_keys = provide_keys.1;
                 let network = network.clone();
-                let handle = std::thread::spawn(move || {
+                let handle = rt.spawn(async move {
                     // originally spawns a limited amount of workers per key
                     loop {
-                        crossbeam::channel::select! {
-                            recv(closer_r) -> _ => {
+                        tokio::select! {
+                            _ = &mut closer_r => {
+                                // shutdown
                                 break;
                             }
-                            recv(provide_keys) -> key => {
+                            key = provide_keys.recv() => {
                                 match key {
-                                    Ok(key) => {
+                                    Some(key) => {
                                         // TODO: timeout
                                         if let Err(err) = network.provide(key) {
                                             warn!("failed to provide: {}: {:?}", key, err);
                                         }
                                     }
-                                    Err(_e) => {
+                                    None => {
                                         // channel closed
                                         break;
                                     }
@@ -184,12 +195,14 @@ impl<S: Store> Server<S> {
 
         Server {
             engine,
-            counters: Mutex::new(Stat::default()),
-            new_blocks: new_blocks.0,
-            provide_enabled,
-            workers,
-            provide_worker,
-            provide_collector,
+            inner: Arc::new(Inner {
+                counters: Mutex::new(Stat::default()),
+                new_blocks: new_blocks.0,
+                provide_enabled,
+                workers,
+                provide_worker,
+                provide_collector,
+            }),
         }
     }
 
@@ -207,36 +220,40 @@ impl<S: Store> Server<S> {
             .collect()
     }
 
-    pub fn close(mut self) -> Result<()> {
+    pub async fn close(self) -> Result<()> {
         // trigger shutdown of the worker threads
         // wait for all workers to be done
-        while let Some((closer, handle)) = self.workers.pop() {
+        let mut inner =
+            Arc::try_unwrap(self.inner).map_err(|_| anyhow!("Server refs not shutdown yet"))?;
+        while let Some((closer, handle)) = inner.workers.pop() {
             closer.send(()).ok();
-            handle.join().map_err(|e| anyhow!("{:?}", e))?;
+            handle.await.map_err(|e| anyhow!("{:?}", e))?;
         }
 
-        if let Some((closer, handle)) = self.provide_collector.take() {
+        if let Some((closer, handle)) = inner.provide_collector.take() {
             closer.send(()).ok();
-            handle.join().map_err(|e| anyhow!("{:?}", e))?;
+            handle.await.map_err(|e| anyhow!("{:?}", e))?;
         }
 
-        if let Some((closer, handle)) = self.provide_worker.take() {
+        if let Some((closer, handle)) = inner.provide_worker.take() {
             closer.send(()).ok();
-            handle.join().map_err(|e| anyhow!("{:?}", e))?;
+            handle.await.map_err(|e| anyhow!("{:?}", e))?;
         }
 
         // stop the decision engine
         Arc::try_unwrap(self.engine)
             .map_err(|_| anyhow!("engine refs not shutdown yet"))?
-            .stop()?;
+            .stop()
+            .await?;
 
         Ok(())
     }
 
     /// Returns aggregated stats about the server operations.
     pub fn stat(&self) -> Result<Stat> {
-        let mut counters = self.counters.lock().unwrap();
-        counters.provide_buf_len = self.new_blocks.len();
+        let mut counters = self.inner.counters.lock().unwrap();
+        // TODO:
+        // counters.provide_buf_len = self.new_blocks.len();
         counters.peers = self.engine.peers().into_iter().collect();
         counters.peers.sort();
 
@@ -247,20 +264,20 @@ impl<S: Store> Server<S> {
     /// Potentially it will notify its peers about it.
     /// The blocks are not stored by bitswap, so the caller has to ensure to
     /// store them in the store, befor calling this method.
-    pub fn notify_new_blocks(&self, blocks: &[Block]) -> Result<()> {
+    pub async fn notify_new_blocks(&self, blocks: &[Block]) -> Result<()> {
         //  send wanted blocks to the decision engine
-        self.engine.notify_new_blocks(blocks);
-        if self.provide_enabled {
+        self.engine.notify_new_blocks(blocks).await;
+        if self.inner.provide_enabled {
             for block in blocks {
-                self.new_blocks.send(*block.cid()).ok();
+                self.inner.new_blocks.send(*block.cid()).await.ok();
             }
         }
 
         Ok(())
     }
 
-    pub fn receive_message(&self, peer: &PeerId, message: &BitswapMessage) {
-        self.engine.message_received(peer, message);
+    pub async fn receive_message(&self, peer: &PeerId, message: &BitswapMessage) {
+        self.engine.message_received(peer, message).await;
         // TODO: only track useful messages
     }
 
@@ -284,14 +301,20 @@ impl<S: Store> Server<S> {
     }
 }
 
-fn send_blocks(network: &Network, envelope: Envelope) {
-    if let Err(err) = network.send_message(envelope.peer, envelope.message) {
-        debug!("failed to send message {}: {:?}", envelope.peer, err);
+async fn send_blocks(network: &Network, envelope: Envelope) {
+    let Envelope {
+        peer,
+        message,
+        sent_tasks,
+        queue,
+        work_signal,
+    } = envelope;
+
+    if let Err(err) = network.send_message(peer, message) {
+        debug!("failed to send message {}: {:?}", peer, err);
     }
 
     // trigger sent updates
-    envelope
-        .queue
-        .tasks_done(envelope.peer, &envelope.sent_tasks);
-    envelope.work_signal.send(()).ok();
+    queue.tasks_done(peer, &sent_tasks).await;
+    work_signal.notify_one();
 }

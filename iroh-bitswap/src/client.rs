@@ -1,4 +1,7 @@
-use std::{sync::Mutex, time::Duration};
+use std::{
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use ahash::AHashSet;
 use anyhow::Result;
@@ -58,21 +61,22 @@ pub struct Stat {
 
 #[derive(Derivative)]
 #[derivative(Debug)]
+#[derive(Clone)]
 pub struct Client<S: Store> {
     peer_manager: PeerManager,
     provider_query_manager: ProviderQueryManager,
     network: Network,
     store: S,
-    counters: Mutex<Stat>,
+    counters: Arc<Mutex<Stat>>,
     session_manager: SessionManager,
     session_interest_manager: SessionInterestManager,
     provider_search_delay: Duration,
     rebroadcast_delay: Duration,
     simulate_dont_haves_on_timeout: bool,
     #[derivative(Debug = "ignore")]
-    blocks_received_cb: Box<dyn Fn(&PeerId, &[&Block]) + 'static + Send + Sync>,
+    blocks_received_cb: Arc<Box<dyn Fn(&PeerId, &[&Block]) + 'static + Send + Sync>>,
     #[derivative(Debug = "ignore")]
-    notify: Mutex<bus::Bus<Block>>,
+    notify: Arc<Mutex<bus::Bus<Block>>>,
 }
 
 impl<S: Store> Client<S> {
@@ -112,14 +116,14 @@ impl<S: Store> Client<S> {
             provider_query_manager,
             network,
             store,
-            counters,
+            counters: Arc::new(counters),
             session_manager,
             session_interest_manager,
             provider_search_delay: config.provider_search_delay,
             rebroadcast_delay: config.rebroadcast_delay,
             simulate_dont_haves_on_timeout: config.simluate_donthaves_on_timeout,
-            blocks_received_cb,
-            notify: Mutex::new(notify),
+            blocks_received_cb: Arc::new(blocks_received_cb),
+            notify: Arc::new(Mutex::new(notify)),
         }
     }
 
