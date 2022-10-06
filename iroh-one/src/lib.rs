@@ -1,5 +1,6 @@
 pub mod cli;
-pub mod config;
+pub mod config_ctl;
+pub mod config_one;
 pub mod content_loader;
 pub mod mem_p2p;
 pub mod mem_store;

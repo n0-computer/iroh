@@ -8,7 +8,7 @@ use iroh_gateway::{bad_bits::BadBits, core::Core, metrics};
 use iroh_one::uds;
 use iroh_one::{
     cli::Args,
-    config::{Config, CONFIG_FILE_NAME, ENV_PREFIX},
+    config_one::{Config, CONFIG_FILE_NAME, ENV_PREFIX},
 };
 use iroh_rpc_client::Client as RpcClient;
 use iroh_rpc_types::Addr;

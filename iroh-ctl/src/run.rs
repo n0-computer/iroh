@@ -2,7 +2,6 @@ use std::collections::HashMap;
 use std::env;
 use std::path::PathBuf;
 
-use crate::config::{Config, CONFIG_FILE_NAME, ENV_PREFIX};
 #[cfg(feature = "testing")]
 use crate::fixture::get_fixture_api;
 use crate::{
@@ -14,6 +13,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use iroh::{Api, Iroh};
 use iroh_metrics::config::Config as MetricsConfig;
+use iroh_one::config_ctl::{Config, CONFIG_FILE_NAME, ENV_PREFIX};
 use iroh_resolver::resolver;
 use iroh_rpc_client::Client;
 use iroh_util::{iroh_config_path, make_config};
