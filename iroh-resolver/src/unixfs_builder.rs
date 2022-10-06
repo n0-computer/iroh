@@ -680,7 +680,6 @@ mod tests {
         let items: Vec<_> = stream.try_collect().await?;
         let (root, _) = items.last().context("no root")?.clone();
         let store: HashMap<Cid, Bytes> = items.into_iter().collect();
-        println!("{}", store.len());
         let resolver = Resolver::new(store);
         Ok((root, resolver))
     }
@@ -838,51 +837,23 @@ mod tests {
         }
     }
 
-    // test is ignored because it currently fails
     #[tokio::test]
     async fn test_builder_roundtrip_complex_tree_1() -> Result<()> {
         // fill with random data so we get distinct cids for all blocks
         let mut rng = ChaCha8Rng::from_seed([0; 32]);
         let mut data = vec![0u8; 1024 * 128];
         rng.fill(data.as_mut_slice());
-        let data: Bytes = data.into();
-        let mut builder = FileBuilder::new();
-        builder
-            .name("file.bin")
-            .chunk_size(1024)
-            .degree(4)
-            .content_bytes(data.clone());
-        let file = builder.build().await?;
-        let stream = file.encode().await?;
-        let (root, resolver) = stream_to_resolver(stream).await?;
-        let out = resolver
-            .resolve(crate::resolver::Path::from_cid(root))
-            .await?;
-        let t = read_to_vec(out.pretty(resolver, OutMetrics::default())?).await?;
-        assert_eq!(t.len(), data.len());
-        assert_eq!(t, data);
+        assert!(file_roundtrip_test(data.into(), 1024, 4).await?);
         Ok(())
     }
 
-    // test is ignored because it currently fails
     #[tokio::test]
     async fn test_builder_roundtrip_128m() -> Result<()> {
         // fill with random data so we get distinct cids for all blocks
         let mut rng = ChaCha8Rng::from_seed([0; 32]);
         let mut data = vec![0u8; 128 * 1024 * 1024];
         rng.fill(data.as_mut_slice());
-        let data: Bytes = data.into();
-        let mut builder = FileBuilder::new();
-        builder.name("128m.bin").content_bytes(data.clone());
-        let file = builder.build().await?;
-        let stream = file.encode().await?;
-        let (root, resolver) = stream_to_resolver(stream).await?;
-        let out = resolver
-            .resolve(crate::resolver::Path::from_cid(root))
-            .await?;
-        let t = read_to_vec(out.pretty(resolver, OutMetrics::default())?).await?;
-        assert_eq!(t.len(), data.len());
-        assert_eq!(t, data);
+        assert!(file_roundtrip_test(data.into(), DEFAULT_CHUNKS_SIZE, DEFAULT_DEGREE).await?);
         Ok(())
     }
 
