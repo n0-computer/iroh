@@ -2,11 +2,6 @@ use std::collections::HashMap;
 use std::env;
 use std::path::PathBuf;
 
-use crate::{
-    gateway::{run_command as run_gateway_command, Gateway},
-    p2p::{run_command as run_p2p_command, P2p},
-    store::{run_command as run_store_command, Store},
-};
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use iroh::{Api, Iroh};
@@ -14,6 +9,11 @@ use iroh_metrics::config::Config as MetricsConfig;
 use iroh_one::config_ctl::{Config, CONFIG_FILE_NAME, ENV_PREFIX};
 #[cfg(feature = "testing")]
 use iroh_one::fixture::get_fixture_api;
+use iroh_one::{
+    gateway_cli::{run_command as run_gateway_command, Gateway},
+    p2p_cli::{run_command as run_p2p_command, P2p},
+    store_cli::{run_command as run_store_command, Store},
+};
 use iroh_resolver::resolver;
 use iroh_rpc_client::Client;
 use iroh_util::{iroh_config_path, make_config};
