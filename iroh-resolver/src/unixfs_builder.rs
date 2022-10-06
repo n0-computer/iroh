@@ -532,7 +532,7 @@ async fn make_dir_from_path<P: Into<PathBuf>>(path: P, recursive: bool) -> Resul
 
 #[cfg(test)]
 mod tests {
-    use crate::resolver::{OutMetrics, Resolver};
+    use crate::resolver::{ContentLoader, Out, OutMetrics, Resolver};
 
     use super::*;
     use anyhow::{Context, Result};
@@ -691,6 +691,7 @@ mod tests {
     }
     type TestDir = BTreeMap<String, TestDirEntry>;
 
+    /// builds an unixfs directory out of a TestDir
     #[async_recursion(?Send)]
     async fn build_directory(name: &str, dir: &TestDir) -> Result<Directory> {
         let mut builder = DirectoryBuilder::new();
@@ -712,8 +713,13 @@ mod tests {
         builder.build()
     }
 
-    /// a roundtrip test that converts a dir to an unixfs DAG and back
-    async fn dir_roundtrip_test(dir: TestDir) -> Result<bool> {
+    /// builds a TestDir out of a stream of blocks and a resolver
+    async fn build_testdir(
+        stream: impl Stream<Item = Result<(crate::resolver::Path, Out)>>,
+        resolver: Resolver<impl ContentLoader + Unpin>,
+    ) -> Result<TestDir> {
+        tokio::pin!(stream);
+
         /// recursively create directories for a path
         fn mkdir(dir: &mut TestDir, path: &[String]) -> Result<()> {
             if let Some((first, rest)) = path.split_first() {
@@ -746,10 +752,6 @@ mod tests {
             Ok(())
         }
 
-        let directory = build_directory("", &dir).await?;
-        let stream = directory.encode();
-        let (root, resolver) = stream_to_resolver(stream).await?;
-        let stream = resolver.resolve_recursive_with_paths(crate::resolver::Path::from_cid(root));
         let reference = stream
             .try_fold(TestDir::default(), move |mut agg, (path, item)| {
                 let resolver = resolver.clone();
@@ -765,6 +767,16 @@ mod tests {
                 }
             })
             .await?;
+        Ok(reference)
+    }
+
+    /// a roundtrip test that converts a dir to an unixfs DAG and back
+    async fn dir_roundtrip_test(dir: TestDir) -> Result<bool> {
+        let directory = build_directory("", &dir).await?;
+        let stream = directory.encode();
+        let (root, resolver) = stream_to_resolver(stream).await?;
+        let stream = resolver.resolve_recursive_with_paths(crate::resolver::Path::from_cid(root));
+        let reference = build_testdir(stream, resolver).await?;
         Ok(dir == reference)
     }
 
@@ -798,20 +810,20 @@ mod tests {
         futures::executor::block_on(f).unwrap()
     }
 
-    /// create an arbitrary nested directory structure
-    fn arb_dir_entry() -> impl Strategy<Value = TestDirEntry> {
-        let leaf = any::<Vec<u8>>().prop_map(|x| TestDirEntry::File(Bytes::from(x)));
-        leaf.prop_recursive(
-            3,  // 3 levels deep
-            64, // Shoot for maximum size of 64 nodes
-            10, // We put up to 10 items per collection
-            |inner| {
-                prop::collection::btree_map(".*", inner, 0..10).prop_map(TestDirEntry::Directory)
-            },
-        )
-    }
-
     fn arb_test_dir() -> impl Strategy<Value = TestDir> {
+        // create an arbitrary nested directory structure
+        fn arb_dir_entry() -> impl Strategy<Value = TestDirEntry> {
+            let leaf = any::<Vec<u8>>().prop_map(|x| TestDirEntry::File(Bytes::from(x)));
+            leaf.prop_recursive(
+                3,  // 3 levels deep
+                64, // Shoot for maximum size of 64 nodes
+                10, // We put up to 10 items per collection
+                |inner| {
+                    prop::collection::btree_map(".*", inner, 0..10)
+                        .prop_map(TestDirEntry::Directory)
+                },
+            )
+        }
         prop::collection::btree_map(".*", arb_dir_entry(), 0..10)
     }
 
