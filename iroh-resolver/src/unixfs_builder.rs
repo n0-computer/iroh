@@ -56,6 +56,11 @@ impl Directory {
         }
     }
 
+    /// Get the size in bytes of all files in this directory
+    pub fn size(&self) -> u64 {
+        self.entries.iter().map(|e| e.size()).sum()
+    }
+
     pub async fn encode_root(self) -> Result<(Cid, Bytes)> {
         let mut current = None;
         let parts = self.encode();
@@ -149,6 +154,7 @@ impl PartialEq for Content {
 #[derive(PartialEq)]
 pub struct File {
     name: String,
+    size: Option<u64>,
     content: Content,
     tree_builder: TreeBuilder,
     chunker: Chunker,
@@ -282,7 +288,8 @@ impl FileBuilder {
                     .to_string(),
             };
             return Ok(File {
-                content: Content::Path(path),
+                content: Content::Path(path.clone()),
+                size: Some(path.metadata()?.len()),
                 name,
                 chunker,
                 tree_builder,
@@ -296,6 +303,7 @@ impl FileBuilder {
 
             return Ok(File {
                 content: Content::Reader(reader),
+                size: None,
                 name,
                 chunker,
                 tree_builder,
@@ -313,6 +321,21 @@ enum Entry {
     Directory(Directory),
 }
 
+impl Entry {
+    fn size(&self) -> u64 {
+        match self {
+            Entry::File(f) => {
+                if let Some(size) = f.size {
+                    size
+                } else {
+                    // must be a reader based file
+                    0
+                }
+            }
+            Entry::Directory(d) => d.size(),
+        }
+    }
+}
 /// Construct a UnixFS directory.
 #[derive(Debug)]
 pub struct DirectoryBuilder {
@@ -1023,6 +1046,8 @@ mod tests {
         });
 
         assert_eq!(expected, got);
+
+        assert_eq!(got.size(), 28);
         Ok(())
     }
 }
