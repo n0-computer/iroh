@@ -1,8 +1,10 @@
 use ahash::AHashMap;
 use anyhow::{anyhow, Result};
+use awaitgroup::WaitGroup;
 use cid::Cid;
-use crossbeam::channel::{bounded, Receiver, Sender};
-use crossbeam::sync::WaitGroup;
+use futures::{future::BoxFuture, Future, FutureExt};
+use tokio::sync::oneshot;
+use tracing::error;
 
 use crate::{block::Block, Store};
 
@@ -12,34 +14,36 @@ pub struct BlockstoreManager<S: Store> {
     store: S,
     // pending_gauge -> iroh-metrics
     // active_gauge -> iroh-metrics
-    jobs: Sender<Box<dyn FnOnce() + Send + Sync>>,
-    workers: Vec<(Sender<()>, tokio::task::JoinHandle<()>)>,
-    runtime: tokio::runtime::Runtime,
+    jobs: async_channel::Sender<BoxFuture<'static, ()>>,
+    workers: Vec<(oneshot::Sender<()>, tokio::task::JoinHandle<()>)>,
 }
 
 impl<S: Store> BlockstoreManager<S> {
     /// Creates a new manager.
-    pub fn new(store: S, worker_count: usize) -> Self {
-        let jobs: (Sender<_>, Receiver<Box<dyn FnOnce() + Send + Sync>>) = bounded(1024);
+    pub async fn new(store: S, worker_count: usize) -> Self {
+        let jobs: (
+            async_channel::Sender<_>,
+            async_channel::Receiver<BoxFuture<'static, ()>>,
+        ) = async_channel::bounded(1024);
         let mut workers = Vec::with_capacity(worker_count);
 
-        let rt = tokio::runtime::Runtime::new().unwrap();
-
+        let rt = tokio::runtime::Handle::current();
         for _ in 0..worker_count {
             let jobs_receiver = jobs.1.clone();
-            let (closer_s, closer_r) = crossbeam::channel::bounded(1);
+            let (closer_s, mut closer_r) = oneshot::channel();
 
-            let handle = rt.spawn_blocking(move || {
+            let handle = rt.spawn(async move {
                 loop {
-                    crossbeam::channel::select! {
-                        recv(closer_r) -> _ => {
+                    tokio::select! {
+                        _ = &mut closer_r => {
+                            // shutdown
                             break;
                         }
-                        recv(jobs_receiver) -> job => {
+                        job = jobs_receiver.recv() => {
                             if let Ok(job) = job {
                                 // dec!(pending);
                                 // inc!(active);
-                                (job)();
+                                job.await;
                                 // dec!(active);
                             }
                         }
@@ -53,45 +57,46 @@ impl<S: Store> BlockstoreManager<S> {
             store,
             jobs: jobs.0,
             workers,
-            runtime: rt,
         }
     }
 
-    pub fn stop(&mut self) -> Result<()> {
+    pub async fn stop(mut self) -> Result<()> {
         while let Some((closer, handle)) = self.workers.pop() {
-            closer.send(()).ok();
-            self.runtime
-                .block_on(async move { handle.await.map_err(|e| anyhow!("{:?}", e)) })?;
+            match closer.send(()) {
+                Ok(_) => handle.await.map_err(|e| anyhow!("{:?}", e))?,
+                Err(err) => {
+                    error!("failed to shutdown blockstore manager: {:?}", err);
+                }
+            }
         }
         Ok(())
     }
 
-    pub fn add_job<F: FnOnce() + Send + Sync + 'static>(&self, job: F) -> Result<()> {
-        self.jobs.send(Box::new(job))?;
+    pub async fn add_job(&self, job: BoxFuture<'static, ()>) -> Result<()> {
+        self.jobs.send(job).await.unwrap();
         // inc!(pending);
 
         Ok(())
     }
 
-    pub fn get_block_sizes(&self, keys: &[Cid]) -> Result<AHashMap<Cid, usize>> {
+    pub async fn get_block_sizes(&self, keys: &[Cid]) -> Result<AHashMap<Cid, usize>> {
         let mut res = AHashMap::new();
         if keys.is_empty() {
             return Ok(res);
         }
-        let (s, r) = bounded(keys.len());
+        let (s, r) = async_channel::bounded(keys.len());
 
         let store = self.store.clone();
-        self.job_per_key(keys, move |cid: Cid| {
-            let size = tokio::runtime::Handle::current()
-                .block_on(async move { store.get_size(&cid).await });
-            if let Ok(size) = size {
-                s.send(Some((cid, size))).ok();
+        self.job_per_key(keys, move |cid: Cid| async move {
+            if let Ok(size) = store.get_size(&cid).await {
+                s.send(Some((cid, size))).await.ok();
             } else {
-                s.send(None).ok();
+                s.send(None).await.ok();
             }
-        })?;
+        })
+        .await?;
 
-        while let Ok(r) = r.recv() {
+        while let Ok(r) = r.recv().await {
             if let Some((cid, size)) = r {
                 res.insert(cid, size);
             }
@@ -100,25 +105,24 @@ impl<S: Store> BlockstoreManager<S> {
         Ok(res)
     }
 
-    pub fn get_blocks(&self, keys: &[Cid]) -> Result<AHashMap<Cid, Block>> {
+    pub async fn get_blocks(&self, keys: &[Cid]) -> Result<AHashMap<Cid, Block>> {
         let mut res = AHashMap::new();
         if keys.is_empty() {
             return Ok(res);
         }
-        let (s, r) = bounded(keys.len());
+        let (s, r) = async_channel::bounded(keys.len());
 
         let store = self.store.clone();
-        self.job_per_key(keys, move |cid: Cid| {
-            let block =
-                tokio::runtime::Handle::current().block_on(async move { store.get(&cid).await });
-            if let Ok(block) = block {
-                s.send(Some((cid, block))).ok();
+        self.job_per_key(keys, move |cid: Cid| async move {
+            if let Ok(block) = store.get(&cid).await {
+                s.send(Some((cid, block))).await.ok();
             } else {
-                s.send(None).ok();
+                s.send(None).await.ok();
             }
-        })?;
+        })
+        .await?;
 
-        while let Ok(r) = r.recv() {
+        while let Ok(r) = r.recv().await {
             if let Some((cid, block)) = r {
                 res.insert(cid, block);
             }
@@ -129,23 +133,28 @@ impl<S: Store> BlockstoreManager<S> {
 
     /// Executes the given job function for each key, returning an error
     /// if queuing any of the jobs fails.
-    fn job_per_key<F>(&self, keys: &[Cid], job_fn: F) -> Result<()>
+    async fn job_per_key<F, FU>(&self, keys: &[Cid], job_fn: F) -> Result<()>
     where
-        F: FnOnce(Cid) + Send + Sync + Clone + 'static,
+        F: FnOnce(Cid) -> FU + Send + Sync + Clone + 'static,
+        FU: Future<Output = ()> + Send + 'static,
     {
-        let wg = WaitGroup::new();
+        let mut wg = WaitGroup::new();
 
         for key in keys {
             let key = *key;
-            let wg = wg.clone();
+            let wg = wg.worker();
             let job_fn = job_fn.clone();
-            self.add_job(move || {
-                job_fn(key);
-                drop(wg);
-            })?;
+            self.add_job(
+                async move {
+                    job_fn(key).await;
+                    wg.done();
+                }
+                .boxed(),
+            )
+            .await?;
         }
 
-        wg.wait();
+        wg.wait().await;
         Ok(())
     }
 }

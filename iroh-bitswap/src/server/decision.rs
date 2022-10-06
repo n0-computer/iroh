@@ -1,15 +1,11 @@
-use std::{
-    fmt::Debug,
-    sync::{Arc, Mutex, RwLock},
-    time::Duration,
-};
+use std::{fmt::Debug, sync::Arc, time::Duration};
 
 use ahash::{AHashMap, AHashSet};
 use anyhow::{anyhow, bail, Result};
 use cid::Cid;
 use libp2p::PeerId;
 use tokio::{
-    sync::{oneshot, Notify},
+    sync::{oneshot, Mutex, Notify, RwLock},
     task::JoinHandle,
     time::Interval,
 };
@@ -142,17 +138,17 @@ impl<S: Store> Engine<S> {
             },
         );
         let peer_task_hook = peer_task_queue.add_hook(64).await;
-        let blockstore_manager = Arc::new(RwLock::new(BlockstoreManager::new(
-            store,
-            config.engine_blockstore_worker_count,
-        )));
+        let blockstore_manager = Arc::new(RwLock::new(
+            BlockstoreManager::new(store, config.engine_blockstore_worker_count).await,
+        ));
         let score_ledger = DefaultScoreLedger::new(Box::new(|_peer, score| {
             if score == 0 {
                 // untag peer("useful")
             } else {
                 // tag peer("useful", score)
             }
-        }));
+        }))
+        .await;
         let target_message_size = config.target_message_size;
         let task_worker_count = config.engine_task_worker_count;
         let mut workers = Vec::with_capacity(task_worker_count);
@@ -216,8 +212,8 @@ impl<S: Store> Engine<S> {
         }
     }
 
-    fn update_metrics(&self) {
-        let mut counter = self.metrics_update_counter.lock().unwrap();
+    async fn update_metrics(&self) {
+        let mut counter = self.metrics_update_counter.lock().await;
         *counter += 1;
 
         if *counter % 100 == 0 {
@@ -233,8 +229,12 @@ impl<S: Store> Engine<S> {
 
     /// Shuts down.
     pub async fn stop(mut self) -> Result<()> {
-        self.blockstore_manager.write().unwrap().stop()?;
-        self.score_ledger.stop()?;
+        Arc::try_unwrap(self.blockstore_manager)
+            .map_err(|_| anyhow!("blockstore manager refs not shutdown"))?
+            .into_inner()
+            .stop()
+            .await?;
+        self.score_ledger.stop().await?;
 
         // TODO: should this just be called on drop?
         while let Some((outer_closer, inner_closer, handle)) = self.workers.pop() {
@@ -246,9 +246,9 @@ impl<S: Store> Engine<S> {
         Ok(())
     }
 
-    pub fn wantlist_for_peer(&self, peer: &PeerId) -> Vec<wantlist::Entry> {
-        let p = self.find_or_create(peer);
-        let mut partner = p.lock().unwrap();
+    pub async fn wantlist_for_peer(&self, peer: &PeerId) -> Vec<wantlist::Entry> {
+        let p = self.find_or_create(peer).await;
+        let mut partner = p.lock().await;
         partner.wantlist_mut().entries().collect()
     }
 
@@ -258,9 +258,9 @@ impl<S: Store> Engine<S> {
     }
 
     /// Returns a list of peers with whom the local node has active sessions.
-    pub fn peers(&self) -> AHashSet<PeerId> {
+    pub async fn peers(&self) -> AHashSet<PeerId> {
         // TODO: can this avoid the allocation?
-        self.ledger_map.read().unwrap().keys().copied().collect()
+        self.ledger_map.read().await.keys().copied().collect()
     }
 
     /// MessageReceived is called when a message is received from a remote peer.
@@ -283,8 +283,9 @@ impl<S: Store> Engine<S> {
         let block_sizes = match self
             .blockstore_manager
             .read()
-            .unwrap()
+            .await
             .get_block_sizes(&want_ks)
+            .await
         {
             Ok(s) => s,
             Err(err) => {
@@ -294,7 +295,7 @@ impl<S: Store> Engine<S> {
         };
 
         {
-            let mut peer_ledger = self.peer_ledger.lock().unwrap();
+            let mut peer_ledger = self.peer_ledger.lock().await;
             for want in &wants {
                 peer_ledger.wants(*peer, want.cid);
             }
@@ -304,8 +305,8 @@ impl<S: Store> Engine<S> {
         }
 
         // get the ledger for the peer
-        let l = self.find_or_create(peer);
-        let mut ledger = l.lock().unwrap();
+        let l = self.find_or_create(peer).await;
+        let mut ledger = l.lock().await;
 
         // if the peer sent a full wantlist, clear the existing wantlist.
         if message.full() {
@@ -379,7 +380,7 @@ impl<S: Store> Engine<S> {
 
         if !active_entries.is_empty() {
             self.peer_task_queue.push_tasks(*peer, active_entries).await;
-            self.update_metrics();
+            self.update_metrics().await;
         }
 
         if new_work_exists {
@@ -387,9 +388,9 @@ impl<S: Store> Engine<S> {
         }
     }
 
-    pub fn message_sent(&self, peer: &PeerId, message: &BitswapMessage) {
-        let l = self.find_or_create(peer);
-        let mut ledger = l.lock().unwrap();
+    pub async fn message_sent(&self, peer: &PeerId, message: &BitswapMessage) {
+        let l = self.find_or_create(peer).await;
+        let mut ledger = l.lock().await;
 
         // remove sent blocks from the want list for the peer
         for block in message.blocks() {
@@ -437,13 +438,13 @@ impl<S: Store> Engine<S> {
         (wants, cancels, denials)
     }
 
-    pub fn received_blocks(&self, from: &PeerId, blocks: &[&Block]) {
+    pub async fn received_blocks(&self, from: PeerId, blocks: Vec<Block>) {
         if blocks.is_empty() {
             return;
         }
 
-        let l = self.find_or_create(from);
-        let ledger = l.lock().unwrap();
+        let l = self.find_or_create(&from).await;
+        let ledger = l.lock().await;
         for block in blocks {
             self.score_ledger
                 .add_to_recv_bytes(ledger.partner(), block.data().len());
@@ -465,19 +466,19 @@ impl<S: Store> Engine<S> {
         let mut missing_wants: AHashMap<PeerId, Vec<Cid>> = AHashMap::new();
         for block in blocks {
             let cid = block.cid();
-            let peer_ledger = self.peer_ledger.lock().unwrap();
+            let peer_ledger = self.peer_ledger.lock().await;
             let peers = peer_ledger.peers(cid);
             if peers.is_none() {
                 continue;
             }
             for peer in peers.unwrap() {
-                let l = self.ledger_map.read().unwrap().get(peer).cloned();
+                let l = self.ledger_map.read().await.get(peer).cloned();
                 if l.is_none() {
                     missing_wants.entry(*peer).or_default().push(*cid);
                     continue;
                 }
                 let l = l.unwrap();
-                let ledger = l.lock().unwrap();
+                let ledger = l.lock().await;
                 let entry = ledger.wantlist_get(cid);
                 if entry.is_none() {
                     missing_wants.entry(*peer).or_default().push(*cid);
@@ -510,17 +511,17 @@ impl<S: Store> Engine<S> {
                         },
                     )
                     .await;
-                self.update_metrics();
+                self.update_metrics().await;
             }
         }
 
         // If we found missing wants remove them from the list
         if !missing_wants.is_empty() {
-            let ledger_map = self.ledger_map.read().unwrap();
-            let mut peer_ledger = self.peer_ledger.lock().unwrap();
+            let ledger_map = self.ledger_map.read().await;
+            let mut peer_ledger = self.peer_ledger.lock().await;
             for (peer, wants) in missing_wants.into_iter() {
                 if let Some(l) = ledger_map.get(&peer) {
-                    let ledger = l.lock().unwrap();
+                    let ledger = l.lock().await;
                     for cid in wants {
                         if ledger.wantlist_get(&cid).is_some() {
                             continue;
@@ -541,8 +542,8 @@ impl<S: Store> Engine<S> {
     }
 
     /// Called when a new peer connects, which means we will start sending blocks to this peer.
-    pub fn peer_connected(&self, peer: &PeerId) {
-        let mut ledger_map = self.ledger_map.write().unwrap();
+    pub async fn peer_connected(&self, peer: &PeerId) {
+        let mut ledger_map = self.ledger_map.write().await;
         let _ = ledger_map
             .entry(*peer)
             .or_insert_with(|| Arc::new(Mutex::new(Ledger::new(*peer))));
@@ -551,11 +552,11 @@ impl<S: Store> Engine<S> {
     }
 
     /// Called when a peer is disconnected.
-    pub fn peer_disconnected(&self, peer: &PeerId) {
-        let mut ledger_map = self.ledger_map.write().unwrap();
+    pub async fn peer_disconnected(&self, peer: &PeerId) {
+        let mut ledger_map = self.ledger_map.write().await;
         if let Some(e) = ledger_map.remove(peer) {
-            let mut entry = e.lock().unwrap();
-            let mut peer_ledger = self.peer_ledger.lock().unwrap();
+            let mut entry = e.lock().await;
+            let mut peer_ledger = self.peer_ledger.lock().await;
             for want in entry.entries() {
                 peer_ledger.cancel_want(peer, &want.cid);
             }
@@ -573,14 +574,14 @@ impl<S: Store> Engine<S> {
         is_want_block || block_size <= self.max_block_size_replace_has_with_block
     }
 
-    fn find_or_create(&self, peer: &PeerId) -> Arc<Mutex<Ledger>> {
-        if !self.ledger_map.read().unwrap().contains_key(peer) {
+    async fn find_or_create(&self, peer: &PeerId) -> Arc<Mutex<Ledger>> {
+        if !self.ledger_map.read().await.contains_key(peer) {
             self.ledger_map
                 .write()
-                .unwrap()
+                .await
                 .insert(*peer, Arc::new(Mutex::new(Ledger::new(*peer))));
         }
-        self.ledger_map.read().unwrap().get(peer).unwrap().clone()
+        self.ledger_map.read().await.get(peer).unwrap().clone()
     }
 }
 
@@ -676,7 +677,11 @@ async fn next_envelope<S: Store>(
         }
 
         // Fetch blocks from the store
-        let mut blocks = blockstore_manager.read().unwrap().get_blocks(&block_cids)?;
+        let mut blocks = blockstore_manager
+            .read()
+            .await
+            .get_blocks(&block_cids)
+            .await?;
 
         for (cid, task) in block_tasks {
             if let Some(block) = blocks.remove(&cid) {

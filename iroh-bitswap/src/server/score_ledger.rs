@@ -1,14 +1,14 @@
 use std::{
     fmt::Debug,
     sync::{Arc, RwLock},
-    thread::JoinHandle,
     time::{Duration, Instant},
 };
 
 use ahash::AHashMap;
 use anyhow::{anyhow, Result};
-use crossbeam::channel::Sender;
 use libp2p::PeerId;
+use tokio::{sync::oneshot, task::JoinHandle};
+use tracing::error;
 
 use crate::server::ewma::ewma;
 
@@ -107,7 +107,7 @@ impl IndividualScoreLedger {
 #[derive(Debug)]
 pub struct DefaultScoreLedger {
     state: Arc<State>,
-    closer: Sender<()>,
+    closer: oneshot::Sender<()>,
     worker: JoinHandle<()>,
 }
 
@@ -130,17 +130,19 @@ impl Debug for State {
 }
 
 impl DefaultScoreLedger {
-    pub fn new(score_peer: Box<dyn ScorePeerFunc>) -> Self {
+    pub async fn new(score_peer: Box<dyn ScorePeerFunc>) -> Self {
         let state = Arc::new(State {
             score_peer,
             ledger_map: Default::default(),
             peer_sample_interval: SHORT_TERM,
         });
-        let (closer, r) = crossbeam::channel::bounded(1);
+        let (closer_s, mut closer_r) = oneshot::channel();
         let state_worker = state.clone();
-        let worker = std::thread::spawn(move || {
+
+        let rt = tokio::runtime::Handle::current();
+        let worker = rt.spawn(async move {
             let state = state_worker;
-            let ticker = crossbeam::channel::tick(state.peer_sample_interval);
+            let mut ticker = tokio::time::interval(state.peer_sample_interval);
 
             let mut updates = Vec::new();
             let mut last_short_update = Instant::now();
@@ -148,11 +150,12 @@ impl DefaultScoreLedger {
             let mut i = 0;
 
             loop {
-                crossbeam::channel::select! {
-                    recv(r) -> _ => {
+                tokio::select! {
+                    _ = &mut closer_r => {
+                        // shutdown
                         break;
                     }
-                    recv(ticker) -> _ => {
+                    _ = ticker.tick() => {
                         i = (i + 1) % LONG_TERM_RATIO;
 
                         let is_update_long = i == 0;
@@ -207,15 +210,20 @@ impl DefaultScoreLedger {
 
         DefaultScoreLedger {
             state,
-            closer,
+            closer: closer_s,
             worker,
         }
     }
 
-    pub fn stop(self) -> Result<()> {
-        self.closer.send(())?;
-        self.worker.join().map_err(|e| anyhow!("{:?}", e))?;
-
+    pub async fn stop(self) -> Result<()> {
+        match self.closer.send(()) {
+            Ok(_) => {
+                self.worker.await.map_err(|e| anyhow!("{:?}", e))?;
+            }
+            Err(err) => {
+                error!("failed to stop score ledger: {:?}", err);
+            }
+        }
         Ok(())
     }
 

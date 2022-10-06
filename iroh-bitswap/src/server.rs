@@ -2,6 +2,8 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::{anyhow, Result};
 use cid::Cid;
+use futures::future::BoxFuture;
+use futures::FutureExt;
 use libp2p::PeerId;
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
@@ -108,7 +110,7 @@ impl<S: Store> Server<S> {
                             match envelope {
                                 Ok(Ok(envelope)) => {
                                     // let start = Instant::now();
-                                    engine.message_sent(&envelope.peer, &envelope.message);
+                                    engine.message_sent(&envelope.peer, &envelope.message).await;
                                     send_blocks(&network, envelope).await;
                                     // self.send_time_histogram.observe(start.elapsed());
                                 }
@@ -212,9 +214,10 @@ impl<S: Store> Server<S> {
     }
 
     /// Returns the currently understood list of blocks requested by a given peer.
-    pub fn wantlist_for_peer(&self, peer: &PeerId) -> Vec<Cid> {
+    pub async fn wantlist_for_peer(&self, peer: &PeerId) -> Vec<Cid> {
         self.engine
             .wantlist_for_peer(peer)
+            .await
             .into_iter()
             .map(|e| e.cid)
             .collect()
@@ -250,11 +253,11 @@ impl<S: Store> Server<S> {
     }
 
     /// Returns aggregated stats about the server operations.
-    pub fn stat(&self) -> Result<Stat> {
+    pub async fn stat(&self) -> Result<Stat> {
         let mut counters = self.inner.counters.lock().unwrap();
         // TODO:
         // counters.provide_buf_len = self.new_blocks.len();
-        counters.peers = self.engine.peers().into_iter().collect();
+        counters.peers = self.engine.peers().await.into_iter().collect();
         counters.peers.sort();
 
         Ok(counters.clone())
@@ -284,20 +287,26 @@ impl<S: Store> Server<S> {
     /// Notifies the decision engine that a peer is well behaving
     /// and gave us usefull data, potentially increasing it's score and making us
     /// send them more data in exchange.
-    pub fn received_blocks_cb(&self) -> Box<dyn Fn(&PeerId, &[&Block]) + 'static + Send + Sync> {
+    pub fn received_blocks_cb(
+        &self,
+    ) -> Box<dyn Fn(PeerId, Vec<Block>) -> BoxFuture<'static, ()> + 'static + Send + Sync> {
         let engine = self.engine.clone();
 
-        Box::new(move |from: &PeerId, blocks: &[&Block]| {
-            engine.received_blocks(from, blocks);
+        Box::new(move |from: PeerId, blocks: Vec<Block>| {
+            let engine = engine.clone();
+            async move {
+                engine.received_blocks(from, blocks).await;
+            }
+            .boxed()
         })
     }
 
-    pub fn peer_connected(&self, peer: &PeerId) {
-        self.engine.peer_connected(peer);
+    pub async fn peer_connected(&self, peer: &PeerId) {
+        self.engine.peer_connected(peer).await;
     }
 
-    pub fn peer_disconnected(&self, peer: &PeerId) {
-        self.engine.peer_disconnected(peer);
+    pub async fn peer_disconnected(&self, peer: &PeerId) {
+        self.engine.peer_disconnected(peer).await;
     }
 }
 

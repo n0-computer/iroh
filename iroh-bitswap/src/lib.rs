@@ -143,9 +143,9 @@ impl<S: Store> Bitswap<S> {
         Ok(())
     }
 
-    pub fn stat(&self) -> Result<Stat> {
+    pub async fn stat(&self) -> Result<Stat> {
         let client_stat = self.client.stat()?;
-        let server_stat = self.server.stat()?;
+        let server_stat = self.server.stat().await?;
 
         Ok(Stat {
             wantlist: client_stat.wantlist,
@@ -161,27 +161,48 @@ impl<S: Store> Bitswap<S> {
         })
     }
 
-    pub fn wantlist_for_peer(&self, peer: &PeerId) -> Vec<Cid> {
+    pub async fn wantlist_for_peer(&self, peer: &PeerId) -> Vec<Cid> {
         if peer == self.network.self_id() {
             return self.client.get_wantlist().into_iter().collect();
         }
 
-        self.server.wantlist_for_peer(peer)
+        self.server.wantlist_for_peer(peer).await
     }
 
-    fn peer_connected(&self, peer: &PeerId) {
-        self.client.peer_connected(peer);
-        self.server.peer_connected(peer);
+    fn peer_connected(&self, peer: PeerId) {
+        let client = self.client.clone();
+        let server = self.server.clone();
+        self.futures.push(
+            async move {
+                client.peer_connected(&peer);
+                server.peer_connected(&peer).await;
+            }
+            .boxed_local(),
+        );
     }
 
-    fn peer_disconnected(&self, peer: &PeerId) {
-        self.client.peer_disconnected(peer);
-        self.server.peer_disconnected(peer);
+    fn peer_disconnected(&self, peer: PeerId) {
+        let client = self.client.clone();
+        let server = self.server.clone();
+        self.futures.push(
+            async move {
+                client.peer_disconnected(&peer);
+                server.peer_disconnected(&peer).await;
+            }
+            .boxed_local(),
+        );
     }
 
-    async fn receive_message(&self, peer: &PeerId, message: &BitswapMessage) {
-        self.client.receive_message(peer, &message);
-        self.server.receive_message(peer, &message).await;
+    fn receive_message(&self, peer: PeerId, message: BitswapMessage) {
+        let client = self.client.clone();
+        let server = self.server.clone();
+        self.futures.push(
+            async move {
+                client.receive_message(&peer, &message);
+                server.receive_message(&peer, &message).await;
+            }
+            .boxed_local(),
+        );
     }
 
     fn get_peer_state(&self, peer: &PeerId) -> PeerState {
@@ -195,10 +216,11 @@ impl<S: Store> Bitswap<S> {
         let peer_state = self.peers.entry(*peer).or_default();
         let old_state = *peer_state;
         *peer_state = new_state;
+        let peer = *peer;
 
         match peer_state {
             PeerState::Disconnected => {
-                self.peers.remove(peer);
+                self.peers.remove(&peer);
                 if matches!(old_state, PeerState::Responsive(_, _)) {
                     self.peer_disconnected(peer);
                 }
@@ -306,7 +328,7 @@ impl<S: Store> NetworkBehaviour for Bitswap<S> {
         // debug!("inject_event from {}, event: {:?}", peer_id, event);
         match event {
             HandlerEvent::Connected { protocol } => {
-                self.peer_connected(&peer_id);
+                self.peer_connected(peer_id);
                 if let Some(mut dials) = self.dials.remove(&peer_id) {
                     while let Some(sender) = dials.pop() {
                         sender.send(Ok((connection, protocol))).ok();
@@ -332,15 +354,7 @@ impl<S: Store> NetworkBehaviour for Bitswap<S> {
                     self.set_peer_state(&peer_id, PeerState::Responsive(connection, protocol));
                 }
 
-                let client = self.client.clone();
-                let server = self.server.clone();
-                self.futures.push(
-                    async move {
-                        client.receive_message(&peer_id, &message);
-                        server.receive_message(&peer_id, &message).await;
-                    }
-                    .boxed_local(),
-                );
+                self.receive_message(peer_id, message);
             }
         }
     }

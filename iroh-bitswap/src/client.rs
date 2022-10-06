@@ -8,6 +8,7 @@ use anyhow::Result;
 use cid::Cid;
 use crossbeam::channel::Receiver;
 use derivative::Derivative;
+use futures::future::BoxFuture;
 use libp2p::PeerId;
 use tracing::{debug, warn};
 
@@ -74,7 +75,8 @@ pub struct Client<S: Store> {
     rebroadcast_delay: Duration,
     simulate_dont_haves_on_timeout: bool,
     #[derivative(Debug = "ignore")]
-    blocks_received_cb: Arc<Box<dyn Fn(&PeerId, &[&Block]) + 'static + Send + Sync>>,
+    blocks_received_cb:
+        Arc<Box<dyn Fn(PeerId, Vec<Block>) -> BoxFuture<'static, ()> + 'static + Send + Sync>>,
     #[derivative(Debug = "ignore")]
     notify: Arc<Mutex<bus::Bus<Block>>>,
 }
@@ -83,7 +85,9 @@ impl<S: Store> Client<S> {
     pub fn new(
         network: Network,
         store: S,
-        blocks_received_cb: Box<dyn Fn(&PeerId, &[&Block]) + 'static + Send + Sync>,
+        blocks_received_cb: Box<
+            dyn Fn(PeerId, Vec<Block>) -> BoxFuture<'static, ()> + 'static + Send + Sync,
+        >,
         config: Config,
     ) -> Self {
         let self_id = *network.self_id();
@@ -184,13 +188,12 @@ impl<S: Store> Client<S> {
         self.session_manager
             .receive_from(Some(*from), &all_keys, haves, dont_haves);
 
-        (self.blocks_received_cb)(from, &wanted);
-
         // Publish the block
         let notify = &mut *self.notify.lock().unwrap();
-        for block in wanted {
-            notify.broadcast(block.clone());
+        for block in &wanted {
+            notify.broadcast((*block).clone());
         }
+        (self.blocks_received_cb)(*from, wanted.into_iter().cloned().collect());
 
         Ok(())
     }
