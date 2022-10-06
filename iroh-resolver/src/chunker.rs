@@ -22,6 +22,7 @@ impl Chunker {
     }
 
     pub fn fixed_with_size(size: usize) -> Self {
+        assert!(size > 0);
         Chunker::FixedSize { chunk_size: size }
     }
 
