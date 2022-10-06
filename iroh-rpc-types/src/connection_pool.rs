@@ -16,13 +16,13 @@ use crate::Addr;
 
 #[derive(Debug, Clone)]
 pub struct TonicConnectionPool {
-    inner: r2d2::Pool<TonicConnectionManager>,
+    inner: bb8::Pool<TonicConnectionManager>,
 }
 
 impl TonicConnectionPool {
-    pub fn new(max_conns: u32, addr: Addr) -> anyhow::Result<Self> {
+    pub async fn new(max_conns: u32, addr: Addr) -> anyhow::Result<Self> {
         let manager = TonicConnectionManager { addr: addr.clone() };
-        let pool = r2d2::Pool::builder()
+        let pool = bb8::Pool::builder()
             .max_size(max_conns)
             .build(manager)
             .unwrap();
@@ -36,11 +36,11 @@ pub struct TonicConnectionManager {
 }
 
 #[async_trait]
-impl r2d2::ManageConnection for TonicConnectionManager {
+impl bb8::ManageConnection for TonicConnectionManager {
     type Connection = Channel;
     type Error = ConnectionManagerError;
 
-    fn connect(&self) -> Result<Self::Connection, Self::Error> {
+    async fn connect(&self) -> Result<Self::Connection, Self::Error> {
         match self.addr.clone() {
             #[cfg(feature = "grpc")]
             Addr::GrpcHttp2(addr) => {
@@ -72,7 +72,7 @@ impl r2d2::ManageConnection for TonicConnectionManager {
         }
     }
 
-    fn is_valid(&self, conn: &mut Self::Connection) -> Result<(), Self::Error> {
+    async fn is_valid(&self, conn: &mut Self::Connection) -> Result<(), Self::Error> {
         // conn.execute_batch("").map_err(Into::into)
         Ok(())
     }
@@ -94,10 +94,13 @@ impl Service<tonic::codegen::http::Request<BoxBody>> for TonicConnectionPool {
     fn call(&mut self, request: tonic::codegen::http::Request<BoxBody>) -> Self::Future {
         // TODO: async
         // TODO: error handling
-        let conn = &mut *self.inner.get().unwrap();
-        let inner = Service::call(conn, request);
+        let h = tokio::spawn(async move {
+            let conn = &mut *self.inner.get().await.unwrap();
+            let inner = Service::call(conn, request);
 
-        ResponseFuture { inner }
+            ResponseFuture { inner }
+        });
+        ResponseFuture { inner: h }
     }
 }
 

@@ -26,7 +26,7 @@ macro_rules! impl_client {
                                 .keep_alive_while_idle(true)
                                 .connect_lazy();
 
-                            let conn_pool = iroh_rpc_types::connection_pool::TonicConnectionPool::new(32, Addr::GrpcHttp2(addr)).unwrap();
+                            let conn_pool = iroh_rpc_types::connection_pool::TonicConnectionPool::new(32, Addr::GrpcHttp2(addr)).await.unwrap();
 
                             let client = [<Grpc $label Client>]::new(conn_pool.clone());
                             let health = HealthClient::new(conn);
@@ -48,7 +48,7 @@ macro_rules! impl_client {
                                     let path = hpath.clone();
                                     UnixStream::connect(path.as_ref().clone())
                                 }));
-                            let conn_pool = iroh_rpc_types::connection_pool::TonicConnectionPool::new(32, Addr::GrpcUds(path)).unwrap();
+                            let conn_pool = iroh_rpc_types::connection_pool::TonicConnectionPool::new(32, Addr::GrpcUds(path)).await.unwrap();
 
                             let client = [<Grpc $label Client>]::new(conn_pool.clone());
                             let health = HealthClient::new(conn);
