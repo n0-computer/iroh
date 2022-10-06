@@ -90,13 +90,25 @@ impl NetworkBehaviour for PeerManager {
         peer_id: &PeerId,
         _connection_id: &ConnectionId,
         _endpoint: &ConnectedPoint,
-        _failed_addresses: Option<&Vec<Multiaddr>>,
+        failed_addresses: Option<&Vec<Multiaddr>>,
         other_established: usize,
     ) {
         if other_established == 0 {
             let p = self.bad_peers.remove(peer_id);
             if p.is_some() {
                 inc!(P2PMetrics::BadPeerRemoved);
+            }
+        }
+
+        if let Some(failed_addresses) = failed_addresses {
+            if let Some(info) = self.info.get_mut(peer_id) {
+                if let Some(ref mut info) = info.last_info {
+                    for addr in failed_addresses {
+                        if let Some(i) = info.listen_addrs.iter().position(|a| a == addr) {
+                            info.listen_addrs.remove(i);
+                        }
+                    }
+                }
             }
         }
     }
@@ -141,6 +153,8 @@ impl NetworkBehaviour for PeerManager {
                     if PutResult::Put == self.bad_peers.put(peer_id, ()) {
                         inc!(P2PMetrics::BadPeer);
                     }
+
+                    self.info.remove(&peer_id);
                 }
             }
         }

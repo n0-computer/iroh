@@ -161,6 +161,7 @@ impl Network {
         peer: PeerId,
         timeout: Duration,
     ) -> Result<(ConnectionId, ProtocolId)> {
+        debug!("dialing {}", peer);
         let res = tokio::time::timeout(timeout, async move {
             let (s, r) = oneshot::channel();
             self.network_out_sender
