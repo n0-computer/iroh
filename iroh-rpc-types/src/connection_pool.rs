@@ -1,5 +1,16 @@
+use std::{
+    future::Future,
+    pin::Pin,
+    task::{Context, Poll},
+};
+
 use async_trait::async_trait;
-use tonic::{transport::{Channel, Endpoint}};
+use tonic::{
+    body::BoxBody,
+    client::GrpcService,
+    transport::{Body, Channel, Endpoint},
+};
+use tower::Service;
 
 use crate::Addr;
 
@@ -10,8 +21,11 @@ pub struct TonicConnectionPool {
 
 impl TonicConnectionPool {
     pub fn new(max_conns: u32, addr: Addr) -> anyhow::Result<Self> {
-        let manager = TonicConnectionManager{addr: addr.clone()};
-        let pool = r2d2::Pool::builder().max_size(max_conns).build(manager).unwrap();
+        let manager = TonicConnectionManager { addr: addr.clone() };
+        let pool = r2d2::Pool::builder()
+            .max_size(max_conns)
+            .build(manager)
+            .unwrap();
         Ok(Self { inner: pool })
     }
 }
@@ -65,6 +79,37 @@ impl r2d2::ManageConnection for TonicConnectionManager {
 
     fn has_broken(&self, _: &mut Self::Connection) -> bool {
         false
+    }
+}
+
+impl Service<tonic::codegen::http::Request<BoxBody>> for TonicConnectionPool {
+    type Response = tonic::codegen::http::Response<Body>;
+    type Error = tonic::transport::Error;
+    type Future = ResponseFuture;
+
+    fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn call(&mut self, request: tonic::codegen::http::Request<BoxBody>) -> Self::Future {
+        // TODO: async
+        // TODO: error handling
+        let conn = &mut *self.inner.get().unwrap();
+        let inner = Service::call(conn, request);
+
+        ResponseFuture { inner }
+    }
+}
+
+pub struct ResponseFuture {
+    inner: tonic::transport::channel::ResponseFuture,
+}
+
+impl Future for ResponseFuture {
+    type Output = Result<tonic::codegen::http::Response<Body>, tonic::transport::Error>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        Pin::new(&mut self.inner).poll(cx)
     }
 }
 
