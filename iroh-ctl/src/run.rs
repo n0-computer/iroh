@@ -86,7 +86,7 @@ impl Cli {
         self.cli_command(&api).await
     }
 
-    // extracted this into function and marked it `pub` so that we don't get a
+    // extracted this into function and marked it `pub` so that we don't get
     // Rust analyzer unused code warnings, which we do get if we inline
     // this code inside of run. `pub(crate)` unfortunately has the same effect.
     pub async fn run_impl(&self) -> Result<()> {
