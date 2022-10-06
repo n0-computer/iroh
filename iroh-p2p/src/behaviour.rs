@@ -242,7 +242,8 @@ impl NodeBehaviour {
             let rt = tokio::runtime::Handle::current();
             let client = bs.client().clone();
             rt.spawn(async move {
-                match client.get_blocks(&[cid][..]).await {
+                let session = client.new_session().await;
+                match session.get_blocks(&[cid][..]).await {
                     Ok(receiver) => {
                         let res = if let Ok(block) = receiver.recv().await {
                             chan.send(Ok(block))
@@ -257,6 +258,9 @@ impl NodeBehaviour {
                     Err(err) => {
                         chan.send(Err(err.to_string())).ok();
                     }
+                }
+                if let Err(err) = session.stop().await {
+                    warn!("failed to stop session: {:?}", err);
                 }
             });
 

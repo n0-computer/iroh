@@ -146,7 +146,9 @@ impl<S: Store> Client<S> {
     /// Attempts to retrieve a particular block from peers.
     pub async fn get_block(&self, key: &Cid) -> Result<Block> {
         let session = self.new_session().await;
-        session.get_block(key).await
+        let block = session.get_block(key).await;
+        session.stop().await?;
+        block
     }
 
     /// Returns a channel where the caller may receive blocks that correspond to the
