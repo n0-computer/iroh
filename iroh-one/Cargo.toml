@@ -33,6 +33,7 @@ tracing = "0.1.33"
 crossterm = "0.25"
 tonic = "0.8"
 iroh = { path = "../iroh"}
+libp2p = { version = "0.49", default-features = false }
 
 [dev-dependencies]
 axum-macros = "0.2.0" # use #[axum_macros::debug_handler] for better error messages on handlers
@@ -46,3 +47,5 @@ rpc-mem = ["iroh-rpc-types/mem", "iroh-rpc-client/mem"]
 # uds-gateway controls whether http over uds is enabled. This is independent of the
 # rpc-grpc control endpoint.
 uds-gateway = []
+# testing controls whether we want to run the CLI in testing mode
+testing = []

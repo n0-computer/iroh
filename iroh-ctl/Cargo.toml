@@ -42,6 +42,7 @@ iroh-one = { path = "../iroh-one" }
 [dev-dependencies]
 trycmd = "0.13.7"
 iroh = { path = "../iroh", features = ["testing"] }
+iroh-one = { path = "../iroh-one", features = ["testing"] }
 # We want to compile `iroh-ctl` in test mode, but we can't specify that yet:
 # https://github.com/rust-lang/cargo/issues/1982
 # This is a workaround for enabling features only during testing: 
