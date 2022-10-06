@@ -1,8 +1,14 @@
 # iroh-car
 
-> [CAR file](https://ipld.io/specs/transport/car/) support for iroh.
+[CAR file](https://ipld.io/specs/transport/car/) support for iroh. "CAR" stands
+for Content Addressable aRchives. A CAR file typically contains a serialized
+representation of an [IPLD
+DAG](https://docs.ipfs.tech/concepts/merkle-dag/#merkle-directed-acyclic-graphs-dags),
+though is general enough to contain arbitrary IPLD blocks.
 
 Currently supports only [v1](https://ipld.io/specs/transport/car/carv1/).
+
+It is part of [iroh](https://github.com/n0-computer/iroh).
 
 ## License
 
