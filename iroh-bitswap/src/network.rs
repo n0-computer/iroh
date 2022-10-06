@@ -150,7 +150,7 @@ impl Network {
         &self,
         key: Cid,
     ) -> Result<mpsc::Receiver<std::result::Result<HashSet<PeerId>, String>>> {
-        let (s, mut r) = mpsc::channel(16);
+        let (s, r) = mpsc::channel(16);
         self.network_out_sender
             .send(OutEvent::GenerateEvent(BitswapEvent::FindProviders {
                 key,

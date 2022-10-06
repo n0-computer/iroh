@@ -1,8 +1,6 @@
 use std::collections::HashSet;
-use std::error::Error;
 use std::time::Duration;
 
-use tokio::sync::oneshot::Sender as OneShotSender;
 use anyhow::{bail, Result};
 use async_trait::async_trait;
 use cid::Cid;
@@ -21,6 +19,7 @@ use libp2p::relay;
 use libp2p::swarm::behaviour::toggle::Toggle;
 use libp2p::NetworkBehaviour;
 use libp2p::{autonat, dcutr};
+use tokio::sync::oneshot::Sender as OneShotSender;
 use tracing::{info, warn};
 
 pub(crate) use self::event::Event;
@@ -93,7 +92,7 @@ impl NodeBehaviour {
         let bitswap = if config.bitswap {
             info!("init bitswap");
             let bs_config = BitswapConfig::default();
-            Some(Bitswap::new(peer_id, BitswapStore(rpc_client), bs_config))
+            Some(Bitswap::new(peer_id, BitswapStore(rpc_client), bs_config).await)
         } else {
             None
         }
@@ -240,19 +239,27 @@ impl NodeBehaviour {
         chan: OneShotSender<Result<Block, String>>,
     ) -> Result<()> {
         if let Some(bs) = self.bitswap.as_mut() {
-            let sync_receiver = bs.client().get_blocks(&[cid][..])?;
-            tokio::runtime::Handle::current().spawn_blocking(move || {
-                let res = if let Ok(block) = sync_receiver.recv() {
-                    chan.send(Ok(block))
-                } else {
-                    chan.send(Err("dropped".to_string()))
-                };
+            let rt = tokio::runtime::Handle::current();
+            let client = bs.client().clone();
+            rt.spawn(async move {
+                match client.get_blocks(&[cid][..]).await {
+                    Ok(receiver) => {
+                        let res = if let Ok(block) = receiver.recv().await {
+                            chan.send(Ok(block))
+                        } else {
+                            chan.send(Err("dropped".to_string()))
+                        };
 
-                if let Err(e) = res {
-                    warn!("failed to send block response: {:?}", e);
+                        if let Err(e) = res {
+                            warn!("failed to send block response: {:?}", e);
+                        }
+                    }
+                    Err(err) => {
+                        chan.send(Err(err.to_string())).ok();
+                    }
                 }
             });
-            
+
             Ok(())
         } else {
             bail!("no bitswap available");

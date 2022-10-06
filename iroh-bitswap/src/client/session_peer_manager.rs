@@ -1,8 +1,9 @@
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 use ahash::AHashSet;
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use libp2p::PeerId;
+use tokio::sync::RwLock;
 
 use crate::network::Network;
 
@@ -34,20 +35,22 @@ impl SessionPeerManager {
         }
     }
 
-    pub fn stop(self) -> Result<()> {
-        let this = &self.inner;
-        let (peers, _) = &*this.peers.read().unwrap();
+    pub async fn stop(self) -> Result<()> {
+        let inner = Arc::try_unwrap(self.inner)
+            .map_err(|_| anyhow!("session peer manager refs not shutdown"))?;
+
+        let (peers, _) = RwLock::into_inner(inner.peers);
         for peer in peers.iter() {
-            this.network.untag_peer(peer, &this.tag);
-            this.network.unprotect_peer(peer, &this.tag);
+            inner.network.untag_peer(peer, &inner.tag);
+            inner.network.unprotect_peer(peer, &inner.tag);
         }
         Ok(())
     }
 
     /// Adds the peer.
     /// Returns true if the peer is new.
-    pub fn add_peer(&self, peer: &PeerId) -> bool {
-        let (peers, peers_discovered) = &mut *self.inner.peers.write().unwrap();
+    pub async fn add_peer(&self, peer: &PeerId) -> bool {
+        let (peers, peers_discovered) = &mut *self.inner.peers.write().await;
 
         if peers.contains(peer) {
             return false;
@@ -64,8 +67,8 @@ impl SessionPeerManager {
     }
 
     /// Protects this connection.
-    pub fn protect_connection(&self, peer: &PeerId) {
-        let (peers, _) = &*self.inner.peers.read().unwrap();
+    pub async fn protect_connection(&self, peer: &PeerId) {
+        let (peers, _) = &*self.inner.peers.read().await;
 
         if !peers.contains(peer) {
             return;
@@ -75,8 +78,8 @@ impl SessionPeerManager {
 
     /// Removes the peer.
     /// Returns true if the peer existed
-    pub fn remove_peer(&self, peer: &PeerId) -> bool {
-        let (peers, _) = &mut *self.inner.peers.write().unwrap();
+    pub async fn remove_peer(&self, peer: &PeerId) -> bool {
+        let (peers, _) = &mut *self.inner.peers.write().await;
 
         if peers.contains(peer) {
             return false;
@@ -90,22 +93,22 @@ impl SessionPeerManager {
     }
 
     /// Indicates wether peers have been discovered yet.
-    pub fn peers_discovered(&self) -> bool {
-        self.inner.peers.read().unwrap().1
+    pub async fn peers_discovered(&self) -> bool {
+        self.inner.peers.read().await.1
     }
 
-    pub fn peers(&self) -> Vec<PeerId> {
-        let (peers, _) = &*self.inner.peers.read().unwrap();
+    pub async fn peers(&self) -> Vec<PeerId> {
+        let (peers, _) = &*self.inner.peers.read().await;
         peers.iter().copied().collect()
     }
 
-    pub fn has_peers(&self) -> bool {
-        let (peers, _) = &*self.inner.peers.read().unwrap();
+    pub async fn has_peers(&self) -> bool {
+        let (peers, _) = &*self.inner.peers.read().await;
         peers.is_empty()
     }
 
-    pub fn has_peer(&self, peer: &PeerId) -> bool {
-        let (peers, _) = &*self.inner.peers.read().unwrap();
+    pub async fn has_peer(&self, peer: &PeerId) -> bool {
+        let (peers, _) = &*self.inner.peers.read().await;
         peers.contains(peer)
     }
 }

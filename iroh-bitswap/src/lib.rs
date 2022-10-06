@@ -12,7 +12,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use cid::Cid;
 use crossbeam::channel::Sender;
-use futures::future::LocalBoxFuture;
+use futures::future::BoxFuture;
 use futures::stream::FuturesUnordered;
 use futures::{FutureExt, StreamExt};
 use handler::{BitswapHandler, HandlerEvent};
@@ -57,7 +57,7 @@ pub struct Bitswap<S: Store> {
     dials: AHashMap<PeerId, Vec<Sender<std::result::Result<(ConnectionId, ProtocolId), String>>>>,
     client: Client<S>,
     server: Server<S>,
-    futures: FuturesUnordered<LocalBoxFuture<'static, ()>>,
+    futures: FuturesUnordered<BoxFuture<'static, ()>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -181,7 +181,7 @@ impl<S: Store> Bitswap<S> {
                 client.peer_connected(&peer).await;
                 server.peer_connected(&peer).await;
             }
-            .boxed_local(),
+            .boxed(),
         );
     }
 
@@ -193,7 +193,7 @@ impl<S: Store> Bitswap<S> {
                 client.peer_disconnected(&peer).await;
                 server.peer_disconnected(&peer).await;
             }
-            .boxed_local(),
+            .boxed(),
         );
     }
 
@@ -205,7 +205,7 @@ impl<S: Store> Bitswap<S> {
                 client.receive_message(&peer, &message).await;
                 server.receive_message(&peer, &message).await;
             }
-            .boxed_local(),
+            .boxed(),
         );
     }
 

@@ -127,7 +127,7 @@ impl ProviderQueryManager {
             |(worker, closer)| async move {
                 closer
                     .send(())
-                    .map_err(|e| anyhow!("failed to send close"))?;
+                    .map_err(|e| anyhow!("failed to send close: {:?}", e))?;
                 worker.await.map_err(|e| anyhow!("worker panic: {:?}", e))?;
                 Ok::<(), anyhow::Error>(())
             },

@@ -209,8 +209,8 @@ impl<S: Store> Server<S> {
     }
 
     /// Returns aggregated data about blocks swapped and communication with a given peer.
-    pub fn ledger_for_peer(&self, peer: &PeerId) -> Option<Receipt> {
-        self.engine.ledger_for_peer(peer)
+    pub async fn ledger_for_peer(&self, peer: &PeerId) -> Option<Receipt> {
+        self.engine.ledger_for_peer(peer).await
     }
 
     /// Returns the currently understood list of blocks requested by a given peer.

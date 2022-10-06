@@ -122,7 +122,8 @@ impl SessionManager {
         let cancels = self
             .inner
             .session_interest_manager
-            .remove_session(session_id);
+            .remove_session(session_id)
+            .await;
         self.cancel_wants(&cancels).await;
         self.inner.sessions.write().await.remove(&session_id);
     }
@@ -143,13 +144,15 @@ impl SessionManager {
         if let Some(ref peer) = peer {
             self.inner
                 .block_presence_manager
-                .receive_from(peer, haves, dont_haves);
+                .receive_from(peer, haves, dont_haves)
+                .await;
         }
 
         for id in &self
             .inner
             .session_interest_manager
             .interested_sessions(blocks, haves, dont_haves)
+            .await
         {
             let sessions = &*self.inner.sessions.read().await;
             if let Some(session) = sessions.get(id) {
@@ -167,13 +170,14 @@ impl SessionManager {
         let cancels = self
             .inner
             .session_interest_manager
-            .remove_session_interested(session_id, wants);
+            .remove_session_interested(session_id, wants)
+            .await;
         self.cancel_wants(&cancels).await;
     }
 
     async fn cancel_wants(&self, wants: &[Cid]) {
         // Free up block presence tracking
-        self.inner.block_presence_manager.remove_keys(wants);
+        self.inner.block_presence_manager.remove_keys(wants).await;
 
         // Send CANCEL to all peers for blocks that no session is interested anymore.
         self.inner.peer_manager.send_cancels(wants).await;

@@ -304,7 +304,7 @@ impl WantInfo {
     }
 
     /// Called when a HAVE / DONT_HAVE is received for the given want / peer.
-    fn update_want_block_presence(
+    async fn update_want_block_presence(
         &mut self,
         block_presence_manager: &BlockPresenceManager,
         cid: &Cid,
@@ -312,20 +312,23 @@ impl WantInfo {
     ) {
         // If the peer sent us a HAVE or DONT_HAVE for the cid, adjust the
         // block presence for the peer / cid combination
-        let info = if block_presence_manager.peer_has_block(&peer, cid) {
+        let info = if block_presence_manager.peer_has_block(&peer, cid).await {
             BlockPresence::Have
-        } else if block_presence_manager.peer_does_not_have_block(&peer, cid) {
+        } else if block_presence_manager
+            .peer_does_not_have_block(&peer, cid)
+            .await
+        {
             BlockPresence::DontHave
         } else {
             BlockPresence::Unknown
         };
-        self.set_peer_block_presence(peer, info);
+        self.set_peer_block_presence(peer, info).await;
     }
 
     /// Sets the block presence for the given peer
-    fn set_peer_block_presence(&mut self, peer: PeerId, bp: BlockPresence) {
+    async fn set_peer_block_presence(&mut self, peer: PeerId, bp: BlockPresence) {
         self.block_presence.insert(peer, bp);
-        self.calculate_best_peer();
+        self.calculate_best_peer().await;
 
         // If a peer informed us that it has a block then make sure the want is no
         // longer flagged as exhausted (exhausted means no peers have the block)
@@ -335,7 +338,7 @@ impl WantInfo {
     }
 
     /// Deletes the given peer from the want info
-    fn remove_peer(&mut self, peer: &PeerId) {
+    async fn remove_peer(&mut self, peer: &PeerId) {
         // If we were waiting to hear back from the peer that is being removed,
         // clear the sent_to field so we no longer wait
         if Some(peer) == self.sent_to.as_ref() {
@@ -343,11 +346,11 @@ impl WantInfo {
         }
 
         self.block_presence.remove(peer);
-        self.calculate_best_peer();
+        self.calculate_best_peer().await;
     }
 
     /// Finds the best peer to send the want to next
-    fn calculate_best_peer(&mut self) {
+    async fn calculate_best_peer(&mut self) {
         // Recalculate the best peer
         let mut best_bp = BlockPresence::DontHave;
         let mut best_peer = None;
@@ -385,7 +388,7 @@ impl WantInfo {
                 peers_with_best.push(*peer);
             }
         }
-        self.best_peer = self.peer_response_tracker.choose(&peers_with_best);
+        self.best_peer = self.peer_response_tracker.choose(&peers_with_best).await;
     }
 }
 
@@ -485,7 +488,7 @@ impl LoopState {
                 Change::Add(cids) => {
                     // Initialize info for new wants
                     for cid in cids {
-                        self.track_want(cid);
+                        self.track_want(cid).await;
                     }
                 }
                 Change::Cancel(cids) => {
@@ -520,13 +523,14 @@ impl LoopState {
         }
 
         // Update peer availability
-        let (newly_available, newly_unavailable) = self.process_availability(&availability);
+        let (newly_available, newly_unavailable) = self.process_availability(&availability).await;
 
         // Update wants
         let dont_haves = self.process_updates(updates).await;
 
         // Check if there are any wants for which all peers have indicated they don't have the want.
-        self.check_for_exhausted_wants(dont_haves, newly_unavailable);
+        self.check_for_exhausted_wants(dont_haves, newly_unavailable)
+            .await;
 
         // If there are any cancels, send them
         if !cancels.is_empty() {
@@ -536,7 +540,7 @@ impl LoopState {
         }
 
         // If there are some connected peers, send any pending wants
-        if self.session_peer_manager.has_peers() {
+        if self.session_peer_manager.has_peers().await {
             self.send_next_wants(newly_available).await;
         }
     }
@@ -545,7 +549,7 @@ impl LoopState {
     // It returns the peers that have become
     // - newly available
     // - newly unavailable
-    fn process_availability(
+    async fn process_availability(
         &mut self,
         availability: &AHashMap<PeerId, bool>,
     ) -> (Vec<PeerId>, Vec<PeerId>) {
@@ -554,13 +558,13 @@ impl LoopState {
         for (peer, is_now_available) in availability {
             let mut state_change = false;
             if *is_now_available {
-                let is_new_peer = self.session_peer_manager.add_peer(peer);
+                let is_new_peer = self.session_peer_manager.add_peer(peer).await;
                 if is_new_peer {
                     state_change = true;
                     newly_available.push(*peer);
                 }
             } else {
-                let was_available = self.session_peer_manager.remove_peer(peer);
+                let was_available = self.session_peer_manager.remove_peer(peer).await;
                 if was_available {
                     state_change = true;
                     newly_unavailable.push(*peer);
@@ -569,7 +573,8 @@ impl LoopState {
 
             // If the state has changed
             if state_change {
-                self.update_wants_peer_availability(peer, *is_now_available);
+                self.update_wants_peer_availability(peer, *is_now_available)
+                    .await;
                 // Reset the count of consecutive DONT_HAVEs received from the peer.
                 self.peer_consecutive_dont_haves.remove(peer);
             }
@@ -579,7 +584,7 @@ impl LoopState {
     }
 
     /// Creates a new entry in the map of cid -> want info.
-    fn track_want(&mut self, cid: Cid) {
+    async fn track_want(&mut self, cid: Cid) {
         if self.wants.contains_key(&cid) {
             return;
         }
@@ -589,8 +594,10 @@ impl LoopState {
 
         // For each available peer, register any information we know about
         // whether the peer has the block
-        for peer in self.session_peer_manager.peers() {
-            want_info.update_want_block_presence(&self.block_presence_manager, &cid, peer);
+        for peer in self.session_peer_manager.peers().await {
+            want_info
+                .update_want_block_presence(&self.block_presence_manager, &cid, peer)
+                .await;
         }
 
         self.wants.insert(cid, want_info);
@@ -612,11 +619,15 @@ impl LoopState {
                 // Remove the want
                 if self.remove_want(cid).is_some() {
                     // Inform the peer tracker that this peer was the first to send us the block.
-                    self.peer_response_tracker.received_block_from(&update.from);
+                    self.peer_response_tracker
+                        .received_block_from(&update.from)
+                        .await;
 
                     // Protect the connection to this peer so that we can ensure
                     // that the connection doesn't get pruned by the connection manager.
-                    self.session_peer_manager.protect_connection(&update.from);
+                    self.session_peer_manager
+                        .protect_connection(&update.from)
+                        .await;
                     self.peer_consecutive_dont_haves.remove(&update.from);
                 }
             }
@@ -648,7 +659,8 @@ impl LoopState {
 
                 // Update the block presence for the peer
                 if let Some(wi) = self.wants.get_mut(cid) {
-                    wi.update_want_block_presence(&self.block_presence_manager, cid, update.from);
+                    wi.update_want_block_presence(&self.block_presence_manager, cid, update.from)
+                        .await;
                 }
 
                 // Check if the DONT_HAVE is in response to a want-block
@@ -679,7 +691,8 @@ impl LoopState {
                             &self.block_presence_manager,
                             cid,
                             update.from,
-                        );
+                        )
+                        .await;
                     }
                 }
 
@@ -693,14 +706,17 @@ impl LoopState {
         {
             // Before removing the peer from the session, check if the peer
             // sent us a HAVE for a block that we want
-            prune_peers.retain(|peer| {
+            let mut to_remove = Vec::new();
+            for peer in &prune_peers {
                 for cid in self.wants.keys() {
-                    if self.block_presence_manager.peer_has_block(&peer, cid) {
-                        return false;
+                    if self.block_presence_manager.peer_has_block(&peer, cid).await {
+                        to_remove.push(*peer);
                     }
                 }
-                true
-            });
+            }
+            for peer in to_remove {
+                prune_peers.remove(&peer);
+            }
         }
         if !prune_peers.is_empty() {
             for peer in prune_peers {
@@ -718,7 +734,7 @@ impl LoopState {
     }
 
     /// Checks if there are any wants for which all peers have sent a DONT_HAVE. We call these "exhausted" wants.
-    fn check_for_exhausted_wants(
+    async fn check_for_exhausted_wants(
         &mut self,
         dont_haves: AHashSet<Cid>,
         newly_unavailable: Vec<PeerId>,
@@ -742,7 +758,7 @@ impl LoopState {
 
             // If the last available peer in the session has become unavailable
             // then we need to broadcast all pending wants
-            if !self.session_peer_manager.has_peers() {
+            if !self.session_peer_manager.has_peers().await {
                 self.process_exhausted_wants(wants);
                 return;
             }
@@ -753,7 +769,8 @@ impl LoopState {
         if !wants.is_empty() {
             let exhausted = self
                 .block_presence_manager
-                .all_peers_do_not_have_block(&self.session_peer_manager.peers(), wants);
+                .all_peers_do_not_have_block(&self.session_peer_manager.peers().await, wants)
+                .await;
             self.process_exhausted_wants(exhausted);
         }
     }
@@ -792,7 +809,7 @@ impl LoopState {
                 to_send.for_peer(best_peer).want_blocks.insert(*cid);
 
                 // Send a want-have to each other peer.
-                for op in self.session_peer_manager.peers() {
+                for op in self.session_peer_manager.peers().await {
                     if &op != best_peer {
                         to_send.for_peer(&op).want_haves.insert(*cid);
                     }
@@ -870,12 +887,13 @@ impl LoopState {
     }
 
     /// Called when the availability changes for a peer. It updates all the wants accordingly.
-    fn update_wants_peer_availability(&mut self, peer: &PeerId, is_now_available: bool) {
+    async fn update_wants_peer_availability(&mut self, peer: &PeerId, is_now_available: bool) {
         for (cid, wi) in &mut self.wants {
             if is_now_available {
-                wi.update_want_block_presence(&self.block_presence_manager, cid, *peer);
+                wi.update_want_block_presence(&self.block_presence_manager, cid, *peer)
+                    .await;
             } else {
-                wi.remove_peer(peer);
+                wi.remove_peer(peer).await;
             }
         }
     }

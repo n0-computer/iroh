@@ -1,7 +1,8 @@
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 use ahash::{AHashMap, AHashSet};
 use cid::Cid;
+use tokio::sync::RwLock;
 use tracing::debug;
 
 use crate::Block;
@@ -27,9 +28,9 @@ impl SessionInterestManager {
     }
 
     /// When the client asks the session for blocks, the session calls this methods.
-    pub fn record_session_interest(&self, session: u64, keys: &[Cid]) {
+    pub async fn record_session_interest(&self, session: u64, keys: &[Cid]) {
         debug!("record_session_interest {}: {:?}", session, keys);
-        let wants = &mut *self.wants.write().unwrap();
+        let wants = &mut *self.wants.write().await;
 
         for key in keys {
             // Record that the session wants the block.
@@ -39,9 +40,9 @@ impl SessionInterestManager {
 
     /// When the session shuts down, this is called.
     /// Returns the keys that no session is interested in anymore.
-    pub fn remove_session(&self, session: u64) -> Vec<Cid> {
+    pub async fn remove_session(&self, session: u64) -> Vec<Cid> {
         debug!("remove_session {}", session);
-        let wants = &mut *self.wants.write().unwrap();
+        let wants = &mut *self.wants.write().await;
 
         let mut deleted_keys = Vec::new();
         for (key, wants) in wants.iter_mut() {
@@ -60,9 +61,9 @@ impl SessionInterestManager {
     }
 
     /// Called when the session receives blocks.
-    pub fn remove_session_wants(&self, session: u64, keys: &[Cid]) {
+    pub async fn remove_session_wants(&self, session: u64, keys: &[Cid]) {
         debug!("remove_session_wants {}: {:?}", session, keys);
-        let wants = &mut *self.wants.write().unwrap();
+        let wants = &mut *self.wants.write().await;
 
         for key in keys {
             if let Some(wants) = wants.get_mut(key) {
@@ -78,9 +79,9 @@ impl SessionInterestManager {
 
     /// Called when a request is cancelled.
     /// Retuns the keys that no session is interested in anymore.
-    pub fn remove_session_interested(&self, session: u64, keys: &[Cid]) -> Vec<Cid> {
+    pub async fn remove_session_interested(&self, session: u64, keys: &[Cid]) -> Vec<Cid> {
         debug!("remove_session_interested {}: {:?}", session, keys);
-        let wants = &mut *self.wants.write().unwrap();
+        let wants = &mut *self.wants.write().await;
 
         let mut deleted_keys = Vec::new();
 
@@ -103,9 +104,13 @@ impl SessionInterestManager {
     }
 
     /// Called to filter the sets of keys for those that the session is interested in.
-    pub fn filter_session_interested(&self, session: u64, key_sets: &[&[Cid]]) -> Vec<Vec<Cid>> {
+    pub async fn filter_session_interested(
+        &self,
+        session: u64,
+        key_sets: &[&[Cid]],
+    ) -> Vec<Vec<Cid>> {
         let mut results = Vec::with_capacity(key_sets.len());
-        let wants = &*self.wants.read().unwrap();
+        let wants = &*self.wants.read().await;
 
         for key_set in key_sets {
             let mut has = Vec::new();
@@ -125,11 +130,11 @@ impl SessionInterestManager {
     }
 
     /// Splits the list of blocks into wanted and unwanted blocks.
-    pub fn split_wanted_unwanted<'a>(
+    pub async fn split_wanted_unwanted<'a>(
         &self,
         blocks: &'a [Block],
     ) -> (Vec<&'a Block>, Vec<&'a Block>) {
-        let wants = &*self.wants.read().unwrap();
+        let wants = &*self.wants.read().await;
 
         // Get the wanted bock keys as a set
         let mut wanted_keys = AHashSet::new();
@@ -159,13 +164,13 @@ impl SessionInterestManager {
     }
 
     /// Returns a list of interested sessions given the message.
-    pub fn interested_sessions(
+    pub async fn interested_sessions(
         &self,
         blocks: &[Cid],
         haves: &[Cid],
         dont_haves: &[Cid],
     ) -> AHashSet<u64> {
-        let wants = &*self.wants.read().unwrap();
+        let wants = &*self.wants.read().await;
 
         let mut session_keys = AHashSet::new();
         let keys = blocks.iter().chain(haves.iter()).chain(dont_haves.iter());

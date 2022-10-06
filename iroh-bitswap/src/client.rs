@@ -1,7 +1,4 @@
-use std::{
-    sync::{Arc, Mutex},
-    time::Duration,
-};
+use std::{sync::Arc, time::Duration};
 
 use ahash::AHashSet;
 use anyhow::Result;
@@ -9,6 +6,7 @@ use cid::Cid;
 use derivative::Derivative;
 use futures::{future::BoxFuture, FutureExt};
 use libp2p::PeerId;
+use tokio::sync::Mutex;
 use tracing::{debug, warn};
 
 use crate::{block::Block, message::BitswapMessage, network::Network, Store};
@@ -170,7 +168,7 @@ impl<S: Store> Client<S> {
 
         // Publish the block to any Bitswap clients that had requested blocks.
         // (the sessions use this pubsub mechanism to inform clients of incoming blocks)
-        let notify = &mut *self.notify.lock().unwrap();
+        let notify = &mut *self.notify.lock().await;
         for block in blocks {
             notify.broadcast(block.clone());
         }
@@ -186,7 +184,10 @@ impl<S: Store> Client<S> {
         haves: &[Cid],
         dont_haves: &[Cid],
     ) -> Result<()> {
-        let (wanted, not_wanted) = self.session_interest_manager.split_wanted_unwanted(blocks);
+        let (wanted, not_wanted) = self
+            .session_interest_manager
+            .split_wanted_unwanted(blocks)
+            .await;
         for block in not_wanted {
             debug!("recv block not in wantlist: {} from {}", block.cid(), from);
         }
@@ -205,7 +206,7 @@ impl<S: Store> Client<S> {
             .await;
 
         // Publish the block
-        let notify = &mut *self.notify.lock().unwrap();
+        let notify = &mut *self.notify.lock().await;
         for block in &wanted {
             notify.broadcast((*block).clone());
         }
@@ -216,10 +217,10 @@ impl<S: Store> Client<S> {
 
     /// Called by the network interface when a new message is received.
     pub async fn receive_message(&self, peer: &PeerId, incoming: &BitswapMessage) {
-        self.counters.lock().unwrap().messages_received += 1;
+        self.counters.lock().await.messages_received += 1;
 
         if incoming.blocks_len() > 0 {
-            self.update_receive_counters(incoming.blocks());
+            self.update_receive_counters(incoming.blocks()).await;
             for block in incoming.blocks() {
                 debug!("recv block; {} from {}", block.cid(), peer);
             }
@@ -242,10 +243,10 @@ impl<S: Store> Client<S> {
         }
     }
 
-    fn update_receive_counters<'a>(&self, blocks: impl Iterator<Item = &'a Block>) {
+    async fn update_receive_counters<'a>(&self, blocks: impl Iterator<Item = &'a Block>) {
         // Check which blocks are in the datastore
         // (Note: any errors from the blockstore are simply logged out in store_has())
-        let store = &self.store;
+        // let store = &self.store;
         for block in blocks {
             // TODO: this is a call to the store for each block just to update metrics, should be avoided.
             let has_block = false;
@@ -260,7 +261,7 @@ impl<S: Store> Client<S> {
                 // TODO: bs.dupMetric.Observe(float64(blkLen))
             }
 
-            let counters = &mut *self.counters.lock().unwrap();
+            let counters = &mut *self.counters.lock().await;
             counters.blocks_received += 1;
             counters.data_received += block_len as u64;
             if has_block {
@@ -308,7 +309,7 @@ impl<S: Store> Client<S> {
 
     /// Returns aggregated statistics about bitswap operations.
     pub async fn stat(&self) -> Result<Stat> {
-        let mut counters = self.counters.lock().unwrap().clone();
+        let mut counters = self.counters.lock().await.clone();
         counters.wantlist = self.get_wantlist().await.into_iter().collect();
 
         Ok(counters)

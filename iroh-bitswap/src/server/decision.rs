@@ -253,8 +253,8 @@ impl<S: Store> Engine<S> {
     }
 
     /// Returns the aggregated data communication for the given peer.
-    pub fn ledger_for_peer(&self, peer: &PeerId) -> Option<Receipt> {
-        self.score_ledger.receipt(peer)
+    pub async fn ledger_for_peer(&self, peer: &PeerId) -> Option<Receipt> {
+        self.score_ledger.receipt(peer).await
     }
 
     /// Returns a list of peers with whom the local node has active sessions.
@@ -395,7 +395,8 @@ impl<S: Store> Engine<S> {
         // remove sent blocks from the want list for the peer
         for block in message.blocks() {
             self.score_ledger
-                .add_to_sent_bytes(ledger.partner(), block.data().len());
+                .add_to_sent_bytes(ledger.partner(), block.data().len())
+                .await;
             ledger
                 .wantlist_mut()
                 .remove_type(block.cid(), WantType::Block);
@@ -447,7 +448,8 @@ impl<S: Store> Engine<S> {
         let ledger = l.lock().await;
         for block in blocks {
             self.score_ledger
-                .add_to_recv_bytes(ledger.partner(), block.data().len());
+                .add_to_recv_bytes(ledger.partner(), block.data().len())
+                .await;
         }
     }
 
@@ -548,7 +550,7 @@ impl<S: Store> Engine<S> {
             .entry(*peer)
             .or_insert_with(|| Arc::new(Mutex::new(Ledger::new(*peer))));
 
-        self.score_ledger.peer_connected(peer);
+        self.score_ledger.peer_connected(peer).await;
     }
 
     /// Called when a peer is disconnected.
@@ -562,7 +564,7 @@ impl<S: Store> Engine<S> {
             }
         }
 
-        self.score_ledger.peer_disconnected(peer);
+        self.score_ledger.peer_disconnected(peer).await;
     }
 
     fn signal_new_work(&self) {

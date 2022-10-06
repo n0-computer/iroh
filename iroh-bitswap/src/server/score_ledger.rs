@@ -1,13 +1,16 @@
 use std::{
     fmt::Debug,
-    sync::{Arc, RwLock},
+    sync::Arc,
     time::{Duration, Instant},
 };
 
 use ahash::AHashMap;
 use anyhow::{anyhow, Result};
 use libp2p::PeerId;
-use tokio::{sync::oneshot, task::JoinHandle};
+use tokio::{
+    sync::{oneshot, RwLock},
+    task::JoinHandle,
+};
 use tracing::error;
 
 use crate::server::ewma::ewma;
@@ -159,7 +162,7 @@ impl DefaultScoreLedger {
                         i = (i + 1) % LONG_TERM_RATIO;
 
                         let is_update_long = i == 0;
-                        let mut ledger_map = state.ledger_map.write().unwrap();
+                        let mut ledger_map = state.ledger_map.write().await;
                         for ledger in ledger_map.values_mut() {
                             // update the short term score
                             ledger.short_score = if ledger.last_exchange > last_short_update {
@@ -228,8 +231,8 @@ impl DefaultScoreLedger {
     }
 
     /// Increments the sent counter.
-    pub fn add_to_sent_bytes(&self, peer: &PeerId, n: usize) {
-        let mut ledger = self.state.ledger_map.write().unwrap();
+    pub async fn add_to_sent_bytes(&self, peer: &PeerId, n: usize) {
+        let mut ledger = self.state.ledger_map.write().await;
         let entry = ledger
             .entry(*peer)
             .or_insert_with(|| IndividualScoreLedger::new(*peer));
@@ -237,8 +240,8 @@ impl DefaultScoreLedger {
     }
 
     /// Increments the received counters.
-    pub fn add_to_recv_bytes(&self, peer: &PeerId, n: usize) {
-        let mut ledger = self.state.ledger_map.write().unwrap();
+    pub async fn add_to_recv_bytes(&self, peer: &PeerId, n: usize) {
+        let mut ledger = self.state.ledger_map.write().await;
         let entry = ledger
             .entry(*peer)
             .or_insert_with(|| IndividualScoreLedger::new(*peer));
@@ -246,22 +249,22 @@ impl DefaultScoreLedger {
     }
 
     /// Start accounting when a peer connects.
-    pub fn peer_connected(&self, peer: &PeerId) {
+    pub async fn peer_connected(&self, peer: &PeerId) {
         self.state
             .ledger_map
             .write()
-            .unwrap()
+            .await
             .entry(*peer)
             .or_insert_with(|| IndividualScoreLedger::new(*peer));
     }
 
     /// Clean up accounting when a peer disconnects.
-    pub fn peer_disconnected(&self, peer: &PeerId) {
-        self.state.ledger_map.write().unwrap().remove(peer);
+    pub async fn peer_disconnected(&self, peer: &PeerId) {
+        self.state.ledger_map.write().await.remove(peer);
     }
 
-    pub fn receipt(&self, peer: &PeerId) -> Option<Receipt> {
-        if let Some(ledger) = self.state.ledger_map.read().unwrap().get(peer) {
+    pub async fn receipt(&self, peer: &PeerId) -> Option<Receipt> {
+        if let Some(ledger) = self.state.ledger_map.read().await.get(peer) {
             return Some(ledger.receipt());
         }
 

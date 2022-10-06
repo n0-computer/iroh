@@ -1,8 +1,9 @@
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 use ahash::AHashMap;
 use cid::Cid;
 use libp2p::PeerId;
+use tokio::sync::RwLock;
 
 #[derive(Debug, Clone)]
 pub struct BlockPresenceManager {
@@ -17,8 +18,8 @@ impl BlockPresenceManager {
     }
 
     /// Called when a peer sends us information about which blocks it has and does not have.
-    pub fn receive_from(&self, peer: &PeerId, haves: &[Cid], dont_haves: &[Cid]) {
-        let presence = &mut *self.presence.write().unwrap();
+    pub async fn receive_from(&self, peer: &PeerId, haves: &[Cid], dont_haves: &[Cid]) {
+        let presence = &mut *self.presence.write().await;
 
         for key in haves {
             update_block_presence(presence, peer, key, true);
@@ -29,8 +30,8 @@ impl BlockPresenceManager {
     }
 
     /// Indicates wether the given peer has sent a `HAVE` for the given `cid`.
-    pub fn peer_has_block(&self, peer: &PeerId, cid: &Cid) -> bool {
-        let presence = self.presence.read().unwrap();
+    pub async fn peer_has_block(&self, peer: &PeerId, cid: &Cid) -> bool {
+        let presence = self.presence.read().await;
         presence
             .get(cid)
             .and_then(|l| l.get(peer))
@@ -39,8 +40,8 @@ impl BlockPresenceManager {
     }
 
     /// Indicates wether the given peer has sent a `DONT_HAVE` for the given `cid`.
-    pub fn peer_does_not_have_block(&self, peer: &PeerId, cid: &Cid) -> bool {
-        let presence = self.presence.read().unwrap();
+    pub async fn peer_does_not_have_block(&self, peer: &PeerId, cid: &Cid) -> bool {
+        let presence = self.presence.read().await;
         presence
             .get(cid)
             .and_then(|l| l.get(peer).map(|have| !*have))
@@ -52,12 +53,12 @@ impl BlockPresenceManager {
     ///
     /// This allows us to know if we've exhauseed all possibilities of finding the key
     /// with the peers we know about.
-    pub fn all_peers_do_not_have_block(
+    pub async fn all_peers_do_not_have_block(
         &self,
         peers: &[PeerId],
         keys: impl IntoIterator<Item = Cid>,
     ) -> Vec<Cid> {
-        let presence = &*self.presence.read().unwrap();
+        let presence = &*self.presence.read().await;
         let mut res = Vec::new();
         for key in keys.into_iter() {
             if all_dont_have(presence, peers, &key) {
@@ -69,16 +70,16 @@ impl BlockPresenceManager {
     }
 
     /// Cleans up the given keys.
-    pub fn remove_keys(&self, keys: &[Cid]) {
-        let presence = &mut *self.presence.write().unwrap();
+    pub async fn remove_keys(&self, keys: &[Cid]) {
+        let presence = &mut *self.presence.write().await;
         for key in keys {
             presence.remove(key);
         }
     }
 
     /// Indicates whether we are trackin this key.
-    pub fn has_key(&self, cid: &Cid) -> bool {
-        let presence = &*self.presence.read().unwrap();
+    pub async fn has_key(&self, cid: &Cid) -> bool {
+        let presence = &*self.presence.read().await;
         presence.contains_key(cid)
     }
 }

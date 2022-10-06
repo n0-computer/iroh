@@ -142,7 +142,7 @@ impl Session {
                     oper = incoming_r.recv() => {
                         match oper {
                             Ok(Op::Receive(keys)) => {
-                                loop_state.handle_receive(keys);
+                                loop_state.handle_receive(keys).await;
                             },
                             Ok(Op::Want(keys)) => {
                                 loop_state.want_blocks(keys).await;
@@ -178,7 +178,7 @@ impl Session {
                     }
                 }
             }
-            if let Err(err) = loop_state.stop() {
+            if let Err(err) = loop_state.stop().await {
                 error!("failed to shutdown session loop: {:?}", err);
             }
         });
@@ -237,7 +237,8 @@ impl Session {
         let mut interested_res = self
             .inner
             .session_interest_manager
-            .filter_session_interested(self.inner.id, &[keys, haves, dont_haves][..]);
+            .filter_session_interested(self.inner.id, &[keys, haves, dont_haves][..])
+            .await;
         let dont_haves = interested_res.pop().unwrap();
         let haves = interested_res.pop().unwrap();
         let keys = interested_res.pop().unwrap();
@@ -382,8 +383,8 @@ impl LoopState {
         }
     }
 
-    fn stop(self) -> Result<()> {
-        self.session_peer_manager.stop()?;
+    async fn stop(self) -> Result<()> {
+        self.session_peer_manager.stop().await?;
         Ok(())
     }
 
@@ -456,7 +457,7 @@ impl LoopState {
     }
 
     // Called when the session receives blocks from a peer
-    fn handle_receive(&mut self, keys: Vec<Cid>) {
+    async fn handle_receive(&mut self, keys: Vec<Cid>) {
         // Record which blocks have been received and figure out the total latency
         // for fetching the blocks
         let (wanted, total_latency) = self.session_wants.blocks_received(&keys);
@@ -471,7 +472,8 @@ impl LoopState {
         // Inform the SessionInterestManager that this session is no longer
         // expecting to receive the wanted keys
         self.session_interest_manager
-            .remove_session_wants(self.id, &wanted);
+            .remove_session_wants(self.id, &wanted)
+            .await;
 
         // We've received new wanted blocks, so reset the number of ticks
         // that have occurred since the last new block
@@ -485,7 +487,8 @@ impl LoopState {
         if !new_keys.is_empty() {
             // Inform the SessionInterestManager that this session is interested in the keys
             self.session_interest_manager
-                .record_session_interest(self.id, &new_keys);
+                .record_session_interest(self.id, &new_keys)
+                .await;
             // Tell the sessionWants tracker that that the wants have been requested
             self.session_wants.blocks_requested(&new_keys);
             // Tell the sessionWantSender that the blocks have been requested
@@ -494,7 +497,7 @@ impl LoopState {
 
         // If we have discovered peers already, the sessionWantSender will
         // send wants to them.
-        if self.session_peer_manager.peers_discovered() {
+        if self.session_peer_manager.peers_discovered().await {
             return;
         }
 
