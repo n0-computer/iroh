@@ -3,11 +3,10 @@ use std::{pin::Pin, sync::Arc, time::Duration};
 use ahash::AHashSet;
 use anyhow::{anyhow, ensure, Result};
 use cid::Cid;
-use derivative::Derivative;
 use futures::FutureExt;
 use libp2p::PeerId;
 use tokio::{
-    sync::oneshot,
+    sync::{broadcast, oneshot},
     task::JoinHandle,
     time::{Instant, Sleep},
 };
@@ -50,8 +49,7 @@ pub struct Session {
     inner: Arc<Inner>,
 }
 
-#[derive(Derivative)]
-#[derivative(Debug)]
+#[derive(Debug)]
 struct Inner {
     self_id: PeerId,
     id: u64,
@@ -62,8 +60,7 @@ struct Inner {
     incoming: async_channel::Sender<Op>,
     closer: oneshot::Sender<()>,
     worker: Option<JoinHandle<()>>,
-    #[derivative(Debug = "ignore")]
-    notify: bus::BusReadHandle<Block>,
+    notify: broadcast::Sender<Block>,
 }
 
 impl Session {
@@ -77,7 +74,7 @@ impl Session {
         session_interest_manager: SessionInterestManager,
         block_presence_manager: BlockPresenceManager,
         provider_query_manager: ProviderQueryManager,
-        notify: bus::BusReadHandle<Block>,
+        notify: broadcast::Sender<Block>,
         initial_search_delay: Duration,
         periodic_search_delay: Duration,
     ) -> Self {
@@ -275,13 +272,13 @@ impl Session {
 
         let (s, r) = async_channel::bounded(8);
         let mut remaining: AHashSet<Cid> = keys.iter().copied().collect();
-        let mut blocks = self.inner.notify.add_rx();
+        let mut block_channel = self.inner.notify.subscribe();
         let incoming = self.inner.incoming.clone();
         let rt = tokio::runtime::Handle::current();
         rt.spawn(async move {
-            for block in blocks.iter() {
+            while let Ok(block) = block_channel.recv().await {
                 let cid = *block.cid();
-                debug!("received block {}", cid);
+                debug!("received wanted block {}", cid);
                 if remaining.contains(&cid) {
                     match s.send(block).await {
                         Ok(_) => {
@@ -292,6 +289,10 @@ impl Session {
                             break;
                         }
                     }
+                }
+
+                if remaining.is_empty() {
+                    break;
                 }
             }
 

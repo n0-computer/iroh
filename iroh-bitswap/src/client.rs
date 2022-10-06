@@ -6,7 +6,7 @@ use cid::Cid;
 use derivative::Derivative;
 use futures::{future::BoxFuture, FutureExt};
 use libp2p::PeerId;
-use tokio::sync::Mutex;
+use tokio::sync::{broadcast, Mutex};
 use tracing::{debug, warn};
 
 use crate::{block::Block, message::BitswapMessage, network::Network, Store};
@@ -74,8 +74,7 @@ pub struct Client<S: Store> {
     #[derivative(Debug = "ignore")]
     blocks_received_cb:
         Arc<Box<dyn Fn(PeerId, Vec<Block>) -> BoxFuture<'static, ()> + 'static + Send + Sync>>,
-    #[derivative(Debug = "ignore")]
-    notify: Arc<Mutex<bus::Bus<Block>>>,
+    notify: broadcast::Sender<Block>,
 }
 
 impl<S: Store> Client<S> {
@@ -93,7 +92,15 @@ impl<S: Store> Client<S> {
         let block_presence_manager = BlockPresenceManager::new();
         let peer_manager = PeerManager::new(self_id, network.clone());
         let provider_query_manager = ProviderQueryManager::new(network.clone()).await;
-        let notify = bus::Bus::new(64);
+        let (notify, mut default_receiver): (broadcast::Sender<Block>, broadcast::Receiver<Block>) =
+            broadcast::channel(64);
+
+        // TODO: track task
+        tokio::task::spawn(async move {
+            while let Ok(block) = default_receiver.recv().await {
+                debug!("received block {}", block.cid());
+            }
+        });
 
         let session_manager = SessionManager::new(
             self_id,
@@ -102,7 +109,7 @@ impl<S: Store> Client<S> {
             peer_manager.clone(),
             provider_query_manager.clone(),
             network.clone(),
-            notify.read_handle(),
+            notify.clone(),
         );
         peer_manager
             .set_cb({
@@ -131,7 +138,7 @@ impl<S: Store> Client<S> {
             rebroadcast_delay: config.rebroadcast_delay,
             simulate_dont_haves_on_timeout: config.simluate_donthaves_on_timeout,
             blocks_received_cb: Arc::new(blocks_received_cb),
-            notify: Arc::new(Mutex::new(notify)),
+            notify,
         }
     }
 
@@ -170,9 +177,8 @@ impl<S: Store> Client<S> {
 
         // Publish the block to any Bitswap clients that had requested blocks.
         // (the sessions use this pubsub mechanism to inform clients of incoming blocks)
-        let notify = &mut *self.notify.lock().await;
         for block in blocks {
-            notify.broadcast(block.clone());
+            self.notify.send(block.clone())?;
         }
 
         Ok(())
@@ -208,9 +214,8 @@ impl<S: Store> Client<S> {
             .await;
 
         // Publish the block
-        let notify = &mut *self.notify.lock().await;
         for block in &wanted {
-            notify.broadcast((*block).clone());
+            self.notify.send((*block).clone())?;
         }
         (self.blocks_received_cb)(*from, wanted.into_iter().cloned().collect());
 

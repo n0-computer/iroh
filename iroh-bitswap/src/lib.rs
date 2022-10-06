@@ -27,7 +27,6 @@ use message::BitswapMessage;
 use network::OutEvent;
 use protocol::{ProtocolConfig, ProtocolId};
 use tokio::sync::oneshot;
-use tracing::debug;
 
 use self::client::{Client, Config as ClientConfig};
 use self::network::Network;

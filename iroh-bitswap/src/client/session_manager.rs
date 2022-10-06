@@ -9,9 +9,8 @@ use std::{
 use ahash::AHashMap;
 use anyhow::{anyhow, Result};
 use cid::Cid;
-use derivative::Derivative;
 use libp2p::PeerId;
-use tokio::sync::RwLock;
+use tokio::sync::{broadcast, RwLock};
 
 use crate::{network::Network, Block};
 
@@ -26,8 +25,7 @@ pub struct SessionManager {
     inner: Arc<Inner>,
 }
 
-#[derive(Derivative)]
-#[derivative(Debug)]
+#[derive(Debug)]
 struct Inner {
     self_id: PeerId,
     session_interest_manager: SessionInterestManager,
@@ -37,8 +35,7 @@ struct Inner {
     sessions: RwLock<AHashMap<u64, Session>>,
     session_index: AtomicU64,
     network: Network,
-    #[derivative(Debug = "ignore")]
-    notify: bus::BusReadHandle<Block>,
+    notify: broadcast::Sender<Block>,
 }
 
 impl SessionManager {
@@ -49,7 +46,7 @@ impl SessionManager {
         peer_manager: PeerManager,
         provider_finder: ProviderQueryManager,
         network: Network,
-        notify: bus::BusReadHandle<Block>,
+        notify: broadcast::Sender<Block>,
     ) -> Self {
         SessionManager {
             inner: Arc::new(Inner {
