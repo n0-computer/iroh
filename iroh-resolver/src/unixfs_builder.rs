@@ -1013,7 +1013,10 @@ mod tests {
 
         let mut got = make_dir_from_path(dir, true).await?;
 
-        // have to sort entries here as entries vec is based on a hashmap
+        // Before comparison sort entries to make test deterministic.
+        // The readdir_r function is used in the underlying platform which
+        // gives no guarantee to return in a specific order.
+        // https://stackoverflow.com/questions/40021882/how-to-sort-readdir-iterator
         got.entries.sort_by_key(|entry| match entry {
             Entry::Directory(dir) => dir.name.clone(),
             Entry::File(file) => file.name.clone(),
