@@ -9,7 +9,7 @@ services as micro services.
 
 ## Running / Building
 
-`cargo run --release -- -p 10000 --store-path=tmpstore`
+`cargo run --release -- start -p 10000 --store-path=tmpstore`
 
 ### Options
 
