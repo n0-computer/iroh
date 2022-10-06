@@ -4,8 +4,7 @@ use std::path::PathBuf;
 use anyhow::Result;
 use cid::Cid;
 use clap::{Args, Subcommand};
-use iroh_resolver::unixfs_builder;
-use iroh_rpc_client::Client;
+use iroh::StoreApi;
 
 #[derive(Args, Debug, Clone)]
 pub struct Store {
@@ -47,24 +46,26 @@ Not yet implemented.",
     Has { cid: Cid },
 }
 
-pub async fn run_command(rpc: Client, cmd: Store) -> Result<()> {
-    match cmd.command {
+pub async fn run_command(store: &impl StoreApi, cmd: &Store) -> Result<()> {
+    match &cmd.command {
         StoreCommands::Version => {
-            let v = rpc.try_store()?.version().await?;
+            let v = store.store_version().await?;
             println!("v{}", v);
         }
         StoreCommands::Block(block) => match block.command {
             BlockCommands::Get { cid } => {
-                let b = rpc.try_store()?.get(cid).await?;
+                let b = store.block_get(&cid).await?;
                 if let Some(b) = b {
                     std::io::stdout().write_all(&b)?;
                 } else {
                     println!("local store does not contain block {}", cid);
                 }
             }
-            BlockCommands::Put { path } => {
-                let cid = unixfs_builder::add_file(Some(&rpc), path.as_path(), false).await?;
-                println!("/ipfs/{}\n", cid);
+            BlockCommands::Put { path: _ } => {
+                todo!("TBD");
+                // I think this shouldn't be in terms of a path but in terms of bytes or stdin
+                // let cid = unixfs_builder::add_file(Some(&rpc), path.as_path(), false).await?;
+                // println!("/ipfs/{}\n", cid);
             }
             BlockCommands::Rm { cid } => {
                 todo!(
@@ -73,12 +74,12 @@ pub async fn run_command(rpc: Client, cmd: Store) -> Result<()> {
                 );
             }
             BlockCommands::Has { cid } => {
-                let b = rpc.try_store()?.has(cid).await?;
+                let b = store.block_has(&cid).await?;
                 println!("{}", b);
             }
         },
         StoreCommands::GetLinks { cid } => {
-            let links = rpc.try_store()?.get_links(cid).await?;
+            let links = store.get_links(cid).await?;
             println!("{:#?}", links);
         }
     };

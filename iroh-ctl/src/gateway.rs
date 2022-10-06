@@ -1,6 +1,5 @@
 use anyhow::Result;
 use clap::{Args, Subcommand};
-use iroh_rpc_client::Client;
 
 #[derive(Args, Debug, Clone)]
 pub struct Gateway {
@@ -30,13 +29,14 @@ pub enum DevCommands {
     Head,
 }
 
-pub async fn run_command(rpc: Client, g: Gateway) -> Result<()> {
-    match g.command {
+pub async fn run_command(g: &Gateway) -> Result<()> {
+    match &g.command {
         GatewayCommands::Version => {
-            let v = rpc.try_gateway()?.version().await?;
-            println!("v{}", v);
+            todo!("Gateway version not yet implemented");
+            // let v = rpc.try_gateway()?.version().await?;
+            // println!("v{}", v);
         }
-        GatewayCommands::Dev(dev) => match dev.command {
+        GatewayCommands::Dev(dev) => match &dev.command {
             DevCommands::Get { curl } => {
                 todo!("Get not yet implemented: {}", curl);
             }
@@ -45,5 +45,4 @@ pub async fn run_command(rpc: Client, g: Gateway) -> Result<()> {
             }
         },
     }
-    Ok(())
 }

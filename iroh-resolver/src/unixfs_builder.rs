@@ -877,13 +877,18 @@ mod tests {
 
         let expected = Directory {
             name: String::from(dir.clone().file_name().and_then(|s| s.to_str()).unwrap()),
-            entries: vec![Entry::Directory(nested_dir), Entry::File(file)],
+            entries: vec![Entry::File(file), Entry::Directory(nested_dir)],
         };
 
-        let got = make_dir_from_path(dir, true).await?;
+        let mut got = make_dir_from_path(dir, true).await?;
+
+        // have to sort entries here as entries vec is based on a hashmap
+        got.entries.sort_by_key(|entry| match entry {
+            Entry::Directory(dir) => dir.name.clone(),
+            Entry::File(file) => file.name.clone(),
+        });
 
         assert_eq!(expected, got);
-
         Ok(())
     }
 }
