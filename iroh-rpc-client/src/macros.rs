@@ -22,10 +22,14 @@ macro_rules! impl_client {
                     match addr {
                         #[cfg(feature = "grpc")]
                         Addr::GrpcHttp2(addr) => {
+                            let conn = Endpoint::new(format!("http://{}", addr))?
+                                .keep_alive_while_idle(true)
+                                .connect_lazy();
+
                             let conn_pool = iroh_rpc_types::connection_pool::TonicConnectionPool::new(32, Addr::GrpcHttp2(addr)).unwrap();
-                            
+
                             let client = [<Grpc $label Client>]::new(conn_pool.clone());
-                            let health = HealthClient::new(conn_pool);
+                            let health = HealthClient::new(conn);
 
                             Ok([<$label Client>] {
                                 backend: [<$label ClientBackend>]::Grpc { client, health },
@@ -35,17 +39,18 @@ macro_rules! impl_client {
                         Addr::GrpcUds(path) => {
                             use tokio::net::UnixStream;
                             use tonic::transport::Uri;
-                            // TODO(pool): r2d2 conn pool
-                            let path = std::sync::Arc::new(path);
+                            // // TODO(pool): r2d2 conn pool
+                            let hpath = std::sync::Arc::new(path.clone());
                             // dummy addr
                             let conn = Endpoint::new("http://[..]:50051")?
                                 .keep_alive_while_idle(true)
                                 .connect_with_connector_lazy(tower::service_fn(move |_: Uri| {
-                                    let path = path.clone();
+                                    let path = hpath.clone();
                                     UnixStream::connect(path.as_ref().clone())
                                 }));
+                            let conn_pool = iroh_rpc_types::connection_pool::TonicConnectionPool::new(32, Addr::GrpcUds(path)).unwrap();
 
-                            let client = [<Grpc $label Client>]::new(conn.clone());
+                            let client = [<Grpc $label Client>]::new(conn_pool.clone());
                             let health = HealthClient::new(conn);
 
                             Ok([<$label Client>] {
