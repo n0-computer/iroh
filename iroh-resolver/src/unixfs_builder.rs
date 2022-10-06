@@ -543,6 +543,7 @@ mod tests {
     use std::{
         collections::{BTreeMap, HashMap},
         io::prelude::*,
+        sync::Arc,
     };
     use tokio::io::AsyncReadExt;
 
@@ -675,12 +676,12 @@ mod tests {
     /// Read a stream of (cid, block) pairs into an in memory store and return the store and the root cid
     async fn stream_to_resolver(
         stream: impl Stream<Item = Result<(Cid, Bytes)>>,
-    ) -> Result<(Cid, Resolver<HashMap<Cid, Bytes>>)> {
+    ) -> Result<(Cid, Resolver<Arc<HashMap<Cid, Bytes>>>)> {
         tokio::pin!(stream);
         let items: Vec<_> = stream.try_collect().await?;
         let (root, _) = items.last().context("no root")?.clone();
         let store: HashMap<Cid, Bytes> = items.into_iter().collect();
-        let resolver = Resolver::new(store);
+        let resolver = Resolver::new(Arc::new(store));
         Ok((root, resolver))
     }
 
@@ -839,7 +840,7 @@ mod tests {
 
     proptest! {
         #[test]
-        fn test_file_roundtrip(data in any::<Vec<u8>>(), chunk_size in arb_chunk_size(), degree in arb_degree()) {
+        fn test_file_roundtrip(data in proptest::collection::vec(any::<u8>(), 0usize..1024), chunk_size in arb_chunk_size(), degree in arb_degree()) {
             assert!(file_roundtrip_test_sync(data.into(), chunk_size, degree));
         }
 
