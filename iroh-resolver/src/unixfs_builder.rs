@@ -540,11 +540,7 @@ mod tests {
     use proptest::prelude::*;
     use rand::prelude::*;
     use rand_chacha::ChaCha8Rng;
-    use std::{
-        collections::{BTreeMap, HashMap},
-        io::prelude::*,
-        sync::Arc,
-    };
+    use std::{collections::BTreeMap, io::prelude::*, sync::Arc};
     use tokio::io::AsyncReadExt;
 
     #[tokio::test]
@@ -676,11 +672,11 @@ mod tests {
     /// Read a stream of (cid, block) pairs into an in memory store and return the store and the root cid
     async fn stream_to_resolver(
         stream: impl Stream<Item = Result<(Cid, Bytes)>>,
-    ) -> Result<(Cid, Resolver<Arc<HashMap<Cid, Bytes>>>)> {
+    ) -> Result<(Cid, Resolver<Arc<fnv::FnvHashMap<Cid, Bytes>>>)> {
         tokio::pin!(stream);
         let items: Vec<_> = stream.try_collect().await?;
         let (root, _) = items.last().context("no root")?.clone();
-        let store: HashMap<Cid, Bytes> = items.into_iter().collect();
+        let store: fnv::FnvHashMap<Cid, Bytes> = items.into_iter().collect();
         let resolver = Resolver::new(Arc::new(store));
         Ok((root, resolver))
     }
@@ -815,15 +811,9 @@ mod tests {
         // create an arbitrary nested directory structure
         fn arb_dir_entry() -> impl Strategy<Value = TestDirEntry> {
             let leaf = any::<Vec<u8>>().prop_map(|x| TestDirEntry::File(Bytes::from(x)));
-            leaf.prop_recursive(
-                3,  // 3 levels deep
-                64, // Shoot for maximum size of 64 nodes
-                10, // We put up to 10 items per collection
-                |inner| {
-                    prop::collection::btree_map(".*", inner, 0..10)
-                        .prop_map(TestDirEntry::Directory)
-                },
-            )
+            leaf.prop_recursive(3, 64, 10, |inner| {
+                prop::collection::btree_map(".*", inner, 0..10).prop_map(TestDirEntry::Directory)
+            })
         }
         prop::collection::btree_map(".*", arb_dir_entry(), 0..10)
     }

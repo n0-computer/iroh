@@ -965,6 +965,7 @@ async fn resolve_txt_record(url: &str) -> Result<Vec<String>> {
 mod tests {
     use std::{
         collections::{BTreeMap, HashMap},
+        hash::BuildHasher,
         sync::Arc,
     };
 
@@ -975,7 +976,7 @@ mod tests {
     use tokio::io::AsyncReadExt;
 
     #[async_trait]
-    impl ContentLoader for HashMap<Cid, Bytes> {
+    impl<S: BuildHasher + Clone + Send + Sync + 'static> ContentLoader for HashMap<Cid, Bytes, S> {
         async fn load_cid(&self, cid: &Cid) -> Result<LoadedCid> {
             match self.get(cid) {
                 Some(b) => Ok(LoadedCid {
