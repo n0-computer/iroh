@@ -69,8 +69,14 @@ enum Commands {
 }
 
 impl Cli {
+    // Rust analyzer sees this function as unused, because in development
+    // mode the `testing` feature is enabled. This needs to be done in order
+    // to compile the CLI with the testing feature, which is needed to create
+    // trycmd tests.
     #[cfg(not(feature = "testing"))]
     pub async fn run(&self) -> Result<()> {
+        // extracted the function body into its own function so it's
+        // not all considered unused
         self.run_impl().await
     }
 
@@ -80,9 +86,9 @@ impl Cli {
         self.cli_command(&api).await
     }
 
-    // extracted this into a public function so that we don't get a lot of
-    // rust analyzer unused code errors, which we do if we inline this code inside
-    // of run
+    // extracted this into function and marked it `pub` so that we don't get a
+    // Rust analyzer unused code warnings, which we do get if we inline
+    // this code inside of run. `pub(crate)` unfortunately has the same effect.
     pub async fn run_impl(&self) -> Result<()> {
         let cfg_path = iroh_config_path(CONFIG_FILE_NAME)?;
         let sources = vec![Some(cfg_path), self.cfg.clone()];
