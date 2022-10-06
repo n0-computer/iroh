@@ -7,6 +7,10 @@ readme = "README.md"
 repository = "https://github.com/dignifiedquire/iroh"
 version = "0.1.0"
 
+[[bin]]
+path = "src/main.rs"
+name = "iroh"
+
 [dependencies]
 anyhow = "1"
 async-trait = "0.1.56"
@@ -38,7 +42,17 @@ libp2p = { version = "0.49", default-features = false }
 [dev-dependencies]
 axum-macros = "0.2.0" # use #[axum_macros::debug_handler] for better error messages on handlers
 http = "0.2" 
+trycmd = "0.13.7"
 iroh = { path = "../iroh", features = ["testing"] }
+# We want to compile the `iroh` CLI in test mode, but we can't specify that yet:
+# https://github.com/rust-lang/cargo/issues/1982
+# This is a workaround for enabling features only during testing: 
+# https://github.com/DesmondWillowbrook/cargo-optional-features-for-testing-and-examples
+# It is needed to have trycmd invoke a version of the iroh CLI in testing
+# mode. trycmd needs to have an actual binary to invoke.
+# Unfortunately this also turns on the feature during development, which may be
+# confusing. See the comments in `run.rs` surrounding this.
+iroh-one = { path = ".", features = ["testing"] }
 
 [features]
 default = ["rpc-mem", "rpc-grpc"]
