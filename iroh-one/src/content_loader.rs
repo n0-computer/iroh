@@ -1,8 +1,11 @@
 /// A content loader implementation for iroh-one.
+use std::collections::HashSet;
+
+use futures::stream::StreamExt;
 use anyhow::Result;
 use async_trait::async_trait;
 use cid::Cid;
-use iroh_resolver::resolver::{parse_links, ContentLoader, LoadedCid, Source, IROH_STORE};
+use iroh_resolver::resolver::{parse_links, ContentLoader, LoadedCid, Source, IROH_STORE, LoaderContext};
 use iroh_rpc_client::Client as RpcClient;
 use tracing::{debug, trace, warn};
 
@@ -19,7 +22,7 @@ impl RacingLoader {
 
 #[async_trait]
 impl ContentLoader for RacingLoader {
-    async fn load_cid(&self, cid: &Cid) -> Result<LoadedCid> {
+    async fn load_cid(&self, cid: &Cid, ctx: &LoaderContext) -> Result<LoadedCid> {
         // TODO: better strategy
 
         let cid = *cid;
@@ -37,8 +40,12 @@ impl ContentLoader for RacingLoader {
             }
         }
         let p2p = self.rpc_client.try_p2p()?;
-        let providers = p2p.fetch_providers(&cid).await?;
-        let bytes = p2p.fetch_bitswap(cid, providers).await?;
+        let mut providers = HashSet::default();
+        let mut p = p2p.fetch_providers_dht(&cid).await?;
+        while let Some(set) = p.next().await {
+            providers.extend(set?);
+        }
+        let bytes = p2p.fetch_bitswap(ctx.id().into(), cid, providers).await?;
 
         // trigger storage in the background
         let cloned = bytes.clone();
