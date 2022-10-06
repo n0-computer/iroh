@@ -27,6 +27,7 @@ use libp2p::{Multiaddr, PeerId};
 use message::BitswapMessage;
 use network::OutEvent;
 use protocol::{ProtocolConfig, ProtocolId};
+use tokio::sync::oneshot;
 use tracing::debug;
 
 use self::client::{Client, Config as ClientConfig};
@@ -107,7 +108,8 @@ impl<S: Store> Bitswap<S> {
             store,
             server.received_blocks_cb(),
             config.client,
-        );
+        )
+        .await;
 
         Bitswap {
             network,
@@ -129,22 +131,24 @@ impl<S: Store> Bitswap<S> {
         &self.client
     }
 
-    pub async fn close(self) -> Result<()> {
+    pub async fn stop(self) -> Result<()> {
         self.network.stop();
-        self.server.close().await?;
+        let (a, b) = futures::future::join(self.client.stop(), self.server.stop()).await;
+        a?;
+        b?;
 
         Ok(())
     }
 
     pub async fn notify_new_blocks(&self, blocks: &[Block]) -> Result<()> {
-        self.client.notify_new_blocks(blocks)?;
+        self.client.notify_new_blocks(blocks).await?;
         self.server.notify_new_blocks(blocks).await?;
 
         Ok(())
     }
 
     pub async fn stat(&self) -> Result<Stat> {
-        let client_stat = self.client.stat()?;
+        let client_stat = self.client.stat().await?;
         let server_stat = self.server.stat().await?;
 
         Ok(Stat {
@@ -163,7 +167,7 @@ impl<S: Store> Bitswap<S> {
 
     pub async fn wantlist_for_peer(&self, peer: &PeerId) -> Vec<Cid> {
         if peer == self.network.self_id() {
-            return self.client.get_wantlist().into_iter().collect();
+            return self.client.get_wantlist().await.into_iter().collect();
         }
 
         self.server.wantlist_for_peer(peer).await
@@ -174,7 +178,7 @@ impl<S: Store> Bitswap<S> {
         let server = self.server.clone();
         self.futures.push(
             async move {
-                client.peer_connected(&peer);
+                client.peer_connected(&peer).await;
                 server.peer_connected(&peer).await;
             }
             .boxed_local(),
@@ -186,7 +190,7 @@ impl<S: Store> Bitswap<S> {
         let server = self.server.clone();
         self.futures.push(
             async move {
-                client.peer_disconnected(&peer);
+                client.peer_disconnected(&peer).await;
                 server.peer_disconnected(&peer).await;
             }
             .boxed_local(),
@@ -198,7 +202,7 @@ impl<S: Store> Bitswap<S> {
         let server = self.server.clone();
         self.futures.push(
             async move {
-                client.receive_message(&peer, &message);
+                client.receive_message(&peer, &message).await;
                 server.receive_message(&peer, &message).await;
             }
             .boxed_local(),
@@ -261,7 +265,7 @@ pub enum BitswapEvent {
     },
     Ping {
         peer: PeerId,
-        response: Sender<Option<Duration>>,
+        response: oneshot::Sender<Option<Duration>>,
     },
 }
 

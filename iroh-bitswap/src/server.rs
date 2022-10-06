@@ -1,11 +1,11 @@
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
 use cid::Cid;
 use futures::future::BoxFuture;
 use futures::FutureExt;
 use libp2p::PeerId;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, Mutex};
 use tokio::task::JoinHandle;
 use tracing::{debug, error, warn};
 
@@ -223,7 +223,7 @@ impl<S: Store> Server<S> {
             .collect()
     }
 
-    pub async fn close(self) -> Result<()> {
+    pub async fn stop(self) -> Result<()> {
         // trigger shutdown of the worker threads
         // wait for all workers to be done
         let mut inner =
@@ -254,7 +254,7 @@ impl<S: Store> Server<S> {
 
     /// Returns aggregated stats about the server operations.
     pub async fn stat(&self) -> Result<Stat> {
-        let mut counters = self.inner.counters.lock().unwrap();
+        let mut counters = self.inner.counters.lock().await;
         // TODO:
         // counters.provide_buf_len = self.new_blocks.len();
         counters.peers = self.engine.peers().await.into_iter().collect();

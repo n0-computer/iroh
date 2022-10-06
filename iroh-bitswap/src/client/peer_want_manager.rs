@@ -28,7 +28,7 @@ struct PeerWant {
 impl PeerWantManager {
     /// Adds a peer whose wants we need to keep track of.
     /// Sends the current list of broadcasts to this peer.
-    pub fn add_peer(&mut self, peer_queue: &MessageQueue, peer: &PeerId) {
+    pub async fn add_peer(&mut self, peer_queue: &MessageQueue, peer: &PeerId) {
         if self.peer_wants.contains_key(peer) {
             return;
         }
@@ -45,7 +45,7 @@ impl PeerWantManager {
         // Broadcast any live want-haves to the newly connected peer.
         if !self.broadcast_wants.is_empty() {
             let wants = &self.broadcast_wants;
-            peer_queue.add_broadcast_want_haves(&wants);
+            peer_queue.add_broadcast_want_haves(&wants).await;
         }
     }
 
@@ -76,7 +76,7 @@ impl PeerWantManager {
     }
 
     /// Sends want-haves to any peers that have not yet been sent them.
-    pub fn broadcast_want_haves(&mut self, want_haves: &AHashSet<Cid>) {
+    pub async fn broadcast_want_haves(&mut self, want_haves: &AHashSet<Cid>) {
         // want_haves - self.broadcast_wants
         let unsent: AHashSet<_> = want_haves
             .difference(&self.broadcast_wants)
@@ -93,7 +93,10 @@ impl PeerWantManager {
                 }
             }
             if !peer_unsent.is_empty() {
-                peer_wants.peer_queue.add_broadcast_want_haves(&peer_unsent);
+                peer_wants
+                    .peer_queue
+                    .add_broadcast_want_haves(&peer_unsent)
+                    .await;
             }
 
             // clear for reuse
@@ -102,7 +105,7 @@ impl PeerWantManager {
     }
 
     /// Only sends the peer the want-blocks and want-haves that have not already been sent to it.
-    pub fn send_wants(&mut self, peer: &PeerId, want_blocks: &[Cid], want_haves: &[Cid]) {
+    pub async fn send_wants(&mut self, peer: &PeerId, want_blocks: &[Cid], want_haves: &[Cid]) {
         let mut flt_want_blocks = Vec::with_capacity(want_blocks.len());
         let mut flt_want_haves = Vec::with_capacity(want_haves.len());
 
@@ -162,7 +165,8 @@ impl PeerWantManager {
             if !flt_want_blocks.is_empty() || !flt_want_haves.is_empty() {
                 peer_wants
                     .peer_queue
-                    .add_wants(&flt_want_blocks, &flt_want_haves);
+                    .add_wants(&flt_want_blocks, &flt_want_haves)
+                    .await;
             }
         } else {
             error!("send_wants called with peer {}, but peer not found", peer);
@@ -170,7 +174,7 @@ impl PeerWantManager {
     }
 
     /// Sends out cancels to each peer which has a corresponding want sent to.
-    pub fn send_cancels(&mut self, cancels: &[Cid]) {
+    pub async fn send_cancels(&mut self, cancels: &[Cid]) {
         if cancels.is_empty() {
             return;
         }
@@ -189,30 +193,34 @@ impl PeerWantManager {
             .copied()
             .collect();
 
-        let send = |_peer: _, peer_wants: &mut PeerWant| {
-            // start from the broadcast cancels
-            let mut to_cancel = broadcast_cancels.clone();
-            // for each key to cancel
-            for cid in cancels {
-                // check if a want was sent for the eky
-                if !peer_wants.want_blocks.contains(cid) && !peer_wants.want_haves.contains(cid) {
-                    continue;
+        macro_rules! send {
+            ($peer_wants:expr) => {
+                // start from the broadcast cancels
+                let mut to_cancel = broadcast_cancels.clone();
+                // for each key to cancel
+                for cid in cancels {
+                    // check if a want was sent for the eky
+                    if !$peer_wants.want_blocks.contains(cid)
+                        && !$peer_wants.want_haves.contains(cid)
+                    {
+                        continue;
+                    }
+
+                    // unconditionally remove from the want lists
+                    $peer_wants.want_blocks.remove(cid);
+                    $peer_wants.want_haves.remove(cid);
+
+                    // If it's a broadcast want, we've already added it
+                    if !self.broadcast_wants.contains(cid) {
+                        to_cancel.insert(*cid);
+                    }
                 }
 
-                // unconditionally remove from the want lists
-                peer_wants.want_blocks.remove(cid);
-                peer_wants.want_haves.remove(cid);
-
-                // If it's a broadcast want, we've already added it
-                if !self.broadcast_wants.contains(cid) {
-                    to_cancel.insert(*cid);
+                if !to_cancel.is_empty() {
+                    $peer_wants.peer_queue.add_cancels(&to_cancel).await;
                 }
-            }
-
-            if !to_cancel.is_empty() {
-                peer_wants.peer_queue.add_cancels(&to_cancel);
-            }
-        };
+            };
+        }
 
         if broadcast_cancels.is_empty() {
             // Only send cancels ot peers that received a corresponding want
@@ -224,7 +232,7 @@ impl PeerWantManager {
                 .collect();
             for peer in cancel_peers {
                 if let Some(peer_wants) = self.peer_wants.get_mut(&peer) {
-                    send(peer, peer_wants);
+                    send!(peer_wants);
                 } else {
                     error!("index missing for peer {}", peer);
                     continue;
@@ -232,8 +240,8 @@ impl PeerWantManager {
             }
         } else {
             // if a broadcast want is being cancelled, send the cancel to all peers
-            for (peer, peer_wants) in &mut self.peer_wants {
-                send(*peer, peer_wants)
+            for (_peer, peer_wants) in &mut self.peer_wants {
+                send!(peer_wants);
             }
         }
 

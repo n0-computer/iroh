@@ -1,6 +1,7 @@
 use std::sync::{Arc, RwLock};
 
 use ahash::AHashSet;
+use anyhow::Result;
 use libp2p::PeerId;
 
 use crate::network::Network;
@@ -31,6 +32,16 @@ impl SessionPeerManager {
                 peers: Default::default(),
             }),
         }
+    }
+
+    pub fn stop(self) -> Result<()> {
+        let this = &self.inner;
+        let (peers, _) = &*this.peers.read().unwrap();
+        for peer in peers.iter() {
+            this.network.untag_peer(peer, &this.tag);
+            this.network.unprotect_peer(peer, &this.tag);
+        }
+        Ok(())
     }
 
     /// Adds the peer.
@@ -96,15 +107,5 @@ impl SessionPeerManager {
     pub fn has_peer(&self, peer: &PeerId) -> bool {
         let (peers, _) = &*self.inner.peers.read().unwrap();
         peers.contains(peer)
-    }
-}
-
-impl Drop for Inner {
-    fn drop(&mut self) {
-        let (peers, _) = &*self.peers.read().unwrap();
-        for peer in peers.iter() {
-            self.network.untag_peer(peer, &self.tag);
-            self.network.unprotect_peer(peer, &self.tag);
-        }
     }
 }

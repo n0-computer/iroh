@@ -1,11 +1,12 @@
-use std::{
-    fmt::Debug,
-    sync::{Arc, RwLock},
-};
+use std::{fmt::Debug, sync::Arc};
 
 use ahash::{AHashMap, AHashSet};
+use anyhow::{anyhow, Result};
 use cid::Cid;
+use futures::{future::BoxFuture, FutureExt};
 use libp2p::PeerId;
+use tokio::sync::RwLock;
+use tracing::error;
 
 use crate::network::Network;
 
@@ -36,20 +37,28 @@ impl Debug for Inner {
     }
 }
 
-pub trait DontHaveTimeout: Fn(&PeerId, &[Cid]) + 'static + Sync + Send {}
+pub trait DontHaveTimeout:
+    Fn(PeerId, Vec<Cid>) -> BoxFuture<'static, ()> + 'static + Sync + Send
+{
+}
 
-impl<F: Fn(&PeerId, &[Cid]) + 'static + Sync + Send> DontHaveTimeout for F {}
+impl<F: Fn(PeerId, Vec<Cid>) -> BoxFuture<'static, ()> + 'static + Sync + Send> DontHaveTimeout
+    for F
+{
+}
 
 impl PeerManager {
     pub fn new(self_id: PeerId, network: Network) -> Self {
-        Self::with_cb(self_id, network, |_: &PeerId, _: &[Cid]| {})
+        Self::with_cb(self_id, network, |_: PeerId, _: Vec<Cid>| {
+            async move {}.boxed()
+        })
     }
 
-    pub fn set_cb<F>(&self, on_dont_have_timeout: F)
+    pub async fn set_cb<F>(&self, on_dont_have_timeout: F)
     where
         F: DontHaveTimeout,
     {
-        *self.inner.on_dont_have_timeout.write().unwrap() = Arc::new(on_dont_have_timeout);
+        *self.inner.on_dont_have_timeout.write().await = Arc::new(on_dont_have_timeout);
     }
 
     pub fn with_cb<F>(self_id: PeerId, network: Network, on_dont_have_timeout: F) -> Self
@@ -67,98 +76,110 @@ impl PeerManager {
         }
     }
 
-    pub fn available_peers(&self) -> Vec<PeerId> {
-        self.connected_peers()
+    pub async fn available_peers(&self) -> Vec<PeerId> {
+        self.connected_peers().await
     }
 
     /// Returns a list of peers this peer manager is managing.
-    pub fn connected_peers(&self) -> Vec<PeerId> {
-        self.inner.peers.read().unwrap().0.keys().copied().collect()
+    pub async fn connected_peers(&self) -> Vec<PeerId> {
+        self.inner.peers.read().await.0.keys().copied().collect()
     }
 
     /// Called to a new peer to the pool, and send it an initial set of wants.
-    pub fn connected(&self, peer: &PeerId) {
-        let (peer_queues, peer_want_manager) = &mut *self.inner.peers.write().unwrap();
+    pub async fn connected(&self, peer: &PeerId) {
+        let (peer_queues, peer_want_manager) = &mut *self.inner.peers.write().await;
 
-        let peer_queue = peer_queues.entry(*peer).or_insert_with(|| {
-            MessageQueue::new(
+        if !peer_queues.contains_key(peer) {
+            peer_queues.insert(
                 *peer,
-                self.inner.network.clone(),
-                self.inner.on_dont_have_timeout.read().unwrap().clone(),
-            )
-        });
+                MessageQueue::new(
+                    *peer,
+                    self.inner.network.clone(),
+                    self.inner.on_dont_have_timeout.read().await.clone(),
+                )
+                .await,
+            );
+        }
+
+        let peer_queue = peer_queues.get_mut(peer).unwrap();
 
         // Inform the peer want manager that there's a new peer.
-        peer_want_manager.add_peer(&peer_queue, peer);
+        peer_want_manager.add_peer(&peer_queue, peer).await;
 
         // Inform the session that the peer has connected
-        self.signal_availability(peer, true);
+        self.signal_availability(peer, true).await;
     }
 
     /// Called to remove a peer from the pool.
-    pub fn disconnected(&self, peer: &PeerId) {
-        let (peer_queues, peer_want_manager) = &mut *self.inner.peers.write().unwrap();
-        if let Some(_peer_queue) = peer_queues.remove(peer) {
+    pub async fn disconnected(&self, peer: &PeerId) {
+        let (peer_queues, peer_want_manager) = &mut *self.inner.peers.write().await;
+        if let Some(peer_queue) = peer_queues.remove(peer) {
             // inform the sessions that the peer has disconnected
-            self.signal_availability(peer, false);
+            self.signal_availability(peer, false).await;
             peer_want_manager.remove_peer(peer);
+            if let Err(err) = peer_queue.stop().await {
+                error!("failed to shutdown message queue for {}: {:?}", peer, err);
+            }
         }
     }
 
     /// Called when a message is received from the network.
     /// The set of blocks, HAVEs and DONT_HAVEs, is `cids`.
     /// Currently only used to calculate latency.
-    pub fn response_received(&self, peer: &PeerId, cids: &[Cid]) {
-        let peer_queues = &*self.inner.peers.read().unwrap().0;
+    pub async fn response_received(&self, peer: &PeerId, cids: &[Cid]) {
+        let peer_queues = &*self.inner.peers.read().await.0;
         if let Some(peer_queue) = peer_queues.get(peer) {
-            peer_queue.response_received(cids.to_vec());
+            peer_queue.response_received(cids.to_vec()).await;
         }
     }
 
     /// Broadcasts want-haves to all peers
     /// (used by the session to discover seeds).
     /// For each peer it filters out want-haves that have previously been sent to the peer.
-    pub fn broadcast_want_haves(&self, want_haves: &AHashSet<Cid>) {
+    pub async fn broadcast_want_haves(&self, want_haves: &AHashSet<Cid>) {
         self.inner
             .peers
             .write()
-            .unwrap()
+            .await
             .1
-            .broadcast_want_haves(want_haves);
+            .broadcast_want_haves(want_haves)
+            .await;
     }
 
     /// Sends the given want-blocks and want-haves to the given peer.
     /// It filters out wants that have been previously sent to the peer.
-    pub fn send_wants(&self, peer: &PeerId, want_blocks: &[Cid], want_haves: &[Cid]) {
-        let (peer_queues, peer_want_manager) = &mut *self.inner.peers.write().unwrap();
+    pub async fn send_wants(&self, peer: &PeerId, want_blocks: &[Cid], want_haves: &[Cid]) {
+        let (peer_queues, peer_want_manager) = &mut *self.inner.peers.write().await;
         if peer_queues.contains_key(peer) {
-            peer_want_manager.send_wants(peer, want_blocks, want_haves);
+            peer_want_manager
+                .send_wants(peer, want_blocks, want_haves)
+                .await;
         }
     }
 
     /// Sends cancels for the given keys to all peers who had previously received a want for those keys.
-    pub fn send_cancels(&self, cancels: &[Cid]) {
-        self.inner.peers.write().unwrap().1.send_cancels(cancels);
+    pub async fn send_cancels(&self, cancels: &[Cid]) {
+        self.inner.peers.write().await.1.send_cancels(cancels).await;
     }
 
     /// Returns a list of pending wants (both want-haves and want-blocks).
-    pub fn current_wants(&self) -> AHashSet<Cid> {
-        self.inner.peers.read().unwrap().1.get_wants()
+    pub async fn current_wants(&self) -> AHashSet<Cid> {
+        self.inner.peers.read().await.1.get_wants()
     }
 
     /// Returns a list of pending want-blocks.
-    pub fn current_want_blocks(&self) -> AHashSet<Cid> {
-        self.inner.peers.read().unwrap().1.get_want_blocks()
+    pub async fn current_want_blocks(&self) -> AHashSet<Cid> {
+        self.inner.peers.read().await.1.get_want_blocks()
     }
 
     /// Returns a list of pending want-haves
-    pub fn current_want_haves(&self) -> AHashSet<Cid> {
-        self.inner.peers.read().unwrap().1.get_want_haves()
+    pub async fn current_want_haves(&self) -> AHashSet<Cid> {
+        self.inner.peers.read().await.1.get_want_haves()
     }
 
     /// Informst the `PeerManager` that the given session is interested in events about the given peer.
-    pub fn register_session(&self, peer: &PeerId, session: Signaler) {
-        let (sessions, peer_sessions) = &mut *self.inner.sessions.write().unwrap();
+    pub async fn register_session(&self, peer: &PeerId, session: Signaler) {
+        let (sessions, peer_sessions) = &mut *self.inner.sessions.write().await;
         let id = session.id();
         if !sessions.contains_key(&id) {
             sessions.insert(session.id(), session);
@@ -167,8 +188,8 @@ impl PeerManager {
         peer_sessions.entry(*peer).or_default().insert(id);
     }
 
-    pub fn unregister_session(&self, session_id: u64) {
-        let (sessions, peer_sessions) = &mut *self.inner.sessions.write().unwrap();
+    pub async fn unregister_session(&self, session_id: u64) {
+        let (sessions, peer_sessions) = &mut *self.inner.sessions.write().await;
         let mut to_remove = Vec::new();
         for (peer_id, session_ids) in peer_sessions.iter_mut() {
             session_ids.remove(&session_id);
@@ -185,15 +206,34 @@ impl PeerManager {
     }
 
     /// Called when a peers connectivity changes, informs the interested sessions.
-    fn signal_availability(&self, peer: &PeerId, is_connected: bool) {
-        let (sessions, peer_sessions) = &*self.inner.sessions.read().unwrap();
+    async fn signal_availability(&self, peer: &PeerId, is_connected: bool) {
+        let (sessions, peer_sessions) = &*self.inner.sessions.read().await;
         if let Some(session_ids) = peer_sessions.get(peer) {
             for session_id in session_ids {
                 if let Some(session) = sessions.get(session_id) {
-                    session.signal_availability(*peer, is_connected);
+                    session.signal_availability(*peer, is_connected).await;
                 }
             }
         }
+    }
+
+    /// Shutdown this peer manager.
+    pub async fn stop(self) -> Result<()> {
+        println!("stopping");
+        let inner =
+            Arc::try_unwrap(self.inner).map_err(|_| anyhow!("peer manager refs not shutdown"))?;
+        let (peers, _) = RwLock::into_inner(inner.peers);
+        let results = futures::future::join_all(
+            peers
+                .into_iter()
+                .map(|(_, mq)| async move { mq.stop().await }),
+        )
+        .await;
+        for r in results {
+            r?;
+        }
+
+        Ok(())
     }
 }
 
@@ -205,8 +245,8 @@ mod tests {
 
     use super::*;
 
-    #[test]
-    fn test_adding_removing_peers() {
+    #[tokio::test]
+    async fn test_adding_removing_peers() {
         let this = PeerId::random();
         let peer1 = PeerId::random();
         let peer2 = PeerId::random();
@@ -216,11 +256,11 @@ mod tests {
         let network = Network::new(this);
 
         let peer_manager = PeerManager::new(this, network);
-        peer_manager.connected(&peer1);
-        peer_manager.connected(&peer2);
-        peer_manager.connected(&peer3);
+        peer_manager.connected(&peer1).await;
+        peer_manager.connected(&peer2).await;
+        peer_manager.connected(&peer3).await;
 
-        let connected_peers = peer_manager.connected_peers();
+        let connected_peers = peer_manager.connected_peers().await;
         assert!(connected_peers.contains(&peer1));
         assert!(connected_peers.contains(&peer2));
         assert!(connected_peers.contains(&peer3));
@@ -229,18 +269,19 @@ mod tests {
         assert!(!connected_peers.contains(&peer5));
 
         // disconnect
-        peer_manager.disconnected(&peer1);
-        let connected_peers = peer_manager.connected_peers();
+        peer_manager.disconnected(&peer1).await;
+        let connected_peers = peer_manager.connected_peers().await;
         assert!(!connected_peers.contains(&peer1));
 
         // reconnect
-        peer_manager.connected(&peer1);
-        let connected_peers = peer_manager.connected_peers();
+        peer_manager.connected(&peer1).await;
+        let connected_peers = peer_manager.connected_peers().await;
         assert!(connected_peers.contains(&peer1));
+        peer_manager.stop().await.unwrap();
     }
 
-    #[test]
-    fn test_broadcast_on_connect() {
+    #[tokio::test]
+    async fn test_broadcast_on_connect() {
         let this = PeerId::random();
         let peer1 = PeerId::random();
         let network = Network::new(this);
@@ -248,23 +289,26 @@ mod tests {
         let peer_manager = PeerManager::new(this, network);
         let cids: AHashSet<_> = gen_cids(2).into_iter().collect();
 
-        peer_manager.broadcast_want_haves(&cids);
+        peer_manager.broadcast_want_haves(&cids).await;
 
         // connect with peer, which should send out the broadcast
-        peer_manager.connected(&peer1);
+        peer_manager.connected(&peer1).await;
 
         // check messages in MessageQueue
-        let peers = peer_manager.inner.peers.read().unwrap();
-        let mq = peers.0.get(&peer1).unwrap();
-        let mq = &*mq.wants.lock().unwrap();
-        assert_eq!(mq.bcst_wants.pending.len(), 2);
-        for cid in &cids {
-            assert!(mq.bcst_wants.pending.get(cid).is_some());
+        {
+            let peers = peer_manager.inner.peers.read().await;
+            let mq = peers.0.get(&peer1).unwrap();
+            let mq = &*mq.wants.lock().await;
+            assert_eq!(mq.bcst_wants.pending.len(), 2);
+            for cid in &cids {
+                assert!(mq.bcst_wants.pending.get(cid).is_some());
+            }
         }
+        peer_manager.stop().await.unwrap();
     }
 
-    #[test]
-    fn test_broadcast_want_haves() {
+    #[tokio::test]
+    async fn test_broadcast_want_haves() {
         let this = PeerId::random();
         let peer1 = PeerId::random();
         let peer2 = PeerId::random();
@@ -274,14 +318,16 @@ mod tests {
         let cids = gen_cids(3);
 
         // broadcast 2
-        peer_manager.broadcast_want_haves(&cids[..2].into_iter().copied().collect::<AHashSet<_>>());
+        peer_manager
+            .broadcast_want_haves(&cids[..2].into_iter().copied().collect::<AHashSet<_>>())
+            .await;
 
-        peer_manager.connected(&peer1);
+        peer_manager.connected(&peer1).await;
 
         {
-            let peers = peer_manager.inner.peers.read().unwrap();
+            let peers = peer_manager.inner.peers.read().await;
             let mq = peers.0.get(&peer1).unwrap();
-            let mq = &*mq.wants.lock().unwrap();
+            let mq = &*mq.wants.lock().await;
             assert_eq!(mq.bcst_wants.pending.len(), 2);
             for cid in &cids[..2] {
                 assert!(mq.bcst_wants.pending.get(cid).is_some());
@@ -289,17 +335,19 @@ mod tests {
         }
 
         // second peer
-        peer_manager.connected(&peer2);
+        peer_manager.connected(&peer2).await;
 
         // broadcast to all peers, including an already sent cid
-        peer_manager.broadcast_want_haves(&[cids[0], cids[2]].into_iter().collect::<AHashSet<_>>());
+        peer_manager
+            .broadcast_want_haves(&[cids[0], cids[2]].into_iter().collect::<AHashSet<_>>())
+            .await;
 
         {
-            let peers = peer_manager.inner.peers.read().unwrap();
+            let peers = peer_manager.inner.peers.read().await;
             // peer 1 now has all three
             {
                 let mq = peers.0.get(&peer1).unwrap();
-                let mq = &*mq.wants.lock().unwrap();
+                let mq = &*mq.wants.lock().await;
                 assert_eq!(mq.bcst_wants.pending.len(), 3);
                 for cid in &cids {
                     assert!(mq.bcst_wants.pending.get(cid).is_some());
@@ -308,17 +356,18 @@ mod tests {
             // peer 2 now has all three
             {
                 let mq = peers.0.get(&peer2).unwrap();
-                let mq = &*mq.wants.lock().unwrap();
+                let mq = &*mq.wants.lock().await;
                 assert_eq!(mq.bcst_wants.pending.len(), 3);
                 for cid in &cids {
                     assert!(mq.bcst_wants.pending.get(cid).is_some());
                 }
             }
         }
+        peer_manager.stop().await.unwrap();
     }
 
-    #[test]
-    fn test_send_wants() {
+    #[tokio::test]
+    async fn test_send_wants() {
         let this = PeerId::random();
         let peer1 = PeerId::random();
         let network = Network::new(this);
@@ -326,13 +375,15 @@ mod tests {
         let peer_manager = PeerManager::new(this, network);
         let cids = gen_cids(4);
 
-        peer_manager.connected(&peer1);
-        peer_manager.send_wants(&peer1, &[cids[0]][..], &[cids[2]][..]);
+        peer_manager.connected(&peer1).await;
+        peer_manager
+            .send_wants(&peer1, &[cids[0]][..], &[cids[2]][..])
+            .await;
 
         {
-            let peers = peer_manager.inner.peers.read().unwrap();
+            let peers = peer_manager.inner.peers.read().await;
             let mq = peers.0.get(&peer1).unwrap();
-            let mq = &*mq.wants.lock().unwrap();
+            let mq = &*mq.wants.lock().await;
             assert!(mq.bcst_wants.pending.is_empty());
             assert_eq!(mq.peer_wants.pending.len(), 2);
             assert_eq!(
@@ -345,12 +396,14 @@ mod tests {
             );
         }
 
-        peer_manager.send_wants(&peer1, &[cids[0], cids[1]][..], &[cids[2], cids[3]][..]);
+        peer_manager
+            .send_wants(&peer1, &[cids[0], cids[1]][..], &[cids[2], cids[3]][..])
+            .await;
 
         {
-            let peers = peer_manager.inner.peers.read().unwrap();
+            let peers = peer_manager.inner.peers.read().await;
             let mq = peers.0.get(&peer1).unwrap();
-            let mq = &*mq.wants.lock().unwrap();
+            let mq = &*mq.wants.lock().await;
             assert!(mq.bcst_wants.pending.is_empty());
             assert_eq!(mq.peer_wants.pending.len(), 4);
             assert_eq!(
@@ -370,10 +423,11 @@ mod tests {
                 WantType::Have
             );
         }
+        peer_manager.stop().await.unwrap();
     }
 
-    #[test]
-    fn test_send_cancels() {
+    #[tokio::test]
+    async fn test_send_cancels() {
         let this = PeerId::random();
         let peer1 = PeerId::random();
         let peer2 = PeerId::random();
@@ -382,16 +436,18 @@ mod tests {
         let peer_manager = PeerManager::new(this, network);
         let cids = gen_cids(4);
 
-        peer_manager.connected(&peer1);
-        peer_manager.connected(&peer2);
+        peer_manager.connected(&peer1).await;
+        peer_manager.connected(&peer2).await;
 
-        peer_manager.send_wants(&peer1, &[cids[0], cids[1]][..], &[cids[2]][..]);
+        peer_manager
+            .send_wants(&peer1, &[cids[0], cids[1]][..], &[cids[2]][..])
+            .await;
         std::thread::sleep(Duration::from_millis(100));
 
         {
-            let peers = peer_manager.inner.peers.read().unwrap();
+            let peers = peer_manager.inner.peers.read().await;
             let mq = peers.0.get(&peer1).unwrap();
-            let mq = &*mq.wants.lock().unwrap();
+            let mq = &*mq.wants.lock().await;
             assert!(mq.bcst_wants.pending.is_empty());
             assert!(mq.bcst_wants.sent.is_empty());
             // TODO: doesn't work because dialing fails
@@ -400,27 +456,28 @@ mod tests {
             assert!(mq.cancels.is_empty());
         }
 
-        peer_manager.send_cancels(&[cids[0], cids[2]][..]);
+        peer_manager.send_cancels(&[cids[0], cids[2]][..]).await;
         std::thread::sleep(Duration::from_millis(100));
         {
-            let peers = peer_manager.inner.peers.read().unwrap();
+            let peers = peer_manager.inner.peers.read().await;
 
             // check that no cancels went to peer2
             {
                 let mq = peers.0.get(&peer2).unwrap();
-                let mq = &*mq.wants.lock().unwrap();
+                let mq = &*mq.wants.lock().await;
                 assert!(mq.cancels.is_empty());
             }
 
             // TODO: doesn't work because dialing fails
             // {
             //     let mq = peers.0.get(&peer1).unwrap();
-            //     let mq = &*mq.wants.lock().unwrap();
+            //     let mq = &*mq.wants.lock().await;
             //     assert!(mq.bcst_wants.pending.is_empty());
             //     assert_eq!(mq.peer_wants.pending.len(), 1);
             //     assert_eq!(mq.cancels.len(), 2);
             // }
         }
+        peer_manager.stop().await.unwrap();
     }
 
     fn gen_cids(n: usize) -> Vec<Cid> {

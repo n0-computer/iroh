@@ -1,10 +1,12 @@
-use std::{sync::Arc, thread::JoinHandle};
+use std::sync::Arc;
 
 use ahash::{AHashMap, AHashSet};
+use anyhow::{anyhow, Result};
 use cid::Cid;
-use crossbeam::channel::{Receiver, Sender};
 use derivative::Derivative;
+use futures::future::BoxFuture;
 use libp2p::PeerId;
+use tokio::{sync::oneshot, task::JoinHandle};
 use tracing::{info, warn};
 
 use crate::client::{
@@ -106,26 +108,15 @@ struct Inner {
     /// The session ID
     session_id: u64,
     /// A channel that collects incoming changes (events)
-    changes: Sender<Change>,
-    closer: Sender<()>,
+    changes: async_channel::Sender<Change>,
+    closer: oneshot::Sender<()>,
     worker: Option<JoinHandle<()>>,
-}
-
-impl Drop for Inner {
-    fn drop(&mut self) {
-        self.closer.send(()).ok();
-        self.worker
-            .take()
-            .expect("missing worker")
-            .join()
-            .expect("worker paniced");
-    }
 }
 
 #[derive(Debug, Clone)]
 pub struct Signaler {
     id: u64,
-    changes: Sender<Change>,
+    changes: async_channel::Sender<Change>,
 }
 
 impl Signaler {
@@ -134,21 +125,26 @@ impl Signaler {
     }
 
     /// Called by the `PeerManager` to signal that a peer has connected / disconnected.
-    pub fn signal_availability(&self, peer: PeerId, is_available: bool) {
-        signal_availability(self.changes.clone(), peer, is_available);
+    pub async fn signal_availability(&self, peer: PeerId, is_available: bool) {
+        signal_availability(self.changes.clone(), peer, is_available).await;
     }
 }
 
-fn signal_availability(changes: Sender<Change>, peer: PeerId, is_available: bool) {
+async fn signal_availability(
+    changes: async_channel::Sender<Change>,
+    peer: PeerId,
+    is_available: bool,
+) {
     let availability = PeerAvailability {
         target: peer,
         is_available,
     };
     // Add the change in a non-blocking manner to avoid the possibility of a deadlock.
     // TODO: this is bad, fix it
-    std::thread::spawn(move || {
+    tokio::runtime::Handle::current().spawn(async move {
         changes
             .send(Change::Availability(availability))
+            .await
             .expect("sender vanished");
     });
 }
@@ -160,11 +156,13 @@ impl SessionWantSender {
         session_peer_manager: SessionPeerManager,
         session_manager: SessionManager,
         block_presence_manager: BlockPresenceManager,
-        on_send: Box<dyn Fn(PeerId, Vec<Cid>, Vec<Cid>) + 'static + Send + Sync>,
-        on_peers_exhausted: Box<dyn Fn(Vec<Cid>) + 'static + Sync + Send>,
+        on_send: Box<
+            dyn Fn(PeerId, Vec<Cid>, Vec<Cid>) -> BoxFuture<'static, ()> + 'static + Send + Sync,
+        >,
+        on_peers_exhausted: Box<dyn Fn(Vec<Cid>) -> BoxFuture<'static, ()> + 'static + Sync + Send>,
     ) -> Self {
-        let (changes_s, changes_r) = crossbeam::channel::bounded(64);
-        let (closer_s, closer_r) = crossbeam::channel::bounded(1);
+        let (changes_s, changes_r) = async_channel::bounded(64);
+        let (closer_s, mut closer_r) = oneshot::channel();
 
         let signaler = Signaler {
             id: session_id,
@@ -180,16 +178,19 @@ impl SessionWantSender {
             on_send,
             on_peers_exhausted,
         );
-        let worker = std::thread::spawn(move || {
+        let rt = tokio::runtime::Handle::current();
+
+        let worker = rt.spawn(async move {
             // The main loop for processing incoming changes
             loop {
-                crossbeam::channel::select! {
-                    recv(closer_r) -> _ => {
+                tokio::select! {
+                    _ = &mut closer_r => {
+                        // shutdown
                         break;
                     }
-                    recv(changes_r) -> change => {
+                    change = changes_r.recv() => {
                         match change {
-                            Ok(change) => { loop_state.on_change(change) },
+                            Ok(change) => { loop_state.on_change(change).await },
                             Err(err) => {
                                 // sender gone
                                 warn!("changes sender error: {:?}", err);
@@ -199,6 +200,8 @@ impl SessionWantSender {
                     }
                 }
             }
+
+            loop_state.stop().await;
         });
 
         SessionWantSender {
@@ -211,28 +214,49 @@ impl SessionWantSender {
         }
     }
 
+    pub async fn stop(self) -> Result<()> {
+        let mut inner = Arc::try_unwrap(self.inner)
+            .map_err(|_| anyhow!("session want sender refs not shutdown"))?;
+        inner
+            .closer
+            .send(())
+            .map_err(|e| anyhow!("failed to stop worker: {:?}", e))?;
+        inner
+            .worker
+            .take()
+            .ok_or_else(|| anyhow!("missing worker"))?
+            .await?;
+        Ok(())
+    }
+
     pub fn id(&self) -> u64 {
         self.inner.session_id
     }
 
     /// Called when new wants are added to the session
-    pub fn add(&self, keys: Vec<Cid>) {
+    pub async fn add(&self, keys: Vec<Cid>) {
         if keys.is_empty() {
             return;
         }
-        self.add_change(Change::Add(keys));
+        self.add_change(Change::Add(keys)).await;
     }
 
     /// Called when a request is cancelled
-    pub fn cancel(&self, keys: Vec<Cid>) {
+    pub async fn cancel(&self, keys: Vec<Cid>) {
         if keys.is_empty() {
             return;
         }
-        self.add_change(Change::Cancel(keys));
+        self.add_change(Change::Cancel(keys)).await;
     }
 
     // Called when the session receives a message with incoming blocks or HAVE / DONT_HAVE.
-    pub fn update(&self, from: PeerId, keys: Vec<Cid>, haves: Vec<Cid>, dont_haves: Vec<Cid>) {
+    pub async fn update(
+        &self,
+        from: PeerId,
+        keys: Vec<Cid>,
+        haves: Vec<Cid>,
+        dont_haves: Vec<Cid>,
+    ) {
         let has_update = !keys.is_empty() || !haves.is_empty() || !dont_haves.is_empty();
         if !has_update {
             return;
@@ -243,12 +267,13 @@ impl SessionWantSender {
             keys,
             haves,
             dont_haves,
-        }));
+        }))
+        .await;
     }
 
     // Adds a new change to the queue.
-    fn add_change(&self, change: Change) {
-        self.inner.changes.send(change).ok();
+    async fn add_change(&self, change: Change) {
+        self.inner.changes.send(change).await.ok();
     }
 }
 
@@ -367,7 +392,7 @@ impl WantInfo {
 #[derive(Derivative)]
 #[derivative(Debug)]
 struct LoopState {
-    changes: Receiver<Change>,
+    changes: async_channel::Receiver<Change>,
     signaler: Signaler,
     /// Information about each want indexed by CID.
     wants: AHashMap<Cid, WantInfo>,
@@ -387,29 +412,25 @@ struct LoopState {
     block_presence_manager: BlockPresenceManager,
     /// Called when wants are sent
     #[derivative(Debug = "ignore")]
-    on_send: Box<dyn Fn(PeerId, Vec<Cid>, Vec<Cid>) + 'static + Send + Sync>,
+    on_send:
+        Box<dyn Fn(PeerId, Vec<Cid>, Vec<Cid>) -> BoxFuture<'static, ()> + 'static + Send + Sync>,
     /// Called when all peers explicitly don't have a block
     #[derivative(Debug = "ignore")]
-    on_peers_exhausted: Box<dyn Fn(Vec<Cid>) + 'static + Sync + Send>,
-}
-
-impl Drop for LoopState {
-    fn drop(&mut self) {
-        // Unregister the session with the PeerManager
-        self.peer_manager.unregister_session(self.signaler.id);
-    }
+    on_peers_exhausted: Box<dyn Fn(Vec<Cid>) -> BoxFuture<'static, ()> + 'static + Sync + Send>,
 }
 
 impl LoopState {
     fn new(
-        changes: Receiver<Change>,
+        changes: async_channel::Receiver<Change>,
         signaler: Signaler,
         peer_manager: PeerManager,
         session_peer_manager: SessionPeerManager,
         session_manager: SessionManager,
         block_presence_manager: BlockPresenceManager,
-        on_send: Box<dyn Fn(PeerId, Vec<Cid>, Vec<Cid>) + 'static + Send + Sync>,
-        on_peers_exhausted: Box<dyn Fn(Vec<Cid>) + 'static + Sync + Send>,
+        on_send: Box<
+            dyn Fn(PeerId, Vec<Cid>, Vec<Cid>) -> BoxFuture<'static, ()> + 'static + Send + Sync,
+        >,
+        on_peers_exhausted: Box<dyn Fn(Vec<Cid>) -> BoxFuture<'static, ()> + 'static + Sync + Send>,
     ) -> Self {
         LoopState {
             changes,
@@ -427,14 +448,19 @@ impl LoopState {
         }
     }
 
+    async fn stop(self) {
+        // Unregister the session with the PeerManager
+        self.peer_manager.unregister_session(self.signaler.id).await;
+    }
+
     fn id(&self) -> u64 {
         self.signaler.id()
     }
 
     /// Collects all the changes that have occurred since the last invocation of `on_change`.
-    fn collect_changes(&self, changes: &mut Vec<Change>) {
+    async fn collect_changes(&self, changes: &mut Vec<Change>) {
         while changes.len() < CHANGES_BUFFER_SIZE {
-            if let Ok(change) = self.changes.recv() {
+            if let Ok(change) = self.changes.recv().await {
                 changes.push(change);
             } else {
                 break;
@@ -443,11 +469,11 @@ impl LoopState {
     }
 
     /// Processes the next set of changes
-    fn on_change(&mut self, change: Change) {
+    async fn on_change(&mut self, change: Change) {
         // Several changes may have been recorded since the last time we checked,
         // so pop all outstanding changes from the channel
         let mut changes = vec![change];
-        self.collect_changes(&mut changes);
+        self.collect_changes(&mut changes).await;
 
         // Apply each change
 
@@ -478,7 +504,8 @@ impl LoopState {
 
                         // Register with the PeerManager
                         self.peer_manager
-                            .register_session(&update.from, self.signaler.clone());
+                            .register_session(&update.from, self.signaler.clone())
+                            .await;
                     }
 
                     updates.push(update);
@@ -496,7 +523,7 @@ impl LoopState {
         let (newly_available, newly_unavailable) = self.process_availability(&availability);
 
         // Update wants
-        let dont_haves = self.process_updates(updates);
+        let dont_haves = self.process_updates(updates).await;
 
         // Check if there are any wants for which all peers have indicated they don't have the want.
         self.check_for_exhausted_wants(dont_haves, newly_unavailable);
@@ -504,12 +531,13 @@ impl LoopState {
         // If there are any cancels, send them
         if !cancels.is_empty() {
             self.session_manager
-                .cancel_session_wants(self.id(), &cancels);
+                .cancel_session_wants(self.id(), &cancels)
+                .await;
         }
 
         // If there are some connected peers, send any pending wants
         if self.session_peer_manager.has_peers() {
-            self.send_next_wants(newly_available);
+            self.send_next_wants(newly_available).await;
         }
     }
 
@@ -574,7 +602,7 @@ impl LoopState {
     }
 
     /// Processes incoming blocks and HAVE / DONT_HAVEs. It returns all DONT_HAVEs.
-    fn process_updates(&mut self, updates: Vec<Update>) -> AHashSet<Cid> {
+    async fn process_updates(&mut self, updates: Vec<Update>) -> AHashSet<Cid> {
         // Process received blocks keys
         let mut block_cids = AHashSet::new();
         for update in &updates {
@@ -682,7 +710,7 @@ impl LoopState {
                     peer,
                     self.id()
                 );
-                self.signaler.signal_availability(peer, false);
+                self.signaler.signal_availability(peer, false).await;
             }
         }
 
@@ -740,7 +768,7 @@ impl LoopState {
     }
 
     /// Sends wants to peers according to the latest information about which peers have / dont have blocks.
-    fn send_next_wants(&mut self, newly_available: Vec<PeerId>) {
+    async fn send_next_wants(&mut self, newly_available: Vec<PeerId>) {
         let mut to_send = AllWants::default();
 
         for (cid, wi) in &mut self.wants {
@@ -773,11 +801,11 @@ impl LoopState {
         }
 
         // Send any wants we've collected
-        self.send_wants(to_send);
+        self.send_wants(to_send).await;
     }
 
     /// Sends want-have and want-blocks to the appropriate peers.
-    fn send_wants(&mut self, sends: AllWants) {
+    async fn send_wants(&mut self, sends: AllWants) {
         // For each peer we're sending a request to
         for (peer, mut snd) in sends.0 {
             // Piggyback some other want-haves onto the request to the peer.
@@ -792,7 +820,8 @@ impl LoopState {
             let want_blocks: Vec<_> = snd.want_blocks.into_iter().collect();
             let want_haves: Vec<_> = snd.want_haves.into_iter().collect();
             self.peer_manager
-                .send_wants(&peer, &want_blocks, &want_haves);
+                .send_wants(&peer, &want_blocks, &want_haves)
+                .await;
             // Record which peers we send want-block to
             self.sent_want_blocks_tracker
                 .add_sent_want_blocks_to(&peer, &want_blocks);

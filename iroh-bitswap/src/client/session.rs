@@ -1,16 +1,17 @@
-use std::{
-    sync::Arc,
-    thread::JoinHandle,
-    time::{Duration, Instant},
-};
+use std::{pin::Pin, sync::Arc, time::Duration};
 
 use ahash::AHashSet;
-use anyhow::{ensure, Result};
+use anyhow::{anyhow, ensure, Result};
 use cid::Cid;
-use crossbeam::channel::{Receiver, Sender};
 use derivative::Derivative;
+use futures::FutureExt;
 use libp2p::PeerId;
-use tracing::{debug, warn};
+use tokio::{
+    sync::oneshot,
+    task::JoinHandle,
+    time::{Instant, Sleep},
+};
+use tracing::{debug, error, warn};
 
 use crate::Block;
 
@@ -58,28 +59,15 @@ struct Inner {
     provider_finder: ProviderQueryManager,
     session_interest_manager: SessionInterestManager,
     session_want_sender: SessionWantSender,
-    incoming: Sender<Op>,
-    closer: Sender<()>,
+    incoming: async_channel::Sender<Op>,
+    closer: oneshot::Sender<()>,
     worker: Option<JoinHandle<()>>,
     #[derivative(Debug = "ignore")]
     notify: bus::BusReadHandle<Block>,
 }
 
-impl Drop for Inner {
-    fn drop(&mut self) {
-        self.closer.send(()).ok();
-        self.worker
-            .take()
-            .expect("missing worker")
-            .join()
-            .expect("worker error");
-        //  Signal to the SessionManager that the session has been shutdown
-        self.session_manager.remove_session(self.id);
-    }
-}
-
 impl Session {
-    pub fn new(
+    pub async fn new(
         self_id: PeerId,
         id: u64,
         session_manager: SessionManager,
@@ -93,7 +81,7 @@ impl Session {
         initial_search_delay: Duration,
         periodic_search_delay: Duration,
     ) -> Self {
-        let (incoming_s, incoming_r) = crossbeam::channel::bounded(128);
+        let (incoming_s, incoming_r) = async_channel::bounded(128);
 
         let session_want_sender = SessionWantSender::new(
             id,
@@ -105,23 +93,32 @@ impl Session {
                 let incoming = incoming_s.clone();
                 Box::new(
                     move |_peer_id: PeerId, mut want_blocks: Vec<Cid>, want_haves: Vec<Cid>| {
-                        want_blocks.extend(want_haves);
-                        incoming.send(Op::WantsSent(want_blocks)).ok();
+                        let incoming = incoming.clone();
+                        async move {
+                            want_blocks.extend(want_haves);
+                            incoming.send(Op::WantsSent(want_blocks)).await.ok();
+                        }
+                        .boxed()
                     },
                 )
             },
             {
                 let incoming = incoming_s.clone();
                 Box::new(move |keys: Vec<Cid>| {
-                    incoming
-                        .send(Op::Broadcast(keys.into_iter().collect()))
-                        .ok();
+                    let incoming = incoming.clone();
+                    async move {
+                        incoming
+                            .send(Op::Broadcast(keys.into_iter().collect()))
+                            .await
+                            .ok();
+                    }
+                    .boxed()
                 })
             },
         );
 
         let session_wants = SessionWants::new(BROADCAST_LIVE_WANTS_LIMIT);
-        let (closer_s, closer_r) = crossbeam::channel::bounded(1);
+        let (closer_s, mut closer_r) = oneshot::channel();
 
         let mut loop_state = LoopState::new(
             id,
@@ -134,29 +131,31 @@ impl Session {
             initial_search_delay,
         );
 
-        let worker = std::thread::spawn(move || {
+        let rt = tokio::runtime::Handle::current();
+        let worker = rt.spawn(async move {
             // Session run loop
 
-            let periodic_search_timer = crossbeam::channel::tick(periodic_search_delay);
+            let mut periodic_search_timer = tokio::time::interval(periodic_search_delay);
+
             loop {
-                crossbeam::channel::select! {
-                    recv(incoming_r) -> oper => {
+                tokio::select! {
+                    oper = incoming_r.recv() => {
                         match oper {
                             Ok(Op::Receive(keys)) => {
                                 loop_state.handle_receive(keys);
                             },
                             Ok(Op::Want(keys)) => {
-                                loop_state.want_blocks(keys);
+                                loop_state.want_blocks(keys).await;
                             },
                             Ok(Op::Cancel(keys)) => {
                                 loop_state.session_wants.cancel_pending(&keys);
-                                loop_state.session_want_sender.cancel(keys);
+                                loop_state.session_want_sender.cancel(keys).await;
                             }
                             Ok(Op::WantsSent(keys)) => {
                                 loop_state.session_wants.wants_sent(&keys);
                             },
                             Ok(Op::Broadcast(keys)) => {
-                                loop_state.broadcast(Some(keys));
+                                loop_state.broadcast(Some(keys)).await;
                             },
                             Err(err) => {
                                 // incoming channel gone, shutdown/panic
@@ -165,19 +164,22 @@ impl Session {
                             }
                         }
                     }
-                    recv(loop_state.idle_tick) -> _ => {
+                    _ = &mut loop_state.idle_tick => {
                         // The session hasn't received blocks for a while, broadcast
-                        loop_state.broadcast(None);
+                        loop_state.broadcast(None).await;
                     }
-                    recv(periodic_search_timer) -> _ => {
+                    _ = periodic_search_timer.tick() => {
                         // Periodically search for a random live want
-                        loop_state.handle_periodic_search();
+                        loop_state.handle_periodic_search().await;
                     }
-                    recv(closer_r) -> _ => {
+                    _ = &mut closer_r => {
                         // Shutdown
                         break;
                     }
                 }
+            }
+            if let Err(err) = loop_state.stop() {
+                error!("failed to shutdown session loop: {:?}", err);
             }
         });
 
@@ -197,12 +199,32 @@ impl Session {
         Session { inner }
     }
 
+    pub async fn stop(self) -> Result<()> {
+        let mut inner =
+            Arc::try_unwrap(self.inner).map_err(|_| anyhow!("session refs not shutdown"))?;
+        inner
+            .closer
+            .send(())
+            .map_err(|e| anyhow!("failed to stop worker: {:?}", e))?;
+        inner
+            .worker
+            .take()
+            .ok_or_else(|| anyhow!("missing worker"))?
+            .await?;
+
+        //  Signal to the SessionManager that the session has been shutdown
+        inner.session_manager.remove_session(inner.id).await;
+        inner.session_want_sender.stop().await?;
+
+        Ok(())
+    }
+
     pub fn id(&self) -> u64 {
         self.inner.id
     }
 
     /// Receives incoming blocks from the given peer.
-    pub fn receive_from(
+    pub async fn receive_from(
         &self,
         from: Option<PeerId>,
         keys: &[Cid],
@@ -224,7 +246,8 @@ impl Session {
         if let Some(from) = from {
             self.inner
                 .session_want_sender
-                .update(from, keys.clone(), haves, dont_haves);
+                .update(from, keys.clone(), haves, dont_haves)
+                .await;
         }
 
         if keys.is_empty() {
@@ -232,33 +255,34 @@ impl Session {
         }
 
         // Inform the session that blocks have been received.
-        self.inner.incoming.send(Op::Receive(keys)).ok();
+        self.inner.incoming.send(Op::Receive(keys)).await.ok();
     }
 
     // Fetches a single block.
-    pub fn get_block(&self, key: &Cid) -> Result<Block> {
-        let r = self.get_blocks(&[*key][..])?;
-        let block = r.recv()?;
+    pub async fn get_block(&self, key: &Cid) -> Result<Block> {
+        let r = self.get_blocks(&[*key][..]).await?;
+        let block = r.recv().await?;
         Ok(block)
     }
 
     // Fetches a set of blocks within the context of this session and
     // returns a channel that found blocks will be returned on. No order is
     // guaranteed on the returned blocks.
-    pub fn get_blocks(&self, keys: &[Cid]) -> Result<Receiver<Block>> {
+    pub async fn get_blocks(&self, keys: &[Cid]) -> Result<async_channel::Receiver<Block>> {
         ensure!(!keys.is_empty(), "missing keys");
         debug!("get blocks: {:?}", keys);
 
-        let (s, r) = crossbeam::channel::bounded(8);
+        let (s, r) = async_channel::bounded(8);
         let mut remaining: AHashSet<Cid> = keys.iter().copied().collect();
         let mut blocks = self.inner.notify.add_rx();
         let incoming = self.inner.incoming.clone();
-        std::thread::spawn(move || {
+        let rt = tokio::runtime::Handle::current();
+        rt.spawn(async move {
             for block in blocks.iter() {
                 let cid = *block.cid();
                 debug!("received block {}", cid);
                 if remaining.contains(&cid) {
-                    match s.send(block) {
+                    match s.send(block).await {
                         Ok(_) => {
                             remaining.remove(&cid);
                         }
@@ -273,10 +297,11 @@ impl Session {
             // cancel all remaining
             incoming
                 .send(Op::Cancel(remaining.into_iter().collect()))
+                .await
                 .ok();
         });
 
-        self.inner.incoming.send(Op::Want(keys.to_vec()))?;
+        self.inner.incoming.send(Op::Want(keys.to_vec())).await?;
 
         Ok(r)
     }
@@ -323,7 +348,7 @@ struct LoopState {
     session_peer_manager: SessionPeerManager,
     peer_manager: PeerManager,
     latency_tracker: LatencyTracker,
-    idle_tick: Receiver<Instant>,
+    idle_tick: Pin<Box<Sleep>>,
     base_tick_delay: Duration,
     initial_search_delay: Duration,
 }
@@ -339,6 +364,8 @@ impl LoopState {
         peer_manager: PeerManager,
         initial_search_delay: Duration,
     ) -> Self {
+        let idle_tick = Box::pin(tokio::time::sleep(initial_search_delay));
+
         LoopState {
             id,
             consecutive_ticks: 0,
@@ -351,27 +378,32 @@ impl LoopState {
             latency_tracker: Default::default(),
             base_tick_delay: Duration::from_millis(500),
             initial_search_delay,
-            idle_tick: crossbeam::channel::after(initial_search_delay),
+            idle_tick,
         }
+    }
+
+    fn stop(self) -> Result<()> {
+        self.session_peer_manager.stop()?;
+        Ok(())
     }
 
     /// Called when the session hasn't received any blocks for some time, or when
     /// all peers in the session have sent DONT_HAVE for a particular set of CIDs.
     /// Send want-haves to all connected peers, and search for new peers with the CID.
-    fn broadcast(&mut self, wants: Option<AHashSet<Cid>>) {
+    async fn broadcast(&mut self, wants: Option<AHashSet<Cid>>) {
         // If this broadcast is because of an idle timeout (we haven't received
         // any blocks for a while) then broadcast all pending wants.
         let wants = wants.unwrap_or_else(|| self.session_wants.prepare_broadcast());
 
         // Broadcast a want-have for the live wants to everyone we're connected to.
-        self.broadcast_want_haves(&wants);
+        self.broadcast_want_haves(&wants).await;
 
         // Do not find providers on consecutive ticks -- just rely on periodic search widening.
         if !wants.is_empty() && (self.consecutive_ticks == 0) {
             // Search for providers who have the first want in the list.
             // Typically if the provider has the first block they will have
             // the rest of the blocks also.
-            self.find_more_peers(wants.iter().next().unwrap());
+            self.find_more_peers(wants.iter().next().unwrap()).await;
         }
 
         self.reset_idle_tick();
@@ -383,30 +415,32 @@ impl LoopState {
     }
 
     /// Called periodically to search for providers of a randomly chosen CID in the sesssion.
-    fn handle_periodic_search(&self) {
+    async fn handle_periodic_search(&self) {
         if let Some(random_want) = self.session_wants.random_live_want() {
             // TODO: come up with a better strategy for determining when to search
             // for new providers for blocks.
-            self.find_more_peers(&random_want);
-            self.broadcast_want_haves(&[random_want].into_iter().collect());
+            self.find_more_peers(&random_want).await;
+            self.broadcast_want_haves(&[random_want].into_iter().collect())
+                .await;
         }
     }
 
     /// Attempts to find more peers for a session by searching for providers for the given cid.
-    fn find_more_peers(&self, cid: &Cid) {
+    async fn find_more_peers(&self, cid: &Cid) {
         // TODO: track thread
         let sws = self.session_want_sender.clone();
         let cid = *cid;
         let provider_query_manager = self.provider_query_manager.clone();
-        let _worker = std::thread::spawn(move || {
-            match provider_query_manager.find_providers_async(&cid) {
+        let _worker = tokio::runtime::Handle::current().spawn(async move {
+            match provider_query_manager.find_providers_async(&cid).await {
                 Ok(r) => {
-                    while let Ok(provider) = r.recv() {
+                    while let Ok(provider) = r.recv().await {
                         match provider {
                             Ok(provider) => {
                                 // When a provider indicates that it has a cid, it's equivalent to
                                 // the providing peer sending a HAVE.
-                                sws.update(provider, Vec::new(), vec![cid], Vec::new());
+                                sws.update(provider, Vec::new(), vec![cid], Vec::new())
+                                    .await;
                             }
                             Err(err) => {
                                 warn!("provider error: {:?}", err);
@@ -447,7 +481,7 @@ impl LoopState {
     }
 
     /// Called when blocks are requested by the client
-    fn want_blocks(&mut self, new_keys: Vec<Cid>) {
+    async fn want_blocks(&mut self, new_keys: Vec<Cid>) {
         if !new_keys.is_empty() {
             // Inform the SessionInterestManager that this session is interested in the keys
             self.session_interest_manager
@@ -455,7 +489,7 @@ impl LoopState {
             // Tell the sessionWants tracker that that the wants have been requested
             self.session_wants.blocks_requested(&new_keys);
             // Tell the sessionWantSender that the blocks have been requested
-            self.session_want_sender.add(new_keys);
+            self.session_want_sender.add(new_keys).await;
         }
 
         // If we have discovered peers already, the sessionWantSender will
@@ -467,13 +501,13 @@ impl LoopState {
         // No peers discovered yet, broadcast some want-haves
         let keys = self.session_wants.get_next_wants();
         if !keys.is_empty() {
-            self.broadcast_want_haves(&keys);
+            self.broadcast_want_haves(&keys).await;
         }
     }
 
     // Send want-haves to all connected peers
-    fn broadcast_want_haves(&self, wants: &AHashSet<Cid>) {
-        self.peer_manager.broadcast_want_haves(wants);
+    async fn broadcast_want_haves(&self, wants: &AHashSet<Cid>) {
+        self.peer_manager.broadcast_want_haves(wants).await;
     }
 
     /// The session will broadcast if it has outstanding wants and doesn't receive
@@ -492,7 +526,7 @@ impl LoopState {
         let tick_delay = Duration::from_secs_f64(
             tick_delay.as_secs_f64() * (1. + self.consecutive_ticks as f64),
         );
-        self.idle_tick = crossbeam::channel::after(tick_delay);
+        self.idle_tick.as_mut().reset(Instant::now() + tick_delay);
     }
 }
 

@@ -1,15 +1,18 @@
 use std::{
     fmt::Debug,
-    sync::{Arc, Mutex},
-    thread::JoinHandle,
+    sync::Arc,
     time::{Duration, Instant},
 };
 
 use ahash::{AHashMap, AHashSet};
+use anyhow::{anyhow, Result};
 use cid::Cid;
-use crossbeam::channel::Sender;
 use derivative::Derivative;
 use libp2p::PeerId;
+use tokio::{
+    sync::{oneshot, Mutex},
+    task::JoinHandle,
+};
 use tracing::warn;
 
 use crate::{client::peer_manager::DontHaveTimeout, network::Network};
@@ -47,7 +50,8 @@ pub struct DontHaveTimeoutManager {
     default_timeout: Duration,
     max_timeout: Duration,
     message_latency_multiplier: f64,
-    trigger_timeouts_check: Sender<()>,
+    trigger_timeouts_check: async_channel::Sender<()>,
+    worker: Arc<(oneshot::Sender<()>, JoinHandle<()>)>,
     inner: Arc<Mutex<Inner>>,
 }
 
@@ -62,31 +66,17 @@ struct Inner {
     timeout: Duration,
     /// Ewma of message latency
     message_latency: LatencyEwma,
-    closer: Sender<()>,
-    worker: Option<JoinHandle<()>>,
     #[derivative(Debug = "ignore")]
     on_dont_have_timeout: Arc<dyn DontHaveTimeout>,
 }
 
-impl Drop for Inner {
-    fn drop(&mut self) {
-        if self.closer.send(()).is_ok() {
-            self.worker
-                .take()
-                .expect("missing worker")
-                .join()
-                .expect("worker paniced");
-        }
-    }
-}
-
 impl DontHaveTimeoutManager {
-    pub fn new(
+    pub async fn new(
         target: PeerId,
         network: Network,
         on_dont_have_timeout: Arc<dyn DontHaveTimeout>,
     ) -> Self {
-        let (closer_s, closer_r) = crossbeam::channel::bounded(1);
+        let (closer_s, mut closer_r) = oneshot::channel();
         let inner = Arc::new(Mutex::new(Inner {
             target,
             timeout: DONT_HAVE_TIMEOUT,
@@ -97,8 +87,6 @@ impl DontHaveTimeoutManager {
                 samples: 0,
                 latency: Duration::default(),
             },
-            closer: closer_s,
-            worker: None,
             on_dont_have_timeout,
         }));
 
@@ -106,57 +94,63 @@ impl DontHaveTimeoutManager {
 
         // measure ping latency
         let i = inner.clone();
-        let (trigger_s, trigger_r) = crossbeam::channel::bounded(16);
+        let (trigger_s, trigger_r) = async_channel::bounded(16);
 
         let ts = trigger_s.clone();
-        let worker = std::thread::spawn(move || {
+        let rt = tokio::runtime::Handle::current();
+        let worker = rt.spawn(async move {
             let inner = i;
-            let mut timeout_r = crossbeam::channel::after(DONT_HAVE_TIMEOUT);
+            let delay = tokio::time::sleep(DONT_HAVE_TIMEOUT);
+            tokio::pin!(delay);
 
-            match network.ping(&target) {
-                Ok(latency) => {
-                    let inner = &mut *inner.lock().unwrap();
-                    if inner.message_latency.samples == 0 {
-                        inner.timeout = calculate_timeout_from_ping_latency(
-                            latency,
-                            MAX_EXPECTED_WANT_PROCESS_TIME,
-                            PING_LATENCY_MULTIPLIER,
-                            MAX_TIMEOUT,
-                        );
+            tokio::select! {
+                ping = network.ping(&target) => {
+                    match ping {
+                        Ok(latency) => {
+                            let inner = &mut *inner.lock().await;
+                            if inner.message_latency.samples == 0 {
+                                inner.timeout = calculate_timeout_from_ping_latency(
+                                    latency,
+                                    MAX_EXPECTED_WANT_PROCESS_TIME,
+                                    PING_LATENCY_MULTIPLIER,
+                                    MAX_TIMEOUT,
+                                );
 
-                        // update timeouts
-                        ts.send(()).ok();
+                                // update timeouts
+                                ts.send(()).await.ok();
+                            }
+                        }
+                        Err(err) => {
+                            warn!("failed to ping {}: {:?}", target, err);
+                            // we leave the default timeout
+                        }
                     }
                 }
-                Err(err) => {
-                    warn!("failed to ping {}: {:?}", target, err);
-                    // we leave the default timeout
+                _ = &mut closer_r => {
+                    // shutdown
+                    return;
                 }
             }
 
             loop {
-                crossbeam::channel::select! {
-                    recv(closer_r) -> _ => {
+                tokio::select! {
+                    _ = &mut closer_r => {
                         // Shutdown
                         break;
                     }
-                    recv(trigger_r) -> _ => {
-                        if let Some(next) = inner.lock().unwrap().check_for_timeouts() {
-                            timeout_r = crossbeam::channel::after(next);
+                    _ = trigger_r.recv() => {
+                        if let Some(next) = inner.lock().await.check_for_timeouts().await {
+                            Pin::set(&mut delay, tokio::time::sleep(next));
                         }
                     }
-                    recv(timeout_r) -> _ => {
-                        if let Some(next) = inner.lock().unwrap().check_for_timeouts() {
-                            timeout_r = crossbeam::channel::after(next);
+                    _ = &mut delay => {
+                        if let Some(next) = inner.lock().await.check_for_timeouts().await {
+                            Pin::set(&mut delay, tokio::time::sleep(next));
                         }
                     }
                 }
             }
         });
-
-        {
-            inner.lock().unwrap().worker = Some(worker);
-        }
 
         DontHaveTimeoutManager {
             default_timeout: DONT_HAVE_TIMEOUT,
@@ -164,13 +158,26 @@ impl DontHaveTimeoutManager {
             message_latency_multiplier: MESSAGE_LATENCY_MULTIPLIER,
             trigger_timeouts_check: trigger_s,
             inner,
+            worker: Arc::new((closer_s, worker)),
         }
+    }
+
+    pub async fn stop(self) -> Result<()> {
+        println!("stopping dhtmgr {}", Arc::strong_count(&self.inner));
+        let (closer, worker) = Arc::try_unwrap(self.worker)
+            .map_err(|_| anyhow!("dont have timeout manager (worker) refs not shutdown"))?;
+        closer
+            .send(())
+            .map_err(|e| anyhow!("failed to send close signal: {:?}", e))?;
+        worker.await?;
+
+        Ok(())
     }
 
     /// Called when we receive a response from the peer. It is the time between
     /// sending a request and receiving the corresponding response.
-    pub fn update_message_latency(&self, elapsed: Duration) {
-        let inner = &mut *self.inner.lock().unwrap();
+    pub async fn update_message_latency(&self, elapsed: Duration) {
+        let inner = &mut *self.inner.lock().await;
 
         // Update the message latency and the timeout
         inner.message_latency.update(elapsed);
@@ -185,18 +192,18 @@ impl DontHaveTimeoutManager {
         if inner.timeout < old_timeout {
             // Check if after changing the timeout there are any pending wants
             // that are now over the timeout
-            self.trigger_timeouts_check.send(()).ok();
+            self.trigger_timeouts_check.send(()).await.ok();
         }
     }
 
     /// Adds the given keys that will expire if not cancelled before the timeout.
-    pub fn add_pending(&self, pending: &[Cid]) {
+    pub async fn add_pending(&self, pending: &[Cid]) {
         if pending.is_empty() {
             return;
         }
 
         let start = Instant::now();
-        let inner = &mut *self.inner.lock().unwrap();
+        let inner = &mut *self.inner.lock().await;
         let queue_was_empty = inner.active_wants.is_empty();
 
         for cid in pending {
@@ -214,13 +221,13 @@ impl DontHaveTimeoutManager {
         // If there was alread an earlier pending item in the queue, timeouts
         // are already scheduled. Otherwise start a timeout check.
         if queue_was_empty {
-            self.trigger_timeouts_check.send(()).ok();
+            self.trigger_timeouts_check.send(()).await.ok();
         }
     }
 
     /// Called when we receive a response for a key.
-    pub fn cancel_pending(&self, cancels: &AHashSet<Cid>) {
-        let inner = &mut *self.inner.lock().unwrap();
+    pub async fn cancel_pending(&self, cancels: &AHashSet<Cid>) {
+        let inner = &mut *self.inner.lock().await;
 
         for cid in cancels {
             if let Some(pw) = inner.active_wants.get_mut(cid) {
@@ -233,7 +240,7 @@ impl DontHaveTimeoutManager {
 
 impl Inner {
     /// Checks pending wants to see if any are over the timeout.
-    fn check_for_timeouts(&mut self) -> Option<Duration> {
+    async fn check_for_timeouts(&mut self) -> Option<Duration> {
         if self.want_queue.is_empty() {
             return None;
         }
@@ -260,7 +267,7 @@ impl Inner {
 
         // Fire timeout
         if !expired.is_empty() {
-            self.fire_timeout(&expired);
+            self.fire_timeout(expired).await;
         }
 
         // Schedule the next check for the moment when the oldest pending want will timeout.
@@ -276,8 +283,8 @@ impl Inner {
     }
 
     /// Triggers on_dont_have_timeout with matching keys.
-    fn fire_timeout(&self, pending: &[Cid]) {
-        (self.on_dont_have_timeout)(&self.target, pending);
+    async fn fire_timeout(&self, pending: Vec<Cid>) {
+        (self.on_dont_have_timeout)(self.target, pending).await;
     }
 }
 

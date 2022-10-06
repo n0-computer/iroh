@@ -1,6 +1,5 @@
 use std::{
     collections::HashSet,
-    sync::Arc,
     task::{Context, Poll},
     time::Duration,
 };
@@ -9,6 +8,7 @@ use anyhow::{anyhow, bail, Result};
 use cid::Cid;
 use crossbeam::channel::{Receiver, Sender};
 use libp2p::{core::connection::ConnectionId, PeerId};
+use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, info};
 
 use crate::{message::BitswapMessage, protocol::ProtocolId, BitswapEvent};
@@ -25,7 +25,6 @@ pub struct Network {
     network_out_receiver: Receiver<OutEvent>,
     network_out_sender: Sender<OutEvent>,
     self_id: PeerId,
-    runtime: Arc<tokio::runtime::Runtime>,
 }
 
 pub enum OutEvent {
@@ -52,14 +51,12 @@ pub enum SendError {
 
 impl Network {
     pub fn new(self_id: PeerId) -> Self {
-        let rt = tokio::runtime::Runtime::new().unwrap();
         let (network_out_sender, network_out_receiver) = crossbeam::channel::bounded(1024);
 
         Network {
             network_out_receiver,
             network_out_sender,
             self_id,
-            runtime: Arc::new(rt),
         }
     }
 
@@ -67,25 +64,21 @@ impl Network {
         &self.self_id
     }
 
-    pub fn ping(&self, peer: &PeerId) -> Result<Duration> {
-        let timeout = crossbeam::channel::after(Duration::from_secs(30));
-        let (s, r) = crossbeam::channel::bounded(1);
-        self.network_out_sender
-            .send(OutEvent::GenerateEvent(BitswapEvent::Ping {
-                peer: *peer,
-                response: s,
-            }))
-            .map_err(|e| anyhow!("channel send: {:?}", e))?;
+    pub async fn ping(&self, peer: &PeerId) -> Result<Duration> {
+        let (s, r) = oneshot::channel();
+        let res = tokio::time::timeout(Duration::from_secs(30), async {
+            self.network_out_sender
+                .send(OutEvent::GenerateEvent(BitswapEvent::Ping {
+                    peer: *peer,
+                    response: s,
+                }))
+                .map_err(|e| anyhow!("channel send: {:?}", e))?;
 
-        crossbeam::channel::select! {
-            recv(timeout) -> _ => {
-                bail!("ping {} timeout", peer);
-            }
-            recv(r) -> res => {
-                let res = res?.ok_or_else(|| anyhow!("no ping available"))?;
-                Ok(res)
-            }
-        }
+            let r = r.await?.ok_or_else(|| anyhow!("no ping available"))?;
+            Ok::<Duration, anyhow::Error>(r)
+        })
+        .await??;
+        Ok(res)
     }
 
     pub fn stop(self) {
@@ -156,27 +149,14 @@ impl Network {
     pub fn find_providers(
         &self,
         key: Cid,
-    ) -> Result<Receiver<std::result::Result<HashSet<PeerId>, String>>> {
-        let (s, r) = crossbeam::channel::bounded(16);
-        let (s_tokio, mut r_tokio) = tokio::sync::mpsc::channel(16);
+    ) -> Result<mpsc::Receiver<std::result::Result<HashSet<PeerId>, String>>> {
+        let (s, mut r) = mpsc::channel(16);
         self.network_out_sender
             .send(OutEvent::GenerateEvent(BitswapEvent::FindProviders {
                 key,
-                response: s_tokio,
+                response: s,
             }))
             .map_err(|e| anyhow!("channel send: {:?}", e))?;
-
-        // Sad face. Adapter into async world.
-        let rt = self.runtime.clone();
-        std::thread::spawn(move || {
-            rt.block_on(async move {
-                while let Some(res) = r_tokio.recv().await {
-                    if s.send(res).is_err() {
-                        break;
-                    }
-                }
-            });
-        });
 
         Ok(r)
     }

@@ -6,9 +6,8 @@ use std::{
 use ahash::AHashSet;
 use anyhow::Result;
 use cid::Cid;
-use crossbeam::channel::Receiver;
 use derivative::Derivative;
-use futures::future::BoxFuture;
+use futures::{future::BoxFuture, FutureExt};
 use libp2p::PeerId;
 use tracing::{debug, warn};
 
@@ -82,7 +81,7 @@ pub struct Client<S: Store> {
 }
 
 impl<S: Store> Client<S> {
-    pub fn new(
+    pub async fn new(
         network: Network,
         store: S,
         blocks_received_cb: Box<
@@ -95,7 +94,7 @@ impl<S: Store> Client<S> {
         let session_interest_manager = SessionInterestManager::new();
         let block_presence_manager = BlockPresenceManager::new();
         let peer_manager = PeerManager::new(self_id, network.clone());
-        let provider_query_manager = ProviderQueryManager::new(network.clone());
+        let provider_query_manager = ProviderQueryManager::new(network.clone()).await;
         let notify = bus::Bus::new(64);
 
         let session_manager = SessionManager::new(
@@ -107,12 +106,19 @@ impl<S: Store> Client<S> {
             network.clone(),
             notify.read_handle(),
         );
-        peer_manager.set_cb({
-            let sm = session_manager.clone();
-            move |peer: &PeerId, dont_haves: &[Cid]| {
-                sm.receive_from(Some(*peer), &[][..], &[][..], dont_haves)
-            }
-        });
+        peer_manager
+            .set_cb({
+                let sm = session_manager.clone();
+                move |peer: PeerId, dont_haves: Vec<Cid>| {
+                    let sm = sm.clone();
+                    async move {
+                        sm.receive_from(Some(peer), &[][..], &[][..], &dont_haves)
+                            .await
+                    }
+                    .boxed()
+                }
+            })
+            .await;
         let counters = Mutex::new(Stat::default());
 
         Client {
@@ -131,27 +137,36 @@ impl<S: Store> Client<S> {
         }
     }
 
+    pub async fn stop(self) -> Result<()> {
+        self.session_manager.stop().await?;
+        self.provider_query_manager.stop().await?;
+        self.peer_manager.stop().await?;
+
+        Ok(())
+    }
+
     /// Attempts to retrieve a particular block from peers.
-    pub fn get_block(&self, key: &Cid) -> Result<Block> {
-        let session = self.new_session();
-        session.get_block(key)
+    pub async fn get_block(&self, key: &Cid) -> Result<Block> {
+        let session = self.new_session().await;
+        session.get_block(key).await
     }
 
     /// Returns a channel where the caller may receive blocks that correspond to the
     /// provided `keys`.
-    pub fn get_blocks(&self, keys: &[Cid]) -> Result<Receiver<Block>> {
-        let session = self.new_session();
-        session.get_blocks(keys)
+    pub async fn get_blocks(&self, keys: &[Cid]) -> Result<async_channel::Receiver<Block>> {
+        let session = self.new_session().await;
+        session.get_blocks(keys).await
     }
 
     /// Announces the existence of blocks to this bitswap service.
     /// Bitswap itself doesn't store new blocks. It's the caller responsibility to ensure
     /// that those blocks are available in the blockstore before calling this function.
-    pub fn notify_new_blocks(&self, blocks: &[Block]) -> Result<()> {
+    pub async fn notify_new_blocks(&self, blocks: &[Block]) -> Result<()> {
         let block_cids: Vec<Cid> = blocks.iter().map(|b| *b.cid()).collect();
         // Send all block keys (including duplicates) to any session that wants them.
         self.session_manager
-            .receive_from(None, &block_cids, &[][..], &[][..]);
+            .receive_from(None, &block_cids, &[][..], &[][..])
+            .await;
 
         // Publish the block to any Bitswap clients that had requested blocks.
         // (the sessions use this pubsub mechanism to inform clients of incoming blocks)
@@ -164,7 +179,7 @@ impl<S: Store> Client<S> {
     }
 
     /// Process blocks received from the network.
-    fn receive_blocks_from(
+    async fn receive_blocks_from(
         &self,
         from: &PeerId,
         blocks: &[Block],
@@ -182,11 +197,12 @@ impl<S: Store> Client<S> {
         combined.extend_from_slice(haves);
         combined.extend_from_slice(dont_haves);
 
-        self.peer_manager.response_received(from, &combined);
+        self.peer_manager.response_received(from, &combined).await;
 
         // Send all block keys (including duplicates to any sessions that want them for accounting purposes).
         self.session_manager
-            .receive_from(Some(*from), &all_keys, haves, dont_haves);
+            .receive_from(Some(*from), &all_keys, haves, dont_haves)
+            .await;
 
         // Publish the block
         let notify = &mut *self.notify.lock().unwrap();
@@ -199,7 +215,7 @@ impl<S: Store> Client<S> {
     }
 
     /// Called by the network interface when a new message is received.
-    pub fn receive_message(&self, peer: &PeerId, incoming: &BitswapMessage) {
+    pub async fn receive_message(&self, peer: &PeerId, incoming: &BitswapMessage) {
         self.counters.lock().unwrap().messages_received += 1;
 
         if incoming.blocks_len() > 0 {
@@ -217,7 +233,9 @@ impl<S: Store> Client<S> {
         if incoming.blocks_len() > 0 || !haves.is_empty() || !dont_haves.is_empty() {
             let incoming_blocks: Vec<Block> = incoming.blocks().cloned().collect();
             // Process blocks
-            if let Err(err) = self.receive_blocks_from(peer, &incoming_blocks, &haves, &dont_haves)
+            if let Err(err) = self
+                .receive_blocks_from(peer, &incoming_blocks, &haves, &dont_haves)
+                .await
             {
                 warn!("ReceiveMessage recvBlockFrom error: {:?}", err);
             }
@@ -253,28 +271,28 @@ impl<S: Store> Client<S> {
     }
 
     /// Called by the network interface when a peer initiates a new connection to bitswap.
-    pub fn peer_connected(&self, peer: &PeerId) {
-        self.peer_manager.connected(peer);
+    pub async fn peer_connected(&self, peer: &PeerId) {
+        self.peer_manager.connected(peer).await;
     }
 
     /// Called by the network interface when a peer closes a connection.
-    pub fn peer_disconnected(&self, peer: &PeerId) {
-        self.peer_manager.disconnected(peer);
+    pub async fn peer_disconnected(&self, peer: &PeerId) {
+        self.peer_manager.disconnected(peer).await;
     }
 
     /// Returns the current local wantlist (both want-blocks and want-haves).
-    pub fn get_wantlist(&self) -> AHashSet<Cid> {
-        self.peer_manager.current_wants()
+    pub async fn get_wantlist(&self) -> AHashSet<Cid> {
+        self.peer_manager.current_wants().await
     }
 
     /// Returns the current list of want-blocks.
-    pub fn get_want_blocks(&self) -> AHashSet<Cid> {
-        self.peer_manager.current_want_blocks()
+    pub async fn get_want_blocks(&self) -> AHashSet<Cid> {
+        self.peer_manager.current_want_blocks().await
     }
 
     /// Returns the current list of want-haves.
-    pub fn get_want_haves(&self) -> AHashSet<Cid> {
-        self.peer_manager.current_want_haves()
+    pub async fn get_want_haves(&self) -> AHashSet<Cid> {
+        self.peer_manager.current_want_haves().await
     }
 
     /// Creates a new Bitswap session. You should use this, rather
@@ -282,15 +300,16 @@ impl<S: Store> Client<S> {
     /// block requests in a row. The session returned will have it's own `get_blocks`
     /// method, but the session will use the fact that the requests are related to
     /// be more efficient in its requests to peers.
-    pub fn new_session(&self) -> Session {
+    pub async fn new_session(&self) -> Session {
         self.session_manager
             .new_session(self.provider_search_delay, self.rebroadcast_delay)
+            .await
     }
 
     /// Returns aggregated statistics about bitswap operations.
-    pub fn stat(&self) -> Result<Stat> {
+    pub async fn stat(&self) -> Result<Stat> {
         let mut counters = self.counters.lock().unwrap().clone();
-        counters.wantlist = self.get_wantlist().into_iter().collect();
+        counters.wantlist = self.get_wantlist().await.into_iter().collect();
 
         Ok(counters)
     }

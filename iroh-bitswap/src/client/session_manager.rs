@@ -1,15 +1,17 @@
 use std::{
     sync::{
         atomic::{AtomicU64, Ordering},
-        Arc, RwLock,
+        Arc,
     },
     time::Duration,
 };
 
 use ahash::AHashMap;
+use anyhow::{anyhow, Result};
 use cid::Cid;
 use derivative::Derivative;
 use libp2p::PeerId;
+use tokio::sync::RwLock;
 
 use crate::{network::Network, Block};
 
@@ -64,8 +66,27 @@ impl SessionManager {
         }
     }
 
+    pub async fn stop(self) -> Result<()> {
+        let inner = Arc::try_unwrap(self.inner)
+            .map_err(|_| anyhow!("session manager refs not shutdown"))?;
+
+        let sessions = RwLock::into_inner(inner.sessions);
+        let results = futures::future::join_all(
+            sessions
+                .into_iter()
+                .map(|(_, session)| async move { session.stop().await }),
+        )
+        .await;
+
+        for r in results {
+            r?;
+        }
+
+        Ok(())
+    }
+
     /// Initializes a new session and starts tracking it.
-    pub fn new_session(
+    pub async fn new_session(
         &self,
         provider_search_delay: Duration,
         rebroadcast_delay: Duration,
@@ -86,24 +107,24 @@ impl SessionManager {
             self.inner.notify.clone(),
             provider_search_delay,
             rebroadcast_delay,
-        );
+        )
+        .await;
 
         self.inner
             .sessions
             .write()
-            .unwrap()
+            .await
             .insert(id, session.clone());
         session
     }
 
-    pub fn remove_session(&self, session_id: u64) {
+    pub async fn remove_session(&self, session_id: u64) {
         let cancels = self
             .inner
             .session_interest_manager
             .remove_session(session_id);
-        self.cancel_wants(&cancels);
-
-        self.inner.sessions.write().unwrap().remove(&session_id);
+        self.cancel_wants(&cancels).await;
+        self.inner.sessions.write().await.remove(&session_id);
     }
 
     /// Returns the next sequential identifier for a session.
@@ -111,7 +132,7 @@ impl SessionManager {
         self.inner.session_index.fetch_add(1, Ordering::SeqCst)
     }
 
-    pub fn receive_from(
+    pub async fn receive_from(
         &self,
         peer: Option<PeerId>,
         blocks: &[Cid],
@@ -130,31 +151,31 @@ impl SessionManager {
             .session_interest_manager
             .interested_sessions(blocks, haves, dont_haves)
         {
-            let sessions = &*self.inner.sessions.read().unwrap();
+            let sessions = &*self.inner.sessions.read().await;
             if let Some(session) = sessions.get(id) {
-                session.receive_from(peer, blocks, haves, dont_haves);
+                session.receive_from(peer, blocks, haves, dont_haves).await;
             }
         }
 
         // Send CANCELs to all peers with want-have/want-block
-        self.inner.peer_manager.send_cancels(blocks);
+        self.inner.peer_manager.send_cancels(blocks).await;
     }
 
-    pub fn cancel_session_wants(&self, session_id: u64, wants: &[Cid]) {
+    pub async fn cancel_session_wants(&self, session_id: u64, wants: &[Cid]) {
         // Remove session's interest in the given blocks - returns the keys taht
         // no session is interested in anymore.
         let cancels = self
             .inner
             .session_interest_manager
             .remove_session_interested(session_id, wants);
-        self.cancel_wants(&cancels);
+        self.cancel_wants(&cancels).await;
     }
 
-    fn cancel_wants(&self, wants: &[Cid]) {
+    async fn cancel_wants(&self, wants: &[Cid]) {
         // Free up block presence tracking
         self.inner.block_presence_manager.remove_keys(wants);
 
         // Send CANCEL to all peers for blocks that no session is interested anymore.
-        self.inner.peer_manager.send_cancels(wants);
+        self.inner.peer_manager.send_cancels(wants).await;
     }
 }
