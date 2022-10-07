@@ -37,6 +37,7 @@ anyhow = "1"
 futures = "0.3.21"
 tracing-subscriber = { version = "0.3.11", features = ["env-filter"] }
 iroh-resolver = { path = "../iroh-resolver" }
+iroh-car = { path = "../iroh-car" }
 tokio-util = { version = "0.7", features = ["io"] }
 bytes = "1.1.0"
 tower-layer = { version = "0.3" }

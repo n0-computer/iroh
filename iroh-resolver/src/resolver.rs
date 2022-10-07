@@ -155,6 +155,42 @@ impl FromStr for Path {
 }
 
 #[derive(Debug, Clone)]
+pub struct OutRaw {
+    metadata: Metadata,
+    content: Bytes,
+    cid: Cid,
+}
+
+impl OutRaw {
+    pub fn from_loaded(cid: Cid, loaded: LoadedCid) -> Self {
+        let metadata = Metadata {
+            path: Path::from_cid(cid),
+            size: None,
+            typ: OutType::Raw,
+            unixfs_type: None,
+            source: loaded.source,
+            resolved_path: vec![cid],
+        };
+        Self {
+            metadata,
+            content: loaded.data,
+            cid,
+        }
+    }
+    pub fn metadata(&self) -> &Metadata {
+        &self.metadata
+    }
+
+    pub fn cid(&self) -> &Cid {
+        &self.cid
+    }
+
+    pub fn content(&self) -> &Bytes {
+        &self.content
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct Out {
     metadata: Metadata,
     pub(crate) content: OutContent,
@@ -569,6 +605,42 @@ impl<T: ContentLoader> Resolver<T> {
                             })
                         ).await;
                         for res in next.into_iter() {
+                            cids.push_back(res);
+                        }
+                    }
+                    yield current;
+                } else {
+                    // no links left to resolve
+                    break;
+                }
+            }
+        }
+    }
+
+    /// Resolve a path recursively and yield the raw bytes plus metadata.
+    #[tracing::instrument(skip(self))]
+    pub fn resolve_recursive_raw(&self, root: Path) -> impl Stream<Item = Result<OutRaw>> {
+        let mut cids = VecDeque::new();
+        let this = self.clone();
+        async_stream::try_stream! {
+            let root_block = this.resolve_root(&root).await.map(|(cid, loaded)| OutRaw::from_loaded(cid, loaded));
+            cids.push_back(root_block?);
+            loop {
+                if let Some(current) = cids.pop_front() {
+                    // let (cid, data) = &current;
+                    let links = parse_links(current.cid(), current.content())?;
+                    // TODO: configurable limit
+                    for link_chunk in links.chunks(8) {
+                        let next = futures::future::join_all(
+                            link_chunk.iter().map(|link| {
+                                let this = this.clone();
+                                async move {
+                                    this.load_cid(&link).await.map(|loaded| OutRaw::from_loaded(*link, loaded))
+                                }
+                            })
+                        ).await;
+                        for res in next.into_iter() {
+                            let res = res?;
                             cids.push_back(res);
                         }
                     }
