@@ -4,8 +4,8 @@
 
 use std::collections::HashSet;
 use std::fmt::Debug;
-use std::task::{Context, Poll};
 use std::sync::Mutex;
+use std::task::{Context, Poll};
 use std::time::Duration;
 
 use ahash::AHashMap;
@@ -29,7 +29,7 @@ use libp2p::{Multiaddr, PeerId};
 use message::BitswapMessage;
 use network::OutEvent;
 use protocol::{ProtocolConfig, ProtocolId};
-use tokio::sync::{oneshot};
+use tokio::sync::oneshot;
 use tracing::trace;
 
 use self::client::{Client, Config as ClientConfig};
@@ -379,45 +379,45 @@ impl<S: Store> NetworkBehaviour for Bitswap<S> {
         // poll local futures
         let _r = self.futures.lock().unwrap().poll_next_unpin(cx);
 
-        match self.network.poll(cx) {
-            Poll::Pending => Poll::Pending,
-            Poll::Ready(ev) => match ev {
-                OutEvent::Dial(peer, response) => {
-                    if let PeerState::Responsive(conn, protocol_id) = self.get_peer_state(&peer) {
-                        // already connected
-                        response.send(Ok((conn, protocol_id))).ok();
-                        Poll::Pending
-                    } else {
-                        self.dials.entry(peer).or_default().push(response);
+        loop {
+            match self.network.poll(cx) {
+                Poll::Pending => return Poll::Pending,
+                Poll::Ready(ev) => match ev {
+                    OutEvent::Dial(peer, response) => {
+                        tracing::debug!("{} dials, {} peers", self.dials.len(), self.peers.len());
 
-                        Poll::Ready(NetworkBehaviourAction::Dial {
-                            opts: DialOpts::peer_id(peer).build(),
-                            handler: self.new_handler(),
-                        })
+                        if let PeerState::Responsive(conn, protocol_id) = self.get_peer_state(&peer)
+                        {
+                            // already connected
+                            response.send(Ok((conn, protocol_id))).ok();
+                            continue;
+                        } else {
+                            self.dials.entry(peer).or_default().push(response);
+
+                            return Poll::Ready(NetworkBehaviourAction::Dial {
+                                opts: DialOpts::peer_id(peer).build(),
+                                handler: self.new_handler(),
+                            });
+                        }
                     }
-                }
-                OutEvent::GenerateEvent(ev) => {
-                    Poll::Ready(NetworkBehaviourAction::GenerateEvent(ev))
-                }
-                OutEvent::SendMessage {
-                    peer,
-                    message,
-                    response,
-                    connection_id,
-                } => {
-                    let handler = if let Some(id) = connection_id {
-                        NotifyHandler::One(id)
-                    } else {
-                        NotifyHandler::Any
-                    };
-
-                    Poll::Ready(NetworkBehaviourAction::NotifyHandler {
-                        peer_id: peer,
-                        handler,
-                        event: handler::BitswapHandlerIn::Message(message, response),
-                    })
-                }
-            },
+                    OutEvent::GenerateEvent(ev) => {
+                        return Poll::Ready(NetworkBehaviourAction::GenerateEvent(ev))
+                    }
+                    OutEvent::SendMessage {
+                        peer,
+                        message,
+                        response,
+                        connection_id,
+                    } => {
+                        tracing::debug!("send message {}", peer);
+                        return Poll::Ready(NetworkBehaviourAction::NotifyHandler {
+                            peer_id: peer,
+                            handler: NotifyHandler::One(connection_id),
+                            event: handler::BitswapHandlerIn::Message(message, response),
+                        });
+                    }
+                },
+            }
         }
     }
 }

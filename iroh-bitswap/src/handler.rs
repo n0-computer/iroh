@@ -266,6 +266,7 @@ impl ConnectionHandler for BitswapHandler {
     fn inject_event(&mut self, message: BitswapHandlerIn) {
         match message {
             BitswapHandlerIn::Message(m, response) => {
+                tracing::debug!("sending message ({})", self.protocol_unsupported);
                 if self.protocol_unsupported {
                     inc!(BitswapMetrics::ProtocolUnsupported);
                     response
@@ -493,6 +494,7 @@ impl ConnectionHandler for BitswapHandler {
                 Some(OutboundSubstreamState::PendingSend(mut substream, (message, response))) => {
                     match Sink::poll_ready(Pin::new(&mut substream), cx) {
                         Poll::Ready(Ok(())) => {
+                            tracing::debug!("sedning message");
                             match Sink::start_send(Pin::new(&mut substream), message) {
                                 Ok(()) => {
                                     response.send(Ok(())).ok();

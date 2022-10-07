@@ -7,11 +7,11 @@ use std::{
 use anyhow::{anyhow, bail, Result};
 use cid::Cid;
 use crossbeam::channel::{Receiver, Sender};
-use iroh_metrics::{inc, bitswap::BitswapMetrics};
+use iroh_metrics::core::MRecorder;
+use iroh_metrics::{bitswap::BitswapMetrics, inc};
 use libp2p::{core::connection::ConnectionId, PeerId};
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, info};
-use iroh_metrics::core::MRecorder;
 
 use crate::{message::BitswapMessage, protocol::ProtocolId, BitswapEvent};
 
@@ -38,7 +38,7 @@ pub enum OutEvent {
         peer: PeerId,
         message: BitswapMessage,
         response: oneshot::Sender<std::result::Result<(), SendError>>,
-        connection_id: Option<ConnectionId>,
+        connection_id: ConnectionId,
     },
     GenerateEvent(BitswapEvent),
 }
@@ -90,7 +90,7 @@ impl Network {
     pub async fn send_message_with_retry_and_timeout(
         &self,
         peer: PeerId,
-        connection_id: Option<ConnectionId>,
+        connection_id: ConnectionId,
         message: BitswapMessage,
         retries: usize,
         timeout: Duration,
@@ -197,11 +197,11 @@ impl Network {
     }
 
     pub async fn send_message(&self, peer: PeerId, message: BitswapMessage) -> Result<()> {
-        self.dial(peer, CONNECT_TIMEOUT).await?;
+        let (connection_id, _) = self.dial(peer, CONNECT_TIMEOUT).await?;
         let timeout = send_timeout(message.encoded_len());
         self.send_message_with_retry_and_timeout(
             peer,
-            None,
+            connection_id,
             message,
             1,
             timeout,
@@ -296,7 +296,7 @@ impl MessageSender {
         self.network
             .send_message_with_retry_and_timeout(
                 self.to,
-                Some(self.connection_id),
+                self.connection_id,
                 message,
                 self.config.max_retries,
                 self.config.send_timeout,
