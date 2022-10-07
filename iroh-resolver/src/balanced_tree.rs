@@ -168,9 +168,9 @@ fn create_unixfs_node_from_links(links: Vec<LinkInfo>) -> Result<UnixfsNode> {
     let inner = unixfs_pb::Data {
         r#type: DataType::File as i32,
         // total size of the raw data this node points to
-        r#filesize: Some(filesize),
+        filesize: Some(filesize),
         // sizes of the raw data pointed to by each link in this node
-        r#blocksizes,
+        blocksizes,
         ..Default::default()
     };
 
@@ -428,7 +428,7 @@ mod tests {
             if let Some(DataType::File) = got_node.typ() {
                 assert_eq!(
                     got_node.filesize().unwrap(),
-                    got_node.blocksizes().unwrap().iter().sum::<u64>()
+                    got_node.blocksizes().iter().sum::<u64>()
                 );
             }
             assert_eq!(expect_node, got_node);
