@@ -7,9 +7,11 @@ use std::{
 use anyhow::{anyhow, bail, Result};
 use cid::Cid;
 use crossbeam::channel::{Receiver, Sender};
+use iroh_metrics::{inc, bitswap::BitswapMetrics};
 use libp2p::{core::connection::ConnectionId, PeerId};
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, info};
+use iroh_metrics::core::MRecorder;
 
 use crate::{message::BitswapMessage, protocol::ProtocolId, BitswapEvent};
 
@@ -95,6 +97,7 @@ impl Network {
         backoff: Duration,
     ) -> Result<()> {
         debug!("sending message to {}", peer);
+        inc!(BitswapMetrics::MessagesSent);
         let res = tokio::time::timeout(timeout, async {
             let mut errors: Vec<anyhow::Error> = Vec::new();
             for i in 0..retries {
@@ -161,6 +164,7 @@ impl Network {
         peer: PeerId,
         timeout: Duration,
     ) -> Result<(ConnectionId, ProtocolId)> {
+        inc!(BitswapMetrics::AttemptedDials);
         debug!("dialing {}", peer);
         let res = tokio::time::timeout(timeout, async move {
             let (s, r) = oneshot::channel();
