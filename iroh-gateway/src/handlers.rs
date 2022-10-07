@@ -72,7 +72,7 @@ pub fn get_app_routes<T: ContentLoader + std::marker::Unpin>(state: &Arc<State<T
                 .layer(CompressionLayer::new())
                 .layer(HandleErrorLayer::new(middleware_error_handler::<T>))
                 .load_shed()
-                .concurrency_limit(2048)
+                .concurrency_limit(2048*1024)
                 .timeout(Duration::from_secs(60))
                 .into_inner(),
         )
