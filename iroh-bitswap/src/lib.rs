@@ -12,7 +12,7 @@ use ahash::AHashMap;
 use anyhow::Result;
 use async_trait::async_trait;
 use cid::Cid;
-use futures::future::{BoxFuture, Future};
+use futures::future::BoxFuture;
 use futures::stream::FuturesUnordered;
 use futures::{FutureExt, StreamExt};
 use handler::{BitswapHandler, HandlerEvent};
@@ -183,36 +183,36 @@ impl<S: Store> Bitswap<S> {
     fn peer_connected(&self, peer: PeerId) {
         let client = self.client.clone();
         let server = self.server.clone();
-        self.futures.lock().unwrap().push(
+        // self.futures.lock().unwrap().push(
+        tokio::task::spawn(
             async move {
                 client.peer_connected(&peer).await;
                 server.peer_connected(&peer).await;
-            }
-            .boxed(),
+            }, // .boxed(),
         );
     }
 
     fn peer_disconnected(&self, peer: PeerId) {
         let client = self.client.clone();
         let server = self.server.clone();
-        self.futures.lock().unwrap().push(
+        // self.futures.lock().unwrap().push(
+        tokio::task::spawn(
             async move {
                 client.peer_disconnected(&peer).await;
                 server.peer_disconnected(&peer).await;
-            }
-            .boxed(),
+            }, //.boxed(),
         );
     }
 
     fn receive_message(&self, peer: PeerId, message: BitswapMessage) {
         let client = self.client.clone();
         let server = self.server.clone();
-        self.futures.lock().unwrap().push(
+        tokio::task::spawn(
+            // self.futures.lock().unwrap().push(
             async move {
                 client.receive_message(&peer, &message).await;
                 server.receive_message(&peer, &message).await;
-            }
-            .boxed(),
+            }, //.boxed(),
         );
     }
 
