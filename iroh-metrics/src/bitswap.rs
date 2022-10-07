@@ -45,6 +45,8 @@ pub(crate) struct Metrics {
 
     engine_pending_tasks: Gauge,
     engine_active_tasks: Gauge,
+    blocks_in: Counter,
+    blocks_out: Counter,
 }
 
 impl fmt::Debug for Metrics {
@@ -227,6 +229,20 @@ impl Metrics {
             Box::new(engine_active_tasks.clone()),
         );
 
+        let blocks_in = Counter::default();
+        sub_registry.register(
+            "blocks_in",
+            "",
+            Box::new(blocks_in.clone()),
+        );
+
+        let blocks_out = Counter::default();
+        sub_registry.register(
+            "blocks_out",
+            "",
+            Box::new(blocks_out.clone()),
+        );
+
         Self {
             requests_total,
             canceled_total,
@@ -260,6 +276,8 @@ impl Metrics {
             handler_outbound_loop_count,
             engine_pending_tasks,
             engine_active_tasks,
+            blocks_in,
+            blocks_out,
         }
     }
 }
@@ -333,6 +351,10 @@ impl MetricsRecorder for Metrics {
             self.engine_pending_tasks.set(value);
         } else if m.name() == BitswapMetrics::EngineActiveTasks.name() {
             self.engine_active_tasks.set(value);
+        } else if m.name() == BitswapMetrics::BlocksIn.name() {
+            self.blocks_in.inc_by(value);
+        } else if m.name() == BitswapMetrics::BlocksOut.name() {
+            self.blocks_out.inc_by(value);
         } else {
             error!("record (bitswap): unknown metric {}", m.name());
         }
@@ -352,6 +374,8 @@ pub enum BitswapMetrics {
     Cancels,
     BlockBytesOut,
     BlockBytesIn,
+    BlocksIn,
+    BlocksOut,
     Providers,
 
     AttemptedDials,
@@ -425,6 +449,8 @@ impl MetricType for BitswapMetrics {
 
             BitswapMetrics::EngineActiveTasks => "engine_active_tasks",
             BitswapMetrics::EnginePendingTasks => "engine_pending_tasks",
+            BitswapMetrics::BlocksIn => "blocks_in",
+            BitswapMetrics::BlocksOut => "blocks_out",
         }
     }
 }
