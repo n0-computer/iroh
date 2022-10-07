@@ -170,6 +170,7 @@ A detailed explanation can be found in this [document][commit-message-format].
 
 [closing-issues]: https://help.github.com/articles/closing-issues-via-commit-messages/
 [commit-message-format]: https://docs.google.com/document/d/1QrDFcIiPjSLDn3EL15IJygNPiHORgU1_OOAqWjiDU5Y/edit#
+[github]: https://github.com/n0-computer/iroh
 [git-revert]: https://git-scm.com/docs/git-revert
 [git-setup]: https://help.github.com/articles/set-up-git
 [git-hook]: https://git-scm.com/book/en/v2/Customizing-Git-Git-Hooks
