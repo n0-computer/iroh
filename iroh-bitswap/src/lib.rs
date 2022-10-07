@@ -5,13 +5,14 @@
 use std::collections::HashSet;
 use std::fmt::Debug;
 use std::task::{Context, Poll};
+use std::sync::Mutex;
 use std::time::Duration;
 
 use ahash::AHashMap;
 use anyhow::Result;
 use async_trait::async_trait;
 use cid::Cid;
-use futures::future::BoxFuture;
+use futures::future::{BoxFuture, Future};
 use futures::stream::FuturesUnordered;
 use futures::{FutureExt, StreamExt};
 use handler::{BitswapHandler, HandlerEvent};
@@ -26,7 +27,8 @@ use libp2p::{Multiaddr, PeerId};
 use message::BitswapMessage;
 use network::OutEvent;
 use protocol::{ProtocolConfig, ProtocolId};
-use tokio::sync::oneshot;
+use tokio::sync::{oneshot};
+use tracing::trace;
 
 use self::client::{Client, Config as ClientConfig};
 use self::network::Network;
@@ -58,7 +60,7 @@ pub struct Bitswap<S: Store> {
     >,
     client: Client<S>,
     server: Server<S>,
-    futures: FuturesUnordered<BoxFuture<'static, ()>>,
+    futures: Mutex<FuturesUnordered<BoxFuture<'static, ()>>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -120,7 +122,7 @@ impl<S: Store> Bitswap<S> {
             dials: Default::default(),
             server,
             client,
-            futures: FuturesUnordered::new(),
+            futures: Mutex::new(FuturesUnordered::new()),
         }
     }
 
@@ -177,7 +179,7 @@ impl<S: Store> Bitswap<S> {
     fn peer_connected(&self, peer: PeerId) {
         let client = self.client.clone();
         let server = self.server.clone();
-        self.futures.push(
+        self.futures.lock().unwrap().push(
             async move {
                 client.peer_connected(&peer).await;
                 server.peer_connected(&peer).await;
@@ -189,7 +191,7 @@ impl<S: Store> Bitswap<S> {
     fn peer_disconnected(&self, peer: PeerId) {
         let client = self.client.clone();
         let server = self.server.clone();
-        self.futures.push(
+        self.futures.lock().unwrap().push(
             async move {
                 client.peer_disconnected(&peer).await;
                 server.peer_disconnected(&peer).await;
@@ -201,7 +203,7 @@ impl<S: Store> Bitswap<S> {
     fn receive_message(&self, peer: PeerId, message: BitswapMessage) {
         let client = self.client.clone();
         let server = self.server.clone();
-        self.futures.push(
+        self.futures.lock().unwrap().push(
             async move {
                 client.receive_message(&peer, &message).await;
                 server.receive_message(&peer, &message).await;
@@ -370,7 +372,7 @@ impl<S: Store> NetworkBehaviour for Bitswap<S> {
         _: &mut impl PollParameters,
     ) -> Poll<NetworkBehaviourAction<Self::OutEvent, Self::ConnectionHandler>> {
         // poll local futures
-        let _ = self.futures.poll_next_unpin(cx);
+        let _r = self.futures.lock().unwrap().poll_next_unpin(cx);
 
         match self.network.poll(cx) {
             Poll::Pending => Poll::Pending,
@@ -412,5 +414,34 @@ impl<S: Store> NetworkBehaviour for Bitswap<S> {
                 }
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn assert_send<T: Send>() {}
+
+    #[derive(Debug, Clone)]
+    struct DummyStore;
+
+    #[async_trait]
+    impl Store for DummyStore {
+        async fn get_size(&self, cid: &Cid) -> Result<usize> {
+            todo!()
+        }
+        async fn get(&self, cid: &Cid) -> Result<Block> {
+            todo!()
+        }
+        async fn has(&self, cid: &Cid) -> Result<bool> {
+            todo!()
+        }
+    }
+
+    #[test]
+    fn test_traits() {
+        assert_send::<Bitswap<DummyStore>>();
+        assert_send::<&Bitswap<DummyStore>>();
     }
 }

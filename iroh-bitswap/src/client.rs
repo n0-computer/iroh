@@ -227,6 +227,8 @@ impl<S: Store> Client<S> {
         self.counters.lock().await.messages_received += 1;
 
         if incoming.blocks_len() > 0 {
+            debug!("client::receive_message {} blocks", incoming.blocks_len());
+
             self.update_receive_counters(incoming.blocks()).await;
             for block in incoming.blocks() {
                 debug!("recv block; {} from {}", block.cid(), peer);

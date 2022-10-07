@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration, collections::HashSet};
 
 use anyhow::{anyhow, Result};
 use cid::Cid;
@@ -58,6 +58,7 @@ impl ProviderQueryManager {
                                 Ok(ProviderQueryMessage::NewProvider { cid, response }) => {
                                    match network.find_providers(cid) {
                                         Ok(mut providers_r) => {
+                                            let mut found_providers = HashSet::new();
                                             loop {
                                                 tokio::select! {
                                                     _ = &mut closer_r => {
@@ -67,14 +68,30 @@ impl ProviderQueryManager {
                                                     providers = providers_r.recv() => {
                                                         match providers {
                                                             Some(Ok(providers)) => {
-                                                                // TODO: parallelize?
-                                                                for provider in providers {
-                                                                    if network.dial(provider, find_provider_timeout).await.is_ok() {
-                                                                        if let Err(err) = response.send(Ok(provider)).await {
-                                                                            warn!("response channel error: {:?}", err);
-                                                                            break;
-                                                                        }
-                                                                    }
+                                                                // at most 10
+                                                                let limit = 10 - found_providers.len();
+                                                                let new_providers = providers
+                                                                    .difference(&found_providers)
+                                                                    .into_iter()
+                                                                    .take(limit)
+                                                                    .copied()
+                                                                    .collect::<Vec<_>>();
+
+                                                                for provider in new_providers {
+                                                                    found_providers.insert(provider);
+                                                                    let response = response.clone();
+                                                                    let network = network.clone();
+                                                                    tokio::task::spawn(async move {
+                                                                        if network.dial(provider, find_provider_timeout).await.is_ok() {
+                                                                            if let Err(err) = response.send(Ok(provider)).await {
+                                                                                warn!("failed to send dial response: {:?}", err);
+                                                                            }
+                                                                        } 
+                                                                    });
+                                                                }
+
+                                                                if found_providers.len() >= 10 {
+                                                                    break;
                                                                 }
                                                             }
                                                             Some(Err(err)) => {

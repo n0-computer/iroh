@@ -10,7 +10,7 @@ use tokio::{
     task::JoinHandle,
     time::{Instant, Sleep},
 };
-use tracing::{debug, error, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::Block;
 
@@ -78,6 +78,7 @@ impl Session {
         initial_search_delay: Duration,
         periodic_search_delay: Duration,
     ) -> Self {
+        info!("creating session {}", id);
         let (incoming_s, incoming_r) = async_channel::bounded(128);
 
         let session_want_sender = SessionWantSender::new(
@@ -135,6 +136,7 @@ impl Session {
             let mut periodic_search_timer = tokio::time::interval(periodic_search_delay);
 
             loop {
+                debug!("session {} tick", loop_state.id);
                 tokio::select! {
                     oper = incoming_r.recv() => {
                         match oper {
@@ -197,6 +199,7 @@ impl Session {
     }
 
     pub async fn stop(self) -> Result<()> {
+        info!("stopping session {}", self.inner.id);
         let mut inner =
             Arc::try_unwrap(self.inner).map_err(|_| anyhow!("session refs not shutdown"))?;
         inner
@@ -307,36 +310,6 @@ impl Session {
 
         Ok(r)
     }
-
-    // TODO: pass these to sessionwantsender
-
-    // // onWantsSent is called when wants are sent to a peer by the session wants sender
-    // fn onWantsSent(p peer.ID, wantBlocks []cid.Cid, wantHaves []cid.Cid) {
-    // 	allBlks := append(wantBlocks[:len(wantBlocks):len(wantBlocks)], wantHaves...)
-    // 	s.nonBlockingEnqueue(op{op: opWantsSent, keys: allBlks})
-    // }
-
-    // // onPeersExhausted is called when all available peers have sent DONT_HAVE for
-    // // a set of cids (or all peers become unavailable)
-    // fn onPeersExhausted(ks []cid.Cid) {
-    // 	s.nonBlockingEnqueue(op{op: opBroadcast, keys: ks})
-    // }
-
-    // // We don't want to block the sessionWantSender if the incoming channel
-    // // is full. So if we can't immediately send on the incoming channel spin
-    // // it off into a go-routine.
-    // fn nonBlockingEnqueue(o op) {
-    // 	select {
-    // 	case s.incoming <- o:
-    // 	default:
-    // 		go func() {
-    // 			select {
-    // 			case s.incoming <- o:
-    // 			case <-s.ctx.Done():
-    // 			}
-    // 		}()
-    // 	}
-    // }
 }
 
 #[derive(Debug)]
@@ -398,7 +371,9 @@ impl LoopState {
         let wants = wants.unwrap_or_else(|| self.session_wants.prepare_broadcast());
 
         // Broadcast a want-have for the live wants to everyone we're connected to.
-        self.broadcast_want_haves(&wants).await;
+        if !wants.is_empty() {
+            self.broadcast_want_haves(&wants).await;
+        }
 
         // Do not find providers on consecutive ticks -- just rely on periodic search widening.
         if !wants.is_empty() && (self.consecutive_ticks == 0) {
@@ -429,20 +404,28 @@ impl LoopState {
 
     /// Attempts to find more peers for a session by searching for providers for the given cid.
     async fn find_more_peers(&self, cid: &Cid) {
+        debug!("find_more_peers");
         // TODO: track thread
         let sws = self.session_want_sender.clone();
         let cid = *cid;
         let provider_query_manager = self.provider_query_manager.clone();
         let _worker = tokio::runtime::Handle::current().spawn(async move {
+            let mut num_providers = 0;
             match provider_query_manager.find_providers_async(&cid).await {
                 Ok(r) => {
                     while let Ok(provider) = r.recv().await {
                         match provider {
                             Ok(provider) => {
+                                num_providers += 1;
+                                debug!("found provider for {}: {}", cid, provider);
                                 // When a provider indicates that it has a cid, it's equivalent to
                                 // the providing peer sending a HAVE.
                                 sws.update(provider, Vec::new(), vec![cid], Vec::new())
                                     .await;
+
+                                if num_providers >= 10 {
+                                    break;
+                                }
                             }
                             Err(err) => {
                                 warn!("provider error: {:?}", err);
@@ -457,8 +440,12 @@ impl LoopState {
         });
     }
 
-    // Called when the session receives blocks from a peer
+    /// Called when the session receives blocks from a peer.
     async fn handle_receive(&mut self, keys: Vec<Cid>) {
+        debug!(
+            "received keys: {:?}",
+            keys.iter().map(|k| k.to_string()).collect::<Vec<String>>()
+        );
         // Record which blocks have been received and figure out the total latency
         // for fetching the blocks
         let (wanted, total_latency) = self.session_wants.blocks_received(&keys);
@@ -483,7 +470,7 @@ impl LoopState {
         self.reset_idle_tick();
     }
 
-    /// Called when blocks are requested by the client
+    /// Called when blocks are requested by the client.
     async fn want_blocks(&mut self, new_keys: Vec<Cid>) {
         if !new_keys.is_empty() {
             // Inform the SessionInterestManager that this session is interested in the keys
@@ -511,6 +498,10 @@ impl LoopState {
 
     // Send want-haves to all connected peers
     async fn broadcast_want_haves(&self, wants: &AHashSet<Cid>) {
+        debug!(
+            "broadacasting wants: {:?}",
+            wants.iter().map(|w| w.to_string()).collect::<Vec<_>>()
+        );
         self.peer_manager.broadcast_want_haves(wants).await;
     }
 
@@ -530,6 +521,13 @@ impl LoopState {
         let tick_delay = Duration::from_secs_f64(
             tick_delay.as_secs_f64() * (1. + self.consecutive_ticks as f64),
         );
+        dbg!(
+            tick_delay,
+            self.initial_search_delay,
+            self.consecutive_ticks,
+            &self.latency_tracker,
+        );
+
         self.idle_tick.as_mut().reset(Instant::now() + tick_delay);
     }
 }

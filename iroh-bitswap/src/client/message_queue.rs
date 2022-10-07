@@ -168,7 +168,7 @@ impl MessageQueue {
         config: Config,
         on_dont_have_timeout: Arc<dyn DontHaveTimeout>,
     ) -> Self {
-        let (closer_sender, mut closer_receiver) = mpsc::channel(1);
+        let (closer_sender, mut closer_receiver) = mpsc::channel(2);
         let (responses_sender, mut responses_receiver) = mpsc::channel(8);
         let (outgoing_work_sender, mut outgoing_work_receiver) = mpsc::channel(4);
         let wants = Arc::new(Mutex::new(Wants {
@@ -212,6 +212,7 @@ impl MessageQueue {
             };
 
             loop {
+                debug!("message queue tick {}", peer);
                 tokio::select! {
                     _ = rebroadcast_timer.tick() => {
                         rebroadcast_wantlist(

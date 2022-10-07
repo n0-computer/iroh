@@ -218,6 +218,11 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                 }, if nice_interval.is_some() => {
                     // Print peer count on an interval.
                     info!("Peers connected: {:?}", self.swarm.connected_peers().count());
+                    {
+                        let bs = self.swarm.behaviour().bitswap.as_ref().unwrap();
+                        let stat = bs.stat().await.unwrap();
+                        info!("bitswap stats: {:?}", stat);
+                    }
                 }
                 _ = bootstrap_interval.tick() => {
                     trace!("tick:bootstrap: nice");
@@ -316,7 +321,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
         }
 
         if let Some((dial_opts, range)) = to_dial {
-            debug!(
+            trace!(
                 "checking node {:?} in bucket range ({:?})",
                 dial_opts.get_peer_id().unwrap(),
                 range
@@ -362,7 +367,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                 if num_established == 1.try_into().unwrap() {
                     self.emit_network_event(NetworkEvent::PeerConnected(peer_id));
                 }
-                debug!("ConnectionEstablished: {:}", peer_id);
+                trace!("ConnectionEstablished: {:}", peer_id);
                 Ok(())
             }
             SwarmEvent::ConnectionClosed {
@@ -374,11 +379,11 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                     self.emit_network_event(NetworkEvent::PeerDisconnected(peer_id));
                 }
 
-                debug!("ConnectionClosed: {:}", peer_id);
+                trace!("ConnectionClosed: {:}", peer_id);
                 Ok(())
             }
             SwarmEvent::OutgoingConnectionError { peer_id, error } => {
-                debug!("failed to dial: {:?}, {:?}", peer_id, error);
+                trace!("failed to dial: {:?}, {:?}", peer_id, error);
 
                 if let Some(peer_id) = peer_id {
                     if let Some(channels) = self.dial_queries.get_mut(&peer_id) {
@@ -579,7 +584,6 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                 }
             }
             Event::Ping(e) => {
-                debug!("received ping from: {}", e.peer);
                 libp2p_metrics().record(&e);
                 if let PingResult::Ok(ping) = e.result {
                     self.swarm

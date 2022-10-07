@@ -1,9 +1,11 @@
 use std::collections::HashSet;
+use std::pin::Pin;
 use std::time::Duration;
 
 use anyhow::{bail, Result};
 use async_trait::async_trait;
 use cid::Cid;
+use futures::future::{Future, FutureExt};
 use iroh_bitswap::{Bitswap, Block, Config as BitswapConfig, Priority, Store};
 use iroh_rpc_client::Client;
 use libp2p::core::identity::Keypair;
@@ -52,28 +54,29 @@ pub(crate) struct BitswapStore(Client);
 #[async_trait]
 impl Store for BitswapStore {
     async fn get(&self, cid: &Cid) -> Result<Block> {
-        let data = self
-            .0
-            .try_store()?
-            .get(*cid)
+        let store = self.0.try_store()?;
+        let cid = *cid;
+        let data = store
+            .get(cid)
             .await?
             .ok_or_else(|| anyhow::anyhow!("not found"))?;
-        Ok(Block::new(data, *cid))
+        Ok(Block::new(data, cid))
     }
 
     async fn get_size(&self, cid: &Cid) -> Result<usize> {
-        let size = self
-            .0
-            .try_store()?
-            .get_size(*cid)
+        let store = self.0.try_store()?;
+        let cid = *cid;
+        let size = store
+            .get_size(cid)
             .await?
             .ok_or_else(|| anyhow::anyhow!("not found"))?;
         Ok(size as usize)
     }
 
     async fn has(&self, cid: &Cid) -> Result<bool> {
-        let res = self.0.try_store()?.has(*cid).await?;
-
+        let store = self.0.try_store()?;
+        let cid = *cid;
+        let res = store.has(cid).await?;
         Ok(res)
     }
 }
@@ -283,5 +286,19 @@ impl NodeBehaviour {
             kad.bootstrap()?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn assert_send<T: Send>() {}
+
+    #[test]
+    fn test_traits() {
+        assert_send::<Bitswap<BitswapStore>>();
+        assert_send::<NodeBehaviour>();
+        assert_send::<&Bitswap<BitswapStore>>();
     }
 }

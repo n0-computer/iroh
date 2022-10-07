@@ -2,7 +2,7 @@ use ahash::AHashMap;
 use anyhow::{anyhow, Result};
 use awaitgroup::WaitGroup;
 use cid::Cid;
-use futures::{future::BoxFuture, Future, FutureExt};
+use futures::{future::BoxFuture, FutureExt};
 use tokio::sync::oneshot;
 use tracing::error;
 
@@ -93,7 +93,7 @@ impl<S: Store> BlockstoreManager<S> {
             } else {
                 s.send(None).await.ok();
             }
-        })
+        }.boxed())
         .await?;
 
         while let Ok(r) = r.recv().await {
@@ -119,7 +119,7 @@ impl<S: Store> BlockstoreManager<S> {
             } else {
                 s.send(None).await.ok();
             }
-        })
+        }.boxed())
         .await?;
 
         while let Ok(r) = r.recv().await {
@@ -133,10 +133,9 @@ impl<S: Store> BlockstoreManager<S> {
 
     /// Executes the given job function for each key, returning an error
     /// if queuing any of the jobs fails.
-    async fn job_per_key<F, FU>(&self, keys: &[Cid], job_fn: F) -> Result<()>
+    async fn job_per_key<F>(&self, keys: &[Cid], job_fn: F) -> Result<()>
     where
-        F: FnOnce(Cid) -> FU + Send + Sync + Clone + 'static,
-        FU: Future<Output = ()> + Send + 'static,
+        F: FnOnce(Cid) -> BoxFuture<'static, ()> + Clone + Send + 'static
     {
         let mut wg = WaitGroup::new();
 

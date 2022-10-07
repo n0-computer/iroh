@@ -13,7 +13,7 @@ use tokio::{
     sync::{oneshot, Mutex},
     task::JoinHandle,
 };
-use tracing::{debug, warn};
+use tracing::{debug, trace};
 
 use crate::{client::peer_manager::DontHaveTimeout, network::Network};
 
@@ -119,7 +119,7 @@ impl DontHaveTimeoutManager {
                             }
                         }
                         Err(err) => {
-                            warn!("failed to ping {}: {:?}", target, err);
+                            trace!("failed to ping {}: {:?}", target, err);
                             // we leave the default timeout
                         }
                     }
