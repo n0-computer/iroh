@@ -3,6 +3,7 @@ use std::{fmt::Debug, sync::Arc, time::Duration};
 use ahash::{AHashMap, AHashSet};
 use anyhow::{anyhow, bail, Result};
 use cid::Cid;
+use iroh_metrics::{record, bitswap::BitswapMetrics};
 use libp2p::PeerId;
 use tokio::{
     sync::{oneshot, Mutex, Notify, RwLock},
@@ -26,6 +27,7 @@ use super::{
     score_ledger::{DefaultScoreLedger, Receipt},
     task_merger::{TaskData, TaskMerger},
 };
+use iroh_metrics::core::MRecorder;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TaskInfo {
@@ -217,9 +219,9 @@ impl<S: Store> Engine<S> {
         *counter += 1;
 
         if *counter % 100 == 0 {
-            // let stats = self.peer_task_queue.stats();
-            // set!(active, stats.num_active)
-            // set!(pending, stats.num_pending)
+            let stats = self.peer_task_queue.stats().await;
+            record!(BitswapMetrics::EnginePendingTasks, stats.num_pending as u64);
+            record!(BitswapMetrics::EngineActiveTasks, stats.num_active as u64);
         }
     }
 

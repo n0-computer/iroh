@@ -1,6 +1,6 @@
 use std::fmt;
 
-use prometheus_client::{metrics::counter::Counter, registry::Registry};
+use prometheus_client::{metrics::{counter::Counter, gauge::Gauge}, registry::Registry};
 use tracing::error;
 
 use crate::{
@@ -42,6 +42,9 @@ pub(crate) struct Metrics {
     outbound_substreams_created_limit: Counter,
     handler_inbound_loop_count: Counter,
     handler_outbound_loop_count: Counter,
+
+    engine_pending_tasks: Gauge,
+    engine_active_tasks: Gauge,
 }
 
 impl fmt::Debug for Metrics {
@@ -210,6 +213,20 @@ impl Metrics {
             Box::new(handler_outbound_loop_count.clone()),
         );
 
+        let engine_pending_tasks = Gauge::default();
+        sub_registry.register(
+            "engine_pending_tasks",
+            "",
+            Box::new(engine_pending_tasks.clone()),
+        );
+
+        let engine_active_tasks = Gauge::default();
+        sub_registry.register(
+            "engine_active_tasks",
+            "",
+            Box::new(engine_active_tasks.clone()),
+        );
+
         Self {
             requests_total,
             canceled_total,
@@ -241,6 +258,8 @@ impl Metrics {
             outbound_substreams_created_limit,
             handler_inbound_loop_count,
             handler_outbound_loop_count,
+            engine_pending_tasks,
+            engine_active_tasks,
         }
     }
 }
@@ -310,6 +329,10 @@ impl MetricsRecorder for Metrics {
             self.handler_inbound_loop_count.inc_by(value);
         } else if m.name() == BitswapMetrics::HandlerOutboundLoopCount.name() {
             self.handler_outbound_loop_count.inc_by(value);
+        } else if m.name() == BitswapMetrics::EnginePendingTasks.name() {
+            self.engine_pending_tasks.set(value);
+        } else if m.name() == BitswapMetrics::EngineActiveTasks.name() {
+            self.engine_active_tasks.set(value);
         } else {
             error!("record (bitswap): unknown metric {}", m.name());
         }
@@ -358,6 +381,9 @@ pub enum BitswapMetrics {
     OutboundSubstreamsCreatedLimit,
     HandlerInboundLoopCount,
     HandlerOutboundLoopCount,
+
+    EngineActiveTasks,
+    EnginePendingTasks,
 }
 
 impl MetricType for BitswapMetrics {
@@ -396,6 +422,9 @@ impl MetricType for BitswapMetrics {
             BitswapMetrics::OutboundSubstreamsCreatedLimit => "outbound_substreams_created_limit",
             BitswapMetrics::HandlerInboundLoopCount => "handler_inbound_loop_count",
             BitswapMetrics::HandlerOutboundLoopCount => "handler_outbound_loop_count",
+
+            BitswapMetrics::EngineActiveTasks => "engine_active_tasks",
+            BitswapMetrics::EnginePendingTasks => "engine_pending_tasks",
         }
     }
 }
