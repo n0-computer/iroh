@@ -3,6 +3,7 @@ use std::task::Poll;
 
 use anyhow::Result;
 use bytes::Bytes;
+use cid::Cid;
 use futures::{StreamExt, TryStream};
 use http::HeaderMap;
 use iroh_car::{CarHeader, CarWriter};
@@ -173,6 +174,14 @@ impl<T: ContentLoader + std::marker::Unpin> Client<T> {
         });
 
         Ok(body)
+    }
+}
+
+impl<T: ContentLoader> Client<T> {
+    #[tracing::instrument(skip(self))]
+    pub async fn has_file_locally(&self, cid: &Cid) -> Result<bool> {
+        info!("has cid {}", cid);
+        self.resolver.has_cid(cid).await
     }
 }
 

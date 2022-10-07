@@ -528,12 +528,18 @@ pub struct Resolver<T: ContentLoader> {
 pub trait ContentLoader: Sync + Send + std::fmt::Debug + Clone + 'static {
     /// Loads the actual content of a given cid.
     async fn load_cid(&self, cid: &Cid) -> Result<LoadedCid>;
+    /// Checks if the given cid is present in the local storage.
+    async fn has_cid(&self, cid: &Cid) -> Result<bool>;
 }
 
 #[async_trait]
 impl<T: ContentLoader> ContentLoader for Arc<T> {
     async fn load_cid(&self, cid: &Cid) -> Result<LoadedCid> {
         self.as_ref().load_cid(cid).await
+    }
+
+    async fn has_cid(&self, cid: &Cid) -> Result<bool> {
+        self.as_ref().has_cid(cid).await
     }
 }
 
@@ -590,6 +596,11 @@ impl ContentLoader for Client {
             data: bytes,
             source: Source::Bitswap,
         })
+    }
+
+    async fn has_cid(&self, cid: &Cid) -> Result<bool> {
+        let cid = *cid;
+        self.try_store()?.has(cid).await
     }
 }
 
@@ -1062,6 +1073,11 @@ impl<T: ContentLoader> Resolver<T> {
     }
 
     #[tracing::instrument(skip(self))]
+    pub async fn has_cid(&self, cid: &Cid) -> Result<bool> {
+        self.loader.has_cid(cid).await
+    }
+
+    #[tracing::instrument(skip(self))]
     async fn load_ipns_record(&self, cid: &Cid) -> Result<Cid> {
         todo!()
     }
@@ -1137,6 +1153,10 @@ mod tests {
                 }),
                 None => bail!("not found"),
             }
+        }
+
+        async fn has_cid(&self, cid: &Cid) -> Result<bool> {
+            Ok(self.contains_key(cid))
         }
     }
 

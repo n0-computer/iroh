@@ -67,4 +67,8 @@ impl ContentLoader for RacingLoader {
             source: Source::Bitswap,
         })
     }
+
+    async fn has_cid(&self, cid: &Cid) -> Result<bool> {
+        Ok(self.rpc_client.try_store()?.has(*cid).await?)
+    }
 }

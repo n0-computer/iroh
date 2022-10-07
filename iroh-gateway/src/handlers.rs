@@ -72,7 +72,7 @@ pub fn get_app_routes<T: ContentLoader + std::marker::Unpin>(state: &Arc<State<T
                 .layer(CompressionLayer::new())
                 .layer(HandleErrorLayer::new(middleware_error_handler::<T>))
                 .load_shed()
-                .concurrency_limit(2048*1024)
+                .concurrency_limit(2048 * 1024)
                 .timeout(Duration::from_secs(60))
                 .into_inner(),
         )
@@ -159,6 +159,9 @@ pub async fn get_handler<T: ContentLoader + std::marker::Unpin>(
         .map_err(|e: anyhow::Error| e.to_string())
         .map_err(|e| error(StatusCode::BAD_REQUEST, &e, &state))?;
     let resolved_cid = resolved_path.root();
+
+    let return_if_head = handle_only_if_cached(&request_headers, &state, &resolved_cid).await?;
+    // TODO: handle HEAD requests
 
     if check_bad_bits(&state, resolved_cid.to_string().as_str(), cpath).await {
         return Err(error(
@@ -313,6 +316,50 @@ fn unsuported_header_check<T: ContentLoader>(
         ));
     }
     Ok(())
+}
+
+#[tracing::instrument()]
+async fn handle_only_if_cached<T: ContentLoader>(
+    request_headers: &HeaderMap,
+    state: &State<T>,
+    cid: &CidOrDomain,
+) -> Result<bool, GatewayError> {
+    if request_headers.contains_key(&HEADER_CACHE_CONTROL) {
+        let hv = request_headers.get(&HEADER_CACHE_CONTROL).unwrap();
+        if hv.to_str().unwrap() == "only-if-cached" {
+            match cid {
+                CidOrDomain::Cid(cid) => {
+                    match state.client.has_file_locally(cid).await {
+                        Ok(true) => {
+                            return Ok(true);
+                        }
+                        Ok(false) => {
+                            return Err(error(
+                                StatusCode::PRECONDITION_FAILED,
+                                "File not found in cache",
+                                state,
+                            ));
+                        }
+                        Err(e) => {
+                            return Err(error(
+                                StatusCode::PRECONDITION_FAILED,
+                                &format!("Error checking cache: {}", e),
+                                state,
+                            ));
+                        }
+                    }
+                }
+                CidOrDomain::Domain(_) => {
+                    return Err(error(
+                        StatusCode::PRECONDITION_FAILED,
+                        "Cannot resolve in cache: invalid CID.",
+                        state,
+                    ));
+                }
+            }
+        }
+    }
+    Ok(false)
 }
 
 pub async fn check_bad_bits<T: ContentLoader>(state: &State<T>, cid: &str, path: &str) -> bool {

@@ -13,6 +13,7 @@ pub struct GatewayError {
 
 impl IntoResponse for GatewayError {
     fn into_response(self) -> Response {
+        // TODO: handle HEAD request
         let body = axum::Json(json!({
             "code": self.status_code.as_u16(),
             "success": false,
