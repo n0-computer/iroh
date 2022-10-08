@@ -108,18 +108,11 @@ fn default_headers() -> HeaderMap {
     );
     headers.typed_insert(
         [
-            CONTENT_TYPE,
-            CONTENT_DISPOSITION,
-            LAST_MODIFIED,
+            IF_NONE_MATCH,
+            ACCEPT,
             CACHE_CONTROL,
-            ACCEPT_RANGES,
-            ETAG,
+            RANGE,
             HEADER_SERVICE_WORKER.clone(),
-            HEADER_X_IPFS_GATEWAY_PREFIX.clone(),
-            HEADER_X_TRACE_ID.clone(),
-            HEADER_X_CONTENT_TYPE_OPTIONS.clone(),
-            HEADER_X_IPFS_PATH.clone(),
-            HEADER_X_IPFS_ROOTS.clone(),
         ]
         .into_iter()
         .collect::<AccessControlAllowHeaders>(),
@@ -265,7 +258,7 @@ mod tests {
             "access-control-allow-methods".to_string(),
             Value::new(None, "GET, PUT, POST, DELETE, HEAD, OPTIONS"),
         );
-        expect.insert("access-control-allow-headers".to_string(), Value::new(None, "content-type, content-disposition, last-modified, cache-control, accept-ranges, etag, service-worker, x-ipfs-gateway-prefix, x-trace-id, x-content-type-options, x-ipfs-path, x-ipfs-roots"));
+        expect.insert("access-control-allow-headers".to_string(), Value::new(None, "if-none-match, accept, cache-control, range, service-worker"));
         expect.insert(
             "cache-control".to_string(),
             Value::new(None, "no-cache, no-transform"),
