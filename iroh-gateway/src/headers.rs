@@ -26,10 +26,10 @@ pub fn add_content_type_headers(headers: &mut HeaderMap, name: &str) {
 pub fn add_content_disposition_headers(
     headers: &mut HeaderMap,
     filename: &str,
-    content_path: &str,
+    content_path: &iroh_resolver::resolver::Path,
     should_download: bool,
 ) -> String {
-    let mut name = get_filename(content_path);
+    let mut name = get_filename(&content_path.to_string());
     if !filename.is_empty() {
         name = filename.to_string();
     }
@@ -212,9 +212,12 @@ mod tests {
         // inline
         let mut headers = HeaderMap::new();
         let filename = "test.txt";
-        let content_path = "QmSomeCid";
+        let content_path: iroh_resolver::resolver::Path =
+            "/ipfs/bafkreigh2akiscaildcqabsyg3dfr6chu3fgpregiymsck7e7aqa4s52zy"
+                .parse()
+                .unwrap();
         let download = false;
-        let name = add_content_disposition_headers(&mut headers, filename, content_path, download);
+        let name = add_content_disposition_headers(&mut headers, filename, &content_path, download);
         assert_eq!(headers.len(), 1);
         assert_eq!(
             headers.get(&CONTENT_DISPOSITION).unwrap(),
@@ -225,9 +228,12 @@ mod tests {
         // attachment
         let mut headers = HeaderMap::new();
         let filename = "test.txt";
-        let content_path = "QmSomeCid";
+        let content_path: iroh_resolver::resolver::Path =
+            "/ipfs/bafkreigh2akiscaildcqabsyg3dfr6chu3fgpregiymsck7e7aqa4s52zy"
+                .parse()
+                .unwrap();
         let download = true;
-        let name = add_content_disposition_headers(&mut headers, filename, content_path, download);
+        let name = add_content_disposition_headers(&mut headers, filename, &content_path, download);
         assert_eq!(headers.len(), 1);
         assert_eq!(
             headers.get(&CONTENT_DISPOSITION).unwrap(),
@@ -238,18 +244,27 @@ mod tests {
         // no filename & no content path filename
         let mut headers = HeaderMap::new();
         let filename = "";
-        let content_path = "QmSomeCid";
+        let content_path: iroh_resolver::resolver::Path =
+            "/ipfs/bafkreigh2akiscaildcqabsyg3dfr6chu3fgpregiymsck7e7aqa4s52zy"
+                .parse()
+                .unwrap();
         let download = true;
-        let name = add_content_disposition_headers(&mut headers, filename, content_path, download);
+        let name = add_content_disposition_headers(&mut headers, filename, &content_path, download);
         assert_eq!(headers.len(), 1);
-        assert_eq!(name, "QmSomeCid");
+        assert_eq!(
+            name,
+            "bafkreigh2akiscaildcqabsyg3dfr6chu3fgpregiymsck7e7aqa4s52zy"
+        );
 
         // no filename & with content path filename
         let mut headers = HeaderMap::new();
         let filename = "";
-        let content_path = "QmSomeCid/folder/test.txt";
+        let content_path: iroh_resolver::resolver::Path =
+            "/ipfs/bafkreigh2akiscaildcqabsyg3dfr6chu3fgpregiymsck7e7aqa4s52zy/folder/test.txt"
+                .parse()
+                .unwrap();
         let download = true;
-        let name = add_content_disposition_headers(&mut headers, filename, content_path, download);
+        let name = add_content_disposition_headers(&mut headers, filename, &content_path, download);
         assert_eq!(headers.len(), 1);
         assert_eq!(name, "test.txt");
     }

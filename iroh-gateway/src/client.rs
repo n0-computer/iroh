@@ -191,7 +191,6 @@ pub struct Request {
     pub cid: CidOrDomain,
     pub resolved_path: iroh_resolver::resolver::Path,
     pub query_file_name: String,
-    pub content_path: String,
     pub download: bool,
     pub query_params: GetParams,
 }

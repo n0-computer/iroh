@@ -213,7 +213,6 @@ pub async fn get_handler<T: ContentLoader + std::marker::Unpin>(
         cid: resolved_path.root().clone(),
         resolved_path,
         query_file_name,
-        content_path: full_content_path.to_string(),
         download,
         query_params: query_params_copy,
     };
@@ -543,7 +542,7 @@ async fn serve_fs<T: ContentLoader + std::marker::Unpin>(
                     let name = add_content_disposition_headers(
                         &mut headers,
                         &req.query_file_name,
-                        &req.content_path,
+                        &req.resolved_path,
                         req.download,
                     );
                     if metadata.unixfs_type == Some(UnixfsType::Symlink) {
@@ -597,17 +596,16 @@ async fn serve_fs_dir<T: ContentLoader + std::marker::Unpin>(
             .unwrap_or_default()
     });
     if !force_dir && has_index {
-        if !req.content_path.ends_with('/') {
+        if !req.resolved_path.is_dir() {
             let redirect_path = format!(
                 "{}/{}",
-                req.content_path,
+                req.resolved_path,
                 req.query_params.to_query_string()
             );
             return Ok(GatewayResponse::redirect(&redirect_path));
         }
         let mut new_req = req.clone();
         new_req.resolved_path.push("index.html");
-        new_req.content_path = format!("{}/index.html", req.content_path);
         return serve_fs(&new_req, state, headers, start_time).await;
     }
 
@@ -616,9 +614,9 @@ async fn serve_fs_dir<T: ContentLoader + std::marker::Unpin>(
     // set_etag_headers(&mut headers, metadata.dir_hash.clone());
 
     let mut template_data: Map<String, Json> = Map::new();
-    let mut root_path = req.content_path.clone();
-    if !root_path.ends_with('/') {
-        root_path.push('/');
+    let mut root_path = req.resolved_path.clone();
+    if !root_path.is_dir() {
+        root_path.push("");
     }
 
     let mut breadcrumbs: Vec<HashMap<&str, String>> = Vec::new();

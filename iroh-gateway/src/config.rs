@@ -258,7 +258,13 @@ mod tests {
             "access-control-allow-methods".to_string(),
             Value::new(None, "GET, PUT, POST, DELETE, HEAD, OPTIONS"),
         );
-        expect.insert("access-control-allow-headers".to_string(), Value::new(None, "if-none-match, accept, cache-control, range, service-worker"));
+        expect.insert(
+            "access-control-allow-headers".to_string(),
+            Value::new(
+                None,
+                "if-none-match, accept, cache-control, range, service-worker",
+            ),
+        );
         expect.insert(
             "cache-control".to_string(),
             Value::new(None, "no-cache, no-transform"),
