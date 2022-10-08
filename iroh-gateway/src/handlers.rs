@@ -11,6 +11,7 @@ use axum::{
 use bytes::Bytes;
 use futures::TryStreamExt;
 use handlebars::Handlebars;
+use http::Method;
 use iroh_metrics::{core::MRecorder, gateway::GatewayMetrics, get_current_trace_id, inc};
 use iroh_resolver::{
     resolver::{CidOrDomain, ContentLoader, OutMetrics, UnixfsType},
@@ -120,6 +121,7 @@ pub async fn get_handler<T: ContentLoader + std::marker::Unpin>(
     Extension(state): Extension<Arc<State<T>>>,
     Path(params): Path<HashMap<String, String>>,
     Query(query_params): Query<GetParams>,
+    method: http::Method,
     request_headers: HeaderMap,
 ) -> Result<GatewayResponse, GatewayError> {
     inc!(GatewayMetrics::Requests);
@@ -160,8 +162,9 @@ pub async fn get_handler<T: ContentLoader + std::marker::Unpin>(
         .map_err(|e| error(StatusCode::BAD_REQUEST, &e, &state))?;
     let resolved_cid = resolved_path.root();
 
-    let return_if_head = handle_only_if_cached(&request_headers, &state, &resolved_cid).await?;
-    // TODO: handle HEAD requests
+    if handle_only_if_cached(&request_headers, &state, &resolved_cid).await? {
+        return response(StatusCode::OK, Body::empty(), HeaderMap::new());
+    }
 
     if check_bad_bits(&state, resolved_cid.to_string().as_str(), cpath).await {
         return Err(error(
@@ -328,27 +331,25 @@ async fn handle_only_if_cached<T: ContentLoader>(
         let hv = request_headers.get(&HEADER_CACHE_CONTROL).unwrap();
         if hv.to_str().unwrap() == "only-if-cached" {
             match cid {
-                CidOrDomain::Cid(cid) => {
-                    match state.client.has_file_locally(cid).await {
-                        Ok(true) => {
-                            return Ok(true);
-                        }
-                        Ok(false) => {
-                            return Err(error(
-                                StatusCode::PRECONDITION_FAILED,
-                                "File not found in cache",
-                                state,
-                            ));
-                        }
-                        Err(e) => {
-                            return Err(error(
-                                StatusCode::PRECONDITION_FAILED,
-                                &format!("Error checking cache: {}", e),
-                                state,
-                            ));
-                        }
+                CidOrDomain::Cid(cid) => match state.client.has_file_locally(cid).await {
+                    Ok(true) => {
+                        return Ok(true);
                     }
-                }
+                    Ok(false) => {
+                        return Err(error(
+                            StatusCode::PRECONDITION_FAILED,
+                            "File not found in cache",
+                            state,
+                        ));
+                    }
+                    Err(e) => {
+                        return Err(error(
+                            StatusCode::PRECONDITION_FAILED,
+                            &format!("Error checking cache: {}", e),
+                            state,
+                        ));
+                    }
+                },
                 CidOrDomain::Domain(_) => {
                     return Err(error(
                         StatusCode::PRECONDITION_FAILED,
@@ -709,15 +710,22 @@ fn error<T: ContentLoader>(
         status_code,
         message: message.to_string(),
         trace_id: get_current_trace_id().to_string(),
+        method: None,
     }
 }
 
 #[tracing::instrument()]
 pub async fn middleware_error_handler<T: ContentLoader>(
+    method: Method,
     Extension(state): Extension<Arc<State<T>>>,
     err: BoxError,
 ) -> impl IntoResponse {
     inc!(GatewayMetrics::FailCount);
+    if err.is::<GatewayError>() {
+        let err = err.downcast::<GatewayError>().unwrap();
+        return err.with_method(method);
+    }
+
     if err.is::<tower::timeout::error::Elapsed>() {
         return error(StatusCode::REQUEST_TIMEOUT, "request timed out", &state);
     }
