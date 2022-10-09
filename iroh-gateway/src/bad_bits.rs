@@ -177,9 +177,6 @@ mod tests {
         bbits.update(deny_list);
 
         let mut config = Config::new(
-            false,
-            false,
-            false,
             0,
             RpcClientConfig {
                 gateway_addr: None,

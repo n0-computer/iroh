@@ -163,9 +163,6 @@ mod tests {
     #[tokio::test]
     async fn gateway_health() {
         let mut config = Config::new(
-            false,
-            false,
-            false,
             0,
             RpcClientConfig {
                 gateway_addr: None,

@@ -24,12 +24,6 @@ pub struct Config {
     /// Pretty URL to redirect to
     #[serde(default = "String::new")]
     pub public_url_base: String,
-    /// flag to toggle whether the gateway allows writing/pushing data
-    pub writeable: bool,
-    /// flag to toggle whether the gateway allows fetching data from other nodes or is local only
-    pub fetch: bool,
-    /// flag to toggle whether the gateway enables/utilizes caching
-    pub cache: bool,
     /// default port to listen on
     pub port: u16,
     /// flag to toggle whether the gateway should use denylist on requests
@@ -46,18 +40,9 @@ pub struct Config {
 }
 
 impl Config {
-    pub fn new(
-        writeable: bool,
-        fetch: bool,
-        cache: bool,
-        port: u16,
-        rpc_client: RpcClientConfig,
-    ) -> Self {
+    pub fn new(port: u16, rpc_client: RpcClientConfig) -> Self {
         Self {
             public_url_base: String::new(),
-            writeable,
-            fetch,
-            cache,
             headers: HeaderMap::new(),
             port,
             rpc_client,
@@ -128,9 +113,6 @@ impl Default for Config {
         let rpc_client = RpcClientConfig::default_grpc();
         let mut t = Self {
             public_url_base: String::new(),
-            writeable: false,
-            fetch: false,
-            cache: false,
             headers: HeaderMap::new(),
             port: DEFAULT_PORT,
             rpc_client,
@@ -150,9 +132,7 @@ impl Source for Config {
     fn collect(&self) -> Result<Map<String, Value>, ConfigError> {
         let rpc_client = self.rpc_client.collect()?;
         let mut map: Map<String, Value> = Map::new();
-        insert_into_config_map(&mut map, "writeable", self.writeable);
-        insert_into_config_map(&mut map, "fetch", self.fetch);
-        insert_into_config_map(&mut map, "cache", self.cache);
+        insert_into_config_map(&mut map, "public_url_base", self.public_url_base);
         insert_into_config_map(&mut map, "denylist", self.denylist);
         // Some issue between deserializing u64 & u16, converting this to
         // an signed int fixes the issue
@@ -211,9 +191,6 @@ mod tests {
     #[test]
     fn default_config() {
         let config = Config::default();
-        assert!(!config.writeable);
-        assert!(!config.fetch);
-        assert!(!config.cache);
         assert_eq!(config.port, DEFAULT_PORT);
     }
 
@@ -221,9 +198,6 @@ mod tests {
     fn test_collect() {
         let default = Config::default();
         let mut expect: Map<String, Value> = Map::new();
-        expect.insert("writeable".to_string(), Value::new(None, default.writeable));
-        expect.insert("fetch".to_string(), Value::new(None, default.fetch));
-        expect.insert("cache".to_string(), Value::new(None, default.cache));
         expect.insert("port".to_string(), Value::new(None, default.port as i64));
         expect.insert("denylist".to_string(), Value::new(None, default.denylist));
         expect.insert(

@@ -56,6 +56,7 @@ pub fn set_content_disposition_headers(headers: &mut HeaderMap, filename: &str, 
 pub fn add_cache_control_headers(headers: &mut HeaderMap, metadata: Metadata) {
     if metadata.path.typ() == PathType::Ipns {
         let lmdt: OffsetDateTime = time::SystemTime::now().into();
+        // TODO: better last modified headers based on actual dns ttls
         headers.insert(
             LAST_MODIFIED,
             HeaderValue::from_str(&lmdt.to_string()).unwrap(),
