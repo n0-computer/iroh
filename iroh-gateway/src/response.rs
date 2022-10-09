@@ -75,13 +75,6 @@ impl ResponseFormat {
                 for h_value in h_values {
                     let h_value = h_value.trim();
                     if h_value.starts_with("application/vnd.ipld.") {
-                        // if valid media type use it, otherwise return error
-                        // todo(arqu): add support for better media type detection
-                        if h_value != "application/vnd.ipld.raw"
-                            && h_value != "application/vnd.ipld.car"
-                        {
-                            return Err(format!("{}: {}", ERR_UNSUPPORTED_FORMAT, h_value));
-                        }
                         return ResponseFormat::try_from(h_value);
                     }
                 }
@@ -96,37 +89,25 @@ pub fn get_response_format(
     request_headers: &HeaderMap,
     query_format: Option<String>,
 ) -> Result<ResponseFormat, String> {
-    let format = if let Some(format) = query_format {
-        if format.is_empty() {
-            match ResponseFormat::try_from_headers(request_headers) {
-                Ok(format) => format,
-                Err(_) => {
-                    return Err("invalid format".to_string());
-                }
-            }
-        } else {
+    if let Some(format) = query_format {
+        if !format.is_empty() {
             match ResponseFormat::try_from(format.as_str()) {
-                Ok(format) => format,
-                Err(_) => {
-                    match ResponseFormat::try_from_headers(request_headers) {
-                        Ok(format) => format,
-                        Err(_) => {
-                            return Err("invalid format".to_string());
-                        }
-                    };
-                    return Err("invalid format".to_string());
+                Ok(format) => {
+                    return Ok(format);
                 }
+                Err(_) => {}
             }
         }
-    } else {
-        match ResponseFormat::try_from_headers(request_headers) {
-            Ok(format) => format,
-            Err(_) => {
-                return Err("invalid format".to_string());
-            }
+    }
+
+    match ResponseFormat::try_from_headers(request_headers) {
+        Ok(format) => {
+            return Ok(format);
         }
-    };
-    Ok(format)
+        Err(_) => {
+            return Ok(ResponseFormat::Fs(String::new()));
+        }
+    }
 }
 
 #[derive(Debug)]

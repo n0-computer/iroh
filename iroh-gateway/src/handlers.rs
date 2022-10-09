@@ -91,7 +91,6 @@ pub fn get_app_routes<T: ContentLoader + std::marker::Unpin>(state: &Arc<State<T
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct GetParams {
-    // todo(arqu): swap this for ResponseFormat
     /// specifies the expected format of the response
     format: Option<String>,
     /// specifies the desired filename of the response
@@ -200,7 +199,7 @@ pub async fn get_handler<T: ContentLoader + std::marker::Unpin>(
         Err(err) => {
             return Err(error(
                 StatusCode::BAD_REQUEST,
-                &format!("invalid header: {}", err),
+                &format!("invalid header value: {}", err),
                 &state,
             ));
         }
@@ -438,6 +437,7 @@ async fn serve_car<T: ContentLoader + std::marker::Unpin>(
     mut headers: HeaderMap,
     start_time: std::time::Instant,
 ) -> Result<GatewayResponse, GatewayError> {
+    // TODO: handle car versions
     // FIXME: we currently only retrieve full cids
     let (body, metadata) = state
         .client
