@@ -111,7 +111,7 @@ impl Path {
     }
 
     pub fn is_dir(&self) -> bool {
-        self.tail.len() > 0 && self.tail.last().unwrap().eq("")
+        !self.tail.is_empty() && self.tail.last().unwrap().is_empty()
     }
 
     pub fn push(&mut self, str: impl AsRef<str>) {
@@ -121,13 +121,13 @@ impl Path {
     pub fn to_string_without_type(&self) -> String {
         let mut s = format!("{}", self.root);
         for part in &self.tail {
-            if part == "" {
+            if part.is_empty() {
                 continue;
             }
             s.push_str(&format!("/{}", part)[..]);
         }
         if self.is_dir() {
-            s.push_str("/");
+            s.push('/');
         }
         s
     }
@@ -153,7 +153,7 @@ impl Display for Path {
         write!(f, "/{}/{}", self.typ.as_str(), self.root)?;
 
         for part in &self.tail {
-            if part == "" {
+            if part.is_empty() {
                 continue;
             }
             write!(f, "/{}", part)?;
@@ -1239,13 +1239,11 @@ mod tests {
         let dir_test = "/ipfs/bafkreigh2akiscaildcqabsyg3dfr6chu3fgpregiymsck7e7aqa4s52zy/";
         let non_dir_path: Path = non_dir_test.parse().unwrap();
         let dir_path: Path = dir_test.parse().unwrap();
-        assert!(non_dir_path.tail().len() == 0);
+        assert!(non_dir_path.tail().is_empty());
         assert!(dir_path.tail().len() == 1);
-        assert!(dir_path.tail()[0] == "");
+        assert!(dir_path.tail()[0].is_empty());
 
         assert!(non_dir_path.to_string() == non_dir_test);
-        println!("dir_path: {}", dir_path.to_string());
-        println!("dir_test: {}", dir_test);
         assert!(dir_path.to_string() == dir_test);
         assert!(dir_path.is_dir());
         assert!(!non_dir_path.is_dir());

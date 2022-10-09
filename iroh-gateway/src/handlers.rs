@@ -161,7 +161,7 @@ pub async fn get_handler<T: ContentLoader + std::marker::Unpin>(
         .map_err(|e| error(StatusCode::BAD_REQUEST, &e, &state))?;
     let resolved_cid = resolved_path.root();
 
-    if handle_only_if_cached(&request_headers, &state, &resolved_cid).await? {
+    if handle_only_if_cached(&request_headers, &state, resolved_cid).await? {
         return response(StatusCode::OK, Body::empty(), HeaderMap::new());
     }
 

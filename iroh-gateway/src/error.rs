@@ -29,9 +29,7 @@ impl GatewayError {
 impl IntoResponse for GatewayError {
     fn into_response(self) -> Response {
         match self.method {
-            Some(http::Method::HEAD) => {
-                return (self.status_code).into_response();
-            }
+            Some(http::Method::HEAD) => (self.status_code).into_response(),
             _ => {
                 let body = axum::Json(json!({
                     "code": self.status_code.as_u16(),
@@ -39,9 +37,9 @@ impl IntoResponse for GatewayError {
                     "message": self.message,
                     "trace_id": self.trace_id,
                 }));
-                return (self.status_code, body).into_response();
+                (self.status_code, body).into_response()
             }
-        };
+        }
     }
 }
 

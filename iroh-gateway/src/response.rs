@@ -91,22 +91,15 @@ pub fn get_response_format(
 ) -> Result<ResponseFormat, String> {
     if let Some(format) = query_format {
         if !format.is_empty() {
-            match ResponseFormat::try_from(format.as_str()) {
-                Ok(format) => {
-                    return Ok(format);
-                }
-                Err(_) => {}
+            if let Ok(format) = ResponseFormat::try_from(format.as_str()) {
+                return Ok(format);
             }
         }
     }
 
     match ResponseFormat::try_from_headers(request_headers) {
-        Ok(format) => {
-            return Ok(format);
-        }
-        Err(_) => {
-            return Ok(ResponseFormat::Fs(String::new()));
-        }
+        Ok(format) => Ok(format),
+        Err(_) => Ok(ResponseFormat::Fs(String::new())),
     }
 }
 
