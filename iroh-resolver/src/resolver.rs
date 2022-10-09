@@ -512,9 +512,10 @@ async fn fetch_providers(
     let p2p = client.try_p2p()?;
 
     let a = p2p.fetch_providers_dht(cid).await?;
-    let b = p2p.fetch_providers_bitswap(ctx.into(), cid).await?;
+    // let b = p2p.fetch_providers_bitswap(ctx.into(), cid).await?;
 
-    Ok(futures::stream::select(a, b))
+    Ok(a)
+    // Ok(futures::stream::select(a, b))
 }
 
 impl InnerLoaderContext {
@@ -658,17 +659,6 @@ impl ContentLoader for Client {
                                     seen_providers.extend(actual_new_providers.clone());
                                     // update cache
                                     ctx.put_providers(cid, actual_new_providers.clone()).await;
-                                    if let Err(e) = p2p
-                                        .inject_provider_bitswap(ctx.id().into(), cid, actual_new_providers)
-                                        .await
-                                    {
-                                        warn!(
-                                            "{:?} failed to inject providers: {}: {:?}",
-                                            ctx.id(),
-                                            cid,
-                                            e
-                                        );
-                                    }
                                 }
                             }
                             Some(Err(e)) => {

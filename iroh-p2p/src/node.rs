@@ -242,52 +242,6 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
     }
 
     fn expiry(&mut self) -> Result<()> {
-        /*for (cid, state) in &mut self.bitswap_queries {
-            {
-                let mut to_remove = Vec::new();
-                for (i, want) in state.wants.iter().enumerate() {
-                    if want.timeout.elapsed() >= Duration::from_secs(60) {
-                        to_remove.push(i);
-                    }
-                }
-                for i in to_remove.into_iter().rev() {
-                    let state = state.wants.remove(i);
-                    trace!("expired wants {}", cid);
-                    self.swarm
-                        .behaviour_mut()
-                        .cancel_want_block(state.ctx, &cid)
-                        .ok();
-
-                    tokio::task::spawn(async move {
-                        state.chan.send(Err(QueryError::Timeout)).ok();
-                    });
-                }
-            }
-            {
-                let mut to_remove = Vec::new();
-                for (i, fp) in state.find_providers.iter().enumerate() {
-                    if fp.timeout.elapsed() >= Duration::from_secs(30) {
-                        self.swarm
-                            .behaviour_mut()
-                            .cancel_want_block(fp.ctx, &cid)
-                            .ok();
-                        to_remove.push(i);
-                    }
-                }
-                for i in to_remove.into_iter().rev() {
-                    let state = state.find_providers.remove(i);
-                    trace!("expired find provs {}", cid);
-                    self.swarm
-                        .behaviour_mut()
-                        .cancel_want_block(state.ctx, &cid)
-                        .ok();
-
-                    tokio::task::spawn(async move {
-                        state.chan.send(Err("timeout".to_string())).await.ok();
-                    });
-                }
-            }
-        }*/
         Ok(())
     }
 

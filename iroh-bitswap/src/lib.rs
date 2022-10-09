@@ -400,7 +400,8 @@ impl<S: Store> NetworkBehaviour for Bitswap<S> {
         // poll local futures
         // let _r = self.futures.lock().unwrap().poll_next_unpin(cx);
 
-        loop {
+        // limti work
+        for _ in 0..100 {
             match Pin::new(&mut self.network).poll(cx) {
                 Poll::Pending => return Poll::Pending,
                 Poll::Ready(ev) => match ev {
@@ -458,6 +459,8 @@ impl<S: Store> NetworkBehaviour for Bitswap<S> {
                 },
             }
         }
+
+        Poll::Pending
     }
 }
 
