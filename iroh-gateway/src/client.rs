@@ -18,8 +18,8 @@ use tokio::io::{AsyncReadExt, AsyncWrite};
 use tokio_util::io::ReaderStream;
 use tracing::{info, warn};
 
-use crate::handlers::GetParams;
 use crate::response::ResponseFormat;
+use crate::{constants::RECURSION_LIMIT, handlers::GetParams};
 
 #[derive(Debug, Clone)]
 pub struct Client<T: ContentLoader> {
@@ -87,7 +87,7 @@ impl<T: ContentLoader + std::marker::Unpin> Client<T> {
             .await
             .map_err(|e| e.to_string())?;
         let metadata = res.metadata().clone();
-        record_ttfb_metrics(start_time, &metadata);
+        record_ttfb_metrics(start_time, &metadata.source);
 
         if res.is_dir() {
             let body = FileResult::Directory(res);
@@ -141,7 +141,7 @@ impl<T: ContentLoader + std::marker::Unpin> Client<T> {
                 match res {
                     Ok(res) => {
                         let metadata = res.metadata().clone();
-                        record_ttfb_metrics(start_time, &metadata);
+                        record_ttfb_metrics(start_time, &metadata.source);
                         let reader =
                             res.pretty(self.resolver.clone(), OutMetrics { start: start_time });
                         match reader {
@@ -191,7 +191,7 @@ where
     T: ContentLoader,
     W: AsyncWrite + Send + Unpin,
 {
-    let stream = resolver.resolve_recursive_raw(path);
+    let stream = resolver.resolve_recursive_raw(path, Some(RECURSION_LIMIT));
     tokio::pin!(stream);
 
     let root = stream
@@ -205,18 +205,18 @@ where
 
     while let Some(block) = stream.next().await {
         let block = block?;
-        record_ttfb_metrics(start_time, block.metadata());
+        record_ttfb_metrics(start_time, block.source());
         writer.write(*block.cid(), block.content()).await?;
     }
     Ok(())
 }
 
-fn record_ttfb_metrics(start_time: std::time::Instant, metadata: &Metadata) {
+fn record_ttfb_metrics(start_time: std::time::Instant, source: &Source) {
     record!(
         GatewayMetrics::TimeToFetchFirstBlock,
         start_time.elapsed().as_millis() as u64
     );
-    if metadata.source == Source::Bitswap {
+    if *source == Source::Bitswap {
         observe!(
             GatewayHistograms::TimeToFetchFirstBlock,
             start_time.elapsed().as_millis() as f64

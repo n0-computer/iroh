@@ -10,7 +10,7 @@ use anyhow::{anyhow, bail, ensure, Context as _, Result};
 use async_trait::async_trait;
 use bytes::Bytes;
 use cid::Cid;
-use futures::Stream;
+use futures::{Future, Stream};
 use iroh_metrics::inc;
 use iroh_rpc_client::Client;
 use libipld::codec::{Decode, Encode};
@@ -154,31 +154,43 @@ impl FromStr for Path {
     }
 }
 
+#[async_trait]
+pub trait LinksContainer: Sync + Send + std::fmt::Debug + Clone + 'static {
+    /// Extract links out of a container struct.
+    fn links(&self) -> Result<Vec<Cid>>;
+}
+
+#[async_trait]
+impl LinksContainer for OutRaw {
+    fn links(&self) -> Result<Vec<Cid>> {
+        parse_links(&self.cid, &self.content)
+    }
+}
+
+#[async_trait]
+impl LinksContainer for Out {
+    fn links(&self) -> Result<Vec<Cid>> {
+        Out::links(self)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct OutRaw {
-    metadata: Metadata,
+    source: Source,
     content: Bytes,
     cid: Cid,
 }
 
 impl OutRaw {
     pub fn from_loaded(cid: Cid, loaded: LoadedCid) -> Self {
-        let metadata = Metadata {
-            path: Path::from_cid(cid),
-            size: None,
-            typ: OutType::Raw,
-            unixfs_type: None,
-            source: loaded.source,
-            resolved_path: vec![cid],
-        };
         Self {
-            metadata,
+            source: loaded.source,
             content: loaded.data,
             cid,
         }
     }
-    pub fn metadata(&self) -> &Metadata {
-        &self.metadata
+    pub fn source(&self) -> &Source {
+        &self.source
     }
 
     pub fn cid(&self) -> &Cid {
@@ -586,55 +598,69 @@ impl<T: ContentLoader> Resolver<T> {
 
     #[tracing::instrument(skip(self))]
     pub fn resolve_recursive(&self, root: Path) -> impl Stream<Item = Result<Out>> {
-        let mut cids = VecDeque::new();
         let this = self.clone();
-        async_stream::try_stream! {
-            cids.push_back(this.resolve(root).await);
-            loop {
-                if let Some(current) = cids.pop_front() {
-                    let current = current?;
-                    let links = current.links()?;
-                    // TODO: configurable limit
-                    for link_chunk in links.chunks(8) {
-                        let next = futures::future::join_all(
-                            link_chunk.iter().map(|link| {
-                                let this = this.clone();
-                                async move {
-                                    this.resolve(Path::from_cid(*link)).await
-                                }
-                            })
-                        ).await;
-                        for res in next.into_iter() {
-                            cids.push_back(res);
-                        }
-                    }
-                    yield current;
-                } else {
-                    // no links left to resolve
-                    break;
-                }
-            }
-        }
+        self.resolve_recursive_mapped(root, None, move |cid| {
+            let this = this.clone();
+            async move { this.resolve(Path::from_cid(cid)).await }
+        })
     }
 
     /// Resolve a path recursively and yield the raw bytes plus metadata.
     #[tracing::instrument(skip(self))]
-    pub fn resolve_recursive_raw(&self, root: Path) -> impl Stream<Item = Result<OutRaw>> {
+    pub fn resolve_recursive_raw(
+        &self,
+        root: Path,
+        recursion_limit: Option<usize>,
+    ) -> impl Stream<Item = Result<OutRaw>> {
+        let this = self.clone();
+        self.resolve_recursive_mapped(root, recursion_limit, move |cid| {
+            let this = this.clone();
+            async move {
+                this.load_cid(&cid)
+                    .await
+                    .map(|loaded| OutRaw::from_loaded(cid, loaded))
+            }
+        })
+    }
+
+    /// Resolve a path recursively and yield the raw bytes plus metadata.
+    #[tracing::instrument(skip(self, resolve))]
+    pub fn resolve_recursive_mapped<O, M, F>(
+        &self,
+        root: Path,
+        recursion_limit: Option<usize>,
+        resolve: M,
+    ) -> impl Stream<Item = Result<O>>
+    where
+        O: LinksContainer,
+        M: Fn(Cid) -> F + Clone,
+        F: Future<Output = Result<O>> + Send + 'static,
+    {
         let mut cids = VecDeque::new();
         let this = self.clone();
+        let mut counter = 0;
+        let chunk_size = 8;
         async_stream::try_stream! {
-            let root_block = this.resolve_root(&root).await.map(|(cid, loaded)| OutRaw::from_loaded(cid, loaded));
-            cids.push_back(root_block?);
+            let root_cid = this.resolve_path_to_cid(&root).await?;
+            let root_block = resolve(root_cid).await?;
+            cids.push_back(root_block);
             loop {
                 if let Some(current) = cids.pop_front() {
-                    let links = parse_links(current.cid(), current.content())?;
+                    let links = current.links()?;
+                    counter += links.len();
+                    if let Some(limit) = recursion_limit {
+                        if counter > limit {
+                            Err(anyhow::anyhow!("Number of links exceeds the recursion limit."))?;
+                        }
+                    }
+
                     // TODO: configurable limit
-                    for link_chunk in links.chunks(8) {
+                    for link_chunk in links.chunks(chunk_size) {
                         let next = futures::future::join_all(
                             link_chunk.iter().map(|link| {
-                                let this = this.clone();
+                                let resolve = resolve.clone();
                                 async move {
-                                    this.load_cid(link).await.map(|loaded| OutRaw::from_loaded(*link, loaded))
+                                    resolve(*link).await
                                 }
                             })
                         ).await;
@@ -644,6 +670,7 @@ impl<T: ContentLoader> Resolver<T> {
                         }
                     }
                     yield current;
+
                 } else {
                     // no links left to resolve
                     break;
@@ -941,7 +968,7 @@ impl<T: ContentLoader> Resolver<T> {
     }
 
     #[tracing::instrument(skip(self))]
-    async fn resolve_root(&self, root: &Path) -> Result<(Cid, LoadedCid)> {
+    async fn resolve_path_to_cid(&self, root: &Path) -> Result<Cid> {
         let mut current = root.clone();
 
         // maximum cursion of ipns lookups
@@ -951,8 +978,7 @@ impl<T: ContentLoader> Resolver<T> {
             match current.typ {
                 PathType::Ipfs => match current.root {
                     CidOrDomain::Cid(ref c) => {
-                        let loaded_cid = self.load_cid(c).await?;
-                        return Ok((*c, loaded_cid));
+                        return Ok(*c);
                     }
                     CidOrDomain::Domain(_) => bail!("invalid domain encountered"),
                 },
@@ -973,6 +999,13 @@ impl<T: ContentLoader> Resolver<T> {
         }
 
         bail!("cannot resolve {}, too many recursive lookups", root);
+    }
+
+    #[tracing::instrument(skip(self))]
+    async fn resolve_root(&self, root: &Path) -> Result<(Cid, LoadedCid)> {
+        let cid = self.resolve_path_to_cid(root).await?;
+        let loaded_cid = self.load_cid(&cid).await?;
+        return Ok((cid, loaded_cid));
     }
 
     #[tracing::instrument(skip(self))]
