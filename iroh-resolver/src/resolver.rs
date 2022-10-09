@@ -623,7 +623,7 @@ impl<T: ContentLoader> Resolver<T> {
         })
     }
 
-    /// Resolve a path recursively and yield the raw bytes plus metadata.
+    /// Resolve a path recursively and supply a closure to resolve cids to outputs.
     #[tracing::instrument(skip(self, resolve))]
     pub fn resolve_recursive_mapped<O, M, F>(
         &self,
