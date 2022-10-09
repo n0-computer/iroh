@@ -12,23 +12,15 @@ pub fn add_user_headers(headers: &mut HeaderMap, user_headers: HeaderMap) {
 #[tracing::instrument()]
 pub fn add_content_type_headers(headers: &mut HeaderMap, name: &str, body_sample: &[u8]) {
     let guess = mime_guess::from_path(name);
-    let mut content_type = String::new();
+    let mut content_type: String;
     if let Some(ct) = guess.first() {
         content_type = ct.to_string();
     } else {
-        // todo(arqu): deeper content type checking
-        let classifier = mime_classifier::MimeClassifier::new();
-        let context = mime_classifier::LoadContext::Browsing;
-        let no_sniff_flag = mime_classifier::NoSniffFlag::Off;
-        let apache_bug_flag = mime_classifier::ApacheBugFlag::Off;
-        let supplied_type = None;
-        let computed_type = classifier.classify(
-            context,
-            no_sniff_flag,
-            apache_bug_flag,
-            &supplied_type,
-            body_sample,
-        );
+        content_type = sniff_content_type(body_sample);
+    }
+
+    if content_type.starts_with("text/") {
+        content_type.push_str("; charset=utf-8");
     }
 
     if content_type.starts_with("text/html") {
@@ -38,6 +30,24 @@ pub fn add_content_type_headers(headers: &mut HeaderMap, name: &str, body_sample
     if !content_type.is_empty() {
         headers.insert(CONTENT_TYPE, HeaderValue::from_str(&content_type).unwrap());
     }
+}
+
+#[tracing::instrument()]
+fn sniff_content_type(body_sample: &[u8]) -> String {
+    let classifier = mime_classifier::MimeClassifier::new();
+    let context = mime_classifier::LoadContext::Browsing;
+    let no_sniff_flag = mime_classifier::NoSniffFlag::Off;
+    let apache_bug_flag = mime_classifier::ApacheBugFlag::On;
+    let supplied_type = None;
+    let computed_type = classifier.classify(
+        context,
+        no_sniff_flag,
+        apache_bug_flag,
+        &supplied_type,
+        body_sample,
+    );
+
+    computed_type.to_string()
 }
 
 #[tracing::instrument()]
@@ -218,13 +228,17 @@ mod tests {
         assert_eq!(headers.len(), 1);
         assert_eq!(
             headers.get(&CONTENT_TYPE).unwrap(),
-            &"text/plain".to_string()
+            &"text/plain; charset=utf-8".to_string()
         );
 
         let mut headers = HeaderMap::new();
         let name = "test.RAND_EXT";
         add_content_type_headers(&mut headers, name, body.as_bytes());
-        assert_eq!(headers.len(), 0);
+        assert_eq!(headers.len(), 1);
+        assert_eq!(
+            headers.get(&CONTENT_TYPE).unwrap(),
+            &"text/plain; charset=utf-8".to_string()
+        );
     }
 
     #[test]

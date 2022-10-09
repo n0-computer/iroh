@@ -16,7 +16,7 @@ use iroh_resolver::resolver::{
     CidOrDomain, ContentLoader, Metadata, Out, OutMetrics, OutPrettyReader, OutType, Resolver,
     Source,
 };
-use tokio::io::{AsyncReadExt, AsyncWrite};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt};
 use tokio_util::io::ReaderStream;
 use tracing::{info, warn};
 
@@ -28,13 +28,23 @@ pub struct Client<T: ContentLoader> {
     pub(crate) resolver: Resolver<T>,
 }
 
-pub struct PrettyStreamBody<T: ContentLoader>(ReaderStream<OutPrettyReader<T>>, Option<u64>);
+pub struct PrettyStreamBody<T: ContentLoader>(
+    ReaderStream<tokio::io::BufReader<OutPrettyReader<T>>>,
+    Option<u64>,
+    Vec<u8>,
+);
 
 #[allow(clippy::large_enum_variant)]
 pub enum FileResult<T: ContentLoader> {
     File(PrettyStreamBody<T>),
     Directory(Out),
     Raw(PrettyStreamBody<T>),
+}
+
+impl<T: ContentLoader> PrettyStreamBody<T> {
+    pub fn get_sample(&self) -> Vec<u8> {
+        self.2.clone()
+    }
 }
 
 impl<T: ContentLoader + std::marker::Unpin> http_body::Body for PrettyStreamBody<T> {
@@ -100,8 +110,15 @@ impl<T: ContentLoader + std::marker::Unpin> Client<T> {
                 .pretty(self.resolver.clone(), OutMetrics { start: start_time })
                 .map_err(|e| e.to_string())?;
 
-            let stream = ReaderStream::new(reader);
-            let body = PrettyStreamBody(stream, metadata.size);
+            let mut buf_reader = tokio::io::BufReader::with_capacity(1024 * 1024, reader);
+            let body_sample = buf_reader
+                .fill_buf()
+                .await
+                .map_err(|e| e.to_string())?
+                .to_vec();
+            let stream = ReaderStream::new(buf_reader);
+
+            let body = PrettyStreamBody(stream, metadata.size, body_sample);
 
             if metadata.typ == OutType::Raw {
                 return Ok((FileResult::Raw(body), metadata));
