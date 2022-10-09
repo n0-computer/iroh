@@ -554,7 +554,9 @@ async fn serve_fs<T: ContentLoader + std::marker::Unpin>(
                             HeaderValue::from_str("inode/symlink").unwrap(),
                         );
                     } else {
-                        add_content_type_headers(&mut headers, &name);
+                        // todo(arqu): get a sample of the file to do content type detection
+                        let body_sample = "".as_bytes();
+                        add_content_type_headers(&mut headers, &name, body_sample);
                     }
                     response(StatusCode::OK, body, headers)
                 }
