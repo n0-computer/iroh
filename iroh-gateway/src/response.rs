@@ -45,7 +45,6 @@ impl ResponseFormat {
                 headers.insert(CONTENT_TYPE, CONTENT_TYPE_IPLD_CAR.clone());
                 headers.insert(&HEADER_X_CONTENT_TYPE_OPTIONS, VALUE_XCTO_NOSNIFF.clone());
                 headers.insert(ACCEPT_RANGES, VALUE_NONE.clone());
-                headers.insert(CACHE_CONTROL, VALUE_NO_CACHE_NO_TRANSFORM.clone());
             }
             ResponseFormat::Fs(_) => {
                 // Don't send application/octet-stream in that case, let the

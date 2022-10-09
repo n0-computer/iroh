@@ -415,11 +415,12 @@ async fn serve_raw<T: ContentLoader + std::marker::Unpin>(
 
     match body {
         FileResult::File(body) | FileResult::Raw(body) => {
-            set_content_disposition_headers(
-                &mut headers,
-                format!("{}.bin", req.cid).as_str(),
-                DISPOSITION_ATTACHMENT,
-            );
+            let file_name = match req.query_file_name.is_empty() {
+                true => format!("{}.bin", req.cid),
+                false => req.query_file_name.clone(),
+            };
+
+            set_content_disposition_headers(&mut headers, &file_name, DISPOSITION_ATTACHMENT);
             set_etag_headers(&mut headers, get_etag(&req.cid, Some(req.format.clone())));
             add_cache_control_headers(&mut headers, metadata.clone());
             add_ipfs_roots_headers(&mut headers, metadata);
@@ -450,16 +451,17 @@ async fn serve_car<T: ContentLoader + std::marker::Unpin>(
 
     match body {
         FileResult::File(body) | FileResult::Raw(body) => {
-            set_content_disposition_headers(
-                &mut headers,
-                format!("{}.car", req.cid).as_str(),
-                DISPOSITION_ATTACHMENT,
-            );
+            let file_name = match req.query_file_name.is_empty() {
+                true => format!("{}.car", req.cid),
+                false => req.query_file_name.clone(),
+            };
 
-            // todo(arqu): this should be root cid
+            set_content_disposition_headers(&mut headers, &file_name, DISPOSITION_ATTACHMENT);
+
+            add_cache_control_headers(&mut headers, metadata.clone());
             let etag = format!("W/{}", get_etag(&req.cid, Some(req.format.clone())));
             set_etag_headers(&mut headers, etag);
-            // todo(arqu): check if etag matches for root cid
+            // todo(arqu): handle if none match
             add_ipfs_roots_headers(&mut headers, metadata);
             response(StatusCode::OK, body, headers)
         }
@@ -485,16 +487,18 @@ async fn serve_car_recursive<T: ContentLoader + std::marker::Unpin>(
         .await
         .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, &e, &state))?;
 
-    set_content_disposition_headers(
-        &mut headers,
-        format!("{}.car", req.cid).as_str(),
-        DISPOSITION_ATTACHMENT,
-    );
+    let file_name = match req.query_file_name.is_empty() {
+        true => format!("{}.car", req.cid),
+        false => req.query_file_name.clone(),
+    };
 
-    // todo(arqu): this should be root cid
+    set_content_disposition_headers(&mut headers, &file_name, DISPOSITION_ATTACHMENT);
+
+    // add_cache_control_headers(&mut headers, metadata.clone());
     let etag = format!("W/{}", get_etag(&req.cid, Some(req.format.clone())));
     set_etag_headers(&mut headers, etag);
-    // todo(arqu): check if etag matches for root cid
+
+    // todo(arqu): handle if none match
     // add_ipfs_roots_headers(&mut headers, metadata);
     response(StatusCode::OK, body, headers)
 }

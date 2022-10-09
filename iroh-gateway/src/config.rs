@@ -103,7 +103,6 @@ fn default_headers() -> HeaderMap {
         .collect::<AccessControlAllowHeaders>(),
     );
     // todo(arqu): remove these once propperly implmented
-    headers.insert(CACHE_CONTROL, VALUE_NO_CACHE_NO_TRANSFORM.clone());
     headers.insert(ACCEPT_RANGES, VALUE_NONE.clone());
     headers
 }
