@@ -1,5 +1,10 @@
 use std::{sync::Arc, time::Duration};
 
+use iroh_metrics::{core::MRecorder, record};
+use iroh_metrics::bitswap::BitswapMetrics;
+use iroh_metrics::inc;
+
+
 use ahash::AHashSet;
 use anyhow::Result;
 use cid::Cid;
@@ -225,6 +230,7 @@ impl<S: Store> Client<S> {
     /// Called by the network interface when a new message is received.
     pub async fn receive_message(&self, peer: &PeerId, incoming: &BitswapMessage) {
         self.counters.lock().await.messages_received += 1;
+        inc!(BitswapMetrics::MessagesReceived);
 
         if incoming.blocks_len() > 0 {
             debug!("client::receive_message {} blocks", incoming.blocks_len());
@@ -271,6 +277,8 @@ impl<S: Store> Client<S> {
             }
 
             let counters = &mut *self.counters.lock().await;
+            inc!(BitswapMetrics::BlocksIn);
+            record!(BitswapMetrics::BlockBytesIn, block_len as u64);
             counters.blocks_received += 1;
             counters.data_received += block_len as u64;
             if has_block {
