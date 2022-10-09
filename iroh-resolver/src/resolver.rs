@@ -627,7 +627,6 @@ impl<T: ContentLoader> Resolver<T> {
             cids.push_back(root_block?);
             loop {
                 if let Some(current) = cids.pop_front() {
-                    // let (cid, data) = &current;
                     let links = parse_links(current.cid(), current.content())?;
                     // TODO: configurable limit
                     for link_chunk in links.chunks(8) {
@@ -635,7 +634,7 @@ impl<T: ContentLoader> Resolver<T> {
                             link_chunk.iter().map(|link| {
                                 let this = this.clone();
                                 async move {
-                                    this.load_cid(&link).await.map(|loaded| OutRaw::from_loaded(*link, loaded))
+                                    this.load_cid(link).await.map(|loaded| OutRaw::from_loaded(*link, loaded))
                                 }
                             })
                         ).await;
