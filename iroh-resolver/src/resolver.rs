@@ -1005,7 +1005,7 @@ impl<T: ContentLoader> Resolver<T> {
     async fn resolve_root(&self, root: &Path) -> Result<(Cid, LoadedCid)> {
         let cid = self.resolve_path_to_cid(root).await?;
         let loaded_cid = self.load_cid(&cid).await?;
-        return Ok((cid, loaded_cid));
+        Ok((cid, loaded_cid))
     }
 
     #[tracing::instrument(skip(self))]
