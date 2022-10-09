@@ -236,34 +236,23 @@ impl NodeBehaviour {
     /// Send a request for data over bitswap
     pub fn want_block(
         &mut self,
-        ctx: u64,
+        _ctx: u64,
         cid: Cid,
-        providers: HashSet<PeerId>,
+        _providers: HashSet<PeerId>,
         chan: OneShotSender<Result<Block, String>>,
     ) -> Result<()> {
         if let Some(bs) = self.bitswap.as_mut() {
-            let rt = tokio::runtime::Handle::current();
             let client = bs.client().clone();
-            rt.spawn(async move {
-                let session = client.new_session().await;
-                match session.get_blocks(&[cid][..]).await {
-                    Ok(receiver) => {
-                        let res = if let Ok(block) = receiver.recv().await {
-                            chan.send(Ok(block))
-                        } else {
-                            chan.send(Err("dropped".to_string()))
-                        };
-
-                        if let Err(e) = res {
+            tokio::task::spawn(async move {
+                match client.get_block(&cid).await {
+                    Ok(block) => {
+                        if let Err(e) = chan.send(Ok(block)) {
                             warn!("failed to send block response: {:?}", e);
                         }
                     }
                     Err(err) => {
                         chan.send(Err(err.to_string())).ok();
                     }
-                }
-                if let Err(err) = session.stop().await {
-                    warn!("failed to stop session: {:?}", err);
                 }
             });
 

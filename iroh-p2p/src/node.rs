@@ -218,11 +218,6 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                 }, if nice_interval.is_some() => {
                     // Print peer count on an interval.
                     info!("Peers connected: {:?}", self.swarm.connected_peers().count());
-                    {
-                        let bs = self.swarm.behaviour().bitswap.as_ref().unwrap();
-                        let stat = bs.stat().await.unwrap();
-                        info!("bitswap stats: {:?}", stat);
-                    }
                 }
                 _ = bootstrap_interval.tick() => {
                     trace!("tick:bootstrap: nice");
