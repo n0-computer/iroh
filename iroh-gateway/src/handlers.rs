@@ -382,15 +382,18 @@ fn etag_check<T: ContentLoader>(
     state: &State<T>,
 ) -> Option<GatewayResponse> {
     if request_headers.contains_key("If-None-Match") {
-        // todo(arqu): handle dir etags
-        let cid_etag = get_etag(resolved_cid, Some(format.clone()));
         let inm = request_headers
             .get("If-None-Match")
             .unwrap()
             .to_str()
             .unwrap();
-        if etag_matches(inm, &cid_etag) {
-            return Some(GatewayResponse::not_modified());
+        if !inm.is_empty() {
+            // todo(arqu): handle dir etags
+            let cid_etag = get_etag(resolved_cid, Some(format.clone()));
+
+            if etag_matches(inm, &cid_etag) {
+                return Some(GatewayResponse::not_modified());
+            }
         }
     }
     None
