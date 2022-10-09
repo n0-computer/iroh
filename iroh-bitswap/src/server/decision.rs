@@ -3,7 +3,7 @@ use std::{fmt::Debug, sync::Arc, time::Duration};
 use ahash::{AHashMap, AHashSet};
 use anyhow::{anyhow, bail, Result};
 use cid::Cid;
-use iroh_metrics::{record, bitswap::BitswapMetrics};
+use iroh_metrics::{bitswap::BitswapMetrics, record};
 use libp2p::PeerId;
 use tokio::{
     sync::{oneshot, Mutex, Notify, RwLock},
@@ -119,7 +119,7 @@ pub struct Engine<S: Store> {
     peer_block_request_filter: Option<Box<dyn PeerBlockRequestFilter>>,
     max_outstanding_bytes_per_peer: usize,
     /// List of handles to worker threads.
-    workers: Vec<(oneshot::Sender<()>, oneshot::Sender<()>, JoinHandle<()>)>,
+    workers: Vec<(oneshot::Sender<()>, JoinHandle<()>)>,
     work_signal: Arc<Notify>,
 }
 
@@ -156,10 +156,10 @@ impl<S: Store> Engine<S> {
         let mut workers = Vec::with_capacity(task_worker_count);
 
         let rt = tokio::runtime::Handle::current();
-        for _ in 0..task_worker_count {
+        for i in 0..task_worker_count {
             let outbox = outbox.0.clone();
-            let (outer_closer_s, mut outer_closer_r) = oneshot::channel();
-            let (inner_closer_s, mut inner_closer_r) = oneshot::channel();
+            let (closer_s, mut closer_r) = oneshot::channel();
+
             let peer_task_queue = peer_task_queue.clone();
             let mut ticker = tokio::time::interval(Duration::from_millis(100));
             let work_signal = work_signal.clone();
@@ -169,31 +169,99 @@ impl<S: Store> Engine<S> {
             let handle = rt.spawn(async move {
                 loop {
                     tokio::select! {
-                        _ = &mut outer_closer_r => {
+                        _ = &mut closer_r => {
                             break;
                         }
                         event = peer_task_hook.recv() => {
                             debug!("peer queue event: {:?}", event);
                             // TODO: tag/untag peer
                         }
-                        else => {
-                            let envelope = next_envelope(
-                                work_signal.clone(),
-                                &mut ticker,
-                                &mut inner_closer_r,
-                                target_message_size,
-                                peer_task_queue.clone(),
-                                blockstore_manager.clone(),
-                            ).await;
-                            if let Err(err) = outbox.send(envelope).await {
-                                error!("failed to deliver envelope: {:?}", err);
-                                break;
+                        _ = work_signal.notified() => {
+                            // not needed anymore?
+                        }
+                        _ = ticker.tick() => {
+                            // TODO: remove thaw_round is not used atm
+                            
+                            // When a task is cancelled, the qeue may be "frozen"
+                            // for a period of time. We periodically "thaw" the queue
+                            // to make sure it doesn't get suck in a frozen state.
+                            // peer_task_queue.thaw_round().await;
+                            if let Some((peer, next_tasks, pending_bytes)) = peer_task_queue.pop_tasks(target_message_size).await {
+                                if next_tasks.is_empty() {
+                                    continue;
+                                }
+                                debug!("engine:{} next envelope:tick tasks: {}", i, next_tasks.len());
+
+                                // create a new message
+                                let mut msg = BitswapMessage::new(false);
+                                msg.set_pending_bytes(pending_bytes as _);
+
+                                // split out want-blocks, want-have and DONT_HAVEs
+                                let mut block_cids = Vec::new();
+                                let mut block_tasks = AHashMap::new();
+
+                                for task in &next_tasks {
+                                    if task.data.have_block {
+                                        if task.data.is_want_block {
+                                            block_cids.push(task.topic);
+                                            block_tasks.insert(task.topic, task);
+                                        } else {
+                                            // add HAVEs to the message
+                                            msg.add_have(task.topic);
+                                        }
+                                    } else {
+                                        // add DONT_HAVEs to the message
+                                        msg.add_dont_have(task.topic);
+                                    }
+                                }
+
+                                // Fetch blocks from the store
+                                let mut blocks = match blockstore_manager
+                                    .read()
+                                    .await
+                                    .get_blocks(&block_cids)
+                                    .await {
+                                        Ok(blocks) => blocks,
+                                        Err(err) => {
+                                            warn!("failed to load blocks: {:?}", err);
+                                            continue;
+                                        }
+                                    };
+
+                                for (cid, task) in block_tasks {
+                                    if let Some(block) = blocks.remove(&cid) {
+                                        msg.add_block(block);
+                                    } else {
+                                        // block was not found
+                                        if task.data.send_dont_have {
+                                            msg.add_dont_have(cid);
+                                        }
+                                    }
+                                }
+
+                                // nothing to see here
+                                if msg.is_empty() {
+                                    peer_task_queue.tasks_done(peer, &next_tasks).await;
+                                    continue;
+                                }
+
+                                let envelope = Ok(Envelope {
+                                    peer,
+                                    message: msg,
+                                    sent_tasks: next_tasks,
+                                    queue: peer_task_queue.clone(),
+                                    work_signal: work_signal.clone(),
+                                });
+                                
+                                if let Err(err) = outbox.send(envelope).await {
+                                    error!("failed to deliver envelope: {:?}", err);
+                                }
                             }
                         }
                     }
                 }
             });
-            workers.push((outer_closer_s, inner_closer_s, handle));
+            workers.push((closer_s, handle));
         }
 
         Engine {
@@ -238,10 +306,8 @@ impl<S: Store> Engine<S> {
             .await?;
         self.score_ledger.stop().await?;
 
-        // TODO: should this just be called on drop?
-        while let Some((outer_closer, inner_closer, handle)) = self.workers.pop() {
-            outer_closer.send(()).ok();
-            inner_closer.send(()).ok();
+        while let Some((closer, handle)) = self.workers.pop() {
+            closer.send(()).map_err(|e| anyhow!("failed to send close {:?}", e))?;
             handle.await.map_err(|e| anyhow!("{:?}", e))?;
         }
 
@@ -379,6 +445,11 @@ impl<S: Store> Engine<S> {
                 send_dont_have(&mut active_entries, &mut new_work_exists, entry);
             }
         }
+        debug!(
+            "{} new active tasks: {:?}",
+            active_entries.len(),
+            active_entries
+        );
 
         if !active_entries.is_empty() {
             self.peer_task_queue.push_tasks(*peer, active_entries).await;
@@ -570,6 +641,7 @@ impl<S: Store> Engine<S> {
     }
 
     fn signal_new_work(&self) {
+        debug!("signal_new_work");
         self.work_signal.notify_one();
     }
 
@@ -597,119 +669,4 @@ pub struct Envelope {
     pub sent_tasks: Vec<Task<Cid, TaskData>>,
     pub queue: PeerTaskQueue<Cid, TaskData, TaskMerger>,
     pub work_signal: Arc<Notify>,
-}
-
-/// The work being executed in the task workers.
-async fn next_envelope<S: Store>(
-    work_signal: Arc<Notify>,
-    ticker: &mut Interval,
-    inner_close: &mut oneshot::Receiver<()>,
-    target_message_size: usize,
-    peer_task_queue: PeerTaskQueue<Cid, TaskData, TaskMerger>,
-    blockstore_manager: Arc<RwLock<BlockstoreManager<S>>>,
-) -> Result<Envelope> {
-    loop {
-        // pop some tasks off the request queue
-        let mut peer = None;
-        let mut next_tasks = None;
-        let mut pending_bytes = None;
-
-        if let Some((p, t, b)) = peer_task_queue.pop_tasks(target_message_size).await {
-            peer = Some(p);
-            if !t.is_empty() {
-                next_tasks = Some(t);
-            }
-            pending_bytes = Some(b);
-        }
-        // self.update_metrics();
-
-        while next_tasks.is_none() {
-            tokio::select! {
-                _ = &mut *inner_close => {
-                    bail!("closed before finishing")
-                }
-                _ = work_signal.notified() => {
-                    if let Some((p, t, b)) = peer_task_queue.pop_tasks(target_message_size).await {
-                        peer = Some(p);
-                        if !t.is_empty() {
-                            next_tasks = Some(t);
-                        }
-                        pending_bytes = Some(b);
-                    }
-                    // self.update_metrics();
-                }
-                _ = ticker.tick() => {
-                    // When a task is cancelled, the qeue may be "frozen"
-                    // for a period of time. We periodically "thaw" the queue
-                    // to make sure it doesn't get suck in a frozen state.
-                    peer_task_queue.thaw_round().await;
-                    if let Some((p, t, b)) = peer_task_queue.pop_tasks(target_message_size).await {
-                        peer = Some(p);
-                        if !t.is_empty() {
-                            next_tasks = Some(t);
-                        }
-                        pending_bytes = Some(b);
-                    }
-                    // self.update_metrics();
-                }
-            }
-        }
-
-        // create a new message
-        let mut msg = BitswapMessage::new(false);
-        msg.set_pending_bytes(pending_bytes.unwrap_or_default() as _);
-
-        // split out want-blocks, want-have and DONT_HAVEs
-        let mut block_cids = Vec::new();
-        let mut block_tasks = AHashMap::new();
-        let next_tasks = next_tasks.unwrap();
-        let peer = peer.unwrap();
-
-        for task in &next_tasks {
-            if task.data.have_block {
-                if task.data.is_want_block {
-                    block_cids.push(task.topic);
-                    block_tasks.insert(task.topic, task);
-                } else {
-                    // add HAVEs to the message
-                    msg.add_have(task.topic);
-                }
-            } else {
-                // add DONT_HAVEs to the message
-                msg.add_dont_have(task.topic);
-            }
-        }
-
-        // Fetch blocks from the store
-        let mut blocks = blockstore_manager
-            .read()
-            .await
-            .get_blocks(&block_cids)
-            .await?;
-
-        for (cid, task) in block_tasks {
-            if let Some(block) = blocks.remove(&cid) {
-                msg.add_block(block);
-            } else {
-                // block was not found
-                if task.data.send_dont_have {
-                    msg.add_dont_have(cid);
-                }
-            }
-        }
-
-        // nothing to see here
-        if msg.is_empty() {
-            peer_task_queue.tasks_done(peer, &next_tasks).await;
-            continue;
-        }
-
-        return Ok(Envelope {
-            peer,
-            message: msg,
-            sent_tasks: next_tasks,
-            queue: peer_task_queue,
-            work_signal,
-        });
-    }
 }

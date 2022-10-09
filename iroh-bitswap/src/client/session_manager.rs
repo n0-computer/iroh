@@ -115,7 +115,7 @@ impl SessionManager {
         session
     }
 
-    pub async fn remove_session(&self, session_id: u64) {
+    pub async fn remove_session(&self, session_id: u64) -> Result<()> {
         let cancels = self
             .inner
             .session_interest_manager
@@ -123,6 +123,8 @@ impl SessionManager {
             .await;
         self.cancel_wants(&cancels).await;
         self.inner.sessions.write().await.remove(&session_id);
+
+        Ok(())
     }
 
     /// Returns the next sequential identifier for a session.

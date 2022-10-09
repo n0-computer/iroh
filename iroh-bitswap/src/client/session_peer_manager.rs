@@ -4,6 +4,7 @@ use ahash::AHashSet;
 use anyhow::{anyhow, Result};
 use libp2p::PeerId;
 use tokio::sync::RwLock;
+use tracing::debug;
 
 use crate::network::Network;
 
@@ -36,6 +37,10 @@ impl SessionPeerManager {
     }
 
     pub async fn stop(self) -> Result<()> {
+        debug!(
+            "shutting down SessionPeerManager ({})",
+            Arc::strong_count(&self.inner)
+        );
         let inner = Arc::try_unwrap(self.inner)
             .map_err(|_| anyhow!("session peer manager refs not shutdown"))?;
 

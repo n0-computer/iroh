@@ -178,7 +178,7 @@ impl<S: Store> Server<S> {
                                 match key {
                                     Some(key) => {
                                         // TODO: timeout
-                                        if let Err(err) = network.provide(key) {
+                                        if let Err(err) = network.provide(key).await {
                                             warn!("failed to provide: {}: {:?}", key, err);
                                         }
                                     }
@@ -280,6 +280,7 @@ impl<S: Store> Server<S> {
     }
 
     pub async fn receive_message(&self, peer: &PeerId, message: &BitswapMessage) {
+        debug!("server:receive_message from {}", peer);
         self.engine.message_received(peer, message).await;
         // TODO: only track useful messages
     }

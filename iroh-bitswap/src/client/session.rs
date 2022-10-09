@@ -173,6 +173,7 @@ impl Session {
                     }
                     _ = &mut closer_r => {
                         // Shutdown
+                        debug!("shutting down loop");
                         break;
                     }
                 }
@@ -199,7 +200,18 @@ impl Session {
     }
 
     pub async fn stop(self) -> Result<()> {
-        info!("stopping session {}", self.inner.id);
+        info!(
+            "stopping session {} ({})",
+            self.inner.id,
+            Arc::strong_count(&self.inner)
+        );
+
+        // Remove from the session manager list, to ensure this is the last ref.
+        self.inner
+            .session_manager
+            .remove_session(self.inner.id)
+            .await?;
+
         let mut inner =
             Arc::try_unwrap(self.inner).map_err(|_| anyhow!("session refs not shutdown"))?;
         inner
@@ -212,10 +224,8 @@ impl Session {
             .ok_or_else(|| anyhow!("missing worker"))?
             .await?;
 
-        //  Signal to the SessionManager that the session has been shutdown
-        inner.session_manager.remove_session(inner.id).await;
         inner.session_want_sender.stop().await?;
-
+        debug!("session stopped");
         Ok(())
     }
 
@@ -358,7 +368,6 @@ impl LoopState {
     }
 
     async fn stop(self) -> Result<()> {
-        self.session_peer_manager.stop().await?;
         Ok(())
     }
 
@@ -473,13 +482,13 @@ impl LoopState {
     /// Called when blocks are requested by the client.
     async fn want_blocks(&mut self, new_keys: Vec<Cid>) {
         if !new_keys.is_empty() {
-            // Inform the SessionInterestManager that this session is interested in the keys
+            // Inform the SessionInterestManager that this session is interested in the keys.
             self.session_interest_manager
                 .record_session_interest(self.id, &new_keys)
                 .await;
-            // Tell the sessionWants tracker that that the wants have been requested
+            // Tell the SessionWants tracker that that the wants have been requested.
             self.session_wants.blocks_requested(&new_keys);
-            // Tell the sessionWantSender that the blocks have been requested
+            // Tell the SessionWantSender that the blocks have been requested.
             self.session_want_sender.add(new_keys).await;
         }
 
@@ -520,12 +529,6 @@ impl LoopState {
         };
         let tick_delay = Duration::from_secs_f64(
             tick_delay.as_secs_f64() * (1. + self.consecutive_ticks as f64),
-        );
-        dbg!(
-            tick_delay,
-            self.initial_search_delay,
-            self.consecutive_ticks,
-            &self.latency_tracker,
         );
 
         self.idle_tick.as_mut().reset(Instant::now() + tick_delay);

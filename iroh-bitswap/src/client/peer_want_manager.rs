@@ -1,7 +1,7 @@
 use ahash::{AHashMap, AHashSet};
 use cid::Cid;
 use libp2p::PeerId;
-use tracing::error;
+use tracing::{debug, error};
 
 use super::message_queue::MessageQueue;
 
@@ -43,6 +43,10 @@ impl PeerWantManager {
         );
 
         // Broadcast any live want-haves to the newly connected peer.
+        debug!(
+            "adding peer {} (have {:?} wants)",
+            peer, self.broadcast_wants
+        );
         if !self.broadcast_wants.is_empty() {
             let wants = &self.broadcast_wants;
             peer_queue.add_broadcast_want_haves(&wants).await;
@@ -77,21 +81,24 @@ impl PeerWantManager {
 
     /// Sends want-haves to any peers that have not yet been sent them.
     pub async fn broadcast_want_haves(&mut self, want_haves: &AHashSet<Cid>) {
+        debug!("pwm: broadcast_want_haves: {:?}", want_haves);
         // want_haves - self.broadcast_wants
         let unsent: AHashSet<_> = want_haves
             .difference(&self.broadcast_wants)
             .copied()
             .collect();
         self.broadcast_wants.extend(want_haves);
+        debug!("pwm: unsent, {:?}", unsent);
 
         let mut peer_unsent = AHashSet::new();
-        for peer_wants in self.peer_wants.values() {
+        for (peer, peer_wants) in self.peer_wants.iter() {
             for cid in &unsent {
                 // Skip if already sent to this peer
                 if !peer_wants.want_blocks.contains(cid) && !peer_wants.want_haves.contains(cid) {
                     peer_unsent.insert(*cid);
                 }
             }
+            debug!("pwm: unsent peer: {}, {:?}", peer, peer_unsent);
             if !peer_unsent.is_empty() {
                 peer_wants
                     .peer_queue

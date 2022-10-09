@@ -1,12 +1,13 @@
 use std::{
     collections::HashSet,
+    pin::Pin,
     task::{Context, Poll},
     time::Duration,
 };
 
 use anyhow::{anyhow, bail, Result};
 use cid::Cid;
-use crossbeam::channel::{Receiver, Sender};
+use futures::Stream;
 use iroh_metrics::core::MRecorder;
 use iroh_metrics::{bitswap::BitswapMetrics, inc};
 use libp2p::{core::connection::ConnectionId, PeerId};
@@ -24,15 +25,16 @@ const MIN_SEND_RATE: u64 = (100 * 1000) / 8;
 
 #[derive(Debug, Clone)]
 pub struct Network {
-    network_out_receiver: Receiver<OutEvent>,
-    network_out_sender: Sender<OutEvent>,
+    network_out_receiver: async_channel::Receiver<OutEvent>,
+    network_out_sender: async_channel::Sender<OutEvent>,
     self_id: PeerId,
 }
 
+#[derive(Debug)]
 pub enum OutEvent {
     Dial(
         PeerId,
-        oneshot::Sender<std::result::Result<(ConnectionId, ProtocolId), String>>,
+        oneshot::Sender<std::result::Result<(ConnectionId, Option<ProtocolId>), String>>,
     ),
     SendMessage {
         peer: PeerId,
@@ -53,7 +55,7 @@ pub enum SendError {
 
 impl Network {
     pub fn new(self_id: PeerId) -> Self {
-        let (network_out_sender, network_out_receiver) = crossbeam::channel::bounded(1024);
+        let (network_out_sender, network_out_receiver) = async_channel::bounded(1024);
 
         Network {
             network_out_receiver,
@@ -74,6 +76,7 @@ impl Network {
                     peer: *peer,
                     response: s,
                 }))
+                .await
                 .map_err(|e| anyhow!("channel send: {:?}", e))?;
 
             let r = r.await?.ok_or_else(|| anyhow!("no ping available"))?;
@@ -96,7 +99,7 @@ impl Network {
         timeout: Duration,
         backoff: Duration,
     ) -> Result<()> {
-        debug!("sending message to {}", peer);
+        info!("sending message to {} ({:?})", peer, message);
         inc!(BitswapMetrics::MessagesSent);
         let res = tokio::time::timeout(timeout, async {
             let mut errors: Vec<anyhow::Error> = Vec::new();
@@ -110,10 +113,12 @@ impl Network {
                         response: s,
                         connection_id,
                     })
+                    .await
                     .map_err(|e| anyhow!("channel send failed: {:?}", e))?;
 
                 match r.await {
                     Ok(Ok(res)) => {
+                        info!("message sent to {}", peer);
                         return Ok(res);
                     }
                     Ok(Err(SendError::ProtocolNotSupported)) => {
@@ -144,7 +149,7 @@ impl Network {
         Ok(res)
     }
 
-    pub fn find_providers(
+    pub async fn find_providers(
         &self,
         key: Cid,
     ) -> Result<mpsc::Receiver<std::result::Result<HashSet<PeerId>, String>>> {
@@ -154,6 +159,7 @@ impl Network {
                 key,
                 response: s,
             }))
+            .await
             .map_err(|e| anyhow!("channel send: {:?}", e))?;
 
         Ok(r)
@@ -163,13 +169,14 @@ impl Network {
         &self,
         peer: PeerId,
         timeout: Duration,
-    ) -> Result<(ConnectionId, ProtocolId)> {
+    ) -> Result<(ConnectionId, Option<ProtocolId>)> {
         inc!(BitswapMetrics::AttemptedDials);
         debug!("dialing {}", peer);
         let res = tokio::time::timeout(timeout, async move {
             let (s, r) = oneshot::channel();
             self.network_out_sender
                 .send(OutEvent::Dial(peer, s))
+                .await
                 .map_err(|e| anyhow!("channel send: {:?}", e))?;
 
             let res = r.await?.map_err(|e| anyhow!("Dial Error: {}", e))?;
@@ -210,9 +217,10 @@ impl Network {
         .await
     }
 
-    pub fn provide(&self, key: Cid) -> Result<()> {
+    pub async fn provide(&self, key: Cid) -> Result<()> {
         self.network_out_sender
             .send(OutEvent::GenerateEvent(BitswapEvent::Provide { key }))
+            .await
             .map_err(|e| anyhow!("channel send: {:?}", e))?;
 
         Ok(())
@@ -239,12 +247,12 @@ impl Network {
         false
     }
 
-    pub fn poll(&mut self, _cx: &mut Context) -> Poll<OutEvent> {
-        if let Ok(event) = self.network_out_receiver.try_recv() {
-            return Poll::Ready(event);
+    pub fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<OutEvent> {
+        match Pin::new(&mut self.network_out_receiver).poll_next(cx) {
+            Poll::Ready(Some(ev)) => Poll::Ready(ev),
+            Poll::Ready(None) => Poll::Pending,
+            Poll::Pending => Poll::Pending,
         }
-
-        Poll::Pending
     }
 }
 
@@ -284,12 +292,14 @@ pub struct MessageSender {
     network: Network,
     config: MessageSenderConfig,
     connection_id: ConnectionId,
-    protocol_id: ProtocolId,
+    protocol_id: Option<ProtocolId>,
 }
 
 impl MessageSender {
     pub fn supports_have(&self) -> bool {
-        self.protocol_id.supports_have()
+        self.protocol_id
+            .map(|p| p.supports_have())
+            .unwrap_or_default()
     }
 
     pub async fn send_message(&self, message: BitswapMessage) -> Result<()> {

@@ -4,7 +4,8 @@
 
 use std::collections::HashSet;
 use std::fmt::Debug;
-use std::sync::Mutex;
+use std::pin::Pin;
+use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 use std::time::Duration;
 
@@ -14,7 +15,6 @@ use async_trait::async_trait;
 use cid::Cid;
 use futures::future::BoxFuture;
 use futures::stream::FuturesUnordered;
-use futures::{FutureExt, StreamExt};
 use handler::{BitswapHandler, HandlerEvent};
 use iroh_metrics::bitswap::BitswapMetrics;
 use iroh_metrics::inc;
@@ -30,7 +30,7 @@ use message::BitswapMessage;
 use network::OutEvent;
 use protocol::{ProtocolConfig, ProtocolId};
 use tokio::sync::oneshot;
-use tracing::trace;
+use tracing::{debug, trace};
 
 use self::client::{Client, Config as ClientConfig};
 use self::network::Network;
@@ -52,23 +52,32 @@ pub use self::message::Priority;
 
 use iroh_metrics::core::MRecorder;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Bitswap<S: Store> {
     network: Network,
     protocol_config: ProtocolConfig,
     idle_timeout: Duration,
-    peers: AHashMap<PeerId, PeerState>,
-    dials: AHashMap<
-        PeerId,
-        Vec<oneshot::Sender<std::result::Result<(ConnectionId, ProtocolId), String>>>,
+    peers: Arc<Mutex<AHashMap<PeerId, PeerState>>>,
+    dials: Arc<
+        Mutex<
+            AHashMap<
+                PeerId,
+                Vec<
+                    oneshot::Sender<
+                        std::result::Result<(ConnectionId, Option<ProtocolId>), String>,
+                    >,
+                >,
+            >,
+        >,
     >,
     client: Client<S>,
     server: Server<S>,
-    futures: Mutex<FuturesUnordered<BoxFuture<'static, ()>>>,
+    futures: Arc<Mutex<FuturesUnordered<BoxFuture<'static, ()>>>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PeerState {
+    Connected(ConnectionId),
     Responsive(ConnectionId, ProtocolId),
     Unresponsive,
     Disconnected,
@@ -126,7 +135,7 @@ impl<S: Store> Bitswap<S> {
             dials: Default::default(),
             server,
             client,
-            futures: Mutex::new(FuturesUnordered::new()),
+            futures: Arc::new(Mutex::new(FuturesUnordered::new())),
         }
     }
 
@@ -181,6 +190,7 @@ impl<S: Store> Bitswap<S> {
     }
 
     fn peer_connected(&self, peer: PeerId) {
+        debug!("peer {} connected", peer);
         let client = self.client.clone();
         let server = self.server.clone();
         // self.futures.lock().unwrap().push(
@@ -193,6 +203,7 @@ impl<S: Store> Bitswap<S> {
     }
 
     fn peer_disconnected(&self, peer: PeerId) {
+        debug!("peer {} disconnected", peer);
         let client = self.client.clone();
         let server = self.server.clone();
         // self.futures.lock().unwrap().push(
@@ -218,20 +229,23 @@ impl<S: Store> Bitswap<S> {
 
     fn get_peer_state(&self, peer: &PeerId) -> PeerState {
         self.peers
+            .lock()
+            .unwrap()
             .get(peer)
             .copied()
             .unwrap_or(PeerState::Disconnected)
     }
 
     fn set_peer_state(&mut self, peer: &PeerId, new_state: PeerState) {
-        let peer_state = self.peers.entry(*peer).or_default();
+        let peers = &mut *self.peers.lock().unwrap();
+        let peer_state = peers.entry(*peer).or_default();
         let old_state = *peer_state;
         *peer_state = new_state;
         let peer = *peer;
 
         match peer_state {
             PeerState::Disconnected => {
-                self.peers.remove(&peer);
+                peers.remove(&peer);
                 if matches!(old_state, PeerState::Responsive(_, _)) {
                     self.peer_disconnected(peer);
                 }
@@ -240,6 +254,9 @@ impl<S: Store> Bitswap<S> {
                 if matches!(old_state, PeerState::Responsive(_, _)) {
                     self.peer_disconnected(peer);
                 }
+            }
+            PeerState::Connected(_) => {
+                self.peer_connected(peer);
             }
             PeerState::Responsive(_, _) => {
                 self.peer_connected(peer);
@@ -297,8 +314,9 @@ impl<S: Store> NetworkBehaviour for Bitswap<S> {
         _failed_addresses: Option<&Vec<Multiaddr>>,
         other_established: usize,
     ) {
-        if other_established == 0 {
-            // debug!("connection established {}", peer_id);
+        debug!("connection established {} ({})", peer_id, other_established);
+        if self.get_peer_state(peer_id) == PeerState::Disconnected {
+            self.set_peer_state(peer_id, PeerState::Connected(*connection));
         }
     }
 
@@ -326,7 +344,9 @@ impl<S: Store> NetworkBehaviour for Bitswap<S> {
         error: &DialError,
     ) {
         if let Some(peer_id) = peer_id {
-            if let Some(mut dials) = self.dials.remove(&peer_id) {
+            debug!("inject_dial_failure {}, {:?}", peer_id, error);
+            let dials = &mut self.dials.lock().unwrap();
+            if let Some(mut dials) = dials.remove(&peer_id) {
                 while let Some(sender) = dials.pop() {
                     sender.send(Err(error.to_string())).ok();
                 }
@@ -335,13 +355,16 @@ impl<S: Store> NetworkBehaviour for Bitswap<S> {
     }
 
     fn inject_event(&mut self, peer_id: PeerId, connection: ConnectionId, event: HandlerEvent) {
-        // debug!("inject_event from {}, event: {:?}", peer_id, event);
+        debug!("inject_event from {}, event: {:?}", peer_id, event);
         match event {
             HandlerEvent::Connected { protocol } => {
                 self.peer_connected(peer_id);
-                if let Some(mut dials) = self.dials.remove(&peer_id) {
-                    while let Some(sender) = dials.pop() {
-                        sender.send(Ok((connection, protocol))).ok();
+                {
+                    let dials = &mut *self.dials.lock().unwrap();
+                    if let Some(mut dials) = dials.remove(&peer_id) {
+                        while let Some(sender) = dials.pop() {
+                            sender.send(Ok((connection, Some(protocol)))).ok();
+                        }
                     }
                 }
 
@@ -352,7 +375,8 @@ impl<S: Store> NetworkBehaviour for Bitswap<S> {
                     self.set_peer_state(&peer_id, PeerState::Unresponsive);
                 }
 
-                if let Some(mut dials) = self.dials.remove(&peer_id) {
+                let dials = &mut *self.dials.lock().unwrap();
+                if let Some(mut dials) = dials.remove(&peer_id) {
                     while let Some(sender) = dials.pop() {
                         sender.send(Err("protocol not supported".into())).ok();
                     }
@@ -377,27 +401,45 @@ impl<S: Store> NetworkBehaviour for Bitswap<S> {
         _: &mut impl PollParameters,
     ) -> Poll<NetworkBehaviourAction<Self::OutEvent, Self::ConnectionHandler>> {
         // poll local futures
-        let _r = self.futures.lock().unwrap().poll_next_unpin(cx);
+        // let _r = self.futures.lock().unwrap().poll_next_unpin(cx);
 
         loop {
-            match self.network.poll(cx) {
+            match Pin::new(&mut self.network).poll(cx) {
                 Poll::Pending => return Poll::Pending,
                 Poll::Ready(ev) => match ev {
                     OutEvent::Dial(peer, response) => {
-                        tracing::debug!("{} dials, {} peers", self.dials.len(), self.peers.len());
+                        tracing::debug!(
+                            "{} dials, {} peers",
+                            self.dials.lock().unwrap().len(),
+                            self.peers.lock().unwrap().len()
+                        );
 
-                        if let PeerState::Responsive(conn, protocol_id) = self.get_peer_state(&peer)
-                        {
-                            // already connected
-                            response.send(Ok((conn, protocol_id))).ok();
-                            continue;
-                        } else {
-                            self.dials.entry(peer).or_default().push(response);
+                        match self.get_peer_state(&peer) {
+                            PeerState::Responsive(conn, protocol_id) => {
+                                // already connected
+                                response.send(Ok((conn, Some(protocol_id)))).ok();
+                                continue;
+                            }
+                            PeerState::Connected(conn) => {
+                                // already connected
+                                response.send(Ok((conn, None))).ok();
+                                continue;
+                            }
+                            _ => {
+                                self.dials
+                                    .lock()
+                                    .unwrap()
+                                    .entry(peer)
+                                    .or_default()
+                                    .push(response);
 
-                            return Poll::Ready(NetworkBehaviourAction::Dial {
-                                opts: DialOpts::peer_id(peer).build(),
-                                handler: self.new_handler(),
-                            });
+                                return Poll::Ready(NetworkBehaviourAction::Dial {
+                                    opts: DialOpts::peer_id(peer)
+                                        .condition(libp2p::swarm::dial_opts::PeerCondition::Always)
+                                        .build(),
+                                    handler: self.new_handler(),
+                                });
+                            }
                         }
                     }
                     OutEvent::GenerateEvent(ev) => {
@@ -424,22 +466,42 @@ impl<S: Store> NetworkBehaviour for Bitswap<S> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::io::{Error, ErrorKind};
+    use std::sync::Arc;
+    use std::time::Duration;
 
-    fn assert_send<T: Send>() {}
+    use anyhow::anyhow;
+    use futures::prelude::*;
+    use libp2p::core::muxing::StreamMuxerBox;
+    use libp2p::core::transport::upgrade::Version;
+    use libp2p::core::transport::Boxed;
+    use libp2p::identity::Keypair;
+    use libp2p::swarm::{SwarmBuilder, SwarmEvent};
+    use libp2p::tcp::{GenTcpConfig, TokioTcpTransport};
+    use libp2p::yamux::YamuxConfig;
+    use libp2p::{noise, PeerId, Swarm, Transport};
+    use tokio::sync::{mpsc, RwLock};
+    use tracing::{info, trace};
+    use tracing_subscriber::{fmt, prelude::*, EnvFilter};
+
+    use super::*;
+    use crate::block::tests::*;
+    use crate::Block;
+
+    fn assert_send<T: Send + Sync>() {}
 
     #[derive(Debug, Clone)]
     struct DummyStore;
 
     #[async_trait]
     impl Store for DummyStore {
-        async fn get_size(&self, cid: &Cid) -> Result<usize> {
+        async fn get_size(&self, _: &Cid) -> Result<usize> {
             todo!()
         }
-        async fn get(&self, cid: &Cid) -> Result<Block> {
+        async fn get(&self, _: &Cid) -> Result<Block> {
             todo!()
         }
-        async fn has(&self, cid: &Cid) -> Result<bool> {
+        async fn has(&self, _: &Cid) -> Result<bool> {
             todo!()
         }
     }
@@ -448,5 +510,143 @@ mod tests {
     fn test_traits() {
         assert_send::<Bitswap<DummyStore>>();
         assert_send::<&Bitswap<DummyStore>>();
+    }
+
+    fn mk_transport() -> (PeerId, Boxed<(PeerId, StreamMuxerBox)>) {
+        let local_key = Keypair::generate_ed25519();
+
+        let auth_config = {
+            let dh_keys = noise::Keypair::<noise::X25519Spec>::new()
+                .into_authentic(&local_key)
+                .expect("Noise key generation failed");
+
+            noise::NoiseConfig::xx(dh_keys).into_authenticated()
+        };
+
+        let peer_id = local_key.public().to_peer_id();
+        let transport = TokioTcpTransport::new(GenTcpConfig::default().nodelay(true))
+            .upgrade(Version::V1)
+            .authenticate(auth_config)
+            .multiplex(YamuxConfig::default())
+            .timeout(Duration::from_secs(20))
+            .map(|(peer_id, muxer), _| (peer_id, StreamMuxerBox::new(muxer)))
+            .map_err(|err| Error::new(ErrorKind::Other, err))
+            .boxed();
+        (peer_id, transport)
+    }
+
+    #[derive(Debug, Clone, Default)]
+    struct TestStore {
+        store: Arc<RwLock<AHashMap<Cid, Block>>>,
+    }
+
+    #[async_trait]
+    impl Store for TestStore {
+        async fn get_size(&self, cid: &Cid) -> Result<usize> {
+            self.store
+                .read()
+                .await
+                .get(cid)
+                .map(|block| block.data().len())
+                .ok_or_else(|| anyhow!("missing"))
+        }
+
+        async fn get(&self, cid: &Cid) -> Result<Block> {
+            self.store
+                .read()
+                .await
+                .get(cid)
+                .cloned()
+                .ok_or_else(|| anyhow!("missing"))
+        }
+
+        async fn has(&self, cid: &Cid) -> Result<bool> {
+            Ok(self.store.read().await.contains_key(cid))
+        }
+    }
+
+    #[tokio::test]
+    async fn test_get_block() {
+        tracing_subscriber::registry()
+            .with(fmt::layer().pretty())
+            .with(EnvFilter::from_default_env())
+            .init();
+
+        let (peer1_id, trans) = mk_transport();
+        let store1 = TestStore::default();
+        let bs1 = Bitswap::new(peer1_id, store1.clone(), Config::default()).await;
+        let mut swarm1 = SwarmBuilder::new(trans, bs1, peer1_id)
+            .executor(Box::new(|fut| {
+                tokio::task::spawn(fut);
+            }))
+            .build();
+
+        let block = create_block_v1(&b"hello world"[..]);
+        let cid = *block.cid();
+        store1.store.write().await.insert(cid, block.clone());
+
+        let (tx, mut rx) = mpsc::channel::<Multiaddr>(1);
+
+        Swarm::listen_on(&mut swarm1, "/ip4/127.0.0.1/tcp/0".parse().unwrap()).unwrap();
+
+        let swarm1_bs = swarm1.behaviour().clone();
+        let peer1 = tokio::task::spawn(async move {
+            while swarm1.next().now_or_never().is_some() {}
+            let listeners: Vec<_> = Swarm::listeners(&swarm1).collect();
+            for l in listeners {
+                tx.send(l.clone()).await.unwrap();
+            }
+
+            loop {
+                match swarm1.next().await {
+                    ev => trace!("peer1: {:?}", ev),
+                }
+            }
+        });
+
+        info!("peer2: startup");
+        let (peer2_id, trans) = mk_transport();
+        let store2 = TestStore::default();
+        let bs2 = Bitswap::new(peer2_id, store2.clone(), Config::default()).await;
+
+        let mut swarm2 = SwarmBuilder::new(trans, bs2, peer2_id)
+            .executor(Box::new(|fut| {
+                tokio::task::spawn(fut);
+            }))
+            .build();
+
+        let swarm2_bs = swarm2.behaviour().clone();
+        let peer2 = tokio::task::spawn(async move {
+            let addr = rx.recv().await.unwrap();
+            info!("peer2: dialing peer1 at {}", addr);
+            Swarm::dial(&mut swarm2, addr).unwrap();
+
+            loop {
+                match swarm2.next().await {
+                    ev => trace!("peer2: {:?}", ev),
+                }
+            }
+        });
+
+        {
+            info!("peer2: fetching block");
+            // Should work, because retrieved
+            let received_block = swarm2_bs
+                .client()
+                .get_block(&cid)
+                .await
+                .expect("failed to get block");
+
+            assert_eq!(block, received_block);
+            info!("peer2: received block");
+        }
+
+        info!("--shutting down peer1");
+        peer1.abort();
+        peer1.await.ok();
+
+        info!("--shutting down peer2");
+        peer2.abort();
+        peer2.await.ok();
     }
 }

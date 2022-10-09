@@ -6,7 +6,7 @@ use cid::Cid;
 use futures::{future::BoxFuture, FutureExt};
 use libp2p::PeerId;
 use tokio::sync::RwLock;
-use tracing::error;
+use tracing::{debug, error};
 
 use crate::network::Network;
 
@@ -87,6 +87,7 @@ impl PeerManager {
 
     /// Called to a new peer to the pool, and send it an initial set of wants.
     pub async fn connected(&self, peer: &PeerId) {
+        debug!("connected to {}", peer);
         let (peer_queues, peer_want_manager) = &mut *self.inner.peers.write().await;
 
         if !peer_queues.contains_key(peer) {
@@ -219,7 +220,7 @@ impl PeerManager {
 
     /// Shutdown this peer manager.
     pub async fn stop(self) -> Result<()> {
-        println!("stopping");
+        debug!("stopping peer manager");
         let inner =
             Arc::try_unwrap(self.inner).map_err(|_| anyhow!("peer manager refs not shutdown"))?;
         let (peers, _) = RwLock::into_inner(inner.peers);

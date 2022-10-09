@@ -535,14 +535,6 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                 libp2p_metrics().record(&*e);
                 trace!("tick: identify {:?}", e);
                 if let IdentifyEvent::Received { peer_id, info } = *e {
-                    // let supported_bs_protocols = self
-                    //     .swarm
-                    //     .behaviour()
-                    //     .bitswap
-                    //     .as_ref()
-                    //     .map(|bs| bs.supported_protocols().to_vec())
-                    //     .unwrap_or_default();
-                    // let mut protocol_bs_name = None;
                     for protocol in &info.protocols {
                         let p = protocol.as_bytes();
 
@@ -552,21 +544,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                                     kad.add_address(&peer_id, addr.clone());
                                 }
                             }
-                        }
-                        /*else if protocol_bs_name.is_none() {
-                            for sp in &supported_bs_protocols {
-                                if p == sp.protocol_name() {
-                                    protocol_bs_name = Some(*sp);
-                                    break;
-                                }
-                            }
-                            if protocol_bs_name.is_some() {
-                                if let Some(bs) = self.swarm.behaviour_mut().bitswap.as_mut() {
-                                    bs.add_peer(peer_id, protocol_bs_name);
-                                }
-                            }
-                        } */
-                        else if p == b"/libp2p/autonat/1.0.0" {
+                        } else if p == b"/libp2p/autonat/1.0.0" {
                             // TODO: expose protocol name on `libp2p::autonat`.
                             // TODO: should we remove them at some point?
                             for addr in &info.listen_addrs {
@@ -875,7 +853,7 @@ async fn load_identity<S: Storage>(kc: &mut Keychain<S>) -> Result<Keypair> {
     let first_key = kc.keys().next().await;
     if let Some(keypair) = first_key {
         let keypair: Keypair = keypair?.into();
-        error!("identity loaded: {}", PeerId::from(keypair.public()));
+        info!("identity loaded: {}", PeerId::from(keypair.public()));
         return Ok(keypair);
     }
 
@@ -931,6 +909,11 @@ mod tests {
     #[cfg(feature = "rpc-mem")]
     #[tokio::test]
     async fn test_fetch_providers_mem_dht() -> Result<()> {
+        tracing_subscriber::registry()
+            .with(fmt::layer().pretty())
+            .with(EnvFilter::from_default_env())
+            .init();
+
         let (server_addr, client_addr) = Addr::new_mem();
         fetch_providers(
             "/ip4/0.0.0.0/tcp/5003".parse().unwrap(),
@@ -942,24 +925,19 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(feature = "rpc-mem")]
-    #[tokio::test]
-    async fn test_fetch_providers_mem_bitswap() -> Result<()> {
-        tracing_subscriber::registry()
-            .with(fmt::layer().pretty())
-            .with(EnvFilter::from_default_env())
-            .init();
-
-        let (server_addr, client_addr) = Addr::new_mem();
-        fetch_providers(
-            "/ip4/0.0.0.0/tcp/5004".parse().unwrap(),
-            server_addr,
-            client_addr,
-            false,
-        )
-        .await?;
-        Ok(())
-    }
+    // #[cfg(feature = "rpc-mem")]
+    // #[tokio::test]
+    // async fn test_fetch_providers_mem_bitswap() -> Result<()> {
+    //     let (server_addr, client_addr) = Addr::new_mem();
+    //     fetch_providers(
+    //         "/ip4/0.0.0.0/tcp/5004".parse().unwrap(),
+    //         server_addr,
+    //         client_addr,
+    //         false,
+    //     )
+    //     .await?;
+    //     Ok(())
+    // }
 
     async fn fetch_providers(
         addr: Multiaddr,
@@ -987,16 +965,19 @@ mod tests {
                 .parse()
                 .unwrap();
             if dht {
-                let providers: Vec<PeerId> = client
-                    .p2p
-                    .unwrap()
-                    .fetch_providers_dht(&c)
-                    .await?
-                    .try_collect::<Vec<_>>()
-                    .await?
-                    .into_iter()
-                    .flat_map(|p| p.into_iter())
-                    .collect();
+                let mut providers = Vec::new();
+                let mut chan = client.p2p.unwrap().fetch_providers_dht(&c).await?;
+                while let Some(new_providers) = chan.next().await {
+                    let new_providers = new_providers.unwrap();
+                    println!("providers found");
+                    assert!(!new_providers.is_empty());
+
+                    for p in &new_providers {
+                        println!("{}", p);
+                        providers.push(*p);
+                    }
+                }
+
                 println!("{:?}", providers);
                 assert!(!providers.is_empty());
                 assert!(

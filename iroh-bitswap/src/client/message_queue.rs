@@ -301,6 +301,7 @@ impl MessageQueue {
 
     /// Add want-haves that are part of a broadcast to all connected peers.
     pub async fn add_broadcast_want_haves(&self, want_haves: &AHashSet<Cid>) {
+        debug!("adding broadcast wants to message queue {:?}", want_haves);
         if want_haves.is_empty() {
             return;
         }
@@ -395,22 +396,21 @@ impl MessageQueue {
     }
 
     pub async fn stop(self) -> Result<()> {
-        println!("stopping message queue");
-        match self.inner.closer.send(()).await {
-            Ok(_) => {
-                println!("waiting for worker");
-                Arc::try_unwrap(self.inner)
-                    .map_err(|_| anyhow!("message queue refs not shutdown"))?
-                    .worker
-                    .take()
-                    .ok_or_else(|| anyhow!("missing worker"))?
-                    .await??;
-                self.dh_timeout_manager.stop().await?;
-            }
-            Err(err) => {
-                error!("failed to shutdown message queue: {:?}", err);
-            }
-        }
+        debug!("stopping message queue");
+        self.inner
+            .closer
+            .send(())
+            .await
+            .map_err(|e| anyhow!("failed to send close: {:?}", e))?;
+
+        Arc::try_unwrap(self.inner)
+            .map_err(|_| anyhow!("message queue refs not shutdown"))?
+            .worker
+            .take()
+            .ok_or_else(|| anyhow!("missing worker"))?
+            .await??;
+        self.dh_timeout_manager.stop().await?;
+
         Ok(())
     }
 }

@@ -7,7 +7,7 @@ use derivative::Derivative;
 use futures::future::BoxFuture;
 use libp2p::PeerId;
 use tokio::{sync::oneshot, task::JoinHandle};
-use tracing::{info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::client::{
     block_presence_manager::BlockPresenceManager, peer_manager::PeerManager,
@@ -201,7 +201,9 @@ impl SessionWantSender {
                 }
             }
 
-            loop_state.stop().await;
+            if let Err(err) = loop_state.stop().await {
+                error!("failed to stop LoopState: {:?}", err);
+            }
         });
 
         SessionWantSender {
@@ -215,6 +217,7 @@ impl SessionWantSender {
     }
 
     pub async fn stop(self) -> Result<()> {
+        debug!("stopping session want sender");
         let mut inner = Arc::try_unwrap(self.inner)
             .map_err(|_| anyhow!("session want sender refs not shutdown"))?;
         inner
@@ -226,6 +229,7 @@ impl SessionWantSender {
             .take()
             .ok_or_else(|| anyhow!("missing worker"))?
             .await?;
+
         Ok(())
     }
 
@@ -451,9 +455,11 @@ impl LoopState {
         }
     }
 
-    async fn stop(self) {
+    async fn stop(self) -> Result<()> {
         // Unregister the session with the PeerManager
         self.peer_manager.unregister_session(self.signaler.id).await;
+        self.session_peer_manager.stop().await?;
+        Ok(())
     }
 
     fn id(&self) -> u64 {
@@ -461,9 +467,9 @@ impl LoopState {
     }
 
     /// Collects all the changes that have occurred since the last invocation of `on_change`.
-    async fn collect_changes(&self, changes: &mut Vec<Change>) {
+    fn collect_changes(&self, changes: &mut Vec<Change>) {
         while changes.len() < CHANGES_BUFFER_SIZE {
-            if let Ok(change) = self.changes.recv().await {
+            if let Ok(change) = self.changes.try_recv() {
                 changes.push(change);
             } else {
                 break;
@@ -476,7 +482,7 @@ impl LoopState {
         // Several changes may have been recorded since the last time we checked,
         // so pop all outstanding changes from the channel
         let mut changes = vec![change];
-        self.collect_changes(&mut changes).await;
+        self.collect_changes(&mut changes);
 
         // Apply each change
 

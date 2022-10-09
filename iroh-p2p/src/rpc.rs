@@ -109,7 +109,7 @@ impl RpcP2p for P2p {
         let block = r
             .await
             .expect("should not drop accidentially")
-            .map_err(|e| anyhow::anyhow!("bitswap: {}", e))?;
+            .map_err(|e| anyhow!("bitswap: {}", e))?;
 
         ensure!(
             cid == block.cid,
@@ -171,7 +171,7 @@ impl RpcP2p for P2p {
     ) -> Result<Pin<Box<dyn Stream<Item = Result<Providers>> + Send>>> {
         let cid: Cid = req.key.clone().try_into()?;
         trace!("received fetch_provider_dht: {}", cid);
-        let (s, r) = channel(1024);
+        let (s, r) = channel(64);
 
         let msg = RpcMessage::ProviderRequest {
             key: ProviderRequestKey::Dht(req.key.into()),
@@ -183,6 +183,8 @@ impl RpcP2p for P2p {
 
         Ok(Box::pin(r.map(|providers| {
             let providers = providers.map_err(|e| anyhow!(e))?;
+            dbg!(&providers);
+
             let providers = providers.into_iter().map(|p| p.to_bytes()).collect();
 
             Ok(Providers { providers })

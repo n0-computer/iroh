@@ -56,7 +56,7 @@ impl ProviderQueryManager {
                         msg = provider_query_message_r.recv() => {
                             match msg {
                                 Ok(ProviderQueryMessage::NewProvider { cid, response }) => {
-                                   match network.find_providers(cid) {
+                                   match network.find_providers(cid).await {
                                         Ok(mut providers_r) => {
                                             let mut found_providers = HashSet::new();
                                             loop {
