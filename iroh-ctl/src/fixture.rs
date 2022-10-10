@@ -27,10 +27,19 @@ fn fixture_lookup() -> MockApi {
     api
 }
 
+fn fixture_get() -> MockApi {
+    let mut api = MockApi::default();
+    api.expect_get().returning(|_, _| Ok(()));
+    api
+}
+
 fn register_fixtures() -> FixtureRegistry {
-    [("lookup".to_string(), fixture_lookup as GetFixture)]
-        .into_iter()
-        .collect()
+    [
+        ("lookup".to_string(), fixture_lookup as GetFixture),
+        ("get".to_string(), fixture_get as GetFixture),
+    ]
+    .into_iter()
+    .collect()
 }
 
 pub fn get_fixture_api() -> MockApi {

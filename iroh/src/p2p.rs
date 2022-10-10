@@ -35,6 +35,8 @@ pub trait P2p: Sync {
 
 #[async_trait]
 impl<'a> P2p for ClientP2p<'a> {
+    /// XXX really should be an API that intos a peer id, and then also accepts
+    /// an address, or two separate methods, one for peer id, one for address
     async fn lookup(&self, _addr: &PeerIdOrAddr) -> Result<Lookup> {
         let (_, listen_addrs) = self.client.get_listening_addrs().await?;
         Ok(Lookup {
