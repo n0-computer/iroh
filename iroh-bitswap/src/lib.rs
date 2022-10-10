@@ -20,6 +20,7 @@ use libp2p::core::connection::ConnectionId;
 use libp2p::core::ConnectedPoint;
 use libp2p::swarm::dial_opts::DialOpts;
 use libp2p::swarm::{
+    CloseConnection,
     DialError, IntoConnectionHandler, NetworkBehaviour, NetworkBehaviourAction, NotifyHandler,
     PollParameters,
 };
@@ -413,6 +414,10 @@ impl<S: Store> NetworkBehaviour for Bitswap<S> {
             match Pin::new(&mut self.network).poll(cx) {
                 Poll::Pending => return Poll::Pending,
                 Poll::Ready(ev) => match ev {
+                    OutEvent::Disconnect(peer_id, response) => {
+                        response.send(()).ok();
+                        return Poll::Ready(NetworkBehaviourAction::CloseConnection { peer_id, connection: CloseConnection::All });
+                    }
                     OutEvent::Dial(peer, response) => {
                         if self.pause_dialing {
                             // already connected

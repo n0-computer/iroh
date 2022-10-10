@@ -36,6 +36,10 @@ pub enum OutEvent {
         PeerId,
         oneshot::Sender<std::result::Result<(ConnectionId, Option<ProtocolId>), String>>,
     ),
+    Disconnect(
+        PeerId,
+        oneshot::Sender<()>,
+    ),
     SendMessage {
         peer: PeerId,
         message: BitswapMessage,
@@ -122,6 +126,8 @@ impl Network {
                         return Ok(res);
                     }
                     Ok(Err(SendError::ProtocolNotSupported)) => {
+                        // No point in using this peer if they don't speak our protocol.
+                        self.disconnect(peer).await?;
                         return Err(SendError::ProtocolNotSupported.into())
                     }
                     Err(channel_err) => {
@@ -215,6 +221,17 @@ impl Network {
             Duration::from_millis(0),
         )
         .await
+    }
+
+    pub async fn disconnect(&self, peer: PeerId) -> Result<()> {
+        let (s, r) = oneshot::channel();
+        self.network_out_sender
+            .send(OutEvent::Disconnect(peer, s))
+            .await
+            .map_err(|e| anyhow!("channel send: {:?}", e))?;
+        r.await?;
+        
+        Ok(())
     }
 
     pub async fn provide(&self, key: Cid) -> Result<()> {
@@ -313,5 +330,9 @@ impl MessageSender {
                 self.config.send_error_backoff,
             )
             .await
+    }
+
+    pub async fn disconnect(&self) -> Result<()> {
+        self.network.disconnect(self.to).await
     }
 }

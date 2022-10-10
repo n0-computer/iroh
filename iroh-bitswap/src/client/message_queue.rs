@@ -212,9 +212,9 @@ impl MessageQueue {
             };
 
             loop {
-                debug!("message queue tick {}", peer);
                 tokio::select! {
                     _ = rebroadcast_timer.tick() => {
+                        debug!("rebroadcast wantlist: {}", peer);
                         rebroadcast_wantlist(
                             &wants,
                             &closer,
@@ -233,6 +233,8 @@ impl MessageQueue {
                         }
 
                         let pending_work_count = wants.lock().await.pending_work_count();
+                        debug!("outgoing work receiver: {} {:?} {} {:?}", peer, work_scheduled.unwrap().elapsed(), pending_work_count, send_message_max_delay);
+
                         if pending_work_count > send_message_cutoff
                             || work_scheduled.unwrap().elapsed() >= send_message_max_delay {
                                 send_if_ready(
@@ -253,6 +255,7 @@ impl MessageQueue {
                             }
                     }
                     _ = &mut schedule_work, if work_scheduled.is_some() => {
+                        debug!("schedule work: {}", peer);
                         work_scheduled = None;
                         send_if_ready(
                             &wants,
@@ -491,8 +494,9 @@ async fn send_message(
 
     let wantlist: Vec<_> = msg.wantlist().cloned().collect();
     if let Err(err) = sender.send_message(msg).await {
-        warn!("failed to send message {:?}", err);
+        error!("failed to send message {:?}", err);
         closer.send(()).await.ok();
+
         return;
     }
 
