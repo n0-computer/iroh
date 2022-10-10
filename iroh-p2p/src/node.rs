@@ -589,6 +589,10 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                         .map_err(|err| anyhow!("Failed to send a bitswap want_block: {:?}", err))?;
                 }
             }
+            RpcMessage::BitswapNotifyNewBlocks { blocks, response_channel } => {
+                self.swarm.behaviour().notify_new_blocks(blocks);
+                response_channel.send(Ok(())).ok();
+            }
             RpcMessage::BitswapInjectProviders {
                 ctx,
                 cid,
@@ -909,6 +913,7 @@ mod tests {
         });
 
         {
+            tokio::time::sleep(Duration::from_millis(1000)).await;
             let client = RpcClient::new(cfg).await?;
             let c = "QmbWqxBEKC3P8tqsKc98xmWNzrzDtRLMiMPL8wBuTGsMnR"
                 .parse()
