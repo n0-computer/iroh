@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::env;
 use std::path::PathBuf;
 
 use crate::config::{Config, CONFIG_FILE_NAME, ENV_PREFIX};
@@ -42,7 +41,6 @@ enum Commands {
         /// when true, updates the status table whenever a change in a process's status occurs
         watch: bool,
     },
-    Version,
     P2p(P2p),
     #[clap(about = "break up a file into block and provide those blocks on the ipfs network")]
     Add {
@@ -119,9 +117,6 @@ impl Cli {
         match &self.command {
             Commands::Status { watch } => {
                 crate::status::status(api, *watch).await?;
-            }
-            Commands::Version => {
-                println!("v{}", env!("CARGO_PKG_VERSION"));
             }
             Commands::P2p(p2p) => run_p2p_command(&api.p2p()?, p2p).await?,
             Commands::Add {
