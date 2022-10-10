@@ -313,8 +313,8 @@ impl Session {
                         match maybe_block {
                             Ok(block) => {
                                 let cid = *block.cid();
-                                debug!("received wanted block {}", cid);
                                 if remaining.contains(&cid) {
+                                    debug!("received wanted block {}", cid);
                                     match s.send(block).await {
                                         Ok(_) => {
                                             remaining.remove(&cid);
@@ -327,6 +327,7 @@ impl Session {
                                 }
 
                                 if remaining.is_empty() {
+                                    debug!("found all requested blocks");
                                     break;
                                 }
                             }
@@ -343,10 +344,12 @@ impl Session {
             }
 
             // cancel all remaining
-            incoming
-                .send(Op::Cancel(remaining.into_iter().collect()))
-                .await
-                .ok();
+            if !remaining.is_empty() {
+                incoming
+                    .send(Op::Cancel(remaining.into_iter().collect()))
+                    .await
+                    .ok();
+            }
         });
 
         self.inner.workers.lock().await.push((closer_s, worker));

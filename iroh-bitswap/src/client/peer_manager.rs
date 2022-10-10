@@ -221,7 +221,7 @@ impl PeerManager {
         if let Some(session_ids) = peer_sessions.get(peer) {
             for session_id in session_ids {
                 if let Some(session) = sessions.get(session_id) {
-                    session.signal_availability(*peer, is_connected).await;
+                    session.signal_availability(*peer, is_connected);
                 }
             }
         }

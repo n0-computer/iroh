@@ -125,28 +125,20 @@ impl Signaler {
     }
 
     /// Called by the `PeerManager` to signal that a peer has connected / disconnected.
-    pub async fn signal_availability(&self, peer: PeerId, is_available: bool) {
-        signal_availability(self.changes.clone(), peer, is_available).await;
+    pub fn signal_availability(&self, peer: PeerId, is_available: bool) {
+        signal_availability(self.changes.clone(), peer, is_available);
     }
 }
 
-async fn signal_availability(
-    changes: async_channel::Sender<Change>,
-    peer: PeerId,
-    is_available: bool,
-) {
+fn signal_availability(changes: async_channel::Sender<Change>, peer: PeerId, is_available: bool) {
     let availability = PeerAvailability {
         target: peer,
         is_available,
     };
     // Add the change in a non-blocking manner to avoid the possibility of a deadlock.
-    // TODO: this is bad, fix it
-    tokio::runtime::Handle::current().spawn(async move {
-        changes
-            .send(Change::Availability(availability))
-            .await
-            .expect("sender vanished");
-    });
+    if let Err(err) = changes.try_send(Change::Availability(availability)) {
+        warn!("unable to deliver changes: {:?}", err);
+    }
 }
 
 impl SessionWantSender {
@@ -236,10 +228,6 @@ impl SessionWantSender {
             .await?;
 
         Ok(())
-    }
-
-    pub fn id(&self) -> u64 {
-        self.inner.session_id
     }
 
     /// Called when new wants are added to the session
@@ -737,7 +725,7 @@ impl LoopState {
                     peer,
                     self.id()
                 );
-                self.signaler.signal_availability(peer, false).await;
+                self.signaler.signal_availability(peer, false);
             }
         }
 
