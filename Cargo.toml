@@ -17,6 +17,10 @@ members = [
   "stores/*",
   "examples"
 ]
+# even if all crates are set to edition 2021, we still need to force the
+# resolver to 2
+# https://github.com/gfx-rs/wgpu/issues/2356#issuecomment-1005134986
+resolver = "2"
 
 [patch.crates-io]
 libp2p = { git = "https://github.com/dignifiedquire/rust-libp2p", branch = "iroh-0-49" }

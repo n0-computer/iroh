@@ -1,6 +1,7 @@
 # Iroh Metrics
 
-The metrics collection interface for iroh services.
+The metrics collection interface for
+[iroh](https://github.com/n0-computer/iroh) services.
 
 ## ENV Variables
 

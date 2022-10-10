@@ -15,8 +15,8 @@ use prost::Message;
 use tokio::io::AsyncRead;
 
 use crate::{
-    balanced_tree::TreeBuilder,
-    chunker::{Chunker, DEFAULT_CHUNK_SIZE_LIMIT},
+    balanced_tree::{TreeBuilder, DEFAULT_DEGREE},
+    chunker::{Chunker, DEFAULT_CHUNKS_SIZE, DEFAULT_CHUNK_SIZE_LIMIT},
     unixfs::{dag_pb, unixfs_pb, DataType, Node, UnixfsNode},
 };
 
@@ -209,6 +209,8 @@ pub struct FileBuilder {
     name: Option<String>,
     path: Option<PathBuf>,
     reader: Option<Pin<Box<dyn AsyncRead>>>,
+    chunk_size: Option<usize>,
+    degree: Option<usize>,
 }
 
 impl Debug for FileBuilder {
@@ -221,6 +223,8 @@ impl Debug for FileBuilder {
         f.debug_struct("FileBuilder")
             .field("path", &self.path)
             .field("name", &self.name)
+            .field("chunk_size", &self.chunk_size)
+            .field("degree", &self.degree)
             .field("reader", &reader)
             .finish()
     }
@@ -242,6 +246,16 @@ impl FileBuilder {
         self
     }
 
+    pub fn chunk_size(&mut self, chunk_size: usize) -> &mut Self {
+        self.chunk_size = Some(chunk_size);
+        self
+    }
+
+    pub fn degree(&mut self, degree: usize) -> &mut Self {
+        self.degree = Some(degree);
+        self
+    }
+
     pub fn content_bytes<B: Into<Bytes>>(&mut self, content: B) -> &mut Self {
         let bytes = content.into();
         self.reader = Some(Box::pin(std::io::Cursor::new(bytes)));
@@ -254,6 +268,10 @@ impl FileBuilder {
     }
 
     pub async fn build(self) -> Result<File> {
+        let chunk_size = self.chunk_size.unwrap_or(DEFAULT_CHUNKS_SIZE);
+        let degree = self.degree.unwrap_or(DEFAULT_DEGREE);
+        let chunker = Chunker::fixed_with_size(chunk_size);
+        let tree_builder = TreeBuilder::balanced_tree_with_degree(degree);
         if let Some(path) = self.path {
             let name = match self.name {
                 Some(n) => n,
@@ -266,8 +284,8 @@ impl FileBuilder {
             return Ok(File {
                 content: Content::Path(path),
                 name,
-                chunker: Chunker::fixed_size(),
-                tree_builder: TreeBuilder::balanced_tree(),
+                chunker,
+                tree_builder,
             });
         }
 
@@ -279,8 +297,8 @@ impl FileBuilder {
             return Ok(File {
                 content: Content::Reader(reader),
                 name,
-                chunker: Chunker::fixed_size(),
-                tree_builder: TreeBuilder::balanced_tree(),
+                chunker,
+                tree_builder,
             });
         }
         anyhow::bail!("must have a path to the content or a reader for the content");
@@ -514,10 +532,16 @@ async fn make_dir_from_path<P: Into<PathBuf>>(path: P, recursive: bool) -> Resul
 
 #[cfg(test)]
 mod tests {
+    use crate::resolver::{ContentLoader, Out, OutMetrics, Resolver};
+
     use super::*;
-    use anyhow::Result;
+    use anyhow::{Context, Result};
     use futures::TryStreamExt;
-    use std::io::prelude::*;
+    use proptest::prelude::*;
+    use rand::prelude::*;
+    use rand_chacha::ChaCha8Rng;
+    use std::{collections::BTreeMap, io::prelude::*, sync::Arc};
+    use tokio::io::AsyncReadExt;
 
     #[tokio::test]
     async fn test_builder_basics() -> Result<()> {
@@ -635,6 +659,204 @@ mod tests {
         assert_eq!(links[1].cid, baz_encoded[0].0);
 
         // TODO: check content
+        Ok(())
+    }
+
+    // read an AsyncRead into a vec completely
+    async fn read_to_vec<T: AsyncRead + Unpin>(mut reader: T) -> Result<Vec<u8>> {
+        let mut out = Vec::new();
+        reader.read_to_end(&mut out).await?;
+        Ok(out)
+    }
+
+    /// Read a stream of (cid, block) pairs into an in memory store and return the store and the root cid
+    async fn stream_to_resolver(
+        stream: impl Stream<Item = Result<(Cid, Bytes)>>,
+    ) -> Result<(Cid, Resolver<Arc<fnv::FnvHashMap<Cid, Bytes>>>)> {
+        tokio::pin!(stream);
+        let items: Vec<_> = stream.try_collect().await?;
+        let (root, _) = items.last().context("no root")?.clone();
+        let store: fnv::FnvHashMap<Cid, Bytes> = items.into_iter().collect();
+        let resolver = Resolver::new(Arc::new(store));
+        Ok((root, resolver))
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    enum TestDirEntry {
+        File(Bytes),
+        Directory(TestDir),
+    }
+    type TestDir = BTreeMap<String, TestDirEntry>;
+
+    /// builds an unixfs directory out of a TestDir
+    #[async_recursion(?Send)]
+    async fn build_directory(name: &str, dir: &TestDir) -> Result<Directory> {
+        let mut builder = DirectoryBuilder::new();
+        builder.recursive();
+        builder.name(name);
+        for (name, entry) in dir {
+            match entry {
+                TestDirEntry::File(content) => {
+                    let mut file = FileBuilder::new();
+                    file.name(name).content_bytes(content.to_vec());
+                    builder.add_file(file.build().await?);
+                }
+                TestDirEntry::Directory(dir) => {
+                    let dir = build_directory(name, dir).await?;
+                    builder.add_dir(dir)?;
+                }
+            }
+        }
+        builder.build()
+    }
+
+    /// builds a TestDir out of a stream of blocks and a resolver
+    async fn build_testdir(
+        stream: impl Stream<Item = Result<(crate::resolver::Path, Out)>>,
+        resolver: Resolver<impl ContentLoader + Unpin>,
+    ) -> Result<TestDir> {
+        tokio::pin!(stream);
+
+        /// recursively create directories for a path
+        fn mkdir(dir: &mut TestDir, path: &[String]) -> Result<()> {
+            if let Some((first, rest)) = path.split_first() {
+                if let TestDirEntry::Directory(child) = dir
+                    .entry(first.clone())
+                    .or_insert_with(|| TestDirEntry::Directory(Default::default()))
+                {
+                    mkdir(child, rest)?;
+                } else {
+                    anyhow::bail!("not a directory");
+                }
+            }
+            Ok(())
+        }
+
+        /// create a file in a directory hierarchy
+        fn mkfile(dir: &mut TestDir, path: &[String], data: Bytes) -> Result<()> {
+            if let Some((first, rest)) = path.split_first() {
+                if rest.is_empty() {
+                    dir.insert(first.clone(), TestDirEntry::File(data));
+                } else if let TestDirEntry::Directory(child) = dir
+                    .entry(first.clone())
+                    .or_insert_with(|| TestDirEntry::Directory(Default::default()))
+                {
+                    mkfile(child, rest, data)?;
+                } else {
+                    anyhow::bail!("not a directory");
+                }
+            }
+            Ok(())
+        }
+
+        let reference = stream
+            .try_fold(TestDir::default(), move |mut agg, (path, item)| {
+                let resolver = resolver.clone();
+                async move {
+                    if item.is_dir() {
+                        mkdir(&mut agg, path.tail())?;
+                    } else {
+                        let reader = item.pretty(resolver.clone(), OutMetrics::default())?;
+                        let data = read_to_vec(reader).await?;
+                        mkfile(&mut agg, path.tail(), data.into())?;
+                    }
+                    Ok(agg)
+                }
+            })
+            .await?;
+        Ok(reference)
+    }
+
+    /// a roundtrip test that converts a dir to an unixfs DAG and back
+    async fn dir_roundtrip_test(dir: TestDir) -> Result<bool> {
+        let directory = build_directory("", &dir).await?;
+        let stream = directory.encode();
+        let (root, resolver) = stream_to_resolver(stream).await?;
+        let stream = resolver.resolve_recursive_with_paths(crate::resolver::Path::from_cid(root));
+        let reference = build_testdir(stream, resolver).await?;
+        Ok(dir == reference)
+    }
+
+    /// sync version of dir_roundtrip_test for use in proptest
+    fn dir_roundtrip_test_sync(dir: TestDir) -> bool {
+        futures::executor::block_on(dir_roundtrip_test(dir)).unwrap()
+    }
+
+    /// a roundtrip test that converts a file to an unixfs DAG and back
+    async fn file_roundtrip_test(data: Bytes, chunk_size: usize, degree: usize) -> Result<bool> {
+        let mut builder = FileBuilder::new();
+        builder
+            .name("file.bin")
+            .chunk_size(chunk_size)
+            .degree(degree)
+            .content_bytes(data.clone());
+        let file = builder.build().await?;
+        let stream = file.encode().await?;
+        let (root, resolver) = stream_to_resolver(stream).await?;
+        let out = resolver
+            .resolve(crate::resolver::Path::from_cid(root))
+            .await?;
+        let t = read_to_vec(out.pretty(resolver, OutMetrics::default())?).await?;
+        println!("{}", data.len());
+        Ok(t == data)
+    }
+
+    /// sync version of file_roundtrip_test for use in proptest
+    fn file_roundtrip_test_sync(data: Bytes, chunk_size: usize, degree: usize) -> bool {
+        let f = file_roundtrip_test(data, chunk_size, degree);
+        futures::executor::block_on(f).unwrap()
+    }
+
+    fn arb_test_dir() -> impl Strategy<Value = TestDir> {
+        // create an arbitrary nested directory structure
+        fn arb_dir_entry() -> impl Strategy<Value = TestDirEntry> {
+            let leaf = any::<Vec<u8>>().prop_map(|x| TestDirEntry::File(Bytes::from(x)));
+            leaf.prop_recursive(3, 64, 10, |inner| {
+                prop::collection::btree_map(".*", inner, 0..10).prop_map(TestDirEntry::Directory)
+            })
+        }
+        prop::collection::btree_map(".*", arb_dir_entry(), 0..10)
+    }
+
+    fn arb_degree() -> impl Strategy<Value = usize> {
+        // use either the smallest possible degree for complex tree structures, or the default value for realism
+        prop_oneof![Just(2), Just(DEFAULT_DEGREE)]
+    }
+
+    fn arb_chunk_size() -> impl Strategy<Value = usize> {
+        // use either the smallest possible chunk size for complex tree structures, or the default value for realism
+        prop_oneof![Just(1), Just(DEFAULT_CHUNKS_SIZE)]
+    }
+
+    proptest! {
+        #[test]
+        fn test_file_roundtrip(data in proptest::collection::vec(any::<u8>(), 0usize..1024), chunk_size in arb_chunk_size(), degree in arb_degree()) {
+            assert!(file_roundtrip_test_sync(data.into(), chunk_size, degree));
+        }
+
+        #[test]
+        fn test_dir_roundtrip(data in arb_test_dir()) {
+            assert!(dir_roundtrip_test_sync(data));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_builder_roundtrip_complex_tree_1() -> Result<()> {
+        // fill with random data so we get distinct cids for all blocks
+        let mut rng = ChaCha8Rng::from_seed([0; 32]);
+        let mut data = vec![0u8; 1024 * 128];
+        rng.fill(data.as_mut_slice());
+        assert!(file_roundtrip_test(data.into(), 1024, 4).await?);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_builder_roundtrip_128m() -> Result<()> {
+        // fill with random data so we get distinct cids for all blocks
+        let mut rng = ChaCha8Rng::from_seed([0; 32]);
+        let mut data = vec![0u8; 128 * 1024 * 1024];
+        rng.fill(data.as_mut_slice());
+        assert!(file_roundtrip_test(data.into(), DEFAULT_CHUNKS_SIZE, DEFAULT_DEGREE).await?);
         Ok(())
     }
 
@@ -786,13 +1008,21 @@ mod tests {
 
         let expected = Directory {
             name: String::from(dir.clone().file_name().and_then(|s| s.to_str()).unwrap()),
-            entries: vec![Entry::Directory(nested_dir), Entry::File(file)],
+            entries: vec![Entry::File(file), Entry::Directory(nested_dir)],
         };
 
-        let got = make_dir_from_path(dir, true).await?;
+        let mut got = make_dir_from_path(dir, true).await?;
+
+        // Before comparison sort entries to make test deterministic.
+        // The readdir_r function is used in the underlying platform which
+        // gives no guarantee to return in a specific order.
+        // https://stackoverflow.com/questions/40021882/how-to-sort-readdir-iterator
+        got.entries.sort_by_key(|entry| match entry {
+            Entry::Directory(dir) => dir.name.clone(),
+            Entry::File(file) => file.name.clone(),
+        });
 
         assert_eq!(expected, got);
-
         Ok(())
     }
 }
