@@ -235,13 +235,13 @@ impl NodeBehaviour {
 
     /// Send a request for data over bitswap
     pub fn want_block(
-        &mut self,
+        &self,
         _ctx: u64,
         cid: Cid,
         _providers: HashSet<PeerId>,
         chan: OneShotSender<Result<Block, String>>,
     ) -> Result<()> {
-        if let Some(bs) = self.bitswap.as_mut() {
+        if let Some(bs) = self.bitswap.as_ref() {
             let client = bs.client().clone();
             tokio::task::spawn(async move {
                 match client.get_block(&cid).await {
@@ -261,6 +261,20 @@ impl NodeBehaviour {
             bail!("no bitswap available");
         }
     }
+
+    pub fn notify_new_blocks(
+        &self,
+        blocks: Vec<Block>,
+    ) {
+        if let Some(bs) = self.bitswap.as_ref() {
+            let client = bs.client().clone();
+            tokio::task::spawn(async move {
+                if let Err(err) = client.notify_new_blocks(&blocks).await {
+                    warn!("failed to notify bitswap about blocks: {:?}", err);
+                }
+            });
+        }
+    }        
 
     pub fn finish_query(&mut self, id: &libp2p::kad::QueryId) {
         if let Some(kad) = self.kad.as_mut() {

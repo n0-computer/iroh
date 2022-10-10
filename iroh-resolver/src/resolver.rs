@@ -627,71 +627,16 @@ impl ContentLoader for Client {
             }
         }
 
-        let mut providers_stream = ctx.load_providers(self, &cid).await?;
-        let p2p = self.try_p2p()?.clone();
-        let providers = ctx.providers().await;
-        let ctx = ctx.clone();
-        let ctx_id = ctx.id();
-
-        let mut seen_providers = providers.clone();
-        let (s, mut r) = tokio::sync::oneshot::channel();
-        let providers_task = tokio::spawn(async move {
-            let mut num_new_providers = 0;
-            loop {
-                tokio::select! {
-                    _ = &mut r => {
-                        // shutdown
-                        break;
-                    }
-                    new_providers = providers_stream.next() => {
-                        match new_providers {
-                            Some(Ok(new_providers)) => {
-                                let actual_new_providers: HashSet<_> =
-                                    new_providers.difference(&seen_providers).copied().collect();
-                                if !actual_new_providers.is_empty() {
-                                    info!(
-                                        "{:?} found providers {} for: {}",
-                                        ctx_id,
-                                        actual_new_providers.len(),
-                                        cid
-                                    );
-                                    num_new_providers += actual_new_providers.len();
-                                    seen_providers.extend(actual_new_providers.clone());
-                                    // update cache
-                                    ctx.put_providers(cid, actual_new_providers.clone()).await;
-                                }
-                            }
-                            Some(Err(e)) => {
-                                warn!("{:?} provider fetch failed for: {}: {:?}", ctx.id(), cid, e);
-                                // ignoring errors, as we try to collect as many providers as possible
-                            }
-                            None => {
-                                // stream is done
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-            trace!(
-                "{:?} finished fetching providers, total found {}",
-                ctx.id(),
-                num_new_providers,
-            );
-        });
-
         // launch fetching using the initial set of cached providers
         let bytes = self
             .try_p2p()?
-            .fetch_bitswap(ctx_id.into(), cid, providers)
+            .fetch_bitswap(ctx.id().into(), cid, Default::default())
             .await?;
-
-        // shutdown providers
-        s.send(()).ok();
 
         // trigger storage in the background
         let clone = bytes.clone();
         let store = self.store.as_ref().cloned();
+        let p2p = self.try_p2p()?.clone();
 
         tokio::spawn(async move {
             let clone2 = clone.clone();
@@ -703,25 +648,26 @@ impl ContentLoader for Client {
             let len = clone.len();
             let links_len = links.len();
             if let Some(store_rpc) = store.as_ref() {
-                match store_rpc.put(cid, clone, links).await {
+                match store_rpc.put(cid, clone.clone(), links).await {
                     Ok(_) => {
                         debug!(
-                            "{:?} stored {} ({}bytes, {}links)",
-                            ctx_id, cid, len, links_len
-                        )
+                            "stored {} ({}bytes, {}links)",
+                            cid, len, links_len
+                        );
+
+                        // Notify bitswap about new blocks
+                        p2p.notify_new_blocks_bitswap(vec![(cid, clone)]).await.ok();
                     }
                     Err(err) => {
-                        warn!("{:?} failed to store {}: {:?}", ctx_id, cid, err);
+                        warn!("failed to store {}: {:?}", cid, err);
                     }
                 }
             } else {
-                warn!("{:?} failed to store: missing store rpc conn", ctx_id);
+                warn!("failed to store: missing store rpc conn");
             }
         });
 
         trace!("retrieved from p2p");
-        // makes sure we properly shutdown
-        providers_task.await?;
 
         Ok(LoadedCid {
             data: bytes,

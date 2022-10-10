@@ -12,6 +12,7 @@ service P2p {
   rpc FetchProviderDht(Key) returns (stream Providers) {}
   rpc FetchProviderBitswap(BitswapKey) returns (stream BitswapProviders) {}
   rpc InjectProviderBitswap(BitswapRequest) returns (google.protobuf.Empty) {}
+  rpc NotifyNewBlocksBitswap(NotifyNewBlocksBitswapRequest) returns (google.protobuf.Empty) {}
   rpc StartProviding(Key) returns (google.protobuf.Empty) {}
   rpc StopProviding(Key) returns (google.protobuf.Empty) {}
   rpc GetListeningAddrs(google.protobuf.Empty) returns (GetListeningAddrsResponse) {}
@@ -69,6 +70,16 @@ message Key {
 message BitswapKey {
   bytes key = 1;
   uint64 ctx = 2;
+}
+
+message NotifyNewBlocksBitswapRequest {
+  // Serialized CID of the requested block.
+  repeated BitswapBlock blocks = 1;
+}
+
+message BitswapBlock {
+  bytes cid = 1;
+  bytes data = 2;
 }
 
 message GetListeningAddrsResponse {
@@ -152,4 +163,5 @@ message GossipsubTopicsResponse {
   // List of topics
   repeated string topics = 1;
 }
+
 

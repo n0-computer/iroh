@@ -20,6 +20,7 @@ use tracing::trace;
 use async_trait::async_trait;
 use iroh_bitswap::Block;
 use iroh_rpc_types::p2p::{
+    NotifyNewBlocksBitswapRequest,
     BitswapKey, BitswapProviders, BitswapRequest, BitswapResponse, ConnectRequest, ConnectResponse,
     DisconnectRequest, GetListeningAddrsResponse, GetPeersResponse, GossipsubAllPeersResponse,
     GossipsubPeerAndTopics, GossipsubPeerIdMsg, GossipsubPeersResponse, GossipsubPublishRequest,
@@ -160,6 +161,26 @@ impl RpcP2p for P2p {
 
         self.sender.send(msg).await?;
         r.await?.context("bitswap inject provider")?;
+
+        Ok(())
+    }
+
+
+    #[tracing::instrument(skip(self, req))]
+    async fn notify_new_blocks_bitswap(&self, req: NotifyNewBlocksBitswapRequest) -> Result<()> {
+        let blocks = req.blocks.into_iter().map(|block| {
+            let cid = Cid::read_bytes(io::Cursor::new(block.cid))?;
+            Ok(Block::new(block.data, cid))
+        }).collect::<Result<Vec<Block>>>()?;
+
+        let (s, r) = oneshot::channel();
+        let msg = RpcMessage::BitswapNotifyNewBlocks {
+            blocks,
+            response_channel: s,
+        };
+
+        self.sender.send(msg).await?;
+        r.await?.context("bitswap notify new blocks")?;
 
         Ok(())
     }
@@ -476,6 +497,10 @@ pub enum RpcMessage {
         cid: Cid,
         response_channel: oneshot::Sender<Result<()>>,
         providers: HashSet<PeerId>,
+    },
+    BitswapNotifyNewBlocks {
+        blocks: Vec<Block>,
+        response_channel: oneshot::Sender<Result<()>>,
     },
     ProviderRequest {
         key: ProviderRequestKey,

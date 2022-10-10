@@ -1,7 +1,7 @@
 use std::{fmt::Debug, sync::Arc, time::Duration};
 
 use ahash::{AHashMap, AHashSet};
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, Result};
 use cid::Cid;
 use iroh_metrics::{bitswap::BitswapMetrics, record};
 use libp2p::PeerId;

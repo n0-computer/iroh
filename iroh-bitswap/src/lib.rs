@@ -68,6 +68,8 @@ pub struct Bitswap<S: Store> {
             >,
         >,
     >,
+    /// Set to true when dialing should be disabled because we have reached the conn limit.
+    pause_dialing: bool,
     client: Client<S>,
     server: Server<S>,
     futures: Arc<Mutex<FuturesUnordered<BoxFuture<'static, ()>>>>,
@@ -131,6 +133,7 @@ impl<S: Store> Bitswap<S> {
             idle_timeout: config.idle_timeout,
             peers: Default::default(),
             dials: Default::default(),
+            pause_dialing: false,
             server,
             client,
             futures: Arc::new(Mutex::new(FuturesUnordered::new())),
@@ -316,6 +319,7 @@ impl<S: Store> NetworkBehaviour for Bitswap<S> {
         if self.get_peer_state(peer_id) == PeerState::Disconnected {
             self.set_peer_state(peer_id, PeerState::Connected(*connection));
         }
+        self.pause_dialing = false;
     }
 
     fn inject_connection_closed(
@@ -326,6 +330,7 @@ impl<S: Store> NetworkBehaviour for Bitswap<S> {
         _handler: <Self::ConnectionHandler as IntoConnectionHandler>::Handler,
         remaining_established: usize,
     ) {
+        self.pause_dialing = false;
         if remaining_established == 0 {
             // debug!("connection closed {}", peer_id);
             if self.get_peer_state(peer_id) == PeerState::Disconnected {
@@ -342,6 +347,9 @@ impl<S: Store> NetworkBehaviour for Bitswap<S> {
         error: &DialError,
     ) {
         if let Some(peer_id) = peer_id {
+            if let DialError::ConnectionLimit(_) = error {
+                self.pause_dialing = true;
+            }
             debug!("inject_dial_failure {}, {:?}", peer_id, error);
             let dials = &mut self.dials.lock().unwrap();
             if let Some(mut dials) = dials.remove(&peer_id) {
@@ -406,12 +414,11 @@ impl<S: Store> NetworkBehaviour for Bitswap<S> {
                 Poll::Pending => return Poll::Pending,
                 Poll::Ready(ev) => match ev {
                     OutEvent::Dial(peer, response) => {
-                        tracing::debug!(
-                            "{} dials, {} peers",
-                            self.dials.lock().unwrap().len(),
-                            self.peers.lock().unwrap().len()
-                        );
-
+                        if self.pause_dialing {
+                            // already connected
+                            response.send(Err("Dialing paused".to_string())).ok();
+                            continue;
+                        }
                         match self.get_peer_state(&peer) {
                             PeerState::Responsive(conn, protocol_id) => {
                                 // already connected
