@@ -7,9 +7,8 @@ use crate::fixture::get_fixture_api;
 use crate::p2p::{run_command as run_p2p_command, P2p};
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use iroh::{Api, Iroh};
+use iroh::{Api, CidOrDomain, IpfsPath, Iroh};
 use iroh_metrics::config::Config as MetricsConfig;
-use iroh_resolver::resolver;
 use iroh_rpc_client::Client;
 use iroh_util::{iroh_config_path, make_config};
 
@@ -56,7 +55,7 @@ enum Commands {
     )]
     Get {
         /// CID or CID/with/path/qualifier to get
-        path: resolver::Path,
+        path: IpfsPath,
         /// filesystem path to write to. Defaults to CID
         output: Option<PathBuf>,
     },
@@ -130,7 +129,7 @@ impl Cli {
                 println!("/ipfs/{}", cid);
             }
             Commands::Get { path, output } => {
-                let cid = if let resolver::CidOrDomain::Cid(cid) = path.root() {
+                let cid = if let CidOrDomain::Cid(cid) = path.root() {
                     cid
                 } else {
                     return Err(anyhow::anyhow!("ipfs path must refer to a CID"));
