@@ -317,7 +317,7 @@ impl MessageQueue {
             wants.cancels.remove(cid);
         }
 
-        if let Err(err) = self.inner.outgoing_work_sender.send(Instant::now()).await {
+        if let Err(err) = self.inner.outgoing_work_sender.try_send(Instant::now()) {
             warn!("unable to send outgoing work: {:?}", err);
         }
     }
@@ -379,7 +379,7 @@ impl MessageQueue {
 
         // Schedule a message send
         if work_ready {
-            if let Err(err) = self.inner.outgoing_work_sender.send(Instant::now()).await {
+            if let Err(err) = self.inner.outgoing_work_sender.try_send(Instant::now()) {
                 warn!("unable to send outgoing work: {:?}", err);
             }
         }
@@ -509,7 +509,7 @@ async fn send_message(
     // If the message was too big and only a subset of wants could be sent
     // schedule sending the rest of the wants in the next iteration of the event loop.
     if wants.lock().await.has_pending_work() {
-        outgoing_work_sender.send(Instant::now()).await.ok();
+        outgoing_work_sender.try_send(Instant::now()).ok();
     }
 }
 
