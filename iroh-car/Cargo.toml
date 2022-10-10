@@ -9,8 +9,8 @@ description = "Implementation the car files for iroh"
 
 [dependencies]
 cid = "0.8"
-ipld = { package = "libipld", version = "0.13"}
-ipld-cbor = { package = "libipld-cbor", version = "0.13" }
+ipld = { package = "libipld", version = "0.14"}
+ipld-cbor = { package = "libipld-cbor", version = "0.14" }
 thiserror = "1.0"
 futures = "0.3.21"
 integer-encoding = { version = "3.0", features = ["tokio_async"] }
