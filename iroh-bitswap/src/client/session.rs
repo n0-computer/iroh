@@ -6,7 +6,7 @@ use cid::Cid;
 use futures::FutureExt;
 use libp2p::PeerId;
 use tokio::{
-    sync::{broadcast, oneshot},
+    sync::{oneshot, Mutex},
     task::JoinHandle,
     time::{Instant, Sleep},
 };
@@ -60,7 +60,8 @@ struct Inner {
     incoming: async_channel::Sender<Op>,
     closer: oneshot::Sender<()>,
     worker: Option<JoinHandle<()>>,
-    notify: broadcast::Sender<Block>,
+    notify: async_broadcast::Sender<Block>,
+    workers: Mutex<Vec<(oneshot::Sender<()>, JoinHandle<()>)>>,
 }
 
 impl Session {
@@ -74,7 +75,7 @@ impl Session {
         session_interest_manager: SessionInterestManager,
         block_presence_manager: BlockPresenceManager,
         provider_query_manager: ProviderQueryManager,
-        notify: broadcast::Sender<Block>,
+        notify: async_broadcast::Sender<Block>,
         initial_search_delay: Duration,
         periodic_search_delay: Duration,
     ) -> Self {
@@ -194,6 +195,7 @@ impl Session {
             notify,
             closer: closer_s,
             worker: Some(worker),
+            workers: Mutex::new(Vec::new()),
         });
 
         Session { inner }
@@ -224,6 +226,15 @@ impl Session {
             .take()
             .ok_or_else(|| anyhow!("missing worker"))?
             .await?;
+
+        let mut workers = Mutex::into_inner(inner.workers);
+        while let Some((closer, worker)) = workers.pop() {
+            // finished get_blocks will have the receiver end dropped
+            // TODO: find a way to clean these up earlier
+            if closer.send(()).is_ok() {
+                worker.await?;
+            }
+        }
 
         inner.session_want_sender.stop().await?;
         debug!("session stopped");
@@ -286,27 +297,46 @@ impl Session {
 
         let (s, r) = async_channel::bounded(8);
         let mut remaining: AHashSet<Cid> = keys.iter().copied().collect();
-        let mut block_channel = self.inner.notify.subscribe();
+        let mut block_channel = self.inner.notify.new_receiver();
         let incoming = self.inner.incoming.clone();
-        let rt = tokio::runtime::Handle::current();
-        rt.spawn(async move {
-            while let Ok(block) = block_channel.recv().await {
-                let cid = *block.cid();
-                debug!("received wanted block {}", cid);
-                if remaining.contains(&cid) {
-                    match s.send(block).await {
-                        Ok(_) => {
-                            remaining.remove(&cid);
-                        }
-                        Err(_) => {
-                            // receiver dropped, shutdown
-                            break;
+        let (closer_s, mut closer_r) = oneshot::channel();
+        let worker = tokio::task::spawn(async move {
+            loop {
+                tokio::select! {
+                    _ = &mut closer_r => {
+                        // shutting down
+                        break;
+                    }
+                    maybe_block = block_channel.recv() => {
+                        match maybe_block {
+                            Ok(block) => {
+                                let cid = *block.cid();
+                                debug!("received wanted block {}", cid);
+                                if remaining.contains(&cid) {
+                                    match s.send(block).await {
+                                        Ok(_) => {
+                                            remaining.remove(&cid);
+                                        }
+                                        Err(_) => {
+                                            // receiver dropped, shutdown
+                                            break;
+                                        }
+                                    }
+                                }
+
+                                if remaining.is_empty() {
+                                    break;
+                                }
+                            }
+                            Err(async_broadcast::RecvError::Closed) => {
+                                break;
+                            }
+                            Err(async_broadcast::RecvError::Overflowed(n)) => {
+                                warn!("receiver is overflowing by {}", n);
+                                continue;
+                            }
                         }
                     }
-                }
-
-                if remaining.is_empty() {
-                    break;
                 }
             }
 
@@ -317,6 +347,7 @@ impl Session {
                 .ok();
         });
 
+        self.inner.workers.lock().await.push((closer_s, worker));
         self.inner.incoming.send(Op::Want(keys.to_vec())).await?;
 
         Ok(r)

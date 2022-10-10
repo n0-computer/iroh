@@ -10,7 +10,7 @@ use ahash::AHashMap;
 use anyhow::{anyhow, Result};
 use cid::Cid;
 use libp2p::PeerId;
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::RwLock;
 
 use crate::{network::Network, Block};
 
@@ -35,7 +35,7 @@ struct Inner {
     sessions: RwLock<AHashMap<u64, Session>>,
     session_index: AtomicU64,
     network: Network,
-    notify: broadcast::Sender<Block>,
+    notify: async_broadcast::Sender<Block>,
 }
 
 impl SessionManager {
@@ -46,7 +46,7 @@ impl SessionManager {
         peer_manager: PeerManager,
         provider_finder: ProviderQueryManager,
         network: Network,
-        notify: broadcast::Sender<Block>,
+        notify: async_broadcast::Sender<Block>,
     ) -> Self {
         SessionManager {
             inner: Arc::new(Inner {

@@ -1,9 +1,8 @@
 use std::{sync::Arc, time::Duration};
 
-use iroh_metrics::{core::MRecorder, record};
 use iroh_metrics::bitswap::BitswapMetrics;
 use iroh_metrics::inc;
-
+use iroh_metrics::{core::MRecorder, record};
 
 use ahash::AHashSet;
 use anyhow::Result;
@@ -11,8 +10,8 @@ use cid::Cid;
 use derivative::Derivative;
 use futures::{future::BoxFuture, FutureExt};
 use libp2p::PeerId;
-use tokio::sync::{broadcast, Mutex};
-use tracing::{debug, warn};
+use tokio::sync::Mutex;
+use tracing::{debug, error, warn};
 
 use crate::{block::Block, message::BitswapMessage, network::Network, Store};
 
@@ -79,7 +78,7 @@ pub struct Client<S: Store> {
     #[derivative(Debug = "ignore")]
     blocks_received_cb:
         Arc<Box<dyn Fn(PeerId, Vec<Block>) -> BoxFuture<'static, ()> + 'static + Send + Sync>>,
-    notify: broadcast::Sender<Block>,
+    notify: async_broadcast::Sender<Block>,
 }
 
 impl<S: Store> Client<S> {
@@ -97,13 +96,28 @@ impl<S: Store> Client<S> {
         let block_presence_manager = BlockPresenceManager::new();
         let peer_manager = PeerManager::new(self_id, network.clone());
         let provider_query_manager = ProviderQueryManager::new(network.clone()).await;
-        let (notify, mut default_receiver): (broadcast::Sender<Block>, broadcast::Receiver<Block>) =
-            broadcast::channel(64);
+        let (notify, mut default_receiver): (
+            async_broadcast::Sender<Block>,
+            async_broadcast::Receiver<Block>,
+        ) = async_broadcast::broadcast(64);
+        // ensure no blocking is generated
 
         // TODO: track task
         tokio::task::spawn(async move {
-            while let Ok(block) = default_receiver.recv().await {
-                debug!("received block {}", block.cid());
+            debug!("starting default receiver");
+            loop {
+                match default_receiver.recv().await {
+                    Ok(block) => {
+                        debug!("received block {}", block.cid());
+                    }
+                    Err(async_broadcast::RecvError::Closed) => {
+                        debug!("shutting down default receiver");
+                        break;
+                    }
+                    Err(e) => {
+                        warn!("broadcast error: {:?}", e);
+                    }
+                }
             }
         });
 
@@ -182,8 +196,11 @@ impl<S: Store> Client<S> {
 
         // Publish the block to any Bitswap clients that had requested blocks.
         // (the sessions use this pubsub mechanism to inform clients of incoming blocks)
+
         for block in blocks {
-            self.notify.send(block.clone())?;
+            if let Err(err) = self.notify.broadcast(block.clone()).await {
+                error!("failed to broadcast block {}: {:?}", block.cid(), err);
+            }
         }
 
         Ok(())
@@ -220,7 +237,9 @@ impl<S: Store> Client<S> {
 
         // Publish the block
         for block in &wanted {
-            self.notify.send((*block).clone())?;
+            if let Err(err) = self.notify.broadcast((*block).clone()).await {
+                error!("failed to broadcast block {}: {:?}", block.cid(), err);
+            }
         }
         (self.blocks_received_cb)(*from, wanted.into_iter().cloned().collect());
 

@@ -20,9 +20,8 @@ use libp2p::core::connection::ConnectionId;
 use libp2p::core::ConnectedPoint;
 use libp2p::swarm::dial_opts::DialOpts;
 use libp2p::swarm::{
-    CloseConnection,
-    DialError, IntoConnectionHandler, NetworkBehaviour, NetworkBehaviourAction, NotifyHandler,
-    PollParameters,
+    CloseConnection, DialError, IntoConnectionHandler, NetworkBehaviour, NetworkBehaviourAction,
+    NotifyHandler, PollParameters,
 };
 use libp2p::{Multiaddr, PeerId};
 use message::BitswapMessage;
@@ -416,7 +415,10 @@ impl<S: Store> NetworkBehaviour for Bitswap<S> {
                 Poll::Ready(ev) => match ev {
                     OutEvent::Disconnect(peer_id, response) => {
                         response.send(()).ok();
-                        return Poll::Ready(NetworkBehaviourAction::CloseConnection { peer_id, connection: CloseConnection::All });
+                        return Poll::Ready(NetworkBehaviourAction::CloseConnection {
+                            peer_id,
+                            connection: CloseConnection::All,
+                        });
                     }
                     OutEvent::Dial(peer, response) => {
                         if self.pause_dialing {
@@ -578,12 +580,46 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_get_block() {
+    async fn test_get_1_block() {
+        get_block::<1>().await;
+    }
+
+    #[tokio::test]
+    async fn test_get_2_block() {
+        get_block::<2>().await;
+    }
+
+    #[tokio::test]
+    async fn test_get_4_block() {
+        get_block::<4>().await;
+    }
+
+    #[tokio::test]
+    async fn test_get_64_block() {
+        get_block::<64>().await;
+    }
+
+    #[tokio::test]
+    async fn test_get_65_block() {
+        get_block::<65>().await;
+    }
+
+    #[tokio::test]
+    async fn test_get_66_block() {
         tracing_subscriber::registry()
             .with(fmt::layer().pretty())
             .with(EnvFilter::from_default_env())
             .init();
 
+        get_block::<66>().await;
+    }
+
+    #[tokio::test]
+    async fn test_get_128_block() {
+        get_block::<128>().await;
+    }
+
+    async fn get_block<const N: usize>() {
         let (peer1_id, trans) = mk_transport();
         let store1 = TestStore::default();
         let bs1 = Bitswap::new(peer1_id, store1.clone(), Config::default()).await;
@@ -593,9 +629,15 @@ mod tests {
             }))
             .build();
 
-        let block = create_block_v1(&b"hello world"[..]);
-        let cid = *block.cid();
-        store1.store.write().await.insert(cid, block.clone());
+        let blocks = (0..N).map(|_| create_random_block_v1()).collect::<Vec<_>>();
+
+        for block in &blocks {
+            store1
+                .store
+                .write()
+                .await
+                .insert(*block.cid(), block.clone());
+        }
 
         let (tx, mut rx) = mpsc::channel::<Multiaddr>(1);
 
@@ -642,15 +684,23 @@ mod tests {
 
         {
             info!("peer2: fetching block");
-            // Should work, because retrieved
-            let received_block = swarm2_bs
-                .client()
-                .get_block(&cid)
-                .await
-                .expect("failed to get block");
+            let mut futs = Vec::new();
+            for block in &blocks {
+                let client = swarm2_bs.client().clone();
+                futs.push(async move {
+                    // Should work, because retrieved
+                    let received_block = client.get_block(block.cid()).await?;
 
-            assert_eq!(block, received_block);
-            info!("peer2: received block");
+                    info!("peer2: received block");
+                    Ok::<Block, anyhow::Error>(received_block)
+                });
+            }
+
+            let results = futures::future::join_all(futs).await;
+            for (block, result) in blocks.into_iter().zip(results.into_iter()) {
+                let received_block = result.unwrap();
+                assert_eq!(block, received_block);
+            }
         }
 
         info!("--shutting down peer1");
