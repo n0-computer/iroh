@@ -18,6 +18,7 @@ use iroh_util::{iroh_config_path, make_config};
 pub struct Cli {
     #[clap(long)]
     cfg: Option<PathBuf>,
+    /// Track metrics
     #[clap(long, action = clap::ArgAction::Set, default_value_t=true)]
     metrics: bool,
     #[clap(subcommand)]
