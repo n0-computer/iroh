@@ -139,6 +139,12 @@ impl Session {
             loop {
                 debug!("session {} tick", loop_state.id);
                 tokio::select! {
+                    biased;
+                    _ = &mut closer_r => {
+                        // Shutdown
+                        debug!("shutting down loop");
+                        break;
+                    }
                     oper = incoming_r.recv() => {
                         match oper {
                             Ok(Op::Receive(keys)) => {
@@ -171,11 +177,6 @@ impl Session {
                     _ = periodic_search_timer.tick() => {
                         // Periodically search for a random live want
                         loop_state.handle_periodic_search().await;
-                    }
-                    _ = &mut closer_r => {
-                        // Shutdown
-                        debug!("shutting down loop");
-                        break;
                     }
                 }
             }
@@ -303,6 +304,7 @@ impl Session {
         let worker = tokio::task::spawn(async move {
             loop {
                 tokio::select! {
+                    biased;
                     _ = &mut closer_r => {
                         // shutting down
                         break;
@@ -464,6 +466,11 @@ impl LoopState {
                 Ok(r) => {
                     loop {
                         tokio::select! {
+                            biased;
+                            _ = &mut closer_r => {
+                                // shutting downn
+                                break;
+                            }
                             Ok(provider) = r.recv() => {
                                 match provider {
                                     Ok(provider) => {
@@ -480,10 +487,6 @@ impl LoopState {
                                         warn!("provider error: {:?}", err);
                                     }
                                 }
-                            }
-                            _ = &mut closer_r => {
-                                // shutting downn
-                                break;
                             }
                             else => {
                                 break;

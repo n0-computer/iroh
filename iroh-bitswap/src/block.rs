@@ -3,7 +3,7 @@ use cid::Cid;
 use multihash::{Code, MultihashDigest};
 
 /// A wrapper around bytes with their `Cid`.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 pub struct Block {
     pub cid: Cid,
     pub data: Bytes,

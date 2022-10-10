@@ -650,10 +650,7 @@ impl ContentLoader for Client {
             if let Some(store_rpc) = store.as_ref() {
                 match store_rpc.put(cid, clone.clone(), links).await {
                     Ok(_) => {
-                        debug!(
-                            "stored {} ({}bytes, {}links)",
-                            cid, len, links_len
-                        );
+                        debug!("stored {} ({}bytes, {}links)", cid, len, links_len);
 
                         // Notify bitswap about new blocks
                         p2p.notify_new_blocks_bitswap(vec![(cid, clone)]).await.ok();

@@ -1,11 +1,13 @@
 /// A content loader implementation for iroh-one.
 use std::collections::HashSet;
 
-use futures::stream::StreamExt;
 use anyhow::Result;
 use async_trait::async_trait;
 use cid::Cid;
-use iroh_resolver::resolver::{parse_links, ContentLoader, LoadedCid, Source, IROH_STORE, LoaderContext};
+use futures::stream::StreamExt;
+use iroh_resolver::resolver::{
+    parse_links, ContentLoader, LoadedCid, LoaderContext, Source, IROH_STORE,
+};
 use iroh_rpc_client::Client as RpcClient;
 use tracing::{debug, trace, warn};
 

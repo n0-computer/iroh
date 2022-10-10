@@ -1,6 +1,9 @@
 use std::fmt;
 
-use prometheus_client::{metrics::{counter::Counter, gauge::Gauge}, registry::Registry};
+use prometheus_client::{
+    metrics::{counter::Counter, gauge::Gauge},
+    registry::Registry,
+};
 use tracing::error;
 
 use crate::{
@@ -230,18 +233,10 @@ impl Metrics {
         );
 
         let blocks_in = Counter::default();
-        sub_registry.register(
-            "blocks_in",
-            "",
-            Box::new(blocks_in.clone()),
-        );
+        sub_registry.register("blocks_in", "", Box::new(blocks_in.clone()));
 
         let blocks_out = Counter::default();
-        sub_registry.register(
-            "blocks_out",
-            "",
-            Box::new(blocks_out.clone()),
-        );
+        sub_registry.register("blocks_out", "", Box::new(blocks_out.clone()));
 
         Self {
             requests_total,

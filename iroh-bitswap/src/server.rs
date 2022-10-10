@@ -102,6 +102,7 @@ impl<S: Store> Server<S> {
             let handle = rt.spawn(async move {
                 loop {
                     tokio::select! {
+                        biased;
                         _ = &mut closer_r => {
                             // shutdown
                             break;
@@ -139,6 +140,7 @@ impl<S: Store> Server<S> {
                 let handle = rt.spawn(async move {
                     loop {
                         tokio::select! {
+                            biased;
                             _ = &mut closer_r => {
                                 // shutdown
                                 break;
@@ -170,6 +172,7 @@ impl<S: Store> Server<S> {
                     // originally spawns a limited amount of workers per key
                     loop {
                         tokio::select! {
+                            biased;
                             _ = &mut closer_r => {
                                 // shutdown
                                 break;

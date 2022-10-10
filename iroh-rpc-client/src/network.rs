@@ -8,9 +8,9 @@ use futures::{Stream, StreamExt};
 #[cfg(feature = "grpc")]
 use iroh_rpc_types::p2p::p2p_client::P2pClient as GrpcP2pClient;
 use iroh_rpc_types::p2p::{
-    BitswapKey, BitswapRequest, ConnectRequest, DisconnectRequest, GossipsubPeerAndTopics,
-    GossipsubPeerIdMsg, GossipsubPublishRequest, GossipsubTopicHashMsg, Key, P2p, P2pClientAddr,
-    P2pClientBackend, Providers, BitswapBlock, NotifyNewBlocksBitswapRequest,
+    BitswapBlock, BitswapKey, BitswapRequest, ConnectRequest, DisconnectRequest,
+    GossipsubPeerAndTopics, GossipsubPeerIdMsg, GossipsubPublishRequest, GossipsubTopicHashMsg,
+    Key, NotifyNewBlocksBitswapRequest, P2p, P2pClientAddr, P2pClientBackend, Providers,
 };
 use iroh_rpc_types::Addr;
 use libp2p::gossipsub::{MessageId, TopicHash};
@@ -92,15 +92,15 @@ impl P2pClient {
 
     /// Injects additional providers for the given CID
     #[tracing::instrument(skip(self))]
-    pub async fn notify_new_blocks_bitswap(
-        &self,
-        blocks: Vec<(Cid, Bytes)>,
-    ) -> Result<()> {
+    pub async fn notify_new_blocks_bitswap(&self, blocks: Vec<(Cid, Bytes)>) -> Result<()> {
         let req = NotifyNewBlocksBitswapRequest {
-            blocks: blocks.into_iter().map(|(cid, data)| BitswapBlock {
-                cid: cid.to_bytes(),
-                data,
-            }).collect(),
+            blocks: blocks
+                .into_iter()
+                .map(|(cid, data)| BitswapBlock {
+                    cid: cid.to_bytes(),
+                    data,
+                })
+                .collect(),
         };
 
         self.backend.notify_new_blocks_bitswap(req).await?;
@@ -441,7 +441,7 @@ mod tests {
         ) -> Result<tonic::Response<()>, tonic::Status> {
             todo!()
         }
-        
+
         async fn notify_new_blocks_bitswap(
             &self,
             _request: Request<NotifyNewBlocksBitswapRequest>,

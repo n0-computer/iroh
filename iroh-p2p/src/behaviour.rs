@@ -262,10 +262,7 @@ impl NodeBehaviour {
         }
     }
 
-    pub fn notify_new_blocks(
-        &self,
-        blocks: Vec<Block>,
-    ) {
+    pub fn notify_new_blocks(&self, blocks: Vec<Block>) {
         if let Some(bs) = self.bitswap.as_ref() {
             let client = bs.client().clone();
             tokio::task::spawn(async move {
@@ -274,7 +271,7 @@ impl NodeBehaviour {
                 }
             });
         }
-    }        
+    }
 
     pub fn finish_query(&mut self, id: &libp2p::kad::QueryId) {
         if let Some(kad) = self.kad.as_mut() {

@@ -154,6 +154,7 @@ impl DefaultScoreLedger {
 
             loop {
                 tokio::select! {
+                    biased;
                     _ = &mut closer_r => {
                         // shutdown
                         break;

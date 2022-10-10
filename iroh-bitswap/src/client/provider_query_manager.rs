@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Duration, collections::HashSet};
+use std::{collections::HashSet, sync::Arc, time::Duration};
 
 use anyhow::{anyhow, Result};
 use cid::Cid;
@@ -49,6 +49,7 @@ impl ProviderQueryManager {
             let worker = rt.spawn(async move {
                 loop {
                     tokio::select! {
+                        biased;
                         _ = &mut closer_r => {
                             // Shutdown
                             break;
@@ -61,6 +62,7 @@ impl ProviderQueryManager {
                                             let mut found_providers = HashSet::new();
                                             loop {
                                                 tokio::select! {
+                                                    biased;
                                                     _ = &mut closer_r => {
                                                         // Closing, break the both loops
                                                         return;
@@ -86,7 +88,7 @@ impl ProviderQueryManager {
                                                                             if let Err(err) = response.send(Ok(provider)).await {
                                                                                 warn!("failed to send dial response: {:?}", err);
                                                                             }
-                                                                        } 
+                                                                        }
                                                                     });
                                                                 }
 

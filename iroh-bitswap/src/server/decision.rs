@@ -8,7 +8,6 @@ use libp2p::PeerId;
 use tokio::{
     sync::{oneshot, Mutex, Notify, RwLock},
     task::JoinHandle,
-    time::Interval,
 };
 use tracing::{debug, error, info, warn};
 
@@ -169,6 +168,7 @@ impl<S: Store> Engine<S> {
             let handle = rt.spawn(async move {
                 loop {
                     tokio::select! {
+                        biased;
                         _ = &mut closer_r => {
                             break;
                         }
@@ -181,7 +181,6 @@ impl<S: Store> Engine<S> {
                         }
                         _ = ticker.tick() => {
                             // TODO: remove thaw_round is not used atm
-                            
                             // When a task is cancelled, the qeue may be "frozen"
                             // for a period of time. We periodically "thaw" the queue
                             // to make sure it doesn't get suck in a frozen state.
@@ -252,7 +251,6 @@ impl<S: Store> Engine<S> {
                                     queue: peer_task_queue.clone(),
                                     work_signal: work_signal.clone(),
                                 });
-                                
                                 if let Err(err) = outbox.send(envelope).await {
                                     error!("failed to deliver envelope: {:?}", err);
                                 }
@@ -307,7 +305,9 @@ impl<S: Store> Engine<S> {
         self.score_ledger.stop().await?;
 
         while let Some((closer, handle)) = self.workers.pop() {
-            closer.send(()).map_err(|e| anyhow!("failed to send close {:?}", e))?;
+            closer
+                .send(())
+                .map_err(|e| anyhow!("failed to send close {:?}", e))?;
             handle.await.map_err(|e| anyhow!("{:?}", e))?;
         }
 

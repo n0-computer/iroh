@@ -20,13 +20,12 @@ use tracing::trace;
 use async_trait::async_trait;
 use iroh_bitswap::Block;
 use iroh_rpc_types::p2p::{
-    NotifyNewBlocksBitswapRequest,
     BitswapKey, BitswapProviders, BitswapRequest, BitswapResponse, ConnectRequest, ConnectResponse,
     DisconnectRequest, GetListeningAddrsResponse, GetPeersResponse, GossipsubAllPeersResponse,
     GossipsubPeerAndTopics, GossipsubPeerIdMsg, GossipsubPeersResponse, GossipsubPublishRequest,
     GossipsubPublishResponse, GossipsubSubscribeResponse, GossipsubTopicHashMsg,
-    GossipsubTopicsResponse, Key as ProviderKey, Multiaddrs, P2p as RpcP2p, P2pServerAddr,
-    PeerIdResponse, Providers, VersionResponse,
+    GossipsubTopicsResponse, Key as ProviderKey, Multiaddrs, NotifyNewBlocksBitswapRequest,
+    P2p as RpcP2p, P2pServerAddr, PeerIdResponse, Providers, VersionResponse,
 };
 
 struct P2p {
@@ -165,13 +164,16 @@ impl RpcP2p for P2p {
         Ok(())
     }
 
-
     #[tracing::instrument(skip(self, req))]
     async fn notify_new_blocks_bitswap(&self, req: NotifyNewBlocksBitswapRequest) -> Result<()> {
-        let blocks = req.blocks.into_iter().map(|block| {
-            let cid = Cid::read_bytes(io::Cursor::new(block.cid))?;
-            Ok(Block::new(block.data, cid))
-        }).collect::<Result<Vec<Block>>>()?;
+        let blocks = req
+            .blocks
+            .into_iter()
+            .map(|block| {
+                let cid = Cid::read_bytes(io::Cursor::new(block.cid))?;
+                Ok(Block::new(block.data, cid))
+            })
+            .collect::<Result<Vec<Block>>>()?;
 
         let (s, r) = oneshot::channel();
         let msg = RpcMessage::BitswapNotifyNewBlocks {

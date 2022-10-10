@@ -103,6 +103,15 @@ impl PeerManager {
         }
 
         let peer_queue = peer_queues.get_mut(peer).unwrap();
+        if !peer_queue.is_running() {
+            // Restart if the queue was stopped, but not yet cleaned up.
+            *peer_queue = MessageQueue::new(
+                *peer,
+                self.inner.network.clone(),
+                self.inner.on_dont_have_timeout.read().await.clone(),
+            )
+            .await;
+        }
 
         // Inform the peer want manager that there's a new peer.
         peer_want_manager.add_peer(&peer_queue, peer).await;

@@ -184,6 +184,7 @@ impl SessionWantSender {
             // The main loop for processing incoming changes
             loop {
                 tokio::select! {
+                    biased;
                     _ = &mut closer_r => {
                         // shutdown
                         break;

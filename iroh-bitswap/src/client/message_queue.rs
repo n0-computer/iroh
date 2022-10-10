@@ -1,10 +1,13 @@
 use std::{
-    sync::Arc,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
     time::{Duration, Instant},
 };
 
 use ahash::{AHashMap, AHashSet};
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, ensure, Result};
 use cid::Cid;
 use futures::Future;
 use libp2p::PeerId;
@@ -31,13 +34,14 @@ pub struct MessageQueue {
     inner: Arc<Inner>,
     dh_timeout_manager: DontHaveTimeoutManager,
     pub(crate) wants: Arc<Mutex<Wants>>,
+    running: Arc<AtomicBool>,
 }
 
 #[derive(Debug)]
 struct Inner {
     responses: mpsc::Sender<Vec<Cid>>,
     closer: mpsc::Sender<()>,
-    worker: Option<JoinHandle<anyhow::Result<()>>>,
+    worker: Option<JoinHandle<()>>,
     outgoing_work_sender: mpsc::Sender<Instant>,
 }
 
@@ -188,18 +192,20 @@ impl MessageQueue {
         let send_timeout = config.send_timeout;
         let send_error_backoff = config.send_error_backof;
         let closer = closer_sender.clone();
+        let running = Arc::new(AtomicBool::new(true));
 
         let dhtm = dh_timeout_manager.clone();
         let wants_thread = wants.clone();
         let nt = network.clone();
         let outgoing_work_sender_thread = outgoing_work_sender.clone();
 
-        let rt = tokio::runtime::Handle::current();
-        let worker = rt.spawn(async move {
+        let running_thread = running.clone();
+        let worker = tokio::task::spawn(async move {
             let mut work_scheduled: Option<Instant> = None;
             let mut rebroadcast_timer = tokio::time::interval(config.rebroadcast_interval);
             let schedule_work = tokio::time::sleep(Duration::from_secs(0));
             tokio::pin!(schedule_work);
+            let running = running_thread;
             let wants = wants_thread;
             let dh_timeout_manager = dhtm;
             let network = nt;
@@ -213,6 +219,11 @@ impl MessageQueue {
 
             loop {
                 tokio::select! {
+                    biased;
+                    _ = closer_receiver.recv() => {
+                        info!("shutting down, close received");
+                        break;
+                    }
                     _ = rebroadcast_timer.tick() => {
                         debug!("rebroadcast wantlist: {}", peer);
                         rebroadcast_wantlist(
@@ -281,13 +292,10 @@ impl MessageQueue {
                             }
                         }
                     }
-                    _ = closer_receiver.recv() => {
-                        info!("shutting down, close received");
-                        break;
-                    }
                 }
             }
-            Ok(())
+
+            running.store(false, Ordering::Relaxed);
         });
 
         MessageQueue {
@@ -299,7 +307,12 @@ impl MessageQueue {
             }),
             dh_timeout_manager,
             wants,
+            running,
         }
+    }
+
+    pub fn is_running(&self) -> bool {
+        self.running.load(Ordering::Relaxed)
     }
 
     /// Add want-haves that are part of a broadcast to all connected peers.
@@ -400,20 +413,19 @@ impl MessageQueue {
 
     pub async fn stop(self) -> Result<()> {
         debug!("stopping message queue");
-        self.inner
-            .closer
-            .send(())
-            .await
-            .map_err(|e| anyhow!("failed to send close: {:?}", e))?;
-
-        Arc::try_unwrap(self.inner)
-            .map_err(|_| anyhow!("message queue refs not shutdown"))?
-            .worker
-            .take()
-            .ok_or_else(|| anyhow!("missing worker"))?
-            .await??;
+        if self.inner.closer.send(()).await.is_ok() {
+            Arc::try_unwrap(self.inner)
+                .map_err(|_| anyhow!("message queue refs not shutdown"))?
+                .worker
+                .take()
+                .ok_or_else(|| anyhow!("missing worker"))?
+                .await?;
+        }
         self.dh_timeout_manager.stop().await?;
-
+        ensure!(
+            self.running.load(Ordering::Relaxed) == false,
+            "failed to shutdown"
+        );
         Ok(())
     }
 }

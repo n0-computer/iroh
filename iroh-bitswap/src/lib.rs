@@ -13,8 +13,6 @@ use ahash::AHashMap;
 use anyhow::Result;
 use async_trait::async_trait;
 use cid::Cid;
-use futures::future::BoxFuture;
-use futures::stream::FuturesUnordered;
 use handler::{BitswapHandler, HandlerEvent};
 use libp2p::core::connection::ConnectionId;
 use libp2p::core::ConnectedPoint;
@@ -28,7 +26,7 @@ use message::BitswapMessage;
 use network::OutEvent;
 use protocol::{ProtocolConfig, ProtocolId};
 use tokio::sync::oneshot;
-use tracing::{debug, trace};
+use tracing::debug;
 
 use self::client::{Client, Config as ClientConfig};
 use self::network::Network;
@@ -47,8 +45,6 @@ mod server;
 pub mod peer_task_queue;
 pub use self::block::Block;
 pub use self::message::Priority;
-
-use iroh_metrics::core::MRecorder;
 
 #[derive(Debug, Clone)]
 pub struct Bitswap<S: Store> {
@@ -72,7 +68,6 @@ pub struct Bitswap<S: Store> {
     pause_dialing: bool,
     client: Client<S>,
     server: Server<S>,
-    futures: Arc<Mutex<FuturesUnordered<BoxFuture<'static, ()>>>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -136,7 +131,6 @@ impl<S: Store> Bitswap<S> {
             pause_dialing: false,
             server,
             client,
-            futures: Arc::new(Mutex::new(FuturesUnordered::new())),
         }
     }
 
@@ -194,38 +188,29 @@ impl<S: Store> Bitswap<S> {
         debug!("peer {} connected", peer);
         let client = self.client.clone();
         let server = self.server.clone();
-        // self.futures.lock().unwrap().push(
-        tokio::task::spawn(
-            async move {
-                client.peer_connected(&peer).await;
-                server.peer_connected(&peer).await;
-            }, // .boxed(),
-        );
+        tokio::task::spawn(async move {
+            client.peer_connected(&peer).await;
+            server.peer_connected(&peer).await;
+        });
     }
 
     fn peer_disconnected(&self, peer: PeerId) {
         debug!("peer {} disconnected", peer);
         let client = self.client.clone();
         let server = self.server.clone();
-        // self.futures.lock().unwrap().push(
-        tokio::task::spawn(
-            async move {
-                client.peer_disconnected(&peer).await;
-                server.peer_disconnected(&peer).await;
-            }, //.boxed(),
-        );
+        tokio::task::spawn(async move {
+            client.peer_disconnected(&peer).await;
+            server.peer_disconnected(&peer).await;
+        });
     }
 
     fn receive_message(&self, peer: PeerId, message: BitswapMessage) {
         let client = self.client.clone();
         let server = self.server.clone();
-        tokio::task::spawn(
-            // self.futures.lock().unwrap().push(
-            async move {
-                client.receive_message(&peer, &message).await;
-                server.receive_message(&peer, &message).await;
-            }, //.boxed(),
-        );
+        tokio::task::spawn(async move {
+            client.receive_message(&peer, &message).await;
+            server.receive_message(&peer, &message).await;
+        });
     }
 
     fn get_peer_state(&self, peer: &PeerId) -> PeerState {
@@ -405,10 +390,7 @@ impl<S: Store> NetworkBehaviour for Bitswap<S> {
         cx: &mut Context,
         _: &mut impl PollParameters,
     ) -> Poll<NetworkBehaviourAction<Self::OutEvent, Self::ConnectionHandler>> {
-        // poll local futures
-        // let _r = self.futures.lock().unwrap().poll_next_unpin(cx);
-
-        // limti work
+        // limit work
         for _ in 0..100 {
             match Pin::new(&mut self.network).poll(cx) {
                 Poll::Pending => return Poll::Pending,
@@ -490,7 +472,7 @@ mod tests {
     use libp2p::core::transport::upgrade::Version;
     use libp2p::core::transport::Boxed;
     use libp2p::identity::Keypair;
-    use libp2p::swarm::{SwarmBuilder, SwarmEvent};
+    use libp2p::swarm::SwarmBuilder;
     use libp2p::tcp::{GenTcpConfig, TokioTcpTransport};
     use libp2p::yamux::YamuxConfig;
     use libp2p::{noise, PeerId, Swarm, Transport};
@@ -619,6 +601,11 @@ mod tests {
         get_block::<128>().await;
     }
 
+    #[tokio::test]
+    async fn test_get_1024_block() {
+        get_block::<1024>().await;
+    }
+
     async fn get_block<const N: usize>() {
         let (peer1_id, trans) = mk_transport();
         let store1 = TestStore::default();
@@ -643,7 +630,6 @@ mod tests {
 
         Swarm::listen_on(&mut swarm1, "/ip4/127.0.0.1/tcp/0".parse().unwrap()).unwrap();
 
-        let swarm1_bs = swarm1.behaviour().clone();
         let peer1 = tokio::task::spawn(async move {
             while swarm1.next().now_or_never().is_some() {}
             let listeners: Vec<_> = Swarm::listeners(&swarm1).collect();
@@ -683,7 +669,8 @@ mod tests {
         });
 
         {
-            info!("peer2: fetching block");
+            info!("peer2: fetching block - ordered");
+            let blocks = blocks.clone();
             let mut futs = Vec::new();
             for block in &blocks {
                 let client = swarm2_bs.client().clone();
@@ -699,6 +686,29 @@ mod tests {
             let results = futures::future::join_all(futs).await;
             for (block, result) in blocks.into_iter().zip(results.into_iter()) {
                 let received_block = result.unwrap();
+                assert_eq!(block, received_block);
+            }
+        }
+
+        {
+            info!("peer2: fetching block - unordered");
+            let mut blocks = blocks.clone();
+            let futs = futures::stream::FuturesUnordered::new();
+            for block in &blocks {
+                let client = swarm2_bs.client().clone();
+                futs.push(async move {
+                    // Should work, because retrieved
+                    let received_block = client.get_block(block.cid()).await?;
+
+                    info!("peer2: received block");
+                    Ok::<Block, anyhow::Error>(received_block)
+                });
+            }
+
+            let mut results = futs.try_collect::<Vec<_>>().await.unwrap();
+            results.sort();
+            blocks.sort();
+            for (block, received_block) in blocks.into_iter().zip(results.into_iter()) {
                 assert_eq!(block, received_block);
             }
         }

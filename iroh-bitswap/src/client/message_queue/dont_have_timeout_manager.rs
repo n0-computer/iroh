@@ -102,6 +102,11 @@ impl DontHaveTimeoutManager {
             let inner = i;
 
             tokio::select! {
+                biased;
+                _ = &mut closer_r => {
+                    // shutdown
+                    return;
+                }
                 ping = network.ping(&target) => {
                     match ping {
                         Ok(latency) => {
@@ -124,10 +129,6 @@ impl DontHaveTimeoutManager {
                         }
                     }
                 }
-                _ = &mut closer_r => {
-                    // shutdown
-                    return;
-                }
             }
 
             let delay = tokio::time::sleep(DONT_HAVE_TIMEOUT);
@@ -135,6 +136,7 @@ impl DontHaveTimeoutManager {
 
             loop {
                 tokio::select! {
+                    biased;
                     _ = &mut closer_r => {
                         // Shutdown
                         break;
