@@ -101,6 +101,7 @@ impl<T: ContentLoader + std::marker::Unpin> Core<T> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
     use std::net::SocketAddr;
 
     use super::*;
@@ -223,7 +224,7 @@ mod tests {
                 cids.push(cid);
                 store.put(cid, bytes, vec![]).await.unwrap();
             }
-            (cids.last().unwrap().clone(), cids)
+            (*cids.last().unwrap(), cids)
         };
 
         // request the root cid as a recursive car
@@ -261,10 +262,14 @@ mod tests {
             .await;
 
         // match cids and content
-        assert_eq!(cids.clone().sort(), all_cids.clone().sort());
+        assert_eq!(cids.len(), all_cids.len());
+        assert_eq!(
+            HashSet::<_>::from_iter(cids.iter()),
+            HashSet::from_iter(all_cids.iter())
+        );
         assert_eq!(cids[0], root_cid);
         assert_eq!(nodes.len(), files.len() + 1);
-        assert_eq!(nodes[0].is_dir(), true);
+        assert!(nodes[0].is_dir());
         assert_eq!(
             nodes[0]
                 .links()
