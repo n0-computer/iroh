@@ -9,11 +9,13 @@ use std::time::Instant;
 use anyhow::{anyhow, bail, ensure, Context as _, Result};
 use async_trait::async_trait;
 use bytes::Bytes;
+use cid::multihash::{Code, MultihashDigest};
 use cid::Cid;
 use futures::{Future, Stream};
 use iroh_metrics::inc;
 use iroh_rpc_client::Client;
 use libipld::codec::{Decode, Encode};
+use libipld::error::{InvalidMultihash, UnsupportedMultihash};
 use libipld::prelude::Codec as _;
 use libipld::{Ipld, IpldCodec};
 use tokio::io::AsyncRead;
@@ -32,6 +34,52 @@ use crate::unixfs::{
 };
 
 pub const IROH_STORE: &str = "iroh-store";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Block {
+    cid: Cid,
+    data: Bytes,
+    links: Vec<Cid>,
+}
+
+impl Block {
+    pub fn new(cid: Cid, data: Bytes, links: Vec<Cid>) -> Self {
+        Self { cid, data, links }
+    }
+
+    pub fn cid(&self) -> &Cid {
+        &self.cid
+    }
+
+    pub fn data(&self) -> &Bytes {
+        &self.data
+    }
+
+    pub fn links(&self) -> &[Cid] {
+        &self.links
+    }
+
+    /// Validate the block. Will return an error if the hash or the links are wrong.
+    pub fn validate(&self) -> Result<()> {
+        // check that the cid is supported
+        let code = self.cid.hash().code();
+        let mh = Code::try_from(code)
+            .map_err(|_| UnsupportedMultihash(code))?
+            .digest(&self.data);
+        // check that the hash matches the data
+        if mh.digest() != self.cid.hash().digest() {
+            return Err(InvalidMultihash(mh.to_bytes()).into());
+        }
+        // check that the links are complete
+        let links = parse_links(&self.cid, &self.data)?;
+        anyhow::ensure!(links == self.links, "links do not match");
+        Ok(())
+    }
+
+    pub fn into_parts(self) -> (Cid, Bytes, Vec<Cid>) {
+        (self.cid, self.data, self.links)
+    }
+}
 
 /// Represents an ipfs path.
 #[derive(Debug, Clone, PartialEq, Eq)]

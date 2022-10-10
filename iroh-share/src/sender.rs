@@ -69,11 +69,10 @@ impl Sender {
             let mut num_parts = 0;
             let mut root_cid = None;
             while let Some(part) = parts.next().await {
-                // TODO: store links in the store
-                let (cid, bytes) = part?;
+                let (cid, bytes, links) = part?.into_parts();
                 num_parts += 1;
                 root_cid = Some(cid);
-                store.put(cid, bytes, vec![]).await?;
+                store.put(cid, bytes, links).await?;
             }
             (root_cid.unwrap(), num_parts)
         };
