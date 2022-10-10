@@ -5,11 +5,7 @@ use std::path::PathBuf;
 use crate::config::{Config, CONFIG_FILE_NAME, ENV_PREFIX};
 #[cfg(feature = "testing")]
 use crate::fixture::get_fixture_api;
-use crate::{
-    gateway::{run_command as run_gateway_command, Gateway},
-    p2p::{run_command as run_p2p_command, P2p},
-    store::{run_command as run_store_command, Store},
-};
+use crate::p2p::{run_command as run_p2p_command, P2p};
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use iroh::{Api, Iroh};
@@ -48,8 +44,6 @@ enum Commands {
     },
     Version,
     P2p(P2p),
-    Store(Store),
-    Gateway(Gateway),
     #[clap(about = "break up a file into block and provide those blocks on the ipfs network")]
     Add {
         path: PathBuf,
@@ -130,8 +124,6 @@ impl Cli {
                 println!("v{}", env!("CARGO_PKG_VERSION"));
             }
             Commands::P2p(p2p) => run_p2p_command(&api.p2p()?, p2p).await?,
-            Commands::Store(store) => run_store_command(&api.store()?, store).await?,
-            Commands::Gateway(gateway) => run_gateway_command(gateway).await?,
             Commands::Add {
                 path,
                 recursive,
