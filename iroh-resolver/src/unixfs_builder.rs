@@ -675,9 +675,12 @@ mod tests {
         stream: impl Stream<Item = Result<Block>>,
     ) -> Result<(Cid, Resolver<Arc<fnv::FnvHashMap<Cid, Bytes>>>)> {
         tokio::pin!(stream);
-        let items: Vec<_> = stream.try_collect().await?;
-        let root_block = items.last().context("no root")?.clone();
-        let store: fnv::FnvHashMap<Cid, Bytes> = items
+        let blocks: Vec<_> = stream.try_collect().await?;
+        for block in &blocks {
+            block.validate()?;
+        }
+        let root_block = blocks.last().context("no root")?.clone();
+        let store: fnv::FnvHashMap<Cid, Bytes> = blocks
             .into_iter()
             .map(|block| {
                 let (cid, bytes, _) = block.into_parts();
