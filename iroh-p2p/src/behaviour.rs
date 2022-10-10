@@ -214,29 +214,28 @@ impl NodeBehaviour {
         })
     }
 
-    /// Send a block have to a peer over bitswap
-    pub fn send_have_block(&mut self, peer_id: &PeerId, cid: Cid) -> Result<()> {
-        // if let Some(bs) = self.bitswap.as_mut() {
-        //     bs.send_have_block(peer_id, cid);
-        // }
-        Ok(())
-    }
-
-    pub fn find_providers(&mut self, ctx: u64, cid: Cid, priority: Priority) -> Result<()> {
-        // if let Some(bs) = self.bitswap.as_mut() {
-        //     bs.find_providers(ctx, cid, priority);
-        // }
-        Ok(())
-    }
-
     pub fn is_bad_peer(&self, peer_id: &PeerId) -> bool {
         self.peer_manager.is_bad_peer(peer_id)
+    }
+
+    pub fn destroy_session(&self, ctx: u64) -> Result<()> {
+        if let Some(bs) = self.bitswap.as_ref() {
+            let client = bs.client().clone();
+            tokio::task::spawn(async move {
+                if let Err(err) = client.stop_session(ctx).await {
+                    warn!("failed to stop session {}: {:?}", ctx, err);
+                }
+            });
+            Ok(())
+        } else {
+            bail!("no bitswap available");
+        }
     }
 
     /// Send a request for data over bitswap
     pub fn want_block(
         &self,
-        _ctx: u64,
+        ctx: u64,
         cid: Cid,
         _providers: HashSet<PeerId>,
         chan: OneShotSender<Result<Block, String>>,
@@ -244,7 +243,7 @@ impl NodeBehaviour {
         if let Some(bs) = self.bitswap.as_ref() {
             let client = bs.client().clone();
             tokio::task::spawn(async move {
-                match client.get_block(&cid).await {
+                match client.get_block_with_session_id(ctx, &cid).await {
                     Ok(block) => {
                         if let Err(e) = chan.send(Ok(block)) {
                             warn!("failed to send block response: {:?}", e);

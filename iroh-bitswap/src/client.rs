@@ -177,6 +177,20 @@ impl<S: Store> Client<S> {
         block
     }
 
+    pub async fn get_block_with_session_id(&self, session_id: u64, key: &Cid) -> Result<Block> {
+        let session = self.get_or_create_session(session_id).await;
+        session.get_block(key).await
+    }
+
+    pub async fn get_blocks_with_session_id(
+        &self,
+        session_id: u64,
+        keys: &[Cid],
+    ) -> Result<async_channel::Receiver<Block>> {
+        let session = self.get_or_create_session(session_id).await;
+        session.get_blocks(keys).await
+    }
+
     /// Returns a channel where the caller may receive blocks that correspond to the
     /// provided `keys`.
     pub async fn get_blocks(&self, keys: &[Cid]) -> Result<async_channel::Receiver<Block>> {
@@ -341,6 +355,24 @@ impl<S: Store> Client<S> {
         self.session_manager
             .new_session(self.provider_search_delay, self.rebroadcast_delay)
             .await
+    }
+
+    pub async fn get_or_create_session(&self, session_id: u64) -> Session {
+        self.session_manager
+            .get_or_create_session(
+                session_id,
+                self.provider_search_delay,
+                self.rebroadcast_delay,
+            )
+            .await
+    }
+
+    pub async fn stop_session(&self, session_id: u64) -> Result<()> {
+        if let Some(session) = self.session_manager.get_session(session_id).await {
+            session.stop().await?;
+        }
+
+        Ok(())
     }
 
     /// Returns aggregated statistics about bitswap operations.

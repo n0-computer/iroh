@@ -88,12 +88,22 @@ impl SessionManager {
         provider_search_delay: Duration,
         rebroadcast_delay: Duration,
     ) -> Session {
-        let id = self.get_next_session_id();
-        let session_peer_manager = SessionPeerManager::new(id, self.inner.network.clone());
+        let id = self.get_next_session_id().await;
+        self.new_session_with_id(id, provider_search_delay, rebroadcast_delay)
+            .await
+    }
+
+    async fn new_session_with_id(
+        &self,
+        session_id: u64,
+        provider_search_delay: Duration,
+        rebroadcast_delay: Duration,
+    ) -> Session {
+        let session_peer_manager = SessionPeerManager::new(session_id, self.inner.network.clone());
 
         let session = Session::new(
             self.inner.self_id,
-            id,
+            session_id,
             self.clone(),
             self.inner.peer_manager.clone(),
             session_peer_manager,
@@ -111,8 +121,26 @@ impl SessionManager {
             .sessions
             .write()
             .await
-            .insert(id, session.clone());
+            .insert(session_id, session.clone());
         session
+    }
+
+    pub async fn get_or_create_session(
+        &self,
+        session_id: u64,
+        provider_search_delay: Duration,
+        rebroadcast_delay: Duration,
+    ) -> Session {
+        if let Some(session) = self.inner.sessions.read().await.get(&session_id) {
+            return session.clone();
+        }
+
+        self.new_session_with_id(session_id, provider_search_delay, rebroadcast_delay)
+            .await
+    }
+
+    pub async fn get_session(&self, session_id: u64) -> Option<Session> {
+        self.inner.sessions.read().await.get(&session_id).cloned()
     }
 
     pub async fn remove_session(&self, session_id: u64) -> Result<()> {
@@ -128,8 +156,15 @@ impl SessionManager {
     }
 
     /// Returns the next sequential identifier for a session.
-    pub fn get_next_session_id(&self) -> u64 {
-        self.inner.session_index.fetch_add(1, Ordering::SeqCst)
+    pub async fn get_next_session_id(&self) -> u64 {
+        // check that we didn't already use the current one
+        for _ in 0..1000 {
+            let id = self.inner.session_index.fetch_add(1, Ordering::SeqCst);
+            if !self.inner.sessions.read().await.contains_key(&id) {
+                return id;
+            }
+        }
+        panic!("unable to retrieve a valid session id after 1000 iterations");
     }
 
     pub async fn receive_from(
