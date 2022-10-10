@@ -12,7 +12,7 @@ fn fixture_lookup() -> MockApi {
     api.expect_p2p().returning(|| {
         let mut mock_p2p = MockP2p::default();
 
-        mock_p2p.expect_lookup().returning(|addr| {
+        mock_p2p.expect_lookup().returning(|_addr| {
             let peer_id = "1AXRDqR8jTkwzGqyu3qknicAC5X578zTMxhAi2brppK2bB"
                 .parse::<PeerId>()
                 .unwrap();

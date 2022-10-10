@@ -35,7 +35,7 @@ pub trait P2p: Sync {
 
 #[async_trait]
 impl<'a> P2p for ClientP2p<'a> {
-    async fn lookup(&self, addr: &PeerIdOrAddr) -> Result<Lookup> {
+    async fn lookup(&self, _addr: &PeerIdOrAddr) -> Result<Lookup> {
         let (_, listen_addrs) = self.client.get_listening_addrs().await?;
         Ok(Lookup {
             peer_id: self.client.local_peer_id().await?,
