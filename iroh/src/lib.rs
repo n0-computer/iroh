@@ -1,4 +1,5 @@
 mod api;
+mod config;
 mod getadd;
 mod p2p;
 

@@ -5,8 +5,8 @@ use libp2p::{Multiaddr, PeerId};
 #[cfg(feature = "testing")]
 use mockall::automock;
 
-pub struct ClientP2p<'a> {
-    client: &'a P2pClient,
+pub struct ClientP2p {
+    client: P2pClient,
 }
 
 pub struct Lookup {
@@ -21,8 +21,8 @@ pub enum PeerIdOrAddr {
     Multiaddr(Multiaddr),
 }
 
-impl<'a> ClientP2p<'a> {
-    pub fn new(client: &'a P2pClient) -> Self {
+impl ClientP2p {
+    pub fn new(client: P2pClient) -> Self {
         Self { client }
     }
 }
@@ -34,7 +34,7 @@ pub trait P2p: Sync {
 }
 
 #[async_trait]
-impl<'a> P2p for ClientP2p<'a> {
+impl P2p for ClientP2p {
     /// XXX really should be an API that intos a peer id, and then also accepts
     /// an address, or two separate methods, one for peer id, one for address
     async fn lookup(&self, _addr: &PeerIdOrAddr) -> Result<Lookup> {

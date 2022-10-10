@@ -11,9 +11,12 @@ testing = ["dep:mockall"]
 
 [dependencies]
 cid = "0.8.5"
+config = "0.13.1"
+iroh-metrics = { path = "../iroh-metrics", default-features = false, features = ["rpc-grpc"] }
 iroh-resolver = { path = "../iroh-resolver" }
 iroh-rpc-types = { path = "../iroh-rpc-types" }
 iroh-rpc-client = { path = "../iroh-rpc-client" }
+iroh-util = { path = "../iroh-util" }
 anyhow = "1"
 async-trait = "0.1.53"
 tokio = { version = "1" }
@@ -23,5 +26,5 @@ tracing = "0.1.34"
 futures = "0.3.21"
 async-stream = "0.3.3"
 mockall = { version = "0.11.2", optional = true }
-
+serde = { version = "1.0", features = ["derive"] }
 

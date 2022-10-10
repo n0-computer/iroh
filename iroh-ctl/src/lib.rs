@@ -1,4 +1,3 @@
-pub mod config;
 #[cfg(feature = "testing")]
 mod fixture;
 pub mod metrics;

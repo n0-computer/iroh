@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use crate::config::{Config, CONFIG_FILE_NAME, ENV_PREFIX};
 #[cfg(feature = "testing")]
 use crate::fixture::get_fixture_api;
 use crate::p2p::{run_command as run_p2p_command, P2p};
@@ -9,8 +8,6 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use iroh::{Api, CidOrDomain, IpfsPath, Iroh};
 use iroh_metrics::config::Config as MetricsConfig;
-use iroh_rpc_client::Client;
-use iroh_util::{iroh_config_path, make_config};
 
 #[derive(Parser, Debug, Clone)]
 #[clap(version, about, long_about = None, propagate_version = true)]
@@ -85,27 +82,11 @@ impl Cli {
     // we inline this code inside of run.
     #[allow(unused)]
     async fn run_impl(&self) -> Result<()> {
-        let cfg_path = iroh_config_path(CONFIG_FILE_NAME)?;
-        let sources = vec![Some(cfg_path), self.cfg.clone()];
-        let config = make_config(
-            // default
-            Config::default(),
-            // potential config files
-            sources,
-            // env var prefix for this config
-            ENV_PREFIX,
-            // map of present command line arguments
-            self.make_overrides_map(),
-        )
-        .unwrap();
-
         let metrics_handler = iroh_metrics::MetricsHandle::new(MetricsConfig::default())
             .await
             .expect("failed to initialize metrics");
 
-        let client = Client::new(config.rpc_client).await?;
-
-        let api = Iroh::new(&client);
+        let api = Iroh::new(self.cfg.as_deref(), self.make_overrides_map()).await?;
 
         self.cli_command(&api).await?;
 
