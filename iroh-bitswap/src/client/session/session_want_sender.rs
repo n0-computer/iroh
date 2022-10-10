@@ -218,8 +218,12 @@ impl SessionWantSender {
 
     pub async fn stop(self) -> Result<()> {
         debug!("stopping session want sender");
-        let mut inner = Arc::try_unwrap(self.inner)
-            .map_err(|_| anyhow!("session want sender refs not shutdown"))?;
+        let mut inner = Arc::try_unwrap(self.inner).map_err(|inner| {
+            anyhow!(
+                "session want sender refs not shutdown ({} refs)",
+                Arc::strong_count(&inner)
+            )
+        })?;
         inner
             .closer
             .send(())

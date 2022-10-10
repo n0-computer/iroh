@@ -183,8 +183,6 @@ impl RpcP2p for P2p {
 
         Ok(Box::pin(r.map(|providers| {
             let providers = providers.map_err(|e| anyhow!(e))?;
-            dbg!(&providers);
-
             let providers = providers.into_iter().map(|p| p.to_bytes()).collect();
 
             Ok(Providers { providers })

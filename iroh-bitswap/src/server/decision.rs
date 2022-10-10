@@ -445,11 +445,6 @@ impl<S: Store> Engine<S> {
                 send_dont_have(&mut active_entries, &mut new_work_exists, entry);
             }
         }
-        debug!(
-            "{} new active tasks: {:?}",
-            active_entries.len(),
-            active_entries
-        );
 
         if !active_entries.is_empty() {
             self.peer_task_queue.push_tasks(*peer, active_entries).await;

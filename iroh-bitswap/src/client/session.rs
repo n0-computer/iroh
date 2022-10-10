@@ -212,8 +212,9 @@ impl Session {
             .remove_session(self.inner.id)
             .await?;
 
-        let mut inner =
-            Arc::try_unwrap(self.inner).map_err(|_| anyhow!("session refs not shutdown"))?;
+        let mut inner = Arc::try_unwrap(self.inner).map_err(|inner| {
+            anyhow!("session refs not shutdown ({})", Arc::strong_count(&inner))
+        })?;
         inner
             .closer
             .send(())
@@ -336,6 +337,7 @@ struct LoopState {
     idle_tick: Pin<Box<Sleep>>,
     base_tick_delay: Duration,
     initial_search_delay: Duration,
+    workers: Vec<(oneshot::Sender<()>, JoinHandle<()>)>,
 }
 
 impl LoopState {
@@ -364,10 +366,17 @@ impl LoopState {
             base_tick_delay: Duration::from_millis(500),
             initial_search_delay,
             idle_tick,
+            workers: Vec::new(),
         }
     }
 
-    async fn stop(self) -> Result<()> {
+    async fn stop(mut self) -> Result<()> {
+        while let Some((closer, worker)) = self.workers.pop() {
+            closer
+                .send(())
+                .map_err(|e| anyhow!("failed to shutdown worker: {:?}", e))?;
+            worker.await?;
+        }
         Ok(())
     }
 
@@ -401,7 +410,7 @@ impl LoopState {
     }
 
     /// Called periodically to search for providers of a randomly chosen CID in the sesssion.
-    async fn handle_periodic_search(&self) {
+    async fn handle_periodic_search(&mut self) {
         if let Some(random_want) = self.session_wants.random_live_want() {
             // TODO: come up with a better strategy for determining when to search
             // for new providers for blocks.
@@ -412,32 +421,41 @@ impl LoopState {
     }
 
     /// Attempts to find more peers for a session by searching for providers for the given cid.
-    async fn find_more_peers(&self, cid: &Cid) {
-        debug!("find_more_peers");
-        // TODO: track thread
+    async fn find_more_peers(&mut self, cid: &Cid) {
+        debug!("find_more_peers {}", cid);
         let sws = self.session_want_sender.clone();
         let cid = *cid;
         let provider_query_manager = self.provider_query_manager.clone();
-        let _worker = tokio::runtime::Handle::current().spawn(async move {
+        let (closer_s, mut closer_r) = oneshot::channel();
+        let worker = tokio::runtime::Handle::current().spawn(async move {
             let mut num_providers = 0;
             match provider_query_manager.find_providers_async(&cid).await {
                 Ok(r) => {
-                    while let Ok(provider) = r.recv().await {
-                        match provider {
-                            Ok(provider) => {
-                                num_providers += 1;
-                                debug!("found provider for {}: {}", cid, provider);
-                                // When a provider indicates that it has a cid, it's equivalent to
-                                // the providing peer sending a HAVE.
-                                sws.update(provider, Vec::new(), vec![cid], Vec::new())
-                                    .await;
-
-                                if num_providers >= 10 {
-                                    break;
+                    loop {
+                        tokio::select! {
+                            Ok(provider) = r.recv() => {
+                                match provider {
+                                    Ok(provider) => {
+                                        num_providers += 1;
+                                        debug!("found provider for {}: {}", cid, provider);
+                                        // When a provider indicates that it has a cid, it's equivalent to
+                                        // the providing peer sending a HAVE.
+                                        sws.update(provider, Vec::new(), vec![cid], Vec::new()).await;
+                                        if num_providers >= 10 {
+                                            break;
+                                        }
+                                    }
+                                    Err(err) => {
+                                        warn!("provider error: {:?}", err);
+                                    }
                                 }
                             }
-                            Err(err) => {
-                                warn!("provider error: {:?}", err);
+                            _ = &mut closer_r => {
+                                // shutting downn
+                                break;
+                            }
+                            else => {
+                                break;
                             }
                         }
                     }
@@ -447,6 +465,8 @@ impl LoopState {
                 }
             }
         });
+
+        self.workers.push((closer_s, worker));
     }
 
     /// Called when the session receives blocks from a peer.
