@@ -1,5 +1,16 @@
+We can get a CID:
+
 ```
 $ iroh get QmP8jTG1m9GSDJLCbeWhVSVgEzCPPwXRdCRuJtQ5Tz9Kc9
+Saving file(s) to QmP8jTG1m9GSDJLCbeWhVSVgEzCPPwXRdCRuJtQ5Tz9Kc9
+
+```
+
+We can also get a ipfs path:
+
+
+```
+$ iroh get /ipfs/QmP8jTG1m9GSDJLCbeWhVSVgEzCPPwXRdCRuJtQ5Tz9Kc9
 Saving file(s) to QmP8jTG1m9GSDJLCbeWhVSVgEzCPPwXRdCRuJtQ5Tz9Kc9
 
 ```
