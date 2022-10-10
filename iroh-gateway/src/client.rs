@@ -5,6 +5,7 @@ use anyhow::Result;
 use bytes::Bytes;
 use futures::{StreamExt, TryStream};
 use http::HeaderMap;
+use iroh_car::{CarHeader, CarWriter};
 use iroh_metrics::{
     core::{MObserver, MRecorder},
     gateway::{GatewayHistograms, GatewayMetrics},
@@ -13,12 +14,12 @@ use iroh_metrics::{
 use iroh_resolver::resolver::{
     CidOrDomain, ContentLoader, Metadata, Out, OutMetrics, OutPrettyReader, Resolver, Source,
 };
-use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncReadExt, AsyncWrite};
 use tokio_util::io::ReaderStream;
 use tracing::{info, warn};
 
-use crate::handlers::GetParams;
 use crate::response::ResponseFormat;
+use crate::{constants::RECURSION_LIMIT, handlers::GetParams};
 
 #[derive(Debug, Clone)]
 pub struct Client<T: ContentLoader> {
@@ -85,22 +86,8 @@ impl<T: ContentLoader + std::marker::Unpin> Client<T> {
             .resolve(path)
             .await
             .map_err(|e| e.to_string())?;
-        record!(
-            GatewayMetrics::TimeToFetchFirstBlock,
-            start_time.elapsed().as_millis() as u64
-        );
         let metadata = res.metadata().clone();
-        if metadata.source == Source::Bitswap {
-            observe!(
-                GatewayHistograms::TimeToFetchFirstBlock,
-                start_time.elapsed().as_millis() as f64
-            );
-        } else {
-            observe!(
-                GatewayHistograms::TimeToFetchFirstBlockCached,
-                start_time.elapsed().as_millis() as f64
-            );
-        }
+        record_ttfb_metrics(start_time, &metadata.source);
 
         if res.is_dir() {
             let body = FileResult::Directory(res);
@@ -115,6 +102,26 @@ impl<T: ContentLoader + std::marker::Unpin> Client<T> {
 
             Ok((FileResult::File(body), metadata))
         }
+    }
+
+    #[tracing::instrument(skip(self))]
+    pub async fn get_car_recursive(
+        self,
+        path: iroh_resolver::resolver::Path,
+        start_time: std::time::Instant,
+    ) -> Result<axum::body::StreamBody<ReaderStream<tokio::io::DuplexStream>>, String> {
+        info!("get car {}", path);
+        // TODO: Find out what a good buffer size is here.
+        let (writer, reader) = tokio::io::duplex(1024 * 64);
+        let body = axum::body::StreamBody::new(ReaderStream::new(reader));
+        let client = self.clone();
+        tokio::task::spawn(async move {
+            if let Err(e) = fetch_car_recursive(&client.resolver, path, writer, start_time).await {
+                warn!("failed to load recursively: {:?}", e);
+            }
+        });
+
+        Ok(body)
     }
 
     #[tracing::instrument(skip(self))]
@@ -133,22 +140,8 @@ impl<T: ContentLoader + std::marker::Unpin> Client<T> {
             while let Some(res) = res.next().await {
                 match res {
                     Ok(res) => {
-                        record!(
-                            GatewayMetrics::TimeToFetchFirstBlock,
-                            start_time.elapsed().as_millis() as u64
-                        );
                         let metadata = res.metadata().clone();
-                        if metadata.source == Source::Bitswap {
-                            observe!(
-                                GatewayHistograms::TimeToFetchFirstBlock,
-                                start_time.elapsed().as_millis() as f64
-                            );
-                        } else {
-                            observe!(
-                                GatewayHistograms::TimeToFetchFirstBlockCached,
-                                start_time.elapsed().as_millis() as f64
-                            );
-                        }
+                        record_ttfb_metrics(start_time, &metadata.source);
                         let reader =
                             res.pretty(self.resolver.clone(), OutMetrics { start: start_time });
                         match reader {
@@ -186,4 +179,52 @@ pub struct Request {
     pub content_path: String,
     pub download: bool,
     pub query_params: GetParams,
+}
+
+async fn fetch_car_recursive<T, W>(
+    resolver: &Resolver<T>,
+    path: iroh_resolver::resolver::Path,
+    writer: W,
+    start_time: std::time::Instant,
+) -> Result<(), anyhow::Error>
+where
+    T: ContentLoader,
+    W: AsyncWrite + Send + Unpin,
+{
+    let stream = resolver.resolve_recursive_raw(path, Some(RECURSION_LIMIT));
+    tokio::pin!(stream);
+
+    let root = stream
+        .next()
+        .await
+        .ok_or_else(|| anyhow::anyhow!("root cid not found"))??;
+
+    let header = CarHeader::new_v1(vec![*root.cid()]);
+    let mut writer = CarWriter::new(header, writer);
+    writer.write(*root.cid(), root.content()).await?;
+
+    while let Some(block) = stream.next().await {
+        let block = block?;
+        record_ttfb_metrics(start_time, block.source());
+        writer.write(*block.cid(), block.content()).await?;
+    }
+    Ok(())
+}
+
+fn record_ttfb_metrics(start_time: std::time::Instant, source: &Source) {
+    record!(
+        GatewayMetrics::TimeToFetchFirstBlock,
+        start_time.elapsed().as_millis() as u64
+    );
+    if *source == Source::Bitswap {
+        observe!(
+            GatewayHistograms::TimeToFetchFirstBlock,
+            start_time.elapsed().as_millis() as f64
+        );
+    } else {
+        observe!(
+            GatewayHistograms::TimeToFetchFirstBlockCached,
+            start_time.elapsed().as_millis() as f64
+        );
+    }
 }

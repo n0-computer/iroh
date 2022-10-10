@@ -406,12 +406,10 @@ async fn serve_car_recursive<T: ContentLoader + std::marker::Unpin>(
     mut headers: HeaderMap,
     start_time: std::time::Instant,
 ) -> Result<GatewayResponse, GatewayError> {
-    // FIXME: actually package as car file
-
     let body = state
         .client
         .clone()
-        .get_file_recursive(req.resolved_path.clone(), start_time)
+        .get_car_recursive(req.resolved_path.clone(), start_time)
         .await
         .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, &e, &state))?;
 

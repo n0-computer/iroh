@@ -12,6 +12,10 @@ pub enum CarHeader {
 }
 
 impl CarHeader {
+    pub fn new_v1(roots: Vec<Cid>) -> Self {
+        Self::V1(roots.into())
+    }
+
     pub fn decode(buffer: &[u8]) -> Result<Self, Error> {
         let header: CarHeaderV1 = DagCborCodec
             .decode(buffer)
