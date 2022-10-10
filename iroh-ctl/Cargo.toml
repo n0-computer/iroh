@@ -6,14 +6,14 @@ authors = ["Kasey Huizinga <klhuizinga@gmail.com>", "Martijn Faassen <faassen@st
 license = "Apache-2.0/MIT"
 repository = "https://github.com/n0-computer/iroh"
 description = "Client for interacting with running iroh processes."
-default-run = "iroh-ctl"
+default-run = "iroh"
 
 [features]
 testing = []
 
 [[bin]]
 path = "src/main.rs"
-name = "iroh-ctl"
+name = "iroh"
 
 [dependencies]
 anyhow = "1.0"

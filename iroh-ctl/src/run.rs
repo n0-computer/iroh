@@ -1,15 +1,10 @@
 use std::collections::HashMap;
-use std::env;
 use std::path::PathBuf;
 
 use crate::config::{Config, CONFIG_FILE_NAME, ENV_PREFIX};
 #[cfg(feature = "testing")]
 use crate::fixture::get_fixture_api;
-use crate::{
-    gateway::{run_command as run_gateway_command, Gateway},
-    p2p::{run_command as run_p2p_command, P2p},
-    store::{run_command as run_store_command, Store},
-};
+use crate::p2p::{run_command as run_p2p_command, P2p};
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use iroh::{Api, Iroh};
@@ -23,8 +18,9 @@ use iroh_util::{iroh_config_path, make_config};
 pub struct Cli {
     #[clap(long)]
     cfg: Option<PathBuf>,
-    #[clap(long = "no-metrics")]
-    no_metrics: bool,
+    /// Track metrics
+    #[clap(long, action = clap::ArgAction::Set, default_value_t=true)]
+    metrics: bool,
     #[clap(subcommand)]
     command: Commands,
 }
@@ -32,7 +28,7 @@ pub struct Cli {
 impl Cli {
     fn make_overrides_map(&self) -> HashMap<String, String> {
         let mut map = HashMap::new();
-        map.insert("metrics.debug".to_string(), self.no_metrics.to_string());
+        map.insert("metrics.debug".to_string(), (!self.metrics).to_string());
         map
     }
 }
@@ -46,10 +42,7 @@ enum Commands {
         /// when true, updates the status table whenever a change in a process's status occurs
         watch: bool,
     },
-    Version,
     P2p(P2p),
-    Store(Store),
-    Gateway(Gateway),
     #[clap(about = "break up a file into block and provide those blocks on the ipfs network")]
     Add {
         path: PathBuf,
@@ -126,12 +119,7 @@ impl Cli {
             Commands::Status { watch } => {
                 crate::status::status(api, *watch).await?;
             }
-            Commands::Version => {
-                println!("v{}", env!("CARGO_PKG_VERSION"));
-            }
             Commands::P2p(p2p) => run_p2p_command(&api.p2p()?, p2p).await?,
-            Commands::Store(store) => run_store_command(&api.store()?, store).await?,
-            Commands::Gateway(gateway) => run_gateway_command(gateway).await?,
             Commands::Add {
                 path,
                 recursive,
