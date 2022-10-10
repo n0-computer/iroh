@@ -18,8 +18,8 @@ use iroh_util::{iroh_config_path, make_config};
 pub struct Cli {
     #[clap(long)]
     cfg: Option<PathBuf>,
-    #[clap(long = "no-metrics")]
-    no_metrics: bool,
+    #[clap(long, action = clap::ArgAction::Set, default_value_t=true)]
+    metrics: bool,
     #[clap(subcommand)]
     command: Commands,
 }
@@ -27,7 +27,7 @@ pub struct Cli {
 impl Cli {
     fn make_overrides_map(&self) -> HashMap<String, String> {
         let mut map = HashMap::new();
-        map.insert("metrics.debug".to_string(), self.no_metrics.to_string());
+        map.insert("metrics.debug".to_string(), (!self.metrics).to_string());
         map
     }
 }
