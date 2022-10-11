@@ -646,13 +646,12 @@ impl<S: Store> Engine<S> {
     }
 
     async fn find_or_create(&self, peer: &PeerId) -> Arc<Mutex<Ledger>> {
-        if !self.ledger_map.read().await.contains_key(peer) {
-            self.ledger_map
-                .write()
-                .await
-                .insert(*peer, Arc::new(Mutex::new(Ledger::new(*peer))));
-        }
-        self.ledger_map.read().await.get(peer).unwrap().clone()
+        self.ledger_map
+            .write()
+            .await
+            .entry(*peer)
+            .or_insert_with(|| Arc::new(Mutex::new(Ledger::new(*peer))))
+            .clone()
     }
 }
 
