@@ -5,7 +5,7 @@ edition = "2021"
 authors = ["Kasey Huizinga <klhuizinga@gmail.com>", "Martijn Faassen <faassen@startifact.com>"]
 license = "Apache-2.0/MIT"
 repository = "https://github.com/n0-computer/iroh"
-description = "Client for interacting with running iroh processes."
+description = "Command line interface for interacting with iroh."
 default-run = "iroh"
 
 [features]
