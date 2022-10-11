@@ -1,6 +1,6 @@
 [workspace]
 members = [
-  "iroh",
+  "iroh-api",
   "iroh-bitswap",
   "iroh-car",
   "iroh-ctl",

@@ -1,5 +1,7 @@
-use std::path::Path;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
+use crate::config::{Config, CONFIG_FILE_NAME, ENV_PREFIX};
 #[cfg(feature = "testing")]
 use crate::p2p::MockP2p;
 use crate::p2p::{ClientP2p, P2p};
@@ -12,11 +14,12 @@ use iroh_resolver::resolver::Path as IpfsPath;
 use iroh_resolver::{resolver, unixfs_builder};
 use iroh_rpc_client::Client;
 use iroh_rpc_client::StatusTable;
+use iroh_util::{iroh_config_path, make_config};
 #[cfg(feature = "testing")]
 use mockall::automock;
 
-pub struct Iroh<'a> {
-    client: &'a Client,
+pub struct Iroh {
+    client: Client,
 }
 
 pub enum OutType<T: resolver::ContentLoader> {
@@ -37,23 +40,46 @@ pub trait Api {
     async fn watch<'a>(&self) -> LocalBoxStream<'a, StatusTable>;
 }
 
-impl<'a> Iroh<'a> {
-    pub fn new(client: &'a Client) -> Self {
+impl Iroh {
+    pub async fn new(
+        config_path: Option<&Path>,
+        overrides_map: HashMap<String, String>,
+    ) -> Result<Self> {
+        let cfg_path = iroh_config_path(CONFIG_FILE_NAME)?;
+        let sources = vec![Some(cfg_path), config_path.map(PathBuf::from)];
+        let config = make_config(
+            // default
+            Config::default(),
+            // potential config files
+            sources,
+            // env var prefix for this config
+            ENV_PREFIX,
+            // map of present command line arguments
+            overrides_map,
+        )
+        .unwrap();
+
+        let client = Client::new(config.rpc_client).await?;
+
+        Ok(Iroh::from_client(client))
+    }
+
+    fn from_client(client: Client) -> Self {
         Self { client }
     }
 
     pub(crate) fn get_client(&self) -> &Client {
-        self.client
+        &self.client
     }
 }
 
 #[async_trait(?Send)]
-impl<'a> Api for Iroh<'a> {
-    type P = ClientP2p<'a>;
+impl Api for Iroh {
+    type P = ClientP2p;
 
-    fn p2p(&self) -> Result<ClientP2p<'a>> {
+    fn p2p(&self) -> Result<ClientP2p> {
         let p2p_client = self.client.try_p2p()?;
-        Ok(ClientP2p::new(p2p_client))
+        Ok(ClientP2p::new(p2p_client.clone()))
     }
 
     async fn get<'b>(&self, ipfs_path: &IpfsPath, output: Option<&'b Path>) -> Result<()> {
