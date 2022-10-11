@@ -31,3 +31,7 @@ pub static CONTENT_TYPE_IPLD_CAR: HeaderValue =
 // Schemes
 pub static SCHEME_IPFS: &str = "ipfs";
 pub static SCHEME_IPNS: &str = "ipns";
+
+// Max number of links to return in a single recursive request.
+// TODO: Make configurable.
+pub static RECURSION_LIMIT: usize = 4096;

@@ -11,17 +11,19 @@ use anyhow::{anyhow, bail, ensure, Context as _, Result};
 use async_trait::async_trait;
 use bytes::Bytes;
 use caches::Cache;
+use cid::multihash::{Code, MultihashDigest};
 use cid::Cid;
-use futures::{Stream, StreamExt};
+use futures::{Future, Stream};
 use iroh_metrics::inc;
 use iroh_rpc_client::Client;
 use libipld::codec::{Decode, Encode};
+use libipld::error::{InvalidMultihash, UnsupportedMultihash};
 use libipld::prelude::Codec as _;
 use libipld::{Ipld, IpldCodec};
 use libp2p::PeerId;
 use tokio::io::AsyncRead;
 use tokio::sync::Mutex;
-use tracing::{debug, info, trace, warn};
+use tracing::{debug, trace, warn};
 
 use iroh_metrics::{
     core::{MObserver, MRecorder},
@@ -36,6 +38,52 @@ use crate::unixfs::{
 };
 
 pub const IROH_STORE: &str = "iroh-store";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Block {
+    cid: Cid,
+    data: Bytes,
+    links: Vec<Cid>,
+}
+
+impl Block {
+    pub fn new(cid: Cid, data: Bytes, links: Vec<Cid>) -> Self {
+        Self { cid, data, links }
+    }
+
+    pub fn cid(&self) -> &Cid {
+        &self.cid
+    }
+
+    pub fn data(&self) -> &Bytes {
+        &self.data
+    }
+
+    pub fn links(&self) -> &[Cid] {
+        &self.links
+    }
+
+    /// Validate the block. Will return an error if the hash or the links are wrong.
+    pub fn validate(&self) -> Result<()> {
+        // check that the cid is supported
+        let code = self.cid.hash().code();
+        let mh = Code::try_from(code)
+            .map_err(|_| UnsupportedMultihash(code))?
+            .digest(&self.data);
+        // check that the hash matches the data
+        if mh.digest() != self.cid.hash().digest() {
+            return Err(InvalidMultihash(mh.to_bytes()).into());
+        }
+        // check that the links are complete
+        let links = parse_links(&self.cid, &self.data)?;
+        anyhow::ensure!(links == self.links, "links do not match");
+        Ok(())
+    }
+
+    pub fn into_parts(self) -> (Cid, Bytes, Vec<Cid>) {
+        (self.cid, self.data, self.links)
+    }
+}
 
 /// Represents an ipfs path.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -155,6 +203,54 @@ impl FromStr for Path {
         let tail = parts.map(Into::into).collect();
 
         Ok(Path { typ, root, tail })
+    }
+}
+
+#[async_trait]
+pub trait LinksContainer: Sync + Send + std::fmt::Debug + Clone + 'static {
+    /// Extract links out of a container struct.
+    fn links(&self) -> Result<Vec<Cid>>;
+}
+
+#[async_trait]
+impl LinksContainer for OutRaw {
+    fn links(&self) -> Result<Vec<Cid>> {
+        parse_links(&self.cid, &self.content)
+    }
+}
+
+#[async_trait]
+impl LinksContainer for Out {
+    fn links(&self) -> Result<Vec<Cid>> {
+        Out::links(self)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct OutRaw {
+    source: Source,
+    content: Bytes,
+    cid: Cid,
+}
+
+impl OutRaw {
+    pub fn from_loaded(cid: Cid, loaded: LoadedCid) -> Self {
+        Self {
+            source: loaded.source,
+            content: loaded.data,
+            cid,
+        }
+    }
+    pub fn source(&self) -> &Source {
+        &self.source
+    }
+
+    pub fn cid(&self) -> &Cid {
+        &self.cid
+    }
+
+    pub fn content(&self) -> &Bytes {
+        &self.content
     }
 }
 
@@ -739,31 +835,83 @@ impl<T: ContentLoader> Resolver<T> {
 
     #[tracing::instrument(skip(self))]
     pub fn resolve_recursive(&self, root: Path) -> impl Stream<Item = Result<Out>> {
-        // TODO: track through using the same context
+        let this = self.clone();
+        self.resolve_recursive_mapped(root, None, move |cid, ctx| {
+            let this = this.clone();
+            async move { this.resolve_with_ctx(ctx, Path::from_cid(cid)).await }
+        })
+    }
+
+    /// Resolve a path recursively and yield the raw bytes plus metadata.
+    #[tracing::instrument(skip(self))]
+    pub fn resolve_recursive_raw(
+        &self,
+        root: Path,
+        recursion_limit: Option<usize>,
+    ) -> impl Stream<Item = Result<OutRaw>> {
+        let this = self.clone();
+        self.resolve_recursive_mapped(root, recursion_limit, move |cid, mut ctx| {
+            let this = this.clone();
+            async move {
+                this.load_cid(&cid, &mut ctx)
+                    .await
+                    .map(|loaded| OutRaw::from_loaded(cid, loaded))
+            }
+        })
+    }
+
+    /// Resolve a path recursively and supply a closure to resolve cids to outputs.
+    #[tracing::instrument(skip(self, resolve))]
+    pub fn resolve_recursive_mapped<O, M, F>(
+        &self,
+        root: Path,
+        recursion_limit: Option<usize>,
+        resolve: M,
+    ) -> impl Stream<Item = Result<O>>
+    where
+        O: LinksContainer,
+        M: Fn(Cid, LoaderContext) -> F + Clone,
+        F: Future<Output = Result<O>> + Send + 'static,
+    {
+        let mut ctx =
+            LoaderContext::from_path(self.next_id(), self.provider_cache.clone(), root.clone());
 
         let mut cids = VecDeque::new();
         let this = self.clone();
+        let mut counter = 0;
+        let chunk_size = 8;
         async_stream::try_stream! {
-            cids.push_back(this.resolve(root).await);
+            let root_cid = this.resolve_path_to_cid(&root, &mut ctx).await?;
+            let root_block = resolve(root_cid, ctx.clone()).await?;
+            cids.push_back(root_block);
             loop {
                 if let Some(current) = cids.pop_front() {
-                    let current = current?;
                     let links = current.links()?;
+                    counter += links.len();
+                    if let Some(limit) = recursion_limit {
+                        if counter > limit {
+                            Err(anyhow::anyhow!("Number of links exceeds the recursion limit."))?;
+                        }
+                    }
+
                     // TODO: configurable limit
-                    for link_chunk in links.chunks(8) {
+                    for link_chunk in links.chunks(chunk_size) {
                         let next = futures::future::join_all(
                             link_chunk.iter().map(|link| {
-                                let this = this.clone();
+                                let resolve = resolve.clone();
+                                let ctx = ctx.clone();
                                 async move {
-                                    this.resolve(Path::from_cid(*link)).await
+                                    resolve(*link, ctx).await
                                 }
                             })
                         ).await;
                         for res in next.into_iter() {
+                            let res = res?;
                             cids.push_back(res);
                         }
                     }
                     yield current;
+
                 } else {
                     // no links left to resolve
                     break;
@@ -1112,7 +1260,7 @@ impl<T: ContentLoader> Resolver<T> {
     }
 
     #[tracing::instrument(skip(self))]
-    async fn resolve_root(&self, root: &Path, ctx: &mut LoaderContext) -> Result<(Cid, LoadedCid)> {
+    async fn resolve_path_to_cid(&self, root: &Path, ctx: &mut LoaderContext) -> Result<Cid> {
         let mut current = root.clone();
 
         // maximum cursion of ipns lookups
@@ -1122,9 +1270,7 @@ impl<T: ContentLoader> Resolver<T> {
             match current.typ {
                 PathType::Ipfs => match current.root {
                     CidOrDomain::Cid(ref c) => {
-                        let loaded_cid = self.load_cid(c, ctx).await?;
-
-                        return Ok((*c, loaded_cid));
+                        return Ok(*c);
                     }
                     CidOrDomain::Domain(_) => bail!("invalid domain encountered"),
                 },
@@ -1145,6 +1291,13 @@ impl<T: ContentLoader> Resolver<T> {
         }
 
         bail!("cannot resolve {}, too many recursive lookups", root);
+    }
+
+    #[tracing::instrument(skip(self))]
+    async fn resolve_root(&self, root: &Path, ctx: &mut LoaderContext) -> Result<(Cid, LoadedCid)> {
+        let cid = self.resolve_path_to_cid(root, ctx).await?;
+        let loaded_cid = self.load_cid(&cid, ctx).await?;
+        Ok((cid, loaded_cid))
     }
 
     #[tracing::instrument(skip(self))]

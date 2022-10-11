@@ -431,19 +431,24 @@ impl Store {
         let mut ids = Vec::new();
         let mut batch = WriteBatch::default();
         for cid in cids {
-            let id = self.next_id();
-            let id_bytes = id.to_be_bytes();
+            let multihash = cid.hash().to_bytes();
+            let id = if let Some(id) = self.inner.content.get_pinned_cf(cf_id, &multihash)? {
+                u64::from_be_bytes(id.as_ref().try_into()?)
+            } else {
+                let id = self.next_id();
+                let id_bytes = id.to_be_bytes();
 
-            let metadata = Versioned(MetadataV0 {
-                codec: cid.codec(),
-                multihash: cid.hash().to_bytes(),
-            });
-            let metadata_bytes = rkyv::to_bytes::<_, 1024>(&metadata)?; // TODO: is this the right amount of scratch space?
+                let metadata = Versioned(MetadataV0 {
+                    codec: cid.codec(),
+                    multihash,
+                });
+                let metadata_bytes = rkyv::to_bytes::<_, 1024>(&metadata)?; // TODO: is this the right amount of scratch space?
 
-            let multihash = &metadata.0.multihash;
-            // TODO: is it worth to check for existence instead of just writing?
-            batch.put_cf(&cf_id, multihash, &id_bytes);
-            batch.put_cf(&cf_meta, &id_bytes, metadata_bytes);
+                let multihash = &metadata.0.multihash;
+                batch.put_cf(&cf_id, multihash, &id_bytes);
+                batch.put_cf(&cf_meta, &id_bytes, metadata_bytes);
+                id
+            };
             ids.push(id);
         }
         self.inner.content.write(batch)?;
