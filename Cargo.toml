@@ -1,9 +1,9 @@
 [workspace]
 members = [
+  "iroh",
   "iroh-api",
   "iroh-bitswap",
   "iroh-car",
-  "iroh-ctl",
   "iroh-rpc-client",
   "iroh-rpc-types",
   "iroh-gateway",
