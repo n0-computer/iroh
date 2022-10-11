@@ -1,14 +1,19 @@
 [package]
-name = "iroh"
+name = "iroh-ctl"
 version = "0.1.0"
 edition = "2021"
 authors = ["Kasey Huizinga <klhuizinga@gmail.com>", "Martijn Faassen <faassen@startifact.com>"]
 license = "Apache-2.0/MIT"
 repository = "https://github.com/n0-computer/iroh"
-description = "Command line interface for interacting with running iroh processes."
+description = "Client for interacting with running iroh processes."
+default-run = "iroh"
 
 [features]
 testing = []
+
+[[bin]]
+path = "src/main.rs"
+name = "iroh"
 
 [dependencies]
 anyhow = "1.0"
@@ -25,7 +30,7 @@ iroh-api = { path = "../iroh-api"}
 [dev-dependencies]
 trycmd = "0.13.7"
 iroh-api = { path = "../iroh-api", features = ["testing"] }
-# We want to compile `iroh` in test mode, but we can't specify that yet:
+# We want to compile `iroh-ctl` in test mode, but we can't specify that yet:
 # https://github.com/rust-lang/cargo/issues/1982
 # This is a workaround for enabling features only during testing: 
 # https://github.com/DesmondWillowbrook/cargo-optional-features-for-testing-and-examples
@@ -33,4 +38,4 @@ iroh-api = { path = "../iroh-api", features = ["testing"] }
 # mode. trycmd needs to have an actual binary to invoke.
 # Unfortunately this also turns on the feature during development, which may be
 # confusing. See the comments in `run.rs` surrounding this.
-iroh = { path = ".", features = ["testing"] }
+iroh-ctl = { path = ".", features = ["testing"] }
