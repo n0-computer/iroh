@@ -13,6 +13,7 @@ service P2p {
   rpc FetchProviderBitswap(BitswapKey) returns (stream BitswapProviders) {}
   rpc InjectProviderBitswap(BitswapRequest) returns (google.protobuf.Empty) {}
   rpc NotifyNewBlocksBitswap(NotifyNewBlocksBitswapRequest) returns (google.protobuf.Empty) {}
+  rpc StopSessionBitswap(StopSessionBitswapRequest) returns (google.protobuf.Empty) {}
   rpc StartProviding(Key) returns (google.protobuf.Empty) {}
   rpc StopProviding(Key) returns (google.protobuf.Empty) {}
   rpc GetListeningAddrs(google.protobuf.Empty) returns (GetListeningAddrsResponse) {}
@@ -45,6 +46,10 @@ message BitswapRequest {
   bytes cid = 1;
   Providers providers = 2;
   uint64 ctx = 3;
+}
+
+message StopSessionBitswapRequest {
+  uint64 ctx = 1;
 }
 
 message BitswapResponse {

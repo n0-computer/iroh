@@ -11,6 +11,7 @@ use iroh_rpc_types::p2p::{
     BitswapBlock, BitswapKey, BitswapRequest, ConnectRequest, DisconnectRequest,
     GossipsubPeerAndTopics, GossipsubPeerIdMsg, GossipsubPublishRequest, GossipsubTopicHashMsg,
     Key, NotifyNewBlocksBitswapRequest, P2p, P2pClientAddr, P2pClientBackend, Providers,
+    StopSessionBitswapRequest,
 };
 use iroh_rpc_types::Addr;
 use libp2p::gossipsub::{MessageId, TopicHash};
@@ -90,7 +91,13 @@ impl P2pClient {
         Ok(())
     }
 
-    /// Injects additional providers for the given CID
+    #[tracing::instrument(skip(self))]
+    pub async fn stop_session_bitswap(&self, ctx: u64) -> Result<()> {
+        let req = StopSessionBitswapRequest { ctx };
+        self.backend.stop_session_bitswap(req).await?;
+        Ok(())
+    }
+
     #[tracing::instrument(skip(self))]
     pub async fn notify_new_blocks_bitswap(&self, blocks: Vec<(Cid, Bytes)>) -> Result<()> {
         let req = NotifyNewBlocksBitswapRequest {
@@ -438,6 +445,13 @@ mod tests {
         async fn inject_provider_bitswap(
             &self,
             _request: Request<BitswapRequest>,
+        ) -> Result<tonic::Response<()>, tonic::Status> {
+            todo!()
+        }
+
+        async fn stop_session_bitswap(
+            &self,
+            _request: Request<StopSessionBitswapRequest>,
         ) -> Result<tonic::Response<()>, tonic::Status> {
             todo!()
         }

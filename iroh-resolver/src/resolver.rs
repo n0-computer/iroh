@@ -22,7 +22,8 @@ use libipld::prelude::Codec as _;
 use libipld::{Ipld, IpldCodec};
 use libp2p::PeerId;
 use tokio::io::AsyncRead;
-use tokio::sync::Mutex;
+use tokio::sync::{mpsc, oneshot, Mutex};
+use tokio::task::JoinHandle;
 use tracing::{debug, trace, warn};
 
 use iroh_metrics::{
@@ -530,6 +531,20 @@ pub struct Resolver<T: ContentLoader> {
     loader: T,
     provider_cache: ProviderCache,
     next_id: Arc<AtomicU64>,
+    worker: Option<Arc<(oneshot::Sender<()>, JoinHandle<()>)>>,
+    session_closer: mpsc::Sender<ContextId>,
+}
+
+impl<T: ContentLoader> Drop for Resolver<T> {
+    fn drop(&mut self) {
+        if self.worker.is_none() {
+            panic!("drop called multiple times");
+        }
+        if Arc::strong_count(self.worker.as_ref().unwrap()) == 1 {
+            let worker = Arc::try_unwrap(self.worker.take().unwrap()).expect("last arc");
+            worker.0.send(()).ok();
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -538,8 +553,33 @@ pub struct LoaderContext {
     inner: Arc<Mutex<InnerLoaderContext>>,
 }
 
+impl Drop for LoaderContext {
+    fn drop(&mut self) {
+        if Arc::strong_count(&self.inner) == 1 {
+            if let Err(err) = self
+                .inner
+                .try_lock()
+                .expect("last reference, no lock")
+                .closer
+                .try_send(self.id)
+            {
+                warn!(
+                    "failed to send session stop for session {}: {:?}",
+                    self.id, err
+                );
+            }
+        }
+    }
+}
+
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ContextId(u64);
+
+impl Display for ContextId {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "ContextId({})", self.0)
+    }
+}
 
 impl From<u64> for ContextId {
     fn from(id: u64) -> Self {
@@ -558,6 +598,7 @@ struct InnerLoaderContext {
     provider_cache: ProviderCache,
     providers: HashSet<PeerId>,
     path: Path,
+    closer: mpsc::Sender<ContextId>,
 }
 
 #[derive(Debug, Clone)]
@@ -625,7 +666,12 @@ impl InnerLoaderContext {
 }
 
 impl LoaderContext {
-    pub fn from_path(id: ContextId, provider_cache: ProviderCache, path: Path) -> Self {
+    pub fn from_path(
+        id: ContextId,
+        closer: mpsc::Sender<ContextId>,
+        provider_cache: ProviderCache,
+        path: Path,
+    ) -> Self {
         trace!("new loader context: {:?}", id);
         LoaderContext {
             id,
@@ -633,6 +679,7 @@ impl LoaderContext {
                 provider_cache,
                 providers: Default::default(),
                 path,
+                closer,
             })),
         }
     }
@@ -687,6 +734,8 @@ impl LoaderContext {
 pub trait ContentLoader: Sync + Send + std::fmt::Debug + Clone + 'static {
     /// Loads the actual content of a given cid.
     async fn load_cid(&self, cid: &Cid, ctx: &LoaderContext) -> Result<LoadedCid>;
+    /// Signal that the passend in session is not used anymore.
+    async fn stop_session(&self, ctx: ContextId) -> Result<()>;
 }
 
 #[async_trait]
@@ -694,10 +743,19 @@ impl<T: ContentLoader> ContentLoader for Arc<T> {
     async fn load_cid(&self, cid: &Cid, ctx: &LoaderContext) -> Result<LoadedCid> {
         self.as_ref().load_cid(cid, ctx).await
     }
+
+    async fn stop_session(&self, ctx: ContextId) -> Result<()> {
+        self.as_ref().stop_session(ctx).await
+    }
 }
 
 #[async_trait]
 impl ContentLoader for Client {
+    async fn stop_session(&self, ctx: ContextId) -> Result<()> {
+        self.try_p2p()?.stop_session_bitswap(ctx.into()).await?;
+        Ok(())
+    }
+
     async fn load_cid(&self, cid: &Cid, ctx: &LoaderContext) -> Result<LoadedCid> {
         trace!("{:?} loading {}", ctx.id(), cid);
 
@@ -771,10 +829,42 @@ impl ContentLoader for Client {
 
 impl<T: ContentLoader> Resolver<T> {
     pub fn new(loader: T) -> Self {
+        let (closer_s, mut closer_r) = oneshot::channel();
+        let (session_closer_s, mut session_closer_r) = mpsc::channel(64);
+
+        let loader_thread = loader.clone();
+        let worker = tokio::task::spawn(async move {
+            // GC Loop for sessions
+            loop {
+                tokio::select! {
+                    biased;
+                    session = session_closer_r.recv() => {
+                        match session {
+                            Some(session) => {
+                                debug!("stopping session {}", session);
+                                if let Err(err) = loader_thread.stop_session(session).await {
+                                    warn!("failed to stop session {}: {:?}", session, err);
+                                }
+                            }
+                            None => {
+                                warn!("session_closer channel broke");
+                                break;
+                            }
+                        }
+                    }
+                    _ = &mut closer_r => {
+                        break;
+                    }
+                }
+            }
+        });
+
         Resolver {
             provider_cache: ProviderCache::new(1024),
             loader,
             next_id: Arc::new(AtomicU64::new(0)),
+            worker: Some(Arc::new((closer_s, worker))),
+            session_closer: session_closer_s,
         }
     }
 
@@ -873,8 +963,12 @@ impl<T: ContentLoader> Resolver<T> {
         M: Fn(Cid, LoaderContext) -> F + Clone,
         F: Future<Output = Result<O>> + Send + 'static,
     {
-        let mut ctx =
-            LoaderContext::from_path(self.next_id(), self.provider_cache.clone(), root.clone());
+        let mut ctx = LoaderContext::from_path(
+            self.next_id(),
+            self.session_closer.clone(),
+            self.provider_cache.clone(),
+            root.clone(),
+        );
 
         let mut cids = VecDeque::new();
         let this = self.clone();
@@ -923,8 +1017,12 @@ impl<T: ContentLoader> Resolver<T> {
     /// Resolves through a given path, returning the [`Cid`] and raw bytes of the final leaf.
     #[tracing::instrument(skip(self))]
     pub async fn resolve(&self, path: Path) -> Result<Out> {
-        let ctx =
-            LoaderContext::from_path(self.next_id(), self.provider_cache.clone(), path.clone());
+        let ctx = LoaderContext::from_path(
+            self.next_id(),
+            self.session_closer.clone(),
+            self.provider_cache.clone(),
+            path.clone(),
+        );
 
         self.resolve_with_ctx(ctx, path).await
     }
@@ -1381,6 +1479,11 @@ mod tests {
                 }),
                 None => bail!("not found"),
             }
+        }
+
+        async fn stop_session(&self, ctx: ContextId) -> Result<()> {
+            // no session tracking
+            Ok(())
         }
     }
 

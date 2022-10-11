@@ -596,6 +596,13 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                 self.swarm.behaviour().notify_new_blocks(blocks);
                 response_channel.send(Ok(())).ok();
             }
+            RpcMessage::BitswapStopSession {
+                ctx,
+                response_channel,
+            } => {
+                let res = self.swarm.behaviour().destroy_session(ctx);
+                response_channel.send(res).ok();
+            }
             RpcMessage::BitswapInjectProviders {
                 ctx,
                 cid,

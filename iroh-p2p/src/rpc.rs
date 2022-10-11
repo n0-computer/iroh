@@ -25,7 +25,8 @@ use iroh_rpc_types::p2p::{
     GossipsubPeerAndTopics, GossipsubPeerIdMsg, GossipsubPeersResponse, GossipsubPublishRequest,
     GossipsubPublishResponse, GossipsubSubscribeResponse, GossipsubTopicHashMsg,
     GossipsubTopicsResponse, Key as ProviderKey, Multiaddrs, NotifyNewBlocksBitswapRequest,
-    P2p as RpcP2p, P2pServerAddr, PeerIdResponse, Providers, VersionResponse,
+    P2p as RpcP2p, P2pServerAddr, PeerIdResponse, Providers, StopSessionBitswapRequest,
+    VersionResponse,
 };
 
 struct P2p {
@@ -160,6 +161,21 @@ impl RpcP2p for P2p {
 
         self.sender.send(msg).await?;
         r.await?.context("bitswap inject provider")?;
+
+        Ok(())
+    }
+
+    #[tracing::instrument(skip(self, req))]
+    async fn stop_session_bitswap(&self, req: StopSessionBitswapRequest) -> Result<()> {
+        let ctx = req.ctx;
+        let (s, r) = oneshot::channel();
+        let msg = RpcMessage::BitswapStopSession {
+            ctx,
+            response_channel: s,
+        };
+
+        self.sender.send(msg).await?;
+        r.await?.context("stop session")?;
 
         Ok(())
     }
@@ -502,6 +518,10 @@ pub enum RpcMessage {
     },
     BitswapNotifyNewBlocks {
         blocks: Vec<Block>,
+        response_channel: oneshot::Sender<Result<()>>,
+    },
+    BitswapStopSession {
+        ctx: u64,
         response_channel: oneshot::Sender<Result<()>>,
     },
     ProviderRequest {
