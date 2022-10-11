@@ -18,7 +18,7 @@ use libipld::codec::{Decode, Encode};
 use libipld::error::{InvalidMultihash, UnsupportedMultihash};
 use libipld::prelude::Codec as _;
 use libipld::{Ipld, IpldCodec};
-use tokio::io::AsyncRead;
+use tokio::io::{AsyncRead, AsyncSeek};
 use tracing::{debug, trace, warn};
 
 use iroh_metrics::{
@@ -132,6 +132,22 @@ impl Path {
         match &self.root {
             CidOrDomain::Cid(cid) => Some(cid),
             CidOrDomain::Domain(_) => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum ResponseClip {
+    NoClip,
+    Clip(usize),
+}
+
+impl From<usize> for ResponseClip {
+    fn from(item: usize) -> Self {
+        if item == 0 {
+            ResponseClip::NoClip
+        } else {
+            ResponseClip::Clip(item)
         }
     }
 }
@@ -337,22 +353,37 @@ impl Out {
         self,
         loader: Resolver<T>,
         om: OutMetrics,
+        clip: ResponseClip,
     ) -> Result<OutPrettyReader<T>> {
         let pos = 0;
         match self.content {
-            OutContent::DagPb(_, bytes) => {
+            OutContent::DagPb(_, mut bytes) => {
+                if let ResponseClip::Clip(n) = clip {
+                    bytes.truncate(n);
+                }
                 Ok(OutPrettyReader::DagPb(BytesReader { pos, bytes, om }))
             }
-            OutContent::DagCbor(_, bytes) => {
+            OutContent::DagCbor(_, mut bytes) => {
+                if let ResponseClip::Clip(n) = clip {
+                    bytes.truncate(n);
+                }
                 Ok(OutPrettyReader::DagCbor(BytesReader { pos, bytes, om }))
             }
-            OutContent::DagJson(_, bytes) => {
+            OutContent::DagJson(_, mut bytes) => {
+                if let ResponseClip::Clip(n) = clip {
+                    bytes.truncate(n);
+                }
                 Ok(OutPrettyReader::DagJson(BytesReader { pos, bytes, om }))
             }
-            OutContent::Raw(_, bytes) => Ok(OutPrettyReader::Raw(BytesReader { pos, bytes, om })),
+            OutContent::Raw(_, mut bytes) => {
+                if let ResponseClip::Clip(n) = clip {
+                    bytes.truncate(n);
+                }
+                Ok(OutPrettyReader::Raw(BytesReader { pos, bytes, om }))
+            }
             OutContent::Unixfs(node) => {
                 let reader = node
-                    .into_content_reader(loader, om)?
+                    .into_content_reader(loader, om, clip)?
                     .ok_or_else(|| anyhow!("cannot read the contents of a directory"))?;
 
                 Ok(OutPrettyReader::Unixfs(reader))
@@ -521,13 +552,53 @@ impl<T: ContentLoader + Unpin + 'static> AsyncRead for OutPrettyReader<T> {
             | OutPrettyReader::DagJson(bytes_reader)
             | OutPrettyReader::Raw(bytes_reader) => {
                 let pos_current = bytes_reader.pos;
-                let res = poll_read_buf_at_pos(&mut bytes_reader.pos, &bytes_reader.bytes, buf);
+                let res = poll_read_buf_at_pos(
+                    &mut bytes_reader.pos,
+                    ResponseClip::Clip(bytes_reader.bytes.len()),
+                    &bytes_reader.bytes,
+                    buf,
+                );
                 let bytes_read = bytes_reader.pos - pos_current;
                 bytes_reader.om.observe_bytes_read(pos_current, bytes_read);
                 Poll::Ready(res)
             }
             OutPrettyReader::Unixfs(r) => Pin::new(&mut *r).poll_read(cx, buf),
         }
+    }
+}
+
+impl<T: ContentLoader + Unpin + 'static> AsyncSeek for OutPrettyReader<T> {
+    fn start_seek(mut self: Pin<&mut Self>, position: std::io::SeekFrom) -> std::io::Result<()> {
+        match &mut *self {
+            OutPrettyReader::DagPb(bytes_reader)
+            | OutPrettyReader::DagCbor(bytes_reader)
+            | OutPrettyReader::DagJson(bytes_reader)
+            | OutPrettyReader::Raw(bytes_reader) => {
+                let pos_current = bytes_reader.pos;
+                let data_len = bytes_reader.bytes.len();
+                match position {
+                    std::io::SeekFrom::Start(pos) => {
+                        let i = std::cmp::min(data_len, pos as usize);
+                        bytes_reader.pos = i;
+                    }
+                    std::io::SeekFrom::End(_pos) => {
+                        // This technically means we can seek past the end which we don't support
+                        // TODO: support rolling buffer reads, ie use overflow remainder to read from the start again
+                        todo!()
+                    }
+                    std::io::SeekFrom::Current(pos) => {
+                        let i = std::cmp::min(data_len, pos_current + pos as usize);
+                        bytes_reader.pos = i;
+                    }
+                }
+                Ok(())
+            }
+            OutPrettyReader::Unixfs(r) => Pin::new(&mut *r).start_seek(position),
+        }
+    }
+
+    fn poll_complete(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<u64>> {
+        Poll::Ready(Ok(0))
     }
 }
 
@@ -1322,7 +1393,11 @@ mod tests {
 
                 let out_bytes = read_to_vec(
                     new_ipld
-                        .pretty(resolver.clone(), OutMetrics::default())
+                        .pretty(
+                            resolver.clone(),
+                            OutMetrics::default(),
+                            ResponseClip::NoClip,
+                        )
                         .unwrap(),
                 )
                 .await;
@@ -1350,7 +1425,11 @@ mod tests {
 
                 let out_bytes = read_to_vec(
                     new_ipld
-                        .pretty(resolver.clone(), OutMetrics::default())
+                        .pretty(
+                            resolver.clone(),
+                            OutMetrics::default(),
+                            ResponseClip::NoClip,
+                        )
                         .unwrap(),
                 )
                 .await;
@@ -1468,9 +1547,13 @@ mod tests {
             if let OutContent::Unixfs(node) = ipld_hello_txt.content {
                 assert_eq!(
                     read_to_string(
-                        node.into_content_reader(resolver.clone(), OutMetrics::default())
-                            .unwrap()
-                            .unwrap()
+                        node.into_content_reader(
+                            resolver.clone(),
+                            OutMetrics::default(),
+                            ResponseClip::NoClip
+                        )
+                        .unwrap()
+                        .unwrap()
                     )
                     .await,
                     "hello\n"
@@ -1499,9 +1582,13 @@ mod tests {
             if let OutContent::Unixfs(node) = ipld_hello_txt.content {
                 assert_eq!(
                     read_to_string(
-                        node.into_content_reader(resolver.clone(), OutMetrics::default())
-                            .unwrap()
-                            .unwrap()
+                        node.into_content_reader(
+                            resolver.clone(),
+                            OutMetrics::default(),
+                            ResponseClip::NoClip
+                        )
+                        .unwrap()
+                        .unwrap()
                     )
                     .await,
                     "hello\n"
@@ -1557,9 +1644,13 @@ mod tests {
             if let OutContent::Unixfs(node) = ipld_bar_txt.content {
                 assert_eq!(
                     read_to_string(
-                        node.into_content_reader(resolver.clone(), OutMetrics::default())
-                            .unwrap()
-                            .unwrap()
+                        node.into_content_reader(
+                            resolver.clone(),
+                            OutMetrics::default(),
+                            ResponseClip::NoClip
+                        )
+                        .unwrap()
+                        .unwrap()
                     )
                     .await,
                     "world\n"
@@ -1721,9 +1812,13 @@ mod tests {
             if let OutContent::Unixfs(node) = ipld_hello_txt.content {
                 assert_eq!(
                     read_to_string(
-                        node.into_content_reader(resolver.clone(), OutMetrics::default())
-                            .unwrap()
-                            .unwrap()
+                        node.into_content_reader(
+                            resolver.clone(),
+                            OutMetrics::default(),
+                            ResponseClip::NoClip
+                        )
+                        .unwrap()
+                        .unwrap()
                     )
                     .await,
                     "hello\n"
@@ -1759,9 +1854,13 @@ mod tests {
             if let OutContent::Unixfs(node) = ipld_bar_txt.content {
                 assert_eq!(
                     read_to_string(
-                        node.into_content_reader(resolver.clone(), OutMetrics::default())
-                            .unwrap()
-                            .unwrap()
+                        node.into_content_reader(
+                            resolver.clone(),
+                            OutMetrics::default(),
+                            ResponseClip::NoClip
+                        )
+                        .unwrap()
+                        .unwrap()
                     )
                     .await,
                     "world\n"
@@ -1821,9 +1920,13 @@ mod tests {
 
             if let OutContent::Unixfs(node) = ipld_readme.content {
                 let content = read_to_string(
-                    node.into_content_reader(resolver.clone(), OutMetrics::default())
-                        .unwrap()
-                        .unwrap(),
+                    node.into_content_reader(
+                        resolver.clone(),
+                        OutMetrics::default(),
+                        ResponseClip::NoClip,
+                    )
+                    .unwrap()
+                    .unwrap(),
                 )
                 .await;
                 print!("{}", content);
@@ -1984,9 +2087,13 @@ mod tests {
             if let OutContent::Unixfs(node) = ipld_hello_txt.content {
                 assert_eq!(
                     read_to_string(
-                        node.into_content_reader(resolver.clone(), OutMetrics::default())
-                            .unwrap()
-                            .unwrap()
+                        node.into_content_reader(
+                            resolver.clone(),
+                            OutMetrics::default(),
+                            ResponseClip::NoClip
+                        )
+                        .unwrap()
+                        .unwrap()
                     )
                     .await,
                     "hello\n"
@@ -2036,9 +2143,13 @@ mod tests {
             if let OutContent::Unixfs(node) = ipld_bar_txt.content {
                 assert_eq!(
                     read_to_string(
-                        node.into_content_reader(resolver.clone(), OutMetrics::default())
-                            .unwrap()
-                            .unwrap()
+                        node.into_content_reader(
+                            resolver.clone(),
+                            OutMetrics::default(),
+                            ResponseClip::NoClip
+                        )
+                        .unwrap()
+                        .unwrap()
                     )
                     .await,
                     "world\n"
@@ -2069,9 +2180,13 @@ mod tests {
             if let OutContent::Unixfs(node) = ipld_bar_txt.content {
                 assert_eq!(
                     read_to_string(
-                        node.into_content_reader(resolver.clone(), OutMetrics::default())
-                            .unwrap()
-                            .unwrap()
+                        node.into_content_reader(
+                            resolver.clone(),
+                            OutMetrics::default(),
+                            ResponseClip::NoClip
+                        )
+                        .unwrap()
+                        .unwrap()
                     )
                     .await,
                     "./bar.txt"
@@ -2102,9 +2217,13 @@ mod tests {
             if let OutContent::Unixfs(node) = ipld_bar_txt.content {
                 assert_eq!(
                     read_to_string(
-                        node.into_content_reader(resolver.clone(), OutMetrics::default())
-                            .unwrap()
-                            .unwrap()
+                        node.into_content_reader(
+                            resolver.clone(),
+                            OutMetrics::default(),
+                            ResponseClip::NoClip
+                        )
+                        .unwrap()
+                        .unwrap()
                     )
                     .await,
                     "../../hello.txt"
@@ -2135,9 +2254,13 @@ mod tests {
             if let OutContent::Unixfs(node) = ipld_bar_txt.content {
                 assert_eq!(
                     read_to_string(
-                        node.into_content_reader(resolver.clone(), OutMetrics::default())
-                            .unwrap()
-                            .unwrap()
+                        node.into_content_reader(
+                            resolver.clone(),
+                            OutMetrics::default(),
+                            ResponseClip::NoClip
+                        )
+                        .unwrap()
+                        .unwrap()
                     )
                     .await,
                     "../hello.txt"
@@ -2158,9 +2281,13 @@ mod tests {
             if let OutContent::Unixfs(node) = ipld_bar_txt.content {
                 assert_eq!(
                     read_to_string(
-                        node.into_content_reader(resolver.clone(), OutMetrics::default())
-                            .unwrap()
-                            .unwrap()
+                        node.into_content_reader(
+                            resolver.clone(),
+                            OutMetrics::default(),
+                            ResponseClip::NoClip
+                        )
+                        .unwrap()
+                        .unwrap()
                     )
                     .await,
                     "../hello.txt"
@@ -2243,9 +2370,13 @@ mod tests {
             if let OutContent::Unixfs(node) = ipld_txt.content {
                 assert_eq!(
                     read_to_string(
-                        node.into_content_reader(resolver.clone(), OutMetrics::default())
-                            .unwrap()
-                            .unwrap()
+                        node.into_content_reader(
+                            resolver.clone(),
+                            OutMetrics::default(),
+                            ResponseClip::NoClip
+                        )
+                        .unwrap()
+                        .unwrap()
                     )
                     .await,
                     "world\n",
@@ -2308,9 +2439,13 @@ mod tests {
             if let OutContent::Unixfs(node) = ipld_txt.content {
                 assert_eq!(
                     read_to_string(
-                        node.into_content_reader(resolver.clone(), OutMetrics::default())
-                            .unwrap()
-                            .unwrap()
+                        node.into_content_reader(
+                            resolver.clone(),
+                            OutMetrics::default(),
+                            ResponseClip::NoClip
+                        )
+                        .unwrap()
+                        .unwrap()
                     )
                     .await,
                     format!("{}\n", i),

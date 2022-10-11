@@ -3,7 +3,7 @@ use ::time::OffsetDateTime;
 use axum::http::header::*;
 use iroh_resolver::resolver::{CidOrDomain, Metadata, PathType};
 use mime::Mime;
-use std::{fmt::Write, time};
+use std::{fmt::Write, ops::Range, time};
 
 #[tracing::instrument()]
 pub fn add_user_headers(headers: &mut HeaderMap, user_headers: HeaderMap) {
@@ -63,10 +63,39 @@ pub fn add_content_disposition_headers(
 
 #[tracing::instrument()]
 pub fn set_content_disposition_headers(headers: &mut HeaderMap, filename: &str, disposition: &str) {
+    // TODO: handle non-ascii filenames https://github.com/ipfs/specs/blob/main/http-gateways/PATH_GATEWAY.md#content-disposition-response-header
     headers.insert(
         CONTENT_DISPOSITION,
         HeaderValue::from_str(&format!("{}; filename={}", disposition, filename)).unwrap(),
     );
+}
+
+#[tracing::instrument()]
+pub fn add_content_range_headers(headers: &mut HeaderMap, range: Range<u64>, size: Option<u64>) {
+    let content_range = if let Some(size) = size {
+        format!("bytes {}-{}/{}", range.start, range.end - 1, size)
+    } else {
+        format!("bytes {}-{}/{}", range.start, range.end - 1, "*")
+    };
+    headers.insert(
+        CONTENT_RANGE,
+        HeaderValue::from_str(&content_range).unwrap(),
+    );
+}
+
+pub fn parse_range_header(range: &HeaderValue) -> Option<Range<u64>> {
+    let range = range.to_str().ok()?;
+    let mut parts = range.splitn(2, '=');
+    if parts.next() != Some("bytes") {
+        return None;
+    }
+    let mut range = parts.next()?.splitn(2, '-');
+    let start = range.next()?.parse().ok()?;
+    let end = range.next()?.parse().ok()?;
+    if start >= end || end == 0 {
+        return None;
+    }
+    Some(Range { start, end })
 }
 
 #[tracing::instrument()]
@@ -96,6 +125,15 @@ pub fn add_ipfs_roots_headers(headers: &mut HeaderMap, metadata: Metadata) {
 #[tracing::instrument()]
 pub fn set_etag_headers(headers: &mut HeaderMap, etag: String) {
     headers.insert(ETAG, HeaderValue::from_str(&etag).unwrap());
+}
+
+#[tracing::instrument()]
+pub fn add_etag_range(headers: &mut HeaderMap, range: Range<u64>) {
+    if headers.contains_key(ETAG) {
+        let etag = headers.get(ETAG).unwrap().to_str().unwrap();
+        let etag = format!("{}.{}-{}", etag, range.start, range.end - 1);
+        headers.insert(ETAG, HeaderValue::from_str(&etag).unwrap());
+    }
 }
 
 #[tracing::instrument()]

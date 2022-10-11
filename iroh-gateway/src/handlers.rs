@@ -3,7 +3,7 @@ use axum::{
     body::{self, Body, HttpBody},
     error_handling::HandleErrorLayer,
     extract::{Extension, Path, Query},
-    http::{header::*, StatusCode},
+    http::{header::*, Request as HttpRequest, StatusCode},
     response::IntoResponse,
     routing::get,
     BoxError, Router,
@@ -28,6 +28,7 @@ use std::{
     collections::HashMap,
     error::Error,
     fmt::Write,
+    ops::Range,
     sync::Arc,
     time::{self, Duration},
 };
@@ -121,6 +122,7 @@ pub async fn get_handler<T: ContentLoader + std::marker::Unpin>(
     Path(params): Path<HashMap<String, String>>,
     Query(query_params): Query<GetParams>,
     method: http::Method,
+    http_req: HttpRequest<Body>,
     request_headers: HeaderMap,
 ) -> Result<GatewayResponse, GatewayError> {
     inc!(GatewayMetrics::Requests);
@@ -159,6 +161,7 @@ pub async fn get_handler<T: ContentLoader + std::marker::Unpin>(
         .parse()
         .map_err(|e: anyhow::Error| e.to_string())
         .map_err(|e| error(StatusCode::BAD_REQUEST, &e, &state))?;
+    // TODO: handle 404 or error
     let resolved_cid = resolved_path.root();
 
     if handle_only_if_cached(&request_headers, &state, resolved_cid).await? {
@@ -220,9 +223,9 @@ pub async fn get_handler<T: ContentLoader + std::marker::Unpin>(
         serve_car_recursive(&req, state, headers, start_time).await
     } else {
         match req.format {
-            ResponseFormat::Raw => serve_raw(&req, state, headers, start_time).await,
+            ResponseFormat::Raw => serve_raw(&req, state, headers, &http_req, start_time).await,
             ResponseFormat::Car => serve_car(&req, state, headers, start_time).await,
-            ResponseFormat::Fs(_) => serve_fs(&req, state, headers, start_time).await,
+            ResponseFormat::Fs(_) => serve_fs(&req, state, headers, &http_req, start_time).await,
         }
     }
 }
@@ -404,12 +407,18 @@ async fn serve_raw<T: ContentLoader + std::marker::Unpin>(
     req: &Request,
     state: Arc<State<T>>,
     mut headers: HeaderMap,
+    http_req: &HttpRequest<Body>,
     start_time: std::time::Instant,
 ) -> Result<GatewayResponse, GatewayError> {
+    let range: Option<Range<u64>> = if http_req.headers().contains_key(RANGE) {
+        parse_range_header(http_req.headers().get(RANGE).unwrap())
+    } else {
+        None
+    };
     // FIXME: we currently only retrieve full cids
     let (body, metadata) = state
         .client
-        .get_file(req.resolved_path.clone(), start_time)
+        .get_file(req.resolved_path.clone(), start_time, None)
         .await
         .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, &e, &state))?;
 
@@ -423,8 +432,18 @@ async fn serve_raw<T: ContentLoader + std::marker::Unpin>(
             set_content_disposition_headers(&mut headers, &file_name, DISPOSITION_ATTACHMENT);
             set_etag_headers(&mut headers, get_etag(&req.cid, Some(req.format.clone())));
             add_cache_control_headers(&mut headers, metadata.clone());
-            add_ipfs_roots_headers(&mut headers, metadata);
-            response(StatusCode::OK, body, headers)
+            add_ipfs_roots_headers(&mut headers, metadata.clone());
+
+            if let Some(mut capped_range) = range {
+                if let Some(size) = metadata.size {
+                    capped_range.end = std::cmp::min(capped_range.end, size);
+                }
+                add_etag_range(&mut headers, capped_range.clone());
+                add_content_range_headers(&mut headers, capped_range, metadata.size);
+                response(StatusCode::PARTIAL_CONTENT, body, headers)
+            } else {
+                response(StatusCode::OK, body, headers)
+            }
         }
         FileResult::Directory(_) => Err(error(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -445,7 +464,7 @@ async fn serve_car<T: ContentLoader + std::marker::Unpin>(
     // FIXME: we currently only retrieve full cids
     let (body, metadata) = state
         .client
-        .get_file(req.resolved_path.clone(), start_time)
+        .get_file(req.resolved_path.clone(), start_time, None)
         .await
         .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, &e, &state))?;
 
@@ -509,12 +528,19 @@ async fn serve_fs<T: ContentLoader + std::marker::Unpin>(
     req: &Request,
     state: Arc<State<T>>,
     mut headers: HeaderMap,
+    http_req: &HttpRequest<Body>,
     start_time: std::time::Instant,
 ) -> Result<GatewayResponse, GatewayError> {
+    let range: Option<Range<u64>> = if http_req.headers().contains_key(RANGE) {
+        parse_range_header(http_req.headers().get(RANGE).unwrap())
+    } else {
+        None
+    };
+
     // FIXME: we currently only retrieve full cids
     let (body, metadata) = state
         .client
-        .get_file(req.resolved_path.clone(), start_time)
+        .get_file(req.resolved_path.clone(), start_time, range.clone())
         .await
         .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, &e, &state))?;
 
@@ -528,7 +554,9 @@ async fn serve_fs<T: ContentLoader + std::marker::Unpin>(
                 .try_collect()
                 .await;
             match dir_list {
-                Ok(dir_list) => serve_fs_dir(&dir_list, req, state, headers, start_time).await,
+                Ok(dir_list) => {
+                    serve_fs_dir(&dir_list, req, state, headers, http_req, start_time).await
+                }
                 Err(e) => {
                     tracing::warn!("failed to read dir: {:?}", e);
                     Err(error(
@@ -561,7 +589,17 @@ async fn serve_fs<T: ContentLoader + std::marker::Unpin>(
                         let content_sniffed_mime = body.get_mime();
                         add_content_type_headers(&mut headers, &name, content_sniffed_mime);
                     }
-                    response(StatusCode::OK, body, headers)
+
+                    if let Some(mut capped_range) = range {
+                        if let Some(size) = metadata.size {
+                            capped_range.end = std::cmp::min(capped_range.end, size);
+                        }
+                        add_etag_range(&mut headers, capped_range.clone());
+                        add_content_range_headers(&mut headers, capped_range, metadata.size);
+                        response(StatusCode::PARTIAL_CONTENT, body, headers)
+                    } else {
+                        response(StatusCode::OK, body, headers)
+                    }
                 }
                 None => Err(error(
                     StatusCode::BAD_REQUEST,
@@ -594,6 +632,7 @@ async fn serve_fs_dir<T: ContentLoader + std::marker::Unpin>(
     req: &Request,
     state: Arc<State<T>>,
     mut headers: HeaderMap,
+    http_req: &HttpRequest<Body>,
     start_time: std::time::Instant,
 ) -> Result<GatewayResponse, GatewayError> {
     let force_dir = req.query_params.force_dir.unwrap_or(false);
@@ -614,7 +653,7 @@ async fn serve_fs_dir<T: ContentLoader + std::marker::Unpin>(
         }
         let mut new_req = req.clone();
         new_req.resolved_path.push("index.html");
-        return serve_fs(&new_req, state, headers, start_time).await;
+        return serve_fs(&new_req, state, headers, http_req, start_time).await;
     }
 
     headers.insert(CONTENT_TYPE, HeaderValue::from_str("text/html").unwrap());
