@@ -182,7 +182,7 @@ mod tests {
     #[test]
     fn test_default_headers() {
         let headers = default_headers();
-        assert_eq!(headers.len(), 5);
+        assert_eq!(headers.len(), 4);
         let h = headers.get(&ACCESS_CONTROL_ALLOW_ORIGIN).unwrap();
         assert_eq!(h, "*");
     }
@@ -237,10 +237,6 @@ mod tests {
                 None,
                 "if-none-match, accept, cache-control, range, service-worker",
             ),
-        );
-        expect.insert(
-            "cache-control".to_string(),
-            Value::new(None, "no-cache, no-transform"),
         );
         expect.insert("accept-ranges".to_string(), Value::new(None, "none"));
         let got = collect_headers(&default_headers()).unwrap();

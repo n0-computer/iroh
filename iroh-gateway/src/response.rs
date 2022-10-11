@@ -197,7 +197,7 @@ mod tests {
         let rf = ResponseFormat::try_from("car").unwrap();
         let mut headers = HeaderMap::new();
         rf.write_headers(&mut headers);
-        assert_eq!(headers.len(), 4);
+        assert_eq!(headers.len(), 3);
         assert_eq!(headers.get(&CONTENT_TYPE).unwrap(), &CONTENT_TYPE_IPLD_CAR);
         assert_eq!(
             headers.get(&HEADER_X_CONTENT_TYPE_OPTIONS).unwrap(),
