@@ -13,3 +13,10 @@ async fn get_cli_test() {
         .case("tests/cmd/get.trycmd")
         .run();
 }
+
+#[tokio::test]
+async fn version_cli_test() {
+    trycmd::TestCases::new()
+        .case("tests/cmd/version.trycmd")
+        .run();
+}

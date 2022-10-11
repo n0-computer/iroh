@@ -1,0 +1,16 @@
+We can get the version with `--version`:
+
+```
+$ iroh --version
+iroh 0.1.0
+
+```
+
+We can also get it with `-V`:
+
+```
+$ iroh -V
+iroh 0.1.0
+
+```
+
