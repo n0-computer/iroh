@@ -17,7 +17,7 @@ use crate::{
     chunker::DEFAULT_CHUNK_SIZE_LIMIT,
     codecs::Codec,
     hamt::Hamt,
-    resolver::{ContentLoader, OutMetrics, Resolver},
+    resolver::{Block, ContentLoader, OutMetrics, Resolver},
 };
 
 pub(crate) mod unixfs_pb {
@@ -212,12 +212,13 @@ impl UnixfsNode {
         }
     }
 
-    pub fn encode(&self) -> Result<(Cid, Bytes)> {
-        let (cid, out) = match self {
+    pub fn encode(&self) -> Result<Block> {
+        let res = match self {
             UnixfsNode::Raw(data) => {
                 let out = data.clone();
+                let links = vec![];
                 let cid = Cid::new_v1(Codec::Raw as _, cid::multihash::Code::Sha2_256.digest(&out));
-                (cid, out)
+                Block::new(cid, out, links)
             }
             UnixfsNode::RawNode(node)
             | UnixfsNode::Directory(node)
@@ -225,21 +226,25 @@ impl UnixfsNode {
             | UnixfsNode::Symlink(node)
             | UnixfsNode::HamtShard(node, _) => {
                 let out = node.encode()?;
+                let links = node
+                    .links()
+                    .map(|x| Ok(x?.cid))
+                    .collect::<Result<Vec<_>>>()?;
                 let cid = Cid::new_v1(
                     Codec::DagPb as _,
                     cid::multihash::Code::Sha2_256.digest(&out),
                 );
-                (cid, out)
+                Block::new(cid, out, links)
             }
         };
 
         ensure!(
-            out.len() <= DEFAULT_CHUNK_SIZE_LIMIT,
+            res.data().len() <= DEFAULT_CHUNK_SIZE_LIMIT,
             "node is too large: {} bytes",
-            out.len()
+            res.data().len()
         );
 
-        Ok((cid, out))
+        Ok(res)
     }
 
     pub const fn typ(&self) -> Option<DataType> {

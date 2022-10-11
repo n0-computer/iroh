@@ -17,6 +17,7 @@ use tokio::io::AsyncRead;
 use crate::{
     balanced_tree::{TreeBuilder, DEFAULT_DEGREE},
     chunker::{Chunker, DEFAULT_CHUNKS_SIZE, DEFAULT_CHUNK_SIZE_LIMIT},
+    resolver::Block,
     unixfs::{dag_pb, unixfs_pb, DataType, Node, UnixfsNode},
 };
 
@@ -56,7 +57,7 @@ impl Directory {
         }
     }
 
-    pub async fn encode_root(self) -> Result<(Cid, Bytes)> {
+    pub async fn encode_root(self) -> Result<Block> {
         let mut current = None;
         let parts = self.encode();
         tokio::pin!(parts);
@@ -68,7 +69,7 @@ impl Directory {
         current.expect("must not be empty")
     }
 
-    pub fn encode<'a>(self) -> LocalBoxStream<'a, Result<(Cid, Bytes)>> {
+    pub fn encode<'a>(self) -> LocalBoxStream<'a, Result<Block>> {
         async_stream::try_stream! {
             let mut links = Vec::new();
             for entry in self.entries {
@@ -79,9 +80,9 @@ impl Directory {
                         tokio::pin!(parts);
                         let mut root = None;
                         while let Some(part) = parts.next().await {
-                            let (cid, bytes) = part?;
-                            root = Some((cid, bytes.clone()));
-                            yield (cid, bytes);
+                            let block = part?;
+                            root = Some(block.clone());
+                            yield block;
                         }
                          (name, root)
                     }
@@ -91,18 +92,18 @@ impl Directory {
                         tokio::pin!(parts);
                         let mut root = None;
                         while let Some(part) = parts.next().await {
-                            let (cid, bytes) = part?;
-                            root = Some((cid, bytes.clone()));
-                            yield (cid, bytes);
+                            let block = part?;
+                            root = Some(block.clone());
+                            yield block;
                         }
                          (name, root)
                     }
                 };
-                let (cid, bytes) = root.expect("file must not be empty");
+                let root_block = root.expect("file must not be empty");
                 links.push(dag_pb::PbLink {
-                    hash: Some(cid.to_bytes()),
+                    hash: Some(root_block.cid().to_bytes()),
                     name: Some(name),
-                    tsize: Some(bytes.len() as u64),
+                    tsize: Some(root_block.data().len() as u64),
                 });
 
             }
@@ -177,7 +178,7 @@ impl File {
         }
     }
 
-    pub async fn encode_root(self) -> Result<(Cid, Bytes)> {
+    pub async fn encode_root(self) -> Result<Block> {
         let mut current = None;
         let parts = self.encode().await?;
         tokio::pin!(parts);
@@ -189,7 +190,7 @@ impl File {
         current.expect("must not be empty")
     }
 
-    pub async fn encode(self) -> Result<impl Stream<Item = Result<(Cid, Bytes)>>> {
+    pub async fn encode(self) -> Result<impl Stream<Item = Result<Block>>> {
         let reader = match self.content {
             Content::Path(path) => {
                 let f = tokio::fs::File::open(path).await?;
@@ -456,9 +457,9 @@ pub async fn add_file<S: Store>(store: Option<S>, path: &Path, wrap: bool) -> Re
     tokio::pin!(parts);
 
     while let Some(part) = parts.next().await {
-        let (cid, bytes) = part?;
+        let (cid, bytes, links) = part?.into_parts();
         if let Some(ref store) = store {
-            store.put(cid, bytes, vec![]).await?;
+            store.put(cid, bytes, links).await?;
         }
         root = Some(cid);
     }
@@ -492,9 +493,9 @@ pub async fn add_dir<S: Store>(
     tokio::pin!(parts);
 
     while let Some(part) = parts.next().await {
-        let (cid, bytes) = part?;
+        let (cid, bytes, links) = part?.into_parts();
         if let Some(ref store) = store {
-            store.put(cid, bytes, vec![]).await?;
+            store.put(cid, bytes, links).await?;
         }
         root = Some(cid);
     }
@@ -577,14 +578,14 @@ mod tests {
 
         let dir = dir.build()?;
 
-        let (cid_dir, dir_encoded) = dir.encode_root().await?;
-        let decoded_dir = UnixfsNode::decode(&cid_dir, dir_encoded)?;
+        let dir_block = dir.encode_root().await?;
+        let decoded_dir = UnixfsNode::decode(dir_block.cid(), dir_block.data().clone())?;
 
         let links = decoded_dir.links().collect::<Result<Vec<_>>>().unwrap();
         assert_eq!(links[0].name.unwrap(), "bar.txt");
-        assert_eq!(links[0].cid, bar_encoded[0].0);
+        assert_eq!(links[0].cid, *bar_encoded[0].cid());
         assert_eq!(links[1].name.unwrap(), "baz.txt");
-        assert_eq!(links[1].cid, baz_encoded[0].0);
+        assert_eq!(links[1].cid, *baz_encoded[0].cid());
 
         // TODO: check content
         Ok(())
@@ -649,14 +650,14 @@ mod tests {
 
         let dir = dir.build()?;
 
-        let (cid_dir, dir_encoded) = dir.encode_root().await?;
-        let decoded_dir = UnixfsNode::decode(&cid_dir, dir_encoded)?;
+        let dir_block = dir.encode_root().await?;
+        let decoded_dir = UnixfsNode::decode(dir_block.cid(), dir_block.data().clone())?;
 
         let links = decoded_dir.links().collect::<Result<Vec<_>>>().unwrap();
         assert_eq!(links[0].name.unwrap(), "bar.txt");
-        assert_eq!(links[0].cid, bar_encoded[0].0);
+        assert_eq!(links[0].cid, *bar_encoded[0].cid());
         assert_eq!(links[1].name.unwrap(), "baz.txt");
-        assert_eq!(links[1].cid, baz_encoded[0].0);
+        assert_eq!(links[1].cid, *baz_encoded[0].cid());
 
         // TODO: check content
         Ok(())
@@ -671,14 +672,23 @@ mod tests {
 
     /// Read a stream of (cid, block) pairs into an in memory store and return the store and the root cid
     async fn stream_to_resolver(
-        stream: impl Stream<Item = Result<(Cid, Bytes)>>,
+        stream: impl Stream<Item = Result<Block>>,
     ) -> Result<(Cid, Resolver<Arc<fnv::FnvHashMap<Cid, Bytes>>>)> {
         tokio::pin!(stream);
-        let items: Vec<_> = stream.try_collect().await?;
-        let (root, _) = items.last().context("no root")?.clone();
-        let store: fnv::FnvHashMap<Cid, Bytes> = items.into_iter().collect();
+        let blocks: Vec<_> = stream.try_collect().await?;
+        for block in &blocks {
+            block.validate()?;
+        }
+        let root_block = blocks.last().context("no root")?.clone();
+        let store: fnv::FnvHashMap<Cid, Bytes> = blocks
+            .into_iter()
+            .map(|block| {
+                let (cid, bytes, _) = block.into_parts();
+                (cid, bytes)
+            })
+            .collect();
         let resolver = Resolver::new(Arc::new(store));
-        Ok((root, resolver))
+        Ok((*root_block.cid(), resolver))
     }
 
     #[derive(Debug, Clone, PartialEq, Eq)]
@@ -905,17 +915,17 @@ mod tests {
 
         let dir = dir.build()?;
 
-        let (cid_dir, dir_encoded) = dir.encode_root().await?;
-        let decoded_dir = UnixfsNode::decode(&cid_dir, dir_encoded)?;
+        let dir_block = dir.encode_root().await?;
+        let decoded_dir = UnixfsNode::decode(dir_block.cid(), dir_block.data().clone())?;
 
         let links = decoded_dir.links().collect::<Result<Vec<_>>>().unwrap();
         assert_eq!(links[0].name.unwrap(), "bar.txt");
-        assert_eq!(links[0].cid, bar_encoded[4].0);
+        assert_eq!(links[0].cid, *bar_encoded[4].cid());
         assert_eq!(links[1].name.unwrap(), "baz.txt");
-        assert_eq!(links[1].cid, baz_encoded[8].0);
+        assert_eq!(links[1].cid, *baz_encoded[8].cid());
 
         for (i, encoded) in baz_encoded.iter().enumerate() {
-            let node = UnixfsNode::decode(&encoded.0, encoded.1.clone())?;
+            let node = UnixfsNode::decode(encoded.cid(), encoded.data().clone())?;
             if i == 8 {
                 assert_eq!(node.typ(), Some(DataType::File));
                 assert_eq!(node.links().count(), 8);
