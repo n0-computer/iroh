@@ -10,7 +10,7 @@ use libp2p::core::identity::Keypair;
 use libp2p::core::PeerId;
 use libp2p::gossipsub::{Gossipsub, GossipsubConfig, MessageAuthenticity};
 use libp2p::identify::{Identify, IdentifyConfig};
-use libp2p::kad::store::MemoryStore;
+use libp2p::kad::store::{MemoryStore, MemoryStoreConfig};
 use libp2p::kad::{Kademlia, KademliaConfig};
 use libp2p::mdns::TokioMdns as Mdns;
 use libp2p::multiaddr::Protocol;
@@ -62,7 +62,13 @@ impl NodeBehaviour {
             let pub_key = local_key.public();
 
             // TODO: persist to store
-            let store = MemoryStore::new(pub_key.to_peer_id());
+            let mem_store_config = MemoryStoreConfig {
+                // enough for >10gb of unixfs files at the default chunk size
+                max_records: 1024 * 64,
+                max_provided_keys: 1024 * 64,
+                ..Default::default()
+            };
+            let store = MemoryStore::with_config(pub_key.to_peer_id(), mem_store_config);
 
             // TODO: make user configurable
             let mut kad_config = KademliaConfig::default();
