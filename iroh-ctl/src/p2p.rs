@@ -2,8 +2,7 @@ use std::str::FromStr;
 
 use anyhow::{Error, Result};
 use clap::{Args, Subcommand};
-use iroh::PeerIdOrAddr;
-use iroh::{Multiaddr, P2pApi, PeerId};
+use iroh_api::{Multiaddr, P2pApi, PeerId, PeerIdOrAddr};
 
 #[derive(Args, Debug, Clone)]
 #[clap(about = "Manage peer-2-peer networking.")]

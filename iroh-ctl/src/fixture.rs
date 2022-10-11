@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::env;
 
-use iroh::{Lookup, MockApi, MockP2p, PeerId};
+use iroh_api::{Lookup, MockApi, MockP2p, PeerId};
 
 type GetFixture = fn() -> MockApi;
 type FixtureRegistry = HashMap<String, GetFixture>;

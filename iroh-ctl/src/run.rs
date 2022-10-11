@@ -6,7 +6,7 @@ use crate::fixture::get_fixture_api;
 use crate::p2p::{run_command as run_p2p_command, P2p};
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use iroh::{Api, CidOrDomain, IpfsPath, Iroh};
+use iroh_api::{Api, CidOrDomain, IpfsPath, Iroh};
 use iroh_metrics::config::Config as MetricsConfig;
 
 #[derive(Parser, Debug, Clone)]

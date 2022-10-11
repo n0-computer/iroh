@@ -25,11 +25,11 @@ crossterm = "0.25"
 tonic = "0.8"
 git-version = "0.3.5"
 iroh-metrics = { path = "../iroh-metrics", default-features = false, features = ["rpc-grpc"] }
-iroh = { path = "../iroh"}
+iroh-api = { path = "../iroh-api"}
 
 [dev-dependencies]
 trycmd = "0.13.7"
-iroh = { path = "../iroh", features = ["testing"] }
+iroh-api = { path = "../iroh-api", features = ["testing"] }
 # We want to compile `iroh-ctl` in test mode, but we can't specify that yet:
 # https://github.com/rust-lang/cargo/issues/1982
 # This is a workaround for enabling features only during testing: 
