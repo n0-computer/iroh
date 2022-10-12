@@ -73,7 +73,7 @@ impl<T: ContentLoader + std::marker::Unpin> Core<T> {
     ) -> anyhow::Result<Arc<State<T>>> {
         let mut templates = HashMap::new();
         templates.insert("dir_list".to_string(), templates::DIR_LIST_TEMPLATE.to_string());
-        templates.insert("not_found".to_string(), templates::NOT_FOUND.to_string());
+        templates.insert("not_found".to_string(), templates::NOT_FOUND_TEMPLATE.to_string());
         let client = Client::new(&content_loader);
         Ok(Arc::new(State {
             config,
