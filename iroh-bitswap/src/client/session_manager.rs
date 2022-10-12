@@ -102,12 +102,10 @@ impl SessionManager {
         let session_peer_manager = SessionPeerManager::new(session_id, self.inner.network.clone());
 
         let session = Session::new(
-            self.inner.self_id,
             session_id,
             self.clone(),
             self.inner.peer_manager.clone(),
             session_peer_manager,
-            self.inner.provider_finder.clone(),
             self.inner.session_interest_manager.clone(),
             self.inner.block_presence_manager.clone(),
             self.inner.provider_finder.clone(),

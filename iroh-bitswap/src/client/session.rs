@@ -3,7 +3,6 @@ use std::{pin::Pin, sync::Arc, time::Duration};
 use ahash::AHashSet;
 use anyhow::{anyhow, ensure, Result};
 use cid::Cid;
-use futures::FutureExt;
 use libp2p::PeerId;
 use tokio::{
     sync::{oneshot, Mutex},
@@ -57,26 +56,22 @@ pub struct Session {
 
 #[derive(Debug)]
 struct Inner {
-    self_id: PeerId,
     id: u64,
     session_manager: SessionManager,
-    provider_finder: ProviderQueryManager,
     session_interest_manager: SessionInterestManager,
     incoming: async_channel::Sender<Op>,
     closer: oneshot::Sender<()>,
-    worker: Option<JoinHandle<()>>,
+    worker: JoinHandle<()>,
     notify: async_broadcast::Sender<Block>,
     workers: Mutex<Vec<(oneshot::Sender<()>, JoinHandle<()>)>>,
 }
 
 impl Session {
     pub async fn new(
-        self_id: PeerId,
         id: u64,
         session_manager: SessionManager,
         peer_manager: PeerManager,
         session_peer_manager: SessionPeerManager,
-        provider_finder: ProviderQueryManager,
         session_interest_manager: SessionInterestManager,
         block_presence_manager: BlockPresenceManager,
         provider_query_manager: ProviderQueryManager,
@@ -93,32 +88,7 @@ impl Session {
             session_peer_manager.clone(),
             session_manager.clone(),
             block_presence_manager,
-            {
-                let incoming = incoming_s.clone();
-                Box::new(
-                    move |_peer_id: PeerId, mut want_blocks: Vec<Cid>, want_haves: Vec<Cid>| {
-                        let incoming = incoming.clone();
-                        async move {
-                            want_blocks.extend(want_haves);
-                            incoming.send(Op::WantsSent(want_blocks)).await.ok();
-                        }
-                        .boxed()
-                    },
-                )
-            },
-            {
-                let incoming = incoming_s.clone();
-                Box::new(move |keys: Vec<Cid>| {
-                    let incoming = incoming.clone();
-                    async move {
-                        incoming
-                            .send(Op::Broadcast(keys.into_iter().collect()))
-                            .await
-                            .ok();
-                    }
-                    .boxed()
-                })
-            },
+            incoming_s.clone(),
         );
 
         let session_wants = SessionWants::new(BROADCAST_LIVE_WANTS_LIMIT);
@@ -198,15 +168,13 @@ impl Session {
         });
 
         let inner = Arc::new(Inner {
-            self_id,
             id,
             session_manager,
-            provider_finder,
             session_interest_manager,
             incoming: incoming_s,
             notify,
             closer: closer_s,
-            worker: Some(worker),
+            worker,
             workers: Mutex::new(Vec::new()),
         });
 
@@ -226,18 +194,14 @@ impl Session {
             .remove_session(self.inner.id)
             .await?;
 
-        let mut inner = Arc::try_unwrap(self.inner).map_err(|inner| {
+        let inner = Arc::try_unwrap(self.inner).map_err(|inner| {
             anyhow!("session refs not shutdown ({})", Arc::strong_count(&inner))
         })?;
         inner
             .closer
             .send(())
             .map_err(|e| anyhow!("failed to stop worker: {:?}", e))?;
-        inner
-            .worker
-            .take()
-            .ok_or_else(|| anyhow!("missing worker"))?
-            .await?;
+        inner.worker.await?;
 
         let mut workers = Mutex::into_inner(inner.workers);
         while let Some((closer, worker)) = workers.pop() {

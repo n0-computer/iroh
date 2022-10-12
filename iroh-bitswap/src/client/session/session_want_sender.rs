@@ -1,8 +1,6 @@
 use ahash::{AHashMap, AHashSet};
 use anyhow::{anyhow, Result};
 use cid::Cid;
-use derivative::Derivative;
-use futures::future::BoxFuture;
 use libp2p::PeerId;
 use tokio::{sync::oneshot, task::JoinHandle};
 use tracing::{error, info, warn};
@@ -135,16 +133,13 @@ fn signal_availability(changes: async_channel::Sender<Change>, peer: PeerId, is_
 }
 
 impl SessionWantSender {
-    pub fn new(
+    pub(super) fn new(
         session_id: u64,
         peer_manager: PeerManager,
         session_peer_manager: SessionPeerManager,
         session_manager: SessionManager,
         block_presence_manager: BlockPresenceManager,
-        on_send: Box<
-            dyn Fn(PeerId, Vec<Cid>, Vec<Cid>) -> BoxFuture<'static, ()> + 'static + Send + Sync,
-        >,
-        on_peers_exhausted: Box<dyn Fn(Vec<Cid>) -> BoxFuture<'static, ()> + 'static + Sync + Send>,
+        session_ops: async_channel::Sender<super::Op>,
     ) -> Self {
         let (changes_s, changes_r) = async_channel::bounded(64);
         let (closer_s, mut closer_r) = oneshot::channel();
@@ -160,8 +155,7 @@ impl SessionWantSender {
             session_peer_manager,
             session_manager,
             block_presence_manager,
-            on_send,
-            on_peers_exhausted,
+            session_ops,
         );
         let rt = tokio::runtime::Handle::current();
 
@@ -368,8 +362,7 @@ impl WantInfo {
     }
 }
 
-#[derive(Derivative)]
-#[derivative(Debug)]
+#[derive(Debug)]
 struct LoopState {
     changes: async_channel::Receiver<Change>,
     signaler: Signaler,
@@ -389,13 +382,7 @@ struct LoopState {
     session_manager: SessionManager,
     /// Keeps track of which peer has / doesn't have a block.
     block_presence_manager: BlockPresenceManager,
-    /// Called when wants are sent
-    #[derivative(Debug = "ignore")]
-    on_send:
-        Box<dyn Fn(PeerId, Vec<Cid>, Vec<Cid>) -> BoxFuture<'static, ()> + 'static + Send + Sync>,
-    /// Called when all peers explicitly don't have a block
-    #[derivative(Debug = "ignore")]
-    on_peers_exhausted: Box<dyn Fn(Vec<Cid>) -> BoxFuture<'static, ()> + 'static + Sync + Send>,
+    session_ops: async_channel::Sender<super::Op>,
 }
 
 impl LoopState {
@@ -406,10 +393,7 @@ impl LoopState {
         session_peer_manager: SessionPeerManager,
         session_manager: SessionManager,
         block_presence_manager: BlockPresenceManager,
-        on_send: Box<
-            dyn Fn(PeerId, Vec<Cid>, Vec<Cid>) -> BoxFuture<'static, ()> + 'static + Send + Sync,
-        >,
-        on_peers_exhausted: Box<dyn Fn(Vec<Cid>) -> BoxFuture<'static, ()> + 'static + Sync + Send>,
+        session_ops: async_channel::Sender<super::Op>,
     ) -> Self {
         LoopState {
             changes,
@@ -422,8 +406,7 @@ impl LoopState {
             session_peer_manager,
             session_manager,
             block_presence_manager,
-            on_send,
-            on_peers_exhausted,
+            session_ops,
         }
     }
 
@@ -737,7 +720,7 @@ impl LoopState {
             // If the last available peer in the session has become unavailable
             // then we need to broadcast all pending wants
             if !self.session_peer_manager.has_peers().await {
-                self.process_exhausted_wants(wants);
+                self.process_exhausted_wants(wants).await;
                 return;
             }
         }
@@ -749,16 +732,20 @@ impl LoopState {
                 .block_presence_manager
                 .all_peers_do_not_have_block(&self.session_peer_manager.peers().await, wants)
                 .await;
-            self.process_exhausted_wants(exhausted);
+            self.process_exhausted_wants(exhausted).await;
         }
     }
 
     /// Filters the list so that only those wants that haven't already been marked as exhausted
     /// are passed to `on_peers_exhausted`.
-    fn process_exhausted_wants(&mut self, exhausted: impl IntoIterator<Item = Cid>) {
+    async fn process_exhausted_wants(&mut self, exhausted: impl IntoIterator<Item = Cid>) {
         let newly_exhausted = self.newly_exhausted(exhausted.into_iter());
         if !newly_exhausted.is_empty() {
-            (self.on_peers_exhausted)(newly_exhausted);
+            // was "on_peers_exhausted"
+            self.session_ops
+                .send(super::Op::Broadcast(newly_exhausted.into_iter().collect()))
+                .await
+                .ok();
         }
     }
 
@@ -812,7 +799,7 @@ impl LoopState {
             // Note that the PeerManager ensures that we don't sent duplicate
             // want-haves / want-blocks to a peer, and that want-blocks take
             // precedence over want-haves.
-            let want_blocks: Vec<_> = snd.want_blocks.into_iter().collect();
+            let mut want_blocks: Vec<_> = snd.want_blocks.into_iter().collect();
             let want_haves: Vec<_> = snd.want_haves.into_iter().collect();
             self.peer_manager
                 .send_wants(&peer, &want_blocks, &want_haves)
@@ -822,7 +809,13 @@ impl LoopState {
                 .add_sent_want_blocks_to(&peer, &want_blocks);
 
             // Inform the session that we've sent the wants.
-            (self.on_send)(peer, want_blocks, want_haves);
+            // was "on_send"
+            want_blocks.extend(want_haves);
+            self.session_ops
+                .send(super::Op::WantsSent(want_blocks))
+                .await
+                .ok();
+            // (self.on_send)(peer, want_blocks, want_haves);
         }
     }
 
