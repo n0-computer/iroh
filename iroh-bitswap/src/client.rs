@@ -8,18 +8,14 @@ use ahash::AHashSet;
 use anyhow::Result;
 use cid::Cid;
 use derivative::Derivative;
-use futures::{future::BoxFuture, FutureExt};
+use futures::future::BoxFuture;
 use libp2p::PeerId;
 use tokio::sync::Mutex;
 use tracing::{debug, error, warn};
 
 use crate::{block::Block, message::BitswapMessage, network::Network, Store};
 
-use self::{
-    block_presence_manager::BlockPresenceManager, peer_manager::PeerManager,
-    provider_query_manager::ProviderQueryManager, session::Session,
-    session_interest_manager::SessionInterestManager, session_manager::SessionManager,
-};
+use self::{peer_manager::PeerManager, session::Session, session_manager::SessionManager};
 
 mod block_presence_manager;
 mod message_queue;
@@ -65,13 +61,10 @@ pub struct Stat {
 #[derivative(Debug)]
 #[derive(Clone)]
 pub struct Client<S: Store> {
-    peer_manager: PeerManager,
-    provider_query_manager: ProviderQueryManager,
     network: Network,
     store: S,
     counters: Arc<Mutex<Stat>>,
     session_manager: SessionManager,
-    session_interest_manager: SessionInterestManager,
     provider_search_delay: Duration,
     rebroadcast_delay: Duration,
     simulate_dont_haves_on_timeout: bool,
@@ -92,10 +85,6 @@ impl<S: Store> Client<S> {
     ) -> Self {
         let self_id = *network.self_id();
 
-        let session_interest_manager = SessionInterestManager::new();
-        let block_presence_manager = BlockPresenceManager::new();
-        let peer_manager = PeerManager::new(self_id, network.clone());
-        let provider_query_manager = ProviderQueryManager::new(network.clone()).await;
         let (notify, mut default_receiver): (
             async_broadcast::Sender<Block>,
             async_broadcast::Receiver<Block>,
@@ -121,38 +110,14 @@ impl<S: Store> Client<S> {
             }
         });
 
-        let session_manager = SessionManager::new(
-            self_id,
-            session_interest_manager.clone(),
-            block_presence_manager,
-            peer_manager.clone(),
-            provider_query_manager.clone(),
-            network.clone(),
-            notify.clone(),
-        );
-        peer_manager
-            .set_cb({
-                let sm = session_manager.clone();
-                move |peer: PeerId, dont_haves: Vec<Cid>| {
-                    let sm = sm.clone();
-                    async move {
-                        sm.receive_from(Some(peer), &[][..], &[][..], &dont_haves)
-                            .await
-                    }
-                    .boxed()
-                }
-            })
-            .await;
+        let session_manager = SessionManager::new(self_id, network.clone(), notify.clone()).await;
         let counters = Mutex::new(Stat::default());
 
         Client {
-            peer_manager,
-            provider_query_manager,
             network,
             store,
             counters: Arc::new(counters),
             session_manager,
-            session_interest_manager,
             provider_search_delay: config.provider_search_delay,
             rebroadcast_delay: config.rebroadcast_delay,
             simulate_dont_haves_on_timeout: config.simluate_donthaves_on_timeout,
@@ -163,8 +128,6 @@ impl<S: Store> Client<S> {
 
     pub async fn stop(self) -> Result<()> {
         self.session_manager.stop().await?;
-        self.provider_query_manager.stop().await?;
-        self.peer_manager.stop().await?;
 
         Ok(())
     }
@@ -229,7 +192,8 @@ impl<S: Store> Client<S> {
         dont_haves: &[Cid],
     ) -> Result<()> {
         let (wanted, not_wanted) = self
-            .session_interest_manager
+            .session_manager
+            .session_interest_manager()
             .split_wanted_unwanted(blocks)
             .await;
         for block in not_wanted {
@@ -242,7 +206,7 @@ impl<S: Store> Client<S> {
         combined.extend_from_slice(haves);
         combined.extend_from_slice(dont_haves);
 
-        self.peer_manager.response_received(from, &combined).await;
+        self.peer_manager().response_received(from, &combined).await;
 
         // Send all block keys (including duplicates to any sessions that want them for accounting purposes).
         self.session_manager
@@ -323,27 +287,31 @@ impl<S: Store> Client<S> {
 
     /// Called by the network interface when a peer initiates a new connection to bitswap.
     pub async fn peer_connected(&self, peer: &PeerId) {
-        self.peer_manager.connected(peer).await;
+        self.peer_manager().connected(peer).await;
     }
 
     /// Called by the network interface when a peer closes a connection.
     pub async fn peer_disconnected(&self, peer: &PeerId) {
-        self.peer_manager.disconnected(peer).await;
+        self.peer_manager().disconnected(peer).await;
     }
 
     /// Returns the current local wantlist (both want-blocks and want-haves).
     pub async fn get_wantlist(&self) -> AHashSet<Cid> {
-        self.peer_manager.current_wants().await
+        self.peer_manager().current_wants().await
     }
 
     /// Returns the current list of want-blocks.
     pub async fn get_want_blocks(&self) -> AHashSet<Cid> {
-        self.peer_manager.current_want_blocks().await
+        self.peer_manager().current_want_blocks().await
     }
 
     /// Returns the current list of want-haves.
     pub async fn get_want_haves(&self) -> AHashSet<Cid> {
-        self.peer_manager.current_want_haves().await
+        self.peer_manager().current_want_haves().await
+    }
+
+    fn peer_manager(&self) -> &PeerManager {
+        self.session_manager.peer_manager()
     }
 
     /// Creates a new Bitswap session. You should use this, rather

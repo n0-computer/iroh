@@ -9,6 +9,7 @@ use std::{
 use ahash::AHashMap;
 use anyhow::{anyhow, Result};
 use cid::Cid;
+use futures::FutureExt;
 use libp2p::PeerId;
 use tokio::sync::RwLock;
 
@@ -27,11 +28,10 @@ pub struct SessionManager {
 
 #[derive(Debug)]
 struct Inner {
-    self_id: PeerId,
     session_interest_manager: SessionInterestManager,
     block_presence_manager: BlockPresenceManager,
     peer_manager: PeerManager,
-    provider_finder: ProviderQueryManager,
+    provider_query_manager: ProviderQueryManager,
     sessions: RwLock<AHashMap<u64, Session>>,
     session_index: AtomicU64,
     network: Network,
@@ -39,28 +39,52 @@ struct Inner {
 }
 
 impl SessionManager {
-    pub fn new(
+    pub async fn new(
         self_id: PeerId,
-        session_interest_manager: SessionInterestManager,
-        block_presence_manager: BlockPresenceManager,
-        peer_manager: PeerManager,
-        provider_finder: ProviderQueryManager,
         network: Network,
         notify: async_broadcast::Sender<Block>,
     ) -> Self {
-        SessionManager {
+        let session_interest_manager = SessionInterestManager::new();
+        let block_presence_manager = BlockPresenceManager::new();
+        let peer_manager = PeerManager::new(self_id, network.clone());
+        let provider_query_manager = ProviderQueryManager::new(network.clone()).await;
+
+        let this = SessionManager {
             inner: Arc::new(Inner {
-                self_id,
                 session_interest_manager,
                 block_presence_manager,
                 peer_manager,
-                provider_finder,
+                provider_query_manager,
                 sessions: Default::default(),
                 session_index: Default::default(),
                 network,
                 notify,
             }),
-        }
+        };
+
+        this.inner
+            .peer_manager
+            .set_cb({
+                let this = this.clone();
+                move |peer: PeerId, dont_haves: Vec<Cid>| {
+                    let this = this.clone();
+                    async move {
+                        this.receive_from(Some(peer), &[][..], &[][..], &dont_haves)
+                            .await;
+                    }
+                    .boxed()
+                }
+            })
+            .await;
+        this
+    }
+
+    pub fn peer_manager(&self) -> &PeerManager {
+        &self.inner.peer_manager
+    }
+
+    pub fn session_interest_manager(&self) -> &SessionInterestManager {
+        &self.inner.session_interest_manager
     }
 
     pub async fn stop(self) -> Result<()> {
@@ -78,6 +102,9 @@ impl SessionManager {
         for r in results {
             r?;
         }
+
+        inner.peer_manager.stop().await?;
+        inner.provider_query_manager.stop().await?;
 
         Ok(())
     }
@@ -108,7 +135,7 @@ impl SessionManager {
             session_peer_manager,
             self.inner.session_interest_manager.clone(),
             self.inner.block_presence_manager.clone(),
-            self.inner.provider_finder.clone(),
+            self.inner.provider_query_manager.clone(),
             self.inner.notify.clone(),
             provider_search_delay,
             rebroadcast_delay,
@@ -180,15 +207,17 @@ impl SessionManager {
                 .await;
         }
 
-        for id in &self
-            .inner
-            .session_interest_manager
-            .interested_sessions(blocks, haves, dont_haves)
-            .await
         {
             let sessions = &*self.inner.sessions.read().await;
-            if let Some(session) = sessions.get(id) {
-                session.receive_from(peer, blocks, haves, dont_haves).await;
+            for id in &self
+                .inner
+                .session_interest_manager
+                .interested_sessions(blocks, haves, dont_haves)
+                .await
+            {
+                if let Some(session) = sessions.get(id) {
+                    session.receive_from(peer, blocks, haves, dont_haves).await;
+                }
             }
         }
 
