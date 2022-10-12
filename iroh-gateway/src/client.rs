@@ -80,7 +80,7 @@ impl<T: ContentLoader + std::marker::Unpin> Client<T> {
         path: iroh_resolver::resolver::Path,
         start_time: std::time::Instant,
     ) -> Result<(FileResult<T>, Metadata), String> {
-        info!("get file {}", path.to_string());
+        info!("get file {}", path);
         let res = self
             .resolver
             .resolve(path)

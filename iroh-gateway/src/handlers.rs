@@ -29,6 +29,7 @@ use std::{
     sync::Arc,
     time::{self, Duration},
 };
+
 use tower::ServiceBuilder;
 use tower_http::{compression::CompressionLayer, trace::TraceLayer};
 use tracing::info_span;
@@ -42,7 +43,7 @@ use crate::{
     error::GatewayError,
     headers::*,
     response::{get_response_format, GatewayResponse, ResponseFormat}, 
-    templates::{ICONS_STLESHEET_TEMPLATE, STYLESHEET_TEMPLATE},
+    templates::{ICONS_STLESHEET_TEMPLATE, STYLESHEET_TEMPLATE, icon_class_name},
 };
 
 /// Trait describing what needs to be accessed on the configuration
@@ -597,6 +598,7 @@ async fn serve_fs_dir<T: ContentLoader + std::marker::Unpin>(
                 "path".to_string(),
                 Json::String(format!("{}{}", root_path, name)),
             );
+            link.insert("icon".to_string(), Json::String(icon_class_name(name)));
             link
         })
         .collect::<Vec<Map<String, Json>>>();
