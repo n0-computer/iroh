@@ -373,12 +373,16 @@ impl<S: Store> NetworkBehaviour for Bitswap<S> {
                     }
                 }
             }
-            HandlerEvent::Message { message, protocol } => {
+            HandlerEvent::Message {
+                mut message,
+                protocol,
+            } => {
                 // mark peer as responsive
                 if self.get_peer_state(&peer_id) == PeerState::Unresponsive {
                     self.set_peer_state(&peer_id, PeerState::Responsive(connection, protocol));
                 }
 
+                message.verify_blocks();
                 self.receive_message(peer_id, message);
             }
         }

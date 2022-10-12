@@ -6,6 +6,8 @@ use cid::Cid;
 use multihash::{Code, MultihashDigest};
 use once_cell::sync::Lazy;
 use prost::Message;
+use tokio::time::Instant;
+use tracing::{trace, warn};
 
 use crate::block::Block;
 use crate::error::Error;
@@ -161,6 +163,30 @@ impl BitswapMessage {
 
     pub fn full(&self) -> bool {
         self.full
+    }
+
+    /// Removes all invalid blocks.
+    pub fn verify_blocks(&mut self) {
+        self.blocks.retain(|_, block| {
+            let now = Instant::now();
+            let is_valid = iroh_util::verify_hash(&block.cid, &block.data);
+            trace!("block validated in {}ms", now.elapsed().as_millis());
+            match is_valid {
+                Some(true) => {
+                    // all good
+                    true
+                }
+                Some(false) => {
+                    // TODO: maybe blacklist peer?
+                    warn!("invalid block received");
+                    false
+                }
+                None => {
+                    warn!("unknown hash function {}", block.cid.hash().code());
+                    false
+                }
+            }
+        });
     }
 
     pub fn is_empty(&self) -> bool {
