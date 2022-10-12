@@ -188,7 +188,8 @@ impl NodeBehaviour {
 
         let identify = {
             let config = IdentifyConfig::new("ipfs/0.1.0".into(), local_key.public())
-                .with_agent_version(format!("iroh/{}", env!("CARGO_PKG_VERSION")));
+                .with_agent_version(format!("iroh/{}", env!("CARGO_PKG_VERSION")))
+                .with_cache_size(64 * 1024);
             Identify::new(config)
         };
 
