@@ -473,7 +473,7 @@ impl LoopState {
                                 match provider {
                                     Ok(provider) => {
                                         num_providers += 1;
-                                        inc!(BitswapMetrics::Providers);
+                                        inc!(BitswapMetrics::ProvidersTotal);
                                         debug!("found provider for {}: {}", cid, provider);
                                         // When a provider indicates that it has a cid, it's equivalent to
                                         // the providing peer sending a HAVE.

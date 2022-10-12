@@ -275,7 +275,7 @@ impl<S: Store> Client<S> {
 
             let counters = &mut *self.counters.lock().await;
             inc!(BitswapMetrics::BlocksIn);
-            record!(BitswapMetrics::BlockBytesIn, block_len as u64);
+            record!(BitswapMetrics::ReceivedBlockBytes, block_len as u64);
             counters.blocks_received += 1;
             counters.data_received += block_len as u64;
             if has_block {

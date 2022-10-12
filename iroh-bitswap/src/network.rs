@@ -163,7 +163,7 @@ impl Network {
         for _ in 0..num_blocks {
             inc!(BitswapMetrics::BlocksOut);
         }
-        record!(BitswapMetrics::BlockBytesOut, num_block_bytes);
+        record!(BitswapMetrics::SentBlockBytes, num_block_bytes);
 
         Ok(res)
     }
@@ -211,7 +211,8 @@ impl Network {
                 .map_err(|e| anyhow!("dial:{} failed: {}", dial_id, e))?;
             Ok::<_, anyhow::Error>(res)
         })
-            .await.map_err(|e| anyhow!("dial:{} error: {:?}", dial_id, e))??;
+        .await
+        .map_err(|e| anyhow!("dial:{} error: {:?}", dial_id, e))??;
 
         debug!("dial:{}: success {}", dial_id, peer);
         inc!(BitswapMetrics::Dials);
