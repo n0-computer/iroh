@@ -1,0 +1,10 @@
+
+We can get a CID that represents a directory, but this directory already
+exists, so we refuse to write:
+
+```
+$ iroh get QmP8jTG1m9GSDJLCbeWhVSVgEzCPPwXRdCRuJtQ5Tz9Kc9
+? failed
+Error: output path QmP8jTG1m9GSDJLCbeWhVSVgEzCPPwXRdCRuJtQ5Tz9Kc9 already exists
+
+```

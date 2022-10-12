@@ -19,6 +19,12 @@ pub trait ApiExt: Api {
             .cid()
             .ok_or_else(|| anyhow!("IPFS path does not refer to a CID"))?;
         let root_path = get_root_path(cid, output_path);
+        if root_path.exists() {
+            return Err(anyhow!(
+                "output path {} already exists",
+                root_path.display()
+            ));
+        }
         let blocks = self.get_stream(ipfs_path);
         save_get_stream(&root_path, blocks).await?;
         Ok(root_path)
