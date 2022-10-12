@@ -7,10 +7,18 @@ async fn lookup_cli_test() {
 }
 
 #[tokio::test]
-async fn get_cli_test() {
+async fn get_success_cli_test() {
     trycmd::TestCases::new()
         .env("IROH_CTL_FIXTURE", "get")
-        .case("tests/cmd/get.trycmd")
+        .case("tests/cmd/get_*_success.trycmd")
+        .run();
+}
+
+#[tokio::test]
+async fn get_failure_cli_test() {
+    trycmd::TestCases::new()
+        .env("IROH_CTL_FIXTURE", "get")
+        .case("tests/cmd/get_failure.trycmd")
         .run();
 }
 
