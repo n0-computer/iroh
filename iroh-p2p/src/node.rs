@@ -2,8 +2,9 @@ use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
 use ahash::AHashMap;
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use cid::Cid;
+use futures::FutureExt;
 use futures_util::stream::StreamExt;
 use iroh_metrics::{core::MRecorder, inc, libp2p_metrics, p2p::P2PMetrics};
 use iroh_rpc_client::Client as RpcClient;
@@ -24,7 +25,7 @@ use libp2p::swarm::dial_opts::{DialOpts, PeerCondition};
 use libp2p::swarm::{ConnectionHandler, IntoConnectionHandler, NetworkBehaviour, SwarmEvent};
 use libp2p::{PeerId, Swarm};
 use tokio::sync::mpsc::{channel, Receiver, Sender};
-use tokio::sync::oneshot::Sender as OneShotSender;
+use tokio::sync::oneshot::{self, Sender as OneShotSender};
 use tokio::task::JoinHandle;
 use tracing::{debug, error, info, trace, warn};
 
@@ -75,6 +76,7 @@ pub struct Node<KeyStorage: Storage> {
     kad_last_range: Option<(Distance, Distance)>,
     rpc_task: JoinHandle<()>,
     use_dht: bool,
+    bitswap_sessions: AHashMap<u64, Vec<(oneshot::Sender<()>, JoinHandle<()>)>>,
 }
 
 #[derive(Default)]
@@ -159,6 +161,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
             kad_last_range: None,
             rpc_task,
             use_dht: libp2p_config.kademlia,
+            bitswap_sessions: Default::default(),
         })
     }
 
@@ -290,6 +293,70 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
         self.network_events.push(s);
         r
     }
+
+    fn destroy_session(&mut self, ctx: u64) -> Result<()> {
+        if let Some(bs) = self.swarm.behaviour().bitswap.as_ref() {
+            let client = bs.client().clone();
+            let workers = self.bitswap_sessions.remove(&ctx).unwrap_or_default();
+            tokio::task::spawn(async move {
+                debug!("stopping session {} ({} workers)", ctx, workers.len());
+                // first shutdown workers
+                for (closer, worker) in workers {
+                    if closer.send(()).is_ok() {
+                        worker.await.ok();
+                    }
+                }
+                debug!("all workers stopped for session {}", ctx);
+                if let Err(err) = client.stop_session(ctx).await {
+                    warn!("failed to stop session {}: {:?}", ctx, err);
+                }
+            });
+            Ok(())
+        } else {
+            bail!("no bitswap available");
+        }
+    }
+
+    /// Send a request for data over bitswap
+    fn want_block(
+        &mut self,
+        ctx: u64,
+        cid: Cid,
+        _providers: HashSet<PeerId>,
+        chan: OneShotSender<Result<Block, String>>,
+    ) -> Result<()> {
+        if let Some(bs) = self.swarm.behaviour().bitswap.as_ref() {
+            let client = bs.client().clone();
+            let (closer_s, closer_r) = oneshot::channel();
+
+            let entry = self.bitswap_sessions.entry(ctx).or_default();
+            let worker = tokio::task::spawn(async move {
+                tokio::pin!(closer_r);
+
+                futures::future::select(
+                    closer_r,
+                    async move {
+                        match client.get_block_with_session_id(ctx, &cid).await {
+                            Ok(block) => {
+                                if let Err(e) = chan.send(Ok(block)) {
+                                    warn!("failed to send block response: {:?}", e);
+                                }
+                            }
+                            Err(err) => {
+                                chan.send(Err(err.to_string())).ok();
+                            }
+                        }
+                    }.boxed()
+                ).await;
+            });
+            entry.push((closer_s, worker));
+
+            Ok(())
+        } else {
+            bail!("no bitswap available");
+        }
+    }
+
 
     #[tracing::instrument(skip(self))]
     fn handle_swarm_event(
@@ -583,8 +650,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
             } => {
                 trace!("context:{} bitswap_request", ctx);
                 for (cid, response_channel) in cids.into_iter().zip(response_channels.into_iter()) {
-                    self.swarm
-                        .behaviour_mut()
+                    self
                         .want_block(ctx, cid, providers.clone(), response_channel)
                         .map_err(|err| anyhow!("Failed to send a bitswap want_block: {:?}", err))?;
                 }
@@ -600,7 +666,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                 ctx,
                 response_channel,
             } => {
-                let res = self.swarm.behaviour().destroy_session(ctx);
+                let res = self.destroy_session(ctx);
                 response_channel.send(res).ok();
             }
             RpcMessage::BitswapInjectProviders {

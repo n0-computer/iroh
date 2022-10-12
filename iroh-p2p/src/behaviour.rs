@@ -225,49 +225,6 @@ impl NodeBehaviour {
         self.peer_manager.is_bad_peer(peer_id)
     }
 
-    pub fn destroy_session(&self, ctx: u64) -> Result<()> {
-        if let Some(bs) = self.bitswap.as_ref() {
-            let client = bs.client().clone();
-            tokio::task::spawn(async move {
-                if let Err(err) = client.stop_session(ctx).await {
-                    warn!("failed to stop session {}: {:?}", ctx, err);
-                }
-            });
-            Ok(())
-        } else {
-            bail!("no bitswap available");
-        }
-    }
-
-    /// Send a request for data over bitswap
-    pub fn want_block(
-        &self,
-        ctx: u64,
-        cid: Cid,
-        _providers: HashSet<PeerId>,
-        chan: OneShotSender<Result<Block, String>>,
-    ) -> Result<()> {
-        if let Some(bs) = self.bitswap.as_ref() {
-            let client = bs.client().clone();
-            tokio::task::spawn(async move {
-                match client.get_block_with_session_id(ctx, &cid).await {
-                    Ok(block) => {
-                        if let Err(e) = chan.send(Ok(block)) {
-                            warn!("failed to send block response: {:?}", e);
-                        }
-                    }
-                    Err(err) => {
-                        chan.send(Err(err.to_string())).ok();
-                    }
-                }
-            });
-
-            Ok(())
-        } else {
-            bail!("no bitswap available");
-        }
-    }
-
     pub fn notify_new_blocks(&self, blocks: Vec<Block>) {
         if let Some(bs) = self.bitswap.as_ref() {
             let client = bs.client().clone();
