@@ -5,17 +5,13 @@ use crate::config::{Config, CONFIG_FILE_NAME, ENV_PREFIX};
 #[cfg(feature = "testing")]
 use crate::p2p::MockP2p;
 use crate::p2p::{ClientP2p, P2p};
-use crate::CidOrDomain;
-use anyhow::{anyhow, Result};
-use async_trait::async_trait;
-use cid::Cid;
+use crate::{Cid, IpfsPath};
+use anyhow::Result;
 use futures::future::{BoxFuture, LocalBoxFuture};
 use futures::stream::LocalBoxStream;
 use futures::FutureExt;
-use futures::Stream;
 use futures::StreamExt;
-use iroh_resolver::resolver::{OutPrettyReader, Path as IpfsPath};
-use iroh_resolver::{resolver, unixfs_builder};
+use iroh_resolver::unixfs_builder;
 use iroh_rpc_client::Client;
 use iroh_rpc_client::StatusTable;
 use iroh_util::{iroh_config_path, make_config};
@@ -57,18 +53,6 @@ pub trait Api {
     fn watch(&self) -> LocalBoxFuture<'static, LocalBoxStream<'static, StatusTable>>;
 }
 
-pub trait ApiExt: Api {
-    fn get<'a>(
-        &'a self,
-        ipfs_path: &'a IpfsPath,
-        output_path: Option<&'a Path>,
-    ) -> LocalBoxFuture<'_, Result<()>> {
-        Iroh::get_impl(self, ipfs_path, output_path).boxed_local()
-    }
-}
-
-impl<T> ApiExt for T where T: Api {}
-
 impl Iroh {
     pub async fn new(
         config_path: Option<&Path>,
@@ -95,60 +79,6 @@ impl Iroh {
 
     fn from_client(client: Client) -> Self {
         Self { client }
-    }
-
-    /// take a stream of blocks as from `get_stream` and write them to the filesystem
-    pub async fn save_get_stream(
-        root_path: &Path,
-        blocks: impl Stream<Item = Result<(RelativePathBuf, OutType)>>,
-    ) -> Result<()> {
-        tokio::pin!(blocks);
-        while let Some(block) = blocks.next().await {
-            let (path, out) = block?;
-            let full_path = path.to_path(root_path);
-            match out {
-                OutType::Dir => {
-                    tokio::fs::create_dir_all(full_path).await?;
-                }
-                OutType::Reader(mut reader) => {
-                    if let Some(parent) = path.parent() {
-                        tokio::fs::create_dir_all(parent.to_path(root_path)).await?;
-                    }
-                    let mut f = tokio::fs::File::create(full_path).await?;
-                    tokio::io::copy(&mut reader, &mut f).await?;
-                }
-            }
-        }
-        Ok(())
-    }
-
-    /// Given an cid and an optional output path, determine root path
-    pub fn get_root_path(cid: &Cid, output_path: Option<&Path>) -> PathBuf {
-        match output_path {
-            Some(path) => path.to_path_buf(),
-            None => PathBuf::from(cid.to_string()),
-        }
-    }
-
-    // TODO(faassen) it would be nicer if this were TryFrom,
-    // but I failed at making that work nicely so far
-    pub fn ipfs_path_to_cid(ipfs_path: &IpfsPath) -> Result<Cid> {
-        if let CidOrDomain::Cid(cid) = ipfs_path.root() {
-            Ok(*cid)
-        } else {
-            Err(anyhow!("ipfs path must refer to a CID"))
-        }
-    }
-
-    async fn get_impl<'a>(
-        api: &(impl Api + ?Sized),
-        ipfs_path: &IpfsPath,
-        output_path: Option<&'a Path>,
-    ) -> Result<()> {
-        let cid = Self::ipfs_path_to_cid(ipfs_path)?;
-        let root_path = Self::get_root_path(&cid, output_path);
-        let blocks = api.get_stream(ipfs_path);
-        Self::save_get_stream(&root_path, blocks).await
     }
 }
 
@@ -213,43 +143,5 @@ impl Api for Iroh {
     ) -> LocalBoxFuture<'static, LocalBoxStream<'static, iroh_rpc_client::StatusTable>> {
         let client = self.client.clone();
         async { client.watch().await.boxed_local() }.boxed_local()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::str::FromStr;
-    use tempdir::TempDir;
-
-    #[tokio::test]
-    async fn test_save_get_stream() {
-        let stream = Box::pin(futures::stream::iter(vec![
-            Ok((RelativePathBuf::from_path("a").unwrap(), OutType::Dir)),
-            Ok((
-                RelativePathBuf::from_path("b").unwrap(),
-                OutType::Reader(Box::new(std::io::Cursor::new("hello"))),
-            )),
-        ]));
-        let tmp_dir = TempDir::new("test_save_get_stream").unwrap();
-        Iroh::save_get_stream(tmp_dir.path(), stream).await.unwrap();
-        assert!(tmp_dir.path().join("a").is_dir());
-        assert_eq!(
-            std::fs::read_to_string(tmp_dir.path().join("b")).unwrap(),
-            "hello"
-        );
-    }
-
-    #[test]
-    fn test_get_root_path() {
-        let cid = Cid::from_str("QmYbcW4tXLXHWw753boCK8Y7uxLu5abXjyYizhLznq9PUR").unwrap();
-        assert_eq!(
-            Iroh::get_root_path(&cid, None),
-            PathBuf::from("QmYbcW4tXLXHWw753boCK8Y7uxLu5abXjyYizhLznq9PUR")
-        );
-        assert_eq!(
-            Iroh::get_root_path(&cid, Some(Path::new("bar"))),
-            PathBuf::from("bar")
-        );
     }
 }

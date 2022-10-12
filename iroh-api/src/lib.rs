@@ -1,11 +1,12 @@
 mod api;
+mod api_ext;
 mod config;
-mod getadd;
 mod p2p;
 
 #[cfg(feature = "testing")]
 pub use crate::api::MockApi;
-pub use crate::api::{Api, ApiExt, Iroh, OutType};
+pub use crate::api::{Api, Iroh, OutType};
+pub use crate::api_ext::ApiExt;
 #[cfg(feature = "testing")]
 pub use crate::p2p::MockP2p;
 pub use crate::p2p::P2p as P2pApi;
