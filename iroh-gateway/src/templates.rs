@@ -34,8 +34,10 @@ pub const DIR_LIST: &str = r#"
   <div id="page-header">
     <div id="page-header-logo" class="ipfs-logo">&nbsp;</div>
     <div id="page-header-menu">
+			<div class="menu-item-wide"><a href="https://iroh.computer/docs/install" target="_blank" rel="noopener noreferrer">Install IPFS</a></div>
       <div class="menu-item-wide"><a href="https://iroh.computer/docs/ipfs" target="_blank" rel="noopener noreferrer">About IPFS</a></div>
       <div class="menu-item-narrow"><a href="https://iroh.computer/docs/ipfs" target="_blank" rel="noopener noreferrer">About</a></div>
+			<div class="menu-item-narrow"><a href="https://iroh.computer/docs/install" target="_blank" rel="noopener noreferrer">Install</a></div>
       <div>
         <a href="https://github.com/n0-computer/iroh/issues/new" target="_blank" rel="noopener noreferrer" title="Report a bug">
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 18.4 21"><circle cx="7.5" cy="4.8" r="1"/><circle cx="11.1" cy="4.8" r="1"/><path d="M12.7 8.4c-0.5-1.5-1.9-2.5-3.5-2.5 -1.6 0-3 1-3.5 2.5H12.7z"/><path d="M8.5 9.7H5c-0.5 0.8-0.7 1.7-0.7 2.7 0 2.6 1.8 4.8 4.2 5.2V9.7z"/><path d="M13.4 9.7H9.9v7.9c2.4-0.4 4.2-2.5 4.2-5.2C14.1 11.4 13.9 10.5 13.4 9.7z"/><circle cx="15.7" cy="12.9" r="1"/><circle cx="15.1" cy="15.4" r="1"/><circle cx="15.3" cy="10.4" r="1"/><circle cx="2.7" cy="12.9" r="1"/><circle cx="3.3" cy="15.4" r="1"/><circle cx="3.1" cy="10.4" r="1"/></svg>
@@ -387,7 +389,7 @@ pub fn icon_class_name(path: &str) -> String {
 }
 
 
-pub const ICONS_STLESHEET_TEMPLATE: &str = r##"
+pub const ICONS_STYLESHEET_TEMPLATE: &str = r##"
 /* Source - fileicons.org */
 
 .icon-_blank {
@@ -571,7 +573,7 @@ pub const ICONS_STLESHEET_TEMPLATE: &str = r##"
 	background-size:contain
 }
 
-.icon-logo {
+.ipfs-logo {
 	background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 553 235.3'%3E%3Cdefs%3E%3C/defs%3E%3Cpath fill='%23ffffff' d='M239 63h17.8v105H239V63zm35.6 0h36.3c7.9 0 14.5.9 19.6 2.6s9.2 4.1 12.1 7.1a24.45 24.45 0 0 1 6.2 10.2 40.75 40.75 0 0 1 1.8 12.1 45.69 45.69 0 0 1-1.8 12.9 26.58 26.58 0 0 1-6.2 10.8 30.59 30.59 0 0 1-12.1 7.3c-5.1 1.8-11.5 2.7-19.3 2.7h-19.1V168h-17.5V63zm36.2 51a38.37 38.37 0 0 0 11.1-1.3 16.3 16.3 0 0 0 6.8-3.7 13.34 13.34 0 0 0 3.5-5.8 29.75 29.75 0 0 0 1-7.6 25.68 25.68 0 0 0-1-7.7 12 12 0 0 0-3.6-5.5 17.15 17.15 0 0 0-6.9-3.4 41.58 41.58 0 0 0-10.9-1.2h-18.5V114h18.5zm119.9-51v15.3h-49.2V108h46.3v15.4h-46.3V168h-17.8V63h67zm26.2 72.9c.8 6.9 3.3 11.9 7.4 15s10.4 4.7 18.6 4.7a32.61 32.61 0 0 0 10.1-1.3 20.52 20.52 0 0 0 6.6-3.5 12 12 0 0 0 3.5-5.2 19.08 19.08 0 0 0 1-6.4 16.14 16.14 0 0 0-.7-4.9 12.87 12.87 0 0 0-2.6-4.5 16.59 16.59 0 0 0-5.1-3.6 35 35 0 0 0-8.2-2.4l-13.4-2.5a89.76 89.76 0 0 1-14.1-3.7 33.51 33.51 0 0 1-10.4-5.8 22.28 22.28 0 0 1-6.3-8.8 34.1 34.1 0 0 1-2.1-12.7 26 26 0 0 1 11.3-22.4 36.35 36.35 0 0 1 12.6-5.6 65.89 65.89 0 0 1 15.8-1.8c7.2 0 13.3.8 18.2 2.5a34.46 34.46 0 0 1 11.9 6.5 28.21 28.21 0 0 1 6.9 9.3 42.1 42.1 0 0 1 3.2 11l-16.8 2.6c-1.4-5.9-3.7-10.2-7.1-13.1s-8.7-4.3-16.1-4.3a43.9 43.9 0 0 0-10.5 1.1 19.47 19.47 0 0 0-6.8 3.1 11.63 11.63 0 0 0-3.7 4.6 14.08 14.08 0 0 0-1.1 5.4c0 4.6 1.2 8 3.7 10.3s6.9 4 13.2 5.3l14.5 2.8c11.1 2.1 19.2 5.6 24.4 10.5s7.8 12.1 7.8 21.4a31.37 31.37 0 0 1-2.4 12.3 25.27 25.27 0 0 1-7.4 9.8 36.58 36.58 0 0 1-12.4 6.6 56 56 0 0 1-17.3 2.4c-13.4 0-24-2.8-31.6-8.5s-11.9-14.4-12.6-26.2h18z'/%3E%3Cpath fill='%23469ea2' d='M30.3 164l84 48.5 84-48.5V67l-84-48.5-84 48.5v97z'/%3E%3Cpath fill='%236acad1' d='M105.7 30.1l-61 35.2a18.19 18.19 0 0 1 0 3.3l60.9 35.2a14.55 14.55 0 0 1 17.3 0l60.9-35.2a18.19 18.19 0 0 1 0-3.3L123 30.1a14.55 14.55 0 0 1-17.3 0zm84 48.2l-61 35.6a14.73 14.73 0 0 1-8.6 15l.1 70a15.57 15.57 0 0 1 2.8 1.6l60.9-35.2a14.73 14.73 0 0 1 8.6-15V79.9a20 20 0 0 1-2.8-1.6zm-150.8.4a15.57 15.57 0 0 1-2.8 1.6v70.4a14.38 14.38 0 0 1 8.6 15l60.9 35.2a15.57 15.57 0 0 1 2.8-1.6v-70.4a14.38 14.38 0 0 1-8.6-15L38.9 78.7z'/%3E%3Cpath fill='%23469ea2' d='M114.3 29l75.1 43.4v86.7l-75.1 43.4-75.1-43.4V72.3L114.3 29m0-10.3l-84 48.5v97l84 48.5 84-48.5v-97l-84-48.5z'/%3E%3Cpath fill='%23469ea2' d='M114.9 132h-1.2A15.66 15.66 0 0 1 98 116.3v-1.2a15.66 15.66 0 0 1 15.7-15.7h1.2a15.66 15.66 0 0 1 15.7 15.7v1.2a15.66 15.66 0 0 1-15.7 15.7zm0 64.5h-1.2a15.65 15.65 0 0 0-13.7 8l14.3 8.2 14.3-8.2a15.65 15.65 0 0 0-13.7-8zm83.5-48.5h-.6a15.66 15.66 0 0 0-15.7 15.7v1.2a15.13 15.13 0 0 0 2 7.6l14.3-8.3V148zm-14.3-89a15.4 15.4 0 0 0-2 7.6v1.2a15.66 15.66 0 0 0 15.7 15.7h.6V67.2L184.1 59zm-69.8-40.3L100 26.9a15.73 15.73 0 0 0 13.7 8.1h1.2a15.65 15.65 0 0 0 13.7-8l-14.3-8.3zM44.6 58.9l-14.3 8.3v16.3h.6a15.66 15.66 0 0 0 15.7-15.7v-1.2a16.63 16.63 0 0 0-2-7.7zM30.9 148h-.6v16.2l14.3 8.3a15.4 15.4 0 0 0 2-7.6v-1.2A15.66 15.66 0 0 0 30.9 148z'/%3E%3Cpath fill='%23083b54' fill-opacity='0.15' d='M114.3 213.2v-97.1l-84-48.5v97.1z'/%3E%3Cpath fill='%23083b54' fill-opacity='0.05' d='M198.4 163.8v-97l-84 48.5v97.1z'/%3E%3C/svg%3E%0A");
 	background-repeat:no-repeat;
 	background-size:contain

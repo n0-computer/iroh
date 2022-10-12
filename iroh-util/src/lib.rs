@@ -17,6 +17,7 @@ use config::{Config, ConfigError, Environment, File, Map, Source, Value, ValueKi
 use tracing::debug;
 
 pub mod lock;
+pub mod human;
 
 /// name of directory that wraps all iroh files in a given application directory
 const IROH_DIR: &str = "iroh";

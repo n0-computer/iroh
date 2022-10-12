@@ -16,6 +16,7 @@ use iroh_resolver::{
     resolver::{CidOrDomain, ContentLoader, OutMetrics, UnixfsType},
     unixfs::Link,
 };
+use iroh_util::human::format_bytes;
 use serde::{Deserialize, Serialize};
 use serde_json::{
     json,
@@ -43,7 +44,7 @@ use crate::{
     error::GatewayError,
     headers::*,
     response::{get_response_format, GatewayResponse, ResponseFormat}, 
-    templates::{ICONS_STLESHEET_TEMPLATE, STYLESHEET_TEMPLATE, icon_class_name},
+    templates::{ICONS_STYLESHEET_TEMPLATE, STYLESHEET_TEMPLATE, icon_class_name},
 };
 
 /// Trait describing what needs to be accessed on the configuration
@@ -242,7 +243,7 @@ pub async fn stylesheet_icons() -> (HeaderMap, &'static str) {
         HeaderName::from_static("content-type"),
         HeaderValue::from_static("text/css"),
     );
-    (headers, ICONS_STLESHEET_TEMPLATE)
+    (headers, ICONS_STYLESHEET_TEMPLATE)
 }
 
 #[tracing::instrument()]
@@ -582,8 +583,8 @@ async fn serve_fs_dir<T: ContentLoader + std::marker::Unpin>(
 
     template_data.insert("root_path".to_string(), Json::String(req.content_path.clone()));
     template_data.insert("public_url_base".to_string(), Json::String(state.config.public_url_base()));
-    // TODO - inaccurate
-    template_data.insert("size".to_string(), json!(1024));
+    // TODO(b5) - add directory size
+    template_data.insert("size".to_string(), Json::String("".to_string()));
     let links = dir_list
         .iter()
         .map(|l| {
@@ -592,7 +593,7 @@ async fn serve_fs_dir<T: ContentLoader + std::marker::Unpin>(
             link.insert("name".to_string(), Json::String(get_filename(name)));
             link.insert(
                 "size".to_string(),
-                json!(l.tsize.unwrap_or_default().clone()),
+                Json::String(format_bytes(l.tsize.unwrap_or_default())),
             );
             link.insert(
                 "path".to_string(),
