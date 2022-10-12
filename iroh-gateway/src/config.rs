@@ -21,6 +21,9 @@ pub const DEFAULT_PORT: u16 = 9050;
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct Config {
+    /// Pretty URL to redirect to
+    #[serde(default = "String::new")]
+    pub public_url_base: String,
     /// flag to toggle whether the gateway allows writing/pushing data
     pub writeable: bool,
     /// flag to toggle whether the gateway allows fetching data from other nodes or is local only
@@ -51,6 +54,7 @@ impl Config {
         rpc_client: RpcClientConfig,
     ) -> Self {
         Self {
+            public_url_base: String::new(),
             writeable,
             fetch,
             cache,
@@ -130,6 +134,7 @@ impl Default for Config {
     fn default() -> Self {
         let rpc_client = RpcClientConfig::default_grpc();
         let mut t = Self {
+            public_url_base: String::new(),
             writeable: false,
             fetch: false,
             cache: false,
@@ -170,6 +175,10 @@ impl Source for Config {
 impl crate::handlers::StateConfig for Config {
     fn rpc_client(&self) -> &iroh_rpc_client::Config {
         &self.rpc_client
+    }
+
+    fn public_url_base(&self) -> String {
+        self.public_url_base.clone()
     }
 
     fn port(&self) -> u16 {
