@@ -5,7 +5,9 @@ use crate::config::{Config, CONFIG_FILE_NAME, ENV_PREFIX};
 #[cfg(feature = "testing")]
 use crate::p2p::MockP2p;
 use crate::p2p::{ClientP2p, P2p};
-use anyhow::Result;
+use crate::CidOrDomain;
+use anyhow::{anyhow, Result};
+use async_trait::async_trait;
 use cid::Cid;
 use futures::future::{BoxFuture, LocalBoxFuture};
 use futures::stream::LocalBoxStream;
@@ -26,12 +28,9 @@ pub struct Iroh {
     client: Client,
 }
 
-pub enum OutType<R>
-where
-    R: AsyncRead + Unpin + ?Sized,
-{
+pub enum OutType {
     Dir,
-    Reader(Box<R>),
+    Reader(Box<dyn AsyncRead + Unpin>),
 }
 
 // Note: `#[async_trait]` is deliberately not in use for this trait, because it
@@ -44,15 +43,10 @@ pub trait Api {
 
     fn p2p(&self) -> Result<Self::P>;
 
-    fn get<'a>(
-        &'a self,
-        ipfs_path: &'a IpfsPath,
-        output_path: Option<&'a Path>,
-    ) -> LocalBoxFuture<'_, Result<()>>;
     fn get_stream<'a>(
         &'a self,
         ipfs_path: &'a IpfsPath,
-    ) -> LocalBoxStream<'_, Result<(RelativePathBuf, OutType<OutPrettyReader<Client>>)>>;
+    ) -> LocalBoxStream<'_, Result<(RelativePathBuf, OutType)>>;
     fn add<'a>(
         &'a self,
         path: &'a Path,
@@ -62,6 +56,18 @@ pub trait Api {
     fn check(&self) -> BoxFuture<'_, StatusTable>;
     fn watch(&self) -> LocalBoxFuture<'static, LocalBoxStream<'static, StatusTable>>;
 }
+
+pub trait ApiExt: Api {
+    fn get<'a>(
+        &'a self,
+        ipfs_path: &'a IpfsPath,
+        output_path: Option<&'a Path>,
+    ) -> LocalBoxFuture<'_, Result<()>> {
+        Iroh::get_impl(self, ipfs_path, output_path).boxed_local()
+    }
+}
+
+impl<T> ApiExt for T where T: Api {}
 
 impl Iroh {
     pub async fn new(
@@ -92,13 +98,10 @@ impl Iroh {
     }
 
     /// take a stream of blocks as from `get_stream` and write them to the filesystem
-    pub async fn save_get_stream<R>(
+    pub async fn save_get_stream(
         root_path: &Path,
-        blocks: impl Stream<Item = Result<(RelativePathBuf, OutType<R>)>>,
-    ) -> Result<()>
-    where
-        R: AsyncRead + Unpin + ?Sized,
-    {
+        blocks: impl Stream<Item = Result<(RelativePathBuf, OutType)>>,
+    ) -> Result<()> {
         tokio::pin!(blocks);
         while let Some(block) = blocks.next().await {
             let (path, out) = block?;
@@ -118,6 +121,35 @@ impl Iroh {
         }
         Ok(())
     }
+
+    /// Given an cid and an optional output path, determine root path
+    pub fn get_root_path(cid: &Cid, output_path: Option<&Path>) -> PathBuf {
+        match output_path {
+            Some(path) => path.to_path_buf(),
+            None => PathBuf::from(cid.to_string()),
+        }
+    }
+
+    // TODO(faassen) it would be nicer if this were TryFrom,
+    // but I failed at making that work nicely so far
+    pub fn ipfs_path_to_cid(ipfs_path: &IpfsPath) -> Result<Cid> {
+        if let CidOrDomain::Cid(cid) = ipfs_path.root() {
+            Ok(*cid)
+        } else {
+            Err(anyhow!("ipfs path must refer to a CID"))
+        }
+    }
+
+    async fn get_impl<'a>(
+        api: &(impl Api + ?Sized),
+        ipfs_path: &IpfsPath,
+        output_path: Option<&'a Path>,
+    ) -> Result<()> {
+        let cid = Self::ipfs_path_to_cid(ipfs_path)?;
+        let root_path = Self::get_root_path(&cid, output_path);
+        let blocks = api.get_stream(ipfs_path);
+        Self::save_get_stream(&root_path, blocks).await
+    }
 }
 
 impl Api for Iroh {
@@ -128,26 +160,10 @@ impl Api for Iroh {
         Ok(ClientP2p::new(p2p_client.clone()))
     }
 
-    fn get<'a>(
-        &'a self,
-        ipfs_path: &'a IpfsPath,
-        output_path: Option<&'a Path>,
-    ) -> LocalBoxFuture<'_, Result<()>> {
-        // TODO(faassen) this should be testable but right now can't be
-        let root_path = if let Some(output_path) = output_path {
-            output_path
-        } else {
-            // TODO(faassen) needs to fall back to CID
-            Path::new(".")
-        };
-        // let root_path = output_path.unwrap_or_else(|| Path::new("."));
-        Iroh::save_get_stream(root_path, self.get_stream(ipfs_path)).boxed_local()
-    }
-
     fn get_stream<'a>(
         &'a self,
         ipfs_path: &'a IpfsPath,
-    ) -> LocalBoxStream<'_, Result<(RelativePathBuf, OutType<OutPrettyReader<Client>>)>> {
+    ) -> LocalBoxStream<'_, Result<(RelativePathBuf, OutType)>> {
         tracing::debug!("get {:?}", ipfs_path);
         let resolver = iroh_resolver::resolver::Resolver::new(self.client.clone());
         let results = resolver.resolve_recursive_with_paths(ipfs_path.clone());
@@ -203,6 +219,7 @@ impl Api for Iroh {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::str::FromStr;
     use tempdir::TempDir;
 
     #[tokio::test]
@@ -220,6 +237,19 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(tmp_dir.path().join("b")).unwrap(),
             "hello"
+        );
+    }
+
+    #[test]
+    fn test_get_root_path() {
+        let cid = Cid::from_str("QmYbcW4tXLXHWw753boCK8Y7uxLu5abXjyYizhLznq9PUR").unwrap();
+        assert_eq!(
+            Iroh::get_root_path(&cid, None),
+            PathBuf::from("QmYbcW4tXLXHWw753boCK8Y7uxLu5abXjyYizhLznq9PUR")
+        );
+        assert_eq!(
+            Iroh::get_root_path(&cid, Some(Path::new("bar"))),
+            PathBuf::from("bar")
         );
     }
 }
