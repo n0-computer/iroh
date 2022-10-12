@@ -4,7 +4,7 @@ use anyhow::Result;
 use crossterm::terminal::{Clear, ClearType};
 use crossterm::{cursor, style, style::Stylize, QueueableCommand};
 use futures::StreamExt;
-use iroh::{Api, ServiceStatus, StatusRow, StatusTable};
+use iroh_api::{Api, ServiceStatus, StatusRow, StatusTable};
 
 pub async fn status(api: &impl Api, watch: bool) -> Result<()> {
     let mut stdout = stdout();

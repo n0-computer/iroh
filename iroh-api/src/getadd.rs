@@ -7,7 +7,7 @@ use futures::StreamExt;
 use iroh_resolver::resolver::Path as IpfsPath;
 use iroh_rpc_client::Client;
 
-impl<'a> Iroh<'a> {
+impl Iroh {
     pub fn get_stream<'b>(
         &self,
         root: &'b IpfsPath,

@@ -1,46 +1,44 @@
-use anyhow::Result;
-use async_trait::async_trait;
-use iroh_rpc_client::P2pClient;
-use libp2p::{Multiaddr, PeerId};
-#[cfg(feature = "testing")]
-use mockall::automock;
+use std::str::FromStr;
 
-pub struct ClientP2p<'a> {
-    client: &'a P2pClient,
+use anyhow::{Error, Result};
+use clap::{Args, Subcommand};
+use iroh_api::{Multiaddr, P2pApi, PeerId, PeerIdOrAddr};
+
+#[derive(Args, Debug, Clone)]
+#[clap(about = "Manage peer-2-peer networking.")]
+pub struct P2p {
+    #[clap(subcommand)]
+    command: P2pCommands,
 }
 
-pub struct Lookup {
-    pub peer_id: PeerId,
-    pub listen_addrs: Vec<Multiaddr>,
-    pub local_addrs: Vec<Multiaddr>,
+#[derive(Subcommand, Debug, Clone)]
+pub enum P2pCommands {
+    #[clap(about = "Retrieve info about a node")]
+    Lookup { addr: PeerIdOrAddrArg },
 }
 
 #[derive(Debug, Clone)]
-pub enum PeerIdOrAddr {
-    PeerId(PeerId),
-    Multiaddr(Multiaddr),
-}
+pub struct PeerIdOrAddrArg(PeerIdOrAddr);
 
-impl<'a> ClientP2p<'a> {
-    pub fn new(client: &'a P2pClient) -> Self {
-        Self { client }
+impl FromStr for PeerIdOrAddrArg {
+    type Err = Error;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if let Ok(m) = Multiaddr::from_str(s) {
+            return Ok(PeerIdOrAddrArg(PeerIdOrAddr::Multiaddr(m)));
+        }
+        if let Ok(p) = PeerId::from_str(s) {
+            return Ok(PeerIdOrAddrArg(PeerIdOrAddr::PeerId(p)));
+        }
+        Err(anyhow::anyhow!("invalid peer id or multiaddress"))
     }
 }
 
-#[cfg_attr(feature = "testing", automock)]
-#[async_trait]
-pub trait P2p: Sync {
-    async fn lookup(&self, addr: &PeerIdOrAddr) -> Result<Lookup>;
-}
-
-#[async_trait]
-impl<'a> P2p for ClientP2p<'a> {
-    async fn lookup(&self, _addr: &PeerIdOrAddr) -> Result<Lookup> {
-        let (_, listen_addrs) = self.client.get_listening_addrs().await?;
-        Ok(Lookup {
-            peer_id: self.client.local_peer_id().await?,
-            listen_addrs,
-            local_addrs: self.client.external_addresses().await?,
-        })
-    }
+pub async fn run_command(p2p: &impl P2pApi, cmd: &P2p) -> Result<()> {
+    match &cmd.command {
+        P2pCommands::Lookup { addr } => {
+            let lookup = p2p.lookup(&addr.0).await?;
+            println!("peer id: {}", lookup.peer_id);
+        }
+    };
+    Ok(())
 }
