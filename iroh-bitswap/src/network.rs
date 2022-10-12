@@ -17,7 +17,7 @@ use tracing::{debug, info};
 
 use crate::{message::BitswapMessage, protocol::ProtocolId, BitswapEvent};
 
-const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
 const MAX_SEND_TIMEOUT: Duration = Duration::from_secs(2 * 60);
 const MIN_SEND_TIMEOUT: Duration = Duration::from_secs(2);
 const SEND_LATENCY: Duration = Duration::from_secs(2);
@@ -211,7 +211,7 @@ impl Network {
                 .map_err(|e| anyhow!("dial:{} failed: {}", dial_id, e))?;
             Ok::<_, anyhow::Error>(res)
         })
-        .await??;
+            .await.map_err(|e| anyhow!("dial:{} error: {:?}", dial_id, e))??;
 
         debug!("dial:{}: success {}", dial_id, peer);
         inc!(BitswapMetrics::Dials);
