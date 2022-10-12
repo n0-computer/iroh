@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use crate::{Api, Cid, CidOrDomain, IpfsPath, OutType};
+use crate::{Api, Cid, IpfsPath, OutType};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use futures::Stream;
@@ -15,8 +15,10 @@ pub trait ApiExt: Api {
         ipfs_path: &IpfsPath,
         output_path: Option<&'a Path>,
     ) -> Result<PathBuf> {
-        let cid = ipfs_path_to_cid(ipfs_path)?;
-        let root_path = get_root_path(&cid, output_path);
+        let cid = ipfs_path
+            .cid()
+            .ok_or_else(|| anyhow!("IPFS path does not refer to a CID"))?;
+        let root_path = get_root_path(cid, output_path);
         let blocks = self.get_stream(ipfs_path);
         save_get_stream(&root_path, blocks).await?;
         Ok(root_path)
@@ -55,16 +57,6 @@ fn get_root_path(cid: &Cid, output_path: Option<&Path>) -> PathBuf {
     match output_path {
         Some(path) => path.to_path_buf(),
         None => PathBuf::from(cid.to_string()),
-    }
-}
-
-// TODO(faassen) it would be nicer if this were TryFrom,
-// but I failed at making that work nicely so far
-fn ipfs_path_to_cid(ipfs_path: &IpfsPath) -> Result<Cid> {
-    if let CidOrDomain::Cid(cid) = ipfs_path.root() {
-        Ok(*cid)
-    } else {
-        Err(anyhow!("ipfs path must refer to a CID"))
     }
 }
 
