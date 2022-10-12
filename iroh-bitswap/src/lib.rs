@@ -426,14 +426,14 @@ impl<S: Store> NetworkBehaviour for Bitswap<S> {
                             PeerState::Responsive(conn, protocol_id) => {
                                 // already connected
                                 if let Err(err) = response.send(Ok((conn, Some(protocol_id)))) {
-                                    warn!("failed to send dial response {:?}", err)
+                                    debug!("failed to send dial response {:?}", err)
                                 }
                                 continue;
                             }
                             PeerState::Connected(conn) => {
                                 // already connected
                                 if let Err(err) = response.send(Ok((conn, None))) {
-                                    warn!("failed to send dial response {:?}", err)
+                                    debug!("failed to send dial response {:?}", err)
                                 }
                                 continue;
                             }

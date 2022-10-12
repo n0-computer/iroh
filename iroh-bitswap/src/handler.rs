@@ -19,7 +19,7 @@ use libp2p::swarm::{
 };
 use smallvec::SmallVec;
 use tokio::sync::oneshot;
-use tracing::{error, trace, warn};
+use tracing::{debug, error, trace, warn};
 
 use crate::{
     error::Error,
@@ -428,7 +428,7 @@ impl ConnectionHandler for BitswapHandler {
                         }
                         // peer closed the stream
                         Poll::Ready(None) => {
-                            warn!("Peer closed their outbound stream");
+                            debug!("Peer closed their outbound stream");
                             self.inbound_substream =
                                 Some(InboundSubstreamState::Closing(substream));
                         }

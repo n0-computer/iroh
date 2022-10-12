@@ -33,6 +33,7 @@ mod dont_have_timeout_manager;
 
 #[derive(Debug)]
 pub struct MessageQueue {
+    peer: PeerId,
     running: Arc<AtomicBool>,
     responses: mpsc::Sender<Vec<Cid>>,
     closer: oneshot::Sender<()>,
@@ -231,7 +232,7 @@ impl MessageQueue {
                 tokio::select! {
                     biased;
                     _ = &mut closer_r => {
-                        info!("shutting down, close received");
+                        info!("message_queue:{}: shutting down, close received", peer);
                         break;
                     }
                     wants_update = wants_r.recv() => {
@@ -246,7 +247,7 @@ impl MessageQueue {
                         }
                     }
                     _ = rebroadcast_timer.tick() => {
-                        debug!("rebroadcast wantlist: {}", peer);
+                        debug!("message_queue:{}: rebroadcast wantlist", peer);
                         if loop_state.rebroadcast_wantlist().await {
                             // fatal error
                             break;
@@ -258,7 +259,7 @@ impl MessageQueue {
                         }
 
                         let pending_work_count = loop_state.wants.pending_work_count();
-                        debug!("outgoing work receiver: {} {:?} {} {:?}", peer, work_scheduled.unwrap().elapsed(), pending_work_count, send_message_max_delay);
+                        debug!("message_queue:{}: outgoing work receiver: {:?} {} {:?}", peer, work_scheduled.unwrap().elapsed(), pending_work_count, send_message_max_delay);
 
                         if pending_work_count > send_message_cutoff
                             || work_scheduled.unwrap().elapsed() >= send_message_max_delay {
@@ -273,7 +274,7 @@ impl MessageQueue {
                             }
                     }
                     _ = &mut schedule_work, if work_scheduled.is_some() => {
-                        debug!("schedule work: {}", peer);
+                        debug!("message_queue:{}: schedule work", peer);
                         work_scheduled = None;
                         if loop_state.send_if_ready().await {
                             // fatal error
@@ -287,7 +288,7 @@ impl MessageQueue {
                                 loop_state.handle_response(response).await;
                             }
                             None => {
-                                error!("shutting down, repsonse receiver error");
+                                error!("message_queue:{}: shutting down, repsonse receiver error", peer);
                                 break;
                             }
                         }
@@ -297,11 +298,15 @@ impl MessageQueue {
 
             running.store(false, Ordering::Relaxed);
             if let Err(err) = loop_state.stop().await {
-                error!("failed to stop message queue loop: {:?}", err);
+                error!(
+                    "message_queue:{}: failed to stop message queue loop: {:?}",
+                    peer, err
+                );
             }
         });
 
         MessageQueue {
+            peer,
             running,
             responses: responses_sender,
             worker,
@@ -324,7 +329,10 @@ impl MessageQueue {
 
     /// Add want-haves that are part of a broadcast to all connected peers.
     pub async fn add_broadcast_want_haves(&self, want_haves: &AHashSet<Cid>) {
-        debug!("adding broadcast wants to message queue {:?}", want_haves);
+        debug!(
+            "message_queue:{}: adding broadcast wants to message queue {:?}",
+            self.peer, want_haves
+        );
         if want_haves.is_empty() {
             return;
         }
@@ -357,7 +365,12 @@ impl MessageQueue {
 
     async fn send_wants_update(&self, update: WantsUpdate) {
         if let Err(err) = self.wants_sender.send(update).await {
-            warn!("failed to send wants update: {:?}", err);
+            warn!(
+                "message_queue:{}: failed to send wants update (is_running: {}): {:?}",
+                self.peer,
+                self.is_running(),
+                err
+            );
         }
     }
 
@@ -370,12 +383,15 @@ impl MessageQueue {
         }
 
         if let Err(err) = self.responses.send(cids).await {
-            warn!("unable to send responses: {:?}", err);
+            warn!(
+                "message_queue:{}: unable to send responses: {:?}",
+                self.peer, err
+            );
         }
     }
 
     pub async fn stop(self) -> Result<()> {
-        debug!("stopping message queue");
+        debug!("message_queue:{}: stopping message queue", self.peer);
         if self.closer.send(()).is_ok() {
             self.worker.await?;
         }
@@ -539,7 +555,7 @@ impl LoopState {
             Ok(res) => res,
             Err(err) => {
                 error!(
-                    "failed to prepare message for peer {}: {:?}",
+                    "message_queue:{}: failed to prepare message: {:?}",
                     self.peer, err
                 );
                 return false;
@@ -551,7 +567,10 @@ impl LoopState {
 
         let wantlist: Vec<_> = msg.wantlist().cloned().collect();
         if let Err(err) = sender.send_message(msg).await {
-            error!("failed to send message {:?}", err);
+            error!(
+                "message_queue:{}: failed to send message {:?}",
+                self.peer, err
+            );
             return true;
         }
 
@@ -574,7 +593,10 @@ impl LoopState {
         // schedule sending the rest of the wants in the next iteration of the event loop.
         if self.wants.has_pending_work() {
             if let Err(err) = self.outgoing_work_sender.try_send(Instant::now()) {
-                warn!("unable to send outgoing work: {:?}", err);
+                warn!(
+                    "message_queue:{}: unable to send outgoing work: {:?}",
+                    self.peer, err
+                );
             }
         }
         false
@@ -600,7 +622,7 @@ impl LoopState {
     }
 
     async fn send_if_ready(&mut self) -> bool {
-        debug!("send if ready {}", self.peer);
+        debug!("message_queue:{}: send if ready", self.peer);
         if self.wants.has_pending_work() {
             return self.send_message().await;
         }
