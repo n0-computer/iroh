@@ -511,6 +511,7 @@ impl LoopState {
         }
         false
     }
+
     /// Transfer wants from the rebroadcast lists into the pending lists.
     async fn transfer_rebroadcast_wants(&mut self) -> bool {
         // Check if there are any wants to rebroadcast.
@@ -522,11 +523,11 @@ impl LoopState {
         self.wants
             .bcst_wants
             .pending
-            .extend(&self.wants.bcst_wants.sent);
+            .extend(self.wants.bcst_wants.sent.clone());
         self.wants
             .peer_wants
             .pending
-            .extend(&self.wants.peer_wants.sent);
+            .extend(self.wants.peer_wants.sent.clone());
 
         true
     }

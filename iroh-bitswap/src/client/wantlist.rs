@@ -29,17 +29,22 @@ impl Wantlist {
 
     /// Adds an entry to thew wantlist, if not already present.
     pub fn add(&mut self, cid: Cid, priority: Priority, want_type: WantType) -> bool {
-        if let Some(entry) = self.set.get(&cid) {
-            // Adding want-have should not override want-block
-            if entry.want_type == WantType::Block || want_type == WantType::Have {
-                return false;
+        match self.set.entry(cid) {
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                self.cached.clear();
+                entry.insert(Entry::new(cid, priority, want_type));
+                true
+            }
+            std::collections::hash_map::Entry::Occupied(mut entry) => {
+                // Adding want-have should not override want-block
+                if entry.get().want_type == WantType::Block || want_type == WantType::Have {
+                    return false;
+                }
+                *entry.get_mut() = Entry::new(cid, priority, want_type);
+                self.cached.clear();
+                true
             }
         }
-
-        self.cached.clear();
-        self.set.insert(cid, Entry::new(cid, priority, want_type));
-
-        true
     }
 
     /// Removes the given Cid from the wantlist.
@@ -59,18 +64,16 @@ impl Wantlist {
 
     /// Removes the given Cid from the wantlist, respecting the type.
     pub fn remove_type(&mut self, cid: &Cid, want_type: WantType) -> Option<Entry> {
-        if !self.set.contains_key(cid) {
-            return None;
-        }
-
-        if let Some(entry) = self.set.get(cid) {
-            if entry.want_type == WantType::Block && want_type == WantType::Have {
-                return None;
+        match self.set.entry(*cid) {
+            std::collections::hash_map::Entry::Vacant(_) => None,
+            std::collections::hash_map::Entry::Occupied(entry) => {
+                if entry.get().want_type == WantType::Block && want_type == WantType::Have {
+                    return None;
+                }
+                self.cached.clear();
+                Some(entry.remove())
             }
         }
-
-        self.cached.clear();
-        self.set.remove(cid)
     }
 
     /// Returns a list of the entries, sorted descending by priority.
@@ -87,11 +90,23 @@ impl Wantlist {
     }
 
     /// Merges the second wantlist into this one.
-    pub fn extend(&mut self, other: &Self) {
+    pub fn extend(&mut self, other: Self) {
         self.cached.clear();
 
-        for entry in other.set.values() {
-            self.add(entry.cid, entry.priority, entry.want_type);
+        for (cid, entry) in other.set.into_iter() {
+            match self.set.entry(cid) {
+                std::collections::hash_map::Entry::Occupied(mut e) => {
+                    // Adding want-have should not override want-block
+                    if e.get().want_type == WantType::Block || entry.want_type == WantType::Have {
+                        continue;
+                    } else {
+                        *e.get_mut() = entry;
+                    }
+                }
+                std::collections::hash_map::Entry::Vacant(e) => {
+                    e.insert(entry);
+                }
+            }
         }
     }
 }
@@ -249,7 +264,7 @@ mod tests {
         assert!(wl2.add(test_cids[0], 2, WantType::Have));
         assert!(wl2.add(test_cids[1], 1, WantType::Block));
 
-        wl.extend(&wl2);
+        wl.extend(wl2);
 
         let entry = wl.get(&test_cids[0]).unwrap();
         assert_eq!(entry.priority, 5);
