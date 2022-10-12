@@ -102,7 +102,7 @@ impl Metrics {
         let attempted_dials = Counter::default();
         sub_registry.register("attempted_dials", "", Box::new(attempted_dials.clone()));
         let dials = Counter::default();
-        sub_registry.register("dials", "", Box::new(attempted_dials.clone()));
+        sub_registry.register("dials", "", Box::new(dials.clone()));
         let known_peers = Counter::default();
         sub_registry.register("known_peers", "", Box::new(known_peers.clone()));
         let forgotten_peers = Counter::default();
