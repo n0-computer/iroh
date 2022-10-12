@@ -40,6 +40,12 @@ enum Op {
     Cancel(Vec<Cid>),
     Broadcast(AHashSet<Cid>),
     WantsSent(Vec<Cid>),
+    UpdateWantSender {
+        from: PeerId,
+        keys: Vec<Cid>,
+        haves: Vec<Cid>,
+        dont_haves: Vec<Cid>,
+    },
 }
 
 /// Holds state for an individual bitswap transfer operation.
@@ -56,7 +62,6 @@ struct Inner {
     session_manager: SessionManager,
     provider_finder: ProviderQueryManager,
     session_interest_manager: SessionInterestManager,
-    session_want_sender: SessionWantSender,
     incoming: async_channel::Sender<Op>,
     closer: oneshot::Sender<()>,
     worker: Option<JoinHandle<()>>,
@@ -122,12 +127,13 @@ impl Session {
         let mut loop_state = LoopState::new(
             id,
             session_wants,
-            session_want_sender.clone(),
+            session_want_sender,
             session_interest_manager.clone(),
             provider_query_manager,
             session_peer_manager,
             peer_manager,
             initial_search_delay,
+            incoming_s.clone(),
         );
 
         let rt = tokio::runtime::Handle::current();
@@ -163,6 +169,12 @@ impl Session {
                             Ok(Op::Broadcast(keys)) => {
                                 loop_state.broadcast(Some(keys)).await;
                             },
+                            Ok(Op::UpdateWantSender { from, keys, haves, dont_haves, }) => {
+                                loop_state
+                                    .session_want_sender
+                                    .update(from, keys, haves, dont_haves)
+                                    .await;
+                            }
                             Err(err) => {
                                 // incoming channel gone, shutdown/panic
                                 warn!("incoming channel error: {:?}", err);
@@ -191,7 +203,6 @@ impl Session {
             session_manager,
             provider_finder,
             session_interest_manager,
-            session_want_sender,
             incoming: incoming_s,
             notify,
             closer: closer_s,
@@ -237,7 +248,6 @@ impl Session {
             }
         }
 
-        inner.session_want_sender.stop().await?;
         debug!("session stopped");
         Ok(())
     }
@@ -269,9 +279,15 @@ impl Session {
         // Inform the session want sender that a message has been received
         if let Some(from) = from {
             self.inner
-                .session_want_sender
-                .update(from, keys.clone(), haves, dont_haves)
-                .await;
+                .incoming
+                .send(Op::UpdateWantSender {
+                    from,
+                    keys: keys.clone(),
+                    haves,
+                    dont_haves,
+                })
+                .await
+                .ok();
         }
 
         if keys.is_empty() {
@@ -374,6 +390,7 @@ struct LoopState {
     base_tick_delay: Duration,
     initial_search_delay: Duration,
     workers: Vec<(oneshot::Sender<()>, JoinHandle<()>)>,
+    incoming: async_channel::Sender<Op>,
 }
 
 impl LoopState {
@@ -386,6 +403,7 @@ impl LoopState {
         session_peer_manager: SessionPeerManager,
         peer_manager: PeerManager,
         initial_search_delay: Duration,
+        incoming: async_channel::Sender<Op>,
     ) -> Self {
         let idle_tick = Box::pin(tokio::time::sleep(initial_search_delay));
 
@@ -403,6 +421,7 @@ impl LoopState {
             initial_search_delay,
             idle_tick,
             workers: Vec::new(),
+            incoming,
         }
     }
 
@@ -413,6 +432,10 @@ impl LoopState {
                 .map_err(|e| anyhow!("failed to shutdown worker: {:?}", e))?;
             worker.await?;
         }
+
+        self.session_want_sender.stop().await?;
+        self.session_peer_manager.stop().await?;
+
         Ok(())
     }
 
@@ -459,7 +482,7 @@ impl LoopState {
     /// Attempts to find more peers for a session by searching for providers for the given cid.
     async fn find_more_peers(&mut self, cid: &Cid) {
         debug!("find_more_peers {}", cid);
-        let sws = self.session_want_sender.clone();
+        let incoming_sender = self.incoming.clone();
         let cid = *cid;
         let provider_query_manager = self.provider_query_manager.clone();
         let (closer_s, mut closer_r) = oneshot::channel();
@@ -481,7 +504,13 @@ impl LoopState {
                                         debug!("found provider for {}: {}", cid, provider);
                                         // When a provider indicates that it has a cid, it's equivalent to
                                         // the providing peer sending a HAVE.
-                                        sws.update(provider, Vec::new(), vec![cid], Vec::new()).await;
+                                        incoming_sender.send(Op::UpdateWantSender {
+                                            from: provider,
+                                            keys: Vec::new(),
+                                            haves: vec![cid],
+                                            dont_haves: Vec::new()
+                                        }).await.ok();
+
                                         if num_providers >= 10 {
                                             break;
                                         }

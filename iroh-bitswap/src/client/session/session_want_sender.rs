@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use ahash::{AHashMap, AHashSet};
 use anyhow::{anyhow, Result};
 use cid::Cid;
@@ -7,7 +5,7 @@ use derivative::Derivative;
 use futures::future::BoxFuture;
 use libp2p::PeerId;
 use tokio::{sync::oneshot, task::JoinHandle};
-use tracing::{debug, error, info, warn};
+use tracing::{error, info, warn};
 
 use crate::client::{
     block_presence_manager::BlockPresenceManager, peer_manager::PeerManager,
@@ -98,19 +96,14 @@ impl AllWants {
 /// To choose the best peer for the optimistic want-block it maintains a list
 /// of how peers have responded to each want (HAVE / DONT_HAVE / Unknown) and
 /// consults the peer response tracker (records which peers sent us blocks).
-#[derive(Debug, Clone)]
-pub struct SessionWantSender {
-    inner: Arc<Inner>,
-}
-
 #[derive(Debug)]
-struct Inner {
+pub struct SessionWantSender {
     /// The session ID
     session_id: u64,
     /// A channel that collects incoming changes (events)
     changes: async_channel::Sender<Change>,
     closer: oneshot::Sender<()>,
-    worker: Option<JoinHandle<()>>,
+    worker: JoinHandle<()>,
 }
 
 #[derive(Debug, Clone)]
@@ -200,32 +193,18 @@ impl SessionWantSender {
         });
 
         SessionWantSender {
-            inner: Arc::new(Inner {
-                session_id,
-                changes: changes_s,
-                worker: Some(worker),
-                closer: closer_s,
-            }),
+            session_id,
+            changes: changes_s,
+            worker,
+            closer: closer_s,
         }
     }
 
     pub async fn stop(self) -> Result<()> {
-        debug!("stopping session want sender");
-        let mut inner = Arc::try_unwrap(self.inner).map_err(|inner| {
-            anyhow!(
-                "session want sender refs not shutdown ({} refs)",
-                Arc::strong_count(&inner)
-            )
-        })?;
-        inner
-            .closer
+        self.closer
             .send(())
             .map_err(|e| anyhow!("failed to stop worker: {:?}", e))?;
-        inner
-            .worker
-            .take()
-            .ok_or_else(|| anyhow!("missing worker"))?
-            .await?;
+        self.worker.await?;
 
         Ok(())
     }
@@ -270,7 +249,7 @@ impl SessionWantSender {
 
     // Adds a new change to the queue.
     async fn add_change(&self, change: Change) {
-        self.inner.changes.send(change).await.ok();
+        self.changes.send(change).await.ok();
     }
 }
 
@@ -451,7 +430,7 @@ impl LoopState {
     async fn stop(self) -> Result<()> {
         // Unregister the session with the PeerManager
         self.peer_manager.unregister_session(self.signaler.id).await;
-        self.session_peer_manager.stop().await?;
+
         Ok(())
     }
 
