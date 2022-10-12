@@ -101,11 +101,10 @@ impl Network {
         backoff: Duration,
     ) -> Result<()> {
         info!("sending message to {}", peer);
-        inc!(BitswapMetrics::MessagesSent);
-        for block in message.blocks() {
-            inc!(BitswapMetrics::BlocksOut);
-            record!(BitswapMetrics::BlockBytesOut, block.data.len() as u64);
-        }
+        inc!(BitswapMetrics::MessagesAttempted);
+
+        let num_blocks = message.blocks().count();
+        let num_block_bytes = message.blocks().map(|b| b.data.len() as u64).sum();
 
         let res = tokio::time::timeout(timeout, async {
             let mut errors: Vec<anyhow::Error> = Vec::new();
@@ -153,6 +152,14 @@ impl Network {
             bail!("Failed to send message to {}: {:?}", peer, errors);
         })
         .await??;
+
+        // Record successfull stats
+
+        inc!(BitswapMetrics::MessagesSent);
+        for _ in 0..num_blocks {
+            inc!(BitswapMetrics::BlocksOut);
+        }
+        record!(BitswapMetrics::BlockBytesOut, num_block_bytes);
 
         Ok(res)
     }

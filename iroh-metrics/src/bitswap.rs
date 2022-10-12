@@ -29,6 +29,7 @@ pub(crate) struct Metrics {
     cancel_want_blocks: Counter,
     connected_peers: Counter,
     disconnected_peers: Counter,
+    messages_attempted: Counter,
     messages_sent: Counter,
     messages_received: Counter,
     events_backpressure_in: Counter,
@@ -122,6 +123,12 @@ impl Metrics {
             "disconnected_peers",
             "",
             Box::new(disconnected_peers.clone()),
+        );
+        let messages_attempted = Counter::default();
+        sub_registry.register(
+            "messages_attempted",
+            "",
+            Box::new(messages_attempted.clone()),
         );
         let messages_sent = Counter::default();
         sub_registry.register("messages_sent", "", Box::new(messages_sent.clone()));
@@ -253,6 +260,7 @@ impl Metrics {
             cancel_want_blocks,
             connected_peers,
             disconnected_peers,
+            messages_attempted,
             messages_sent,
             messages_received,
             events_backpressure_in,
@@ -310,6 +318,8 @@ impl MetricsRecorder for Metrics {
             self.connected_peers.inc_by(value);
         } else if m.name() == BitswapMetrics::DisconnectedPeers.name() {
             self.disconnected_peers.inc_by(value);
+        } else if m.name() == BitswapMetrics::MessagesAttempted.name() {
+            self.messages_attempted.inc_by(value);
         } else if m.name() == BitswapMetrics::MessagesSent.name() {
             self.messages_sent.inc_by(value);
         } else if m.name() == BitswapMetrics::MessagesReceived.name() {
@@ -382,6 +392,7 @@ pub enum BitswapMetrics {
     CancelWantBlocks,
     ConnectedPeers,
     DisconnectedPeers,
+    MessagesAttempted,
     MessagesSent,
     MessagesReceived,
     EventsBackpressureIn,
@@ -423,6 +434,7 @@ impl MetricType for BitswapMetrics {
             BitswapMetrics::CancelWantBlocks => METRICS_CNT_CANCEL_WANT_BLOCKS,
             BitswapMetrics::ConnectedPeers => METRICS_CNT_CONNECTED_PEERS,
             BitswapMetrics::DisconnectedPeers => METRICS_CNT_DISCONNECTED_PEERS,
+            BitswapMetrics::MessagesAttempted => METRICS_CNT_MESSAGES_ATTEMPTED,
             BitswapMetrics::MessagesSent => METRICS_CNT_MESSAGES_SENT,
             BitswapMetrics::MessagesReceived => METRICS_CNT_MESSAGES_RECEIVED,
             BitswapMetrics::EventsBackpressureIn => METRICS_CNT_EVENTS_BACKPRESSURE_IN,
@@ -476,6 +488,7 @@ pub const METRICS_CNT_CANCEL_BLOCKS: &str = "cancel_blocks";
 pub const METRICS_CNT_CANCEL_WANT_BLOCKS: &str = "cancel_want_blocks";
 pub const METRICS_CNT_CONNECTED_PEERS: &str = "connected_peers";
 pub const METRICS_CNT_DISCONNECTED_PEERS: &str = "disconnected_peers";
+pub const METRICS_CNT_MESSAGES_ATTEMPTED: &str = "messages_attempted";
 pub const METRICS_CNT_MESSAGES_SENT: &str = "messages_sent";
 pub const METRICS_CNT_MESSAGES_RECEIVED: &str = "messages_received";
 pub const METRICS_CNT_EVENTS_BACKPRESSURE_IN: &str = "events_backpressure_in";
