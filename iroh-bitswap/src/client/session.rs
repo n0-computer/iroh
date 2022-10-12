@@ -489,6 +489,7 @@ impl LoopState {
                                         }
 
                                         if num_providers >= 10 {
+                                            inc!(BitswapMetrics::ProviderQuerySuccess);
                                             break;
                                         }
                                     }

@@ -73,11 +73,9 @@ impl ProviderQueryManager {
                                                         match providers {
                                                             Some(Ok(providers)) => {
                                                                 // at most 10
-                                                                let limit = 10 - found_providers.len();
                                                                 let new_providers = providers
                                                                     .difference(&found_providers)
                                                                     .into_iter()
-                                                                    .take(limit)
                                                                     .copied()
                                                                     .collect::<Vec<_>>();
 
@@ -92,11 +90,6 @@ impl ProviderQueryManager {
                                                                             }
                                                                         }
                                                                     });
-                                                                }
-
-                                                                if found_providers.len() >= 10 {
-                                                                    inc!(BitswapMetrics::ProviderQuerySuccess);
-                                                                    break;
                                                                 }
                                                             }
                                                             Some(Err(err)) => {
