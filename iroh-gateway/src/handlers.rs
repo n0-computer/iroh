@@ -44,7 +44,7 @@ use crate::{
     error::GatewayError,
     headers::*,
     response::{get_response_format, GatewayResponse, ResponseFormat}, 
-    templates::{ICONS_STYLESHEET_TEMPLATE, STYLESHEET_TEMPLATE, icon_class_name},
+    templates::{ICONS_STYLESHEET, STYLESHEET, icon_class_name},
 };
 
 /// Trait describing what needs to be accessed on the configuration
@@ -234,7 +234,7 @@ async fn stylesheet_main() -> (HeaderMap, &'static str) {
         HeaderName::from_static("content-type"),
         HeaderValue::from_static("text/css"),
     );
-    (headers, STYLESHEET_TEMPLATE)
+    (headers, STYLESHEET)
 }
 
 pub async fn stylesheet_icons() -> (HeaderMap, &'static str) {
@@ -243,7 +243,7 @@ pub async fn stylesheet_icons() -> (HeaderMap, &'static str) {
         HeaderName::from_static("content-type"),
         HeaderValue::from_static("text/css"),
     );
-    (headers, ICONS_STYLESHEET_TEMPLATE)
+    (headers, ICONS_STYLESHEET)
 }
 
 #[tracing::instrument()]
