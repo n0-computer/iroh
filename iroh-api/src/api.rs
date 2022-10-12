@@ -203,7 +203,7 @@ impl Api for Iroh {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::pin::Pin;
+    use tempdir::TempDir;
 
     #[tokio::test]
     async fn test_save_get_stream() {
@@ -214,9 +214,12 @@ mod tests {
                 OutType::Reader(Box::new(std::io::Cursor::new("hello"))),
             )),
         ]));
-        // TODO(faassen) use tempfile crate so things get cleaned up
-        Iroh::save_get_stream(Path::new("/tmp"), stream)
-            .await
-            .unwrap();
+        let tmp_dir = TempDir::new("test_save_get_stream").unwrap();
+        Iroh::save_get_stream(tmp_dir.path(), stream).await.unwrap();
+        assert!(tmp_dir.path().join("a").is_dir());
+        assert_eq!(
+            std::fs::read_to_string(tmp_dir.path().join("b")).unwrap(),
+            "hello"
+        );
     }
 }
