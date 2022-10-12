@@ -219,7 +219,7 @@ impl<S: Store> Client<S> {
                 error!("failed to broadcast block {}: {:?}", block.cid(), err);
             }
         }
-        (self.blocks_received_cb)(*from, wanted.into_iter().cloned().collect());
+        (self.blocks_received_cb)(*from, wanted.into_iter().cloned().collect()).await;
 
         Ok(())
     }
