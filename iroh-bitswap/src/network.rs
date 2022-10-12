@@ -199,6 +199,8 @@ impl Network {
         })
         .await??;
 
+        inc!(BitswapMetrics::Dials);
+
         Ok(res)
     }
 
