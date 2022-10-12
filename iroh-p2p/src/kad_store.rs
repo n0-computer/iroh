@@ -2,19 +2,18 @@ use std::{
     borrow::Cow,
     collections::BTreeMap,
     path::PathBuf,
-    time::{self, Instant},
+    time::{self, Duration, Instant},
 };
 
-use anyhow::Result;
 use bytecheck::CheckBytes;
 use libp2p::{
     kad::{self, store::RecordStore},
     Multiaddr, PeerId,
 };
-use rkyv::{ser::serializers::AllocSerializer, Archive, Deserialize, Fallible, Serialize};
+use rkyv::{ser::serializers::AllocSerializer, Archive, Deserialize, Serialize};
 use rocksdb::{
-    BlockBasedOptions, Cache, DBIterator, DBIteratorWithThreadMode, DBPinnableSlice, IteratorMode,
-    Options, SingleThreaded, SnapshotWithThreadMode, WriteBatch, DB as RocksDb,
+    BlockBasedOptions, Cache, DBIteratorWithThreadMode, IteratorMode, Options,
+    SnapshotWithThreadMode, DB as RocksDb,
 };
 use std::fmt::Debug;
 
@@ -63,12 +62,12 @@ fn default_options() -> (Options, Cache) {
     (opts, cache)
 }
 
-fn rocks_to_kad_error(error: rocksdb::Error) -> kad::store::Error {
+fn rocks_to_kad_error(_error: rocksdb::Error) -> kad::store::Error {
     // TODO: PR to libp2p to add more error variants
     kad::store::Error::ValueTooLarge
 }
 
-fn rkyv_to_kad_error<F: rkyv::Fallible>(error: F::Error) -> kad::store::Error {
+fn rkyv_to_kad_error<F: rkyv::Fallible>(_error: F::Error) -> kad::store::Error {
     // TODO: PR to libp2p to add more error variants
     kad::store::Error::ValueTooLarge
 }
@@ -90,31 +89,12 @@ pub(crate) struct ProviderRecordValue {
     expires: Option<u64>,
 }
 
-enum Error {
-    KadStore(kad::store::Error),
-    RocksDB(rocksdb::Error),
-    RkyvSer(String),
-    RkyvDeser(String),
-}
-
-impl From<kad::store::Error> for Error {
-    fn from(error: kad::store::Error) -> Self {
-        Self::KadStore(error)
-    }
-}
-
-impl From<rocksdb::Error> for Error {
-    fn from(error: rocksdb::Error) -> Self {
-        Self::RocksDB(error)
-    }
-}
-
 impl RocksRecordStore {
     pub fn create(config: Config) -> std::result::Result<Self, rocksdb::Error> {
         let (mut options, cache) = default_options();
         options.create_if_missing(true);
 
-        let path = config.path.clone();
+        let path = config.path;
         let mut db = RocksDb::open(&options, path)?;
         {
             let opts = Options::default();
@@ -131,16 +111,22 @@ impl RocksRecordStore {
         })
     }
 
-    fn put0(&mut self, r: kad::Record) -> kad::store::Result<()> {
+    fn put0(&self, r: kad::Record) -> kad::store::Result<()> {
         let cf = self.db.cf_handle(CF_RECORDS_V0).expect("cf exists");
+        let expires = r
+            .expires
+            .map(|x| x.duration_since(self.startup).as_nanos().try_into())
+            .transpose()
+            .expect("expiry fits in u64");
+
+        if let (Some(expected), Some(actual_ns)) = (r.expires, expires) {
+            let actual = self.startup + Duration::from_nanos(actual_ns);
+            assert_eq!(expected, actual);
+        }
         let value = RecordValue {
             value: r.value,
             publisher: r.publisher.map(|x| x.to_bytes()),
-            expires: r
-                .expires
-                .map(|x| x.duration_since(self.startup).as_nanos().try_into())
-                .transpose()
-                .expect("expiry fits in u64"),
+            expires,
         };
         // TODO: use fixed size buffer and prevent allocations
         let value = rkyv::to_bytes::<_, 1024>(&value).expect("rkyv ser should not fail");
@@ -186,7 +172,7 @@ impl RocksRecordStore {
         }
     }
 
-    fn add_provider0(&mut self, r: kad::ProviderRecord) -> kad::store::Result<()> {
+    fn add_provider0(&self, r: kad::ProviderRecord) -> kad::store::Result<()> {
         let cf = self
             .db
             .cf_handle(CF_PROVIDER_RECORDS_V0)
@@ -220,11 +206,7 @@ impl RocksRecordStore {
         Ok(())
     }
 
-    fn remove_provider0(
-        &mut self,
-        key: &kad::record::Key,
-        peer: &PeerId,
-    ) -> kad::store::Result<()> {
+    fn remove_provider0(&self, key: &kad::record::Key, peer: &PeerId) -> kad::store::Result<()> {
         let cf = self
             .db
             .cf_handle(CF_PROVIDER_RECORDS_V0)
@@ -307,7 +289,7 @@ impl<'a> RecordsIter<'a> {
     fn next0(&mut self) -> Option<Cow<'a, kad::Record>> {
         if self.iter.is_none() {
             // TODO: use init once or some other trick
-            let snapshot: &SnapshotWithThreadMode<'static, rocksdb::DB> =
+            let snapshot: &SnapshotWithThreadMode<'a, rocksdb::DB> =
                 unsafe { std::mem::transmute(&self.snapshot) };
             self.iter = Some(snapshot.iterator_cf(self.cf, IteratorMode::Start))
         };
@@ -439,10 +421,17 @@ impl<'a> RecordStore<'a> for RocksRecordStore {
 #[allow(clippy::redundant_clone)]
 #[cfg(test)]
 mod tests {
-    use std::{str::FromStr, vec};
+    use std::{
+        net::{Ipv4Addr, Ipv6Addr},
+        str::FromStr,
+        vec,
+    };
 
     use super::*;
     use anyhow::Context;
+    use libp2p::multiaddr::Protocol;
+    use multihash::{Code, Multihash, MultihashDigest};
+    use proptest::prelude::*;
     use tempfile::tempdir;
 
     fn record_roundtrip(store: &mut RocksRecordStore, record: kad::Record) -> anyhow::Result<()> {
@@ -584,6 +573,109 @@ mod tests {
         canonicalize_provider_records(&mut actual);
         canonicalize_provider_records(&mut expected);
         anyhow::ensure!(actual == expected);
+        Ok(())
+    }
+
+    fn arb_kad_key() -> impl Strategy<Value = kad::record::Key> {
+        proptest::collection::vec(any::<u8>(), 0..100).prop_map(|x| kad::record::Key::new(&x))
+    }
+
+    fn arb_kad_record() -> impl Strategy<Value = kad::Record> {
+        (
+            arb_kad_key(),
+            any::<Vec<u8>>(),
+            proptest::option::of(arb_peerid()),
+            proptest::option::of(any::<Instant>()),
+        )
+            .prop_map(|(key, value, publisher, expires)| kad::Record {
+                key,
+                value,
+                publisher,
+                expires,
+            })
+    }
+
+    fn arb_kad_provider_record() -> impl Strategy<Value = kad::ProviderRecord> {
+        (
+            arb_kad_key(),
+            proptest::collection::vec(arb_ip_multiaddr(), 0..10),
+            arb_peerid(),
+            proptest::option::of(any::<Instant>()),
+        )
+            .prop_map(|(key, addresses, provider, expires)| kad::ProviderRecord {
+                key,
+                provider,
+                addresses,
+                expires,
+            })
+    }
+
+    fn arb_multihash() -> impl Strategy<Value = Multihash> {
+        let arb_multihash_code = proptest::sample::select(vec![Code::Sha2_256, Code::Sha2_512]);
+        (any::<Vec<u8>>(), arb_multihash_code).prop_map(|(data, code)| code.digest(&data))
+    }
+
+    fn arb_peerid() -> impl Strategy<Value = PeerId> {
+        (
+            proptest::collection::vec(any::<u8>(), 0..42),
+            proptest::sample::select(vec![Code::Sha2_256, Code::Identity]),
+        )
+            .prop_map(|(data, code)| {
+                let hash = code.digest(&data);
+                PeerId::from_multihash(hash).unwrap()
+            })
+    }
+
+    fn arb_ip_multiaddr() -> impl Strategy<Value = Multiaddr> {
+        fn arb_ip() -> impl Strategy<Value = Protocol<'static>> {
+            let ip4 = any::<Ipv4Addr>().prop_map(Protocol::Ip4).boxed();
+            let ip6 = any::<Ipv6Addr>().prop_map(Protocol::Ip6).boxed();
+            prop_oneof![ip4, ip6]
+        }
+        fn arb_ip_protocol() -> impl Strategy<Value = Protocol<'static>> {
+            let ip4 = any::<u16>().prop_map(Protocol::Tcp).boxed();
+            let ip6 = any::<u16>().prop_map(Protocol::Udp).boxed();
+            prop_oneof![ip4, ip6]
+        }
+        (arb_ip(), arb_ip_protocol()).prop_map(|(host, port)| {
+            let mut t = Multiaddr::empty();
+            t.push(host);
+            t.push(port);
+            t
+        })
+    }
+
+    fn arb_multiaddr() -> impl Strategy<Value = Multiaddr> {
+        arb_ip_multiaddr()
+    }
+
+    #[test]
+    fn prop_add_get_record() -> anyhow::Result<()> {
+        let dir = tempdir()?;
+        let path = dir.path().join("db");
+        let store = RocksRecordStore::create(Config { path })?;
+        proptest!(|(mut r in arb_kad_record())| {
+            r.expires = None;
+            store.put0(r.clone())?;
+            let actual = store.get(&r.key).map(Cow::into_owned);
+            let expected = Some(r);
+            prop_assert_eq!(actual, expected);
+        });
+        Ok(())
+    }
+
+    #[test]
+    fn prop_add_get_provider_record() -> anyhow::Result<()> {
+        let dir = tempdir()?;
+        let path = dir.path().join("db");
+        let store = RocksRecordStore::create(Config { path })?;
+        proptest!(|(mut r in arb_kad_provider_record())| {
+            r.expires = None;
+            store.add_provider0(r.clone()).unwrap();
+            let actual = store.provided().next().unwrap().into_owned();
+            prop_assert_eq!(actual, r.clone());
+            store.remove_provider0(&r.key, &r.provider).unwrap();
+        });
         Ok(())
     }
 }
