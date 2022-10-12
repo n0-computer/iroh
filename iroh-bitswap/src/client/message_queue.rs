@@ -201,16 +201,22 @@ impl MessageQueue {
             let schedule_work = tokio::time::sleep(Duration::from_secs(0));
             tokio::pin!(schedule_work);
             let running = running_thread;
-            let wants = wants_thread;
-            let dh_timeout_manager = dhtm;
-            let network = nt;
-            let outgoing_work_sender = outgoing_work_sender_thread;
-            let mut sender = None;
-            let msg_sender_config = MessageSenderConfig {
-                max_retries,
-                send_timeout,
-                send_error_backoff,
-            };
+
+            let mut loop_state = LoopState::new(
+                wants_thread,
+                closer,
+                dhtm,
+                max_message_size,
+                max_valid_latency,
+                outgoing_work_sender_thread,
+                nt,
+                MessageSenderConfig {
+                    max_retries,
+                    send_timeout,
+                    send_error_backoff,
+                },
+                peer,
+            );
 
             loop {
                 tokio::select! {
@@ -221,39 +227,19 @@ impl MessageQueue {
                     }
                     _ = rebroadcast_timer.tick() => {
                         debug!("rebroadcast wantlist: {}", peer);
-                        rebroadcast_wantlist(
-                            &wants,
-                            &closer,
-                            &dh_timeout_manager,
-                            max_message_size,
-                            &outgoing_work_sender,
-                            &mut sender,
-                            &network,
-                            &msg_sender_config,
-                            peer,
-                        ).await;
+                        loop_state.rebroadcast_wantlist().await;
                     }
                     when = outgoing_work_receiver.recv() => {
                         if work_scheduled.is_none() {
                             work_scheduled = when;
                         }
 
-                        let pending_work_count = wants.lock().await.pending_work_count();
+                        let pending_work_count = loop_state.wants.lock().await.pending_work_count();
                         debug!("outgoing work receiver: {} {:?} {} {:?}", peer, work_scheduled.unwrap().elapsed(), pending_work_count, send_message_max_delay);
 
                         if pending_work_count > send_message_cutoff
                             || work_scheduled.unwrap().elapsed() >= send_message_max_delay {
-                                send_if_ready(
-                                    &wants,
-                                    &closer,
-                                    &dh_timeout_manager,
-                                    max_message_size,
-                                    &outgoing_work_sender,
-                                    &mut sender,
-                                    &network,
-                                    &msg_sender_config,
-                                    peer,
-                                ).await;
+                                loop_state.send_if_ready().await;
                                 work_scheduled = None;
                             } else {
                                 // Extend the timer
@@ -263,23 +249,13 @@ impl MessageQueue {
                     _ = &mut schedule_work, if work_scheduled.is_some() => {
                         debug!("schedule work: {}", peer);
                         work_scheduled = None;
-                        send_if_ready(
-                            &wants,
-                            &closer,
-                            &dh_timeout_manager,
-                            max_message_size,
-                            &outgoing_work_sender,
-                            &mut sender,
-                            &network,
-                            &msg_sender_config,
-                            peer,
-                        ).await;
+                        loop_state.send_if_ready().await;
                     }
                     response = responses_receiver.recv() => {
                         match response {
                             Some(response) => {
                                 // Received a response from the peer, calculate latency.
-                                handle_response(&wants, max_valid_latency, &dh_timeout_manager,  response).await;
+                                loop_state.handle_response(response).await;
                             }
                             None => {
                                 error!("shutting down, repsonse receiver error");
@@ -418,338 +394,318 @@ impl MessageQueue {
     }
 }
 
-async fn rebroadcast_wantlist(
-    wants: &Arc<Mutex<Wants>>,
-    closer: &mpsc::Sender<()>,
-    dh_timeout_manager: &DontHaveTimeoutManager,
+struct LoopState {
+    wants: Arc<Mutex<Wants>>,
+    closer: mpsc::Sender<()>,
+    dh_timeout_manager: DontHaveTimeoutManager,
     max_message_size: usize,
-    outgoing_work_sender: &mpsc::Sender<Instant>,
-    sender: &mut Option<MessageSender>,
-    network: &Network,
-    msg_sender_config: &MessageSenderConfig,
+    max_valid_latency: Duration,
+    outgoing_work_sender: mpsc::Sender<Instant>,
+    sender: Option<MessageSender>,
+    network: Network,
+    msg_sender_config: MessageSenderConfig,
     peer: PeerId,
-) {
-    if transfer_rebroadcast_wants(wants).await {
-        send_message(
+}
+
+impl LoopState {
+    fn new(
+        wants: Arc<Mutex<Wants>>,
+        closer: mpsc::Sender<()>,
+        dh_timeout_manager: DontHaveTimeoutManager,
+        max_message_size: usize,
+        max_valid_latency: Duration,
+        outgoing_work_sender: mpsc::Sender<Instant>,
+        network: Network,
+        msg_sender_config: MessageSenderConfig,
+        peer: PeerId,
+    ) -> Self {
+        Self {
             wants,
             closer,
             dh_timeout_manager,
             max_message_size,
+            max_valid_latency,
             outgoing_work_sender,
-            sender,
+            sender: None,
             network,
             msg_sender_config,
             peer,
-        )
-        .await;
-    }
-}
-
-/// Transfer wants from the rebroadcast lists into the pending lists.
-async fn transfer_rebroadcast_wants(wants: &Arc<Mutex<Wants>>) -> bool {
-    let wants = &mut *wants.lock().await;
-
-    // Check if there are any wants to rebroadcast.
-    if wants.bcst_wants.sent.is_empty() && wants.peer_wants.sent.is_empty() {
-        return false;
-    }
-
-    // Copy sent wants into pending wants lists
-    wants.bcst_wants.pending.extend(&wants.bcst_wants.sent);
-    wants.peer_wants.pending.extend(&wants.peer_wants.sent);
-
-    true
-}
-
-async fn send_message(
-    wants: &Arc<Mutex<Wants>>,
-    closer: &mpsc::Sender<()>,
-    dh_timeout_manager: &DontHaveTimeoutManager,
-    max_message_size: usize,
-    outgoing_work_sender: &mpsc::Sender<Instant>,
-    sender: &mut Option<MessageSender>,
-    network: &Network,
-    msg_sender_config: &MessageSenderConfig,
-    peer: PeerId,
-) {
-    if sender.is_none() {
-        match network
-            .new_message_sender(peer, msg_sender_config.clone())
-            .await
-        {
-            Ok(s) => *sender = Some(s),
-            Err(err) => {
-                error!("failed to dial, unable to send message: {:?}", err);
-                return;
-            }
         }
     }
-    let sender = sender.as_ref().unwrap();
-    // Convert want lists to a bitswap message
-    let (msg, on_sent) =
-        extract_outgoing_message(wants, max_message_size, sender.supports_have()).await;
-    if msg.is_empty() {
-        return;
+
+    async fn rebroadcast_wantlist(&mut self) {
+        if self.transfer_rebroadcast_wants().await {
+            self.send_message().await;
+        }
+    }
+    /// Transfer wants from the rebroadcast lists into the pending lists.
+    async fn transfer_rebroadcast_wants(&mut self) -> bool {
+        let wants = &mut *self.wants.lock().await;
+
+        // Check if there are any wants to rebroadcast.
+        if wants.bcst_wants.sent.is_empty() && wants.peer_wants.sent.is_empty() {
+            return false;
+        }
+
+        // Copy sent wants into pending wants lists
+        wants.bcst_wants.pending.extend(&wants.bcst_wants.sent);
+        wants.peer_wants.pending.extend(&wants.peer_wants.sent);
+
+        true
     }
 
-    let wantlist: Vec<_> = msg.wantlist().cloned().collect();
-    if let Err(err) = sender.send_message(msg).await {
-        error!("failed to send message {:?}", err);
-        closer.send(()).await.ok();
-
-        return;
-    }
-
-    // Record sent time so as to calculate message latency.
-    on_sent.await;
-
-    // Set a timer to wait for responses.
-    simulate_dont_have_with_timeout(&wantlist, wants, dh_timeout_manager).await;
-
-    // If the message was too big and only a subset of wants could be sent
-    // schedule sending the rest of the wants in the next iteration of the event loop.
-    if wants.lock().await.has_pending_work() {
-        outgoing_work_sender.try_send(Instant::now()).ok();
-    }
-}
-
-async fn simulate_dont_have_with_timeout(
-    wantlist: &[Entry],
-    wants: &Arc<Mutex<Wants>>,
-    dh_timeout_manager: &DontHaveTimeoutManager,
-) {
-    let wants = &mut *wants.lock().await;
-
-    // Get the Cid of each want-block that expects a DONT_HAVE reponse.
-    let pending_wants: Vec<Cid> = wantlist
-        .iter()
-        .filter_map(|entry| {
-            if entry.want_type == WantType::Block && entry.send_dont_have {
-                // check if the block was already sent
-                if wants.peer_wants.sent.contains(&entry.cid) {
-                    return Some(entry.cid);
+    async fn send_message(&mut self) {
+        if self.sender.is_none() {
+            match self
+                .network
+                .new_message_sender(self.peer, self.msg_sender_config.clone())
+                .await
+            {
+                Ok(sender) => self.sender = Some(sender),
+                Err(err) => {
+                    error!("failed to dial, unable to send message: {:?}", err);
+                    return;
                 }
             }
-            None
-        })
-        .collect();
-
-    drop(wants);
-
-    // Add wants to DONT_HAVE timeout manger
-    dh_timeout_manager.add_pending(&pending_wants).await;
-}
-
-async fn send_if_ready(
-    wants: &Arc<Mutex<Wants>>,
-    closer: &mpsc::Sender<()>,
-    dh_timeout_manager: &DontHaveTimeoutManager,
-    max_message_size: usize,
-    outgoing_work_sender: &mpsc::Sender<Instant>,
-    sender: &mut Option<MessageSender>,
-    network: &Network,
-    msg_sender_config: &MessageSenderConfig,
-    peer: PeerId,
-) {
-    debug!("send if ready {}", peer);
-    if wants.lock().await.has_pending_work() {
-        send_message(
-            wants,
-            closer,
-            dh_timeout_manager,
-            max_message_size,
-            outgoing_work_sender,
-            sender,
-            network,
-            msg_sender_config,
-            peer,
-        )
-        .await;
-    }
-}
-
-async fn handle_response(
-    wants: &Arc<Mutex<Wants>>,
-    max_valid_latency: Duration,
-    dh_timeout_manager: &DontHaveTimeoutManager,
-    response: Vec<Cid>,
-) {
-    let now = Instant::now();
-    let wants = &mut *wants.lock().await;
-
-    // Check if the keys in the response correspond to any request that was sent to the peer.
-    //
-    // - Finde the earliest request so as to calculate the longest latency as we want
-    //   to be conservative when setting the timeout.
-    // - Ignore latencies that are very long, as these are likely to be outliers caused when
-    //   - we send a want to pere A
-    //   - peer A does not have the block
-    //   - peer A later receives the block from peer B
-    //   - peer A sends us HAVE/block
-
-    let mut earliest = None;
-    for cid in response {
-        if let Some(at) = wants.bcst_wants.sent_at.get(&cid) {
-            if (earliest.is_none() || at < earliest.as_ref().unwrap())
-                && now - *at < max_valid_latency
-            {
-                earliest = Some(*at);
-            }
-            wants.bcst_wants.clear_sent_at(&cid);
+        };
+        let sender = self.sender.as_ref().unwrap();
+        // Convert want lists to a bitswap message
+        let (msg, on_sent) = self.extract_outgoing_message().await;
+        if msg.is_empty() {
+            return;
         }
-        if let Some(at) = wants.peer_wants.sent_at.get(&cid) {
-            if (earliest.is_none() || at < earliest.as_ref().unwrap())
-                && now - *at < max_valid_latency
-            {
-                earliest = Some(*at);
-                // Clear out the sent time, as we want to only record the latency
-                // between the request and the first response.
-                wants.peer_wants.clear_sent_at(&cid);
-            }
+
+        let wantlist: Vec<_> = msg.wantlist().cloned().collect();
+        if let Err(err) = sender.send_message(msg).await {
+            error!("failed to send message {:?}", err);
+            self.closer.send(()).await.ok();
+
+            return;
+        }
+
+        // Record sent time so as to calculate message latency.
+        on_sent.await;
+
+        // Set a timer to wait for responses.
+        self.simulate_dont_have_with_timeout(wantlist).await;
+
+        // If the message was too big and only a subset of wants could be sent
+        // schedule sending the rest of the wants in the next iteration of the event loop.
+        if self.wants.lock().await.has_pending_work() {
+            self.outgoing_work_sender.try_send(Instant::now()).ok();
         }
     }
 
-    drop(wants);
+    async fn simulate_dont_have_with_timeout(&self, wantlist: Vec<Entry>) {
+        let wants = &mut *self.wants.lock().await;
 
-    if let Some(earliest) = earliest {
-        dh_timeout_manager
-            .update_message_latency(now - earliest)
-            .await;
+        // Get the Cid of each want-block that expects a DONT_HAVE reponse.
+        let pending_wants: Vec<Cid> = wantlist
+            .iter()
+            .filter_map(|entry| {
+                if entry.want_type == WantType::Block && entry.send_dont_have {
+                    // check if the block was already sent
+                    if wants.peer_wants.sent.contains(&entry.cid) {
+                        return Some(entry.cid);
+                    }
+                }
+                None
+            })
+            .collect();
+
+        drop(wants);
+
+        // Add wants to DONT_HAVE timeout manger
+        self.dh_timeout_manager.add_pending(&pending_wants).await;
     }
-}
 
-/// Convert the lists of wants into a bitswap message
-async fn extract_outgoing_message(
-    wants: &Arc<Mutex<Wants>>,
-    max_message_size: usize,
-    supports_have: bool,
-) -> (BitswapMessage, impl Future<Output = ()>) {
-    let (mut peer_entries, mut bcst_entries, mut cancels) = {
-        let wants = &mut *wants.lock().await;
-        let mut peer_entries: Vec<_> = wants.peer_wants.pending.entries().collect();
-        if !supports_have {
-            // Remove want haves
+    async fn send_if_ready(&mut self) {
+        debug!("send if ready {}", self.peer);
+        if self.wants.lock().await.has_pending_work() {
+            self.send_message().await;
+        }
+    }
+
+    async fn handle_response(&mut self, response: Vec<Cid>) {
+        let now = Instant::now();
+        let wants = &mut *self.wants.lock().await;
+
+        // Check if the keys in the response correspond to any request that was sent to the peer.
+        //
+        // - Finde the earliest request so as to calculate the longest latency as we want
+        //   to be conservative when setting the timeout.
+        // - Ignore latencies that are very long, as these are likely to be outliers caused when
+        //   - we send a want to pere A
+        //   - peer A does not have the block
+        //   - peer A later receives the block from peer B
+        //   - peer A sends us HAVE/block
+
+        let mut earliest = None;
+        for cid in response {
+            if let Some(at) = wants.bcst_wants.sent_at.get(&cid) {
+                if (earliest.is_none() || at < earliest.as_ref().unwrap())
+                    && now - *at < self.max_valid_latency
+                {
+                    earliest = Some(*at);
+                }
+                wants.bcst_wants.clear_sent_at(&cid);
+            }
+            if let Some(at) = wants.peer_wants.sent_at.get(&cid) {
+                if (earliest.is_none() || at < earliest.as_ref().unwrap())
+                    && now - *at < self.max_valid_latency
+                {
+                    earliest = Some(*at);
+                    // Clear out the sent time, as we want to only record the latency
+                    // between the request and the first response.
+                    wants.peer_wants.clear_sent_at(&cid);
+                }
+            }
+        }
+
+        drop(wants);
+
+        if let Some(earliest) = earliest {
+            self.dh_timeout_manager
+                .update_message_latency(now - earliest)
+                .await;
+        }
+    }
+
+    /// Convert the lists of wants into a bitswap message
+    async fn extract_outgoing_message(&self) -> (BitswapMessage, impl Future<Output = ()>) {
+        let supports_have = self
+            .sender
+            .as_ref()
+            .map(|s| s.supports_have())
+            .unwrap_or_default();
+
+        let (mut peer_entries, mut bcst_entries, mut cancels) = {
+            let wants = &mut *self.wants.lock().await;
+            let mut peer_entries: Vec<_> = wants.peer_wants.pending.entries().collect();
+            if !supports_have {
+                // Remove want haves
+                peer_entries.retain(|entry| {
+                    if entry.want_type == WantType::Have {
+                        wants.peer_wants.remove_type(&entry.cid, WantType::Have);
+                        false
+                    } else {
+                        true
+                    }
+                });
+            }
+            let bcst_entries: Vec<_> = wants.bcst_wants.pending.entries().collect();
+            let cancels: Vec<_> = wants.cancels.iter().cloned().collect();
+            (peer_entries, bcst_entries, cancels)
+        };
+
+        // We prioritize cancels, then regular wants, then broadcast wants.
+
+        let mut msg_size = 0;
+        let mut sent_cancels = 0;
+        let mut sent_peer_entries = 0;
+        let mut sent_bcst_entries = 0;
+        let mut done = false;
+
+        let mut msg = BitswapMessage::default();
+
+        // add cancels
+        for c in &cancels {
+            msg_size += msg.cancel(*c);
+            sent_cancels += 1;
+
+            if msg_size >= self.max_message_size {
+                done = true;
+                break;
+            }
+        }
+
+        if !done {
+            // add wants, if there are too many entires for a single message, sort by
+            // by priority.
+            for entry in &peer_entries {
+                msg_size += msg.add_entry(entry.cid, entry.priority, entry.want_type, true);
+                sent_peer_entries += 1;
+
+                if msg_size >= self.max_message_size {
+                    done = true;
+                    break;
+                }
+            }
+        }
+
+        if !done {
+            // add each broadcast want-have to the message
+
+            for entry in &bcst_entries {
+                // Broadcast wants are sent as want-have
+                let want_type = if supports_have {
+                    WantType::Have
+                } else {
+                    WantType::Block
+                };
+
+                msg_size += msg.add_entry(entry.cid, entry.priority, want_type, false);
+                sent_bcst_entries += 1;
+
+                if msg_size >= self.max_message_size {
+                    break;
+                }
+            }
+        }
+
+        // Finally  retake the lock, makr sent and remove any entries from our message
+        // that we've decided to cancel at the last minute.
+        {
+            let wants = &mut *self.wants.lock().await;
+
+            // shorten to actually sent
+            peer_entries.truncate(sent_peer_entries);
             peer_entries.retain(|entry| {
-                if entry.want_type == WantType::Have {
-                    wants.peer_wants.remove_type(&entry.cid, WantType::Have);
+                if !wants.peer_wants.mark_sent(entry) {
+                    // It changed
+                    msg.remove(&entry.cid);
                     false
                 } else {
                     true
                 }
             });
+
+            // shorten to actually sent
+            bcst_entries.truncate(sent_bcst_entries);
+            bcst_entries.retain(|entry| {
+                if !wants.bcst_wants.mark_sent(entry) {
+                    // It changed
+                    msg.remove(&entry.cid);
+                    false
+                } else {
+                    true
+                }
+            });
+
+            // shorten to actually sent
+            cancels.truncate(sent_cancels);
+            for cancel in &cancels {
+                if !wants.cancels.contains(cancel) {
+                    msg.remove(&cancel);
+                } else {
+                    wants.cancels.remove(cancel);
+                }
+            }
         }
-        let bcst_entries: Vec<_> = wants.bcst_wants.pending.entries().collect();
-        let cancels: Vec<_> = wants.cancels.iter().cloned().collect();
-        (peer_entries, bcst_entries, cancels)
-    };
 
-    // We prioritize cancels, then regular wants, then broadcast wants.
+        // Update state after the message has been sent.
+        let wants = self.wants.clone();
+        let on_sent = async move {
+            let now = Instant::now();
+            let wants = &mut *wants.lock().await;
 
-    let mut msg_size = 0;
-    let mut sent_cancels = 0;
-    let mut sent_peer_entries = 0;
-    let mut sent_bcst_entries = 0;
-    let mut done = false;
-
-    let mut msg = BitswapMessage::default();
-
-    // add cancels
-    for c in &cancels {
-        msg_size += msg.cancel(*c);
-        sent_cancels += 1;
-
-        if msg_size >= max_message_size {
-            done = true;
-            break;
-        }
+            for e in peer_entries {
+                wants.peer_wants.sent_at(e.cid, now);
+            }
+            for e in bcst_entries {
+                wants.bcst_wants.sent_at(e.cid, now);
+            }
+        };
+        (msg, on_sent)
     }
-
-    if !done {
-        // add wants, if there are too many entires for a single message, sort by
-        // by priority.
-        for entry in &peer_entries {
-            msg_size += msg.add_entry(entry.cid, entry.priority, entry.want_type, true);
-            sent_peer_entries += 1;
-
-            if msg_size >= max_message_size {
-                done = true;
-                break;
-            }
-        }
-    }
-
-    if !done {
-        // add each broadcast want-have to the message
-
-        for entry in &bcst_entries {
-            // Broadcast wants are sent as want-have
-            let want_type = if supports_have {
-                WantType::Have
-            } else {
-                WantType::Block
-            };
-
-            msg_size += msg.add_entry(entry.cid, entry.priority, want_type, false);
-            sent_bcst_entries += 1;
-
-            if msg_size >= max_message_size {
-                break;
-            }
-        }
-    }
-
-    // Finally  retake the lock, makr sent and remove any entries from our message
-    // that we've decided to cancel at the last minute.
-    {
-        let wants = &mut *wants.lock().await;
-
-        // shorten to actually sent
-        peer_entries.truncate(sent_peer_entries);
-        peer_entries.retain(|entry| {
-            if !wants.peer_wants.mark_sent(entry) {
-                // It changed
-                msg.remove(&entry.cid);
-                false
-            } else {
-                true
-            }
-        });
-
-        // shorten to actually sent
-        bcst_entries.truncate(sent_bcst_entries);
-        bcst_entries.retain(|entry| {
-            if !wants.bcst_wants.mark_sent(entry) {
-                // It changed
-                msg.remove(&entry.cid);
-                false
-            } else {
-                true
-            }
-        });
-
-        // shorten to actually sent
-        cancels.truncate(sent_cancels);
-        for cancel in &cancels {
-            if !wants.cancels.contains(cancel) {
-                msg.remove(&cancel);
-            } else {
-                wants.cancels.remove(cancel);
-            }
-        }
-    }
-
-    // Update state after the message has been sent.
-    let wants = wants.clone();
-    let on_sent = async move {
-        let now = Instant::now();
-        let wants = &mut *wants.lock().await;
-
-        for e in peer_entries {
-            wants.peer_wants.sent_at(e.cid, now);
-        }
-        for e in bcst_entries {
-            wants.bcst_wants.sent_at(e.cid, now);
-        }
-    };
-    (msg, on_sent)
 }
