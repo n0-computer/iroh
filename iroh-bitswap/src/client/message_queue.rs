@@ -560,7 +560,7 @@ impl LoopState {
                     "message_queue:{}: failed to prepare message: {:?}",
                     self.peer, err
                 );
-                return false;
+                return true;
             }
         };
         if msg.is_empty() {
