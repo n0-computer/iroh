@@ -3,7 +3,7 @@ use std::{pin::Pin, sync::Arc, time::Duration};
 use ahash::AHashSet;
 use anyhow::{anyhow, ensure, Result};
 use cid::Cid;
-use iroh_metrics::{bitswap::BitswapMetrics, core::MRecorder, inc};
+use iroh_metrics::{bitswap::BitswapMetrics, core::MRecorder, inc, record};
 use libp2p::PeerId;
 use tokio::{
     sync::{oneshot, Mutex},
@@ -525,6 +525,7 @@ impl LoopState {
         if wanted.is_empty() {
             return;
         }
+        record!(BitswapMetrics::WantedBlocksReceived, wanted.len() as u64);
 
         // Record latency
         self.latency_tracker
@@ -545,6 +546,7 @@ impl LoopState {
 
     /// Called when blocks are requested by the client.
     async fn want_blocks(&mut self, new_keys: Vec<Cid>) {
+        record!(BitswapMetrics::WantedBlocks, new_keys.len() as u64);
         if !new_keys.is_empty() {
             // Inform the SessionInterestManager that this session is interested in the keys.
             self.session_interest_manager
