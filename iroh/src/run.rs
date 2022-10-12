@@ -110,17 +110,8 @@ impl Cli {
                 println!("/ipfs/{}", cid);
             }
             Commands::Get { path, output } => {
-                let cid = if let CidOrDomain::Cid(cid) = path.root() {
-                    cid
-                } else {
-                    return Err(anyhow::anyhow!("ipfs path must refer to a CID"));
-                };
-                api.get(path, output.as_deref()).await?;
-                let real_output = output
-                    .as_deref()
-                    .map(|path| path.to_path_buf())
-                    .unwrap_or_else(|| PathBuf::from(&cid.to_string()));
-                println!("Saving file(s) to {}", real_output.to_str().unwrap());
+                let root_path = api.get(path, output.as_deref()).await?;
+                println!("Saving file(s) to {}", root_path.to_str().unwrap());
             }
         };
 

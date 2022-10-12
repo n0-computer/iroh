@@ -10,11 +10,16 @@ use relative_path::RelativePathBuf;
 #[async_trait(?Send)]
 pub trait ApiExt: Api {
     /// High level get, equivalent of CLI `iroh get`
-    async fn get<'a>(&self, ipfs_path: &IpfsPath, output_path: Option<&'a Path>) -> Result<()> {
+    async fn get<'a>(
+        &self,
+        ipfs_path: &IpfsPath,
+        output_path: Option<&'a Path>,
+    ) -> Result<PathBuf> {
         let cid = ipfs_path_to_cid(ipfs_path)?;
         let root_path = get_root_path(&cid, output_path);
         let blocks = self.get_stream(ipfs_path);
-        save_get_stream(&root_path, blocks).await
+        save_get_stream(&root_path, blocks).await?;
+        Ok(root_path)
     }
 }
 

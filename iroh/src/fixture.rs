@@ -1,8 +1,6 @@
 use std::collections::HashMap;
 use std::env;
 
-use futures::future;
-use futures::FutureExt;
 use futures::StreamExt;
 use iroh_api::{Lookup, MockApi, MockP2p, OutType, PeerId};
 use relative_path::RelativePathBuf;
@@ -42,8 +40,6 @@ fn fixture_get() -> MockApi {
         ])
         .boxed_local()
     });
-    // api.expect_get()
-    //     .returning(|_, _| future::ready(Ok(())).boxed_local());
     api
 }
 
