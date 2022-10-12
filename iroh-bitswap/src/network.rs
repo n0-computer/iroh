@@ -100,7 +100,7 @@ impl Network {
         timeout: Duration,
         backoff: Duration,
     ) -> Result<()> {
-        info!("sending message to {} ({:?})", peer, message);
+        info!("sending message to {}", peer);
         inc!(BitswapMetrics::MessagesSent);
         let res = tokio::time::timeout(timeout, async {
             let mut errors: Vec<anyhow::Error> = Vec::new();
