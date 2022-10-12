@@ -147,12 +147,9 @@ impl PeerManager {
     /// (used by the session to discover seeds).
     /// For each peer it filters out want-haves that have previously been sent to the peer.
     pub async fn broadcast_want_haves(&self, want_haves: &AHashSet<Cid>) {
-        self.inner
-            .peers
-            .write()
-            .await
-            .1
-            .broadcast_want_haves(want_haves)
+        let (peer_queues, peer_want_manager) = &mut *self.inner.peers.write().await;
+        peer_want_manager
+            .broadcast_want_haves(want_haves, peer_queues)
             .await;
     }
 
@@ -162,14 +159,15 @@ impl PeerManager {
         let (peer_queues, peer_want_manager) = &mut *self.inner.peers.write().await;
         if peer_queues.contains_key(peer) {
             peer_want_manager
-                .send_wants(peer, want_blocks, want_haves)
+                .send_wants(peer, want_blocks, want_haves, &peer_queues)
                 .await;
         }
     }
 
     /// Sends cancels for the given keys to all peers who had previously received a want for those keys.
     pub async fn send_cancels(&self, cancels: &[Cid]) {
-        self.inner.peers.write().await.1.send_cancels(cancels).await;
+        let (peer_queues, peer_want_manager) = &mut *self.inner.peers.write().await;
+        peer_want_manager.send_cancels(cancels, &peer_queues).await;
     }
 
     /// Returns a list of pending wants (both want-haves and want-blocks).

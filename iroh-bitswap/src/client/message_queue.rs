@@ -7,7 +7,7 @@ use std::{
 };
 
 use ahash::{AHashMap, AHashSet};
-use anyhow::{anyhow, ensure, Result};
+use anyhow::{ensure, Result};
 use cid::Cid;
 use futures::Future;
 use libp2p::PeerId;
@@ -29,19 +29,14 @@ use super::{peer_manager::DontHaveTimeout, wantlist::Wantlist};
 
 mod dont_have_timeout_manager;
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct MessageQueue {
-    inner: Arc<Inner>,
     dh_timeout_manager: DontHaveTimeoutManager,
     pub(crate) wants: Arc<Mutex<Wants>>,
     running: Arc<AtomicBool>,
-}
-
-#[derive(Debug)]
-struct Inner {
     responses: mpsc::Sender<Vec<Cid>>,
     closer: mpsc::Sender<()>,
-    worker: Option<JoinHandle<()>>,
+    worker: JoinHandle<()>,
     outgoing_work_sender: mpsc::Sender<Instant>,
 }
 
@@ -299,15 +294,13 @@ impl MessageQueue {
         });
 
         MessageQueue {
-            inner: Arc::new(Inner {
-                responses: responses_sender,
-                closer: closer_sender,
-                worker: Some(worker),
-                outgoing_work_sender,
-            }),
             dh_timeout_manager,
             wants,
             running,
+            responses: responses_sender,
+            closer: closer_sender,
+            worker,
+            outgoing_work_sender,
         }
     }
 
@@ -330,7 +323,7 @@ impl MessageQueue {
             wants.cancels.remove(cid);
         }
 
-        if let Err(err) = self.inner.outgoing_work_sender.try_send(Instant::now()) {
+        if let Err(err) = self.outgoing_work_sender.try_send(Instant::now()) {
             warn!("unable to send outgoing work: {:?}", err);
         }
     }
@@ -392,7 +385,7 @@ impl MessageQueue {
 
         // Schedule a message send
         if work_ready {
-            if let Err(err) = self.inner.outgoing_work_sender.try_send(Instant::now()) {
+            if let Err(err) = self.outgoing_work_sender.try_send(Instant::now()) {
                 warn!("unable to send outgoing work: {:?}", err);
             }
         }
@@ -406,20 +399,15 @@ impl MessageQueue {
             return;
         }
 
-        if let Err(err) = self.inner.responses.send(cids).await {
+        if let Err(err) = self.responses.send(cids).await {
             warn!("unable to send responses: {:?}", err);
         }
     }
 
     pub async fn stop(self) -> Result<()> {
         debug!("stopping message queue");
-        if self.inner.closer.send(()).await.is_ok() {
-            Arc::try_unwrap(self.inner)
-                .map_err(|_| anyhow!("message queue refs not shutdown"))?
-                .worker
-                .take()
-                .ok_or_else(|| anyhow!("missing worker"))?
-                .await?;
+        if self.closer.send(()).await.is_ok() {
+            self.worker.await?;
         }
         self.dh_timeout_manager.stop().await?;
         ensure!(

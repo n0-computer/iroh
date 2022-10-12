@@ -22,7 +22,6 @@ pub struct PeerWantManager {
 struct PeerWant {
     want_blocks: AHashSet<Cid>,
     want_haves: AHashSet<Cid>,
-    peer_queue: MessageQueue,
 }
 
 impl PeerWantManager {
@@ -38,7 +37,6 @@ impl PeerWantManager {
             PeerWant {
                 want_blocks: Default::default(),
                 want_haves: Default::default(),
-                peer_queue: peer_queue.clone(),
             },
         );
 
@@ -80,7 +78,11 @@ impl PeerWantManager {
     }
 
     /// Sends want-haves to any peers that have not yet been sent them.
-    pub async fn broadcast_want_haves(&mut self, want_haves: &AHashSet<Cid>) {
+    pub async fn broadcast_want_haves(
+        &mut self,
+        want_haves: &AHashSet<Cid>,
+        peer_queues: &AHashMap<PeerId, MessageQueue>,
+    ) {
         debug!("pwm: broadcast_want_haves: {:?}", want_haves);
         // want_haves - self.broadcast_wants
         let unsent: AHashSet<_> = want_haves
@@ -100,10 +102,9 @@ impl PeerWantManager {
             }
             debug!("pwm: unsent peer: {}, {:?}", peer, peer_unsent);
             if !peer_unsent.is_empty() {
-                peer_wants
-                    .peer_queue
-                    .add_broadcast_want_haves(&peer_unsent)
-                    .await;
+                if let Some(peer_queue) = peer_queues.get(peer) {
+                    peer_queue.add_broadcast_want_haves(&peer_unsent).await;
+                }
             }
 
             // clear for reuse
@@ -112,7 +113,13 @@ impl PeerWantManager {
     }
 
     /// Only sends the peer the want-blocks and want-haves that have not already been sent to it.
-    pub async fn send_wants(&mut self, peer: &PeerId, want_blocks: &[Cid], want_haves: &[Cid]) {
+    pub async fn send_wants(
+        &mut self,
+        peer: &PeerId,
+        want_blocks: &[Cid],
+        want_haves: &[Cid],
+        peer_queues: &AHashMap<PeerId, MessageQueue>,
+    ) {
         let mut flt_want_blocks = Vec::with_capacity(want_blocks.len());
         let mut flt_want_haves = Vec::with_capacity(want_haves.len());
 
@@ -170,10 +177,11 @@ impl PeerWantManager {
 
             // send out want-blocks and want-haves
             if !flt_want_blocks.is_empty() || !flt_want_haves.is_empty() {
-                peer_wants
-                    .peer_queue
-                    .add_wants(&flt_want_blocks, &flt_want_haves)
-                    .await;
+                if let Some(peer_queue) = peer_queues.get(peer) {
+                    peer_queue
+                        .add_wants(&flt_want_blocks, &flt_want_haves)
+                        .await;
+                }
             }
         } else {
             error!("send_wants called with peer {}, but peer not found", peer);
@@ -181,7 +189,11 @@ impl PeerWantManager {
     }
 
     /// Sends out cancels to each peer which has a corresponding want sent to.
-    pub async fn send_cancels(&mut self, cancels: &[Cid]) {
+    pub async fn send_cancels(
+        &mut self,
+        cancels: &[Cid],
+        peer_queues: &AHashMap<PeerId, MessageQueue>,
+    ) {
         if cancels.is_empty() {
             return;
         }
@@ -201,7 +213,7 @@ impl PeerWantManager {
             .collect();
 
         macro_rules! send {
-            ($peer_wants:expr) => {
+            ($peer:expr, $peer_wants:expr) => {
                 // start from the broadcast cancels
                 let mut to_cancel = broadcast_cancels.clone();
                 // for each key to cancel
@@ -224,7 +236,9 @@ impl PeerWantManager {
                 }
 
                 if !to_cancel.is_empty() {
-                    $peer_wants.peer_queue.add_cancels(&to_cancel).await;
+                    if let Some(peer_queue) = peer_queues.get($peer) {
+                        peer_queue.add_cancels(&to_cancel).await;
+                    }
                 }
             };
         }
@@ -239,7 +253,7 @@ impl PeerWantManager {
                 .collect();
             for peer in cancel_peers {
                 if let Some(peer_wants) = self.peer_wants.get_mut(&peer) {
-                    send!(peer_wants);
+                    send!(&peer, peer_wants);
                 } else {
                     error!("index missing for peer {}", peer);
                     continue;
@@ -247,8 +261,8 @@ impl PeerWantManager {
             }
         } else {
             // if a broadcast want is being cancelled, send the cancel to all peers
-            for (_peer, peer_wants) in &mut self.peer_wants {
-                send!(peer_wants);
+            for (peer, peer_wants) in &mut self.peer_wants {
+                send!(peer, peer_wants);
             }
         }
 
