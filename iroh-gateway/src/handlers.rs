@@ -43,8 +43,8 @@ use crate::{
     core::State,
     error::GatewayError,
     headers::*,
-    response::{get_response_format, GatewayResponse, ResponseFormat}, 
-    templates::{ICONS_STYLESHEET, STYLESHEET, icon_class_name},
+    response::{get_response_format, GatewayResponse, ResponseFormat},
+    templates::{icon_class_name, ICONS_STYLESHEET, STYLESHEET},
 };
 
 /// Trait describing what needs to be accessed on the configuration
@@ -560,16 +560,18 @@ async fn serve_fs_dir<T: ContentLoader + std::marker::Unpin>(
 
     let mut breadcrumbs: Vec<HashMap<&str, String>> = Vec::new();
     root_path
-    .trim_matches('/')
-    .split('/')
+        .trim_matches('/')
+        .split('/')
         .fold(&mut breadcrumbs, |accum, path_el| {
             let mut el = HashMap::new();
             let path = match accum.last() {
                 Some(prev) => {
                     let base = prev.get("path");
                     format!("/{}/{}", base.unwrap_or(&"".to_string()), encode(path_el))
-                },
-                None => { format!("/{}", encode(path_el)) },
+                }
+                None => {
+                    format!("/{}", encode(path_el))
+                }
             };
             el.insert("name", path_el.to_string());
             el.insert("path", path);
@@ -581,8 +583,14 @@ async fn serve_fs_dir<T: ContentLoader + std::marker::Unpin>(
         template_data.insert("root_cid".to_string(), Json::String(root_cid.to_string()));
     }
 
-    template_data.insert("root_path".to_string(), Json::String(req.content_path.clone()));
-    template_data.insert("public_url_base".to_string(), Json::String(state.config.public_url_base()));
+    template_data.insert(
+        "root_path".to_string(),
+        Json::String(req.content_path.clone()),
+    );
+    template_data.insert(
+        "public_url_base".to_string(),
+        Json::String(state.config.public_url_base()),
+    );
     // TODO(b5) - add directory size
     template_data.insert("size".to_string(), Json::String("".to_string()));
     let links = dir_list
