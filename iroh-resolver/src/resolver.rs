@@ -400,6 +400,7 @@ pub enum OutType {
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum UnixfsType {
+    Raw,
     Dir,
     File,
     Symlink,
@@ -962,7 +963,7 @@ impl<T: ContentLoader> Resolver<T> {
             path: root_path,
             size: Some(loaded_cid.data.len() as u64),
             typ: OutType::Raw,
-            unixfs_type: None,
+            unixfs_type: Some(UnixfsType::Raw),
             resolved_path: vec![cid],
             source: loaded_cid.source,
         };
