@@ -56,11 +56,12 @@ pub struct Bitswap<S: Store> {
         Mutex<
             AHashMap<
                 PeerId,
-                Vec<
+                Vec<(
+                    usize,
                     oneshot::Sender<
                         std::result::Result<(ConnectionId, Option<ProtocolId>), String>,
                     >,
-                >,
+                )>,
             >,
         >,
     >,
@@ -338,9 +339,9 @@ impl<S: Store> NetworkBehaviour for Bitswap<S> {
             debug!("inject_dial_failure {}, {:?}", peer_id, error);
             let dials = &mut self.dials.lock().unwrap();
             if let Some(mut dials) = dials.remove(&peer_id) {
-                while let Some(sender) = dials.pop() {
+                while let Some((id, sender)) = dials.pop() {
                     if let Err(err) = sender.send(Err(error.to_string())) {
-                        warn!("failed to send dial response {:?}", err)
+                        warn!("dial:{}: failed to send dial response {:?}", id, err)
                     }
                 }
             }
@@ -355,9 +356,9 @@ impl<S: Store> NetworkBehaviour for Bitswap<S> {
                 {
                     let dials = &mut *self.dials.lock().unwrap();
                     if let Some(mut dials) = dials.remove(&peer_id) {
-                        while let Some(sender) = dials.pop() {
+                        while let Some((id, sender)) = dials.pop() {
                             if let Err(err) = sender.send(Ok((connection, Some(protocol)))) {
-                                warn!("failed to send dial response {:?}", err)
+                                warn!("dial:{}: failed to send dial response {:?}", id, err)
                             }
                         }
                     }
@@ -372,9 +373,9 @@ impl<S: Store> NetworkBehaviour for Bitswap<S> {
 
                 let dials = &mut *self.dials.lock().unwrap();
                 if let Some(mut dials) = dials.remove(&peer_id) {
-                    while let Some(sender) = dials.pop() {
+                    while let Some((id, sender)) = dials.pop() {
                         if let Err(err) = sender.send(Err("protocol not supported".into())) {
-                            warn!("failed to send dial response {:?}", err)
+                            warn!("dial:{} failed to send dial response {:?}", id, err)
                         }
                     }
                 }
@@ -414,11 +415,13 @@ impl<S: Store> NetworkBehaviour for Bitswap<S> {
                             connection: CloseConnection::All,
                         });
                     }
-                    OutEvent::Dial(peer, response) => {
+                    OutEvent::Dial { peer, response, id } => {
                         if self.pause_dialing {
                             // already connected
-                            if let Err(err) = response.send(Err("Dialing paused".to_string())) {
-                                warn!("failed to send dial response {:?}", err)
+                            if let Err(err) =
+                                response.send(Err(format!("dial:{}: dialing paused", id)))
+                            {
+                                warn!("dial:{}: failed to send dial response {:?}", id, err)
                             }
                             continue;
                         }
@@ -426,14 +429,14 @@ impl<S: Store> NetworkBehaviour for Bitswap<S> {
                             PeerState::Responsive(conn, protocol_id) => {
                                 // already connected
                                 if let Err(err) = response.send(Ok((conn, Some(protocol_id)))) {
-                                    debug!("failed to send dial response {:?}", err)
+                                    debug!("dial:{}: failed to send dial response {:?}", id, err)
                                 }
                                 continue;
                             }
                             PeerState::Connected(conn) => {
                                 // already connected
                                 if let Err(err) = response.send(Ok((conn, None))) {
-                                    debug!("failed to send dial response {:?}", err)
+                                    debug!("dial:{}: failed to send dial response {:?}", id, err)
                                 }
                                 continue;
                             }
@@ -443,7 +446,7 @@ impl<S: Store> NetworkBehaviour for Bitswap<S> {
                                     .unwrap()
                                     .entry(peer)
                                     .or_default()
-                                    .push(response);
+                                    .push((id, response));
 
                                 return Poll::Ready(NetworkBehaviourAction::Dial {
                                     opts: DialOpts::peer_id(peer)

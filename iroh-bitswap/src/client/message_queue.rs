@@ -364,13 +364,15 @@ impl MessageQueue {
     }
 
     async fn send_wants_update(&self, update: WantsUpdate) {
-        if let Err(err) = self.wants_sender.send(update).await {
-            warn!(
-                "message_queue:{}: failed to send wants update (is_running: {}): {:?}",
-                self.peer,
-                self.is_running(),
-                err
-            );
+        if self.is_running() {
+            if let Err(err) = self.wants_sender.send(update).await {
+                warn!(
+                    "message_queue:{}: failed to send wants update (is_running: {}): {:?}",
+                    self.peer,
+                    self.is_running(),
+                    err
+                );
+            }
         }
     }
 

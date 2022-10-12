@@ -1,6 +1,7 @@
 use std::{
     collections::HashSet,
     pin::Pin,
+    sync::{atomic::AtomicUsize, Arc},
     task::{Context, Poll},
     time::Duration,
 };
@@ -28,14 +29,16 @@ pub struct Network {
     network_out_receiver: async_channel::Receiver<OutEvent>,
     network_out_sender: async_channel::Sender<OutEvent>,
     self_id: PeerId,
+    dial_id: Arc<AtomicUsize>,
 }
 
 #[derive(Debug)]
 pub enum OutEvent {
-    Dial(
-        PeerId,
-        oneshot::Sender<std::result::Result<(ConnectionId, Option<ProtocolId>), String>>,
-    ),
+    Dial {
+        peer: PeerId,
+        response: oneshot::Sender<std::result::Result<(ConnectionId, Option<ProtocolId>), String>>,
+        id: usize,
+    },
     Disconnect(PeerId, oneshot::Sender<()>),
     SendMessage {
         peer: PeerId,
@@ -62,6 +65,7 @@ impl Network {
             network_out_receiver,
             network_out_sender,
             self_id,
+            dial_id: Arc::new(AtomicUsize::new(0)),
         }
     }
 
@@ -185,20 +189,31 @@ impl Network {
         peer: PeerId,
         timeout: Duration,
     ) -> Result<(ConnectionId, Option<ProtocolId>)> {
+        let dial_id = self
+            .dial_id
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
         inc!(BitswapMetrics::AttemptedDials);
-        debug!("dialing {}", peer);
+        debug!("dial:{}: peer {}", dial_id, peer);
         let res = tokio::time::timeout(timeout, async move {
             let (s, r) = oneshot::channel();
             self.network_out_sender
-                .send(OutEvent::Dial(peer, s))
+                .send(OutEvent::Dial {
+                    peer,
+                    response: s,
+                    id: dial_id,
+                })
                 .await
-                .map_err(|e| anyhow!("channel send: {:?}", e))?;
+                .map_err(|e| anyhow!("dial:{}: channel send: {:?}", dial_id, e))?;
 
-            let res = r.await?.map_err(|e| anyhow!("Dial Error: {}", e))?;
+            let res = r
+                .await?
+                .map_err(|e| anyhow!("dial:{} failed: {}", dial_id, e))?;
             Ok::<_, anyhow::Error>(res)
         })
         .await??;
 
+        debug!("dial:{}: success {}", dial_id, peer);
         inc!(BitswapMetrics::Dials);
 
         Ok(res)
