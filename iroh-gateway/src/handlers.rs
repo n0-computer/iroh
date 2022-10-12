@@ -4,6 +4,7 @@ use axum::{
     error_handling::HandleErrorLayer,
     extract::{Extension, Path, Query},
     http::{header::*, Request as HttpRequest, StatusCode},
+    middleware,
     response::IntoResponse,
     routing::get,
     BoxError, Router,
@@ -71,6 +72,7 @@ pub fn get_app_routes<T: ContentLoader + std::marker::Unpin>(state: &Arc<State<T
             ServiceBuilder::new()
                 // Handle errors from middleware
                 .layer(Extension(Arc::clone(state)))
+                .layer(middleware::from_fn(request_middleware))
                 .layer(CompressionLayer::new())
                 .layer(HandleErrorLayer::new(middleware_error_handler::<T>))
                 .load_shed()
@@ -758,6 +760,20 @@ fn error<T: ContentLoader>(
         trace_id: get_current_trace_id().to_string(),
         method: None,
     }
+}
+
+// #[tracing::instrument()]
+pub async fn request_middleware<B>(
+    request: axum::http::Request<B>,
+    next: axum::middleware::Next<B>,
+) -> axum::response::Response {
+    let method = request.method().clone();
+    let mut r = next.run(request).await;
+    if method == Method::HEAD {
+        let b = r.body_mut();
+        *b = http_body::combinators::UnsyncBoxBody::default();
+    }
+    r
 }
 
 #[tracing::instrument()]
