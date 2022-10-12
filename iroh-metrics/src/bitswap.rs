@@ -47,6 +47,11 @@ make_metrics! {
     OutboundSubstreamsCreatedLimit: Counter: "",
     HandlerInboundLoopCount: Counter: "",
     HandlerOutboundLoopCount: Counter: "",
+    SessionsCreated: Counter: "Number of sessions created",
+    SessionsDestroyed: Counter: "Number of sessions destroyed",
+    ProviderQueryCreated: Counter: "",
+    ProviderQuerySuccess: Counter: "",
+    ProviderQueryError: Counter: "",
     EngineActiveTasks: Gauge: "",
     EnginePendingTasks: Gauge: ""
 }

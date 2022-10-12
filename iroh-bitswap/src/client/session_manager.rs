@@ -10,6 +10,7 @@ use ahash::AHashMap;
 use anyhow::{anyhow, Result};
 use cid::Cid;
 use futures::FutureExt;
+use iroh_metrics::{bitswap::BitswapMetrics, core::MRecorder, inc};
 use libp2p::PeerId;
 use tokio::sync::RwLock;
 
@@ -126,6 +127,7 @@ impl SessionManager {
         provider_search_delay: Duration,
         rebroadcast_delay: Duration,
     ) -> Session {
+        inc!(BitswapMetrics::SessionsCreated);
         let session_peer_manager = SessionPeerManager::new(session_id, self.inner.network.clone());
 
         let session = Session::new(
@@ -169,6 +171,7 @@ impl SessionManager {
     }
 
     pub async fn remove_session(&self, session_id: u64) -> Result<()> {
+        inc!(BitswapMetrics::SessionsDestroyed);
         let cancels = self
             .inner
             .session_interest_manager

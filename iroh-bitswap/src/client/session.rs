@@ -183,10 +183,12 @@ impl Session {
     }
 
     pub async fn stop(self) -> Result<()> {
-        info!(
-            "stopping session {} ({})",
-            self.inner.id,
-            Arc::strong_count(&self.inner)
+        let count = Arc::strong_count(&self.inner);
+        info!("stopping session {} ({})", self.inner.id, count,);
+        ensure!(
+            count == 2,
+            "session {}: too many session refs",
+            self.inner.id
         );
 
         // Remove from the session manager list, to ensure this is the last ref.

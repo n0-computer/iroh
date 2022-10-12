@@ -2,6 +2,7 @@ use std::{collections::HashSet, sync::Arc, time::Duration};
 
 use anyhow::{anyhow, Result};
 use cid::Cid;
+use iroh_metrics::{bitswap::BitswapMetrics, core::MRecorder, inc};
 use libp2p::PeerId;
 use tokio::{sync::oneshot, task::JoinHandle};
 use tracing::warn;
@@ -57,7 +58,8 @@ impl ProviderQueryManager {
                         msg = provider_query_message_r.recv() => {
                             match msg {
                                 Ok(ProviderQueryMessage::NewProvider { cid, response }) => {
-                                   match network.find_providers(cid).await {
+                                    inc!(BitswapMetrics::ProviderQueryCreated);
+                                    match network.find_providers(cid).await {
                                         Ok(mut providers_r) => {
                                             let mut found_providers = HashSet::new();
                                             loop {
@@ -93,6 +95,7 @@ impl ProviderQueryManager {
                                                                 }
 
                                                                 if found_providers.len() >= 10 {
+                                                                    inc!(BitswapMetrics::ProviderQuerySuccess);
                                                                     break;
                                                                 }
                                                             }
@@ -112,6 +115,7 @@ impl ProviderQueryManager {
                                             }
                                         }
                                         Err(err) => {
+                                            inc!(BitswapMetrics::ProviderQueryError);
                                             if let Err(err) = response.send(Err(err)).await {
                                                 warn!("response channel error: {:?}", err);
                                             }
