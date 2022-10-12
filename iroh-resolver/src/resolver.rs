@@ -121,6 +121,13 @@ impl Path {
         }
         s
     }
+
+    pub fn cid(&self) -> Option<&Cid> {
+        match &self.root {
+            CidOrDomain::Cid(cid) => Some(cid),
+            CidOrDomain::Domain(_) => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
