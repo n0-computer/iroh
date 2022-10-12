@@ -27,4 +27,5 @@ futures = "0.3.21"
 async-stream = "0.3.3"
 mockall = { version = "0.11.2", optional = true }
 serde = { version = "1.0", features = ["derive"] }
+relative-path = "1.7.2"
 

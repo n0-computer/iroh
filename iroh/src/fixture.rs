@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 use std::env;
 
+use futures::future;
+use futures::FutureExt;
 use iroh_api::{Lookup, MockApi, MockP2p, PeerId};
 
 type GetFixture = fn() -> MockApi;
@@ -28,7 +30,8 @@ fn fixture_lookup() -> MockApi {
 
 fn fixture_get() -> MockApi {
     let mut api = MockApi::default();
-    api.expect_get().returning(|_, _| Ok(()));
+    api.expect_get()
+        .returning(|_, _| future::ready(Ok(())).boxed_local());
     api
 }
 
