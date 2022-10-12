@@ -209,12 +209,12 @@ impl Network {
             let res = r
                 .await?
                 .map_err(|e| anyhow!("dial:{} failed: {}", dial_id, e))?;
-            
-                debug!("dial:{}: success {}", dial_id, peer);
-                inc!(BitswapMetrics::Dials);
             Ok::<_, anyhow::Error>(res)
         })
         .await??;
+
+        debug!("dial:{}: success {}", dial_id, peer);
+        inc!(BitswapMetrics::Dials);
 
         Ok(res)
     }
