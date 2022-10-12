@@ -306,7 +306,7 @@ mod tests {
         {
             let peers = peer_manager.inner.peers.read().await;
             let mq = peers.0.get(&peer1).unwrap();
-            let mq = &*mq.wants.lock().await;
+            let mq = mq.wants().await.unwrap();
             assert_eq!(mq.bcst_wants.pending.len(), 2);
             for cid in &cids {
                 assert!(mq.bcst_wants.pending.get(cid).is_some());
@@ -335,7 +335,7 @@ mod tests {
         {
             let peers = peer_manager.inner.peers.read().await;
             let mq = peers.0.get(&peer1).unwrap();
-            let mq = &*mq.wants.lock().await;
+            let mq = mq.wants().await.unwrap();
             assert_eq!(mq.bcst_wants.pending.len(), 2);
             for cid in &cids[..2] {
                 assert!(mq.bcst_wants.pending.get(cid).is_some());
@@ -355,7 +355,7 @@ mod tests {
             // peer 1 now has all three
             {
                 let mq = peers.0.get(&peer1).unwrap();
-                let mq = &*mq.wants.lock().await;
+                let mq = mq.wants().await.unwrap();
                 assert_eq!(mq.bcst_wants.pending.len(), 3);
                 for cid in &cids {
                     assert!(mq.bcst_wants.pending.get(cid).is_some());
@@ -364,7 +364,7 @@ mod tests {
             // peer 2 now has all three
             {
                 let mq = peers.0.get(&peer2).unwrap();
-                let mq = &*mq.wants.lock().await;
+                let mq = mq.wants().await.unwrap();
                 assert_eq!(mq.bcst_wants.pending.len(), 3);
                 for cid in &cids {
                     assert!(mq.bcst_wants.pending.get(cid).is_some());
@@ -391,7 +391,7 @@ mod tests {
         {
             let peers = peer_manager.inner.peers.read().await;
             let mq = peers.0.get(&peer1).unwrap();
-            let mq = &*mq.wants.lock().await;
+            let mq = mq.wants().await.unwrap();
             assert!(mq.bcst_wants.pending.is_empty());
             assert_eq!(mq.peer_wants.pending.len(), 2);
             assert_eq!(
@@ -411,7 +411,7 @@ mod tests {
         {
             let peers = peer_manager.inner.peers.read().await;
             let mq = peers.0.get(&peer1).unwrap();
-            let mq = &*mq.wants.lock().await;
+            let mq = mq.wants().await.unwrap();
             assert!(mq.bcst_wants.pending.is_empty());
             assert_eq!(mq.peer_wants.pending.len(), 4);
             assert_eq!(
@@ -455,7 +455,7 @@ mod tests {
         {
             let peers = peer_manager.inner.peers.read().await;
             let mq = peers.0.get(&peer1).unwrap();
-            let mq = &*mq.wants.lock().await;
+            let mq = mq.wants().await.unwrap();
             assert!(mq.bcst_wants.pending.is_empty());
             assert!(mq.bcst_wants.sent.is_empty());
             // TODO: doesn't work because dialing fails
@@ -472,14 +472,14 @@ mod tests {
             // check that no cancels went to peer2
             {
                 let mq = peers.0.get(&peer2).unwrap();
-                let mq = &*mq.wants.lock().await;
+                let mq = mq.wants().await.unwrap();
                 assert!(mq.cancels.is_empty());
             }
 
             // TODO: doesn't work because dialing fails
             // {
             //     let mq = peers.0.get(&peer1).unwrap();
-            //     let mq = &*mq.wants.lock().await;
+            //     let mq = mq.wants().await.unwrap();
             //     assert!(mq.bcst_wants.pending.is_empty());
             //     assert_eq!(mq.peer_wants.pending.len(), 1);
             //     assert_eq!(mq.cancels.len(), 2);

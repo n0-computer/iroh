@@ -5,7 +5,7 @@ use std::{
 };
 
 use ahash::{AHashMap, AHashSet};
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use cid::Cid;
 use derivative::Derivative;
 use libp2p::PeerId;
@@ -45,13 +45,13 @@ struct PendingWant {
     sent: Instant,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct DontHaveTimeoutManager {
     default_timeout: Duration,
     max_timeout: Duration,
     message_latency_multiplier: f64,
     trigger_timeouts_check: async_channel::Sender<()>,
-    worker: Arc<(oneshot::Sender<()>, JoinHandle<()>)>,
+    worker: (oneshot::Sender<()>, JoinHandle<()>),
     inner: Arc<Mutex<Inner>>,
 }
 
@@ -163,17 +163,15 @@ impl DontHaveTimeoutManager {
             message_latency_multiplier: MESSAGE_LATENCY_MULTIPLIER,
             trigger_timeouts_check: trigger_s,
             inner,
-            worker: Arc::new((closer_s, worker)),
+            worker: (closer_s, worker),
         }
     }
 
     pub async fn stop(self) -> Result<()> {
-        let (closer, worker) = Arc::try_unwrap(self.worker)
-            .map_err(|_| anyhow!("dont have timeout manager (worker) refs not shutdown"))?;
-        closer
-            .send(())
-            .map_err(|e| anyhow!("failed to send close signal: {:?}", e))?;
-        worker.await?;
+        let (closer, worker) = self.worker;
+        if closer.send(()).is_ok() {
+            worker.await?;
+        }
 
         Ok(())
     }
