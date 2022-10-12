@@ -4,10 +4,14 @@ use std::{
 };
 
 use axum::{
+    body::BoxBody,
     http::StatusCode,
     response::{IntoResponse, Response},
 };
+use http::{HeaderMap, HeaderValue};
 use serde_json::json;
+
+use crate::constants::HEADER_X_TRACE_ID;
 
 #[derive(Debug)]
 pub struct GatewayError {
@@ -28,8 +32,18 @@ impl GatewayError {
 
 impl IntoResponse for GatewayError {
     fn into_response(self) -> Response {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            &HEADER_X_TRACE_ID,
+            HeaderValue::from_str(&self.trace_id).unwrap(),
+        );
         match self.method {
-            Some(http::Method::HEAD) => (self.status_code).into_response(),
+            Some(http::Method::HEAD) => {
+                let mut rb = Response::builder().status(self.status_code);
+                let rh = rb.headers_mut().unwrap();
+                rh.extend(headers);
+                rb.body(BoxBody::default()).unwrap()
+            }
             _ => {
                 let body = axum::Json(json!({
                     "code": self.status_code.as_u16(),
@@ -37,7 +51,11 @@ impl IntoResponse for GatewayError {
                     "message": self.message,
                     "trace_id": self.trace_id,
                 }));
-                (self.status_code, body).into_response()
+                let mut res = body.into_response();
+                res.headers_mut().extend(headers);
+                let status = res.status_mut();
+                *status = self.status_code;
+                res
             }
         }
     }

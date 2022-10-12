@@ -3,6 +3,7 @@ use ::time::OffsetDateTime;
 use axum::http::header::*;
 use iroh_resolver::resolver::{CidOrDomain, Metadata, PathType};
 use mime::Mime;
+use sha2::Digest;
 use std::{fmt::Write, ops::Range, time};
 
 #[tracing::instrument()]
@@ -119,6 +120,16 @@ pub fn add_cache_control_headers(headers: &mut HeaderMap, metadata: Metadata) {
 }
 
 #[tracing::instrument()]
+pub fn add_content_length_header(headers: &mut HeaderMap, metadata: Metadata) {
+    if let Some(size) = metadata.size {
+        headers.insert(
+            CONTENT_LENGTH,
+            HeaderValue::from_str(&size.to_string()).unwrap(),
+        );
+    }
+}
+
+#[tracing::instrument()]
 pub fn add_ipfs_roots_headers(headers: &mut HeaderMap, metadata: Metadata) {
     let mut roots = "".to_string();
     for rcid in metadata.resolved_path {
@@ -155,6 +166,19 @@ pub fn get_etag(cid: &CidOrDomain, response_format: Option<ResponseFormat>) -> S
                 }
             }
             format!("\"{}{}\"", cid, suffix)
+        }
+        CidOrDomain::Domain(_) => {
+            // TODO:
+            String::new()
+        }
+    }
+}
+
+#[tracing::instrument()]
+pub fn get_dir_etag(cid: &CidOrDomain) -> String {
+    match cid {
+        CidOrDomain::Cid(cid) => {
+            format!("\"Dir-{}-CID-{}\"", *VERSION_TEMPLATE_HASH, cid)
         }
         CidOrDomain::Domain(_) => {
             // TODO:
@@ -225,6 +249,24 @@ pub fn get_filename(content_path: &str) -> String {
         .map(|s| s.to_string())
         .last()
         .unwrap_or_default()
+}
+
+pub fn version_and_template_hash() -> String {
+    let v = format!(
+        "{}-{}-{}-{}",
+        env!("CARGO_PKG_NAME"),
+        env!("CARGO_PKG_VERSION"),
+        crate::templates::DIR_LIST_TEMPLATE,
+        crate::templates::NOT_FOUND_TEMPLATE,
+    );
+    let mut hasher = sha2::Sha256::new();
+    hasher.update(v.as_bytes());
+    let hash = hasher.finalize();
+    hex::encode(hash)
+}
+
+lazy_static::lazy_static! {
+    pub(crate) static ref VERSION_TEMPLATE_HASH: String = version_and_template_hash();
 }
 
 #[cfg(test)]
