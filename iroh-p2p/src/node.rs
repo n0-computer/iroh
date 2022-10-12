@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::num::NonZeroU32;
 use std::time::Duration;
 
 use ahash::AHashMap;
@@ -268,7 +269,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                     }
                 }
 
-                if num_established == 1.try_into().unwrap() {
+                if num_established == NonZeroU32::try_from(1).unwrap() {
                     self.emit_network_event(NetworkEvent::PeerConnected(peer_id))
                         .await;
                 }

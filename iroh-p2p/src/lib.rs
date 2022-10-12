@@ -1,6 +1,7 @@
 mod behaviour;
 pub mod cli;
 pub mod config;
+mod kad_store;
 mod keys;
 pub mod metrics;
 mod node;
