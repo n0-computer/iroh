@@ -8,8 +8,8 @@ use std::{
 use anyhow::{anyhow, bail, Result};
 use cid::Cid;
 use futures::Stream;
-use iroh_metrics::core::MRecorder;
 use iroh_metrics::{bitswap::BitswapMetrics, inc};
+use iroh_metrics::{core::MRecorder, record};
 use libp2p::{core::connection::ConnectionId, PeerId};
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, info};
@@ -102,6 +102,11 @@ impl Network {
     ) -> Result<()> {
         info!("sending message to {}", peer);
         inc!(BitswapMetrics::MessagesSent);
+        for block in message.blocks() {
+            inc!(BitswapMetrics::BlocksOut);
+            record!(BitswapMetrics::BlockBytesOut, block.data.len() as u64);
+        }
+
         let res = tokio::time::timeout(timeout, async {
             let mut errors: Vec<anyhow::Error> = Vec::new();
             for i in 0..retries {
