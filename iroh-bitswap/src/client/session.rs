@@ -3,6 +3,7 @@ use std::{pin::Pin, sync::Arc, time::Duration};
 use ahash::AHashSet;
 use anyhow::{anyhow, ensure, Result};
 use cid::Cid;
+use iroh_metrics::{bitswap::BitswapMetrics, core::MRecorder, inc};
 use libp2p::PeerId;
 use tokio::{
     sync::{oneshot, Mutex},
@@ -465,6 +466,7 @@ impl LoopState {
                                 match provider {
                                     Ok(provider) => {
                                         num_providers += 1;
+                                        inc!(BitswapMetrics::Providers);
                                         debug!("found provider for {}: {}", cid, provider);
                                         // When a provider indicates that it has a cid, it's equivalent to
                                         // the providing peer sending a HAVE.
