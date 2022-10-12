@@ -52,9 +52,9 @@ enum Commands {
     )]
     Get {
         /// CID or CID/with/path/qualifier to get
-        path: IpfsPath,
+        ipfs_path: IpfsPath,
         /// filesystem path to write to. Defaults to CID
-        output: Option<PathBuf>,
+        output_path: Option<PathBuf>,
     },
 }
 
@@ -109,8 +109,11 @@ impl Cli {
                 let cid = api.add(path, *recursive, *no_wrap).await?;
                 println!("/ipfs/{}", cid);
             }
-            Commands::Get { path, output } => {
-                let root_path = api.get(path, output.as_deref()).await?;
+            Commands::Get {
+                ipfs_path,
+                output_path,
+            } => {
+                let root_path = api.get(ipfs_path, output_path.as_deref()).await?;
                 println!("Saving file(s) to {}", root_path.to_str().unwrap());
             }
         };
