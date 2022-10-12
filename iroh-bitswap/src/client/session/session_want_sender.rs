@@ -243,7 +243,12 @@ impl SessionWantSender {
 
     // Adds a new change to the queue.
     async fn add_change(&self, change: Change) {
-        self.changes.send(change).await.ok();
+        if let Err(err) = self.changes.send(change).await {
+            warn!(
+                "session {}: unable to send changes: {:?}",
+                self.session_id, err
+            );
+        }
     }
 }
 
@@ -742,10 +747,13 @@ impl LoopState {
         let newly_exhausted = self.newly_exhausted(exhausted.into_iter());
         if !newly_exhausted.is_empty() {
             // was "on_peers_exhausted"
-            self.session_ops
+            if let Err(err) = self
+                .session_ops
                 .send(super::Op::Broadcast(newly_exhausted.into_iter().collect()))
                 .await
-                .ok();
+            {
+                warn!("unabel to send broadcast op: {:?}", err);
+            }
         }
     }
 
@@ -811,11 +819,13 @@ impl LoopState {
             // Inform the session that we've sent the wants.
             // was "on_send"
             want_blocks.extend(want_haves);
-            self.session_ops
+            if let Err(err) = self
+                .session_ops
                 .send(super::Op::WantsSent(want_blocks))
                 .await
-                .ok();
-            // (self.on_send)(peer, want_blocks, want_haves);
+            {
+                warn!("unabel to send broadcast op: {:?}", err);
+            }
         }
     }
 

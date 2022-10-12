@@ -232,18 +232,21 @@ impl<S: Store> Server<S> {
         let mut inner =
             Arc::try_unwrap(self.inner).map_err(|_| anyhow!("Server refs not shutdown yet"))?;
         while let Some((closer, handle)) = inner.workers.pop() {
-            closer.send(()).ok();
-            handle.await.map_err(|e| anyhow!("{:?}", e))?;
+            if closer.send(()).is_ok() {
+                handle.await.map_err(|e| anyhow!("{:?}", e))?;
+            }
         }
 
         if let Some((closer, handle)) = inner.provide_collector.take() {
-            closer.send(()).ok();
-            handle.await.map_err(|e| anyhow!("{:?}", e))?;
+            if closer.send(()).is_ok() {
+                handle.await.map_err(|e| anyhow!("{:?}", e))?;
+            }
         }
 
         if let Some((closer, handle)) = inner.provide_worker.take() {
-            closer.send(()).ok();
-            handle.await.map_err(|e| anyhow!("{:?}", e))?;
+            if closer.send(()).is_ok() {
+                handle.await.map_err(|e| anyhow!("{:?}", e))?;
+            }
         }
 
         // stop the decision engine
@@ -275,7 +278,9 @@ impl<S: Store> Server<S> {
         self.engine.notify_new_blocks(blocks).await;
         if self.inner.provide_enabled {
             for block in blocks {
-                self.inner.new_blocks.send(*block.cid()).await.ok();
+                if let Err(err) = self.inner.new_blocks.send(*block.cid()).await {
+                    warn!("failed to send new blocks: {:?}", err);
+                }
             }
         }
 

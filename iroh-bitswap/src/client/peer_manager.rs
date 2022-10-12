@@ -87,8 +87,12 @@ impl PeerManager {
 
     /// Called to a new peer to the pool, and send it an initial set of wants.
     pub async fn connected(&self, peer: &PeerId) {
-        debug!("connected to {}", peer);
         let (peer_queues, peer_want_manager) = &mut *self.inner.peers.write().await;
+        debug!(
+            "connected to {} (current connections: {})",
+            peer,
+            peer_queues.len()
+        );
 
         if !peer_queues.contains_key(peer) {
             peer_queues.insert(
@@ -104,6 +108,7 @@ impl PeerManager {
 
         let peer_queue = peer_queues.get_mut(peer).unwrap();
         if !peer_queue.is_running() {
+            debug!("found stopped peer_queue, restarting: {}", peer);
             // Restart if the queue was stopped, but not yet cleaned up.
             *peer_queue = MessageQueue::new(
                 *peer,
@@ -123,6 +128,12 @@ impl PeerManager {
     /// Called to remove a peer from the pool.
     pub async fn disconnected(&self, peer: &PeerId) {
         let (peer_queues, peer_want_manager) = &mut *self.inner.peers.write().await;
+        debug!(
+            "disconnected from {} (current connections {})",
+            peer,
+            peer_queues.len()
+        );
+
         if let Some(peer_queue) = peer_queues.remove(peer) {
             // inform the sessions that the peer has disconnected
             self.signal_availability(peer, false).await;

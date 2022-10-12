@@ -538,7 +538,10 @@ impl LoopState {
         {
             Ok(res) => res,
             Err(err) => {
-                error!("failed to prepare message: {:?}", err);
+                error!(
+                    "failed to prepare message for peer {}: {:?}",
+                    self.peer, err
+                );
                 return false;
             }
         };
@@ -570,7 +573,9 @@ impl LoopState {
         // If the message was too big and only a subset of wants could be sent
         // schedule sending the rest of the wants in the next iteration of the event loop.
         if self.wants.has_pending_work() {
-            self.outgoing_work_sender.try_send(Instant::now()).ok();
+            if let Err(err) = self.outgoing_work_sender.try_send(Instant::now()) {
+                warn!("unable to send outgoing work: {:?}", err);
+            }
         }
         false
     }

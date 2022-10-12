@@ -6,6 +6,7 @@ use ahash::AHashSet;
 use keyed_priority_queue::{Entry, KeyedPriorityQueue};
 use libp2p::PeerId;
 use tokio::sync::Mutex;
+use tracing::warn;
 
 mod peer_task;
 mod peer_tracker;
@@ -251,7 +252,9 @@ impl<T: Topic, D: Data, TM: TaskMerger<T, D>> PeerTaskQueue<T, D, TM> {
 impl<T: Topic, D: Data, TM: TaskMerger<T, D>> Inner<T, D, TM> {
     async fn call_hook(&self, event: Event) {
         for hook in &self.hooks {
-            hook.send(event.clone()).await.ok();
+            if let Err(err) = hook.send(event.clone()).await {
+                warn!("failed to call hook for {:?}: {:?}", event, err);
+            }
         }
     }
 }

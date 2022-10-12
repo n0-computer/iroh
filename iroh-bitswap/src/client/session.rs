@@ -243,7 +243,8 @@ impl Session {
 
         // Inform the session want sender that a message has been received
         if let Some(from) = from {
-            self.inner
+            if let Err(err) = self
+                .inner
                 .incoming
                 .send(Op::UpdateWantSender {
                     from,
@@ -252,7 +253,9 @@ impl Session {
                     dont_haves,
                 })
                 .await
-                .ok();
+            {
+                warn!("failed to send update want sender: {:?}", err);
+            }
         }
 
         if keys.is_empty() {
@@ -260,7 +263,9 @@ impl Session {
         }
 
         // Inform the session that blocks have been received.
-        self.inner.incoming.send(Op::Receive(keys)).await.ok();
+        if let Err(err) = self.inner.incoming.send(Op::Receive(keys)).await {
+            warn!("failed to send receive: {:?}", err);
+        }
     }
 
     // Fetches a single block.
@@ -326,10 +331,12 @@ impl Session {
 
             // cancel all remaining
             if !remaining.is_empty() {
-                incoming
+                if let Err(err) = incoming
                     .send(Op::Cancel(remaining.into_iter().collect()))
                     .await
-                    .ok();
+                {
+                    warn!("failed to send cancel: {:?}", err);
+                }
             }
         });
 
@@ -470,12 +477,14 @@ impl LoopState {
                                         debug!("found provider for {}: {}", cid, provider);
                                         // When a provider indicates that it has a cid, it's equivalent to
                                         // the providing peer sending a HAVE.
-                                        incoming_sender.send(Op::UpdateWantSender {
+                                        if let Err(err) = incoming_sender.send(Op::UpdateWantSender {
                                             from: provider,
                                             keys: Vec::new(),
                                             haves: vec![cid],
                                             dont_haves: Vec::new()
-                                        }).await.ok();
+                                        }).await {
+                                            warn!("failed to send update want sender: {:?}", err);
+                                        }
 
                                         if num_providers >= 10 {
                                             break;

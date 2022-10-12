@@ -26,7 +26,7 @@ use message::BitswapMessage;
 use network::OutEvent;
 use protocol::{ProtocolConfig, ProtocolId};
 use tokio::sync::oneshot;
-use tracing::debug;
+use tracing::{debug, warn};
 
 use self::client::{Client, Config as ClientConfig};
 use self::network::Network;
@@ -339,7 +339,9 @@ impl<S: Store> NetworkBehaviour for Bitswap<S> {
             let dials = &mut self.dials.lock().unwrap();
             if let Some(mut dials) = dials.remove(&peer_id) {
                 while let Some(sender) = dials.pop() {
-                    sender.send(Err(error.to_string())).ok();
+                    if let Err(err) = sender.send(Err(error.to_string())) {
+                        warn!("failed to send dial response {:?}", err)
+                    }
                 }
             }
         }
@@ -354,7 +356,9 @@ impl<S: Store> NetworkBehaviour for Bitswap<S> {
                     let dials = &mut *self.dials.lock().unwrap();
                     if let Some(mut dials) = dials.remove(&peer_id) {
                         while let Some(sender) = dials.pop() {
-                            sender.send(Ok((connection, Some(protocol)))).ok();
+                            if let Err(err) = sender.send(Ok((connection, Some(protocol)))) {
+                                warn!("failed to send dial response {:?}", err)
+                            }
                         }
                     }
                 }
@@ -369,7 +373,9 @@ impl<S: Store> NetworkBehaviour for Bitswap<S> {
                 let dials = &mut *self.dials.lock().unwrap();
                 if let Some(mut dials) = dials.remove(&peer_id) {
                     while let Some(sender) = dials.pop() {
-                        sender.send(Err("protocol not supported".into())).ok();
+                        if let Err(err) = sender.send(Err("protocol not supported".into())) {
+                            warn!("failed to send dial response {:?}", err)
+                        }
                     }
                 }
             }
@@ -400,7 +406,9 @@ impl<S: Store> NetworkBehaviour for Bitswap<S> {
                 Poll::Pending => return Poll::Pending,
                 Poll::Ready(ev) => match ev {
                     OutEvent::Disconnect(peer_id, response) => {
-                        response.send(()).ok();
+                        if let Err(err) = response.send(()) {
+                            warn!("failed to send disconnect response {:?}", err)
+                        }
                         return Poll::Ready(NetworkBehaviourAction::CloseConnection {
                             peer_id,
                             connection: CloseConnection::All,
@@ -409,18 +417,24 @@ impl<S: Store> NetworkBehaviour for Bitswap<S> {
                     OutEvent::Dial(peer, response) => {
                         if self.pause_dialing {
                             // already connected
-                            response.send(Err("Dialing paused".to_string())).ok();
+                            if let Err(err) = response.send(Err("Dialing paused".to_string())) {
+                                warn!("failed to send dial response {:?}", err)
+                            }
                             continue;
                         }
                         match self.get_peer_state(&peer) {
                             PeerState::Responsive(conn, protocol_id) => {
                                 // already connected
-                                response.send(Ok((conn, Some(protocol_id)))).ok();
+                                if let Err(err) = response.send(Ok((conn, Some(protocol_id)))) {
+                                    warn!("failed to send dial response {:?}", err)
+                                }
                                 continue;
                             }
                             PeerState::Connected(conn) => {
                                 // already connected
-                                response.send(Ok((conn, None))).ok();
+                                if let Err(err) = response.send(Ok((conn, None))) {
+                                    warn!("failed to send dial response {:?}", err)
+                                }
                                 continue;
                             }
                             _ => {
