@@ -94,6 +94,20 @@ impl PeerManager {
             peer_queues.len()
         );
 
+        // GC stopped queues
+        let mut to_remove = Vec::new();
+        for (peer, queue) in &*peer_queues {
+            if !queue.is_running() {
+                debug!("cleaning up queue {}", peer);
+                self.signal_availability(peer, false).await;
+                peer_want_manager.remove_peer(peer);
+                to_remove.push(*peer);
+            }
+        }
+        for peer in to_remove {
+            peer_queues.remove(&peer);
+        }
+
         if !peer_queues.contains_key(peer) {
             peer_queues.insert(
                 *peer,
