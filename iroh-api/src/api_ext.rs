@@ -30,13 +30,8 @@ pub trait ApiExt: Api {
         Ok(root_path)
     }
 
-    async fn add(&self, path: &Path, wrap: bool, recursive: bool) -> Result<Cid> {
+    async fn add(&self, path: &Path, wrap: bool) -> Result<Cid> {
         if path.is_dir() {
-            if !recursive {
-                // TODO(faassen) This error message is okay for the API but not really
-                // ideal for the CLI, so need to make it different in the CLI
-                anyhow::bail!("{} is a directory, use recursive to add it", path.display());
-            }
             self.add_dir(path, wrap).await
         } else if path.is_file() {
             self.add_file(path, wrap).await

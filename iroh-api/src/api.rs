@@ -138,7 +138,7 @@ impl Api for Iroh {
             let providing_client = iroh_resolver::unixfs_builder::StoreAndProvideClient {
                 client: Box::new(&self.client),
             };
-            unixfs_builder::add_dir(Some(&providing_client), path, wrap, true).await
+            unixfs_builder::add_dir(Some(&providing_client), path, wrap).await
         }
         .boxed_local()
     }

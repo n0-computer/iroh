@@ -320,7 +320,6 @@ pub struct DirectoryBuilder {
     name: Option<String>,
     entries: Vec<Entry>,
     typ: DirectoryType,
-    recursive: bool,
 }
 
 impl Default for DirectoryBuilder {
@@ -329,7 +328,6 @@ impl Default for DirectoryBuilder {
             name: None,
             entries: Default::default(),
             typ: DirectoryType::Basic,
-            recursive: false,
         }
     }
 }
@@ -344,18 +342,12 @@ impl DirectoryBuilder {
         self
     }
 
-    pub fn recursive(&mut self) -> &mut Self {
-        self.recursive = true;
-        self
-    }
-
     pub fn name<N: Into<String>>(&mut self, name: N) -> &mut Self {
         self.name = Some(name.into());
         self
     }
 
     pub fn add_dir(&mut self, dir: Directory) -> Result<&mut Self> {
-        ensure!(self.recursive, "recursive directories not allowed");
         Ok(self.entry(Entry::Directory(dir)))
     }
 
@@ -471,15 +463,10 @@ pub async fn add_file<S: Store>(store: Option<S>, path: &Path, wrap: bool) -> Re
 /// - storing the content using `rpc.store`
 /// - returns the root Cid
 /// - optionally wraps into a UnixFs directory to preserve the directory name
-pub async fn add_dir<S: Store>(
-    store: Option<S>,
-    path: &Path,
-    wrap: bool,
-    recursive: bool,
-) -> Result<Cid> {
+pub async fn add_dir<S: Store>(store: Option<S>, path: &Path, wrap: bool) -> Result<Cid> {
     ensure!(path.is_dir(), "provided path was not a directory");
 
-    let dir = make_dir_from_path(path, recursive).await?;
+    let dir = make_dir_from_path(path).await?;
     // encode and store
     let mut root = None;
     let parts = {
@@ -504,7 +491,7 @@ pub async fn add_dir<S: Store>(
 }
 
 #[async_recursion(?Send)]
-async fn make_dir_from_path<P: Into<PathBuf>>(path: P, recursive: bool) -> Result<Directory> {
+async fn make_dir_from_path<P: Into<PathBuf>>(path: P) -> Result<Directory> {
     let path = path.into();
     let mut dir = DirectoryBuilder::new();
     dir.name(
@@ -512,9 +499,6 @@ async fn make_dir_from_path<P: Into<PathBuf>>(path: P, recursive: bool) -> Resul
             .and_then(|s| s.to_str())
             .unwrap_or_default(),
     );
-    if recursive {
-        dir.recursive();
-    }
     let mut directory_reader = tokio::fs::read_dir(path.clone()).await?;
     while let Some(entry) = directory_reader.next_entry().await? {
         let path = entry.path();
@@ -522,7 +506,7 @@ async fn make_dir_from_path<P: Into<PathBuf>>(path: P, recursive: bool) -> Resul
             let f = FileBuilder::new().path(path).build().await?;
             dir.add_file(f);
         } else if path.is_dir() {
-            let d = make_dir_from_path(path, recursive).await?;
+            let d = make_dir_from_path(path).await?;
             dir.add_dir(d)?;
         } else {
             anyhow::bail!("directory entry is neither file nor directory")
@@ -597,16 +581,7 @@ mod tests {
         let dir = DirectoryBuilder::new();
         let dir = dir.build()?;
 
-        let mut no_recursive = DirectoryBuilder::new();
-        if no_recursive.add_dir(dir).is_ok() {
-            panic!("shouldn't be able to add a directory to a non-recursive directory builder");
-        }
-
-        let dir = DirectoryBuilder::new();
-        let dir = dir.build()?;
-
         let mut recursive_dir_builder = DirectoryBuilder::new();
-        recursive_dir_builder.recursive();
         recursive_dir_builder
             .add_dir(dir)
             .expect("recursive directories allowed");
@@ -703,7 +678,6 @@ mod tests {
     #[async_recursion(?Send)]
     async fn build_directory(name: &str, dir: &TestDir) -> Result<Directory> {
         let mut builder = DirectoryBuilder::new();
-        builder.recursive();
         builder.name(name);
         for (name, entry) in dir {
             match entry {
@@ -1027,7 +1001,7 @@ mod tests {
             entries: vec![Entry::File(file), Entry::Directory(nested_dir)],
         };
 
-        let mut got = make_dir_from_path(dir, true).await?;
+        let mut got = make_dir_from_path(dir).await?;
 
         // Before comparison sort entries to make test deterministic.
         // The readdir_r function is used in the underlying platform which

@@ -63,6 +63,16 @@ fn fixture_add_file() -> MockApi {
     api
 }
 
+fn fixture_add_directory() -> MockApi {
+    let mut api = MockApi::default();
+    api.expect_add_dir().returning(|_ipfs_path, _| {
+        Box::pin(future::ready(
+            Cid::from_str("QmYbcW4tXLXHWw753boCK8Y7uxLu5abXjyYizhLznq9PUR").map_err(|e| e.into()),
+        ))
+    });
+    api
+}
+
 fn fixture_get_wrapped_file() -> MockApi {
     let mut api = MockApi::default();
     api.expect_get_stream().returning(|_ipfs_path| {
@@ -103,6 +113,10 @@ fn register_fixtures() -> FixtureRegistry {
             fixture_get_unwrapped_file as GetFixture,
         ),
         ("add_file".to_string(), fixture_add_file as GetFixture),
+        (
+            "add_directory".to_string(),
+            fixture_add_directory as GetFixture,
+        ),
     ]
     .into_iter()
     .collect()

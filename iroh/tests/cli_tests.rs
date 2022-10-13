@@ -58,6 +58,30 @@ fn get_failure_test() {
 }
 
 #[test]
+fn add_file_test() {
+    trycmd::TestCases::new()
+        .env("IROH_CTL_FIXTURE", "add_file")
+        .case("tests/cmd/add_file.trycmd")
+        .run();
+}
+
+#[test]
+fn add_directory_test() {
+    trycmd::TestCases::new()
+        .env("IROH_CTL_FIXTURE", "add_directory")
+        .case("tests/cmd/add_directory.trycmd")
+        .run();
+}
+
+#[test]
+fn add_directory_without_r_fails_test() {
+    trycmd::TestCases::new()
+        .env("IROH_CTL_FIXTURE", "add_directory")
+        .case("tests/cmd/add_directory_without_r_fails.trycmd")
+        .run();
+}
+
+#[test]
 fn version_cli_test() {
     trycmd::TestCases::new()
         .case("tests/cmd/version.trycmd")
@@ -73,15 +97,15 @@ fn add_file() {
 }
 
 #[test]
-fn add_missing() {
+fn add_file_missing_test() {
     trycmd::TestCases::new()
         .env("IROH_CTL_FIXTURE", "add_file")
-        .case("tests/cmd/add_missing.trycmd")
+        .case("tests/cmd/add_file_missing.trycmd")
         .run();
 }
 
 #[test]
-fn add_directory() {
+fn add_directory_test() {
     trycmd::TestCases::new()
         .env("IROH_CTL_FIXTURE", "add_directory")
         .case("tests/cmd/add_directory.trycmd")
