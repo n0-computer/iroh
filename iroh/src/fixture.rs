@@ -63,7 +63,7 @@ fn fixture_get_unwrapped_file() -> MockApi {
     let mut api = MockApi::default();
     api.expect_get_stream().returning(|_ipfs_path| {
         futures::stream::iter(vec![Ok((
-            RelativePathBuf::from_path("file.txt").unwrap(),
+            RelativePathBuf::from_path("").unwrap(),
             OutType::Reader(Box::new(std::io::Cursor::new("hello"))),
         ))])
         .boxed_local()

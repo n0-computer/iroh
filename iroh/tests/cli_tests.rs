@@ -31,6 +31,14 @@ async fn get_wrapped_file_cli_test() {
 }
 
 #[tokio::test]
+async fn get_unwrapped_file_cli_test() {
+    trycmd::TestCases::new()
+        .env("IROH_CTL_FIXTURE", "get_unwrapped_file")
+        .case("tests/cmd/get_unwrapped_file.trycmd")
+        .run();
+}
+
+#[tokio::test]
 async fn version_cli_test() {
     trycmd::TestCases::new()
         .case("tests/cmd/version.trycmd")
