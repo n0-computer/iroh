@@ -32,6 +32,7 @@ serde = { version = "1.0", features = ["derive"] }
 config = "0.13.1"
 async-trait = "0.1.56"
 smallvec = { version = "1.10.0", features = ["write"] }
+multihash = "0.16.3"
 
 [dev-dependencies]
 criterion = { version = "0.4.0", features = ["async_tokio"] }

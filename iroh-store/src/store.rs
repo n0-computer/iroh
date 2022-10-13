@@ -14,8 +14,9 @@ use iroh_metrics::{
     store::{StoreHistograms, StoreMetrics},
 };
 use iroh_rpc_client::Client as RpcClient;
+use multihash::Multihash;
 use rocksdb::{
-    BlockBasedOptions, Cache, ColumnFamily, DBPinnableSlice, IteratorMode, Options, WriteBatch,
+    BlockBasedOptions, Cache, ColumnFamily, DBPinnableSlice, Direction, IteratorMode, Options, WriteBatch,
     DB as RocksDb,
 };
 use smallvec::SmallVec;
@@ -74,8 +75,8 @@ fn default_blob_opts() -> Options {
 
 fn id_key(cid: &Cid) -> SmallVec<[u8; 64]> {
     let mut key = SmallVec::new();
-    key.extend_from_slice(&cid.codec().to_be_bytes());
     cid.hash().write(&mut key).unwrap();
+    key.extend_from_slice(&cid.codec().to_be_bytes());
     key
 }
 
@@ -226,6 +227,40 @@ impl Store {
     }
 
     #[tracing::instrument(skip(self))]
+    pub async fn get_blob_by_hash(&self, hash: &Multihash) -> Result<Option<DBPinnableSlice<'_>>> {
+        let cf_blobs = self
+            .inner
+            .content
+            .cf_handle(CF_BLOBS_V0)
+            .ok_or_else(|| anyhow!("missing column family: blobs"))?;
+        for elem in self.get_ids_for_hash(hash)? {
+            let (_code, id) = elem?;
+            let id_bytes = id.to_be_bytes();
+            if let Some(blob) = self.inner.content.get_pinned_cf(&cf_blobs, &id_bytes)? {
+                return Ok(Some(blob));
+            }
+        }
+        Ok(None)
+    }
+
+    #[tracing::instrument(skip(self))]
+    pub async fn has_blob_for_hash(&self, hash: &Multihash) -> Result<bool> {
+        let cf_blobs = self
+            .inner
+            .content
+            .cf_handle(CF_BLOBS_V0)
+            .ok_or_else(|| anyhow!("missing column family: blobs"))?;
+        for elem in self.get_ids_for_hash(hash)? {
+            let (_code, id) = elem?;
+            let id_bytes = id.to_be_bytes();
+            if let Some(_blob) = self.inner.content.get_pinned_cf(&cf_blobs, &id_bytes)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    #[tracing::instrument(skip(self))]
     pub async fn get(&self, cid: &Cid) -> Result<Option<DBPinnableSlice<'_>>> {
         inc!(StoreMetrics::GetRequests);
         let start = std::time::Instant::now();
@@ -297,6 +332,38 @@ impl Store {
             }
             None => Ok(None),
         }
+    }
+
+    fn get_ids_for_hash(
+        &self,
+        hash: &Multihash,
+    ) -> Result<impl Iterator<Item = Result<(u64, u64)>> + '_> {
+        let hash = hash.to_bytes();
+        let cf_id = self
+            .inner
+            .content
+            .cf_handle(CF_ID_V0)
+            .ok_or_else(|| anyhow!("missing column family: id"))?;
+        let iter = self
+            .inner
+            .content
+            .iterator_cf(cf_id, IteratorMode::From(&hash, Direction::Forward));
+        let hash_len = hash.len();
+        Ok(iter
+            .take_while(move |elem| {
+                if let Ok((k, _)) = elem {
+                    k.len() == hash_len + 8 && k.starts_with(&hash)
+                } else {
+                    // we don't want to swallow errors. An error is not the same as no result!
+                    true
+                }
+            })
+            .map(move |elem| {
+                let (k, v) = elem?;
+                let code = u64::from_be_bytes(k[hash_len..].try_into()?);
+                let id = u64::from_be_bytes(v[..8].try_into()?);
+                Ok((code, id))
+            }))
     }
 
     #[tracing::instrument(skip(self))]
@@ -573,6 +640,9 @@ mod tests {
         store.put(cbor_cid, &blob, vec![link1, link2]).await?;
         assert_eq!(store.get_links(&raw_cid).await?.unwrap().len(), 0);
         assert_eq!(store.get_links(&cbor_cid).await?.unwrap().len(), 2);
+
+        let ids = store.get_ids_for_hash(&hash)?.collect::<Vec<_>>();
+        assert_eq!(ids.len(), 2);
         Ok(())
     }
 }
