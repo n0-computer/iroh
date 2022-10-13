@@ -51,7 +51,7 @@ use crate::{
 /// from the shared state.
 pub trait StateConfig: std::fmt::Debug + Sync + Send {
     fn rpc_client(&self) -> &iroh_rpc_client::Config;
-    fn public_url_base(&self) -> String;
+    fn public_url_base(&self) -> &str;
     fn port(&self) -> u16;
     fn user_headers(&self) -> &HeaderMap<HeaderValue>;
 }
@@ -567,7 +567,10 @@ async fn serve_fs_dir<T: ContentLoader + std::marker::Unpin>(
             let path = match accum.last() {
                 Some(prev) => {
                     let base = prev.get("path");
-                    format!("/{}/{}", base.unwrap_or(&"".to_string()), encode(path_el))
+                    match prev.get("path") {
+                        Some(base) => format!("/{}/{}", base, encode(path_el)),
+                        None => format!("/{}", encode(path_el)),
+                    }
                 }
                 None => {
                     format!("/{}", encode(path_el))
@@ -589,7 +592,7 @@ async fn serve_fs_dir<T: ContentLoader + std::marker::Unpin>(
     );
     template_data.insert(
         "public_url_base".to_string(),
-        Json::String(state.config.public_url_base()),
+        Json::String(state.config.public_url_base().to_string()),
     );
     // TODO(b5) - add directory size
     template_data.insert("size".to_string(), Json::String("".to_string()));

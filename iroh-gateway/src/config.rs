@@ -177,8 +177,8 @@ impl crate::handlers::StateConfig for Config {
         &self.rpc_client
     }
 
-    fn public_url_base(&self) -> String {
-        self.public_url_base.clone()
+    fn public_url_base(&self) -> &str {
+        &self.public_url_base
     }
 
     fn port(&self) -> u16 {
