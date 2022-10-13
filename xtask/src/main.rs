@@ -1,11 +1,10 @@
+use anyhow::Result;
 use clap::CommandFactory;
 use std::{
-    env, fs,
+    env, fs, io,
     path::{Path, PathBuf},
     process::{Command, Stdio},
 };
-
-type DynError = Box<dyn std::error::Error>;
 
 fn main() {
     if let Err(e) = try_main() {
@@ -14,9 +13,9 @@ fn main() {
     }
 }
 
-fn try_main() -> Result<(), DynError> {
+fn try_main() -> Result<()> {
     let task = env::args().nth(1);
-    match task.as_ref().map(|it| it.as_str()) {
+    match task.as_deref() {
         Some("dist") => dist()?,
         Some("man") => dist_manpage()?,
         _ => print_help(),
@@ -33,7 +32,7 @@ man             build man pages
     )
 }
 
-fn dist() -> Result<(), DynError> {
+fn dist() -> Result<()> {
     let _ = fs::remove_dir_all(&dist_dir());
     fs::create_dir_all(&dist_dir())?;
 
@@ -43,7 +42,7 @@ fn dist() -> Result<(), DynError> {
     Ok(())
 }
 
-fn dist_binary() -> Result<(), DynError> {
+fn dist_binary() -> Result<()> {
     let cargo = env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
     let status = Command::new(cargo)
         .current_dir(project_root())
@@ -51,7 +50,7 @@ fn dist_binary() -> Result<(), DynError> {
         .status()?;
 
     if !status.success() {
-        Err("cargo build failed")?;
+        Err(anyhow::anyhow!("cargo build failed"))?;
     }
 
     let dst = project_root().join("target/release/iroh");
@@ -67,7 +66,7 @@ fn dist_binary() -> Result<(), DynError> {
         eprintln!("stripping the binary");
         let status = Command::new("strip").arg(&dst).status()?;
         if !status.success() {
-            Err("strip failed")?;
+            Err(anyhow::anyhow!("strip failed"))?;
         }
     } else {
         eprintln!("no `strip` utility found")
@@ -76,18 +75,31 @@ fn dist_binary() -> Result<(), DynError> {
     Ok(())
 }
 
-fn dist_manpage() -> Result<(), DynError> {
-    let app = iroh::run::Cli::command();
+fn dist_manpage() -> Result<()> {
+    let outdir = dist_dir();
+    let f = fs::File::create(outdir.join("iroh.1"))?;
+    let mut buf = io::BufWriter::new(f);
+    let cmd = iroh::run::Cli::command();
+    let man = clap_mangen::Man::new(cmd.clone());
+    man.render(&mut buf)?;
 
-    // TODO(b5): This only generates the man page for the iroh command
-    // need to recursively handle all subcommands, generating man files
-    // for them as well
+    write_subcommand_man_files("iroh", &cmd, &outdir)
+}
 
-    let man = clap_mangen::Man::new(app);
-    let mut buffer: Vec<u8> = Default::default();
-    man.render(&mut buffer)?;
+fn write_subcommand_man_files(prefix: &str, cmd: &clap::Command, outdir: &PathBuf) -> Result<()> {
+    for subcommand in cmd.get_subcommands() {
+        let subcommand_name = format!("iroh{}", subcommand.get_name());
+        let f = fs::File::create(outdir.join(format!("{}{}", &subcommand_name, ".1")))?;
+        let mut buf = io::BufWriter::new(f);
+        let man = clap_mangen::Man::new(subcommand.clone());
+        man.render(&mut buf)?;
 
-    std::fs::write(dist_dir().join("iroh.1"), buffer)?;
+        write_subcommand_man_files(
+            format!("{prefix}{subcommand_name}").as_str(),
+            subcommand,
+            outdir,
+        )?;
+    }
 
     Ok(())
 }
