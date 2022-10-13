@@ -1,4 +1,4 @@
-use phf::{Set, phf_set};
+use phf::{phf_set, Set};
 use std::{ffi::OsStr, path::Path};
 
 pub const DIR_LIST_TEMPLATE: &str = include_str!("../assets/dir_list.html");
@@ -14,7 +14,6 @@ static KNOWN_ICONS: Set<&'static str> = phf_set! {
         ".ppt", ".psd", ".py", ".qt", ".rar", ".rb", ".rtf", ".sass", ".scss", ".sql", ".tga",
         ".tgz", ".tiff", ".txt", ".wav", ".wmv", ".xls", ".xlsx", ".xml", ".yml", ".zip",
 };
-
 
 pub fn icon_class_name(path: &str) -> String {
     let ext = Path::new(path)
