@@ -112,7 +112,7 @@ impl Cli {
                 recursive,
                 no_wrap,
             } => {
-                let cid = api.add(path, *recursive, *no_wrap).await?;
+                let cid = api.add(path, !(*no_wrap), *recursive).await?;
                 println!("/ipfs/{}", cid);
             }
             Commands::Get {

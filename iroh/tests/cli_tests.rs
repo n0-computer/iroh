@@ -73,6 +73,14 @@ fn add_file() {
 }
 
 #[test]
+fn add_missing() {
+    trycmd::TestCases::new()
+        .env("IROH_CTL_FIXTURE", "add_file")
+        .case("tests/cmd/add_missing.trycmd")
+        .run();
+}
+
+#[test]
 fn add_directory() {
     trycmd::TestCases::new()
         .env("IROH_CTL_FIXTURE", "add_directory")

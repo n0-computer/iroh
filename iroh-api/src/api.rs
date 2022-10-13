@@ -46,12 +46,10 @@ pub trait Api {
         &self,
         ipfs_path: &IpfsPath,
     ) -> LocalBoxStream<'_, Result<(RelativePathBuf, OutType)>>;
-    fn add<'a>(
-        &'a self,
-        path: &'a Path,
-        recursive: bool,
-        no_wrap: bool,
-    ) -> LocalBoxFuture<'_, Result<Cid>>;
+
+    fn add_file<'a>(&'a self, path: &'a Path, wrap: bool) -> LocalBoxFuture<'_, Result<Cid>>;
+    fn add_dir<'a>(&'a self, path: &'a Path, wrap: bool) -> LocalBoxFuture<'_, Result<Cid>>;
+
     fn check(&self) -> BoxFuture<'_, StatusTable>;
     fn watch(&self) -> LocalBoxFuture<'static, LocalBoxStream<'static, StatusTable>>;
 }
@@ -125,23 +123,22 @@ impl Api for Iroh {
         .boxed_local()
     }
 
-    fn add<'a>(
-        &'a self,
-        path: &'a Path,
-        recursive: bool,
-        no_wrap: bool,
-    ) -> LocalBoxFuture<'_, Result<Cid>> {
+    fn add_file<'a>(&'a self, path: &'a Path, wrap: bool) -> LocalBoxFuture<'_, Result<Cid>> {
         async move {
             let providing_client = iroh_resolver::unixfs_builder::StoreAndProvideClient {
                 client: Box::new(&self.client),
             };
-            if path.is_dir() {
-                unixfs_builder::add_dir(Some(&providing_client), path, !no_wrap, recursive).await
-            } else if path.is_file() {
-                unixfs_builder::add_file(Some(&providing_client), path, !no_wrap).await
-            } else {
-                anyhow::bail!("can only add files or directories");
-            }
+            unixfs_builder::add_file(Some(&providing_client), path, wrap).await
+        }
+        .boxed_local()
+    }
+
+    fn add_dir<'a>(&'a self, path: &'a Path, wrap: bool) -> LocalBoxFuture<'_, Result<Cid>> {
+        async move {
+            let providing_client = iroh_resolver::unixfs_builder::StoreAndProvideClient {
+                client: Box::new(&self.client),
+            };
+            unixfs_builder::add_dir(Some(&providing_client), path, wrap, true).await
         }
         .boxed_local()
     }
