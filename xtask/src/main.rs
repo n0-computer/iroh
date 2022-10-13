@@ -1,34 +1,40 @@
 use anyhow::Result;
-use clap::CommandFactory;
+use clap::{CommandFactory, Parser, Subcommand};
 use std::{
     env, fs, io,
     path::{Path, PathBuf},
     process::{Command, Stdio},
 };
 
-fn cli() -> clap::Command {
-    clap::Command::new("xtasks")
-        .about("iroh automation tasks")
-        .subcommand_required(true)
-        .arg_required_else_help(true)
-        .allow_external_subcommands(true)
-        .subcommand(clap::Command::new("dist").about("build application and man pages"))
-        .subcommand(clap::Command::new("man").about("build man pages"))
+#[derive(Debug, Parser)]
+#[command(name = "xtasks")]
+#[command(about = "iroh automation tasks", long_about = None)]
+#[command(arg_required_else_help = true)]
+struct Cli {
+    #[command(subcommand)]
+    command: Commands,
+}
+
+#[derive(Debug, Subcommand)]
+enum Commands {
+    #[command(about = "build application and man pages", long_about = None)]
+    Dist {},
+    #[command(about = "build man pages")]
+    Man {},
 }
 
 fn main() {
-    let matches = cli().get_matches();
-    if let Err(e) = run_subcommand(matches) {
+    let args = Cli::parse();
+    if let Err(e) = run_subcommand(args) {
         eprintln!("{}", e);
         std::process::exit(-1);
     }
 }
 
-fn run_subcommand(matches: clap::ArgMatches) -> Result<()> {
-    match matches.subcommand() {
-        Some(("dist", _)) => dist()?,
-        Some(("man", _)) => dist_manpage()?,
-        _ => unreachable!(), // If all subcommands are defined above, anything else is unreachabe!()
+fn run_subcommand(args: Cli) -> Result<()> {
+    match args.command {
+        Commands::Dist {} => dist()?,
+        Commands::Man {} => dist_manpage()?,
     }
     Ok(())
 }
