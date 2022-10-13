@@ -32,6 +32,7 @@ fn fixture_get() -> MockApi {
     let mut api = MockApi::default();
     api.expect_get_stream().returning(|_ipfs_path| {
         futures::stream::iter(vec![
+            Ok((RelativePathBuf::from_path("").unwrap(), OutType::Dir)),
             Ok((RelativePathBuf::from_path("a").unwrap(), OutType::Dir)),
             Ok((
                 RelativePathBuf::from_path("b").unwrap(),
@@ -43,10 +44,45 @@ fn fixture_get() -> MockApi {
     api
 }
 
+fn fixture_get_wrapped_file() -> MockApi {
+    let mut api = MockApi::default();
+    api.expect_get_stream().returning(|_ipfs_path| {
+        futures::stream::iter(vec![
+            Ok((RelativePathBuf::from_path("").unwrap(), OutType::Dir)),
+            Ok((
+                RelativePathBuf::from_path("file.txt").unwrap(),
+                OutType::Reader(Box::new(std::io::Cursor::new("hello"))),
+            )),
+        ])
+        .boxed_local()
+    });
+    api
+}
+
+fn fixture_get_unwrapped_file() -> MockApi {
+    let mut api = MockApi::default();
+    api.expect_get_stream().returning(|_ipfs_path| {
+        futures::stream::iter(vec![Ok((
+            RelativePathBuf::from_path("file.txt").unwrap(),
+            OutType::Reader(Box::new(std::io::Cursor::new("hello"))),
+        ))])
+        .boxed_local()
+    });
+    api
+}
+
 fn register_fixtures() -> FixtureRegistry {
     [
         ("lookup".to_string(), fixture_lookup as GetFixture),
         ("get".to_string(), fixture_get as GetFixture),
+        (
+            "get_wrapped_file".to_string(),
+            fixture_get_wrapped_file as GetFixture,
+        ),
+        (
+            "get_unwrapped_file".to_string(),
+            fixture_get_unwrapped_file as GetFixture,
+        ),
     ]
     .into_iter()
     .collect()
