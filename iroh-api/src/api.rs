@@ -39,6 +39,9 @@ pub trait Api {
 
     fn p2p(&self) -> Result<Self::P>;
 
+    /// Produces a asynchronous stream of file descriptions Each description is
+    /// a tuple of a relative path, and either a `Directory` or a `Reader`
+    /// with the file contents.
     fn get_stream<'a>(
         &'a self,
         ipfs_path: &'a IpfsPath,
@@ -101,7 +104,7 @@ impl Api for Iroh {
             tokio::pin!(results);
             while let Some(res) = results.next().await {
                 let (relative_ipfs_path, out) = res?;
-                let relative_path = RelativePathBuf::from_path(&relative_ipfs_path.to_string_without_type())?;
+                let relative_path = RelativePathBuf::from_path(&relative_ipfs_path.to_relative_string())?;
                 if out.is_dir() {
                     yield (relative_path, OutType::Dir);
                 } else {
