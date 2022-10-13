@@ -18,6 +18,7 @@ use rocksdb::{
     BlockBasedOptions, Cache, ColumnFamily, DBPinnableSlice, IteratorMode, Options, WriteBatch,
     DB as RocksDb,
 };
+use smallvec::SmallVec;
 use tokio::task;
 
 use crate::cf::{
@@ -71,12 +72,10 @@ fn default_blob_opts() -> Options {
     opts
 }
 
-fn id_key(cid: &Cid) -> Vec<u8> {
-    let hash = cid.hash().to_bytes();
-    let code = cid.codec();
-    let mut key = Vec::with_capacity(8 + hash.len());
-    key.extend_from_slice(&code.to_be_bytes());
-    key.extend_from_slice(&hash);
+fn id_key(cid: &Cid) -> SmallVec<[u8; 64]> {
+    let mut key = SmallVec::new();
+    key.extend_from_slice(&cid.codec().to_be_bytes());
+    cid.hash().write(&mut key).unwrap();
     key
 }
 
@@ -428,7 +427,7 @@ mod tests {
     use iroh_rpc_client::Config as RpcClientConfig;
 
     use cid::multihash::{Code, MultihashDigest};
-    use libipld::{cbor::DagCbor, prelude::Encode, IpldCodec};
+    use libipld::{prelude::Encode, IpldCodec};
     use tempfile::TempDir;
     const RAW: u64 = 0x55;
 
