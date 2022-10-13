@@ -104,7 +104,7 @@ impl Network {
         timeout: Duration,
         backoff: Duration,
     ) -> Result<()> {
-        info!("sending message to {}", peer);
+        info!("send:{}: start: {:#?}", peer, message);
         inc!(BitswapMetrics::MessagesAttempted);
 
         let num_blocks = message.blocks().count();
@@ -112,8 +112,8 @@ impl Network {
 
         let res = tokio::time::timeout(timeout, async {
             let mut errors: Vec<anyhow::Error> = Vec::new();
-            for i in 0..retries {
-                debug!("try {}/{}", i, retries);
+            for i in 1..=retries {
+                debug!("send:{}: try {}/{}", peer, i, retries);
                 let (s, r) = oneshot::channel();
                 self.network_out_sender
                     .send(OutEvent::SendMessage {
@@ -123,11 +123,11 @@ impl Network {
                         connection_id,
                     })
                     .await
-                    .map_err(|e| anyhow!("channel send failed: {:?}", e))?;
+                    .map_err(|e| anyhow!("send:{}: channel send failed: {:?}", peer, e))?;
 
                 match r.await {
                     Ok(Ok(res)) => {
-                        info!("message sent to {}", peer);
+                        info!("send:{}: message sent", peer);
                         return Ok(res);
                     }
                     Ok(Err(SendError::ProtocolNotSupported)) => {
@@ -136,7 +136,10 @@ impl Network {
                         return Err(SendError::ProtocolNotSupported.into());
                     }
                     Err(channel_err) => {
-                        debug!("try {}/{} failed with: {:?}", i, retries, channel_err);
+                        debug!(
+                            "send:{}: try {}/{} failed with: {:?}",
+                            peer, i, retries, channel_err
+                        );
                         errors.push(channel_err.into());
                         if i < retries - 1 {
                             // backoff until we retry
@@ -144,7 +147,10 @@ impl Network {
                         }
                     }
                     Ok(Err(other)) => {
-                        debug!("try {}/{} failed with: {:?}", i, retries, other);
+                        debug!(
+                            "send:{}: try {}/{} failed with: {:?}",
+                            peer, i, retries, other
+                        );
                         errors.push(other.into());
                         if i < retries - 1 {
                             // backoff until we retry
@@ -153,10 +159,12 @@ impl Network {
                     }
                 }
             }
-            bail!("Failed to send message to {}: {:?}", peer, errors);
+            bail!("send:{}: failed {:?}", peer, errors);
         })
-        .await??;
+        .await
+        .map_err(|e| anyhow!("send:{}: {:?}", peer, e))??;
 
+        debug!("send:{}: success", peer);
         // Record successfull stats
 
         inc!(BitswapMetrics::MessagesSent);
@@ -341,9 +349,7 @@ pub struct MessageSender {
 
 impl MessageSender {
     pub fn supports_have(&self) -> bool {
-        self.protocol_id
-            .map(|p| p.supports_have())
-            .unwrap_or_default()
+        self.protocol_id.map(|p| p.supports_have()).unwrap_or(true) // optimisticallly assume haves are supported
     }
 
     pub async fn send_message(&self, message: BitswapMessage) -> Result<()> {

@@ -208,7 +208,11 @@ impl MessageQueue {
         let running_thread = running.clone();
         let worker = tokio::task::spawn(async move {
             let mut work_scheduled: Option<Instant> = None;
-            let mut rebroadcast_timer = tokio::time::interval(config.rebroadcast_interval);
+            let mut rebroadcast_timer = tokio::time::interval_at(
+                tokio::time::Instant::now() + config.rebroadcast_interval,
+                config.rebroadcast_interval,
+            );
+
             let schedule_work = tokio::time::sleep(Duration::from_secs(0));
             tokio::pin!(schedule_work);
             let running = running_thread;
@@ -568,6 +572,7 @@ impl LoopState {
         }
 
         let wantlist: Vec<_> = msg.wantlist().cloned().collect();
+        debug!("sending wantlist: {:?}", wantlist);
         if let Err(err) = sender.send_message(msg).await {
             error!(
                 "message_queue:{}: failed to send message {:?}",
@@ -609,8 +614,10 @@ impl LoopState {
         let pending_wants: Vec<Cid> = wantlist
             .iter()
             .filter_map(|entry| {
+                debug!("entry: {:?}", entry);
                 if entry.want_type == WantType::Block && entry.send_dont_have {
                     // check if the block was already sent
+                    debug!("wants: {:?}", self.wants.peer_wants.sent);
                     if self.wants.peer_wants.sent.contains(&entry.cid) {
                         return Some(entry.cid);
                     }
@@ -619,6 +626,7 @@ impl LoopState {
             })
             .collect();
 
+        debug!("got pendign wants: {:?}", pending_wants);
         // Add wants to DONT_HAVE timeout manger
         self.dh_timeout_manager.add_pending(&pending_wants).await;
     }
@@ -757,7 +765,6 @@ impl LoopState {
                 } else {
                     WantType::Block
                 };
-
                 msg_size += msg.add_entry(entry.cid, entry.priority, want_type, false);
                 sent_bcst_entries += 1;
 

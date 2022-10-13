@@ -181,6 +181,10 @@ impl PeerManager {
     /// Sends the given want-blocks and want-haves to the given peer.
     /// It filters out wants that have been previously sent to the peer.
     pub async fn send_wants(&self, peer: &PeerId, want_blocks: &[Cid], want_haves: &[Cid]) {
+        debug!(
+            "send_wants to {}: {:?}, {:?}",
+            peer, want_blocks, want_haves
+        );
         let (peer_queues, peer_want_manager) = &mut *self.inner.peers.write().await;
         if peer_queues.contains_key(peer) {
             peer_want_manager

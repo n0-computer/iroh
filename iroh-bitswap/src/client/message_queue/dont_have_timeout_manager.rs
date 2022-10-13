@@ -13,7 +13,7 @@ use tokio::{
     sync::{oneshot, Mutex},
     task::JoinHandle,
 };
-use tracing::{debug, trace};
+use tracing::debug;
 
 use crate::{client::peer_manager::DontHaveTimeout, network::Network};
 
@@ -123,8 +123,7 @@ impl DontHaveTimeoutManager {
                                 ts.send(()).await.ok();
                             }
                         }
-                        Err(err) => {
-                            trace!("failed to ping {}: {:?}", target, err);
+                        Err(_err) => {
                             // we leave the default timeout
                         }
                     }
@@ -206,6 +205,12 @@ impl DontHaveTimeoutManager {
 
         let start = Instant::now();
         let inner = &mut *self.inner.lock().await;
+        debug!(
+            "dh:{}: add pending: {:?}",
+            inner.target,
+            pending.iter().map(|s| s.to_string()).collect::<Vec<_>>()
+        );
+
         let queue_was_empty = inner.active_wants.is_empty();
 
         for cid in pending {
@@ -243,10 +248,14 @@ impl DontHaveTimeoutManager {
 impl Inner {
     /// Checks pending wants to see if any are over the timeout.
     async fn check_for_timeouts(&mut self) -> Option<Duration> {
-        debug!("check_for_timeouts: {}", self.target);
         if self.want_queue.is_empty() {
             return None;
         }
+        debug!(
+            "check_for_timeouts: {} ({})",
+            self.target,
+            self.want_queue.len()
+        );
 
         // Figure out which of the blocks that were wanted were not received within
         // the timeout.
@@ -288,6 +297,10 @@ impl Inner {
 
     /// Triggers on_dont_have_timeout with matching keys.
     async fn fire_timeout(&self, pending: Vec<Cid>) {
+        debug!(
+            "timeout: {:?}",
+            pending.iter().map(|s| s.to_string()).collect::<Vec<_>>()
+        );
         (self.on_dont_have_timeout)(self.target, pending).await;
     }
 }

@@ -1,12 +1,23 @@
+use std::fmt::Debug;
+
 use bytes::Bytes;
 use cid::Cid;
 use multihash::{Code, MultihashDigest};
 
 /// A wrapper around bytes with their `Cid`.
-#[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[derive(Clone, Eq, PartialEq, PartialOrd, Ord)]
 pub struct Block {
     pub cid: Cid,
     pub data: Bytes,
+}
+
+impl Debug for Block {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Block")
+            .field("cid", &self.cid.to_string())
+            .field("data", &format!("[{} bytes]", self.data.len()))
+            .finish()
+    }
 }
 
 impl Block {

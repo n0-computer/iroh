@@ -231,6 +231,15 @@ impl Session {
         haves: &[Cid],
         dont_haves: &[Cid],
     ) {
+        debug!(
+            "session:{}: received updates from: {:?} keys: {:?}\n  haves: {:?}\n  dont_haves: {:?}",
+            self.inner.id,
+            from.map(|s| s.to_string()),
+            keys.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+            haves.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+            dont_haves.iter().map(|s| s.to_string()).collect::<Vec<_>>()
+        );
+
         // The SessionManager tells each Session about all keys that it may be
         // interested in. Here the Session filters the keys to the ones that this
         // particular Session is interested in.

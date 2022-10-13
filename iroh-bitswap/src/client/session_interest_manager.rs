@@ -29,7 +29,7 @@ impl SessionInterestManager {
 
     /// When the client asks the session for blocks, the session calls this methods.
     pub async fn record_session_interest(&self, session: u64, keys: &[Cid]) {
-        debug!("record_session_interest {}: {:?}", session, keys);
+        debug!("session:{} record_session_interest: {:?}", session, keys);
         let wants = &mut *self.wants.write().await;
 
         for key in keys {
@@ -41,7 +41,7 @@ impl SessionInterestManager {
     /// When the session shuts down, this is called.
     /// Returns the keys that no session is interested in anymore.
     pub async fn remove_session(&self, session: u64) -> Vec<Cid> {
-        debug!("remove_session {}", session);
+        debug!("session:{}: remove_session", session);
         let wants = &mut *self.wants.write().await;
 
         let mut deleted_keys = Vec::new();
@@ -62,7 +62,11 @@ impl SessionInterestManager {
 
     /// Called when the session receives blocks.
     pub async fn remove_session_wants(&self, session: u64, keys: &[Cid]) {
-        debug!("remove_session_wants {}: {:?}", session, keys);
+        debug!(
+            "session:{}: remove_session_wants: {:?}",
+            session,
+            keys.iter().map(|s| s.to_string()).collect::<Vec<_>>()
+        );
         let wants = &mut *self.wants.write().await;
 
         for key in keys {
@@ -80,7 +84,11 @@ impl SessionInterestManager {
     /// Called when a request is cancelled.
     /// Retuns the keys that no session is interested in anymore.
     pub async fn remove_session_interested(&self, session: u64, keys: &[Cid]) -> Vec<Cid> {
-        debug!("remove_session_interested {}: {:?}", session, keys);
+        debug!(
+            "session:{}: remove_session_interested: {:?}",
+            session,
+            keys.iter().map(|s| s.to_string()).collect::<Vec<_>>()
+        );
         let wants = &mut *self.wants.write().await;
 
         let mut deleted_keys = Vec::new();

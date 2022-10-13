@@ -3,7 +3,7 @@ use anyhow::{anyhow, Result};
 use cid::Cid;
 use libp2p::PeerId;
 use tokio::{sync::oneshot, task::JoinHandle};
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::client::{
     block_presence_manager::BlockPresenceManager, peer_manager::PeerManager,
@@ -141,6 +141,7 @@ impl SessionWantSender {
         block_presence_manager: BlockPresenceManager,
         session_ops: async_channel::Sender<super::Op>,
     ) -> Self {
+        debug!("session:{}: session_want_sender create", session_id);
         let (changes_s, changes_r) = async_channel::bounded(64);
         let (closer_s, mut closer_r) = oneshot::channel();
 
@@ -182,7 +183,10 @@ impl SessionWantSender {
             }
 
             if let Err(err) = loop_state.stop().await {
-                error!("failed to stop LoopState: {:?}", err);
+                error!(
+                    "session:{}: failed to stop LoopState: {:?}",
+                    session_id, err
+                );
             }
         });
 
@@ -195,10 +199,10 @@ impl SessionWantSender {
     }
 
     pub async fn stop(self) -> Result<()> {
-        self.closer
-            .send(())
-            .map_err(|e| anyhow!("failed to stop worker: {:?}", e))?;
-        self.worker.await?;
+        debug!("stopping session_want_sender");
+        if self.closer.send(()).is_ok() {
+            self.worker.await?;
+        }
 
         Ok(())
     }
@@ -227,8 +231,7 @@ impl SessionWantSender {
         haves: Vec<Cid>,
         dont_haves: Vec<Cid>,
     ) {
-        let has_update = !keys.is_empty() || !haves.is_empty() || !dont_haves.is_empty();
-        if !has_update {
+        if keys.is_empty() && haves.is_empty() && dont_haves.is_empty() {
             return;
         }
 
@@ -316,7 +319,7 @@ impl WantInfo {
     async fn remove_peer(&mut self, peer: &PeerId) {
         // If we were waiting to hear back from the peer that is being removed,
         // clear the sent_to field so we no longer wait
-        if Some(peer) == self.sent_to.as_ref() {
+        if self.sent_to.is_some() && self.sent_to.as_ref().unwrap() == peer {
             self.sent_to = None;
         }
 
@@ -326,6 +329,7 @@ impl WantInfo {
 
     /// Finds the best peer to send the want to next
     async fn calculate_best_peer(&mut self) {
+        debug!("calculate best peer");
         // Recalculate the best peer
         let mut best_bp = BlockPresence::DontHave;
         let mut best_peer = None;
@@ -335,6 +339,7 @@ impl WantInfo {
         let mut count_with_best = 0;
         for (peer, bp) in &self.block_presence {
             if bp > &best_bp {
+                debug!("found new best peer {}: {:?}", peer, bp);
                 best_bp = *bp;
                 best_peer = Some(*peer);
                 count_with_best = 1;
@@ -443,6 +448,7 @@ impl LoopState {
         // so pop all outstanding changes from the channel
         let mut changes = vec![change];
         self.collect_changes(&mut changes);
+        debug!("handling changes: {:?}", changes);
 
         // Apply each change
 
@@ -454,6 +460,7 @@ impl LoopState {
                 Change::Add(cids) => {
                     // Initialize info for new wants
                     for cid in cids {
+                        debug!("tracking want: {}", cid);
                         self.track_want(cid).await;
                     }
                 }
@@ -522,6 +529,10 @@ impl LoopState {
         let mut newly_available = Vec::new();
         let mut newly_unavailable = Vec::new();
         for (peer, is_now_available) in availability {
+            debug!(
+                "session_want_sender:{}: process availability: {}:{}",
+                self.signaler.id, peer, is_now_available
+            );
             let mut state_change = false;
             if *is_now_available {
                 let is_new_peer = self.session_peer_manager.add_peer(peer).await;
@@ -759,6 +770,10 @@ impl LoopState {
 
     /// Sends wants to peers according to the latest information about which peers have / dont have blocks.
     async fn send_next_wants(&mut self, newly_available: Vec<PeerId>) {
+        debug!(
+            "send_next_wants: newly_available ({})",
+            newly_available.len()
+        );
         let mut to_send = AllWants::default();
 
         for (cid, wi) in &mut self.wants {
@@ -772,9 +787,8 @@ impl LoopState {
                 continue;
             }
 
-            // All the peers have indicated that they don't have the block
-            // corresponding to this want, so we must wait to discover more peers
             if let Some(ref best_peer) = wi.best_peer {
+                debug!("sending want for {} to: {}", cid, best_peer);
                 // Record that we are sending a want-block for this want to the peer
                 wi.sent_to = Some(*best_peer);
 
@@ -784,9 +798,13 @@ impl LoopState {
                 // Send a want-have to each other peer.
                 for op in self.session_peer_manager.peers().await {
                     if &op != best_peer {
+                        debug!("sending want_have for {} to: {}", cid, op);
                         to_send.for_peer(&op).want_haves.insert(*cid);
                     }
                 }
+            } else {
+                // All the peers have indicated that they don't have the block
+                // corresponding to this want, so we must wait to discover more peers
             }
         }
 
@@ -798,6 +816,7 @@ impl LoopState {
     async fn send_wants(&mut self, sends: AllWants) {
         // For each peer we're sending a request to
         for (peer, mut snd) in sends.0 {
+            debug!("send_wants to {}: {:?}", peer, snd);
             // Piggyback some other want-haves onto the request to the peer.
             for cid in self.get_piggyback_want_haves(&peer, &snd.want_blocks) {
                 snd.want_haves.insert(cid);
@@ -889,5 +908,17 @@ impl LoopState {
         if let Some(wi) = self.wants.get_mut(cid) {
             wi.sent_to = peer;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_block_presence_order() {
+        assert!(BlockPresence::Have > BlockPresence::DontHave);
+        assert!(BlockPresence::Unknown > BlockPresence::DontHave);
+        assert!(BlockPresence::Have > BlockPresence::Unknown);
     }
 }

@@ -13,6 +13,7 @@ use futures::FutureExt;
 use iroh_metrics::{bitswap::BitswapMetrics, core::MRecorder, inc};
 use libp2p::PeerId;
 use tokio::sync::RwLock;
+use tracing::debug;
 
 use crate::{network::Network, Block};
 
@@ -202,6 +203,14 @@ impl SessionManager {
         haves: &[Cid],
         dont_haves: &[Cid],
     ) {
+        debug!(
+            "received updates from: {:?} keys: {:?}\n  haves: {:?}\n  dont_haves: {:?}",
+            peer.map(|s| s.to_string()),
+            blocks.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+            haves.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+            dont_haves.iter().map(|s| s.to_string()).collect::<Vec<_>>()
+        );
+
         // Record block presence for HAVE/DONT_HAVE.
         if let Some(ref peer) = peer {
             self.inner

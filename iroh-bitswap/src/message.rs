@@ -1,4 +1,5 @@
 use core::convert::TryFrom;
+use std::fmt::{self, Debug};
 
 use ahash::AHashMap;
 use bytes::Bytes;
@@ -102,13 +103,25 @@ impl From<WantType> for pb::message::wantlist::WantType {
 // - whether message is a cancel
 // - whether requester wants a DONT_HAVE message
 // - whether requester wants a HAVE message (instead of the block)
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct Entry {
     pub cid: Cid,
     pub priority: Priority,
     pub want_type: WantType,
     pub cancel: bool,
     pub send_dont_have: bool,
+}
+
+impl Debug for Entry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Entry")
+            .field("cid", &self.cid.to_string())
+            .field("priority", &self.priority)
+            .field("want_type", &self.want_type)
+            .field("cancel", &self.cancel)
+            .field("send_dont_have", &self.send_dont_have)
+            .finish()
+    }
 }
 
 impl Entry {
@@ -135,13 +148,65 @@ impl From<&Entry> for pb::message::wantlist::Entry {
 pub type Priority = i32;
 
 /// A bitswap message.
-#[derive(Default, Clone, Debug, PartialEq, Eq)]
+#[derive(Default, Clone, PartialEq, Eq)]
 pub struct BitswapMessage {
     full: bool,
     wantlist: AHashMap<Cid, Entry>,
     blocks: AHashMap<Cid, Block>,
     block_presences: AHashMap<Cid, BlockPresenceType>,
     pending_bytes: i32,
+}
+
+struct Fmt<F>(pub F)
+where
+    F: Fn(&mut fmt::Formatter) -> fmt::Result;
+
+impl<F> fmt::Debug for Fmt<F>
+where
+    F: Fn(&mut fmt::Formatter) -> fmt::Result,
+{
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        (self.0)(f)
+    }
+}
+
+impl Debug for BitswapMessage {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("BitswapMessge")
+            .field("full", &self.full)
+            .field(
+                "wantlist",
+                &Fmt(|f| {
+                    let mut wantlist = f.debug_map();
+                    for (cid, entry) in &self.wantlist {
+                        wantlist.entry(&cid.to_string(), entry);
+                    }
+                    wantlist.finish()
+                }),
+            )
+            .field(
+                "blocks",
+                &Fmt(|f| {
+                    let mut blocks = f.debug_map();
+                    for (cid, entry) in &self.blocks {
+                        blocks.entry(&cid.to_string(), entry);
+                    }
+                    blocks.finish()
+                }),
+            )
+            .field(
+                "block_presences",
+                &Fmt(|f| {
+                    let mut block_presences = f.debug_map();
+                    for (cid, entry) in &self.block_presences {
+                        block_presences.entry(&cid.to_string(), entry);
+                    }
+                    block_presences.finish()
+                }),
+            )
+            .field("pending_bytes", &self.pending_bytes)
+            .finish()
+    }
 }
 
 impl BitswapMessage {

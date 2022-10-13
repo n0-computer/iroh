@@ -349,7 +349,7 @@ impl<S: Store> NetworkBehaviour for Bitswap<S> {
     }
 
     fn inject_event(&mut self, peer_id: PeerId, connection: ConnectionId, event: HandlerEvent) {
-        debug!("inject_event from {}, event: {:?}", peer_id, event);
+        // trace!("inject_event from {}, event: {:?}", peer_id, event);
         match event {
             HandlerEvent::Connected { protocol } => {
                 self.peer_connected(peer_id);
