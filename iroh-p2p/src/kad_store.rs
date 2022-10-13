@@ -13,7 +13,7 @@ use libp2p::{
 use rkyv::{ser::serializers::AllocSerializer, Archive, Deserialize, Serialize};
 use rocksdb::{
     BlockBasedOptions, Cache, DBIteratorWithThreadMode, IteratorMode, Options,
-    SnapshotWithThreadMode, DB as RocksDb,
+    DB as RocksDb,
 };
 use std::fmt::Debug;
 
@@ -29,7 +29,7 @@ pub(crate) struct RocksRecordStore {
 }
 
 pub(crate) struct Config {
-    path: PathBuf,
+    pub path: PathBuf,
 }
 
 /// Creates the default rocksdb options
@@ -119,10 +119,6 @@ impl RocksRecordStore {
             .transpose()
             .expect("expiry fits in u64");
 
-        if let (Some(expected), Some(actual_ns)) = (r.expires, expires) {
-            let actual = self.startup + Duration::from_nanos(actual_ns);
-            assert_eq!(expected, actual);
-        }
         let value = RecordValue {
             value: r.value,
             publisher: r.publisher.map(|x| x.to_bytes()),
@@ -165,7 +161,7 @@ impl RocksRecordStore {
         let snapshot = self.db.snapshot();
         let cf = self.db.cf_handle(CF_RECORDS_V0).expect("cf exists");
         RecordsIter {
-            snapshot,
+            snapshot: Box::new(snapshot),
             iter: None,
             cf,
             startup: self.startup,
@@ -239,8 +235,10 @@ impl RocksRecordStore {
             .get_cf(cf, key)
             .map_err(rocks_to_kad_error)?
             .unwrap_or_default();
-        let providers =
-            rkyv::check_archived_root::<BTreeMap<Vec<u8>, ProviderRecordValue>>(&slice).unwrap();
+        if slice.is_empty() {
+            return Ok(vec![]);
+        }
+        let providers = rkyv::check_archived_root::<BTreeMap<Vec<u8>, ProviderRecordValue>>(&slice).unwrap();
         let mut res = Vec::with_capacity(providers.len());
         for (provider, value) in providers {
             let provider = PeerId::from_bytes(provider).unwrap();
@@ -270,7 +268,7 @@ impl RocksRecordStore {
             .cf_handle(CF_PROVIDER_RECORDS_V0)
             .expect("cf exists");
         ProviderRecordsIter {
-            snapshot,
+            snapshot: Box::new(snapshot),
             iter: None,
             cf,
             startup: self.startup,
@@ -279,8 +277,8 @@ impl RocksRecordStore {
     }
 }
 pub(crate) struct RecordsIter<'a> {
+    snapshot: Box<rocksdb::SnapshotWithThreadMode<'a, rocksdb::DB>>,
     iter: Option<DBIteratorWithThreadMode<'a, rocksdb::DB>>,
-    snapshot: rocksdb::SnapshotWithThreadMode<'a, rocksdb::DB>,
     cf: &'a rocksdb::ColumnFamily,
     startup: std::time::Instant,
 }
@@ -288,10 +286,12 @@ pub(crate) struct RecordsIter<'a> {
 impl<'a> RecordsIter<'a> {
     fn next0(&mut self) -> Option<Cow<'a, kad::Record>> {
         if self.iter.is_none() {
-            // TODO: use init once or some other trick
-            let snapshot: &SnapshotWithThreadMode<'a, rocksdb::DB> =
-                unsafe { std::mem::transmute(&self.snapshot) };
-            self.iter = Some(snapshot.iterator_cf(self.cf, IteratorMode::Start))
+            // snapshot is in a box and will not be modified, so the iterator will be valid for the lifetime of this struct
+            let iter: DBIteratorWithThreadMode<'_, rocksdb::DB> =
+                self.snapshot.iterator_cf(self.cf, IteratorMode::Start);
+            let iter: DBIteratorWithThreadMode<'a, rocksdb::DB> =
+                unsafe { std::mem::transmute(iter) };
+            self.iter = Some(iter)
         };
         let iter = self.iter.as_mut().unwrap();
         if let Ok((key, value)) = iter.next()? {
@@ -323,8 +323,8 @@ impl<'a> Iterator for RecordsIter<'a> {
 }
 
 pub(crate) struct ProviderRecordsIter<'a> {
+    snapshot: Box<rocksdb::SnapshotWithThreadMode<'a, rocksdb::DB>>,
     iter: Option<DBIteratorWithThreadMode<'a, rocksdb::DB>>,
-    snapshot: rocksdb::SnapshotWithThreadMode<'a, rocksdb::DB>,
     cf: &'a rocksdb::ColumnFamily,
     startup: std::time::Instant,
     records: Vec<kad::ProviderRecord>,
@@ -333,10 +333,12 @@ pub(crate) struct ProviderRecordsIter<'a> {
 impl<'a> ProviderRecordsIter<'a> {
     fn next0(&mut self) -> Option<Cow<'a, kad::ProviderRecord>> {
         if self.iter.is_none() {
-            // TODO: use init once or some other trick
-            let snapshot: &SnapshotWithThreadMode<'static, rocksdb::DB> =
-                unsafe { std::mem::transmute(&self.snapshot) };
-            self.iter = Some(snapshot.iterator_cf(self.cf, IteratorMode::Start))
+            // snapshot is in a box and will not be modified, so the iterator will be valid for the lifetime of this struct
+            let iter: DBIteratorWithThreadMode<'_, rocksdb::DB> =
+                self.snapshot.iterator_cf(self.cf, IteratorMode::Start);
+            let iter: DBIteratorWithThreadMode<'a, rocksdb::DB> =
+                unsafe { std::mem::transmute(iter) };
+            self.iter = Some(iter)
         };
         let iter = self.iter.as_mut().unwrap();
         loop {
@@ -394,26 +396,32 @@ impl<'a> RecordStore<'a> for RocksRecordStore {
     }
 
     fn remove(&mut self, k: &kad::record::Key) {
+        tracing::info!("removing record {:?}", k);
         self.remove0(k);
     }
 
     fn records(&'a self) -> Self::RecordsIter {
+        tracing::info!("records");
         self.records0()
     }
 
     fn add_provider(&mut self, record: kad::ProviderRecord) -> kad::store::Result<()> {
+        tracing::info!("add_provider: {:?}", record);
         self.add_provider0(record)
     }
 
     fn providers(&self, key: &kad::record::Key) -> Vec<kad::ProviderRecord> {
+        tracing::info!("providers {:?}", key);
         self.providers0(key).unwrap()
     }
 
     fn provided(&'a self) -> Self::ProvidedIter {
+        tracing::info!("provided");
         self.provided0()
     }
 
     fn remove_provider(&mut self, key: &kad::record::Key, peer: &PeerId) {
+        tracing::info!("remove provider {:?} {:?}", key, peer);
         let _ = self.remove_provider0(key, peer);
     }
 }
@@ -429,6 +437,7 @@ mod tests {
 
     use super::*;
     use anyhow::Context;
+    use cid::Cid;
     use libp2p::multiaddr::Protocol;
     use multihash::{Code, Multihash, MultihashDigest};
     use proptest::prelude::*;
@@ -574,6 +583,11 @@ mod tests {
         canonicalize_provider_records(&mut expected);
         anyhow::ensure!(actual == expected);
         Ok(())
+    }
+
+    #[test]
+    fn sizes() {
+        println!("mh {} pid {} cid {}", std::mem::size_of::<Multihash>(), std::mem::size_of::<PeerId>(), std::mem::size_of::<Cid>());
     }
 
     fn arb_kad_key() -> impl Strategy<Value = kad::record::Key> {

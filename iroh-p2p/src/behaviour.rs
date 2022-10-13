@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::env::temp_dir;
 use std::error::Error;
 use std::time::Duration;
 
@@ -23,6 +24,7 @@ use tracing::warn;
 
 pub(crate) use self::event::Event;
 use crate::config::Libp2pConfig;
+use crate::kad_store::RocksRecordStore;
 
 mod event;
 
@@ -33,7 +35,7 @@ pub(crate) struct NodeBehaviour {
     ping: Ping,
     identify: Identify,
     bitswap: Bitswap,
-    pub(crate) kad: Toggle<Kademlia<MemoryStore>>,
+    pub(crate) kad: Toggle<Kademlia<RocksRecordStore>>,
     mdns: Toggle<Mdns>,
     pub(crate) autonat: Toggle<autonat::Behaviour>,
     relay: Toggle<relay::v2::relay::Relay>,
@@ -62,7 +64,13 @@ impl NodeBehaviour {
             let pub_key = local_key.public();
 
             // TODO: persist to store
-            let store = MemoryStore::new(pub_key.to_peer_id());
+            use rand::Rng;
+            let path = temp_dir().join(format!("iroh-kad-store-{}", rand::thread_rng().gen::<u128>()));
+            tracing::info!("opening kad store at {:?}", path);
+            let store = crate::kad_store::RocksRecordStore::create(crate::kad_store::Config {
+                path,
+            })?;
+            // let store = MemoryStore::new(pub_key.to_peer_id());
 
             // TODO: make user configurable
             let mut kad_config = KademliaConfig::default();
