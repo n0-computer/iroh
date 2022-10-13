@@ -42,9 +42,9 @@ pub trait Api {
     /// Produces a asynchronous stream of file descriptions Each description is
     /// a tuple of a relative path, and either a `Directory` or a `Reader`
     /// with the file contents.
-    fn get_stream<'a>(
-        &'a self,
-        ipfs_path: &'a IpfsPath,
+    fn get_stream(
+        &self,
+        ipfs_path: &IpfsPath,
     ) -> LocalBoxStream<'_, Result<(RelativePathBuf, OutType)>>;
     fn add<'a>(
         &'a self,
@@ -93,9 +93,9 @@ impl Api for Iroh {
         Ok(ClientP2p::new(p2p_client.clone()))
     }
 
-    fn get_stream<'a>(
-        &'a self,
-        ipfs_path: &'a IpfsPath,
+    fn get_stream(
+        &self,
+        ipfs_path: &IpfsPath,
     ) -> LocalBoxStream<'_, Result<(RelativePathBuf, OutType)>> {
         tracing::debug!("get {:?}", ipfs_path);
         let resolver = iroh_resolver::resolver::Resolver::new(self.client.clone());
