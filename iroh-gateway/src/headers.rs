@@ -2,6 +2,7 @@ use crate::{constants::*, response::ResponseFormat};
 use ::time::OffsetDateTime;
 use axum::http::header::*;
 use iroh_resolver::resolver::{CidOrDomain, Metadata, PathType};
+use mime::Mime;
 use std::{fmt::Write, time};
 
 #[tracing::instrument()]
@@ -10,19 +11,25 @@ pub fn add_user_headers(headers: &mut HeaderMap, user_headers: HeaderMap) {
 }
 
 #[tracing::instrument()]
-pub fn add_content_type_headers(headers: &mut HeaderMap, name: &str, body_sample: &[u8]) {
+pub fn add_content_type_headers(
+    headers: &mut HeaderMap,
+    name: &str,
+    content_sniffed_mime: Option<Mime>,
+) {
     let guess = mime_guess::from_path(name);
-    let mut content_type: String;
+    let mut content_type = String::new();
     if let Some(ct) = guess.first() {
         content_type = ct.to_string();
-    } else {
-        content_type = sniff_content_type(body_sample);
+    } else if let Some(ct) = content_sniffed_mime {
+        content_type = ct.to_string();
     }
 
-    if content_type.starts_with("text/") {
+    // for most text types we want to add charset=utf-8
+    if content_type.starts_with("text/") && !content_type.contains("charset") {
         content_type.push_str("; charset=utf-8");
     }
 
+    // for html we want to explicitly have the browser detect encoding
     if content_type.starts_with("text/html") {
         content_type = "text/html".to_string()
     }
@@ -30,24 +37,6 @@ pub fn add_content_type_headers(headers: &mut HeaderMap, name: &str, body_sample
     if !content_type.is_empty() {
         headers.insert(CONTENT_TYPE, HeaderValue::from_str(&content_type).unwrap());
     }
-}
-
-#[tracing::instrument()]
-fn sniff_content_type(body_sample: &[u8]) -> String {
-    let classifier = mime_classifier::MimeClassifier::new();
-    let context = mime_classifier::LoadContext::Browsing;
-    let no_sniff_flag = mime_classifier::NoSniffFlag::Off;
-    let apache_bug_flag = mime_classifier::ApacheBugFlag::On;
-    let supplied_type = None;
-    let computed_type = classifier.classify(
-        context,
-        no_sniff_flag,
-        apache_bug_flag,
-        &supplied_type,
-        body_sample,
-    );
-
-    computed_type.to_string()
 }
 
 #[tracing::instrument()]
@@ -224,7 +213,8 @@ mod tests {
         let mut headers = HeaderMap::new();
         let name = "test.txt";
         let body = "test body";
-        add_content_type_headers(&mut headers, name, body.as_bytes());
+        let content_sniffed_mime = Some(crate::client::sniff_content_type(body.as_bytes()));
+        add_content_type_headers(&mut headers, name, content_sniffed_mime.clone());
         assert_eq!(headers.len(), 1);
         assert_eq!(
             headers.get(&CONTENT_TYPE).unwrap(),
@@ -233,7 +223,7 @@ mod tests {
 
         let mut headers = HeaderMap::new();
         let name = "test.RAND_EXT";
-        add_content_type_headers(&mut headers, name, body.as_bytes());
+        add_content_type_headers(&mut headers, name, content_sniffed_mime);
         assert_eq!(headers.len(), 1);
         assert_eq!(
             headers.get(&CONTENT_TYPE).unwrap(),

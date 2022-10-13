@@ -558,8 +558,8 @@ async fn serve_fs<T: ContentLoader + std::marker::Unpin>(
                             HeaderValue::from_str("inode/symlink").unwrap(),
                         );
                     } else {
-                        let body_sample = body.get_sample();
-                        add_content_type_headers(&mut headers, &name, body_sample.as_slice());
+                        let content_sniffed_mime = body.get_mime();
+                        add_content_type_headers(&mut headers, &name, content_sniffed_mime);
                     }
                     response(StatusCode::OK, body, headers)
                 }
@@ -604,7 +604,7 @@ async fn serve_fs_dir<T: ContentLoader + std::marker::Unpin>(
             .unwrap_or_default()
     });
     if !force_dir && has_index {
-        if !req.resolved_path.is_dir() {
+        if !req.resolved_path.is_dir_like_path() {
             let redirect_path = format!(
                 "{}/{}",
                 req.resolved_path,
@@ -623,7 +623,7 @@ async fn serve_fs_dir<T: ContentLoader + std::marker::Unpin>(
 
     let mut template_data: Map<String, Json> = Map::new();
     let mut root_path = req.resolved_path.clone();
-    if !root_path.is_dir() {
+    if !root_path.is_dir_like_path() {
         root_path.push("");
     }
 

@@ -58,6 +58,7 @@ hex-literal = "0.3.4"
 hex = "0.4.3"
 http-body = "0.4.5"
 mime_classifier = "0.0.1"
+mime = "0.3"
 phf = { version = "0.11", features = ["macros"] }
 
 [dev-dependencies]
