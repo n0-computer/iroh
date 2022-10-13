@@ -160,6 +160,10 @@ impl iroh_gateway::handlers::StateConfig for Config {
         &self.rpc_client
     }
 
+    fn public_url_base(&self) -> &str {
+        &self.gateway.public_url_base
+    }
+
     fn port(&self) -> u16 {
         self.gateway.port
     }

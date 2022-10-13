@@ -16,6 +16,7 @@ use iroh_resolver::{
     resolver::{CidOrDomain, ContentLoader, OutMetrics, UnixfsType},
     unixfs::Link,
 };
+use iroh_util::human::format_bytes;
 use serde::{Deserialize, Serialize};
 use serde_json::{
     json,
@@ -29,6 +30,7 @@ use std::{
     sync::Arc,
     time::{self, Duration},
 };
+
 use tower::ServiceBuilder;
 use tower_http::{compression::CompressionLayer, trace::TraceLayer};
 use tracing::info_span;
@@ -42,15 +44,15 @@ use crate::{
     error::GatewayError,
     headers::*,
     response::{get_response_format, GatewayResponse, ResponseFormat},
+    templates::{icon_class_name, ICONS_STYLESHEET, STYLESHEET},
 };
 
 /// Trait describing what needs to be accessed on the configuration
 /// from the shared state.
 pub trait StateConfig: std::fmt::Debug + Sync + Send {
     fn rpc_client(&self) -> &iroh_rpc_client::Config;
-
+    fn public_url_base(&self) -> &str;
     fn port(&self) -> u16;
-
     fn user_headers(&self) -> &HeaderMap<HeaderValue>;
 }
 
@@ -60,6 +62,8 @@ pub fn get_app_routes<T: ContentLoader + std::marker::Unpin>(state: &Arc<State<T
         .route("/:scheme/:cid", get(get_handler::<T>))
         .route("/:scheme/:cid/*cpath", get(get_handler::<T>))
         .route("/health", get(health_check))
+        .route("/icons.css", get(stylesheet_icons))
+        .route("/style.css", get(stylesheet_main))
         .layer(Extension(Arc::clone(state)))
         .layer(
             ServiceBuilder::new()
@@ -222,6 +226,24 @@ pub async fn get_handler<T: ContentLoader + std::marker::Unpin>(
 #[tracing::instrument()]
 pub async fn health_check() -> String {
     "OK".to_string()
+}
+
+async fn stylesheet_main() -> (HeaderMap, &'static str) {
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        HeaderName::from_static("content-type"),
+        HeaderValue::from_static("text/css"),
+    );
+    (headers, STYLESHEET)
+}
+
+pub async fn stylesheet_icons() -> (HeaderMap, &'static str) {
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        HeaderName::from_static("content-type"),
+        HeaderValue::from_static("text/css"),
+    );
+    (headers, ICONS_STYLESHEET)
 }
 
 #[tracing::instrument()]
@@ -550,6 +572,42 @@ async fn serve_fs_dir<T: ContentLoader + std::marker::Unpin>(
     if !root_path.ends_with('/') {
         root_path.push('/');
     }
+
+    let mut breadcrumbs: Vec<HashMap<&str, String>> = Vec::new();
+    root_path
+        .trim_matches('/')
+        .split('/')
+        .fold(&mut breadcrumbs, |accum, path_el| {
+            let mut el = HashMap::new();
+            let path = match accum.last() {
+                Some(prev) => match prev.get("path") {
+                    Some(base) => format!("/{}/{}", base, encode(path_el)),
+                    None => format!("/{}", encode(path_el)),
+                },
+                None => {
+                    format!("/{}", encode(path_el))
+                }
+            };
+            el.insert("name", path_el.to_string());
+            el.insert("path", path);
+            accum.push(el);
+            accum
+        });
+    template_data.insert("breadcrumbs".to_string(), json!(breadcrumbs));
+    if let CidOrDomain::Cid(root_cid) = req.cid {
+        template_data.insert("root_cid".to_string(), Json::String(root_cid.to_string()));
+    }
+
+    template_data.insert(
+        "root_path".to_string(),
+        Json::String(req.content_path.clone()),
+    );
+    template_data.insert(
+        "public_url_base".to_string(),
+        Json::String(state.config.public_url_base().to_string()),
+    );
+    // TODO(b5) - add directory size
+    template_data.insert("size".to_string(), Json::String("".to_string()));
     let links = dir_list
         .iter()
         .map(|l| {
@@ -557,9 +615,14 @@ async fn serve_fs_dir<T: ContentLoader + std::marker::Unpin>(
             let mut link = Map::new();
             link.insert("name".to_string(), Json::String(get_filename(name)));
             link.insert(
+                "size".to_string(),
+                Json::String(format_bytes(l.tsize.unwrap_or_default())),
+            );
+            link.insert(
                 "path".to_string(),
                 Json::String(format!("{}{}", root_path, name)),
             );
+            link.insert("icon".to_string(), Json::String(icon_class_name(name)));
             link
         })
         .collect::<Vec<Map<String, Json>>>();
