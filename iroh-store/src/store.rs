@@ -71,6 +71,15 @@ fn default_blob_opts() -> Options {
     opts
 }
 
+fn id_key(cid: &Cid) -> Vec<u8> {
+    let hash = cid.hash().to_bytes();
+    let code = cid.codec();
+    let mut key = Vec::with_capacity(8 + hash.len());
+    key.extend_from_slice(&code.to_be_bytes());
+    key.extend_from_slice(&hash);
+    key
+}
+
 impl Store {
     /// Creates a new database.
     #[tracing::instrument]
@@ -192,7 +201,7 @@ impl Store {
             multihash: cid.hash().to_bytes(),
         });
         let metadata_bytes = rkyv::to_bytes::<_, 1024>(&metadata)?; // TODO: is this the right amount of scratch space?
-        let multihash = &metadata.0.multihash;
+        let id_key = id_key(&cid);
 
         let children = self.ensure_id_many(links.into_iter()).await?;
 
@@ -206,7 +215,7 @@ impl Store {
         let blob_size = blob.as_ref().len();
 
         let mut batch = WriteBatch::default();
-        batch.put_cf(cf_id, multihash, &id_bytes);
+        batch.put_cf(cf_id, id_key, &id_bytes);
         batch.put_cf(cf_blobs, &id_bytes, blob);
         batch.put_cf(cf_meta, &id_bytes, metadata_bytes);
         batch.put_cf(cf_graph, &id_bytes, graph_bytes);
@@ -280,8 +289,8 @@ impl Store {
     #[tracing::instrument(skip(self))]
     async fn get_id(&self, cid: &Cid) -> Result<Option<u64>> {
         let cf_id = self.cf_id()?;
-        let multihash = cid.hash().to_bytes();
-        let maybe_id_bytes = self.db().get_pinned_cf(cf_id, multihash)?;
+        let id_key = id_key(cid);
+        let maybe_id_bytes = self.db().get_pinned_cf(cf_id, id_key)?;
         match maybe_id_bytes {
             Some(bytes) => {
                 let arr = bytes[..8].try_into().map_err(|e| anyhow!("{:?}", e))?;
@@ -349,8 +358,8 @@ impl Store {
         let mut ids = Vec::new();
         let mut batch = WriteBatch::default();
         for cid in cids {
-            let multihash = cid.hash().to_bytes();
-            let id = if let Some(id) = self.db().get_pinned_cf(cf_id, &multihash)? {
+            let id_key = id_key(&cid);
+            let id = if let Some(id) = self.db().get_pinned_cf(cf_id, &id_key)? {
                 u64::from_be_bytes(id.as_ref().try_into()?)
             } else {
                 let id = self.next_id();
@@ -358,12 +367,10 @@ impl Store {
 
                 let metadata = Versioned(MetadataV0 {
                     codec: cid.codec(),
-                    multihash,
+                    multihash: cid.hash().to_bytes(),
                 });
                 let metadata_bytes = rkyv::to_bytes::<_, 1024>(&metadata)?; // TODO: is this the right amount of scratch space?
-
-                let multihash = &metadata.0.multihash;
-                batch.put_cf(&cf_id, multihash, &id_bytes);
+                batch.put_cf(&cf_id, id_key, &id_bytes);
                 batch.put_cf(&cf_meta, &id_bytes, metadata_bytes);
                 id
             };
@@ -421,7 +428,7 @@ mod tests {
     use iroh_rpc_client::Config as RpcClientConfig;
 
     use cid::multihash::{Code, MultihashDigest};
-    use libipld::{cbor::DagCbor, IpldCodec, prelude::Encode};
+    use libipld::{cbor::DagCbor, prelude::Encode, IpldCodec};
     use tempfile::TempDir;
     const RAW: u64 = 0x55;
 
