@@ -16,8 +16,8 @@ use iroh_metrics::{
 use iroh_rpc_client::Client as RpcClient;
 use multihash::Multihash;
 use rocksdb::{
-    BlockBasedOptions, Cache, ColumnFamily, DBPinnableSlice, Direction, IteratorMode, Options, WriteBatch,
-    DB as RocksDb,
+    BlockBasedOptions, Cache, ColumnFamily, DBPinnableSlice, Direction, IteratorMode, Options,
+    WriteBatch, DB as RocksDb,
 };
 use smallvec::SmallVec;
 use tokio::task;
@@ -641,8 +641,8 @@ mod tests {
         assert_eq!(store.get_links(&raw_cid).await?.unwrap().len(), 0);
         assert_eq!(store.get_links(&cbor_cid).await?.unwrap().len(), 2);
 
-        let ids = store.get_ids_for_hash(&hash)?.collect::<Vec<_>>();
-        assert_eq!(ids.len(), 2);
+        let ids = store.get_ids_for_hash(&hash)?;
+        assert_eq!(ids.count(), 2);
         Ok(())
     }
 }
