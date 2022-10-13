@@ -6,30 +6,31 @@ use std::{
     process::{Command, Stdio},
 };
 
+fn cli() -> clap::Command {
+    clap::Command::new("xtasks")
+        .about("iroh automation tasks")
+        .subcommand_required(true)
+        .arg_required_else_help(true)
+        .allow_external_subcommands(true)
+        .subcommand(clap::Command::new("dist").about("build application and man pages"))
+        .subcommand(clap::Command::new("man").about("build man pages"))
+}
+
 fn main() {
-    if let Err(e) = try_main() {
+    let matches = cli().get_matches();
+    if let Err(e) = run_subcommand(matches) {
         eprintln!("{}", e);
         std::process::exit(-1);
     }
 }
 
-fn try_main() -> Result<()> {
-    let task = env::args().nth(1);
-    match task.as_deref() {
-        Some("dist") => dist()?,
-        Some("man") => dist_manpage()?,
-        _ => print_help(),
+fn run_subcommand(matches: clap::ArgMatches) -> Result<()> {
+    match matches.subcommand() {
+        Some(("dist", _)) => dist()?,
+        Some(("man", _)) => dist_manpage()?,
+        _ => unreachable!(), // If all subcommands are defined above, anything else is unreachabe!()
     }
     Ok(())
-}
-
-fn print_help() {
-    eprintln!(
-        "Tasks:
-dist            builds application and man pages
-man             build man pages
-"
-    )
 }
 
 fn dist() -> Result<()> {
