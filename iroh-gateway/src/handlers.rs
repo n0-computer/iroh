@@ -365,7 +365,7 @@ async fn serve_raw<T: ContentLoader + std::marker::Unpin>(
         .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, &e, &state))?;
 
     match body {
-        FileResult::File(body) => {
+        FileResult::File(body) | FileResult::Raw(body) => {
             set_content_disposition_headers(
                 &mut headers,
                 format!("{}.bin", req.cid).as_str(),
@@ -399,7 +399,7 @@ async fn serve_car<T: ContentLoader + std::marker::Unpin>(
         .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, &e, &state))?;
 
     match body {
-        FileResult::File(body) => {
+        FileResult::File(body) | FileResult::Raw(body) => {
             set_content_disposition_headers(
                 &mut headers,
                 format!("{}.car", req.cid).as_str(),
@@ -514,6 +514,21 @@ async fn serve_fs<T: ContentLoader + std::marker::Unpin>(
                     &state,
                 )),
             }
+        }
+        FileResult::Raw(body) => {
+            // todo(arqu): error on no size
+            // todo(arqu): add lazy seeking
+            add_cache_control_headers(&mut headers, metadata.clone());
+            set_etag_headers(&mut headers, get_etag(&req.cid, Some(req.format.clone())));
+            add_ipfs_roots_headers(&mut headers, metadata);
+            let name = add_content_disposition_headers(
+                &mut headers,
+                &req.query_file_name,
+                &req.content_path,
+                req.download,
+            );
+            add_content_type_headers(&mut headers, &name);
+            response(StatusCode::OK, body, headers)
         }
     }
 }
