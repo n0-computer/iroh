@@ -114,12 +114,8 @@ impl Path {
         self.tail.push(str.as_ref().to_owned());
     }
 
-    pub fn to_string_without_type(&self) -> String {
-        let mut s = format!("{}", self.root);
-        for part in &self.tail {
-            s.push_str(&format!("/{}", part)[..]);
-        }
-        s
+    pub fn to_relative_string(&self) -> String {
+        self.tail.join("/")
     }
 
     pub fn cid(&self) -> Option<&Cid> {
