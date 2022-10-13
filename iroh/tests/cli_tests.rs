@@ -23,6 +23,14 @@ async fn get_failure_cli_test() {
 }
 
 #[tokio::test]
+async fn get_wrapped_file_cli_test() {
+    trycmd::TestCases::new()
+        .env("IROH_CTL_FIXTURE", "get_wrapped_file")
+        .case("tests/cmd/get_wrapped_file.trycmd")
+        .run();
+}
+
+#[tokio::test]
 async fn version_cli_test() {
     trycmd::TestCases::new()
         .case("tests/cmd/version.trycmd")
