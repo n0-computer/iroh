@@ -494,8 +494,11 @@ async fn serve_fs<T: ContentLoader + std::marker::Unpin>(
             }
         }
         FileResult::Raw(body) => {
+            // todo(arqu): error on no size
+            // todo(arqu): add lazy seeking
             add_cache_control_headers(&mut headers, metadata.clone());
             set_etag_headers(&mut headers, get_etag(&req.cid, Some(req.format.clone())));
+            add_ipfs_roots_headers(&mut headers, metadata);
             let name = add_content_disposition_headers(
                 &mut headers,
                 &req.query_file_name,
