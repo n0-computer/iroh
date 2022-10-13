@@ -15,7 +15,8 @@ members = [
   "iroh-share",
   "iroh-util",
   "stores/*",
-  "examples"
+  "examples",
+  "xtask"
 ]
 # even if all crates are set to edition 2021, we still need to force the
 # resolver to 2
