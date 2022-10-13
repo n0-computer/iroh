@@ -12,7 +12,8 @@ use iroh_metrics::{
     observe, record,
 };
 use iroh_resolver::resolver::{
-    CidOrDomain, ContentLoader, Metadata, Out, OutMetrics, OutPrettyReader, Resolver, Source,
+    CidOrDomain, ContentLoader, Metadata, Out, OutMetrics, OutPrettyReader, OutType, Resolver,
+    Source,
 };
 use tokio::io::{AsyncReadExt, AsyncWrite};
 use tokio_util::io::ReaderStream;
@@ -32,6 +33,7 @@ pub struct PrettyStreamBody<T: ContentLoader>(ReaderStream<OutPrettyReader<T>>, 
 pub enum FileResult<T: ContentLoader> {
     File(PrettyStreamBody<T>),
     Directory(Out),
+    Raw(PrettyStreamBody<T>),
 }
 
 impl<T: ContentLoader + std::marker::Unpin> http_body::Body for PrettyStreamBody<T> {
@@ -99,6 +101,10 @@ impl<T: ContentLoader + std::marker::Unpin> Client<T> {
 
             let stream = ReaderStream::new(reader);
             let body = PrettyStreamBody(stream, metadata.size);
+
+            if metadata.typ == OutType::Raw {
+                return Ok((FileResult::Raw(body), metadata));
+            }
 
             Ok((FileResult::File(body), metadata))
         }
