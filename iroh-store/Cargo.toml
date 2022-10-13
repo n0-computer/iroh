@@ -36,6 +36,7 @@ async-trait = "0.1.56"
 criterion = { version = "0.4.0", features = ["async_tokio"] }
 tempfile = "3.3.0"
 tokio = { version = "1", features = ["rt", "macros", "rt-multi-thread"] }
+libipld = "0.14.0"
 
 [features]
 default = ["rpc-grpc", "rpc-mem"]

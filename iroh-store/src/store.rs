@@ -413,12 +413,16 @@ impl Store {
 
 #[cfg(test)]
 mod tests {
+    use std::str::FromStr;
+
     use super::*;
 
     use iroh_metrics::config::Config as MetricsConfig;
     use iroh_rpc_client::Config as RpcClientConfig;
 
     use cid::multihash::{Code, MultihashDigest};
+    use libipld::{cbor::DagCbor, IpldCodec, prelude::Encode};
+    use tempfile::TempDir;
     const RAW: u64 = 0x55;
 
     #[tokio::test]
@@ -528,5 +532,41 @@ mod tests {
             let links = store.get_links(c).await.unwrap().unwrap();
             assert_eq!(expected_links, &links[..]);
         }
+    }
+
+    async fn test_store() -> anyhow::Result<(Store, TempDir)> {
+        let dir = tempfile::tempdir()?;
+        let rpc_client = RpcClientConfig::default();
+        let config = Config {
+            path: dir.path().into(),
+            rpc_client,
+            metrics: MetricsConfig::default(),
+        };
+
+        let store = Store::create(config).await?;
+        Ok((store, dir))
+    }
+
+    #[tokio::test]
+    async fn test_multiple_cids_same_hash() -> anyhow::Result<()> {
+        let link1 = Cid::from_str("bafybeib4tddkl4oalrhe7q66rrz5dcpz4qwv5lmpstuqrls3djikw566y4")?;
+        let link2 = Cid::from_str("QmcBphfXUFUNLcfAm31WEqYjrjEh19G5x4iAQANSK151DD")?;
+        // some data with links
+        let data = libipld::ipld!({
+            "link1": link1,
+            "link2": link2,
+        });
+        let mut blob = Vec::new();
+        data.encode(IpldCodec::DagCbor, &mut blob)?;
+        let hash = Code::Sha2_256.digest(&blob);
+        let raw_cid = Cid::new_v1(IpldCodec::Raw.into(), hash);
+        let cbor_cid = Cid::new_v1(IpldCodec::DagCbor.into(), hash);
+
+        let (store, _dir) = test_store().await?;
+        store.put(raw_cid, &blob, vec![]).await?;
+        store.put(cbor_cid, &blob, vec![link1, link2]).await?;
+        assert_eq!(store.get_links(&raw_cid).await?.unwrap().len(), 0);
+        assert_eq!(store.get_links(&cbor_cid).await?.unwrap().len(), 2);
+        Ok(())
     }
 }
