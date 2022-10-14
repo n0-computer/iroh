@@ -10,7 +10,19 @@ use iroh_api::{Api, ApiExt, IpfsPath, Iroh};
 use iroh_metrics::config::Config as MetricsConfig;
 
 #[derive(Parser, Debug, Clone)]
-#[clap(version, about, long_about = None, propagate_version = true)]
+#[clap(version, long_about = None, propagate_version = true)]
+#[clap(about = "A next generation IPFS implementation: https://iroh.computer")]
+#[clap(
+    after_help = "Iroh is a next-generation implementation the Interplanetary File System (IPFS).
+IPFS is a networking protocol for exchanging content-addressed blocks of
+immutable data. 'content-addressed' means referring to data by the hash of it's
+content, which makes the reference both unique and verifiable. These two
+properties make it possible to get data from any node in the network that speaks
+the IPFS protocol, including IPFS content being served by other implementations
+of the protocol.
+
+For more info see https://iroh.computer/docs"
+)]
 pub struct Cli {
     #[clap(long)]
     cfg: Option<PathBuf>,
@@ -33,9 +45,43 @@ impl Cli {
 enum Commands {
     // status checks the health of the different processes
     #[clap(about = "Check the health of the different iroh processes.")]
+    #[clap(
+        after_help = "status reports the current operational setup of iroh. Use status as a go-to
+command for understanding where iroh commands are being processed. different
+ops configurations utilize different network and service implementations
+under the hood, which can lead to varying performance characteristics.
+
+Status reports connectivity, which is either offline or online:
+
+  offline: iroh is not connected to any background process, all commands
+           are one-off, any network connections are closed when a command
+           completes. Some network duties may be delegated to remote hosts.
+
+  online:  iroh has found a long-running process to issue commands to. Any
+           comand issued will be deletegated to the long-running process as a
+           remote procedure call
+
+If iroh is online, status also reports the service configuration of the
+long running process, including the health of the configured subsystem(s).
+Possible configurations fall into two buckets:
+
+  one:     Iroh is running with all services bundled into one single process,
+           this setup is common in desktop enviornments.
+
+  cloud:   Iroh is running with services split into separate processes, which
+           are speaking to each other via remote procedure calls.
+
+Use the --watch flag to continually poll for changes.
+
+Status reports no metrics about the running system aside from current service
+health. Instead all metrics are emitted through uniform tracing collection &
+reporting, which is intended to be consumed by tools like prometheus and
+grafana. For more info on metrics collection, see
+https://iroh.computer/docs/metrics"
+    )]
     Status {
         #[clap(short, long)]
-        /// when true, updates the status table whenever a change in a process's status occurs
+        /// Poll process for changes
         watch: bool,
     },
     P2p(P2p),
@@ -51,6 +97,20 @@ enum Commands {
         no_wrap: bool,
     },
     #[clap(about = "Fetch IPFS content and write it to disk")]
+    #[clap(
+        after_help = "Download file or directory specified by <ipfs-path> from IPFS into [path]. If
+path already exists and is a file then it's overwritten with the new downloaded
+file. If path already exists and is a directory, the command fails with an
+error. If path already exists, is a file and the downloaded data is a directory,
+that's an error.
+
+By default, the output will be written to the working directory. If no file or
+directory name can be derived from the <ipfs-path>, the output will be written
+to the given path's CID.
+
+If <ipfs-path> is already present in the iroh store, no network call will
+be made."
+    )]
     Get {
         /// CID or CID/with/path/qualifier to get
         ipfs_path: IpfsPath,
