@@ -59,13 +59,13 @@ fn dev_install(build: bool) -> Result<()> {
     if build {
         dist().unwrap();
     }
-    let bins = vec!["iroh", "iroh-one", "iroh-gateway", "iroh-p2p", "iroh-store"];
+    let bins = ["iroh", "iroh-one", "iroh-gateway", "iroh-p2p", "iroh-store"];
     let home = dirs_next::home_dir().unwrap();
     for bin in bins {
         let from = project_root().join(format!("target/release/{}", bin));
         let to = home.join(format!(".cargo/bin/{}", bin));
-        println!("copying {} to {}", bin, to.to_str().unwrap());
-        fs::copy(from, to).unwrap();
+        println!("copying {} to {}", bin, to.display());
+        fs::copy(from, to)?;
     }
     Ok(())
 }
@@ -79,20 +79,6 @@ fn dist_binaries() -> Result<()> {
 
     if !status.success() {
         Err(anyhow::anyhow!("cargo build failed"))?;
-    }
-
-    let dst = project_root().join("target/release/iroh");
-
-    fs::copy(&dst, dist_dir().join("iroh"))?;
-
-    if which::which("strip").is_ok() {
-        eprintln!("stripping the binary");
-        let status = Command::new("strip").arg(&dst).status()?;
-        if !status.success() {
-            Err(anyhow::anyhow!("strip failed"))?;
-        }
-    } else {
-        eprintln!("no `strip` utility found")
     }
 
     Ok(())

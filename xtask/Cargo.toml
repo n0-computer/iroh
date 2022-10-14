@@ -12,4 +12,3 @@ clap = { version = "4.0.9", features = ["derive"] }
 clap_mangen = "0.2.2"
 dirs-next = "2.0.0"
 iroh = { path = "../iroh" }
-which = "4.3.0"
