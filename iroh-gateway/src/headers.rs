@@ -137,7 +137,8 @@ pub fn set_etag_headers(headers: &mut HeaderMap, etag: String) {
 pub fn add_etag_range(headers: &mut HeaderMap, range: Range<u64>) {
     if headers.contains_key(ETAG) {
         let etag = headers.get(ETAG).unwrap().to_str().unwrap();
-        let etag = format!("{}.{}-{}", etag, range.start, range.end - 1);
+        let etag = etag.trim_end_matches('"');
+        let etag = format!("{}.{}-{}\"", etag, range.start, range.end - 1);
         headers.insert(ETAG, HeaderValue::from_str(&etag).unwrap());
     }
 }
