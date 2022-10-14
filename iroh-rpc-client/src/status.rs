@@ -164,6 +164,8 @@ pub struct StatusTable {
     pub gateway: StatusRow,
     pub p2p: StatusRow,
     pub store: StatusRow,
+
+    iter: u8
 }
 
 impl StatusTable {
@@ -176,6 +178,7 @@ impl StatusTable {
             gateway: gateway.unwrap_or_default(),
             p2p: p2p.unwrap_or_default(),
             store: store.unwrap_or_default(),
+            iter: 0,
         }
     }
 
@@ -196,12 +199,32 @@ impl StatusTable {
     }
 }
 
+impl Iterator for StatusTable {
+    type Item = StatusRow;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let current = match self.iter {
+            0 => Some(self.store.to_owned()),
+            1 => Some(self.p2p.to_owned()),
+            2 => Some(self.gateway.to_owned()),
+            _ => None,
+        };
+
+        self.iter += 1;
+        if current == None {
+            self.iter = 0;
+        }
+        current
+    }
+}
+
 impl Default for StatusTable {
     fn default() -> Self {
         Self {
             gateway: StatusRow::new(gateway::NAME, 1, ServiceStatus::Unknown),
             p2p: StatusRow::new(network::NAME, 1, ServiceStatus::Unknown),
             store: StatusRow::new(store::NAME, 1, ServiceStatus::Unknown),
+            iter: 0,
         }
     }
 }

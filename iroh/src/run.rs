@@ -130,7 +130,7 @@ impl Cli {
                 println!("Saving file(s) to {}", root_path.to_str().unwrap());
             }
             Commands::Start {} => {
-                daemon::start().unwrap();
+                daemon::start(api).await?;
                 println!("started iroh");
             }
             Commands::Stop {} => {
