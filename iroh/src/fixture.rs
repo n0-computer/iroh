@@ -34,6 +34,13 @@ fn fixture_get() -> MockApi {
         futures::stream::iter(vec![
             Ok((RelativePathBuf::from_path("").unwrap(), OutType::Dir)),
             Ok((RelativePathBuf::from_path("a").unwrap(), OutType::Dir)),
+            // git doesn't like empty directories, nor does trycmd trip if it's missing
+            // we rely on the unit test for save_get_stream elsewhere to check empty
+            // directories are created
+            Ok((
+                RelativePathBuf::from_path("a/exists").unwrap(),
+                OutType::Reader(Box::new(std::io::Cursor::new("exists"))),
+            )),
             Ok((
                 RelativePathBuf::from_path("b").unwrap(),
                 OutType::Reader(Box::new(std::io::Cursor::new("hello"))),
