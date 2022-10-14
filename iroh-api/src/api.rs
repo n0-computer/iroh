@@ -17,7 +17,7 @@ use iroh_rpc_client::StatusTable;
 use iroh_util::{iroh_config_path, make_config};
 #[cfg(feature = "testing")]
 use mockall::automock;
-use relative_path::RelativePathBuf;
+use relative_path::{RelativePath, RelativePathBuf};
 use tokio::io::AsyncRead;
 
 pub struct Iroh {
@@ -99,12 +99,17 @@ impl Api for Iroh {
     ) -> LocalBoxStream<'_, Result<(RelativePathBuf, OutType)>> {
         tracing::debug!("get {:?}", ipfs_path);
         let resolver = iroh_resolver::resolver::Resolver::new(self.client.clone());
+        let sub_path = ipfs_path.to_relative_string();
         let results = resolver.resolve_recursive_with_paths(ipfs_path.clone());
         async_stream::try_stream! {
             tokio::pin!(results);
             while let Some(res) = results.next().await {
                 let (relative_ipfs_path, out) = res?;
                 let relative_path = RelativePathBuf::from_path(&relative_ipfs_path.to_relative_string())?;
+                if !relative_path.starts_with(&sub_path) {
+                    continue;
+                }
+                let relative_path = relative_path.strip_prefix(&sub_path).expect("should be a prefix").to_owned();
                 if out.is_dir() {
                     yield (relative_path, OutType::Dir);
                 } else {
