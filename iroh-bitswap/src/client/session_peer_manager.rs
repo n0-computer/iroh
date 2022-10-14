@@ -109,7 +109,7 @@ impl SessionPeerManager {
 
     pub async fn has_peers(&self) -> bool {
         let (peers, _) = &*self.inner.peers.read().await;
-        peers.is_empty()
+        !peers.is_empty()
     }
 
     pub async fn has_peer(&self, peer: &PeerId) -> bool {
