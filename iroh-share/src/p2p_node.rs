@@ -107,6 +107,10 @@ impl ContentLoader for Loader {
             source: Source::Bitswap,
         })
     }
+
+    async fn has_cid(&self, cid: &Cid) -> Result<bool> {
+        Ok(self.client.try_store()?.has(*cid).await?)
+    }
 }
 
 impl P2pNode {

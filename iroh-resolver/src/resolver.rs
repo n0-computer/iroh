@@ -110,6 +110,11 @@ impl Path {
         &self.tail
     }
 
+    // used only for string path manipulation
+    pub fn has_trailing_slash(&self) -> bool {
+        !self.tail.is_empty() && self.tail.last().unwrap().is_empty()
+    }
+
     pub fn push(&mut self, str: impl AsRef<str>) {
         self.tail.push(str.as_ref().to_owned());
     }
@@ -117,7 +122,13 @@ impl Path {
     pub fn to_string_without_type(&self) -> String {
         let mut s = format!("{}", self.root);
         for part in &self.tail {
+            if part.is_empty() {
+                continue;
+            }
             s.push_str(&format!("/{}", part)[..]);
+        }
+        if self.has_trailing_slash() {
+            s.push('/');
         }
         s
     }
@@ -143,7 +154,14 @@ impl Display for Path {
         write!(f, "/{}/{}", self.typ.as_str(), self.root)?;
 
         for part in &self.tail {
+            if part.is_empty() {
+                continue;
+            }
             write!(f, "/{}", part)?;
+        }
+
+        if self.has_trailing_slash() {
+            write!(f, "/")?;
         }
 
         Ok(())
@@ -196,7 +214,11 @@ impl FromStr for Path {
             (PathType::Ipfs, CidOrDomain::Cid(root))
         };
 
-        let tail = parts.map(Into::into).collect();
+        let mut tail: Vec<String> = parts.map(Into::into).collect();
+
+        if s.ends_with('/') {
+            tail.push("".to_owned());
+        }
 
         Ok(Path { typ, root, tail })
     }
@@ -528,12 +550,18 @@ pub struct Resolver<T: ContentLoader> {
 pub trait ContentLoader: Sync + Send + std::fmt::Debug + Clone + 'static {
     /// Loads the actual content of a given cid.
     async fn load_cid(&self, cid: &Cid) -> Result<LoadedCid>;
+    /// Checks if the given cid is present in the local storage.
+    async fn has_cid(&self, cid: &Cid) -> Result<bool>;
 }
 
 #[async_trait]
 impl<T: ContentLoader> ContentLoader for Arc<T> {
     async fn load_cid(&self, cid: &Cid) -> Result<LoadedCid> {
         self.as_ref().load_cid(cid).await
+    }
+
+    async fn has_cid(&self, cid: &Cid) -> Result<bool> {
+        self.as_ref().has_cid(cid).await
     }
 }
 
@@ -590,6 +618,11 @@ impl ContentLoader for Client {
             data: bytes,
             source: Source::Bitswap,
         })
+    }
+
+    async fn has_cid(&self, cid: &Cid) -> Result<bool> {
+        let cid = *cid;
+        self.try_store()?.has(cid).await
     }
 }
 
@@ -1062,6 +1095,11 @@ impl<T: ContentLoader> Resolver<T> {
     }
 
     #[tracing::instrument(skip(self))]
+    pub async fn has_cid(&self, cid: &Cid) -> Result<bool> {
+        self.loader.has_cid(cid).await
+    }
+
+    #[tracing::instrument(skip(self))]
     async fn load_ipns_record(&self, cid: &Cid) -> Result<Cid> {
         todo!()
     }
@@ -1138,6 +1176,10 @@ mod tests {
                 None => bail!("not found"),
             }
         }
+
+        async fn has_cid(&self, cid: &Cid) -> Result<bool> {
+            Ok(self.contains_key(cid))
+        }
     }
 
     async fn load_fixture(p: &str) -> Bytes {
@@ -1190,6 +1232,22 @@ mod tests {
             println!("{}", test);
             assert!(test.parse::<Path>().is_err());
         }
+    }
+
+    #[test]
+    fn test_dir_paths() {
+        let non_dir_test = "/ipfs/bafkreigh2akiscaildcqabsyg3dfr6chu3fgpregiymsck7e7aqa4s52zy";
+        let dir_test = "/ipfs/bafkreigh2akiscaildcqabsyg3dfr6chu3fgpregiymsck7e7aqa4s52zy/";
+        let non_dir_path: Path = non_dir_test.parse().unwrap();
+        let dir_path: Path = dir_test.parse().unwrap();
+        assert!(non_dir_path.tail().is_empty());
+        assert!(dir_path.tail().len() == 1);
+        assert!(dir_path.tail()[0].is_empty());
+
+        assert!(non_dir_path.to_string() == non_dir_test);
+        assert!(dir_path.to_string() == dir_test);
+        assert!(dir_path.has_trailing_slash());
+        assert!(!non_dir_path.has_trailing_slash());
     }
 
     fn make_ipld() -> Ipld {

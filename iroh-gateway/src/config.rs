@@ -24,12 +24,6 @@ pub struct Config {
     /// Pretty URL to redirect to
     #[serde(default = "String::new")]
     pub public_url_base: String,
-    /// flag to toggle whether the gateway allows writing/pushing data
-    pub writeable: bool,
-    /// flag to toggle whether the gateway allows fetching data from other nodes or is local only
-    pub fetch: bool,
-    /// flag to toggle whether the gateway enables/utilizes caching
-    pub cache: bool,
     /// default port to listen on
     pub port: u16,
     /// flag to toggle whether the gateway should use denylist on requests
@@ -46,18 +40,9 @@ pub struct Config {
 }
 
 impl Config {
-    pub fn new(
-        writeable: bool,
-        fetch: bool,
-        cache: bool,
-        port: u16,
-        rpc_client: RpcClientConfig,
-    ) -> Self {
+    pub fn new(port: u16, rpc_client: RpcClientConfig) -> Self {
         Self {
             public_url_base: String::new(),
-            writeable,
-            fetch,
-            cache,
             headers: HeaderMap::new(),
             port,
             rpc_client,
@@ -108,24 +93,16 @@ fn default_headers() -> HeaderMap {
     );
     headers.typed_insert(
         [
-            CONTENT_TYPE,
-            CONTENT_DISPOSITION,
-            LAST_MODIFIED,
+            IF_NONE_MATCH,
+            ACCEPT,
             CACHE_CONTROL,
-            ACCEPT_RANGES,
-            ETAG,
+            RANGE,
             HEADER_SERVICE_WORKER.clone(),
-            HEADER_X_IPFS_GATEWAY_PREFIX.clone(),
-            HEADER_X_TRACE_ID.clone(),
-            HEADER_X_CONTENT_TYPE_OPTIONS.clone(),
-            HEADER_X_IPFS_PATH.clone(),
-            HEADER_X_IPFS_ROOTS.clone(),
         ]
         .into_iter()
         .collect::<AccessControlAllowHeaders>(),
     );
     // todo(arqu): remove these once propperly implmented
-    headers.insert(CACHE_CONTROL, VALUE_NO_CACHE_NO_TRANSFORM.clone());
     headers.insert(ACCEPT_RANGES, VALUE_NONE.clone());
     headers
 }
@@ -135,9 +112,6 @@ impl Default for Config {
         let rpc_client = RpcClientConfig::default_grpc();
         let mut t = Self {
             public_url_base: String::new(),
-            writeable: false,
-            fetch: false,
-            cache: false,
             headers: HeaderMap::new(),
             port: DEFAULT_PORT,
             rpc_client,
@@ -157,9 +131,7 @@ impl Source for Config {
     fn collect(&self) -> Result<Map<String, Value>, ConfigError> {
         let rpc_client = self.rpc_client.collect()?;
         let mut map: Map<String, Value> = Map::new();
-        insert_into_config_map(&mut map, "writeable", self.writeable);
-        insert_into_config_map(&mut map, "fetch", self.fetch);
-        insert_into_config_map(&mut map, "cache", self.cache);
+        insert_into_config_map(&mut map, "public_url_base", self.public_url_base.clone());
         insert_into_config_map(&mut map, "denylist", self.denylist);
         // Some issue between deserializing u64 & u16, converting this to
         // an signed int fixes the issue
@@ -210,7 +182,7 @@ mod tests {
     #[test]
     fn test_default_headers() {
         let headers = default_headers();
-        assert_eq!(headers.len(), 5);
+        assert_eq!(headers.len(), 4);
         let h = headers.get(&ACCESS_CONTROL_ALLOW_ORIGIN).unwrap();
         assert_eq!(h, "*");
     }
@@ -218,9 +190,6 @@ mod tests {
     #[test]
     fn default_config() {
         let config = Config::default();
-        assert!(!config.writeable);
-        assert!(!config.fetch);
-        assert!(!config.cache);
         assert_eq!(config.port, DEFAULT_PORT);
     }
 
@@ -228,9 +197,10 @@ mod tests {
     fn test_collect() {
         let default = Config::default();
         let mut expect: Map<String, Value> = Map::new();
-        expect.insert("writeable".to_string(), Value::new(None, default.writeable));
-        expect.insert("fetch".to_string(), Value::new(None, default.fetch));
-        expect.insert("cache".to_string(), Value::new(None, default.cache));
+        expect.insert(
+            "public_url_base".to_string(),
+            Value::new(None, default.public_url_base.clone()),
+        );
         expect.insert("port".to_string(), Value::new(None, default.port as i64));
         expect.insert("denylist".to_string(), Value::new(None, default.denylist));
         expect.insert(
@@ -265,10 +235,12 @@ mod tests {
             "access-control-allow-methods".to_string(),
             Value::new(None, "GET, PUT, POST, DELETE, HEAD, OPTIONS"),
         );
-        expect.insert("access-control-allow-headers".to_string(), Value::new(None, "content-type, content-disposition, last-modified, cache-control, accept-ranges, etag, service-worker, x-ipfs-gateway-prefix, x-trace-id, x-content-type-options, x-ipfs-path, x-ipfs-roots"));
         expect.insert(
-            "cache-control".to_string(),
-            Value::new(None, "no-cache, no-transform"),
+            "access-control-allow-headers".to_string(),
+            Value::new(
+                None,
+                "if-none-match, accept, cache-control, range, service-worker",
+            ),
         );
         expect.insert("accept-ranges".to_string(), Value::new(None, "none"));
         let got = collect_headers(&default_headers()).unwrap();

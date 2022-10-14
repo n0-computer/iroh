@@ -3,6 +3,7 @@ use std::task::Poll;
 
 use anyhow::Result;
 use bytes::Bytes;
+use cid::Cid;
 use futures::{StreamExt, TryStream};
 use http::HeaderMap;
 use iroh_car::{CarHeader, CarWriter};
@@ -15,7 +16,8 @@ use iroh_resolver::resolver::{
     CidOrDomain, ContentLoader, Metadata, Out, OutMetrics, OutPrettyReader, OutType, Resolver,
     Source,
 };
-use tokio::io::{AsyncReadExt, AsyncWrite};
+use mime::Mime;
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWrite};
 use tokio_util::io::ReaderStream;
 use tracing::{info, warn};
 
@@ -27,13 +29,23 @@ pub struct Client<T: ContentLoader> {
     pub(crate) resolver: Resolver<T>,
 }
 
-pub struct PrettyStreamBody<T: ContentLoader>(ReaderStream<OutPrettyReader<T>>, Option<u64>);
+pub struct PrettyStreamBody<T: ContentLoader>(
+    ReaderStream<tokio::io::BufReader<OutPrettyReader<T>>>,
+    Option<u64>,
+    Option<Mime>,
+);
 
 #[allow(clippy::large_enum_variant)]
 pub enum FileResult<T: ContentLoader> {
     File(PrettyStreamBody<T>),
     Directory(Out),
     Raw(PrettyStreamBody<T>),
+}
+
+impl<T: ContentLoader> PrettyStreamBody<T> {
+    pub fn get_mime(&self) -> Option<Mime> {
+        self.2.clone()
+    }
 }
 
 impl<T: ContentLoader + std::marker::Unpin> http_body::Body for PrettyStreamBody<T> {
@@ -99,8 +111,12 @@ impl<T: ContentLoader + std::marker::Unpin> Client<T> {
                 .pretty(self.resolver.clone(), OutMetrics { start: start_time })
                 .map_err(|e| e.to_string())?;
 
-            let stream = ReaderStream::new(reader);
-            let body = PrettyStreamBody(stream, metadata.size);
+            let mut buf_reader = tokio::io::BufReader::with_capacity(1024 * 1024, reader);
+            let body_sample = buf_reader.fill_buf().await.map_err(|e| e.to_string())?;
+            let mime = sniff_content_type(body_sample);
+            let stream = ReaderStream::new(buf_reader);
+
+            let body = PrettyStreamBody(stream, metadata.size, Some(mime));
 
             if metadata.typ == OutType::Raw {
                 return Ok((FileResult::Raw(body), metadata));
@@ -176,13 +192,20 @@ impl<T: ContentLoader + std::marker::Unpin> Client<T> {
     }
 }
 
+impl<T: ContentLoader> Client<T> {
+    #[tracing::instrument(skip(self))]
+    pub async fn has_file_locally(&self, cid: &Cid) -> Result<bool> {
+        info!("has cid {}", cid);
+        self.resolver.has_cid(cid).await
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Request {
     pub format: ResponseFormat,
     pub cid: CidOrDomain,
     pub resolved_path: iroh_resolver::resolver::Path,
     pub query_file_name: String,
-    pub content_path: String,
     pub download: bool,
     pub query_params: GetParams,
 }
@@ -233,4 +256,19 @@ fn record_ttfb_metrics(start_time: std::time::Instant, source: &Source) {
             start_time.elapsed().as_millis() as f64
         );
     }
+}
+
+pub(crate) fn sniff_content_type(body_sample: &[u8]) -> Mime {
+    let classifier = mime_classifier::MimeClassifier::new();
+    let context = mime_classifier::LoadContext::Browsing;
+    let no_sniff_flag = mime_classifier::NoSniffFlag::Off;
+    let apache_bug_flag = mime_classifier::ApacheBugFlag::On;
+    let supplied_type = None;
+    classifier.classify(
+        context,
+        no_sniff_flag,
+        apache_bug_flag,
+        &supplied_type,
+        body_sample,
+    )
 }

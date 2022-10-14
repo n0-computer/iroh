@@ -163,9 +163,6 @@ mod tests {
     #[tokio::test]
     async fn gateway_health() {
         let mut config = Config::new(
-            false,
-            false,
-            false,
             0,
             RpcClientConfig {
                 gateway_addr: None,
@@ -197,9 +194,6 @@ mod tests {
     async fn fetch_car_recursive() {
         let (store_client_addr, store_task) = spawn_store().await;
         let mut config = Config::new(
-            false,
-            false,
-            false,
             0,
             RpcClientConfig {
                 gateway_addr: None,

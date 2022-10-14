@@ -2,6 +2,7 @@ use crate::{constants::*, response::ResponseFormat};
 use ::time::OffsetDateTime;
 use axum::http::header::*;
 use iroh_resolver::resolver::{CidOrDomain, Metadata, PathType};
+use mime::Mime;
 use std::{fmt::Write, time};
 
 #[tracing::instrument()]
@@ -10,15 +11,31 @@ pub fn add_user_headers(headers: &mut HeaderMap, user_headers: HeaderMap) {
 }
 
 #[tracing::instrument()]
-pub fn add_content_type_headers(headers: &mut HeaderMap, name: &str) {
+pub fn add_content_type_headers(
+    headers: &mut HeaderMap,
+    name: &str,
+    content_sniffed_mime: Option<Mime>,
+) {
     let guess = mime_guess::from_path(name);
-    if let Some(content_type) = guess.first() {
-        // todo(arqu): deeper content type checking
-        // todo(arqu): if mime type starts with text/html; strip encoding to let browser detect
-        headers.insert(
-            CONTENT_TYPE,
-            HeaderValue::from_str(content_type.as_ref()).unwrap(),
-        );
+    let mut content_type = String::new();
+    if let Some(ct) = guess.first() {
+        content_type = ct.to_string();
+    } else if let Some(ct) = content_sniffed_mime {
+        content_type = ct.to_string();
+    }
+
+    // for most text types we want to add charset=utf-8
+    if content_type.starts_with("text/") && !content_type.contains("charset") {
+        content_type.push_str("; charset=utf-8");
+    }
+
+    // for html we want to explicitly have the browser detect encoding
+    if content_type.starts_with("text/html") {
+        content_type = "text/html".to_string()
+    }
+
+    if !content_type.is_empty() {
+        headers.insert(CONTENT_TYPE, HeaderValue::from_str(&content_type).unwrap());
     }
 }
 
@@ -26,10 +43,10 @@ pub fn add_content_type_headers(headers: &mut HeaderMap, name: &str) {
 pub fn add_content_disposition_headers(
     headers: &mut HeaderMap,
     filename: &str,
-    content_path: &str,
+    content_path: &iroh_resolver::resolver::Path,
     should_download: bool,
 ) -> String {
-    let mut name = get_filename(content_path);
+    let mut name = get_filename(&content_path.to_string());
     if !filename.is_empty() {
         name = filename.to_string();
     }
@@ -56,6 +73,7 @@ pub fn set_content_disposition_headers(headers: &mut HeaderMap, filename: &str, 
 pub fn add_cache_control_headers(headers: &mut HeaderMap, metadata: Metadata) {
     if metadata.path.typ() == PathType::Ipns {
         let lmdt: OffsetDateTime = time::SystemTime::now().into();
+        // TODO: better last modified headers based on actual dns ttls
         headers.insert(
             LAST_MODIFIED,
             HeaderValue::from_str(&lmdt.to_string()).unwrap(),
@@ -194,17 +212,23 @@ mod tests {
     fn add_content_type_headers_test() {
         let mut headers = HeaderMap::new();
         let name = "test.txt";
-        add_content_type_headers(&mut headers, name);
+        let body = "test body";
+        let content_sniffed_mime = Some(crate::client::sniff_content_type(body.as_bytes()));
+        add_content_type_headers(&mut headers, name, content_sniffed_mime.clone());
         assert_eq!(headers.len(), 1);
         assert_eq!(
             headers.get(&CONTENT_TYPE).unwrap(),
-            &"text/plain".to_string()
+            &"text/plain; charset=utf-8".to_string()
         );
 
         let mut headers = HeaderMap::new();
         let name = "test.RAND_EXT";
-        add_content_type_headers(&mut headers, name);
-        assert_eq!(headers.len(), 0);
+        add_content_type_headers(&mut headers, name, content_sniffed_mime);
+        assert_eq!(headers.len(), 1);
+        assert_eq!(
+            headers.get(&CONTENT_TYPE).unwrap(),
+            &"text/plain; charset=utf-8".to_string()
+        );
     }
 
     #[test]
@@ -212,9 +236,12 @@ mod tests {
         // inline
         let mut headers = HeaderMap::new();
         let filename = "test.txt";
-        let content_path = "QmSomeCid";
+        let content_path: iroh_resolver::resolver::Path =
+            "/ipfs/bafkreigh2akiscaildcqabsyg3dfr6chu3fgpregiymsck7e7aqa4s52zy"
+                .parse()
+                .unwrap();
         let download = false;
-        let name = add_content_disposition_headers(&mut headers, filename, content_path, download);
+        let name = add_content_disposition_headers(&mut headers, filename, &content_path, download);
         assert_eq!(headers.len(), 1);
         assert_eq!(
             headers.get(&CONTENT_DISPOSITION).unwrap(),
@@ -225,9 +252,12 @@ mod tests {
         // attachment
         let mut headers = HeaderMap::new();
         let filename = "test.txt";
-        let content_path = "QmSomeCid";
+        let content_path: iroh_resolver::resolver::Path =
+            "/ipfs/bafkreigh2akiscaildcqabsyg3dfr6chu3fgpregiymsck7e7aqa4s52zy"
+                .parse()
+                .unwrap();
         let download = true;
-        let name = add_content_disposition_headers(&mut headers, filename, content_path, download);
+        let name = add_content_disposition_headers(&mut headers, filename, &content_path, download);
         assert_eq!(headers.len(), 1);
         assert_eq!(
             headers.get(&CONTENT_DISPOSITION).unwrap(),
@@ -238,18 +268,27 @@ mod tests {
         // no filename & no content path filename
         let mut headers = HeaderMap::new();
         let filename = "";
-        let content_path = "QmSomeCid";
+        let content_path: iroh_resolver::resolver::Path =
+            "/ipfs/bafkreigh2akiscaildcqabsyg3dfr6chu3fgpregiymsck7e7aqa4s52zy"
+                .parse()
+                .unwrap();
         let download = true;
-        let name = add_content_disposition_headers(&mut headers, filename, content_path, download);
+        let name = add_content_disposition_headers(&mut headers, filename, &content_path, download);
         assert_eq!(headers.len(), 1);
-        assert_eq!(name, "QmSomeCid");
+        assert_eq!(
+            name,
+            "bafkreigh2akiscaildcqabsyg3dfr6chu3fgpregiymsck7e7aqa4s52zy"
+        );
 
         // no filename & with content path filename
         let mut headers = HeaderMap::new();
         let filename = "";
-        let content_path = "QmSomeCid/folder/test.txt";
+        let content_path: iroh_resolver::resolver::Path =
+            "/ipfs/bafkreigh2akiscaildcqabsyg3dfr6chu3fgpregiymsck7e7aqa4s52zy/folder/test.txt"
+                .parse()
+                .unwrap();
         let download = true;
-        let name = add_content_disposition_headers(&mut headers, filename, content_path, download);
+        let name = add_content_disposition_headers(&mut headers, filename, &content_path, download);
         assert_eq!(headers.len(), 1);
         assert_eq!(name, "test.txt");
     }
