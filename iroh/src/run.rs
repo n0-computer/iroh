@@ -14,8 +14,8 @@ use iroh_metrics::config::Config as MetricsConfig;
 pub struct Cli {
     #[clap(long)]
     cfg: Option<PathBuf>,
-    /// Track metrics
-    #[clap(long, short)]
+    /// Do not track metrics
+    #[clap(long)]
     no_metrics: bool,
     #[clap(subcommand)]
     command: Commands,
@@ -39,21 +39,22 @@ enum Commands {
         watch: bool,
     },
     P2p(P2p),
-    #[clap(about = "break up a file into block and provide those blocks on the ipfs network")]
+    #[clap(about = "Add a file or directory to iroh & make it available on IPFS")]
     Add {
+        /// The path to a file or directory to be added
         path: PathBuf,
+        /// Required to add a directory
         #[clap(long, short)]
         recursive: bool,
-        #[clap(long, short)]
+        /// Do not wrap added content with a directory
+        #[clap(long)]
         no_wrap: bool,
     },
-    #[clap(
-        about = "get content based on a Content Identifier from the ipfs network, and save it "
-    )]
+    #[clap(about = "Fetch IPFS content and write it to disk")]
     Get {
         /// CID or CID/with/path/qualifier to get
         ipfs_path: IpfsPath,
-        /// filesystem path to write to. Default: $CID
+        /// filesystem path to write to. Optional and defaults to $CID
         output: Option<PathBuf>,
     },
 }
