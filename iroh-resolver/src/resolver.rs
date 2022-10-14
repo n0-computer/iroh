@@ -119,9 +119,9 @@ impl Path {
         self.tail.push(str.as_ref().to_owned());
     }
 
-    // Arqu says that empty path segments in the *middle* shouldn't occur,
+    // Empty path segments in the *middle* shouldn't occur,
     // though they can occur at the end, which `join` handles.
-    // TODO: it would make sense to return a `RelativePathBuf` here at some
+    // TODO(faassen): it would make sense to return a `RelativePathBuf` here at some
     // point in the future so we don't deal with bare strings anymore and
     // we're forced to handle various cases more explicitly.
     pub fn to_relative_string(&self) -> String {
