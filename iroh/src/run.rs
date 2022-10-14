@@ -15,8 +15,8 @@ pub struct Cli {
     #[clap(long)]
     cfg: Option<PathBuf>,
     /// Track metrics
-    #[clap(long, action = clap::ArgAction::Set, default_value_t=true)]
-    metrics: bool,
+    #[clap(long, short)]
+    no_metrics: bool,
     #[clap(subcommand)]
     command: Commands,
 }
@@ -24,7 +24,7 @@ pub struct Cli {
 impl Cli {
     fn make_overrides_map(&self) -> HashMap<String, String> {
         let mut map = HashMap::new();
-        map.insert("metrics.debug".to_string(), (!self.metrics).to_string());
+        map.insert("metrics.debug".to_string(), (self.no_metrics).to_string());
         map
     }
 }
@@ -53,8 +53,8 @@ enum Commands {
     Get {
         /// CID or CID/with/path/qualifier to get
         ipfs_path: IpfsPath,
-        /// filesystem path to write to. Defaults to CID
-        output_path: Option<PathBuf>,
+        /// filesystem path to write to. Default: $CID
+        output: Option<PathBuf>,
     },
 }
 
@@ -110,10 +110,15 @@ impl Cli {
                 println!("/ipfs/{}", cid);
             }
             Commands::Get {
-                ipfs_path,
-                output_path,
+                ipfs_path: path,
+                output,
             } => {
-                let root_path = api.get(ipfs_path, output_path.as_deref()).await?;
+                let cid = if let CidOrDomain::Cid(cid) = path.root() {
+                    cid
+                } else {
+                    return Err(anyhow::anyhow!("ipfs path must refer to a CID"));
+                };
+                let root_path = api.get(path, output.as_deref()).await?;
                 println!("Saving file(s) to {}", root_path.to_str().unwrap());
             }
         };
