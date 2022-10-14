@@ -7,7 +7,7 @@ use futures::FutureExt;
 use libp2p::PeerId;
 use tokio::sync::{mpsc, oneshot, Mutex};
 use tokio::task::JoinHandle;
-use tracing::{debug, error, warn};
+use tracing::{debug, error, trace, warn};
 
 use self::{
     decision::{Config as DecisionConfig, Engine as DecisionEngine, Envelope},
@@ -288,7 +288,7 @@ impl<S: Store> Server<S> {
     }
 
     pub async fn receive_message(&self, peer: &PeerId, message: &BitswapMessage) {
-        debug!("server:receive_message from {}", peer);
+        trace!("server:receive_message from {}", peer);
         self.engine.message_received(peer, message).await;
         // TODO: only track useful messages
     }

@@ -243,7 +243,7 @@ impl<S: Store> Bitswap<S> {
                 }
             }
             PeerState::Connected(_) => {
-                self.peer_connected(peer);
+                // we only connected, might not speak bitswap
             }
             PeerState::Responsive(_, _) => {
                 self.peer_connected(peer);
