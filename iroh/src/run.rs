@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use crate::doc;
+use crate::daemon;
 #[cfg(feature = "testing")]
 use crate::fixture::get_fixture_api;
 use crate::p2p::{run_command as run_p2p_command, P2p};
@@ -34,14 +35,6 @@ impl Cli {
 
 #[derive(Subcommand, Debug, Clone)]
 enum Commands {
-    // status checks the health of the different processes
-    #[clap(about = "Check the health of the different iroh processes.")]
-    #[clap(after_help = doc::STATUS_LONG_DESCRIPTION)]
-    Status {
-        #[clap(short, long)]
-        /// Poll process for changes
-        watch: bool,
-    },
     P2p(P2p),
     #[clap(about = "Add a file or directory to iroh & make it available on IPFS")]
     Add {
@@ -62,6 +55,18 @@ enum Commands {
         /// filesystem path to write to. Optional and defaults to $CID
         output: Option<PathBuf>,
     },
+    #[clap(about = "Start a long running iroh process")]
+    Start {},
+    // status checks the health of the different processes
+    #[clap(about = "Check the health of the different iroh processes.")]
+    #[clap(after_help = doc::STATUS_LONG_DESCRIPTION)]
+    Status {
+        #[clap(short, long)]
+        /// when true, updates the status table whenever a change in a process's status occurs
+        watch: bool,
+    },
+    #[clap(about = "Stop all local iroh services")]
+    Stop {},
 }
 
 impl Cli {
@@ -121,6 +126,14 @@ impl Cli {
             } => {
                 let root_path = api.get(path, output.as_deref()).await?;
                 println!("Saving file(s) to {}", root_path.to_str().unwrap());
+            }
+            Commands::Start {} => {
+                daemon::start().unwrap();
+                println!("started iroh");
+            }
+            Commands::Stop {} => {
+                daemon::stop().unwrap();
+                println!("stopped iroh");
             }
         };
 
