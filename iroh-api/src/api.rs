@@ -106,6 +106,9 @@ impl Api for Iroh {
             while let Some(res) = results.next().await {
                 let (relative_ipfs_path, out) = res?;
                 let relative_path = RelativePathBuf::from_path(&relative_ipfs_path.to_relative_string())?;
+                // TODO this focusing in on sub-paths should really be handled in the resolver,
+                // because it'll be testable there, and it allows potential optimizations we
+                // can't do here
                 if !relative_path.starts_with(&sub_path) {
                     continue;
                 }
