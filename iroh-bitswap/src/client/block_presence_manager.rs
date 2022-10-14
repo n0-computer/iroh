@@ -32,20 +32,27 @@ impl BlockPresenceManager {
     /// Indicates wether the given peer has sent a `HAVE` for the given `cid`.
     pub async fn peer_has_block(&self, peer: &PeerId, cid: &Cid) -> bool {
         let presence = self.presence.read().await;
-        presence
-            .get(cid)
-            .and_then(|l| l.get(peer))
-            .copied()
-            .unwrap_or_default()
+
+        if let Some(list) = presence.get(cid) {
+            if let Some(have) = list.get(peer) {
+                return *have;
+            }
+        }
+        false
     }
 
     /// Indicates wether the given peer has sent a `DONT_HAVE` for the given `cid`.
     pub async fn peer_does_not_have_block(&self, peer: &PeerId, cid: &Cid) -> bool {
         let presence = self.presence.read().await;
-        presence
-            .get(cid)
-            .and_then(|l| l.get(peer).map(|have| !*have))
-            .unwrap_or_default()
+        if let Some(list) = presence.get(cid) {
+            if let Some(have) = list.get(peer) {
+                !have
+            } else {
+                false
+            }
+        } else {
+            false
+        }
     }
 
     /// Filters the keys such that all the given peers have received a DONT_HAVE
@@ -111,7 +118,7 @@ fn all_dont_have(
         // Check if we explicitly know that all the given peers do not have the cid.
         for peer in peers {
             if let Some(has) = ps.get(peer) {
-                if !has {
+                if *has {
                     return false;
                 }
             } else {
@@ -121,5 +128,230 @@ fn all_dont_have(
         true
     } else {
         false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::block::tests::create_random_block_v1;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn test_block_presence_manager() {
+        let bpm = BlockPresenceManager::new();
+
+        let p = PeerId::random();
+        let cids = gen_cids(2);
+        let c0 = cids[0];
+        let c1 = cids[1];
+
+        // Nothing stored yet, both peer_has_block and peer_does_not_have_block should
+        // return false
+        assert!(!bpm.peer_has_block(&p, &c0).await);
+
+        assert!(!bpm.peer_does_not_have_block(&p, &c0).await);
+
+        // HAVE cid0 / DONT_HAVE cid1
+        bpm.receive_from(&p, &[c0][..], &[c1][..]).await;
+
+        // Peer has received HAVE for cid0
+        assert!(bpm.peer_has_block(&p, &c0).await);
+        assert!(!bpm.peer_does_not_have_block(&p, &c0).await);
+
+        // Peer has received DONT_HAVE for cid1
+        assert!(!bpm.peer_has_block(&p, &c1).await);
+        assert!(bpm.peer_does_not_have_block(&p, &c1).await);
+
+        // HAVE cid1 / DONT_HAVE cid0
+        bpm.receive_from(&p, &[c1][..], &[c0][..]).await;
+
+        // DONT_HAVE cid0 should NOT over-write earlier HAVE cid0
+        assert!(bpm.peer_has_block(&p, &c0).await);
+        assert!(!bpm.peer_does_not_have_block(&p, &c0).await);
+
+        // HAVE cid1 should over-write earlier DONT_HAVE cid1
+        assert!(bpm.peer_has_block(&p, &c1).await);
+        assert!(!bpm.peer_does_not_have_block(&p, &c1).await);
+
+        // Remove cid0
+        bpm.remove_keys(&[c0][..]).await;
+
+        // Nothing stored, both peer_has_block and peer_does_not_have_block should
+        // return false
+        assert!(!bpm.peer_has_block(&p, &c0).await);
+        assert!(!bpm.peer_does_not_have_block(&p, &c0).await);
+
+        // Remove cid1
+        bpm.remove_keys(&[c1][..]).await;
+
+        // Nothing stored, both peer_has_block and peer_does_not_have_block should
+        // return false
+        assert!(!bpm.peer_has_block(&p, &c1).await);
+        assert!(!bpm.peer_does_not_have_block(&p, &c1).await);
+    }
+
+    #[tokio::test]
+    async fn test_add_remove_multi() {
+        let bpm = BlockPresenceManager::new();
+
+        let p0 = PeerId::random();
+        let p1 = PeerId::random();
+        let cids = gen_cids(3);
+        let c0 = cids[0];
+        let c1 = cids[1];
+        let c2 = cids[2];
+
+        // p0: HAVE cid0, cid1 / DONT_HAVE cid1, cid2
+        // p1: HAVE cid1, cid2 / DONT_HAVE cid0
+        bpm.receive_from(&p0, &[c0, c1][..], &[c1, c2][..]).await;
+        bpm.receive_from(&p1, &[c1, c2][..], &[c0][..]).await;
+
+        // Peer 0 should end up with
+        // - HAVE cid0
+        // - HAVE cid1
+        // - DONT_HAVE cid2
+        assert!(bpm.peer_has_block(&p0, &c0).await);
+        assert!(bpm.peer_has_block(&p0, &c1).await);
+        assert!(bpm.peer_does_not_have_block(&p0, &c2).await);
+
+        // Peer 1 should end up with
+        // - HAVE cid1
+        // - HAVE cid2
+        // - DONT_HAVE cid0
+        assert!(bpm.peer_has_block(&p1, &c1).await);
+        assert!(bpm.peer_has_block(&p1, &c2).await);
+        assert!(bpm.peer_does_not_have_block(&p1, &c0).await);
+
+        // Remove cid1 and cid2. Should end up with
+        // Peer 0: HAVE cid0
+        // Peer 1: DONT_HAVE cid0
+        bpm.remove_keys(&[c1, c2][..]).await;
+        assert!(bpm.peer_has_block(&p0, &c0).await);
+        assert!(bpm.peer_does_not_have_block(&p1, &c0).await);
+
+        // The other keys should have been cleared, so both HasBlock() and
+        // DoesNotHaveBlock() should return false
+        assert!(!bpm.peer_has_block(&p0, &c1).await);
+        assert!(!bpm.peer_does_not_have_block(&p0, &c1).await);
+
+        assert!(!bpm.peer_has_block(&p0, &c2).await);
+        assert!(!bpm.peer_does_not_have_block(&p0, &c2).await);
+        assert!(!bpm.peer_has_block(&p1, &c1).await);
+        assert!(!bpm.peer_does_not_have_block(&p1, &c1).await);
+        assert!(!bpm.peer_has_block(&p1, &c2).await);
+        assert!(!bpm.peer_does_not_have_block(&p1, &c2).await);
+    }
+
+    #[tokio::test]
+    async fn test_all_peers_do_not_have_block() {
+        let bpm = BlockPresenceManager::new();
+
+        let p0 = PeerId::random();
+        let p1 = PeerId::random();
+        let p2 = PeerId::random();
+
+        let cids = gen_cids(3);
+        let c0 = cids[0];
+        let c1 = cids[1];
+        let c2 = cids[2];
+
+        //      c0  c1  c2
+        //  p0   ?  N   N
+        //  p1   N  Y   ?
+        //  p2   Y  Y   N
+        bpm.receive_from(&p0, &[][..], &[c1, c2][..]).await;
+        bpm.receive_from(&p1, &[c1][..], &[c0][..]).await;
+        bpm.receive_from(&p2, &[c0, c1][..], &[c2][..]).await;
+
+        struct TestCase {
+            peers: Vec<PeerId>,
+            ks: Vec<Cid>,
+            exp: Vec<Cid>,
+        }
+
+        let testcases = [
+            TestCase {
+                peers: vec![p0],
+                ks: vec![c0],
+                exp: vec![],
+            },
+            TestCase {
+                peers: vec![p1],
+                ks: vec![c0],
+                exp: vec![c0],
+            },
+            TestCase {
+                peers: vec![p2],
+                ks: vec![c0],
+                exp: vec![],
+            },
+            TestCase {
+                peers: vec![p0],
+                ks: vec![c1],
+                exp: vec![c1],
+            },
+            TestCase {
+                peers: vec![p1],
+                ks: vec![c1],
+                exp: vec![],
+            },
+            TestCase {
+                peers: vec![p2],
+                ks: vec![c1],
+                exp: vec![],
+            },
+            TestCase {
+                peers: vec![p0],
+                ks: vec![c2],
+                exp: vec![c2],
+            },
+            TestCase {
+                peers: vec![p1],
+                ks: vec![c2],
+                exp: vec![],
+            },
+            TestCase {
+                peers: vec![p2],
+                ks: vec![c2],
+                exp: vec![c2],
+            },
+            // p0 recieved DONT_HAVE for c1 & c2 (but not for c0)
+            TestCase {
+                peers: vec![p0],
+                ks: vec![c0, c1, c2],
+                exp: vec![c1, c2],
+            },
+            TestCase {
+                peers: vec![p0, p1],
+                ks: vec![c0, c1, c2],
+                exp: vec![],
+            },
+            // Both p0 and p2 received DONT_HAVE for c2
+            TestCase {
+                peers: vec![p0, p2],
+                ks: vec![c0, c1, c2],
+                exp: vec![c2],
+            },
+            TestCase {
+                peers: vec![p0, p1, p2],
+                ks: vec![c0, c1, c2],
+                exp: vec![],
+            },
+        ];
+
+        for (i, mut tc) in testcases.into_iter().enumerate() {
+            let mut peers = bpm.all_peers_do_not_have_block(&tc.peers, tc.ks).await;
+            peers.sort();
+            tc.exp.sort();
+            assert_eq!(
+                peers, tc.exp,
+                "test case {i} failed: expected matching keys"
+            );
+        }
+    }
+
+    fn gen_cids(n: usize) -> Vec<Cid> {
+        (0..n).map(|_| *create_random_block_v1().cid()).collect()
     }
 }
