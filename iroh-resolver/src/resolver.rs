@@ -111,7 +111,7 @@ impl Path {
     }
 
     // used only for string path manipulation
-    pub fn is_dir_like_path(&self) -> bool {
+    pub fn has_trailing_slash(&self) -> bool {
         !self.tail.is_empty() && self.tail.last().unwrap().is_empty()
     }
 
@@ -127,7 +127,7 @@ impl Path {
             }
             s.push_str(&format!("/{}", part)[..]);
         }
-        if self.is_dir_like_path() {
+        if self.has_trailing_slash() {
             s.push('/');
         }
         s
@@ -160,7 +160,7 @@ impl Display for Path {
             write!(f, "/{}", part)?;
         }
 
-        if self.is_dir_like_path() {
+        if self.has_trailing_slash() {
             write!(f, "/")?;
         }
 
@@ -1246,8 +1246,8 @@ mod tests {
 
         assert!(non_dir_path.to_string() == non_dir_test);
         assert!(dir_path.to_string() == dir_test);
-        assert!(dir_path.is_dir_like_path());
-        assert!(!non_dir_path.is_dir_like_path());
+        assert!(dir_path.has_trailing_slash());
+        assert!(!non_dir_path.has_trailing_slash());
     }
 
     fn make_ipld() -> Ipld {
