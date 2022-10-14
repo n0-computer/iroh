@@ -14,9 +14,9 @@ use iroh_metrics::config::Config as MetricsConfig;
 pub struct Cli {
     #[clap(long)]
     cfg: Option<PathBuf>,
-    /// Track metrics
-    #[clap(long, action = clap::ArgAction::Set, default_value_t=true)]
-    metrics: bool,
+    /// Do not track metrics
+    #[clap(long)]
+    no_metrics: bool,
     #[clap(subcommand)]
     command: Commands,
 }
@@ -24,7 +24,7 @@ pub struct Cli {
 impl Cli {
     fn make_overrides_map(&self) -> HashMap<String, String> {
         let mut map = HashMap::new();
-        map.insert("metrics.debug".to_string(), (!self.metrics).to_string());
+        map.insert("metrics.debug".to_string(), (self.no_metrics).to_string());
         map
     }
 }
@@ -39,22 +39,23 @@ enum Commands {
         watch: bool,
     },
     P2p(P2p),
-    #[clap(about = "break up a file into block and provide those blocks on the ipfs network")]
+    #[clap(about = "Add a file or directory to iroh & make it available on IPFS")]
     Add {
+        /// The path to a file or directory to be added
         path: PathBuf,
+        /// Required to add a directory
         #[clap(long, short)]
         recursive: bool,
-        #[clap(long, short)]
+        /// Do not wrap added content with a directory
+        #[clap(long)]
         no_wrap: bool,
     },
-    #[clap(
-        about = "get content based on a Content Identifier from the ipfs network, and save it "
-    )]
+    #[clap(about = "Fetch IPFS content and write it to disk")]
     Get {
         /// CID or CID/with/path/qualifier to get
         ipfs_path: IpfsPath,
-        /// filesystem path to write to. Defaults to CID
-        output_path: Option<PathBuf>,
+        /// filesystem path to write to. Optional and defaults to $CID
+        output: Option<PathBuf>,
     },
 }
 
@@ -110,10 +111,10 @@ impl Cli {
                 println!("/ipfs/{}", cid);
             }
             Commands::Get {
-                ipfs_path,
-                output_path,
+                ipfs_path: path,
+                output,
             } => {
-                let root_path = api.get(ipfs_path, output_path.as_deref()).await?;
+                let root_path = api.get(path, output.as_deref()).await?;
                 println!("Saving file(s) to {}", root_path.to_str().unwrap());
             }
         };
