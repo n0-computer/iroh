@@ -131,7 +131,7 @@ impl Source for Config {
     fn collect(&self) -> Result<Map<String, Value>, ConfigError> {
         let rpc_client = self.rpc_client.collect()?;
         let mut map: Map<String, Value> = Map::new();
-        insert_into_config_map(&mut map, "public_url_base", self.public_url_base);
+        insert_into_config_map(&mut map, "public_url_base", self.public_url_base.clone());
         insert_into_config_map(&mut map, "denylist", self.denylist);
         // Some issue between deserializing u64 & u16, converting this to
         // an signed int fixes the issue
@@ -197,6 +197,10 @@ mod tests {
     fn test_collect() {
         let default = Config::default();
         let mut expect: Map<String, Value> = Map::new();
+        expect.insert(
+            "public_url_base".to_string(),
+            Value::new(None, default.public_url_base.clone()),
+        );
         expect.insert("port".to_string(), Value::new(None, default.port as i64));
         expect.insert("denylist".to_string(), Value::new(None, default.denylist));
         expect.insert(

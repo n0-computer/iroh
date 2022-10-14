@@ -575,14 +575,14 @@ async fn serve_fs<T: ContentLoader + std::marker::Unpin>(
             // todo(arqu): add lazy seeking
             add_cache_control_headers(&mut headers, metadata.clone());
             set_etag_headers(&mut headers, get_etag(&req.cid, Some(req.format.clone())));
-            add_ipfs_roots_headers(&mut headers, metadata);
             let name = add_content_disposition_headers(
                 &mut headers,
                 &req.query_file_name,
-                &req.content_path,
+                &req.resolved_path,
                 req.download,
             );
-            add_content_type_headers(&mut headers, &name);
+            let content_sniffed_mime = body.get_mime();
+            add_content_type_headers(&mut headers, &name, content_sniffed_mime);
             response(StatusCode::OK, body, headers)
         }
     }
@@ -629,6 +629,7 @@ async fn serve_fs_dir<T: ContentLoader + std::marker::Unpin>(
 
     let mut breadcrumbs: Vec<HashMap<&str, String>> = Vec::new();
     root_path
+        .to_string()
         .trim_matches('/')
         .split('/')
         .fold(&mut breadcrumbs, |accum, path_el| {
@@ -654,7 +655,7 @@ async fn serve_fs_dir<T: ContentLoader + std::marker::Unpin>(
 
     template_data.insert(
         "root_path".to_string(),
-        Json::String(req.content_path.clone()),
+        Json::String(req.resolved_path.to_string()),
     );
     template_data.insert(
         "public_url_base".to_string(),
