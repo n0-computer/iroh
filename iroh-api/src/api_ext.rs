@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use crate::{Api, Cid, IpfsPath, OutType};
+use crate::{Api, IpfsPath, OutType};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use futures::Stream;
@@ -15,10 +15,10 @@ pub trait ApiExt: Api {
         ipfs_path: &IpfsPath,
         output_path: Option<&'a Path>,
     ) -> Result<PathBuf> {
-        let cid = ipfs_path
-            .cid()
-            .ok_or_else(|| anyhow!("IPFS path does not refer to a CID"))?;
-        let root_path = get_root_path(cid, output_path);
+        if ipfs_path.cid().is_none() {
+            return Err(anyhow!("IPFS path does not refer to a CID"));
+        }
+        let root_path = get_root_path(ipfs_path, output_path);
         if root_path.exists() {
             return Err(anyhow!(
                 "output path {} already exists",
@@ -59,10 +59,16 @@ async fn save_get_stream(
 }
 
 /// Given an cid and an optional output path, determine root path
-fn get_root_path(cid: &Cid, output_path: Option<&Path>) -> PathBuf {
+fn get_root_path(ipfs_path: &IpfsPath, output_path: Option<&Path>) -> PathBuf {
     match output_path {
         Some(path) => path.to_path_buf(),
-        None => PathBuf::from(cid.to_string()),
+        None => {
+            if ipfs_path.tail().is_empty() {
+                PathBuf::from(ipfs_path.cid().unwrap().to_string())
+            } else {
+                PathBuf::from(ipfs_path.tail().last().unwrap())
+            }
+        }
     }
 }
 
@@ -92,13 +98,26 @@ mod tests {
 
     #[test]
     fn test_get_root_path() {
-        let cid = Cid::from_str("QmYbcW4tXLXHWw753boCK8Y7uxLu5abXjyYizhLznq9PUR").unwrap();
+        let ipfs_path =
+            IpfsPath::from_str("/ipfs/QmYyQSo1c1Ym7orWxLYvCrM2EmxFTANf8wXmmE7DWjhx5N").unwrap();
         assert_eq!(
-            get_root_path(&cid, None),
-            PathBuf::from("QmYbcW4tXLXHWw753boCK8Y7uxLu5abXjyYizhLznq9PUR")
+            get_root_path(&ipfs_path, None),
+            PathBuf::from("QmYyQSo1c1Ym7orWxLYvCrM2EmxFTANf8wXmmE7DWjhx5N")
         );
         assert_eq!(
-            get_root_path(&cid, Some(Path::new("bar"))),
+            get_root_path(&ipfs_path, Some(Path::new("bar"))),
+            PathBuf::from("bar")
+        );
+    }
+
+    #[test]
+    fn test_get_root_path_with_tail() {
+        let ipfs_path =
+            IpfsPath::from_str("/ipfs/QmYyQSo1c1Ym7orWxLYvCrM2EmxFTANf8wXmmE7DWjhx5N/tail")
+                .unwrap();
+        assert_eq!(get_root_path(&ipfs_path, None), PathBuf::from("tail"));
+        assert_eq!(
+            get_root_path(&ipfs_path, Some(Path::new("bar"))),
             PathBuf::from("bar")
         );
     }
