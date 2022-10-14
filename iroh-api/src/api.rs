@@ -109,8 +109,7 @@ impl Api for Iroh {
                 // TODO(faassen) this focusing in on sub-paths should really be handled in the resolver:
                 // * it can be tested there far more easily than here (where currently it isn't)
                 // * it makes sense to have an API "what does this resolve to" in the resolver
-                // * the resolver may have opportunities for optimization we don't have, like
-                //   not even touching the store at all if the path isn't requested in the first place
+                // * the resolver may have opportunities for optimization we don't have
                 if !relative_path.starts_with(&sub_path) {
                     continue;
                 }
