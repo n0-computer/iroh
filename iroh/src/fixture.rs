@@ -3,7 +3,6 @@ use std::env;
 
 use futures::StreamExt;
 use iroh_api::{Lookup, MockApi, MockP2p, OutType, PeerId};
-use relative_path::RelativePathBuf;
 
 type GetFixture = fn() -> MockApi;
 type FixtureRegistry = HashMap<String, GetFixture>;
@@ -30,44 +29,44 @@ fn fixture_lookup() -> MockApi {
 
 fn fixture_get() -> MockApi {
     let mut api = MockApi::default();
-    api.expect_get_stream().returning(|_ipfs_path| {
-        futures::stream::iter(vec![
-            Ok((RelativePathBuf::from_path("").unwrap(), OutType::Dir)),
-            Ok((RelativePathBuf::from_path("a").unwrap(), OutType::Dir)),
-            Ok((
-                RelativePathBuf::from_path("b").unwrap(),
-                OutType::Reader(Box::new(std::io::Cursor::new("hello"))),
-            )),
-        ])
-        .boxed_local()
-    });
+    // api.expect_get_stream().returning(|ipfs_path| {
+    //     futures::stream::iter(vec![
+    //         Ok((RelativePathBuf::from_path("").unwrap(), OutType::Dir)),
+    //         Ok((RelativePathBuf::from_path("a").unwrap(), OutType::Dir)),
+    //         Ok((
+    //             RelativePathBuf::from_path("b").unwrap(),
+    //             OutType::Reader(Box::new(std::io::Cursor::new("hello"))),
+    //         )),
+    //     ])
+    //     .boxed_local()
+    // });
     api
 }
 
 fn fixture_get_wrapped_file() -> MockApi {
     let mut api = MockApi::default();
-    api.expect_get_stream().returning(|_ipfs_path| {
-        futures::stream::iter(vec![
-            Ok((RelativePathBuf::from_path("").unwrap(), OutType::Dir)),
-            Ok((
-                RelativePathBuf::from_path("file.txt").unwrap(),
-                OutType::Reader(Box::new(std::io::Cursor::new("hello"))),
-            )),
-        ])
-        .boxed_local()
-    });
+    // api.expect_get_stream().returning(|_ipfs_path| {
+    //     futures::stream::iter(vec![
+    //         Ok((RelativePathBuf::from_path("").unwrap(), OutType::Dir)),
+    //         Ok((
+    //             RelativePathBuf::from_path("file.txt").unwrap(),
+    //             OutType::Reader(Box::new(std::io::Cursor::new("hello"))),
+    //         )),
+    //     ])
+    //     .boxed_local()
+    // });
     api
 }
 
 fn fixture_get_unwrapped_file() -> MockApi {
-    let mut api = MockApi::default();
-    api.expect_get_stream().returning(|_ipfs_path| {
-        futures::stream::iter(vec![Ok((
-            RelativePathBuf::from_path("").unwrap(),
-            OutType::Reader(Box::new(std::io::Cursor::new("hello"))),
-        ))])
-        .boxed_local()
-    });
+    let api = MockApi::default();
+    // api.expect_get_stream().returning(|_ipfs_path| {
+    //     futures::stream::iter(vec![Ok((
+    //         RelativePathBuf::from_path("").unwrap(),
+    //         OutType::Reader(Box::new(std::io::Cursor::new("hello"))),
+    //     ))])
+    //     .boxed_local()
+    // });
     api
 }
 

@@ -118,6 +118,11 @@ impl Path {
         self.tail.join("/")
     }
 
+    pub fn to_path_buf(&self) -> std::path::PathBuf {
+        let p = format!("{}/{}", self.root, self.to_relative_string());
+        std::path::PathBuf::from(p)
+    }
+
     pub fn cid(&self) -> Option<&Cid> {
         match &self.root {
             CidOrDomain::Cid(cid) => Some(cid),

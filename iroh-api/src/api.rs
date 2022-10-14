@@ -17,7 +17,6 @@ use iroh_rpc_client::StatusTable;
 use iroh_util::{iroh_config_path, make_config};
 #[cfg(feature = "testing")]
 use mockall::automock;
-use relative_path::RelativePathBuf;
 use tokio::io::AsyncRead;
 
 pub struct Iroh {
@@ -42,10 +41,7 @@ pub trait Api {
     /// Produces a asynchronous stream of file descriptions Each description is
     /// a tuple of a relative path, and either a `Directory` or a `Reader`
     /// with the file contents.
-    fn get_stream(
-        &self,
-        ipfs_path: &IpfsPath,
-    ) -> LocalBoxStream<'_, Result<(RelativePathBuf, OutType)>>;
+    fn get_stream(&self, ipfs_path: &IpfsPath) -> LocalBoxStream<'_, Result<(PathBuf, OutType)>>;
     fn add<'a>(
         &'a self,
         path: &'a Path,
@@ -93,23 +89,20 @@ impl Api for Iroh {
         Ok(ClientP2p::new(p2p_client.clone()))
     }
 
-    fn get_stream(
-        &self,
-        ipfs_path: &IpfsPath,
-    ) -> LocalBoxStream<'_, Result<(RelativePathBuf, OutType)>> {
+    fn get_stream(&self, ipfs_path: &IpfsPath) -> LocalBoxStream<'_, Result<(PathBuf, OutType)>> {
         tracing::debug!("get {:?}", ipfs_path);
         let resolver = iroh_resolver::resolver::Resolver::new(self.client.clone());
         let results = resolver.resolve_recursive_with_paths(ipfs_path.clone());
         async_stream::try_stream! {
             tokio::pin!(results);
             while let Some(res) = results.next().await {
-                let (relative_ipfs_path, out) = res?;
-                let relative_path = RelativePathBuf::from_path(&relative_ipfs_path.to_relative_string())?;
+                let (ipfs_path, out) = res?;
+                let ipfs_path = ipfs_path.to_path_buf();
                 if out.is_dir() {
-                    yield (relative_path, OutType::Dir);
+                    yield (ipfs_path, OutType::Dir);
                 } else {
                     let reader = out.pretty(resolver.clone(), Default::default())?;
-                    yield (relative_path, OutType::Reader(Box::new(reader)));
+                    yield (ipfs_path, OutType::Reader(Box::new(reader)));
                 }
             }
         }

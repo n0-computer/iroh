@@ -1,11 +1,10 @@
 use std::path::{Path, PathBuf};
 
-use crate::{Api, Cid, IpfsPath, OutType};
+use crate::{Api, IpfsPath, OutType};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use futures::Stream;
 use futures::StreamExt;
-use relative_path::RelativePathBuf;
 
 #[async_trait(?Send)]
 pub trait ApiExt: Api {
@@ -15,19 +14,16 @@ pub trait ApiExt: Api {
         ipfs_path: &IpfsPath,
         output_path: Option<&'a Path>,
     ) -> Result<PathBuf> {
-        let cid = ipfs_path
+        ipfs_path
             .cid()
             .ok_or_else(|| anyhow!("IPFS path does not refer to a CID"))?;
-        let root_path = get_root_path(cid, output_path);
-        if root_path.exists() {
-            return Err(anyhow!(
-                "output path {} already exists",
-                root_path.display()
-            ));
+        let out_path = get_out_path(ipfs_path, output_path);
+        if out_path.exists() {
+            return Err(anyhow!("output path {} already exists", out_path.display()));
         }
         let blocks = self.get_stream(ipfs_path);
-        save_get_stream(&root_path, blocks).await?;
-        Ok(root_path)
+        save_get_stream(&ipfs_path.to_path_buf(), &out_path, blocks).await?;
+        Ok(out_path)
     }
 }
 
@@ -36,19 +32,20 @@ impl<T> ApiExt for T where T: Api {}
 /// take a stream of blocks as from `get_stream` and write them to the filesystem
 async fn save_get_stream(
     root_path: &Path,
-    blocks: impl Stream<Item = Result<(RelativePathBuf, OutType)>>,
+    out_path: &Path,
+    blocks: impl Stream<Item = Result<(PathBuf, OutType)>>,
 ) -> Result<()> {
     tokio::pin!(blocks);
     while let Some(block) = blocks.next().await {
         let (path, out) = block?;
-        let full_path = path.to_path(root_path);
+        let full_path = replace_with_out_path(root_path, out_path, &path)?;
         match out {
             OutType::Dir => {
                 tokio::fs::create_dir_all(full_path).await?;
             }
             OutType::Reader(mut reader) => {
-                if let Some(parent) = path.parent() {
-                    tokio::fs::create_dir_all(parent.to_path(root_path)).await?;
+                if let Some(parent) = full_path.parent() {
+                    tokio::fs::create_dir_all(parent).await?;
                 }
                 let mut f = tokio::fs::File::create(full_path).await?;
                 tokio::io::copy(&mut reader, &mut f).await?;
@@ -58,31 +55,52 @@ async fn save_get_stream(
     Ok(())
 }
 
-/// Given an cid and an optional output path, determine root path
-fn get_root_path(cid: &Cid, output_path: Option<&Path>) -> PathBuf {
+/// Given the ipfs_path and an optional output path, determine output path
+fn get_out_path(ipfs_path: &IpfsPath, output_path: Option<&Path>) -> PathBuf {
     match output_path {
         Some(path) => path.to_path_buf(),
-        None => PathBuf::from(cid.to_string()),
+        None => {
+            let mut out_path = ipfs_path.to_path_buf();
+            if let Some(parent) = out_path.parent() {
+                out_path = out_path
+                    .strip_prefix(parent)
+                    .expect("parent should always be a valid path prefix")
+                    .to_path_buf();
+            }
+            out_path
+        }
     }
+}
+
+fn replace_with_out_path(root_path: &Path, output_path: &Path, path: &Path) -> Result<PathBuf> {
+    if root_path == path {
+        return Ok(output_path.to_path_buf());
+    }
+    let relative = path.strip_prefix(root_path)?;
+    Ok(output_path.join(relative))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cid::Cid;
     use std::str::FromStr;
     use tempdir::TempDir;
 
     #[tokio::test]
     async fn test_save_get_stream() {
         let stream = Box::pin(futures::stream::iter(vec![
-            Ok((RelativePathBuf::from_path("a").unwrap(), OutType::Dir)),
+            Ok((PathBuf::from("foo/a"), OutType::Dir)),
             Ok((
-                RelativePathBuf::from_path("b").unwrap(),
+                PathBuf::from("foo/b"),
                 OutType::Reader(Box::new(std::io::Cursor::new("hello"))),
             )),
         ]));
+        let ipfs_path = PathBuf::from("foo");
         let tmp_dir = TempDir::new("test_save_get_stream").unwrap();
-        save_get_stream(tmp_dir.path(), stream).await.unwrap();
+        save_get_stream(&ipfs_path, tmp_dir.path(), stream)
+            .await
+            .unwrap();
         assert!(tmp_dir.path().join("a").is_dir());
         assert_eq!(
             std::fs::read_to_string(tmp_dir.path().join("b")).unwrap(),
@@ -91,15 +109,34 @@ mod tests {
     }
 
     #[test]
-    fn test_get_root_path() {
+    fn test_get_out_path() {
         let cid = Cid::from_str("QmYbcW4tXLXHWw753boCK8Y7uxLu5abXjyYizhLznq9PUR").unwrap();
+        let ipfs_path = IpfsPath::from_cid(cid);
         assert_eq!(
-            get_root_path(&cid, None),
+            get_out_path(&ipfs_path, None),
             PathBuf::from("QmYbcW4tXLXHWw753boCK8Y7uxLu5abXjyYizhLznq9PUR")
         );
         assert_eq!(
-            get_root_path(&cid, Some(Path::new("bar"))),
+            get_out_path(&ipfs_path, Some(Path::new("bar"))),
             PathBuf::from("bar")
         );
+    }
+
+    #[test]
+    fn test_replace_with_out_path() {
+        let got = replace_with_out_path(
+            Path::new("foo/bar"),
+            Path::new("baz"),
+            Path::new("foo/bar/bat"),
+        )
+        .unwrap();
+        let expect = PathBuf::from("baz/bat");
+        assert_eq!(expect, got);
+
+        let got =
+            replace_with_out_path(Path::new("foo/bar"), Path::new("baz"), Path::new("foo/bar"))
+                .unwrap();
+        let expect = PathBuf::from("baz");
+        assert_eq!(expect, got);
     }
 }
