@@ -18,7 +18,7 @@ use iroh_util::{iroh_config_path, make_config};
 #[cfg(feature = "testing")]
 use mockall::automock;
 use relative_path::RelativePathBuf;
-use tokio::io::AsyncRead;
+use tokio::io::{AsyncRead, AsyncReadExt};
 
 pub struct Iroh {
     client: Client,
@@ -27,6 +27,7 @@ pub struct Iroh {
 pub enum OutType {
     Dir,
     Reader(Box<dyn AsyncRead + Unpin>),
+    Symlink(PathBuf),
 }
 
 // Note: `#[async_trait]` is deliberately not in use for this trait, because it
@@ -49,6 +50,7 @@ pub trait Api {
 
     fn add_file<'a>(&'a self, path: &'a Path, wrap: bool) -> LocalBoxFuture<'_, Result<Cid>>;
     fn add_dir<'a>(&'a self, path: &'a Path, wrap: bool) -> LocalBoxFuture<'_, Result<Cid>>;
+    fn add_symlink<'a>(&'a self, path: &'a Path, wrap: bool) -> LocalBoxFuture<'_, Result<Cid>>;
 
     fn check(&self) -> BoxFuture<'_, StatusTable>;
     fn watch(&self) -> LocalBoxFuture<'static, LocalBoxStream<'static, StatusTable>>;
@@ -114,6 +116,12 @@ impl Api for Iroh {
                 let relative_path = relative_path.strip_prefix(&sub_path).expect("should be a prefix").to_owned();
                 if out.is_dir() {
                     yield (relative_path, OutType::Dir);
+                } else if out.is_symlink() {
+                    let mut reader = out.pretty(resolver.clone(), Default::default(), iroh_resolver::resolver::ResponseClip::NoClip)?;
+                    let mut target = String::new();
+                    reader.read_to_string(&mut target).await?;
+                    let target = PathBuf::from(target);
+                    yield (relative_path, OutType::Symlink(target));
                 } else {
                     let reader = out.pretty(resolver.clone(), Default::default(), iroh_resolver::resolver::ResponseClip::NoClip)?;
                     yield (relative_path, OutType::Reader(Box::new(reader)));
@@ -139,6 +147,16 @@ impl Api for Iroh {
                 client: Box::new(&self.client),
             };
             unixfs_builder::add_dir(Some(&providing_client), path, wrap).await
+        }
+        .boxed_local()
+    }
+
+    fn add_symlink<'a>(&'a self, path: &'a Path, wrap: bool) -> LocalBoxFuture<'_, Result<Cid>> {
+        async move {
+            let providing_client = iroh_resolver::unixfs_builder::StoreAndProvideClient {
+                client: Box::new(&self.client),
+            };
+            unixfs_builder::add_symlink(Some(&providing_client), path, wrap).await
         }
         .boxed_local()
     }

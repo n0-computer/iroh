@@ -63,6 +63,12 @@ async fn save_get_stream(
                 let mut f = tokio::fs::File::create(full_path).await?;
                 tokio::io::copy(&mut reader, &mut f).await?;
             }
+            OutType::Symlink(target) => {
+                if let Some(parent) = path.parent() {
+                    tokio::fs::create_dir_all(parent.to_path(root_path)).await?;
+                }
+                tokio::fs::symlink(target, full_path).await?;
+            }
         }
     }
     Ok(())
