@@ -1,3 +1,4 @@
+use std::ops::Range;
 use std::pin::Pin;
 use std::task::Poll;
 
@@ -14,10 +15,10 @@ use iroh_metrics::{
 };
 use iroh_resolver::resolver::{
     CidOrDomain, ContentLoader, Metadata, Out, OutMetrics, OutPrettyReader, OutType, Resolver,
-    Source,
+    ResponseClip, Source,
 };
 use mime::Mime;
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWrite};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, AsyncWrite};
 use tokio_util::io::ReaderStream;
 use tracing::{info, warn};
 
@@ -45,6 +46,10 @@ pub enum FileResult<T: ContentLoader> {
 impl<T: ContentLoader> PrettyStreamBody<T> {
     pub fn get_mime(&self) -> Option<Mime> {
         self.2.clone()
+    }
+
+    pub fn get_size(&self) -> Option<u64> {
+        self.1
     }
 }
 
@@ -93,6 +98,7 @@ impl<T: ContentLoader + std::marker::Unpin> Client<T> {
         &self,
         path: iroh_resolver::resolver::Path,
         start_time: std::time::Instant,
+        range: Option<Range<u64>>,
     ) -> Result<(FileResult<T>, Metadata), String> {
         info!("get file {}", path);
         let res = self
@@ -107,13 +113,27 @@ impl<T: ContentLoader + std::marker::Unpin> Client<T> {
             let body = FileResult::Directory(res);
             Ok((body, metadata))
         } else {
+            let mut clip = 0;
+            if let Some(range) = &range {
+                clip = range.end as usize;
+            }
             let reader = res
-                .pretty(self.resolver.clone(), OutMetrics { start: start_time })
+                .pretty(
+                    self.resolver.clone(),
+                    OutMetrics { start: start_time },
+                    ResponseClip::from(clip),
+                )
                 .map_err(|e| e.to_string())?;
 
             let mut buf_reader = tokio::io::BufReader::with_capacity(1024 * 1024, reader);
             let body_sample = buf_reader.fill_buf().await.map_err(|e| e.to_string())?;
             let mime = sniff_content_type(body_sample);
+            if let Some(range) = range {
+                buf_reader
+                    .seek(tokio::io::SeekFrom::Start(range.start))
+                    .await
+                    .map_err(|e| e.to_string())?;
+            }
             let stream = ReaderStream::new(buf_reader);
 
             let body = PrettyStreamBody(stream, metadata.size, Some(mime));
@@ -164,8 +184,11 @@ impl<T: ContentLoader + std::marker::Unpin> Client<T> {
                     Ok(res) => {
                         let metadata = res.metadata().clone();
                         record_ttfb_metrics(start_time, &metadata.source);
-                        let reader =
-                            res.pretty(self.resolver.clone(), OutMetrics { start: start_time });
+                        let reader = res.pretty(
+                            self.resolver.clone(),
+                            OutMetrics { start: start_time },
+                            ResponseClip::NoClip,
+                        );
                         match reader {
                             Ok(mut reader) => {
                                 let mut bytes = Vec::new();
