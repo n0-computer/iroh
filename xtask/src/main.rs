@@ -3,7 +3,7 @@ use clap::{CommandFactory, Parser, Subcommand};
 use std::{
     env, fs, io,
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    process::Command,
 };
 
 #[derive(Debug, Parser)]
@@ -21,6 +21,11 @@ enum Commands {
     Dist {},
     #[command(about = "build man pages")]
     Man {},
+    #[command(about = "copy release binaries to $HOME/.cargo/bin")]
+    DevInstall {
+        #[clap(short, long)]
+        build: bool,
+    },
 }
 
 fn main() {
@@ -35,6 +40,7 @@ fn run_subcommand(args: Cli) -> Result<()> {
     match args.command {
         Commands::Dist {} => dist()?,
         Commands::Man {} => dist_manpage()?,
+        Commands::DevInstall { build } => dev_install(build)?,
     }
     Ok(())
 }
@@ -43,13 +49,28 @@ fn dist() -> Result<()> {
     let _ = fs::remove_dir_all(&dist_dir());
     fs::create_dir_all(&dist_dir())?;
 
-    dist_binary()?;
+    dist_binaries()?;
     dist_manpage()?;
 
     Ok(())
 }
 
-fn dist_binary() -> Result<()> {
+fn dev_install(build: bool) -> Result<()> {
+    if build {
+        dist().unwrap();
+    }
+    let bins = vec!["iroh", "iroh-one", "iroh-gateway", "iroh-p2p", "iroh-store"];
+    let home = dirs_next::home_dir().unwrap();
+    for bin in bins {
+        let from = project_root().join(format!("target/release/{}", bin));
+        let to = home.join(format!(".cargo/bin/{}", bin));
+        println!("copying {} to {}", bin, to.to_str().unwrap());
+        fs::copy(from, to).unwrap();
+    }
+    Ok(())
+}
+
+fn dist_binaries() -> Result<()> {
     let cargo = env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
     let status = Command::new(cargo)
         .current_dir(project_root())
@@ -64,12 +85,7 @@ fn dist_binary() -> Result<()> {
 
     fs::copy(&dst, dist_dir().join("iroh"))?;
 
-    if Command::new("strip")
-        .arg("--version")
-        .stdout(Stdio::null())
-        .status()
-        .is_ok()
-    {
+    if which::which("strip").is_ok() {
         eprintln!("stripping the binary");
         let status = Command::new("strip").arg(&dst).status()?;
         if !status.success() {
