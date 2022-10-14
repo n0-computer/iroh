@@ -39,8 +39,8 @@ pub trait Api {
 
     fn p2p(&self) -> Result<Self::P>;
 
-    /// Produces a asynchronous stream of file descriptions Each description is
-    /// a tuple of a relative path, and either a `Directory` or a `Reader`
+    /// Produces a asynchronous stream of file descriptions
+    /// Each description is a tuple of a relative path, and either a `Directory` or a `Reader`
     /// with the file contents.
     fn get_stream(
         &self,
