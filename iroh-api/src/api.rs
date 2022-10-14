@@ -17,7 +17,7 @@ use iroh_rpc_client::StatusTable;
 use iroh_util::{iroh_config_path, make_config};
 #[cfg(feature = "testing")]
 use mockall::automock;
-use relative_path::{RelativePath, RelativePathBuf};
+use relative_path::RelativePathBuf;
 use tokio::io::AsyncRead;
 
 pub struct Iroh {
