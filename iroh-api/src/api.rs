@@ -106,9 +106,11 @@ impl Api for Iroh {
             while let Some(res) = results.next().await {
                 let (relative_ipfs_path, out) = res?;
                 let relative_path = RelativePathBuf::from_path(&relative_ipfs_path.to_relative_string())?;
-                // TODO this focusing in on sub-paths should really be handled in the resolver,
-                // because it'll be testable there, and it allows potential optimizations we
-                // can't do here
+                // TODO(faassen) this focusing in on sub-paths should really be handled in the resolver:
+                // * it can be tested there far more easily than here (where currently it isn't)
+                // * it makes sense to have an API "what does this resolve to" in the resolver
+                // * the resolver may have opportunities for optimization we don't have, like
+                //   not even touching the store at all if the path isn't requested in the first place
                 if !relative_path.starts_with(&sub_path) {
                     continue;
                 }
