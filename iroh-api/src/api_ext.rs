@@ -33,6 +33,8 @@ pub trait ApiExt: Api {
     async fn add(&self, path: &Path, wrap: bool) -> Result<Cid> {
         if path.is_dir() {
             self.add_dir(path, wrap).await
+        } else if path.is_symlink() {
+            self.add_symlink(path, wrap).await
         } else if path.is_file() {
             self.add_file(path, wrap).await
         } else {
@@ -99,6 +101,10 @@ mod tests {
         let stream = Box::pin(futures::stream::iter(vec![
             Ok((RelativePathBuf::from_path("a").unwrap(), OutType::Dir)),
             Ok((
+                RelativePathBuf::from_path("a/c").unwrap(),
+                OutType::Symlink(PathBuf::from("../b")),
+            )),
+            Ok((
                 RelativePathBuf::from_path("b").unwrap(),
                 OutType::Reader(Box::new(std::io::Cursor::new("hello"))),
             )),
@@ -106,6 +112,11 @@ mod tests {
         let tmp_dir = TempDir::new("test_save_get_stream").unwrap();
         save_get_stream(tmp_dir.path(), stream).await.unwrap();
         assert!(tmp_dir.path().join("a").is_dir());
+        assert!(tmp_dir.path().join("a/c").is_symlink());
+        let target = tokio::fs::read_link(tmp_dir.path().join("a/c"))
+            .await
+            .expect("file to exist");
+        assert_eq!(target, PathBuf::from("../b"));
         assert_eq!(
             std::fs::read_to_string(tmp_dir.path().join("b")).unwrap(),
             "hello"
