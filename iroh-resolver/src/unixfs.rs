@@ -382,6 +382,7 @@ impl UnixfsNode {
                 Ok(Some(UnixfsContentReader::File {
                     root_node: self,
                     pos: 0,
+                    skip_pos: 0,
                     pos_max,
                     current_node: CurrentNodeState::Outer,
                     current_links,
@@ -413,6 +414,8 @@ pub enum UnixfsContentReader<T: ContentLoader> {
         pos: usize,
         /// Absolute max position in bytes, only used for clipping responses
         pos_max: ResponseClip,
+        /// Amount of bytes to skip to seek up to pos
+        skip_pos: usize,
         /// Current node being operated on, only used for nested nodes (not the root).
         current_node: CurrentNodeState,
         /// Stack of links left to traverse.
@@ -463,6 +466,7 @@ impl<T: ContentLoader + Unpin + 'static> AsyncRead for UnixfsContentReader<T> {
                 root_node,
                 pos,
                 pos_max,
+                skip_pos,
                 current_node,
                 current_links,
                 loader,
@@ -480,6 +484,7 @@ impl<T: ContentLoader + Unpin + 'static> AsyncRead for UnixfsContentReader<T> {
                         node,
                         loader.loader().clone(),
                         pos,
+                        skip_pos,
                         *pos_max,
                         buf,
                         current_links,
@@ -510,6 +515,7 @@ impl<T: ContentLoader + Unpin + 'static> AsyncSeek for UnixfsContentReader<T> {
                 root_node,
                 pos,
                 pos_max: _,
+                skip_pos,
                 current_node: _,
                 current_links: _,
                 loader: _,
@@ -526,6 +532,7 @@ impl<T: ContentLoader + Unpin + 'static> AsyncSeek for UnixfsContentReader<T> {
                         i = std::cmp::min(i, data_len - 1);
                     }
                     *pos = i;
+                    *skip_pos = i;
                 }
                 std::io::SeekFrom::End(offset) => {
                     let data_len = root_node.size();
@@ -539,6 +546,7 @@ impl<T: ContentLoader + Unpin + 'static> AsyncSeek for UnixfsContentReader<T> {
                             i += data_len as i64;
                         }
                         *pos = i as usize;
+                        *skip_pos = i as usize;
                     } else {
                         return Err(std::io::Error::new(
                             std::io::ErrorKind::InvalidInput,
@@ -559,6 +567,7 @@ impl<T: ContentLoader + Unpin + 'static> AsyncSeek for UnixfsContentReader<T> {
                         i = std::cmp::min(i, data_len as i64 - 1);
                     }
                     *pos = i as usize;
+                    *skip_pos = i as usize;
                 }
             },
         }
@@ -574,6 +583,7 @@ impl<T: ContentLoader + Unpin + 'static> AsyncSeek for UnixfsContentReader<T> {
                 root_node: _,
                 pos,
                 pos_max: _,
+                skip_pos: _,
                 current_node: _,
                 current_links: _,
                 loader: _,
@@ -667,6 +677,7 @@ fn poll_read_file_at<T: ContentLoader + 'static>(
     root_node: &Node,
     loader: T,
     pos: &mut usize,
+    skip_pos: &mut usize,
     pos_max: ResponseClip,
     buf: &mut tokio::io::ReadBuf<'_>,
     current_links: &mut Vec<VecDeque<Link>>,
@@ -735,6 +746,16 @@ fn poll_read_file_at<T: ContentLoader + 'static>(
                 let ty = current_node_inner.typ();
                 match current_node_inner {
                     UnixfsNode::Raw(data) => {
+                        if node_pos < skip_pos {
+                            if *node_pos + data.len() < *skip_pos {
+                                *skip_pos -= data.len();
+                                *node_pos += data.len();
+                            } else {
+                                *node_pos += *skip_pos - *node_pos;
+                                *skip_pos = 0;
+                            }
+                        }
+
                         let old = *node_pos;
                         let mut node_pos_max = data.len();
                         if let ResponseClip::Clip(n) = pos_max {
@@ -764,6 +785,15 @@ fn poll_read_file_at<T: ContentLoader + 'static>(
                     UnixfsNode::File(node) | UnixfsNode::RawNode(node) => {
                         // read direct node data
                         if let Some(ref data) = node.inner.data {
+                            if node_pos < skip_pos {
+                                if *node_pos + data.len() < *skip_pos {
+                                    *skip_pos -= data.len();
+                                    *node_pos += data.len();
+                                } else {
+                                    *node_pos += *skip_pos - *node_pos;
+                                    *skip_pos = 0;
+                                }
+                            }
                             let old = *node_pos;
                             let mut node_pos_max = data.len();
                             if let ResponseClip::Clip(n) = pos_max {
@@ -784,7 +814,6 @@ fn poll_read_file_at<T: ContentLoader + 'static>(
                                 return Poll::Ready(res);
                             }
                         }
-
                         // follow links
                         if load_next_node(current_node, current_links, loader.clone()) {
                             return Poll::Ready(Ok(()));

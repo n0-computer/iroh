@@ -1255,7 +1255,7 @@ mod tests {
     use cid::multihash::{Code, MultihashDigest};
     use futures::{StreamExt, TryStreamExt};
     use libipld::{codec::Encode, Ipld, IpldCodec};
-    use tokio::io::AsyncReadExt;
+    use tokio::io::{AsyncReadExt, AsyncSeekExt};
 
     #[async_trait]
     impl<S: BuildHasher + Clone + Send + Sync + 'static> ContentLoader for HashMap<Cid, Bytes, S> {
@@ -1285,6 +1285,28 @@ mod tests {
     }
     async fn read_to_string<T: AsyncRead + Unpin>(reader: T) -> String {
         String::from_utf8(read_to_vec(reader).await).unwrap()
+    }
+
+    async fn seek_and_clip<T: ContentLoader + Unpin>(
+        node: &UnixfsNode,
+        resolver: Resolver<T>,
+        range: std::ops::Range<u64>,
+    ) -> UnixfsContentReader<T> {
+        let mut cr = node
+            .clone()
+            .into_content_reader(
+                resolver.clone(),
+                OutMetrics::default(),
+                ResponseClip::Clip(range.end as usize),
+            )
+            .unwrap()
+            .unwrap();
+        let n = cr
+            .seek(tokio::io::SeekFrom::Start(range.start))
+            .await
+            .unwrap();
+        assert_eq!(n, range.start);
+        cr
     }
 
     #[test]
@@ -1676,6 +1698,129 @@ mod tests {
                 );
             } else {
                 panic!("invalid result: {:?}", ipld_bar_txt);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_resolver_seeking() {
+        // Test content
+        // ------------
+        // QmZULkCELmmk5XNfCgTnCyFgAVxBRBXyDHGGMVoLFLiXEN foo/hello.txt
+        //   contains: "hello"
+        // QmdkGfDx42RNdAZFALHn5hjHqUq7L9o6Ef4zLnFEu3Y4Go foo
+
+        let hello_txt_cid_str = "QmZULkCELmmk5XNfCgTnCyFgAVxBRBXyDHGGMVoLFLiXEN";
+        let hello_txt_block_bytes = load_fixture(hello_txt_cid_str).await;
+
+        // read root
+        let root_cid_str = "QmdkGfDx42RNdAZFALHn5hjHqUq7L9o6Ef4zLnFEu3Y4Go";
+        let root_cid: Cid = root_cid_str.parse().unwrap();
+        let root_block_bytes = load_fixture(root_cid_str).await;
+
+        let loader: HashMap<Cid, Bytes> = [
+            (root_cid, root_block_bytes.clone()),
+            (hello_txt_cid_str.parse().unwrap(), hello_txt_block_bytes),
+        ]
+        .into_iter()
+        .collect();
+        let loader = Arc::new(loader);
+        let resolver = Resolver::new(loader.clone());
+
+        let path = format!("/ipfs/{root_cid_str}/hello.txt");
+        let ipld_hello_txt = resolver.resolve(path.parse().unwrap()).await.unwrap();
+
+        if let OutContent::Unixfs(node) = ipld_hello_txt.content {
+            // clip response
+            let cr = seek_and_clip(&node, resolver.clone(), 0..2).await;
+            assert_eq!(read_to_string(cr).await, "he");
+
+            let cr = seek_and_clip(&node, resolver.clone(), 0..5).await;
+            assert_eq!(read_to_string(cr).await, "hello");
+
+            // clip to the end
+            let cr = seek_and_clip(&node, resolver.clone(), 0..6).await;
+            assert_eq!(read_to_string(cr).await, "hello\n");
+
+            // clip beyond the end
+            let cr = seek_and_clip(&node, resolver.clone(), 0..100).await;
+            assert_eq!(read_to_string(cr).await, "hello\n");
+
+            // seek
+            let cr = seek_and_clip(&node, resolver.clone(), 1..100).await;
+            assert_eq!(read_to_string(cr).await, "ello\n");
+
+            // seek and clip
+            let cr = seek_and_clip(&node, resolver.clone(), 1..3).await;
+            assert_eq!(read_to_string(cr).await, "el");
+        } else {
+            panic!("invalid result: {:?}", ipld_hello_txt);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_resolver_seeking_chunked() {
+        // Test content
+        // ------------
+        // QmUr9cs4mhWxabKqm9PYPSQQ6AQGbHJBtyrNmxtKgxqUx9 README.md
+        //
+        // imported with `go-ipfs add --chunker size-100`
+
+        let pieces_cid_str = [
+            "QmccJ8pV5hG7DEbq66ih1ZtowxgvqVS6imt98Ku62J2WRw",
+            "QmUajVwSkEp9JvdW914Qh1BCMRSUf2ztiQa6jqy1aWhwJv",
+            "QmNyLad1dWGS6mv2zno4iEviBSYSUR2SrQ8JoZNDz1UHYy",
+            "QmcXoBdCgmFMoNbASaQCNVswRuuuqbw4VvA7e5GtHbhRNp",
+            "QmP9yKRwuji5i7RTgrevwJwXp7uqQu1prv88nxq9uj99rW",
+        ];
+
+        // read root
+        let root_cid_str = "QmUr9cs4mhWxabKqm9PYPSQQ6AQGbHJBtyrNmxtKgxqUx9";
+        let root_cid: Cid = root_cid_str.parse().unwrap();
+        let root_block_bytes = load_fixture(root_cid_str).await;
+        let root_block = UnixfsNode::decode(&root_cid, root_block_bytes.clone()).unwrap();
+
+        let links: Vec<_> = root_block.links().collect::<Result<_>>().unwrap();
+        assert_eq!(links.len(), 5);
+
+        let mut loader: HashMap<Cid, Bytes> =
+            [(root_cid, root_block_bytes.clone())].into_iter().collect();
+
+        for c in &pieces_cid_str {
+            let bytes = load_fixture(c).await;
+            loader.insert(c.parse().unwrap(), bytes);
+        }
+
+        let loader = Arc::new(loader);
+        let resolver = Resolver::new(loader.clone());
+
+        {
+            let path = format!("/ipfs/{root_cid_str}");
+            let ipld_readme = resolver.resolve(path.parse().unwrap()).await.unwrap();
+
+            let m = ipld_readme.metadata();
+            assert_eq!(m.unixfs_type, Some(UnixfsType::File));
+            assert_eq!(m.path.to_string(), path);
+            assert_eq!(m.typ, OutType::Unixfs);
+            assert_eq!(m.size, Some(426));
+            assert_eq!(m.resolved_path, vec![root_cid_str.parse().unwrap(),]);
+
+            let size = m.size.unwrap();
+
+            if let OutContent::Unixfs(node) = ipld_readme.content {
+                let cr = seek_and_clip(&node, resolver.clone(), 1..size - 1).await;
+                let content = read_to_string(cr).await;
+                assert_eq!(content.len(), (size - 2) as usize);
+                assert!(content.starts_with(" iroh")); // without seeking '# iroh'
+                assert!(content.ends_with("</sub>\n")); // without clipping '</sub>\n\n'
+
+                let cr = seek_and_clip(&node, resolver.clone(), 101..size - 101).await;
+                let content = read_to_string(cr).await;
+                assert_eq!(content.len(), (size - 202) as usize);
+                assert!(content.starts_with("2.0</a>"));
+                assert!(content.ends_with("the Apac"));
+            } else {
+                panic!("invalid result: {:?}", ipld_readme);
             }
         }
     }
