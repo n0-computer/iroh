@@ -114,6 +114,7 @@ impl Session {
             let mut periodic_search_timer = tokio::time::interval(periodic_search_delay);
 
             loop {
+                inc!(BitswapMetrics::SessionLoopTick);
                 debug!("session {} tick", loop_state.id);
                 tokio::select! {
                     biased;
@@ -300,6 +301,7 @@ impl Session {
         let (closer_s, mut closer_r) = oneshot::channel();
         let worker = tokio::task::spawn(async move {
             loop {
+                inc!(BitswapMetrics::SessionGetBlockLoopTick);
                 tokio::select! {
                     biased;
                     _ = &mut closer_r => {
@@ -474,6 +476,7 @@ impl LoopState {
             match provider_query_manager.find_providers_async(&cid).await {
                 Ok(r) => {
                     loop {
+                        inc!(BitswapMetrics::FindMorePeersLoopTick);
                         tokio::select! {
                             biased;
                             _ = &mut closer_r => {

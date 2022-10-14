@@ -14,6 +14,8 @@ use anyhow::Result;
 use async_trait::async_trait;
 use cid::Cid;
 use handler::{BitswapHandler, HandlerEvent};
+use iroh_metrics::bitswap::BitswapMetrics;
+use iroh_metrics::inc;
 use libp2p::core::connection::ConnectionId;
 use libp2p::core::ConnectedPoint;
 use libp2p::swarm::dial_opts::DialOpts;
@@ -27,6 +29,7 @@ use network::OutEvent;
 use protocol::{ProtocolConfig, ProtocolId};
 use tokio::sync::oneshot;
 use tracing::{debug, warn};
+use iroh_metrics::core::MRecorder;
 
 use self::client::{Client, Config as ClientConfig};
 use self::network::Network;
@@ -401,6 +404,7 @@ impl<S: Store> NetworkBehaviour for Bitswap<S> {
         cx: &mut Context,
         _: &mut impl PollParameters,
     ) -> Poll<NetworkBehaviourAction<Self::OutEvent, Self::ConnectionHandler>> {
+        inc!(BitswapMetrics::NetworkBehaviourActionPollTick);
         // limit work
         for _ in 0..100 {
             match Pin::new(&mut self.network).poll(cx) {

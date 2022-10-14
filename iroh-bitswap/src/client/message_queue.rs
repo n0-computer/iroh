@@ -9,12 +9,14 @@ use std::{
 use ahash::{AHashMap, AHashSet};
 use anyhow::{ensure, Result};
 use cid::Cid;
+use iroh_metrics::{inc, bitswap::BitswapMetrics};
 use libp2p::PeerId;
 use tokio::{
     sync::{mpsc, oneshot},
     task::JoinHandle,
 };
 use tracing::{debug, error, info, warn};
+use iroh_metrics::core::MRecorder;
 
 use crate::{
     message::{BitswapMessage, Entry, WantType},
@@ -233,6 +235,7 @@ impl MessageQueue {
             );
 
             loop {
+                inc!(BitswapMetrics::MessageQueueWorkerLoopTick);
                 tokio::select! {
                     biased;
                     _ = &mut closer_r => {

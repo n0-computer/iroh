@@ -1,9 +1,11 @@
 use ahash::{AHashMap, AHashSet};
 use anyhow::Result;
 use cid::Cid;
+use iroh_metrics::{inc, bitswap::BitswapMetrics};
 use libp2p::PeerId;
 use tokio::{sync::oneshot, task::JoinHandle};
 use tracing::{debug, error, info, warn};
+use iroh_metrics::core::MRecorder;
 
 use crate::client::{
     block_presence_manager::BlockPresenceManager, peer_manager::PeerManager,
@@ -163,6 +165,7 @@ impl SessionWantSender {
         let worker = rt.spawn(async move {
             // The main loop for processing incoming changes
             loop {
+                inc!(BitswapMetrics::SessionWantSenderLoopTick);
                 tokio::select! {
                     biased;
                     _ = &mut closer_r => {

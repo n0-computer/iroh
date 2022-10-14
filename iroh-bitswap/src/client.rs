@@ -94,6 +94,7 @@ impl<S: Store> Client<S> {
         // TODO: track task
         tokio::task::spawn(async move {
             debug!("starting default receiver");
+            inc!(BitswapMetrics::ClientLoopTick);
             loop {
                 match default_receiver.recv().await {
                     Ok(block) => {

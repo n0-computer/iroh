@@ -3,7 +3,7 @@ use std::{fmt::Debug, sync::Arc, time::Duration};
 use ahash::{AHashMap, AHashSet};
 use anyhow::{anyhow, Result};
 use cid::Cid;
-use iroh_metrics::{bitswap::BitswapMetrics, record};
+use iroh_metrics::{bitswap::BitswapMetrics, record, inc};
 use libp2p::PeerId;
 use tokio::{
     sync::{oneshot, Mutex, Notify, RwLock},
@@ -167,6 +167,7 @@ impl<S: Store> Engine<S> {
 
             let handle = rt.spawn(async move {
                 loop {
+                    inc!(BitswapMetrics::EngineLoopTick);
                     tokio::select! {
                         biased;
                         _ = &mut closer_r => {

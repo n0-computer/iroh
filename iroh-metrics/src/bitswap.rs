@@ -56,5 +56,21 @@ make_metrics! {
     ProviderQuerySuccess: Counter: "",
     ProviderQueryError: Counter: "",
     EngineActiveTasks: Gauge: "",
-    EnginePendingTasks: Gauge: ""
+    EnginePendingTasks: Gauge: "",
+    
+    ClientLoopTick: Counter: "",
+    ServerTaskLoopTick: Counter: "",
+    ServerProviderTaskLoopTick: Counter: "",
+    ServerKeyProviderTaskLoopTick: Counter: "",
+    MessageQueueWorkerLoopTick: Counter: "",
+    SessionLoopTick: Counter: "",
+    SessionGetBlockLoopTick: Counter: "",
+    FindMorePeersLoopTick: Counter: "",
+    DontHaveTimeoutLoopTick: Counter: "",
+    SessionWantSenderLoopTick: Counter: "",
+    EngineLoopTick: Counter: "",
+    ScoreLedgerLoopTick: Counter: "",
+
+    NetworkBehaviourActionPollTick: Counter: "",
+    NetworkPollTick: Counter: ""
 }
