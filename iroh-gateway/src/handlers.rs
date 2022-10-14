@@ -418,7 +418,7 @@ async fn serve_raw<T: ContentLoader + std::marker::Unpin>(
     // FIXME: we currently only retrieve full cids
     let (body, metadata) = state
         .client
-        .get_file(req.resolved_path.clone(), start_time, None)
+        .get_file(req.resolved_path.clone(), start_time, range.clone())
         .await
         .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, &e, &state))?;
 

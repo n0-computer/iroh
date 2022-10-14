@@ -507,6 +507,70 @@ impl<T: ContentLoader + Unpin + 'static> AsyncSeek for UnixfsContentReader<T> {
     fn start_seek(mut self: Pin<&mut Self>, position: std::io::SeekFrom) -> std::io::Result<()> {
         match &mut *self {
             UnixfsContentReader::File {
+                root_node,
+                pos,
+                pos_max: _,
+                current_node: _,
+                current_links: _,
+                loader: _,
+                out_metrics: _,
+            } => match position {
+                std::io::SeekFrom::Start(offset) => {
+                    let mut i = offset as usize;
+                    let data_len = root_node.size();
+                    if let Some(data_len) = data_len {
+                        if data_len == 0 {
+                            *pos = 0;
+                            return Ok(());
+                        }
+                        i = std::cmp::min(i, data_len - 1);
+                    }
+                    *pos = i;
+                }
+                std::io::SeekFrom::End(offset) => {
+                    let data_len = root_node.size();
+                    if let Some(data_len) = data_len {
+                        if data_len == 0 {
+                            *pos = 0;
+                            return Ok(());
+                        }
+                        let mut i = (data_len as i64 + offset) % data_len as i64;
+                        if i < 0 {
+                            i += data_len as i64;
+                        }
+                        *pos = i as usize;
+                    } else {
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::InvalidInput,
+                            "cannot seek from end of unknown length",
+                        ));
+                    }
+                }
+                std::io::SeekFrom::Current(offset) => {
+                    let mut i = *pos as i64 + offset;
+                    i = std::cmp::max(0, i);
+
+                    let data_len = root_node.size();
+                    if let Some(data_len) = data_len {
+                        if data_len == 0 {
+                            *pos = 0;
+                            return Ok(());
+                        }
+                        i = std::cmp::min(i, data_len as i64 - 1);
+                    }
+                    *pos = i as usize;
+                }
+            },
+        }
+        Ok(())
+    }
+
+    fn poll_complete(
+        mut self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+    ) -> Poll<std::io::Result<u64>> {
+        match &mut *self {
+            UnixfsContentReader::File {
                 root_node: _,
                 pos,
                 pos_max: _,
@@ -514,27 +578,8 @@ impl<T: ContentLoader + Unpin + 'static> AsyncSeek for UnixfsContentReader<T> {
                 current_links: _,
                 loader: _,
                 out_metrics: _,
-            } => {
-                match position {
-                    std::io::SeekFrom::Start(offset) => {
-                        *pos = offset as usize;
-                    }
-                    std::io::SeekFrom::End(_offset) => {
-                        // This technically means we can seek past the end which we don't support
-                        // TODO: support rolling buffer reads, ie use overflow remainder to read from the start again
-                        todo!()
-                    }
-                    std::io::SeekFrom::Current(offset) => {
-                        *pos = (*pos as i64 + offset) as usize;
-                    }
-                }
-            }
+            } => Poll::Ready(Ok(*pos as u64)),
         }
-        Ok(())
-    }
-
-    fn poll_complete(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<u64>> {
-        Poll::Ready(Ok(0))
     }
 }
 

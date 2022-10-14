@@ -136,6 +136,7 @@ impl Path {
     }
 }
 
+/// Holds information if we should clip the response and to what offset
 #[derive(Debug, Clone, Copy)]
 pub enum ResponseClip {
     NoClip,
@@ -574,21 +575,30 @@ impl<T: ContentLoader + Unpin + 'static> AsyncSeek for OutPrettyReader<T> {
             | OutPrettyReader::DagCbor(bytes_reader)
             | OutPrettyReader::DagJson(bytes_reader)
             | OutPrettyReader::Raw(bytes_reader) => {
-                let pos_current = bytes_reader.pos;
+                let pos_current = bytes_reader.pos as i64;
                 let data_len = bytes_reader.bytes.len();
+                if data_len == 0 {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        "cannot seek on empty data",
+                    ));
+                }
                 match position {
                     std::io::SeekFrom::Start(pos) => {
-                        let i = std::cmp::min(data_len, pos as usize);
+                        let i = std::cmp::min(data_len - 1, pos as usize);
                         bytes_reader.pos = i;
                     }
-                    std::io::SeekFrom::End(_pos) => {
-                        // This technically means we can seek past the end which we don't support
-                        // TODO: support rolling buffer reads, ie use overflow remainder to read from the start again
-                        todo!()
+                    std::io::SeekFrom::End(pos) => {
+                        let mut i = (data_len as i64 + pos) % data_len as i64;
+                        if i < 0 {
+                            i += data_len as i64;
+                        }
+                        bytes_reader.pos = i as usize;
                     }
                     std::io::SeekFrom::Current(pos) => {
-                        let i = std::cmp::min(data_len, pos_current + pos as usize);
-                        bytes_reader.pos = i;
+                        let mut i = std::cmp::min(data_len as i64 - 1, pos_current as i64 + pos);
+                        i = std::cmp::max(0, i);
+                        bytes_reader.pos = i as usize;
                     }
                 }
                 Ok(())
@@ -597,8 +607,17 @@ impl<T: ContentLoader + Unpin + 'static> AsyncSeek for OutPrettyReader<T> {
         }
     }
 
-    fn poll_complete(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<u64>> {
-        Poll::Ready(Ok(0))
+    fn poll_complete(
+        mut self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+    ) -> Poll<std::io::Result<u64>> {
+        match &mut *self {
+            OutPrettyReader::DagPb(bytes_reader)
+            | OutPrettyReader::DagCbor(bytes_reader)
+            | OutPrettyReader::DagJson(bytes_reader)
+            | OutPrettyReader::Raw(bytes_reader) => Poll::Ready(Ok(bytes_reader.pos as u64)),
+            OutPrettyReader::Unixfs(r) => Pin::new(&mut *r).poll_complete(_cx),
+        }
     }
 }
 

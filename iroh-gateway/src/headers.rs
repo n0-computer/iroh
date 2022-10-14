@@ -72,6 +72,11 @@ pub fn set_content_disposition_headers(headers: &mut HeaderMap, filename: &str, 
 
 #[tracing::instrument()]
 pub fn add_content_range_headers(headers: &mut HeaderMap, range: Range<u64>, size: Option<u64>) {
+    if range.end == 0 {
+        // this should never happen as it is checked for in parse_range_header
+        // but just to avoid any footguns
+        return;
+    }
     let content_range = if let Some(size) = size {
         format!("bytes {}-{}/{}", range.start, range.end - 1, size)
     } else {
@@ -84,6 +89,7 @@ pub fn add_content_range_headers(headers: &mut HeaderMap, range: Range<u64>, siz
 }
 
 pub fn parse_range_header(range: &HeaderValue) -> Option<Range<u64>> {
+    // TODO: potentially support multiple ranges ie bytes=0-100,200-300
     let range = range.to_str().ok()?;
     let mut parts = range.splitn(2, '=');
     if parts.next() != Some("bytes") {
@@ -267,6 +273,43 @@ mod tests {
             headers.get(&CONTENT_TYPE).unwrap(),
             &"text/plain; charset=utf-8".to_string()
         );
+    }
+
+    #[test]
+    fn parse_range_header_test() {
+        let range = HeaderValue::from_str("bytes=0-10").unwrap();
+        let r = parse_range_header(&range);
+        assert_eq!(r, Some(Range { start: 0, end: 10 }));
+
+        let range = HeaderValue::from_str("byts=0-10").unwrap();
+        let r = parse_range_header(&range);
+        assert_eq!(r, None);
+
+        let range = HeaderValue::from_str("bytes=0-").unwrap();
+        let r = parse_range_header(&range);
+        assert_eq!(r, None);
+
+        let range = HeaderValue::from_str("bytes=10-1").unwrap();
+        let r = parse_range_header(&range);
+        assert_eq!(r, None);
+
+        let range = HeaderValue::from_str("bytes=0-0").unwrap();
+        let r = parse_range_header(&range);
+        assert_eq!(r, None);
+
+        let range = HeaderValue::from_str("bytes=100-200").unwrap();
+        let r = parse_range_header(&range);
+        assert_eq!(
+            r,
+            Some(Range {
+                start: 100,
+                end: 200
+            })
+        );
+
+        let range = HeaderValue::from_str("bytes=0-10,20-30").unwrap();
+        let r = parse_range_header(&range);
+        assert_eq!(r, None);
     }
 
     #[test]
