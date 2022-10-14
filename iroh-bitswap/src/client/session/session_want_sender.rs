@@ -1,5 +1,5 @@
 use ahash::{AHashMap, AHashSet};
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use cid::Cid;
 use libp2p::PeerId;
 use tokio::{sync::oneshot, task::JoinHandle};

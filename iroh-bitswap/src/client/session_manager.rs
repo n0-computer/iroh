@@ -46,7 +46,7 @@ impl SessionManager {
         network: Network,
         notify: async_broadcast::Sender<Block>,
     ) -> Self {
-        let session_interest_manager = SessionInterestManager::new();
+        let session_interest_manager = SessionInterestManager::default();
         let block_presence_manager = BlockPresenceManager::new();
         let peer_manager = PeerManager::new(self_id, network.clone());
         let provider_query_manager = ProviderQueryManager::new(network.clone()).await;

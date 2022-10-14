@@ -7,7 +7,7 @@ use tracing::debug;
 
 use crate::Block;
 
-#[derive(Debug, Clone)]
+#[derive(Default, Debug, Clone)]
 pub struct SessionInterestManager {
     /// Map of cids -> sessions -> bool
     ///
@@ -21,12 +21,6 @@ pub struct SessionInterestManager {
 }
 
 impl SessionInterestManager {
-    pub fn new() -> Self {
-        SessionInterestManager {
-            wants: Default::default(),
-        }
-    }
-
     /// When the client asks the session for blocks, the session calls this methods.
     pub async fn record_session_interest(&self, session: u64, keys: &[Cid]) {
         debug!("session:{} record_session_interest: {:?}", session, keys);
