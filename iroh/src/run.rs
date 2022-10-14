@@ -6,7 +6,7 @@ use crate::fixture::get_fixture_api;
 use crate::p2p::{run_command as run_p2p_command, P2p};
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use iroh_api::{Api, CidOrDomain, IpfsPath, Iroh};
+use iroh_api::{Api, ApiExt, IpfsPath, Iroh};
 use iroh_metrics::config::Config as MetricsConfig;
 
 #[derive(Parser, Debug, Clone)]
@@ -52,9 +52,9 @@ enum Commands {
     )]
     Get {
         /// CID or CID/with/path/qualifier to get
-        path: IpfsPath,
+        ipfs_path: IpfsPath,
         /// filesystem path to write to. Defaults to CID
-        output: Option<PathBuf>,
+        output_path: Option<PathBuf>,
     },
 }
 
@@ -109,18 +109,12 @@ impl Cli {
                 let cid = api.add(path, *recursive, *no_wrap).await?;
                 println!("/ipfs/{}", cid);
             }
-            Commands::Get { path, output } => {
-                let cid = if let CidOrDomain::Cid(cid) = path.root() {
-                    cid
-                } else {
-                    return Err(anyhow::anyhow!("ipfs path must refer to a CID"));
-                };
-                api.get(path, output.as_deref()).await?;
-                let real_output = output
-                    .as_deref()
-                    .map(|path| path.to_path_buf())
-                    .unwrap_or_else(|| PathBuf::from(&cid.to_string()));
-                println!("Saving file(s) to {}", real_output.to_str().unwrap());
+            Commands::Get {
+                ipfs_path,
+                output_path,
+            } => {
+                let root_path = api.get(ipfs_path, output_path.as_deref()).await?;
+                println!("Saving file(s) to {}", root_path.to_str().unwrap());
             }
         };
 

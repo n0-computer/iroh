@@ -1,0 +1,8 @@
+
+We can get a CID indicating a specific path inside:
+
+```
+$ iroh get /ipfs/QmP8jTG1m9GSDJLCbeWhVSVgEzCPPwXRdCRuJtQ5Tz9Kc9/b
+Saving file(s) to b
+
+```

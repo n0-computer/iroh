@@ -1,0 +1,8 @@
+Get a file that's not wrapped. Overwriting an existing file fails:
+
+```
+$ iroh get /ipfs/QmP8jTG1m9GSDJLCbeWhVSVgEzCPPwXRdCRuJtQ5Tz9Kc9
+? failed
+Error: output path QmP8jTG1m9GSDJLCbeWhVSVgEzCPPwXRdCRuJtQ5Tz9Kc9 already exists
+
+```

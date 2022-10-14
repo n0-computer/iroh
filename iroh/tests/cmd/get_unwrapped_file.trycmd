@@ -1,0 +1,7 @@
+Get a file that's not wrapped:
+
+```
+$ iroh get /ipfs/QmP8jTG1m9GSDJLCbeWhVSVgEzCPPwXRdCRuJtQ5Tz9Kc9
+Saving file(s) to QmP8jTG1m9GSDJLCbeWhVSVgEzCPPwXRdCRuJtQ5Tz9Kc9
+
+```
