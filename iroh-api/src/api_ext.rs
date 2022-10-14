@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use crate::{Api, IpfsPath, OutType};
+use crate::{Api, Cid, IpfsPath, OutType};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use futures::Stream;

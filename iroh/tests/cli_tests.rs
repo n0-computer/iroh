@@ -2,15 +2,55 @@
 // when `.in` and `.out` directories are in use. So we avoid that
 
 #[test]
-fn lookup_test() {
+fn add_directory_without_r_fails_test() {
     trycmd::TestCases::new()
-        .env("IROH_CTL_FIXTURE", "lookup")
-        .case("tests/cmd/lookup.trycmd")
+        .env("IROH_CTL_FIXTURE", "add_directory")
+        .case("tests/cmd/add_directory_without_r_fails.trycmd")
         .run();
 }
 
 #[test]
-fn get_success_cid_explicit_output_path_success_test() {
+fn add_directory_test() {
+    trycmd::TestCases::new()
+        .env("IROH_CTL_FIXTURE", "add_directory")
+        .case("tests/cmd/add_directory.trycmd")
+        .run();
+}
+
+#[test]
+fn add_file_missing_test() {
+    trycmd::TestCases::new()
+        .env("IROH_CTL_FIXTURE", "add_file")
+        .case("tests/cmd/add_file_missing.trycmd")
+        .run();
+}
+
+#[test]
+fn add_file_test() {
+    trycmd::TestCases::new()
+        .env("IROH_CTL_FIXTURE", "add_file")
+        .case("tests/cmd/add_file.trycmd")
+        .run();
+}
+
+#[test]
+fn get_cid_directory_overwrite_explicit_failure_test() {
+    trycmd::TestCases::new()
+        .env("IROH_CTL_FIXTURE", "get")
+        .case("tests/cmd/get_cid_directory_overwrite_explicit_failure.trycmd")
+        .run();
+}
+
+#[test]
+fn get_cid_directory_overwrite_failure_test() {
+    trycmd::TestCases::new()
+        .env("IROH_CTL_FIXTURE", "get")
+        .case("tests/cmd/get_cid_directory_overwrite_failure.trycmd")
+        .run();
+}
+
+#[test]
+fn get_cid_explicit_output_path_success_test() {
     trycmd::TestCases::new()
         .env("IROH_CTL_FIXTURE", "get")
         .case("tests/cmd/get_cid_explicit_output_path_success.trycmd")
@@ -26,18 +66,26 @@ fn get_cid_success_test() {
 }
 
 #[test]
-fn get_wrapped_file_cli_test() {
+fn get_failure_test() {
     trycmd::TestCases::new()
-        .env("IROH_CTL_FIXTURE", "get_wrapped_file")
-        .case("tests/cmd/get_wrapped_file.trycmd")
+        .env("IROH_CTL_FIXTURE", "get")
+        .case("tests/cmd/get_failure.trycmd")
         .run();
 }
 
 #[test]
-fn get_unwrapped_file_test() {
+fn get_ipfs_path_success_test() {
+    trycmd::TestCases::new()
+        .env("IROH_CTL_FIXTURE", "get")
+        .case("tests/cmd/get_ipfs_path_success.trycmd")
+        .run();
+}
+
+#[test]
+fn get_tail_success_test() {
     trycmd::TestCases::new()
         .env("IROH_CTL_FIXTURE", "get_unwrapped_file")
-        .case("tests/cmd/get_unwrapped_file.trycmd")
+        .case("tests/cmd/get_tail_success.trycmd")
         .run();
 }
 
@@ -50,64 +98,32 @@ fn get_unwrapped_file_overwrite_test() {
 }
 
 #[test]
-fn get_failure_test() {
+fn get_unwrapped_file_test() {
     trycmd::TestCases::new()
-        .env("IROH_CTL_FIXTURE", "get")
-        .case("tests/cmd/get_failure.trycmd")
+        .env("IROH_CTL_FIXTURE", "get_unwrapped_file")
+        .case("tests/cmd/get_unwrapped_file.trycmd")
         .run();
 }
 
 #[test]
-fn add_file_test() {
+fn get_wrapped_file_test() {
     trycmd::TestCases::new()
-        .env("IROH_CTL_FIXTURE", "add_file")
-        .case("tests/cmd/add_file.trycmd")
+        .env("IROH_CTL_FIXTURE", "get_wrapped_file")
+        .case("tests/cmd/get_wrapped_file.trycmd")
         .run();
 }
 
 #[test]
-fn add_directory_test() {
+fn lookup_test() {
     trycmd::TestCases::new()
-        .env("IROH_CTL_FIXTURE", "add_directory")
-        .case("tests/cmd/add_directory.trycmd")
+        .env("IROH_CTL_FIXTURE", "lookup")
+        .case("tests/cmd/lookup.trycmd")
         .run();
 }
 
 #[test]
-fn add_directory_without_r_fails_test() {
-    trycmd::TestCases::new()
-        .env("IROH_CTL_FIXTURE", "add_directory")
-        .case("tests/cmd/add_directory_without_r_fails.trycmd")
-        .run();
-}
-
-#[test]
-fn version_cli_test() {
+fn version_test() {
     trycmd::TestCases::new()
         .case("tests/cmd/version.trycmd")
-        .run();
-}
-
-#[test]
-fn add_file() {
-    trycmd::TestCases::new()
-        .env("IROH_CTL_FIXTURE", "add_file")
-        .case("tests/cmd/add_file.trycmd")
-        .run();
-}
-
-#[test]
-fn add_file_missing_test() {
-    trycmd::TestCases::new()
-        .env("IROH_CTL_FIXTURE", "add_file")
-        .case("tests/cmd/add_file_missing.trycmd")
-        .run();
-}
-
-#[test]
-fn add_directory_test() {
-    trycmd::TestCases::new()
-        .env("IROH_CTL_FIXTURE", "add_directory")
-        .case("tests/cmd/add_directory.trycmd")
         .run();
 }
