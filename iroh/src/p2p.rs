@@ -1,8 +1,8 @@
-use std::str::FromStr;
-
+use crate::doc;
 use anyhow::{Error, Result};
 use clap::{Args, Subcommand};
 use iroh_api::{Multiaddr, P2pApi, PeerId, PeerIdOrAddr};
+use std::str::FromStr;
 
 #[derive(Args, Debug, Clone)]
 #[clap(about = "Peer-2-peer commands")]
@@ -18,35 +18,13 @@ pub struct P2p {
 #[derive(Subcommand, Debug, Clone)]
 pub enum P2pCommands {
     #[clap(about = "Connect to a peer")]
-    #[clap(after_help = "
-Attempts to open a new direct connection to a peer address. By default p2p
-continulously maintains an open set of peer connections based on requests &
-internal hueristics. Connect is useful in situations where it makes sense to
-manually force libp2p to dial a known peer. A common example includes when you
-know the multiaddr or peer ID of a peer that you would like to exchange data
-with.
-
-The address format is in multiaddr format. For example:
-
- > iroh p2p connect /ip4/104.131.131.82/tcp/4001/p2p/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ
-
-for more info on multiaddrs see https://iroh.computer/docs/concepts#multiaddr
-
-If a peer ID is provided, connect first perform a distribtued hash table (DHT)
-lookup to learn the address of the given peer ID before dialing.")]
+    #[clap(after_help = doc::P2P_CONNECT_LONG_DESCRIPTION)]
     Connect {
         /// Multiaddr or peer ID of a peer to connect to
         addr: PeerIdOrAddrArg,
     },
     #[clap(about = "Retrieve info about a node")]
-    #[clap(
-        after_help = "Takes as input a peer ID or address and prints the output of the libp2p-identify
-protocol. When provided with a peer ID, the address is looked up on the 
-Network's Distributed Hash Table (DHT) before connecting to the node. When 
-provided with a multiaddress, the connection is dialed directly.
-
-Providing no <ADDR> argument will return your local node information."
-    )]
+    #[clap(after_help = doc::P2P_LOOKUP_LONG_DESCRIPTION)]
     Lookup {
         /// multiaddress or peer ID
         addr: PeerIdOrAddrArg,
