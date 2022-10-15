@@ -8,7 +8,7 @@ use futures::{future::BoxFuture, FutureExt};
 use iroh_metrics::{bitswap::BitswapMetrics, core::MRecorder, inc};
 use libp2p::PeerId;
 use tokio::sync::{mpsc, oneshot};
-use tracing::{debug, error, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::network::Network;
 
@@ -53,7 +53,7 @@ impl<F: Fn(PeerId, Vec<Cid>) -> BoxFuture<'static, ()> + 'static + Sync + Send> 
 
 impl PeerManager {
     pub async fn new(self_id: PeerId, network: Network) -> Self {
-        let (sender, receiver) = mpsc::channel(128);
+        let (sender, receiver) = mpsc::channel(1024);
         let actor = PeerManagerActor::new(self_id, network, receiver).await;
 
         let _worker = tokio::task::spawn(async move {
@@ -171,8 +171,12 @@ impl PeerManager {
 
 async fn run(mut actor: PeerManagerActor) {
     loop {
+        inc!(BitswapMetrics::PeerManagerLoopTick);
+
         tokio::select! {
             message = actor.receiver.recv() => {
+                info!("processing {:?}", message);
+
                 match message {
                     Some(Message::GetConnectedPeers(r)) => {
                         let _= r.send(actor.connected_peers().await);

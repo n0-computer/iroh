@@ -74,6 +74,7 @@ make_metrics! {
     SessionWantSenderLoopTick: Counter: "",
     EngineLoopTick: Counter: "",
     ScoreLedgerLoopTick: Counter: "",
+    PeerManagerLoopTick: Counter: "",
 
     MessageQueuesCreated: Counter: "",
     MessageQueuesDestroyed: Counter: "",
