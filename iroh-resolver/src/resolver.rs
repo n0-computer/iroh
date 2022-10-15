@@ -630,6 +630,7 @@ pub struct LoadedCid {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Source {
     Bitswap,
+    Http(String),
     Store(&'static str),
 }
 
@@ -857,10 +858,9 @@ impl<T: ContentLoader> Resolver<T> {
     pub async fn resolve(&self, path: Path) -> Result<Out> {
         // Resolve the root block.
         let (root_cid, loaded_cid) = self.resolve_root(&path).await?;
-        if loaded_cid.source == Source::Bitswap {
-            inc!(ResolverMetrics::CacheMiss);
-        } else {
-            inc!(ResolverMetrics::CacheHit);
+        match loaded_cid.source {
+            Source::Store(_) => inc!(ResolverMetrics::CacheHit),
+            _ => inc!(ResolverMetrics::CacheMiss),
         }
 
         let codec = Codec::try_from(root_cid.codec()).context("unknown codec")?;
