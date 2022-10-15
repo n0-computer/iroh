@@ -165,7 +165,7 @@ pub struct StatusTable {
     pub p2p: StatusRow,
     pub store: StatusRow,
 
-    iter: u8
+    iter: u8,
 }
 
 impl StatusTable {

@@ -23,7 +23,8 @@ iroh-metrics = { path = "../iroh-metrics", default-features = false, features = 
 iroh-api = { path = "../iroh-api"}
 relative-path = { version = "1.7.2", optional = true }
 iroh-util = { path = "../iroh-util"}
-fork = "0.1"
+handlebars = "4"
+serde_json = "1.0.78"
 which = "4.3.0"
 sysinfo = "0.26.4"
 
