@@ -94,20 +94,6 @@ impl PeerManager {
             peer_queues.len()
         );
 
-        // GC stopped queues
-        let mut to_remove = Vec::new();
-        for (peer, queue) in &*peer_queues {
-            if !queue.is_running() {
-                debug!("cleaning up queue {}", peer);
-                self.signal_availability(peer, false).await;
-                peer_want_manager.remove_peer(peer);
-                to_remove.push(*peer);
-            }
-        }
-        for peer in to_remove {
-            peer_queues.remove(&peer);
-        }
-
         if !peer_queues.contains_key(peer) {
             peer_queues.insert(
                 *peer,
@@ -133,7 +119,7 @@ impl PeerManager {
         }
 
         // Inform the peer want manager that there's a new peer.
-        peer_want_manager.add_peer(&peer_queue, peer).await;
+        peer_want_manager.add_peer(peer_queue, peer).await;
 
         // Inform the session that the peer has connected
         self.signal_availability(peer, true).await;
@@ -162,9 +148,11 @@ impl PeerManager {
     /// The set of blocks, HAVEs and DONT_HAVEs, is `cids`.
     /// Currently only used to calculate latency.
     pub async fn response_received(&self, peer: &PeerId, cids: &[Cid]) {
-        let peer_queues = &*self.inner.peers.read().await.0;
-        if let Some(peer_queue) = peer_queues.get(peer) {
-            peer_queue.response_received(cids.to_vec()).await;
+        let peer_queues = &mut *self.inner.peers.write().await.0;
+        if let Some(peer_queue) = peer_queues.get_mut(peer) {
+            if !peer_queue.response_received(cids.to_vec()).await {
+                peer_queues.remove(peer);
+            }
         }
     }
 
@@ -188,7 +176,7 @@ impl PeerManager {
         let (peer_queues, peer_want_manager) = &mut *self.inner.peers.write().await;
         if peer_queues.contains_key(peer) {
             peer_want_manager
-                .send_wants(peer, want_blocks, want_haves, &peer_queues)
+                .send_wants(peer, want_blocks, want_haves, peer_queues)
                 .await;
         }
     }
@@ -196,7 +184,7 @@ impl PeerManager {
     /// Sends cancels for the given keys to all peers who had previously received a want for those keys.
     pub async fn send_cancels(&self, cancels: &[Cid]) {
         let (peer_queues, peer_want_manager) = &mut *self.inner.peers.write().await;
-        peer_want_manager.send_cancels(cancels, &peer_queues).await;
+        peer_want_manager.send_cancels(cancels, peer_queues).await;
     }
 
     /// Returns a list of pending wants (both want-haves and want-blocks).
@@ -333,8 +321,8 @@ mod tests {
 
         // check messages in MessageQueue
         {
-            let peers = peer_manager.inner.peers.read().await;
-            let mq = peers.0.get(&peer1).unwrap();
+            let mut peers = peer_manager.inner.peers.write().await;
+            let mq = peers.0.get_mut(&peer1).unwrap();
             let mq = mq.wants().await.unwrap();
             assert_eq!(mq.bcst_wants.pending.len(), 2);
             for cid in &cids {
@@ -362,8 +350,8 @@ mod tests {
         peer_manager.connected(&peer1).await;
 
         {
-            let peers = peer_manager.inner.peers.read().await;
-            let mq = peers.0.get(&peer1).unwrap();
+            let mut peers = peer_manager.inner.peers.write().await;
+            let mq = peers.0.get_mut(&peer1).unwrap();
             let mq = mq.wants().await.unwrap();
             assert_eq!(mq.bcst_wants.pending.len(), 2);
             for cid in &cids[..2] {
@@ -380,10 +368,10 @@ mod tests {
             .await;
 
         {
-            let peers = peer_manager.inner.peers.read().await;
+            let mut peers = peer_manager.inner.peers.write().await;
             // peer 1 now has all three
             {
-                let mq = peers.0.get(&peer1).unwrap();
+                let mq = peers.0.get_mut(&peer1).unwrap();
                 let mq = mq.wants().await.unwrap();
                 assert_eq!(mq.bcst_wants.pending.len(), 3);
                 for cid in &cids {
@@ -392,7 +380,7 @@ mod tests {
             }
             // peer 2 now has all three
             {
-                let mq = peers.0.get(&peer2).unwrap();
+                let mq = peers.0.get_mut(&peer2).unwrap();
                 let mq = mq.wants().await.unwrap();
                 assert_eq!(mq.bcst_wants.pending.len(), 3);
                 for cid in &cids {
@@ -418,8 +406,8 @@ mod tests {
             .await;
 
         {
-            let peers = peer_manager.inner.peers.read().await;
-            let mq = peers.0.get(&peer1).unwrap();
+            let mut peers = peer_manager.inner.peers.write().await;
+            let mq = peers.0.get_mut(&peer1).unwrap();
             let mq = mq.wants().await.unwrap();
             assert!(mq.bcst_wants.pending.is_empty());
             assert_eq!(mq.peer_wants.pending.len(), 2);
@@ -438,8 +426,8 @@ mod tests {
             .await;
 
         {
-            let peers = peer_manager.inner.peers.read().await;
-            let mq = peers.0.get(&peer1).unwrap();
+            let mut peers = peer_manager.inner.peers.write().await;
+            let mq = peers.0.get_mut(&peer1).unwrap();
             let mq = mq.wants().await.unwrap();
             assert!(mq.bcst_wants.pending.is_empty());
             assert_eq!(mq.peer_wants.pending.len(), 4);
@@ -482,8 +470,8 @@ mod tests {
         std::thread::sleep(Duration::from_millis(100));
 
         {
-            let peers = peer_manager.inner.peers.read().await;
-            let mq = peers.0.get(&peer1).unwrap();
+            let mut peers = peer_manager.inner.peers.write().await;
+            let mq = peers.0.get_mut(&peer1).unwrap();
             let mq = mq.wants().await.unwrap();
             assert!(mq.bcst_wants.pending.is_empty());
             assert!(mq.bcst_wants.sent.is_empty());
@@ -496,11 +484,11 @@ mod tests {
         peer_manager.send_cancels(&[cids[0], cids[2]][..]).await;
         std::thread::sleep(Duration::from_millis(100));
         {
-            let peers = peer_manager.inner.peers.read().await;
+            let mut peers = peer_manager.inner.peers.write().await;
 
             // check that no cancels went to peer2
             {
-                let mq = peers.0.get(&peer2).unwrap();
+                let mq = peers.0.get_mut(&peer2).unwrap();
                 let mq = mq.wants().await.unwrap();
                 assert!(mq.cancels.is_empty());
             }
