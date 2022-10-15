@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use crate::doc;
 use crate::daemon;
+use crate::doc;
 #[cfg(feature = "testing")]
 use crate::fixture::get_fixture_api;
 use crate::p2p::{run_command as run_p2p_command, P2p};
