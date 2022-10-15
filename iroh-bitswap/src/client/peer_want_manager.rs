@@ -81,7 +81,7 @@ impl PeerWantManager {
     pub async fn broadcast_want_haves(
         &mut self,
         want_haves: &AHashSet<Cid>,
-        peer_queues: &mut AHashMap<PeerId, MessageQueue>,
+        peer_queues: &AHashMap<PeerId, MessageQueue>,
     ) {
         debug!("pwm: broadcast_want_haves: {:?}", want_haves);
         // want_haves - self.broadcast_wants
@@ -102,10 +102,8 @@ impl PeerWantManager {
             }
             debug!("pwm: unsent peer: {}, {:?}", peer, peer_unsent);
             if !peer_unsent.is_empty() {
-                if let Some(peer_queue) = peer_queues.get_mut(peer) {
-                    if !peer_queue.add_broadcast_want_haves(&peer_unsent).await {
-                        peer_queues.remove(peer);
-                    }
+                if let Some(peer_queue) = peer_queues.get(peer) {
+                    peer_queue.add_broadcast_want_haves(&peer_unsent).await;
                 }
             }
 
@@ -120,7 +118,7 @@ impl PeerWantManager {
         peer: &PeerId,
         want_blocks: &[Cid],
         want_haves: &[Cid],
-        peer_queues: &mut AHashMap<PeerId, MessageQueue>,
+        peer_queues: &AHashMap<PeerId, MessageQueue>,
     ) {
         let mut flt_want_blocks = Vec::with_capacity(want_blocks.len());
         let mut flt_want_haves = Vec::with_capacity(want_haves.len());
@@ -179,13 +177,10 @@ impl PeerWantManager {
 
             // send out want-blocks and want-haves
             if !flt_want_blocks.is_empty() || !flt_want_haves.is_empty() {
-                if let Some(peer_queue) = peer_queues.get_mut(peer) {
-                    if !peer_queue
+                if let Some(peer_queue) = peer_queues.get(peer) {
+                    peer_queue
                         .add_wants(&flt_want_blocks, &flt_want_haves)
-                        .await
-                    {
-                        peer_queues.remove(peer);
-                    }
+                        .await;
                 }
             }
         } else {
@@ -197,7 +192,7 @@ impl PeerWantManager {
     pub async fn send_cancels(
         &mut self,
         cancels: &[Cid],
-        peer_queues: &mut AHashMap<PeerId, MessageQueue>,
+        peer_queues: &AHashMap<PeerId, MessageQueue>,
     ) {
         if cancels.is_empty() {
             return;
@@ -241,10 +236,8 @@ impl PeerWantManager {
                 }
 
                 if !to_cancel.is_empty() {
-                    if let Some(peer_queue) = peer_queues.get_mut($peer) {
-                        if !peer_queue.add_cancels(&to_cancel).await {
-                            peer_queues.remove($peer);
-                        }
+                    if let Some(peer_queue) = peer_queues.get($peer) {
+                        peer_queue.add_cancels(&to_cancel).await;
                     }
                 }
             };

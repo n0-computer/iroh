@@ -73,6 +73,10 @@ make_metrics! {
     EngineLoopTick: Counter: "",
     ScoreLedgerLoopTick: Counter: "",
 
+    MessageQueuesCreated: Counter: "",
+    MessageQueuesDestroyed: Counter: "",
+    MessageQueuesStopped: Counter: "",
+
     NetworkBehaviourActionPollTick: Counter: "",
     NetworkPollTick: Counter: ""
 }

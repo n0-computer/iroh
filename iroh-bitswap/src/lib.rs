@@ -14,9 +14,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use cid::Cid;
 use handler::{BitswapHandler, HandlerEvent};
-use iroh_metrics::bitswap::BitswapMetrics;
-use iroh_metrics::core::MRecorder;
-use iroh_metrics::inc;
+use iroh_metrics::{bitswap::BitswapMetrics, core::MRecorder, inc};
 use libp2p::core::connection::ConnectionId;
 use libp2p::core::ConnectedPoint;
 use libp2p::swarm::dial_opts::DialOpts;
@@ -258,36 +256,41 @@ impl<S: Store> Bitswap<S> {
                     }
                 }
 
-                *entry.get_mut() = new_state;
+                if new_state == PeerState::Disconnected {
+                    entry.remove();
+                } else {
+                    *entry.get_mut() = new_state;
+                }
                 match new_state {
                     PeerState::DialFailure(_)
                     | PeerState::Disconnected
                     | PeerState::Unresponsive => {
                         if old_state.is_connected() {
+                            inc!(BitswapMetrics::ConnectedPeers);
                             self.peer_disconnected(peer);
-                        }
-
-                        // remove disconnected, we remember the other states
-                        if new_state == PeerState::Disconnected {
-                            entry.remove();
                         }
                     }
                     PeerState::Connected(_) | PeerState::Responsive(_, _) => {
                         if old_state.is_disconnected() {
+                            inc!(BitswapMetrics::DisconnectedPeers);
                             self.peer_connected(peer);
                         }
                     }
                 }
             }
             std::collections::hash_map::Entry::Vacant(entry) => {
-                entry.insert(new_state);
+                if new_state != PeerState::Disconnected {
+                    entry.insert(new_state);
+                }
                 match new_state {
                     PeerState::DialFailure(_)
                     | PeerState::Disconnected
                     | PeerState::Unresponsive => {
+                        inc!(BitswapMetrics::DisconnectedPeers);
                         self.peer_disconnected(peer);
                     }
                     PeerState::Connected(_) | PeerState::Responsive(_, _) => {
+                        inc!(BitswapMetrics::DisconnectedPeers);
                         self.peer_connected(peer);
                     }
                 }

@@ -4,6 +4,7 @@ use ahash::{AHashMap, AHashSet};
 use anyhow::{anyhow, Result};
 use cid::Cid;
 use futures::{future::BoxFuture, FutureExt};
+use iroh_metrics::{bitswap::BitswapMetrics, core::MRecorder, inc};
 use libp2p::PeerId;
 use tokio::sync::RwLock;
 use tracing::{debug, error};
@@ -95,6 +96,7 @@ impl PeerManager {
         );
 
         if !peer_queues.contains_key(peer) {
+            inc!(BitswapMetrics::MessageQueuesCreated);
             peer_queues.insert(
                 *peer,
                 MessageQueue::new(
@@ -109,6 +111,7 @@ impl PeerManager {
         let peer_queue = peer_queues.get_mut(peer).unwrap();
         if !peer_queue.is_running() {
             debug!("found stopped peer_queue, restarting: {}", peer);
+            inc!(BitswapMetrics::MessageQueuesCreated);
             // Restart if the queue was stopped, but not yet cleaned up.
             *peer_queue = MessageQueue::new(
                 *peer,
@@ -135,6 +138,7 @@ impl PeerManager {
         );
 
         if let Some(peer_queue) = peer_queues.remove(peer) {
+            inc!(BitswapMetrics::MessageQueuesDestroyed);
             // inform the sessions that the peer has disconnected
             self.signal_availability(peer, false).await;
             peer_want_manager.remove_peer(peer);
@@ -148,11 +152,9 @@ impl PeerManager {
     /// The set of blocks, HAVEs and DONT_HAVEs, is `cids`.
     /// Currently only used to calculate latency.
     pub async fn response_received(&self, peer: &PeerId, cids: &[Cid]) {
-        let peer_queues = &mut *self.inner.peers.write().await.0;
-        if let Some(peer_queue) = peer_queues.get_mut(peer) {
-            if !peer_queue.response_received(cids.to_vec()).await {
-                peer_queues.remove(peer);
-            }
+        let (peer_queues, _peer_want_manager) = &*self.inner.peers.read().await;
+        if let Some(peer_queue) = peer_queues.get(peer) {
+            peer_queue.response_received(cids.to_vec()).await;
         }
     }
 

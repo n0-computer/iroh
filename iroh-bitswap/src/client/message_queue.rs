@@ -129,73 +129,67 @@ impl MessageQueue {
     }
 
     /// Add want-haves that are part of a broadcast to all connected peers.
-    pub async fn add_broadcast_want_haves(&mut self, want_haves: &AHashSet<Cid>) -> bool {
+    pub async fn add_broadcast_want_haves(&self, want_haves: &AHashSet<Cid>) {
         if want_haves.is_empty() {
-            return self.is_running();
+            return;
         }
         self.send_wants_update(WantsUpdate::AddBroadcastWantHaves(want_haves.to_owned()))
-            .await
+            .await;
     }
 
     /// Add want-haves and want-blocks for the peer for this queue.
-    pub async fn add_wants(&mut self, want_blocks: &[Cid], want_haves: &[Cid]) -> bool {
+    pub async fn add_wants(&self, want_blocks: &[Cid], want_haves: &[Cid]) {
         if want_blocks.is_empty() && want_haves.is_empty() {
-            return self.is_running();
+            return;
         }
 
         self.send_wants_update(WantsUpdate::AddWants {
             want_blocks: want_blocks.to_vec(),
             want_haves: want_haves.to_vec(),
         })
-        .await
+        .await;
     }
 
     /// Add cancel messages for the given keys.
-    pub async fn add_cancels(&mut self, cancels: &AHashSet<Cid>) -> bool {
+    pub async fn add_cancels(&self, cancels: &AHashSet<Cid>) {
         if cancels.is_empty() {
-            return self.is_running();
+            return;
         }
 
         self.send_wants_update(WantsUpdate::AddCancels(cancels.to_owned()))
-            .await
+            .await;
     }
 
-    async fn send_wants_update(&mut self, update: WantsUpdate) -> bool {
-        self.send(Message::WantsUpdate(update)).await
+    async fn send_wants_update(&self, update: WantsUpdate) {
+        self.send(Message::WantsUpdate(update)).await;
     }
 
     /// Returns `is_running`.
-    async fn send(&mut self, message: Message) -> bool {
+    async fn send(&self, message: Message) {
         if let Some(ref sender) = self.sender {
             if let Err(err) = sender.send(message).await {
                 warn!(
                     "message_queue:{}: failed to send wants update: {:?}",
                     self.peer, err
                 );
-                // Mark as not running
-                let _ = self.sender.take();
-                false
-            } else {
-                true
             }
         } else {
             warn!(
                 "message_queue:{}: failed to send message: not running",
                 self.peer
             );
-            false
         }
     }
 
     /// Called when a message is received from the network.
     /// `cids` is the set of blocks, HAVEs and DONT_HAVEs in the message.
     /// Note: this is only use to calculate latency currently.
-    pub async fn response_received(&mut self, cids: Vec<Cid>) -> bool {
+    pub async fn response_received(&self, cids: Vec<Cid>) {
         if cids.is_empty() {
-            return self.is_running();
+            return;
         }
 
-        self.send(Message::Responses(cids)).await
+        self.send(Message::Responses(cids)).await;
     }
 
     /// Shuts down this message queue.
@@ -205,6 +199,8 @@ impl MessageQueue {
             "message queue {} already stopped",
             self.peer
         );
+        inc!(BitswapMetrics::MessageQueuesStopped);
+
         let _ = self.sender.take();
         self.worker.await?;
 
