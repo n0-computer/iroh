@@ -424,15 +424,6 @@ impl<S: Store> NetworkBehaviour for Bitswap<S> {
                         });
                     }
                     OutEvent::Dial { peer, response, id } => {
-                        if self.pause_dialing {
-                            // already connected
-                            if let Err(err) =
-                                response.send(Err(format!("dial:{}: dialing paused", id)))
-                            {
-                                warn!("dial:{}: failed to send dial response {:?}", id, err)
-                            }
-                            continue;
-                        }
                         match self.get_peer_state(&peer) {
                             PeerState::Responsive(conn, protocol_id) => {
                                 // already connected
@@ -449,6 +440,16 @@ impl<S: Store> NetworkBehaviour for Bitswap<S> {
                                 continue;
                             }
                             _ => {
+                                if self.pause_dialing {
+                                    // already connected
+                                    if let Err(err) =
+                                        response.send(Err(format!("dial:{}: dialing paused", id)))
+                                    {
+                                        warn!("dial:{}: failed to send dial response {:?}", id, err)
+                                    }
+                                    continue;
+                                }
+
                                 self.dials
                                     .lock()
                                     .unwrap()
