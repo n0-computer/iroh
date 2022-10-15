@@ -286,6 +286,7 @@ impl<S: Store> Bitswap<S> {
     }
 
     fn receive_message(&self, peer: PeerId, message: BitswapMessage) {
+        inc!(BitswapMetrics::MessagesReceived);
         // TODO: Handle backpressure properly
         if let Err(err) = self.incoming_messages.send((peer, message)) {
             warn!("failed to receive message from {}: {:?}", peer, err);

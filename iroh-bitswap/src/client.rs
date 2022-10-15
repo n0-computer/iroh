@@ -226,7 +226,7 @@ impl<S: Store> Client<S> {
 
     /// Called by the network interface when a new message is received.
     pub async fn receive_message(&self, peer: &PeerId, incoming: &BitswapMessage) {
-        inc!(BitswapMetrics::MessagesReceived);
+        inc!(BitswapMetrics::MessagesProcessing);
 
         if incoming.blocks_len() > 0 {
             debug!("client::receive_message {} blocks", incoming.blocks_len());

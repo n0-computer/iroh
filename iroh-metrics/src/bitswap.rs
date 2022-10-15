@@ -37,6 +37,7 @@ make_metrics! {
     DisconnectedPeers: Counter: "",
     MessagesAttempted: Counter: "",
     MessagesSent: Counter: "",
+    MessagesProcessing: Counter: "",
     MessagesReceived: Counter: "",
     EventsBackpressureIn: Counter: "",
     EventsBackpressureOut: Counter: "",
