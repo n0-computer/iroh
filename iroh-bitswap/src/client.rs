@@ -10,7 +10,6 @@ use cid::Cid;
 use derivative::Derivative;
 use futures::future::BoxFuture;
 use libp2p::PeerId;
-use tokio::sync::Mutex;
 use tracing::{debug, error, warn};
 
 use crate::{block::Block, message::BitswapMessage, network::Network, Store};
@@ -63,7 +62,6 @@ pub struct Stat {
 pub struct Client<S: Store> {
     network: Network,
     store: S,
-    counters: Arc<Mutex<Stat>>,
     session_manager: SessionManager,
     provider_search_delay: Duration,
     rebroadcast_delay: Duration,
@@ -112,12 +110,10 @@ impl<S: Store> Client<S> {
         });
 
         let session_manager = SessionManager::new(self_id, network.clone(), notify.clone()).await;
-        let counters = Mutex::new(Stat::default());
 
         Client {
             network,
             store,
-            counters: Arc::new(counters),
             session_manager,
             provider_search_delay: config.provider_search_delay,
             rebroadcast_delay: config.rebroadcast_delay,
@@ -188,19 +184,20 @@ impl<S: Store> Client<S> {
     async fn receive_blocks_from(
         &self,
         from: &PeerId,
-        blocks: &[Block],
+        incoming: &BitswapMessage,
         haves: &[Cid],
         dont_haves: &[Cid],
     ) -> Result<()> {
+        let all_keys: Vec<Cid> = incoming.blocks().map(|b| *b.cid()).collect();
+        let blocks = incoming.blocks().cloned().collect::<Vec<_>>();
         let (wanted, not_wanted) = self
             .session_manager
             .session_interest_manager()
-            .split_wanted_unwanted(blocks)
+            .split_wanted_unwanted(&blocks)
             .await;
         for block in not_wanted {
             debug!("recv block not in wantlist: {} from {}", block.cid(), from);
         }
-        let all_keys: Vec<Cid> = blocks.iter().map(|b| *b.cid()).collect();
 
         // Inform the PeerManager so that we can calculate per-peer latency.
         let mut combined = all_keys.clone();
@@ -227,15 +224,18 @@ impl<S: Store> Client<S> {
 
     /// Called by the network interface when a new message is received.
     pub async fn receive_message(&self, peer: &PeerId, incoming: &BitswapMessage) {
-        self.counters.lock().await.messages_received += 1;
         inc!(BitswapMetrics::MessagesReceived);
 
         if incoming.blocks_len() > 0 {
             debug!("client::receive_message {} blocks", incoming.blocks_len());
 
-            self.update_receive_counters(incoming.blocks()).await;
             for block in incoming.blocks() {
                 debug!("recv block; {} from {}", block.cid(), peer);
+                inc!(BitswapMetrics::BlocksIn);
+                record!(
+                    BitswapMetrics::ReceivedBlockBytes,
+                    block.data().len() as u64
+                );
             }
         }
 
@@ -245,43 +245,12 @@ impl<S: Store> Client<S> {
         let dont_haves: Vec<Cid> = incoming.dont_haves().copied().collect();
 
         if incoming.blocks_len() > 0 || !haves.is_empty() || !dont_haves.is_empty() {
-            let incoming_blocks: Vec<Block> = incoming.blocks().cloned().collect();
             // Process blocks
             if let Err(err) = self
-                .receive_blocks_from(peer, &incoming_blocks, &haves, &dont_haves)
+                .receive_blocks_from(peer, incoming, &haves, &dont_haves)
                 .await
             {
                 warn!("ReceiveMessage recvBlockFrom error: {:?}", err);
-            }
-        }
-    }
-
-    async fn update_receive_counters<'a>(&self, blocks: impl Iterator<Item = &'a Block>) {
-        // Check which blocks are in the datastore
-        // (Note: any errors from the blockstore are simply logged out in store_has())
-        // let store = &self.store;
-        for block in blocks {
-            // TODO: this is a call to the store for each block just to update metrics, should be avoided.
-            let has_block = false;
-            // TODO:
-            /*
-            let has_block = tokio::runtime::Handle::current()
-                .block_on(async { store.has(block.cid()).await.unwrap_or_default() });
-            */
-            let block_len = block.data().len();
-            // TODO: bs.allMetric.Observe(float64(blkLen))
-            if has_block {
-                // TODO: bs.dupMetric.Observe(float64(blkLen))
-            }
-
-            let counters = &mut *self.counters.lock().await;
-            inc!(BitswapMetrics::BlocksIn);
-            record!(BitswapMetrics::ReceivedBlockBytes, block_len as u64);
-            counters.blocks_received += 1;
-            counters.data_received += block_len as u64;
-            if has_block {
-                counters.dup_blks_received += 1;
-                counters.dup_data_received += block_len as u64;
             }
         }
     }
@@ -346,9 +315,6 @@ impl<S: Store> Client<S> {
 
     /// Returns aggregated statistics about bitswap operations.
     pub async fn stat(&self) -> Result<Stat> {
-        let mut counters = self.counters.lock().await.clone();
-        counters.wantlist = self.get_wantlist().await.into_iter().collect();
-
-        Ok(counters)
+        todo!()
     }
 }

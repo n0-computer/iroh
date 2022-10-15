@@ -111,6 +111,8 @@ impl SessionInterestManager {
         session: u64,
         key_sets: &[&[Cid]],
     ) -> Vec<Vec<Cid>> {
+        debug!("filter_session_interested",);
+
         let mut results = Vec::with_capacity(key_sets.len());
         let wants = &*self.wants.read().await;
 
@@ -136,9 +138,10 @@ impl SessionInterestManager {
         &self,
         blocks: &'a [Block],
     ) -> (Vec<&'a Block>, Vec<&'a Block>) {
+        debug!("split_wanted_unwantedn",);
+
         let wants = &*self.wants.read().await;
 
-        // Get the wanted bock keys as a set
         let mut wanted_keys = AHashSet::new();
         for block in blocks {
             let cid = block.cid();
@@ -172,6 +175,7 @@ impl SessionInterestManager {
         haves: &[Cid],
         dont_haves: &[Cid],
     ) -> AHashSet<u64> {
+        debug!("interested sessions");
         let wants = &*self.wants.read().await;
 
         let mut session_keys = AHashSet::new();
