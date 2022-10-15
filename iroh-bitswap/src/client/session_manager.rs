@@ -48,7 +48,7 @@ impl SessionManager {
     ) -> Self {
         let session_interest_manager = SessionInterestManager::default();
         let block_presence_manager = BlockPresenceManager::new();
-        let peer_manager = PeerManager::new(self_id, network.clone());
+        let peer_manager = PeerManager::new(self_id, network.clone()).await;
         let provider_query_manager = ProviderQueryManager::new(network.clone()).await;
 
         let this = SessionManager {

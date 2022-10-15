@@ -120,7 +120,7 @@ impl MessageQueue {
     }
 
     #[cfg(test)]
-    pub(crate) async fn wants(&mut self) -> Result<Wants> {
+    pub(crate) async fn wants(&self) -> Result<Wants> {
         let (s, r) = tokio::sync::oneshot::channel();
         self.send(Message::WantsUpdate(WantsUpdate::GetWants(s)))
             .await;
