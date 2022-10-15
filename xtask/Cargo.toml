@@ -2,7 +2,7 @@
 name = "xtask"
 version = "0.1.0"
 edition = "2021"
-private = true
+publish = false
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -10,4 +10,5 @@ private = true
 anyhow = "1.0"
 clap = { version = "4.0.9", features = ["derive"] }
 clap_mangen = "0.2.2"
+dirs-next = "2.0.0"
 iroh = { path = "../iroh" }

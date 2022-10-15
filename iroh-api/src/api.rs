@@ -117,7 +117,7 @@ impl Api for Iroh {
                 if out.is_dir() {
                     yield (relative_path, OutType::Dir);
                 } else {
-                    let reader = out.pretty(resolver.clone(), Default::default())?;
+                    let reader = out.pretty(resolver.clone(), Default::default(), iroh_resolver::resolver::ResponseClip::NoClip)?;
                     yield (relative_path, OutType::Reader(Box::new(reader)));
                 }
             }
