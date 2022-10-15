@@ -32,6 +32,8 @@ make_metrics! {
     CancelBlocks: Counter: "",
     CancelWantBlocks: Counter: "",
     ConnectedPeers: Counter: "",
+    ResponsivePeers: Counter: "",
+    UnresponsivePeers: Counter: "",
     DisconnectedPeers: Counter: "",
     MessagesAttempted: Counter: "",
     MessagesSent: Counter: "",
@@ -57,7 +59,7 @@ make_metrics! {
     ProviderQueryError: Counter: "",
     EngineActiveTasks: Gauge: "",
     EnginePendingTasks: Gauge: "",
-    
+
     ClientLoopTick: Counter: "",
     ServerTaskLoopTick: Counter: "",
     ServerProviderTaskLoopTick: Counter: "",
