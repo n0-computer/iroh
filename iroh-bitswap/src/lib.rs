@@ -273,7 +273,7 @@ impl<S: Store> Bitswap<S> {
                     | PeerState::Disconnected
                     | PeerState::Unresponsive => {
                         if old_state.is_connected() {
-                            inc!(BitswapMetrics::ConnectedPeers);
+                            inc!(BitswapMetrics::DisconnectedPeers);
                             self.peer_disconnected(peer);
                         }
                     }

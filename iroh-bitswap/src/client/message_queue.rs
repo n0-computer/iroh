@@ -225,6 +225,7 @@ async fn run(mut actor: MessageQueueActor) {
             biased;
 
             message = actor.receiver.recv() => {
+                debug!("{}: {:?}", actor.peer, message);
                 match message {
                     Some(Message::WantsUpdate(wants_update)) => {
                         actor.handle_wants_update(wants_update).await;
@@ -240,6 +241,7 @@ async fn run(mut actor: MessageQueueActor) {
                 }
             }
             _ = rebroadcast_timer.tick() => {
+                debug!("{}: rebroadcast", actor.peer);
                 if actor.rebroadcast_wantlist().await {
                     // fatal error
                     break;
@@ -252,17 +254,20 @@ async fn run(mut actor: MessageQueueActor) {
                 let pending_work_count = actor.wants.pending_work_count();
                 if pending_work_count > actor.config.send_message_cutoff ||
                     work_scheduled.unwrap().elapsed() >= actor.config.send_message_max_delay {
+                        debug!("{}: outgoing work sending", actor.peer);
                     if actor.send_if_ready().await {
                         // fatal error
                         break;
                     }
                     work_scheduled = None;
                 } else {
+                        debug!("{}: outgoing work extend timer", actor.peer);
                     // Extend the timer
                     schedule_work.as_mut().reset(tokio::time::Instant::now() + actor.config.send_message_debounce);
                 }
             }
             _ = &mut schedule_work, if work_scheduled.is_some() => {
+                debug!("{}: schedule work", actor.peer);
                 work_scheduled = None;
                 if actor.send_if_ready().await {
                     // fatal error
@@ -272,6 +277,7 @@ async fn run(mut actor: MessageQueueActor) {
         }
     }
 
+    debug!("{}: message loop shutting down", actor.peer);
     if let Err(err) = actor.stop().await {
         error!(
             "message_queue: failed to stop message queue loop: {:?}",

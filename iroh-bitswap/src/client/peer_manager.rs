@@ -88,41 +88,43 @@ impl PeerManager {
 
     /// Called to a new peer to the pool, and send it an initial set of wants.
     pub async fn connected(&self, peer: &PeerId) {
-        let (peer_queues, peer_want_manager) = &mut *self.inner.peers.write().await;
-        debug!(
-            "connected to {} (current connections: {})",
-            peer,
-            peer_queues.len()
-        );
+        {
+            let (peer_queues, peer_want_manager) = &mut *self.inner.peers.write().await;
+            debug!(
+                "connected to {} (current connections: {})",
+                peer,
+                peer_queues.len()
+            );
 
-        if !peer_queues.contains_key(peer) {
-            inc!(BitswapMetrics::MessageQueuesCreated);
-            peer_queues.insert(
-                *peer,
-                MessageQueue::new(
+            if !peer_queues.contains_key(peer) {
+                inc!(BitswapMetrics::MessageQueuesCreated);
+                peer_queues.insert(
+                    *peer,
+                    MessageQueue::new(
+                        *peer,
+                        self.inner.network.clone(),
+                        self.inner.on_dont_have_timeout.read().await.clone(),
+                    )
+                    .await,
+                );
+            }
+
+            let peer_queue = peer_queues.get_mut(peer).unwrap();
+            if !peer_queue.is_running() {
+                debug!("found stopped peer_queue, restarting: {}", peer);
+                inc!(BitswapMetrics::MessageQueuesCreated);
+                // Restart if the queue was stopped, but not yet cleaned up.
+                *peer_queue = MessageQueue::new(
                     *peer,
                     self.inner.network.clone(),
                     self.inner.on_dont_have_timeout.read().await.clone(),
                 )
-                .await,
-            );
-        }
+                .await;
+            }
 
-        let peer_queue = peer_queues.get_mut(peer).unwrap();
-        if !peer_queue.is_running() {
-            debug!("found stopped peer_queue, restarting: {}", peer);
-            inc!(BitswapMetrics::MessageQueuesCreated);
-            // Restart if the queue was stopped, but not yet cleaned up.
-            *peer_queue = MessageQueue::new(
-                *peer,
-                self.inner.network.clone(),
-                self.inner.on_dont_have_timeout.read().await.clone(),
-            )
-            .await;
+            // Inform the peer want manager that there's a new peer.
+            peer_want_manager.add_peer(peer_queue, peer).await;
         }
-
-        // Inform the peer want manager that there's a new peer.
-        peer_want_manager.add_peer(peer_queue, peer).await;
 
         // Inform the session that the peer has connected
         self.signal_availability(peer, true).await;
@@ -130,18 +132,24 @@ impl PeerManager {
 
     /// Called to remove a peer from the pool.
     pub async fn disconnected(&self, peer: &PeerId) {
-        let (peer_queues, peer_want_manager) = &mut *self.inner.peers.write().await;
-        debug!(
-            "disconnected from {} (current connections {})",
-            peer,
-            peer_queues.len()
-        );
+        let peer_queue = {
+            let (peer_queues, peer_want_manager) = &mut *self.inner.peers.write().await;
+            debug!(
+                "disconnected from {} (current connections {})",
+                peer,
+                peer_queues.len()
+            );
 
-        if let Some(peer_queue) = peer_queues.remove(peer) {
-            inc!(BitswapMetrics::MessageQueuesDestroyed);
-            // inform the sessions that the peer has disconnected
-            self.signal_availability(peer, false).await;
-            peer_want_manager.remove_peer(peer);
+            if let Some(peer_queue) = peer_queues.remove(peer) {
+                inc!(BitswapMetrics::MessageQueuesDestroyed);
+                // inform the sessions that the peer has disconnected
+                peer_want_manager.remove_peer(peer);
+                Some(peer_queue)
+            } else {
+                None
+            }
+        };
+        if let Some(peer_queue) = peer_queue {
             if let Err(err) = peer_queue.stop().await {
                 error!("failed to shutdown message queue for {}: {:?}", peer, err);
             }
