@@ -10,7 +10,7 @@ use cid::Cid;
 use derivative::Derivative;
 use futures::future::BoxFuture;
 use libp2p::PeerId;
-use tracing::{debug, error, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::{block::Block, message::BitswapMessage, network::Network, Store};
 
@@ -188,6 +188,7 @@ impl<S: Store> Client<S> {
         haves: &[Cid],
         dont_haves: &[Cid],
     ) -> Result<()> {
+        info!("recv_msg start");
         let all_keys: Vec<Cid> = incoming.blocks().map(|b| *b.cid()).collect();
         // Determine wanted and unwanted blocks
         let blocks = incoming.blocks().cloned().collect::<Vec<_>>();
@@ -206,13 +207,16 @@ impl<S: Store> Client<S> {
         combined.extend_from_slice(haves);
         combined.extend_from_slice(dont_haves);
 
+        info!("recv_msg peer_manager");
         self.peer_manager().response_received(from, &combined).await;
 
+        info!("recv_msg session_manager");
         // Send all block keys (including duplicates to any sessions that want them for accounting purposes).
         self.session_manager
             .receive_from(Some(*from), &all_keys, haves, dont_haves)
             .await;
 
+        info!("recv_msg broadcast");
         // Publish the blocks
         for block in &wanted {
             if let Err(err) = self.notify.broadcast((*block).clone()).await {
@@ -221,12 +225,13 @@ impl<S: Store> Client<S> {
         }
         (self.blocks_received_cb)(*from, wanted.into_iter().cloned().collect()).await;
 
+        info!("recv_msg end");
         Ok(())
     }
 
     /// Called by the network interface when a new message is received.
     pub async fn receive_message(&self, peer: &PeerId, incoming: &BitswapMessage) {
-        inc!(BitswapMetrics::MessagesProcessing);
+        inc!(BitswapMetrics::MessagesProcessingClient);
 
         if incoming.blocks_len() > 0 {
             debug!("client::receive_message {} blocks", incoming.blocks_len());

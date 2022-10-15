@@ -5,12 +5,12 @@ use cid::Cid;
 use futures::future::BoxFuture;
 use futures::FutureExt;
 use iroh_metrics::bitswap::BitswapMetrics;
+use iroh_metrics::core::MRecorder;
 use iroh_metrics::inc;
 use libp2p::PeerId;
 use tokio::sync::{mpsc, oneshot, Mutex};
 use tokio::task::JoinHandle;
 use tracing::{debug, error, trace, warn};
-use iroh_metrics::core::MRecorder;
 
 use self::{
     decision::{Config as DecisionConfig, Engine as DecisionEngine, Envelope},
@@ -295,6 +295,7 @@ impl<S: Store> Server<S> {
 
     pub async fn receive_message(&self, peer: &PeerId, message: &BitswapMessage) {
         trace!("server:receive_message from {}", peer);
+        inc!(BitswapMetrics::MessagesProcessingServer);
         self.engine.message_received(peer, message).await;
         // TODO: only track useful messages
     }
