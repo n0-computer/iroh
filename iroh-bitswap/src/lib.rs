@@ -73,6 +73,8 @@ pub struct Bitswap<S: Store> {
     client: Client<S>,
     server: Server<S>,
     incoming_messages: mpsc::UnboundedSender<(PeerId, BitswapMessage)>,
+    peers_connected: mpsc::UnboundedSender<PeerId>,
+    peers_disconnected: mpsc::UnboundedSender<PeerId>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -135,18 +137,55 @@ impl<S: Store> Bitswap<S> {
         .await;
 
         // EVIL: must eventually not be unbounded !!!
-        let (sender, mut receiver) = mpsc::unbounded_channel();
-        let s = server.clone();
-        let c = client.clone();
+        let (sender_msg, mut receiver_msg) = mpsc::unbounded_channel();
+        let (sender_con, mut receiver_con) = mpsc::unbounded_channel();
+        let (sender_dis, mut receiver_dis) = mpsc::unbounded_channel();
 
-        let _worker = tokio::task::spawn(async move {
-            // process messages serially but without blocking the p2p loop
-            while let Some((peer, message)) = receiver.recv().await {
-                futures::future::join(
-                    c.receive_message(&peer, &message),
-                    s.receive_message(&peer, &message),
-                )
-                .await;
+        let _worker = tokio::task::spawn({
+            let server = server.clone();
+            let client = client.clone();
+
+            async move {
+                // process messages serially but without blocking the p2p loop
+                while let Some((peer, message)) = receiver_msg.recv().await {
+                    futures::future::join(
+                        client.receive_message(&peer, &message),
+                        server.receive_message(&peer, &message),
+                    )
+                    .await;
+                }
+            }
+        });
+
+        let _worker = tokio::task::spawn({
+            let server = server.clone();
+            let client = client.clone();
+
+            async move {
+                // process messages serially but without blocking the p2p loop
+                while let Some(peer) = receiver_con.recv().await {
+                    futures::future::join(
+                        client.peer_connected(&peer),
+                        server.peer_connected(&peer),
+                    )
+                    .await;
+                }
+            }
+        });
+
+        let _worker = tokio::task::spawn({
+            let server = server.clone();
+            let client = client.clone();
+
+            async move {
+                // process messages serially but without blocking the p2p loop
+                while let Some(peer) = receiver_dis.recv().await {
+                    futures::future::join(
+                        client.peer_disconnected(&peer),
+                        server.peer_disconnected(&peer),
+                    )
+                    .await;
+                }
             }
         });
 
@@ -159,7 +198,9 @@ impl<S: Store> Bitswap<S> {
             pause_dialing: false,
             server,
             client,
-            incoming_messages: sender,
+            incoming_messages: sender_msg,
+            peers_connected: sender_con,
+            peers_disconnected: sender_dis,
         }
     }
 
@@ -229,22 +270,19 @@ impl<S: Store> Bitswap<S> {
 
     fn peer_connected(&self, peer: PeerId) {
         debug!("peer {} connected", peer);
-        let client = self.client.clone();
-        let server = self.server.clone();
-        tokio::task::spawn(async move {
-            client.peer_connected(&peer).await;
-            server.peer_connected(&peer).await;
-        });
+        if let Err(err) = self.peers_connected.send(peer) {
+            warn!("failed to process peer connection from {}: {:?}", peer, err);
+        }
     }
 
     fn peer_disconnected(&self, peer: PeerId) {
         debug!("peer {} disconnected", peer);
-        let client = self.client.clone();
-        let server = self.server.clone();
-        tokio::task::spawn(async move {
-            client.peer_disconnected(&peer).await;
-            server.peer_disconnected(&peer).await;
-        });
+        if let Err(err) = self.peers_disconnected.send(peer) {
+            warn!(
+                "failed to process peer disconnection from {}: {:?}",
+                peer, err
+            );
+        }
     }
 
     fn receive_message(&self, peer: PeerId, message: BitswapMessage) {
