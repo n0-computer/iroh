@@ -15,12 +15,12 @@ use crate::BitswapMessage;
 
 const MAX_BUF_SIZE: usize = 1024 * 1024 * 2;
 
-#[derive(Clone, Debug, Copy, PartialEq, Eq)]
+#[derive(Clone, Debug, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ProtocolId {
-    Legacy,
-    Bitswap100,
-    Bitswap110,
-    Bitswap120,
+    Legacy = 0,
+    Bitswap100 = 1,
+    Bitswap110 = 2,
+    Bitswap120 = 3,
 }
 
 impl ProtocolName for ProtocolId {
@@ -30,6 +30,23 @@ impl ProtocolName for ProtocolId {
             ProtocolId::Bitswap100 => b"/ipfs/bitswap/1.0.0",
             ProtocolId::Bitswap110 => b"/ipfs/bitswap/1.1.0",
             ProtocolId::Bitswap120 => b"/ipfs/bitswap/1.2.0",
+        }
+    }
+}
+
+impl ProtocolId {
+    pub fn try_from(value: impl AsRef<[u8]>) -> Option<Self> {
+        let value = value.as_ref();
+        if value == ProtocolId::Legacy.protocol_name() {
+            Some(ProtocolId::Legacy)
+        } else if value == ProtocolId::Bitswap100.protocol_name() {
+            Some(ProtocolId::Bitswap100)
+        } else if value == ProtocolId::Bitswap110.protocol_name() {
+            Some(ProtocolId::Bitswap110)
+        } else if value == ProtocolId::Bitswap120.protocol_name() {
+            Some(ProtocolId::Bitswap120)
+        } else {
+            None
         }
     }
 }
@@ -208,5 +225,23 @@ mod tests {
         };
 
         future::select(Box::pin(server), Box::pin(client)).await;
+    }
+
+    #[test]
+    fn test_ord() {
+        let mut protocols = [
+            ProtocolId::Bitswap120,
+            ProtocolId::Bitswap100,
+            ProtocolId::Legacy,
+        ];
+        protocols.sort();
+        assert_eq!(
+            protocols,
+            [
+                ProtocolId::Legacy,
+                ProtocolId::Bitswap100,
+                ProtocolId::Bitswap120
+            ]
+        );
     }
 }

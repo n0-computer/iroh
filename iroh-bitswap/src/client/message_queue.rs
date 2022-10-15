@@ -10,7 +10,7 @@ use iroh_metrics::core::MRecorder;
 use iroh_metrics::{bitswap::BitswapMetrics, inc};
 use libp2p::PeerId;
 use tokio::{sync::mpsc, task::JoinHandle};
-use tracing::{error, warn};
+use tracing::{debug, error, warn};
 
 use crate::{
     message::{BitswapMessage, Entry, WantType},
@@ -194,6 +194,7 @@ impl MessageQueue {
 
     /// Shuts down this message queue.
     pub async fn stop(mut self) -> Result<()> {
+        debug!("stopping message queue {}", self.peer);
         ensure!(
             self.sender.is_some(),
             "message queue {} already stopped",

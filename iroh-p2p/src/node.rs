@@ -346,8 +346,10 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                                 chan.send(Err(err.to_string())).ok();
                             }
                         }
-                    }.boxed()
-                ).await;
+                    }
+                    .boxed(),
+                )
+                .await;
             });
             entry.push((closer_s, worker));
 
@@ -356,7 +358,6 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
             bail!("no bitswap available");
         }
     }
-
 
     #[tracing::instrument(skip(self))]
     fn handle_swarm_event(
@@ -570,6 +571,9 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                             }
                         }
                     }
+                    if let Some(bitswap) = self.swarm.behaviour().bitswap.as_ref() {
+                        bitswap.on_identify(&peer_id, &info.protocols);
+                    }
 
                     self.swarm
                         .behaviour_mut()
@@ -650,8 +654,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
             } => {
                 trace!("context:{} bitswap_request", ctx);
                 for (cid, response_channel) in cids.into_iter().zip(response_channels.into_iter()) {
-                    self
-                        .want_block(ctx, cid, providers.clone(), response_channel)
+                    self.want_block(ctx, cid, providers.clone(), response_channel)
                         .map_err(|err| anyhow!("Failed to send a bitswap want_block: {:?}", err))?;
                 }
             }

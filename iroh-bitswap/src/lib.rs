@@ -93,13 +93,6 @@ impl PeerState {
     fn is_connected(self) -> bool {
         matches!(self, PeerState::Connected(_) | PeerState::Responsive(_, _))
     }
-
-    fn is_disconnected(self) -> bool {
-        matches!(
-            self,
-            PeerState::DialFailure(_) | PeerState::Unresponsive | PeerState::Disconnected
-        )
-    }
 }
 
 #[derive(Debug)]
@@ -176,6 +169,20 @@ impl<S: Store> Bitswap<S> {
         Ok(())
     }
 
+    /// Called on identify events from swarm, informing us about available protocols of this peer.
+    pub fn on_identify(&self, peer: &PeerId, protocols: &[String]) {
+        if let Some(PeerState::Connected(conn_id)) = self.get_peer_state(peer) {
+            let mut protocols: Vec<ProtocolId> = protocols
+                .iter()
+                .filter_map(|p| ProtocolId::try_from(p))
+                .collect();
+            protocols.sort();
+            if let Some(best_protocol) = protocols.last() {
+                self.set_peer_state(peer, PeerState::Responsive(conn_id, *best_protocol));
+            }
+        }
+    }
+
     pub async fn stat(&self) -> Result<Stat> {
         let client_stat = self.client.stat().await?;
         let server_stat = self.server.stat().await?;
@@ -235,7 +242,7 @@ impl<S: Store> Bitswap<S> {
         self.peers.lock().unwrap().get(peer).copied()
     }
 
-    fn set_peer_state(&mut self, peer: &PeerId, new_state: PeerState) {
+    fn set_peer_state(&self, peer: &PeerId, new_state: PeerState) {
         let peers = &mut *self.peers.lock().unwrap();
         let peer = *peer;
         match peers.entry(peer) {
@@ -270,11 +277,13 @@ impl<S: Store> Bitswap<S> {
                             self.peer_disconnected(peer);
                         }
                     }
-                    PeerState::Connected(_) | PeerState::Responsive(_, _) => {
-                        if old_state.is_disconnected() {
-                            inc!(BitswapMetrics::DisconnectedPeers);
-                            self.peer_connected(peer);
-                        }
+                    PeerState::Connected(_) => {
+                        // nothing, just recorded until we receive protocol confirmation
+                        inc!(BitswapMetrics::ConnectedPeers);
+                    }
+                    PeerState::Responsive(_, _) => {
+                        inc!(BitswapMetrics::ResponsivePeers);
+                        self.peer_connected(peer);
                     }
                 }
             }
@@ -289,8 +298,11 @@ impl<S: Store> Bitswap<S> {
                         inc!(BitswapMetrics::DisconnectedPeers);
                         self.peer_disconnected(peer);
                     }
-                    PeerState::Connected(_) | PeerState::Responsive(_, _) => {
-                        inc!(BitswapMetrics::DisconnectedPeers);
+                    PeerState::Connected(_) => {
+                        inc!(BitswapMetrics::ConnectedPeers);
+                    }
+                    PeerState::Responsive(_, _) => {
+                        inc!(BitswapMetrics::ResponsivePeers);
                         self.peer_connected(peer);
                     }
                 }
@@ -547,7 +559,7 @@ mod tests {
     use libp2p::core::transport::upgrade::Version;
     use libp2p::core::transport::Boxed;
     use libp2p::identity::Keypair;
-    use libp2p::swarm::SwarmBuilder;
+    use libp2p::swarm::{SwarmBuilder, SwarmEvent};
     use libp2p::tcp::{GenTcpConfig, TokioTcpTransport};
     use libp2p::yamux::YamuxConfig;
     use libp2p::{noise, PeerId, Swarm, Transport};
@@ -738,6 +750,17 @@ mod tests {
 
             loop {
                 match swarm2.next().await {
+                    Some(SwarmEvent::ConnectionEstablished { peer_id, .. }) => {
+                        trace!("peer2: connected to {}", peer_id);
+                        // simulate identify to inform bitswap about the protocols
+                        swarm2.behaviour().on_identify(
+                            &peer_id,
+                            &[
+                                "/ipfs/bitswap/1.2.0".to_string(),
+                                "/ipfs/bitswap/1.1.0".to_string(),
+                            ],
+                        );
+                    }
                     ev => trace!("peer2: {:?}", ev),
                 }
             }
