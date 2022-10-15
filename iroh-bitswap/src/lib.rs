@@ -331,9 +331,6 @@ impl<S: Store> NetworkBehaviour for Bitswap<S> {
         self.pause_dialing = false;
         if remaining_established == 0 {
             // debug!("connection closed {}", peer_id);
-            if self.get_peer_state(peer_id) == PeerState::Disconnected {
-                return;
-            }
             self.set_peer_state(peer_id, PeerState::Disconnected)
         }
     }
@@ -349,6 +346,8 @@ impl<S: Store> NetworkBehaviour for Bitswap<S> {
                 self.pause_dialing = true;
             }
             debug!("inject_dial_failure {}, {:?}", peer_id, error);
+            self.set_peer_state(&peer_id, PeerState::Disconnected);
+
             let dials = &mut self.dials.lock().unwrap();
             if let Some(mut dials) = dials.remove(&peer_id) {
                 while let Some((id, sender)) = dials.pop() {
@@ -364,7 +363,7 @@ impl<S: Store> NetworkBehaviour for Bitswap<S> {
         // trace!("inject_event from {}, event: {:?}", peer_id, event);
         match event {
             HandlerEvent::Connected { protocol } => {
-                self.peer_connected(peer_id);
+                self.set_peer_state(&peer_id, PeerState::Responsive(connection, protocol));
                 {
                     let dials = &mut *self.dials.lock().unwrap();
                     if let Some(mut dials) = dials.remove(&peer_id) {
@@ -375,11 +374,9 @@ impl<S: Store> NetworkBehaviour for Bitswap<S> {
                         }
                     }
                 }
-
-                self.set_peer_state(&peer_id, PeerState::Responsive(connection, protocol));
             }
             HandlerEvent::ProtocolNotSuppported => {
-                if matches!(self.get_peer_state(&peer_id), PeerState::Responsive(_, _)) {
+                if !matches!(self.get_peer_state(&peer_id), PeerState::Disconnected) {
                     self.set_peer_state(&peer_id, PeerState::Unresponsive);
                 }
 
@@ -397,9 +394,7 @@ impl<S: Store> NetworkBehaviour for Bitswap<S> {
                 protocol,
             } => {
                 // mark peer as responsive
-                if self.get_peer_state(&peer_id) == PeerState::Unresponsive {
-                    self.set_peer_state(&peer_id, PeerState::Responsive(connection, protocol));
-                }
+                self.set_peer_state(&peer_id, PeerState::Responsive(connection, protocol));
 
                 message.verify_blocks();
                 self.receive_message(peer_id, message);
