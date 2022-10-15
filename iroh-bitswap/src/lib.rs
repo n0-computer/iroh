@@ -15,6 +15,7 @@ use async_trait::async_trait;
 use cid::Cid;
 use handler::{BitswapHandler, HandlerEvent};
 use iroh_metrics::bitswap::BitswapMetrics;
+use iroh_metrics::core::MRecorder;
 use iroh_metrics::inc;
 use libp2p::core::connection::ConnectionId;
 use libp2p::core::ConnectedPoint;
@@ -29,7 +30,6 @@ use network::OutEvent;
 use protocol::{ProtocolConfig, ProtocolId};
 use tokio::sync::oneshot;
 use tracing::{debug, warn};
-use iroh_metrics::core::MRecorder;
 
 use self::client::{Client, Config as ClientConfig};
 use self::network::Network;
@@ -247,9 +247,14 @@ impl<S: Store> Bitswap<S> {
             }
             PeerState::Connected(_) => {
                 // we only connected, might not speak bitswap
+                // TODO: this is tricky
+                self.peer_connected(peer);
             }
             PeerState::Responsive(_, _) => {
-                self.peer_connected(peer);
+                if !matches!(old_state, PeerState::Connected(_)) {
+                    // Only trigger if not already triggered before
+                    self.peer_connected(peer);
+                }
             }
         }
     }
@@ -588,6 +593,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_1_block() {
+        tracing_subscriber::registry()
+            .with(fmt::layer().pretty())
+            .with(EnvFilter::from_default_env())
+            .init();
+
         get_block::<1>().await;
     }
 
@@ -613,11 +623,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_66_block() {
-        tracing_subscriber::registry()
-            .with(fmt::layer().pretty())
-            .with(EnvFilter::from_default_env())
-            .init();
-
         get_block::<66>().await;
     }
 
