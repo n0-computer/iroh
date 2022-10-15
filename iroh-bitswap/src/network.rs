@@ -13,7 +13,7 @@ use iroh_metrics::{bitswap::BitswapMetrics, inc};
 use iroh_metrics::{core::MRecorder, record};
 use libp2p::{core::connection::ConnectionId, PeerId};
 use tokio::sync::{mpsc, oneshot};
-use tracing::{debug, info};
+use tracing::{debug, info, trace};
 
 use crate::{message::BitswapMessage, protocol::ProtocolId, BitswapEvent};
 
@@ -104,7 +104,7 @@ impl Network {
         timeout: Duration,
         backoff: Duration,
     ) -> Result<()> {
-        info!("send:{}: start: {:#?}", peer, message);
+        debug!("send:{}: start: {:#?}", peer, message);
         inc!(BitswapMetrics::MessagesAttempted);
 
         let num_blocks = message.blocks().count();
@@ -137,14 +137,10 @@ impl Network {
                     }
                     Err(channel_err) => {
                         debug!(
-                            "send:{}: try {}/{} failed with: {:?}",
+                            "send:{}: try {}/{} failed with channel: {:?}",
                             peer, i, retries, channel_err
                         );
-                        errors.push(channel_err.into());
-                        if i < retries - 1 {
-                            // backoff until we retry
-                            tokio::time::sleep(backoff).await;
-                        }
+                        return Err(anyhow!("send:{}: channel gone: {:?}", peer, channel_err));
                     }
                     Ok(Err(other)) => {
                         debug!(
@@ -280,22 +276,22 @@ impl Network {
 
     pub fn tag_peer(&self, peer: &PeerId, tag: &str, value: usize) {
         // TODO: is this needed?
-        info!("tag {}: {} - {}", peer, tag, value);
+        trace!("tag {}: {} - {}", peer, tag, value);
     }
 
     pub fn untag_peer(&self, peer: &PeerId, tag: &str) {
         // TODO: is this needed?
-        info!("untag {}: {}", peer, tag);
+        trace!("untag {}: {}", peer, tag);
     }
 
     pub fn protect_peer(&self, peer: &PeerId, tag: &str) {
         // TODO: is this needed?
-        info!("protect {}: {}", peer, tag);
+        trace!("protect {}: {}", peer, tag);
     }
 
     pub fn unprotect_peer(&self, peer: &PeerId, tag: &str) -> bool {
         // TODO: is this needed?
-        info!("unprotect {}: {}", peer, tag);
+        trace!("unprotect {}: {}", peer, tag);
         false
     }
 
