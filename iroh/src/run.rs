@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+use crate::doc;
 #[cfg(feature = "testing")]
 use crate::fixture::get_fixture_api;
 use crate::p2p::{run_command as run_p2p_command, P2p};
@@ -10,7 +11,9 @@ use iroh_api::{Api, ApiExt, IpfsPath, Iroh};
 use iroh_metrics::config::Config as MetricsConfig;
 
 #[derive(Parser, Debug, Clone)]
-#[clap(version, about, long_about = None, propagate_version = true)]
+#[clap(version, long_about = None, propagate_version = true)]
+#[clap(about = "A next generation IPFS implementation: https://iroh.computer")]
+#[clap(after_help = doc::IROH_LONG_DESCRIPTION)]
 pub struct Cli {
     #[clap(long)]
     cfg: Option<PathBuf>,
@@ -33,9 +36,10 @@ impl Cli {
 enum Commands {
     // status checks the health of the different processes
     #[clap(about = "Check the health of the different iroh processes.")]
+    #[clap(after_help = doc::STATUS_LONG_DESCRIPTION)]
     Status {
         #[clap(short, long)]
-        /// when true, updates the status table whenever a change in a process's status occurs
+        /// Poll process for changes
         watch: bool,
     },
     P2p(P2p),
@@ -51,6 +55,7 @@ enum Commands {
         no_wrap: bool,
     },
     #[clap(about = "Fetch IPFS content and write it to disk")]
+    #[clap(after_help = doc::GET_LONG_DESCRIPTION )]
     Get {
         /// CID or CID/with/path/qualifier to get
         ipfs_path: IpfsPath,
