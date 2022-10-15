@@ -237,13 +237,19 @@ impl<S: Store> Bitswap<S> {
             PeerState::Disconnected => {
                 inc!(BitswapMetrics::DisconnectedPeers);
                 peers.remove(&peer);
-                if matches!(old_state, PeerState::Responsive(_, _)) {
+                if matches!(
+                    old_state,
+                    PeerState::Connected(_) | PeerState::Responsive(_, _)
+                ) {
                     self.peer_disconnected(peer);
                 }
             }
             PeerState::Unresponsive => {
                 inc!(BitswapMetrics::UnresponsivePeers);
-                if matches!(old_state, PeerState::Responsive(_, _)) {
+                if matches!(
+                    old_state,
+                    PeerState::Connected(_) | PeerState::Responsive(_, _)
+                ) {
                     self.peer_disconnected(peer);
                 }
             }
@@ -251,11 +257,13 @@ impl<S: Store> Bitswap<S> {
                 inc!(BitswapMetrics::ConnectedPeers);
                 // we only connected, might not speak bitswap
                 // TODO: this is tricky
-                self.peer_connected(peer);
+                if matches!(old_state, PeerState::Disconnected | PeerState::Unresponsive) {
+                    self.peer_connected(peer);
+                }
             }
             PeerState::Responsive(_, _) => {
                 inc!(BitswapMetrics::ResponsivePeers);
-                if !matches!(old_state, PeerState::Connected(_)) {
+                if matches!(old_state, PeerState::Disconnected | PeerState::Unresponsive) {
                     // Only trigger if not already triggered before
                     self.peer_connected(peer);
                 }
