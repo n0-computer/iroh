@@ -1,46 +1,40 @@
 use std::{
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc,
-    },
+    sync::Arc,
     time::{Duration, Instant},
 };
 
-use ahash::{AHashMap, AHashSet};
+use ahash::AHashSet;
 use anyhow::{ensure, Result};
 use cid::Cid;
-use iroh_metrics::{inc, bitswap::BitswapMetrics};
-use libp2p::PeerId;
-use tokio::{
-    sync::{mpsc, oneshot},
-    task::JoinHandle,
-};
-use tracing::{debug, error, info, warn};
 use iroh_metrics::core::MRecorder;
+use iroh_metrics::{bitswap::BitswapMetrics, inc};
+use libp2p::PeerId;
+use tokio::{sync::mpsc, task::JoinHandle};
+use tracing::{error, warn};
 
 use crate::{
     message::{BitswapMessage, Entry, WantType},
     network::{MessageSender, MessageSenderConfig, Network},
-    Priority,
 };
 
-use self::dont_have_timeout_manager::DontHaveTimeoutManager;
+use self::{dont_have_timeout_manager::DontHaveTimeoutManager, wantlist::Wants};
 
-use super::{
-    peer_manager::DontHaveTimeout,
-    wantlist::{self, Wantlist},
-};
+use super::peer_manager::DontHaveTimeout;
 
 mod dont_have_timeout_manager;
+mod wantlist;
 
 #[derive(Debug)]
 pub struct MessageQueue {
     peer: PeerId,
-    running: Arc<AtomicBool>,
-    responses: mpsc::Sender<Vec<Cid>>,
-    closer: oneshot::Sender<()>,
+    sender: Option<mpsc::Sender<Message>>,
     worker: JoinHandle<()>,
-    wants_sender: mpsc::Sender<WantsUpdate>,
+}
+
+#[derive(Debug)]
+enum Message {
+    Responses(Vec<Cid>),
+    WantsUpdate(WantsUpdate),
 }
 
 #[derive(Debug)]
@@ -53,81 +47,6 @@ enum WantsUpdate {
     AddCancels(AHashSet<Cid>),
     #[cfg(test)]
     GetWants(tokio::sync::oneshot::Sender<Wants>),
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct Wants {
-    pub(crate) bcst_wants: RecallWantlist,
-    pub(crate) peer_wants: RecallWantlist,
-    pub(crate) cancels: AHashSet<Cid>,
-    pub(crate) priority: i32,
-}
-
-impl Wants {
-    /// Wether there is work to be processed.
-    fn has_pending_work(&self) -> bool {
-        self.pending_work_count() > 0
-    }
-
-    /// The amount of work that is waiting to be processed.
-    fn pending_work_count(&self) -> usize {
-        self.bcst_wants.pending.len() + self.peer_wants.pending.len() + self.cancels.len()
-    }
-}
-
-#[derive(Debug, Default, Clone)]
-pub(crate) struct RecallWantlist {
-    /// List of wants that have not yet been sent.
-    pub(crate) pending: Wantlist,
-    /// The list of wants that have been sent.
-    pub(crate) sent: Wantlist,
-    /// The time at which each want was sent.
-    pub(crate) sent_at: AHashMap<Cid, Instant>,
-}
-
-impl RecallWantlist {
-    /// Adds a want to the pending list.
-    fn add(&mut self, cid: Cid, priority: Priority, want_type: WantType) {
-        self.pending.add(cid, priority, want_type);
-    }
-
-    /// Removes wants from both pending and sent list.
-    fn remove(&mut self, cid: &Cid) {
-        self.pending.remove(cid);
-        self.sent.remove(cid);
-        self.sent_at.remove(cid);
-    }
-
-    /// Removes wants from both pending and sent list, by type.
-    fn remove_type(&mut self, cid: &Cid, want_type: WantType) {
-        self.pending.remove_type(cid, want_type);
-        if self.sent.remove_type(cid, want_type).is_some() {
-            self.sent_at.remove(cid);
-        }
-    }
-
-    /// Moves the want from pending to sent.
-    ///
-    /// Returns true if the want was marked as sent, false if the want wasn't
-    /// pending to begin with.
-    fn mark_sent(&mut self, e: &crate::client::wantlist::Entry) -> bool {
-        if self.pending.remove_type(&e.cid, e.want_type).is_none() {
-            return false;
-        }
-        self.sent.add(e.cid, e.priority, e.want_type);
-        true
-    }
-
-    /// Clears out the recorded sent time.
-    fn clear_sent_at(&mut self, cid: &Cid) {
-        self.sent_at.remove(cid);
-    }
-
-    fn sent_at(&mut self, cid: Cid, at: Instant) {
-        if !self.sent.contains(&cid) {
-            self.sent_at.insert(cid, at);
-        }
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -182,164 +101,35 @@ impl MessageQueue {
         config: Config,
         on_dont_have_timeout: Arc<dyn DontHaveTimeout>,
     ) -> Self {
-        let (closer_s, mut closer_r) = oneshot::channel();
-        let (responses_sender, mut responses_receiver) = mpsc::channel(8);
-        let (outgoing_work_sender, mut outgoing_work_receiver) = mpsc::channel(4);
-        let send_message_max_delay = config.send_message_max_delay;
-        let send_message_cutoff = config.send_message_cutoff;
-        let send_message_debounce = config.send_message_debounce;
-        let max_valid_latency = config.max_valid_latency;
-        let dh_timeout_manager =
-            DontHaveTimeoutManager::new(peer, network.clone(), on_dont_have_timeout).await;
-        let max_retries = config.max_retries;
-        let max_message_size = config.max_message_size;
-        let send_timeout = config.send_timeout;
-        let send_error_backoff = config.send_error_backof;
-        let running = Arc::new(AtomicBool::new(true));
+        let (sender, receiver) = mpsc::channel(64);
 
-        let nt = network.clone();
-        let wants = Wants {
-            bcst_wants: Default::default(),
-            peer_wants: Default::default(),
-            cancels: Default::default(),
-            priority: config.max_priority,
-        };
+        let actor =
+            MessageQueueActor::new(config, network, peer, receiver, on_dont_have_timeout).await;
 
-        let (wants_s, mut wants_r) = mpsc::channel(64);
-
-        let running_thread = running.clone();
-        let worker = tokio::task::spawn(async move {
-            let mut work_scheduled: Option<Instant> = None;
-            let mut rebroadcast_timer = tokio::time::interval_at(
-                tokio::time::Instant::now() + config.rebroadcast_interval,
-                config.rebroadcast_interval,
-            );
-
-            let schedule_work = tokio::time::sleep(Duration::from_secs(0));
-            tokio::pin!(schedule_work);
-            let running = running_thread;
-
-            let mut loop_state = LoopState::new(
-                wants,
-                dh_timeout_manager,
-                max_message_size,
-                max_valid_latency,
-                outgoing_work_sender,
-                nt,
-                MessageSenderConfig {
-                    max_retries,
-                    send_timeout,
-                    send_error_backoff,
-                },
-                peer,
-            );
-
-            loop {
-                inc!(BitswapMetrics::MessageQueueWorkerLoopTick);
-                tokio::select! {
-                    biased;
-                    _ = &mut closer_r => {
-                        info!("message_queue:{}: shutting down, close received", peer);
-                        break;
-                    }
-                    wants_update = wants_r.recv() => {
-                        match wants_update {
-                            Some(wants_update) => {
-                                loop_state.handle_wants_update(wants_update).await;
-                            }
-                            None => {
-                                // shutting down
-                                break;
-                            }
-                        }
-                    }
-                    _ = rebroadcast_timer.tick() => {
-                        debug!("message_queue:{}: rebroadcast wantlist", peer);
-                        if loop_state.rebroadcast_wantlist().await {
-                            // fatal error
-                            break;
-                        }
-                    }
-                    when = outgoing_work_receiver.recv() => {
-                        if work_scheduled.is_none() {
-                            work_scheduled = when;
-                        }
-
-                        let pending_work_count = loop_state.wants.pending_work_count();
-                        debug!("message_queue:{}: outgoing work receiver: {:?} {} {:?}", peer, work_scheduled.unwrap().elapsed(), pending_work_count, send_message_max_delay);
-
-                        if pending_work_count > send_message_cutoff
-                            || work_scheduled.unwrap().elapsed() >= send_message_max_delay {
-                                if loop_state.send_if_ready().await {
-                                    // fatal error
-                                    break;
-                                }
-                                work_scheduled = None;
-                            } else {
-                                // Extend the timer
-                                schedule_work.as_mut().reset(tokio::time::Instant::now() + send_message_debounce);
-                            }
-                    }
-                    _ = &mut schedule_work, if work_scheduled.is_some() => {
-                        debug!("message_queue:{}: schedule work", peer);
-                        work_scheduled = None;
-                        if loop_state.send_if_ready().await {
-                            // fatal error
-                            break;
-                        }
-                    }
-                    response = responses_receiver.recv() => {
-                        match response {
-                            Some(response) => {
-                                // Received a response from the peer, calculate latency.
-                                loop_state.handle_response(response).await;
-                            }
-                            None => {
-                                error!("message_queue:{}: shutting down, repsonse receiver error", peer);
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-
-            running.store(false, Ordering::Relaxed);
-            if let Err(err) = loop_state.stop().await {
-                error!(
-                    "message_queue:{}: failed to stop message queue loop: {:?}",
-                    peer, err
-                );
-            }
-        });
+        let worker = tokio::task::spawn(async move { run(actor).await });
 
         MessageQueue {
             peer,
-            running,
-            responses: responses_sender,
+            sender: Some(sender),
             worker,
-            wants_sender: wants_s,
-            closer: closer_s,
         }
     }
 
     pub fn is_running(&self) -> bool {
-        self.running.load(Ordering::Relaxed)
+        self.sender.is_some()
     }
 
     #[cfg(test)]
     pub(crate) async fn wants(&self) -> Result<Wants> {
         let (s, r) = tokio::sync::oneshot::channel();
-        self.wants_sender.send(WantsUpdate::GetWants(s)).await?;
+        self.send(Message::WantsUpdate(WantsUpdate::GetWants(s)))
+            .await;
         let wants = r.await?;
         Ok(wants)
     }
 
     /// Add want-haves that are part of a broadcast to all connected peers.
     pub async fn add_broadcast_want_haves(&self, want_haves: &AHashSet<Cid>) {
-        debug!(
-            "message_queue:{}: adding broadcast wants to message queue {:?}",
-            self.peer, want_haves
-        );
         if want_haves.is_empty() {
             return;
         }
@@ -371,15 +161,22 @@ impl MessageQueue {
     }
 
     async fn send_wants_update(&self, update: WantsUpdate) {
-        if self.is_running() {
-            if let Err(err) = self.wants_sender.send(update).await {
+        self.send(Message::WantsUpdate(update)).await;
+    }
+
+    async fn send(&self, message: Message) {
+        if let Some(ref sender) = self.sender {
+            if let Err(err) = sender.send(message).await {
                 warn!(
-                    "message_queue:{}: failed to send wants update (is_running: {}): {:?}",
-                    self.peer,
-                    self.is_running(),
-                    err
+                    "message_queue:{}: failed to send wants update: {:?}",
+                    self.peer, err
                 );
             }
+        } else {
+            warn!(
+                "message_queue:{}: failed to send message: not running",
+                self.peer
+            );
         }
     }
 
@@ -391,60 +188,140 @@ impl MessageQueue {
             return;
         }
 
-        if let Err(err) = self.responses.send(cids).await {
-            warn!(
-                "message_queue:{}: unable to send responses: {:?}",
-                self.peer, err
-            );
-        }
+        self.send(Message::Responses(cids)).await;
     }
 
-    pub async fn stop(self) -> Result<()> {
-        debug!("message_queue:{}: stopping message queue", self.peer);
-        if self.closer.send(()).is_ok() {
-            self.worker.await?;
-        }
+    /// Shuts down this message queue.
+    pub async fn stop(mut self) -> Result<()> {
         ensure!(
-            self.running.load(Ordering::Relaxed) == false,
-            "failed to shutdown"
+            self.sender.is_some(),
+            "message queue {} already stopped",
+            self.peer
         );
+        let _ = self.sender.take();
+        self.worker.await?;
+
         Ok(())
     }
 }
 
-struct LoopState {
+async fn run(mut actor: MessageQueueActor) {
+    let mut work_scheduled: Option<Instant> = None;
+    let mut rebroadcast_timer = tokio::time::interval_at(
+        tokio::time::Instant::now() + actor.config.rebroadcast_interval,
+        actor.config.rebroadcast_interval,
+    );
+
+    let schedule_work = tokio::time::sleep(Duration::from_secs(0));
+    tokio::pin!(schedule_work);
+
+    loop {
+        inc!(BitswapMetrics::MessageQueueWorkerLoopTick);
+        tokio::select! {
+            biased;
+
+            message = actor.receiver.recv() => {
+                match message {
+                    Some(Message::WantsUpdate(wants_update)) => {
+                        actor.handle_wants_update(wants_update).await;
+                    }
+                    Some(Message::Responses(response)) => {
+                        // Received a response from the peer, calculate latency.
+                        actor.handle_response(response).await;
+                    }
+                    None => {
+                        // Shutdown
+                        break;
+                    }
+                }
+            }
+            _ = rebroadcast_timer.tick() => {
+                if actor.rebroadcast_wantlist().await {
+                    // fatal error
+                    break;
+                }
+            }
+            Some(when) = actor.outgoing_work.1.recv() => {
+                if work_scheduled.is_none() {
+                    work_scheduled = Some(when);
+                }
+                let pending_work_count = actor.wants.pending_work_count();
+                if pending_work_count > actor.config.send_message_cutoff ||
+                    work_scheduled.unwrap().elapsed() >= actor.config.send_message_max_delay {
+                    if actor.send_if_ready().await {
+                        // fatal error
+                        break;
+                    }
+                    work_scheduled = None;
+                } else {
+                    // Extend the timer
+                    schedule_work.as_mut().reset(tokio::time::Instant::now() + actor.config.send_message_debounce);
+                }
+            }
+            _ = &mut schedule_work, if work_scheduled.is_some() => {
+                work_scheduled = None;
+                if actor.send_if_ready().await {
+                    // fatal error
+                    break;
+                }
+            }
+        }
+    }
+
+    if let Err(err) = actor.stop().await {
+        error!(
+            "message_queue: failed to stop message queue loop: {:?}",
+            err
+        );
+    }
+}
+
+struct MessageQueueActor {
+    peer: PeerId,
+    config: Config,
     wants: Wants,
     dh_timeout_manager: DontHaveTimeoutManager,
-    max_message_size: usize,
-    max_valid_latency: Duration,
-    outgoing_work_sender: mpsc::Sender<Instant>,
+    outgoing_work: (mpsc::Sender<Instant>, mpsc::Receiver<Instant>),
     sender: Option<MessageSender>,
     network: Network,
     msg_sender_config: MessageSenderConfig,
-    peer: PeerId,
+    receiver: mpsc::Receiver<Message>,
 }
 
-impl LoopState {
-    fn new(
-        wants: Wants,
-        dh_timeout_manager: DontHaveTimeoutManager,
-        max_message_size: usize,
-        max_valid_latency: Duration,
-        outgoing_work_sender: mpsc::Sender<Instant>,
+impl MessageQueueActor {
+    async fn new(
+        config: Config,
         network: Network,
-        msg_sender_config: MessageSenderConfig,
         peer: PeerId,
+        receiver: mpsc::Receiver<Message>,
+        on_dont_have_timeout: Arc<dyn DontHaveTimeout>,
     ) -> Self {
+        let outgoing_work = mpsc::channel(2);
+        let wants = Wants {
+            bcst_wants: Default::default(),
+            peer_wants: Default::default(),
+            cancels: Default::default(),
+            priority: config.max_priority,
+        };
+
+        let dh_timeout_manager =
+            DontHaveTimeoutManager::new(peer, network.clone(), on_dont_have_timeout).await;
+
+        let msg_sender_config = MessageSenderConfig {
+            max_retries: config.max_retries,
+            send_timeout: config.send_timeout,
+            send_error_backoff: config.send_error_backof,
+        };
         Self {
+            config,
             wants,
             dh_timeout_manager,
-            max_message_size,
-            max_valid_latency,
-            outgoing_work_sender,
+            outgoing_work,
             sender: None,
             network,
             msg_sender_config,
             peer,
+            receiver,
         }
     }
 
@@ -466,9 +343,7 @@ impl LoopState {
                     self.wants.cancels.remove(&cid);
                 }
 
-                if let Err(err) = self.outgoing_work_sender.try_send(Instant::now()) {
-                    warn!("unable to send outgoing work: {:?}", err);
-                }
+                self.signal_work();
             }
             WantsUpdate::AddWants {
                 want_blocks,
@@ -520,9 +395,7 @@ impl LoopState {
 
                 // Schedule a message send
                 if work_ready {
-                    if let Err(err) = self.outgoing_work_sender.try_send(Instant::now()) {
-                        warn!("unable to send outgoing work: {:?}", err);
-                    }
+                    self.signal_work();
                 }
             }
             #[cfg(test)]
@@ -575,7 +448,6 @@ impl LoopState {
         }
 
         let wantlist: Vec<_> = msg.wantlist().cloned().collect();
-        debug!("sending wantlist: {:?}", wantlist);
         if let Err(err) = sender.send_message(msg).await {
             error!(
                 "message_queue:{}: failed to send message {:?}",
@@ -602,12 +474,7 @@ impl LoopState {
         // If the message was too big and only a subset of wants could be sent
         // schedule sending the rest of the wants in the next iteration of the event loop.
         if self.wants.has_pending_work() {
-            if let Err(err) = self.outgoing_work_sender.try_send(Instant::now()) {
-                warn!(
-                    "message_queue:{}: unable to send outgoing work: {:?}",
-                    self.peer, err
-                );
-            }
+            self.signal_work();
         }
         false
     }
@@ -617,10 +484,8 @@ impl LoopState {
         let pending_wants: Vec<Cid> = wantlist
             .iter()
             .filter_map(|entry| {
-                debug!("entry: {:?}", entry);
                 if entry.want_type == WantType::Block && entry.send_dont_have {
                     // check if the block was already sent
-                    debug!("wants: {:?}", self.wants.peer_wants.sent);
                     if self.wants.peer_wants.sent.contains(&entry.cid) {
                         return Some(entry.cid);
                     }
@@ -629,13 +494,11 @@ impl LoopState {
             })
             .collect();
 
-        debug!("got pendign wants: {:?}", pending_wants);
         // Add wants to DONT_HAVE timeout manger
         self.dh_timeout_manager.add_pending(&pending_wants).await;
     }
 
     async fn send_if_ready(&mut self) -> bool {
-        debug!("message_queue:{}: send if ready", self.peer);
         if self.wants.has_pending_work() {
             return self.send_message().await;
         }
@@ -658,7 +521,7 @@ impl LoopState {
         for cid in response {
             if let Some(at) = self.wants.bcst_wants.sent_at.get(&cid) {
                 if (earliest.is_none() || at < earliest.as_ref().unwrap())
-                    && now - *at < self.max_valid_latency
+                    && now - *at < self.config.max_valid_latency
                 {
                     earliest = Some(*at);
                 }
@@ -666,7 +529,7 @@ impl LoopState {
             }
             if let Some(at) = self.wants.peer_wants.sent_at.get(&cid) {
                 if (earliest.is_none() || at < earliest.as_ref().unwrap())
-                    && now - *at < self.max_valid_latency
+                    && now - *at < self.config.max_valid_latency
                 {
                     earliest = Some(*at);
                     // Clear out the sent time, as we want to only record the latency
@@ -689,8 +552,8 @@ impl LoopState {
     ) -> Result<(
         BitswapMessage,
         &MessageSender,
-        Vec<wantlist::Entry>,
-        Vec<wantlist::Entry>,
+        Vec<super::wantlist::Entry>,
+        Vec<super::wantlist::Entry>,
     )> {
         if self.sender.is_none() {
             let sender = self
@@ -738,7 +601,7 @@ impl LoopState {
             msg_size += msg.cancel(*c);
             sent_cancels += 1;
 
-            if msg_size >= self.max_message_size {
+            if msg_size >= self.config.max_message_size {
                 done = true;
                 break;
             }
@@ -751,7 +614,7 @@ impl LoopState {
                 msg_size += msg.add_entry(entry.cid, entry.priority, entry.want_type, true);
                 sent_peer_entries += 1;
 
-                if msg_size >= self.max_message_size {
+                if msg_size >= self.config.max_message_size {
                     done = true;
                     break;
                 }
@@ -771,7 +634,7 @@ impl LoopState {
                 msg_size += msg.add_entry(entry.cid, entry.priority, want_type, false);
                 sent_bcst_entries += 1;
 
-                if msg_size >= self.max_message_size {
+                if msg_size >= self.config.max_message_size {
                     break;
                 }
             }
@@ -816,5 +679,15 @@ impl LoopState {
         }
 
         Ok((msg, sender, peer_entries, bcst_entries))
+    }
+
+    /// Signal the event loop that there is new work.
+    fn signal_work(&self) {
+        if let Err(err) = self.outgoing_work.0.try_send(Instant::now()) {
+            warn!(
+                "message_queue:{}: unable to send outgoing work: {:?}",
+                self.peer, err
+            );
+        }
     }
 }
