@@ -26,7 +26,7 @@ use libp2p::{Multiaddr, PeerId};
 use message::BitswapMessage;
 use network::OutEvent;
 use protocol::{ProtocolConfig, ProtocolId};
-use tokio::sync::oneshot;
+use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, trace, warn};
 
 use self::client::{Client, Config as ClientConfig};
@@ -72,6 +72,7 @@ pub struct Bitswap<S: Store> {
     pause_dialing: bool,
     client: Client<S>,
     server: Server<S>,
+    incoming_messages: mpsc::UnboundedSender<(PeerId, BitswapMessage)>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -133,6 +134,22 @@ impl<S: Store> Bitswap<S> {
         )
         .await;
 
+        // EVIL: must eventually not be unbounded !!!
+        let (sender, mut receiver) = mpsc::unbounded_channel();
+        let s = server.clone();
+        let c = client.clone();
+
+        let _worker = tokio::task::spawn(async move {
+            // process messages serially but without blocking the p2p loop
+            while let Some((peer, message)) = receiver.recv().await {
+                futures::future::join(
+                    c.receive_message(&peer, &message),
+                    s.receive_message(&peer, &message),
+                )
+                .await;
+            }
+        });
+
         Bitswap {
             network,
             protocol_config: config.protocol,
@@ -142,6 +159,7 @@ impl<S: Store> Bitswap<S> {
             pause_dialing: false,
             server,
             client,
+            incoming_messages: sender,
         }
     }
 
@@ -230,12 +248,10 @@ impl<S: Store> Bitswap<S> {
     }
 
     fn receive_message(&self, peer: PeerId, message: BitswapMessage) {
-        let client = self.client.clone();
-        let server = self.server.clone();
-        tokio::task::spawn(async move {
-            client.receive_message(&peer, &message).await;
-            server.receive_message(&peer, &message).await;
-        });
+        // TODO: Handle backpressure properly
+        if let Err(err) = self.incoming_messages.send((peer, message)) {
+            warn!("failed to receive message from {}: {:?}", peer, err);
+        }
     }
 
     fn get_peer_state(&self, peer: &PeerId) -> Option<PeerState> {
@@ -650,11 +666,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_1_block() {
-        tracing_subscriber::registry()
-            .with(fmt::layer().pretty())
-            .with(EnvFilter::from_default_env())
-            .init();
-
         get_block::<1>().await;
     }
 
@@ -685,6 +696,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_128_block() {
+        tracing_subscriber::registry()
+            .with(fmt::layer().pretty())
+            .with(EnvFilter::from_default_env())
+            .init();
+
         get_block::<128>().await;
     }
 
@@ -804,6 +820,20 @@ mod tests {
             }
 
             let mut results = futs.try_collect::<Vec<_>>().await.unwrap();
+            results.sort();
+            blocks.sort();
+            for (block, received_block) in blocks.into_iter().zip(results.into_iter()) {
+                assert_eq!(block, received_block);
+            }
+        }
+
+        {
+            info!("peer2: fetching block - session");
+            let mut blocks = blocks.clone();
+            let ids: Vec<_> = blocks.iter().map(|b| *b.cid()).collect();
+            let session = swarm2_bs.client().new_session().await;
+            let mut results: Vec<_> = session.get_blocks(&ids).await.unwrap().collect().await;
+
             results.sort();
             blocks.sort();
             for (block, received_block) in blocks.into_iter().zip(results.into_iter()) {

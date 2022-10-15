@@ -189,12 +189,14 @@ impl<S: Store> Client<S> {
         dont_haves: &[Cid],
     ) -> Result<()> {
         let all_keys: Vec<Cid> = incoming.blocks().map(|b| *b.cid()).collect();
+        // Determine wanted and unwanted blocks
         let blocks = incoming.blocks().cloned().collect::<Vec<_>>();
         let (wanted, not_wanted) = self
             .session_manager
             .session_interest_manager()
             .split_wanted_unwanted(&blocks)
             .await;
+
         for block in not_wanted {
             debug!("recv block not in wantlist: {} from {}", block.cid(), from);
         }
@@ -211,7 +213,7 @@ impl<S: Store> Client<S> {
             .receive_from(Some(*from), &all_keys, haves, dont_haves)
             .await;
 
-        // Publish the block
+        // Publish the blocks
         for block in &wanted {
             if let Err(err) = self.notify.broadcast((*block).clone()).await {
                 error!("failed to broadcast block {}: {:?}", block.cid(), err);
