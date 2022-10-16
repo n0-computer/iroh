@@ -27,14 +27,9 @@ mod wantlist;
 #[derive(Debug)]
 pub struct MessageQueue {
     peer: PeerId,
-    sender: Option<mpsc::Sender<Message>>,
+    sender_responses: Option<mpsc::Sender<Vec<Cid>>>,
+    sender_wants: Option<mpsc::Sender<WantsUpdate>>,
     worker: JoinHandle<()>,
-}
-
-#[derive(Debug)]
-enum Message {
-    Responses(Vec<Cid>),
-    WantsUpdate(WantsUpdate),
 }
 
 #[derive(Debug)]
@@ -101,29 +96,37 @@ impl MessageQueue {
         config: Config,
         on_dont_have_timeout: Arc<dyn DontHaveTimeout>,
     ) -> Self {
-        let (sender, receiver) = mpsc::channel(2048);
+        let (sender_responses, receiver_responses) = mpsc::channel(64);
+        let (sender_wants, receiver_wants) = mpsc::channel(2048);
 
-        let actor =
-            MessageQueueActor::new(config, network, peer, receiver, on_dont_have_timeout).await;
+        let actor = MessageQueueActor::new(
+            config,
+            network,
+            peer,
+            receiver_responses,
+            receiver_wants,
+            on_dont_have_timeout,
+        )
+        .await;
 
         let worker = tokio::task::spawn(async move { run(actor).await });
 
         MessageQueue {
             peer,
-            sender: Some(sender),
+            sender_responses: Some(sender_responses),
+            sender_wants: Some(sender_wants),
             worker,
         }
     }
 
     pub fn is_running(&self) -> bool {
-        self.sender.is_some()
+        self.sender_wants.is_some()
     }
 
     #[cfg(test)]
     pub(crate) async fn wants(&self) -> Result<Wants> {
         let (s, r) = tokio::sync::oneshot::channel();
-        self.send(Message::WantsUpdate(WantsUpdate::GetWants(s)))
-            .await;
+        self.send_wants_update(WantsUpdate::GetWants(s)).await;
         let wants = r.await?;
         Ok(wants)
     }
@@ -161,13 +164,8 @@ impl MessageQueue {
     }
 
     async fn send_wants_update(&self, update: WantsUpdate) {
-        self.send(Message::WantsUpdate(update)).await;
-    }
-
-    /// Returns `is_running`.
-    async fn send(&self, message: Message) {
-        if let Some(ref sender) = self.sender {
-            if let Err(err) = sender.send(message).await {
+        if let Some(ref sender) = self.sender_wants {
+            if let Err(err) = sender.send(update).await {
                 warn!(
                     "message_queue:{}: failed to send wants update: {:?}",
                     self.peer, err
@@ -189,20 +187,24 @@ impl MessageQueue {
             return;
         }
 
-        self.send(Message::Responses(cids)).await;
+        // Best effort only
+        if let Some(ref sender) = self.sender_responses {
+            let _ = sender.try_send(cids);
+        }
     }
 
     /// Shuts down this message queue.
     pub async fn stop(mut self) -> Result<()> {
         debug!("stopping message queue {}", self.peer);
         ensure!(
-            self.sender.is_some(),
+            self.sender_responses.is_some(),
             "message queue {} already stopped",
             self.peer
         );
         inc!(BitswapMetrics::MessageQueuesStopped);
 
-        let _ = self.sender.take();
+        let _ = self.sender_wants.take();
+        let _ = self.sender_responses.take();
         // just kill it
         self.worker.abort();
         // self.worker.await?;
@@ -226,15 +228,23 @@ async fn run(mut actor: MessageQueueActor) {
         tokio::select! {
             biased;
 
-            message = actor.receiver.recv() => {
+            message = actor.receiver_wants.recv() => {
                 debug!("{}: {:?}", actor.peer, message);
                 match message {
-                    Some(Message::WantsUpdate(wants_update)) => {
+                    Some(wants_update) => {
                         actor.handle_wants_update(wants_update).await;
                     }
-                    Some(Message::Responses(response)) => {
-                        // Received a response from the peer, calculate latency.
-                        actor.handle_response(response).await;
+                    None => {
+                        // Shutdown
+                        break;
+                    }
+                }
+            }
+            message = actor.receiver_responses.recv() => {
+                debug!("{}: {:?}", actor.peer, message);
+                match message {
+                    Some(responses) => {
+                        actor.handle_response(responses).await;
                     }
                     None => {
                         // Shutdown
@@ -297,7 +307,8 @@ struct MessageQueueActor {
     sender: Option<MessageSender>,
     network: Network,
     msg_sender_config: MessageSenderConfig,
-    receiver: mpsc::Receiver<Message>,
+    receiver_responses: mpsc::Receiver<Vec<Cid>>,
+    receiver_wants: mpsc::Receiver<WantsUpdate>,
 }
 
 impl MessageQueueActor {
@@ -305,7 +316,8 @@ impl MessageQueueActor {
         config: Config,
         network: Network,
         peer: PeerId,
-        receiver: mpsc::Receiver<Message>,
+        receiver_responses: mpsc::Receiver<Vec<Cid>>,
+        receiver_wants: mpsc::Receiver<WantsUpdate>,
         on_dont_have_timeout: Arc<dyn DontHaveTimeout>,
     ) -> Self {
         let outgoing_work = mpsc::channel(2);
@@ -333,7 +345,8 @@ impl MessageQueueActor {
             network,
             msg_sender_config,
             peer,
-            receiver,
+            receiver_responses,
+            receiver_wants,
         }
     }
 
@@ -386,22 +399,20 @@ impl MessageQueueActor {
                 self.dh_timeout_manager.cancel_pending(&cancels).await;
 
                 let mut work_ready = false;
-                {
-                    // Remove keys from broadcast and peer wants, and add to cancels.
-                    for cid in cancels {
-                        // Check if a want for the key was sent
-                        let was_sent_bcst = self.wants.bcst_wants.sent.contains(&cid);
-                        let was_sent_peer = self.wants.peer_wants.sent.contains(&cid);
+                // Remove keys from broadcast and peer wants, and add to cancels.
+                for cid in cancels {
+                    // Check if a want for the key was sent
+                    let was_sent_bcst = self.wants.bcst_wants.sent.contains(&cid);
+                    let was_sent_peer = self.wants.peer_wants.sent.contains(&cid);
 
-                        // Remove the want from tracking wantlist
-                        self.wants.bcst_wants.remove(&cid);
-                        self.wants.peer_wants.remove(&cid);
+                    // Remove the want from tracking wantlist
+                    self.wants.bcst_wants.remove(&cid);
+                    self.wants.peer_wants.remove(&cid);
 
-                        // Only send a cancel if a want was sent
-                        if was_sent_bcst || was_sent_peer {
-                            self.wants.cancels.insert(cid);
-                            work_ready = true;
-                        }
+                    // Only send a cancel if a want was sent
+                    if was_sent_bcst || was_sent_peer {
+                        self.wants.cancels.insert(cid);
+                        work_ready = true;
                     }
                 }
 
