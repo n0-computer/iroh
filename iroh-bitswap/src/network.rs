@@ -297,10 +297,6 @@ impl Network {
 
     pub fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<OutEvent> {
         inc!(BitswapMetrics::NetworkPollTick);
-        debug!(
-            "{} network events awaiting",
-            self.network_out_receiver.len()
-        );
         match Pin::new(&mut self.network_out_receiver).poll_next(cx) {
             Poll::Ready(Some(ev)) => Poll::Ready(ev),
             Poll::Ready(None) => Poll::Pending,

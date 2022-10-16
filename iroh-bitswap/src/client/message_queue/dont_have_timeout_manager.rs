@@ -8,14 +8,14 @@ use ahash::{AHashMap, AHashSet};
 use anyhow::Result;
 use cid::Cid;
 use derivative::Derivative;
-use iroh_metrics::{inc, bitswap::BitswapMetrics};
+use iroh_metrics::core::MRecorder;
+use iroh_metrics::{bitswap::BitswapMetrics, inc};
 use libp2p::PeerId;
 use tokio::{
     sync::{oneshot, Mutex},
     task::JoinHandle,
 };
 use tracing::debug;
-use iroh_metrics::core::MRecorder;
 
 use crate::{client::peer_manager::DontHaveTimeout, network::Network};
 
@@ -52,8 +52,11 @@ pub struct DontHaveTimeoutManager {
     default_timeout: Duration,
     max_timeout: Duration,
     message_latency_multiplier: f64,
-    trigger_timeouts_check: async_channel::Sender<()>,
-    worker: (oneshot::Sender<()>, JoinHandle<()>),
+    worker: Option<(
+        async_channel::Sender<()>,
+        oneshot::Sender<()>,
+        JoinHandle<()>,
+    )>,
     inner: Arc<Mutex<Inner>>,
 }
 
@@ -73,12 +76,7 @@ struct Inner {
 }
 
 impl DontHaveTimeoutManager {
-    pub async fn new(
-        target: PeerId,
-        network: Network,
-        on_dont_have_timeout: Arc<dyn DontHaveTimeout>,
-    ) -> Self {
-        let (closer_s, mut closer_r) = oneshot::channel();
+    pub async fn new(target: PeerId, on_dont_have_timeout: Arc<dyn DontHaveTimeout>) -> Self {
         let inner = Arc::new(Mutex::new(Inner {
             target,
             timeout: DONT_HAVE_TIMEOUT,
@@ -92,15 +90,28 @@ impl DontHaveTimeoutManager {
             on_dont_have_timeout,
         }));
 
-        // TODO: store latencies somewhere central and retrieve them here
+        DontHaveTimeoutManager {
+            default_timeout: DONT_HAVE_TIMEOUT,
+            max_timeout: MAX_TIMEOUT,
+            message_latency_multiplier: MESSAGE_LATENCY_MULTIPLIER,
+            inner,
+            worker: None,
+        }
+    }
+
+    pub async fn start(&mut self, network: Network) {
+        // already running
+        if self.worker.is_some() {
+            return;
+        }
+        let (closer_s, mut closer_r) = oneshot::channel();
 
         // measure ping latency
-        let i = inner.clone();
+        let i = self.inner.clone();
         let (trigger_s, trigger_r) = async_channel::bounded(16);
-
         let ts = trigger_s.clone();
-        let rt = tokio::runtime::Handle::current();
-        let worker = rt.spawn(async move {
+        let target = i.lock().await.target;
+        let worker = tokio::task::spawn(async move {
             let inner = i;
 
             tokio::select! {
@@ -159,22 +170,15 @@ impl DontHaveTimeoutManager {
             }
         });
 
-        DontHaveTimeoutManager {
-            default_timeout: DONT_HAVE_TIMEOUT,
-            max_timeout: MAX_TIMEOUT,
-            message_latency_multiplier: MESSAGE_LATENCY_MULTIPLIER,
-            trigger_timeouts_check: trigger_s,
-            inner,
-            worker: (closer_s, worker),
-        }
+        self.worker = Some((trigger_s, closer_s, worker));
     }
 
     pub async fn stop(self) -> Result<()> {
-        let (closer, worker) = self.worker;
-        if closer.send(()).is_ok() {
-            worker.await?;
+        if let Some((_, closer, worker)) = self.worker {
+            if closer.send(()).is_ok() {
+                worker.await?;
+            }
         }
-
         Ok(())
     }
 
@@ -196,7 +200,7 @@ impl DontHaveTimeoutManager {
         if inner.timeout < old_timeout {
             // Check if after changing the timeout there are any pending wants
             // that are now over the timeout
-            self.trigger_timeouts_check.send(()).await.ok();
+            self.trigger().await;
         }
     }
 
@@ -231,7 +235,13 @@ impl DontHaveTimeoutManager {
         // If there was alread an earlier pending item in the queue, timeouts
         // are already scheduled. Otherwise start a timeout check.
         if queue_was_empty {
-            self.trigger_timeouts_check.send(()).await.ok();
+            self.trigger().await;
+        }
+    }
+
+    async fn trigger(&self) {
+        if let Some((trigger, _, _)) = self.worker.as_ref() {
+            let _ = trigger.send(()).await;
         }
     }
 

@@ -220,8 +220,9 @@ async fn run(mut actor: MessageQueueActor) {
         actor.config.rebroadcast_interval,
     );
 
-    let schedule_work = tokio::time::sleep(Duration::from_secs(0));
+    let schedule_work = tokio::time::sleep(Duration::from_secs(100));
     tokio::pin!(schedule_work);
+    let mut schedule_work_enabled = false;
 
     loop {
         inc!(BitswapMetrics::MessageQueueWorkerLoopTick);
@@ -261,26 +262,34 @@ async fn run(mut actor: MessageQueueActor) {
             }
             Some(when) = actor.outgoing_work.1.recv() => {
                 if work_scheduled.is_none() {
+                    // No work, record when the work was scheduled.
                     work_scheduled = Some(when);
+                } else {
+                    // If work is scheduled, make sure timer is cancelled.
+                    schedule_work_enabled = false;
                 }
+
+                // We have so much work, schedule it immeditately
                 let pending_work_count = actor.wants.pending_work_count();
                 if pending_work_count > actor.config.send_message_cutoff ||
                     work_scheduled.unwrap().elapsed() >= actor.config.send_message_max_delay {
                         debug!("{}: outgoing work sending", actor.peer);
-                    if actor.send_if_ready().await {
-                        // fatal error
-                        break;
-                    }
-                    work_scheduled = None;
-                } else {
+                        if actor.send_if_ready().await {
+                            // fatal error
+                            break;
+                        }
+                        work_scheduled = None;
+                    } else {
                         debug!("{}: outgoing work extend timer", actor.peer);
-                    // Extend the timer
-                    schedule_work.as_mut().reset(tokio::time::Instant::now() + actor.config.send_message_debounce);
-                }
+                        // Extend the timer
+                        schedule_work.as_mut().reset(tokio::time::Instant::now() + actor.config.send_message_debounce);
+                        schedule_work_enabled = true;
+                    }
             }
-            _ = &mut schedule_work, if work_scheduled.is_some() => {
+            _ = &mut schedule_work, if schedule_work_enabled => {
                 debug!("{}: schedule work", actor.peer);
                 work_scheduled = None;
+                schedule_work_enabled = false;
                 if actor.send_if_ready().await {
                     // fatal error
                     break;
@@ -328,8 +337,7 @@ impl MessageQueueActor {
             priority: config.max_priority,
         };
 
-        let dh_timeout_manager =
-            DontHaveTimeoutManager::new(peer, network.clone(), on_dont_have_timeout).await;
+        let dh_timeout_manager = DontHaveTimeoutManager::new(peer, on_dont_have_timeout).await;
 
         let msg_sender_config = MessageSenderConfig {
             max_retries: config.max_retries,
@@ -454,6 +462,7 @@ impl MessageQueueActor {
     }
 
     async fn send_message(&mut self) -> bool {
+        self.dh_timeout_manager.start(self.network.clone()).await;
         // Convert want lists to a bitswap message
         let (msg, sender, peer_entries, bcst_entries) = match self.extract_outgoing_message().await
         {
