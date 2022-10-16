@@ -4,6 +4,7 @@ use libp2p::PeerId;
 use tracing::{debug, error};
 
 use super::message_queue::MessageQueue;
+use super::peer_manager::PeerState;
 
 /// Keeps track of which want-haves and want-blocks have been sent to each peer,
 /// in order to avoid the `PeerManager` sending duplicates.
@@ -27,7 +28,7 @@ struct PeerWant {
 impl PeerWantManager {
     /// Adds a peer whose wants we need to keep track of.
     /// Sends the current list of broadcasts to this peer.
-    pub async fn add_peer(&mut self, peer_queue: &mut MessageQueue, peer: &PeerId) {
+    pub async fn add_peer(&mut self, peer_queue: &MessageQueue, peer: &PeerId) {
         if self.peer_wants.contains_key(peer) {
             return;
         }
@@ -78,10 +79,10 @@ impl PeerWantManager {
     }
 
     /// Sends want-haves to any peers that have not yet been sent them.
-    pub async fn broadcast_want_haves(
+    pub(super) async fn broadcast_want_haves(
         &mut self,
         want_haves: &AHashSet<Cid>,
-        peer_queues: &AHashMap<PeerId, MessageQueue>,
+        peer_queues: &AHashMap<PeerId, PeerState>,
     ) {
         debug!("pwm: broadcast_want_haves: {:?}", want_haves);
         // want_haves - self.broadcast_wants
@@ -102,8 +103,11 @@ impl PeerWantManager {
             }
             debug!("pwm: unsent peer: {}, {:?}", peer, peer_unsent);
             if !peer_unsent.is_empty() {
-                if let Some(peer_queue) = peer_queues.get(peer) {
-                    peer_queue.add_broadcast_want_haves(&peer_unsent).await;
+                if let Some(peer_state) = peer_queues.get(peer) {
+                    peer_state
+                        .message_queue
+                        .add_broadcast_want_haves(&peer_unsent)
+                        .await;
                 }
             }
 
@@ -113,12 +117,12 @@ impl PeerWantManager {
     }
 
     /// Only sends the peer the want-blocks and want-haves that have not already been sent to it.
-    pub async fn send_wants(
+    pub(super) async fn send_wants(
         &mut self,
         peer: &PeerId,
         want_blocks: &[Cid],
         want_haves: &[Cid],
-        peer_queues: &AHashMap<PeerId, MessageQueue>,
+        peer_queues: &AHashMap<PeerId, PeerState>,
     ) {
         let mut flt_want_blocks = Vec::with_capacity(want_blocks.len());
         let mut flt_want_haves = Vec::with_capacity(want_haves.len());
@@ -177,8 +181,9 @@ impl PeerWantManager {
 
             // send out want-blocks and want-haves
             if !flt_want_blocks.is_empty() || !flt_want_haves.is_empty() {
-                if let Some(peer_queue) = peer_queues.get(peer) {
-                    peer_queue
+                if let Some(peer_state) = peer_queues.get(peer) {
+                    peer_state
+                        .message_queue
                         .add_wants(&flt_want_blocks, &flt_want_haves)
                         .await;
                 }
@@ -189,10 +194,10 @@ impl PeerWantManager {
     }
 
     /// Sends out cancels to each peer which has a corresponding want sent to.
-    pub async fn send_cancels(
+    pub(super) async fn send_cancels(
         &mut self,
         cancels: &[Cid],
-        peer_queues: &AHashMap<PeerId, MessageQueue>,
+        peer_queues: &AHashMap<PeerId, PeerState>,
     ) {
         if cancels.is_empty() {
             return;
@@ -236,8 +241,8 @@ impl PeerWantManager {
                 }
 
                 if !to_cancel.is_empty() {
-                    if let Some(peer_queue) = peer_queues.get($peer) {
-                        peer_queue.add_cancels(&to_cancel).await;
+                    if let Some(peer_state) = peer_queues.get($peer) {
+                        peer_state.message_queue.add_cancels(&to_cancel).await;
                     }
                 }
             };

@@ -10,15 +10,12 @@ use asynchronous_codec::Framed;
 use futures::prelude::*;
 use futures::StreamExt;
 use iroh_metrics::{bitswap::BitswapMetrics, core::MRecorder, inc};
+use libp2p::core::upgrade::{
+    InboundUpgrade, NegotiationError, OutboundUpgrade, ProtocolError, UpgradeError,
+};
 use libp2p::swarm::{
     ConnectionHandler, ConnectionHandlerEvent, ConnectionHandlerUpgrErr, KeepAlive,
     NegotiatedSubstream, SubstreamProtocol,
-};
-use libp2p::{
-    core::upgrade::{
-        InboundUpgrade, NegotiationError, OutboundUpgrade, ProtocolError, UpgradeError,
-    },
-    PeerId,
 };
 use smallvec::SmallVec;
 use tokio::sync::oneshot;

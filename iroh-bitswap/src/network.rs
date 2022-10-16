@@ -15,9 +15,7 @@ use libp2p::{core::connection::ConnectionId, PeerId};
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, info, trace};
 
-use crate::{
-    handler::BitswapHandlerIn, message::BitswapMessage, protocol::ProtocolId, BitswapEvent,
-};
+use crate::{message::BitswapMessage, protocol::ProtocolId, BitswapEvent};
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
 const MAX_SEND_TIMEOUT: Duration = Duration::from_secs(3 * 60 + 5);

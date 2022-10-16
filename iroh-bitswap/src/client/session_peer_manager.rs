@@ -47,7 +47,7 @@ impl SessionPeerManager {
         let (peers, _) = RwLock::into_inner(inner.peers);
         for peer in peers.iter() {
             inner.network.untag_peer(peer, &inner.tag);
-            inner.network.unprotect_peer(peer, &inner.tag);
+            inner.network.unprotect_peer(peer, &inner.tag).await;
         }
         Ok(())
     }

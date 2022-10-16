@@ -213,7 +213,7 @@ async fn run(mut actor: PeerManagerActor) {
                         actor.send_cancels(cancels).await;
                     },
                     Some(Message::RegisterSession(peer, session)) => {
-                        actor.register_session(peer, session);
+                        actor.register_session(peer, session).await;
                     },
                     Some(Message::UnregisterSession(session)) => {
                         actor.unregister_session(session);
@@ -238,13 +238,24 @@ async fn run(mut actor: PeerManagerActor) {
 #[derivative(Debug)]
 struct PeerManagerActor {
     receiver: mpsc::Receiver<Message>,
-    peers: AHashMap<PeerId, MessageQueue>,
+    peers: AHashMap<PeerId, PeerState>,
     peer_want_manager: PeerWantManager,
-    sessions: (AHashMap<u64, Signaler>, AHashMap<PeerId, AHashSet<u64>>),
+    sessions: AHashMap<u64, SessionState>,
     self_id: PeerId,
     network: Network,
     #[derivative(Debug = "ignore")]
     on_dont_have_timeout: Arc<dyn DontHaveTimeout>,
+}
+
+#[derive(Debug)]
+pub(super) struct PeerState {
+    pub(super) message_queue: MessageQueue,
+    pub(super) sessions: AHashSet<u64>,
+}
+
+#[derive(Debug)]
+struct SessionState {
+    signaler: Signaler,
 }
 
 impl PeerManagerActor {
@@ -264,7 +275,7 @@ impl PeerManagerActor {
         let results = futures::future::join_all(
             self.peers
                 .into_iter()
-                .map(|(_, mq)| async move { mq.stop().await }),
+                .map(|(_, state)| async move { state.message_queue.stop().await }),
         )
         .await;
         for r in results {
@@ -286,25 +297,14 @@ impl PeerManagerActor {
             self.peers.len()
         );
 
-        if !self.peers.contains_key(&peer) {
-            inc!(BitswapMetrics::MessageQueuesCreated);
-            self.peers.insert(
-                peer,
-                MessageQueue::new(
-                    peer,
-                    self.network.clone(),
-                    self.on_dont_have_timeout.clone(),
-                )
-                .await,
-            );
-        }
+        self.insert_peer(peer, None).await;
 
-        let peer_queue = self.peers.get_mut(&peer).unwrap();
-        if !peer_queue.is_running() {
+        let peer_state = self.peers.get_mut(&peer).unwrap();
+        if !peer_state.message_queue.is_running() {
             debug!("found stopped peer_queue, restarting: {}", peer);
             inc!(BitswapMetrics::MessageQueuesCreated);
             // Restart if the queue was stopped, but not yet cleaned up.
-            *peer_queue = MessageQueue::new(
+            peer_state.message_queue = MessageQueue::new(
                 peer,
                 self.network.clone(),
                 self.on_dont_have_timeout.clone(),
@@ -313,7 +313,9 @@ impl PeerManagerActor {
         }
 
         // Inform the peer want manager that there's a new peer.
-        self.peer_want_manager.add_peer(peer_queue, &peer).await;
+        self.peer_want_manager
+            .add_peer(&peer_state.message_queue, &peer)
+            .await;
 
         // Inform the session that the peer has connected
         self.signal_availability(peer, true).await;
@@ -326,21 +328,21 @@ impl PeerManagerActor {
             self.peers.len()
         );
 
-        if let Some(peer_queue) = self.peers.remove(&peer) {
+        if let Some(peer_state) = self.peers.remove(&peer) {
             inc!(BitswapMetrics::MessageQueuesDestroyed);
             // inform the sessions that the peer has disconnected
 
             self.peer_want_manager.remove_peer(&peer);
 
-            if let Err(err) = peer_queue.stop().await {
+            if let Err(err) = peer_state.message_queue.stop().await {
                 error!("failed to shutdown message queue for {}: {:?}", peer, err);
             }
         }
     }
 
     async fn response_received(&self, peer: PeerId, cids: Vec<Cid>) {
-        if let Some(peer_queue) = self.peers.get(&peer) {
-            peer_queue.response_received(cids).await;
+        if let Some(peer_state) = self.peers.get(&peer) {
+            peer_state.message_queue.response_received(cids).await;
         }
     }
 
@@ -380,43 +382,53 @@ impl PeerManagerActor {
         self.peer_want_manager.get_want_haves()
     }
 
-    fn register_session(&mut self, peer: PeerId, session: Signaler) {
-        let (sessions, peer_sessions) = &mut self.sessions;
-        let id = session.id();
-        if !sessions.contains_key(&id) {
-            sessions.insert(session.id(), session);
-        }
-        if let Some(list) = peer_sessions.get_mut(&peer) {
-            list.insert(id);
-        } else {
-            peer_sessions.insert(peer, [id].into_iter().collect());
+    async fn register_session(&mut self, peer: PeerId, signaler: Signaler) {
+        let id = signaler.id();
+        self.sessions.entry(id).or_insert(SessionState { signaler });
+
+        self.insert_peer(peer, Some(id)).await;
+    }
+
+    async fn insert_peer(&mut self, peer: PeerId, session: Option<u64>) {
+        match self.peers.entry(peer) {
+            std::collections::hash_map::Entry::Occupied(mut entry) => {
+                if let Some(id) = session {
+                    entry.get_mut().sessions.insert(id);
+                }
+            }
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                inc!(BitswapMetrics::MessageQueuesCreated);
+                let message_queue = MessageQueue::new(
+                    peer,
+                    self.network.clone(),
+                    self.on_dont_have_timeout.clone(),
+                )
+                .await;
+                let sessions = session
+                    .map(|id| [id].into_iter().collect())
+                    .unwrap_or_default();
+                entry.insert(PeerState {
+                    message_queue,
+                    sessions,
+                });
+            }
         }
     }
 
     fn unregister_session(&mut self, session_id: u64) {
-        let (sessions, peer_sessions) = &mut self.sessions;
-        let mut to_remove = Vec::new();
-        for (peer_id, session_ids) in peer_sessions.iter_mut() {
-            session_ids.remove(&session_id);
-            if session_ids.is_empty() {
-                to_remove.push(*peer_id);
-            }
+        for peer_state in self.peers.values_mut() {
+            peer_state.sessions.remove(&session_id);
         }
 
-        for peer in to_remove {
-            peer_sessions.remove(&peer);
-        }
-
-        sessions.remove(&session_id);
+        self.sessions.remove(&session_id);
     }
 
     /// Called when a peers connectivity changes, informs the interested sessions.
     async fn signal_availability(&self, peer: PeerId, is_connected: bool) {
-        let (sessions, peer_sessions) = &self.sessions;
-        if let Some(session_ids) = peer_sessions.get(&peer) {
-            for session_id in session_ids {
-                if let Some(session) = sessions.get(session_id) {
-                    session.signal_availability(peer, is_connected);
+        if let Some(peer_state) = self.peers.get(&peer) {
+            for session_id in &peer_state.sessions {
+                if let Some(session) = self.sessions.get(session_id) {
+                    session.signaler.signal_availability(peer, is_connected);
                 }
             }
         }
