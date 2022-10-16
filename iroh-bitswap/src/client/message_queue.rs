@@ -203,7 +203,9 @@ impl MessageQueue {
         inc!(BitswapMetrics::MessageQueuesStopped);
 
         let _ = self.sender.take();
-        self.worker.await?;
+        // just kill it
+        self.worker.abort();
+        // self.worker.await?;
 
         Ok(())
     }
