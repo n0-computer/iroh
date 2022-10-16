@@ -90,12 +90,6 @@ pub fn iroh_data_path(file_name: &str) -> Result<PathBuf> {
     Ok(path)
 }
 
-pub fn home_dir() -> Result<PathBuf> {
-    let path = dirs_next::home_dir()
-        .ok_or_else(|| anyhow!("operating environment doesn't provide a home directory"))?;
-    Ok(path)
-}
-
 /// insert a value into a `config::Map`
 pub fn insert_into_config_map<I: Into<String>, V: Into<ValueKind>>(
     map: &mut Map<String, Value>,

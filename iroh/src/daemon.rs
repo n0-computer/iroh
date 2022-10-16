@@ -1,10 +1,7 @@
 use anyhow::{anyhow, Result};
-use handlebars::Handlebars;
 use iroh_api::Api;
-use serde_json::json;
-use std::fs;
-use std::{collections::HashSet, path::PathBuf, process::Command};
-use tracing::info;
+use std::{collections::HashSet, path::PathBuf};
+use localops::deamon::Daemon;
 
 pub struct DaemonDetails {
     pub bin_paths: Vec<PathBuf>,
@@ -59,6 +56,7 @@ async fn start_services(api: &impl Api, services: HashSet<&str>) -> Result<Daemo
     }
 
     for &service in missing_services.iter() {
+      let data_dir = iroh_util::iroh_data_root()?;
         let daemon_name = format!("iroh-{}", service);
 
         // check if a binary by this name exists
@@ -70,13 +68,12 @@ async fn start_services(api: &impl Api, services: HashSet<&str>) -> Result<Daemo
         })?;
 
         println!("starting {}", daemon_name);
-        //
-        // if let Ok(Fork::Child) = daemon(false, false) {
-        //     Command::new(daemon_path)
-        //         .output()
-        //         .expect("failed to execute process");
-        // }
-        install_daemon(service, bin_path)?;
+        Daemon::new(service)
+          .binary_path(bin_path)
+          .data_dir(data_dir)
+          .install()?;
+
+        println!("{} daemon registered with operating system", service);
     }
 
     // TODO - confirm communication with RPC API
@@ -88,66 +85,12 @@ async fn start_services(api: &impl Api, services: HashSet<&str>) -> Result<Daemo
 // TODO(b5) - in an ideal world the lock files would contain PIDs of daemon processes
 pub fn stop() -> Result<()> {
     for service_name in ["one", "gateway", "p2p", "store"] {
-        remove_deamon(service_name).unwrap_or_else(|e| {
+        Daemon::new(service_name)
+          .remove()
+          .unwrap_or_else(|e| {
             println!("error removing {} service:\n {}", service_name, e);
-        })
+          })
     }
     Ok(())
 }
 
-const LAUNCHD_JOB_TEMPLATE: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-  <dict>
-    <key>Label</key>
-    <string>computer.iroh.{{ service_name }}.plist</string>
-    <key>RunAtLoad</key>
-    <true/>
-    <key>KeepAlive</key>
-    <true/>
-    <key>StandardErrorPath</key>
-    <string>{{ data_dir }}/{{ service_name }}.err</string>
-    <key>StandardOutPath</key>
-    <string>{{ data_dir }}/{{ service_name }}.out</string>
-    <key>ProgramArguments</key>
-    <array>
-      <string>{{ bin_path }}</string>
-    </array>
-  </dict>
-</plist>
-"#;
-
-fn install_daemon(service_name: &str, bin_path: PathBuf) -> Result<()> {
-    let data_dir = iroh_util::iroh_data_root()?;
-    let data = json!({
-      "service_name" : service_name,
-      "data_dir": data_dir.to_str(),
-      "bin_path": bin_path.to_str().unwrap(),
-    });
-    let rendered = Handlebars::new().render_template(LAUNCHD_JOB_TEMPLATE, &data)?;
-
-    let plist_name = format!("computer.iroh.{}.plist", service_name);
-    let plist_path = iroh_util::home_dir()?.join(format!("Library/LaunchAgents/{}", plist_name));
-    info!("writing plist {}", plist_path.display());
-    fs::write(&plist_path, rendered)?;
-
-    Command::new("launchctl")
-        .arg("load")
-        .arg(&plist_path.into_os_string().into_string().unwrap())
-        .output()?;
-
-    println!("{} daemon registered with operating system", service_name);
-    Ok(())
-}
-
-fn remove_deamon(service_name: &str) -> Result<()> {
-    let plist_name = format!("computer.iroh.{}.plist", service_name);
-    let plist_path = iroh_util::home_dir()?.join(format!("Library/LaunchAgents/{}", plist_name));
-
-    Command::new("launchctl")
-        .arg("unload")
-        .arg(&plist_path.into_os_string().into_string().unwrap())
-        .output()?;
-
-    Ok(())
-}
