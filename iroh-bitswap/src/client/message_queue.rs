@@ -101,7 +101,7 @@ impl MessageQueue {
         config: Config,
         on_dont_have_timeout: Arc<dyn DontHaveTimeout>,
     ) -> Self {
-        let (sender, receiver) = mpsc::channel(64);
+        let (sender, receiver) = mpsc::channel(2048);
 
         let actor =
             MessageQueueActor::new(config, network, peer, receiver, on_dont_have_timeout).await;

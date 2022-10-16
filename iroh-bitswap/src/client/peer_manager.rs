@@ -53,7 +53,7 @@ impl<F: Fn(PeerId, Vec<Cid>) -> BoxFuture<'static, ()> + 'static + Sync + Send> 
 
 impl PeerManager {
     pub async fn new(self_id: PeerId, network: Network) -> Self {
-        let (sender, receiver) = mpsc::channel(1024);
+        let (sender, receiver) = mpsc::channel(2048);
         let actor = PeerManagerActor::new(self_id, network, receiver).await;
 
         let _worker = tokio::task::spawn(async move {
