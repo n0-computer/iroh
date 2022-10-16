@@ -594,6 +594,28 @@ impl<S: Store> NetworkBehaviour for Bitswap<S> {
                             event: handler::BitswapHandlerIn::Message(message, response),
                         });
                     }
+                    OutEvent::ProtectPeer { peer } => {
+                        if let Some(PeerState::Responsive(conn_id, _)) = self.get_peer_state(&peer)
+                        {
+                            return Poll::Ready(NetworkBehaviourAction::NotifyHandler {
+                                peer_id: peer,
+                                handler: NotifyHandler::One(conn_id),
+                                event: handler::BitswapHandlerIn::Protect,
+                            });
+                        }
+                    }
+                    OutEvent::UnprotectPeer { peer, response } => {
+                        if let Some(PeerState::Responsive(conn_id, _)) = self.get_peer_state(&peer)
+                        {
+                            let _ = response.send(true);
+                            return Poll::Ready(NetworkBehaviourAction::NotifyHandler {
+                                peer_id: peer,
+                                handler: NotifyHandler::One(conn_id),
+                                event: handler::BitswapHandlerIn::Unprotect,
+                            });
+                        }
+                        let _ = response.send(false);
+                    }
                 },
             }
         }

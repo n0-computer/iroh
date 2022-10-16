@@ -151,7 +151,7 @@ impl PeerManager {
         r.await.unwrap_or_default()
     }
 
-    /// Informst the `PeerManager` that the given session is interested in events about the given peer.
+    /// Informs the `PeerManager` that the given session is interested in events about the given peer.
     pub async fn register_session(&self, peer: &PeerId, session: Signaler) {
         self.send(Message::RegisterSession(*peer, session)).await;
     }

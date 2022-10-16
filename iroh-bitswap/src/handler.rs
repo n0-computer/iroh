@@ -10,12 +10,15 @@ use asynchronous_codec::Framed;
 use futures::prelude::*;
 use futures::StreamExt;
 use iroh_metrics::{bitswap::BitswapMetrics, core::MRecorder, inc};
-use libp2p::core::upgrade::{
-    InboundUpgrade, NegotiationError, OutboundUpgrade, ProtocolError, UpgradeError,
-};
 use libp2p::swarm::{
     ConnectionHandler, ConnectionHandlerEvent, ConnectionHandlerUpgrErr, KeepAlive,
     NegotiatedSubstream, SubstreamProtocol,
+};
+use libp2p::{
+    core::upgrade::{
+        InboundUpgrade, NegotiationError, OutboundUpgrade, ProtocolError, UpgradeError,
+    },
+    PeerId,
 };
 use smallvec::SmallVec;
 use tokio::sync::oneshot;
@@ -80,6 +83,8 @@ pub enum BitswapHandlerIn {
     /// A bitswap message to send.
     Message(BitswapMessage, BitswapMessageResponse),
     // TODO: do we need a close?
+    Protect,
+    Unprotect,
 }
 
 /// The maximum number of substreams we accept or create before disconnecting from the peer.
@@ -278,6 +283,13 @@ impl ConnectionHandler for BitswapHandler {
                     // TODO: should we permanently keep this open instead, until we remove from all sessions?
                     self.keep_alive = KeepAlive::Until(Instant::now() + self.idle_timeout);
                 }
+            }
+            BitswapHandlerIn::Protect => {
+                self.keep_alive = KeepAlive::Yes;
+            }
+            BitswapHandlerIn::Unprotect => {
+                self.keep_alive =
+                    KeepAlive::Until(Instant::now() + Duration::from_secs(INITIAL_KEEP_ALIVE));
             }
         }
     }

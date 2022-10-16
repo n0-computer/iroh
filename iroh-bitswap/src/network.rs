@@ -15,7 +15,9 @@ use libp2p::{core::connection::ConnectionId, PeerId};
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, info, trace};
 
-use crate::{message::BitswapMessage, protocol::ProtocolId, BitswapEvent};
+use crate::{
+    handler::BitswapHandlerIn, message::BitswapMessage, protocol::ProtocolId, BitswapEvent,
+};
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
 const MAX_SEND_TIMEOUT: Duration = Duration::from_secs(2 * 60);
@@ -47,6 +49,13 @@ pub enum OutEvent {
         connection_id: ConnectionId,
     },
     GenerateEvent(BitswapEvent),
+    ProtectPeer {
+        peer: PeerId,
+    },
+    UnprotectPeer {
+        peer: PeerId,
+        response: oneshot::Sender<bool>,
+    },
 }
 
 #[derive(Debug, Clone, thiserror::Error)]
@@ -284,15 +293,25 @@ impl Network {
         trace!("untag {}: {}", peer, tag);
     }
 
-    pub fn protect_peer(&self, peer: &PeerId, tag: &str) {
+    pub async fn protect_peer(&self, peer: &PeerId, tag: &str) {
         // TODO: is this needed?
         trace!("protect {}: {}", peer, tag);
+        let _ = self
+            .network_out_sender
+            .send(OutEvent::ProtectPeer { peer: *peer });
     }
 
-    pub fn unprotect_peer(&self, peer: &PeerId, tag: &str) -> bool {
+    pub async fn unprotect_peer(&self, peer: &PeerId, tag: &str) -> bool {
         // TODO: is this needed?
         trace!("unprotect {}: {}", peer, tag);
-        false
+
+        let (s, r) = oneshot::channel();
+        let _ = self.network_out_sender.send(OutEvent::UnprotectPeer {
+            peer: *peer,
+            response: s,
+        });
+
+        r.await.unwrap_or_default()
     }
 
     pub fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<OutEvent> {

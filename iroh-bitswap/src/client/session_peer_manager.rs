@@ -74,11 +74,10 @@ impl SessionPeerManager {
     /// Protects this connection.
     pub async fn protect_connection(&self, peer: &PeerId) {
         let (peers, _) = &*self.inner.peers.read().await;
-
         if !peers.contains(peer) {
             return;
         }
-        self.inner.network.protect_peer(peer, &self.inner.tag);
+        self.inner.network.protect_peer(peer, &self.inner.tag).await;
     }
 
     /// Removes the peer.
@@ -93,7 +92,10 @@ impl SessionPeerManager {
         peers.remove(peer);
 
         self.inner.network.untag_peer(peer, &self.inner.tag);
-        self.inner.network.unprotect_peer(peer, &self.inner.tag);
+        self.inner
+            .network
+            .unprotect_peer(peer, &self.inner.tag)
+            .await;
         true
     }
 
