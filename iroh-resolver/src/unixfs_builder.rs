@@ -928,6 +928,21 @@ mod tests {
         Ok(())
     }
 
+    #[tokio::test]
+    async fn symlink_from_disk_test() -> Result<()> {
+        let temp_dir = std::env::temp_dir();
+        let expect_name = "path_to_symlink";
+        let expect_target = temp_dir.join("path_to_target");
+        let expect_path = temp_dir.join(expect_name);
+
+        tokio::fs::symlink(expect_target.clone(), expect_path.clone()).await?;
+
+        let got_symlink = SymlinkBuilder::new(expect_path).build().await?;
+        assert_eq!(expect_name, got_symlink.name());
+        assert_eq!(expect_target, got_symlink.target);
+        Ok(())
+    }
+
     /// sync version of file_roundtrip_test for use in proptest
     fn file_roundtrip_test_sync(data: Bytes, chunk_size: usize, degree: usize) -> bool {
         let f = file_roundtrip_test(data, chunk_size, degree);
