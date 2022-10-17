@@ -345,7 +345,7 @@ impl Session {
             receiver: r,
             guard: BlockReceiverGuard {
                 closer: Some(closer_s),
-                worker,
+                _worker: worker,
             },
         })
     }
@@ -650,7 +650,7 @@ pub struct BlockReceiver {
 pub struct BlockReceiverGuard {
     /// Used to cancel the work, when this is dropped.
     closer: Option<oneshot::Sender<()>>,
-    worker: JoinHandle<()>,
+    _worker: JoinHandle<()>,
 }
 
 impl Drop for BlockReceiverGuard {
@@ -659,8 +659,6 @@ impl Drop for BlockReceiverGuard {
         if let Some(closer) = self.closer.take() {
             let _ = closer.send(());
         }
-        // make sure the worker is dead
-        self.worker.abort();
     }
 }
 
