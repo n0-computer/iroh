@@ -114,6 +114,12 @@ impl Cli {
                 recursive,
                 no_wrap,
             } => {
+                if !path.exists() {
+                    anyhow::bail!("Path does not exist");
+                }
+                if !path.is_dir() && !path.is_file() {
+                    anyhow::bail!("Path is not a file or directory");
+                }
                 if path.is_dir() && !*recursive {
                     anyhow::bail!(
                         "{} is a directory, use --recursive to add it",
