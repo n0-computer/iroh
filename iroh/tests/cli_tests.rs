@@ -98,14 +98,6 @@ fn get_tail_success_test() {
 }
 
 #[test]
-fn get_unwrapped_file_overwrite_test() {
-    trycmd::TestCases::new()
-        .env("IROH_CTL_FIXTURE", "get_unwrapped_file")
-        .case("tests/cmd/get_unwrapped_file_overwrite.trycmd")
-        .run();
-}
-
-#[test]
 fn get_unwrapped_file_test() {
     trycmd::TestCases::new()
         .env("IROH_CTL_FIXTURE", "get_unwrapped_file")

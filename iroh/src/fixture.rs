@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 use std::env;
 use std::future;
-use std::str::FromStr;
 use std::path::PathBuf;
+use std::str::FromStr;
 
 use futures::StreamExt;
 use iroh_api::{Cid, Lookup, MockApi, MockP2p, OutType, PeerId};
@@ -144,6 +144,7 @@ fn register_fixtures() -> FixtureRegistry {
         (
             "add_directory".to_string(),
             fixture_add_directory as GetFixture,
+        ),
         (
             "get_wrapped_symlink".to_string(),
             fixture_get_wrapped_symlink as GetFixture,
