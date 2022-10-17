@@ -120,7 +120,11 @@ impl MessageQueue {
     }
 
     pub fn is_running(&self) -> bool {
-        self.sender_wants.is_some()
+        if let Some(ref sender) = self.sender_wants {
+            !sender.is_closed()
+        } else {
+            false
+        }
     }
 
     #[cfg(test)]
