@@ -1,8 +1,10 @@
 use std::collections::HashMap;
 use std::env;
+use std::future;
+use std::str::FromStr;
 
 use futures::StreamExt;
-use iroh_api::{Lookup, MockApi, MockP2p, OutType, PeerId};
+use iroh_api::{Cid, Lookup, MockApi, MockP2p, OutType, PeerId};
 use relative_path::RelativePathBuf;
 
 type GetFixture = fn() -> MockApi;
@@ -51,6 +53,26 @@ fn fixture_get() -> MockApi {
     api
 }
 
+fn fixture_add_file() -> MockApi {
+    let mut api = MockApi::default();
+    api.expect_add_file().returning(|_ipfs_path, _| {
+        Box::pin(future::ready(
+            Cid::from_str("QmYbcW4tXLXHWw753boCK8Y7uxLu5abXjyYizhLznq9PUR").map_err(|e| e.into()),
+        ))
+    });
+    api
+}
+
+fn fixture_add_directory() -> MockApi {
+    let mut api = MockApi::default();
+    api.expect_add_dir().returning(|_ipfs_path, _| {
+        Box::pin(future::ready(
+            Cid::from_str("QmYbcW4tXLXHWw753boCK8Y7uxLu5abXjyYizhLznq9PUR").map_err(|e| e.into()),
+        ))
+    });
+    api
+}
+
 fn fixture_get_wrapped_file() -> MockApi {
     let mut api = MockApi::default();
     api.expect_get_stream().returning(|_ipfs_path| {
@@ -89,6 +111,11 @@ fn register_fixtures() -> FixtureRegistry {
         (
             "get_unwrapped_file".to_string(),
             fixture_get_unwrapped_file as GetFixture,
+        ),
+        ("add_file".to_string(), fixture_add_file as GetFixture),
+        (
+            "add_directory".to_string(),
+            fixture_add_directory as GetFixture,
         ),
     ]
     .into_iter()

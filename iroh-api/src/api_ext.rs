@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use crate::{Api, IpfsPath, OutType};
+use crate::{Api, Cid, IpfsPath, OutType};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use futures::Stream;
@@ -28,6 +28,16 @@ pub trait ApiExt: Api {
         let blocks = self.get_stream(ipfs_path);
         save_get_stream(&root_path, blocks).await?;
         Ok(root_path)
+    }
+
+    async fn add(&self, path: &Path, wrap: bool) -> Result<Cid> {
+        if path.is_dir() {
+            self.add_dir(path, wrap).await
+        } else if path.is_file() {
+            self.add_file(path, wrap).await
+        } else {
+            anyhow::bail!("can only add files or directories")
+        }
     }
 }
 
