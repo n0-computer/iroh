@@ -20,7 +20,7 @@ use crate::{
 };
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
-const MAX_SEND_TIMEOUT: Duration = Duration::from_secs(2 * 60);
+const MAX_SEND_TIMEOUT: Duration = Duration::from_secs(3 * 60 + 5);
 const MIN_SEND_TIMEOUT: Duration = Duration::from_secs(2);
 const SEND_LATENCY: Duration = Duration::from_secs(2);
 // 100kbit/s
