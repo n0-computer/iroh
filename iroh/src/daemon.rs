@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Result};
 use iroh_api::Api;
-use std::{collections::HashSet, path::PathBuf};
 use localops::deamon::Daemon;
+use std::{collections::HashSet, path::PathBuf};
 
 pub struct DaemonDetails {
     pub bin_paths: Vec<PathBuf>,
@@ -56,7 +56,7 @@ async fn start_services(api: &impl Api, services: HashSet<&str>) -> Result<Daemo
     }
 
     for &service in missing_services.iter() {
-      let data_dir = iroh_util::iroh_data_root()?;
+        let data_dir = iroh_util::iroh_data_root()?;
         let daemon_name = format!("iroh-{}", service);
 
         // check if a binary by this name exists
@@ -69,9 +69,9 @@ async fn start_services(api: &impl Api, services: HashSet<&str>) -> Result<Daemo
 
         println!("starting {}", daemon_name);
         Daemon::new(service)
-          .binary_path(bin_path)
-          .data_dir(data_dir)
-          .install()?;
+            .bin_path(bin_path)
+            .data_dir(data_dir)
+            .install()?;
 
         println!("{} daemon registered with operating system", service);
     }
@@ -85,12 +85,9 @@ async fn start_services(api: &impl Api, services: HashSet<&str>) -> Result<Daemo
 // TODO(b5) - in an ideal world the lock files would contain PIDs of daemon processes
 pub fn stop() -> Result<()> {
     for service_name in ["one", "gateway", "p2p", "store"] {
-        Daemon::new(service_name)
-          .remove()
-          .unwrap_or_else(|e| {
+        Daemon::new(service_name).remove().unwrap_or_else(|e| {
             println!("error removing {} service:\n {}", service_name, e);
-          })
+        })
     }
     Ok(())
 }
-
