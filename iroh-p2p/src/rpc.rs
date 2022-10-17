@@ -20,14 +20,15 @@ use tracing::trace;
 use async_trait::async_trait;
 use iroh_bitswap::Block;
 use iroh_rpc_types::p2p::{
-    BitswapKey, BitswapProviders, BitswapRequest, BitswapResponse, ConnectRequest, ConnectResponse,
-    DisconnectRequest, GetListeningAddrsResponse, GetPeersResponse, GossipsubAllPeersResponse,
-    GossipsubPeerAndTopics, GossipsubPeerIdMsg, GossipsubPeersResponse, GossipsubPublishRequest,
-    GossipsubPublishResponse, GossipsubSubscribeResponse, GossipsubTopicHashMsg,
-    GossipsubTopicsResponse, Key as ProviderKey, Multiaddrs, NotifyNewBlocksBitswapRequest,
-    P2p as RpcP2p, P2pServerAddr, PeerIdResponse, Providers, StopSessionBitswapRequest,
-    VersionResponse,
+    BitswapRequest, BitswapResponse, ConnectRequest, ConnectResponse, DisconnectRequest,
+    GetListeningAddrsResponse, GetPeersResponse, GossipsubAllPeersResponse, GossipsubPeerAndTopics,
+    GossipsubPeerIdMsg, GossipsubPeersResponse, GossipsubPublishRequest, GossipsubPublishResponse,
+    GossipsubSubscribeResponse, GossipsubTopicHashMsg, GossipsubTopicsResponse, Key as ProviderKey,
+    Multiaddrs, NotifyNewBlocksBitswapRequest, P2p as RpcP2p, P2pServerAddr, PeerIdResponse,
+    Providers, StopSessionBitswapRequest, VersionResponse,
 };
+
+use super::node::DEFAULT_PROVIDER_LIMIT;
 
 struct P2p {
     sender: Sender<RpcMessage>,
@@ -177,6 +178,7 @@ impl RpcP2p for P2p {
         let msg = RpcMessage::ProviderRequest {
             key: ProviderRequestKey::Dht(req.key.into()),
             response_channel: s,
+            limit: DEFAULT_PROVIDER_LIMIT,
         };
 
         self.sender.send(msg).await?;
@@ -187,35 +189,6 @@ impl RpcP2p for P2p {
             let providers = providers.into_iter().map(|p| p.to_bytes()).collect();
 
             Ok(Providers { providers })
-        })))
-    }
-
-    #[tracing::instrument(skip(self, req))]
-    async fn fetch_provider_bitswap(
-        &self,
-        req: BitswapKey,
-    ) -> Result<Pin<Box<dyn Stream<Item = Result<BitswapProviders>> + Send>>> {
-        let ctx = req.ctx;
-        trace!(
-            "context:{} received fetch_provider_bitswap: {:?}",
-            ctx,
-            req.key
-        );
-
-        let (s, r) = channel(1024);
-        let msg = RpcMessage::ProviderRequest {
-            key: ProviderRequestKey::Bitswap(ctx, Cid::try_from(&req.key[..])?),
-            response_channel: s,
-        };
-
-        self.sender.send(msg).await?;
-        let r = tokio_stream::wrappers::ReceiverStream::new(r);
-
-        Ok(Box::pin(r.map(move |providers| {
-            let providers = providers.map_err(|e| anyhow!(e))?;
-            let providers = providers.into_iter().map(|p| p.to_bytes()).collect();
-
-            Ok(BitswapProviders { ctx, providers })
         })))
     }
 
@@ -483,6 +456,7 @@ pub enum RpcMessage {
     ProviderRequest {
         key: ProviderRequestKey,
         response_channel: Sender<Result<HashSet<PeerId>, String>>,
+        limit: usize,
     },
     StartProviding(oneshot::Sender<Result<libp2p::kad::QueryId>>, Key),
     StopProviding(oneshot::Sender<Result<()>>, Key),

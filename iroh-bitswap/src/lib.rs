@@ -390,6 +390,7 @@ pub enum BitswapEvent {
     FindProviders {
         key: Cid,
         response: tokio::sync::mpsc::Sender<std::result::Result<HashSet<PeerId>, String>>,
+        limit: usize,
     },
     Ping {
         peer: PeerId,

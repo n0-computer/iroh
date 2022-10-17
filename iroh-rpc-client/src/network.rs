@@ -7,9 +7,9 @@ use futures::{Stream, StreamExt};
 #[cfg(feature = "grpc")]
 use iroh_rpc_types::p2p::p2p_client::P2pClient as GrpcP2pClient;
 use iroh_rpc_types::p2p::{
-    BitswapBlock, BitswapKey, BitswapRequest, ConnectRequest, DisconnectRequest,
-    GossipsubPeerAndTopics, GossipsubPeerIdMsg, GossipsubPublishRequest, GossipsubTopicHashMsg,
-    Key, NotifyNewBlocksBitswapRequest, P2p, P2pClientAddr, P2pClientBackend, Providers,
+    BitswapBlock, BitswapRequest, ConnectRequest, DisconnectRequest, GossipsubPeerAndTopics,
+    GossipsubPeerIdMsg, GossipsubPublishRequest, GossipsubTopicHashMsg, Key,
+    NotifyNewBlocksBitswapRequest, P2p, P2pClientAddr, P2pClientBackend, Providers,
     StopSessionBitswapRequest,
 };
 use iroh_rpc_types::Addr;
@@ -102,28 +102,6 @@ impl P2pClient {
         };
         let res = self.backend.fetch_provider_dht(req).await?;
 
-        let providers_stream = res.map(|p| {
-            let p = p?;
-            let mut providers = HashSet::new();
-            for provider in p.providers.into_iter() {
-                providers.insert(PeerId::from_bytes(&provider[..])?);
-            }
-            Ok(providers)
-        });
-        Ok(providers_stream)
-    }
-
-    #[tracing::instrument(skip(self))]
-    pub async fn fetch_providers_bitswap(
-        &self,
-        ctx: u64,
-        key: &Cid,
-    ) -> Result<impl Stream<Item = Result<HashSet<PeerId>>>> {
-        let req = BitswapKey {
-            ctx,
-            key: key.to_bytes(),
-        };
-        let res = self.backend.fetch_provider_bitswap(req).await?;
         let providers_stream = res.map(|p| {
             let p = p?;
             let mut providers = HashSet::new();
@@ -313,10 +291,10 @@ mod tests {
     use super::*;
     use async_trait::async_trait;
     use iroh_rpc_types::p2p::{
-        p2p_server, BitswapProviders, BitswapResponse, ConnectResponse, GetListeningAddrsResponse,
-        GetPeersResponse, GossipsubAllPeersResponse, GossipsubPeersResponse,
-        GossipsubPublishResponse, GossipsubSubscribeResponse, GossipsubTopicsResponse, Multiaddrs,
-        PeerIdResponse, VersionResponse,
+        p2p_server, BitswapResponse, ConnectResponse, GetListeningAddrsResponse, GetPeersResponse,
+        GossipsubAllPeersResponse, GossipsubPeersResponse, GossipsubPublishResponse,
+        GossipsubSubscribeResponse, GossipsubTopicsResponse, Multiaddrs, PeerIdResponse,
+        VersionResponse,
     };
     use libp2p::gossipsub::IdentTopic;
     use tokio::net::TcpListener;
@@ -374,9 +352,6 @@ mod tests {
     impl p2p_server::P2p for TestRpcServer {
         type FetchProviderDhtStream =
             Pin<Box<dyn Stream<Item = std::result::Result<Providers, tonic::Status>> + Send>>;
-        type FetchProviderBitswapStream = Pin<
-            Box<dyn Stream<Item = std::result::Result<BitswapProviders, tonic::Status>> + Send>,
-        >;
 
         async fn version(
             &self,
@@ -438,13 +413,6 @@ mod tests {
             &self,
             _request: Request<Key>,
         ) -> Result<tonic::Response<Self::FetchProviderDhtStream>, tonic::Status> {
-            todo!()
-        }
-
-        async fn fetch_provider_bitswap(
-            &self,
-            _request: Request<BitswapKey>,
-        ) -> Result<tonic::Response<Self::FetchProviderBitswapStream>, tonic::Status> {
             todo!()
         }
 

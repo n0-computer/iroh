@@ -88,6 +88,7 @@ enum KadQueryChannel {
         #[allow(dead_code)]
         query_id: QueryId,
         channels: Vec<Sender<Result<HashSet<PeerId>, String>>>,
+        limit: usize,
     },
 }
 
@@ -96,7 +97,7 @@ enum QueryKey {
     ProviderKey(Key),
 }
 
-const PROVIDER_LIMIT: usize = 20;
+pub(crate) const DEFAULT_PROVIDER_LIMIT: usize = 10;
 const NICE_INTERVAL: Duration = Duration::from_secs(6);
 const BOOTSTRAP_INTERVAL: Duration = Duration::from_secs(5 * 60);
 const EXPIRY_INTERVAL: Duration = Duration::from_secs(1);
@@ -432,11 +433,16 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                             }
                         }
                     }
-                    BitswapEvent::FindProviders { key, response } => {
+                    BitswapEvent::FindProviders {
+                        key,
+                        response,
+                        limit,
+                    } => {
                         info!("bitswap find providers {}", key);
                         self.handle_rpc_message(RpcMessage::ProviderRequest {
                             key: ProviderRequestKey::Dht(key.hash().to_bytes().into()),
                             response_channel: response,
+                            limit,
                         })?;
                     }
                     BitswapEvent::Ping { peer, response } => {
@@ -467,6 +473,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                             } else if let Some(KadQueryChannel::GetProviders {
                                 channels,
                                 found_providers,
+                                limit,
                                 ..
                             }) = self.kad_queries.get_mut(&QueryKey::ProviderKey(key))
                             {
@@ -497,11 +504,11 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                                     });
                                 }
 
-                                if found_providers.len() >= PROVIDER_LIMIT {
+                                if found_providers.len() >= *limit {
                                     debug!(
                                         "finish provider query {}/{}",
                                         found_providers.len(),
-                                        PROVIDER_LIMIT
+                                        limit,
                                     );
                                     // Finish query if we have enough providers.
                                     self.swarm.behaviour_mut().finish_query(&id);
@@ -668,6 +675,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
             }
             RpcMessage::ProviderRequest {
                 key,
+                limit,
                 response_channel,
             } => match key {
                 ProviderRequestKey::Dht(key) => {
@@ -685,6 +693,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                                     found_providers: Default::default(),
                                     query_id,
                                     channels: vec![response_channel],
+                                    limit,
                                 });
                             }
                         }
@@ -969,10 +978,10 @@ mod tests {
             println!("{:?}", providers);
             assert!(!providers.is_empty());
             assert!(
-                providers.len() >= PROVIDER_LIMIT,
+                providers.len() >= DEFAULT_PROVIDER_LIMIT,
                 "{} < {}",
                 providers.len(),
-                PROVIDER_LIMIT
+                DEFAULT_PROVIDER_LIMIT
             );
         };
 

@@ -10,7 +10,6 @@ service P2p {
   rpc ExternalAddrs(google.protobuf.Empty) returns (Multiaddrs) {}
   rpc FetchBitswap(BitswapRequest) returns (BitswapResponse) {}
   rpc FetchProviderDht(Key) returns (stream Providers) {}
-  rpc FetchProviderBitswap(BitswapKey) returns (stream BitswapProviders) {}
   rpc NotifyNewBlocksBitswap(NotifyNewBlocksBitswapRequest) returns (google.protobuf.Empty) {}
   rpc StopSessionBitswap(StopSessionBitswapRequest) returns (google.protobuf.Empty) {}
   rpc StartProviding(Key) returns (google.protobuf.Empty) {}
@@ -69,11 +68,6 @@ message BitswapProviders {
 
 message Key {
   bytes key = 1;
-}
-
-message BitswapKey {
-  bytes key = 1;
-  uint64 ctx = 2;
 }
 
 message NotifyNewBlocksBitswapRequest {

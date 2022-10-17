@@ -127,19 +127,11 @@ async fn find_provider(
     response: async_channel::Sender<Result<PeerId>>,
     mut receiver: mpsc::Receiver<std::result::Result<HashSet<PeerId>, String>>,
 ) {
-    let mut found_providers = HashSet::new();
     while let Some(providers) = receiver.recv().await {
         match providers {
-            Ok(providers) => {
-                let new_providers = providers
-                    .difference(&found_providers)
-                    .into_iter()
-                    .copied()
-                    .collect::<Vec<_>>();
-
+            Ok(new_providers) => {
                 let futures = FuturesUnordered::new();
                 for provider in new_providers {
-                    found_providers.insert(provider);
                     let response = response.clone();
                     let network = network.clone();
                     futures.push(async move {

@@ -23,6 +23,7 @@ const MIN_SEND_TIMEOUT: Duration = Duration::from_secs(2);
 const SEND_LATENCY: Duration = Duration::from_secs(2);
 // 100kbit/s
 const MIN_SEND_RATE: u64 = (100 * 1000) / 8;
+const DEFAULT_PROVIDER_LIMIT: usize = 10;
 
 #[derive(Debug, Clone)]
 pub struct Network {
@@ -188,6 +189,7 @@ impl Network {
             .send(OutEvent::GenerateEvent(BitswapEvent::FindProviders {
                 key,
                 response: s,
+                limit: DEFAULT_PROVIDER_LIMIT,
             }))
             .await
             .map_err(|e| anyhow!("channel send: {:?}", e))?;
