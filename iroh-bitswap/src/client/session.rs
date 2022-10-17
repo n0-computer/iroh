@@ -1,4 +1,4 @@
-use std::{pin::Pin, sync::Arc, time::Duration};
+use std::{ops::Deref, pin::Pin, sync::Arc, time::Duration};
 
 use ahash::AHashSet;
 use anyhow::{anyhow, ensure, Result};
@@ -6,7 +6,7 @@ use cid::Cid;
 use iroh_metrics::{bitswap::BitswapMetrics, core::MRecorder, inc, record};
 use libp2p::PeerId;
 use tokio::{
-    sync::{oneshot, Mutex},
+    sync::oneshot,
     task::JoinHandle,
     time::{Instant, Sleep},
 };
@@ -64,7 +64,6 @@ struct Inner {
     closer: oneshot::Sender<()>,
     worker: JoinHandle<()>,
     notify: async_broadcast::Sender<Block>,
-    workers: Mutex<Vec<(oneshot::Sender<()>, JoinHandle<()>)>>,
 }
 
 impl Session {
@@ -173,7 +172,6 @@ impl Session {
             notify,
             closer: closer_s,
             worker,
-            workers: Mutex::new(Vec::new()),
         });
 
         Session { inner }
@@ -202,15 +200,6 @@ impl Session {
             .send(())
             .map_err(|e| anyhow!("failed to stop worker: {:?}", e))?;
         inner.worker.await?;
-
-        let mut workers = Mutex::into_inner(inner.workers);
-        while let Some((closer, worker)) = workers.pop() {
-            // finished get_blocks will have the receiver end dropped
-            // TODO: find a way to clean these up earlier
-            if closer.send(()).is_ok() {
-                worker.await?;
-            }
-        }
 
         debug!("session stopped");
         Ok(())
@@ -276,17 +265,17 @@ impl Session {
         }
     }
 
-    // Fetches a single block.
+    /// Fetches a single block.
     pub async fn get_block(&self, key: &Cid) -> Result<Block> {
         let r = self.get_blocks(&[*key][..]).await?;
         let block = r.recv().await?;
         Ok(block)
     }
 
-    // Fetches a set of blocks within the context of this session and
-    // returns a channel that found blocks will be returned on. No order is
-    // guaranteed on the returned blocks.
-    pub async fn get_blocks(&self, keys: &[Cid]) -> Result<async_channel::Receiver<Block>> {
+    /// Fetches a set of blocks within the context of this session and
+    /// returns a channel that found blocks will be returned on. No order is
+    /// guaranteed on the returned blocks.
+    pub async fn get_blocks(&self, keys: &[Cid]) -> Result<BlockReceiver> {
         ensure!(!keys.is_empty(), "missing keys");
         debug!("get blocks: {:?}", keys);
 
@@ -349,10 +338,15 @@ impl Session {
             }
         });
 
-        self.inner.workers.lock().await.push((closer_s, worker));
         self.inner.incoming.send(Op::Want(keys.to_vec())).await?;
 
-        Ok(r)
+        Ok(BlockReceiver {
+            receiver: r,
+            guard: BlockReceiverGuard {
+                closer: Some(closer_s),
+                worker,
+            },
+        })
     }
 }
 
@@ -642,5 +636,43 @@ impl LatencyTracker {
     fn receive_update(&mut self, count: usize, latency: Duration) {
         self.count += count;
         self.total_latency += latency;
+    }
+}
+
+#[derive(Debug)]
+pub struct BlockReceiver {
+    /// Receives the results.
+    receiver: async_channel::Receiver<Block>,
+    guard: BlockReceiverGuard,
+}
+#[derive(Debug)]
+pub struct BlockReceiverGuard {
+    /// Used to cancel the work, when this is dropped.
+    closer: Option<oneshot::Sender<()>>,
+    worker: JoinHandle<()>,
+}
+
+impl Drop for BlockReceiverGuard {
+    fn drop(&mut self) {
+        debug!("shutting down get block loop");
+        if let Some(closer) = self.closer.take() {
+            let _ = closer.send(());
+        }
+        // make sure the worker is dead
+        self.worker.abort();
+    }
+}
+
+impl BlockReceiver {
+    pub fn into_parts(self) -> (async_channel::Receiver<Block>, BlockReceiverGuard) {
+        (self.receiver, self.guard)
+    }
+}
+
+impl Deref for BlockReceiver {
+    type Target = async_channel::Receiver<Block>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.receiver
     }
 }

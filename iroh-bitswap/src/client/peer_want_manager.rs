@@ -42,10 +42,6 @@ impl PeerWantManager {
         );
 
         // Broadcast any live want-haves to the newly connected peer.
-        debug!(
-            "adding peer {} (have {:?} wants)",
-            peer, self.broadcast_wants
-        );
         if !self.broadcast_wants.is_empty() {
             let wants = &self.broadcast_wants;
             peer_queue.add_broadcast_want_haves(&wants).await;

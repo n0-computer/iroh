@@ -13,6 +13,7 @@ use tracing::{debug, error, info, warn};
 
 use crate::{block::Block, message::BitswapMessage, network::Network, Store};
 
+use self::session::BlockReceiver;
 use self::{peer_manager::PeerManager, session::Session, session_manager::SessionManager};
 
 mod block_presence_manager;
@@ -144,14 +145,14 @@ impl<S: Store> Client<S> {
         &self,
         session_id: u64,
         keys: &[Cid],
-    ) -> Result<async_channel::Receiver<Block>> {
+    ) -> Result<BlockReceiver> {
         let session = self.get_or_create_session(session_id).await;
         session.get_blocks(keys).await
     }
 
     /// Returns a channel where the caller may receive blocks that correspond to the
     /// provided `keys`.
-    pub async fn get_blocks(&self, keys: &[Cid]) -> Result<async_channel::Receiver<Block>> {
+    pub async fn get_blocks(&self, keys: &[Cid]) -> Result<BlockReceiver> {
         let session = self.new_session().await;
         session.get_blocks(keys).await
     }

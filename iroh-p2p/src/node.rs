@@ -323,7 +323,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
         ctx: u64,
         cid: Cid,
         _providers: HashSet<PeerId>,
-        chan: OneShotSender<Result<Block, String>>,
+        mut chan: OneShotSender<Result<Block, String>>,
     ) -> Result<()> {
         if let Some(bs) = self.swarm.behaviour().bitswap.as_ref() {
             let client = bs.client().clone();
@@ -332,11 +332,21 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
             let entry = self.bitswap_sessions.entry(ctx).or_default();
             let worker = tokio::task::spawn(async move {
                 tokio::pin!(closer_r);
+                let block_receiver = client.get_block_with_session_id(ctx, &cid);
 
-                futures::future::select(
-                    closer_r,
-                    async move {
-                        match client.get_block_with_session_id(ctx, &cid).await {
+                tokio::select! {
+                    _ = closer_r => {
+                        // Explicit sesssion stop.
+                        debug!("session {}: stopped", ctx);
+                        return;
+                    }
+                    _ = chan.closed() => {
+                        debug!("session {}: request canceled", ctx);
+                        // RPC dropped
+                        return;
+                    }
+                    block = block_receiver => {
+                        match block {
                             Ok(block) => {
                                 if let Err(e) = chan.send(Ok(block)) {
                                     warn!("failed to send block response: {:?}", e);
@@ -347,9 +357,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                             }
                         }
                     }
-                    .boxed(),
-                )
-                .await;
+                }
             });
             entry.push((closer_s, worker));
 

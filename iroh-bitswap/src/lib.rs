@@ -273,7 +273,6 @@ impl<S: Store> Bitswap<S> {
     }
 
     fn peer_connected(&self, peer: PeerId) {
-        debug!("peer {} connected", peer);
         if let Err(err) = self.peers_connected.try_send(peer) {
             warn!(
                 "failed to process peer connection from {}: {:?}, dropping",
@@ -283,7 +282,6 @@ impl<S: Store> Bitswap<S> {
     }
 
     fn peer_disconnected(&self, peer: PeerId) {
-        debug!("peer {} disconnected", peer);
         if let Err(err) = self.peers_disconnected.try_send(peer) {
             warn!(
                 "failed to process peer disconnection from {}: {:?}, dropping",
@@ -425,7 +423,7 @@ impl<S: Store> NetworkBehaviour for Bitswap<S> {
         _failed_addresses: Option<&Vec<Multiaddr>>,
         other_established: usize,
     ) {
-        debug!("connection established {} ({})", peer_id, other_established);
+        trace!("connection established {} ({})", peer_id, other_established);
         self.set_peer_state(peer_id, PeerState::Connected(*connection));
         self.pause_dialing = false;
     }
@@ -903,7 +901,8 @@ mod tests {
             let mut blocks = blocks.clone();
             let ids: Vec<_> = blocks.iter().map(|b| *b.cid()).collect();
             let session = swarm2_bs.client().new_session().await;
-            let mut results: Vec<_> = session.get_blocks(&ids).await.unwrap().collect().await;
+            let (blocks_receiver, _guard) = session.get_blocks(&ids).await.unwrap().into_parts();
+            let mut results: Vec<_> = blocks_receiver.collect().await;
 
             results.sort();
             blocks.sort();

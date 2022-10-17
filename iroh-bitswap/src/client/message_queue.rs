@@ -200,7 +200,6 @@ impl MessageQueue {
 
     /// Shuts down this message queue.
     pub async fn stop(mut self) -> Result<()> {
-        debug!("stopping message queue {}", self.peer);
         ensure!(
             self.sender_responses.is_some(),
             "message queue {} already stopped",
@@ -259,7 +258,6 @@ async fn run(mut actor: MessageQueueActor) {
                 }
             }
             _ = rebroadcast_timer.tick() => {
-                debug!("{}: rebroadcast", actor.peer);
                 if actor.rebroadcast_wantlist().await {
                     // fatal error
                     break;
