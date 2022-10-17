@@ -134,22 +134,26 @@ impl Cli {
                     total_size += size_info.size;
                     pb.inc(1);
                 }
-                pb.finish_with_message(format!(
-                    "Total size: {}",
-                    indicatif::HumanBytes(total_size)
-                ));
+                pb.finish_and_clear();
+                // with_message(format!(
+                //     "Total size: {}",
+                //     indicatif::HumanBytes(total_size)
+                // ));
 
                 let pb = ProgressBar::new(total_size);
                 pb.set_style(ProgressStyle::with_template(
                     "[{elapsed_precise}] {bar:40} {bytes}/{total_bytes} ({bytes_per_sec}) {msg}",
                 )?);
+                // show the progress bar right away, as `add` takes
+                // a while before it starts ending progress reports
+                pb.inc(0);
                 let (tx, mut rx) = tokio::sync::mpsc::channel::<FileInfo>(32);
                 tokio::spawn(async move {
                     while let Some(file_info) = rx.recv().await {
                         pb.inc(file_info.size);
                         pb.set_message(format!("{}", &file_info.path.display()));
                     }
-                    pb.finish();
+                    pb.finish_and_clear();
                 });
                 let cid = api.add(path, !(*no_wrap), tx).await?;
                 println!("/ipfs/{}", cid);
