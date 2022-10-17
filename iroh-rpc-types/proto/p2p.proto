@@ -11,7 +11,6 @@ service P2p {
   rpc FetchBitswap(BitswapRequest) returns (BitswapResponse) {}
   rpc FetchProviderDht(Key) returns (stream Providers) {}
   rpc FetchProviderBitswap(BitswapKey) returns (stream BitswapProviders) {}
-  rpc InjectProviderBitswap(BitswapRequest) returns (google.protobuf.Empty) {}
   rpc NotifyNewBlocksBitswap(NotifyNewBlocksBitswapRequest) returns (google.protobuf.Empty) {}
   rpc StopSessionBitswap(StopSessionBitswapRequest) returns (google.protobuf.Empty) {}
   rpc StartProviding(Key) returns (google.protobuf.Empty) {}

@@ -117,7 +117,7 @@ impl Network {
         let num_blocks = message.blocks().count();
         let num_block_bytes = message.blocks().map(|b| b.data.len() as u64).sum();
 
-        let res = tokio::time::timeout(timeout, async {
+        tokio::time::timeout(timeout, async {
             let mut errors: Vec<anyhow::Error> = Vec::new();
             for i in 1..=retries {
                 debug!("send:{}: try {}/{}", peer, i, retries);
@@ -176,7 +176,7 @@ impl Network {
         }
         record!(BitswapMetrics::SentBlockBytes, num_block_bytes);
 
-        Ok(res)
+        Ok(())
     }
 
     pub async fn find_providers(

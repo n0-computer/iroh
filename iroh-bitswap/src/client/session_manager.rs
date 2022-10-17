@@ -36,7 +36,6 @@ struct Inner {
     provider_query_manager: ProviderQueryManager,
     sessions: RwLock<AHashMap<u64, Session>>,
     session_index: AtomicU64,
-    network: Network,
     notify: async_broadcast::Sender<Block>,
 }
 
@@ -59,7 +58,6 @@ impl SessionManager {
                 provider_query_manager,
                 sessions: Default::default(),
                 session_index: Default::default(),
-                network,
                 notify,
             }),
         };
@@ -170,7 +168,6 @@ impl SessionManager {
     }
 
     pub async fn remove_session(&self, session_id: u64) -> Result<()> {
-        inc!(BitswapMetrics::SessionsDestroyed);
         let cancels = self
             .inner
             .session_interest_manager

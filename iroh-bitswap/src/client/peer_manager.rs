@@ -720,7 +720,7 @@ impl PeerManagerActor {
 mod tests {
     use std::time::Duration;
 
-    use crate::{block::tests::create_random_block_v1, message::WantType};
+    use crate::block::tests::create_random_block_v1;
 
     use super::*;
 

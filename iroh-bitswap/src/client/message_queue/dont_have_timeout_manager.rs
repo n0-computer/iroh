@@ -49,7 +49,6 @@ struct PendingWant {
 
 #[derive(Debug)]
 pub struct DontHaveTimeoutManager {
-    default_timeout: Duration,
     max_timeout: Duration,
     message_latency_multiplier: f64,
     worker: Option<(
@@ -91,7 +90,6 @@ impl DontHaveTimeoutManager {
         }));
 
         DontHaveTimeoutManager {
-            default_timeout: DONT_HAVE_TIMEOUT,
             max_timeout: MAX_TIMEOUT,
             message_latency_multiplier: MESSAGE_LATENCY_MULTIPLIER,
             inner,

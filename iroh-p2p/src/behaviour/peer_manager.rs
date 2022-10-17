@@ -3,13 +3,13 @@ use std::{
     time::Duration,
 };
 
-use ahash::{AHashMap, AHashSet};
+use ahash::AHashMap;
 use caches::{Cache, PutResult};
 use iroh_metrics::{core::MRecorder, inc, p2p::P2PMetrics};
 use libp2p::{
     core::{connection::ConnectionId, transport::ListenerId, ConnectedPoint},
     identify::IdentifyInfo,
-    ping::PingSuccess,
+    ping::Success as PingSuccess,
     swarm::{
         handler::DummyConnectionHandler, ConnectionHandler, DialError, IntoConnectionHandler,
         NetworkBehaviour, NetworkBehaviourAction, PollParameters,

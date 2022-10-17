@@ -20,6 +20,7 @@ impl CidQueue {
         None
     }
 
+    #[allow(dead_code)]
     pub fn cids(&mut self) -> Vec<Cid> {
         // Lazily deletes cids removed from the set.
         self.elements.retain(|el| self.set.contains(el));

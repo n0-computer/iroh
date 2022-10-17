@@ -11,7 +11,6 @@ proxy!(
     fetch_provider_bitswap: BitswapKey =>
          std::pin::Pin<Box<dyn futures::Stream<Item = Result<BitswapProviders, tonic::Status>> + Send>> =>
         std::pin::Pin<Box<dyn futures::Stream<Item = anyhow::Result<BitswapProviders>> + Send>> [FetchProviderBitswapStream],
-    inject_provider_bitswap: BitswapRequest => () => (),
     stop_session_bitswap: StopSessionBitswapRequest => () => (),
     notify_new_blocks_bitswap: NotifyNewBlocksBitswapRequest => () => (),
     get_listening_addrs: () => GetListeningAddrsResponse =>  GetListeningAddrsResponse,

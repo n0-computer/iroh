@@ -106,7 +106,7 @@ macro_rules! make_metrics {
 
             impl MRecorder for  [<$module_name Metrics>] {
                 fn record(&self, value: u64) {
-                    crate::record(Collector::$module_name, self.clone(), value);
+                    $crate::record(Collector::$module_name, self.clone(), value);
                 }
             }
 

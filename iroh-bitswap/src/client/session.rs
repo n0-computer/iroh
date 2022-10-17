@@ -67,6 +67,7 @@ struct Inner {
 }
 
 impl Session {
+    #[allow(clippy::too_many_arguments)]
     pub async fn new(
         id: u64,
         session_manager: SessionManager,
@@ -201,6 +202,8 @@ impl Session {
             .send(())
             .map_err(|e| anyhow!("failed to stop worker: {:?}", e))?;
         inner.worker.await?;
+
+        inc!(BitswapMetrics::SessionsDestroyed);
 
         debug!("session stopped");
         Ok(())
@@ -369,6 +372,7 @@ struct LoopState {
 }
 
 impl LoopState {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         id: u64,
         session_wants: SessionWants,

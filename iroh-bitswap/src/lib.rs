@@ -50,25 +50,21 @@ pub use self::message::Priority;
 
 const DIAL_BACK_OFF: Duration = Duration::from_secs(10 * 60);
 
+type DialMap = AHashMap<
+    PeerId,
+    Vec<(
+        usize,
+        oneshot::Sender<std::result::Result<(ConnectionId, Option<ProtocolId>), String>>,
+    )>,
+>;
+
 #[derive(Debug, Clone)]
 pub struct Bitswap<S: Store> {
     network: Network,
     protocol_config: ProtocolConfig,
     idle_timeout: Duration,
     peers: Arc<Mutex<AHashMap<PeerId, PeerState>>>,
-    dials: Arc<
-        Mutex<
-            AHashMap<
-                PeerId,
-                Vec<(
-                    usize,
-                    oneshot::Sender<
-                        std::result::Result<(ConnectionId, Option<ProtocolId>), String>,
-                    >,
-                )>,
-            >,
-        >,
-    >,
+    dials: Arc<Mutex<DialMap>>,
     /// Set to true when dialing should be disabled because we have reached the conn limit.
     pause_dialing: bool,
     client: Client<S>,
@@ -235,10 +231,8 @@ impl<S: Store> Bitswap<S> {
     /// Called on identify events from swarm, informing us about available protocols of this peer.
     pub fn on_identify(&self, peer: &PeerId, protocols: &[String]) {
         if let Some(PeerState::Connected(conn_id)) = self.get_peer_state(peer) {
-            let mut protocols: Vec<ProtocolId> = protocols
-                .iter()
-                .filter_map(|p| ProtocolId::try_from(p))
-                .collect();
+            let mut protocols: Vec<ProtocolId> =
+                protocols.iter().filter_map(ProtocolId::try_from).collect();
             protocols.sort();
             if let Some(best_protocol) = protocols.last() {
                 self.set_peer_state(peer, PeerState::Responsive(conn_id, *best_protocol));

@@ -40,6 +40,7 @@ impl Block {
     }
 }
 
+#[cfg(test)]
 pub mod tests {
     use super::*;
     use bytes::BytesMut;
@@ -61,6 +62,7 @@ pub mod tests {
         Block::new(bytes, cid)
     }
 
+    #[allow(dead_code)]
     pub fn create_block_v0<B: Into<Bytes>>(bytes: B) -> Block {
         let bytes = bytes.into();
         let digest = Code::Sha2_256.digest(&bytes);

@@ -1,10 +1,9 @@
 use std::collections::{HashMap, HashSet};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use ahash::AHashMap;
 use anyhow::{anyhow, bail, Context, Result};
 use cid::Cid;
-use futures::FutureExt;
 use futures_util::stream::StreamExt;
 use iroh_metrics::{core::MRecorder, inc, libp2p_metrics, p2p::P2PMetrics};
 use iroh_rpc_client::Client as RpcClient;
@@ -20,7 +19,7 @@ use libp2p::kad::{
     self, record::Key, GetProvidersError, GetProvidersOk, KademliaEvent, QueryId, QueryResult,
 };
 use libp2p::metrics::Recorder;
-use libp2p::ping::PingResult;
+use libp2p::ping::Result as PingResult;
 use libp2p::swarm::dial_opts::{DialOpts, PeerCondition};
 use libp2p::swarm::{ConnectionHandler, IntoConnectionHandler, NetworkBehaviour, SwarmEvent};
 use libp2p::{PeerId, Swarm};
@@ -71,32 +70,17 @@ pub struct Node<KeyStorage: Storage> {
     kad_queries: AHashMap<QueryKey, KadQueryChannel>,
     dial_queries: AHashMap<PeerId, Vec<OneShotSender<bool>>>,
     network_events: Vec<Sender<NetworkEvent>>,
+    #[allow(dead_code)]
     rpc_client: RpcClient,
     _keychain: Keychain<KeyStorage>,
+    #[allow(dead_code)]
     kad_last_range: Option<(Distance, Distance)>,
     rpc_task: JoinHandle<()>,
     use_dht: bool,
-    bitswap_sessions: AHashMap<u64, Vec<(oneshot::Sender<()>, JoinHandle<()>)>>,
+    bitswap_sessions: BitswapSessions,
 }
 
-#[derive(Default)]
-struct BitswapQueryChannel {
-    wants: Vec<WantState>,
-    find_providers: Vec<FindProviderState>,
-}
-
-struct WantState {
-    ctx: u64,
-    timeout: Instant,
-}
-
-struct FindProviderState {
-    ctx: u64,
-    timeout: Instant,
-    provider_count: usize,
-    expected_provider_count: usize,
-    chan: Sender<Result<HashSet<PeerId>, String>>,
-}
+type BitswapSessions = AHashMap<u64, Vec<(oneshot::Sender<()>, JoinHandle<()>)>>;
 
 enum KadQueryChannel {
     GetProviders {
@@ -338,12 +322,10 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                     _ = closer_r => {
                         // Explicit sesssion stop.
                         debug!("session {}: stopped", ctx);
-                        return;
                     }
                     _ = chan.closed() => {
                         debug!("session {}: request canceled", ctx);
                         // RPC dropped
-                        return;
                     }
                     block = block_receiver => {
                         match block {
@@ -445,7 +427,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                         info!("bitswap provide {}", key);
                         if let Some(kad) = self.swarm.behaviour_mut().kad.as_mut() {
                             match kad.start_providing(key.hash().to_bytes().into()) {
-                                Ok(query_id) => {
+                                Ok(_query_id) => {
                                     // TODO: track query?
                                 }
                                 Err(err) => {
@@ -488,9 +470,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                             } else if let Some(KadQueryChannel::GetProviders {
                                 channels,
                                 provider_count,
-                            }) = self
-                                .kad_queries
-                                .get_mut(&QueryKey::ProviderKey(key.clone()))
+                            }) = self.kad_queries.get_mut(&QueryKey::ProviderKey(key))
                             {
                                 // filter out bad providers
                                 let providers: HashSet<_> = providers
@@ -680,20 +660,6 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                 let res = self.destroy_session(ctx);
                 response_channel.send(res).ok();
             }
-            RpcMessage::BitswapInjectProviders {
-                ctx,
-                cid,
-                response_channel,
-                providers,
-            } => {
-                trace!("context:{} bitswap_inject_providers", ctx);
-                // TODO
-                /*let res = self
-                .swarm
-                .behaviour_mut()
-                .want_block(ctx, cid, providers, response_channel)
-                .map_err(|e| anyhow!("Failed to send a bitswap want_block: {:?}", e));*/
-            }
             RpcMessage::ProviderRequest {
                 key,
                 response_channel,
@@ -732,7 +698,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                         });
                     }
                 }
-                ProviderRequestKey::Bitswap(ctx, cid) => {
+                ProviderRequestKey::Bitswap(_, _) => {
                     debug!(
                         "RpcMessage::ProviderRequest: getting providers for {:?}",
                         key

@@ -88,12 +88,10 @@ impl SessionWants {
     pub fn wants_sent(&mut self, keys: &[Cid]) {
         let now = Instant::now();
         for key in keys {
-            if !self.live_wants.contains_key(key) {
-                if self.to_fetch.has(key) {
-                    self.to_fetch.remove(key);
-                    self.live_wants_order.push(*key);
-                    self.live_wants.insert(*key, now);
-                }
+            if !self.live_wants.contains_key(key) && self.to_fetch.has(key) {
+                self.to_fetch.remove(key);
+                self.live_wants_order.push(*key);
+                self.live_wants.insert(*key, now);
             }
         }
     }
@@ -168,7 +166,7 @@ impl SessionWants {
         // Picking a random live want
         let mut rng = thread_rng();
         let i = rng.gen_range(0..self.live_wants.len());
-        self.live_wants.keys().skip(i).next().copied()
+        self.live_wants.keys().nth(i).copied()
     }
 
     /// Has live wants indicates if there are any live wants.

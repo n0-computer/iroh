@@ -76,6 +76,7 @@ type BitswapMessageResponse = oneshot::Sender<Result<(), network::SendError>>;
 
 /// A message sent from the behaviour to the handler.
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
 pub enum BitswapHandlerIn {
     /// A bitswap message to send.
     Message(BitswapMessage, BitswapMessageResponse),
@@ -91,6 +92,13 @@ pub enum BitswapHandlerIn {
 /// connection faulty and disconnect. This also prevents against potential substream creation loops.
 const MAX_SUBSTREAM_CREATION: usize = 5;
 
+type BitswapConnectionHandlerEvent = ConnectionHandlerEvent<
+    ProtocolConfig,
+    (BitswapMessage, BitswapMessageResponse),
+    HandlerEvent,
+    BitswapHandlerError,
+>;
+
 /// Protocol Handler that manages a single long-lived substream with a peer.
 pub struct BitswapHandler {
     /// Upgrade configuration for the bitswap protocol.
@@ -103,14 +111,7 @@ pub struct BitswapHandler {
     inbound_substream: Option<InboundSubstreamState>,
 
     /// Pending events to yield.
-    events: SmallVec<
-        [ConnectionHandlerEvent<
-            ProtocolConfig,
-            (BitswapMessage, BitswapMessageResponse),
-            HandlerEvent,
-            BitswapHandlerError,
-        >; 4],
-    >,
+    events: SmallVec<[BitswapConnectionHandlerEvent; 4]>,
 
     /// Queue of values that we want to send to the remote.
     send_queue: SmallVec<[(BitswapMessage, BitswapMessageResponse); 16]>,
@@ -159,6 +160,7 @@ enum InboundSubstreamState {
 }
 
 /// State of the outbound substream, opened either by us or by the remote.
+#[allow(clippy::large_enum_variant)]
 enum OutboundSubstreamState {
     /// Waiting for the user to send a message. The idle state for an outbound substream.
     WaitingOutput(Framed<NegotiatedSubstream, BitswapCodec>),
@@ -307,17 +309,7 @@ impl ConnectionHandler for BitswapHandler {
         self.keep_alive
     }
 
-    fn poll(
-        &mut self,
-        cx: &mut Context<'_>,
-    ) -> Poll<
-        ConnectionHandlerEvent<
-            Self::OutboundProtocol,
-            Self::OutboundOpenInfo,
-            Self::OutEvent,
-            Self::Error,
-        >,
-    > {
+    fn poll(&mut self, cx: &mut Context<'_>) -> Poll<BitswapConnectionHandlerEvent> {
         inc!(BitswapMetrics::HandlerPollCount);
         if !self.events.is_empty() {
             return Poll::Ready(self.events.remove(0));

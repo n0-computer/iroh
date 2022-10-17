@@ -69,27 +69,6 @@ impl P2pClient {
         Ok(res.data)
     }
 
-    /// Injects additional providers for the given CID
-    #[tracing::instrument(skip(self))]
-    pub async fn inject_provider_bitswap(
-        &self,
-        ctx: u64,
-        cid: Cid,
-        providers: HashSet<PeerId>,
-    ) -> Result<()> {
-        let providers = Providers {
-            providers: providers.into_iter().map(|id| id.to_bytes()).collect(),
-        };
-
-        let req = BitswapRequest {
-            cid: cid.to_bytes(),
-            providers: Some(providers),
-            ctx,
-        };
-        self.backend.inject_provider_bitswap(req).await?;
-        Ok(())
-    }
-
     #[tracing::instrument(skip(self))]
     pub async fn stop_session_bitswap(&self, ctx: u64) -> Result<()> {
         let req = StopSessionBitswapRequest { ctx };
@@ -438,13 +417,6 @@ mod tests {
             &self,
             _request: Request<BitswapRequest>,
         ) -> Result<tonic::Response<BitswapResponse>, tonic::Status> {
-            todo!()
-        }
-
-        async fn inject_provider_bitswap(
-            &self,
-            _request: Request<BitswapRequest>,
-        ) -> Result<tonic::Response<()>, tonic::Status> {
             todo!()
         }
 

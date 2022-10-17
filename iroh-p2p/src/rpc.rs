@@ -128,44 +128,6 @@ impl RpcP2p for P2p {
     }
 
     #[tracing::instrument(skip(self, req))]
-    async fn inject_provider_bitswap(&self, req: BitswapRequest) -> Result<()> {
-        let ctx = req.ctx;
-        let cid = Cid::read_bytes(io::Cursor::new(req.cid))?;
-
-        trace!(
-            "context:{} received inject_provider_bitswap: {:?}",
-            ctx,
-            cid
-        );
-        let providers = req
-            .providers
-            .with_context(|| format!("missing providers for: {}", cid))?;
-
-        tracing::debug!("providers: {:?}", providers);
-
-        let providers: HashSet<PeerId> = providers
-            .providers
-            .into_iter()
-            .map(|p| PeerId::from_bytes(&p).context("invalid provider"))
-            .collect::<Result<_>>()?;
-
-        ensure!(!providers.is_empty(), "missing providers for: {}", cid);
-
-        let (s, r) = oneshot::channel();
-        let msg = RpcMessage::BitswapInjectProviders {
-            ctx,
-            cid,
-            providers,
-            response_channel: s,
-        };
-
-        self.sender.send(msg).await?;
-        r.await?.context("bitswap inject provider")?;
-
-        Ok(())
-    }
-
-    #[tracing::instrument(skip(self, req))]
     async fn stop_session_bitswap(&self, req: StopSessionBitswapRequest) -> Result<()> {
         let ctx = req.ctx;
         let (s, r) = oneshot::channel();
@@ -508,12 +470,6 @@ pub enum RpcMessage {
         ctx: u64,
         cids: Vec<Cid>,
         response_channels: Vec<oneshot::Sender<Result<Block, String>>>,
-        providers: HashSet<PeerId>,
-    },
-    BitswapInjectProviders {
-        ctx: u64,
-        cid: Cid,
-        response_channel: oneshot::Sender<Result<()>>,
         providers: HashSet<PeerId>,
     },
     BitswapNotifyNewBlocks {

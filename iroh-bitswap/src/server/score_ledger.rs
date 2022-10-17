@@ -6,14 +6,14 @@ use std::{
 
 use ahash::AHashMap;
 use anyhow::{anyhow, Result};
-use iroh_metrics::{inc, bitswap::BitswapMetrics};
+use iroh_metrics::core::MRecorder;
+use iroh_metrics::{bitswap::BitswapMetrics, inc};
 use libp2p::PeerId;
 use tokio::{
     sync::{oneshot, RwLock},
     task::JoinHandle,
 };
 use tracing::error;
-use iroh_metrics::core::MRecorder;
 
 use crate::server::ewma::ewma;
 

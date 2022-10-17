@@ -86,7 +86,7 @@ impl Wantlist {
             self.cached.reverse();
         }
 
-        self.cached.iter().map(|c| c.clone())
+        self.cached.iter().cloned()
     }
 
     /// Merges the second wantlist into this one.
@@ -136,9 +136,6 @@ impl Entry {
             priority,
             want_type,
         }))
-    }
-    pub fn new_ref(cid: Cid, priority: Priority) -> Self {
-        Entry::new(cid, priority, WantType::Block)
     }
 }
 

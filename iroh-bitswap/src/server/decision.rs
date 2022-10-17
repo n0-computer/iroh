@@ -111,19 +111,17 @@ pub struct Engine<S: Store> {
     /// replace a want-have with a want-block.
     max_block_size_replace_has_with_block: usize,
     send_dont_haves: bool,
-    self_id: PeerId,
     // pending_gauge -> iroh-metrics
     // active_guage -> iroh-metrics
     metrics_update_counter: Mutex<usize>, // ?? atomic
     peer_block_request_filter: Option<Box<dyn PeerBlockRequestFilter>>,
-    max_outstanding_bytes_per_peer: usize,
     /// List of handles to worker threads.
     workers: Vec<(oneshot::Sender<()>, JoinHandle<()>)>,
     work_signal: Arc<Notify>,
 }
 
 impl<S: Store> Engine<S> {
-    pub async fn new(store: S, self_id: PeerId, config: Config) -> Self {
+    pub async fn new(store: S, _self_id: PeerId, config: Config) -> Self {
         // TODO: insert options for peertaskqueue
 
         // TODO: limit?
@@ -142,12 +140,12 @@ impl<S: Store> Engine<S> {
         let blockstore_manager = Arc::new(RwLock::new(
             BlockstoreManager::new(store, config.engine_blockstore_worker_count).await,
         ));
-        let score_ledger = DefaultScoreLedger::new(Box::new(|_peer, score| {
-            if score == 0 {
-                // untag peer("useful")
-            } else {
-                // tag peer("useful", score)
-            }
+        let score_ledger = DefaultScoreLedger::new(Box::new(|_peer, _score| {
+            // if score == 0 {
+            //     // untag peer("useful")
+            // } else {
+            //     // tag peer("useful", score)
+            // }
         }))
         .await;
         let target_message_size = config.target_message_size;
@@ -272,10 +270,8 @@ impl<S: Store> Engine<S> {
             score_ledger,
             max_block_size_replace_has_with_block: config.max_replace_size,
             send_dont_haves: config.send_dont_haves,
-            self_id,
             metrics_update_counter: Default::default(),
             peer_block_request_filter: config.peer_block_request_filter,
-            max_outstanding_bytes_per_peer: config.max_outstanding_bytes_per_peer,
             workers,
             work_signal,
         }
@@ -492,16 +488,14 @@ impl<S: Store> Engine<S> {
         for entry in entries {
             if entry.cancel {
                 cancels.push(entry);
-            } else {
-                if let Some(ref filter) = self.peer_block_request_filter {
-                    if (filter)(peer, &entry.cid) {
-                        wants.push(entry);
-                    } else {
-                        denials.push(entry);
-                    }
-                } else {
+            } else if let Some(ref filter) = self.peer_block_request_filter {
+                if (filter)(peer, &entry.cid) {
                     wants.push(entry);
+                } else {
+                    denials.push(entry);
                 }
+            } else {
+                wants.push(entry);
             }
         }
 

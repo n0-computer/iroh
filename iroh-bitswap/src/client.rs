@@ -66,18 +66,18 @@ pub struct Client<S: Store> {
     rebroadcast_delay: Duration,
     simulate_dont_haves_on_timeout: bool,
     #[derivative(Debug = "ignore")]
-    blocks_received_cb:
-        Arc<Box<dyn Fn(PeerId, Vec<Block>) -> BoxFuture<'static, ()> + 'static + Send + Sync>>,
+    blocks_received_cb: Arc<Box<BlocksReceivedCb>>,
     notify: async_broadcast::Sender<Block>,
 }
+
+pub type BlocksReceivedCb =
+    dyn Fn(PeerId, Vec<Block>) -> BoxFuture<'static, ()> + 'static + Send + Sync;
 
 impl<S: Store> Client<S> {
     pub async fn new(
         network: Network,
         store: S,
-        blocks_received_cb: Box<
-            dyn Fn(PeerId, Vec<Block>) -> BoxFuture<'static, ()> + 'static + Send + Sync,
-        >,
+        blocks_received_cb: Box<BlocksReceivedCb>,
         config: Config,
     ) -> Self {
         let self_id = *network.self_id();

@@ -1,3 +1,5 @@
+use std::cmp::Ordering;
+
 use ahash::{AHashMap, AHashSet};
 use anyhow::Result;
 use cid::Cid;
@@ -339,13 +341,16 @@ impl WantInfo {
         // share the block presence
         let mut count_with_best = 0;
         for (peer, bp) in &self.block_presence {
-            if bp > &best_bp {
-                debug!("found new best peer {}: {:?}", peer, bp);
-                best_bp = *bp;
-                best_peer = Some(*peer);
-                count_with_best = 1;
-            } else if bp == &best_bp {
-                count_with_best += 1;
+            match bp.cmp(&best_bp) {
+                Ordering::Greater => {
+                    best_bp = *bp;
+                    best_peer = Some(*peer);
+                    count_with_best = 1;
+                }
+                Ordering::Equal => {
+                    count_with_best += 1;
+                }
+                _ => {}
             }
         }
 
@@ -690,7 +695,7 @@ impl LoopState {
             let mut to_remove = Vec::new();
             for peer in &prune_peers {
                 for cid in self.wants.keys() {
-                    if self.block_presence_manager.peer_has_block(&peer, cid).await {
+                    if self.block_presence_manager.peer_has_block(peer, cid).await {
                         to_remove.push(*peer);
                     }
                 }
@@ -883,7 +888,7 @@ impl LoopState {
     /// (all peers indicated they don't have the block).
     fn newly_exhausted(&mut self, keys: impl Iterator<Item = Cid>) -> Vec<Cid> {
         keys.filter(|cid| {
-            if let Some(wi) = self.wants.get_mut(&cid) {
+            if let Some(wi) = self.wants.get_mut(cid) {
                 if !wi.exhausted {
                     wi.exhausted = true;
                     return true;

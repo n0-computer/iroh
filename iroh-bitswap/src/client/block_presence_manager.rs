@@ -5,16 +5,14 @@ use cid::Cid;
 use libp2p::PeerId;
 use tokio::sync::RwLock;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct BlockPresenceManager {
     presence: Arc<RwLock<AHashMap<Cid, AHashMap<PeerId, bool>>>>,
 }
 
 impl BlockPresenceManager {
     pub fn new() -> Self {
-        BlockPresenceManager {
-            presence: Default::default(),
-        }
+        Self::default()
     }
 
     /// Called when a peer sends us information about which blocks it has and does not have.

@@ -1,10 +1,9 @@
 use std::time::Duration;
 
-use anyhow::{bail, Result};
+use anyhow::Result;
 use async_trait::async_trait;
 use cid::Cid;
-use futures::future::{Future, FutureExt};
-use iroh_bitswap::{Bitswap, Block, Config as BitswapConfig, Priority, Store};
+use iroh_bitswap::{Bitswap, Block, Config as BitswapConfig, Store};
 use iroh_rpc_client::Client;
 use libp2p::core::identity::Keypair;
 use libp2p::core::PeerId;
@@ -19,7 +18,6 @@ use libp2p::relay;
 use libp2p::swarm::behaviour::toggle::Toggle;
 use libp2p::NetworkBehaviour;
 use libp2p::{autonat, dcutr};
-use tokio::sync::oneshot::Sender as OneShotSender;
 use tracing::{info, warn};
 
 pub(crate) use self::event::Event;

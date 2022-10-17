@@ -44,7 +44,7 @@ impl PeerWantManager {
         // Broadcast any live want-haves to the newly connected peer.
         if !self.broadcast_wants.is_empty() {
             let wants = &self.broadcast_wants;
-            peer_queue.add_broadcast_want_haves(&wants).await;
+            peer_queue.add_broadcast_want_haves(wants).await;
         }
     }
 
@@ -267,8 +267,10 @@ impl PeerWantManager {
 
     /// Counts how many peers have a pendinng want-block and want-have for the given cid.
     fn want_peer_counts(&self, cid: &Cid) -> WantPeerCounts {
-        let mut counts = WantPeerCounts::default();
-        counts.is_broadcast = self.broadcast_wants.contains(cid);
+        let mut counts = WantPeerCounts {
+            is_broadcast: self.broadcast_wants.contains(cid),
+            ..Default::default()
+        };
 
         if let Some(peers) = self.want_peers.get(cid) {
             for peer in peers {

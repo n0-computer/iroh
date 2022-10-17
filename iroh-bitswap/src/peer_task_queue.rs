@@ -48,21 +48,12 @@ struct Inner<T: Topic, D: Data, TM: TaskMerger<T, D>> {
     hooks: Vec<async_channel::Sender<Event>>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Config {
     /// Sets if freezing should be enabled or not.
     pub ignore_freezing: bool,
     /// Configures how many task a peer can have outstanding with the same topic as an existing topic.
     pub max_outstanding_work_per_peer: usize,
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Config {
-            ignore_freezing: false,
-            max_outstanding_work_per_peer: 0,
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -194,9 +185,7 @@ impl<T: Topic, D: Data, TM: TaskMerger<T, D>> PeerTaskQueue<T, D, TM> {
                 }
                 this.peer_queue.push(peer, peer_tracker);
             }
-            None => {
-                return;
-            }
+            None => {}
         }
     }
 

@@ -27,7 +27,6 @@ mod score_ledger;
 mod task_merger;
 
 const PROVIDE_KEYS_BUFFER_SIZE: usize = 2048;
-const PROVIDE_WORKER_MAX: usize = 6;
 
 #[derive(Debug)]
 pub struct Config {

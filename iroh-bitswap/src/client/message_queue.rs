@@ -34,13 +34,14 @@ pub struct MessageQueue {
 
 #[derive(Debug)]
 enum WantsUpdate {
-    AddBroadcastWantHaves(AHashSet<Cid>),
-    AddWants {
+    BroadcastWantHaves(AHashSet<Cid>),
+    Wants {
         want_blocks: Vec<Cid>,
         want_haves: Vec<Cid>,
     },
-    AddCancels(AHashSet<Cid>),
+    Cancels(AHashSet<Cid>),
     #[cfg(test)]
+    #[allow(dead_code)]
     GetWants(tokio::sync::oneshot::Sender<Wants>),
 }
 
@@ -128,6 +129,7 @@ impl MessageQueue {
     }
 
     #[cfg(test)]
+    #[allow(dead_code)]
     pub(crate) async fn wants(&self) -> Result<Wants> {
         let (s, r) = tokio::sync::oneshot::channel();
         self.send_wants_update(WantsUpdate::GetWants(s)).await;
@@ -140,7 +142,7 @@ impl MessageQueue {
         if want_haves.is_empty() || !self.is_running() {
             return;
         }
-        self.send_wants_update(WantsUpdate::AddBroadcastWantHaves(want_haves.to_owned()))
+        self.send_wants_update(WantsUpdate::BroadcastWantHaves(want_haves.to_owned()))
             .await;
     }
 
@@ -151,7 +153,7 @@ impl MessageQueue {
             return;
         }
 
-        self.send_wants_update(WantsUpdate::AddWants {
+        self.send_wants_update(WantsUpdate::Wants {
             want_blocks: want_blocks.to_vec(),
             want_haves: want_haves.to_vec(),
         })
@@ -164,7 +166,7 @@ impl MessageQueue {
             return;
         }
 
-        self.send_wants_update(WantsUpdate::AddCancels(cancels.to_owned()))
+        self.send_wants_update(WantsUpdate::Cancels(cancels.to_owned()))
             .await;
     }
 
@@ -368,7 +370,7 @@ impl MessageQueueActor {
 
     async fn handle_wants_update(&mut self, wants_update: WantsUpdate) {
         match wants_update {
-            WantsUpdate::AddBroadcastWantHaves(want_haves) => {
+            WantsUpdate::BroadcastWantHaves(want_haves) => {
                 for cid in want_haves {
                     self.wants
                         .bcst_wants
@@ -381,7 +383,7 @@ impl MessageQueueActor {
 
                 self.signal_work();
             }
-            WantsUpdate::AddWants {
+            WantsUpdate::Wants {
                 want_blocks,
                 want_haves,
             } => {
@@ -406,7 +408,7 @@ impl MessageQueueActor {
                 }
                 self.signal_work();
             }
-            WantsUpdate::AddCancels(cancels) => {
+            WantsUpdate::Cancels(cancels) => {
                 // Cancel any outstanding DONT_HAVE timers
                 self.dh_timeout_manager.cancel_pending(&cancels).await;
 
@@ -712,7 +714,7 @@ impl MessageQueueActor {
             cancels.truncate(sent_cancels);
             for cancel in &cancels {
                 if !self.wants.cancels.contains(cancel) {
-                    msg.remove(&cancel);
+                    msg.remove(cancel);
                 } else {
                     self.wants.cancels.remove(cancel);
                 }

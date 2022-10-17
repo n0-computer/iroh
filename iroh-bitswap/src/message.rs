@@ -4,8 +4,6 @@ use std::fmt::{self, Debug};
 use ahash::AHashMap;
 use bytes::Bytes;
 use cid::Cid;
-use multihash::{Code, MultihashDigest};
-use once_cell::sync::Lazy;
 use prost::Message;
 use tokio::time::Instant;
 use tracing::{trace, warn};
@@ -18,19 +16,6 @@ mod pb {
     #![allow(clippy::all)]
     include!(concat!(env!("OUT_DIR"), "/bitswap_pb.rs"));
 }
-
-/// The maximum size a single entry inside a wantlist can have.
-static MAX_ENTRY_SIZE: Lazy<usize> = Lazy::new(|| {
-    let cid = Cid::new_v0(Code::Sha2_256.digest(b"cid")).unwrap();
-    let entry = Entry {
-        cid,
-        priority: i32::MAX,
-        want_type: WantType::Have,
-        send_dont_have: true,
-        cancel: true,
-    };
-    entry.encoded_len()
-});
 
 /// Represents a HAVE / DONT_HAVE for a given Cid.
 #[derive(Debug, Clone, PartialEq, Eq)]
