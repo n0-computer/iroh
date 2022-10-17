@@ -133,7 +133,7 @@ impl MessageQueue {
 
     /// Add want-haves that are part of a broadcast to all connected peers.
     pub async fn add_broadcast_want_haves(&self, want_haves: &AHashSet<Cid>) {
-        if want_haves.is_empty() {
+        if want_haves.is_empty() || !self.is_running() {
             return;
         }
         self.send_wants_update(WantsUpdate::AddBroadcastWantHaves(want_haves.to_owned()))
@@ -143,7 +143,7 @@ impl MessageQueue {
     /// Add want-haves and want-blocks for the peer for this queue.
     pub async fn add_wants(&self, want_blocks: &[Cid], want_haves: &[Cid]) {
         debug!("add_wants: {} {}", want_blocks.len(), want_haves.len());
-        if want_blocks.is_empty() && want_haves.is_empty() {
+        if (want_blocks.is_empty() && want_haves.is_empty()) || !self.is_running() {
             return;
         }
 
@@ -156,7 +156,7 @@ impl MessageQueue {
 
     /// Add cancel messages for the given keys.
     pub async fn add_cancels(&self, cancels: &AHashSet<Cid>) {
-        if cancels.is_empty() {
+        if cancels.is_empty() || !self.is_running() {
             return;
         }
 
@@ -184,7 +184,7 @@ impl MessageQueue {
     /// `cids` is the set of blocks, HAVEs and DONT_HAVEs in the message.
     /// Note: this is only use to calculate latency currently.
     pub async fn response_received(&self, cids: Vec<Cid>) {
-        if cids.is_empty() {
+        if cids.is_empty() || !self.is_running() {
             return;
         }
 

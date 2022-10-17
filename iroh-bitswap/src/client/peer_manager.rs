@@ -543,9 +543,9 @@ impl PeerManagerActor {
             want_blocks,
             want_haves
         );
-        if self.peers.contains_key(&peer) {
+        if let Some(peer_state) = self.peers.get(&peer) {
             self.peer_want_manager
-                .send_wants(&peer, &want_blocks, &want_haves, &self.peers)
+                .send_wants(&peer, &want_blocks, &want_haves, &peer_state.message_queue)
                 .await;
         }
     }
@@ -573,7 +573,6 @@ impl PeerManagerActor {
         debug!("register session {}: {}", peer, signaler.id());
         let id = signaler.id();
 
-        self.insert_peer(peer, Some(id)).await;
         match self.sessions.entry(id) {
             std::collections::hash_map::Entry::Occupied(mut entry) => {
                 entry.get_mut().peers_discovered = true;

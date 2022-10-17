@@ -121,7 +121,7 @@ impl PeerWantManager {
         peer: &PeerId,
         want_blocks: &[Cid],
         want_haves: &[Cid],
-        peer_queues: &AHashMap<PeerId, PeerState>,
+        message_queue: &MessageQueue,
     ) {
         let mut flt_want_blocks = Vec::with_capacity(want_blocks.len());
         let mut flt_want_haves = Vec::with_capacity(want_haves.len());
@@ -165,12 +165,9 @@ impl PeerWantManager {
 
             // send out want-blocks and want-haves
             if !flt_want_blocks.is_empty() || !flt_want_haves.is_empty() {
-                if let Some(peer_state) = peer_queues.get(peer) {
-                    peer_state
-                        .message_queue
-                        .add_wants(&flt_want_blocks, &flt_want_haves)
-                        .await;
-                }
+                message_queue
+                    .add_wants(&flt_want_blocks, &flt_want_haves)
+                    .await;
             }
         } else {
             error!("send_wants called with peer {}, but peer not found", peer);
