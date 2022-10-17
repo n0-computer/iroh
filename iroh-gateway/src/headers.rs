@@ -3,6 +3,7 @@ use ::time::OffsetDateTime;
 use axum::http::header::*;
 use iroh_resolver::resolver::{CidOrDomain, Metadata, PathType};
 use mime::Mime;
+use once_cell::sync::Lazy;
 use sha2::Digest;
 use std::{fmt::Write, ops::Range, time};
 
@@ -265,9 +266,7 @@ pub fn version_and_template_hash() -> String {
     hex::encode(hash)
 }
 
-lazy_static::lazy_static! {
-    pub(crate) static ref VERSION_TEMPLATE_HASH: String = version_and_template_hash();
-}
+pub(crate) static VERSION_TEMPLATE_HASH: Lazy<String> = Lazy::new(version_and_template_hash);
 
 #[cfg(test)]
 mod tests {
