@@ -22,9 +22,7 @@ use rocksdb::{
 use smallvec::SmallVec;
 use tokio::task;
 
-use crate::cf::{
-    GraphV0, MetadataV0, Versioned, CF_BLOBS_V0, CF_GRAPH_V0, CF_ID_V0, CF_METADATA_V0,
-};
+use crate::cf::{GraphV0, MetadataV0, CF_BLOBS_V0, CF_GRAPH_V0, CF_ID_V0, CF_METADATA_V0};
 use crate::Config;
 
 #[derive(Clone)]
@@ -210,16 +208,16 @@ impl Store {
 
         // guranteed that the key does not exists, so we want to store it
 
-        let metadata = Versioned(MetadataV0 {
+        let metadata = MetadataV0 {
             codec: cid.codec(),
             multihash: cid.hash().to_bytes(),
-        });
+        };
         let metadata_bytes = rkyv::to_bytes::<_, 1024>(&metadata)?; // TODO: is this the right amount of scratch space?
         let id_key = id_key(&cid);
 
         let children = self.ensure_id_many(links.into_iter()).await?;
 
-        let graph = Versioned(GraphV0 { children });
+        let graph = GraphV0 { children };
         let graph_bytes = rkyv::to_bytes::<_, 1024>(&graph)?; // TODO: is this the right amount of scratch space?
 
         let cf_id = self.cf_id()?;
@@ -396,27 +394,22 @@ impl Store {
         match self.db().get_cf(cf_graph, &id_bytes)? {
             Some(links_id) => {
                 let cf_meta = self.cf_metadata()?;
-                let graph = rkyv::check_archived_root::<Versioned<GraphV0>>(&links_id)
+                let graph = rkyv::check_archived_root::<GraphV0>(&links_id)
                     .map_err(|e| anyhow!("{:?}", e))?;
-                let keys = graph
-                    .0
-                    .children
-                    .iter()
-                    .map(|id| (&cf_meta, id.to_be_bytes()));
+                let keys = graph.children.iter().map(|id| (&cf_meta, id.to_be_bytes()));
                 let meta = self.db().multi_get_cf(keys);
                 let mut links = Vec::with_capacity(meta.len());
                 for (i, meta) in meta.into_iter().enumerate() {
                     match meta? {
                         Some(meta) => {
-                            let meta = rkyv::check_archived_root::<Versioned<MetadataV0>>(&meta)
+                            let meta = rkyv::check_archived_root::<MetadataV0>(&meta)
                                 .map_err(|e| anyhow!("{:?}", e))?;
-                            let multihash =
-                                cid::multihash::Multihash::from_bytes(&meta.0.multihash)?;
-                            let c = cid::Cid::new_v1(meta.0.codec, multihash);
+                            let multihash = cid::multihash::Multihash::from_bytes(&meta.multihash)?;
+                            let c = cid::Cid::new_v1(meta.codec, multihash);
                             links.push(c);
                         }
                         None => {
-                            bail!("invalid link: {}", graph.0.children[i]);
+                            bail!("invalid link: {}", graph.children[i]);
                         }
                     }
                 }
@@ -445,10 +438,10 @@ impl Store {
                 let id = self.next_id();
                 let id_bytes = id.to_be_bytes();
 
-                let metadata = Versioned(MetadataV0 {
+                let metadata = MetadataV0 {
                     codec: cid.codec(),
                     multihash: cid.hash().to_bytes(),
-                });
+                };
                 let metadata_bytes = rkyv::to_bytes::<_, 1024>(&metadata)?; // TODO: is this the right amount of scratch space?
                 batch.put_cf(&cf_id, id_key, &id_bytes);
                 batch.put_cf(&cf_meta, &id_bytes, metadata_bytes);
