@@ -316,6 +316,10 @@ impl Out {
         }
     }
 
+    pub fn is_symlink(&self) -> bool {
+        self.metadata.unixfs_type == Some(UnixfsType::Symlink)
+    }
+
     /// What kind of content this is this.
     pub fn typ(&self) -> OutType {
         self.content.typ()

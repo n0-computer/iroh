@@ -65,8 +65,16 @@ fn get_cid_success_test() {
         .run();
 }
 
-#[test]
-fn get_failure_test() {
+#[tokio::test]
+async fn get_unwrapped_file_overwrite_test() {
+    trycmd::TestCases::new()
+        .env("IROH_CTL_FIXTURE", "get_unwrapped_file")
+        .case("tests/cmd/get_unwrapped_file_overwrite.trycmd")
+        .run();
+}
+
+#[tokio::test]
+async fn get_failure_test() {
     trycmd::TestCases::new()
         .env("IROH_CTL_FIXTURE", "get")
         .case("tests/cmd/get_failure.trycmd")
@@ -90,14 +98,6 @@ fn get_tail_success_test() {
 }
 
 #[test]
-fn get_unwrapped_file_overwrite_test() {
-    trycmd::TestCases::new()
-        .env("IROH_CTL_FIXTURE", "get_unwrapped_file")
-        .case("tests/cmd/get_unwrapped_file_overwrite.trycmd")
-        .run();
-}
-
-#[test]
 fn get_unwrapped_file_test() {
     trycmd::TestCases::new()
         .env("IROH_CTL_FIXTURE", "get_unwrapped_file")
@@ -110,6 +110,22 @@ fn get_wrapped_file_test() {
     trycmd::TestCases::new()
         .env("IROH_CTL_FIXTURE", "get_wrapped_file")
         .case("tests/cmd/get_wrapped_file.trycmd")
+        .run();
+}
+
+#[tokio::test]
+async fn get_unwrapped_symlink_test() {
+    trycmd::TestCases::new()
+        .env("IROH_CTL_FIXTURE", "get_unwrapped_symlink")
+        .case("tests/cmd/get_unwrapped_symlink.trycmd")
+        .run();
+}
+
+#[tokio::test]
+async fn get_wrapped_symlink_test() {
+    trycmd::TestCases::new()
+        .env("IROH_CTL_FIXTURE", "get_wrapped_symlink")
+        .case("tests/cmd/get_wrapped_symlink.trycmd")
         .run();
 }
 
