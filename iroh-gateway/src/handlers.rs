@@ -71,10 +71,10 @@ pub fn get_app_routes<T: ContentLoader + std::marker::Unpin>(state: &Arc<State<T
             ServiceBuilder::new()
                 // Handle errors from middleware
                 .layer(Extension(Arc::clone(state)))
-                .layer(CompressionLayer::new())
+                // .layer(CompressionLayer::new())
                 .layer(HandleErrorLayer::new(middleware_error_handler::<T>))
-                .load_shed()
-                .concurrency_limit(2048 * 1024)
+                // .load_shed()
+                // .concurrency_limit(2048 * 1024)
                 .timeout(Duration::from_secs(120))
                 .into_inner(),
         )
