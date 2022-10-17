@@ -90,8 +90,7 @@ impl PeerWantManager {
             .difference(&self.broadcast_wants)
             .copied()
             .collect();
-        self.broadcast_wants.extend(want_haves);
-        debug!("pwm: unsent, {:?}", unsent);
+        self.broadcast_wants.extend(unsent.clone());
 
         let mut peer_unsent = AHashSet::new();
         for (peer, peer_wants) in self.peer_wants.iter() {
@@ -101,7 +100,7 @@ impl PeerWantManager {
                     peer_unsent.insert(*cid);
                 }
             }
-            debug!("pwm: unsent peer: {}, {:?}", peer, peer_unsent);
+
             if !peer_unsent.is_empty() {
                 if let Some(peer_state) = peer_queues.get(peer) {
                     peer_state
@@ -136,15 +135,6 @@ impl PeerWantManager {
                     continue;
                 }
 
-                /* TODO:
-                let peer_counts = self.want_peer_counts(&cid);
-                if peer_counts.want_block == 0 {
-                    // TODO: wantBlockGauge inc
-                }
-                if !peer_counts.wanted() {
-                    // TODO: wantGauge inc
-                }*/
-
                 // make sure the cid is no longer recorded as want-have
                 peer_wants.want_haves.remove(cid);
                 // record that the cid was sent as a want-block
@@ -164,12 +154,6 @@ impl PeerWantManager {
 
                 // Onliy if the cid has not been sent as want-block or want-have
                 if !peer_wants.want_blocks.contains(cid) && !peer_wants.want_haves.contains(cid) {
-                    /* TODO:
-                    let peer_counts = self.want_peer_counts(&cid);
-                    if !peer_counts.wanted() {
-                        // TODO: wantGauge inc
-                    }*/
-
                     // record that the cid was sent as a want-have
                     peer_wants.want_haves.insert(*cid);
                     // add to the results

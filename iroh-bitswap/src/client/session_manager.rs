@@ -20,7 +20,7 @@ use crate::{network::Network, Block};
 use super::{
     block_presence_manager::BlockPresenceManager, peer_manager::PeerManager,
     provider_query_manager::ProviderQueryManager, session::Session,
-    session_interest_manager::SessionInterestManager, session_peer_manager::SessionPeerManager,
+    session_interest_manager::SessionInterestManager,
 };
 
 #[derive(Debug, Clone)]
@@ -129,13 +129,11 @@ impl SessionManager {
         rebroadcast_delay: Duration,
     ) -> Session {
         inc!(BitswapMetrics::SessionsCreated);
-        let session_peer_manager = SessionPeerManager::new(session_id, self.inner.network.clone());
 
         let session = Session::new(
             session_id,
             self.clone(),
             self.inner.peer_manager.clone(),
-            session_peer_manager,
             self.inner.session_interest_manager.clone(),
             self.inner.block_presence_manager.clone(),
             self.inner.provider_query_manager.clone(),

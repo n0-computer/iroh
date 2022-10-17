@@ -19,7 +19,7 @@ use self::{session_want_sender::SessionWantSender, session_wants::SessionWants};
 use super::{
     block_presence_manager::BlockPresenceManager, peer_manager::PeerManager,
     provider_query_manager::ProviderQueryManager, session_interest_manager::SessionInterestManager,
-    session_manager::SessionManager, session_peer_manager::SessionPeerManager,
+    session_manager::SessionManager,
 };
 
 mod cid_queue;
@@ -72,7 +72,6 @@ impl Session {
         id: u64,
         session_manager: SessionManager,
         peer_manager: PeerManager,
-        session_peer_manager: SessionPeerManager,
         session_interest_manager: SessionInterestManager,
         block_presence_manager: BlockPresenceManager,
         provider_query_manager: ProviderQueryManager,
@@ -86,7 +85,6 @@ impl Session {
         let session_want_sender = SessionWantSender::new(
             id,
             peer_manager.clone(),
-            session_peer_manager.clone(),
             session_manager.clone(),
             block_presence_manager,
             incoming_s.clone(),
@@ -101,7 +99,6 @@ impl Session {
             session_want_sender,
             session_interest_manager.clone(),
             provider_query_manager,
-            session_peer_manager,
             peer_manager,
             initial_search_delay,
             incoming_s.clone(),
@@ -115,7 +112,6 @@ impl Session {
 
             loop {
                 inc!(BitswapMetrics::SessionLoopTick);
-                debug!("session {} tick", loop_state.id);
                 tokio::select! {
                     biased;
                     _ = &mut closer_r => {
@@ -368,7 +364,6 @@ struct LoopState {
     session_interest_manager: SessionInterestManager,
     session_want_sender: SessionWantSender,
     provider_query_manager: ProviderQueryManager,
-    session_peer_manager: SessionPeerManager,
     peer_manager: PeerManager,
     latency_tracker: LatencyTracker,
     idle_tick: Pin<Box<Sleep>>,
@@ -385,7 +380,6 @@ impl LoopState {
         session_want_sender: SessionWantSender,
         session_interest_manager: SessionInterestManager,
         provider_query_manager: ProviderQueryManager,
-        session_peer_manager: SessionPeerManager,
         peer_manager: PeerManager,
         initial_search_delay: Duration,
         incoming: async_channel::Sender<Op>,
@@ -399,7 +393,6 @@ impl LoopState {
             session_want_sender,
             session_interest_manager,
             provider_query_manager,
-            session_peer_manager,
             peer_manager,
             latency_tracker: Default::default(),
             base_tick_delay: Duration::from_millis(500),
@@ -419,7 +412,6 @@ impl LoopState {
         }
 
         self.session_want_sender.stop().await?;
-        self.session_peer_manager.stop().await?;
 
         Ok(())
     }
@@ -428,6 +420,7 @@ impl LoopState {
     /// all peers in the session have sent DONT_HAVE for a particular set of CIDs.
     /// Send want-haves to all connected peers, and search for new peers with the CID.
     async fn broadcast(&mut self, wants: Option<AHashSet<Cid>>) {
+        debug!("broadcast: {:?}", wants.as_ref().map(|w| w.len()));
         // If this broadcast is because of an idle timeout (we haven't received
         // any blocks for a while) then broadcast all pending wants.
         let wants = wants.unwrap_or_else(|| self.session_wants.prepare_broadcast());
@@ -455,6 +448,7 @@ impl LoopState {
 
     /// Called periodically to search for providers of a randomly chosen CID in the sesssion.
     async fn handle_periodic_search(&mut self) {
+        debug!("periodic search");
         if let Some(random_want) = self.session_wants.random_live_want() {
             // TODO: come up with a better strategy for determining when to search
             // for new providers for blocks.
@@ -572,12 +566,21 @@ impl LoopState {
 
         // If we have discovered peers already, the sessionWantSender will
         // send wants to them.
-        if self.session_peer_manager.peers_discovered().await {
+        if self
+            .peer_manager
+            .peers_discovered_for_session(self.id)
+            .await
+        {
             return;
         }
 
         // No peers discovered yet, broadcast some want-haves
         let keys = self.session_wants.get_next_wants();
+        debug!(
+            "initial broadcast, as no peers discovered yet {}",
+            keys.len()
+        );
+
         if !keys.is_empty() {
             self.broadcast_want_haves(&keys).await;
         }
@@ -586,7 +589,7 @@ impl LoopState {
     // Send want-haves to all connected peers
     async fn broadcast_want_haves(&self, wants: &AHashSet<Cid>) {
         debug!(
-            "broadacasting wants: {:?}",
+            "broadcasting wants: {:?}",
             wants.iter().map(|w| w.to_string()).collect::<Vec<_>>()
         );
         self.peer_manager.broadcast_want_haves(wants).await;

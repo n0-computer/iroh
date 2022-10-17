@@ -23,7 +23,6 @@ mod provider_query_manager;
 mod session;
 mod session_interest_manager;
 mod session_manager;
-mod session_peer_manager;
 pub(crate) mod wantlist;
 
 #[derive(Debug, Clone, PartialEq, Eq)]

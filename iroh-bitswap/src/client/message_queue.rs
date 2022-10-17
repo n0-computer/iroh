@@ -142,6 +142,7 @@ impl MessageQueue {
 
     /// Add want-haves and want-blocks for the peer for this queue.
     pub async fn add_wants(&self, want_blocks: &[Cid], want_haves: &[Cid]) {
+        debug!("add_wants: {} {}", want_blocks.len(), want_haves.len());
         if want_blocks.is_empty() && want_haves.is_empty() {
             return;
         }
@@ -401,6 +402,7 @@ impl MessageQueueActor {
                     // Adding a want-block for the cid, so clear any pending cancels.
                     self.wants.cancels.remove(&cid);
                 }
+                self.signal_work();
             }
             WantsUpdate::AddCancels(cancels) => {
                 // Cancel any outstanding DONT_HAVE timers
@@ -618,6 +620,12 @@ impl MessageQueueActor {
             (peer_entries, bcst_entries, cancels)
         };
 
+        debug!("pending bcst: {:?}", bcst_entries);
+        debug!("pending peer: {:?}", peer_entries);
+        debug!(
+            "pending cancels: {:?}",
+            cancels.iter().map(|s| s.to_string()).collect::<Vec<_>>()
+        );
         // We prioritize cancels, then regular wants, then broadcast wants.
 
         let mut msg_size = 0;
@@ -672,8 +680,7 @@ impl MessageQueueActor {
             }
         }
 
-        // Finally  retake the lock, makr sent and remove any entries from our message
-        // that we've decided to cancel at the last minute.
+        // Finally mark sent and remove any entries from our message that we've decided to cancel at the last minute.
         {
             // shorten to actually sent
             peer_entries.truncate(sent_peer_entries);
@@ -709,6 +716,7 @@ impl MessageQueueActor {
                 }
             }
         }
+        debug!("got done {}", done);
 
         Ok((msg, sender, peer_entries, bcst_entries))
     }

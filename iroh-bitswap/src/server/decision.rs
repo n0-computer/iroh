@@ -3,7 +3,7 @@ use std::{fmt::Debug, sync::Arc, time::Duration};
 use ahash::{AHashMap, AHashSet};
 use anyhow::{anyhow, Result};
 use cid::Cid;
-use iroh_metrics::{bitswap::BitswapMetrics, record, inc};
+use iroh_metrics::{bitswap::BitswapMetrics, inc, record};
 use libp2p::PeerId;
 use tokio::{
     sync::{oneshot, Mutex, Notify, RwLock},

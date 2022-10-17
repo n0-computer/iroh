@@ -36,8 +36,44 @@ enum Message {
         want_haves: Vec<Cid>,
     },
     SendCancels(Vec<Cid>),
-    RegisterSession(PeerId, Signaler),
-    UnregisterSession(u64),
+    RegisterSession {
+        peer: PeerId,
+        signaler: Signaler,
+        response: oneshot::Sender<bool>,
+    },
+    UnregisterSession(u64, oneshot::Sender<()>),
+    AddPeerToSession {
+        session: u64,
+        peer: PeerId,
+        response: oneshot::Sender<bool>,
+    },
+    RemovePeerFromSession {
+        session: u64,
+        peer: PeerId,
+        response: oneshot::Sender<bool>,
+    },
+    ProtectConnection {
+        session: u64,
+        peer: PeerId,
+        response: oneshot::Sender<()>,
+    },
+    PeersDiscoveredForSession {
+        session: u64,
+        response: oneshot::Sender<bool>,
+    },
+    PeersForSession {
+        session: u64,
+        response: oneshot::Sender<Vec<PeerId>>,
+    },
+    SessionHasPeers {
+        session: u64,
+        response: oneshot::Sender<bool>,
+    },
+    SessionHasPeer {
+        session: u64,
+        peer: PeerId,
+        response: oneshot::Sender<bool>,
+    },
     SetCb(#[derivative(Debug = "ignore")] Arc<dyn DontHaveTimeout>),
 }
 
@@ -152,12 +188,21 @@ impl PeerManager {
     }
 
     /// Informs the `PeerManager` that the given session is interested in events about the given peer.
-    pub async fn register_session(&self, peer: &PeerId, session: Signaler) {
-        self.send(Message::RegisterSession(*peer, session)).await;
+    pub async fn register_session(&self, peer: &PeerId, signaler: Signaler) -> bool {
+        let (s, r) = oneshot::channel();
+        self.send(Message::RegisterSession {
+            peer: *peer,
+            signaler,
+            response: s,
+        })
+        .await;
+        r.await.unwrap_or_default()
     }
 
     pub async fn unregister_session(&self, session_id: u64) {
-        self.send(Message::UnregisterSession(session_id)).await;
+        let (s, r) = oneshot::channel();
+        self.send(Message::UnregisterSession(session_id, s)).await;
+        let _ = r.await;
     }
 
     /// Shutdown this peer manager.
@@ -166,6 +211,93 @@ impl PeerManager {
         // dropping will stop the loop
 
         Ok(())
+    }
+
+    /// Adds the peer to the session.
+    /// Returns true if the peer is new.
+    pub async fn add_peer_to_session(&self, session: u64, peer: PeerId) -> bool {
+        let (s, r) = oneshot::channel();
+        self.send(Message::AddPeerToSession {
+            session,
+            peer,
+            response: s,
+        })
+        .await;
+
+        r.await.unwrap_or_default()
+    }
+
+    /// Removes the peer from the sessoin.
+    /// Returns true if the peer existed.
+    pub async fn remove_peer_from_session(&self, session: u64, peer: PeerId) -> bool {
+        let (s, r) = oneshot::channel();
+        self.send(Message::RemovePeerFromSession {
+            session,
+            peer,
+            response: s,
+        })
+        .await;
+
+        r.await.unwrap_or_default()
+    }
+
+    /// Protects this connection.
+    pub async fn protect_connection(&self, session: u64, peer: PeerId) {
+        let (s, r) = oneshot::channel();
+        self.send(Message::ProtectConnection {
+            session,
+            peer,
+            response: s,
+        })
+        .await;
+
+        let _ = r.await;
+    }
+
+    /// Indicates wether peers have been discovered yet.
+    pub async fn peers_discovered_for_session(&self, session: u64) -> bool {
+        let (s, r) = oneshot::channel();
+        self.send(Message::PeersDiscoveredForSession {
+            session,
+            response: s,
+        })
+        .await;
+
+        r.await.unwrap_or_default()
+    }
+
+    pub async fn peers_for_session(&self, session: u64) -> Vec<PeerId> {
+        let (s, r) = oneshot::channel();
+        self.send(Message::PeersForSession {
+            session,
+            response: s,
+        })
+        .await;
+
+        r.await.unwrap_or_default()
+    }
+
+    pub async fn session_has_peers(&self, session: u64) -> bool {
+        let (s, r) = oneshot::channel();
+        self.send(Message::SessionHasPeers {
+            session,
+            response: s,
+        })
+        .await;
+
+        r.await.unwrap_or_default()
+    }
+
+    pub async fn session_has_peer(&self, session: u64, peer: PeerId) -> bool {
+        let (s, r) = oneshot::channel();
+        self.send(Message::SessionHasPeer {
+            session,
+            peer,
+            response: s,
+        })
+        .await;
+
+        r.await.unwrap_or_default()
     }
 }
 
@@ -212,15 +344,61 @@ async fn run(mut actor: PeerManagerActor) {
                     Some(Message::SendCancels(cancels)) => {
                         actor.send_cancels(cancels).await;
                     },
-                    Some(Message::RegisterSession(peer, session)) => {
-                        actor.register_session(peer, session).await;
+                    Some(Message::RegisterSession { peer, signaler, response }) => {
+                        let _ = response.send(actor.register_session(peer, signaler).await);
                     },
-                    Some(Message::UnregisterSession(session)) => {
-                        actor.unregister_session(session);
+                    Some(Message::UnregisterSession(session, response)) => {
+                        actor.unregister_session(session, response).await;
                     },
                     Some(Message::SetCb(cb)) => {
                         actor.on_dont_have_timeout = cb;
                     }
+                    Some(Message::AddPeerToSession{
+                        session,
+                        peer,
+                        response,
+                    }) => {
+                        actor.add_peer_to_session(session, peer, response).await;
+                    },
+                    Some(Message::RemovePeerFromSession{
+                        session,
+                        peer,
+                        response,
+                    }) => {
+                        actor.remove_peer_from_session(session, peer, response).await;
+                    },
+                    Some(Message::ProtectConnection{
+                        session,
+                        peer,
+                        response,
+                    }) => {
+                        actor.protect_connection(session, peer, response).await;
+                    },
+                    Some(Message::PeersDiscoveredForSession{
+                        session,
+                        response,
+                    }) => {
+                        actor.peers_discovered_for_session(session, response).await;
+                    },
+                    Some(Message::PeersForSession{
+                        session,
+                        response,
+                    }) => {
+                        actor.peers_for_session(session, response).await;
+                    },
+                    Some(Message::SessionHasPeers{
+                        session,
+                        response,
+                    }) => {
+                        actor.session_has_peers(session, response).await;
+                    },
+                    Some(Message::SessionHasPeer{
+                        session,
+                        peer,
+                        response,
+                    }) => {
+                        actor.session_has_peer(session, peer, response).await;
+                    },
                     None => {
                         break;
                     }
@@ -256,6 +434,10 @@ pub(super) struct PeerState {
 #[derive(Debug)]
 struct SessionState {
     signaler: Signaler,
+    // TODO: move this into `peers`
+    peers: AHashSet<PeerId>,
+    /// Have we ever discovered a peer for this session?
+    peers_discovered: bool,
 }
 
 impl PeerManagerActor {
@@ -354,8 +536,12 @@ impl PeerManagerActor {
 
     async fn send_wants(&mut self, peer: PeerId, want_blocks: Vec<Cid>, want_haves: Vec<Cid>) {
         debug!(
-            "send_wants to {}: {:?}, {:?}",
-            peer, want_blocks, want_haves
+            "send_wants to {}: {}, {} {:?}, {:?}",
+            peer,
+            want_blocks.len(),
+            want_haves.len(),
+            want_blocks,
+            want_haves
         );
         if self.peers.contains_key(&peer) {
             self.peer_want_manager
@@ -382,11 +568,26 @@ impl PeerManagerActor {
         self.peer_want_manager.get_want_haves()
     }
 
-    async fn register_session(&mut self, peer: PeerId, signaler: Signaler) {
+    /// Returns true if the peer is new..
+    async fn register_session(&mut self, peer: PeerId, signaler: Signaler) -> bool {
+        debug!("register session {}: {}", peer, signaler.id());
         let id = signaler.id();
-        self.sessions.entry(id).or_insert(SessionState { signaler });
 
         self.insert_peer(peer, Some(id)).await;
+        match self.sessions.entry(id) {
+            std::collections::hash_map::Entry::Occupied(mut entry) => {
+                entry.get_mut().peers_discovered = true;
+                entry.get_mut().peers.insert(peer)
+            }
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                entry.insert(SessionState {
+                    signaler,
+                    peers: [peer].into_iter().collect(),
+                    peers_discovered: true,
+                });
+                true
+            }
+        }
     }
 
     async fn insert_peer(&mut self, peer: PeerId, session: Option<u64>) {
@@ -415,12 +616,17 @@ impl PeerManagerActor {
         }
     }
 
-    fn unregister_session(&mut self, session_id: u64) {
+    async fn unregister_session(&mut self, session_id: u64, response: oneshot::Sender<()>) {
         for peer_state in self.peers.values_mut() {
             peer_state.sessions.remove(&session_id);
         }
 
-        self.sessions.remove(&session_id);
+        if let Some(session) = self.sessions.remove(&session_id) {
+            for peer in session.peers {
+                self.network.unprotect_peer(peer).await;
+            }
+        }
+        let _ = response.send(());
     }
 
     /// Called when a peers connectivity changes, informs the interested sessions.
@@ -431,6 +637,96 @@ impl PeerManagerActor {
                     session.signaler.signal_availability(peer, is_connected);
                 }
             }
+        }
+    }
+
+    async fn add_peer_to_session(
+        &mut self,
+        session_id: u64,
+        peer: PeerId,
+        response: oneshot::Sender<bool>,
+    ) {
+        debug!("add peer to session {}: {}", peer, session_id);
+        if let Some(session) = self.sessions.get_mut(&session_id) {
+            debug!("found session: {}: {}", peer, session_id);
+            if session.peers.contains(&peer) {
+                let _ = response.send(false);
+                return;
+            }
+
+            session.peers.insert(peer);
+            session.peers_discovered = true;
+
+            let _ = response.send(true);
+        } else {
+            debug!("found no session: {}: {}", peer, session_id);
+            // TODO: better handling
+            let _ = response.send(true);
+        }
+    }
+
+    async fn protect_connection(
+        &mut self,
+        session: u64,
+        peer: PeerId,
+        response: oneshot::Sender<()>,
+    ) {
+        if let Some(session) = self.sessions.get(&session) {
+            if session.peers.contains(&peer) {
+                self.network.protect_peer(peer).await;
+            }
+        }
+        let _ = response.send(());
+    }
+
+    async fn remove_peer_from_session(
+        &mut self,
+        session: u64,
+        peer: PeerId,
+        response: oneshot::Sender<bool>,
+    ) {
+        if let Some(session) = self.sessions.get_mut(&session) {
+            let existed = session.peers.remove(&peer);
+            let _ = response.send(existed);
+
+            if existed {
+                self.network.unprotect_peer(peer).await;
+            }
+        } else {
+            let _ = response.send(false);
+        }
+    }
+
+    /// Indicates wether peers have been discovered yet.
+    async fn peers_discovered_for_session(&self, session: u64, response: oneshot::Sender<bool>) {
+        if let Some(session) = self.sessions.get(&session) {
+            let _ = response.send(session.peers_discovered);
+        } else {
+            let _ = response.send(false);
+        }
+    }
+
+    async fn peers_for_session(&self, session: u64, response: oneshot::Sender<Vec<PeerId>>) {
+        if let Some(session) = self.sessions.get(&session) {
+            let _ = response.send(session.peers.iter().copied().collect());
+        } else {
+            let _ = response.send(Vec::new());
+        }
+    }
+
+    async fn session_has_peers(&self, session: u64, response: oneshot::Sender<bool>) {
+        if let Some(session) = self.sessions.get(&session) {
+            let _ = response.send(!session.peers.is_empty());
+        } else {
+            let _ = response.send(false);
+        }
+    }
+
+    async fn session_has_peer(&self, session: u64, peer: PeerId, response: oneshot::Sender<bool>) {
+        if let Some(session) = self.sessions.get(&session) {
+            let _ = response.send(session.peers.contains(&peer));
+        } else {
+            let _ = response.send(false);
         }
     }
 }

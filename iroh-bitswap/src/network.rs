@@ -291,23 +291,18 @@ impl Network {
         trace!("untag {}: {}", peer, tag);
     }
 
-    pub async fn protect_peer(&self, peer: &PeerId, tag: &str) {
-        // TODO: is this needed?
-        trace!("protect {}: {}", peer, tag);
-        let _ = self
-            .network_out_sender
-            .send(OutEvent::ProtectPeer { peer: *peer });
+    pub async fn protect_peer(&self, peer: PeerId) {
+        trace!("protect {}", peer);
+        let _ = self.network_out_sender.send(OutEvent::ProtectPeer { peer });
     }
 
-    pub async fn unprotect_peer(&self, peer: &PeerId, tag: &str) -> bool {
-        // TODO: is this needed?
-        trace!("unprotect {}: {}", peer, tag);
+    pub async fn unprotect_peer(&self, peer: PeerId) -> bool {
+        trace!("unprotect {}", peer);
 
         let (s, r) = oneshot::channel();
-        let _ = self.network_out_sender.send(OutEvent::UnprotectPeer {
-            peer: *peer,
-            response: s,
-        });
+        let _ = self
+            .network_out_sender
+            .send(OutEvent::UnprotectPeer { peer, response: s });
 
         r.await.unwrap_or_default()
     }
