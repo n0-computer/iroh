@@ -5,9 +5,9 @@ use std::{
 };
 
 use async_trait::async_trait;
+use thiserror::Error;
 use tonic::{
     body::BoxBody,
-    client::GrpcService,
     transport::{Body, Channel, Endpoint},
 };
 use tower::Service;
@@ -73,8 +73,8 @@ impl bb8::ManageConnection for TonicConnectionManager {
         }
     }
 
-    async fn is_valid(&self, conn: &mut Self::Connection) -> Result<(), Self::Error> {
-        // conn.execute_batch("").map_err(Into::into)
+    async fn is_valid(&self, _conn: &mut Self::Connection) -> Result<(), Self::Error> {
+        // TODO(arqu): validate working connection
         Ok(())
     }
 
@@ -124,14 +124,10 @@ impl Future for ResponseFuture {
     }
 }
 
-quick_error! {
-    #[derive(Debug)]
-    pub enum ConnectionManagerError {
-        Tonic(err: tonic::transport::Error) {
-            from()
-        }
-        Other(err: String) {
-            from()
-        }
-    }
+#[derive(Error, Debug)]
+pub enum ConnectionManagerError {
+    #[error("tonic rpc error: `{0}`")]
+    Tonic(#[from] tonic::transport::Error),
+    #[error("other connection error: `{0}`")]
+    Other(String),
 }

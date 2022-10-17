@@ -7,8 +7,8 @@ pub mod store;
 
 pub mod connection_pool;
 
-#[macro_use]
-extern crate quick_error;
+// #[macro_use]
+// extern crate quick_error;
 
 // Reexport for convenience.
 #[cfg(feature = "grpc")]

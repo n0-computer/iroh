@@ -24,7 +24,7 @@ paste = "1.0.7"
 futures = "0.3.24"
 bb8 = "0.8.0"
 r2d2 = "0.8.10"
-quick-error = "2.0.1"
+thiserror = "1.0.37"
 tower = { version = "0.4.13", optional = true }
 
 [build-dependencies]
