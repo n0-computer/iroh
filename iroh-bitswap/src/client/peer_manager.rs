@@ -434,7 +434,7 @@ pub(super) struct PeerState {
 #[derive(Debug)]
 struct SessionState {
     signaler: Signaler,
-    // TODO: move this into `peers`
+    // TODO: can this be merged into `peers`?
     peers: AHashSet<PeerId>,
     /// Have we ever discovered a peer for this session?
     peers_discovered: bool,

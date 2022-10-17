@@ -2,9 +2,10 @@ use std::{collections::HashSet, sync::Arc, time::Duration};
 
 use anyhow::{anyhow, Result};
 use cid::Cid;
+use futures::{stream::FuturesUnordered, StreamExt};
 use iroh_metrics::{bitswap::BitswapMetrics, core::MRecorder, inc};
 use libp2p::PeerId;
-use tokio::{sync::oneshot, task::JoinHandle};
+use tokio::{sync::mpsc, task::JoinHandle};
 use tracing::warn;
 
 use crate::network::Network;
@@ -15,7 +16,7 @@ const MAX_IN_PROCESS_REQUESTS: usize = 6;
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Debug)]
-enum ProviderQueryMessage {
+enum Message {
     NewProvider {
         cid: Cid,
         response: async_channel::Sender<Result<PeerId>>,
@@ -25,13 +26,8 @@ enum ProviderQueryMessage {
 /// Manages requests to find more providers for blocks for bitsaqp sessions.
 #[derive(Debug, Clone)]
 pub struct ProviderQueryManager {
-    inner: Arc<Inner>,
-}
-
-#[derive(Debug)]
-struct Inner {
-    provider_query_messages: async_channel::Sender<ProviderQueryMessage>,
-    workers: Vec<(JoinHandle<()>, oneshot::Sender<()>)>,
+    sender: async_channel::Sender<Message>,
+    workers: Arc<Vec<JoinHandle<()>>>,
 }
 
 impl ProviderQueryManager {
@@ -39,115 +35,32 @@ impl ProviderQueryManager {
         // Use a larger buffer to avoid blocking on this too much.
         let (provider_query_message_s, provider_query_message_r) = async_channel::bounded(1024);
         let mut workers = Vec::new();
-        let find_provider_timeout = DEFAULT_TIMEOUT;
 
-        let rt = tokio::runtime::Handle::current();
         for _i in 0..MAX_IN_PROCESS_REQUESTS {
-            let (closer_s, mut closer_r) = oneshot::channel();
             let network = network.clone();
             let provider_query_message_r = provider_query_message_r.clone();
 
-            let worker = rt.spawn(async move {
-                loop {
-                    tokio::select! {
-                        biased;
-                        _ = &mut closer_r => {
-                            // Shutdown
-                            break;
-                        }
-                        msg = provider_query_message_r.recv() => {
-                            match msg {
-                                Ok(ProviderQueryMessage::NewProvider { cid, response }) => {
-                                    inc!(BitswapMetrics::ProviderQueryCreated);
-                                    match network.find_providers(cid).await {
-                                        Ok(mut providers_r) => {
-                                            let mut found_providers = HashSet::new();
-                                            loop {
-                                                tokio::select! {
-                                                    biased;
-                                                    _ = &mut closer_r => {
-                                                        // Closing, break the both loops
-                                                        return;
-                                                    }
-                                                    providers = providers_r.recv() => {
-                                                        match providers {
-                                                            Some(Ok(providers)) => {
-                                                                // at most 10
-                                                                let new_providers = providers
-                                                                    .difference(&found_providers)
-                                                                    .into_iter()
-                                                                    .copied()
-                                                                    .collect::<Vec<_>>();
-
-                                                                for provider in new_providers {
-                                                                    found_providers.insert(provider);
-                                                                    let response = response.clone();
-                                                                    let network = network.clone();
-                                                                    tokio::task::spawn(async move {
-                                                                        if network.dial(provider, find_provider_timeout).await.is_ok() {
-                                                                            if let Err(err) = response.send(Ok(provider)).await {
-                                                                                warn!("failed to send dial response: {:?}", err);
-                                                                            }
-                                                                        }
-                                                                    });
-                                                                }
-                                                            }
-                                                            Some(Err(err)) => {
-                                                                // single provider call failed just move on
-                                                                warn!("provider error: {:?}", err);
-                                                                continue;
-                                                            }
-                                                            None => {
-                                                                // provider channel is gone
-                                                                drop(response);
-                                                                break;
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                        Err(err) => {
-                                            inc!(BitswapMetrics::ProviderQueryError);
-                                            if let Err(err) = response.send(Err(err)).await {
-                                                warn!("response channel error: {:?}", err);
-                                            }
-                                        }
-                                    }
-                                }
-                                Err(err) => {
-                                    warn!("input channel: {:?}", err);
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                }
-            });
-            workers.push((worker, closer_s));
+            workers.push(tokio::task::spawn(async move {
+                run(network, provider_query_message_r).await
+            }));
         }
 
         ProviderQueryManager {
-            inner: Arc::new(Inner {
-                provider_query_messages: provider_query_message_s,
-                workers,
-            }),
+            sender: provider_query_message_s,
+            workers: Arc::new(workers),
         }
     }
 
     pub async fn stop(self) -> Result<()> {
-        let inner = Arc::try_unwrap(self.inner)
+        let workers = Arc::try_unwrap(self.workers)
             .map_err(|_| anyhow!("provider query manager refs not shutdown"))?;
 
-        let results = futures::future::join_all(inner.workers.into_iter().map(
-            |(worker, closer)| async move {
-                closer
-                    .send(())
-                    .map_err(|e| anyhow!("failed to send close: {:?}", e))?;
-                worker.await.map_err(|e| anyhow!("worker panic: {:?}", e))?;
-                Ok::<(), anyhow::Error>(())
-            },
-        ))
+        drop(self.sender);
+
+        let results = futures::future::join_all(workers.into_iter().map(|worker| async move {
+            worker.await.map_err(|e| anyhow!("worker panic: {:?}", e))?;
+            Ok::<(), anyhow::Error>(())
+        }))
         .await;
 
         for r in results {
@@ -164,14 +77,84 @@ impl ProviderQueryManager {
     ) -> Result<async_channel::Receiver<Result<PeerId>>> {
         let (s, r) = async_channel::bounded(8);
 
-        self.inner
-            .provider_query_messages
-            .send(ProviderQueryMessage::NewProvider {
+        self.sender
+            .send(Message::NewProvider {
                 cid: *cid,
                 response: s,
             })
             .await?;
 
         Ok(r)
+    }
+}
+
+async fn run(network: Network, receiver: async_channel::Receiver<Message>) {
+    loop {
+        while let Ok(msg) = receiver.recv().await {
+            let mut worker = None;
+            match msg {
+                Message::NewProvider { cid, response } => {
+                    inc!(BitswapMetrics::ProviderQueryCreated);
+                    match network.find_providers(cid).await {
+                        Ok(providers_r) => {
+                            worker = Some(tokio::task::spawn(find_provider(
+                                network.clone(),
+                                response,
+                                providers_r,
+                            )));
+                        }
+                        Err(err) => {
+                            inc!(BitswapMetrics::ProviderQueryError);
+                            if let Err(err) = response.send(Err(err)).await {
+                                warn!("response channel error: {:?}", err);
+                            }
+                        }
+                    }
+                }
+            }
+
+            if let Some(worker) = worker {
+                if let Err(err) = worker.await {
+                    warn!("worker shutdown failed: {:?}", err);
+                }
+            }
+        }
+    }
+}
+
+async fn find_provider(
+    network: Network,
+    response: async_channel::Sender<Result<PeerId>>,
+    mut receiver: mpsc::Receiver<std::result::Result<HashSet<PeerId>, String>>,
+) {
+    let mut found_providers = HashSet::new();
+    while let Some(providers) = receiver.recv().await {
+        match providers {
+            Ok(providers) => {
+                let new_providers = providers
+                    .difference(&found_providers)
+                    .into_iter()
+                    .copied()
+                    .collect::<Vec<_>>();
+
+                let futures = FuturesUnordered::new();
+                for provider in new_providers {
+                    found_providers.insert(provider);
+                    let response = response.clone();
+                    let network = network.clone();
+                    futures.push(async move {
+                        if network.dial(provider, DEFAULT_TIMEOUT).await.is_ok() {
+                            let _ = response.send(Ok(provider)).await;
+                        }
+                    });
+                }
+                let _ = futures.collect::<Vec<()>>().await;
+            }
+            Err(err) => {
+                // single provider call failed just move on
+                warn!("provider error: {:?}", err);
+                continue;
+            }
+        }
     }
 }
