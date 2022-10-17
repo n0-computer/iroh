@@ -2,6 +2,7 @@ mod api;
 mod api_ext;
 mod config;
 mod p2p;
+mod size;
 
 #[cfg(feature = "testing")]
 pub use crate::api::MockApi;
