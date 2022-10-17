@@ -275,7 +275,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
         r
     }
 
-    fn destroy_session(&mut self, ctx: u64) -> Result<()> {
+    fn destroy_session(&mut self, ctx: u64, response_channel: oneshot::Sender<Result<()>>) {
         if let Some(bs) = self.swarm.behaviour().bitswap.as_ref() {
             let client = bs.client().clone();
             let workers = self.bitswap_sessions.remove(&ctx).unwrap_or_default();
@@ -291,10 +291,10 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                 if let Err(err) = client.stop_session(ctx).await {
                     warn!("failed to stop session {}: {:?}", ctx, err);
                 }
+                let _ = response_channel.send(Ok(()));
             });
-            Ok(())
         } else {
-            bail!("no bitswap available");
+            let _ = response_channel.send(Err(anyhow!("no bitswap available")));
         }
     }
 
@@ -670,8 +670,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                 ctx,
                 response_channel,
             } => {
-                let res = self.destroy_session(ctx);
-                response_channel.send(res).ok();
+                self.destroy_session(ctx, response_channel);
             }
             RpcMessage::ProviderRequest {
                 key,
