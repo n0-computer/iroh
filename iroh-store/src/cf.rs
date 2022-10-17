@@ -10,7 +10,9 @@ pub const CF_METADATA_V0: &str = "metadata-v0";
 /// Column familty that stores the graph for a blob
 /// - indexed by id (u64)
 pub const CF_GRAPH_V0: &str = "graph-v0";
-/// Column family that stores the mapping multihash to id.
+/// Column family that stores the mapping (multihash, code) to id.
+///
+/// By storing multihash first we can search for ids either by cid = (multihash, code) or by multihash.
 pub const CF_ID_V0: &str = "id-v0";
 
 // This wrapper type serializes the contained value out-of-line so that newer

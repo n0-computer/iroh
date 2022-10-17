@@ -1,0 +1,6 @@
+```
+$ iroh add mydir
+? failed
+Error: mydir is a directory, use --recursive to add it
+
+```

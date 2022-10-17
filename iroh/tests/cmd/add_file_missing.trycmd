@@ -1,0 +1,6 @@
+```
+$ iroh add missing.txt
+? failed
+Error: can only add files or directories
+
+```

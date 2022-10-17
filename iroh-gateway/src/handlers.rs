@@ -4,6 +4,7 @@ use axum::{
     error_handling::HandleErrorLayer,
     extract::{Extension, Path, Query},
     http::{header::*, Request as HttpRequest, StatusCode},
+    middleware,
     response::IntoResponse,
     routing::get,
     BoxError, Router,
@@ -71,6 +72,7 @@ pub fn get_app_routes<T: ContentLoader + std::marker::Unpin>(state: &Arc<State<T
             ServiceBuilder::new()
                 // Handle errors from middleware
                 .layer(Extension(Arc::clone(state)))
+                .layer(middleware::from_fn(request_middleware))
                 .layer(CompressionLayer::new())
                 .layer(HandleErrorLayer::new(middleware_error_handler::<T>))
                 .load_shed()
@@ -149,11 +151,7 @@ pub async fn get_handler<T: ContentLoader + std::marker::Unpin>(
     unsuported_header_check(&request_headers, &state)?;
 
     if check_bad_bits(&state, cid, cpath).await {
-        return Err(error(
-            StatusCode::FORBIDDEN,
-            "CID is in the denylist",
-            &state,
-        ));
+        return Err(error(StatusCode::GONE, "CID is in the denylist", &state));
     }
 
     let full_content_path = format!("/{}/{}{}", scheme, cid, cpath);
@@ -169,11 +167,7 @@ pub async fn get_handler<T: ContentLoader + std::marker::Unpin>(
     }
 
     if check_bad_bits(&state, resolved_cid.to_string().as_str(), cpath).await {
-        return Err(error(
-            StatusCode::FORBIDDEN,
-            "CID is in the denylist",
-            &state,
-        ));
+        return Err(error(StatusCode::GONE, "CID is in the denylist", &state));
     }
 
     // parse query params
@@ -391,10 +385,10 @@ fn etag_check<T: ContentLoader>(
             .to_str()
             .unwrap();
         if !inm.is_empty() {
-            // todo(arqu): handle dir etags
             let cid_etag = get_etag(resolved_cid, Some(format.clone()));
+            let dir_etag = get_dir_etag(resolved_cid);
 
-            if etag_matches(inm, &cid_etag) {
+            if etag_matches(inm, &cid_etag) || etag_matches(inm, &dir_etag) {
                 return Some(GatewayResponse::not_modified());
             }
         }
@@ -431,8 +425,12 @@ async fn serve_raw<T: ContentLoader + std::marker::Unpin>(
 
             set_content_disposition_headers(&mut headers, &file_name, DISPOSITION_ATTACHMENT);
             set_etag_headers(&mut headers, get_etag(&req.cid, Some(req.format.clone())));
+            if let Some(res) = etag_check(&headers, &req.cid, &req.format, &state) {
+                return Ok(res);
+            }
             add_cache_control_headers(&mut headers, metadata.clone());
             add_ipfs_roots_headers(&mut headers, metadata.clone());
+            add_content_length_header(&mut headers, metadata.clone());
 
             if let Some(mut capped_range) = range {
                 if let Some(size) = metadata.size {
@@ -478,9 +476,12 @@ async fn serve_car<T: ContentLoader + std::marker::Unpin>(
             set_content_disposition_headers(&mut headers, &file_name, DISPOSITION_ATTACHMENT);
 
             add_cache_control_headers(&mut headers, metadata.clone());
+            add_content_length_header(&mut headers, metadata.clone());
             let etag = format!("W/{}", get_etag(&req.cid, Some(req.format.clone())));
             set_etag_headers(&mut headers, etag);
-            // todo(arqu): handle if none match
+            if let Some(res) = etag_check(&headers, &req.cid, &req.format, &state) {
+                return Ok(res);
+            }
             add_ipfs_roots_headers(&mut headers, metadata);
             response(StatusCode::OK, body, headers)
         }
@@ -516,8 +517,9 @@ async fn serve_car_recursive<T: ContentLoader + std::marker::Unpin>(
     // add_cache_control_headers(&mut headers, metadata.clone());
     let etag = format!("W/{}", get_etag(&req.cid, Some(req.format.clone())));
     set_etag_headers(&mut headers, etag);
-
-    // todo(arqu): handle if none match
+    if let Some(res) = etag_check(&headers, &req.cid, &req.format, &state) {
+        return Ok(res);
+    }
     // add_ipfs_roots_headers(&mut headers, metadata);
     response(StatusCode::OK, body, headers)
 }
@@ -573,7 +575,11 @@ async fn serve_fs<T: ContentLoader + std::marker::Unpin>(
                     // todo(arqu): error on no size
                     // todo(arqu): add lazy seeking
                     add_cache_control_headers(&mut headers, metadata.clone());
+                    add_content_length_header(&mut headers, metadata.clone());
                     set_etag_headers(&mut headers, get_etag(&req.cid, Some(req.format.clone())));
+                    if let Some(res) = etag_check(&headers, &req.cid, &req.format, &state) {
+                        return Ok(res);
+                    }
                     let name = add_content_disposition_headers(
                         &mut headers,
                         &req.query_file_name,
@@ -612,7 +618,11 @@ async fn serve_fs<T: ContentLoader + std::marker::Unpin>(
             // todo(arqu): error on no size
             // todo(arqu): add lazy seeking
             add_cache_control_headers(&mut headers, metadata.clone());
+            add_content_length_header(&mut headers, metadata.clone());
             set_etag_headers(&mut headers, get_etag(&req.cid, Some(req.format.clone())));
+            if let Some(res) = etag_check(&headers, &req.cid, &req.format, &state) {
+                return Ok(res);
+            }
             let name = add_content_disposition_headers(
                 &mut headers,
                 &req.query_file_name,
@@ -649,7 +659,7 @@ async fn serve_fs_dir<T: ContentLoader + std::marker::Unpin>(
                 req.resolved_path,
                 req.query_params.to_query_string()
             );
-            return Ok(GatewayResponse::redirect(&redirect_path));
+            return Ok(GatewayResponse::redirect_permanently(&redirect_path));
         }
         let mut new_req = req.clone();
         new_req.resolved_path.push("index.html");
@@ -657,8 +667,10 @@ async fn serve_fs_dir<T: ContentLoader + std::marker::Unpin>(
     }
 
     headers.insert(CONTENT_TYPE, HeaderValue::from_str("text/html").unwrap());
-    // todo(arqu): set etag
-    // set_etag_headers(&mut headers, metadata.dir_hash.clone());
+    set_etag_headers(&mut headers, get_dir_etag(&req.cid));
+    if let Some(res) = etag_check(&headers, &req.cid, &req.format, &state) {
+        return Ok(res);
+    }
 
     let mut template_data: Map<String, Json> = Map::new();
     let mut root_path = req.resolved_path.clone();
@@ -760,6 +772,20 @@ fn error<T: ContentLoader>(
     }
 }
 
+// #[tracing::instrument()]
+pub async fn request_middleware<B>(
+    request: axum::http::Request<B>,
+    next: axum::middleware::Next<B>,
+) -> axum::response::Response {
+    let method = request.method().clone();
+    let mut r = next.run(request).await;
+    if method == Method::HEAD {
+        let b = r.body_mut();
+        *b = http_body::combinators::UnsyncBoxBody::default();
+    }
+    r
+}
+
 #[tracing::instrument()]
 pub async fn middleware_error_handler<T: ContentLoader>(
     method: Method,
@@ -773,12 +799,12 @@ pub async fn middleware_error_handler<T: ContentLoader>(
     }
 
     if err.is::<tower::timeout::error::Elapsed>() {
-        return error(StatusCode::REQUEST_TIMEOUT, "request timed out", &state);
+        return error(StatusCode::GATEWAY_TIMEOUT, "request timed out", &state);
     }
 
     if err.is::<tower::load_shed::error::Overloaded>() {
         return error(
-            StatusCode::SERVICE_UNAVAILABLE,
+            StatusCode::TOO_MANY_REQUESTS,
             "service is overloaded, try again later",
             &state,
         );

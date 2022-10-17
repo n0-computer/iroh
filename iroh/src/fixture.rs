@@ -1,8 +1,11 @@
 use std::collections::HashMap;
 use std::env;
+use std::future;
+use std::path::PathBuf;
+use std::str::FromStr;
 
 use futures::StreamExt;
-use iroh_api::{Lookup, MockApi, MockP2p, OutType, PeerId};
+use iroh_api::{Cid, Lookup, MockApi, MockP2p, OutType, PeerId};
 use relative_path::RelativePathBuf;
 
 type GetFixture = fn() -> MockApi;
@@ -39,7 +42,7 @@ fn fixture_get() -> MockApi {
             // directories are created
             Ok((
                 RelativePathBuf::from_path("a/exists").unwrap(),
-                OutType::Reader(Box::new(std::io::Cursor::new("exists"))),
+                OutType::Symlink(PathBuf::from("../b")),
             )),
             Ok((
                 RelativePathBuf::from_path("b").unwrap(),
@@ -47,6 +50,26 @@ fn fixture_get() -> MockApi {
             )),
         ])
         .boxed_local()
+    });
+    api
+}
+
+fn fixture_add_file() -> MockApi {
+    let mut api = MockApi::default();
+    api.expect_add_file().returning(|_ipfs_path, _| {
+        Box::pin(future::ready(
+            Cid::from_str("QmYbcW4tXLXHWw753boCK8Y7uxLu5abXjyYizhLznq9PUR").map_err(|e| e.into()),
+        ))
+    });
+    api
+}
+
+fn fixture_add_directory() -> MockApi {
+    let mut api = MockApi::default();
+    api.expect_add_dir().returning(|_ipfs_path, _| {
+        Box::pin(future::ready(
+            Cid::from_str("QmYbcW4tXLXHWw753boCK8Y7uxLu5abXjyYizhLznq9PUR").map_err(|e| e.into()),
+        ))
     });
     api
 }
@@ -78,6 +101,33 @@ fn fixture_get_unwrapped_file() -> MockApi {
     api
 }
 
+fn fixture_get_wrapped_symlink() -> MockApi {
+    let mut api = MockApi::default();
+    api.expect_get_stream().returning(|_ipfs_path| {
+        futures::stream::iter(vec![
+            Ok((RelativePathBuf::from_path("").unwrap(), OutType::Dir)),
+            Ok((
+                RelativePathBuf::from_path("symlink.txt").unwrap(),
+                OutType::Symlink(PathBuf::from("target/path/foo.txt")),
+            )),
+        ])
+        .boxed_local()
+    });
+    api
+}
+
+fn fixture_get_unwrapped_symlink() -> MockApi {
+    let mut api = MockApi::default();
+    api.expect_get_stream().returning(|_ipfs_path| {
+        futures::stream::iter(vec![Ok((
+            RelativePathBuf::from_path("").unwrap(),
+            OutType::Symlink(PathBuf::from("target/path/foo.txt")),
+        ))])
+        .boxed_local()
+    });
+    api
+}
+
 fn register_fixtures() -> FixtureRegistry {
     [
         ("lookup".to_string(), fixture_lookup as GetFixture),
@@ -89,6 +139,19 @@ fn register_fixtures() -> FixtureRegistry {
         (
             "get_unwrapped_file".to_string(),
             fixture_get_unwrapped_file as GetFixture,
+        ),
+        ("add_file".to_string(), fixture_add_file as GetFixture),
+        (
+            "add_directory".to_string(),
+            fixture_add_directory as GetFixture,
+        ),
+        (
+            "get_wrapped_symlink".to_string(),
+            fixture_get_wrapped_symlink as GetFixture,
+        ),
+        (
+            "get_unwrapped_symlink".to_string(),
+            fixture_get_unwrapped_symlink as GetFixture,
         ),
     ]
     .into_iter()

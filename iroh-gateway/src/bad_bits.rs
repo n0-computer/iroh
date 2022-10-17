@@ -210,7 +210,7 @@ mod tests {
             .unwrap();
         let client = hyper::Client::new();
         let res = client.get(uri).await.unwrap();
-        assert_eq!(StatusCode::FORBIDDEN, res.status());
+        assert_eq!(StatusCode::GONE, res.status());
 
         let uri = hyper::Uri::builder()
             .scheme("http")
@@ -220,7 +220,7 @@ mod tests {
             .unwrap();
         let client = hyper::Client::new();
         let res = client.get(uri).await.unwrap();
-        assert_eq!(StatusCode::FORBIDDEN, res.status());
+        assert_eq!(StatusCode::GONE, res.status());
 
         let uri = hyper::Uri::builder()
             .scheme("http")
@@ -231,7 +231,7 @@ mod tests {
         let client = hyper::Client::new();
         let res = client.get(uri).await.unwrap();
         let status = res.status();
-        assert_eq!(StatusCode::FORBIDDEN, status);
+        assert_eq!(StatusCode::GONE, status);
 
         let uri = hyper::Uri::builder()
             .scheme("http")
@@ -242,7 +242,7 @@ mod tests {
         let client = hyper::Client::new();
         let res = client.get(uri).await.unwrap();
         let status = res.status();
-        assert_eq!(StatusCode::FORBIDDEN, status);
+        assert_eq!(StatusCode::GONE, status);
 
         let uri = hyper::Uri::builder()
             .scheme("http")
@@ -252,7 +252,7 @@ mod tests {
             .unwrap();
         let client = hyper::Client::new();
         let res = client.get(uri).await.unwrap();
-        assert!(res.status() != StatusCode::FORBIDDEN);
+        assert!(res.status() != StatusCode::GONE);
 
         let uri = hyper::Uri::builder()
             .scheme("http")
@@ -262,7 +262,7 @@ mod tests {
             .unwrap();
         let client = hyper::Client::new();
         let res = client.get(uri).await.unwrap();
-        assert!(res.status() != StatusCode::FORBIDDEN);
+        assert!(res.status() != StatusCode::GONE);
 
         let uri = hyper::Uri::builder()
             .scheme("http")
@@ -272,7 +272,7 @@ mod tests {
             .unwrap();
         let client = hyper::Client::new();
         let res = client.get(uri).await.unwrap();
-        assert!(res.status() != StatusCode::FORBIDDEN);
+        assert!(res.status() != StatusCode::GONE);
 
         core_task.abort();
         core_task.await.unwrap_err();

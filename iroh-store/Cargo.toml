@@ -31,11 +31,14 @@ git-version = "0.3.5"
 serde = { version = "1.0", features = ["derive"] }
 config = "0.13.1"
 async-trait = "0.1.56"
+smallvec = { version = "1.10.0", features = ["write"] }
+multihash = "0.16.3"
 
 [dev-dependencies]
 criterion = { version = "0.4.0", features = ["async_tokio"] }
 tempfile = "3.3.0"
 tokio = { version = "1", features = ["rt", "macros", "rt-multi-thread"] }
+libipld = "0.14.0"
 
 [features]
 default = ["rpc-grpc", "rpc-mem"]

@@ -98,6 +98,13 @@ impl Directory {
                         }
                          (name, root)
                     }
+                    Entry::Symlink(sym) => {
+                        let name = sym.name().to_string();
+                        let block = sym.encode()?;
+                        let root = Some(block.clone());
+                        yield block;
+                        (name, root)
+                    }
                 };
                 let root_block = root.expect("file must not be empty");
                 links.push(dag_pb::PbLink {
@@ -201,6 +208,54 @@ impl File {
         };
         let chunks = self.chunker.chunks(reader);
         Ok(self.tree_builder.stream_tree(chunks))
+    }
+}
+
+/// Representation of a constructed Symlink.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Symlink {
+    name: String,
+    target: PathBuf,
+}
+
+impl Symlink {
+    pub fn new<P: Into<PathBuf>>(path: P, target: P) -> Self {
+        Self {
+            name: path
+                .into()
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or_default()
+                .to_string(),
+            target: target.into(),
+        }
+    }
+
+    pub fn wrap(self) -> Directory {
+        Directory {
+            name: "".into(),
+            entries: vec![Entry::Symlink(self)],
+        }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn encode(self) -> Result<Block> {
+        let target = self
+            .target
+            .to_str()
+            .ok_or_else(|| anyhow::anyhow!("target path {:?} is not valid unicode", self.target))?;
+        let target = String::from(target);
+        let inner = unixfs_pb::Data {
+            r#type: DataType::Symlink as i32,
+            data: Some(Bytes::from(target)),
+            ..Default::default()
+        };
+        let outer = encode_unixfs_pb(&inner, Vec::new())?;
+        let node = UnixfsNode::Symlink(Node { outer, inner });
+        node.encode()
     }
 }
 
@@ -312,6 +367,7 @@ impl FileBuilder {
 enum Entry {
     File(File),
     Directory(Directory),
+    Symlink(Symlink),
 }
 
 /// Construct a UnixFS directory.
@@ -320,7 +376,6 @@ pub struct DirectoryBuilder {
     name: Option<String>,
     entries: Vec<Entry>,
     typ: DirectoryType,
-    recursive: bool,
 }
 
 impl Default for DirectoryBuilder {
@@ -329,7 +384,6 @@ impl Default for DirectoryBuilder {
             name: None,
             entries: Default::default(),
             typ: DirectoryType::Basic,
-            recursive: false,
         }
     }
 }
@@ -344,23 +398,21 @@ impl DirectoryBuilder {
         self
     }
 
-    pub fn recursive(&mut self) -> &mut Self {
-        self.recursive = true;
-        self
-    }
-
     pub fn name<N: Into<String>>(&mut self, name: N) -> &mut Self {
         self.name = Some(name.into());
         self
     }
 
     pub fn add_dir(&mut self, dir: Directory) -> Result<&mut Self> {
-        ensure!(self.recursive, "recursive directories not allowed");
         Ok(self.entry(Entry::Directory(dir)))
     }
 
     pub fn add_file(&mut self, file: File) -> &mut Self {
         self.entry(Entry::File(file))
+    }
+
+    pub fn add_symlink(&mut self, symlink: Symlink) -> &mut Self {
+        self.entry(Entry::Symlink(symlink))
     }
 
     fn entry(&mut self, entry: Entry) -> &mut Self {
@@ -381,6 +433,41 @@ impl DirectoryBuilder {
         let name = name.unwrap_or_default();
 
         Ok(Directory { name, entries })
+    }
+}
+
+/// Constructs a UnixFS Symlink
+#[derive(Debug)]
+pub struct SymlinkBuilder {
+    path: PathBuf,
+    target: Option<PathBuf>,
+}
+
+impl SymlinkBuilder {
+    pub fn new<P: Into<PathBuf>>(path: P) -> Self {
+        Self {
+            path: path.into(),
+            target: None,
+        }
+    }
+
+    pub fn target<P: Into<PathBuf>>(&mut self, target: P) -> &mut Self {
+        self.target = Some(target.into());
+        self
+    }
+
+    pub async fn build(self) -> Result<Symlink> {
+        let name = self
+            .path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or_default()
+            .to_string();
+        let target = match self.target {
+            Some(target) => target,
+            None => tokio::fs::read_link(&self.path).await?,
+        };
+        Ok(Symlink { name, target })
     }
 }
 
@@ -443,9 +530,6 @@ pub async fn add_file<S: Store>(store: Option<S>, path: &Path, wrap: bool) -> Re
 
     let file = FileBuilder::new().path(path).build().await?;
 
-    // encode and store
-    let mut root = None;
-
     let parts = {
         if wrap {
             // wrap file in dir to preserve file name
@@ -454,10 +538,17 @@ pub async fn add_file<S: Store>(store: Option<S>, path: &Path, wrap: bool) -> Re
             Box::pin(file.encode().await?)
         }
     };
-    tokio::pin!(parts);
+    add_blocks_to_store(store, parts).await
+}
 
-    while let Some(part) = parts.next().await {
-        let (cid, bytes, links) = part?.into_parts();
+pub async fn add_blocks_to_store<S: Store>(
+    store: Option<S>,
+    blocks: Pin<Box<dyn Stream<Item = Result<Block>>>>,
+) -> Result<Cid> {
+    let mut root = None;
+    tokio::pin!(blocks);
+    while let Some(block) = blocks.next().await {
+        let (cid, bytes, links) = block?.into_parts();
         if let Some(ref store) = store {
             store.put(cid, bytes, links).await?;
         }
@@ -471,15 +562,10 @@ pub async fn add_file<S: Store>(store: Option<S>, path: &Path, wrap: bool) -> Re
 /// - storing the content using `rpc.store`
 /// - returns the root Cid
 /// - optionally wraps into a UnixFs directory to preserve the directory name
-pub async fn add_dir<S: Store>(
-    store: Option<S>,
-    path: &Path,
-    wrap: bool,
-    recursive: bool,
-) -> Result<Cid> {
+pub async fn add_dir<S: Store>(store: Option<S>, path: &Path, wrap: bool) -> Result<Cid> {
     ensure!(path.is_dir(), "provided path was not a directory");
 
-    let dir = make_dir_from_path(path, recursive).await?;
+    let dir = make_dir_from_path(path).await?;
     // encode and store
     let mut root = None;
     let parts = {
@@ -503,8 +589,24 @@ pub async fn add_dir<S: Store>(
     Ok(root.expect("missing root"))
 }
 
+/// Adds a symlink
+pub async fn add_symlink<S: Store>(store: Option<S>, path: &Path, wrap: bool) -> Result<Cid> {
+    ensure!(path.is_symlink(), "provided path was not a symlink");
+    let symlink = SymlinkBuilder::new(path).build().await?;
+    if wrap {
+        let dir = symlink.wrap();
+        let parts = dir.encode();
+        return add_blocks_to_store(store, parts).await;
+    }
+    let (cid, bytes, links) = symlink.encode()?.into_parts();
+    if let Some(ref store) = store {
+        store.put(cid, bytes, links).await?;
+    }
+    Ok(cid)
+}
+
 #[async_recursion(?Send)]
-async fn make_dir_from_path<P: Into<PathBuf>>(path: P, recursive: bool) -> Result<Directory> {
+async fn make_dir_from_path<P: Into<PathBuf>>(path: P) -> Result<Directory> {
     let path = path.into();
     let mut dir = DirectoryBuilder::new();
     dir.name(
@@ -512,17 +614,17 @@ async fn make_dir_from_path<P: Into<PathBuf>>(path: P, recursive: bool) -> Resul
             .and_then(|s| s.to_str())
             .unwrap_or_default(),
     );
-    if recursive {
-        dir.recursive();
-    }
     let mut directory_reader = tokio::fs::read_dir(path.clone()).await?;
     while let Some(entry) = directory_reader.next_entry().await? {
         let path = entry.path();
-        if path.is_file() {
+        if path.is_symlink() {
+            let s = SymlinkBuilder::new(path).build().await?;
+            dir.add_symlink(s);
+        } else if path.is_file() {
             let f = FileBuilder::new().path(path).build().await?;
             dir.add_file(f);
         } else if path.is_dir() {
-            let d = make_dir_from_path(path, recursive).await?;
+            let d = make_dir_from_path(path).await?;
             dir.add_dir(d)?;
         } else {
             anyhow::bail!("directory entry is neither file nor directory")
@@ -543,6 +645,7 @@ mod tests {
     use rand::prelude::*;
     use rand_chacha::ChaCha8Rng;
     use std::{collections::BTreeMap, io::prelude::*, sync::Arc};
+    use tempfile;
     use tokio::io::AsyncReadExt;
 
     #[tokio::test]
@@ -563,19 +666,18 @@ mod tests {
         };
         assert_eq!(bar_encoded.len(), 1);
 
-        // Add a file
-        let mut baz = FileBuilder::new();
-        baz.name("baz.txt").content_bytes(b"baz".to_vec());
+        // Add a symlink
+        let mut baz = SymlinkBuilder::new("baz.txt");
+        baz.target("bat.txt");
         let baz = baz.build().await?;
-        let baz_encoded: Vec<_> = {
-            let mut baz = FileBuilder::new();
-            baz.name("baz.txt").content_bytes(b"baz".to_vec());
+        let baz_encoded: Block = {
+            let mut baz = SymlinkBuilder::new("baz.txt");
+            baz.target("bat.txt");
             let baz = baz.build().await?;
-            baz.encode().await?.try_collect().await?
+            baz.encode()?
         };
-        assert_eq!(baz_encoded.len(), 1);
 
-        dir.add_file(bar).add_file(baz);
+        dir.add_file(bar).add_symlink(baz);
 
         let dir = dir.build()?;
 
@@ -586,7 +688,7 @@ mod tests {
         assert_eq!(links[0].name.unwrap(), "bar.txt");
         assert_eq!(links[0].cid, *bar_encoded[0].cid());
         assert_eq!(links[1].name.unwrap(), "baz.txt");
-        assert_eq!(links[1].cid, *baz_encoded[0].cid());
+        assert_eq!(links[1].cid, *baz_encoded.cid());
 
         // TODO: check content
         Ok(())
@@ -597,16 +699,7 @@ mod tests {
         let dir = DirectoryBuilder::new();
         let dir = dir.build()?;
 
-        let mut no_recursive = DirectoryBuilder::new();
-        if no_recursive.add_dir(dir).is_ok() {
-            panic!("shouldn't be able to add a directory to a non-recursive directory builder");
-        }
-
-        let dir = DirectoryBuilder::new();
-        let dir = dir.build()?;
-
         let mut recursive_dir_builder = DirectoryBuilder::new();
-        recursive_dir_builder.recursive();
         recursive_dir_builder
             .add_dir(dir)
             .expect("recursive directories allowed");
@@ -633,21 +726,18 @@ mod tests {
         };
         assert_eq!(bar_encoded.len(), 1);
 
-        // Add a file
-        let mut baz = FileBuilder::new();
-        let baz_reader = std::io::Cursor::new(b"bazz");
-        baz.name("baz.txt").content_reader(baz_reader);
+        // Add a symlink
+        let mut baz = SymlinkBuilder::new("baz.txt");
+        baz.target("bat.txt");
         let baz = baz.build().await?;
-        let baz_encoded: Vec<_> = {
-            let mut baz = FileBuilder::new();
-            let baz_reader = std::io::Cursor::new(b"bazz");
-            baz.name("baz.txt").content_reader(baz_reader);
+        let baz_encoded: Block = {
+            let mut baz = SymlinkBuilder::new("baz.txt");
+            baz.target("bat.txt");
             let baz = baz.build().await?;
-            baz.encode().await?.try_collect().await?
+            baz.encode()?
         };
-        assert_eq!(baz_encoded.len(), 1);
 
-        dir.add_file(bar).add_file(baz);
+        dir.add_file(bar).add_symlink(baz);
 
         let dir = dir.build()?;
 
@@ -658,7 +748,7 @@ mod tests {
         assert_eq!(links[0].name.unwrap(), "bar.txt");
         assert_eq!(links[0].cid, *bar_encoded[0].cid());
         assert_eq!(links[1].name.unwrap(), "baz.txt");
-        assert_eq!(links[1].cid, *baz_encoded[0].cid());
+        assert_eq!(links[1].cid, *baz_encoded.cid());
 
         // TODO: check content
         Ok(())
@@ -703,7 +793,6 @@ mod tests {
     #[async_recursion(?Send)]
     async fn build_directory(name: &str, dir: &TestDir) -> Result<Directory> {
         let mut builder = DirectoryBuilder::new();
-        builder.recursive();
         builder.name(name);
         for (name, entry) in dir {
             match entry {
@@ -819,6 +908,44 @@ mod tests {
             read_to_vec(out.pretty(resolver, OutMetrics::default(), ResponseClip::NoClip)?).await?;
         println!("{}", data.len());
         Ok(t == data)
+    }
+
+    /// a roundtrip test that converts a symlink to a unixfs DAG and back
+    #[tokio::test]
+    async fn symlink_roundtrip_test() -> Result<()> {
+        let mut builder = SymlinkBuilder::new("foo");
+        let target = "../../bar.txt";
+        builder.target(target);
+        let sym = builder.build().await?;
+        let block = sym.encode()?;
+        let stream = async_stream::try_stream! {
+            yield block;
+        };
+        let (root, resolver) = stream_to_resolver(stream).await?;
+        let out = resolver
+            .resolve(crate::resolver::Path::from_cid(root))
+            .await?;
+        let mut reader = out.pretty(resolver, OutMetrics::default(), ResponseClip::NoClip)?;
+        let mut t = String::new();
+        reader.read_to_string(&mut t).await?;
+        println!("{}", t);
+        assert_eq!(target, t);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn symlink_from_disk_test() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let expect_name = "path_to_symlink";
+        let expect_target = temp_dir.path().join("path_to_target");
+        let expect_path = temp_dir.path().join(expect_name);
+
+        tokio::fs::symlink(expect_target.clone(), expect_path.clone()).await?;
+
+        let got_symlink = SymlinkBuilder::new(expect_path).build().await?;
+        assert_eq!(expect_name, got_symlink.name());
+        assert_eq!(expect_target, got_symlink.target);
+        Ok(())
     }
 
     /// sync version of file_roundtrip_test for use in proptest
@@ -1035,7 +1162,7 @@ mod tests {
             entries: vec![Entry::File(file), Entry::Directory(nested_dir)],
         };
 
-        let mut got = make_dir_from_path(dir, true).await?;
+        let mut got = make_dir_from_path(dir).await?;
 
         // Before comparison sort entries to make test deterministic.
         // The readdir_r function is used in the underlying platform which
@@ -1044,6 +1171,7 @@ mod tests {
         got.entries.sort_by_key(|entry| match entry {
             Entry::Directory(dir) => dir.name.clone(),
             Entry::File(file) => file.name.clone(),
+            Entry::Symlink(sym) => sym.name().to_string(),
         });
 
         assert_eq!(expected, got);

@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use crate::{Api, IpfsPath, OutType};
+use crate::{Api, Cid, IpfsPath, OutType};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use futures::Stream;
@@ -29,6 +29,18 @@ pub trait ApiExt: Api {
         save_get_stream(&root_path, blocks).await?;
         Ok(root_path)
     }
+
+    async fn add(&self, path: &Path, wrap: bool) -> Result<Cid> {
+        if path.is_dir() {
+            self.add_dir(path, wrap).await
+        } else if path.is_symlink() {
+            self.add_symlink(path, wrap).await
+        } else if path.is_file() {
+            self.add_file(path, wrap).await
+        } else {
+            anyhow::bail!("can only add files or directories")
+        }
+    }
 }
 
 impl<T> ApiExt for T where T: Api {}
@@ -52,6 +64,12 @@ async fn save_get_stream(
                 }
                 let mut f = tokio::fs::File::create(full_path).await?;
                 tokio::io::copy(&mut reader, &mut f).await?;
+            }
+            OutType::Symlink(target) => {
+                if let Some(parent) = path.parent() {
+                    tokio::fs::create_dir_all(parent.to_path(root_path)).await?;
+                }
+                tokio::fs::symlink(target, full_path).await?;
             }
         }
     }
@@ -83,6 +101,10 @@ mod tests {
         let stream = Box::pin(futures::stream::iter(vec![
             Ok((RelativePathBuf::from_path("a").unwrap(), OutType::Dir)),
             Ok((
+                RelativePathBuf::from_path("a/c").unwrap(),
+                OutType::Symlink(PathBuf::from("../b")),
+            )),
+            Ok((
                 RelativePathBuf::from_path("b").unwrap(),
                 OutType::Reader(Box::new(std::io::Cursor::new("hello"))),
             )),
@@ -90,6 +112,11 @@ mod tests {
         let tmp_dir = TempDir::new("test_save_get_stream").unwrap();
         save_get_stream(tmp_dir.path(), stream).await.unwrap();
         assert!(tmp_dir.path().join("a").is_dir());
+        assert!(tmp_dir.path().join("a/c").is_symlink());
+        let target = tokio::fs::read_link(tmp_dir.path().join("a/c"))
+            .await
+            .expect("file to exist");
+        assert_eq!(target, PathBuf::from("../b"));
         assert_eq!(
             std::fs::read_to_string(tmp_dir.path().join("b")).unwrap(),
             "hello"

@@ -1,77 +1,67 @@
 // using globs for trycmd unfortunately leads to some issues
 // when `.in` and `.out` directories are in use. So we avoid that
 
-#[tokio::test]
-async fn lookup_test() {
+#[test]
+fn add_directory_without_r_fails_test() {
     trycmd::TestCases::new()
-        .env("IROH_CTL_FIXTURE", "lookup")
-        .case("tests/cmd/lookup.trycmd")
+        .env("IROH_CTL_FIXTURE", "add_directory")
+        .case("tests/cmd/add_directory_without_r_fails.trycmd")
         .run();
 }
 
-#[tokio::test]
-async fn get_success_cid_explicit_output_path_success_test() {
+#[test]
+fn add_directory_test() {
     trycmd::TestCases::new()
-        .env("IROH_CTL_FIXTURE", "get")
-        .case("tests/cmd/get_cid_explicit_output_path_success.trycmd")
+        .env("IROH_CTL_FIXTURE", "add_directory")
+        .case("tests/cmd/add_directory.trycmd")
         .run();
 }
 
-#[tokio::test]
-async fn get_cid_success_test() {
+#[test]
+fn add_file_missing_test() {
     trycmd::TestCases::new()
-        .env("IROH_CTL_FIXTURE", "get")
-        .case("tests/cmd/get_cid_success.trycmd")
+        .env("IROH_CTL_FIXTURE", "add_file")
+        .case("tests/cmd/add_file_missing.trycmd")
         .run();
 }
 
-#[tokio::test]
-async fn get_ipfs_path_success_test() {
+#[test]
+fn add_file_test() {
     trycmd::TestCases::new()
-        .env("IROH_CTL_FIXTURE", "get")
-        .case("tests/cmd/get_ipfs_path_success.trycmd")
+        .env("IROH_CTL_FIXTURE", "add_file")
+        .case("tests/cmd/add_file.trycmd")
         .run();
 }
 
-#[tokio::test]
-async fn get_tail_success_test() {
-    // we use the get_unwrapped_file fixture because it delivers a file
-    // which is what the test simulates
-    trycmd::TestCases::new()
-        .env("IROH_CTL_FIXTURE", "get_unwrapped_file")
-        .case("tests/cmd/get_tail_success.trycmd")
-        .run();
-}
-
-#[tokio::test]
-async fn get_cid_directory_overwrite_expicit_failure_test() {
+#[test]
+fn get_cid_directory_overwrite_explicit_failure_test() {
     trycmd::TestCases::new()
         .env("IROH_CTL_FIXTURE", "get")
         .case("tests/cmd/get_cid_directory_overwrite_explicit_failure.trycmd")
         .run();
 }
 
-#[tokio::test]
-async fn get_cid_directory_overwrite_failure_test() {
+#[test]
+fn get_cid_directory_overwrite_failure_test() {
     trycmd::TestCases::new()
         .env("IROH_CTL_FIXTURE", "get")
         .case("tests/cmd/get_cid_directory_overwrite_failure.trycmd")
         .run();
 }
 
-#[tokio::test]
-async fn get_wrapped_file_test() {
+#[test]
+fn get_cid_explicit_output_path_success_test() {
     trycmd::TestCases::new()
-        .env("IROH_CTL_FIXTURE", "get_wrapped_file")
-        .case("tests/cmd/get_wrapped_file.trycmd")
+        .env("IROH_CTL_FIXTURE", "get")
+        .case("tests/cmd/get_cid_explicit_output_path_success.trycmd")
         .run();
 }
 
-#[tokio::test]
-async fn get_unwrapped_file_test() {
+#[test]
+fn get_cid_success_test() {
     trycmd::TestCases::new()
-        .env("IROH_CTL_FIXTURE", "get_unwrapped_file")
-        .case("tests/cmd/get_unwrapped_file.trycmd")
+        .env("IROH_CTL_FIXTURE", "get")
+        .case("tests/cmd/get_cid_success.trycmd")
         .run();
 }
 
@@ -91,8 +81,64 @@ async fn get_failure_test() {
         .run();
 }
 
+#[test]
+fn get_ipfs_path_success_test() {
+    trycmd::TestCases::new()
+        .env("IROH_CTL_FIXTURE", "get")
+        .case("tests/cmd/get_ipfs_path_success.trycmd")
+        .run();
+}
+
+#[test]
+fn get_tail_success_test() {
+    trycmd::TestCases::new()
+        .env("IROH_CTL_FIXTURE", "get_unwrapped_file")
+        .case("tests/cmd/get_tail_success.trycmd")
+        .run();
+}
+
+#[test]
+fn get_unwrapped_file_test() {
+    trycmd::TestCases::new()
+        .env("IROH_CTL_FIXTURE", "get_unwrapped_file")
+        .case("tests/cmd/get_unwrapped_file.trycmd")
+        .run();
+}
+
+#[test]
+fn get_wrapped_file_test() {
+    trycmd::TestCases::new()
+        .env("IROH_CTL_FIXTURE", "get_wrapped_file")
+        .case("tests/cmd/get_wrapped_file.trycmd")
+        .run();
+}
+
 #[tokio::test]
-async fn version_cli_test() {
+async fn get_unwrapped_symlink_test() {
+    trycmd::TestCases::new()
+        .env("IROH_CTL_FIXTURE", "get_unwrapped_symlink")
+        .case("tests/cmd/get_unwrapped_symlink.trycmd")
+        .run();
+}
+
+#[tokio::test]
+async fn get_wrapped_symlink_test() {
+    trycmd::TestCases::new()
+        .env("IROH_CTL_FIXTURE", "get_wrapped_symlink")
+        .case("tests/cmd/get_wrapped_symlink.trycmd")
+        .run();
+}
+
+#[test]
+fn lookup_test() {
+    trycmd::TestCases::new()
+        .env("IROH_CTL_FIXTURE", "lookup")
+        .case("tests/cmd/lookup.trycmd")
+        .run();
+}
+
+#[test]
+fn version_test() {
     trycmd::TestCases::new()
         .case("tests/cmd/version.trycmd")
         .run();
