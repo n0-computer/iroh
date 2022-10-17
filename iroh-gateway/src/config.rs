@@ -102,8 +102,6 @@ fn default_headers() -> HeaderMap {
         .into_iter()
         .collect::<AccessControlAllowHeaders>(),
     );
-    // todo(arqu): remove these once propperly implmented
-    headers.insert(ACCEPT_RANGES, VALUE_NONE.clone());
     headers
 }
 
@@ -182,7 +180,7 @@ mod tests {
     #[test]
     fn test_default_headers() {
         let headers = default_headers();
-        assert_eq!(headers.len(), 4);
+        assert_eq!(headers.len(), 3);
         let h = headers.get(&ACCESS_CONTROL_ALLOW_ORIGIN).unwrap();
         assert_eq!(h, "*");
     }
@@ -242,7 +240,6 @@ mod tests {
                 "if-none-match, accept, cache-control, range, service-worker",
             ),
         );
-        expect.insert("accept-ranges".to_string(), Value::new(None, "none"));
         let got = collect_headers(&default_headers()).unwrap();
         assert_eq!(expect, got);
     }
