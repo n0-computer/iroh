@@ -73,11 +73,25 @@ fn default_blob_opts() -> Options {
     opts
 }
 
+/// The key used in CF_ID_V0
+///
+/// The multihash followed by the be encoded code. This allows both looking up an id by multihash and code (aka Cid),
+/// and looking up all codes and ids for a multihash, for the rare case that there are mulitple cids with the same
+/// multihash but different codes.
 fn id_key(cid: &Cid) -> SmallVec<[u8; 64]> {
     let mut key = SmallVec::new();
     cid.hash().write(&mut key).unwrap();
     key.extend_from_slice(&cid.codec().to_be_bytes());
     key
+}
+
+/// Struct used to iterate over all the ids for a multihash
+struct CodeAndId {
+    // the ipld code of the id
+    #[allow(dead_code)]
+    code: u64,
+    // the id for the cid, used in most other column families
+    id: u64,
 }
 
 impl Store {
@@ -234,7 +248,7 @@ impl Store {
             .cf_handle(CF_BLOBS_V0)
             .ok_or_else(|| anyhow!("missing column family: blobs"))?;
         for elem in self.get_ids_for_hash(hash)? {
-            let (_code, id) = elem?;
+            let id = elem?.id;
             let id_bytes = id.to_be_bytes();
             if let Some(blob) = self.inner.content.get_pinned_cf(&cf_blobs, &id_bytes)? {
                 return Ok(Some(blob));
@@ -251,7 +265,7 @@ impl Store {
             .cf_handle(CF_BLOBS_V0)
             .ok_or_else(|| anyhow!("missing column family: blobs"))?;
         for elem in self.get_ids_for_hash(hash)? {
-            let (_code, id) = elem?;
+            let id = elem?.id;
             let id_bytes = id.to_be_bytes();
             if let Some(_blob) = self.inner.content.get_pinned_cf(&cf_blobs, &id_bytes)? {
                 return Ok(true);
@@ -337,7 +351,7 @@ impl Store {
     fn get_ids_for_hash(
         &self,
         hash: &Multihash,
-    ) -> Result<impl Iterator<Item = Result<(u64, u64)>> + '_> {
+    ) -> Result<impl Iterator<Item = Result<CodeAndId>> + '_> {
         let hash = hash.to_bytes();
         let cf_id = self
             .inner
@@ -362,7 +376,7 @@ impl Store {
                 let (k, v) = elem?;
                 let code = u64::from_be_bytes(k[hash_len..].try_into()?);
                 let id = u64::from_be_bytes(v[..8].try_into()?);
-                Ok((code, id))
+                Ok(CodeAndId { code, id })
             }))
     }
 
@@ -643,6 +657,39 @@ mod tests {
 
         let ids = store.get_ids_for_hash(&hash)?;
         assert_eq!(ids.count(), 2);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_blob_by_hash() -> anyhow::Result<()> {
+        let link1 = Cid::from_str("bafybeib4tddkl4oalrhe7q66rrz5dcpz4qwv5lmpstuqrls3djikw566y4")?;
+        let link2 = Cid::from_str("QmcBphfXUFUNLcfAm31WEqYjrjEh19G5x4iAQANSK151DD")?;
+        // some data with links
+        let data = libipld::ipld!({
+            "link1": link1,
+            "link2": link2,
+        });
+        let mut expected = Vec::new();
+        data.encode(IpldCodec::DagCbor, &mut expected)?;
+        let hash = Code::Sha2_256.digest(&expected);
+        let raw_cid = Cid::new_v1(IpldCodec::Raw.into(), hash);
+        let cbor_cid = Cid::new_v1(IpldCodec::DagCbor.into(), hash);
+
+        let (store, _dir) = test_store().await?;
+        // we don't have it yet
+        assert!(!store.has_blob_for_hash(&hash).await?);
+        let actual = store.get_blob_by_hash(&hash).await?.map(|x| x.to_vec());
+        assert_eq!(actual, None);
+
+        store.put(raw_cid, &expected, vec![]).await?;
+        assert!(store.has_blob_for_hash(&hash).await?);
+        let actual = store.get_blob_by_hash(&hash).await?.map(|x| x.to_vec());
+        assert_eq!(actual, Some(expected.clone()));
+
+        store.put(cbor_cid, &expected, vec![link1, link2]).await?;
+        assert!(store.has_blob_for_hash(&hash).await?);
+        let actual = store.get_blob_by_hash(&hash).await?.map(|x| x.to_vec());
+        assert_eq!(actual, Some(expected));
         Ok(())
     }
 }
