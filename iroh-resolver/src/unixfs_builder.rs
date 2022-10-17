@@ -13,6 +13,7 @@ use futures::{stream::LocalBoxStream, Stream, StreamExt};
 use iroh_rpc_client::Client;
 use prost::Message;
 use tokio::io::AsyncRead;
+use tokio::sync::mpsc;
 
 use crate::{
     balanced_tree::{TreeBuilder, DEFAULT_DEGREE},
@@ -558,16 +559,26 @@ pub async fn add_blocks_to_store<S: Store>(
     Ok(root.expect("missing root"))
 }
 
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct FileInfo {
+    pub path: PathBuf,
+    pub size: u64,
+}
+
 /// Adds a directory.
 /// - storing the content using `rpc.store`
 /// - returns the root Cid
 /// - optionally wraps into a UnixFs directory to preserve the directory name
-pub async fn add_dir<S: Store>(store: Option<S>, path: &Path, wrap: bool) -> Result<Cid> {
+pub async fn add_dir<S: Store>(
+    store: Option<S>,
+    path: &Path,
+    wrap: bool,
+    file_info_tx: mpsc::Sender<FileInfo>,
+) -> Result<Cid> {
     ensure!(path.is_dir(), "provided path was not a directory");
 
     let dir = make_dir_from_path(path).await?;
     // encode and store
-    let mut root = None;
     let parts = {
         if wrap {
             // wrap dir in dir to preserve file name
@@ -576,12 +587,24 @@ pub async fn add_dir<S: Store>(store: Option<S>, path: &Path, wrap: bool) -> Res
             dir.encode()
         }
     };
+
     tokio::pin!(parts);
 
+    let mut root = None;
     while let Some(part) = parts.next().await {
-        let (cid, bytes, links) = part?.into_parts();
+        let block = part?;
+        let raw_data_size = block.raw_data_size();
+        let (cid, bytes, links) = block.into_parts();
         if let Some(ref store) = store {
             store.put(cid, bytes, links).await?;
+        }
+        if let Some(raw_data_size) = raw_data_size {
+            file_info_tx
+                .send(FileInfo {
+                    path: path.to_path_buf(), // TODO this is wrong
+                    size: raw_data_size,
+                })
+                .await?;
         }
         root = Some(cid);
     }
