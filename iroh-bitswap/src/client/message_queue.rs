@@ -727,11 +727,7 @@ impl MessageQueueActor {
 
     /// Signal the event loop that there is new work.
     fn signal_work(&self) {
-        if let Err(err) = self.outgoing_work.0.try_send(Instant::now()) {
-            warn!(
-                "message_queue:{}: unable to send outgoing work: {:?}",
-                self.peer, err
-            );
-        }
+        // Ignore error, we only want to make sure the loop is aware that there is work to be done.
+        let _ = self.outgoing_work.0.try_send(Instant::now());
     }
 }

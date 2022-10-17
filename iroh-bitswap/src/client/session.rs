@@ -420,7 +420,11 @@ impl LoopState {
     /// all peers in the session have sent DONT_HAVE for a particular set of CIDs.
     /// Send want-haves to all connected peers, and search for new peers with the CID.
     async fn broadcast(&mut self, wants: Option<AHashSet<Cid>>) {
-        debug!("broadcast: {:?}", wants.as_ref().map(|w| w.len()));
+        debug!(
+            "sesion:{}: broadcast: {:?}",
+            self.id,
+            wants.as_ref().map(|w| w.len())
+        );
         // If this broadcast is because of an idle timeout (we haven't received
         // any blocks for a while) then broadcast all pending wants.
         let wants = wants.unwrap_or_else(|| self.session_wants.prepare_broadcast());
@@ -448,7 +452,7 @@ impl LoopState {
 
     /// Called periodically to search for providers of a randomly chosen CID in the sesssion.
     async fn handle_periodic_search(&mut self) {
-        debug!("periodic search");
+        debug!("session:{}: periodic search", self.id);
         if let Some(random_want) = self.session_wants.random_live_want() {
             // TODO: come up with a better strategy for determining when to search
             // for new providers for blocks.
@@ -460,7 +464,7 @@ impl LoopState {
 
     /// Attempts to find more peers for a session by searching for providers for the given cid.
     async fn find_more_peers(&mut self, cid: &Cid) {
-        debug!("find_more_peers {}", cid);
+        debug!("session:{}: find_more_peers {}", self.id, cid);
         let incoming_sender = self.incoming.clone();
         let cid = *cid;
         let provider_query_manager = self.provider_query_manager.clone();
@@ -522,7 +526,8 @@ impl LoopState {
     /// Called when the session receives blocks from a peer.
     async fn handle_receive(&mut self, keys: Vec<Cid>) {
         debug!(
-            "received keys: {:?}",
+            "session:{}: received keys: {:?}",
+            self.id,
             keys.iter().map(|k| k.to_string()).collect::<Vec<String>>()
         );
         // Record which blocks have been received and figure out the total latency
@@ -577,7 +582,8 @@ impl LoopState {
         // No peers discovered yet, broadcast some want-haves
         let keys = self.session_wants.get_next_wants();
         debug!(
-            "initial broadcast, as no peers discovered yet {}",
+            "session:{}: initial broadcast, as no peers discovered yet {}",
+            self.id,
             keys.len()
         );
 
@@ -589,7 +595,8 @@ impl LoopState {
     // Send want-haves to all connected peers
     async fn broadcast_want_haves(&self, wants: &AHashSet<Cid>) {
         debug!(
-            "broadcasting wants: {:?}",
+            "session:{}: broadcasting wants: {:?}",
+            self.id,
             wants.iter().map(|w| w.to_string()).collect::<Vec<_>>()
         );
         self.peer_manager.broadcast_want_haves(wants).await;
@@ -612,6 +619,7 @@ impl LoopState {
             tick_delay.as_secs_f64() * (1. + self.consecutive_ticks as f64),
         );
 
+        debug!("session:{}: reset_idle_tick {:?}", self.id, tick_delay);
         self.idle_tick.as_mut().reset(Instant::now() + tick_delay);
     }
 }
