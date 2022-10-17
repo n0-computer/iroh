@@ -6,7 +6,7 @@ use cid::Cid;
 use iroh_p2p::{config, Keychain, MemoryStorage, NetworkEvent, Node};
 use iroh_resolver::{
     parse_links,
-    resolver::{ContentLoader, LoadedCid, LoaderContext, Resolver, Source, IROH_STORE},
+    resolver::{ContentLoader, ContextId, LoadedCid, LoaderContext, Resolver, Source, IROH_STORE},
 };
 use iroh_rpc_client::Client;
 use iroh_rpc_types::Addr;
@@ -112,6 +112,14 @@ impl ContentLoader for Loader {
             data: bytes,
             source: Source::Bitswap,
         })
+    }
+
+    async fn stop_session(&self, ctx: ContextId) -> Result<()> {
+        self.client
+            .try_p2p()?
+            .stop_session_bitswap(ctx.into())
+            .await?;
+        Ok(())
     }
 
     async fn has_cid(&self, cid: &Cid) -> Result<bool> {

@@ -3,7 +3,6 @@ use std::collections::{HashMap, HashSet};
 use anyhow::{ensure, Context, Result};
 use bytes::Bytes;
 use cid::Cid;
-#[cfg(feature = "grpc")]
 use futures::{Stream, StreamExt};
 #[cfg(feature = "grpc")]
 use iroh_rpc_types::p2p::p2p_client::P2pClient as GrpcP2pClient;
