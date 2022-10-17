@@ -6,8 +6,8 @@ use tokio::fs;
 
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct FileInfo {
-    path: PathBuf,
-    size: u64,
+    pub path: PathBuf,
+    pub size: u64,
 }
 
 pub fn size_stream(path: &Path) -> impl Stream<Item = FileInfo> + '_ {

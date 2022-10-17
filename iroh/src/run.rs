@@ -7,7 +7,9 @@ use crate::fixture::get_fixture_api;
 use crate::p2p::{run_command as run_p2p_command, P2p};
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use iroh_api::{Api, ApiExt, IpfsPath, Iroh};
+use futures::stream::StreamExt;
+use indicatif::ProgressBar;
+use iroh_api::{size_stream, Api, ApiExt, IpfsPath, Iroh};
 use iroh_metrics::config::Config as MetricsConfig;
 
 #[derive(Parser, Debug, Clone)]
@@ -118,6 +120,19 @@ impl Cli {
                         path.display()
                     );
                 }
+                let pb = ProgressBar::new_spinner();
+                pb.set_message("Calculating size...");
+                let mut total_size: u64 = 0;
+                let mut stream = Box::pin(size_stream(path));
+                while let Some(size_info) = stream.next().await {
+                    total_size += size_info.size;
+                    pb.inc(1);
+                    // std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                pb.finish_with_message(format!(
+                    "Total size: {}",
+                    indicatif::HumanBytes(total_size)
+                ));
                 let cid = api.add(path, !(*no_wrap)).await?;
                 println!("/ipfs/{}", cid);
             }

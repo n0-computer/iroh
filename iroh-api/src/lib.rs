@@ -18,3 +18,6 @@ pub use iroh_resolver::resolver::Path as IpfsPath;
 pub use iroh_rpc_client::{ServiceStatus, StatusRow, StatusTable};
 pub use libp2p::gossipsub::MessageId;
 pub use libp2p::{Multiaddr, PeerId};
+// TODO(faassen) we don't want to expose this but perhaps move it, or
+// instead use it to also construct a Directory
+pub use crate::size::size_stream;
