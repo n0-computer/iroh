@@ -127,6 +127,7 @@ impl Session {
                                 loop_state.want_blocks(keys).await;
                             },
                             Ok(Op::Cancel(keys)) => {
+                                record!(BitswapMetrics::CancelBlocks, keys.len() as u64);
                                 loop_state.session_wants.cancel_pending(&keys);
                                 loop_state.session_want_sender.cancel(keys).await;
                             }
