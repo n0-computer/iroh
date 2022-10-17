@@ -10,8 +10,10 @@ use libp2p::core::{InboundUpgrade, OutboundUpgrade, ProtocolName, UpgradeInfo};
 use prost::Message;
 use unsigned_varint::codec;
 
-use crate::handler::{BitswapHandlerError, HandlerEvent};
-use crate::BitswapMessage;
+use crate::{
+    handler::{BitswapHandlerError, HandlerEvent},
+    message::BitswapMessage,
+};
 
 const MAX_BUF_SIZE: usize = 1024 * 1024 * 2;
 

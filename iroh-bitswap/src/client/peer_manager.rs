@@ -799,7 +799,7 @@ mod tests {
 
         // broadcast 2
         peer_manager
-            .broadcast_want_haves(&cids[..2].into_iter().copied().collect::<AHashSet<_>>())
+            .broadcast_want_haves(&cids[..2].iter().copied().collect::<AHashSet<_>>())
             .await;
 
         peer_manager.connected(&peer1).await;

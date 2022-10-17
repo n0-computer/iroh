@@ -671,8 +671,8 @@ fn load_next_node<T: ContentLoader + 'static>(
     let link = links.pop_front().unwrap();
 
     let fut = async move {
-        let mut ctx = ctx.lock().await;
-        let loaded_cid = loader.loader().load_cid(&link.cid, &mut ctx).await?;
+        let ctx = ctx.lock().await;
+        let loaded_cid = loader.loader().load_cid(&link.cid, &ctx).await?;
         let node = UnixfsNode::decode(&link.cid, loaded_cid.data)?;
 
         Ok(node)

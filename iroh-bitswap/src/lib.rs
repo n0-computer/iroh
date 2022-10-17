@@ -23,30 +23,31 @@ use libp2p::swarm::{
     NotifyHandler, PollParameters,
 };
 use libp2p::{Multiaddr, PeerId};
-use message::BitswapMessage;
-use network::OutEvent;
-use protocol::{ProtocolConfig, ProtocolId};
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 use tracing::{debug, trace, warn};
 
 use self::client::{Client, Config as ClientConfig};
+use self::message::BitswapMessage;
 use self::network::Network;
+use self::network::OutEvent;
+use self::protocol::ProtocolConfig;
 use self::server::{Config as ServerConfig, Server};
 
 mod block;
 mod client;
 mod error;
 mod handler;
-mod message;
 mod network;
 mod prefix;
 mod protocol;
 mod server;
 
+pub mod message;
 pub mod peer_task_queue;
-pub use self::block::Block;
-pub use self::message::Priority;
+
+pub use self::block::{tests::*, Block};
+pub use self::protocol::ProtocolId;
 
 const DIAL_BACK_OFF: Duration = Duration::from_secs(10 * 60);
 
@@ -647,7 +648,6 @@ mod tests {
     use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
     use super::*;
-    use crate::block::tests::*;
     use crate::Block;
 
     fn assert_send<T: Send + Sync>() {}
@@ -804,9 +804,8 @@ mod tests {
             }
 
             loop {
-                match swarm1.next().await {
-                    ev => trace!("peer1: {:?}", ev),
-                }
+                let ev = swarm1.next().await;
+                trace!("peer1: {:?}", ev);
             }
         });
 

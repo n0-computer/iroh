@@ -1,5 +1,4 @@
-/// A content loader implementation for iroh-one.
-use std::collections::HashSet;
+//! A content loader implementation for iroh-one.
 
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;

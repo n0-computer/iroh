@@ -1,4 +1,4 @@
-use std::collections::{HashSet, VecDeque};
+use std::collections::VecDeque;
 use std::fmt::{self, Debug, Display, Formatter};
 use std::pin::Pin;
 use std::str::FromStr;
@@ -10,7 +10,6 @@ use std::time::Instant;
 use anyhow::{anyhow, bail, ensure, Context as _, Result};
 use async_trait::async_trait;
 use bytes::Bytes;
-use caches::Cache;
 use cid::multihash::{Code, MultihashDigest};
 use cid::Cid;
 use futures::{Future, Stream};
@@ -20,7 +19,6 @@ use libipld::codec::{Decode, Encode};
 use libipld::error::{InvalidMultihash, UnsupportedMultihash};
 use libipld::prelude::Codec as _;
 use libipld::{Ipld, IpldCodec};
-use libp2p::PeerId;
 use tokio::io::{AsyncRead, AsyncSeek};
 use tokio::sync::{mpsc, oneshot, Mutex};
 use tokio::task::JoinHandle;
@@ -644,7 +642,6 @@ pub enum Source {
 #[derive(Debug, Clone)]
 pub struct Resolver<T: ContentLoader> {
     loader: T,
-    provider_cache: ProviderCache,
     next_id: Arc<AtomicU64>,
     worker: Option<Arc<(oneshot::Sender<()>, JoinHandle<()>)>>,
     session_closer: mpsc::Sender<ContextId>,
@@ -666,6 +663,20 @@ impl<T: ContentLoader> Drop for Resolver<T> {
 pub struct LoaderContext {
     id: ContextId,
     inner: Arc<Mutex<InnerLoaderContext>>,
+}
+
+impl LoaderContext {
+    pub fn from_path(id: ContextId, closer: mpsc::Sender<ContextId>, path: Path) -> Self {
+        trace!("new loader context: {:?}", id);
+        LoaderContext {
+            id,
+            inner: Arc::new(Mutex::new(InnerLoaderContext { path, closer })),
+        }
+    }
+
+    pub fn id(&self) -> ContextId {
+        self.id
+    }
 }
 
 impl Drop for LoaderContext {
@@ -710,139 +721,9 @@ impl From<ContextId> for u64 {
 
 #[derive(Debug)]
 struct InnerLoaderContext {
-    provider_cache: ProviderCache,
-    providers: HashSet<PeerId>,
+    #[allow(dead_code)]
     path: Path,
     closer: mpsc::Sender<ContextId>,
-}
-
-#[derive(Debug, Clone)]
-pub struct ProviderCache {
-    providers: Arc<Mutex<caches::RawLRU<Cid, HashSet<PeerId>>>>,
-}
-
-impl ProviderCache {
-    pub fn new(cap: usize) -> Self {
-        ProviderCache {
-            providers: Arc::new(Mutex::new(caches::RawLRU::new(cap).unwrap())),
-        }
-    }
-
-    pub async fn get(&self, cid: &Cid) -> Option<HashSet<PeerId>> {
-        let mut cache = self.providers.lock().await;
-        match cache.get(cid) {
-            Some(providers) => {
-                if providers.is_empty() {
-                    cache.remove(cid);
-                    return None;
-                }
-                Some(providers.clone())
-            }
-            None => None,
-        }
-    }
-
-    pub async fn put(&self, cid: Cid, providers: HashSet<PeerId>) {
-        let mut cache = self.providers.lock().await;
-        match cache.peek_mut_or_put(cid, providers.clone()) {
-            (Some(old_providers), _) => {
-                // extend existing providers list
-                old_providers.extend(providers);
-            }
-            (None, _) => {
-                // Nothing to do
-            }
-        }
-    }
-}
-
-async fn fetch_providers(
-    ctx: ContextId,
-    client: &Client,
-    cid: &Cid,
-) -> Result<impl Stream<Item = Result<HashSet<PeerId>>>> {
-    let p2p = client.try_p2p()?;
-
-    let a = p2p.fetch_providers_dht(cid).await?;
-    // let b = p2p.fetch_providers_bitswap(ctx.into(), cid).await?;
-
-    Ok(a)
-    // Ok(futures::stream::select(a, b))
-}
-
-impl InnerLoaderContext {
-    pub fn root(&self) -> Option<Cid> {
-        if let CidOrDomain::Cid(root) = self.path.root() {
-            Some(*root)
-        } else {
-            None
-        }
-    }
-}
-
-impl LoaderContext {
-    pub fn from_path(
-        id: ContextId,
-        closer: mpsc::Sender<ContextId>,
-        provider_cache: ProviderCache,
-        path: Path,
-    ) -> Self {
-        trace!("new loader context: {:?}", id);
-        LoaderContext {
-            id,
-            inner: Arc::new(Mutex::new(InnerLoaderContext {
-                provider_cache,
-                providers: Default::default(),
-                path,
-                closer,
-            })),
-        }
-    }
-
-    pub fn id(&self) -> ContextId {
-        self.id
-    }
-
-    pub async fn providers(&self) -> HashSet<PeerId> {
-        self.inner.lock().await.providers.clone()
-    }
-
-    pub async fn load_providers(
-        &self,
-        client: &Client,
-        cid: &Cid,
-    ) -> Result<impl Stream<Item = Result<HashSet<PeerId>>>> {
-        let this = &mut *self.inner.lock().await;
-        // Check caches
-        if let Some(provs) = this.provider_cache.get(cid).await {
-            this.providers.extend(provs);
-        }
-        if let Some(ref root) = this.root() {
-            if let Some(provs) = this.provider_cache.get(root).await {
-                this.providers.extend(provs);
-            }
-        }
-
-        let mut streams = vec![];
-        streams.push(fetch_providers(self.id, client, cid).await?);
-
-        if this.providers.len() < 5 {
-            if let Some(ref root) = this.root() {
-                // only load if the root is actually different from the current cid
-                if root != cid {
-                    streams.push(fetch_providers(self.id, client, root).await?);
-                }
-            }
-        }
-
-        Ok(futures::stream::select_all(streams))
-    }
-
-    async fn put_providers(&self, cid: Cid, providers: HashSet<PeerId>) {
-        let this = &mut self.inner.lock().await;
-        this.provider_cache.put(cid, providers.clone()).await;
-        this.providers.extend(providers);
-    }
 }
 
 #[async_trait]
@@ -967,10 +848,14 @@ impl<T: ContentLoader> Resolver<T> {
                     session = session_closer_r.recv() => {
                         match session {
                             Some(session) => {
-                                debug!("stopping session {}", session);
-                                if let Err(err) = loader_thread.stop_session(session).await {
-                                    warn!("failed to stop session {}: {:?}", session, err);
-                                }
+                                let loader = loader_thread.clone();
+                                // Spawn to make sure the channel has always capacity.
+                                tokio::task::spawn(async move {
+                                    debug!("stopping session {}", session);
+                                    if let Err(err) = loader.stop_session(session).await {
+                                        warn!("failed to stop session {}: {:?}", session, err);
+                                    }
+                                });
                             }
                             None => {
                                 warn!("session_closer channel broke");
@@ -986,7 +871,6 @@ impl<T: ContentLoader> Resolver<T> {
         });
 
         Resolver {
-            provider_cache: ProviderCache::new(1024),
             loader,
             next_id: Arc::new(AtomicU64::new(0)),
             worker: Some(Arc::new((closer_s, worker))),
@@ -1001,10 +885,6 @@ impl<T: ContentLoader> Resolver<T> {
 
     pub fn loader(&self) -> &T {
         &self.loader
-    }
-
-    pub fn provider_cache(&self) -> &ProviderCache {
-        &self.provider_cache
     }
 
     #[tracing::instrument(skip(self))]
@@ -1089,12 +969,8 @@ impl<T: ContentLoader> Resolver<T> {
         M: Fn(Cid, LoaderContext) -> F + Clone,
         F: Future<Output = Result<O>> + Send + 'static,
     {
-        let mut ctx = LoaderContext::from_path(
-            self.next_id(),
-            self.session_closer.clone(),
-            self.provider_cache.clone(),
-            root.clone(),
-        );
+        let mut ctx =
+            LoaderContext::from_path(self.next_id(), self.session_closer.clone(), root.clone());
 
         let mut cids = VecDeque::new();
         let this = self.clone();
@@ -1143,12 +1019,8 @@ impl<T: ContentLoader> Resolver<T> {
     /// Resolves through a given path, returning the [`Cid`] and raw bytes of the final leaf.
     #[tracing::instrument(skip(self))]
     pub async fn resolve(&self, path: Path) -> Result<Out> {
-        let ctx = LoaderContext::from_path(
-            self.next_id(),
-            self.session_closer.clone(),
-            self.provider_cache.clone(),
-            path.clone(),
-        );
+        let ctx =
+            LoaderContext::from_path(self.next_id(), self.session_closer.clone(), path.clone());
 
         self.resolve_with_ctx(ctx, path).await
     }

@@ -242,7 +242,7 @@ impl Store {
 
     #[tracing::instrument(skip(self))]
     pub async fn get_size(&self, cid: &Cid) -> Result<Option<usize>> {
-        let res = match self.get_id(cid).await? {
+        match self.get_id(cid).await? {
             Some(id) => {
                 inc!(StoreMetrics::StoreHit);
                 let maybe_size = self.get_size_by_id(id).await?;
@@ -252,8 +252,7 @@ impl Store {
                 inc!(StoreMetrics::StoreMiss);
                 Ok(None)
             }
-        };
-        res
+        }
     }
 
     #[tracing::instrument(skip(self))]

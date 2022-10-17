@@ -3,7 +3,10 @@ use std::time::Instant;
 use ahash::{AHashMap, AHashSet};
 use cid::Cid;
 
-use crate::{client::wantlist::Wantlist, message::WantType, Priority};
+use crate::{
+    client::wantlist::Wantlist,
+    message::{Priority, WantType},
+};
 
 #[derive(Debug, Clone)]
 pub struct Wants {

@@ -23,9 +23,9 @@ use tracing::{debug, error, trace, warn};
 
 use crate::{
     error::Error,
+    message::BitswapMessage,
     network,
     protocol::{BitswapCodec, ProtocolConfig, ProtocolId},
-    BitswapMessage,
 };
 
 /// The initial time (in seconds) we set the keep alive for protocol negotiations to occur.
