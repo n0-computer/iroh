@@ -120,10 +120,12 @@ impl IntoResponse for GatewayResponse {
             }
         }
         let mut rb = Response::builder().status(self.status_code);
-        self.headers.insert(
-            &HEADER_X_TRACE_ID,
-            HeaderValue::from_str(&self.trace_id).unwrap(),
-        );
+        if !self.trace_id.is_empty() && self.trace_id != "00000000000000000000000000000000" {
+            self.headers.insert(
+                &HEADER_X_TRACE_ID,
+                HeaderValue::from_str(&self.trace_id).unwrap(),
+            );
+        }
         let rh = rb.headers_mut().unwrap();
         rh.extend(self.headers);
         rb.body(self.body).unwrap()

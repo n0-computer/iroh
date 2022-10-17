@@ -33,10 +33,14 @@ impl GatewayError {
 impl IntoResponse for GatewayError {
     fn into_response(self) -> Response {
         let mut headers = HeaderMap::new();
-        headers.insert(
-            &HEADER_X_TRACE_ID,
-            HeaderValue::from_str(&self.trace_id).unwrap(),
-        );
+        let has_trace_id =
+            !self.trace_id.is_empty() && self.trace_id != "00000000000000000000000000000000";
+        if has_trace_id {
+            headers.insert(
+                &HEADER_X_TRACE_ID,
+                HeaderValue::from_str(&self.trace_id).unwrap(),
+            );
+        }
         match self.method {
             Some(http::Method::HEAD) => {
                 let mut rb = Response::builder().status(self.status_code);
@@ -45,12 +49,19 @@ impl IntoResponse for GatewayError {
                 rb.body(BoxBody::default()).unwrap()
             }
             _ => {
-                let body = axum::Json(json!({
-                    "code": self.status_code.as_u16(),
-                    "success": false,
-                    "message": self.message,
-                    "trace_id": self.trace_id,
-                }));
+                let body = match has_trace_id {
+                    true => axum::Json(json!({
+                        "code": self.status_code.as_u16(),
+                        "success": false,
+                        "message": self.message,
+                        "trace_id": self.trace_id,
+                    })),
+                    false => axum::Json(json!({
+                        "code": self.status_code.as_u16(),
+                        "success": false,
+                        "message": self.message,
+                    })),
+                };
                 let mut res = body.into_response();
                 res.headers_mut().extend(headers);
                 let status = res.status_mut();
