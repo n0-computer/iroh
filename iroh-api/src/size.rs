@@ -4,7 +4,7 @@ use async_stream::stream;
 use futures::stream::Stream;
 use tokio::fs;
 
-#[derive(Debug, Default, PartialEq)]
+#[derive(Debug, Default, PartialEq, Eq)]
 pub struct FileInfo {
     path: PathBuf,
     size: u64,
