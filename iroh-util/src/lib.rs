@@ -16,6 +16,7 @@ use cid::{
 use config::{Config, ConfigError, Environment, File, Map, Source, Value, ValueKind};
 use tracing::debug;
 
+pub mod human;
 pub mod lock;
 
 /// name of directory that wraps all iroh files in a given application directory

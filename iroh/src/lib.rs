@@ -1,3 +1,4 @@
+pub mod doc;
 #[cfg(feature = "testing")]
 mod fixture;
 pub mod metrics;

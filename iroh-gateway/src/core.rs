@@ -40,8 +40,14 @@ impl<T: ContentLoader + std::marker::Unpin> Core<T> {
             }
         });
         let mut templates = HashMap::new();
-        templates.insert("dir_list".to_string(), templates::DIR_LIST.to_string());
-        templates.insert("not_found".to_string(), templates::NOT_FOUND.to_string());
+        templates.insert(
+            "dir_list".to_string(),
+            templates::DIR_LIST_TEMPLATE.to_string(),
+        );
+        templates.insert(
+            "not_found".to_string(),
+            templates::NOT_FOUND_TEMPLATE.to_string(),
+        );
         let client = Client::<T>::new(&content_loader);
 
         Ok(Self {
@@ -72,8 +78,14 @@ impl<T: ContentLoader + std::marker::Unpin> Core<T> {
         content_loader: T,
     ) -> anyhow::Result<Arc<State<T>>> {
         let mut templates = HashMap::new();
-        templates.insert("dir_list".to_string(), templates::DIR_LIST.to_string());
-        templates.insert("not_found".to_string(), templates::NOT_FOUND.to_string());
+        templates.insert(
+            "dir_list".to_string(),
+            templates::DIR_LIST_TEMPLATE.to_string(),
+        );
+        templates.insert(
+            "not_found".to_string(),
+            templates::NOT_FOUND_TEMPLATE.to_string(),
+        );
         let client = Client::new(&content_loader);
         Ok(Arc::new(State {
             config,
@@ -151,9 +163,6 @@ mod tests {
     #[tokio::test]
     async fn gateway_health() {
         let mut config = Config::new(
-            false,
-            false,
-            false,
             0,
             RpcClientConfig {
                 gateway_addr: None,
@@ -185,9 +194,6 @@ mod tests {
     async fn fetch_car_recursive() {
         let (store_client_addr, store_task) = spawn_store().await;
         let mut config = Config::new(
-            false,
-            false,
-            false,
             0,
             RpcClientConfig {
                 gateway_addr: None,

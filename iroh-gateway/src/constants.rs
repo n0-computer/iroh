@@ -9,12 +9,11 @@ pub static HEADER_X_IPFS_GATEWAY_PREFIX: HeaderName =
     HeaderName::from_static("x-ipfs-gateway-prefix");
 pub static HEADER_X_IPFS_ROOTS: HeaderName = HeaderName::from_static("x-ipfs-roots");
 pub static HEADER_SERVICE_WORKER: HeaderName = HeaderName::from_static("service-worker");
+pub static HEADER_CACHE_CONTROL: HeaderName = HeaderName::from_static("cache-control");
 
 // Common Header Values
 pub static VALUE_XCTO_NOSNIFF: HeaderValue = HeaderValue::from_static("nosniff");
 pub static VALUE_NONE: HeaderValue = HeaderValue::from_static("none");
-pub static VALUE_NO_CACHE_NO_TRANSFORM: HeaderValue =
-    HeaderValue::from_static("no-cache, no-transform");
 pub static VAL_IMMUTABLE_MAX_AGE: HeaderValue =
     HeaderValue::from_static("public, max-age=31536000, immutable");
 

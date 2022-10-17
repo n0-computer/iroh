@@ -11,6 +11,7 @@ version = "0.1.0"
 anyhow = "1"
 async-trait = "0.1.56"
 axum = "0.5.1"
+bytes = "1.1"
 cid = "0.8"
 clap = {version = "4.0.9", features = ["derive"]}
 config = "0.13.1"
@@ -26,6 +27,7 @@ iroh-rpc-client = {path = "../iroh-rpc-client", default-features = false}
 iroh-rpc-types = {path = "../iroh-rpc-types", default-features = false}
 iroh-store = {path = "../iroh-store", default-features = false, features = ["rpc-mem"]}
 iroh-util = {path = "../iroh-util"}
+reqwest = {version = "0.11", features = ["rustls-tls"], default-features = false}
 serde = {version = "1.0", features = ["derive"]}
 tempdir = "0.3.7"
 tokio = {version = "1", features = ["macros", "rt-multi-thread", "process"]}

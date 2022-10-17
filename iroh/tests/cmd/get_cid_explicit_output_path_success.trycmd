@@ -1,0 +1,8 @@
+
+We can get a CID and define an explicit output path:
+
+```
+$ iroh get QmP8jTG1m9GSDJLCbeWhVSVgEzCPPwXRdCRuJtQ5Tz9Kc9 explicit
+Saving file(s) to explicit
+
+```

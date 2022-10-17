@@ -15,7 +15,8 @@ use iroh_metrics::{
 };
 use iroh_rpc_client::Client as RpcClient;
 use rocksdb::{
-    BlockBasedOptions, Cache, DBPinnableSlice, IteratorMode, Options, WriteBatch, DB as RocksDb,
+    BlockBasedOptions, Cache, ColumnFamily, DBPinnableSlice, IteratorMode, Options, WriteBatch,
+    DB as RocksDb,
 };
 use tokio::task;
 
@@ -198,28 +199,10 @@ impl Store {
         let graph = Versioned(GraphV0 { children });
         let graph_bytes = rkyv::to_bytes::<_, 1024>(&graph)?; // TODO: is this the right amount of scratch space?
 
-        let cf_id = self
-            .inner
-            .content
-            .cf_handle(CF_ID_V0)
-            .ok_or_else(|| anyhow!("missing column family: id"))?;
-
-        let cf_blobs = self
-            .inner
-            .content
-            .cf_handle(CF_BLOBS_V0)
-            .ok_or_else(|| anyhow!("missing column family: blobs"))?;
-        let cf_meta = self
-            .inner
-            .content
-            .cf_handle(CF_METADATA_V0)
-            .ok_or_else(|| anyhow!("missing column family: metadata"))?;
-        let cf_graph = self
-            .inner
-            .content
-            .cf_handle(CF_GRAPH_V0)
-            .ok_or_else(|| anyhow!("missing column family: metadata"))?;
-
+        let cf_id = self.cf_id()?;
+        let cf_meta = self.cf_metadata()?;
+        let cf_graph = self.cf_graph()?;
+        let cf_blobs = self.cf_blobs()?;
         let blob_size = blob.as_ref().len();
 
         let mut batch = WriteBatch::default();
@@ -227,7 +210,7 @@ impl Store {
         batch.put_cf(cf_blobs, &id_bytes, blob);
         batch.put_cf(cf_meta, &id_bytes, metadata_bytes);
         batch.put_cf(cf_graph, &id_bytes, graph_bytes);
-        self.inner.content.write(batch)?;
+        self.db().write(batch)?;
         observe!(StoreHistograms::PutRequests, start.elapsed().as_secs_f64());
         record!(StoreMetrics::PutBytes, blob_size as u64);
 
@@ -277,14 +260,9 @@ impl Store {
     pub async fn has(&self, cid: &Cid) -> Result<bool> {
         match self.get_id(cid).await? {
             Some(id) => {
-                let cf_blobs = self
-                    .inner
-                    .content
-                    .cf_handle(CF_BLOBS_V0)
-                    .ok_or_else(|| anyhow!("missing column family: blobs"))?;
+                let cf_blobs = self.cf_blobs()?;
                 let exists = self
-                    .inner
-                    .content
+                    .db()
                     .get_pinned_cf(cf_blobs, id.to_be_bytes())?
                     .is_some();
                 Ok(exists)
@@ -317,13 +295,9 @@ impl Store {
 
     #[tracing::instrument(skip(self))]
     async fn get_id(&self, cid: &Cid) -> Result<Option<u64>> {
-        let cf_id = self
-            .inner
-            .content
-            .cf_handle(CF_ID_V0)
-            .ok_or_else(|| anyhow!("missing column family: id"))?;
+        let cf_id = self.cf_id()?;
         let multihash = cid.hash().to_bytes();
-        let maybe_id_bytes = self.inner.content.get_pinned_cf(cf_id, multihash)?;
+        let maybe_id_bytes = self.db().get_pinned_cf(cf_id, multihash)?;
         match maybe_id_bytes {
             Some(bytes) => {
                 let arr = bytes[..8].try_into().map_err(|e| anyhow!("{:?}", e))?;
@@ -335,15 +309,8 @@ impl Store {
 
     #[tracing::instrument(skip(self))]
     async fn get_by_id(&self, id: u64) -> Result<Option<DBPinnableSlice<'_>>> {
-        let cf_blobs = self
-            .inner
-            .content
-            .cf_handle(CF_BLOBS_V0)
-            .ok_or_else(|| anyhow!("missing column family: blobs"))?;
-        let maybe_blob = self
-            .inner
-            .content
-            .get_pinned_cf(cf_blobs, id.to_be_bytes())?;
+        let cf_blobs = self.cf_blobs()?;
+        let maybe_blob = self.db().get_pinned_cf(cf_blobs, id.to_be_bytes())?;
 
         Ok(maybe_blob)
     }
@@ -365,21 +332,12 @@ impl Store {
 
     #[tracing::instrument(skip(self))]
     async fn get_links_by_id(&self, id: u64) -> Result<Option<Vec<Cid>>> {
-        let cf_graph = self
-            .inner
-            .content
-            .cf_handle(CF_GRAPH_V0)
-            .ok_or_else(|| anyhow!("missing column family: graph"))?;
+        let cf_graph = self.cf_graph()?;
         let id_bytes = id.to_be_bytes();
         // FIXME: can't use pinned because otherwise this can trigger alignment issues :/
-        match self.inner.content.get_cf(cf_graph, &id_bytes)? {
+        match self.db().get_cf(cf_graph, &id_bytes)? {
             Some(links_id) => {
-                let cf_meta = self
-                    .inner
-                    .content
-                    .cf_handle(CF_METADATA_V0)
-                    .ok_or_else(|| anyhow!("missing column family: metadata"))?;
-
+                let cf_meta = self.cf_metadata()?;
                 let graph = rkyv::check_archived_root::<Versioned<GraphV0>>(&links_id)
                     .map_err(|e| anyhow!("{:?}", e))?;
                 let keys = graph
@@ -387,7 +345,7 @@ impl Store {
                     .children
                     .iter()
                     .map(|id| (&cf_meta, id.to_be_bytes()));
-                let meta = self.inner.content.multi_get_cf(keys);
+                let meta = self.db().multi_get_cf(keys);
                 let mut links = Vec::with_capacity(meta.len());
                 for (i, meta) in meta.into_iter().enumerate() {
                     match meta? {
@@ -416,23 +374,14 @@ impl Store {
     where
         I: IntoIterator<Item = Cid>,
     {
-        let cf_id = self
-            .inner
-            .content
-            .cf_handle(CF_ID_V0)
-            .ok_or_else(|| anyhow!("missing column family: id"))?;
-
-        let cf_meta = self
-            .inner
-            .content
-            .cf_handle(CF_METADATA_V0)
-            .ok_or_else(|| anyhow!("missing column family: metadata"))?;
+        let cf_id = self.cf_id()?;
+        let cf_meta = self.cf_metadata()?;
 
         let mut ids = Vec::new();
         let mut batch = WriteBatch::default();
         for cid in cids {
             let multihash = cid.hash().to_bytes();
-            let id = if let Some(id) = self.inner.content.get_pinned_cf(cf_id, &multihash)? {
+            let id = if let Some(id) = self.db().get_pinned_cf(cf_id, &multihash)? {
                 u64::from_be_bytes(id.as_ref().try_into()?)
             } else {
                 let id = self.next_id();
@@ -451,7 +400,7 @@ impl Store {
             };
             ids.push(id);
         }
-        self.inner.content.write(batch)?;
+        self.db().write(batch)?;
 
         Ok(ids)
     }
@@ -462,6 +411,34 @@ impl Store {
         // TODO: better handling
         assert!(id > 0, "this store is full");
         id
+    }
+
+    fn db(&self) -> &RocksDb {
+        &self.inner.content
+    }
+
+    fn cf_id(&self) -> Result<&ColumnFamily> {
+        self.db()
+            .cf_handle(CF_ID_V0)
+            .context("missing column family: id")
+    }
+
+    fn cf_metadata(&self) -> Result<&ColumnFamily> {
+        self.db()
+            .cf_handle(CF_METADATA_V0)
+            .context("missing column family: metadata")
+    }
+
+    fn cf_blobs(&self) -> Result<&ColumnFamily> {
+        self.db()
+            .cf_handle(CF_BLOBS_V0)
+            .context("missing column family: blobs")
+    }
+
+    fn cf_graph(&self) -> Result<&ColumnFamily> {
+        self.db()
+            .cf_handle(CF_GRAPH_V0)
+            .context("missing column family: graph")
     }
 }
 

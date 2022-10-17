@@ -1,22 +1,25 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+use crate::doc;
 #[cfg(feature = "testing")]
 use crate::fixture::get_fixture_api;
 use crate::p2p::{run_command as run_p2p_command, P2p};
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use iroh_api::{Api, CidOrDomain, IpfsPath, Iroh};
+use iroh_api::{Api, ApiExt, IpfsPath, Iroh};
 use iroh_metrics::config::Config as MetricsConfig;
 
 #[derive(Parser, Debug, Clone)]
-#[clap(version, about, long_about = None, propagate_version = true)]
+#[clap(version, long_about = None, propagate_version = true)]
+#[clap(about = "A next generation IPFS implementation: https://iroh.computer")]
+#[clap(after_help = doc::IROH_LONG_DESCRIPTION)]
 pub struct Cli {
     #[clap(long)]
     cfg: Option<PathBuf>,
-    /// Track metrics
-    #[clap(long, action = clap::ArgAction::Set, default_value_t=true)]
-    metrics: bool,
+    /// Do not track metrics
+    #[clap(long)]
+    no_metrics: bool,
     #[clap(subcommand)]
     command: Commands,
 }
@@ -24,7 +27,7 @@ pub struct Cli {
 impl Cli {
     fn make_overrides_map(&self) -> HashMap<String, String> {
         let mut map = HashMap::new();
-        map.insert("metrics.debug".to_string(), (!self.metrics).to_string());
+        map.insert("metrics.debug".to_string(), (self.no_metrics).to_string());
         map
     }
 }
@@ -33,27 +36,30 @@ impl Cli {
 enum Commands {
     // status checks the health of the different processes
     #[clap(about = "Check the health of the different iroh processes.")]
+    #[clap(after_help = doc::STATUS_LONG_DESCRIPTION)]
     Status {
         #[clap(short, long)]
-        /// when true, updates the status table whenever a change in a process's status occurs
+        /// Poll process for changes
         watch: bool,
     },
     P2p(P2p),
-    #[clap(about = "break up a file into block and provide those blocks on the ipfs network")]
+    #[clap(about = "Add a file or directory to iroh & make it available on IPFS")]
     Add {
+        /// The path to a file or directory to be added
         path: PathBuf,
+        /// Required to add a directory
         #[clap(long, short)]
         recursive: bool,
-        #[clap(long, short)]
+        /// Do not wrap added content with a directory
+        #[clap(long)]
         no_wrap: bool,
     },
-    #[clap(
-        about = "get content based on a Content Identifier from the ipfs network, and save it "
-    )]
+    #[clap(about = "Fetch IPFS content and write it to disk")]
+    #[clap(after_help = doc::GET_LONG_DESCRIPTION )]
     Get {
         /// CID or CID/with/path/qualifier to get
-        path: IpfsPath,
-        /// filesystem path to write to. Defaults to CID
+        ipfs_path: IpfsPath,
+        /// filesystem path to write to. Optional and defaults to $CID
         output: Option<PathBuf>,
     },
 }
@@ -109,18 +115,12 @@ impl Cli {
                 let cid = api.add(path, *recursive, *no_wrap).await?;
                 println!("/ipfs/{}", cid);
             }
-            Commands::Get { path, output } => {
-                let cid = if let CidOrDomain::Cid(cid) = path.root() {
-                    cid
-                } else {
-                    return Err(anyhow::anyhow!("ipfs path must refer to a CID"));
-                };
-                api.get(path, output.as_deref()).await?;
-                let real_output = output
-                    .as_deref()
-                    .map(|path| path.to_path_buf())
-                    .unwrap_or_else(|| PathBuf::from(&cid.to_string()));
-                println!("Saving file(s) to {}", real_output.to_str().unwrap());
+            Commands::Get {
+                ipfs_path: path,
+                output,
+            } => {
+                let root_path = api.get(path, output.as_deref()).await?;
+                println!("Saving file(s) to {}", root_path.to_str().unwrap());
             }
         };
 

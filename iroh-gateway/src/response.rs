@@ -45,7 +45,6 @@ impl ResponseFormat {
                 headers.insert(CONTENT_TYPE, CONTENT_TYPE_IPLD_CAR.clone());
                 headers.insert(&HEADER_X_CONTENT_TYPE_OPTIONS, VALUE_XCTO_NOSNIFF.clone());
                 headers.insert(ACCEPT_RANGES, VALUE_NONE.clone());
-                headers.insert(CACHE_CONTROL, VALUE_NO_CACHE_NO_TRANSFORM.clone());
             }
             ResponseFormat::Fs(_) => {
                 // Don't send application/octet-stream in that case, let the
@@ -75,13 +74,6 @@ impl ResponseFormat {
                 for h_value in h_values {
                     let h_value = h_value.trim();
                     if h_value.starts_with("application/vnd.ipld.") {
-                        // if valid media type use it, otherwise return error
-                        // todo(arqu): add support for better media type detection
-                        if h_value != "application/vnd.ipld.raw"
-                            && h_value != "application/vnd.ipld.car"
-                        {
-                            return Err(format!("{}: {}", ERR_UNSUPPORTED_FORMAT, h_value));
-                        }
                         return ResponseFormat::try_from(h_value);
                     }
                 }
@@ -96,37 +88,18 @@ pub fn get_response_format(
     request_headers: &HeaderMap,
     query_format: Option<String>,
 ) -> Result<ResponseFormat, String> {
-    let format = if let Some(format) = query_format {
-        if format.is_empty() {
-            match ResponseFormat::try_from_headers(request_headers) {
-                Ok(format) => format,
-                Err(_) => {
-                    return Err("invalid format".to_string());
-                }
-            }
-        } else {
-            match ResponseFormat::try_from(format.as_str()) {
-                Ok(format) => format,
-                Err(_) => {
-                    match ResponseFormat::try_from_headers(request_headers) {
-                        Ok(format) => format,
-                        Err(_) => {
-                            return Err("invalid format".to_string());
-                        }
-                    };
-                    return Err("invalid format".to_string());
-                }
+    if let Some(format) = query_format {
+        if !format.is_empty() {
+            if let Ok(format) = ResponseFormat::try_from(format.as_str()) {
+                return Ok(format);
             }
         }
-    } else {
-        match ResponseFormat::try_from_headers(request_headers) {
-            Ok(format) => format,
-            Err(_) => {
-                return Err("invalid format".to_string());
-            }
-        }
-    };
-    Ok(format)
+    }
+
+    match ResponseFormat::try_from_headers(request_headers) {
+        Ok(format) => Ok(format),
+        Err(_) => Ok(ResponseFormat::Fs(String::new())),
+    }
 }
 
 #[derive(Debug)]
@@ -224,7 +197,7 @@ mod tests {
         let rf = ResponseFormat::try_from("car").unwrap();
         let mut headers = HeaderMap::new();
         rf.write_headers(&mut headers);
-        assert_eq!(headers.len(), 4);
+        assert_eq!(headers.len(), 3);
         assert_eq!(headers.get(&CONTENT_TYPE).unwrap(), &CONTENT_TYPE_IPLD_CAR);
         assert_eq!(
             headers.get(&HEADER_X_CONTENT_TYPE_OPTIONS).unwrap(),

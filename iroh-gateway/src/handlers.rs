@@ -3,7 +3,7 @@ use axum::{
     body::{self, Body, HttpBody},
     error_handling::HandleErrorLayer,
     extract::{Extension, Path, Query},
-    http::{header::*, StatusCode},
+    http::{header::*, Request as HttpRequest, StatusCode},
     response::IntoResponse,
     routing::get,
     BoxError, Router,
@@ -11,11 +11,13 @@ use axum::{
 use bytes::Bytes;
 use futures::TryStreamExt;
 use handlebars::Handlebars;
+use http::Method;
 use iroh_metrics::{core::MRecorder, gateway::GatewayMetrics, get_current_trace_id, inc};
 use iroh_resolver::{
     resolver::{CidOrDomain, ContentLoader, OutMetrics, UnixfsType},
     unixfs::Link,
 };
+use iroh_util::human::format_bytes;
 use serde::{Deserialize, Serialize};
 use serde_json::{
     json,
@@ -26,9 +28,11 @@ use std::{
     collections::HashMap,
     error::Error,
     fmt::Write,
+    ops::Range,
     sync::Arc,
     time::{self, Duration},
 };
+
 use tower::ServiceBuilder;
 use tower_http::{compression::CompressionLayer, trace::TraceLayer};
 use tracing::info_span;
@@ -42,15 +46,15 @@ use crate::{
     error::GatewayError,
     headers::*,
     response::{get_response_format, GatewayResponse, ResponseFormat},
+    templates::{icon_class_name, ICONS_STYLESHEET, STYLESHEET},
 };
 
 /// Trait describing what needs to be accessed on the configuration
 /// from the shared state.
 pub trait StateConfig: std::fmt::Debug + Sync + Send {
     fn rpc_client(&self) -> &iroh_rpc_client::Config;
-
+    fn public_url_base(&self) -> &str;
     fn port(&self) -> u16;
-
     fn user_headers(&self) -> &HeaderMap<HeaderValue>;
 }
 
@@ -60,6 +64,8 @@ pub fn get_app_routes<T: ContentLoader + std::marker::Unpin>(state: &Arc<State<T
         .route("/:scheme/:cid", get(get_handler::<T>))
         .route("/:scheme/:cid/*cpath", get(get_handler::<T>))
         .route("/health", get(health_check))
+        .route("/icons.css", get(stylesheet_icons))
+        .route("/style.css", get(stylesheet_main))
         .layer(Extension(Arc::clone(state)))
         .layer(
             ServiceBuilder::new()
@@ -68,8 +74,8 @@ pub fn get_app_routes<T: ContentLoader + std::marker::Unpin>(state: &Arc<State<T
                 .layer(CompressionLayer::new())
                 .layer(HandleErrorLayer::new(middleware_error_handler::<T>))
                 .load_shed()
-                .concurrency_limit(2048)
-                .timeout(Duration::from_secs(180))
+                .concurrency_limit(2048 * 1024)
+                .timeout(Duration::from_secs(120))
                 .into_inner(),
         )
         .layer(
@@ -86,7 +92,6 @@ pub fn get_app_routes<T: ContentLoader + std::marker::Unpin>(state: &Arc<State<T
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct GetParams {
-    // todo(arqu): swap this for ResponseFormat
     /// specifies the expected format of the response
     format: Option<String>,
     /// specifies the desired filename of the response
@@ -116,6 +121,8 @@ pub async fn get_handler<T: ContentLoader + std::marker::Unpin>(
     Extension(state): Extension<Arc<State<T>>>,
     Path(params): Path<HashMap<String, String>>,
     Query(query_params): Query<GetParams>,
+    method: http::Method,
+    http_req: HttpRequest<Body>,
     request_headers: HeaderMap,
 ) -> Result<GatewayResponse, GatewayError> {
     inc!(GatewayMetrics::Requests);
@@ -154,7 +161,12 @@ pub async fn get_handler<T: ContentLoader + std::marker::Unpin>(
         .parse()
         .map_err(|e: anyhow::Error| e.to_string())
         .map_err(|e| error(StatusCode::BAD_REQUEST, &e, &state))?;
+    // TODO: handle 404 or error
     let resolved_cid = resolved_path.root();
+
+    if handle_only_if_cached(&request_headers, &state, resolved_cid).await? {
+        return response(StatusCode::OK, Body::empty(), HeaderMap::new());
+    }
 
     if check_bad_bits(&state, resolved_cid.to_string().as_str(), cpath).await {
         return Err(error(
@@ -190,7 +202,7 @@ pub async fn get_handler<T: ContentLoader + std::marker::Unpin>(
         Err(err) => {
             return Err(error(
                 StatusCode::BAD_REQUEST,
-                &format!("invalid header: {}", err),
+                &format!("invalid header value: {}", err),
                 &state,
             ));
         }
@@ -203,7 +215,6 @@ pub async fn get_handler<T: ContentLoader + std::marker::Unpin>(
         cid: resolved_path.root().clone(),
         resolved_path,
         query_file_name,
-        content_path: full_content_path.to_string(),
         download,
         query_params: query_params_copy,
     };
@@ -212,9 +223,9 @@ pub async fn get_handler<T: ContentLoader + std::marker::Unpin>(
         serve_car_recursive(&req, state, headers, start_time).await
     } else {
         match req.format {
-            ResponseFormat::Raw => serve_raw(&req, state, headers, start_time).await,
+            ResponseFormat::Raw => serve_raw(&req, state, headers, &http_req, start_time).await,
             ResponseFormat::Car => serve_car(&req, state, headers, start_time).await,
-            ResponseFormat::Fs(_) => serve_fs(&req, state, headers, start_time).await,
+            ResponseFormat::Fs(_) => serve_fs(&req, state, headers, &http_req, start_time).await,
         }
     }
 }
@@ -222,6 +233,24 @@ pub async fn get_handler<T: ContentLoader + std::marker::Unpin>(
 #[tracing::instrument()]
 pub async fn health_check() -> String {
     "OK".to_string()
+}
+
+async fn stylesheet_main() -> (HeaderMap, &'static str) {
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        HeaderName::from_static("content-type"),
+        HeaderValue::from_static("text/css"),
+    );
+    (headers, STYLESHEET)
+}
+
+pub async fn stylesheet_icons() -> (HeaderMap, &'static str) {
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        HeaderName::from_static("content-type"),
+        HeaderValue::from_static("text/css"),
+    );
+    (headers, ICONS_STYLESHEET)
 }
 
 #[tracing::instrument()]
@@ -293,6 +322,48 @@ fn unsuported_header_check<T: ContentLoader>(
     Ok(())
 }
 
+#[tracing::instrument()]
+async fn handle_only_if_cached<T: ContentLoader>(
+    request_headers: &HeaderMap,
+    state: &State<T>,
+    cid: &CidOrDomain,
+) -> Result<bool, GatewayError> {
+    if request_headers.contains_key(&HEADER_CACHE_CONTROL) {
+        let hv = request_headers.get(&HEADER_CACHE_CONTROL).unwrap();
+        if hv.to_str().unwrap() == "only-if-cached" {
+            match cid {
+                CidOrDomain::Cid(cid) => match state.client.has_file_locally(cid).await {
+                    Ok(true) => {
+                        return Ok(true);
+                    }
+                    Ok(false) => {
+                        return Err(error(
+                            StatusCode::PRECONDITION_FAILED,
+                            "File not found in cache",
+                            state,
+                        ));
+                    }
+                    Err(e) => {
+                        return Err(error(
+                            StatusCode::PRECONDITION_FAILED,
+                            &format!("Error checking cache: {}", e),
+                            state,
+                        ));
+                    }
+                },
+                CidOrDomain::Domain(_) => {
+                    return Err(error(
+                        StatusCode::PRECONDITION_FAILED,
+                        "Cannot resolve in cache: invalid CID.",
+                        state,
+                    ));
+                }
+            }
+        }
+    }
+    Ok(false)
+}
+
 pub async fn check_bad_bits<T: ContentLoader>(state: &State<T>, cid: &str, path: &str) -> bool {
     // check if cid is in the denylist
     if state.bad_bits.is_some() {
@@ -314,15 +385,18 @@ fn etag_check<T: ContentLoader>(
     state: &State<T>,
 ) -> Option<GatewayResponse> {
     if request_headers.contains_key("If-None-Match") {
-        // todo(arqu): handle dir etags
-        let cid_etag = get_etag(resolved_cid, Some(format.clone()));
         let inm = request_headers
             .get("If-None-Match")
             .unwrap()
             .to_str()
             .unwrap();
-        if etag_matches(inm, &cid_etag) {
-            return Some(GatewayResponse::not_modified());
+        if !inm.is_empty() {
+            // todo(arqu): handle dir etags
+            let cid_etag = get_etag(resolved_cid, Some(format.clone()));
+
+            if etag_matches(inm, &cid_etag) {
+                return Some(GatewayResponse::not_modified());
+            }
         }
     }
     None
@@ -333,26 +407,43 @@ async fn serve_raw<T: ContentLoader + std::marker::Unpin>(
     req: &Request,
     state: Arc<State<T>>,
     mut headers: HeaderMap,
+    http_req: &HttpRequest<Body>,
     start_time: std::time::Instant,
 ) -> Result<GatewayResponse, GatewayError> {
+    let range: Option<Range<u64>> = if http_req.headers().contains_key(RANGE) {
+        parse_range_header(http_req.headers().get(RANGE).unwrap())
+    } else {
+        None
+    };
     // FIXME: we currently only retrieve full cids
     let (body, metadata) = state
         .client
-        .get_file(req.resolved_path.clone(), start_time)
+        .get_file(req.resolved_path.clone(), start_time, range.clone())
         .await
         .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, &e, &state))?;
 
     match body {
         FileResult::File(body) | FileResult::Raw(body) => {
-            set_content_disposition_headers(
-                &mut headers,
-                format!("{}.bin", req.cid).as_str(),
-                DISPOSITION_ATTACHMENT,
-            );
+            let file_name = match req.query_file_name.is_empty() {
+                true => format!("{}.bin", req.cid),
+                false => req.query_file_name.clone(),
+            };
+
+            set_content_disposition_headers(&mut headers, &file_name, DISPOSITION_ATTACHMENT);
             set_etag_headers(&mut headers, get_etag(&req.cid, Some(req.format.clone())));
             add_cache_control_headers(&mut headers, metadata.clone());
-            add_ipfs_roots_headers(&mut headers, metadata);
-            response(StatusCode::OK, body, headers)
+            add_ipfs_roots_headers(&mut headers, metadata.clone());
+
+            if let Some(mut capped_range) = range {
+                if let Some(size) = metadata.size {
+                    capped_range.end = std::cmp::min(capped_range.end, size);
+                }
+                add_etag_range(&mut headers, capped_range.clone());
+                add_content_range_headers(&mut headers, capped_range, metadata.size);
+                response(StatusCode::PARTIAL_CONTENT, body, headers)
+            } else {
+                response(StatusCode::OK, body, headers)
+            }
         }
         FileResult::Directory(_) => Err(error(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -369,25 +460,27 @@ async fn serve_car<T: ContentLoader + std::marker::Unpin>(
     mut headers: HeaderMap,
     start_time: std::time::Instant,
 ) -> Result<GatewayResponse, GatewayError> {
+    // TODO: handle car versions
     // FIXME: we currently only retrieve full cids
     let (body, metadata) = state
         .client
-        .get_file(req.resolved_path.clone(), start_time)
+        .get_file(req.resolved_path.clone(), start_time, None)
         .await
         .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, &e, &state))?;
 
     match body {
         FileResult::File(body) | FileResult::Raw(body) => {
-            set_content_disposition_headers(
-                &mut headers,
-                format!("{}.car", req.cid).as_str(),
-                DISPOSITION_ATTACHMENT,
-            );
+            let file_name = match req.query_file_name.is_empty() {
+                true => format!("{}.car", req.cid),
+                false => req.query_file_name.clone(),
+            };
 
-            // todo(arqu): this should be root cid
+            set_content_disposition_headers(&mut headers, &file_name, DISPOSITION_ATTACHMENT);
+
+            add_cache_control_headers(&mut headers, metadata.clone());
             let etag = format!("W/{}", get_etag(&req.cid, Some(req.format.clone())));
             set_etag_headers(&mut headers, etag);
-            // todo(arqu): check if etag matches for root cid
+            // todo(arqu): handle if none match
             add_ipfs_roots_headers(&mut headers, metadata);
             response(StatusCode::OK, body, headers)
         }
@@ -413,16 +506,18 @@ async fn serve_car_recursive<T: ContentLoader + std::marker::Unpin>(
         .await
         .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, &e, &state))?;
 
-    set_content_disposition_headers(
-        &mut headers,
-        format!("{}.car", req.cid).as_str(),
-        DISPOSITION_ATTACHMENT,
-    );
+    let file_name = match req.query_file_name.is_empty() {
+        true => format!("{}.car", req.cid),
+        false => req.query_file_name.clone(),
+    };
 
-    // todo(arqu): this should be root cid
+    set_content_disposition_headers(&mut headers, &file_name, DISPOSITION_ATTACHMENT);
+
+    // add_cache_control_headers(&mut headers, metadata.clone());
     let etag = format!("W/{}", get_etag(&req.cid, Some(req.format.clone())));
     set_etag_headers(&mut headers, etag);
-    // todo(arqu): check if etag matches for root cid
+
+    // todo(arqu): handle if none match
     // add_ipfs_roots_headers(&mut headers, metadata);
     response(StatusCode::OK, body, headers)
 }
@@ -433,12 +528,19 @@ async fn serve_fs<T: ContentLoader + std::marker::Unpin>(
     req: &Request,
     state: Arc<State<T>>,
     mut headers: HeaderMap,
+    http_req: &HttpRequest<Body>,
     start_time: std::time::Instant,
 ) -> Result<GatewayResponse, GatewayError> {
+    let range: Option<Range<u64>> = if http_req.headers().contains_key(RANGE) {
+        parse_range_header(http_req.headers().get(RANGE).unwrap())
+    } else {
+        None
+    };
+
     // FIXME: we currently only retrieve full cids
     let (body, metadata) = state
         .client
-        .get_file(req.resolved_path.clone(), start_time)
+        .get_file(req.resolved_path.clone(), start_time, range.clone())
         .await
         .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, &e, &state))?;
 
@@ -452,7 +554,9 @@ async fn serve_fs<T: ContentLoader + std::marker::Unpin>(
                 .try_collect()
                 .await;
             match dir_list {
-                Ok(dir_list) => serve_fs_dir(&dir_list, req, state, headers, start_time).await,
+                Ok(dir_list) => {
+                    serve_fs_dir(&dir_list, req, state, headers, http_req, start_time).await
+                }
                 Err(e) => {
                     tracing::warn!("failed to read dir: {:?}", e);
                     Err(error(
@@ -473,7 +577,7 @@ async fn serve_fs<T: ContentLoader + std::marker::Unpin>(
                     let name = add_content_disposition_headers(
                         &mut headers,
                         &req.query_file_name,
-                        &req.content_path,
+                        &req.resolved_path,
                         req.download,
                     );
                     if metadata.unixfs_type == Some(UnixfsType::Symlink) {
@@ -482,9 +586,20 @@ async fn serve_fs<T: ContentLoader + std::marker::Unpin>(
                             HeaderValue::from_str("inode/symlink").unwrap(),
                         );
                     } else {
-                        add_content_type_headers(&mut headers, &name);
+                        let content_sniffed_mime = body.get_mime();
+                        add_content_type_headers(&mut headers, &name, content_sniffed_mime);
                     }
-                    response(StatusCode::OK, body, headers)
+
+                    if let Some(mut capped_range) = range {
+                        if let Some(size) = metadata.size {
+                            capped_range.end = std::cmp::min(capped_range.end, size);
+                        }
+                        add_etag_range(&mut headers, capped_range.clone());
+                        add_content_range_headers(&mut headers, capped_range, metadata.size);
+                        response(StatusCode::PARTIAL_CONTENT, body, headers)
+                    } else {
+                        response(StatusCode::OK, body, headers)
+                    }
                 }
                 None => Err(error(
                     StatusCode::BAD_REQUEST,
@@ -498,14 +613,14 @@ async fn serve_fs<T: ContentLoader + std::marker::Unpin>(
             // todo(arqu): add lazy seeking
             add_cache_control_headers(&mut headers, metadata.clone());
             set_etag_headers(&mut headers, get_etag(&req.cid, Some(req.format.clone())));
-            add_ipfs_roots_headers(&mut headers, metadata);
             let name = add_content_disposition_headers(
                 &mut headers,
                 &req.query_file_name,
-                &req.content_path,
+                &req.resolved_path,
                 req.download,
             );
-            add_content_type_headers(&mut headers, &name);
+            let content_sniffed_mime = body.get_mime();
+            add_content_type_headers(&mut headers, &name, content_sniffed_mime);
             response(StatusCode::OK, body, headers)
         }
     }
@@ -517,6 +632,7 @@ async fn serve_fs_dir<T: ContentLoader + std::marker::Unpin>(
     req: &Request,
     state: Arc<State<T>>,
     mut headers: HeaderMap,
+    http_req: &HttpRequest<Body>,
     start_time: std::time::Instant,
 ) -> Result<GatewayResponse, GatewayError> {
     let force_dir = req.query_params.force_dir.unwrap_or(false);
@@ -527,18 +643,17 @@ async fn serve_fs_dir<T: ContentLoader + std::marker::Unpin>(
             .unwrap_or_default()
     });
     if !force_dir && has_index {
-        if !req.content_path.ends_with('/') {
+        if !req.resolved_path.has_trailing_slash() {
             let redirect_path = format!(
                 "{}/{}",
-                req.content_path,
+                req.resolved_path,
                 req.query_params.to_query_string()
             );
             return Ok(GatewayResponse::redirect(&redirect_path));
         }
         let mut new_req = req.clone();
         new_req.resolved_path.push("index.html");
-        new_req.content_path = format!("{}/index.html", req.content_path);
-        return serve_fs(&new_req, state, headers, start_time).await;
+        return serve_fs(&new_req, state, headers, http_req, start_time).await;
     }
 
     headers.insert(CONTENT_TYPE, HeaderValue::from_str("text/html").unwrap());
@@ -546,10 +661,47 @@ async fn serve_fs_dir<T: ContentLoader + std::marker::Unpin>(
     // set_etag_headers(&mut headers, metadata.dir_hash.clone());
 
     let mut template_data: Map<String, Json> = Map::new();
-    let mut root_path = req.content_path.clone();
-    if !root_path.ends_with('/') {
-        root_path.push('/');
+    let mut root_path = req.resolved_path.clone();
+    if !root_path.has_trailing_slash() {
+        root_path.push("");
     }
+
+    let mut breadcrumbs: Vec<HashMap<&str, String>> = Vec::new();
+    root_path
+        .to_string()
+        .trim_matches('/')
+        .split('/')
+        .fold(&mut breadcrumbs, |accum, path_el| {
+            let mut el = HashMap::new();
+            let path = match accum.last() {
+                Some(prev) => match prev.get("path") {
+                    Some(base) => format!("/{}/{}", base, encode(path_el)),
+                    None => format!("/{}", encode(path_el)),
+                },
+                None => {
+                    format!("/{}", encode(path_el))
+                }
+            };
+            el.insert("name", path_el.to_string());
+            el.insert("path", path);
+            accum.push(el);
+            accum
+        });
+    template_data.insert("breadcrumbs".to_string(), json!(breadcrumbs));
+    if let CidOrDomain::Cid(root_cid) = req.cid {
+        template_data.insert("root_cid".to_string(), Json::String(root_cid.to_string()));
+    }
+
+    template_data.insert(
+        "root_path".to_string(),
+        Json::String(req.resolved_path.to_string()),
+    );
+    template_data.insert(
+        "public_url_base".to_string(),
+        Json::String(state.config.public_url_base().to_string()),
+    );
+    // TODO(b5) - add directory size
+    template_data.insert("size".to_string(), Json::String("".to_string()));
     let links = dir_list
         .iter()
         .map(|l| {
@@ -557,9 +709,14 @@ async fn serve_fs_dir<T: ContentLoader + std::marker::Unpin>(
             let mut link = Map::new();
             link.insert("name".to_string(), Json::String(get_filename(name)));
             link.insert(
+                "size".to_string(),
+                Json::String(format_bytes(l.tsize.unwrap_or_default())),
+            );
+            link.insert(
                 "path".to_string(),
                 Json::String(format!("{}{}", root_path, name)),
             );
+            link.insert("icon".to_string(), Json::String(icon_class_name(name)));
             link
         })
         .collect::<Vec<Map<String, Json>>>();
@@ -599,15 +756,22 @@ fn error<T: ContentLoader>(
         status_code,
         message: message.to_string(),
         trace_id: get_current_trace_id().to_string(),
+        method: None,
     }
 }
 
 #[tracing::instrument()]
 pub async fn middleware_error_handler<T: ContentLoader>(
+    method: Method,
     Extension(state): Extension<Arc<State<T>>>,
     err: BoxError,
 ) -> impl IntoResponse {
     inc!(GatewayMetrics::FailCount);
+    if err.is::<GatewayError>() {
+        let err = err.downcast::<GatewayError>().unwrap();
+        return err.with_method(method);
+    }
+
     if err.is::<tower::timeout::error::Elapsed>() {
         return error(StatusCode::REQUEST_TIMEOUT, "request timed out", &state);
     }

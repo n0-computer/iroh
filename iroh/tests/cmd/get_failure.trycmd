@@ -1,0 +1,31 @@
+Getting something that's not a proper path to a CID fails with an error:
+
+```
+$ iroh get /something
+? failed
+error: Invalid value '/something' for '<IPFS_PATH>': invalid cid
+
+For more information try '--help'
+
+```
+
+
+Getting something that's not a CID fails too:
+
+```
+$ iroh get QmP8jTG1m9GSDJLCbeWhVSVg
+? failed
+error: Invalid value 'QmP8jTG1m9GSDJLCbeWhVSVg' for '<IPFS_PATH>': invalid cid
+
+For more information try '--help'
+
+```
+
+Getting something that's a proper path but does not include a CID is also an error:
+
+```
+$ iroh get /ipns/foo
+? failed
+Error: IPFS path does not refer to a CID
+
+```

@@ -84,6 +84,7 @@ async fn main() -> Result<()> {
     // let content_loader = RpcClient::new(config.rpc_client.clone()).await?;
     let content_loader = iroh_one::content_loader::RacingLoader::new(
         RpcClient::new(config.rpc_client.clone()).await?,
+        config.resolver_gateway.clone(),
     );
     let shared_state = Core::make_state(
         Arc::new(config.clone()),

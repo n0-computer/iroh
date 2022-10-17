@@ -1,11 +1,15 @@
-use std::str::FromStr;
-
+use crate::doc;
 use anyhow::{Error, Result};
 use clap::{Args, Subcommand};
 use iroh_api::{Multiaddr, P2pApi, PeerId, PeerIdOrAddr};
+use std::str::FromStr;
 
 #[derive(Args, Debug, Clone)]
-#[clap(about = "Manage peer-2-peer networking.")]
+#[clap(about = "Peer-2-peer commands")]
+#[clap(
+    after_help = "p2p commands all relate to peer-2-peer connectivity. See subcommands for
+additional details."
+)]
 pub struct P2p {
     #[clap(subcommand)]
     command: P2pCommands,
@@ -13,8 +17,18 @@ pub struct P2p {
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum P2pCommands {
+    #[clap(about = "Connect to a peer")]
+    #[clap(after_help = doc::P2P_CONNECT_LONG_DESCRIPTION)]
+    Connect {
+        /// Multiaddr or peer ID of a peer to connect to
+        addr: PeerIdOrAddrArg,
+    },
     #[clap(about = "Retrieve info about a node")]
-    Lookup { addr: PeerIdOrAddrArg },
+    #[clap(after_help = doc::P2P_LOOKUP_LONG_DESCRIPTION)]
+    Lookup {
+        /// multiaddress or peer ID
+        addr: PeerIdOrAddrArg,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -35,6 +49,9 @@ impl FromStr for PeerIdOrAddrArg {
 
 pub async fn run_command(p2p: &impl P2pApi, cmd: &P2p) -> Result<()> {
     match &cmd.command {
+        P2pCommands::Connect { .. } => {
+            todo!("`iroh p2p connect` is not yet implemented")
+        }
         P2pCommands::Lookup { addr } => {
             let lookup = p2p.lookup(&addr.0).await?;
             println!("peer id: {}", lookup.peer_id);

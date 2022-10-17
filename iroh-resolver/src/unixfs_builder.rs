@@ -536,6 +536,7 @@ mod tests {
     use crate::resolver::{ContentLoader, Out, OutMetrics, Resolver};
 
     use super::*;
+    use crate::resolver::ResponseClip;
     use anyhow::{Context, Result};
     use futures::TryStreamExt;
     use proptest::prelude::*;
@@ -766,7 +767,11 @@ mod tests {
                     if item.is_dir() {
                         mkdir(&mut agg, path.tail())?;
                     } else {
-                        let reader = item.pretty(resolver.clone(), OutMetrics::default())?;
+                        let reader = item.pretty(
+                            resolver.clone(),
+                            OutMetrics::default(),
+                            ResponseClip::NoClip,
+                        )?;
                         let data = read_to_vec(reader).await?;
                         mkfile(&mut agg, path.tail(), data.into())?;
                     }
@@ -810,7 +815,8 @@ mod tests {
         let out = resolver
             .resolve(crate::resolver::Path::from_cid(root))
             .await?;
-        let t = read_to_vec(out.pretty(resolver, OutMetrics::default())?).await?;
+        let t =
+            read_to_vec(out.pretty(resolver, OutMetrics::default(), ResponseClip::NoClip)?).await?;
         println!("{}", data.len());
         Ok(t == data)
     }

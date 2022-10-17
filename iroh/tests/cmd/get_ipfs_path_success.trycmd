@@ -1,0 +1,9 @@
+
+We can also get a ipfs path to a CID:
+
+
+```
+$ iroh get /ipfs/QmP8jTG1m9GSDJLCbeWhVSVgEzCPPwXRdCRuJtQ5Tz9Kc9
+Saving file(s) to QmP8jTG1m9GSDJLCbeWhVSVgEzCPPwXRdCRuJtQ5Tz9Kc9
+
+```

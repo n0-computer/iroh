@@ -21,7 +21,7 @@ use libipld::error::{InvalidMultihash, UnsupportedMultihash};
 use libipld::prelude::Codec as _;
 use libipld::{Ipld, IpldCodec};
 use libp2p::PeerId;
-use tokio::io::AsyncRead;
+use tokio::io::{AsyncRead, AsyncSeek};
 use tokio::sync::{mpsc, oneshot, Mutex};
 use tokio::task::JoinHandle;
 use tracing::{debug, trace, warn};
@@ -115,16 +115,46 @@ impl Path {
         &self.tail
     }
 
+    // used only for string path manipulation
+    pub fn has_trailing_slash(&self) -> bool {
+        !self.tail.is_empty() && self.tail.last().unwrap().is_empty()
+    }
+
     pub fn push(&mut self, str: impl AsRef<str>) {
         self.tail.push(str.as_ref().to_owned());
     }
 
-    pub fn to_string_without_type(&self) -> String {
-        let mut s = format!("{}", self.root);
-        for part in &self.tail {
-            s.push_str(&format!("/{}", part)[..]);
+    // Empty path segments in the *middle* shouldn't occur,
+    // though they can occur at the end, which `join` handles.
+    // TODO(faassen): it would make sense to return a `RelativePathBuf` here at some
+    // point in the future so we don't deal with bare strings anymore and
+    // we're forced to handle various cases more explicitly.
+    pub fn to_relative_string(&self) -> String {
+        self.tail.join("/")
+    }
+
+    pub fn cid(&self) -> Option<&Cid> {
+        match &self.root {
+            CidOrDomain::Cid(cid) => Some(cid),
+            CidOrDomain::Domain(_) => None,
         }
-        s
+    }
+}
+
+/// Holds information if we should clip the response and to what offset
+#[derive(Debug, Clone, Copy)]
+pub enum ResponseClip {
+    NoClip,
+    Clip(usize),
+}
+
+impl From<usize> for ResponseClip {
+    fn from(item: usize) -> Self {
+        if item == 0 {
+            ResponseClip::NoClip
+        } else {
+            ResponseClip::Clip(item)
+        }
     }
 }
 
@@ -148,7 +178,14 @@ impl Display for Path {
         write!(f, "/{}/{}", self.typ.as_str(), self.root)?;
 
         for part in &self.tail {
+            if part.is_empty() {
+                continue;
+            }
             write!(f, "/{}", part)?;
+        }
+
+        if self.has_trailing_slash() {
+            write!(f, "/")?;
         }
 
         Ok(())
@@ -201,7 +238,11 @@ impl FromStr for Path {
             (PathType::Ipfs, CidOrDomain::Cid(root))
         };
 
-        let tail = parts.map(Into::into).collect();
+        let mut tail: Vec<String> = parts.map(Into::into).collect();
+
+        if s.ends_with('/') {
+            tail.push("".to_owned());
+        }
 
         Ok(Path { typ, root, tail })
     }
@@ -319,23 +360,38 @@ impl Out {
         self,
         loader: Resolver<T>,
         om: OutMetrics,
+        clip: ResponseClip,
     ) -> Result<OutPrettyReader<T>> {
         let pos = 0;
         match self.content {
-            OutContent::DagPb(_, bytes) => {
+            OutContent::DagPb(_, mut bytes) => {
+                if let ResponseClip::Clip(n) = clip {
+                    bytes.truncate(n);
+                }
                 Ok(OutPrettyReader::DagPb(BytesReader { pos, bytes, om }))
             }
-            OutContent::DagCbor(_, bytes) => {
+            OutContent::DagCbor(_, mut bytes) => {
+                if let ResponseClip::Clip(n) = clip {
+                    bytes.truncate(n);
+                }
                 Ok(OutPrettyReader::DagCbor(BytesReader { pos, bytes, om }))
             }
-            OutContent::DagJson(_, bytes) => {
+            OutContent::DagJson(_, mut bytes) => {
+                if let ResponseClip::Clip(n) = clip {
+                    bytes.truncate(n);
+                }
                 Ok(OutPrettyReader::DagJson(BytesReader { pos, bytes, om }))
             }
-            OutContent::Raw(_, bytes) => Ok(OutPrettyReader::Raw(BytesReader { pos, bytes, om })),
+            OutContent::Raw(_, mut bytes) => {
+                if let ResponseClip::Clip(n) = clip {
+                    bytes.truncate(n);
+                }
+                Ok(OutPrettyReader::Raw(BytesReader { pos, bytes, om }))
+            }
             OutContent::Unixfs(node) => {
                 let ctx = self.context;
                 let reader = node
-                    .into_content_reader(ctx, loader, om)?
+                    .into_content_reader(ctx, loader, om, clip)?
                     .ok_or_else(|| anyhow!("cannot read the contents of a directory"))?;
 
                 Ok(OutPrettyReader::Unixfs(reader))
@@ -504,12 +560,70 @@ impl<T: ContentLoader + Unpin + 'static> AsyncRead for OutPrettyReader<T> {
             | OutPrettyReader::DagJson(bytes_reader)
             | OutPrettyReader::Raw(bytes_reader) => {
                 let pos_current = bytes_reader.pos;
-                let res = poll_read_buf_at_pos(&mut bytes_reader.pos, &bytes_reader.bytes, buf);
+                let res = poll_read_buf_at_pos(
+                    &mut bytes_reader.pos,
+                    ResponseClip::Clip(bytes_reader.bytes.len()),
+                    &bytes_reader.bytes,
+                    buf,
+                );
                 let bytes_read = bytes_reader.pos - pos_current;
                 bytes_reader.om.observe_bytes_read(pos_current, bytes_read);
                 Poll::Ready(res)
             }
             OutPrettyReader::Unixfs(r) => Pin::new(&mut *r).poll_read(cx, buf),
+        }
+    }
+}
+
+impl<T: ContentLoader + Unpin + 'static> AsyncSeek for OutPrettyReader<T> {
+    fn start_seek(mut self: Pin<&mut Self>, position: std::io::SeekFrom) -> std::io::Result<()> {
+        match &mut *self {
+            OutPrettyReader::DagPb(bytes_reader)
+            | OutPrettyReader::DagCbor(bytes_reader)
+            | OutPrettyReader::DagJson(bytes_reader)
+            | OutPrettyReader::Raw(bytes_reader) => {
+                let pos_current = bytes_reader.pos as i64;
+                let data_len = bytes_reader.bytes.len();
+                if data_len == 0 {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        "cannot seek on empty data",
+                    ));
+                }
+                match position {
+                    std::io::SeekFrom::Start(pos) => {
+                        let i = std::cmp::min(data_len - 1, pos as usize);
+                        bytes_reader.pos = i;
+                    }
+                    std::io::SeekFrom::End(pos) => {
+                        let mut i = (data_len as i64 + pos) % data_len as i64;
+                        if i < 0 {
+                            i += data_len as i64;
+                        }
+                        bytes_reader.pos = i as usize;
+                    }
+                    std::io::SeekFrom::Current(pos) => {
+                        let mut i = std::cmp::min(data_len as i64 - 1, pos_current as i64 + pos);
+                        i = std::cmp::max(0, i);
+                        bytes_reader.pos = i as usize;
+                    }
+                }
+                Ok(())
+            }
+            OutPrettyReader::Unixfs(r) => Pin::new(&mut *r).start_seek(position),
+        }
+    }
+
+    fn poll_complete(
+        mut self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+    ) -> Poll<std::io::Result<u64>> {
+        match &mut *self {
+            OutPrettyReader::DagPb(bytes_reader)
+            | OutPrettyReader::DagCbor(bytes_reader)
+            | OutPrettyReader::DagJson(bytes_reader)
+            | OutPrettyReader::Raw(bytes_reader) => Poll::Ready(Ok(bytes_reader.pos as u64)),
+            OutPrettyReader::Unixfs(r) => Pin::new(&mut *r).poll_complete(_cx),
         }
     }
 }
@@ -523,6 +637,7 @@ pub struct LoadedCid {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Source {
     Bitswap,
+    Http(String),
     Store(&'static str),
 }
 
@@ -736,6 +851,8 @@ pub trait ContentLoader: Sync + Send + std::fmt::Debug + Clone + 'static {
     async fn load_cid(&self, cid: &Cid, ctx: &LoaderContext) -> Result<LoadedCid>;
     /// Signal that the passend in session is not used anymore.
     async fn stop_session(&self, ctx: ContextId) -> Result<()>;
+    /// Checks if the given cid is present in the local storage.
+    async fn has_cid(&self, cid: &Cid) -> Result<bool>;
 }
 
 #[async_trait]
@@ -746,6 +863,10 @@ impl<T: ContentLoader> ContentLoader for Arc<T> {
 
     async fn stop_session(&self, ctx: ContextId) -> Result<()> {
         self.as_ref().stop_session(ctx).await
+    }
+
+    async fn has_cid(&self, cid: &Cid) -> Result<bool> {
+        self.as_ref().has_cid(cid).await
     }
 }
 
@@ -824,6 +945,11 @@ impl ContentLoader for Client {
             data: bytes,
             source: Source::Bitswap,
         })
+    }
+
+    async fn has_cid(&self, cid: &Cid) -> Result<bool> {
+        let cid = *cid;
+        self.try_store()?.has(cid).await
     }
 }
 
@@ -1030,10 +1156,9 @@ impl<T: ContentLoader> Resolver<T> {
     pub async fn resolve_with_ctx(&self, mut ctx: LoaderContext, path: Path) -> Result<Out> {
         // Resolve the root block.
         let (root_cid, loaded_cid) = self.resolve_root(&path, &mut ctx).await?;
-        if loaded_cid.source == Source::Bitswap {
-            inc!(ResolverMetrics::CacheMiss);
-        } else {
-            inc!(ResolverMetrics::CacheHit);
+        match loaded_cid.source {
+            Source::Store(_) => inc!(ResolverMetrics::CacheHit),
+            _ => inc!(ResolverMetrics::CacheMiss),
         }
 
         let codec = Codec::try_from(root_cid.codec()).context("unknown codec")?;
@@ -1404,6 +1529,11 @@ impl<T: ContentLoader> Resolver<T> {
     }
 
     #[tracing::instrument(skip(self))]
+    pub async fn has_cid(&self, cid: &Cid) -> Result<bool> {
+        self.loader.has_cid(cid).await
+    }
+
+    #[tracing::instrument(skip(self))]
     async fn load_ipns_record(&self, cid: &Cid) -> Result<Cid> {
         todo!()
     }
@@ -1467,7 +1597,7 @@ mod tests {
     use cid::multihash::{Code, MultihashDigest};
     use futures::{StreamExt, TryStreamExt};
     use libipld::{codec::Encode, Ipld, IpldCodec};
-    use tokio::io::AsyncReadExt;
+    use tokio::io::{AsyncReadExt, AsyncSeekExt};
 
     #[async_trait]
     impl<S: BuildHasher + Clone + Send + Sync + 'static> ContentLoader for HashMap<Cid, Bytes, S> {
@@ -1481,9 +1611,13 @@ mod tests {
             }
         }
 
-        async fn stop_session(&self, ctx: ContextId) -> Result<()> {
+        async fn stop_session(&self, _ctx: ContextId) -> Result<()> {
             // no session tracking
             Ok(())
+        }
+
+        async fn has_cid(&self, cid: &Cid) -> Result<bool> {
+            Ok(self.contains_key(cid))
         }
     }
 
@@ -1498,6 +1632,30 @@ mod tests {
     }
     async fn read_to_string<T: AsyncRead + Unpin>(reader: T) -> String {
         String::from_utf8(read_to_vec(reader).await).unwrap()
+    }
+
+    async fn seek_and_clip<T: ContentLoader + Unpin>(
+        ctx: LoaderContext,
+        node: &UnixfsNode,
+        resolver: Resolver<T>,
+        range: std::ops::Range<u64>,
+    ) -> UnixfsContentReader<T> {
+        let mut cr = node
+            .clone()
+            .into_content_reader(
+                ctx,
+                resolver.clone(),
+                OutMetrics::default(),
+                ResponseClip::Clip(range.end as usize),
+            )
+            .unwrap()
+            .unwrap();
+        let n = cr
+            .seek(tokio::io::SeekFrom::Start(range.start))
+            .await
+            .unwrap();
+        assert_eq!(n, range.start);
+        cr
     }
 
     #[test]
@@ -1537,6 +1695,22 @@ mod tests {
             println!("{}", test);
             assert!(test.parse::<Path>().is_err());
         }
+    }
+
+    #[test]
+    fn test_dir_paths() {
+        let non_dir_test = "/ipfs/bafkreigh2akiscaildcqabsyg3dfr6chu3fgpregiymsck7e7aqa4s52zy";
+        let dir_test = "/ipfs/bafkreigh2akiscaildcqabsyg3dfr6chu3fgpregiymsck7e7aqa4s52zy/";
+        let non_dir_path: Path = non_dir_test.parse().unwrap();
+        let dir_path: Path = dir_test.parse().unwrap();
+        assert!(non_dir_path.tail().is_empty());
+        assert!(dir_path.tail().len() == 1);
+        assert!(dir_path.tail()[0].is_empty());
+
+        assert!(non_dir_path.to_string() == non_dir_test);
+        assert!(dir_path.to_string() == dir_test);
+        assert!(dir_path.has_trailing_slash());
+        assert!(!non_dir_path.has_trailing_slash());
     }
 
     fn make_ipld() -> Ipld {
@@ -1609,7 +1783,11 @@ mod tests {
 
                 let out_bytes = read_to_vec(
                     new_ipld
-                        .pretty(resolver.clone(), OutMetrics::default())
+                        .pretty(
+                            resolver.clone(),
+                            OutMetrics::default(),
+                            ResponseClip::NoClip,
+                        )
                         .unwrap(),
                 )
                 .await;
@@ -1637,7 +1815,11 @@ mod tests {
 
                 let out_bytes = read_to_vec(
                     new_ipld
-                        .pretty(resolver.clone(), OutMetrics::default())
+                        .pretty(
+                            resolver.clone(),
+                            OutMetrics::default(),
+                            ResponseClip::NoClip,
+                        )
                         .unwrap(),
                 )
                 .await;
@@ -1758,7 +1940,8 @@ mod tests {
                         node.into_content_reader(
                             ipld_hello_txt.context,
                             resolver.clone(),
-                            OutMetrics::default()
+                            OutMetrics::default(),
+                            ResponseClip::NoClip,
                         )
                         .unwrap()
                         .unwrap()
@@ -1793,7 +1976,8 @@ mod tests {
                         node.into_content_reader(
                             ipld_hello_txt.context,
                             resolver.clone(),
-                            OutMetrics::default()
+                            OutMetrics::default(),
+                            ResponseClip::NoClip,
                         )
                         .unwrap()
                         .unwrap()
@@ -1855,7 +2039,8 @@ mod tests {
                         node.into_content_reader(
                             ipld_bar_txt.context,
                             resolver.clone(),
-                            OutMetrics::default()
+                            OutMetrics::default(),
+                            ResponseClip::NoClip,
                         )
                         .unwrap()
                         .unwrap()
@@ -1865,6 +2050,131 @@ mod tests {
                 );
             } else {
                 panic!("invalid result: {:?}", ipld_bar_txt);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_resolver_seeking() {
+        // Test content
+        // ------------
+        // QmZULkCELmmk5XNfCgTnCyFgAVxBRBXyDHGGMVoLFLiXEN foo/hello.txt
+        //   contains: "hello"
+        // QmdkGfDx42RNdAZFALHn5hjHqUq7L9o6Ef4zLnFEu3Y4Go foo
+
+        let hello_txt_cid_str = "QmZULkCELmmk5XNfCgTnCyFgAVxBRBXyDHGGMVoLFLiXEN";
+        let hello_txt_block_bytes = load_fixture(hello_txt_cid_str).await;
+
+        // read root
+        let root_cid_str = "QmdkGfDx42RNdAZFALHn5hjHqUq7L9o6Ef4zLnFEu3Y4Go";
+        let root_cid: Cid = root_cid_str.parse().unwrap();
+        let root_block_bytes = load_fixture(root_cid_str).await;
+
+        let loader: HashMap<Cid, Bytes> = [
+            (root_cid, root_block_bytes.clone()),
+            (hello_txt_cid_str.parse().unwrap(), hello_txt_block_bytes),
+        ]
+        .into_iter()
+        .collect();
+        let loader = Arc::new(loader);
+        let resolver = Resolver::new(loader.clone());
+
+        let path = format!("/ipfs/{root_cid_str}/hello.txt");
+        let ipld_hello_txt = resolver.resolve(path.parse().unwrap()).await.unwrap();
+
+        let ctx = ipld_hello_txt.context.clone();
+        if let OutContent::Unixfs(node) = ipld_hello_txt.content {
+            // clip response
+            let cr = seek_and_clip(ctx.clone(), &node, resolver.clone(), 0..2).await;
+            assert_eq!(read_to_string(cr).await, "he");
+
+            let cr = seek_and_clip(ctx.clone(), &node, resolver.clone(), 0..5).await;
+            assert_eq!(read_to_string(cr).await, "hello");
+
+            // clip to the end
+            let cr = seek_and_clip(ctx.clone(), &node, resolver.clone(), 0..6).await;
+            assert_eq!(read_to_string(cr).await, "hello\n");
+
+            // clip beyond the end
+            let cr = seek_and_clip(ctx.clone(), &node, resolver.clone(), 0..100).await;
+            assert_eq!(read_to_string(cr).await, "hello\n");
+
+            // seek
+            let cr = seek_and_clip(ctx.clone(), &node, resolver.clone(), 1..100).await;
+            assert_eq!(read_to_string(cr).await, "ello\n");
+
+            // seek and clip
+            let cr = seek_and_clip(ctx.clone(), &node, resolver.clone(), 1..3).await;
+            assert_eq!(read_to_string(cr).await, "el");
+        } else {
+            panic!("invalid result: {:?}", ipld_hello_txt);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_resolver_seeking_chunked() {
+        // Test content
+        // ------------
+        // QmUr9cs4mhWxabKqm9PYPSQQ6AQGbHJBtyrNmxtKgxqUx9 README.md
+        //
+        // imported with `go-ipfs add --chunker size-100`
+
+        let pieces_cid_str = [
+            "QmccJ8pV5hG7DEbq66ih1ZtowxgvqVS6imt98Ku62J2WRw",
+            "QmUajVwSkEp9JvdW914Qh1BCMRSUf2ztiQa6jqy1aWhwJv",
+            "QmNyLad1dWGS6mv2zno4iEviBSYSUR2SrQ8JoZNDz1UHYy",
+            "QmcXoBdCgmFMoNbASaQCNVswRuuuqbw4VvA7e5GtHbhRNp",
+            "QmP9yKRwuji5i7RTgrevwJwXp7uqQu1prv88nxq9uj99rW",
+        ];
+
+        // read root
+        let root_cid_str = "QmUr9cs4mhWxabKqm9PYPSQQ6AQGbHJBtyrNmxtKgxqUx9";
+        let root_cid: Cid = root_cid_str.parse().unwrap();
+        let root_block_bytes = load_fixture(root_cid_str).await;
+        let root_block = UnixfsNode::decode(&root_cid, root_block_bytes.clone()).unwrap();
+
+        let links: Vec<_> = root_block.links().collect::<Result<_>>().unwrap();
+        assert_eq!(links.len(), 5);
+
+        let mut loader: HashMap<Cid, Bytes> =
+            [(root_cid, root_block_bytes.clone())].into_iter().collect();
+
+        for c in &pieces_cid_str {
+            let bytes = load_fixture(c).await;
+            loader.insert(c.parse().unwrap(), bytes);
+        }
+
+        let loader = Arc::new(loader);
+        let resolver = Resolver::new(loader.clone());
+
+        {
+            let path = format!("/ipfs/{root_cid_str}");
+            let ipld_readme = resolver.resolve(path.parse().unwrap()).await.unwrap();
+
+            let m = ipld_readme.metadata();
+            assert_eq!(m.unixfs_type, Some(UnixfsType::File));
+            assert_eq!(m.path.to_string(), path);
+            assert_eq!(m.typ, OutType::Unixfs);
+            assert_eq!(m.size, Some(426));
+            assert_eq!(m.resolved_path, vec![root_cid_str.parse().unwrap(),]);
+
+            let size = m.size.unwrap();
+
+            let ctx = ipld_readme.context.clone();
+            if let OutContent::Unixfs(node) = ipld_readme.content {
+                let cr = seek_and_clip(ctx.clone(), &node, resolver.clone(), 1..size - 1).await;
+                let content = read_to_string(cr).await;
+                assert_eq!(content.len(), (size - 2) as usize);
+                assert!(content.starts_with(" iroh")); // without seeking '# iroh'
+                assert!(content.ends_with("</sub>\n")); // without clipping '</sub>\n\n'
+
+                let cr = seek_and_clip(ctx, &node, resolver.clone(), 101..size - 101).await;
+                let content = read_to_string(cr).await;
+                assert_eq!(content.len(), (size - 202) as usize);
+                assert!(content.starts_with("2.0</a>"));
+                assert!(content.ends_with("the Apac"));
+            } else {
+                panic!("invalid result: {:?}", ipld_readme);
             }
         }
     }
@@ -2023,7 +2333,8 @@ mod tests {
                         node.into_content_reader(
                             ipld_hello_txt.context,
                             resolver.clone(),
-                            OutMetrics::default()
+                            OutMetrics::default(),
+                            ResponseClip::NoClip,
                         )
                         .unwrap()
                         .unwrap()
@@ -2065,7 +2376,8 @@ mod tests {
                         node.into_content_reader(
                             ipld_bar_txt.context,
                             resolver.clone(),
-                            OutMetrics::default()
+                            OutMetrics::default(),
+                            ResponseClip::NoClip
                         )
                         .unwrap()
                         .unwrap()
@@ -2132,6 +2444,7 @@ mod tests {
                         ipld_readme.context,
                         resolver.clone(),
                         OutMetrics::default(),
+                        ResponseClip::NoClip,
                     )
                     .unwrap()
                     .unwrap(),
@@ -2298,7 +2611,8 @@ mod tests {
                         node.into_content_reader(
                             ipld_hello_txt.context,
                             resolver.clone(),
-                            OutMetrics::default()
+                            OutMetrics::default(),
+                            ResponseClip::NoClip
                         )
                         .unwrap()
                         .unwrap()
@@ -2354,7 +2668,8 @@ mod tests {
                         node.into_content_reader(
                             ipld_bar_txt.context,
                             resolver.clone(),
-                            OutMetrics::default()
+                            OutMetrics::default(),
+                            ResponseClip::NoClip
                         )
                         .unwrap()
                         .unwrap()
@@ -2391,7 +2706,8 @@ mod tests {
                         node.into_content_reader(
                             ipld_bar_txt.context,
                             resolver.clone(),
-                            OutMetrics::default()
+                            OutMetrics::default(),
+                            ResponseClip::NoClip
                         )
                         .unwrap()
                         .unwrap()
@@ -2428,7 +2744,8 @@ mod tests {
                         node.into_content_reader(
                             ipld_bar_txt.context,
                             resolver.clone(),
-                            OutMetrics::default()
+                            OutMetrics::default(),
+                            ResponseClip::NoClip,
                         )
                         .unwrap()
                         .unwrap()
@@ -2465,7 +2782,8 @@ mod tests {
                         node.into_content_reader(
                             ipld_bar_txt.context,
                             resolver.clone(),
-                            OutMetrics::default()
+                            OutMetrics::default(),
+                            ResponseClip::NoClip
                         )
                         .unwrap()
                         .unwrap()
@@ -2492,7 +2810,8 @@ mod tests {
                         node.into_content_reader(
                             ipld_bar_txt.context,
                             resolver.clone(),
-                            OutMetrics::default()
+                            OutMetrics::default(),
+                            ResponseClip::NoClip
                         )
                         .unwrap()
                         .unwrap()
@@ -2581,7 +2900,8 @@ mod tests {
                         node.into_content_reader(
                             ipld_txt.context,
                             resolver.clone(),
-                            OutMetrics::default()
+                            OutMetrics::default(),
+                            ResponseClip::NoClip
                         )
                         .unwrap()
                         .unwrap()
@@ -2650,7 +2970,8 @@ mod tests {
                         node.into_content_reader(
                             ipld_txt.context,
                             resolver.clone(),
-                            OutMetrics::default()
+                            OutMetrics::default(),
+                            ResponseClip::NoClip
                         )
                         .unwrap()
                         .unwrap()
