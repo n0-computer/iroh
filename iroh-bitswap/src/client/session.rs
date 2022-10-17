@@ -592,7 +592,7 @@ impl LoopState {
         }
     }
 
-    // Send want-haves to all connected peers
+    /// Send want-haves to all connected peers
     async fn broadcast_want_haves(&self, wants: &AHashSet<Cid>) {
         debug!(
             "session:{}: broadcasting wants: {:?}",

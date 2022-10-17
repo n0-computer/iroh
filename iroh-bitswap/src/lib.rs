@@ -27,6 +27,7 @@ use message::BitswapMessage;
 use network::OutEvent;
 use protocol::{ProtocolConfig, ProtocolId};
 use tokio::sync::{mpsc, oneshot};
+use tokio::task::JoinHandle;
 use tracing::{debug, trace, warn};
 
 use self::client::{Client, Config as ClientConfig};
@@ -72,9 +73,10 @@ pub struct Bitswap<S: Store> {
     pause_dialing: bool,
     client: Client<S>,
     server: Server<S>,
-    incoming_messages: mpsc::UnboundedSender<(PeerId, BitswapMessage)>,
-    peers_connected: mpsc::UnboundedSender<PeerId>,
-    peers_disconnected: mpsc::UnboundedSender<PeerId>,
+    incoming_messages: mpsc::Sender<(PeerId, BitswapMessage)>,
+    peers_connected: mpsc::Sender<PeerId>,
+    peers_disconnected: mpsc::Sender<PeerId>,
+    _workers: Arc<Vec<JoinHandle<()>>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -137,11 +139,12 @@ impl<S: Store> Bitswap<S> {
         .await;
 
         // EVIL: must eventually not be unbounded !!!
-        let (sender_msg, mut receiver_msg) = mpsc::unbounded_channel();
-        let (sender_con, mut receiver_con) = mpsc::unbounded_channel();
-        let (sender_dis, mut receiver_dis) = mpsc::unbounded_channel();
+        let (sender_msg, mut receiver_msg) = mpsc::channel(2048);
+        let (sender_con, mut receiver_con) = mpsc::channel(2048);
+        let (sender_dis, mut receiver_dis) = mpsc::channel(2048);
 
-        let _worker = tokio::task::spawn({
+        let mut workers = Vec::new();
+        workers.push(tokio::task::spawn({
             let server = server.clone();
             let client = client.clone();
 
@@ -155,9 +158,9 @@ impl<S: Store> Bitswap<S> {
                     .await;
                 }
             }
-        });
+        }));
 
-        let _worker = tokio::task::spawn({
+        workers.push(tokio::task::spawn({
             let server = server.clone();
             let client = client.clone();
 
@@ -171,9 +174,9 @@ impl<S: Store> Bitswap<S> {
                     .await;
                 }
             }
-        });
+        }));
 
-        let _worker = tokio::task::spawn({
+        workers.push(tokio::task::spawn({
             let server = server.clone();
             let client = client.clone();
 
@@ -187,7 +190,7 @@ impl<S: Store> Bitswap<S> {
                     .await;
                 }
             }
-        });
+        }));
 
         Bitswap {
             network,
@@ -201,6 +204,7 @@ impl<S: Store> Bitswap<S> {
             incoming_messages: sender_msg,
             peers_connected: sender_con,
             peers_disconnected: sender_dis,
+            _workers: Arc::new(workers),
         }
     }
 
@@ -270,16 +274,19 @@ impl<S: Store> Bitswap<S> {
 
     fn peer_connected(&self, peer: PeerId) {
         debug!("peer {} connected", peer);
-        if let Err(err) = self.peers_connected.send(peer) {
-            warn!("failed to process peer connection from {}: {:?}", peer, err);
+        if let Err(err) = self.peers_connected.try_send(peer) {
+            warn!(
+                "failed to process peer connection from {}: {:?}, dropping",
+                peer, err
+            );
         }
     }
 
     fn peer_disconnected(&self, peer: PeerId) {
         debug!("peer {} disconnected", peer);
-        if let Err(err) = self.peers_disconnected.send(peer) {
+        if let Err(err) = self.peers_disconnected.try_send(peer) {
             warn!(
-                "failed to process peer disconnection from {}: {:?}",
+                "failed to process peer disconnection from {}: {:?}, dropping",
                 peer, err
             );
         }
@@ -288,8 +295,11 @@ impl<S: Store> Bitswap<S> {
     fn receive_message(&self, peer: PeerId, message: BitswapMessage) {
         inc!(BitswapMetrics::MessagesReceived);
         // TODO: Handle backpressure properly
-        if let Err(err) = self.incoming_messages.send((peer, message)) {
-            warn!("failed to receive message from {}: {:?}", peer, err);
+        if let Err(err) = self.incoming_messages.try_send((peer, message)) {
+            warn!(
+                "failed to receive message from {}: {:?}, dropping",
+                peer, err
+            );
         }
     }
 
