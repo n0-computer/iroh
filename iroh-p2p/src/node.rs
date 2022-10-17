@@ -84,7 +84,9 @@ type BitswapSessions = AHashMap<u64, Vec<(oneshot::Sender<()>, JoinHandle<()>)>>
 
 enum KadQueryChannel {
     GetProviders {
-        provider_count: usize,
+        found_providers: HashSet<PeerId>,
+        #[allow(dead_code)]
+        query_id: QueryId,
         channels: Vec<Sender<Result<HashSet<PeerId>, String>>>,
     },
 }
@@ -162,13 +164,11 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
         let mut expiry_interval = tokio::time::interval(EXPIRY_INTERVAL);
 
         loop {
-            trace!("tick");
             inc!(P2PMetrics::LoopCounter);
 
             tokio::select! {
                 swarm_event = self.swarm.next() => {
                     let swarm_event = swarm_event.expect("the swarm will never die");
-                    trace!("tick: swarm event: {:?}", swarm_event);
                     if let Err(err) = self.handle_swarm_event(swarm_event) {
                         error!("swarm error: {:?}", err);
                     }
@@ -176,7 +176,6 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                 rpc_message = self.net_receiver_in.recv() => {
                     match rpc_message {
                         Some(rpc_message) => {
-                            trace!("tick: rpc message");
                             match self.handle_rpc_message(rpc_message) {
                                 Ok(true) => {
                                     // shutdown
@@ -207,14 +206,11 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                     info!("Peers connected: {:?}", self.swarm.connected_peers().count());
                 }
                 _ = bootstrap_interval.tick() => {
-                    trace!("tick:bootstrap: nice");
                     if let Err(e) = self.swarm.behaviour_mut().kad_bootstrap() {
                         warn!("kad bootstrap failed: {:?}", e);
                     }
                 }
                 _ = expiry_interval.tick() => {
-                    trace!("tick:expiry: expiry");
-
                     if let Err(err) = self.expiry() {
                         warn!("expiry error {:?}", err);
                     }
@@ -465,37 +461,47 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                         QueryResult::GetProviders(Ok(GetProvidersOk {
                             key, providers, ..
                         })) => {
+                            debug!("provider results for {:?} last: {}", key, step.last);
                             if step.last {
                                 let _ = self.kad_queries.remove(&QueryKey::ProviderKey(key));
                             } else if let Some(KadQueryChannel::GetProviders {
                                 channels,
-                                provider_count,
+                                found_providers,
+                                ..
                             }) = self.kad_queries.get_mut(&QueryKey::ProviderKey(key))
                             {
-                                // filter out bad providers
+                                debug!("found providers: {:?}", providers);
+                                // filter out bad providers.
                                 let providers: HashSet<_> = providers
                                     .into_iter()
                                     .filter(|provider| {
                                         inc!(P2PMetrics::SkippedPeerKad);
-                                        !self.swarm.behaviour().is_bad_peer(provider)
+                                        let is_bad = self.swarm.behaviour().is_bad_peer(provider);
+                                        debug!("filtering bad peer: {}", provider);
+                                        !is_bad
                                     })
                                     .collect();
 
-                                if !providers.is_empty() {
-                                    let providers = providers.clone();
+                                // Filter out already found providers.
+                                let new_providers: HashSet<PeerId> =
+                                    providers.difference(found_providers).copied().collect();
+
+                                found_providers.extend(new_providers.clone());
+
+                                if !new_providers.is_empty() {
                                     let channels = channels.clone();
                                     tokio::task::spawn(async move {
                                         for chan in channels.into_iter() {
-                                            chan.send(Ok(providers.clone())).await.ok();
+                                            chan.send(Ok(new_providers.clone())).await.ok();
                                         }
                                     });
                                 }
 
-                                *provider_count += providers.len();
-                                if *provider_count >= PROVIDER_LIMIT {
+                                if found_providers.len() >= PROVIDER_LIMIT {
                                     debug!(
                                         "finish provider query {}/{}",
-                                        provider_count, PROVIDER_LIMIT
+                                        found_providers.len(),
+                                        PROVIDER_LIMIT
                                     );
                                     // Finish query if we have enough providers.
                                     self.swarm.behaviour_mut().finish_query(&id);
@@ -665,29 +671,22 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                 response_channel,
             } => match key {
                 ProviderRequestKey::Dht(key) => {
+                    debug!("fetching providers for: {:?}", key);
                     if let Some(kad) = self.swarm.behaviour_mut().kad.as_mut() {
-                        if let Some(KadQueryChannel::GetProviders { channels, .. }) = self
-                            .kad_queries
-                            .get_mut(&QueryKey::ProviderKey(key.clone()))
-                        {
-                            debug!(
-                                "RpcMessage::ProviderRequest: already fetching providers for {:?}",
-                                key
-                            );
-                            channels.push(response_channel);
-                        } else {
-                            debug!(
-                                "RpcMessage::ProviderRequest: getting providers for {:?}",
-                                key
-                            );
-                            let _ = kad.get_providers(key.clone());
-                            self.kad_queries.insert(
-                                QueryKey::ProviderKey(key),
-                                KadQueryChannel::GetProviders {
-                                    provider_count: 0,
+                        match self.kad_queries.entry(QueryKey::ProviderKey(key.clone())) {
+                            std::collections::hash_map::Entry::Occupied(mut entry) => {
+                                let KadQueryChannel::GetProviders { channels, .. } =
+                                    entry.get_mut();
+                                channels.push(response_channel);
+                            }
+                            std::collections::hash_map::Entry::Vacant(entry) => {
+                                let query_id = kad.get_providers(key);
+                                entry.insert(KadQueryChannel::GetProviders {
+                                    found_providers: Default::default(),
+                                    query_id,
                                     channels: vec![response_channel],
-                                },
-                            );
+                                });
+                            }
                         }
                     } else {
                         tokio::task::spawn(async move {
@@ -872,7 +871,6 @@ mod tests {
 
     use super::*;
     use anyhow::Result;
-    use futures::TryStreamExt;
     use iroh_rpc_types::{
         p2p::{P2pClientAddr, P2pServerAddr},
         Addr,
@@ -888,7 +886,6 @@ mod tests {
             "/ip4/0.0.0.0/tcp/5001".parse().unwrap(),
             server_addr,
             client_addr,
-            true,
         )
         .await?;
         Ok(())
@@ -906,7 +903,6 @@ mod tests {
             "/ip4/0.0.0.0/tcp/5002".parse().unwrap(),
             server_addr,
             client_addr,
-            true,
         )
         .await?;
         Ok(())
@@ -925,31 +921,15 @@ mod tests {
             "/ip4/0.0.0.0/tcp/5003".parse().unwrap(),
             server_addr,
             client_addr,
-            true,
         )
         .await?;
         Ok(())
     }
 
-    // #[cfg(feature = "rpc-mem")]
-    // #[tokio::test]
-    // async fn test_fetch_providers_mem_bitswap() -> Result<()> {
-    //     let (server_addr, client_addr) = Addr::new_mem();
-    //     fetch_providers(
-    //         "/ip4/0.0.0.0/tcp/5004".parse().unwrap(),
-    //         server_addr,
-    //         client_addr,
-    //         false,
-    //     )
-    //     .await?;
-    //     Ok(())
-    // }
-
     async fn fetch_providers(
         addr: Multiaddr,
         rpc_server_addr: P2pServerAddr,
         rpc_client_addr: P2pClientAddr,
-        dht: bool,
     ) -> Result<()> {
         let mut network_config = Config::default_with_rpc(rpc_client_addr.clone());
         network_config.libp2p.listening_multiaddr = addr;
@@ -966,62 +946,34 @@ mod tests {
         });
 
         {
-            tokio::time::sleep(Duration::from_millis(1000)).await;
+            // Make sure we are bootstrapped.
+            tokio::time::sleep(Duration::from_millis(2500)).await;
             let client = RpcClient::new(cfg).await?;
             let c = "QmbWqxBEKC3P8tqsKc98xmWNzrzDtRLMiMPL8wBuTGsMnR"
                 .parse()
                 .unwrap();
-            if dht {
-                let mut providers = Vec::new();
-                let mut chan = client.p2p.unwrap().fetch_providers_dht(&c).await?;
-                while let Some(new_providers) = chan.next().await {
-                    let new_providers = new_providers.unwrap();
-                    println!("providers found");
-                    assert!(!new_providers.is_empty());
 
-                    for p in &new_providers {
-                        println!("{}", p);
-                        providers.push(*p);
-                    }
+            let mut providers = Vec::new();
+            let mut chan = client.p2p.unwrap().fetch_providers_dht(&c).await?;
+            while let Some(new_providers) = chan.next().await {
+                let new_providers = new_providers.unwrap();
+                println!("providers found");
+                assert!(!new_providers.is_empty());
+
+                for p in &new_providers {
+                    println!("{}", p);
+                    providers.push(*p);
                 }
-
-                println!("{:?}", providers);
-                assert!(!providers.is_empty());
-                assert!(
-                    providers.len() >= PROVIDER_LIMIT,
-                    "{} < {}",
-                    providers.len(),
-                    PROVIDER_LIMIT
-                );
-            } else {
-                // force to connect to providers, so we have a chance
-                let providers: Vec<_> = client
-                    .p2p
-                    .clone()
-                    .unwrap()
-                    .fetch_providers_dht(&c)
-                    .await?
-                    .try_collect::<Vec<_>>()
-                    .await?
-                    .into_iter()
-                    .flat_map(|p| p.into_iter())
-                    .collect();
-                assert!(!providers.is_empty());
-                println!("found providers dht: {:?}", providers);
-
-                let providers: Vec<_> = client
-                    .p2p
-                    .unwrap()
-                    .fetch_providers_bitswap(0, &c)
-                    .await?
-                    .try_collect::<Vec<_>>()
-                    .await?
-                    .into_iter()
-                    .flat_map(|p| p.into_iter())
-                    .collect();
-                assert!(!providers.is_empty());
-                println!("found providers bitswap: {:?}", providers);
             }
+
+            println!("{:?}", providers);
+            assert!(!providers.is_empty());
+            assert!(
+                providers.len() >= PROVIDER_LIMIT,
+                "{} < {}",
+                providers.len(),
+                PROVIDER_LIMIT
+            );
         };
 
         p2p_task.abort();
