@@ -114,7 +114,7 @@ impl Cli {
                 recursive,
                 no_wrap,
             } => {
-                add(api, path, *recursive, *no_wrap).await?;
+                add(api, path, *no_wrap, *recursive).await?;
             }
             Commands::Get {
                 ipfs_path: path,
