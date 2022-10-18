@@ -16,7 +16,7 @@ use iroh_rpc_client::Client;
 use iroh_rpc_client::StatusTable;
 use iroh_util::{iroh_config_path, make_config};
 #[cfg(feature = "testing")]
-use mockall::automock;
+use mockall::{automock, mock};
 use relative_path::RelativePathBuf;
 use tokio::io::{AsyncRead, AsyncReadExt};
 
@@ -30,16 +30,53 @@ pub enum OutType {
     Symlink(PathBuf),
 }
 
+pub trait Api: OtherApi + AddGetApi {}
+
+#[cfg(feature = "testing")]
+mock! {
+    #[derive(Debug)]
+    pub Api {}
+
+    impl OtherApi for Api {
+        type P = MockP2p;
+
+        fn p2p(&self) -> Result<MockP2p>;
+        fn check(&self) -> BoxFuture<'_, StatusTable>;
+        fn watch(&self) -> LocalBoxFuture<'static, LocalBoxStream<'static, StatusTable>>;
+    }
+    impl AddGetApi for Api {
+        fn get_stream(
+            &self,
+            ipfs_path: &IpfsPath,
+        ) -> LocalBoxStream<'_, Result<(RelativePathBuf, OutType)>>;
+
+    fn add_file<'a>(&'a self, path: &'a Path, wrap: bool) -> LocalBoxFuture<'_, Result<Cid>>;
+    fn add_dir(
+        &self,
+        path: &Path,
+        wrap: bool,
+    ) -> LocalBoxFuture<'_, Result<LocalBoxStream<'static, Result<AddEvent>>>>;
+    fn add_symlink<'a>(&'a self, path: &'a Path, wrap: bool) -> LocalBoxFuture<'_, Result<Cid>>;
+    }
+}
+
+impl<T> Api for T where T: AddGetApi + OtherApi {}
+
 // Note: `#[async_trait]` is deliberately not in use for this trait, because it
 // became very hard to express what we wanted once streams were involved.
 // Instead we spell things out explicitly without magic.
 
 #[cfg_attr(feature= "testing", automock(type P = MockP2p;))]
-pub trait Api {
+pub trait OtherApi {
     type P: P2p;
 
     fn p2p(&self) -> Result<Self::P>;
+    fn check(&self) -> BoxFuture<'_, StatusTable>;
+    fn watch(&self) -> LocalBoxFuture<'static, LocalBoxStream<'static, StatusTable>>;
+}
 
+#[cfg_attr(feature = "testing", automock())]
+pub trait AddGetApi {
     /// Produces a asynchronous stream of file descriptions
     /// Each description is a tuple of a relative path, and either a `Directory` or a `Reader`
     /// with the file contents.
@@ -55,9 +92,6 @@ pub trait Api {
         wrap: bool,
     ) -> LocalBoxFuture<'_, Result<LocalBoxStream<'static, Result<AddEvent>>>>;
     fn add_symlink<'a>(&'a self, path: &'a Path, wrap: bool) -> LocalBoxFuture<'_, Result<Cid>>;
-
-    fn check(&self) -> BoxFuture<'_, StatusTable>;
-    fn watch(&self) -> LocalBoxFuture<'static, LocalBoxStream<'static, StatusTable>>;
 }
 
 impl Iroh {
@@ -89,7 +123,7 @@ impl Iroh {
     }
 }
 
-impl Api for Iroh {
+impl OtherApi for Iroh {
     type P = ClientP2p;
 
     fn p2p(&self) -> Result<ClientP2p> {
@@ -97,6 +131,19 @@ impl Api for Iroh {
         Ok(ClientP2p::new(p2p_client.clone()))
     }
 
+    fn check(&self) -> BoxFuture<'_, StatusTable> {
+        async { self.client.check().await }.boxed()
+    }
+
+    fn watch(
+        &self,
+    ) -> LocalBoxFuture<'static, LocalBoxStream<'static, iroh_rpc_client::StatusTable>> {
+        let client = self.client.clone();
+        async { client.watch().await.boxed_local() }.boxed_local()
+    }
+}
+
+impl AddGetApi for Iroh {
     fn get_stream(
         &self,
         ipfs_path: &IpfsPath,
@@ -170,16 +217,5 @@ impl Api for Iroh {
             unixfs_builder::add_symlink(Some(providing_client), path, wrap).await
         }
         .boxed_local()
-    }
-
-    fn check(&self) -> BoxFuture<'_, StatusTable> {
-        async { self.client.check().await }.boxed()
-    }
-
-    fn watch(
-        &self,
-    ) -> LocalBoxFuture<'static, LocalBoxStream<'static, iroh_rpc_client::StatusTable>> {
-        let client = self.client.clone();
-        async { client.watch().await.boxed_local() }.boxed_local()
     }
 }

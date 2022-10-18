@@ -171,8 +171,8 @@ async fn add(api: &impl Api, path: &Path, no_wrap: bool, recursive: bool) -> Res
     //     }
     //     pb.finish_and_clear();
     // });
-    let mut added = api.add(path, !no_wrap).await?;
-    let mut stream = added.progress();
+    let added = api.add(path, !no_wrap).await?;
+    let mut stream = added.progress().await?;
     while let Some(Ok(add_event)) = stream.next().await {
         match add_event {
             AddEvent::Progress(size) => {

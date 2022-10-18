@@ -5,7 +5,11 @@ mod p2p;
 mod size;
 
 #[cfg(feature = "testing")]
+pub use crate::api::MockAddGetApi;
+#[cfg(feature = "testing")]
 pub use crate::api::MockApi;
+#[cfg(feature = "testing")]
+pub use crate::api::MockOtherApi;
 pub use crate::api::{Api, Iroh, OutType};
 pub use crate::api_ext::ApiExt;
 #[cfg(feature = "testing")]

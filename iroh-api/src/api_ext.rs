@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
-use crate::{AddEvent, Api, Cid, IpfsPath, OutType};
+use crate::api::AddGetApi;
+use crate::{AddEvent, Cid, IpfsPath, OutType};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use futures::stream::LocalBoxStream;
@@ -9,7 +10,7 @@ use futures::StreamExt;
 use relative_path::RelativePathBuf;
 
 #[async_trait(?Send)]
-pub trait ApiExt: Api {
+pub trait ApiExt: AddGetApi + Sized {
     /// High level get, equivalent of CLI `iroh get`
     async fn get<'a>(
         &self,
@@ -31,11 +32,12 @@ pub trait ApiExt: Api {
         Ok(root_path)
     }
 
-    async fn add<'a>(&'a self, path: &Path, wrap: bool) -> Result<Added<'a>> {
+    async fn add<'a>(&'a self, path: &Path, wrap: bool) -> Result<Added> {
         if path.is_dir() {
             Ok(Added {
-                cid: None,
-                stream: self.add_dir(path, wrap).await?,
+                api: Box::new(self),
+                path: path.to_path_buf(),
+                wrap,
             })
         }
         //  else if path.is_symlink() {
@@ -50,31 +52,32 @@ pub trait ApiExt: Api {
 }
 
 pub struct Added<'a> {
-    cid: Option<Cid>,
-    stream: LocalBoxStream<'a, Result<AddEvent>>,
+    // XXX double indirection
+    api: Box<&'a dyn AddGetApi>,
+    path: PathBuf,
+    wrap: bool,
 }
 
-impl Added<'_> {
-    pub fn progress(&mut self) -> LocalBoxStream<'_, Result<AddEvent>> {
-        async_stream::stream! {
-            // TODO(faassen) can we use stream.then instead?
-            while let Some(add_event) = self.stream.next().await {
-                if let Ok(AddEvent::Done(cid)) = add_event {
-                    self.cid = Some(cid);
-                }
-                yield add_event;
-            }
-        }
-        .boxed_local()
+impl<'a> Added<'a> {
+    pub async fn progress(&self) -> Result<LocalBoxStream<'_, Result<AddEvent>>> {
+        self.api.add_dir(&self.path, self.wrap).await
+        // async_stream::stream! {
+        //     // TODO(faassen) can we use stream.then instead?
+        //     while let Some(add_event) = self.stream.next().await {
+        //         if let Ok(AddEvent::Done(cid)) = add_event {
+        //             self.cid = Some(cid);
+        //         }
+        //         yield add_event;
+        //     }
+        // }
+        // .boxed_local()
     }
 
-    pub async fn cid(&mut self) -> Result<Cid> {
-        if let Some(cid) = self.cid {
-            return Ok(cid);
-        }
-        // if we don't already have a cid, consume the stream until we do
+    pub async fn cid(&self) -> Result<Cid> {
+        // consume the stream until we get a cid
         let r = self
             .progress()
+            .await?
             .fold(None, |_, add_event| async move {
                 if let Ok(AddEvent::Done(cid)) = add_event {
                     Some(cid)
@@ -109,7 +112,7 @@ impl Added<'_> {
 //     }
 // }
 
-impl<T> ApiExt for T where T: Api {}
+impl<T> ApiExt for T where T: AddGetApi {}
 
 /// take a stream of blocks as from `get_stream` and write them to the filesystem
 async fn save_get_stream(
