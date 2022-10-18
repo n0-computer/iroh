@@ -71,8 +71,6 @@ default-features = false
 features = ["std", "multihash-impl", "identity", "sha2"]
 
 [dev-dependencies]
-# tokio = { version = "1" }
-#car = { path = "../car" }
 
 [features]
 default = ["rpc-grpc", "rpc-mem"]

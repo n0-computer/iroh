@@ -474,7 +474,7 @@ impl MessageQueueActor {
         {
             Ok(res) => res,
             Err(err) => {
-                error!(
+                debug!(
                     "message_queue:{}: failed to prepare message: {:?}",
                     self.peer, err
                 );
@@ -487,7 +487,7 @@ impl MessageQueueActor {
 
         let wantlist: Vec<_> = msg.wantlist().cloned().collect();
         if let Err(err) = sender.send_message(msg).await {
-            error!(
+            debug!(
                 "message_queue:{}: failed to send message {:?}",
                 self.peer, err
             );
