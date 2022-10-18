@@ -3,6 +3,8 @@ use axum::{
     http::{header::*, HeaderValue, StatusCode},
     response::{IntoResponse, Redirect, Response},
 };
+use iroh_metrics::get_current_trace_id;
+use opentelemetry::trace::TraceId;
 
 use crate::constants::*;
 
@@ -107,7 +109,7 @@ pub struct GatewayResponse {
     pub status_code: StatusCode,
     pub body: BoxBody,
     pub headers: HeaderMap,
-    pub trace_id: String,
+    pub trace_id: TraceId,
 }
 
 impl IntoResponse for GatewayResponse {
@@ -120,10 +122,12 @@ impl IntoResponse for GatewayResponse {
             }
         }
         let mut rb = Response::builder().status(self.status_code);
-        self.headers.insert(
-            &HEADER_X_TRACE_ID,
-            HeaderValue::from_str(&self.trace_id).unwrap(),
-        );
+        if self.trace_id != TraceId::INVALID {
+            self.headers.insert(
+                &HEADER_X_TRACE_ID,
+                HeaderValue::from_str(&self.trace_id.to_string()).unwrap(),
+            );
+        }
         let rh = rb.headers_mut().unwrap();
         rh.extend(self.headers);
         rb.body(self.body).unwrap()
@@ -138,7 +142,7 @@ impl GatewayResponse {
             status_code,
             body: BoxBody::default(),
             headers: HeaderMap::new(),
-            trace_id: String::new(),
+            trace_id: get_current_trace_id(),
         }
     }
 
@@ -155,7 +159,7 @@ impl GatewayResponse {
             status_code: StatusCode::NOT_MODIFIED,
             body: BoxBody::default(),
             headers: HeaderMap::new(),
-            trace_id: String::new(),
+            trace_id: get_current_trace_id(),
         }
     }
 }
