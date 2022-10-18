@@ -26,3 +26,10 @@ resolver = "2"
 [patch.crates-io]
 libp2p = { git = "https://github.com/dignifiedquire/rust-libp2p", branch = "iroh-0-49" }
 # libp2p = { path = "../rust-libp2p" }
+
+[profile.ci]
+inherits = 'release'
+lto = true
+panic = 'abort'
+incremental = false
+codegen-units = 8

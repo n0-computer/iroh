@@ -265,7 +265,7 @@ jobs:
         type: string
         default: ""
     environment:
-      RUST_LOG: debug
+      RUST_LOG: error
     steps:
       - set-env-path
       - setup-protoc
@@ -288,7 +288,7 @@ jobs:
         type: string
         default: ""
     environment:
-      RUST_LOG: debug
+      RUST_LOG: error
     steps:
       - checkout
       - setup-env-mac
@@ -319,7 +319,7 @@ jobs:
   clippy:
     executor: docker-executor
     environment:
-      RUST_LOG: debug
+      RUST_LOG: warn
     steps:
       - set-env-path
       - setup-protoc
@@ -348,13 +348,13 @@ jobs:
           profile-name: default
       - run:
           name: build x86_64 release
-          command: cargo build --release -v
+          command: cargo build --profile ci -v
       - push-to-s3:
-          path: ./target/release/
+          path: ./target/ci/
           os: linux
           arch: amd64
       - push-to-s3-latest:
-          path: ./target/release/
+          path: ./target/ci/
           os: linux
           arch: amd64
       - save-sccache-cache
@@ -375,13 +375,13 @@ jobs:
           profile-name: default
       - run:
           name: build aarch64 release
-          command: cargo build --release -v
+          command: cargo build --profile ci -v
       - push-to-s3:
-          path: ./target/release/
+          path: ./target/ci/
           os: linux
           arch: aarch64
       - push-to-s3-latest:
-          path: ./target/release/
+          path: ./target/ci/
           os: linux
           arch: aarch64
       - save-sccache-cache
@@ -403,13 +403,13 @@ jobs:
       - run:
           name: build x86_64_darwin
           no_output_timeout: 20m
-          command: cargo build --release -v
+          command: cargo build --profile ci -v
       - push-to-s3:
-          path: ./target/release/
+          path: ./target/ci/
           os: darwin
           arch: x86_64
       - push-to-s3-latest:
-          path: ./target/release/
+          path: ./target/ci/
           os: darwin
           arch: x86_64
       - run:
@@ -421,13 +421,13 @@ jobs:
       - run:
           name: build aarch64_darwin
           no_output_timeout: 20m
-          command: cargo build --release -v --target aarch64-apple-darwin
+          command: cargo build --profile ci -v --target aarch64-apple-darwin
       - push-to-s3:
-          path: ./target/aarch64-apple-darwin/release/
+          path: ./target/aarch64-apple-darwin/ci/
           os: darwin
           arch: aarch64
       - push-to-s3-latest:
-          path: ./target/aarch64-apple-darwin/release/
+          path: ./target/aarch64-apple-darwin/ci/
           os: darwin
           arch: aarch64
       - save-sccache-cache
