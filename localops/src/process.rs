@@ -1,5 +1,5 @@
 use std::path::PathBuf;
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 use anyhow::{anyhow, Result};
 #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -14,26 +14,33 @@ pub fn daemonize(bin_path: PathBuf) -> Result<()> {
 #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
 fn daemonize_process(bin_path: PathBuf) -> Result<()> {
     Err(anyhow!(
-        "stopping processes is not supported on your operating system"
+        "deamonizing processes is not supported on your operating system"
     ))
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 fn daemonize_process(bin_path: PathBuf) -> Result<()> {
+    // ¯\_(ツ)_/¯
     let status = Command::new("bash")
         .arg("-c")
-        .arg(format!("{} &", bin_path.to_str().unwrap()))
+        // TODO(b5): might be nice to capture output in a log file at some point?
+        .arg(format!(
+            "nohup {} > /dev/null 2>&1 &",
+            bin_path.to_str().unwrap(),
+        ))
+        .stderr(Stdio::null())
+        .stdout(Stdio::null())
         .status()?;
 
     if !status.success() {
-        Err(anyhow::anyhow!("cargo build failed"))?;
+        Err(anyhow::anyhow!("couldn't daemonize binary"))?;
     }
     Ok(())
 }
 
 #[cfg(target_os = "windows")]
 fn daemonize_process(bin_path: PathBuf) -> Result<()> {
-    Err(anyhow!("stopping processes on windows is not supported"))
+    Err(anyhow!("deamonizing processes on windows is not supported"))
 }
 
 pub fn stop(pid: u32) -> Result<()> {
@@ -50,7 +57,7 @@ fn stop_process(pid: u32) -> Result<()> {
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 fn stop_process(pid: u32) -> Result<()> {
     let id = Pid::from_raw(pid.try_into()?);
-    kill(id, Signal::SIGKILL).map_err(|e| anyhow!("killing process, error number: {}", e))
+    kill(id, Signal::SIGINT).map_err(|e| anyhow!("killing process, error number: {}", e))
 }
 
 #[cfg(target_os = "windows")]

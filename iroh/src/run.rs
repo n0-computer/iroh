@@ -127,14 +127,12 @@ impl Cli {
             Commands::P2p(p2p) => run_p2p_command(&api.p2p()?, p2p).await?,
             Commands::Start {} => {
                 crate::services::start(api).await?;
-                println!("started iroh");
             }
             Commands::Status { watch } => {
                 crate::services::status(api, *watch).await?;
             }
             Commands::Stop {} => {
                 crate::services::stop().await?;
-                println!("stopped iroh");
             }
         };
 

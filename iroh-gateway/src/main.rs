@@ -19,7 +19,7 @@ use tracing::{debug, error};
 async fn main() -> Result<()> {
     let mut lock = ProgramLock::new("iroh-gateway")?;
     if lock.is_locked() {
-        println!("iroh-one is already running, stopping.");
+        println!("iroh-gateway is already running, stopping.");
         return Ok(());
     } else {
         lock.acquire()?;

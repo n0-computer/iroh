@@ -2,32 +2,21 @@ use anyhow::{anyhow, Result};
 use crossterm::terminal::{Clear, ClearType};
 use crossterm::{cursor, style, style::Stylize, QueueableCommand};
 use futures::StreamExt;
+use std::collections::HashSet;
 use std::io::{stdout, Write};
-use std::{collections::HashSet, path::PathBuf};
+use tracing::{info, warn};
 
 use iroh_api::{Api, ServiceStatus, StatusRow, StatusTable};
 use iroh_util::lock::{read_lock_pid, try_cleanup_dead_lock, ProgramLock};
 
-pub struct DaemonDetails {
-    pub bin_paths: Vec<PathBuf>,
-}
-
-/// start registers iroh with the host operating system, configuring iroh as a
-/// service that will be kept in the event of a crash by the OS.
-/// Current supported platforms:
-///   - MacOS using launchd
-/// terms:
-/// daemon - a binary that when running, supplies one or more services. currently {iroh-one,iroh-gateway,iroh-p2p,iroh-store}
-/// service - an RPC endpoint. currently one of {gateway,p2p,store}
-/// one deamon can provide multiple services
-///
 /// TODO(b5) - start should check for configuration mismatch between iroh CLI configuration
 /// any daemons services it's starting
-pub async fn start(api: &impl Api) -> Result<DaemonDetails> {
+pub async fn start(api: &impl Api) -> Result<()> {
+    // start_services(api, HashSet::from(["store"])).await
     start_services(api, HashSet::from(["store", "p2p", "gateway"])).await
 }
 
-async fn start_services(api: &impl Api, services: HashSet<&str>) -> Result<DaemonDetails> {
+async fn start_services(api: &impl Api, services: HashSet<&str>) -> Result<()> {
     // check for any running iroh services
     let table = api.check().await;
 
@@ -57,7 +46,9 @@ async fn start_services(api: &impl Api, services: HashSet<&str>) -> Result<Daemo
         .collect();
 
     if missing_services.is_empty() {
-        return Err(anyhow!("iroh is already running. all systems nominal."));
+        return Err(anyhow!(
+            "iroh is already running. all systems nominal.".green()
+        ));
     }
 
     for &service in missing_services.iter() {
@@ -67,42 +58,45 @@ async fn start_services(api: &impl Api, services: HashSet<&str>) -> Result<Daemo
         // // check if a binary by this name exists
         let bin_path = which::which(&daemon_name).map_err(|_| {
             anyhow!(format!(
-                "can't find {} binary on your $PATH. please install {}",
+                "can't find {} daemon binary on your $PATH. please install {}.\n visit https://iroh.computer/docs/install for more info",
                 &daemon_name, &daemon_name
             ))
         })?;
 
-        print!("starting {}...", &daemon_name);
-        // // TODO - b5 start daemon
-        // // Command::new(bin_path)
+        print!("starting {}...\t", &daemon_name.bold());
         localops::process::daemonize(bin_path)?;
-        println!("success");
+        println!("{}", "success".green());
+        // TODO - confirm communication with RPC API
     }
 
-    // TODO - confirm communication with RPC API
-
-    // TODO(b5) - properly collect started daemons
-    Ok(DaemonDetails { bin_paths: vec![] })
+    Ok(())
 }
 
 // TODO(b5) - in an ideal world the lock files would contain PIDs of daemon processes
 pub async fn stop() -> Result<()> {
     for daemon_name in ["iroh-one", "iroh-gateway", "iroh-p2p", "iroh-store"] {
         let lock = ProgramLock::new(daemon_name)?;
-        println!(
-            "checking process {}, locked = {}",
+        info!(
+            "checking daemon {}, locked = {}",
             daemon_name,
             lock.is_locked()
         );
         if lock.is_locked() {
             let pid = read_lock_pid(daemon_name)?;
-            println!("stopping {} pid: {}", daemon_name, pid);
+            info!("stopping {} pid: {}", daemon_name, pid);
+
+            print!("stopping {}...", &daemon_name);
             match localops::process::stop(pid) {
-                Ok(_) => (),
-                Err(_) => {
+                Ok(_) => {
+                    println!("{}", "stopped".red());
+                }
+                Err(e) => {
                     // if killing the process errored out, try to remove the lockfile
                     if try_cleanup_dead_lock(daemon_name)? {
-                        println!("removed dead lockfile for {} daemon", daemon_name);
+                        warn!("removed dead lockfile for {} daemon", daemon_name);
+                        println!("{}", "stopped".red());
+                    } else {
+                        println!("{}: {}", "error".yellow(), e);
                     }
                 }
             }

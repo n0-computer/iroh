@@ -5,6 +5,7 @@ use std::fs::File;
 use std::path::PathBuf;
 use std::process;
 use std::rc::Rc;
+use tracing::info;
 
 /// Manages a lock file used to track if an iroh program
 /// is already running.
@@ -50,25 +51,32 @@ impl ProgramLock {
 }
 
 /// Attempt to remove a stray lock file that wasn't cleaned up, returns true
-/// if a lock is successfully deleted
+/// if a lock is successfully deleted, and will only attempt to delete if the
+/// lock is not currently held
 pub fn try_cleanup_dead_lock(prog_name: &str) -> Result<bool> {
     let lock = ProgramLock {
         path: crate::iroh_data_path(&format!("{}.lock", prog_name))?,
         lock: None,
     };
     if lock.is_locked() {
+        info!("lock {} is currently active, cannot remove", prog_name);
         return Ok(false);
     }
     match std::fs::remove_file(lock.path) {
-        Err(_) => Ok(false),
-        Ok(_) => Ok(true),
+        Err(e) => {
+            info!("error removing {} lockfile: {}", prog_name, e);
+            Ok(false)
+        }
+        Ok(_) => {
+            info!("removed dead {} lockfile", prog_name);
+            Ok(true)
+        }
     }
 }
 
 /// Report Process ID stored in a lock file
 pub fn read_lock_pid(prog_name: &str) -> Result<u32> {
     let path = crate::iroh_data_path(&format!("{}.lock", prog_name))?;
-    println!("reading lock: {}", path.display());
     read_lock(path)
 }
 
