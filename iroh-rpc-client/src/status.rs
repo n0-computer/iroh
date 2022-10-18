@@ -164,8 +164,6 @@ pub struct StatusTable {
     pub gateway: StatusRow,
     pub p2p: StatusRow,
     pub store: StatusRow,
-
-    iter: u8,
 }
 
 impl StatusTable {
@@ -178,6 +176,12 @@ impl StatusTable {
             gateway: gateway.unwrap_or_default(),
             p2p: p2p.unwrap_or_default(),
             store: store.unwrap_or_default(),
+        }
+    }
+
+    pub fn into_iter(&self) -> StatusTableIterator<'_> {
+        StatusTableIterator {
+            table: self,
             iter: 0,
         }
     }
@@ -199,14 +203,19 @@ impl StatusTable {
     }
 }
 
-impl Iterator for StatusTable {
+pub struct StatusTableIterator<'a> {
+    table: &'a StatusTable,
+    iter: usize,
+}
+
+impl Iterator for StatusTableIterator<'_> {
     type Item = StatusRow;
 
     fn next(&mut self) -> Option<Self::Item> {
         let current = match self.iter {
-            0 => Some(self.store.to_owned()),
-            1 => Some(self.p2p.to_owned()),
-            2 => Some(self.gateway.to_owned()),
+            0 => Some(self.table.store.to_owned()),
+            1 => Some(self.table.p2p.to_owned()),
+            2 => Some(self.table.gateway.to_owned()),
             _ => None,
         };
 
@@ -224,7 +233,6 @@ impl Default for StatusTable {
             gateway: StatusRow::new(gateway::NAME, 1, ServiceStatus::Unknown),
             p2p: StatusRow::new(network::NAME, 1, ServiceStatus::Unknown),
             store: StatusRow::new(store::NAME, 1, ServiceStatus::Unknown),
-            iter: 0,
         }
     }
 }
@@ -274,7 +282,6 @@ mod tests {
                 number: 1,
                 status: ServiceStatus::Unknown,
             },
-            iter: 0,
         };
 
         assert_eq!(expect, StatusTable::default());
@@ -298,7 +305,6 @@ mod tests {
                 number: 1,
                 status: ServiceStatus::Unknown,
             },
-            iter: 0,
         };
         assert_eq!(
             expect,
@@ -332,5 +338,31 @@ mod tests {
         let expect = StatusTable::new(gateway, p2p.clone(), store);
         got.update(p2p.unwrap()).unwrap();
         assert_eq!(expect, got);
+    }
+
+    #[test]
+    fn status_table_iter() {
+        let table = StatusTable::default();
+        let rows: Vec<StatusRow> = table.iter().collect();
+        assert_eq!(
+            vec![
+                StatusRow {
+                    name: crate::store::NAME,
+                    number: 1,
+                    status: ServiceStatus::Unknown,
+                },
+                StatusRow {
+                    name: crate::network::NAME,
+                    number: 1,
+                    status: ServiceStatus::Unknown,
+                },
+                StatusRow {
+                    name: crate::gateway::NAME,
+                    number: 1,
+                    status: ServiceStatus::Unknown,
+                },
+            ],
+            rows
+        );
     }
 }

@@ -1,5 +1,5 @@
 [package]
-name = "localops"
+name = "iroh-localops"
 version = "0.1.0"
 edition = "2021"
 
@@ -9,7 +9,4 @@ edition = "2021"
 anyhow = "1.0"
 
 [target.'cfg(unix)'.dependencies]
-nix = { version = "0.25", features = ["signal", "process"]}
-
-[target.'cfg(macos)'.dependencies]
 nix = { version = "0.25", features = ["signal", "process"]}

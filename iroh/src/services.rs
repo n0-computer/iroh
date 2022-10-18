@@ -9,35 +9,38 @@ use tracing::{info, warn};
 use iroh_api::{Api, ServiceStatus, StatusRow, StatusTable};
 use iroh_util::lock::{read_lock_pid, try_cleanup_dead_lock, ProgramLock};
 
-/// TODO(b5) - start should check for configuration mismatch between iroh CLI configuration
-/// any daemons services it's starting
+/// start any of {iroh-gateway,iroh-store,iroh-p2p} that aren't currently
+/// running.
 pub async fn start(api: &impl Api) -> Result<()> {
     // start_services(api, HashSet::from(["store"])).await
     start_services(api, HashSet::from(["store", "p2p", "gateway"])).await
 }
 
+// TODO(b5) - should check for configuration mismatch between iroh CLI configuration
 async fn start_services(api: &impl Api, services: HashSet<&str>) -> Result<()> {
     // check for any running iroh services
     let table = api.check().await;
 
     let mut missing_services = HashSet::new();
-    let missing_services = table.fold(&mut missing_services, |accum, status_row| {
-        match status_row.status() {
-            iroh_api::ServiceStatus::Serving => (),
-            iroh_api::ServiceStatus::Unknown => {
-                accum.insert(status_row.name());
+    let missing_services = table
+        .into_iter()
+        .fold(&mut missing_services, |accum, status_row| {
+            match status_row.status() {
+                iroh_api::ServiceStatus::Serving => (),
+                iroh_api::ServiceStatus::Unknown => {
+                    accum.insert(status_row.name());
+                }
+                iroh_api::ServiceStatus::NotServing => {
+                    accum.insert(status_row.name());
+                }
+                iroh_api::ServiceStatus::ServiceUnknown => (),
+                iroh_api::ServiceStatus::Down(_reason) => {
+                    accum.insert(status_row.name());
+                    // TODO(b5) - warn user that a service is down & exit
+                }
             }
-            iroh_api::ServiceStatus::NotServing => {
-                accum.insert(status_row.name());
-            }
-            iroh_api::ServiceStatus::ServiceUnknown => (),
-            iroh_api::ServiceStatus::Down(_reason) => {
-                accum.insert(status_row.name());
-                // TODO(b5) - warn user that a service is down & exit
-            }
-        }
-        accum
-    });
+            accum
+        });
 
     // construct a new set from the intersection of missing & expected services
     let missing_services: HashSet<&str> = services
@@ -46,9 +49,11 @@ async fn start_services(api: &impl Api, services: HashSet<&str>) -> Result<()> {
         .collect();
 
     if missing_services.is_empty() {
-        return Err(anyhow!(
-            "iroh is already running. all systems nominal.".green()
-        ));
+        println!(
+            "{}",
+            "All iroh daemons are already running. all systems nominal.".green()
+        );
+        return Ok(());
     }
 
     for &service in missing_services.iter() {
@@ -64,7 +69,7 @@ async fn start_services(api: &impl Api, services: HashSet<&str>) -> Result<()> {
         })?;
 
         print!("starting {}...\t", &daemon_name.bold());
-        localops::process::daemonize(bin_path)?;
+        iroh_localops::process::daemonize(bin_path)?;
         println!("{}", "success".green());
         // TODO - confirm communication with RPC API
     }
@@ -72,7 +77,7 @@ async fn start_services(api: &impl Api, services: HashSet<&str>) -> Result<()> {
     Ok(())
 }
 
-// TODO(b5) - in an ideal world the lock files would contain PIDs of daemon processes
+///
 pub async fn stop() -> Result<()> {
     for daemon_name in ["iroh-one", "iroh-gateway", "iroh-p2p", "iroh-store"] {
         let lock = ProgramLock::new(daemon_name)?;
@@ -86,7 +91,7 @@ pub async fn stop() -> Result<()> {
             info!("stopping {} pid: {}", daemon_name, pid);
 
             print!("stopping {}...", &daemon_name);
-            match localops::process::stop(pid) {
+            match iroh_localops::process::stop(pid) {
                 Ok(_) => {
                     println!("{}", "stopped".red());
                 }

@@ -13,8 +13,8 @@ use tracing::{debug, error, info};
 async fn main() -> anyhow::Result<()> {
     let mut lock = ProgramLock::new("iroh-store")?;
     if lock.is_locked() {
-        println!("iroh-store is already running, stopping.");
-        ::std::process::exit(iroh_util::exitcodes::LOCKED);
+        eprintln!("iroh-store is already running, stopping.");
+        std::process::exit(iroh_util::exitcodes::LOCKED);
     } else {
         lock.acquire()?;
     }

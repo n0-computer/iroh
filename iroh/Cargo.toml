@@ -27,7 +27,7 @@ indicatif = "0.17.1"
 iroh-util = { path = "../iroh-util"}
 which = "4.3.0"
 sysinfo = "0.26.4"
-localops = { path = "../localops" }
+iroh-localops = { path = "../iroh-localops" }
 
 [dev-dependencies]
 trycmd = "0.13.7"

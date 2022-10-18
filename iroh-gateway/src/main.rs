@@ -19,8 +19,8 @@ use tracing::{debug, error};
 async fn main() -> Result<()> {
     let mut lock = ProgramLock::new("iroh-gateway")?;
     if lock.is_locked() {
-        println!("iroh-gateway is already running, stopping.");
-        ::std::process::exit(iroh_util::exitcodes::LOCKED);
+        eprintln!("iroh-gateway is already running, stopping.");
+        std::process::exit(iroh_util::exitcodes::LOCKED);
     } else {
         lock.acquire()?;
     }

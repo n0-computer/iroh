@@ -11,8 +11,8 @@ use tracing::{debug, error};
 fn main() -> Result<()> {
     let mut lock = ProgramLock::new("iroh-p2p")?;
     if lock.is_locked() {
-        println!("iroh-one is already running, stopping.");
-        ::std::process::exit(iroh_util::exitcodes::LOCKED);
+        eprintln!("iroh-one is already running, stopping.");
+        std::process::exit(iroh_util::exitcodes::LOCKED);
     } else {
         lock.acquire()?;
     }

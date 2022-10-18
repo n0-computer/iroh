@@ -1,6 +1,7 @@
 use anyhow::{anyhow, Result};
 use file_guard::{FileGuard, Lock};
 use std::fs::File;
+use std::fs::OpenOptions;
 use std::io::prelude::*;
 use std::io::Write;
 use std::path::PathBuf;
@@ -41,7 +42,12 @@ impl ProgramLock {
 
     /// Try to acquire a lock for this program.
     pub fn acquire(&mut self) -> Result<()> {
-        let mut file = File::create(&self.path)?;
+        // ensure path to lock exists
+        std::fs::create_dir_all(&crate::iroh_data_root()?)?;
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&self.path)?;
         file.write_all(process::id().to_string().as_bytes())?;
         let file = Rc::new(file);
 
@@ -66,7 +72,7 @@ pub fn try_cleanup_dead_lock(prog_name: &str) -> Result<bool> {
     match std::fs::remove_file(lock.path) {
         Err(e) => {
             info!("error removing {} lockfile: {}", prog_name, e);
-            Ok(false)
+            Err(anyhow!("removing dead lockfile: {}", e))
         }
         Ok(_) => {
             info!("removed dead {} lockfile", prog_name);
