@@ -57,10 +57,11 @@ enum Commands {
         /// filesystem path to write to. Optional and defaults to $CID
         output: Option<PathBuf>,
     },
-    #[clap(about = "Start a long running iroh process")]
+    #[clap(about = "Start iroh services locally")]
+    #[clap(after_help = doc::START_LONG_DESCRIPTION )]
     Start {},
     // status checks the health of the different processes
-    #[clap(about = "Check the health of the different iroh processes.")]
+    #[clap(about = "Check the health of the different iroh services")]
     #[clap(after_help = doc::STATUS_LONG_DESCRIPTION)]
     Status {
         #[clap(short, long)]
@@ -68,6 +69,7 @@ enum Commands {
         watch: bool,
     },
     #[clap(about = "Stop all local iroh services")]
+    #[clap(after_help = doc::STOP_LONG_DESCRIPTION )]
     Stop {},
 }
 

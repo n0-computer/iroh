@@ -10,12 +10,12 @@ use tracing::{debug, error};
 /// Starts daemon process
 fn main() -> Result<()> {
     let mut lock = ProgramLock::new("iroh-p2p")?;
-        if lock.is_locked() {
-            println!("iroh-one is already running, stopping.");
-            return Ok(());
-        } else {
-            lock.acquire()?;
-        }
+    if lock.is_locked() {
+        println!("iroh-one is already running, stopping.");
+        return Ok(());
+    } else {
+        lock.acquire()?;
+    }
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .max_blocking_threads(2048)

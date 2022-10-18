@@ -9,6 +9,12 @@ of the protocol.
 
 For more info see https://iroh.computer/docs";
 
+pub const START_LONG_DESCRIPTION: &str = "
+";
+
+pub const STOP_LONG_DESCRIPTION: &str = "
+";
+
 pub const STATUS_LONG_DESCRIPTION: &str = "
 status reports the current operational setup of iroh. Use status as a go-to
 command for understanding where iroh commands are being processed. different
