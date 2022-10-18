@@ -28,8 +28,7 @@ async fn build_transport(
 ) {
     // TODO: make transports configurable
 
-    let tcp_config = libp2p::tcp::GenTcpConfig::default()
-        .port_reuse(true)
+    let tcp_config = libp2p::tcp::GenTcpConfig::default().port_reuse(true);
     let transport = libp2p::tcp::TokioTcpTransport::new(tcp_config.clone());
     let transport =
         libp2p::websocket::WsConfig::new(libp2p::tcp::TokioTcpTransport::new(tcp_config))
