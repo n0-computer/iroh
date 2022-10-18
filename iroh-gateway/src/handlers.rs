@@ -753,7 +753,7 @@ where
         status_code,
         body: body::boxed(body),
         headers,
-        trace_id: get_current_trace_id().to_string(),
+        trace_id: get_current_trace_id(),
     })
 }
 
@@ -767,7 +767,7 @@ fn error<T: ContentLoader>(
     GatewayError {
         status_code,
         message: message.to_string(),
-        trace_id: get_current_trace_id().to_string(),
+        trace_id: get_current_trace_id(),
         method: None,
     }
 }
