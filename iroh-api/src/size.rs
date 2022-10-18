@@ -19,6 +19,8 @@ pub fn size_stream(path: &Path) -> impl Stream<Item = FileInfo> + '_ {
                 while let Some(entry) = read_dir.next_entry().await.unwrap() {
                     stack.push(entry.path());
                 }
+            } else if path.is_symlink() {
+                continue;
             } else {
                 let size = fs::metadata(&path).await.unwrap().len();
                 let path = path.clone();
