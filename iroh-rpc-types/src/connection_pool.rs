@@ -85,21 +85,24 @@ impl bb8::ManageConnection for TonicConnectionManager {
 
 impl Service<tonic::codegen::http::Request<BoxBody>> for TonicConnectionPool {
     type Response = tonic::codegen::http::Response<Body>;
-    type Error = tonic::transport::Error;
+    type Error = anyhow::Error;
     type Future = ResponseFuture;
 
-    fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        if self.inner.state().connections == 0 {
+            cx.waker().wake_by_ref();
+            return Poll::Pending;
+        }
         Poll::Ready(Ok(()))
     }
 
     fn call(&mut self, request: tonic::codegen::http::Request<BoxBody>) -> Self::Future {
-        let this = self.inner.clone();
-        let inner = std::mem::replace(&mut self.inner, this);
-        // TODO: error handling
+        let inner = self.inner.clone();
         let fut = Box::pin(async move {
-            let mut conn = inner.get().await.unwrap();
-            Service::call(&mut *conn, request).await
-        }); // TODO: avoid box
+            let mut conn = inner.get().await?;
+            let res = Service::call(&mut *conn, request).await?;
+            Ok(res)
+        });
 
         ResponseFuture { inner: fut }
     }
@@ -108,16 +111,15 @@ impl Service<tonic::codegen::http::Request<BoxBody>> for TonicConnectionPool {
 pub struct ResponseFuture {
     inner: Pin<
         Box<
-            dyn Future<
-                    Output = Result<tonic::codegen::http::Response<Body>, tonic::transport::Error>,
-                > + Send
+            dyn Future<Output = Result<tonic::codegen::http::Response<Body>, anyhow::Error>>
+                + Send
                 + 'static,
         >,
     >,
 }
 
 impl Future for ResponseFuture {
-    type Output = Result<tonic::codegen::http::Response<Body>, tonic::transport::Error>;
+    type Output = Result<tonic::codegen::http::Response<Body>, anyhow::Error>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         Pin::new(&mut self.inner).poll(cx)
