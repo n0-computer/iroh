@@ -9,6 +9,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use http::{HeaderMap, HeaderValue};
+use opentelemetry::trace::TraceId;
 use serde_json::json;
 
 use crate::constants::HEADER_X_TRACE_ID;
@@ -17,7 +18,7 @@ use crate::constants::HEADER_X_TRACE_ID;
 pub struct GatewayError {
     pub status_code: StatusCode,
     pub message: String,
-    pub trace_id: String,
+    pub trace_id: TraceId,
     pub method: Option<http::Method>,
 }
 
@@ -33,12 +34,10 @@ impl GatewayError {
 impl IntoResponse for GatewayError {
     fn into_response(self) -> Response {
         let mut headers = HeaderMap::new();
-        let has_trace_id =
-            !self.trace_id.is_empty() && self.trace_id != "00000000000000000000000000000000";
-        if has_trace_id {
+        if self.trace_id != TraceId::INVALID {
             headers.insert(
                 &HEADER_X_TRACE_ID,
-                HeaderValue::from_str(&self.trace_id).unwrap(),
+                HeaderValue::from_str(&self.trace_id.to_string()).unwrap(),
             );
         }
         match self.method {
@@ -49,18 +48,19 @@ impl IntoResponse for GatewayError {
                 rb.body(BoxBody::default()).unwrap()
             }
             _ => {
-                let body = match has_trace_id {
-                    true => axum::Json(json!({
+                let body = if self.trace_id != TraceId::INVALID {
+                    axum::Json(json!({
                         "code": self.status_code.as_u16(),
                         "success": false,
                         "message": self.message,
-                        "trace_id": self.trace_id,
-                    })),
-                    false => axum::Json(json!({
+                        "trace_id": self.trace_id.to_string(),
+                    }))
+                } else {
+                    axum::Json(json!({
                         "code": self.status_code.as_u16(),
                         "success": false,
                         "message": self.message,
-                    })),
+                    }))
                 };
                 let mut res = body.into_response();
                 res.headers_mut().extend(headers);
