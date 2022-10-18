@@ -1,9 +1,14 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use async_stream::stream;
 use futures::stream::Stream;
-use iroh_resolver::unixfs_builder::FileInfo;
 use tokio::fs;
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct FileInfo {
+    pub path: PathBuf,
+    pub size: u64,
+}
 
 pub fn size_stream(path: &Path) -> impl Stream<Item = FileInfo> + '_ {
     stream! {

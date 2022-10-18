@@ -21,4 +21,3 @@ pub use libp2p::{Multiaddr, PeerId};
 // TODO(faassen) we don't want to expose this but the CLI isn't the
 // right place either, as FileInfo at least is inherent to the API
 pub use crate::size::size_stream;
-pub use iroh_resolver::unixfs_builder::FileInfo;

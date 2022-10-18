@@ -1,6 +1,5 @@
 use std::path::{Path, PathBuf};
 
-use crate::FileInfo;
 use crate::{Api, Cid, IpfsPath, OutType};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
@@ -31,14 +30,9 @@ pub trait ApiExt: Api {
         Ok(root_path)
     }
 
-    async fn add(
-        &self,
-        path: &Path,
-        wrap: bool,
-        update_tx: tokio::sync::mpsc::Sender<FileInfo>,
-    ) -> Result<Cid> {
+    async fn add(&self, path: &Path, wrap: bool) -> Result<Cid> {
         if path.is_dir() {
-            self.add_dir(path, wrap, update_tx).await
+            self.add_dir(path, wrap).await
         } else if path.is_symlink() {
             self.add_symlink(path, wrap).await
         } else if path.is_file() {

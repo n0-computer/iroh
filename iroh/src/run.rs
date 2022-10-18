@@ -9,7 +9,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use futures::stream::StreamExt;
 use indicatif::{ProgressBar, ProgressStyle};
-use iroh_api::{size_stream, Api, ApiExt, FileInfo, IpfsPath, Iroh};
+use iroh_api::{size_stream, Api, ApiExt, IpfsPath, Iroh};
 use iroh_metrics::config::Config as MetricsConfig;
 
 #[derive(Parser, Debug, Clone)]
@@ -163,15 +163,15 @@ async fn add(api: &impl Api, path: &Path, no_wrap: bool, recursive: bool) -> Res
     // show the progress bar right away, as `add` takes
     // a while before it starts ending progress reports
     pb.inc(0);
-    let (tx, mut rx) = tokio::sync::mpsc::channel::<FileInfo>(32);
-    tokio::spawn(async move {
-        while let Some(file_info) = rx.recv().await {
-            pb.inc(file_info.size);
-            pb.set_message(format!("{}", ""));
-        }
-        pb.finish_and_clear();
-    });
-    let cid = api.add(path, !no_wrap, tx).await?;
+    // let (tx, mut rx) = tokio::sync::mpsc::channel::<FileInfo>(32);
+    // tokio::spawn(async move {
+    //     while let Some(file_info) = rx.recv().await {
+    //         pb.inc(file_info.size);
+    //         pb.set_message(format!("{}", ""));
+    //     }
+    //     pb.finish_and_clear();
+    // });
+    let cid = api.add(path, !no_wrap).await?;
     println!("/ipfs/{}", cid);
     Ok(())
 }

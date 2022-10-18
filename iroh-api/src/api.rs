@@ -5,7 +5,6 @@ use crate::config::{Config, CONFIG_FILE_NAME, ENV_PREFIX};
 #[cfg(feature = "testing")]
 use crate::p2p::MockP2p;
 use crate::p2p::{ClientP2p, P2p};
-use crate::FileInfo;
 use crate::{Cid, IpfsPath};
 use anyhow::Result;
 use futures::future::{BoxFuture, LocalBoxFuture};
@@ -50,12 +49,7 @@ pub trait Api {
     ) -> LocalBoxStream<'_, Result<(RelativePathBuf, OutType)>>;
 
     fn add_file<'a>(&'a self, path: &'a Path, wrap: bool) -> LocalBoxFuture<'_, Result<Cid>>;
-    fn add_dir<'a>(
-        &'a self,
-        path: &'a Path,
-        wrap: bool,
-        update_tx: tokio::sync::mpsc::Sender<FileInfo>,
-    ) -> LocalBoxFuture<'_, Result<Cid>>;
+    fn add_dir<'a>(&'a self, path: &'a Path, wrap: bool) -> LocalBoxFuture<'_, Result<Cid>>;
     fn add_symlink<'a>(&'a self, path: &'a Path, wrap: bool) -> LocalBoxFuture<'_, Result<Cid>>;
 
     fn check(&self) -> BoxFuture<'_, StatusTable>;
@@ -147,17 +141,12 @@ impl Api for Iroh {
         .boxed_local()
     }
 
-    fn add_dir<'a>(
-        &'a self,
-        path: &'a Path,
-        wrap: bool,
-        sender: tokio::sync::mpsc::Sender<FileInfo>,
-    ) -> LocalBoxFuture<'_, Result<Cid>> {
+    fn add_dir<'a>(&'a self, path: &'a Path, wrap: bool) -> LocalBoxFuture<'_, Result<Cid>> {
         async move {
             let providing_client = iroh_resolver::unixfs_builder::StoreAndProvideClient {
                 client: Box::new(&self.client),
             };
-            unixfs_builder::add_dir(Some(&providing_client), path, wrap, sender).await
+            unixfs_builder::add_dir(Some(&providing_client), path, wrap).await
         }
         .boxed_local()
     }
