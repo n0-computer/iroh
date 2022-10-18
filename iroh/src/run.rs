@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::doc;
 #[cfg(feature = "testing")]
@@ -114,49 +114,7 @@ impl Cli {
                 recursive,
                 no_wrap,
             } => {
-                if !path.exists() {
-                    anyhow::bail!("Path does not exist");
-                }
-                if !path.is_dir() && !path.is_file() {
-                    anyhow::bail!("Path is not a file or directory");
-                }
-                if path.is_dir() && !*recursive {
-                    anyhow::bail!(
-                        "{} is a directory, use --recursive to add it",
-                        path.display()
-                    );
-                }
-                let pb = ProgressBar::new_spinner();
-                pb.set_message("Calculating size...");
-                let mut total_size: u64 = 0;
-                let mut stream = Box::pin(size_stream(path));
-                while let Some(size_info) = stream.next().await {
-                    total_size += size_info.size;
-                    pb.inc(1);
-                }
-                pb.finish_and_clear();
-                // with_message(format!(
-                //     "Total size: {}",
-                //     indicatif::HumanBytes(total_size)
-                // ));
-
-                let pb = ProgressBar::new(total_size);
-                pb.set_style(ProgressStyle::with_template(
-                    "[{elapsed_precise}] {bar:40} {bytes}/{total_bytes} ({bytes_per_sec}) {msg}",
-                )?);
-                // show the progress bar right away, as `add` takes
-                // a while before it starts ending progress reports
-                pb.inc(0);
-                let (tx, mut rx) = tokio::sync::mpsc::channel::<FileInfo>(32);
-                tokio::spawn(async move {
-                    while let Some(file_info) = rx.recv().await {
-                        pb.inc(file_info.size);
-                        pb.set_message(format!("{}", &file_info.path.display()));
-                    }
-                    pb.finish_and_clear();
-                });
-                let cid = api.add(path, !(*no_wrap), tx).await?;
-                println!("/ipfs/{}", cid);
+                add(api, path, *recursive, *no_wrap).await?;
             }
             Commands::Get {
                 ipfs_path: path,
@@ -169,4 +127,51 @@ impl Cli {
 
         Ok(())
     }
+}
+
+async fn add(api: &impl Api, path: &Path, no_wrap: bool, recursive: bool) -> Result<()> {
+    if !path.exists() {
+        anyhow::bail!("Path does not exist");
+    }
+    if !path.is_dir() && !path.is_file() {
+        anyhow::bail!("Path is not a file or directory");
+    }
+    if path.is_dir() && !recursive {
+        anyhow::bail!(
+            "{} is a directory, use --recursive to add it",
+            path.display()
+        );
+    }
+    let pb = ProgressBar::new_spinner();
+    pb.set_message("Calculating size...");
+    let mut total_size: u64 = 0;
+    let mut stream = Box::pin(size_stream(path));
+    while let Some(size_info) = stream.next().await {
+        total_size += size_info.size;
+        pb.inc(1);
+    }
+    pb.finish_and_clear();
+    // with_message(format!(
+    //     "Total size: {}",
+    //     indicatif::HumanBytes(total_size)
+    // ));
+
+    let pb = ProgressBar::new(total_size);
+    pb.set_style(ProgressStyle::with_template(
+        "[{elapsed_precise}] {bar:40} {bytes}/{total_bytes} ({bytes_per_sec}) {msg}",
+    )?);
+    // show the progress bar right away, as `add` takes
+    // a while before it starts ending progress reports
+    pb.inc(0);
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<FileInfo>(32);
+    tokio::spawn(async move {
+        while let Some(file_info) = rx.recv().await {
+            pb.inc(file_info.size);
+            pb.set_message(format!("{}", &file_info.path.display()));
+        }
+        pb.finish_and_clear();
+    });
+    let cid = api.add(path, !no_wrap, tx).await?;
+    println!("/ipfs/{}", cid);
+    Ok(())
 }
