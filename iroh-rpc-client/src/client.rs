@@ -1,6 +1,10 @@
+use std::sync::Arc;
+use std::sync::atomic::AtomicUsize;
+
 use anyhow::{anyhow, Context, Result};
 #[cfg(feature = "grpc")]
 use futures::{Stream, StreamExt};
+use rand::Rng;
 
 use crate::config::Config;
 use crate::gateway::GatewayClient;
@@ -10,8 +14,36 @@ use crate::store::StoreClient;
 #[derive(Debug, Clone)]
 pub struct Client {
     pub gateway: Option<GatewayClient>,
-    pub p2p: Option<P2pClient>,
-    pub store: Option<StoreClient>,
+        pub p2p: Option<P2pLBClient>,
+    pub store: Option<StoreLBClient>,
+}
+
+#[derive(Debug, Clone)]
+pub struct StoreLBClient {
+    clients: Vec<StoreClient>,
+    pos: usize,
+}
+
+impl StoreLBClient {
+    pub fn get(&mut self) -> StoreClient {
+        let c = self.clients.get(self.pos).unwrap();
+        self.pos = (self.pos + 1) % self.clients.len();
+        c.clone()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct P2pLBClient {
+    clients: Vec<P2pClient>,
+    pos: usize,
+}
+
+impl P2pLBClient {
+    pub fn get(&mut self) -> P2pClient {
+        let c = self.clients.get(self.pos).unwrap();
+        self.pos = (self.pos + 1) % self.clients.len();
+        c.clone()
+    }
 }
 
 impl Client {
@@ -33,20 +65,26 @@ impl Client {
         };
 
         let p2p = if let Some(addr) = p2p_addr {
-            Some(
-                P2pClient::new(addr)
+            let mut slb = P2pLBClient { clients: vec![], pos: 0};
+            for i in 0..32 {
+                let sc = P2pClient::new(addr.clone())
                     .await
-                    .context("Could not create p2p rpc client")?,
-            )
+                    .context("Could not create store rpc client")?;
+                slb.clients.push(sc);
+            }
+            Some(slb)
         } else {
             None
         };
         let store = if let Some(addr) = store_addr {
-            Some(
-                StoreClient::new(addr)
+            let mut slb = StoreLBClient { clients: vec![], pos: 0};
+            for i in 0..32 {
+                let sc = StoreClient::new(addr.clone())
                     .await
-                    .context("Could not create store rpc client")?,
-            )
+                    .context("Could not create store rpc client")?;
+                slb.clients.push(sc);
+            }
+            Some(slb)
         } else {
             None
         };
@@ -58,10 +96,9 @@ impl Client {
         })
     }
 
-    pub fn try_p2p(&self) -> Result<&P2pClient> {
-        self.p2p
-            .as_ref()
-            .ok_or_else(|| anyhow!("missing rpc p2p connnection"))
+    pub fn try_p2p(self) -> Result<P2pClient> {
+        let c = self.p2p.unwrap().clone().get();
+        return Ok(c);
     }
 
     pub fn try_gateway(&self) -> Result<&GatewayClient> {
@@ -70,10 +107,9 @@ impl Client {
             .ok_or_else(|| anyhow!("missing rpc gateway connnection"))
     }
 
-    pub fn try_store(&self) -> Result<&StoreClient> {
-        self.store
-            .as_ref()
-            .ok_or_else(|| anyhow!("missing rpc store connnection"))
+    pub fn try_store(self) -> Result<StoreClient> {
+        let c = self.store.unwrap().clone().get();
+        return Ok(c);
     }
 
     #[cfg(feature = "grpc")]
@@ -84,12 +120,12 @@ impl Client {
             None
         };
         let p = if let Some(ref p) = self.p2p {
-            Some(p.check().await)
+            Some(p.clone().get().check().await)
         } else {
             None
         };
         let s = if let Some(ref s) = self.store {
-            Some(s.check().await)
+            Some(s.clone().get().check().await)
         } else {
             None
         };
@@ -107,11 +143,11 @@ impl Client {
                 streams.push(g.boxed());
             }
             if let Some(ref p) = self.p2p {
-                let p = p.watch().await;
+                let p = p.clone().get().watch().await;
                 streams.push(p.boxed());
             }
             if let Some(ref s) = self.store {
-                let s = s.watch().await;
+                let s = s.clone().get().watch().await;
                 streams.push(s.boxed());
             }
 
