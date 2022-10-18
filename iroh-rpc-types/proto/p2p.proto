@@ -16,9 +16,11 @@ service P2p {
   rpc StopProviding(Key) returns (google.protobuf.Empty) {}
   rpc GetListeningAddrs(google.protobuf.Empty) returns (GetListeningAddrsResponse) {}
   rpc GetPeers(google.protobuf.Empty) returns (GetPeersResponse) {}
-  rpc PeerConnect(ConnectRequest) returns (ConnectResponse) {}
+  rpc PeerConnect(ConnectRequest) returns (google.protobuf.Empty) {}
+  rpc PeerConnectByPeerId(ConnectByPeerIdRequest) returns (google.protobuf.Empty) {}
   rpc PeerDisconnect(DisconnectRequest) returns (google.protobuf.Empty) {}
   rpc Shutdown(google.protobuf.Empty) returns (google.protobuf.Empty) {}
+  rpc Lookup(LookupRequest) returns (PeerInfo) {}
 
   rpc GossipsubAddExplicitPeer(GossipsubPeerIdMsg) returns (google.protobuf.Empty) {}
   rpc GossipsubAllMeshPeers(google.protobuf.Empty) returns (GossipsubPeersResponse) {}
@@ -95,15 +97,15 @@ message GetPeersResponse {
   map<string, Multiaddrs> peers = 1;
 }
 
-message ConnectRequest {
-  // Serialized peer id
-  bytes peer_id = 1; 
-  // Serialized list of multiaddrs
-  repeated bytes addrs = 2;
+message ConnectByPeerIdRequest {
+  bytes peer_id = 1;
 }
 
-message ConnectResponse {
-  bool success = 1; 
+message ConnectRequest {
+  // Serialized PeerId
+  bytes peer_id = 1;
+  // Serialized multiaddr
+  repeated bytes addrs = 2;
 }
 
 message DisconnectRequest {
@@ -111,11 +113,31 @@ message DisconnectRequest {
   bytes peer_id = 1;
 }
 
+message LookupRequest {
+  // PeerId
+  bytes peer_id = 1;
+  // Serialized multiaddr
+  optional bytes addr = 2;
+}
+
+message PeerInfo {
+  // PublicKey
+  bytes peer_id = 1;
+  // String
+  string protocol_version = 2;
+  // string
+  string agent_version = 3;
+  // vec of Multiaddrs
+  repeated bytes listen_addrs = 4;
+  // vec of Strings
+  repeated string protocols = 5;
+  // Multiaddr
+  bytes observed_addr = 6;
+}
 message Multiaddrs {
   // Serialized list of multiaddrs
   repeated bytes addrs = 1;
 }
-
 
 message GossipsubPeerIdMsg {
   // Serialized PeerId
@@ -161,5 +183,4 @@ message GossipsubTopicsResponse {
   // List of topics
   repeated string topics = 1;
 }
-
 

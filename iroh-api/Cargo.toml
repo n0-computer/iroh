@@ -30,4 +30,4 @@ serde = { version = "1.0", features = ["derive"] }
 relative-path = "1.7.2"
 
 [dev-dependencies]
-tempdir = "0.3.7"
+tempfile = "3.3.0"

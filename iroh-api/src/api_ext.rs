@@ -115,7 +115,7 @@ fn get_root_path(ipfs_path: &IpfsPath, output_path: Option<&Path>) -> PathBuf {
 mod tests {
     use super::*;
     use std::str::FromStr;
-    use tempdir::TempDir;
+    use tempfile::TempDir;
 
     #[tokio::test]
     async fn test_save_get_stream() {
@@ -130,18 +130,15 @@ mod tests {
                 OutType::Reader(Box::new(std::io::Cursor::new("hello"))),
             )),
         ]));
-        let tmp_dir = TempDir::new("test_save_get_stream").unwrap();
-        save_get_stream(tmp_dir.path(), stream).await.unwrap();
-        assert!(tmp_dir.path().join("a").is_dir());
-        assert!(tmp_dir.path().join("a/c").is_symlink());
-        let target = tokio::fs::read_link(tmp_dir.path().join("a/c"))
+        let tmp_dir = TempDir::new().unwrap().path().join("test_save_get_stream");
+        save_get_stream(&tmp_dir, stream).await.unwrap();
+        assert!(tmp_dir.join("a").is_dir());
+        assert!(tmp_dir.join("a/c").is_symlink());
+        let target = tokio::fs::read_link(tmp_dir.join("a/c"))
             .await
             .expect("file to exist");
         assert_eq!(target, PathBuf::from("../b"));
-        assert_eq!(
-            std::fs::read_to_string(tmp_dir.path().join("b")).unwrap(),
-            "hello"
-        );
+        assert_eq!(std::fs::read_to_string(tmp_dir.join("b")).unwrap(), "hello");
     }
 
     #[test]

@@ -11,12 +11,15 @@ use iroh_rpc_types::p2p::P2pServerAddr;
 use libp2p::core::Multiaddr;
 use libp2p::gossipsub::{GossipsubMessage, MessageId, TopicHash};
 pub use libp2p::gossipsub::{IdentTopic, Topic};
-use libp2p::identify::Event as IdentifyEvent;
+use libp2p::identify::{Event as IdentifyEvent, Info as IdentifyInfo};
 use libp2p::identity::Keypair;
 use libp2p::kad::kbucket::{Distance, NodeStatus};
-use libp2p::kad::BootstrapOk;
-use libp2p::kad::{self, GetProvidersOk, KademliaEvent, QueryId, QueryResult};
+use libp2p::kad::{
+    self, BootstrapOk, GetClosestPeersError, GetClosestPeersOk, GetProvidersOk, KademliaEvent,
+    QueryId, QueryResult,
+};
 use libp2p::metrics::Recorder;
+use libp2p::multiaddr::Protocol;
 use libp2p::ping::Result as PingResult;
 use libp2p::swarm::dial_opts::{DialOpts, PeerCondition};
 use libp2p::swarm::{ConnectionHandler, IntoConnectionHandler, NetworkBehaviour, SwarmEvent};
@@ -66,7 +69,10 @@ pub enum GossipsubEvent {
 pub struct Node<KeyStorage: Storage> {
     swarm: Swarm<NodeBehaviour>,
     net_receiver_in: Receiver<RpcMessage>,
-    dial_queries: AHashMap<PeerId, Vec<OneShotSender<bool>>>,
+    dial_queries: AHashMap<PeerId, Vec<OneShotSender<Result<()>>>>,
+    lookup_queries: AHashMap<PeerId, Vec<oneshot::Sender<Result<IdentifyInfo>>>>,
+    // TODO(ramfox): use new providers queue instead
+    find_on_dht_queries: AHashMap<Vec<u8>, DHTQuery>,
     network_events: Vec<Sender<NetworkEvent>>,
     #[allow(dead_code)]
     rpc_client: RpcClient,
@@ -78,6 +84,9 @@ pub struct Node<KeyStorage: Storage> {
     bitswap_sessions: BitswapSessions,
     providers: Providers,
 }
+
+// TODO(ramfox): use new providers queue instead
+type DHTQuery = (PeerId, Vec<oneshot::Sender<Result<()>>>);
 
 type BitswapSessions = AHashMap<u64, Vec<(oneshot::Sender<()>, JoinHandle<()>)>>;
 
@@ -125,6 +134,9 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
             swarm,
             net_receiver_in: network_receiver_in,
             dial_queries: Default::default(),
+            lookup_queries: Default::default(),
+            // TODO(ramfox): use new providers queue instead
+            find_on_dht_queries: Default::default(),
             network_events: Vec::new(),
             rpc_client,
             _keychain: keychain,
@@ -353,7 +365,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
             } => {
                 if let Some(channels) = self.dial_queries.get_mut(&peer_id) {
                     while let Some(channel) = channels.pop() {
-                        channel.send(true).ok();
+                        channel.send(Ok(())).ok();
                     }
                 }
 
@@ -381,7 +393,9 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                 if let Some(peer_id) = peer_id {
                     if let Some(channels) = self.dial_queries.get_mut(&peer_id) {
                         while let Some(channel) = channels.pop() {
-                            channel.send(false).ok();
+                            channel
+                                .send(Err(anyhow!("Error dialing peer {:?}: {}", peer_id, error)))
+                                .ok();
                         }
                     }
                 }
@@ -448,6 +462,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
             }
             Event::Kademlia(e) => {
                 libp2p_metrics().record(&e);
+
                 if let KademliaEvent::OutboundQueryProgressed {
                     id, result, step, ..
                 } = e
@@ -493,6 +508,48 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                         QueryResult::Bootstrap(Err(e)) => {
                             warn!("kad bootstrap error: {:?}", e);
                         }
+                        QueryResult::GetClosestPeers(Ok(GetClosestPeersOk { key, peers })) => {
+                            debug!("GetClosestPeers ok {:?}", key);
+                            if let Some((peer_id, channels)) = self.find_on_dht_queries.remove(&key)
+                            {
+                                let have_peer = peers.contains(&peer_id);
+                                // if this is not the last step we will have more chances to find
+                                // the peer
+                                if !have_peer && !step.last {
+                                    return Ok(());
+                                }
+                                let res = move || {
+                                    if have_peer {
+                                        Ok(())
+                                    } else {
+                                        Err(anyhow!("Failed to find peer {:?} on the DHT", peer_id))
+                                    }
+                                };
+                                tokio::task::spawn(async move {
+                                    for chan in channels.into_iter() {
+                                        chan.send(res()).ok();
+                                    }
+                                });
+                            }
+                        }
+                        QueryResult::GetClosestPeers(Err(GetClosestPeersError::Timeout {
+                            key,
+                            ..
+                        })) => {
+                            debug!("GetClosestPeers Timeout: {:?}", key);
+                            if let Some((peer_id, channels)) = self.find_on_dht_queries.remove(&key)
+                            {
+                                tokio::task::spawn(async move {
+                                    for chan in channels.into_iter() {
+                                        chan.send(Err(anyhow!(
+                                            "Failed to find peer {:?} on the DHT: Timeout",
+                                            peer_id
+                                        )))
+                                        .ok();
+                                    }
+                                });
+                            }
+                        }
                         other => {
                             debug!("Libp2p => Unhandled Kademlia query result: {:?}", other)
                         }
@@ -529,7 +586,24 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                     self.swarm
                         .behaviour_mut()
                         .peer_manager
-                        .inject_identify_info(peer_id, info);
+                        .inject_identify_info(peer_id, info.clone());
+
+                    if let Some(channels) = self.lookup_queries.remove(&peer_id) {
+                        for chan in channels {
+                            chan.send(Ok(info.clone())).ok();
+                        }
+                    }
+                } else if let IdentifyEvent::Error { peer_id, error } = *e {
+                    if let Some(channels) = self.lookup_queries.remove(&peer_id) {
+                        for chan in channels {
+                            chan.send(Err(anyhow!(
+                                "error upgrading connection to peer {:?}: {}",
+                                peer_id,
+                                error
+                            )))
+                            .ok();
+                        }
+                    }
                 }
             }
             Event::Ping(e) => {
@@ -691,20 +765,60 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                     .send(peer_addresses)
                     .map_err(|_| anyhow!("Failed to get Libp2p peers"))?;
             }
-            RpcMessage::NetConnect(response_channel, peer_id, addresses) => {
-                let channels = self.dial_queries.entry(peer_id).or_default();
-                channels.push(response_channel);
+            RpcMessage::NetConnect(response_channel, peer_id, addrs) => {
+                if self.swarm.is_connected(&peer_id) {
+                    response_channel.send(Ok(())).ok();
+                } else {
+                    let channels = self.dial_queries.entry(peer_id).or_default();
+                    channels.push(response_channel);
 
-                let dial_opts = DialOpts::peer_id(peer_id)
-                    .addresses(addresses)
-                    .condition(libp2p::swarm::dial_opts::PeerCondition::Always)
-                    .build();
-                if let Err(e) = Swarm::dial(&mut self.swarm, dial_opts) {
-                    warn!("invalid dial options: {:?}", e);
-                    while let Some(channel) = channels.pop() {
-                        channel.send(false).ok();
+                    // when using DialOpts::peer_id, having the `P2p` protocol as part of the
+                    // added addresses throws an error
+                    // we can filter out that protocol before adding the addresses to the dial opts
+                    let addrs = addrs
+                        .iter()
+                        .map(|a| {
+                            a.iter()
+                                .filter(|p| !matches!(*p, Protocol::P2p(_)))
+                                .collect()
+                        })
+                        .collect();
+                    let dial_opts = DialOpts::peer_id(peer_id)
+                        .addresses(addrs)
+                        .condition(libp2p::swarm::dial_opts::PeerCondition::Always)
+                        .build();
+                    if let Err(e) = Swarm::dial(&mut self.swarm, dial_opts) {
+                        warn!("invalid dial options: {:?}", e);
+                        while let Some(channel) = channels.pop() {
+                            channel
+                                .send(Err(anyhow!("error dialing peer {:?}: {}", peer_id, e)))
+                                .ok();
+                        }
                     }
                 }
+            }
+            RpcMessage::NetConnectByPeerId(response_channel, peer_id) => {
+                if self.swarm.is_connected(&peer_id) {
+                    response_channel.send(Ok(())).ok();
+                } else {
+                    let channels = self.dial_queries.entry(peer_id).or_default();
+                    channels.push(response_channel);
+
+                    let dial_opts = DialOpts::peer_id(peer_id)
+                        .condition(libp2p::swarm::dial_opts::PeerCondition::Always)
+                        .build();
+                    if let Err(e) = Swarm::dial(&mut self.swarm, dial_opts) {
+                        while let Some(channel) = channels.pop() {
+                            channel
+                                .send(Err(anyhow!("error dialing peer {:?}: {}", peer_id, e)))
+                                .ok();
+                        }
+                    }
+                }
+            }
+            RpcMessage::AddressesOfPeer(response_channel, peer_id) => {
+                let addrs = self.swarm.behaviour_mut().addresses_of_peer(&peer_id);
+                response_channel.send(addrs).ok();
             }
             RpcMessage::NetDisconnect(response_channel, _peer_id) => {
                 warn!("NetDisconnect API not yet implemented"); // TODO: implement NetDisconnect
@@ -780,6 +894,43 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                             .send(res)
                             .map_err(|_| anyhow!("sender dropped"))?;
                     }
+                }
+            }
+            RpcMessage::ListenForIdentify(response_channel, peer_id) => {
+                let channels = self.lookup_queries.entry(peer_id).or_default();
+                channels.push(response_channel);
+            }
+            RpcMessage::LookupPeerInfo(response_channel, peer_id) => {
+                if let Some(info) = self.swarm.behaviour().peer_manager.info_for_peer(&peer_id) {
+                    let info = info.last_info.clone();
+                    response_channel.send(info).ok();
+                } else {
+                    response_channel.send(None).ok();
+                }
+            }
+            RpcMessage::CancelListenForIdentify(response_channel, peer_id) => {
+                self.lookup_queries.remove(&peer_id);
+                response_channel.send(()).ok();
+            }
+            RpcMessage::FindPeerOnDHT(response_channel, peer_id) => {
+                debug!("find closest peers for: {:?}", peer_id);
+                if let Some(kad) = self.swarm.behaviour_mut().kad.as_mut() {
+                    match self.find_on_dht_queries.entry(peer_id.to_bytes()) {
+                        std::collections::hash_map::Entry::Occupied(mut entry) => {
+                            let (_, channels) = entry.get_mut();
+                            channels.push(response_channel);
+                        }
+                        std::collections::hash_map::Entry::Vacant(entry) => {
+                            kad.get_closest_peers(peer_id);
+                            entry.insert((peer_id, vec![response_channel]));
+                        }
+                    }
+                } else {
+                    tokio::task::spawn(async move {
+                        response_channel
+                            .send(Err(anyhow!("kademlia is not available")))
+                            .ok();
+                    });
                 }
             }
             RpcMessage::Shutdown => {
