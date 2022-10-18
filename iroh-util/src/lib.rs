@@ -16,9 +16,9 @@ use cid::{
 use config::{Config, ConfigError, Environment, File, Map, Source, Value, ValueKind};
 use tracing::debug;
 
+pub mod exitcodes;
 pub mod human;
 pub mod lock;
-pub mod exitcodes;
 
 /// name of directory that wraps all iroh files in a given application directory
 const IROH_DIR: &str = "iroh";
