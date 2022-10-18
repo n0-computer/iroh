@@ -35,7 +35,7 @@ pub trait ApiExt: AddGetApi + Sized {
     async fn add<'a>(&'a self, path: &Path, wrap: bool) -> Result<Added> {
         if path.is_dir() {
             Ok(Added {
-                api: Box::new(self),
+                api: self,
                 path: path.to_path_buf(),
                 wrap,
             })
@@ -52,8 +52,7 @@ pub trait ApiExt: AddGetApi + Sized {
 }
 
 pub struct Added<'a> {
-    // XXX double indirection
-    api: Box<&'a dyn AddGetApi>,
+    api: &'a dyn AddGetApi,
     path: PathBuf,
     wrap: bool,
 }
