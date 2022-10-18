@@ -37,6 +37,7 @@ impl ProgramLock {
 
     /// Try to acquire a lock for this program.
     pub fn acquire(&mut self) -> Result<()> {
+        std::fs::create_dir_all(&crate::iroh_data_root()?)?;
         let file = Rc::new(File::create(&self.path)?);
 
         file_guard::lock(file, Lock::Exclusive, 0, 1)
