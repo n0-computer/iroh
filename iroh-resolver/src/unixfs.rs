@@ -17,7 +17,7 @@ use crate::{
     chunker::DEFAULT_CHUNK_SIZE_LIMIT,
     codecs::Codec,
     hamt::Hamt,
-    resolver::{Block, ContentLoader, OutMetrics, Resolver, ResponseClip},
+    resolver::{Block, ContentLoader, LoaderContext, OutMetrics, Resolver, ResponseClip},
 };
 
 pub(crate) mod unixfs_pb {
@@ -341,6 +341,7 @@ impl UnixfsNode {
     /// If this is a directory or hamt shard, returns a stream that yields all children of it.
     pub fn as_child_reader<'a, 'b: 'a, T: ContentLoader>(
         &'a self,
+        ctx: LoaderContext,
         loader: &'b Resolver<T>,
         om: OutMetrics,
     ) -> Result<Option<UnixfsChildStream<'a>>> {
@@ -359,7 +360,7 @@ impl UnixfsNode {
                 }))
             }
             UnixfsNode::HamtShard(_, hamt) => Ok(Some(UnixfsChildStream::Hamt {
-                stream: hamt.children(loader).boxed(),
+                stream: hamt.children(ctx, loader).boxed(),
                 pos: 0,
                 out_metrics: om,
             })),
@@ -368,6 +369,7 @@ impl UnixfsNode {
 
     pub fn into_content_reader<T: ContentLoader>(
         self,
+        ctx: LoaderContext,
         loader: Resolver<T>,
         om: OutMetrics,
         pos_max: ResponseClip,
@@ -388,6 +390,7 @@ impl UnixfsNode {
                     current_links,
                     loader,
                     out_metrics: om,
+                    ctx: std::sync::Arc::new(tokio::sync::Mutex::new(ctx)),
                 }))
             }
             UnixfsNode::HamtShard(_, _) | UnixfsNode::Directory(_) => Ok(None),
@@ -422,6 +425,7 @@ pub enum UnixfsContentReader<T: ContentLoader> {
         current_links: Vec<VecDeque<Link>>,
         loader: Resolver<T>,
         out_metrics: OutMetrics,
+        ctx: std::sync::Arc<tokio::sync::Mutex<LoaderContext>>,
     },
 }
 
@@ -471,6 +475,7 @@ impl<T: ContentLoader + Unpin + 'static> AsyncRead for UnixfsContentReader<T> {
                 current_links,
                 loader,
                 out_metrics,
+                ctx,
             } => {
                 let typ = root_node.typ();
                 let pos_current = *pos;
@@ -482,13 +487,14 @@ impl<T: ContentLoader + Unpin + 'static> AsyncRead for UnixfsContentReader<T> {
                     UnixfsNode::File(node) => poll_read_file_at(
                         cx,
                         node,
-                        loader.loader().clone(),
+                        loader.clone(),
                         pos,
                         skip_pos,
                         *pos_max,
                         buf,
                         current_links,
                         current_node,
+                        ctx.clone(),
                     ),
                     UnixfsNode::Symlink(node) => {
                         let data = node.inner.data.as_deref().unwrap_or_default();
@@ -520,6 +526,7 @@ impl<T: ContentLoader + Unpin + 'static> AsyncSeek for UnixfsContentReader<T> {
                 current_links: _,
                 loader: _,
                 out_metrics: _,
+                ctx: _,
             } => match position {
                 std::io::SeekFrom::Start(offset) => {
                     let mut i = offset as usize;
@@ -588,6 +595,7 @@ impl<T: ContentLoader + Unpin + 'static> AsyncSeek for UnixfsContentReader<T> {
                 current_links: _,
                 loader: _,
                 out_metrics: _,
+                ctx: _,
             } => Poll::Ready(Ok(*pos as u64)),
         }
     }
@@ -639,7 +647,8 @@ impl Debug for CurrentNodeState {
 fn load_next_node<T: ContentLoader + 'static>(
     current_node: &mut CurrentNodeState,
     current_links: &mut Vec<VecDeque<Link>>,
-    loader: T,
+    loader: Resolver<T>,
+    ctx: std::sync::Arc<tokio::sync::Mutex<LoaderContext>>,
 ) -> bool {
     // Load next node
 
@@ -662,8 +671,10 @@ fn load_next_node<T: ContentLoader + 'static>(
     let link = links.pop_front().unwrap();
 
     let fut = async move {
-        let loaded_cid = loader.load_cid(&link.cid).await?;
+        let ctx = ctx.lock().await;
+        let loaded_cid = loader.loader().load_cid(&link.cid, &ctx).await?;
         let node = UnixfsNode::decode(&link.cid, loaded_cid.data)?;
+
         Ok(node)
     }
     .boxed();
@@ -675,13 +686,14 @@ fn load_next_node<T: ContentLoader + 'static>(
 fn poll_read_file_at<T: ContentLoader + 'static>(
     cx: &mut Context<'_>,
     root_node: &Node,
-    loader: T,
+    loader: Resolver<T>,
     pos: &mut usize,
     skip_pos: &mut usize,
     pos_max: ResponseClip,
     buf: &mut tokio::io::ReadBuf<'_>,
     current_links: &mut Vec<VecDeque<Link>>,
     current_node: &mut CurrentNodeState,
+    ctx: std::sync::Arc<tokio::sync::Mutex<LoaderContext>>,
 ) -> Poll<std::io::Result<()>> {
     loop {
         match current_node {
@@ -702,12 +714,12 @@ fn poll_read_file_at<T: ContentLoader + 'static>(
                     }
                 }
                 *current_node = CurrentNodeState::None;
-                if load_next_node(current_node, current_links, loader.clone()) {
+                if load_next_node(current_node, current_links, loader.clone(), ctx.clone()) {
                     return Poll::Ready(Ok(()));
                 }
             }
             CurrentNodeState::None => {
-                if load_next_node(current_node, current_links, loader.clone()) {
+                if load_next_node(current_node, current_links, loader.clone(), ctx.clone()) {
                     return Poll::Ready(Ok(()));
                 }
             }
@@ -777,7 +789,12 @@ fn poll_read_file_at<T: ContentLoader + 'static>(
                             return Poll::Ready(res);
                         } else if *node_pos == data.len() {
                             // finished reading this node
-                            if load_next_node(current_node, current_links, loader.clone()) {
+                            if load_next_node(
+                                current_node,
+                                current_links,
+                                loader.clone(),
+                                ctx.clone(),
+                            ) {
                                 return Poll::Ready(Ok(()));
                             }
                         }
@@ -815,7 +832,8 @@ fn poll_read_file_at<T: ContentLoader + 'static>(
                             }
                         }
                         // follow links
-                        if load_next_node(current_node, current_links, loader.clone()) {
+                        if load_next_node(current_node, current_links, loader.clone(), ctx.clone())
+                        {
                             return Poll::Ready(Ok(()));
                         }
                     }

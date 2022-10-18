@@ -2,6 +2,7 @@ use std::collections::VecDeque;
 use std::fmt::{self, Debug, Display, Formatter};
 use std::pin::Pin;
 use std::str::FromStr;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Instant;
@@ -19,6 +20,8 @@ use libipld::error::{InvalidMultihash, UnsupportedMultihash};
 use libipld::prelude::Codec as _;
 use libipld::{Ipld, IpldCodec};
 use tokio::io::{AsyncRead, AsyncSeek};
+use tokio::sync::{mpsc, oneshot, Mutex};
+use tokio::task::JoinHandle;
 use tracing::{debug, trace, warn};
 
 use iroh_metrics::{
@@ -295,6 +298,7 @@ impl OutRaw {
 pub struct Out {
     metadata: Metadata,
     pub(crate) content: OutContent,
+    context: LoaderContext,
 }
 
 impl Out {
@@ -349,7 +353,7 @@ impl Out {
         om: OutMetrics,
     ) -> Result<Option<UnixfsChildStream<'a>>> {
         match &self.content {
-            OutContent::Unixfs(node) => node.as_child_reader(loader, om),
+            OutContent::Unixfs(node) => node.as_child_reader(self.context.clone(), loader, om),
             _ => Ok(None),
         }
     }
@@ -387,8 +391,9 @@ impl Out {
                 Ok(OutPrettyReader::Raw(BytesReader { pos, bytes, om }))
             }
             OutContent::Unixfs(node) => {
+                let ctx = self.context;
                 let reader = node
-                    .into_content_reader(loader, om, clip)?
+                    .into_content_reader(ctx, loader, om, clip)?
                     .ok_or_else(|| anyhow!("cannot read the contents of a directory"))?;
 
                 Ok(OutPrettyReader::Unixfs(reader))
@@ -641,20 +646,108 @@ pub enum Source {
 #[derive(Debug, Clone)]
 pub struct Resolver<T: ContentLoader> {
     loader: T,
+    next_id: Arc<AtomicU64>,
+    worker: Option<Arc<(oneshot::Sender<()>, JoinHandle<()>)>>,
+    session_closer: mpsc::Sender<ContextId>,
+}
+
+impl<T: ContentLoader> Drop for Resolver<T> {
+    fn drop(&mut self) {
+        if self.worker.is_none() {
+            panic!("drop called multiple times");
+        }
+        if Arc::strong_count(self.worker.as_ref().unwrap()) == 1 {
+            let worker = Arc::try_unwrap(self.worker.take().unwrap()).expect("last arc");
+            worker.0.send(()).ok();
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct LoaderContext {
+    id: ContextId,
+    inner: Arc<Mutex<InnerLoaderContext>>,
+}
+
+impl LoaderContext {
+    pub fn from_path(id: ContextId, closer: mpsc::Sender<ContextId>, path: Path) -> Self {
+        trace!("new loader context: {:?}", id);
+        LoaderContext {
+            id,
+            inner: Arc::new(Mutex::new(InnerLoaderContext { path, closer })),
+        }
+    }
+
+    pub fn id(&self) -> ContextId {
+        self.id
+    }
+}
+
+impl Drop for LoaderContext {
+    fn drop(&mut self) {
+        if Arc::strong_count(&self.inner) == 1 {
+            if let Err(err) = self
+                .inner
+                .try_lock()
+                .expect("last reference, no lock")
+                .closer
+                .try_send(self.id)
+            {
+                warn!(
+                    "failed to send session stop for session {}: {:?}",
+                    self.id, err
+                );
+            }
+        }
+    }
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ContextId(u64);
+
+impl Display for ContextId {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "ContextId({})", self.0)
+    }
+}
+
+impl From<u64> for ContextId {
+    fn from(id: u64) -> Self {
+        ContextId(id)
+    }
+}
+
+impl From<ContextId> for u64 {
+    fn from(id: ContextId) -> Self {
+        id.0
+    }
+}
+
+#[derive(Debug)]
+struct InnerLoaderContext {
+    #[allow(dead_code)]
+    path: Path,
+    closer: mpsc::Sender<ContextId>,
 }
 
 #[async_trait]
 pub trait ContentLoader: Sync + Send + std::fmt::Debug + Clone + 'static {
     /// Loads the actual content of a given cid.
-    async fn load_cid(&self, cid: &Cid) -> Result<LoadedCid>;
+    async fn load_cid(&self, cid: &Cid, ctx: &LoaderContext) -> Result<LoadedCid>;
+    /// Signal that the passend in session is not used anymore.
+    async fn stop_session(&self, ctx: ContextId) -> Result<()>;
     /// Checks if the given cid is present in the local storage.
     async fn has_cid(&self, cid: &Cid) -> Result<bool>;
 }
 
 #[async_trait]
 impl<T: ContentLoader> ContentLoader for Arc<T> {
-    async fn load_cid(&self, cid: &Cid) -> Result<LoadedCid> {
-        self.as_ref().load_cid(cid).await
+    async fn load_cid(&self, cid: &Cid, ctx: &LoaderContext) -> Result<LoadedCid> {
+        self.as_ref().load_cid(cid, ctx).await
+    }
+
+    async fn stop_session(&self, ctx: ContextId) -> Result<()> {
+        self.as_ref().stop_session(ctx).await
     }
 
     async fn has_cid(&self, cid: &Cid) -> Result<bool> {
@@ -664,13 +757,20 @@ impl<T: ContentLoader> ContentLoader for Arc<T> {
 
 #[async_trait]
 impl ContentLoader for Client {
-    async fn load_cid(&self, cid: &Cid) -> Result<LoadedCid> {
+    async fn stop_session(&self, ctx: ContextId) -> Result<()> {
+        self.try_p2p()?.stop_session_bitswap(ctx.into()).await?;
+        Ok(())
+    }
+
+    async fn load_cid(&self, cid: &Cid, ctx: &LoaderContext) -> Result<LoadedCid> {
+        trace!("{:?} loading {}", ctx.id(), cid);
+
         // TODO: better strategy
 
         let cid = *cid;
         match self.try_store()?.get(cid).await {
             Ok(Some(data)) => {
-                trace!("retrieved from store");
+                trace!("{:?} retrieved from store", ctx.id());
                 return Ok(LoadedCid {
                     data,
                     source: Source::Store(IROH_STORE),
@@ -678,28 +778,43 @@ impl ContentLoader for Client {
             }
             Ok(None) => {}
             Err(err) => {
-                warn!("failed to fetch data from store {}: {:?}", cid, err);
+                warn!(
+                    "{:?} failed to fetch data from store {}: {:?}",
+                    ctx.id(),
+                    cid,
+                    err
+                );
             }
         }
-        let p2p = self.try_p2p()?;
-        let providers = p2p.fetch_providers(&cid).await?;
-        let bytes = p2p.fetch_bitswap(cid, providers).await?;
+
+        // launch fetching using the initial set of cached providers
+        let bytes = self
+            .try_p2p()?
+            .fetch_bitswap(ctx.id().into(), cid, Default::default())
+            .await?;
 
         // trigger storage in the background
-        let cloned = bytes.clone();
-        let rpc = self.clone();
+        let clone = bytes.clone();
+        let store = self.store.as_ref().cloned();
+        let p2p = self.try_p2p()?.clone();
+
         tokio::spawn(async move {
-            let clone2 = cloned.clone();
+            let clone2 = clone.clone();
             let links =
                 tokio::task::spawn_blocking(move || parse_links(&cid, &clone2).unwrap_or_default())
                     .await
                     .unwrap_or_default();
 
-            let len = cloned.len();
+            let len = clone.len();
             let links_len = links.len();
-            if let Some(store_rpc) = rpc.store.as_ref() {
-                match store_rpc.put(cid, cloned, links).await {
-                    Ok(_) => debug!("stored {} ({}bytes, {}links)", cid, len, links_len),
+            if let Some(store_rpc) = store.as_ref() {
+                match store_rpc.put(cid, clone.clone(), links).await {
+                    Ok(_) => {
+                        debug!("stored {} ({}bytes, {}links)", cid, len, links_len);
+
+                        // Notify bitswap about new blocks
+                        p2p.notify_new_blocks_bitswap(vec![(cid, clone)]).await.ok();
+                    }
                     Err(err) => {
                         warn!("failed to store {}: {:?}", cid, err);
                     }
@@ -725,7 +840,51 @@ impl ContentLoader for Client {
 
 impl<T: ContentLoader> Resolver<T> {
     pub fn new(loader: T) -> Self {
-        Resolver { loader }
+        let (closer_s, mut closer_r) = oneshot::channel();
+        let (session_closer_s, mut session_closer_r) = mpsc::channel(64);
+
+        let loader_thread = loader.clone();
+        let worker = tokio::task::spawn(async move {
+            // GC Loop for sessions
+            loop {
+                tokio::select! {
+                    biased;
+                    session = session_closer_r.recv() => {
+                        match session {
+                            Some(session) => {
+                                let loader = loader_thread.clone();
+                                // Spawn to make sure the channel has always capacity.
+                                tokio::task::spawn(async move {
+                                    debug!("stopping session {}", session);
+                                    if let Err(err) = loader.stop_session(session).await {
+                                        warn!("failed to stop session {}: {:?}", session, err);
+                                    }
+                                });
+                            }
+                            None => {
+                                warn!("session_closer channel broke");
+                                break;
+                            }
+                        }
+                    }
+                    _ = &mut closer_r => {
+                        break;
+                    }
+                }
+            }
+        });
+
+        Resolver {
+            loader,
+            next_id: Arc::new(AtomicU64::new(0)),
+            worker: Some(Arc::new((closer_s, worker))),
+            session_closer: session_closer_s,
+        }
+    }
+
+    fn next_id(&self) -> ContextId {
+        let id = self.next_id.fetch_add(1, Ordering::SeqCst);
+        ContextId(id)
     }
 
     pub fn loader(&self) -> &T {
@@ -777,9 +936,9 @@ impl<T: ContentLoader> Resolver<T> {
     #[tracing::instrument(skip(self))]
     pub fn resolve_recursive(&self, root: Path) -> impl Stream<Item = Result<Out>> {
         let this = self.clone();
-        self.resolve_recursive_mapped(root, None, move |cid| {
+        self.resolve_recursive_mapped(root, None, move |cid, ctx| {
             let this = this.clone();
-            async move { this.resolve(Path::from_cid(cid)).await }
+            async move { this.resolve_with_ctx(ctx, Path::from_cid(cid)).await }
         })
     }
 
@@ -791,10 +950,10 @@ impl<T: ContentLoader> Resolver<T> {
         recursion_limit: Option<usize>,
     ) -> impl Stream<Item = Result<OutRaw>> {
         let this = self.clone();
-        self.resolve_recursive_mapped(root, recursion_limit, move |cid| {
+        self.resolve_recursive_mapped(root, recursion_limit, move |cid, mut ctx| {
             let this = this.clone();
             async move {
-                this.load_cid(&cid)
+                this.load_cid(&cid, &mut ctx)
                     .await
                     .map(|loaded| OutRaw::from_loaded(cid, loaded))
             }
@@ -811,16 +970,19 @@ impl<T: ContentLoader> Resolver<T> {
     ) -> impl Stream<Item = Result<O>>
     where
         O: LinksContainer,
-        M: Fn(Cid) -> F + Clone,
+        M: Fn(Cid, LoaderContext) -> F + Clone,
         F: Future<Output = Result<O>> + Send + 'static,
     {
+        let mut ctx =
+            LoaderContext::from_path(self.next_id(), self.session_closer.clone(), root.clone());
+
         let mut cids = VecDeque::new();
         let this = self.clone();
         let mut counter = 0;
         let chunk_size = 8;
         async_stream::try_stream! {
-            let root_cid = this.resolve_path_to_cid(&root).await?;
-            let root_block = resolve(root_cid).await?;
+            let root_cid = this.resolve_path_to_cid(&root, &mut ctx).await?;
+            let root_block = resolve(root_cid, ctx.clone()).await?;
             cids.push_back(root_block);
             loop {
                 if let Some(current) = cids.pop_front() {
@@ -837,8 +999,9 @@ impl<T: ContentLoader> Resolver<T> {
                         let next = futures::future::join_all(
                             link_chunk.iter().map(|link| {
                                 let resolve = resolve.clone();
+                                let ctx = ctx.clone();
                                 async move {
-                                    resolve(*link).await
+                                    resolve(*link, ctx).await
                                 }
                             })
                         ).await;
@@ -860,8 +1023,15 @@ impl<T: ContentLoader> Resolver<T> {
     /// Resolves through a given path, returning the [`Cid`] and raw bytes of the final leaf.
     #[tracing::instrument(skip(self))]
     pub async fn resolve(&self, path: Path) -> Result<Out> {
+        let ctx =
+            LoaderContext::from_path(self.next_id(), self.session_closer.clone(), path.clone());
+
+        self.resolve_with_ctx(ctx, path).await
+    }
+
+    pub async fn resolve_with_ctx(&self, mut ctx: LoaderContext, path: Path) -> Result<Out> {
         // Resolve the root block.
-        let (root_cid, loaded_cid) = self.resolve_root(&path).await?;
+        let (root_cid, loaded_cid) = self.resolve_root(&path, &mut ctx).await?;
         match loaded_cid.source {
             Source::Store(_) => inc!(ResolverMetrics::CacheHit),
             _ => inc!(ResolverMetrics::CacheMiss),
@@ -871,12 +1041,12 @@ impl<T: ContentLoader> Resolver<T> {
 
         match codec {
             Codec::DagPb => {
-                self.resolve_dag_pb_or_unixfs(path, root_cid, loaded_cid)
+                self.resolve_dag_pb_or_unixfs(path, root_cid, loaded_cid, ctx)
                     .await
             }
-            Codec::DagCbor => self.resolve_dag_cbor(path, root_cid, loaded_cid).await,
-            Codec::DagJson => self.resolve_dag_json(path, root_cid, loaded_cid).await,
-            Codec::Raw => self.resolve_raw(path, root_cid, loaded_cid).await,
+            Codec::DagCbor => self.resolve_dag_cbor(path, root_cid, loaded_cid, ctx).await,
+            Codec::DagJson => self.resolve_dag_json(path, root_cid, loaded_cid, ctx).await,
+            Codec::Raw => self.resolve_raw(path, root_cid, loaded_cid, ctx).await,
             _ => bail!("unsupported codec {:?}", codec),
         }
     }
@@ -886,6 +1056,7 @@ impl<T: ContentLoader> Resolver<T> {
         current: &mut UnixfsNode,
         resolved_path: &mut Vec<Cid>,
         part: &str,
+        ctx: &mut LoaderContext,
     ) -> Result<()> {
         match current {
             UnixfsNode::Directory(_) => {
@@ -893,7 +1064,7 @@ impl<T: ContentLoader> Resolver<T> {
                     .get_link_by_name(&part)
                     .await?
                     .ok_or_else(|| anyhow!("UnixfsNode::Directory link '{}' not found", part))?;
-                let loaded_cid = self.load_cid(&next_link.cid).await?;
+                let loaded_cid = self.load_cid(&next_link.cid, ctx).await?;
                 let next_node = UnixfsNode::decode(&next_link.cid, loaded_cid.data)?;
                 resolved_path.push(next_link.cid);
 
@@ -901,7 +1072,7 @@ impl<T: ContentLoader> Resolver<T> {
             }
             UnixfsNode::HamtShard(_, hamt) => {
                 let (next_link, next_node) = hamt
-                    .get(self, part.as_bytes())
+                    .get(ctx.clone(), self, part.as_bytes())
                     .await?
                     .ok_or_else(|| anyhow!("UnixfsNode::HamtShard link '{}' not found", part))?;
                 // TODO: is this the right way to to resolved path here?
@@ -924,14 +1095,16 @@ impl<T: ContentLoader> Resolver<T> {
         root_path: Path,
         cid: Cid,
         loaded_cid: LoadedCid,
+        mut ctx: LoaderContext,
     ) -> Result<Out> {
+        trace!("{:?} resolving {} for {}", ctx.id(), cid, root_path);
         if let Ok(node) = UnixfsNode::decode(&cid, loaded_cid.data.clone()) {
             let tail = &root_path.tail;
             let mut current = node;
             let mut resolved_path = vec![cid];
 
             for part in tail {
-                self.inner_resolve(&mut current, &mut resolved_path, part)
+                self.inner_resolve(&mut current, &mut resolved_path, part, &mut ctx)
                     .await?;
             }
 
@@ -956,10 +1129,11 @@ impl<T: ContentLoader> Resolver<T> {
             };
             Ok(Out {
                 metadata,
+                context: ctx,
                 content: OutContent::Unixfs(current),
             })
         } else {
-            self.resolve_dag_pb(root_path, cid, loaded_cid).await
+            self.resolve_dag_pb(root_path, cid, loaded_cid, ctx).await
         }
     }
 
@@ -969,13 +1143,21 @@ impl<T: ContentLoader> Resolver<T> {
         root_path: Path,
         cid: Cid,
         loaded_cid: LoadedCid,
+        mut ctx: LoaderContext,
     ) -> Result<Out> {
+        trace!("{:?} resolving {} for {}", ctx.id(), cid, root_path);
         let ipld: libipld::Ipld = libipld::IpldCodec::DagPb
             .decode(&loaded_cid.data)
             .map_err(|e| anyhow!("invalid dag cbor: {:?}", e))?;
 
         let out = self
-            .resolve_ipld(cid, libipld::IpldCodec::DagPb, ipld, &root_path.tail)
+            .resolve_ipld(
+                cid,
+                libipld::IpldCodec::DagPb,
+                ipld,
+                &root_path.tail,
+                &mut ctx,
+            )
             .await?;
 
         // reencode if we only return part of the original
@@ -997,6 +1179,7 @@ impl<T: ContentLoader> Resolver<T> {
         };
         Ok(Out {
             metadata,
+            context: ctx,
             content: OutContent::DagPb(out, bytes),
         })
     }
@@ -1007,13 +1190,21 @@ impl<T: ContentLoader> Resolver<T> {
         root_path: Path,
         cid: Cid,
         loaded_cid: LoadedCid,
+        mut ctx: LoaderContext,
     ) -> Result<Out> {
+        trace!("{:?} resolving {} for {}", ctx.id(), cid, root_path);
         let ipld: libipld::Ipld = libipld::IpldCodec::DagCbor
             .decode(&loaded_cid.data)
             .map_err(|e| anyhow!("invalid dag cbor: {:?}", e))?;
 
         let out = self
-            .resolve_ipld(cid, libipld::IpldCodec::DagCbor, ipld, &root_path.tail)
+            .resolve_ipld(
+                cid,
+                libipld::IpldCodec::DagCbor,
+                ipld,
+                &root_path.tail,
+                &mut ctx,
+            )
             .await?;
 
         // reencode if we only return part of the original
@@ -1035,6 +1226,7 @@ impl<T: ContentLoader> Resolver<T> {
         };
         Ok(Out {
             metadata,
+            context: ctx,
             content: OutContent::DagCbor(out, bytes),
         })
     }
@@ -1045,13 +1237,21 @@ impl<T: ContentLoader> Resolver<T> {
         root_path: Path,
         cid: Cid,
         loaded_cid: LoadedCid,
+        mut ctx: LoaderContext,
     ) -> Result<Out> {
+        trace!("{:?} resolving {} for {}", ctx.id(), cid, root_path);
         let ipld: libipld::Ipld = libipld::IpldCodec::DagJson
             .decode(&loaded_cid.data)
             .map_err(|e| anyhow!("invalid dag json: {:?}", e))?;
 
         let out = self
-            .resolve_ipld(cid, libipld::IpldCodec::DagJson, ipld, &root_path.tail)
+            .resolve_ipld(
+                cid,
+                libipld::IpldCodec::DagJson,
+                ipld,
+                &root_path.tail,
+                &mut ctx,
+            )
             .await?;
 
         // reencode if we only return part of the original
@@ -1073,18 +1273,32 @@ impl<T: ContentLoader> Resolver<T> {
         };
         Ok(Out {
             metadata,
+            context: ctx,
             content: OutContent::DagJson(out, bytes),
         })
     }
 
     #[tracing::instrument(skip(self, loaded_cid))]
-    async fn resolve_raw(&self, root_path: Path, cid: Cid, loaded_cid: LoadedCid) -> Result<Out> {
+    async fn resolve_raw(
+        &self,
+        root_path: Path,
+        cid: Cid,
+        loaded_cid: LoadedCid,
+        mut ctx: LoaderContext,
+    ) -> Result<Out> {
+        trace!("{:?} resolving {} for {}", ctx.id(), cid, root_path);
         let ipld: libipld::Ipld = libipld::IpldCodec::Raw
             .decode(&loaded_cid.data)
             .map_err(|e| anyhow!("invalid raw: {:?}", e))?;
 
         let out = self
-            .resolve_ipld(cid, libipld::IpldCodec::Raw, ipld, &root_path.tail)
+            .resolve_ipld(
+                cid,
+                libipld::IpldCodec::Raw,
+                ipld,
+                &root_path.tail,
+                &mut ctx,
+            )
             .await?;
 
         let metadata = Metadata {
@@ -1097,6 +1311,7 @@ impl<T: ContentLoader> Resolver<T> {
         };
         Ok(Out {
             metadata,
+            context: ctx,
             content: OutContent::Raw(out, loaded_cid.data),
         })
     }
@@ -1108,6 +1323,7 @@ impl<T: ContentLoader> Resolver<T> {
         codec: libipld::IpldCodec,
         root: Ipld,
         path: &[String],
+        ctx: &mut LoaderContext,
     ) -> Result<Ipld> {
         let mut root = root;
         let mut current = root;
@@ -1123,7 +1339,7 @@ impl<T: ContentLoader> Resolver<T> {
                 );
 
                 // resolve link and update if we have encountered a link
-                let loaded_cid = self.load_cid(&c).await?;
+                let loaded_cid = self.load_cid(&c, ctx).await?;
                 root = codec
                     .decode(&loaded_cid.data)
                     .map_err(|e| anyhow!("invalid dag json: {:?}", e))?;
@@ -1139,13 +1355,11 @@ impl<T: ContentLoader> Resolver<T> {
             current = current.take(index)?;
         }
 
-        // TODO: can we avoid this clone?
-
         Ok(current)
     }
 
     #[tracing::instrument(skip(self))]
-    async fn resolve_path_to_cid(&self, root: &Path) -> Result<Cid> {
+    async fn resolve_path_to_cid(&self, root: &Path, ctx: &mut LoaderContext) -> Result<Cid> {
         let mut current = root.clone();
 
         // maximum cursion of ipns lookups
@@ -1179,15 +1393,15 @@ impl<T: ContentLoader> Resolver<T> {
     }
 
     #[tracing::instrument(skip(self))]
-    async fn resolve_root(&self, root: &Path) -> Result<(Cid, LoadedCid)> {
-        let cid = self.resolve_path_to_cid(root).await?;
-        let loaded_cid = self.load_cid(&cid).await?;
+    async fn resolve_root(&self, root: &Path, ctx: &mut LoaderContext) -> Result<(Cid, LoadedCid)> {
+        let cid = self.resolve_path_to_cid(root, ctx).await?;
+        let loaded_cid = self.load_cid(&cid, ctx).await?;
         Ok((cid, loaded_cid))
     }
 
     #[tracing::instrument(skip(self))]
-    async fn load_cid(&self, cid: &Cid) -> Result<LoadedCid> {
-        self.loader.load_cid(cid).await
+    async fn load_cid(&self, cid: &Cid, ctx: &mut LoaderContext) -> Result<LoadedCid> {
+        self.loader.load_cid(cid, ctx).await
     }
 
     #[tracing::instrument(skip(self))]
@@ -1263,7 +1477,7 @@ mod tests {
 
     #[async_trait]
     impl<S: BuildHasher + Clone + Send + Sync + 'static> ContentLoader for HashMap<Cid, Bytes, S> {
-        async fn load_cid(&self, cid: &Cid) -> Result<LoadedCid> {
+        async fn load_cid(&self, cid: &Cid, _ctx: &LoaderContext) -> Result<LoadedCid> {
             match self.get(cid) {
                 Some(b) => Ok(LoadedCid {
                     data: b.clone(),
@@ -1271,6 +1485,11 @@ mod tests {
                 }),
                 None => bail!("not found"),
             }
+        }
+
+        async fn stop_session(&self, _ctx: ContextId) -> Result<()> {
+            // no session tracking
+            Ok(())
         }
 
         async fn has_cid(&self, cid: &Cid) -> Result<bool> {
@@ -1292,6 +1511,7 @@ mod tests {
     }
 
     async fn seek_and_clip<T: ContentLoader + Unpin>(
+        ctx: LoaderContext,
         node: &UnixfsNode,
         resolver: Resolver<T>,
         range: std::ops::Range<u64>,
@@ -1299,6 +1519,7 @@ mod tests {
         let mut cr = node
             .clone()
             .into_content_reader(
+                ctx,
                 resolver.clone(),
                 OutMetrics::default(),
                 ResponseClip::Clip(range.end as usize),
@@ -1593,9 +1814,10 @@ mod tests {
                 assert_eq!(
                     read_to_string(
                         node.into_content_reader(
+                            ipld_hello_txt.context,
                             resolver.clone(),
                             OutMetrics::default(),
-                            ResponseClip::NoClip
+                            ResponseClip::NoClip,
                         )
                         .unwrap()
                         .unwrap()
@@ -1628,9 +1850,10 @@ mod tests {
                 assert_eq!(
                     read_to_string(
                         node.into_content_reader(
+                            ipld_hello_txt.context,
                             resolver.clone(),
                             OutMetrics::default(),
-                            ResponseClip::NoClip
+                            ResponseClip::NoClip,
                         )
                         .unwrap()
                         .unwrap()
@@ -1690,9 +1913,10 @@ mod tests {
                 assert_eq!(
                     read_to_string(
                         node.into_content_reader(
+                            ipld_bar_txt.context,
                             resolver.clone(),
                             OutMetrics::default(),
-                            ResponseClip::NoClip
+                            ResponseClip::NoClip,
                         )
                         .unwrap()
                         .unwrap()
@@ -1734,28 +1958,29 @@ mod tests {
         let path = format!("/ipfs/{root_cid_str}/hello.txt");
         let ipld_hello_txt = resolver.resolve(path.parse().unwrap()).await.unwrap();
 
+        let ctx = ipld_hello_txt.context.clone();
         if let OutContent::Unixfs(node) = ipld_hello_txt.content {
             // clip response
-            let cr = seek_and_clip(&node, resolver.clone(), 0..2).await;
+            let cr = seek_and_clip(ctx.clone(), &node, resolver.clone(), 0..2).await;
             assert_eq!(read_to_string(cr).await, "he");
 
-            let cr = seek_and_clip(&node, resolver.clone(), 0..5).await;
+            let cr = seek_and_clip(ctx.clone(), &node, resolver.clone(), 0..5).await;
             assert_eq!(read_to_string(cr).await, "hello");
 
             // clip to the end
-            let cr = seek_and_clip(&node, resolver.clone(), 0..6).await;
+            let cr = seek_and_clip(ctx.clone(), &node, resolver.clone(), 0..6).await;
             assert_eq!(read_to_string(cr).await, "hello\n");
 
             // clip beyond the end
-            let cr = seek_and_clip(&node, resolver.clone(), 0..100).await;
+            let cr = seek_and_clip(ctx.clone(), &node, resolver.clone(), 0..100).await;
             assert_eq!(read_to_string(cr).await, "hello\n");
 
             // seek
-            let cr = seek_and_clip(&node, resolver.clone(), 1..100).await;
+            let cr = seek_and_clip(ctx.clone(), &node, resolver.clone(), 1..100).await;
             assert_eq!(read_to_string(cr).await, "ello\n");
 
             // seek and clip
-            let cr = seek_and_clip(&node, resolver.clone(), 1..3).await;
+            let cr = seek_and_clip(ctx.clone(), &node, resolver.clone(), 1..3).await;
             assert_eq!(read_to_string(cr).await, "el");
         } else {
             panic!("invalid result: {:?}", ipld_hello_txt);
@@ -1811,14 +2036,15 @@ mod tests {
 
             let size = m.size.unwrap();
 
+            let ctx = ipld_readme.context.clone();
             if let OutContent::Unixfs(node) = ipld_readme.content {
-                let cr = seek_and_clip(&node, resolver.clone(), 1..size - 1).await;
+                let cr = seek_and_clip(ctx.clone(), &node, resolver.clone(), 1..size - 1).await;
                 let content = read_to_string(cr).await;
                 assert_eq!(content.len(), (size - 2) as usize);
                 assert!(content.starts_with(" iroh")); // without seeking '# iroh'
                 assert!(content.ends_with("</sub>\n")); // without clipping '</sub>\n\n'
 
-                let cr = seek_and_clip(&node, resolver.clone(), 101..size - 101).await;
+                let cr = seek_and_clip(ctx, &node, resolver.clone(), 101..size - 101).await;
                 let content = read_to_string(cr).await;
                 assert_eq!(content.len(), (size - 202) as usize);
                 assert!(content.starts_with("2.0</a>"));
@@ -1981,9 +2207,10 @@ mod tests {
                 assert_eq!(
                     read_to_string(
                         node.into_content_reader(
+                            ipld_hello_txt.context,
                             resolver.clone(),
                             OutMetrics::default(),
-                            ResponseClip::NoClip
+                            ResponseClip::NoClip,
                         )
                         .unwrap()
                         .unwrap()
@@ -2023,6 +2250,7 @@ mod tests {
                 assert_eq!(
                     read_to_string(
                         node.into_content_reader(
+                            ipld_bar_txt.context,
                             resolver.clone(),
                             OutMetrics::default(),
                             ResponseClip::NoClip
@@ -2089,6 +2317,7 @@ mod tests {
             if let OutContent::Unixfs(node) = ipld_readme.content {
                 let content = read_to_string(
                     node.into_content_reader(
+                        ipld_readme.context,
                         resolver.clone(),
                         OutMetrics::default(),
                         ResponseClip::NoClip,
@@ -2256,6 +2485,7 @@ mod tests {
                 assert_eq!(
                     read_to_string(
                         node.into_content_reader(
+                            ipld_hello_txt.context,
                             resolver.clone(),
                             OutMetrics::default(),
                             ResponseClip::NoClip
@@ -2312,6 +2542,7 @@ mod tests {
                 assert_eq!(
                     read_to_string(
                         node.into_content_reader(
+                            ipld_bar_txt.context,
                             resolver.clone(),
                             OutMetrics::default(),
                             ResponseClip::NoClip
@@ -2349,6 +2580,7 @@ mod tests {
                 assert_eq!(
                     read_to_string(
                         node.into_content_reader(
+                            ipld_bar_txt.context,
                             resolver.clone(),
                             OutMetrics::default(),
                             ResponseClip::NoClip
@@ -2386,9 +2618,10 @@ mod tests {
                 assert_eq!(
                     read_to_string(
                         node.into_content_reader(
+                            ipld_bar_txt.context,
                             resolver.clone(),
                             OutMetrics::default(),
-                            ResponseClip::NoClip
+                            ResponseClip::NoClip,
                         )
                         .unwrap()
                         .unwrap()
@@ -2423,6 +2656,7 @@ mod tests {
                 assert_eq!(
                     read_to_string(
                         node.into_content_reader(
+                            ipld_bar_txt.context,
                             resolver.clone(),
                             OutMetrics::default(),
                             ResponseClip::NoClip
@@ -2450,6 +2684,7 @@ mod tests {
                 assert_eq!(
                     read_to_string(
                         node.into_content_reader(
+                            ipld_bar_txt.context,
                             resolver.clone(),
                             OutMetrics::default(),
                             ResponseClip::NoClip
@@ -2539,6 +2774,7 @@ mod tests {
                 assert_eq!(
                     read_to_string(
                         node.into_content_reader(
+                            ipld_txt.context,
                             resolver.clone(),
                             OutMetrics::default(),
                             ResponseClip::NoClip
@@ -2608,6 +2844,7 @@ mod tests {
                 assert_eq!(
                     read_to_string(
                         node.into_content_reader(
+                            ipld_txt.context,
                             resolver.clone(),
                             OutMetrics::default(),
                             ResponseClip::NoClip

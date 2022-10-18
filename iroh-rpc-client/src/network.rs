@@ -3,14 +3,14 @@ use std::collections::{HashMap, HashSet};
 use anyhow::{ensure, Context, Result};
 use bytes::Bytes;
 use cid::Cid;
-#[cfg(feature = "grpc")]
-use futures::Stream;
+use futures::{Stream, StreamExt};
 #[cfg(feature = "grpc")]
 use iroh_rpc_types::p2p::p2p_client::P2pClient as GrpcP2pClient;
 use iroh_rpc_types::p2p::{
-    BitswapRequest, ConnectRequest, DisconnectRequest, GossipsubPeerAndTopics, GossipsubPeerIdMsg,
-    GossipsubPublishRequest, GossipsubTopicHashMsg, Key, P2p, P2pClientAddr, P2pClientBackend,
-    Providers,
+    BitswapBlock, BitswapRequest, ConnectRequest, DisconnectRequest, GossipsubPeerAndTopics,
+    GossipsubPeerIdMsg, GossipsubPublishRequest, GossipsubTopicHashMsg, Key,
+    NotifyNewBlocksBitswapRequest, P2p, P2pClientAddr, P2pClientBackend, Providers,
+    StopSessionBitswapRequest,
 };
 use iroh_rpc_types::Addr;
 use libp2p::gossipsub::{MessageId, TopicHash};
@@ -49,7 +49,12 @@ impl P2pClient {
 
     // Fetches a block directly from the network.
     #[tracing::instrument(skip(self))]
-    pub async fn fetch_bitswap(&self, cid: Cid, providers: HashSet<PeerId>) -> Result<Bytes> {
+    pub async fn fetch_bitswap(
+        &self,
+        ctx: u64,
+        cid: Cid,
+        providers: HashSet<PeerId>,
+    ) -> Result<Bytes> {
         debug!("rpc p2p client fetch_bitswap: {:?}", cid);
         let providers = Providers {
             providers: providers.into_iter().map(|id| id.to_bytes()).collect(),
@@ -58,22 +63,54 @@ impl P2pClient {
         let req = BitswapRequest {
             cid: cid.to_bytes(),
             providers: Some(providers),
+            ctx,
         };
         let res = self.backend.fetch_bitswap(req).await?;
         Ok(res.data)
     }
 
     #[tracing::instrument(skip(self))]
-    pub async fn fetch_providers(&self, key: &Cid) -> Result<HashSet<PeerId>> {
+    pub async fn stop_session_bitswap(&self, ctx: u64) -> Result<()> {
+        let req = StopSessionBitswapRequest { ctx };
+        self.backend.stop_session_bitswap(req).await?;
+        Ok(())
+    }
+
+    #[tracing::instrument(skip(self))]
+    pub async fn notify_new_blocks_bitswap(&self, blocks: Vec<(Cid, Bytes)>) -> Result<()> {
+        let req = NotifyNewBlocksBitswapRequest {
+            blocks: blocks
+                .into_iter()
+                .map(|(cid, data)| BitswapBlock {
+                    cid: cid.to_bytes(),
+                    data,
+                })
+                .collect(),
+        };
+
+        self.backend.notify_new_blocks_bitswap(req).await?;
+        Ok(())
+    }
+
+    #[tracing::instrument(skip(self))]
+    pub async fn fetch_providers_dht(
+        &self,
+        key: &Cid,
+    ) -> Result<impl Stream<Item = Result<HashSet<PeerId>>>> {
         let req = Key {
             key: key.hash().to_bytes(),
         };
-        let res = self.backend.fetch_provider(req).await?;
-        let mut providers = HashSet::new();
-        for provider in res.providers.into_iter() {
-            providers.insert(PeerId::from_bytes(&provider[..])?);
-        }
-        Ok(providers)
+        let res = self.backend.fetch_provider_dht(req).await?;
+
+        let providers_stream = res.map(|p| {
+            let p = p?;
+            let mut providers = HashSet::new();
+            for provider in p.providers.into_iter() {
+                providers.insert(PeerId::from_bytes(&provider[..])?);
+            }
+            Ok(providers)
+        });
+        Ok(providers_stream)
     }
 
     #[tracing::instrument(skip(self))]
@@ -249,6 +286,8 @@ fn addrs_from_bytes(a: Vec<Vec<u8>>) -> Result<Vec<Multiaddr>> {
 // TODO: mem tests
 #[cfg(all(test, feature = "grpc"))]
 mod tests {
+    use std::pin::Pin;
+
     use super::*;
     use async_trait::async_trait;
     use iroh_rpc_types::p2p::{
@@ -311,6 +350,9 @@ mod tests {
 
     #[async_trait]
     impl p2p_server::P2p for TestRpcServer {
+        type FetchProviderDhtStream =
+            Pin<Box<dyn Stream<Item = std::result::Result<Providers, tonic::Status>> + Send>>;
+
         async fn version(
             &self,
             _request: Request<()>,
@@ -353,10 +395,24 @@ mod tests {
             todo!()
         }
 
-        async fn fetch_provider(
+        async fn stop_session_bitswap(
+            &self,
+            _request: Request<StopSessionBitswapRequest>,
+        ) -> Result<tonic::Response<()>, tonic::Status> {
+            todo!()
+        }
+
+        async fn notify_new_blocks_bitswap(
+            &self,
+            _request: Request<NotifyNewBlocksBitswapRequest>,
+        ) -> Result<tonic::Response<()>, tonic::Status> {
+            todo!()
+        }
+
+        async fn fetch_provider_dht(
             &self,
             _request: Request<Key>,
-        ) -> Result<tonic::Response<Providers>, tonic::Status> {
+        ) -> Result<tonic::Response<Self::FetchProviderDhtStream>, tonic::Status> {
             todo!()
         }
 

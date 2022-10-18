@@ -883,7 +883,11 @@ mod tests {
 
     /// sync version of dir_roundtrip_test for use in proptest
     fn dir_roundtrip_test_sync(dir: TestDir) -> bool {
-        futures::executor::block_on(dir_roundtrip_test(dir)).unwrap()
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap()
+            .block_on(dir_roundtrip_test(dir))
+            .unwrap()
     }
 
     /// a roundtrip test that converts a file to an unixfs DAG and back
@@ -947,7 +951,11 @@ mod tests {
     /// sync version of file_roundtrip_test for use in proptest
     fn file_roundtrip_test_sync(data: Bytes, chunk_size: usize, degree: usize) -> bool {
         let f = file_roundtrip_test(data, chunk_size, degree);
-        futures::executor::block_on(f).unwrap()
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap()
+            .block_on(f)
+            .unwrap()
     }
 
     fn arb_test_dir() -> impl Strategy<Value = TestDir> {

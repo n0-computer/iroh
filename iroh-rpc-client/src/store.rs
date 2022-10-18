@@ -8,7 +8,8 @@ use futures::Stream;
 #[cfg(feature = "grpc")]
 use iroh_rpc_types::store::store_client::StoreClient as GrpcStoreClient;
 use iroh_rpc_types::store::{
-    GetLinksRequest, GetRequest, HasRequest, PutRequest, Store, StoreClientAddr, StoreClientBackend,
+    GetLinksRequest, GetRequest, GetSizeRequest, HasRequest, PutRequest, Store, StoreClientAddr,
+    StoreClientBackend,
 };
 use iroh_rpc_types::Addr;
 #[cfg(feature = "grpc")]
@@ -72,5 +73,14 @@ impl StoreClient {
                 .collect();
             Ok(Some(links?))
         }
+    }
+
+    #[tracing::instrument(skip(self))]
+    pub async fn get_size(&self, cid: Cid) -> Result<Option<u64>> {
+        let req = GetSizeRequest {
+            cid: cid.to_bytes(),
+        };
+        let size = self.backend.get_size(req).await?.size;
+        Ok(size)
     }
 }

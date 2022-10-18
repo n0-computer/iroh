@@ -1,10 +1,13 @@
-/// A content loader implementation for iroh-one.
+//! A content loader implementation for iroh-one.
+
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use bytes::Bytes;
 use cid::{multibase, Cid};
 use futures::{future::FutureExt, pin_mut, select};
-use iroh_resolver::resolver::{parse_links, ContentLoader, LoadedCid, Source, IROH_STORE};
+use iroh_resolver::resolver::{
+    parse_links, ContentLoader, ContextId, LoadedCid, LoaderContext, Source, IROH_STORE,
+};
 use iroh_rpc_client::Client as RpcClient;
 use tracing::{debug, error, trace, warn};
 
@@ -30,10 +33,10 @@ impl RacingLoader {
             .ok_or_else(|| anyhow!("no gateway configured to fetch raw CIDs"))
     }
 
-    async fn fetch_p2p(&self, cid: &Cid) -> Result<Bytes, anyhow::Error> {
+    async fn fetch_p2p(&self, ctx: ContextId, cid: &Cid) -> Result<Bytes, anyhow::Error> {
         let p2p = self.rpc_client.try_p2p()?;
-        let providers = p2p.fetch_providers(cid).await?;
-        p2p.fetch_bitswap(*cid, providers).await
+        p2p.fetch_bitswap(ctx.into(), *cid, Default::default())
+            .await
     }
 
     async fn fetch_http(&self, cid: &Cid) -> Result<(Bytes, String), anyhow::Error> {
@@ -52,7 +55,7 @@ impl RacingLoader {
 
 #[async_trait]
 impl ContentLoader for RacingLoader {
-    async fn load_cid(&self, cid: &Cid) -> Result<LoadedCid> {
+    async fn load_cid(&self, cid: &Cid, ctx: &LoaderContext) -> Result<LoadedCid> {
         // TODO: better strategy
 
         let cid = *cid;
@@ -70,7 +73,7 @@ impl ContentLoader for RacingLoader {
             }
         }
 
-        let p2p_fut = self.fetch_p2p(&cid).fuse();
+        let p2p_fut = self.fetch_p2p(ctx.id(), &cid).fuse();
         let http_fut = self.fetch_http(&cid).fuse();
         pin_mut!(p2p_fut, http_fut);
 
@@ -133,6 +136,14 @@ impl ContentLoader for RacingLoader {
         } else {
             Err(anyhow::anyhow!("Failed to load from p2p & http"))
         }
+    }
+
+    async fn stop_session(&self, ctx: ContextId) -> Result<()> {
+        self.rpc_client
+            .try_p2p()?
+            .stop_session_bitswap(ctx.into())
+            .await?;
+        Ok(())
     }
 
     async fn has_cid(&self, cid: &Cid) -> Result<bool> {

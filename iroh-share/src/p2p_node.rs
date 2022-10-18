@@ -6,7 +6,7 @@ use cid::Cid;
 use iroh_p2p::{config, Keychain, MemoryStorage, NetworkEvent, Node};
 use iroh_resolver::{
     parse_links,
-    resolver::{ContentLoader, LoadedCid, Resolver, Source, IROH_STORE},
+    resolver::{ContentLoader, ContextId, LoadedCid, LoaderContext, Resolver, Source, IROH_STORE},
 };
 use iroh_rpc_client::Client;
 use iroh_rpc_types::Addr;
@@ -63,8 +63,10 @@ impl Loader {
 
 #[async_trait]
 impl ContentLoader for Loader {
-    async fn load_cid(&self, cid: &Cid) -> Result<LoadedCid> {
+    async fn load_cid(&self, cid: &Cid, _ctx: &LoaderContext) -> Result<LoadedCid> {
         let cid = *cid;
+        let providers = self.providers.lock().await.clone();
+
         match self.client.try_store()?.get(cid).await {
             Ok(Some(data)) => {
                 return Ok(LoadedCid {
@@ -78,10 +80,14 @@ impl ContentLoader for Loader {
             }
         }
 
-        let providers = self.providers.lock().await.clone();
         ensure!(!providers.is_empty(), "no providers supplied");
 
-        let res = self.client.try_p2p()?.fetch_bitswap(cid, providers).await;
+        // TODO: track context id
+        let res = self
+            .client
+            .try_p2p()?
+            .fetch_bitswap(0, cid, providers.clone())
+            .await;
         let bytes = match res {
             Ok(bytes) => bytes,
             Err(err) => {
@@ -106,6 +112,14 @@ impl ContentLoader for Loader {
             data: bytes,
             source: Source::Bitswap,
         })
+    }
+
+    async fn stop_session(&self, ctx: ContextId) -> Result<()> {
+        self.client
+            .try_p2p()?
+            .stop_session_bitswap(ctx.into())
+            .await?;
+        Ok(())
     }
 
     async fn has_cid(&self, cid: &Cid) -> Result<bool> {

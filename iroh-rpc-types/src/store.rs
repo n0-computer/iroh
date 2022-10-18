@@ -2,9 +2,10 @@ include_proto!("store");
 
 proxy!(
     Store,
-    version: () => VersionResponse,
-    put: PutRequest => (),
-    get: GetRequest => GetResponse,
-    has: HasRequest => HasResponse,
-    get_links: GetLinksRequest => GetLinksResponse
+    version: () => VersionResponse => VersionResponse,
+    put: PutRequest => () => (),
+    get: GetRequest => GetResponse => GetResponse,
+    has: HasRequest => HasResponse => HasResponse,
+    get_links: GetLinksRequest => GetLinksResponse => GetLinksResponse,
+    get_size: GetSizeRequest => GetSizeResponse => GetSizeResponse
 );

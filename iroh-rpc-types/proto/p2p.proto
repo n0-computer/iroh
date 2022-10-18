@@ -9,7 +9,9 @@ service P2p {
   rpc LocalPeerId(google.protobuf.Empty) returns (PeerIdResponse) {}
   rpc ExternalAddrs(google.protobuf.Empty) returns (Multiaddrs) {}
   rpc FetchBitswap(BitswapRequest) returns (BitswapResponse) {}
-  rpc FetchProvider(Key) returns (Providers) {}
+  rpc FetchProviderDht(Key) returns (stream Providers) {}
+  rpc NotifyNewBlocksBitswap(NotifyNewBlocksBitswapRequest) returns (google.protobuf.Empty) {}
+  rpc StopSessionBitswap(StopSessionBitswapRequest) returns (google.protobuf.Empty) {}
   rpc StartProviding(Key) returns (google.protobuf.Empty) {}
   rpc StopProviding(Key) returns (google.protobuf.Empty) {}
   rpc GetListeningAddrs(google.protobuf.Empty) returns (GetListeningAddrsResponse) {}
@@ -41,10 +43,16 @@ message BitswapRequest {
   // Serialized CID of the requested block.
   bytes cid = 1;
   Providers providers = 2;
+  uint64 ctx = 3;
+}
+
+message StopSessionBitswapRequest {
+  uint64 ctx = 1;
 }
 
 message BitswapResponse {
   bytes data = 1;
+  uint64 ctx = 2;
 }
 
 message Providers {
@@ -52,8 +60,24 @@ message Providers {
   repeated bytes providers = 1;
 }
 
+message BitswapProviders {
+  uint64 ctx = 1;
+  // List of providers. Serialized PeerIds
+  repeated bytes providers = 2;
+}
+
 message Key {
   bytes key = 1;
+}
+
+message NotifyNewBlocksBitswapRequest {
+  // Serialized CID of the requested block.
+  repeated BitswapBlock blocks = 1;
+}
+
+message BitswapBlock {
+  bytes cid = 1;
+  bytes data = 2;
 }
 
 message GetListeningAddrsResponse {
@@ -137,4 +161,5 @@ message GossipsubTopicsResponse {
   // List of topics
   repeated string topics = 1;
 }
+
 

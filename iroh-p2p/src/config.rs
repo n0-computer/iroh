@@ -42,6 +42,8 @@ pub struct Libp2pConfig {
     pub bootstrap_peers: Vec<Multiaddr>,
     /// Mdns discovery enabled.
     pub mdns: bool,
+    /// Bitswap discovery enabled.
+    pub bitswap: bool,
     /// Kademlia discovery enabled.
     pub kademlia: bool,
     /// Autonat holepunching enabled.
@@ -116,6 +118,7 @@ impl Source for Libp2pConfig {
 
         insert_into_config_map(&mut map, "kademlia", self.kademlia);
         insert_into_config_map(&mut map, "autonat", self.autonat);
+        insert_into_config_map(&mut map, "bitswap", self.bitswap);
         insert_into_config_map(&mut map, "mdns", self.mdns);
         insert_into_config_map(&mut map, "relay_server", self.relay_server);
         insert_into_config_map(&mut map, "relay_client", self.relay_client);
@@ -163,14 +166,15 @@ impl Default for Libp2pConfig {
             relay_server: true,
             relay_client: true,
             gossipsub: true,
+            bitswap: true,
             max_conns_pending_out: 256,
             max_conns_pending_in: 256,
             max_conns_in: 256,
-            max_conns_out: 256,
+            max_conns_out: 512,
             max_conns_per_peer: 8,
             notify_handler_buffer_size: 256,
             connection_event_buffer_size: 256,
-            dial_concurrency_factor: 16,
+            dial_concurrency_factor: 8,
         }
     }
 }
@@ -189,9 +193,14 @@ impl Config {
     }
 
     pub fn default_grpc() -> Self {
-        let addr = "grpc://0.0.0.0:4401";
+        let rpc_client = RpcClientConfig::default_grpc();
 
-        Self::default_with_rpc(addr.parse().unwrap())
+        Self {
+            libp2p: Libp2pConfig::default(),
+            rpc_client,
+            metrics: MetricsConfig::default(),
+            key_store_path: iroh_data_root().unwrap(),
+        }
     }
 
     /// Derive server addr for non memory addrs.
@@ -298,6 +307,7 @@ mod tests {
         expect.insert("kademlia".to_string(), Value::new(None, default.kademlia));
         expect.insert("autonat".to_string(), Value::new(None, default.autonat));
         expect.insert("mdns".to_string(), Value::new(None, default.mdns));
+        expect.insert("bitswap".to_string(), Value::new(None, default.bitswap));
         expect.insert(
             "relay_server".to_string(),
             Value::new(None, default.relay_server),

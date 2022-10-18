@@ -10,6 +10,7 @@ service Store {
   rpc Get(GetRequest) returns (GetResponse) {}
   rpc Has(HasRequest) returns (HasResponse) {}
   rpc GetLinks(GetLinksRequest) returns(GetLinksResponse) {}
+  rpc GetSize(GetSizeRequest) returns (GetSizeResponse) {}
 }
 
 message VersionResponse {
@@ -52,5 +53,14 @@ message GetLinksRequest {
 message GetLinksResponse {
   // list of CIDs
   repeated bytes links = 1;
+}
+
+message GetSizeRequest {
+  // Serialized CID of the requested block.
+  bytes cid = 1;
+}
+
+message GetSizeResponse {
+  optional uint64 size = 1;
 }
 

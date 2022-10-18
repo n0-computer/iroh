@@ -159,7 +159,7 @@ impl DiskStorage {
     async fn next_count_for_alg(&self, alg: ssh_key::Algorithm) -> Result<usize> {
         let matcher = format!("id_{}", print_algorithm(alg));
         let key_files = self.key_files();
-        tokio::pin!(key_files);
+        futures::pin_mut!(key_files);
 
         let mut counts = Vec::new();
         while let Some(file) = key_files.next().await {
@@ -187,7 +187,7 @@ impl DiskStorage {
                 if path.extension().is_none()
                     && path.file_name().is_some()
                     && path.file_name().unwrap().to_string_lossy().starts_with("id_") {
-                        yield path;
+                        yield PathBuf::from(path.as_path());
                 }
             }
         }

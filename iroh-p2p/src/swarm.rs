@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 use anyhow::Result;
+use iroh_rpc_client::Client;
 use libp2p::{
     core::{
         self,
@@ -27,12 +28,11 @@ async fn build_transport(
 ) {
     // TODO: make transports configurable
 
+    let tcp_config = libp2p::tcp::GenTcpConfig::default().port_reuse(true);
+    let transport = libp2p::tcp::TokioTcpTransport::new(tcp_config.clone());
     let transport =
-        libp2p::tcp::TokioTcpTransport::new(libp2p::tcp::GenTcpConfig::default().nodelay(true));
-    let transport = libp2p::websocket::WsConfig::new(libp2p::tcp::TokioTcpTransport::new(
-        libp2p::tcp::GenTcpConfig::default().nodelay(true),
-    ))
-    .or_transport(transport);
+        libp2p::websocket::WsConfig::new(libp2p::tcp::TokioTcpTransport::new(tcp_config))
+            .or_transport(transport);
 
     // TODO: configurable
     let transport = TransportTimeout::new(transport, Duration::from_secs(10));
@@ -91,11 +91,12 @@ async fn build_transport(
 pub(crate) async fn build_swarm(
     config: &Libp2pConfig,
     keypair: &Keypair,
+    rpc_client: Client,
 ) -> Result<Swarm<NodeBehaviour>> {
     let peer_id = keypair.public().to_peer_id();
 
     let (transport, relay_client) = build_transport(keypair, config).await;
-    let behaviour = NodeBehaviour::new(keypair, config, relay_client).await?;
+    let behaviour = NodeBehaviour::new(keypair, config, relay_client, rpc_client).await?;
 
     let limits = ConnectionLimits::default()
         .with_max_pending_incoming(Some(config.max_conns_pending_in))
@@ -109,7 +110,7 @@ pub(crate) async fn build_swarm(
         .connection_event_buffer_size(config.connection_event_buffer_size)
         .dial_concurrency_factor(config.dial_concurrency_factor.try_into().unwrap())
         .executor(Box::new(|fut| {
-            tokio::spawn(fut);
+            tokio::task::spawn(fut);
         }))
         .build();
 

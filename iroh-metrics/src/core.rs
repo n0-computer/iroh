@@ -29,6 +29,8 @@ pub(crate) struct Core {
     #[cfg(feature = "store")]
     store_metrics: store::Metrics,
     #[cfg(feature = "p2p")]
+    libp2p_metrics: p2p::Libp2pMetrics,
+    #[cfg(feature = "p2p")]
     p2p_metrics: p2p::Metrics,
 }
 
@@ -45,6 +47,8 @@ impl Default for Core {
             bitswap_metrics: bitswap::Metrics::new(&mut reg),
             #[cfg(feature = "store")]
             store_metrics: store::Metrics::new(&mut reg),
+            #[cfg(feature = "p2p")]
+            libp2p_metrics: p2p::Libp2pMetrics::new(&mut reg),
             #[cfg(feature = "p2p")]
             p2p_metrics: p2p::Metrics::new(&mut reg),
             registry: reg,
@@ -75,6 +79,11 @@ impl Core {
     #[cfg(feature = "store")]
     pub(crate) fn store_metrics(&self) -> &store::Metrics {
         &self.store_metrics
+    }
+
+    #[cfg(feature = "p2p")]
+    pub(crate) fn libp2p_metrics(&self) -> &p2p::Libp2pMetrics {
+        &self.libp2p_metrics
     }
 
     #[cfg(feature = "p2p")]

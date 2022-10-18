@@ -38,6 +38,8 @@ ssh-key = { version = "0.4.2", features = ["ed25519", "std", "rand_core"], defau
 rand = "0.8.5"
 async-stream = "0.3.3"
 tempfile = "3.3.0"
+caches = "0.2.2"
+tokio-stream = "0.1"
  
 [dependencies.libp2p]
 version = "0.49"
@@ -69,8 +71,6 @@ default-features = false
 features = ["std", "multihash-impl", "identity", "sha2"]
 
 [dev-dependencies]
-tokio = { version = "1" }
-#car = { path = "../car" }
 
 [features]
 default = ["rpc-grpc", "rpc-mem"]

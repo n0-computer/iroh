@@ -1,11 +1,10 @@
-use std::collections::HashSet;
-use std::error::Error;
 use std::time::Duration;
 
 use anyhow::Result;
-use bytes::Bytes;
+use async_trait::async_trait;
 use cid::Cid;
-use iroh_bitswap::{Bitswap, BitswapConfig, Priority, QueryId};
+use iroh_bitswap::{Bitswap, Block, Config as BitswapConfig, Store};
+use iroh_rpc_client::Client;
 use libp2p::core::identity::Keypair;
 use libp2p::core::PeerId;
 use libp2p::gossipsub::{Gossipsub, GossipsubConfig, MessageAuthenticity};
@@ -19,12 +18,14 @@ use libp2p::relay;
 use libp2p::swarm::behaviour::toggle::Toggle;
 use libp2p::NetworkBehaviour;
 use libp2p::{autonat, dcutr};
-use tracing::warn;
+use tracing::{info, warn};
 
 pub(crate) use self::event::Event;
+use self::peer_manager::PeerManager;
 use crate::config::Libp2pConfig;
 
 mod event;
+mod peer_manager;
 
 /// Libp2p behaviour for the node.
 #[derive(NetworkBehaviour)]
@@ -32,7 +33,7 @@ mod event;
 pub(crate) struct NodeBehaviour {
     ping: Ping,
     identify: Identify,
-    bitswap: Bitswap,
+    pub(crate) bitswap: Toggle<Bitswap<BitswapStore>>,
     pub(crate) kad: Toggle<Kademlia<MemoryStore>>,
     mdns: Toggle<Mdns>,
     pub(crate) autonat: Toggle<autonat::Behaviour>,
@@ -40,6 +41,40 @@ pub(crate) struct NodeBehaviour {
     relay_client: Toggle<relay::v2::client::Client>,
     dcutr: Toggle<dcutr::behaviour::Behaviour>,
     pub(crate) gossipsub: Toggle<Gossipsub>,
+    pub(crate) peer_manager: PeerManager,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct BitswapStore(Client);
+
+#[async_trait]
+impl Store for BitswapStore {
+    async fn get(&self, cid: &Cid) -> Result<Block> {
+        let store = self.0.try_store()?;
+        let cid = *cid;
+        let data = store
+            .get(cid)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("not found"))?;
+        Ok(Block::new(data, cid))
+    }
+
+    async fn get_size(&self, cid: &Cid) -> Result<usize> {
+        let store = self.0.try_store()?;
+        let cid = *cid;
+        let size = store
+            .get_size(cid)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("not found"))?;
+        Ok(size as usize)
+    }
+
+    async fn has(&self, cid: &Cid) -> Result<bool> {
+        let store = self.0.try_store()?;
+        let cid = *cid;
+        let res = store.has(cid).await?;
+        Ok(res)
+    }
 }
 
 impl NodeBehaviour {
@@ -47,11 +82,23 @@ impl NodeBehaviour {
         local_key: &Keypair,
         config: &Libp2pConfig,
         relay_client: Option<relay::v2::client::Client>,
+        rpc_client: Client,
     ) -> Result<Self> {
-        let bs_config = BitswapConfig::default();
-        let bitswap = Bitswap::new(bs_config);
+        let peer_manager = PeerManager::default();
+        let pub_key = local_key.public();
+        let peer_id = pub_key.to_peer_id();
+
+        let bitswap = if config.bitswap {
+            info!("init bitswap");
+            let bs_config = BitswapConfig::default();
+            Some(Bitswap::new(peer_id, BitswapStore(rpc_client), bs_config).await)
+        } else {
+            None
+        }
+        .into();
 
         let mdns = if config.mdns {
+            info!("init mdns");
             Some(Mdns::new(Default::default()).await?)
         } else {
             None
@@ -59,8 +106,7 @@ impl NodeBehaviour {
         .into();
 
         let kad = if config.kademlia {
-            let pub_key = local_key.public();
-
+            info!("init kademlia");
             // TODO: persist to store
             let mem_store_config = MemoryStoreConfig {
                 // enough for >10gb of unixfs files at the default chunk size
@@ -68,7 +114,7 @@ impl NodeBehaviour {
                 max_provided_keys: 1024 * 64,
                 ..Default::default()
             };
-            let store = MemoryStore::with_config(pub_key.to_peer_id(), mem_store_config);
+            let store = MemoryStore::with_config(peer_id, mem_store_config);
 
             // TODO: make user configurable
             let mut kad_config = KademliaConfig::default();
@@ -100,6 +146,7 @@ impl NodeBehaviour {
         .into();
 
         let autonat = if config.autonat {
+            info!("init autonat");
             let pub_key = local_key.public();
             let config = autonat::Config {
                 use_connected: true,
@@ -116,6 +163,7 @@ impl NodeBehaviour {
         .into();
 
         let relay = if config.relay_server {
+            info!("init relay server");
             let config = relay::v2::relay::Config::default();
             let r = relay::v2::relay::Relay::new(local_key.public().to_peer_id(), config);
             Some(r)
@@ -125,6 +173,7 @@ impl NodeBehaviour {
         .into();
 
         let (dcutr, relay_client) = if config.relay_client {
+            info!("init relay client");
             let relay_client =
                 relay_client.expect("missing relay client even though it was enabled");
             let dcutr = dcutr::behaviour::Behaviour::new();
@@ -135,11 +184,13 @@ impl NodeBehaviour {
 
         let identify = {
             let config = IdentifyConfig::new("ipfs/0.1.0".into(), local_key.public())
-                .with_agent_version(format!("iroh/{}", env!("CARGO_PKG_VERSION")));
+                .with_agent_version(format!("iroh/{}", env!("CARGO_PKG_VERSION")))
+                .with_cache_size(64 * 1024);
             Identify::new(config)
         };
 
         let gossipsub = if config.gossipsub {
+            info!("init gossipsub");
             let gossipsub_config = GossipsubConfig::default();
             let message_authenticity = MessageAuthenticity::Signed(local_key.clone());
             Some(
@@ -162,24 +213,23 @@ impl NodeBehaviour {
             dcutr: dcutr.into(),
             relay_client: relay_client.into(),
             gossipsub,
+            peer_manager,
         })
     }
 
-    /// Send a block to a peer over bitswap
-    pub fn send_block(&mut self, peer_id: &PeerId, cid: Cid, data: Bytes) -> Result<()> {
-        self.bitswap.send_block(peer_id, cid, data);
-        Ok(())
+    pub fn is_bad_peer(&self, peer_id: &PeerId) -> bool {
+        self.peer_manager.is_bad_peer(peer_id)
     }
 
-    /// Send a request for data over bitswap
-    pub fn want_block(
-        &mut self,
-        cid: Cid,
-        priority: Priority,
-        providers: HashSet<PeerId>,
-    ) -> Result<QueryId, Box<dyn Error>> {
-        let id = self.bitswap.want_block(cid, priority, providers);
-        Ok(id)
+    pub fn notify_new_blocks(&self, blocks: Vec<Block>) {
+        if let Some(bs) = self.bitswap.as_ref() {
+            let client = bs.client().clone();
+            tokio::task::spawn(async move {
+                if let Err(err) = client.notify_new_blocks(&blocks).await {
+                    warn!("failed to notify bitswap about blocks: {:?}", err);
+                }
+            });
+        }
     }
 
     pub fn finish_query(&mut self, id: &libp2p::kad::QueryId) {
@@ -195,5 +245,19 @@ impl NodeBehaviour {
             kad.bootstrap()?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn assert_send<T: Send>() {}
+
+    #[test]
+    fn test_traits() {
+        assert_send::<Bitswap<BitswapStore>>();
+        assert_send::<NodeBehaviour>();
+        assert_send::<&Bitswap<BitswapStore>>();
     }
 }

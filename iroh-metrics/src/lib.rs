@@ -103,12 +103,18 @@ async fn init_metrics(cfg: Config) -> Option<JoinHandle<()>> {
 
 /// Initialize the tracing subsystem.
 fn init_tracer(cfg: Config) -> Result<(), Box<dyn std::error::Error>> {
+    #[cfg(feature = "tokio-console")]
+    let console_subscriber = if cfg.tokio_console {
+        Some(console_subscriber::spawn())
+    } else {
+        None
+    };
+
     let log_subscriber = fmt::layer()
         .pretty()
         .with_filter(EnvFilter::from_default_env());
-    if !cfg.tracing {
-        tracing_subscriber::registry().with(log_subscriber).init();
-    } else {
+
+    let opentelemetry_subscriber = if cfg.tracing {
         global::set_text_map_propagator(TraceContextPropagator::new());
         let exporter = opentelemetry_otlp::new_exporter()
             .tonic()
@@ -129,12 +135,21 @@ fn init_tracer(cfg: Config) -> Result<(), Box<dyn std::error::Error>> {
             ])))
             .install_batch(opentelemetry::runtime::Tokio)?;
 
-        let opentelemetry = tracing_opentelemetry::layer().with_tracer(tracer);
-        tracing_subscriber::registry()
-            .with(log_subscriber)
-            .with(opentelemetry)
-            .try_init()?;
-    }
+        Some(tracing_opentelemetry::layer().with_tracer(tracer))
+    } else {
+        None
+    };
+
+    #[cfg(feature = "tokio-console")]
+    let registry = tracing_subscriber::registry().with(console_subscriber);
+    #[cfg(not(feature = "tokio-console"))]
+    let registry = tracing_subscriber::registry();
+
+    registry
+        .with(log_subscriber)
+        .with(opentelemetry_subscriber)
+        .try_init()?;
+
     Ok(())
 }
 
@@ -156,6 +171,8 @@ pub enum Collector {
     Bitswap,
     #[cfg(feature = "store")]
     Store,
+    #[cfg(feature = "p2p")]
+    P2P,
 }
 
 #[allow(unused_variables, unreachable_patterns)]
@@ -173,6 +190,8 @@ where
             Collector::Bitswap => CORE.bitswap_metrics().record(m, v),
             #[cfg(feature = "store")]
             Collector::Store => CORE.store_metrics().record(m, v),
+            #[cfg(feature = "p2p")]
+            Collector::P2P => CORE.p2p_metrics().record(m, v),
             _ => panic!("not enabled/implemented"),
         };
     }
@@ -193,12 +212,14 @@ where
             Collector::Bitswap => CORE.bitswap_metrics().observe(m, v),
             #[cfg(feature = "store")]
             Collector::Store => CORE.store_metrics().observe(m, v),
+            #[cfg(feature = "p2p")]
+            Collector::P2P => CORE.p2p_metrics().observe(m, v),
             _ => panic!("not enabled/implemented"),
         };
     }
 }
 
 #[cfg(feature = "p2p")]
-pub fn p2p_metrics() -> &'static p2p::Metrics {
-    CORE.p2p_metrics()
+pub fn libp2p_metrics() -> &'static p2p::Libp2pMetrics {
+    CORE.libp2p_metrics()
 }

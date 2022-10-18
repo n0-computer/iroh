@@ -27,6 +27,8 @@ names = { version = "0.14.0", default-features = false }
 serde = { version = "1.0", features = ["derive"] }
 lazy_static = "1.4.0"
 async-trait = "0.1.57"
+console-subscriber = { version = "0.1.7", optional = true }
+paste = "1.0.9"
 
 [dependencies.libp2p]
 version = "0.49"
@@ -60,3 +62,6 @@ resolver = []
 bitswap = []
 store = []
 p2p = ["libp2p"]
+
+# requires setting RUSTFLAGS="--cfg tokio_unstable"
+tokio-console = ["tokio/tracing", "console-subscriber"]
