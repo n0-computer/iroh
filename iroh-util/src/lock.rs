@@ -1,12 +1,12 @@
 use anyhow::{anyhow, Result};
 use file_guard::{FileGuard, Lock};
 use std::fs::File;
+use std::io::prelude::*;
 use std::io::Write;
 use std::path::PathBuf;
 use std::process;
 use std::rc::Rc;
 use tracing::info;
-use std::io::prelude::*;
 
 /// Manages a lock file used to track if an iroh program
 /// is already running.
