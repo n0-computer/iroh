@@ -5,7 +5,7 @@ use crate::config::{Config, CONFIG_FILE_NAME, ENV_PREFIX};
 #[cfg(feature = "testing")]
 use crate::p2p::MockP2p;
 use crate::p2p::{ClientP2p, P2p};
-use crate::{Cid, IpfsPath};
+use crate::{AddEvent, Cid, IpfsPath};
 use anyhow::Result;
 use futures::future::{BoxFuture, LocalBoxFuture};
 use futures::stream::LocalBoxStream;
@@ -49,7 +49,11 @@ pub trait Api {
     ) -> LocalBoxStream<'_, Result<(RelativePathBuf, OutType)>>;
 
     fn add_file<'a>(&'a self, path: &'a Path, wrap: bool) -> LocalBoxFuture<'_, Result<Cid>>;
-    fn add_dir<'a>(&'a self, path: &'a Path, wrap: bool) -> LocalBoxFuture<'_, Result<Cid>>;
+    fn add_dir(
+        &self,
+        path: &Path,
+        wrap: bool,
+    ) -> LocalBoxFuture<'_, Result<LocalBoxStream<'static, Result<AddEvent>>>>;
     fn add_symlink<'a>(&'a self, path: &'a Path, wrap: bool) -> LocalBoxFuture<'_, Result<Cid>>;
 
     fn check(&self) -> BoxFuture<'_, StatusTable>;
@@ -134,19 +138,26 @@ impl Api for Iroh {
     fn add_file<'a>(&'a self, path: &'a Path, wrap: bool) -> LocalBoxFuture<'_, Result<Cid>> {
         async move {
             let providing_client = iroh_resolver::unixfs_builder::StoreAndProvideClient {
-                client: Box::new(&self.client),
+                client: self.client.clone(),
             };
-            unixfs_builder::add_file(Some(&providing_client), path, wrap).await
+            unixfs_builder::add_file(Some(providing_client), path, wrap).await
         }
         .boxed_local()
     }
 
-    fn add_dir<'a>(&'a self, path: &'a Path, wrap: bool) -> LocalBoxFuture<'_, Result<Cid>> {
+    fn add_dir(
+        &self,
+        path: &Path,
+        wrap: bool,
+    ) -> LocalBoxFuture<'_, Result<LocalBoxStream<'static, Result<AddEvent>>>> {
+        let providing_client = iroh_resolver::unixfs_builder::StoreAndProvideClient {
+            client: self.client.clone(),
+        };
+        let path = path.to_path_buf();
         async move {
-            let providing_client = iroh_resolver::unixfs_builder::StoreAndProvideClient {
-                client: Box::new(&self.client),
-            };
-            unixfs_builder::add_dir(Some(&providing_client), path, wrap).await
+            unixfs_builder::add_dir(Some(providing_client), &path, wrap)
+                .await
+                .map(|s| s.boxed_local())
         }
         .boxed_local()
     }
@@ -154,9 +165,9 @@ impl Api for Iroh {
     fn add_symlink<'a>(&'a self, path: &'a Path, wrap: bool) -> LocalBoxFuture<'_, Result<Cid>> {
         async move {
             let providing_client = iroh_resolver::unixfs_builder::StoreAndProvideClient {
-                client: Box::new(&self.client),
+                client: self.client.clone(),
             };
-            unixfs_builder::add_symlink(Some(&providing_client), path, wrap).await
+            unixfs_builder::add_symlink(Some(providing_client), path, wrap).await
         }
         .boxed_local()
     }

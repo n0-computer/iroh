@@ -1,8 +1,9 @@
 use std::path::{Path, PathBuf};
 
-use crate::{Api, Cid, IpfsPath, OutType};
+use crate::{AddEvent, Api, Cid, IpfsPath, OutType};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
+use futures::stream::LocalBoxStream;
 use futures::Stream;
 use futures::StreamExt;
 use relative_path::RelativePathBuf;
@@ -30,18 +31,83 @@ pub trait ApiExt: Api {
         Ok(root_path)
     }
 
-    async fn add(&self, path: &Path, wrap: bool) -> Result<Cid> {
+    async fn add<'a>(&'a self, path: &Path, wrap: bool) -> Result<Added<'a>> {
         if path.is_dir() {
-            self.add_dir(path, wrap).await
-        } else if path.is_symlink() {
-            self.add_symlink(path, wrap).await
-        } else if path.is_file() {
-            self.add_file(path, wrap).await
-        } else {
+            Ok(Added {
+                cid: None,
+                stream: self.add_dir(path, wrap).await?,
+            })
+        }
+        //  else if path.is_symlink() {
+        //     self.add_symlink(path, wrap).await
+        // } else if path.is_file() {
+        //     self.add_file(path, wrap).await
+        // }
+        else {
             anyhow::bail!("can only add files or directories")
         }
     }
 }
+
+pub struct Added<'a> {
+    cid: Option<Cid>,
+    stream: LocalBoxStream<'a, Result<AddEvent>>,
+}
+
+impl Added<'_> {
+    pub fn progress(&mut self) -> LocalBoxStream<'_, Result<AddEvent>> {
+        async_stream::stream! {
+            // TODO(faassen) can we use stream.then instead?
+            while let Some(add_event) = self.stream.next().await {
+                if let Ok(AddEvent::Done(cid)) = add_event {
+                    self.cid = Some(cid);
+                }
+                yield add_event;
+            }
+        }
+        .boxed_local()
+    }
+
+    pub async fn cid(&mut self) -> Result<Cid> {
+        if let Some(cid) = self.cid {
+            return Ok(cid);
+        }
+        // if we don't already have a cid, consume the stream until we do
+        let r = self
+            .progress()
+            .fold(None, |_, add_event| async move {
+                if let Ok(AddEvent::Done(cid)) = add_event {
+                    Some(cid)
+                } else {
+                    // TODO(faassen) error handling as we get results
+                    None
+                }
+            })
+            .await;
+        if let Some(cid) = r {
+            Ok(cid)
+        } else {
+            anyhow::bail!("no cid found");
+        }
+    }
+}
+
+// impl std::future::Future for Added {
+//     type Output = Result<Cid>;
+
+//     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+//         if let Some(cid) = self.cid {
+//             return Poll::Ready(Ok(cid));
+//         }
+//         let event = self.stream.next();
+//         if let AddEvent::Done(cid) = event {
+//             self.cid = Some(cid);
+//             Poll::Ready(Ok(cid))
+//         } else {
+//             Poll::Pending
+//         }
+//     }
+// }
 
 impl<T> ApiExt for T where T: Api {}
 

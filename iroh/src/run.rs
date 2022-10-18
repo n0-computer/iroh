@@ -9,7 +9,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use futures::stream::StreamExt;
 use indicatif::{ProgressBar, ProgressStyle};
-use iroh_api::{size_stream, Api, ApiExt, IpfsPath, Iroh};
+use iroh_api::{size_stream, AddEvent, Api, ApiExt, IpfsPath, Iroh};
 use iroh_metrics::config::Config as MetricsConfig;
 
 #[derive(Parser, Debug, Clone)]
@@ -171,7 +171,18 @@ async fn add(api: &impl Api, path: &Path, no_wrap: bool, recursive: bool) -> Res
     //     }
     //     pb.finish_and_clear();
     // });
-    let cid = api.add(path, !no_wrap).await?;
-    println!("/ipfs/{}", cid);
+    let mut added = api.add(path, !no_wrap).await?;
+    let mut stream = added.progress();
+    while let Some(Ok(add_event)) = stream.next().await {
+        match add_event {
+            AddEvent::Progress(size) => {
+                pb.inc(size);
+            }
+            _ => {}
+        }
+    }
+
+    // let cid = added.cid().await?;
+    // println!("/ipfs/{}", cid);
     Ok(())
 }
