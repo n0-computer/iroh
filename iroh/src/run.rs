@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use crate::daemon;
 use crate::doc;
 #[cfg(feature = "testing")]
 use crate::fixture::get_fixture_api;
@@ -111,10 +110,6 @@ impl Cli {
 
     async fn cli_command(&self, api: &impl Api) -> Result<()> {
         match &self.command {
-            Commands::Status { watch } => {
-                crate::status::status(api, *watch).await?;
-            }
-            Commands::P2p(p2p) => run_p2p_command(&api.p2p()?, p2p).await?,
             Commands::Add {
                 path,
                 recursive,
@@ -129,12 +124,16 @@ impl Cli {
                 let root_path = api.get(path, output.as_deref()).await?;
                 println!("Saving file(s) to {}", root_path.to_str().unwrap());
             }
+            Commands::P2p(p2p) => run_p2p_command(&api.p2p()?, p2p).await?,
             Commands::Start {} => {
-                daemon::start(api).await?;
+                crate::services::start(api).await?;
                 println!("started iroh");
             }
+            Commands::Status { watch } => {
+                crate::services::status(api, *watch).await?;
+            }
             Commands::Stop {} => {
-                daemon::stop().unwrap();
+                crate::services::stop().await?;
                 println!("stopped iroh");
             }
         };

@@ -274,6 +274,7 @@ mod tests {
                 number: 1,
                 status: ServiceStatus::Unknown,
             },
+            iter: 0,
         };
 
         assert_eq!(expect, StatusTable::default());
@@ -297,6 +298,7 @@ mod tests {
                 number: 1,
                 status: ServiceStatus::Unknown,
             },
+            iter: 0,
         };
         assert_eq!(
             expect,

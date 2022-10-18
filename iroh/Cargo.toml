@@ -25,9 +25,9 @@ relative-path = { version = "1.7.2", optional = true }
 async-stream = "0.3.3"
 indicatif = "0.17.1"
 iroh-util = { path = "../iroh-util"}
-localops = { path = "../localops"}
 which = "4.3.0"
 sysinfo = "0.26.4"
+localops = { path = "../localops" }
 
 [dev-dependencies]
 trycmd = "0.13.7"

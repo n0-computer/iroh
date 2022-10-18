@@ -1,7 +1,9 @@
-use anyhow::Result;
+use anyhow::{anyhow, Result};
+use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use file_guard::{FileGuard, Lock};
 use std::fs::File;
 use std::path::PathBuf;
+use std::process;
 use std::rc::Rc;
 
 /// Manages a lock file used to track if an iroh program
@@ -28,7 +30,7 @@ impl ProgramLock {
 
         // Even if we manage to lock the file this won't last since the drop implementation
         // of FileGuard releases the underlying lock.
-        if let Ok(file) = File::create(&self.path) {
+        if let Ok(file) = File::open(&self.path) {
             file_guard::try_lock(&file, Lock::Exclusive, 0, 1).is_err()
         } else {
             false
@@ -37,12 +39,46 @@ impl ProgramLock {
 
     /// Try to acquire a lock for this program.
     pub fn acquire(&mut self) -> Result<()> {
-        let file = Rc::new(File::create(&self.path)?);
+        let mut file = File::create(&self.path)?;
+        file.write_u32::<LittleEndian>(process::id())?;
+        let file = Rc::new(file);
 
         file_guard::lock(file, Lock::Exclusive, 0, 1)
             .map(|lock| self.lock = Some(lock))
             .map_err(|err| err.into())
     }
+}
+
+/// Attempt to remove a stray lock file that wasn't cleaned up, returns true
+/// if a lock is successfully deleted
+pub fn try_cleanup_dead_lock(prog_name: &str) -> Result<bool> {
+    let lock = ProgramLock {
+        path: crate::iroh_data_path(&format!("{}.lock", prog_name))?,
+        lock: None,
+    };
+    if lock.is_locked() {
+        return Ok(false);
+    }
+    match std::fs::remove_file(lock.path) {
+        Err(_) => Ok(false),
+        Ok(_) => Ok(true),
+    }
+}
+
+/// Report Process ID stored in a lock file
+pub fn read_lock_pid(prog_name: &str) -> Result<u32> {
+    let path = crate::iroh_data_path(&format!("{}.lock", prog_name))?;
+    println!("reading lock: {}", path.display());
+    read_lock(path)
+}
+
+fn read_lock(path: PathBuf) -> Result<u32> {
+    if !path.exists() {
+        return Err(anyhow!("no lock file exists"));
+    }
+    let mut file = File::open(path)?;
+    let pid = file.read_u32::<LittleEndian>()?;
+    Ok(pid)
 }
 
 #[cfg(all(test, unix))]
@@ -51,7 +87,7 @@ mod test {
 
     fn create_test_lock(name: &str) -> ProgramLock {
         ProgramLock {
-            path: PathBuf::new().join(name),
+            path: PathBuf::from(name),
             lock: None,
         }
     }
@@ -62,18 +98,26 @@ mod test {
         use std::io::{Read, Write};
         use std::time::Duration;
 
-        // Start we no lock file.
+        // Start with no lock file.
         let _ = std::fs::remove_file("test1.lock");
 
         let mut lock = create_test_lock("test1.lock");
         assert!(!lock.is_locked());
+        assert!(read_lock(PathBuf::from("test1.lock")).is_err());
 
         lock.acquire().unwrap();
+
+        assert!(lock.is_locked());
+        // ensure call to is_locked doesn't affect PID reporting
+        assert_eq!(
+            process::id(),
+            read_lock(PathBuf::from("test1.lock")).unwrap()
+        );
 
         // Spawn a child process to check we can't get the same lock.
         // assert!() failures in the child are not reported by the test
         // harness, so we write the result in a file from the child and
-        // read them back in the parent after a reasonnable delay :(
+        // read them back in the parent after a reasonable delay :(
         unsafe {
             match fork() {
                 Ok(Parent { child: _ }) => {
@@ -84,20 +128,25 @@ mod test {
                     let mut result = std::fs::File::open("lock_test.result").unwrap();
                     let mut buf = String::new();
                     let _ = result.read_to_string(&mut buf);
-                    assert_eq!(buf, "locked1=true, locked2=false");
+                    assert_eq!(
+                        buf,
+                        format!("locked1=true, locked2=false lock1pid={}", process::id())
+                    );
 
                     let _ = std::fs::remove_file("lock_test.result");
                 }
                 Ok(Child) => {
                     let lock = create_test_lock("test1.lock");
                     let lock2 = create_test_lock("test2.lock");
+                    let pid = read_lock(PathBuf::from("test1.lock")).unwrap();
                     {
                         let mut result = std::fs::File::create("lock_test.result").unwrap();
                         let _ = result.write_all(
                             format!(
-                                "locked1={}, locked2={}",
+                                "locked1={}, locked2={} lock1pid={}",
                                 lock.is_locked(),
-                                lock2.is_locked()
+                                lock2.is_locked(),
+                                pid,
                             )
                             .as_bytes(),
                         );
