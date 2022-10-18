@@ -14,7 +14,7 @@ async fn main() -> anyhow::Result<()> {
     let mut lock = ProgramLock::new("iroh-store")?;
     if lock.is_locked() {
         println!("iroh-store is already running, stopping.");
-        return Ok(());
+        ::std::process::exit(iroh_util::exitcodes::LOCKED);
     } else {
         lock.acquire()?;
     }

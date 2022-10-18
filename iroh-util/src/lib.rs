@@ -18,6 +18,7 @@ use tracing::debug;
 
 pub mod human;
 pub mod lock;
+pub mod exitcodes;
 
 /// name of directory that wraps all iroh files in a given application directory
 const IROH_DIR: &str = "iroh";
