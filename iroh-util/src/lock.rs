@@ -1,11 +1,12 @@
 use anyhow::{anyhow, Result};
-use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use file_guard::{FileGuard, Lock};
 use std::fs::File;
+use std::io::Write;
 use std::path::PathBuf;
 use std::process;
 use std::rc::Rc;
 use tracing::info;
+use std::io::prelude::*;
 
 /// Manages a lock file used to track if an iroh program
 /// is already running.
@@ -41,7 +42,7 @@ impl ProgramLock {
     /// Try to acquire a lock for this program.
     pub fn acquire(&mut self) -> Result<()> {
         let mut file = File::create(&self.path)?;
-        file.write_u32::<LittleEndian>(process::id())?;
+        file.write_all(process::id().to_string().as_bytes())?;
         let file = Rc::new(file);
 
         file_guard::lock(file, Lock::Exclusive, 0, 1)
@@ -85,7 +86,9 @@ fn read_lock(path: PathBuf) -> Result<u32> {
         return Err(anyhow!("no lock file exists"));
     }
     let mut file = File::open(path)?;
-    let pid = file.read_u32::<LittleEndian>()?;
+    let mut pid = String::new();
+    file.read_to_string(&mut pid)?;
+    let pid = pid.parse::<u32>().unwrap();
     Ok(pid)
 }
 
