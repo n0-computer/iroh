@@ -46,7 +46,6 @@ use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, Env
 
 pub struct MetricsHandle {
     metrics_task: Option<JoinHandle<()>>,
-    tracer_task: Option<JoinHandle<()>>,
 }
 
 impl MetricsHandle {
@@ -56,19 +55,13 @@ impl MetricsHandle {
         if let Some(mt) = &self.metrics_task {
             mt.abort();
         }
-        if let Some(tt) = &self.tracer_task {
-            tt.abort();
-        }
     }
 
     /// Initialize the tracing and metrics subsystems.
     pub async fn new(cfg: Config) -> Result<Self, Box<dyn std::error::Error>> {
-        let tracer_task = init_tracer(cfg.clone())?;
+        init_tracer(cfg.clone())?;
         let metrics_task = init_metrics(cfg).await;
-        Ok(MetricsHandle {
-            tracer_task,
-            metrics_task,
-        })
+        Ok(MetricsHandle { metrics_task })
     }
 }
 
