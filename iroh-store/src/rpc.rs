@@ -4,9 +4,11 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use bytes::BytesMut;
 use cid::Cid;
+use futures::StreamExt;
 use iroh_rpc_types::store::{
-    GetLinksRequest, GetLinksResponse, GetRequest, GetResponse, GetSizeRequest, GetSizeResponse,
-    HasRequest, HasResponse, PutRequest, Store as RpcStore, StoreServerAddr, VersionResponse,
+    GetBlockCidsResponse, GetLinksRequest, GetLinksResponse, GetRequest, GetResponse,
+    GetSizeRequest, GetSizeResponse, HasRequest, HasResponse, PutRequest, Store as RpcStore,
+    StoreServerAddr, VersionResponse,
 };
 use tracing::info;
 
@@ -76,6 +78,25 @@ impl RpcStore for Store {
         } else {
             Ok(GetSizeResponse { size: None })
         }
+    }
+
+    #[tracing::instrument(skip(self))]
+    async fn get_block_cids(
+        &self,
+        _: (),
+    ) -> Result<
+        std::pin::Pin<Box<dyn futures::Stream<Item = anyhow::Result<GetBlockCidsResponse>> + Send>>,
+    > {
+        let iter = self
+            .block_cids()?
+            .map(|cid| {
+                let cid = cid?;
+                Ok(GetBlockCidsResponse {
+                    cid: cid.to_bytes(),
+                })
+            })
+            .collect::<Vec<_>>();
+        Ok(futures::stream::iter(iter).boxed())
     }
 }
 

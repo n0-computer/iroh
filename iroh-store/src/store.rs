@@ -122,7 +122,7 @@ impl BlockCidsIterInner {
     fn next(&mut self) -> Result<Option<Cid>> {
         while let Some(item) = self.with_iter_mut(|x| x.next()) {
             let (key, id) = item?;
-            let key = parse_id_key(key)?;
+            let key = parse_id_key(key).context("unable to parse id key")?;
             let id = <[u8; 8]>::try_from(id.as_ref())?;
             let has_blob = self
                 .borrow_snapshot()

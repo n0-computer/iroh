@@ -34,6 +34,7 @@ async-trait = "0.1.56"
 smallvec = { version = "1.10.0", features = ["write"] }
 multihash = "0.16.3"
 ouroboros = "0.15.5"
+hex = "0.4.3"
 
 [dev-dependencies]
 criterion = { version = "0.4.0", features = ["async_tokio"] }

@@ -11,6 +11,7 @@ service Store {
   rpc Has(HasRequest) returns (HasResponse) {}
   rpc GetLinks(GetLinksRequest) returns(GetLinksResponse) {}
   rpc GetSize(GetSizeRequest) returns (GetSizeResponse) {}
+  rpc GetBlockCids(google.protobuf.Empty) returns (stream GetBlockCidsResponse) {}
 }
 
 message VersionResponse {
@@ -64,3 +65,7 @@ message GetSizeResponse {
   optional uint64 size = 1;
 }
 
+message GetBlockCidsResponse {
+  // Serialized CID
+  bytes cid = 1;
+}
