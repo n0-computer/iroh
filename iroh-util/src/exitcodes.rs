@@ -10,7 +10,7 @@
 //! ::std::process::exit(exitcode::OK);
 //! ```
 
-/// Alias for the numeric type that holds system exit codes.
+/// Alias for the numeric type that holds iroh exit codes.
 pub type IrohExitCode = i32;
 
 /// Successful exit

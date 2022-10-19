@@ -23,7 +23,7 @@ async fn start_services(api: &impl Api, services: HashSet<&str>) -> Result<()> {
 
     let mut missing_services = HashSet::new();
     let missing_services = table
-        .into_iter()
+        .iter()
         .fold(&mut missing_services, |accum, status_row| {
             match status_row.status() {
                 iroh_api::ServiceStatus::Serving => (),

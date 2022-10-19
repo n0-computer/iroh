@@ -179,7 +179,7 @@ impl StatusTable {
         }
     }
 
-    pub fn into_iter(&self) -> StatusTableIterator<'_> {
+    pub fn iter(&self) -> StatusTableIterator<'_> {
         StatusTableIterator {
             table: self,
             iter: 0,
