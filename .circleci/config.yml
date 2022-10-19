@@ -5,7 +5,7 @@ parameters:
     type: string
     default: "nightly-2022-06-23"
 
-orbs: 
+orbs:
   aws-cli: circleci/aws-cli@3.1.1
 
 executors:
@@ -172,7 +172,7 @@ commands:
           key: sccache-cache-stable-{{ arch }}-{{ .Environment.CIRCLE_JOB }}-{{ epoch }}
           paths:
             - "~/.cache/sccache"
-    
+
   push-to-s3:
     parameters:
       version:
@@ -191,11 +191,11 @@ commands:
       - run:
           name: push to s3
           command: |
-              source $BASH_ENV
-              aws s3 cp <<parameters.path>>iroh-gateway s3://vorc/iroh-gateway-<<parameters.os>>-<<parameters.arch>>-${CIRCLE_SHA1::7} --no-progress
-              aws s3 cp <<parameters.path>>iroh-p2p s3://vorc/iroh-p2p-<<parameters.os>>-<<parameters.arch>>-${CIRCLE_SHA1::7} --no-progress
-              aws s3 cp <<parameters.path>>iroh-store s3://vorc/iroh-store-<<parameters.os>>-<<parameters.arch>>-${CIRCLE_SHA1::7} --no-progress
-              aws s3 cp <<parameters.path>>iroh s3://vorc/iroh-<<parameters.os>>-<<parameters.arch>>-${CIRCLE_SHA1::7} --no-progress
+            source $BASH_ENV
+            aws s3 cp <<parameters.path>>iroh-gateway s3://vorc/iroh-gateway-<<parameters.os>>-<<parameters.arch>>-${CIRCLE_SHA1::7} --no-progress
+            aws s3 cp <<parameters.path>>iroh-p2p s3://vorc/iroh-p2p-<<parameters.os>>-<<parameters.arch>>-${CIRCLE_SHA1::7} --no-progress
+            aws s3 cp <<parameters.path>>iroh-store s3://vorc/iroh-store-<<parameters.os>>-<<parameters.arch>>-${CIRCLE_SHA1::7} --no-progress
+            aws s3 cp <<parameters.path>>iroh s3://vorc/iroh-<<parameters.os>>-<<parameters.arch>>-${CIRCLE_SHA1::7} --no-progress
 
   push-to-s3-latest:
     parameters:
@@ -212,11 +212,11 @@ commands:
       - run:
           name: push to s3 latest
           command: |
-              source $BASH_ENV
-              aws s3 cp <<parameters.path>>iroh-gateway s3://vorc/iroh-gateway-<<parameters.os>>-<<parameters.arch>>-latest --no-progress
-              aws s3 cp <<parameters.path>>iroh-p2p s3://vorc/iroh-p2p-<<parameters.os>>-<<parameters.arch>>-latest --no-progress
-              aws s3 cp <<parameters.path>>iroh-store s3://vorc/iroh-store-<<parameters.os>>-<<parameters.arch>>-latest --no-progress
-              aws s3 cp <<parameters.path>>iroh s3://vorc/iroh-<<parameters.os>>-<<parameters.arch>>-latest --no-progress
+            source $BASH_ENV
+            aws s3 cp <<parameters.path>>iroh-gateway s3://vorc/iroh-gateway-<<parameters.os>>-<<parameters.arch>>-latest --no-progress
+            aws s3 cp <<parameters.path>>iroh-p2p s3://vorc/iroh-p2p-<<parameters.os>>-<<parameters.arch>>-latest --no-progress
+            aws s3 cp <<parameters.path>>iroh-store s3://vorc/iroh-store-<<parameters.os>>-<<parameters.arch>>-latest --no-progress
+            aws s3 cp <<parameters.path>>iroh s3://vorc/iroh-<<parameters.os>>-<<parameters.arch>>-latest --no-progress
 
 jobs:
   cargo_fetch:
@@ -265,11 +265,7 @@ jobs:
         type: string
         default: ""
     environment:
-<<<<<<< HEAD
       RUST_LOG: error
-=======
-      RUST_LOG: info
->>>>>>> ab78e95 (Experimentally adjust log level for tests)
     steps:
       - set-env-path
       - setup-protoc
@@ -335,7 +331,7 @@ jobs:
           name: Run cargo clippy (default features)
           command: cargo clippy --all --all-targets -- -D warnings
       - save-sccache-cache
-  
+
   audit:
     executor: docker-executor
     environment:
@@ -384,7 +380,7 @@ jobs:
           os: linux
           arch: amd64
       - save-sccache-cache
-  
+
   build_release_aarch64:
     executor: arm-executor
     steps:
@@ -457,7 +453,6 @@ jobs:
           os: darwin
           arch: aarch64
       - save-sccache-cache
-
 
 workflows:
   version: 2.1
