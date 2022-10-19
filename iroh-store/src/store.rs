@@ -15,9 +15,10 @@ use iroh_metrics::{
 };
 use iroh_rpc_client::Client as RpcClient;
 use multihash::Multihash;
+use ouroboros::self_referencing;
 use rocksdb::{
-    BlockBasedOptions, Cache, ColumnFamily, DBPinnableSlice, Direction, IteratorMode, Options,
-    WriteBatch, DB as RocksDb,
+    BlockBasedOptions, Cache, ColumnFamily, DBIterator, DBPinnableSlice, Direction, IteratorMode,
+    Options, WriteBatch, DB as RocksDb,
 };
 use smallvec::SmallVec;
 use tokio::task;
@@ -83,6 +84,14 @@ fn id_key(cid: &Cid) -> SmallVec<[u8; 64]> {
     key
 }
 
+fn parse_id_key(data: impl AsRef<[u8]>) -> anyhow::Result<Cid> {
+    let data = data.as_ref();
+    anyhow::ensure!(data.as_ref().len() >= 8, "invalid id key");
+    let hash = Multihash::from_bytes(&data[..data.len() - 8])?;
+    let codec = u64::from_be_bytes(data[data.len() - 8..].try_into().unwrap());
+    Ok(Cid::new_v1(codec, hash))
+}
+
 /// Struct used to iterate over all the ids for a multihash
 struct CodeAndId {
     // the ipld code of the id
@@ -90,6 +99,74 @@ struct CodeAndId {
     code: u64,
     // the id for the cid, used in most other column families
     id: u64,
+}
+
+/// A standalone iterator over all cids for which we had blocks at the time of creation of the iterator
+#[self_referencing]
+struct BlockCidsIterInner {
+    /// the owner, to keep the db alive
+    owner: Arc<InnerStore>,
+    #[borrows(owner)]
+    #[covariant]
+    snapshot: rocksdb::Snapshot<'this>,
+    #[borrows(owner)]
+    cf_id: &'this rocksdb::ColumnFamily,
+    #[borrows(owner)]
+    cf_blobs: &'this rocksdb::ColumnFamily,
+    #[borrows(snapshot, cf_id)]
+    #[covariant]
+    iter: DBIterator<'this>,
+}
+
+impl BlockCidsIterInner {
+    fn next(&mut self) -> Result<Option<Cid>> {
+        while let Some(item) = self.with_iter_mut(|x| x.next()) {
+            let (key, id) = item?;
+            let key = parse_id_key(key)?;
+            let id = <[u8; 8]>::try_from(id.as_ref())?;
+            let has_blob = self
+                .borrow_snapshot()
+                .get_pinned_cf(self.borrow_cf_blobs(), id)?
+                .is_some();
+            if has_blob {
+                return Ok(Some(key));
+            }
+        }
+        Ok(None)
+    }
+}
+
+pub struct BlockCidsIter(BlockCidsIterInner);
+
+impl BlockCidsIter {
+    fn create(inner: &Arc<InnerStore>) -> Result<Self> {
+        BlockCidsIterInner::try_new(
+            inner.clone(),
+            |inner| Ok(inner.content.snapshot()),
+            |inner| {
+                inner
+                    .content
+                    .cf_handle(CF_ID_V0)
+                    .context("missing column family: id")
+            },
+            |inner| {
+                inner
+                    .content
+                    .cf_handle(CF_BLOBS_V0)
+                    .context("missing column family: metadata")
+            },
+            |snapshot, cf_id| Ok(snapshot.iterator_cf(cf_id, rocksdb::IteratorMode::Start)),
+        )
+        .map(Self)
+    }
+}
+
+impl Iterator for BlockCidsIter {
+    type Item = Result<Cid>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.0.next().transpose()
+    }
 }
 
 impl Store {
@@ -135,6 +212,11 @@ impl Store {
                 _rpc_client,
             }),
         })
+    }
+
+    /// Iterate over all cids for which we have data
+    pub fn block_cids(&self) -> anyhow::Result<BlockCidsIter> {
+        BlockCidsIter::create(&self.inner)
     }
 
     /// Opens an existing database.
