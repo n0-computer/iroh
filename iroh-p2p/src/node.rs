@@ -4,6 +4,8 @@ use std::time::Duration;
 use ahash::AHashMap;
 use anyhow::{anyhow, bail, Context, Result};
 use cid::Cid;
+use futures::future::BoxFuture;
+use futures::FutureExt;
 use futures_util::stream::StreamExt;
 use iroh_metrics::{core::MRecorder, inc, libp2p_metrics, p2p::P2PMetrics};
 use iroh_rpc_client::Client as RpcClient;
@@ -76,6 +78,7 @@ pub struct Node<KeyStorage: Storage> {
     #[allow(dead_code)]
     kad_last_range: Option<(Distance, Distance)>,
     rpc_task: JoinHandle<()>,
+    record_sync_task: JoinHandle<()>,
     use_dht: bool,
     bitswap_sessions: BitswapSessions,
 }
@@ -101,10 +104,12 @@ pub(crate) const DEFAULT_PROVIDER_LIMIT: usize = 10;
 const NICE_INTERVAL: Duration = Duration::from_secs(6);
 const BOOTSTRAP_INTERVAL: Duration = Duration::from_secs(5 * 60);
 const EXPIRY_INTERVAL: Duration = Duration::from_secs(1);
+const PROVIDER_SYNC_INTERVAL: Duration = Duration::from_secs(3600);
 
 impl<KeyStorage: Storage> Drop for Node<KeyStorage> {
     fn drop(&mut self) {
         self.rpc_task.abort();
+        self.record_sync_task.abort();
     }
 }
 
@@ -122,6 +127,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
             ..
         } = config;
 
+        let network_sender_in_2 = network_sender_in.clone();
         let rpc_task = tokio::task::spawn(async move {
             // TODO: handle error
             rpc::new(rpc_addr, network_sender_in).await.unwrap()
@@ -137,6 +143,9 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
         Swarm::listen_on(&mut swarm, libp2p_config.listening_multiaddr.clone()).unwrap();
         println!("{}", libp2p_config.listening_multiaddr);
 
+        let record_sync_task =
+            tokio::task::spawn(record_sync_task(rpc_client.clone(), network_sender_in_2));
+
         Ok(Node {
             swarm,
             net_receiver_in: network_receiver_in,
@@ -147,6 +156,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
             _keychain: keychain,
             kad_last_range: None,
             rpc_task,
+            record_sync_task,
             use_dht: libp2p_config.kademlia,
             bitswap_sessions: Default::default(),
         })
@@ -852,6 +862,35 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
         }
 
         Ok(false)
+    }
+}
+
+async fn record_sync_task(client: RpcClient, network_sender_in: Sender<RpcMessage>) {
+    // try to sync once with the store, failing as soon as something goes wrong
+    let sync_one = || -> BoxFuture<Result<()>> {
+        async {
+            let store = client.try_store()?;
+            let mut records = store.get_block_cids().await?;
+            while let Some(cid) = records.next().await {
+                let cid = cid?;
+                info!("starting to provide {} from the store", cid);
+                let record = cid.to_bytes();
+                let (s, _) = oneshot::channel();
+                network_sender_in
+                    .send(RpcMessage::StartProviding(s, record.into()))
+                    .await?;
+            }
+            Ok(())
+        }
+        .boxed()
+    };
+
+    let mut provider_sync_interval = tokio::time::interval(PROVIDER_SYNC_INTERVAL);
+    loop {
+        provider_sync_interval.tick().await;
+        if let Err(cause) = sync_one().await {
+            warn!("Failed to sync provider records: {}", cause);
+        }
     }
 }
 

@@ -56,19 +56,10 @@ async fn main() -> anyhow::Result<()> {
         Store::create(config).await?
     };
 
-    let store2 = store.clone();
     let rpc_task = tokio::spawn(async move { rpc::new(rpc_addr, store.clone()).await.unwrap() });
-
-    let provide_task = tokio::spawn(async move {
-        let iter = store2.block_cids().unwrap();
-        for cid in iter {
-            println!("{:?}", cid);
-        }
-    });
 
     block_until_sigint().await;
     rpc_task.abort();
-    provide_task.abort();
     metrics_handle.shutdown();
 
     Ok(())

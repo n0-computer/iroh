@@ -87,6 +87,7 @@ impl RpcStore for Store {
     ) -> Result<
         std::pin::Pin<Box<dyn futures::Stream<Item = anyhow::Result<GetBlockCidsResponse>> + Send>>,
     > {
+        // TODO: avoid having to collect into a vec to make the stream Send
         let iter = self
             .block_cids()?
             .map(|cid| {

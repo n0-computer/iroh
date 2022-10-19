@@ -5,6 +5,7 @@ use bytes::Bytes;
 use cid::Cid;
 #[cfg(feature = "grpc")]
 use futures::Stream;
+use futures::TryStreamExt;
 #[cfg(feature = "grpc")]
 use iroh_rpc_types::store::store_client::StoreClient as GrpcStoreClient;
 use iroh_rpc_types::store::{
@@ -82,5 +83,16 @@ impl StoreClient {
         };
         let size = self.backend.get_size(req).await?.size;
         Ok(size)
+    }
+
+    #[tracing::instrument(skip(self))]
+    pub async fn get_block_cids(&self) -> Result<impl Stream<Item = Result<Cid>>> {
+        let stream = self.backend.get_block_cids(()).await?.and_then(|msg| {
+            futures::future::ready(
+                Cid::read_bytes(Cursor::new(&msg.cid))
+                    .context(format!("invalid cid: {:?}", msg.cid)),
+            )
+        });
+        Ok(stream)
     }
 }
