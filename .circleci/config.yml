@@ -265,7 +265,11 @@ jobs:
         type: string
         default: ""
     environment:
+<<<<<<< HEAD
       RUST_LOG: error
+=======
+      RUST_LOG: info
+>>>>>>> ab78e95 (Experimentally adjust log level for tests)
     steps:
       - set-env-path
       - setup-protoc
