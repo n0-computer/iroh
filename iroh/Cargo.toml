@@ -22,6 +22,7 @@ git-version = "0.3.5"
 iroh-metrics = { path = "../iroh-metrics", default-features = false, features = ["rpc-grpc"] }
 iroh-api = { path = "../iroh-api"}
 relative-path = { version = "1.7.2", optional = true }
+async-stream = "0.3.3"
 
 [dev-dependencies]
 trycmd = "0.13.7"
