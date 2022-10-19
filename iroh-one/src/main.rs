@@ -50,11 +50,11 @@ async fn main() -> Result<()> {
 
     let (store_rpc, p2p_rpc) = {
         let (store_recv, store_sender) = Addr::new_mem();
-        config.rpc_client.store_addr = Some(store_sender);
+        config.rpc_client.as_mut().unwrap().store_addr = Some(store_sender);
         let store_rpc = iroh_one::mem_store::start(store_recv, config.clone().store).await?;
 
         let (p2p_recv, p2p_sender) = Addr::new_mem();
-        config.rpc_client.p2p_addr = Some(p2p_sender);
+        config.rpc_client.as_mut().unwrap().p2p_addr = Some(p2p_sender);
         let p2p_rpc = iroh_one::mem_p2p::start(p2p_recv, config.clone().p2p).await?;
         (store_rpc, p2p_rpc)
     };
@@ -77,7 +77,7 @@ async fn main() -> Result<()> {
     };
 
     let content_loader = RacingLoader::new(
-        RpcClient::new(config.rpc_client.clone()).await?,
+        RpcClient::new(config.rpc_client.clone().unwrap()).await?,
         config.gateway.http_resolvers.clone().unwrap_or_default(),
     );
     let shared_state = Core::make_state(

@@ -1,6 +1,6 @@
-include_proto!("gateway");
+use crate::RpcError;
 
-proxy!(
-    Gateway,
-    version: () => VersionResponse => VersionResponse
-);
+#[tarpc::service]
+pub trait Gateway {
+    async fn version() -> Result<String, RpcError>;
+}

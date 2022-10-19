@@ -24,7 +24,7 @@ async fn main() -> anyhow::Result<()> {
     let config_data_path = config_data_path(args.path.clone())?;
     let config = make_config(
         // default
-        Config::new_grpc(config_data_path),
+        Config::new_tcp(config_data_path),
         // potential config files
         sources,
         // env var prefix for this config
@@ -60,7 +60,7 @@ async fn main() -> anyhow::Result<()> {
         Store::create(config).await?
     };
 
-    let rpc_task = tokio::spawn(async move { rpc::new(rpc_addr, store).await.unwrap() });
+    let rpc_task = tokio::spawn(async move { rpc::serve(rpc_addr, store.into()).await.unwrap() });
 
     block_until_sigint().await;
     rpc_task.abort();

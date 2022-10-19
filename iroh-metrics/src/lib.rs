@@ -117,7 +117,7 @@ fn init_tracer(cfg: Config) -> Result<(), Box<dyn std::error::Error>> {
     let opentelemetry_subscriber = if cfg.tracing {
         global::set_text_map_propagator(TraceContextPropagator::new());
         let exporter = opentelemetry_otlp::new_exporter()
-            .tonic()
+            .http()
             .with_endpoint(cfg.collector_endpoint)
             .with_timeout(std::time::Duration::from_secs(5));
 

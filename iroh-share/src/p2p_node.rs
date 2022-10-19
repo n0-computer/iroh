@@ -70,7 +70,7 @@ impl ContentLoader for Loader {
         match self.client.try_store()?.get(cid).await {
             Ok(Some(data)) => {
                 return Ok(LoadedCid {
-                    data,
+                    data: data.freeze(),
                     source: Source::Store(IROH_STORE),
                 });
             }
@@ -192,7 +192,7 @@ impl P2pNode {
         });
 
         let store_task = tokio::spawn(async move {
-            iroh_store::rpc::new(rpc_store_addr_server, store)
+            iroh_store::rpc::serve(rpc_store_addr_server, store.into())
                 .await
                 .unwrap()
         });

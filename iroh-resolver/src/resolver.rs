@@ -773,7 +773,7 @@ impl ContentLoader for Client {
             Ok(Some(data)) => {
                 trace!("{:?} retrieved from store", ctx.id());
                 return Ok(LoadedCid {
-                    data,
+                    data: data.freeze(),
                     source: Source::Store(IROH_STORE),
                 });
             }

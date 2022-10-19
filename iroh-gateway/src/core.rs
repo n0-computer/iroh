@@ -1,8 +1,7 @@
+use std::{collections::HashMap, sync::Arc};
+
 use axum::Router;
 use iroh_resolver::resolver::ContentLoader;
-use iroh_rpc_types::gateway::GatewayServerAddr;
-
-use std::{collections::HashMap, sync::Arc};
 use tokio::sync::RwLock;
 
 use crate::{
@@ -10,7 +9,7 @@ use crate::{
     client::Client,
     handlers::{get_app_routes, StateConfig},
     rpc,
-    rpc::Gateway,
+    rpc::{Gateway, GatewayServerAddr},
     templates,
 };
 
@@ -35,7 +34,7 @@ impl<T: ContentLoader + std::marker::Unpin> Core<T> {
         content_loader: T,
     ) -> anyhow::Result<Self> {
         tokio::spawn(async move {
-            if let Err(err) = rpc::new(rpc_addr, Gateway::default()).await {
+            if let Err(err) = rpc::serve(rpc_addr, Gateway::default()).await {
                 tracing::error!("Failed to run gateway rpc handler: {}", err);
             }
         });
@@ -65,7 +64,7 @@ impl<T: ContentLoader + std::marker::Unpin> Core<T> {
         state: Arc<State<T>>,
     ) -> anyhow::Result<Self> {
         tokio::spawn(async move {
-            if let Err(err) = rpc::new(rpc_addr, Gateway::default()).await {
+            if let Err(err) = rpc::serve(rpc_addr, Gateway::default()).await {
                 tracing::error!("Failed to run gateway rpc handler: {}", err);
             }
         });
@@ -121,9 +120,9 @@ mod tests {
     use futures::{StreamExt, TryStreamExt};
     use iroh_resolver::unixfs::UnixfsNode;
     use iroh_resolver::unixfs_builder::{DirectoryBuilder, FileBuilder};
+    use iroh_rpc_client::store::StoreClientAddr;
     use iroh_rpc_client::Client as RpcClient;
     use iroh_rpc_client::Config as RpcClientConfig;
-    use iroh_rpc_types::store::StoreClientAddr;
     use iroh_rpc_types::Addr;
     use std::io;
     use tokio_util::io::StreamReader;
@@ -131,13 +130,21 @@ mod tests {
     use crate::config::Config;
 
     async fn spawn_gateway(
-        config: Arc<Config>,
+        mut config: Config,
     ) -> (SocketAddr, RpcClient, tokio::task::JoinHandle<()>) {
-        let rpc_addr = "grpc://0.0.0.0:0".parse().unwrap();
-        let rpc_client = RpcClient::new(config.rpc_client().clone()).await.unwrap();
-        let core = Core::new(config, rpc_addr, Arc::new(None), rpc_client.clone())
+        let rpc_addr = "tcp://0.0.0.0:0".parse().unwrap();
+        let rpc_client = RpcClient::new(config.take_rpc_client().unwrap())
             .await
             .unwrap();
+        let core = Core::new(
+            Arc::new(config),
+            rpc_addr,
+            Arc::new(None),
+            rpc_client.clone(),
+        )
+        .await
+        .unwrap();
+
         let server = core.server();
         let addr = server.local_addr();
         let core_task = tokio::spawn(async move {
@@ -155,8 +162,11 @@ mod tests {
             metrics: iroh_metrics::config::Config::default(),
         };
         let store = iroh_store::Store::create(config).await.unwrap();
-        let task =
-            tokio::spawn(async move { iroh_store::rpc::new(server_addr, store).await.unwrap() });
+        let task = tokio::spawn(async move {
+            iroh_store::rpc::serve(server_addr, store.into())
+                .await
+                .unwrap()
+        });
         (client_addr, task)
     }
 
@@ -173,7 +183,7 @@ mod tests {
         );
         config.set_default_headers();
 
-        let (addr, _rpc_client, core_task) = spawn_gateway(Arc::new(config)).await;
+        let (addr, _rpc_client, core_task) = spawn_gateway(config).await;
 
         let uri = hyper::Uri::builder()
             .scheme("http")
@@ -205,7 +215,7 @@ mod tests {
         );
         config.set_default_headers();
 
-        let (addr, rpc_client, core_task) = spawn_gateway(Arc::new(config)).await;
+        let (addr, rpc_client, core_task) = spawn_gateway(config).await;
 
         let dir = "demo";
         let files = [

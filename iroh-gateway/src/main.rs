@@ -7,6 +7,7 @@ use iroh_gateway::{
     cli::Args,
     config::{Config, CONFIG_FILE_NAME, ENV_PREFIX},
     core::Core,
+    handlers::StateConfig,
     metrics,
 };
 use iroh_resolver::racing::RacingLoader;
@@ -47,7 +48,15 @@ async fn main() -> Result<()> {
         .server_rpc_addr()?
         .ok_or_else(|| anyhow!("missing gateway rpc addr"))?;
 
+    let rpc_client = RpcClient::new(
+        config
+            .take_rpc_client()
+            .expect("missing rpc client configuration"),
+    )
+    .await?;
+
     let content_loader = RacingLoader::new(
+        rpc_client,
         RpcClient::new(config.rpc_client.clone()).await?,
         config.http_resolvers.clone().unwrap_or_default(),
     );

@@ -1,7 +1,6 @@
 /// A p2p instance listening on a memory rpc channel.
 use iroh_p2p::config::Config;
-use iroh_p2p::{DiskStorage, Keychain, Node};
-use iroh_rpc_types::p2p::P2pServerAddr;
+use iroh_p2p::{rpc::P2pServerAddr, DiskStorage, Keychain, Node};
 use tokio::task;
 use tokio::task::JoinHandle;
 use tracing::error;

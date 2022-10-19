@@ -9,36 +9,25 @@ description = "RPC type definitions for iroh"
 
 
 [dependencies]
-prost = "0.11"
-prost-types = "0.11.1"
 async-trait = "0.1.56"
 anyhow = "1.0.58"
 serde_with = "2.0.0"
 iroh-metrics = { path = "../iroh-metrics", default-features = false }
-
-tonic = { version = "0.8", optional = true }
-tonic-health = { version = "0.7", optional = true }
 tokio = { version = "1", features = ["net", "sync"] }
 tokio-stream = { version = "0.1.9", optional = true, features = ["net"] }
-paste = "1.0.7"
 futures = "0.3.24"
+tarpc = { version = "0.30.0", features = ["serde1", "tokio1", "serde-transport", "serde-transport-bincode", "tcp"] }
+cid = { version = "0.8.6", features = ["serde-codec"] }
+bytes = { version = "1.2.1", features = ["serde"] }
+libp2p = { version = "0.50", default-features = false, features = ["serde"] }
+serde = { version = "1.0.145", features = ["derive"] }
+thiserror = "1.0.37"
+paste = "1.0.9"
+flume = "0.10.14"
 
-[build-dependencies]
-prost-build = "0.11.1"
-tonic-build = { version = "0.8", features = ["prost"], optional = true }
 
 [features]
-default = ["grpc", "mem"]
-# GRPC based transport
-grpc = [
-  "tonic",
-  "tonic-build",
-  "tonic-health",
-  "iroh-metrics/rpc-grpc",
-  "tokio-stream"
-]
-# Memory based transport
-mem = []
+default = []
 
 # Builds and empty tonic server & client as well as associated protobufs
 # that can be used for testing

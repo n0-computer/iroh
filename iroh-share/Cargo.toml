@@ -9,12 +9,12 @@ description = "Sharing files with iroh"
 
 [dependencies]
 anyhow = "1.0.58"
-iroh-p2p = { path = "../iroh-p2p", default-features = false, features = ["rpc-mem"] }
-iroh-store = {path = "../iroh-store", default-features = false, features = ["rpc-mem"] }
-iroh-rpc-client = { path = "../iroh-rpc-client", default-features = false, features = ["mem"] }
-iroh-rpc-types = { path = "../iroh-rpc-types", default-features = false, features = ["mem"] }
+iroh-p2p = { path = "../iroh-p2p", default-features = false }
+iroh-store = {path = "../iroh-store", default-features = false }
+iroh-rpc-client = { path = "../iroh-rpc-client", default-features = false }
+iroh-rpc-types = { path = "../iroh-rpc-types", default-features = false }
 iroh-metrics = { path = "../iroh-metrics", default-features = false }
-iroh-resolver = { path = "../iroh-resolver", default-features = false, features = ["rpc-mem"] }
+iroh-resolver = { path = "../iroh-resolver", default-features = false }
 iroh-util = { path = "../iroh-util" }
 tracing = "0.1.34"
 tokio = { version = "1" }

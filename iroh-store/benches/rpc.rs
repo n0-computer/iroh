@@ -4,12 +4,9 @@ use bytes::Bytes;
 use cid::multihash::{Code, MultihashDigest};
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use iroh_metrics::config::Config as MetricsConfig;
-use iroh_rpc_client::{Client, Config as RpcClientConfig};
-use iroh_rpc_types::{
-    store::{StoreClientAddr, StoreServerAddr},
-    Addr,
-};
-use iroh_store::{Config, Store};
+use iroh_rpc_client::{store::StoreClientAddr, Client, Config as RpcClientConfig};
+use iroh_rpc_types::Addr;
+use iroh_store::{rpc::StoreServerAddr, Config, Store};
 use tokio::runtime::Runtime;
 
 const RAW: u64 = 0x55;
@@ -17,23 +14,23 @@ const RAW: u64 = 0x55;
 const VALUES: [usize; 4] = [32, 256, 1024, 256 * 1024];
 #[derive(Debug, Copy, Clone)]
 enum Transport {
-    GrpcHttp2,
-    GrpcUds,
+    Tcp,
+    Uds,
     Mem,
 }
 
 impl Transport {
     fn new_addr(self) -> (StoreServerAddr, StoreClientAddr, Option<tempfile::TempDir>) {
         match self {
-            Transport::GrpcHttp2 => (
-                "grpc://127.0.0.1:4001".parse().unwrap(),
-                "grpc://127.0.0.1:4001".parse().unwrap(),
+            Transport::Tcp => (
+                "tcp://127.0.0.1:4001".parse().unwrap(),
+                "tcp://127.0.0.1:4001".parse().unwrap(),
                 None,
             ),
-            Transport::GrpcUds => {
+            Transport::Uds => {
                 let dir = tempfile::tempdir().unwrap();
                 let file = dir.path().join("iroh-store.uds");
-                (Addr::GrpcUds(file.clone()), Addr::GrpcUds(file), Some(dir))
+                (Addr::Uds(file.clone()), Addr::Uds(file), Some(dir))
             }
             Transport::Mem => {
                 let (a, b) = Addr::new_mem();
@@ -46,7 +43,7 @@ impl Transport {
 pub fn put_benchmark(c: &mut Criterion) {
     let mut group = c.benchmark_group("rpc_store_put");
 
-    let addrs = [Transport::GrpcHttp2, Transport::GrpcUds, Transport::Mem];
+    let addrs = [Transport::Tcp, Transport::Uds, Transport::Mem];
     for transport in addrs.into_iter() {
         for value_size in VALUES.iter() {
             let value = Bytes::from(vec![8u8; *value_size]);
@@ -77,7 +74,9 @@ pub fn put_benchmark(c: &mut Criterion) {
                     let (_task, rpc) = executor.block_on(async {
                         let store = Store::create(config).await.unwrap();
                         let task = executor.spawn(async move {
-                            iroh_store::rpc::new(server_addr, store).await.unwrap()
+                            iroh_store::rpc::serve(server_addr, store.into())
+                                .await
+                                .unwrap()
                         });
                         // wait for a moment until the transport is setup
                         // TODO: signal this more clearly
@@ -103,7 +102,7 @@ pub fn put_benchmark(c: &mut Criterion) {
 
 pub fn get_benchmark(c: &mut Criterion) {
     let mut group = c.benchmark_group("rpc_store_get");
-    let addrs = [Transport::GrpcHttp2, Transport::GrpcUds, Transport::Mem];
+    let addrs = [Transport::Tcp, Transport::Uds, Transport::Mem];
     for transport in addrs.into_iter() {
         for value_size in VALUES.iter() {
             group.throughput(criterion::Throughput::Bytes(*value_size as u64));
@@ -130,7 +129,9 @@ pub fn get_benchmark(c: &mut Criterion) {
                     let (_task, rpc) = executor.block_on(async {
                         let store = Store::create(config).await.unwrap();
                         let task = executor.spawn(async move {
-                            iroh_store::rpc::new(server_addr, store).await.unwrap()
+                            iroh_store::rpc::serve(server_addr, store.into())
+                                .await
+                                .unwrap()
                         });
                         // wait for a moment until the transport is setup
                         // TODO: signal this more clearly

@@ -32,7 +32,7 @@ pub struct Config {
     /// P2P specific configuration.
     pub p2p: iroh_p2p::config::Config,
     /// rpc addresses for the gateway & addresses for the rpc client to dial
-    pub rpc_client: RpcClientConfig,
+    pub rpc_client: Option<RpcClientConfig>,
     /// metrics configuration
     pub metrics: MetricsConfig,
 }
@@ -49,7 +49,7 @@ impl Config {
             gateway,
             store,
             p2p,
-            rpc_client,
+            rpc_client: Some(rpc_client),
             metrics: MetricsConfig::default(),
             #[cfg(feature = "uds-gateway")]
             gateway_uds_path,
@@ -68,11 +68,11 @@ impl Config {
             .join("ipfsd.http");
 
         RpcClientConfig {
-            #[cfg(feature = "uds-gateway")]
-            gateway_addr: Some(iroh_rpc_types::Addr::GrpcUds(path)),
+            #[cfg(all(unix, feature = "uds-gateway"))]
+            gateway_addr: Some(Addr::Uds(path)),
             // TODO(ramfox): not sure what the correct option is when not running a uds gateway
-            #[cfg(not(feature = "uds-gateway"))]
-            gateway_addr: None,
+            #[cfg(not(all(unix, feature = "uds-gateway")))]
+            gateway_addr: todo!(),
             p2p_addr: None,
             store_addr: None,
             channels: Some(1),
@@ -81,9 +81,10 @@ impl Config {
 
     // synchronize the top level configs across subsystems
     pub fn synchronize_subconfigs(&mut self) {
-        self.gateway.rpc_client = self.rpc_client.clone();
-        self.p2p.rpc_client = self.rpc_client.clone();
-        self.store.rpc_client = self.rpc_client.clone();
+        todo!();
+        // self.gateway.rpc_client = self.rpc_client.clone();
+        // self.p2p.rpc_client = self.rpc_client.clone();
+        // self.store.rpc_client = self.rpc_client.clone();
         self.gateway.metrics = self.metrics.clone();
         self.p2p.metrics = self.metrics.clone();
         self.store.metrics = self.metrics.clone();
@@ -100,7 +101,7 @@ impl Default for Config {
             default_store_config(None, rpc_client.clone(), metrics_config.clone()).unwrap();
         let key_store_path = iroh_util::iroh_data_root().unwrap();
         Self {
-            rpc_client: rpc_client.clone(),
+            rpc_client: todo!(), //rpc_client.clone(),
             metrics: metrics_config.clone(),
             gateway: iroh_gateway::config::Config::default(),
             store: store_config,
@@ -148,7 +149,7 @@ impl Source for Config {
         insert_into_config_map(&mut map, "gateway", self.gateway.collect()?);
         insert_into_config_map(&mut map, "store", self.store.collect()?);
         insert_into_config_map(&mut map, "p2p", self.p2p.collect()?);
-        insert_into_config_map(&mut map, "rpc_client", self.rpc_client.collect()?);
+        // insert_into_config_map(&mut map, "rpc_client", self.rpc_client.collect()?);
         insert_into_config_map(&mut map, "metrics", self.metrics.collect()?);
         #[cfg(feature = "uds-gateway")]
         if let Some(uds_path) = self.gateway_uds_path.as_ref() {
@@ -163,8 +164,8 @@ impl Source for Config {
 }
 
 impl iroh_gateway::handlers::StateConfig for Config {
-    fn rpc_client(&self) -> &iroh_rpc_client::Config {
-        &self.rpc_client
+    fn take_rpc_client(&mut self) -> Option<iroh_rpc_client::Config> {
+        self.rpc_client.take()
     }
 
     fn public_url_base(&self) -> &str {

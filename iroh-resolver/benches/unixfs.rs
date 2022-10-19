@@ -42,7 +42,9 @@ pub fn add_benchmark(c: &mut Criterion) {
                 let (_task, rpc) = executor.block_on(async {
                     let store = Store::create(config).await.unwrap();
                     let task = executor.spawn(async move {
-                        iroh_store::rpc::new(server_addr, store).await.unwrap()
+                        iroh_store::rpc::serve(server_addr, store.into())
+                            .await
+                            .unwrap()
                     });
                     // wait for a moment until the transport is setup
                     // TODO: signal this more clearly

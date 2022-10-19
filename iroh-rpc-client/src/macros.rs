@@ -2,88 +2,77 @@
 macro_rules! impl_client {
     ($label:ident) => {
         paste::paste! {
-            /// Name that the health service registers the client,
-            /// as this is derived from the protobuf definition.
-            #[cfg(feature = "grpc")]
-            pub(crate) const SERVICE_NAME: &str = stringify!([<$label:lower>].[<$label>]);
-
-            /// The display name that we expect to see in the StatusTable.
-            #[cfg(feature = "grpc")]
-            pub(crate) const NAME: &str = stringify!([<$label:lower>]);
-
             #[derive(Debug, Clone)]
             pub struct [<$label Client>] {
-                backend: [<$label ClientBackend>],
+                backend: std::sync::Arc<tokio::sync::RwLock<[<$label BackendState>]>>,
+            }
+
+            #[derive(Debug)]
+            enum [<$label BackendState>] {
+                Disconnected(std::net::SocketAddr),
+                Connected(iroh_rpc_types::[<$label:snake>]::[<$label Client>]),
             }
 
             impl [<$label Client>] {
+                async fn backend(&self) -> anyhow::Result<iroh_rpc_types::[<$label:snake>]::[<$label Client>]> {
+                    if let [<$label BackendState>]::Connected(backend) = &*self.backend.read().await {
+                        return Ok(backend.clone());
+                    }
+
+                    let backend = &mut *self.backend.write().await;
+                    match backend {
+                        [<$label BackendState>]::Disconnected(server_addr) => {
+                            let transport = tarpc::serde_transport::tcp::connect(
+                                *server_addr,
+                                tarpc::tokio_serde::formats::Bincode::default,
+                            ).await?;
+
+                            let client = iroh_rpc_types::[<$label:snake>]::[<$label Client>]::new(
+                                tarpc::client::Config::default(),
+                                transport,
+                            ).spawn();
+                            *backend = [<$label BackendState>]::Connected(client.clone());
+                            Ok(client)
+                        }
+                        [<$label BackendState>]::Connected(backend) => {
+                            // connected in the meantime
+                            Ok(backend.clone())
+                        }
+                    }
+                }
+            }
+
+            pub type [<$label ClientAddr>] = iroh_rpc_types::Addr<
+                    tarpc::Response<iroh_rpc_types::[<$label:snake>]::[<$label Response>]>,
+                    tarpc::ClientMessage<iroh_rpc_types::[<$label:snake>]::[<$label Request>]>,
+           >;
+
+
+            impl [<$label Client>] {
                 pub async fn new(addr: [<$label ClientAddr>]) -> Result<Self> {
-                    tracing::info!("connecting to {}", addr);
+                    // tracing::info!("connecting to {}", addr);
                     match addr {
-                        #[cfg(feature = "grpc")]
-                        Addr::GrpcHttp2(addr) => {
-                            let conn = Endpoint::new(format!("http://{}", addr))?
-                                .keep_alive_while_idle(true)
-                                .connect_lazy();
-
-                            let client = [<Grpc $label Client>]::new(conn.clone());
-                            let health = HealthClient::new(conn);
+                        iroh_rpc_types::Addr::Tcp(server_addr) => {
 
                             Ok([<$label Client>] {
-                                backend: [<$label ClientBackend>]::Grpc { client, health },
+                                backend: std::sync::Arc::new(tokio::sync::RwLock::new([<$label BackendState>]::Disconnected(server_addr))),
                             })
                         }
-                        #[cfg(all(feature = "grpc", unix))]
-                        Addr::GrpcUds(path) => {
-                            use tokio::net::UnixStream;
-                            use tonic::transport::Uri;
+                        #[cfg(unix)]
+                        iroh_rpc_types::Addr::Uds(_path) => {
+                            todo!()
+                        }
+                        iroh_rpc_types::Addr::Mem(client_transport) => {
+                            let client = iroh_rpc_types::[<$label:snake>]::[<$label Client>]::new(
+                                tarpc::client::Config::default(),
+                                client_transport,
+                            ).spawn();
 
-                            let path = std::sync::Arc::new(path);
-                            // dummy addr
-                            let conn = Endpoint::new("http://[..]:50051")?
-                                .keep_alive_while_idle(true)
-                                .connect_with_connector_lazy(tower::service_fn(move |_: Uri| {
-                                    let path = path.clone();
-                                    UnixStream::connect(path.as_ref().clone())
-                                }));
-
-                            let client = [<Grpc $label Client>]::new(conn.clone());
-                            let health = HealthClient::new(conn);
-
+                            // No lazy mode for channels
                             Ok([<$label Client>] {
-                                backend: [<$label ClientBackend>]::Grpc { client, health },
+                                backend: std::sync::Arc::new(tokio::sync::RwLock::new([<$label BackendState>]::Connected(client))),
                             })
-                        }
-                        #[cfg(feature = "mem")]
-                        Addr::Mem(s) => Ok([<$label Client>] {
-                            backend: [<$label ClientBackend>]::Mem(s),
-                        }),
-                    }
-                }
-
-                #[cfg(feature = "grpc")]
-                #[tracing::instrument(skip(self))]
-                pub async fn check(&self) -> StatusRow {
-                    match &self.backend {
-                        [<$label ClientBackend>]::Grpc { health, .. } => {
-                            status::check(health.clone(), SERVICE_NAME, NAME).await
-                        }
-                        _ => {
-                            todo!()
-                        }
-                    }
-                }
-
-                #[cfg(feature = "grpc")]
-                #[tracing::instrument(skip(self))]
-                pub async fn watch(&self) -> impl Stream<Item = StatusRow> {
-                    match &self.backend {
-                        [<$label ClientBackend>]::Grpc { health, .. } => {
-                            status::watch(health.clone(), SERVICE_NAME, NAME).await
-                        }
-                        _ => {
-                            todo!()
-                        }
+                        },
                     }
                 }
             }

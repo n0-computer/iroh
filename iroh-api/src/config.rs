@@ -19,7 +19,7 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            rpc_client: RpcClientConfig::default_grpc(),
+            rpc_client: RpcClientConfig::default_tcp(),
             metrics: Default::default(),
         }
     }

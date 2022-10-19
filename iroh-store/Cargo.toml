@@ -33,6 +33,8 @@ config = "0.13.1"
 async-trait = "0.1.56"
 smallvec = { version = "1.10.0", features = ["write"] }
 multihash = "0.16.3"
+tarpc = { version = "0.30.0", features = ["serde1", "tokio1", "serde-transport", "serde-transport-bincode", "tcp"] }
+paste = "1.0.9"
 
 [dev-dependencies]
 criterion = { version = "0.4.0", features = ["async_tokio"] }
@@ -41,9 +43,7 @@ tokio = { version = "1", features = ["rt", "macros", "rt-multi-thread"] }
 libipld = "0.14.0"
 
 [features]
-default = ["rpc-grpc", "rpc-mem"]
-rpc-grpc = ["iroh-rpc-types/grpc", "iroh-rpc-client/grpc", "iroh-metrics/rpc-grpc"]
-rpc-mem = ["iroh-rpc-types/mem", "iroh-rpc-client/mem"]
+default = []
 
 [[bench]]
 name = "store"

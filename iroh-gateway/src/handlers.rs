@@ -53,7 +53,7 @@ use crate::{
 /// Trait describing what needs to be accessed on the configuration
 /// from the shared state.
 pub trait StateConfig: std::fmt::Debug + Sync + Send {
-    fn rpc_client(&self) -> &iroh_rpc_client::Config;
+    fn take_rpc_client(&mut self) -> Option<iroh_rpc_client::Config>;
     fn public_url_base(&self) -> &str;
     fn port(&self) -> u16;
     fn user_headers(&self) -> &HeaderMap<HeaderValue>;

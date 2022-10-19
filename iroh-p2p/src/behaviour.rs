@@ -56,7 +56,7 @@ impl Store for BitswapStore {
             .get(cid)
             .await?
             .ok_or_else(|| anyhow::anyhow!("not found"))?;
-        Ok(Block::new(data, cid))
+        Ok(Block::new(data.freeze(), cid))
     }
 
     async fn get_size(&self, cid: &Cid) -> Result<usize> {

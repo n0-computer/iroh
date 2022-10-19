@@ -73,7 +73,7 @@ impl ContentLoader for RacingLoader {
             Ok(Some(data)) => {
                 trace!("retrieved from store");
                 return Ok(LoadedCid {
-                    data,
+                    data: data.freeze(),
                     source: Source::Store(IROH_STORE),
                 });
             }

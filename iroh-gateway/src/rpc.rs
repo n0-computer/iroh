@@ -1,24 +1,19 @@
 use anyhow::Result;
-use async_trait::async_trait;
-use iroh_rpc_types::gateway::{Gateway as RpcGateway, GatewayServerAddr, VersionResponse};
+use iroh_rpc_types::{
+    gateway::{Gateway as RpcGateway, GatewayRequest, GatewayResponse},
+    impl_serve, RpcError,
+};
+use tarpc::context::Context;
 
-#[derive(Default)]
+impl_serve!(Gateway, Gateway, GatewayRequest, GatewayResponse);
+
+#[derive(Default, Clone)]
 pub struct Gateway {}
 
-#[async_trait]
+#[tarpc::server]
 impl RpcGateway for Gateway {
-    #[tracing::instrument(skip(self))]
-    async fn version(&self, _: ()) -> Result<VersionResponse> {
+    async fn version(self, _ctx: Context) -> Result<String, RpcError> {
         let version = env!("CARGO_PKG_VERSION").to_string();
-        Ok(VersionResponse { version })
+        Ok(version)
     }
-}
-
-#[cfg(feature = "grpc")]
-impl iroh_rpc_types::NamedService for Gateway {
-    const NAME: &'static str = "gateway";
-}
-
-pub async fn new(addr: GatewayServerAddr, gateway: Gateway) -> Result<()> {
-    iroh_rpc_types::gateway::serve(addr, gateway).await
 }

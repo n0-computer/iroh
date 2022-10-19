@@ -21,11 +21,11 @@ http-serde = "1.1.0"
 hyper = "0.14.19"
 iroh-gateway = {path = "../iroh-gateway"}
 iroh-metrics = {path = "../iroh-metrics", default-features = false}
-iroh-p2p = {path = "../iroh-p2p", default-features = false, features = ["rpc-mem"]}
+iroh-p2p = {path = "../iroh-p2p", default-features = false}
 iroh-resolver = {path = "../iroh-resolver"}
 iroh-rpc-client = {path = "../iroh-rpc-client", default-features = false}
 iroh-rpc-types = {path = "../iroh-rpc-types", default-features = false}
-iroh-store = {path = "../iroh-store", default-features = false, features = ["rpc-mem"]}
+iroh-store = {path = "../iroh-store", default-features = false}
 iroh-util = {path = "../iroh-util"}
 reqwest = {version = "0.11", features = ["rustls-tls"], default-features = false}
 serde = {version = "1.0", features = ["derive"]}
@@ -38,9 +38,8 @@ axum-macros = "0.2.0" # use #[axum_macros::debug_handler] for better error messa
 http = "0.2" 
 
 [features]
-default = ["rpc-mem", "rpc-grpc"]
-rpc-grpc = ["iroh-rpc-types/grpc", "iroh-rpc-client/grpc", "iroh-metrics/rpc-grpc"]
-rpc-mem = ["iroh-rpc-types/mem", "iroh-rpc-client/mem"]
+default = []
+
 # uds-gateway controls whether http over uds is enabled. This is independent of the
 # rpc-grpc control endpoint.
 uds-gateway = []

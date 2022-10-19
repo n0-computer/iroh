@@ -30,7 +30,7 @@ fn main() -> Result<()> {
         let sources = vec![Some(cfg_path), args.cfg.clone()];
         let network_config = make_config(
             // default
-            Config::default_grpc(),
+            Config::default_tcp(),
             // potential config files
             sources,
             // env var prefix for this config

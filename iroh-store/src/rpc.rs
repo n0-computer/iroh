@@ -1,111 +1,79 @@
-use std::io::Cursor;
-
-use anyhow::{Context, Result};
-use async_trait::async_trait;
-use bytes::BytesMut;
+use bytes::{Bytes, BytesMut};
 use cid::Cid;
-use iroh_rpc_types::store::{
-    GetLinksRequest, GetLinksResponse, GetRequest, GetResponse, GetSizeRequest, GetSizeResponse,
-    HasRequest, HasResponse, PutManyRequest, PutRequest, Store as RpcStore, StoreServerAddr,
-    VersionResponse,
+use iroh_rpc_types::{
+    impl_serve,
+    store::{StoreRequest, StoreResponse},
+    RpcError,
 };
-use tracing::info;
+use tarpc::context::Context;
 
 use crate::store::Store;
 
-#[cfg(feature = "rpc-grpc")]
-impl iroh_rpc_types::NamedService for Store {
-    const NAME: &'static str = "store";
+impl_serve!(Store, RpcStore, StoreRequest, StoreResponse);
+
+#[derive(Clone)]
+pub struct RpcStore {
+    store: Store,
 }
 
-#[async_trait]
-impl RpcStore for Store {
-    #[tracing::instrument(skip(self))]
-    async fn version(&self, _: ()) -> Result<VersionResponse> {
+impl From<Store> for RpcStore {
+    fn from(store: Store) -> Self {
+        RpcStore { store }
+    }
+}
+
+#[tarpc::server]
+impl iroh_rpc_types::store::Store for RpcStore {
+    async fn version(self, _ctx: Context) -> Result<String, RpcError> {
         let version = env!("CARGO_PKG_VERSION").to_string();
-        Ok(VersionResponse { version })
+        Ok(version)
     }
 
-    #[tracing::instrument(skip(self, req))]
-    async fn put(&self, req: PutRequest) -> Result<()> {
-        let cid = cid_from_bytes(req.cid)?;
-        let links = links_from_bytes(req.links)?;
-        let res = self.put(cid, req.blob, links)?;
-
-        info!("store rpc call: put cid {}", cid);
+    async fn put(
+        self,
+        _ctx: Context,
+        cid: Cid,
+        blob: Bytes,
+        links: Vec<Cid>,
+    ) -> Result<(), RpcError> {
+        let res = self.store.put(cid, blob, links)?;
         Ok(res)
     }
 
-    #[tracing::instrument(skip(self, req))]
-    async fn put_many(&self, req: PutManyRequest) -> Result<()> {
-        let req = req
-            .blocks
-            .into_iter()
-            .map(|req| {
-                let cid = cid_from_bytes(req.cid)?;
-                let links = links_from_bytes(req.links)?;
-                Ok((cid, req.blob, links))
-            })
-            .collect::<Result<Vec<_>>>()?;
-        self.put_many(req)
+    async fn put_many(
+        self,
+        _ctx: Context,
+        blocks: Vec<(Cid, Bytes, Vec<Cid>)>,
+    ) -> Result<(), RpcError> {
+        self.store.put_many(blocks)?;
+
+        Ok(())
     }
 
-    #[tracing::instrument(skip(self))]
-    async fn get(&self, req: GetRequest) -> Result<GetResponse> {
-        let cid = cid_from_bytes(req.cid)?;
-        if let Some(res) = self.get(&cid)? {
-            Ok(GetResponse {
-                data: Some(BytesMut::from(&res[..]).freeze()),
-            })
+    async fn get(self, _ctx: Context, cid: Cid) -> Result<Option<BytesMut>, RpcError> {
+        if let Some(res) = self.store.get(&cid)? {
+            Ok(Some(BytesMut::from(&res[..])))
         } else {
-            Ok(GetResponse { data: None })
+            Ok(None)
         }
     }
 
-    #[tracing::instrument(skip(self))]
-    async fn has(&self, req: HasRequest) -> Result<HasResponse> {
-        let cid = cid_from_bytes(req.cid)?;
-        let has = self.has(&cid)?;
+    async fn has(self, _ctx: Context, cid: Cid) -> Result<bool, RpcError> {
+        let has = self.store.has(&cid)?;
 
-        Ok(HasResponse { has })
+        Ok(has)
     }
 
-    #[tracing::instrument(skip(self))]
-    async fn get_links(&self, req: GetLinksRequest) -> Result<GetLinksResponse> {
-        let cid = cid_from_bytes(req.cid)?;
-        if let Some(res) = self.get_links(&cid)? {
-            let links = res.into_iter().map(|cid| cid.to_bytes()).collect();
-            Ok(GetLinksResponse { links })
+    async fn get_links(self, _ctx: Context, cid: Cid) -> Result<Vec<Cid>, RpcError> {
+        let links = self.store.get_links(&cid)?.unwrap_or_default();
+        Ok(links)
+    }
+
+    async fn get_size(self, _ctx: Context, cid: Cid) -> Result<Option<u64>, RpcError> {
+        if let Some(size) = self.store.get_size(&cid).await? {
+            Ok(Some(size as u64))
         } else {
-            Ok(GetLinksResponse { links: Vec::new() })
+            Ok(None)
         }
     }
-
-    #[tracing::instrument(skip(self))]
-    async fn get_size(&self, req: GetSizeRequest) -> Result<GetSizeResponse> {
-        let cid = cid_from_bytes(req.cid)?;
-        if let Some(size) = self.get_size(&cid).await? {
-            Ok(GetSizeResponse {
-                size: Some(size as u64),
-            })
-        } else {
-            Ok(GetSizeResponse { size: None })
-        }
-    }
-}
-
-#[tracing::instrument(skip(store))]
-pub async fn new(addr: StoreServerAddr, store: Store) -> Result<()> {
-    info!("rpc listening on: {}", addr);
-    iroh_rpc_types::store::serve(addr, store).await
-}
-
-#[tracing::instrument]
-fn cid_from_bytes(b: Vec<u8>) -> Result<Cid> {
-    Cid::read_bytes(Cursor::new(b)).context("invalid cid")
-}
-
-#[tracing::instrument]
-fn links_from_bytes(l: Vec<Vec<u8>>) -> Result<Vec<Cid>> {
-    l.into_iter().map(cid_from_bytes).collect()
 }

@@ -7,7 +7,6 @@ use cid::Cid;
 use futures_util::stream::StreamExt;
 use iroh_metrics::{core::MRecorder, inc, libp2p_metrics, p2p::P2PMetrics};
 use iroh_rpc_client::Client as RpcClient;
-use iroh_rpc_types::p2p::P2pServerAddr;
 use libp2p::core::Multiaddr;
 use libp2p::gossipsub::{GossipsubMessage, MessageId, TopicHash};
 pub use libp2p::gossipsub::{IdentTopic, Topic};
@@ -33,11 +32,10 @@ use iroh_bitswap::{BitswapEvent, Block};
 
 use crate::keys::{Keychain, Storage};
 use crate::providers::Providers;
-use crate::rpc::ProviderRequestKey;
-use crate::swarm::build_swarm;
 use crate::{
     behaviour::{Event, NodeBehaviour},
-    rpc::{self, RpcMessage},
+    rpc::{self, P2pServerAddr, ProviderRequestKey, RpcMessage},
+    swarm::build_swarm,
     Config,
 };
 
@@ -90,7 +88,6 @@ type DHTQuery = (PeerId, Vec<oneshot::Sender<Result<()>>>);
 
 type BitswapSessions = AHashMap<u64, Vec<(oneshot::Sender<()>, JoinHandle<()>)>>;
 
-pub(crate) const DEFAULT_PROVIDER_LIMIT: usize = 10;
 const NICE_INTERVAL: Duration = Duration::from_secs(6);
 const BOOTSTRAP_INTERVAL: Duration = Duration::from_secs(5 * 60);
 const EXPIRY_INTERVAL: Duration = Duration::from_secs(1);
@@ -117,7 +114,9 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
 
         let rpc_task = tokio::task::spawn(async move {
             // TODO: handle error
-            rpc::new(rpc_addr, network_sender_in).await.unwrap()
+            rpc::serve(rpc_addr, network_sender_in.into())
+                .await
+                .unwrap()
         });
 
         let rpc_client = RpcClient::new(rpc_client)
@@ -987,17 +986,14 @@ mod tests {
 
     use super::*;
     use anyhow::Result;
-    use iroh_rpc_types::{
-        p2p::{P2pClientAddr, P2pServerAddr},
-        Addr,
-    };
+    use iroh_rpc_client::network::P2pClientAddr;
+    use iroh_rpc_types::Addr;
     use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
-    #[cfg(feature = "rpc-grpc")]
     #[tokio::test]
-    async fn test_fetch_providers_grpc_dht() -> Result<()> {
-        let server_addr = "grpc://0.0.0.0:4401".parse().unwrap();
-        let client_addr = "grpc://0.0.0.0:4401".parse().unwrap();
+    async fn test_fetch_providers_tcp_dht() -> Result<()> {
+        let server_addr = "tcp://0.0.0.0:4401".parse().unwrap();
+        let client_addr = "tcp://0.0.0.0:4401".parse().unwrap();
         fetch_providers(
             "/ip4/0.0.0.0/tcp/5001".parse().unwrap(),
             server_addr,
@@ -1007,14 +1003,16 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(all(feature = "rpc-grpc", unix))]
+    #[cfg(unix)]
     #[tokio::test]
     async fn test_fetch_providers_uds_dht() -> Result<()> {
+        use iroh_rpc_client::network::P2pClientAddr;
+
         let dir = tempfile::tempdir()?;
         let file = dir.path().join("cool.iroh");
 
-        let server_addr = P2pServerAddr::GrpcUds(file.clone());
-        let client_addr = P2pClientAddr::GrpcUds(file);
+        let server_addr = P2pServerAddr::Uds(file.clone());
+        let client_addr = P2pClientAddr::Uds(file);
         fetch_providers(
             "/ip4/0.0.0.0/tcp/5002".parse().unwrap(),
             server_addr,
@@ -1024,8 +1022,7 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(feature = "rpc-mem")]
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_fetch_providers_mem_dht() -> Result<()> {
         tracing_subscriber::registry()
             .with(fmt::layer().pretty())
@@ -1070,27 +1067,11 @@ mod tests {
                 .parse()
                 .unwrap();
 
-            let mut providers = Vec::new();
-            let mut chan = client.try_p2p().unwrap().fetch_providers_dht(&c).await?;
-            while let Some(new_providers) = chan.next().await {
-                let new_providers = new_providers.unwrap();
-                println!("providers found: {}", new_providers.len());
-                assert!(!new_providers.is_empty());
-
-                for p in &new_providers {
-                    println!("{}", p);
-                    providers.push(*p);
-                }
-            }
+            let providers = client.try_p2p().unwrap().fetch_providers_dht(c, 10).await?;
 
             println!("{:?}", providers);
             assert!(!providers.is_empty());
-            assert!(
-                providers.len() >= DEFAULT_PROVIDER_LIMIT,
-                "{} < {}",
-                providers.len(),
-                DEFAULT_PROVIDER_LIMIT
-            );
+            assert!(providers.len() >= 10, "{} < {}", providers.len(), 10);
         };
 
         p2p_task.abort();

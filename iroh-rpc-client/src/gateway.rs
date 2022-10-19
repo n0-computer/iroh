@@ -1,25 +1,23 @@
-#[cfg(feature = "grpc")]
-use crate::status::{self, StatusRow};
+use std::time::{Duration, SystemTime};
+
+// #[cfg(feature = "grpc")]
+// use crate::status::{self, StatusRow};
 use anyhow::Result;
-#[cfg(feature = "grpc")]
-use futures::Stream;
-#[cfg(feature = "grpc")]
-use iroh_rpc_types::gateway::gateway_client::GatewayClient as GrpcGatewayClient;
-use iroh_rpc_types::{
-    gateway::{Gateway, GatewayClientAddr, GatewayClientBackend},
-    Addr,
-};
-#[cfg(feature = "grpc")]
-use tonic::transport::Endpoint;
-#[cfg(feature = "grpc")]
-use tonic_health::proto::health_client::HealthClient;
+use tarpc::context::Context;
 
 impl_client!(Gateway);
 
+const DEFAULT_DEADLINE: Duration = Duration::from_secs(60);
+
+fn default_context() -> Context {
+    let mut ctx = Context::current();
+    ctx.deadline = SystemTime::now() + DEFAULT_DEADLINE;
+    ctx
+}
+
 impl GatewayClient {
-    #[tracing::instrument(skip(self))]
     pub async fn version(&self) -> Result<String> {
-        let res = self.backend.version(()).await?;
-        Ok(res.version)
+        let res = self.backend().await?.version(default_context()).await??;
+        Ok(res)
     }
 }

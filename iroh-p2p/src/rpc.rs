@@ -1,11 +1,15 @@
 use std::collections::{HashMap, HashSet};
-use std::io;
-use std::pin::Pin;
 
-use anyhow::{anyhow, ensure, Context, Result};
+use anyhow::{anyhow, Context as _};
 use bytes::Bytes;
 use cid::Cid;
-use futures::{Stream, StreamExt};
+use iroh_bitswap::Block;
+use iroh_rpc_types::p2p::PeerInfo;
+use iroh_rpc_types::RpcError;
+use iroh_rpc_types::{
+    impl_serve,
+    p2p::{P2p as RpcP2p, P2pRequest, P2pResponse},
+};
 use libp2p::gossipsub::{
     error::{PublishError, SubscriptionError},
     MessageId, TopicHash,
@@ -14,149 +18,134 @@ use libp2p::identify::Info as IdentifyInfo;
 use libp2p::kad::record::Key;
 use libp2p::Multiaddr;
 use libp2p::PeerId;
-use tokio::sync::mpsc::{channel, Sender};
+use tarpc::context::Context;
+use tokio::sync::mpsc::{self, Sender};
 use tokio::sync::oneshot;
-use tracing::{debug, trace};
+use tracing::trace;
 
-use async_trait::async_trait;
-use iroh_bitswap::Block;
-use iroh_rpc_types::p2p::{
-    BitswapRequest, BitswapResponse, ConnectByPeerIdRequest, ConnectRequest, DisconnectRequest,
-    GetListeningAddrsResponse, GetPeersResponse, GossipsubAllPeersResponse, GossipsubPeerAndTopics,
-    GossipsubPeerIdMsg, GossipsubPeersResponse, GossipsubPublishRequest, GossipsubPublishResponse,
-    GossipsubSubscribeResponse, GossipsubTopicHashMsg, GossipsubTopicsResponse, Key as ProviderKey,
-    LookupRequest, Multiaddrs, NotifyNewBlocksBitswapRequest, P2p as RpcP2p, P2pServerAddr,
-    PeerIdResponse, PeerInfo, Providers, StopSessionBitswapRequest, VersionResponse,
-};
+// use super::node::DEFAULT_PROVIDER_LIMIT;
 
-use super::node::DEFAULT_PROVIDER_LIMIT;
+impl_serve!(P2p, P2p, P2pRequest, P2pResponse);
 
-struct P2p {
+#[derive(Debug, Clone)]
+pub struct P2p {
     sender: Sender<RpcMessage>,
 }
 
-#[async_trait]
+impl From<Sender<RpcMessage>> for P2p {
+    fn from(sender: Sender<RpcMessage>) -> Self {
+        P2p { sender }
+    }
+}
+
+#[tarpc::server]
 impl RpcP2p for P2p {
-    #[tracing::instrument(skip(self))]
-    async fn version(&self, _: ()) -> Result<VersionResponse> {
+    async fn version(self, _ctx: Context) -> Result<String, RpcError> {
         let version = env!("CARGO_PKG_VERSION").to_string();
-        Ok(VersionResponse { version })
+        Ok(version)
     }
 
-    #[tracing::instrument(skip(self))]
-    async fn shutdown(&self, _: ()) -> Result<()> {
-        self.sender.send(RpcMessage::Shutdown).await?;
+    async fn shutdown(self, _ctx: Context) -> Result<(), RpcError> {
+        self.sender
+            .send(RpcMessage::Shutdown)
+            .await
+            .map_err(RpcError::from_any)?;
+
         Ok(())
     }
 
-    #[tracing::instrument(skip(self))]
-    async fn external_addrs(&self, _: ()) -> Result<Multiaddrs> {
+    async fn external_addrs(self, _ctx: Context) -> Result<Vec<Multiaddr>, RpcError> {
         trace!("received ExternalAddrs request");
 
         let (s, r) = oneshot::channel();
         let msg = RpcMessage::ExternalAddrs(s);
 
-        self.sender.send(msg).await?;
+        self.sender.send(msg).await.map_err(RpcError::from_any)?;
+        let addrs = r.await.map_err(RpcError::from_any)?;
 
-        let addrs = r.await?;
-
-        Ok(Multiaddrs {
-            addrs: addrs.into_iter().map(|addr| addr.to_vec()).collect(),
-        })
+        Ok(addrs)
     }
 
-    #[tracing::instrument(skip(self))]
-    async fn local_peer_id(&self, _: ()) -> Result<PeerIdResponse> {
+    async fn local_peer_id(self, _ctx: Context) -> Result<PeerId, RpcError> {
         trace!("received LocalPeerId request");
 
         let (s, r) = oneshot::channel();
         let msg = RpcMessage::LocalPeerId(s);
 
-        self.sender.send(msg).await?;
+        self.sender.send(msg).await.map_err(RpcError::from_any)?;
+        let peer_id = r.await.map_err(RpcError::from_any)?;
 
-        let peer_id = r.await?;
-
-        Ok(PeerIdResponse {
-            peer_id: peer_id.to_bytes(),
-        })
+        Ok(peer_id)
     }
 
     // TODO: expand to handle multiple cids at once. Probably not a tough fix, just want to push
     // forward right now
-    #[tracing::instrument(skip(self, req))]
-    async fn fetch_bitswap(&self, req: BitswapRequest) -> Result<BitswapResponse> {
-        let ctx = req.ctx;
-        let cid = Cid::read_bytes(io::Cursor::new(req.cid))?;
-
-        trace!("context:{}, received fetch_bitswap: {:?}", ctx, cid);
-        let providers = req
-            .providers
-            .with_context(|| format!("missing providers for: {}", cid))?;
-
-        let providers: HashSet<PeerId> = providers
-            .providers
-            .into_iter()
-            .map(|p| PeerId::from_bytes(&p).context("invalid provider"))
-            .collect::<Result<_>>()?;
+    async fn fetch_bitswap(
+        self,
+        _ctx: Context,
+        context_id: u64,
+        cid: Cid,
+        providers: Vec<PeerId>,
+    ) -> Result<Bytes, RpcError> {
+        trace!("context:{}, received fetch_bitswap: {:?}", context_id, cid);
+        let providers: HashSet<PeerId> = providers.into_iter().collect();
 
         let (s, r) = oneshot::channel();
         let msg = RpcMessage::BitswapRequest {
-            ctx,
+            ctx: context_id,
             cids: vec![cid],
             providers,
             response_channels: vec![s],
         };
 
-        trace!("context:{} making bitswap request for {:?}", ctx, cid);
-        self.sender.send(msg).await?;
+        trace!(
+            "context:{} making bitswap request for {:?}",
+            context_id,
+            cid
+        );
+        self.sender.send(msg).await.map_err(RpcError::from_any)?;
         let block = r
             .await
             .map_err(|_| anyhow!("bitswap req shut down"))?
             .map_err(|e| anyhow!("bitswap: {}", e))?;
 
-        ensure!(
-            cid == block.cid,
-            "unexpected bitswap response: expected: {} got: {}",
-            cid,
-            block.cid
-        );
+        if cid != block.cid {
+            return Err(RpcError::from(anyhow!(
+                "unexpected bitswap response: expected: {} got: {}",
+                cid,
+                block.cid
+            )));
+        }
 
-        trace!("context:{} got bitswap response for {:?}", ctx, cid);
+        trace!("context:{} got bitswap response for {:?}", context_id, cid);
 
-        Ok(BitswapResponse {
-            data: block.data,
-            ctx,
-        })
+        Ok(block.data)
     }
 
-    #[tracing::instrument(skip(self, req))]
-    async fn stop_session_bitswap(&self, req: StopSessionBitswapRequest) -> Result<()> {
-        let ctx = req.ctx;
-        debug!("stop session bitswap {}", ctx);
-
+    async fn stop_session_bitswap(self, _ctx: Context, context_id: u64) -> Result<(), RpcError> {
         let (s, r) = oneshot::channel();
         let msg = RpcMessage::BitswapStopSession {
-            ctx,
+            ctx: context_id,
             response_channel: s,
         };
 
-        self.sender.send(msg).await?;
-        r.await?.context("stop session")?;
-        debug!("stop session bitwap {} done", ctx);
+        self.sender.send(msg).await.map_err(RpcError::from_any)?;
+        r.await
+            .map_err(RpcError::from_any)?
+            .context("stop session")?;
 
         Ok(())
     }
 
-    #[tracing::instrument(skip(self, req))]
-    async fn notify_new_blocks_bitswap(&self, req: NotifyNewBlocksBitswapRequest) -> Result<()> {
-        let blocks = req
-            .blocks
+    async fn notify_new_blocks_bitswap(
+        self,
+        _ctx: Context,
+        blocks: Vec<(Cid, Bytes)>,
+    ) -> Result<(), RpcError> {
+        let blocks = blocks
             .into_iter()
-            .map(|block| {
-                let cid = Cid::read_bytes(io::Cursor::new(block.cid))?;
-                Ok(Block::new(block.data, cid))
-            })
-            .collect::<Result<Vec<Block>>>()?;
+            .map(|(cid, data)| Block::new(data, cid))
+            .collect::<Vec<Block>>();
 
         let (s, r) = oneshot::channel();
         let msg = RpcMessage::BitswapNotifyNewBlocks {
@@ -164,362 +153,314 @@ impl RpcP2p for P2p {
             response_channel: s,
         };
 
-        self.sender.send(msg).await?;
-        r.await?.context("bitswap notify new blocks")?;
+        self.sender.send(msg).await.map_err(RpcError::from_any)?;
+        r.await
+            .map_err(RpcError::from_any)?
+            .map_err(|e| anyhow!(e))?;
 
         Ok(())
     }
 
-    #[tracing::instrument(skip(self, req))]
     async fn fetch_provider_dht(
-        &self,
-        req: ProviderKey,
-    ) -> Result<Pin<Box<dyn Stream<Item = Result<Providers>> + Send>>> {
-        let cid: Cid = req.key.clone().try_into()?;
-        trace!("received fetch_provider_dht: {}", cid);
-        let (s, r) = channel(64);
+        self,
+        _ctx: Context,
+        key: Cid,
+        limit: usize,
+    ) -> Result<HashSet<PeerId>, RpcError> {
+        let (s, mut r) = mpsc::channel(limit.min(32));
 
         let msg = RpcMessage::ProviderRequest {
-            key: ProviderRequestKey::Dht(req.key.into()),
+            key: ProviderRequestKey::Dht(key.hash().to_bytes().into()),
             response_channel: s,
-            limit: DEFAULT_PROVIDER_LIMIT,
+            limit,
         };
 
-        self.sender.send(msg).await?;
-        let r = tokio_stream::wrappers::ReceiverStream::new(r);
+        self.sender.send(msg).await.map_err(RpcError::from_any)?;
+        let mut results = HashSet::with_capacity(limit);
+        while let Some(provider) = r.recv().await {
+            let provider = provider?;
+            results.extend(provider);
+        }
 
-        Ok(Box::pin(r.map(|providers| {
-            let providers = providers.map_err(|e| anyhow!(e))?;
-            let providers = providers.into_iter().map(|p| p.to_bytes()).collect();
-
-            Ok(Providers { providers })
-        })))
+        Ok(results)
     }
 
-    #[tracing::instrument(skip(self, req))]
-    async fn start_providing(&self, req: ProviderKey) -> Result<()> {
-        trace!("received StartProviding request: {:?}", req.key);
+    async fn start_providing(self, _ctx: Context, key: Vec<u8>) -> Result<(), RpcError> {
         let (s, r) = oneshot::channel();
-        let msg = RpcMessage::StartProviding(s, req.key.clone().into());
+        let msg = RpcMessage::StartProviding(s, key.into());
 
-        self.sender.send(msg).await?;
+        self.sender.send(msg).await.map_err(RpcError::from_any)?;
 
-        let query_id = r.await??;
-
-        tracing::debug!("StartProviding query_id: {:?}", query_id);
+        let _query_id = r.await.map_err(RpcError::from_any)??;
         Ok(())
     }
 
-    #[tracing::instrument(skip(self, req))]
-    async fn stop_providing(&self, req: ProviderKey) -> Result<()> {
-        trace!("received StopProviding request: {:?}", req.key);
+    async fn stop_providing(self, _ctx: Context, key: Vec<u8>) -> Result<(), RpcError> {
+        trace!("received StopProviding request: {:?}", key);
         let (s, r) = oneshot::channel();
-        let msg = RpcMessage::StopProviding(s, req.key.clone().into());
+        let msg = RpcMessage::StopProviding(s, key.into());
 
-        self.sender.send(msg).await?;
+        self.sender.send(msg).await.map_err(RpcError::from_any)?;
 
-        r.await??;
+        r.await.map_err(RpcError::from_any)??;
         Ok(())
     }
 
-    #[tracing::instrument(skip(self))]
-    async fn get_listening_addrs(&self, _: ()) -> Result<GetListeningAddrsResponse> {
+    async fn get_listening_addrs(
+        self,
+        _ctx: Context,
+    ) -> Result<(PeerId, Vec<Multiaddr>), RpcError> {
         let (s, r) = oneshot::channel();
         let msg = RpcMessage::NetListeningAddrs(s);
-        self.sender.send(msg).await?;
+        self.sender.send(msg).await.map_err(RpcError::from_any)?;
 
-        let (peer_id, addrs) = r.await?;
+        let (peer_id, addrs) = r.await.map_err(RpcError::from_any)?;
 
-        Ok(GetListeningAddrsResponse {
-            peer_id: peer_id.to_bytes(),
-            addrs: addrs.into_iter().map(|addr| addr.to_vec()).collect(),
-        })
+        Ok((peer_id, addrs))
     }
 
-    #[tracing::instrument(skip(self))]
-    async fn get_peers(&self, _: ()) -> Result<GetPeersResponse> {
+    async fn get_peers(self, _ctx: Context) -> Result<HashMap<PeerId, Vec<Multiaddr>>, RpcError> {
         let (s, r) = oneshot::channel();
         let msg = RpcMessage::NetPeers(s);
-        self.sender.send(msg).await?;
+        self.sender.send(msg).await.map_err(RpcError::from_any)?;
+        let peers = r.await.map_err(RpcError::from_any)?;
 
-        let peers = r.await?;
-        let mut p: HashMap<String, Multiaddrs> = Default::default();
-        for (id, addrs) in peers.into_iter() {
-            p.insert(
-                id.to_string(),
-                Multiaddrs {
-                    addrs: addrs.into_iter().map(|addr| addr.to_vec()).collect(),
-                },
-            );
-        }
-        Ok(GetPeersResponse { peers: p })
+        Ok(peers)
     }
 
-    #[tracing::instrument(skip(self, req))]
-    /// First attempts to find the peer on the DHT, if found, it will then ensure we have
-    /// a connection to the peer.
-    async fn peer_connect_by_peer_id(&self, req: ConnectByPeerIdRequest) -> Result<()> {
-        let peer_id = peer_id_from_bytes(req.peer_id)?;
-        let (s, r) = oneshot::channel();
-        // ask the swarm if we already have address for this peer
-        let msg = RpcMessage::AddressesOfPeer(s, peer_id);
-        self.sender.send(msg).await?;
-        let res = r.await?;
-        if res.is_empty() {
-            // if we don't have the addr info for this peer, we need to try to
-            // find it on the dht
-            let (s, r) = oneshot::channel();
-            let msg = RpcMessage::FindPeerOnDHT(s, peer_id);
-            self.sender.send(msg).await?;
-            r.await??;
-        }
-        // now we know we have found the peer on the dht,
-        // we can attempt to dial it
-        let (s, r) = oneshot::channel();
-        let msg = RpcMessage::NetConnectByPeerId(s, peer_id);
-        self.sender.send(msg).await?;
-        r.await?
-    }
-
-    #[tracing::instrument(skip(self, req))]
     /// Dial the peer directly using the PeerId and Multiaddr
-    async fn peer_connect(&self, req: ConnectRequest) -> Result<()> {
-        let peer_id = peer_id_from_bytes(req.peer_id)?;
-        let addrs = addrs_from_bytes(req.addrs)?;
-        let (s, r) = oneshot::channel();
-        let msg = RpcMessage::NetConnect(s, peer_id, addrs);
-        self.sender.send(msg).await?;
-        r.await?
+    /// If no addrs are provided it first attempts to find the peer on the DHT, if found, it will then ensure we have
+    /// a connection to the peer.
+    async fn peer_connect(
+        self,
+        _ctx: Context,
+        peer_id: PeerId,
+        addrs: Option<Vec<Multiaddr>>,
+    ) -> Result<(), RpcError> {
+        if let Some(addrs) = addrs {
+            let (s, r) = oneshot::channel();
+            let msg = RpcMessage::NetConnect(s, peer_id, addrs);
+            self.sender.send(msg).await.map_err(RpcError::from_any)?;
+            let ack = r.await.map_err(RpcError::from_any)??;
+            Ok(ack)
+        } else {
+            let (s, r) = oneshot::channel();
+            // ask the swarm if we already have address for this peer
+            let msg = RpcMessage::AddressesOfPeer(s, peer_id);
+            self.sender.send(msg).await.map_err(RpcError::from_any)?;
+            let addrs = r.await.map_err(RpcError::from_any)?;
+
+            if addrs.is_empty() {
+                // if we don't have the addr info for this peer, we need to try to
+                // find it on the dht
+                let (s, r) = oneshot::channel();
+                let msg = RpcMessage::FindPeerOnDHT(s, peer_id);
+                self.sender.send(msg).await.map_err(RpcError::from_any)?;
+                r.await.map_err(RpcError::from_any)??;
+            }
+
+            // now we know we have found the peer on the dht,
+            // we can attempt to dial it
+            let (s, r) = oneshot::channel();
+            let msg = RpcMessage::NetConnectByPeerId(s, peer_id);
+            self.sender.send(msg).await.map_err(RpcError::from_any)?;
+            let ack = r.await.map_err(RpcError::from_any)??;
+            Ok(ack)
+        }
     }
 
-    #[tracing::instrument(skip(self, req))]
-    async fn peer_disconnect(&self, req: DisconnectRequest) -> Result<()> {
-        let peer_id = peer_id_from_bytes(req.peer_id)?;
+    async fn peer_disconnect(self, _ctx: Context, peer: PeerId) -> Result<(), RpcError> {
         let (s, r) = oneshot::channel();
-        let msg = RpcMessage::NetDisconnect(s, peer_id);
-        self.sender.send(msg).await?;
-        let ack = r.await?;
+        let msg = RpcMessage::NetDisconnect(s, peer);
+        self.sender.send(msg).await.map_err(RpcError::from_any)?;
+        let ack = r.await.map_err(RpcError::from_any)?;
 
         Ok(ack)
     }
 
-    #[tracing::instrument(skip(self, req))]
-    async fn lookup(&self, req: LookupRequest) -> Result<PeerInfo> {
+    async fn lookup(
+        self,
+        ctx: Context,
+        peer_id: PeerId,
+        addr: Option<Multiaddr>,
+    ) -> Result<PeerInfo, RpcError> {
         let (s, r) = oneshot::channel();
-        let peer_id = peer_id_from_bytes(req.peer_id.clone())?;
 
         // check if we have already encountered this peer, and already
         // that the peer info
         let msg = RpcMessage::LookupPeerInfo(s, peer_id);
-        self.sender.send(msg).await?;
-        if let Some(info) = r.await? {
+        self.sender.send(msg).await.map_err(RpcError::from_any)?;
+        if let Some(info) = r.await.map_err(RpcError::from_any)? {
             return Ok(peer_info_from_identify_info(info));
         }
 
         // listen for if any peer info for this peer gets sent to us
         let (s, r) = oneshot::channel();
         let msg = RpcMessage::ListenForIdentify(s, peer_id);
-        self.sender.send(msg).await?;
+        self.sender.send(msg).await.map_err(RpcError::from_any)?;
 
         // once we connect to the peer, the idenitfy protocol
         // will attempt to exchange peer info
-        let res = match req.addr {
+        let res = match addr {
             Some(addr) => {
-                self.peer_connect(ConnectRequest {
-                    peer_id: req.peer_id,
-                    addrs: vec![addr],
-                })
-                .await
+                self.clone()
+                    .peer_connect(ctx, peer_id, Some(vec![addr]))
+                    .await
             }
-            None => {
-                self.peer_connect_by_peer_id(ConnectByPeerIdRequest {
-                    peer_id: req.peer_id,
-                })
-                .await
-            }
+            None => self.clone().peer_connect(ctx, peer_id, None).await,
         };
 
         if let Err(e) = res {
             let (s, r) = oneshot::channel();
             self.sender
                 .send(RpcMessage::CancelListenForIdentify(s, peer_id))
-                .await?;
-            r.await?;
-            anyhow::bail!("Cannot get peer information: {}", e);
+                .await
+                .map_err(RpcError::from_any)?;
+            r.await.map_err(RpcError::from_any)?;
+            return Err(anyhow!("Cannot get peer information: {}", e).into());
         }
 
-        let info = r.await??;
+        let info = r.await.map_err(RpcError::from_any)??;
 
         Ok(peer_info_from_identify_info(info))
     }
 
-    #[tracing::instrument(skip(self, req))]
-    async fn gossipsub_add_explicit_peer(&self, req: GossipsubPeerIdMsg) -> Result<()> {
+    async fn gossipsub_add_explicit_peer(
+        self,
+        _ctx: Context,
+        peer: PeerId,
+    ) -> Result<(), RpcError> {
         let (s, r) = oneshot::channel();
-        let msg = RpcMessage::Gossipsub(GossipsubMessage::AddExplicitPeer(
-            s,
-            peer_id_from_bytes(req.peer_id)?,
-        ));
-        self.sender.send(msg).await?;
-        r.await?;
+        let msg = RpcMessage::Gossipsub(GossipsubMessage::AddExplicitPeer(s, peer));
+        self.sender.send(msg).await.map_err(RpcError::from_any)?;
+        r.await.map_err(RpcError::from_any)?;
 
         Ok(())
     }
 
-    #[tracing::instrument(skip(self))]
-    async fn gossipsub_all_mesh_peers(&self, _: ()) -> Result<GossipsubPeersResponse> {
+    async fn gossipsub_all_mesh_peers(self, _ctx: Context) -> Result<Vec<PeerId>, RpcError> {
         let (s, r) = oneshot::channel();
         let msg = RpcMessage::Gossipsub(GossipsubMessage::AllMeshPeers(s));
-        self.sender.send(msg).await?;
-        let peers = r.await?;
+        self.sender.send(msg).await.map_err(RpcError::from_any)?;
+        let peers = r.await.map_err(RpcError::from_any)?;
 
-        let peers = peers.into_iter().map(|p| p.to_bytes()).collect();
-        Ok(GossipsubPeersResponse { peers })
+        Ok(peers)
     }
 
-    #[tracing::instrument(skip(self))]
-    async fn gossipsub_all_peers(&self, _: ()) -> Result<GossipsubAllPeersResponse> {
+    async fn gossipsub_all_peers(
+        self,
+        _ctx: Context,
+    ) -> Result<Vec<(PeerId, Vec<String>)>, RpcError> {
         let (s, r) = oneshot::channel();
         let msg = RpcMessage::Gossipsub(GossipsubMessage::AllPeers(s));
-        self.sender.send(msg).await?;
+        self.sender.send(msg).await.map_err(RpcError::from_any)?;
 
-        let all_peers = r.await?;
-        let all = all_peers
+        let all_peers = r.await.map_err(RpcError::from_any)?;
+        let all_peers = all_peers
             .into_iter()
-            .map(|(p, t)| GossipsubPeerAndTopics {
-                peer_id: p.to_bytes(),
-                topics: t.into_iter().map(|t| t.into_string()).collect(),
-            })
+            .map(|(peer, topics)| (peer, topics.into_iter().map(|t| t.to_string()).collect()))
             .collect();
-
-        Ok(GossipsubAllPeersResponse { all })
+        Ok(all_peers)
     }
 
-    #[tracing::instrument(skip(self, req))]
     async fn gossipsub_mesh_peers(
-        &self,
-        req: GossipsubTopicHashMsg,
-    ) -> Result<GossipsubPeersResponse> {
-        let topic = TopicHash::from_raw(req.topic_hash);
+        self,
+        _ctx: Context,
+        topic_hash: String,
+    ) -> Result<Vec<PeerId>, RpcError> {
+        let topic = TopicHash::from_raw(topic_hash);
         let (s, r) = oneshot::channel();
         let msg = RpcMessage::Gossipsub(GossipsubMessage::MeshPeers(s, topic));
-        self.sender.send(msg).await?;
+        self.sender.send(msg).await.map_err(RpcError::from_any)?;
+        let peers = r.await.map_err(RpcError::from_any)?;
 
-        let res = r.await?;
-        let peers = res.into_iter().map(|p| p.to_bytes()).collect();
-
-        Ok(GossipsubPeersResponse { peers })
+        Ok(peers)
     }
 
-    #[tracing::instrument(skip(self, req))]
     async fn gossipsub_publish(
-        &self,
-        req: GossipsubPublishRequest,
-    ) -> Result<GossipsubPublishResponse> {
-        let data = req.data;
-        let topic_hash = TopicHash::from_raw(req.topic_hash);
+        self,
+        _ctx: Context,
+        topic_hash: String,
+        data: Bytes,
+    ) -> Result<Vec<u8>, RpcError> {
+        let topic_hash = TopicHash::from_raw(topic_hash);
         let (s, r) = oneshot::channel();
         let msg = RpcMessage::Gossipsub(GossipsubMessage::Publish(s, topic_hash, data));
-        self.sender.send(msg).await?;
+        self.sender.send(msg).await.map_err(RpcError::from_any)?;
+        let message_id = r
+            .await
+            .map_err(RpcError::from_any)?
+            .map_err(RpcError::from_any)?;
 
-        let message_id = r.await??;
-
-        Ok(GossipsubPublishResponse {
-            message_id: message_id.0,
-        })
+        Ok(message_id.0)
     }
 
-    #[tracing::instrument(skip(self, req))]
-    async fn gossipsub_remove_explicit_peer(&self, req: GossipsubPeerIdMsg) -> Result<()> {
-        let peer_id = peer_id_from_bytes(req.peer_id)?;
+    async fn gossipsub_remove_explicit_peer(
+        self,
+        _ctx: Context,
+        peer: PeerId,
+    ) -> Result<(), RpcError> {
         let (s, r) = oneshot::channel();
-        let msg = RpcMessage::Gossipsub(GossipsubMessage::RemoveExplicitPeer(s, peer_id));
-        self.sender.send(msg).await?;
+        let msg = RpcMessage::Gossipsub(GossipsubMessage::RemoveExplicitPeer(s, peer));
+        self.sender.send(msg).await.map_err(RpcError::from_any)?;
 
-        r.await?;
+        r.await.map_err(RpcError::from_any)?;
         Ok(())
     }
 
-    #[tracing::instrument(skip(self, req))]
     async fn gossipsub_subscribe(
-        &self,
-        req: GossipsubTopicHashMsg,
-    ) -> Result<GossipsubSubscribeResponse> {
+        self,
+        _ctx: Context,
+        topic_hash: String,
+    ) -> Result<bool, RpcError> {
         let (s, r) = oneshot::channel();
         let msg = RpcMessage::Gossipsub(GossipsubMessage::Subscribe(
             s,
-            TopicHash::from_raw(req.topic_hash),
+            TopicHash::from_raw(topic_hash),
         ));
+        self.sender.send(msg).await.map_err(RpcError::from_any)?;
+        let was_subscribed = r
+            .await
+            .map_err(RpcError::from_any)?
+            .map_err(RpcError::from_any)?;
 
-        self.sender.send(msg).await?;
-
-        let was_subscribed = r.await??;
-
-        Ok(GossipsubSubscribeResponse { was_subscribed })
+        Ok(was_subscribed)
     }
 
-    #[tracing::instrument(skip(self))]
-    async fn gossipsub_topics(&self, _: ()) -> Result<GossipsubTopicsResponse> {
+    async fn gossipsub_topics(self, _ctx: Context) -> Result<Vec<String>, RpcError> {
         let (s, r) = oneshot::channel();
         let msg = RpcMessage::Gossipsub(GossipsubMessage::Topics(s));
 
-        self.sender.send(msg).await?;
+        self.sender.send(msg).await.map_err(RpcError::from_any)?;
+        let topics: Vec<String> = r
+            .await
+            .map_err(RpcError::from_any)?
+            .into_iter()
+            .map(|t| t.into_string())
+            .collect();
 
-        let topics: Vec<String> = r.await?.into_iter().map(|t| t.into_string()).collect();
-
-        Ok(GossipsubTopicsResponse { topics })
+        Ok(topics)
     }
 
-    #[tracing::instrument(skip(self, req))]
     async fn gossipsub_unsubscribe(
-        &self,
-        req: GossipsubTopicHashMsg,
-    ) -> Result<GossipsubSubscribeResponse> {
+        self,
+        _ctx: Context,
+        topic_hash: String,
+    ) -> Result<bool, RpcError> {
         let (s, r) = oneshot::channel();
         let msg = RpcMessage::Gossipsub(GossipsubMessage::Unsubscribe(
             s,
-            TopicHash::from_raw(req.topic_hash),
+            TopicHash::from_raw(topic_hash),
         ));
 
-        self.sender.send(msg).await?;
-        let was_subscribed = r.await??;
+        self.sender.send(msg).await.map_err(RpcError::from_any)?;
+        let was_subscribed = r
+            .await
+            .map_err(RpcError::from_any)?
+            .map_err(RpcError::from_any)?;
 
-        Ok(GossipsubSubscribeResponse { was_subscribed })
+        Ok(was_subscribed)
     }
-}
-
-pub async fn new(addr: P2pServerAddr, sender: Sender<RpcMessage>) -> Result<()> {
-    let p2p = P2p { sender };
-
-    iroh_rpc_types::p2p::serve(addr, p2p).await
-}
-
-fn peer_info_from_identify_info(i: IdentifyInfo) -> PeerInfo {
-    let peer_id = i.public_key.to_peer_id();
-    PeerInfo {
-        peer_id: peer_id.to_bytes(),
-        protocol_version: i.protocol_version,
-        agent_version: i.agent_version,
-        listen_addrs: i
-            .listen_addrs
-            .into_iter()
-            .map(|addr| addr.to_vec())
-            .collect(),
-        protocols: i.protocols,
-        observed_addr: i.observed_addr.to_vec(),
-    }
-}
-
-fn peer_id_from_bytes(p: Vec<u8>) -> Result<PeerId> {
-    PeerId::from_bytes(&p[..]).context("invalid peer_id")
-}
-
-fn addr_from_bytes(m: Vec<u8>) -> Result<Multiaddr> {
-    Multiaddr::try_from(m).context("invalid multiaddr")
-}
-
-fn addrs_from_bytes(a: Vec<Vec<u8>>) -> Result<Vec<Multiaddr>> {
-    a.into_iter().map(addr_from_bytes).collect()
 }
 
 #[derive(Debug)]
@@ -542,28 +483,28 @@ pub enum RpcMessage {
     },
     BitswapNotifyNewBlocks {
         blocks: Vec<Block>,
-        response_channel: oneshot::Sender<Result<()>>,
+        response_channel: oneshot::Sender<Result<(), String>>,
     },
     BitswapStopSession {
         ctx: u64,
-        response_channel: oneshot::Sender<Result<()>>,
+        response_channel: oneshot::Sender<anyhow::Result<()>>,
     },
     ProviderRequest {
         key: ProviderRequestKey,
         response_channel: Sender<Result<HashSet<PeerId>, String>>,
         limit: usize,
     },
-    StartProviding(oneshot::Sender<Result<libp2p::kad::QueryId>>, Key),
-    StopProviding(oneshot::Sender<Result<()>>, Key),
+    StartProviding(oneshot::Sender<anyhow::Result<libp2p::kad::QueryId>>, Key),
+    StopProviding(oneshot::Sender<anyhow::Result<()>>, Key),
     NetListeningAddrs(oneshot::Sender<(PeerId, Vec<Multiaddr>)>),
     NetPeers(oneshot::Sender<HashMap<PeerId, Vec<Multiaddr>>>),
-    NetConnectByPeerId(oneshot::Sender<Result<()>>, PeerId),
-    NetConnect(oneshot::Sender<Result<()>>, PeerId, Vec<Multiaddr>),
+    NetConnectByPeerId(oneshot::Sender<anyhow::Result<()>>, PeerId),
+    NetConnect(oneshot::Sender<anyhow::Result<()>>, PeerId, Vec<Multiaddr>),
     NetDisconnect(oneshot::Sender<()>, PeerId),
     Gossipsub(GossipsubMessage),
-    FindPeerOnDHT(oneshot::Sender<Result<()>>, PeerId),
+    FindPeerOnDHT(oneshot::Sender<anyhow::Result<()>>, PeerId),
     LookupPeerInfo(oneshot::Sender<Option<IdentifyInfo>>, PeerId),
-    ListenForIdentify(oneshot::Sender<Result<IdentifyInfo>>, PeerId),
+    ListenForIdentify(oneshot::Sender<anyhow::Result<IdentifyInfo>>, PeerId),
     CancelListenForIdentify(oneshot::Sender<()>, PeerId),
     AddressesOfPeer(oneshot::Sender<Vec<Multiaddr>>, PeerId),
     Shutdown,
@@ -584,4 +525,16 @@ pub enum GossipsubMessage {
     Subscribe(oneshot::Sender<Result<bool, SubscriptionError>>, TopicHash),
     Topics(oneshot::Sender<Vec<TopicHash>>),
     Unsubscribe(oneshot::Sender<Result<bool, PublishError>>, TopicHash),
+}
+
+fn peer_info_from_identify_info(i: IdentifyInfo) -> PeerInfo {
+    let peer_id = i.public_key.to_peer_id();
+    PeerInfo {
+        peer_id,
+        protocol_version: i.protocol_version,
+        agent_version: i.agent_version,
+        listen_addrs: i.listen_addrs.into_iter().collect(),
+        protocols: i.protocols,
+        observed_addr: i.observed_addr,
+    }
 }
