@@ -523,14 +523,18 @@ impl Store for &tokio::sync::Mutex<std::collections::HashMap<Cid, Bytes>> {
 
 /// Adds a single file.
 /// - storing the content using `rpc.store`
-/// - returns the root Cid
+/// - returns a stream of AddEvent
 /// - optionally wraps into a UnixFs directory to preserve the filename
-pub async fn add_file<S: Store>(store: Option<S>, path: &Path, wrap: bool) -> Result<Cid> {
+pub async fn add_file<S: Store>(
+    store: Option<S>,
+    path: &Path,
+    wrap: bool,
+) -> Result<impl Stream<Item = Result<AddEvent>>> {
     ensure!(path.is_file(), "provided path was not a file");
 
     let file = FileBuilder::new().path(path).build().await?;
 
-    let parts = {
+    let blocks = {
         if wrap {
             // wrap file in dir to preserve file name
             file.wrap().encode()
@@ -538,36 +542,12 @@ pub async fn add_file<S: Store>(store: Option<S>, path: &Path, wrap: bool) -> Re
             Box::pin(file.encode().await?)
         }
     };
-    add_blocks_to_store(store, parts).await
-}
-
-pub async fn add_blocks_to_store<S: Store>(
-    store: Option<S>,
-    blocks: Pin<Box<dyn Stream<Item = Result<Block>>>>,
-) -> Result<Cid> {
-    let mut root = None;
-    tokio::pin!(blocks);
-    while let Some(block) = blocks.next().await {
-        let (cid, bytes, links) = block?.into_parts();
-        if let Some(ref store) = store {
-            store.put(cid, bytes, links).await?;
-        }
-        root = Some(cid);
-    }
-
-    Ok(root.expect("missing root"))
-}
-
-pub enum AddEvent {
-    /// Progress in bytes of the add operation
-    Progress(u64),
-    /// The root Cid of the added file, produced once in the end
-    Done(Cid),
+    add_blocks_to_store(store, blocks).await
 }
 
 /// Adds a directory.
 /// - storing the content using `rpc.store`
-/// - returns the root Cid
+/// - returns a stream of AddEvent
 /// - optionally wraps into a UnixFs directory to preserve the directory name
 pub async fn add_dir<S: Store>(
     store: Option<S>,
@@ -578,29 +558,73 @@ pub async fn add_dir<S: Store>(
 
     let dir = make_dir_from_path(path).await?;
 
-    let stream = async_stream::try_stream! {
-        // encode and store
-        let parts = {
-            if wrap {
-                // wrap dir in dir to preserve file name
-                dir.wrap().encode()
-            } else {
-                dir.encode()
-            }
-        };
+    // encode and store
+    let blocks = {
+        if wrap {
+            // wrap dir in dir to preserve file name
+            dir.wrap().encode()
+        } else {
+            dir.encode()
+        }
+    };
 
-        tokio::pin!(parts);
+    let stream = add_blocks_to_store(store, blocks).await?;
+
+    Ok(stream)
+}
+
+/// Adds a symlink
+pub async fn add_symlink<S: Store>(
+    store: Option<S>,
+    path: &Path,
+    wrap: bool,
+) -> Result<impl Stream<Item = Result<AddEvent>>> {
+    ensure!(path.is_symlink(), "provided path was not a symlink");
+    let symlink = SymlinkBuilder::new(path).build().await?;
+    if wrap {
+        let dir = symlink.wrap();
+        let blocks = dir.encode();
+        return add_blocks_to_store(store, blocks).await;
+    }
+    let blocks = Box::pin(async_stream::try_stream! {
+        yield symlink.encode()?
+    });
+    let stream = add_blocks_to_store(store, blocks).await?;
+
+    // let (cid, bytes, links) = symlink.encode()?.into_parts();
+    // if let Some(ref store) = store {
+    //     store.put(cid, bytes, links).await?;
+    // }
+    // let stream = async_stream::try_stream! {
+    //     yield AddEvent::Done(cid);
+    // };
+    Ok(stream)
+}
+
+/// An event on the add stream
+pub enum AddEvent {
+    /// Delta of progress in bytes
+    ProgressDelta(u64),
+    /// The root Cid of the added file, produced once in the end
+    Done(Cid),
+}
+
+pub async fn add_blocks_to_store<S: Store>(
+    store: Option<S>,
+    mut blocks: Pin<Box<dyn Stream<Item = Result<Block>>>>,
+) -> Result<impl Stream<Item = Result<AddEvent>>> {
+    let stream = async_stream::try_stream! {
 
         let mut root = None;
-        while let Some(part) = parts.next().await {
-            let block = part?;
+        while let Some(block) = blocks.next().await {
+            let block = block?;
             let raw_data_size = block.raw_data_size();
             let (cid, bytes, links) = block.into_parts();
             if let Some(ref store) = store {
                 store.put(cid, bytes, links).await?;
             }
             if let Some(raw_data_size) = raw_data_size {
-                yield AddEvent::Progress(raw_data_size);
+                yield AddEvent::ProgressDelta(raw_data_size);
             }
             root = Some(cid);
         }
@@ -608,22 +632,6 @@ pub async fn add_dir<S: Store>(
         yield AddEvent::Done(root.expect("missing root"))
     };
     Ok(stream)
-}
-
-/// Adds a symlink
-pub async fn add_symlink<S: Store>(store: Option<S>, path: &Path, wrap: bool) -> Result<Cid> {
-    ensure!(path.is_symlink(), "provided path was not a symlink");
-    let symlink = SymlinkBuilder::new(path).build().await?;
-    if wrap {
-        let dir = symlink.wrap();
-        let parts = dir.encode();
-        return add_blocks_to_store(store, parts).await;
-    }
-    let (cid, bytes, links) = symlink.encode()?.into_parts();
-    if let Some(ref store) = store {
-        store.put(cid, bytes, links).await?;
-    }
-    Ok(cid)
 }
 
 #[async_recursion(?Send)]

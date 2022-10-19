@@ -161,10 +161,10 @@ async fn add(api: &impl Api, path: &Path, no_wrap: bool, recursive: bool) -> Res
     // a while before it starts ending progress reports
     pb.inc(0);
 
-    let mut progress = api.add_dir(path, !no_wrap).await?;
+    let mut progress = api.add_stream(path, !no_wrap).await?;
     while let Some(Ok(add_event)) = progress.next().await {
         match add_event {
-            AddEvent::Progress(size) => {
+            AddEvent::ProgressDelta(size) => {
                 pb.inc(size);
             }
             AddEvent::Done(cid) => {

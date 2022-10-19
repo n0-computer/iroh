@@ -57,9 +57,13 @@ fn fixture_get() -> MockApi {
 fn fixture_add_file() -> MockApi {
     let mut api = MockApi::default();
     api.expect_add_file().returning(|_ipfs_path, _| {
-        Box::pin(future::ready(
-            Cid::from_str("QmYbcW4tXLXHWw753boCK8Y7uxLu5abXjyYizhLznq9PUR").map_err(|e| e.into()),
-        ))
+        let add_event = Cid::from_str("QmYbcW4tXLXHWw753boCK8Y7uxLu5abXjyYizhLznq9PUR")
+            .map(AddEvent::Done)
+            .map_err(|e| e.into());
+
+        Box::pin(future::ready(Ok(
+            futures::stream::iter(vec![add_event]).boxed_local()
+        )))
     });
     api
 }
