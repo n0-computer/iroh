@@ -542,7 +542,7 @@ pub async fn add_file<S: Store>(
             Box::pin(file.encode().await?)
         }
     };
-    add_blocks_to_store(store, blocks).await
+    Ok(add_blocks_to_store(store, blocks).await)
 }
 
 /// Adds a directory.
@@ -568,9 +568,7 @@ pub async fn add_dir<S: Store>(
         }
     };
 
-    let stream = add_blocks_to_store(store, blocks).await?;
-
-    Ok(stream)
+    Ok(add_blocks_to_store(store, blocks).await)
 }
 
 /// Adds a symlink
@@ -584,21 +582,12 @@ pub async fn add_symlink<S: Store>(
     if wrap {
         let dir = symlink.wrap();
         let blocks = dir.encode();
-        return add_blocks_to_store(store, blocks).await;
+        return Ok(add_blocks_to_store(store, blocks).await);
     }
     let blocks = Box::pin(async_stream::try_stream! {
         yield symlink.encode()?
     });
-    let stream = add_blocks_to_store(store, blocks).await?;
-
-    // let (cid, bytes, links) = symlink.encode()?.into_parts();
-    // if let Some(ref store) = store {
-    //     store.put(cid, bytes, links).await?;
-    // }
-    // let stream = async_stream::try_stream! {
-    //     yield AddEvent::Done(cid);
-    // };
-    Ok(stream)
+    Ok(add_blocks_to_store(store, blocks).await)
 }
 
 /// An event on the add stream
@@ -612,8 +601,8 @@ pub enum AddEvent {
 pub async fn add_blocks_to_store<S: Store>(
     store: Option<S>,
     mut blocks: Pin<Box<dyn Stream<Item = Result<Block>>>>,
-) -> Result<impl Stream<Item = Result<AddEvent>>> {
-    let stream = async_stream::try_stream! {
+) -> impl Stream<Item = Result<AddEvent>> {
+    async_stream::try_stream! {
 
         let mut root = None;
         while let Some(block) = blocks.next().await {
@@ -630,8 +619,7 @@ pub async fn add_blocks_to_store<S: Store>(
         }
 
         yield AddEvent::Done(root.expect("missing root"))
-    };
-    Ok(stream)
+    }
 }
 
 #[async_recursion(?Send)]
