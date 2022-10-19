@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::str::FromStr;
 
 use futures::StreamExt;
-use iroh_api::{Cid, Lookup, MockApi, MockP2p, OutType, PeerId};
+use iroh_api::{AddEvent, Cid, Lookup, MockApi, MockP2p, OutType, PeerId};
 use relative_path::RelativePathBuf;
 
 type GetFixture = fn() -> MockApi;
@@ -67,9 +67,13 @@ fn fixture_add_file() -> MockApi {
 fn fixture_add_directory() -> MockApi {
     let mut api = MockApi::default();
     api.expect_add_dir().returning(|_ipfs_path, _| {
-        Box::pin(future::ready(
-            Cid::from_str("QmYbcW4tXLXHWw753boCK8Y7uxLu5abXjyYizhLznq9PUR").map_err(|e| e.into()),
-        ))
+        let add_event = Cid::from_str("QmYbcW4tXLXHWw753boCK8Y7uxLu5abXjyYizhLznq9PUR")
+            .map(AddEvent::Done)
+            .map_err(|e| e.into());
+
+        Box::pin(future::ready(Ok(
+            futures::stream::iter(vec![add_event]).boxed_local()
+        )))
     });
     api
 }

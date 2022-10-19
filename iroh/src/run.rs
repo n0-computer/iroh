@@ -1,13 +1,16 @@
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::doc;
 #[cfg(feature = "testing")]
 use crate::fixture::get_fixture_api;
 use crate::p2p::{run_command as run_p2p_command, P2p};
+use crate::size::size_stream;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use iroh_api::{Api, ApiExt, IpfsPath, Iroh};
+use futures::StreamExt;
+use indicatif::{ProgressBar, ProgressStyle};
+use iroh_api::{AddEvent, Api, ApiExt, IpfsPath, Iroh};
 use iroh_metrics::config::Config as MetricsConfig;
 
 #[derive(Parser, Debug, Clone)]
@@ -112,14 +115,7 @@ impl Cli {
                 recursive,
                 no_wrap,
             } => {
-                if path.is_dir() && !*recursive {
-                    anyhow::bail!(
-                        "{} is a directory, use --recursive to add it",
-                        path.display()
-                    );
-                }
-                let cid = api.add(path, !(*no_wrap)).await?;
-                println!("/ipfs/{}", cid);
+                add(api, path, *no_wrap, *recursive).await?;
             }
             Commands::Get {
                 ipfs_path: path,
@@ -132,4 +128,50 @@ impl Cli {
 
         Ok(())
     }
+}
+
+async fn add(api: &impl Api, path: &Path, no_wrap: bool, recursive: bool) -> Result<()> {
+    if !path.exists() {
+        anyhow::bail!("Path does not exist");
+    }
+    if !path.is_dir() && !path.is_file() {
+        anyhow::bail!("Path is not a file or directory");
+    }
+    if path.is_dir() && !recursive {
+        anyhow::bail!(
+            "{} is a directory, use --recursive to add it",
+            path.display()
+        );
+    }
+    let pb = ProgressBar::new_spinner();
+    pb.set_message("Calculating size...");
+    let mut total_size: u64 = 0;
+    let mut stream = Box::pin(size_stream(path));
+    while let Some(size_info) = stream.next().await {
+        total_size += size_info.size;
+        pb.inc(1);
+    }
+    pb.finish_and_clear();
+
+    let pb = ProgressBar::new(total_size);
+    pb.set_style(ProgressStyle::with_template(
+        "[{elapsed_precise}] {bar:20} {bytes}/{total_bytes} ({bytes_per_sec}) {msg}",
+    )?);
+    // show the progress bar right away, as `add` takes
+    // a while before it starts ending progress reports
+    pb.inc(0);
+
+    let mut progress = api.add_dir(path, !no_wrap).await?;
+    while let Some(Ok(add_event)) = progress.next().await {
+        match add_event {
+            AddEvent::Progress(size) => {
+                pb.inc(size);
+            }
+            AddEvent::Done(cid) => {
+                pb.finish_and_clear();
+                println!("/ipfs/{}", cid);
+            }
+        }
+    }
+    Ok(())
 }

@@ -23,6 +23,7 @@ iroh-metrics = { path = "../iroh-metrics", default-features = false, features = 
 iroh-api = { path = "../iroh-api"}
 relative-path = { version = "1.7.2", optional = true }
 async-stream = "0.3.3"
+indicatif = "0.17.1"
 
 [dev-dependencies]
 trycmd = "0.13.7"

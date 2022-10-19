@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
-use crate::{Api, Cid, IpfsPath, OutType};
-use anyhow::{anyhow, Result};
+use crate::{AddEvent, Api, Cid, IpfsPath, OutType};
+use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use futures::Stream;
 use futures::StreamExt;
@@ -32,7 +32,18 @@ pub trait ApiExt: Api {
 
     async fn add(&self, path: &Path, wrap: bool) -> Result<Cid> {
         if path.is_dir() {
-            self.add_dir(path, wrap).await
+            self.add_dir(path, wrap)
+                .await?
+                .fold(None, |_, add_event| async move {
+                    if let Ok(AddEvent::Done(cid)) = add_event {
+                        Some(cid)
+                    } else {
+                        // TODO(faassen) error handling as we get results
+                        None
+                    }
+                })
+                .await
+                .context("No cid found")
         } else if path.is_symlink() {
             self.add_symlink(path, wrap).await
         } else if path.is_file() {

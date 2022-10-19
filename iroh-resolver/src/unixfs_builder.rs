@@ -501,12 +501,12 @@ impl Store for &Client {
 }
 
 #[derive(Debug)]
-pub struct StoreAndProvideClient<'a> {
-    pub client: Box<&'a Client>,
+pub struct StoreAndProvideClient {
+    pub client: Client,
 }
 
 #[async_trait]
-impl<'a> Store for &StoreAndProvideClient<'a> {
+impl Store for StoreAndProvideClient {
     async fn put(&self, cid: Cid, blob: Bytes, links: Vec<Cid>) -> Result<()> {
         self.client.try_store()?.put(cid, blob, links).await?;
         self.client.try_p2p()?.start_providing(&cid).await
@@ -558,35 +558,56 @@ pub async fn add_blocks_to_store<S: Store>(
     Ok(root.expect("missing root"))
 }
 
+pub enum AddEvent {
+    /// Progress in bytes of the add operation
+    Progress(u64),
+    /// The root Cid of the added file, produced once in the end
+    Done(Cid),
+}
+
 /// Adds a directory.
 /// - storing the content using `rpc.store`
 /// - returns the root Cid
 /// - optionally wraps into a UnixFs directory to preserve the directory name
-pub async fn add_dir<S: Store>(store: Option<S>, path: &Path, wrap: bool) -> Result<Cid> {
+pub async fn add_dir<S: Store>(
+    store: Option<S>,
+    path: &Path,
+    wrap: bool,
+) -> Result<impl Stream<Item = Result<AddEvent>>> {
     ensure!(path.is_dir(), "provided path was not a directory");
 
     let dir = make_dir_from_path(path).await?;
-    // encode and store
-    let mut root = None;
-    let parts = {
-        if wrap {
-            // wrap dir in dir to preserve file name
-            dir.wrap().encode()
-        } else {
-            dir.encode()
+
+    let stream = async_stream::try_stream! {
+        // encode and store
+        let parts = {
+            if wrap {
+                // wrap dir in dir to preserve file name
+                dir.wrap().encode()
+            } else {
+                dir.encode()
+            }
+        };
+
+        tokio::pin!(parts);
+
+        let mut root = None;
+        while let Some(part) = parts.next().await {
+            let block = part?;
+            let raw_data_size = block.raw_data_size();
+            let (cid, bytes, links) = block.into_parts();
+            if let Some(ref store) = store {
+                store.put(cid, bytes, links).await?;
+            }
+            if let Some(raw_data_size) = raw_data_size {
+                yield AddEvent::Progress(raw_data_size);
+            }
+            root = Some(cid);
         }
+
+        yield AddEvent::Done(root.expect("missing root"))
     };
-    tokio::pin!(parts);
-
-    while let Some(part) = parts.next().await {
-        let (cid, bytes, links) = part?.into_parts();
-        if let Some(ref store) = store {
-            store.put(cid, bytes, links).await?;
-        }
-        root = Some(cid);
-    }
-
-    Ok(root.expect("missing root"))
+    Ok(stream)
 }
 
 /// Adds a symlink
