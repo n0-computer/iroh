@@ -1,6 +1,6 @@
 ```
 $ iroh add missing.txt
 ? failed
-Error: can only add files or directories
+Error: Path does not exist
 
 ```
