@@ -131,8 +131,7 @@ impl RpcP2p for P2p {
     #[tracing::instrument(skip(self, req))]
     async fn stop_session_bitswap(&self, req: StopSessionBitswapRequest) -> Result<()> {
         let ctx = req.ctx;
-        debug!("stop session bitswap {}", context_id);
-        let _guard = Guard { context_id };
+        debug!("stop session bitswap {}", ctx);
 
         let (s, r) = oneshot::channel();
         let msg = RpcMessage::BitswapStopSession {
@@ -142,7 +141,7 @@ impl RpcP2p for P2p {
 
         self.sender.send(msg).await?;
         r.await?.context("stop session")?;
-        debug!("stop session bitwap {} done", context_id);
+        debug!("stop session bitwap {} done", ctx);
 
         Ok(())
     }

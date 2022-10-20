@@ -312,7 +312,6 @@ impl<S: Store> Client<S> {
     }
 
     pub async fn stop_session(&self, session_id: u64) -> Result<()> {
-        debug!("removing session {}", session_id);
         if let Some(session) = self.session_manager.get_session(session_id).await {
             session.stop().await?;
         }
