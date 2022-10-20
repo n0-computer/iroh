@@ -5,14 +5,14 @@ use iroh_store::{
     config::{config_data_path, CONFIG_FILE_NAME, ENV_PREFIX},
     metrics, rpc, Config, Store,
 };
-use iroh_util::lock::{require_daemon_lock, ProgramLock};
+use iroh_util::lock::{acquire_or_exit, ProgramLock};
 use iroh_util::{block_until_sigint, iroh_config_path, make_config};
 use tracing::{debug, error, info};
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> anyhow::Result<()> {
     let mut lock = ProgramLock::new("iroh-store")?;
-    require_daemon_lock(&mut lock, "iroh-store")?;
+    acquire_or_exit(&mut lock, "iroh-store")?;
 
     let args = Args::parse();
 

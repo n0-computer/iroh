@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use sysinfo::{Pid, ProcessExt, ProcessStatus, System, SystemExt};
 use thiserror::Error;
 
-pub fn require_daemon_lock(lock: &mut ProgramLock, daemon_name: &str) -> Result<(), LockError> {
+pub fn acquire_or_exit(lock: &mut ProgramLock, daemon_name: &str) -> Result<(), LockError> {
     if lock.is_locked()? {
         eprintln!("{} is already running, stopping.", daemon_name);
         std::process::exit(crate::exitcodes::LOCKED);
@@ -104,11 +104,11 @@ fn process_is_running(pid: Pid) -> AnyhowResult<bool> {
 
     // TODO(b5) - docs say we shouldn't be allocating on each call like this:
     // https://docs.rs/sysinfo/0.26.5/sysinfo/index.html#usage
-    // I'm suspicious this pattern might be alright. Seems the underlying lib
+    // I'm suspicious this pattern might be alright. Seems the underlying lib 
     // doesn't do much hydrating, but System may be a large memory allocation
     let mut s = System::new();
     if !s.refresh_process(pid) {
-        return Ok(false);
+        return Ok(false)
     }
 
     match s.process(pid) {
@@ -130,7 +130,9 @@ fn process_is_running(pid: Pid) -> AnyhowResult<bool> {
                 ProcessStatus::Unknown(_s) => Ok(false),
             }
         }
-        None => Err(anyhow!("couldn't find system process with id {}", pid)),
+        None => Err(anyhow!(
+            "couldn't find system process with id {}", pid
+        )),
     }
 }
 

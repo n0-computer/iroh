@@ -21,14 +21,14 @@ and control it's uptime.
 Daemons provide 'services' like storage, peer-2-peer networking, and a gateway 
 to bridge IPFS to HTTP. Services work together to fullfill API requests. In this
 v0.1.0 release iroh is hard-coded to start three deamons: iroh-gateway, 
-iroh-p2p, and iroh-store. Each daemon provides gateay, p2p, and store services,
+iroh-p2p, and iroh-store. Each daemon provides gateway, p2p, and store services,
 respectively. To learn more about each service, see:
   https://iroh.computer/docs/services
 
 Iroh start is a simple command, under the hood it just kicks off daemons to run 
-in the background. On startup each deamon writes it's process identifier (PID) 
-to a lock file, which iroh stop uses to lookup and terminate.  Iroh start is by
-no means the only way to get iroh up & running. Long running local deployments
+in the background. On startup each deamon writes its process identifier (PID) to
+a lock file, which iroh stop uses to lookup and terminate.  Iroh start is by no 
+means the only way to get iroh up & running. Long running local deployments
 should be scheduled by your operating systems daemon supervisior, and cloud
 deployments should invoke daemon binaries directly. Regardless of how iroh is 
 started, you can always use `iroh status` to monitor service health.

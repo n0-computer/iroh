@@ -35,7 +35,7 @@ pub fn daemonize(bin_path: PathBuf, log_path: PathBuf) -> Result<()> {
 #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
 fn daemonize_process(bin_path: PathBuf, log_path: PathBuf) -> Result<()> {
     Err(anyhow!(
-        "deamonizing processes is not supported on your operating system"
+        "daemonizing processes is not supported on your operating system"
     ))
 }
 
@@ -63,7 +63,7 @@ fn daemonize_process(bin_path: PathBuf, log_path: PathBuf) -> Result<()> {
 
 #[cfg(target_os = "windows")]
 fn daemonize_process(bin_path: PathBuf, log_path: PathBuf) -> Result<()> {
-    Err(anyhow!("deamonizing processes on windows is not supported"))
+    Err(anyhow!("daemonizing processes on windows is not supported"))
 }
 
 pub fn stop(pid: i32) -> Result<()> {

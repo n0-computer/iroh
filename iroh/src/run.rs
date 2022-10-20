@@ -60,7 +60,7 @@ enum Commands {
     #[clap(about = "Start iroh services locally")]
     #[clap(after_help = doc::START_LONG_DESCRIPTION )]
     Start {},
-    // status checks the health of the different processes
+    /// status checks the health of the different processes
     #[clap(about = "Check the health of the different iroh services")]
     #[clap(after_help = doc::STATUS_LONG_DESCRIPTION)]
     Status {
