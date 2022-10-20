@@ -9,7 +9,7 @@ use std::{
 use asynchronous_codec::Framed;
 use futures::prelude::*;
 use futures::StreamExt;
-use iroh_metrics::{bitswap::BitswapMetrics, core::MRecorder, inc};
+use iroh_metrics::{bitswap::BitswapMetrics, core::MRecorder, inc, record};
 use libp2p::core::upgrade::{
     InboundUpgrade, NegotiationError, OutboundUpgrade, ProtocolError, UpgradeError,
 };
@@ -277,6 +277,7 @@ impl ConnectionHandler for BitswapHandler {
                         .send(Err(network::SendError::ProtocolNotSupported))
                         .ok();
                 } else {
+                    record!(BitswapMetrics::MessageBytesIn, m.encoded_len() as u64);
                     self.send_queue.push((m, response));
                     // received a message, reset keepalive
                     // TODO: should we permanently keep this open instead, until we remove from all sessions?

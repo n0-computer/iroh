@@ -5,7 +5,6 @@ use asynchronous_codec::{Decoder, Encoder, Framed};
 use bytes::{Bytes, BytesMut};
 use futures::future;
 use futures::io::{AsyncRead, AsyncWrite};
-use iroh_metrics::{bitswap::BitswapMetrics, core::MRecorder, record};
 use libp2p::core::{InboundUpgrade, OutboundUpgrade, ProtocolName, UpgradeInfo};
 use prost::Message;
 use unsigned_varint::codec;
@@ -160,7 +159,6 @@ impl Encoder for BitswapCodec {
         let mut buf = BytesMut::with_capacity(message.encoded_len());
         message.encode(&mut buf).expect("fixed target");
 
-        record!(BitswapMetrics::MessageBytesOut, buf.len() as u64);
         // length prefix the protobuf message, ensuring the max limit is not hit
         self.length_codec
             .encode(Bytes::from(buf), dst)
@@ -184,7 +182,6 @@ impl Decoder for BitswapCodec {
             None => return Ok(None),
         };
 
-        record!(BitswapMetrics::MessageBytesIn, packet.len() as u64);
         let message = BitswapMessage::try_from(packet.freeze())?;
 
         Ok(Some(HandlerEvent::Message {
