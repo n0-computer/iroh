@@ -6,7 +6,7 @@ use crate::doc;
 use crate::fixture::get_fixture_api;
 use crate::p2p::{run_command as run_p2p_command, P2p};
 use crate::size::size_stream;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use futures::StreamExt;
 use indicatif::{ProgressBar, ProgressStyle};
