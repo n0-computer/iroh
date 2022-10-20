@@ -14,6 +14,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use cid::Cid;
 use handler::{BitswapHandler, HandlerEvent};
+use iroh_metrics::record;
 use iroh_metrics::{bitswap::BitswapMetrics, core::MRecorder, inc};
 use libp2p::core::connection::ConnectionId;
 use libp2p::core::ConnectedPoint;
@@ -287,6 +288,10 @@ impl<S: Store> Bitswap<S> {
 
     fn receive_message(&self, peer: PeerId, message: BitswapMessage) {
         inc!(BitswapMetrics::MessagesReceived);
+        record!(
+            BitswapMetrics::MessageBytesIn,
+            message.encoded_len() as u64
+        );
         // TODO: Handle backpressure properly
         if let Err(err) = self.incoming_messages.try_send((peer, message)) {
             warn!(

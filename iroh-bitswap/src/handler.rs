@@ -9,7 +9,7 @@ use std::{
 use asynchronous_codec::Framed;
 use futures::prelude::*;
 use futures::StreamExt;
-use iroh_metrics::{bitswap::BitswapMetrics, core::MRecorder, inc, record};
+use iroh_metrics::{bitswap::BitswapMetrics, core::MRecorder, inc};
 use libp2p::core::upgrade::{
     InboundUpgrade, NegotiationError, OutboundUpgrade, ProtocolError, UpgradeError,
 };
@@ -496,10 +496,8 @@ impl ConnectionHandler for BitswapHandler {
                     match Sink::poll_ready(Pin::new(&mut substream), cx) {
                         Poll::Ready(Ok(())) => {
                             tracing::debug!("sedning message");
-                            let msg_len = message.clone().encoded_len();
                             match Sink::start_send(Pin::new(&mut substream), message) {
                                 Ok(()) => {
-                                    record!(BitswapMetrics::MessageBytesIn, msg_len as u64);
                                     response.send(Ok(())).ok();
                                     self.outbound_substream =
                                         Some(OutboundSubstreamState::PendingFlush(substream))
