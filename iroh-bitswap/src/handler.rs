@@ -277,7 +277,6 @@ impl ConnectionHandler for BitswapHandler {
                         .send(Err(network::SendError::ProtocolNotSupported))
                         .ok();
                 } else {
-                    record!(BitswapMetrics::MessageBytesIn, m.encoded_len() as u64);
                     self.send_queue.push((m, response));
                     // received a message, reset keepalive
                     // TODO: should we permanently keep this open instead, until we remove from all sessions?
@@ -497,8 +496,10 @@ impl ConnectionHandler for BitswapHandler {
                     match Sink::poll_ready(Pin::new(&mut substream), cx) {
                         Poll::Ready(Ok(())) => {
                             tracing::debug!("sedning message");
+                            let msg_len = message.clone().encoded_len();
                             match Sink::start_send(Pin::new(&mut substream), message) {
                                 Ok(()) => {
+                                    record!(BitswapMetrics::MessageBytesIn, msg_len as u64);
                                     response.send(Ok(())).ok();
                                     self.outbound_substream =
                                         Some(OutboundSubstreamState::PendingFlush(substream))
