@@ -10,7 +10,7 @@ use iroh_gateway::{
     metrics,
 };
 use iroh_rpc_client::Client as RpcClient;
-use iroh_util::lock::ProgramLock;
+use iroh_util::lock::{require_daemon_lock, ProgramLock};
 use iroh_util::{iroh_config_path, make_config};
 use tokio::sync::RwLock;
 use tracing::{debug, error};
@@ -18,12 +18,7 @@ use tracing::{debug, error};
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<()> {
     let mut lock = ProgramLock::new("iroh-gateway")?;
-    if lock.is_locked() {
-        eprintln!("iroh-gateway is already running, stopping.");
-        std::process::exit(iroh_util::exitcodes::LOCKED);
-    } else {
-        lock.acquire()?;
-    }
+    require_daemon_lock(&mut lock, "iroh-gateway")?;
 
     let args = Args::parse();
 

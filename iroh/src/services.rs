@@ -8,7 +8,7 @@ use std::io::{stdout, Write};
 use tracing::info;
 
 use iroh_api::{Api, ServiceStatus, StatusRow, StatusTable};
-use iroh_util::lock::{read_lock_pid, try_cleanup_dead_lock, LockError, ProgramLock};
+use iroh_util::lock::{LockError, ProgramLock};
 
 /// start any of {iroh-gateway,iroh-store,iroh-p2p} that aren't currently
 /// running.
@@ -84,37 +84,30 @@ pub async fn stop() -> Result<()> {
     for daemon_name in ["iroh-one", "iroh-gateway", "iroh-p2p", "iroh-store"] {
         info!("checking daemon {} lock", daemon_name);
         let lock = ProgramLock::new(daemon_name)?;
-        if lock.is_locked() {
-            let pid = match read_lock_pid(daemon_name) {
-                Ok(pid) => pid,
-                Err(error) => match error {
-                    LockError::CorruptLock(path) => {
-                        println!("removing corrupted lockfile for {} daemon", daemon_name);
-                        std::fs::remove_file(path).map_err(|e| anyhow!("{}", e))?;
-                        continue;
-                    }
-                    e => {
-                        eprintln!("error reading lock: {}", e);
-                        return Err(anyhow!("{}", e));
-                    }
-                },
-            };
-            info!("stopping {} pid: {}", daemon_name, pid);
-            print!("stopping {}...", &daemon_name);
-            match iroh_localops::process::stop(pid) {
-                Ok(_) => {
-                    println!("{}", "stopped".red());
-                }
-                Err(e) => {
-                    // if killing the process errored out, try to remove the lockfile
-                    if try_cleanup_dead_lock(daemon_name)? {
-                        println!("removed dead lockfile for {} daemon", daemon_name);
+        match lock.active_pid() {
+            Ok(pid) => {
+                info!("stopping {} pid: {}", daemon_name, pid);
+                print!("stopping {}... ", &daemon_name);
+                match iroh_localops::process::stop(pid.into()) {
+                    Ok(_) => {
                         println!("{}", "stopped".red());
-                    } else {
-                        println!("{}: {}", "error".yellow(), e);
+                    }
+                    Err(error) => {
+                        println!("{}: {}", "error".yellow(), error);
                     }
                 }
             }
+            Err(e) => match e {
+                LockError::NoLock(_) => {
+                    println!("{}", "already stopped".red());
+                }
+                e => {
+                    println!("lock error: {}", e);
+                    println!("removing bad lockfile for {} daemon", daemon_name);
+                    // std::fs::remove_file(lock.path()).map_err(|e| anyhow!("{}", e))?;
+                    continue;
+                }
+            },
         }
     }
     Ok(())

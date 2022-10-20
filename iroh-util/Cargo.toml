@@ -10,7 +10,6 @@ description = "Utilities for iroh"
 [dependencies]
 cid = "0.8.4"
 ctrlc = "3.2.2"
-file-guard = "0.1"
 futures = "0.3.21"
 anyhow = "1.0.57"
 toml = "0.5.9"
@@ -21,8 +20,8 @@ temp-env = "0.3.1"
 rlimit = "0.8.3"
 dirs-next = "2.0.0"
 humansize = "2.0.0"
-byteorder = "1.4.3"
 thiserror = "1.0"
+sysinfo = "0.26.5"
 
 [target.'cfg(unix)'.dev-dependencies]
 nix = "0.25"

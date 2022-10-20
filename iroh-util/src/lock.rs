@@ -1,15 +1,19 @@
 use anyhow::{anyhow, Result as AnyhowResult};
-use file_guard::{FileGuard, Lock};
 use std::fs::File;
-use std::fs::OpenOptions;
 use std::io::prelude::*;
 use std::io::ErrorKind;
 use std::io::Write;
 use std::path::PathBuf;
-use std::process;
-use std::rc::Rc;
+use sysinfo::{Pid, ProcessExt, ProcessStatus, System, SystemExt};
 use thiserror::Error;
-use tracing::info;
+
+pub fn require_daemon_lock(lock: &mut ProgramLock, daemon_name: &str) -> Result<(), LockError> {
+    if lock.is_locked()? {
+        eprintln!("{} is already running, stopping.", daemon_name);
+        std::process::exit(crate::exitcodes::LOCKED);
+    }
+    lock.acquire()
+}
 
 /// Manages a lock file used to track if an iroh program
 /// is already running.
@@ -17,105 +21,167 @@ use tracing::info;
 /// or when the program stops.
 pub struct ProgramLock {
     path: PathBuf,
-    lock: Option<FileGuard<Rc<File>>>,
+    lock: Option<sysinfo::Pid>,
 }
 
 impl ProgramLock {
     /// Create a new lock for the given program. This does not yet acquire the lock.
-    pub fn new(prog_name: &str) -> AnyhowResult<Self> {
-        let path = crate::iroh_data_path(&format!("{}.lock", prog_name))?;
+    pub fn new(prog_name: &str) -> Result<Self, LockError> {
+        let path = crate::iroh_data_path(&format!("{}.lock", prog_name))
+            .map_err(|e| LockError::InvalidPath { source: e })?;
         Ok(Self { path, lock: None })
     }
 
+    pub fn path(&self) -> &PathBuf {
+        &self.path
+    }
+
     /// Check if the current program is locked or not.
-    pub fn is_locked(&self) -> bool {
+    pub fn is_locked(&self) -> Result<bool, LockError> {
         if !self.path.exists() {
-            return false;
+            return Ok(false);
         }
 
-        // Even if we manage to lock the file this won't last since the drop implementation
-        // of FileGuard releases the underlying lock.
-        if let Ok(file) = File::open(&self.path) {
-            file_guard::try_lock(&file, Lock::Exclusive, 0, 1).is_err()
+        // path exists, examine lock PID
+        let pid = read_lock(&self.path)?;
+        process_is_running(pid).map_err(|e| LockError::Uncategorized { source: e })
+    }
+
+    /// returns
+    pub fn active_pid(&self) -> Result<Pid, LockError> {
+        if !self.path.exists() {
+            return Err(LockError::NoLock(self.path.clone()));
+        }
+
+        // path exists, examine lock PID
+        let pid = read_lock(&self.path)?;
+        let running =
+            process_is_running(pid).map_err(|e| LockError::Uncategorized { source: e })?;
+        if running {
+            Ok(pid)
         } else {
-            false
+            Err(LockError::ZombieLock(self.path.clone()))
         }
     }
 
     /// Try to acquire a lock for this program.
-    pub fn acquire(&mut self) -> AnyhowResult<()> {
-        // ensure path to lock exists
-        std::fs::create_dir_all(&crate::iroh_data_root()?)?;
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&self.path)?;
-        file.write_all(process::id().to_string().as_bytes())?;
-        let file = Rc::new(file);
+    pub fn acquire(&mut self) -> Result<(), LockError> {
+        match self.is_locked() {
+            Ok(false) => self
+                .write()
+                .map_err(|e| LockError::Uncategorized { source: anyhow!(e) }),
+            Ok(true) => Err(LockError::Locked(self.path.clone())),
+            Err(e) => match e {
+                LockError::CorruptLock(_) => {
+                    // overwrite corrupt locks
+                    self.write().map_err(|e| LockError::Uncategorized {
+                        source: anyhow!("{}", e),
+                    })
+                }
+                e => Err(LockError::Uncategorized {
+                    source: anyhow!("{}", e),
+                }),
+            },
+        }
+    }
 
-        file_guard::lock(file, Lock::Exclusive, 0, 1)
-            .map(|lock| self.lock = Some(lock))
-            .map_err(|err| err.into())
+    fn write(&mut self) -> AnyhowResult<()> {
+        // create lock. ensure path to lock exists
+        std::fs::create_dir_all(&crate::iroh_data_root()?)?;
+        let mut file = File::create(&self.path)?;
+        let pid = sysinfo::get_current_pid().unwrap();
+        file.write_all(pid.to_string().as_bytes())?;
+        self.lock = Some(pid);
+        Ok(())
     }
 }
 
-/// Attempt to remove a stray lock file that wasn't cleaned up, returns true
-/// if a lock is successfully deleted, and will only attempt to delete if the
-/// lock is not currently held
-pub fn try_cleanup_dead_lock(prog_name: &str) -> AnyhowResult<bool> {
-    let lock = ProgramLock {
-        path: crate::iroh_data_path(&format!("{}.lock", prog_name))?,
-        lock: None,
-    };
-    if lock.is_locked() {
-        info!("lock {} is currently active, cannot remove", prog_name);
+fn process_is_running(pid: Pid) -> AnyhowResult<bool> {
+    let this_pid = sysinfo::get_current_pid().unwrap();
+    if pid == this_pid {
+        return Ok(true);
+    }
+
+    // TODO(b5) - docs say we shouldn't be allocating on each call like this:
+    // https://docs.rs/sysinfo/0.26.5/sysinfo/index.html#usage
+    // I'm suspicious this pattern might be alright. Seems the underlying lib
+    // doesn't do much hydrating, but System may be a large memory allocation
+    let mut s = System::new();
+    if !s.refresh_process(pid) {
         return Ok(false);
     }
-    match std::fs::remove_file(lock.path) {
-        Err(e) => {
-            info!("error removing {} lockfile: {}", prog_name, e);
-            Err(anyhow!("removing dead lockfile: {}", e))
+
+    match s.process(pid) {
+        Some(process) => {
+            match process.status() {
+                // see https://docs.rs/sysinfo/0.26.5/sysinfo/enum.ProcessStatus.html for details
+                ProcessStatus::Idle => Ok(true),
+                ProcessStatus::Run => Ok(true),
+                ProcessStatus::Sleep => Ok(true),
+                ProcessStatus::Waking => Ok(true),
+
+                ProcessStatus::Stop => Ok(false),
+                ProcessStatus::Zombie => Ok(false),
+                ProcessStatus::Tracing => Ok(false),
+                ProcessStatus::Dead => Ok(false),
+                ProcessStatus::Wakekill => Ok(false),
+                ProcessStatus::Parked => Ok(false),
+                ProcessStatus::LockBlocked => Ok(false),
+                ProcessStatus::Unknown(_s) => Ok(false),
+            }
         }
-        Ok(_) => {
-            info!("removed dead {} lockfile", prog_name);
-            Ok(true)
-        }
+        None => Err(anyhow!("couldn't find system process with id {}", pid)),
     }
 }
 
 /// Report Process ID stored in a lock file
-pub fn read_lock_pid(prog_name: &str) -> Result<u32, LockError> {
+pub fn read_lock_pid(prog_name: &str) -> Result<Pid, LockError> {
     let path = crate::iroh_data_path(&format!("{}.lock", prog_name))
-        .map_err(|e| LockError::Uncategorized(e.to_string()))?;
-    read_lock(path)
+        .map_err(|e| LockError::Uncategorized { source: e })?;
+    read_lock(&path)
 }
 
-fn read_lock(path: PathBuf) -> Result<u32, LockError> {
+fn read_lock(path: &PathBuf) -> Result<Pid, LockError> {
     let mut file = File::open(&path).map_err(|e| match e.kind() {
         ErrorKind::NotFound => LockError::NoLock(path.clone()),
-        e => LockError::Uncategorized(e.to_string()),
+        e => LockError::Uncategorized {
+            source: anyhow!("{}", e),
+        },
     })?;
-
     let mut pid = String::new();
     file.read_to_string(&mut pid)
         .map_err(|_| LockError::CorruptLock(path.clone()))?;
     let pid = pid
-        .parse::<u32>()
+        .parse::<i32>()
         .map_err(|_| LockError::CorruptLock(path.clone()))?;
-    Ok(pid)
+    Ok(Pid::from(pid))
 }
 
 /// LockError classifies non-generic errors related to program locks
 #[derive(Error, Debug)]
 pub enum LockError {
+    // lock present when one is not expected
+    #[error("Locked")]
+    Locked(PathBuf),
     #[error("No lock file at {0}")]
     NoLock(PathBuf),
     /// Failure to parse contents of lock file
     #[error("Corrupt lock file contents at {0}")]
     CorruptLock(PathBuf),
+    #[error("Cannot detrmine status of process holding this lock")]
+    ZombieLock(PathBuf),
+    // location for lock no bueno
+    #[error("invalid path for lock file: {source}")]
+    InvalidPath {
+        #[source]
+        source: anyhow::Error,
+    },
     /// catchall error type
-    #[error("{0}")]
-    Uncategorized(String),
+    #[error("{source}")]
+    Uncategorized {
+        #[from]
+        source: anyhow::Error,
+    },
 }
 
 #[cfg(all(test, unix))]
@@ -134,13 +200,10 @@ mod test {
         let path = PathBuf::from("lock.lock");
         let mut f = File::create(&path).unwrap();
         write!(f, "oh noes, not a lock file").unwrap();
-        let e = read_lock(path).err().unwrap();
+        let e = read_lock(&path).err().unwrap();
         match e {
-            LockError::NoLock(_) => {
-                panic!("expected CorruptLock")
-            }
             LockError::CorruptLock(_) => (),
-            LockError::Uncategorized(_) => {
+            _e => {
                 panic!("expected CorruptLock")
             }
         }
@@ -156,16 +219,16 @@ mod test {
         let _ = std::fs::remove_file("test1.lock");
 
         let mut lock = create_test_lock("test1.lock");
-        assert!(!lock.is_locked());
-        assert!(read_lock(PathBuf::from("test1.lock")).is_err());
+        assert!(!lock.is_locked().unwrap());
+        assert!(read_lock(&PathBuf::from("test1.lock")).is_err());
 
         lock.acquire().unwrap();
 
-        assert!(lock.is_locked());
+        assert!(lock.is_locked().unwrap());
         // ensure call to is_locked doesn't affect PID reporting
         assert_eq!(
-            process::id(),
-            read_lock(PathBuf::from("test1.lock")).unwrap()
+            sysinfo::get_current_pid().unwrap(),
+            read_lock(&PathBuf::from("test1.lock")).unwrap()
         );
 
         // Spawn a child process to check we can't get the same lock.
@@ -184,7 +247,10 @@ mod test {
                     let _ = result.read_to_string(&mut buf);
                     assert_eq!(
                         buf,
-                        format!("locked1=true, locked2=false lock1pid={}", process::id())
+                        format!(
+                            "locked1=true, locked2=false lock1pid={}",
+                            sysinfo::get_current_pid().unwrap()
+                        )
                     );
 
                     let _ = std::fs::remove_file("lock_test.result");
@@ -192,14 +258,14 @@ mod test {
                 Ok(Child) => {
                     let lock = create_test_lock("test1.lock");
                     let lock2 = create_test_lock("test2.lock");
-                    let pid = read_lock(PathBuf::from("test1.lock")).unwrap();
+                    let pid = read_lock(&PathBuf::from("test1.lock")).unwrap();
                     {
                         let mut result = std::fs::File::create("lock_test.result").unwrap();
                         let _ = result.write_all(
                             format!(
                                 "locked1={}, locked2={} lock1pid={}",
-                                lock.is_locked(),
-                                lock2.is_locked(),
+                                lock.is_locked().unwrap(),
+                                lock2.is_locked().unwrap(),
                                 pid,
                             )
                             .as_bytes(),

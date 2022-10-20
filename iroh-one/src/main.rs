@@ -12,7 +12,7 @@ use iroh_one::{
 };
 use iroh_rpc_client::Client as RpcClient;
 use iroh_rpc_types::Addr;
-use iroh_util::lock::ProgramLock;
+use iroh_util::lock::{require_daemon_lock, ProgramLock};
 use iroh_util::{iroh_config_path, make_config};
 #[cfg(feature = "uds-gateway")]
 use tempdir::TempDir;
@@ -22,12 +22,7 @@ use tracing::{debug, error};
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<()> {
     let mut lock = ProgramLock::new("iroh-one")?;
-    if lock.is_locked() {
-        eprintln!("iroh-one is already running, stopping.");
-        std::process::exit(iroh_util::exitcodes::LOCKED);
-    } else {
-        lock.acquire()?;
-    }
+    require_daemon_lock(&mut lock, "iroh-one")?;
 
     let args = Args::parse();
 

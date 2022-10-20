@@ -66,24 +66,24 @@ fn daemonize_process(bin_path: PathBuf, log_path: PathBuf) -> Result<()> {
     Err(anyhow!("deamonizing processes on windows is not supported"))
 }
 
-pub fn stop(pid: u32) -> Result<()> {
+pub fn stop(pid: i32) -> Result<()> {
     stop_process(pid)
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
-fn stop_process(pid: u32) -> Result<()> {
+fn stop_process(pid: i32) -> Result<()> {
     Err(anyhow!(
         "stopping processes is not supported on your operating system"
     ))
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-fn stop_process(pid: u32) -> Result<()> {
-    let id = Pid::from_raw(pid.try_into()?);
+fn stop_process(pid: i32) -> Result<()> {
+    let id = Pid::from_raw(pid);
     kill(id, Signal::SIGINT).map_err(|e| anyhow!("killing process: {}", e))
 }
 
 #[cfg(target_os = "windows")]
-fn stop_process(pid: u32) -> Result<()> {
+fn stop_process(pid: i32) -> Result<()> {
     Err(anyhow!("stopping processes on windows is not supported"))
 }
