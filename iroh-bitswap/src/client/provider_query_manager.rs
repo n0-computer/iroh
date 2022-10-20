@@ -2,7 +2,6 @@ use std::{collections::HashSet, sync::Arc, time::Duration};
 
 use anyhow::{anyhow, Result};
 use cid::Cid;
-use futures::{stream::FuturesUnordered, StreamExt};
 use iroh_metrics::{bitswap::BitswapMetrics, core::MRecorder, inc};
 use libp2p::PeerId;
 use tokio::{sync::mpsc, task::JoinHandle};
@@ -89,33 +88,20 @@ impl ProviderQueryManager {
 }
 
 async fn run(network: Network, receiver: async_channel::Receiver<Message>) {
-    loop {
-        while let Ok(msg) = receiver.recv().await {
-            let mut worker = None;
-            match msg {
-                Message::NewProvider { cid, response } => {
-                    inc!(BitswapMetrics::ProviderQueryCreated);
-                    match network.find_providers(cid).await {
-                        Ok(providers_r) => {
-                            worker = Some(tokio::task::spawn(find_provider(
-                                network.clone(),
-                                response,
-                                providers_r,
-                            )));
-                        }
-                        Err(err) => {
-                            inc!(BitswapMetrics::ProviderQueryError);
-                            if let Err(err) = response.send(Err(err)).await {
-                                warn!("response channel error: {:?}", err);
-                            }
+    while let Ok(msg) = receiver.recv().await {
+        match msg {
+            Message::NewProvider { cid, response } => {
+                inc!(BitswapMetrics::ProviderQueryCreated);
+                match network.find_providers(cid).await {
+                    Ok(providers_r) => {
+                        find_provider(network.clone(), response, providers_r).await;
+                    }
+                    Err(err) => {
+                        inc!(BitswapMetrics::ProviderQueryError);
+                        if let Err(err) = response.send(Err(err)).await {
+                            warn!("response channel error: {:?}", err);
                         }
                     }
-                }
-            }
-
-            if let Some(worker) = worker {
-                if let Err(err) = worker.await {
-                    warn!("worker shutdown failed: {:?}", err);
                 }
             }
         }
@@ -130,17 +116,16 @@ async fn find_provider(
     while let Some(providers) = receiver.recv().await {
         match providers {
             Ok(new_providers) => {
-                let futures = FuturesUnordered::new();
-                for provider in new_providers {
+                let futures = new_providers.into_iter().map(|provider| {
                     let response = response.clone();
                     let network = network.clone();
-                    futures.push(async move {
+                    async move {
                         if network.dial(provider, DEFAULT_TIMEOUT).await.is_ok() {
                             let _ = response.send(Ok(provider)).await;
                         }
-                    });
-                }
-                let _ = futures.collect::<Vec<()>>().await;
+                    }
+                });
+                let _ = futures::future::join_all(futures).await;
             }
             Err(err) => {
                 // single provider call failed just move on
