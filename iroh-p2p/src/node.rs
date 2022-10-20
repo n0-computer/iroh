@@ -296,10 +296,8 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                     }
                     debug!("session {} stopped", ctx);
                 });
-            } else {
-                if let Err(err) = response_channel.send(Ok(())) {
-                    warn!("session {} failed to send stop response: {:?}", ctx, err);
-                }
+            } else if let Err(err) = response_channel.send(Ok(())) {
+                warn!("session {} failed to send stop response: {:?}", ctx, err);
             }
         } else {
             let _ = response_channel.send(Err(anyhow!("no bitswap available")));
