@@ -331,6 +331,28 @@ jobs:
           name: Run cargo clippy (default features)
           command: cargo clippy --all --all-targets -- -D warnings
       - save-sccache-cache
+  
+  audit:
+    executor: docker-executor
+    environment:
+      RUST_LOG: warn
+    steps:
+      - set-env-path
+      - setup-protoc
+      - *restore-workspace
+      - *restore-cache
+      - setup-sccache
+      - restore-sccache-cache
+      - run:
+          name: Install cargo audit
+          command: cargo install --force cargo-audit
+      - run:
+          name: Generate lock file
+          command: cargo generate-lockfile
+      - run:
+          name: Run cargo audit (default features)
+          command: cargo audit
+      - save-sccache-cache
 
   build_release_x86_64:
     executor: default
@@ -443,6 +465,9 @@ workflows:
           requires:
             - cargo_fetch
       - clippy:
+          requires:
+            - cargo_fetch
+      - audit:
           requires:
             - cargo_fetch
       - test:
