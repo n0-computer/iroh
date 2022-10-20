@@ -14,6 +14,7 @@ pub use crate::p2p::{Lookup, PeerIdOrAddr};
 pub use bytes::Bytes;
 pub use cid::Cid;
 pub use iroh_resolver::resolver::Path as IpfsPath;
+pub use iroh_resolver::unixfs_builder::AddEvent;
 pub use iroh_rpc_client::{ServiceStatus, StatusRow, StatusTable};
 pub use libp2p::gossipsub::MessageId;
 pub use libp2p::{Multiaddr, PeerId};

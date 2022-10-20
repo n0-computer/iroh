@@ -62,6 +62,14 @@ impl Block {
         &self.links
     }
 
+    pub fn raw_data_size(&self) -> Option<u64> {
+        let codec = Codec::try_from(self.cid.codec()).unwrap();
+        match codec {
+            Codec::Raw => Some(self.data.len() as u64),
+            _ => None,
+        }
+    }
+
     /// Validate the block. Will return an error if the hash or the links are wrong.
     pub fn validate(&self) -> Result<()> {
         // check that the cid is supported

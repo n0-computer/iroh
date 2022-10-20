@@ -1,4 +1,6 @@
+use anyhow::Context;
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use futures::TryStreamExt;
 use iroh_metrics::config::Config as MetricsConfig;
 use iroh_rpc_client::Client;
 use iroh_rpc_client::Config as RpcClientConfig;
@@ -51,10 +53,30 @@ pub fn add_benchmark(c: &mut Criterion) {
                 });
                 let rpc_ref = &rpc;
                 b.to_async(&executor).iter(|| async move {
-                    let c = iroh_resolver::unixfs_builder::add_file(Some(rpc_ref), path, false)
+                    let stream =
+                        iroh_resolver::unixfs_builder::add_file(Some(rpc_ref), path, false)
+                            .await
+                            .unwrap();
+                    // we have to consume the stream here, otherwise we are
+                    // not actually benchmarking anything
+                    // TODO(faassen) rewrite the benchmark in terms of the iroh-api which
+                    // can consume the stream for you
+                    let cid = stream
+                        .try_fold(None, |acc, add_event| async move {
+                            Ok(
+                                if let iroh_resolver::unixfs_builder::AddEvent::Done(cid) =
+                                    add_event
+                                {
+                                    Some(cid)
+                                } else {
+                                    acc
+                                },
+                            )
+                        })
                         .await
-                        .unwrap();
-                    black_box(c)
+                        .unwrap()
+                        .context("No cid found");
+                    black_box(cid)
                 });
             },
         );
