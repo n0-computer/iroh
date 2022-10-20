@@ -15,7 +15,7 @@ use libp2p::Multiaddr;
 use libp2p::PeerId;
 use tokio::sync::mpsc::{channel, Sender};
 use tokio::sync::oneshot;
-use tracing::trace;
+use tracing::{debug, trace};
 
 use async_trait::async_trait;
 use iroh_bitswap::Block;
@@ -131,6 +131,8 @@ impl RpcP2p for P2p {
     #[tracing::instrument(skip(self, req))]
     async fn stop_session_bitswap(&self, req: StopSessionBitswapRequest) -> Result<()> {
         let ctx = req.ctx;
+        debug!("stop session bitswap {}", ctx);
+
         let (s, r) = oneshot::channel();
         let msg = RpcMessage::BitswapStopSession {
             ctx,
@@ -139,6 +141,7 @@ impl RpcP2p for P2p {
 
         self.sender.send(msg).await?;
         r.await?.context("stop session")?;
+        debug!("stop session bitwap {} done", ctx);
 
         Ok(())
     }

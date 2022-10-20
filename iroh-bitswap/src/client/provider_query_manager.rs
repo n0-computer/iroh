@@ -75,7 +75,7 @@ impl ProviderQueryManager {
         &self,
         cid: &Cid,
     ) -> Result<async_channel::Receiver<Result<PeerId>>> {
-        let (s, r) = async_channel::bounded(8);
+        let (s, r) = async_channel::bounded(10);
 
         self.sender
             .send(Message::NewProvider {

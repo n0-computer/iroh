@@ -403,6 +403,11 @@ impl LoopState {
     }
 
     async fn stop(mut self) -> Result<()> {
+        debug!(
+            "seesion loop stopping {} (workers {})",
+            self.id,
+            self.workers.len()
+        );
         while let Some((closer, worker)) = self.workers.pop() {
             closer
                 .send(())
@@ -468,10 +473,14 @@ impl LoopState {
         let cid = *cid;
         let provider_query_manager = self.provider_query_manager.clone();
         let (closer_s, mut closer_r) = oneshot::channel();
-        let worker = tokio::runtime::Handle::current().spawn(async move {
+        let worker = tokio::task::spawn(async move {
             let mut num_providers = 0;
-            match provider_query_manager.find_providers_async(&cid).await {
-                Ok(r) => {
+            tokio::select! {
+                biased;
+                _ = &mut closer_r => {
+                    // shutting down
+                }
+                Ok(r) = provider_query_manager.find_providers_async(&cid) => {
                     loop {
                         inc!(BitswapMetrics::FindMorePeersLoopTick);
                         tokio::select! {
@@ -513,8 +522,8 @@ impl LoopState {
                         }
                     }
                 }
-                Err(err) => {
-                    warn!("failed to start finding providers: {:?}", err);
+                else => {
+                    warn!("failed to start finding providers");
                 }
             }
         });

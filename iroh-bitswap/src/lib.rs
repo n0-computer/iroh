@@ -514,7 +514,7 @@ impl<S: Store> NetworkBehaviour for Bitswap<S> {
     ) -> Poll<NetworkBehaviourAction<Self::OutEvent, Self::ConnectionHandler>> {
         inc!(BitswapMetrics::NetworkBehaviourActionPollTick);
         // limit work
-        for _ in 0..100 {
+        for _ in 0..50 {
             match Pin::new(&mut self.network).poll(cx) {
                 Poll::Pending => return Poll::Pending,
                 Poll::Ready(ev) => match ev {

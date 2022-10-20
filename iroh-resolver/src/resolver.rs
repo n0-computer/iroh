@@ -20,9 +20,9 @@ use libipld::error::{InvalidMultihash, UnsupportedMultihash};
 use libipld::prelude::Codec as _;
 use libipld::{Ipld, IpldCodec};
 use tokio::io::{AsyncRead, AsyncSeek};
-use tokio::sync::{mpsc, oneshot, Mutex};
+use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
-use tracing::{debug, trace, warn};
+use tracing::{debug, error, trace, warn};
 
 use iroh_metrics::{
     core::{MObserver, MRecorder},
@@ -655,20 +655,8 @@ pub enum Source {
 pub struct Resolver<T: ContentLoader> {
     loader: T,
     next_id: Arc<AtomicU64>,
-    worker: Option<Arc<(oneshot::Sender<()>, JoinHandle<()>)>>,
-    session_closer: mpsc::Sender<ContextId>,
-}
-
-impl<T: ContentLoader> Drop for Resolver<T> {
-    fn drop(&mut self) {
-        if self.worker.is_none() {
-            panic!("drop called multiple times");
-        }
-        if Arc::strong_count(self.worker.as_ref().unwrap()) == 1 {
-            let worker = Arc::try_unwrap(self.worker.take().unwrap()).expect("last arc");
-            worker.0.send(()).ok();
-        }
-    }
+    _worker: Arc<JoinHandle<()>>,
+    session_closer: async_channel::Sender<ContextId>,
 }
 
 #[derive(Debug, Clone)]
@@ -678,7 +666,7 @@ pub struct LoaderContext {
 }
 
 impl LoaderContext {
-    pub fn from_path(id: ContextId, closer: mpsc::Sender<ContextId>, path: Path) -> Self {
+    pub fn from_path(id: ContextId, closer: async_channel::Sender<ContextId>, path: Path) -> Self {
         trace!("new loader context: {:?}", id);
         LoaderContext {
             id,
@@ -693,13 +681,15 @@ impl LoaderContext {
 
 impl Drop for LoaderContext {
     fn drop(&mut self) {
-        if Arc::strong_count(&self.inner) == 1 {
+        let count = Arc::strong_count(&self.inner);
+        debug!("session {} dropping loader context {}", self.id, count);
+        if count == 1 {
             if let Err(err) = self
                 .inner
                 .try_lock()
                 .expect("last reference, no lock")
                 .closer
-                .try_send(self.id)
+                .send_blocking(self.id)
             {
                 warn!(
                     "failed to send session stop for session {}: {:?}",
@@ -735,7 +725,7 @@ impl From<ContextId> for u64 {
 struct InnerLoaderContext {
     #[allow(dead_code)]
     path: Path,
-    closer: mpsc::Sender<ContextId>,
+    closer: async_channel::Sender<ContextId>,
 }
 
 #[async_trait]
@@ -848,44 +838,28 @@ impl ContentLoader for Client {
 
 impl<T: ContentLoader> Resolver<T> {
     pub fn new(loader: T) -> Self {
-        let (closer_s, mut closer_r) = oneshot::channel();
-        let (session_closer_s, mut session_closer_r) = mpsc::channel(64);
+        let (session_closer_s, session_closer_r) = async_channel::bounded(2048);
 
         let loader_thread = loader.clone();
         let worker = tokio::task::spawn(async move {
             // GC Loop for sessions
-            loop {
-                tokio::select! {
-                    biased;
-                    session = session_closer_r.recv() => {
-                        match session {
-                            Some(session) => {
-                                let loader = loader_thread.clone();
-                                // Spawn to make sure the channel has always capacity.
-                                tokio::task::spawn(async move {
-                                    debug!("stopping session {}", session);
-                                    if let Err(err) = loader.stop_session(session).await {
-                                        warn!("failed to stop session {}: {:?}", session, err);
-                                    }
-                                });
-                            }
-                            None => {
-                                warn!("session_closer channel broke");
-                                break;
-                            }
-                        }
+            while let Ok(session) = session_closer_r.recv().await {
+                let loader = loader_thread.clone();
+
+                tokio::task::spawn(async move {
+                    error!("stopping session {}", session);
+                    if let Err(err) = loader.stop_session(session).await {
+                        warn!("failed to stop session {}: {:?}", session, err);
                     }
-                    _ = &mut closer_r => {
-                        break;
-                    }
-                }
+                    error!("stopping session {} done", session);
+                });
             }
         });
 
         Resolver {
             loader,
             next_id: Arc::new(AtomicU64::new(0)),
-            worker: Some(Arc::new((closer_s, worker))),
+            _worker: Arc::new(worker),
             session_closer: session_closer_s,
         }
     }
@@ -2834,6 +2808,7 @@ mod tests {
         }
 
         for i in 1..=10000 {
+            tokio::task::yield_now().await; // yield so sessions can be closed
             let path = format!("/ipfs/{root_cid_str}/{}.txt", i);
             let ipld_txt = resolver.resolve(path.parse().unwrap()).await.unwrap();
 
