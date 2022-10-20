@@ -288,10 +288,7 @@ impl<S: Store> Bitswap<S> {
 
     fn receive_message(&self, peer: PeerId, message: BitswapMessage) {
         inc!(BitswapMetrics::MessagesReceived);
-        record!(
-            BitswapMetrics::MessageBytesIn,
-            message.encoded_len() as u64
-        );
+        record!(BitswapMetrics::MessageBytesIn, message.encoded_len() as u64);
         // TODO: Handle backpressure properly
         if let Err(err) = self.incoming_messages.try_send((peer, message)) {
             warn!(
