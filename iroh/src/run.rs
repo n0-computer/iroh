@@ -155,7 +155,7 @@ async fn add(api: &impl Api, path: &Path, no_wrap: bool, recursive: bool) -> Res
 
     let pb = ProgressBar::new(total_size);
     pb.set_style(ProgressStyle::with_template(
-        "[{elapsed_precise}] {bar:20} {bytes}/{total_bytes} ({bytes_per_sec}) {msg}",
+        "[{elapsed_precise}] {wide_bar} {bytes}/{total_bytes} ({bytes_per_sec}) {msg}",
     )?);
     // show the progress bar right away, as `add` takes
     // a while before it starts ending progress reports
