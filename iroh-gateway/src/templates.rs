@@ -20,6 +20,10 @@ pub fn icon_class_name(path: &str) -> String {
         .extension()
         .and_then(OsStr::to_str)
         .unwrap_or("");
-    let icon = KNOWN_ICONS.contains(ext).then(|| ext).unwrap_or("_blank");
+    let icon = if KNOWN_ICONS.contains(ext) {
+        ext
+    } else {
+        "_blank"
+    };
     format!("icon-{}", icon)
 }

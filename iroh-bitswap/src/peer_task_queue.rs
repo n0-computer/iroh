@@ -177,15 +177,12 @@ impl<T: Topic, D: Data, TM: TaskMerger<T, D>> PeerTaskQueue<T, D, TM> {
     pub async fn tasks_done(&self, peer: PeerId, tasks: &[Task<T, D>]) {
         let mut this = self.inner.lock().await;
 
-        match this.peer_queue.remove(&peer) {
-            Some(mut peer_tracker) => {
-                // tell the peer what was done
-                for task in tasks {
-                    peer_tracker.task_done(task);
-                }
-                this.peer_queue.push(peer, peer_tracker);
+        if let Some(mut peer_tracker) = this.peer_queue.remove(&peer) {
+            // tell the peer what was done
+            for task in tasks {
+                peer_tracker.task_done(task);
             }
-            None => {}
+            this.peer_queue.push(peer, peer_tracker);
         }
     }
 
