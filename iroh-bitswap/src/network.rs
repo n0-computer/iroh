@@ -123,6 +123,10 @@ impl Network {
             for i in 1..=retries {
                 debug!("send:{}: try {}/{}", peer, i, retries);
                 let (s, r) = oneshot::channel();
+                record!(
+                    BitswapMetrics::MessageBytesOut,
+                    message.clone().encoded_len() as u64
+                );
                 self.network_out_sender
                     .send(OutEvent::SendMessage {
                         peer,
