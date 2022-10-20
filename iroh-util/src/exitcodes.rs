@@ -2,13 +2,6 @@
 //!
 //! Exit code constants intended to be passed to
 //! `std::process::exit()`
-//!
-//! # Example:
-//! ```
-//! extern crate exitcode;
-//!
-//! ::std::process::exit(exitcode::OK);
-//! ```
 
 /// Alias for the numeric type that holds iroh exit codes.
 pub type IrohExitCode = i32;

@@ -7,7 +7,7 @@ use std::io::{stdout, Write};
 use tracing::{info, warn};
 
 use iroh_api::{Api, ServiceStatus, StatusRow, StatusTable};
-use iroh_util::lock::{read_lock_pid, try_cleanup_dead_lock, ProgramLock};
+use iroh_util::lock::{read_lock_pid, try_cleanup_dead_lock, ProgramLock, LockError};
 
 /// start any of {iroh-gateway,iroh-store,iroh-p2p} that aren't currently
 /// running.
@@ -87,7 +87,17 @@ pub async fn stop() -> Result<()> {
             lock.is_locked()
         );
         if lock.is_locked() {
-            let pid = read_lock_pid(daemon_name)?;
+            let pid = match read_lock_pid(daemon_name) {
+                Ok(pid) => pid,
+                Err(error) => match error {
+                    LockError::CorruptLock(path) => {
+                        println!("removing corrupted lockfile for {} daemon", daemon_name);
+                        std::fs::remove_file(path).map_err(|e| anyhow!("{}", e))?;
+                        continue;
+                    },
+                    e => { return Err(anyhow!("{}", e)); }, 
+                }
+            };
             info!("stopping {} pid: {}", daemon_name, pid);
 
             print!("stopping {}...", &daemon_name);
@@ -98,7 +108,7 @@ pub async fn stop() -> Result<()> {
                 Err(e) => {
                     // if killing the process errored out, try to remove the lockfile
                     if try_cleanup_dead_lock(daemon_name)? {
-                        warn!("removed dead lockfile for {} daemon", daemon_name);
+                        println!("removed dead lockfile for {} daemon", daemon_name);
                         println!("{}", "stopped".red());
                     } else {
                         println!("{}: {}", "error".yellow(), e);

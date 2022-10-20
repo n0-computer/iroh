@@ -22,6 +22,7 @@ rlimit = "0.8.3"
 dirs-next = "2.0.0"
 humansize = "2.0.0"
 byteorder = "1.4.3"
+thiserror = "1.0"
 
 [target.'cfg(unix)'.dev-dependencies]
 nix = "0.25"

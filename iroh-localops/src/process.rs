@@ -1,11 +1,32 @@
-use std::path::PathBuf;
-use std::process::{Command, Stdio};
-
 use anyhow::{anyhow, Result};
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 use nix::sys::signal::{kill, Signal};
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 use nix::unistd::Pid;
+use std::path::PathBuf;
+use std::process::{Command, Stdio};
+
+// TODO(b5): instead of using u32's for Process Identifiers, use a proper Pid type
+// something along the lines of:
+
+// #[cfg(unix)]
+// #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+// pub struct Pid(nix::unistd::Pid);
+
+// #[cfg(not(unix))]
+// #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+// pub struct Pid; // TODO: fill in for each platform when supported
+
+// // #[cfg(unix)]
+// impl From nix::Pid for Pid {
+//  // ..
+// }
+
+// impl std::fmt::Display for Pid {
+//     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+//         write!(f, "{}", self.to_string())
+//     }
+// }
 
 pub fn daemonize(bin_path: PathBuf) -> Result<()> {
     daemonize_process(bin_path)
