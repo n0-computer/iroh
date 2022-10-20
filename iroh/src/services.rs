@@ -2,12 +2,13 @@ use anyhow::{anyhow, Result};
 use crossterm::terminal::{Clear, ClearType};
 use crossterm::{cursor, style, style::Stylize, QueueableCommand};
 use futures::StreamExt;
+use iroh_util::iroh_cache_path;
 use std::collections::HashSet;
 use std::io::{stdout, Write};
-use tracing::{info, warn};
+use tracing::info;
 
 use iroh_api::{Api, ServiceStatus, StatusRow, StatusTable};
-use iroh_util::lock::{read_lock_pid, try_cleanup_dead_lock, ProgramLock, LockError};
+use iroh_util::lock::{read_lock_pid, try_cleanup_dead_lock, LockError, ProgramLock};
 
 /// start any of {iroh-gateway,iroh-store,iroh-p2p} that aren't currently
 /// running.
@@ -59,6 +60,7 @@ async fn start_services(api: &impl Api, services: HashSet<&str>) -> Result<()> {
     for &service in missing_services.iter() {
         // let data_dir = iroh_util::iroh_data_root()?;
         let daemon_name = format!("iroh-{}", service);
+        let log_path = iroh_cache_path(format!("iroh-{}.log", service).as_str())?;
 
         // // check if a binary by this name exists
         let bin_path = which::which(&daemon_name).map_err(|_| {
@@ -68,8 +70,8 @@ async fn start_services(api: &impl Api, services: HashSet<&str>) -> Result<()> {
             ))
         })?;
 
-        print!("starting {}...\t", &daemon_name.bold());
-        iroh_localops::process::daemonize(bin_path)?;
+        print!("starting {}... ", &daemon_name.bold());
+        iroh_localops::process::daemonize(bin_path, log_path)?;
         println!("{}", "success".green());
         // TODO - confirm communication with RPC API
     }
@@ -80,12 +82,8 @@ async fn start_services(api: &impl Api, services: HashSet<&str>) -> Result<()> {
 ///
 pub async fn stop() -> Result<()> {
     for daemon_name in ["iroh-one", "iroh-gateway", "iroh-p2p", "iroh-store"] {
+        info!("checking daemon {} lock", daemon_name);
         let lock = ProgramLock::new(daemon_name)?;
-        info!(
-            "checking daemon {}, locked = {}",
-            daemon_name,
-            lock.is_locked()
-        );
         if lock.is_locked() {
             let pid = match read_lock_pid(daemon_name) {
                 Ok(pid) => pid,
@@ -94,12 +92,14 @@ pub async fn stop() -> Result<()> {
                         println!("removing corrupted lockfile for {} daemon", daemon_name);
                         std::fs::remove_file(path).map_err(|e| anyhow!("{}", e))?;
                         continue;
-                    },
-                    e => { return Err(anyhow!("{}", e)); }, 
-                }
+                    }
+                    e => {
+                        eprintln!("error reading lock: {}", e);
+                        return Err(anyhow!("{}", e));
+                    }
+                },
             };
             info!("stopping {} pid: {}", daemon_name, pid);
-
             print!("stopping {}...", &daemon_name);
             match iroh_localops::process::stop(pid) {
                 Ok(_) => {

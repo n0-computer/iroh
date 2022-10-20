@@ -91,6 +91,28 @@ pub fn iroh_data_path(file_name: &str) -> Result<PathBuf> {
     Ok(path)
 }
 
+/// Returns the path to the user's iroh cache directory.
+///
+/// The returned value depends on the operating system and is either a `Some`, containing a value from the following table, or a `None`.
+///
+/// | Platform | Value                                         | Example                                  |
+/// | -------- | --------------------------------------------- | ---------------------------------------- |
+/// | Linux    | `$XDG_CACHE_HOME`/iroh or `$HOME`/.cache/iroh | /home/.cache/iroh                        |
+/// | macOS    | `$HOME`/Library/Caches/iroh                   | /Users/Alice/Library/Caches/iroh         |
+/// | Windows  | `{FOLDERID_LocalAppData}/iroh`                | C:\Users\Alice\AppData\Roaming\iroh      |
+pub fn iroh_cache_root() -> Result<PathBuf> {
+    let path = dirs_next::cache_dir().ok_or_else(|| {
+        anyhow!("operating environment provides no directory for application data")
+    })?;
+    Ok(path.join(&IROH_DIR))
+}
+
+/// Path that leads to a file in the iroh cache directory.
+pub fn iroh_cache_path(file_name: &str) -> Result<PathBuf> {
+    let path = iroh_cache_root()?.join(file_name);
+    Ok(path)
+}
+
 /// insert a value into a `config::Map`
 pub fn insert_into_config_map<I: Into<String>, V: Into<ValueKind>>(
     map: &mut Map<String, Value>,

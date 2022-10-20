@@ -2,14 +2,14 @@ use anyhow::{anyhow, Result as AnyhowResult};
 use file_guard::{FileGuard, Lock};
 use std::fs::File;
 use std::fs::OpenOptions;
-use std::io::ErrorKind;
 use std::io::prelude::*;
+use std::io::ErrorKind;
 use std::io::Write;
 use std::path::PathBuf;
 use std::process;
 use std::rc::Rc;
-use tracing::info;
 use thiserror::Error;
+use tracing::info;
 
 /// Manages a lock file used to track if an iroh program
 /// is already running.
@@ -85,21 +85,23 @@ pub fn try_cleanup_dead_lock(prog_name: &str) -> AnyhowResult<bool> {
 
 /// Report Process ID stored in a lock file
 pub fn read_lock_pid(prog_name: &str) -> Result<u32, LockError> {
-    let path = crate::iroh_data_path(&format!("{}.lock", prog_name)).map_err(|e| LockError::Uncategorized(e.to_string()))?;
+    let path = crate::iroh_data_path(&format!("{}.lock", prog_name))
+        .map_err(|e| LockError::Uncategorized(e.to_string()))?;
     read_lock(path)
 }
 
 fn read_lock(path: PathBuf) -> Result<u32, LockError> {
-    let mut file = File::open(&path).map_err(|e|{
-        match e.kind() {
-            ErrorKind::NotFound => LockError::NoLock(path.clone()),
-            e => LockError::Uncategorized(e.to_string())
-        }
+    let mut file = File::open(&path).map_err(|e| match e.kind() {
+        ErrorKind::NotFound => LockError::NoLock(path.clone()),
+        e => LockError::Uncategorized(e.to_string()),
     })?;
 
     let mut pid = String::new();
-    file.read_to_string(&mut pid).map_err(|_| LockError::CorruptLock(path.clone()))?;
-    let pid = pid.parse::<u32>().map_err(|_| LockError::CorruptLock(path.clone()))?;
+    file.read_to_string(&mut pid)
+        .map_err(|_| LockError::CorruptLock(path.clone()))?;
+    let pid = pid
+        .parse::<u32>()
+        .map_err(|_| LockError::CorruptLock(path.clone()))?;
     Ok(pid)
 }
 
@@ -113,7 +115,7 @@ pub enum LockError {
     CorruptLock(PathBuf),
     /// catchall error type
     #[error("{0}")]
-    Uncategorized(String)
+    Uncategorized(String),
 }
 
 #[cfg(all(test, unix))]
@@ -134,9 +136,13 @@ mod test {
         write!(f, "oh noes, not a lock file").unwrap();
         let e = read_lock(path).err().unwrap();
         match e {
-            LockError::NoLock(_) => { panic!("expected CorruptLock")},
+            LockError::NoLock(_) => {
+                panic!("expected CorruptLock")
+            }
             LockError::CorruptLock(_) => (),
-            LockError::Uncategorized(_) => { panic!("expected CorruptLock")},
+            LockError::Uncategorized(_) => {
+                panic!("expected CorruptLock")
+            }
         }
     }
 

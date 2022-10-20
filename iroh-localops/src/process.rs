@@ -28,26 +28,28 @@ use std::process::{Command, Stdio};
 //     }
 // }
 
-pub fn daemonize(bin_path: PathBuf) -> Result<()> {
-    daemonize_process(bin_path)
+pub fn daemonize(bin_path: PathBuf, log_path: PathBuf) -> Result<()> {
+    daemonize_process(bin_path, log_path)
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
-fn daemonize_process(bin_path: PathBuf) -> Result<()> {
+fn daemonize_process(bin_path: PathBuf, log_path: PathBuf) -> Result<()> {
     Err(anyhow!(
         "deamonizing processes is not supported on your operating system"
     ))
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-fn daemonize_process(bin_path: PathBuf) -> Result<()> {
+fn daemonize_process(bin_path: PathBuf, log_path: PathBuf) -> Result<()> {
+    std::fs::create_dir_all(&log_path.parent().unwrap())?;
     // ¯\_(ツ)_/¯
     let status = Command::new("bash")
         .arg("-c")
         // TODO(b5): might be nice to capture output in a log file at some point?
         .arg(format!(
-            "nohup {} > /dev/null 2>&1 &",
+            "nohup {} > {} 2>&1 &",
             bin_path.to_str().unwrap(),
+            log_path.to_str().unwrap(),
         ))
         .stderr(Stdio::null())
         .stdout(Stdio::null())
@@ -60,7 +62,7 @@ fn daemonize_process(bin_path: PathBuf) -> Result<()> {
 }
 
 #[cfg(target_os = "windows")]
-fn daemonize_process(bin_path: PathBuf) -> Result<()> {
+fn daemonize_process(bin_path: PathBuf, log_path: PathBuf) -> Result<()> {
     Err(anyhow!("deamonizing processes on windows is not supported"))
 }
 
@@ -78,7 +80,7 @@ fn stop_process(pid: u32) -> Result<()> {
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 fn stop_process(pid: u32) -> Result<()> {
     let id = Pid::from_raw(pid.try_into()?);
-    kill(id, Signal::SIGINT).map_err(|e| anyhow!("killing process, error number: {}", e))
+    kill(id, Signal::SIGINT).map_err(|e| anyhow!("killing process: {}", e))
 }
 
 #[cfg(target_os = "windows")]

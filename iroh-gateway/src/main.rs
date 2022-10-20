@@ -88,5 +88,6 @@ async fn main() -> Result<()> {
         handle.abort();
     }
 
+    println!("shutting down");
     Ok(())
 }
