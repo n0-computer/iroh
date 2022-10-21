@@ -4,6 +4,7 @@ pub mod config;
 mod keys;
 pub mod metrics;
 mod node;
+mod providers;
 pub mod rpc;
 mod swarm;
 

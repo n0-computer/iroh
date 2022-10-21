@@ -8,11 +8,11 @@ use caches::{Cache, PutResult};
 use iroh_metrics::{core::MRecorder, inc, p2p::P2PMetrics};
 use libp2p::{
     core::{connection::ConnectionId, transport::ListenerId, ConnectedPoint},
-    identify::IdentifyInfo,
+    identify::Info as IdentifyInfo,
     ping::Success as PingSuccess,
     swarm::{
-        handler::DummyConnectionHandler, ConnectionHandler, DialError, IntoConnectionHandler,
-        NetworkBehaviour, NetworkBehaviourAction, PollParameters,
+        dummy, ConnectionHandler, DialError, IntoConnectionHandler, NetworkBehaviour,
+        NetworkBehaviourAction, PollParameters,
     },
     Multiaddr, PeerId,
 };
@@ -70,11 +70,11 @@ impl PeerManager {
 }
 
 impl NetworkBehaviour for PeerManager {
-    type ConnectionHandler = DummyConnectionHandler;
+    type ConnectionHandler = dummy::ConnectionHandler;
     type OutEvent = PeerManagerEvent;
 
     fn new_handler(&mut self) -> Self::ConnectionHandler {
-        DummyConnectionHandler::default()
+        dummy::ConnectionHandler
     }
 
     fn addresses_of_peer(&mut self, peer_id: &PeerId) -> Vec<Multiaddr> {

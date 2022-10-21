@@ -7,8 +7,8 @@ use iroh_bitswap::{Bitswap, Block, Config as BitswapConfig, Store};
 use iroh_rpc_client::Client;
 use libp2p::core::identity::Keypair;
 use libp2p::core::PeerId;
-use libp2p::gossipsub::{Gossipsub, GossipsubConfig, MessageAuthenticity};
-use libp2p::identify::{Identify, IdentifyConfig};
+use libp2p::gossipsub::{self, MessageAuthenticity};
+use libp2p::identify;
 use libp2p::kad::store::{MemoryStore, MemoryStoreConfig};
 use libp2p::kad::{Kademlia, KademliaConfig};
 use libp2p::mdns::TokioMdns as Mdns;
@@ -32,7 +32,7 @@ mod peer_manager;
 #[behaviour(out_event = "Event", event_process = false)]
 pub(crate) struct NodeBehaviour {
     ping: Ping,
-    identify: Identify,
+    identify: identify::Behaviour,
     pub(crate) bitswap: Toggle<Bitswap<BitswapStore>>,
     pub(crate) kad: Toggle<Kademlia<MemoryStore>>,
     mdns: Toggle<Mdns>,
@@ -40,7 +40,7 @@ pub(crate) struct NodeBehaviour {
     relay: Toggle<relay::v2::relay::Relay>,
     relay_client: Toggle<relay::v2::client::Client>,
     dcutr: Toggle<dcutr::behaviour::Behaviour>,
-    pub(crate) gossipsub: Toggle<Gossipsub>,
+    pub(crate) gossipsub: Toggle<gossipsub::Gossipsub>,
     pub(crate) peer_manager: PeerManager,
 }
 
@@ -99,7 +99,7 @@ impl NodeBehaviour {
 
         let mdns = if config.mdns {
             info!("init mdns");
-            Some(Mdns::new(Default::default()).await?)
+            Some(Mdns::new(Default::default())?)
         } else {
             None
         }
@@ -183,18 +183,18 @@ impl NodeBehaviour {
         };
 
         let identify = {
-            let config = IdentifyConfig::new("ipfs/0.1.0".into(), local_key.public())
+            let config = identify::Config::new("ipfs/0.1.0".into(), local_key.public())
                 .with_agent_version(format!("iroh/{}", env!("CARGO_PKG_VERSION")))
                 .with_cache_size(64 * 1024);
-            Identify::new(config)
+            identify::Behaviour::new(config)
         };
 
         let gossipsub = if config.gossipsub {
             info!("init gossipsub");
-            let gossipsub_config = GossipsubConfig::default();
+            let gossipsub_config = gossipsub::GossipsubConfig::default();
             let message_authenticity = MessageAuthenticity::Signed(local_key.clone());
             Some(
-                Gossipsub::new(message_authenticity, gossipsub_config)
+                gossipsub::Gossipsub::new(message_authenticity, gossipsub_config)
                     .map_err(|e| anyhow::anyhow!("{}", e))?,
             )
         } else {
@@ -217,10 +217,6 @@ impl NodeBehaviour {
         })
     }
 
-    pub fn is_bad_peer(&self, peer_id: &PeerId) -> bool {
-        self.peer_manager.is_bad_peer(peer_id)
-    }
-
     pub fn notify_new_blocks(&self, blocks: Vec<Block>) {
         if let Some(bs) = self.bitswap.as_ref() {
             let client = bs.client().clone();
@@ -229,14 +225,6 @@ impl NodeBehaviour {
                     warn!("failed to notify bitswap about blocks: {:?}", err);
                 }
             });
-        }
-    }
-
-    pub fn finish_query(&mut self, id: &libp2p::kad::QueryId) {
-        if let Some(kad) = self.kad.as_mut() {
-            if let Some(mut query) = kad.query_mut(id) {
-                query.finish();
-            }
         }
     }
 

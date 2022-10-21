@@ -3,6 +3,7 @@ use std::{ops::Deref, pin::Pin, sync::Arc, time::Duration};
 use ahash::AHashSet;
 use anyhow::{anyhow, ensure, Result};
 use cid::Cid;
+use futures::{future, stream, StreamExt};
 use iroh_metrics::{bitswap::BitswapMetrics, core::MRecorder, inc, record};
 use libp2p::PeerId;
 use tokio::{
@@ -12,14 +13,13 @@ use tokio::{
 };
 use tracing::{debug, error, info, warn};
 
-use crate::Block;
+use crate::{network::Network, Block};
 
 use self::{session_want_sender::SessionWantSender, session_wants::SessionWants};
 
 use super::{
     block_presence_manager::BlockPresenceManager, peer_manager::PeerManager,
-    provider_query_manager::ProviderQueryManager, session_interest_manager::SessionInterestManager,
-    session_manager::SessionManager,
+    session_interest_manager::SessionInterestManager, session_manager::SessionManager,
 };
 
 mod cid_queue;
@@ -31,6 +31,9 @@ mod session_wants;
 pub use self::session_want_sender::Signaler;
 
 const BROADCAST_LIVE_WANTS_LIMIT: usize = 64;
+const MAX_IN_PROCESS_REQUESTS: usize = 6;
+const MAX_PROVIDERS: usize = 10;
+const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// The kind of operation being executed in the event loop.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -74,7 +77,7 @@ impl Session {
         peer_manager: PeerManager,
         session_interest_manager: SessionInterestManager,
         block_presence_manager: BlockPresenceManager,
-        provider_query_manager: ProviderQueryManager,
+        network: Network,
         notify: async_broadcast::Sender<Block>,
         initial_search_delay: Duration,
         periodic_search_delay: Duration,
@@ -98,7 +101,7 @@ impl Session {
             session_wants,
             session_want_sender,
             session_interest_manager.clone(),
-            provider_query_manager,
+            network,
             peer_manager,
             initial_search_delay,
             incoming_s.clone(),
@@ -354,21 +357,20 @@ impl Session {
     }
 }
 
-#[derive(Debug)]
 struct LoopState {
     id: u64,
     consecutive_ticks: usize,
     session_wants: SessionWants,
     session_interest_manager: SessionInterestManager,
     session_want_sender: SessionWantSender,
-    provider_query_manager: ProviderQueryManager,
     peer_manager: PeerManager,
     latency_tracker: LatencyTracker,
     idle_tick: Pin<Box<Sleep>>,
     base_tick_delay: Duration,
     initial_search_delay: Duration,
-    workers: Vec<(oneshot::Sender<()>, JoinHandle<()>)>,
-    incoming: async_channel::Sender<Op>,
+    workers: Vec<JoinHandle<Option<()>>>,
+    task_controller: tokio_context::task::TaskController,
+    provider_search_queue: Arc<deadqueue::limited::Queue<Cid>>,
 }
 
 impl LoopState {
@@ -378,12 +380,66 @@ impl LoopState {
         session_wants: SessionWants,
         session_want_sender: SessionWantSender,
         session_interest_manager: SessionInterestManager,
-        provider_query_manager: ProviderQueryManager,
+        network: Network,
         peer_manager: PeerManager,
         initial_search_delay: Duration,
         incoming: async_channel::Sender<Op>,
     ) -> Self {
         let idle_tick = Box::pin(tokio::time::sleep(initial_search_delay));
+        let mut task_controller = tokio_context::task::TaskController::new();
+
+        let mut workers = Vec::new();
+        let queue = Arc::new(deadqueue::limited::Queue::new(128));
+
+        for _ in 0..MAX_IN_PROCESS_REQUESTS {
+            let network = network.clone();
+            let incoming = incoming.clone();
+            let queue = queue.clone();
+
+            workers.push(task_controller.spawn(async move {
+                loop {
+                    let cid = queue.pop().await;
+                    if let Ok(chan) = network.find_providers(cid, MAX_PROVIDERS).await {
+                        let stream = tokio_stream::wrappers::ReceiverStream::new(chan);
+                        stream
+                            // Remove intermitten failures.
+                            .filter_map(|providers_result| future::ready(providers_result.ok()))
+                            // Flatten.
+                            .flat_map_unordered(None, stream::iter)
+                            // Attempt to dial the provider.
+                            .filter_map(|provider| {
+                                let network = network.clone();
+                                async move {
+                                    network
+                                        .dial(provider, DEFAULT_TIMEOUT)
+                                        .await
+                                        .ok()
+                                        .map(|_| provider)
+                                }
+                            })
+                            // Notify the session about successfull ones.
+                            .for_each_concurrent(None, |provider| {
+                                inc!(BitswapMetrics::ProvidersTotal);
+                                debug!("found provider for {}: {}", cid, provider);
+                                // When a provider indicates that it has a cid, it's equivalent to
+                                // the providing peer sending a HAVE.
+                                let incoming = incoming.clone();
+                                async move {
+                                    let _ = incoming
+                                        .send(Op::UpdateWantSender {
+                                            from: provider,
+                                            keys: Vec::new(),
+                                            haves: vec![cid],
+                                            dont_haves: Vec::new(),
+                                        })
+                                        .await;
+                                }
+                            })
+                            .await;
+                    }
+                }
+            }));
+        }
 
         LoopState {
             id,
@@ -391,14 +447,14 @@ impl LoopState {
             session_wants,
             session_want_sender,
             session_interest_manager,
-            provider_query_manager,
             peer_manager,
             latency_tracker: Default::default(),
             base_tick_delay: Duration::from_millis(500),
             initial_search_delay,
             idle_tick,
-            workers: Vec::new(),
-            incoming,
+            workers,
+            task_controller,
+            provider_search_queue: queue,
         }
     }
 
@@ -406,12 +462,10 @@ impl LoopState {
         debug!(
             "seesion loop stopping {} (workers {})",
             self.id,
-            self.workers.len()
+            self.workers.len(),
         );
-        while let Some((closer, worker)) = self.workers.pop() {
-            closer
-                .send(())
-                .map_err(|e| anyhow!("failed to shutdown worker: {:?}", e))?;
+        self.task_controller.cancel();
+        while let Some(worker) = self.workers.pop() {
             worker.await?;
         }
 
@@ -469,66 +523,8 @@ impl LoopState {
     /// Attempts to find more peers for a session by searching for providers for the given cid.
     async fn find_more_peers(&mut self, cid: &Cid) {
         debug!("session:{}: find_more_peers {}", self.id, cid);
-        let incoming_sender = self.incoming.clone();
-        let cid = *cid;
-        let provider_query_manager = self.provider_query_manager.clone();
-        let (closer_s, mut closer_r) = oneshot::channel();
-        let worker = tokio::task::spawn(async move {
-            let mut num_providers = 0;
-            tokio::select! {
-                biased;
-                _ = &mut closer_r => {
-                    // shutting down
-                }
-                Ok(r) = provider_query_manager.find_providers_async(&cid) => {
-                    loop {
-                        inc!(BitswapMetrics::FindMorePeersLoopTick);
-                        tokio::select! {
-                            biased;
-                            _ = &mut closer_r => {
-                                // shutting downn
-                                break;
-                            }
-                            Ok(provider) = r.recv() => {
-                                match provider {
-                                    Ok(provider) => {
-                                        num_providers += 1;
-                                        inc!(BitswapMetrics::ProvidersTotal);
-                                        debug!("found provider for {}: {}", cid, provider);
-                                        // When a provider indicates that it has a cid, it's equivalent to
-                                        // the providing peer sending a HAVE.
-                                        if let Err(err) = incoming_sender.send(Op::UpdateWantSender {
-                                            from: provider,
-                                            keys: Vec::new(),
-                                            haves: vec![cid],
-                                            dont_haves: Vec::new()
-                                        }).await {
-                                            warn!("failed to send update want sender: {:?}", err);
-                                        }
-
-                                        if num_providers >= 10 {
-                                            inc!(BitswapMetrics::ProviderQuerySuccess);
-                                            break;
-                                        }
-                                    }
-                                    Err(err) => {
-                                        warn!("provider error: {:?}", err);
-                                    }
-                                }
-                            }
-                            else => {
-                                break;
-                            }
-                        }
-                    }
-                }
-                else => {
-                    warn!("failed to start finding providers");
-                }
-            }
-        });
-
-        self.workers.push((closer_s, worker));
+        inc!(BitswapMetrics::ProviderQueryCreated);
+        self.provider_search_queue.push(*cid).await;
     }
 
     /// Called when the session receives blocks from a peer.

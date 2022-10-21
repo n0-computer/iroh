@@ -15,7 +15,7 @@ tokio = { version = "1", features = ["sync"] }
 bytes = "1.1.0"
 cid = "0.8.0"
 futures = "0.3.21"
-libp2p = { version = "0.49", default-features = false, features = ["ping"] }
+libp2p = { version = "0.50", default-features = false, features = ["ping"] }
 multihash = "0.16.0"
 prost = "0.11"
 thiserror = "1.0.20"
@@ -41,11 +41,14 @@ derivative = "2.2.0"
 async-channel = "1.7.1"
 awaitgroup = "0.6.0"
 async-broadcast = "0.4.1"
+tokio-stream = "0.1.11"
+tokio-context = "0.1.3"
+deadqueue = "0.2.3"
 
 [dev-dependencies]
 criterion = "0.4.0"
 tracing-subscriber = { version = "0.3.11", features = ["env-filter"] }
-libp2p = { version = "0.49", features = ["yamux", "noise", "tcp-tokio"], default-features = false }
+libp2p = { version = "0.50", features = ["yamux", "noise", "tcp", "tokio"], default-features = false }
 tokio = { version = "1", features = ["macros", "net", "rt"] }
 tokio-util = { version = "0.7", features = ["compat"] }
 

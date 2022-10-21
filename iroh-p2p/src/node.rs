@@ -11,13 +11,11 @@ use iroh_rpc_types::p2p::P2pServerAddr;
 use libp2p::core::Multiaddr;
 use libp2p::gossipsub::{GossipsubMessage, MessageId, TopicHash};
 pub use libp2p::gossipsub::{IdentTopic, Topic};
-use libp2p::identify::IdentifyEvent;
+use libp2p::identify::Event as IdentifyEvent;
 use libp2p::identity::Keypair;
 use libp2p::kad::kbucket::{Distance, NodeStatus};
 use libp2p::kad::BootstrapOk;
-use libp2p::kad::{
-    self, record::Key, GetProvidersError, GetProvidersOk, KademliaEvent, QueryId, QueryResult,
-};
+use libp2p::kad::{self, GetProvidersOk, KademliaEvent, QueryId, QueryResult};
 use libp2p::metrics::Recorder;
 use libp2p::ping::Result as PingResult;
 use libp2p::swarm::dial_opts::{DialOpts, PeerCondition};
@@ -31,6 +29,7 @@ use tracing::{debug, error, info, trace, warn};
 use iroh_bitswap::{BitswapEvent, Block};
 
 use crate::keys::{Keychain, Storage};
+use crate::providers::Providers;
 use crate::rpc::ProviderRequestKey;
 use crate::swarm::build_swarm;
 use crate::{
@@ -67,7 +66,6 @@ pub enum GossipsubEvent {
 pub struct Node<KeyStorage: Storage> {
     swarm: Swarm<NodeBehaviour>,
     net_receiver_in: Receiver<RpcMessage>,
-    kad_queries: AHashMap<QueryKey, KadQueryChannel>,
     dial_queries: AHashMap<PeerId, Vec<OneShotSender<bool>>>,
     network_events: Vec<Sender<NetworkEvent>>,
     #[allow(dead_code)]
@@ -78,24 +76,10 @@ pub struct Node<KeyStorage: Storage> {
     rpc_task: JoinHandle<()>,
     use_dht: bool,
     bitswap_sessions: BitswapSessions,
+    providers: Providers,
 }
 
 type BitswapSessions = AHashMap<u64, Vec<(oneshot::Sender<()>, JoinHandle<()>)>>;
-
-enum KadQueryChannel {
-    GetProviders {
-        found_providers: HashSet<PeerId>,
-        #[allow(dead_code)]
-        query_id: QueryId,
-        channels: Vec<Sender<Result<HashSet<PeerId>, String>>>,
-        limit: usize,
-    },
-}
-
-#[derive(Debug, Hash, PartialEq, Eq)]
-enum QueryKey {
-    ProviderKey(Key),
-}
 
 pub(crate) const DEFAULT_PROVIDER_LIMIT: usize = 10;
 const NICE_INTERVAL: Duration = Duration::from_secs(6);
@@ -140,7 +124,6 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
         Ok(Node {
             swarm,
             net_receiver_in: network_receiver_in,
-            kad_queries: Default::default(),
             dial_queries: Default::default(),
             network_events: Vec::new(),
             rpc_client,
@@ -149,6 +132,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
             rpc_task,
             use_dht: libp2p_config.kademlia,
             bitswap_sessions: Default::default(),
+            providers: Providers::new(4),
         })
     }
 
@@ -172,6 +156,10 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                     let swarm_event = swarm_event.expect("the swarm will never die");
                     if let Err(err) = self.handle_swarm_event(swarm_event) {
                         error!("swarm error: {:?}", err);
+                    }
+
+                    if let Some(kad) = self.swarm.behaviour_mut().kad.as_mut() {
+                        self.providers.poll(kad);
                     }
                 }
                 rpc_message = self.net_receiver_in.recv() => {
@@ -277,10 +265,12 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
 
     fn destroy_session(&mut self, ctx: u64, response_channel: oneshot::Sender<Result<()>>) {
         if let Some(bs) = self.swarm.behaviour().bitswap.as_ref() {
-            if let Some(workers) = self.bitswap_sessions.remove(&ctx) {
-                let client = bs.client().clone();
-                tokio::task::spawn(async move {
-                    debug!("stopping session {} ({} workers)", ctx, workers.len());
+            let workers = self.bitswap_sessions.remove(&ctx);
+            let client = bs.client().clone();
+            tokio::task::spawn(async move {
+                debug!("stopping session {}", ctx);
+                if let Some(workers) = workers {
+                    debug!("stopping workers {} for session {}", workers.len(), ctx);
                     // first shutdown workers
                     for (closer, worker) in workers {
                         if closer.send(()).is_ok() {
@@ -288,17 +278,15 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                         }
                     }
                     debug!("all workers stopped for session {}", ctx);
-                    if let Err(err) = client.stop_session(ctx).await {
-                        warn!("failed to stop session {}: {:?}", ctx, err);
-                    }
-                    if let Err(err) = response_channel.send(Ok(())) {
-                        warn!("session {} failed to send stop response: {:?}", ctx, err);
-                    }
-                    debug!("session {} stopped", ctx);
-                });
-            } else if let Err(err) = response_channel.send(Ok(())) {
-                warn!("session {} failed to send stop response: {:?}", ctx, err);
-            }
+                }
+                if let Err(err) = client.stop_session(ctx).await {
+                    warn!("failed to stop session {}: {:?}", ctx, err);
+                }
+                if let Err(err) = response_channel.send(Ok(())) {
+                    warn!("session {} failed to send stop response: {:?}", ctx, err);
+                }
+                debug!("session {} stopped", ctx);
+            });
         } else {
             let _ = response_channel.send(Err(anyhow!("no bitswap available")));
         }
@@ -468,66 +456,29 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                         QueryResult::GetProviders(Ok(GetProvidersOk {
                             key, providers, ..
                         })) => {
-                            debug!("provider results for {:?} last: {}", key, step.last);
-                            if step.last {
-                                let _ = self.kad_queries.remove(&QueryKey::ProviderKey(key));
-                            } else if let Some(KadQueryChannel::GetProviders {
-                                channels,
-                                found_providers,
-                                limit,
-                                ..
-                            }) = self.kad_queries.get_mut(&QueryKey::ProviderKey(key))
-                            {
+                            let swarm = self.swarm.behaviour_mut();
+                            if let Some(kad) = swarm.kad.as_mut() {
+                                debug!("provider results for {:?} last: {}", key, step.last);
+
                                 // filter out bad providers.
                                 let providers: HashSet<_> = providers
                                     .into_iter()
                                     .filter(|provider| {
-                                        inc!(P2PMetrics::SkippedPeerKad);
-                                        let is_bad = self.swarm.behaviour().is_bad_peer(provider);
+                                        let is_bad = swarm.peer_manager.is_bad_peer(provider);
+                                        if is_bad {
+                                            inc!(P2PMetrics::SkippedPeerKad);
+                                        }
                                         !is_bad
                                     })
                                     .collect();
 
-                                // Filter out already found providers.
-                                let new_providers: HashSet<PeerId> =
-                                    providers.difference(found_providers).copied().collect();
-
-                                found_providers.extend(new_providers.clone());
-
-                                if !new_providers.is_empty() {
-                                    let channels = channels.clone();
-                                    tokio::task::spawn(async move {
-                                        for chan in channels.into_iter() {
-                                            chan.send(Ok(new_providers.clone())).await.ok();
-                                        }
-                                    });
-                                }
-
-                                if found_providers.len() >= *limit {
-                                    debug!(
-                                        "finish provider query {}/{}",
-                                        found_providers.len(),
-                                        limit,
-                                    );
-                                    // Finish query if we have enough providers.
-                                    self.swarm.behaviour_mut().finish_query(&id);
-                                }
+                                self.providers
+                                    .handle_get_providers_ok(id, step.last, key, providers, kad);
                             }
                         }
-
-                        QueryResult::GetProviders(Err(err)) => {
-                            let key = match err {
-                                GetProvidersError::Timeout { key, .. } => key,
-                            };
-                            debug!("GetProviders timeout {:?}", key);
-                            if let Some(KadQueryChannel::GetProviders { channels, .. }) =
-                                self.kad_queries.remove(&QueryKey::ProviderKey(key))
-                            {
-                                tokio::task::spawn(async move {
-                                    for chan in channels.into_iter() {
-                                        chan.send(Err("Timeout".into())).await.ok();
-                                    }
-                                });
+                        QueryResult::GetProviders(Err(error)) => {
+                            if let Some(kad) = self.swarm.behaviour_mut().kad.as_mut() {
+                                self.providers.handle_get_providers_error(id, error, kad);
                             }
                         }
                         QueryResult::Bootstrap(Ok(BootstrapOk {
@@ -678,23 +629,8 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
             } => match key {
                 ProviderRequestKey::Dht(key) => {
                     debug!("fetching providers for: {:?}", key);
-                    if let Some(kad) = self.swarm.behaviour_mut().kad.as_mut() {
-                        match self.kad_queries.entry(QueryKey::ProviderKey(key.clone())) {
-                            std::collections::hash_map::Entry::Occupied(mut entry) => {
-                                let KadQueryChannel::GetProviders { channels, .. } =
-                                    entry.get_mut();
-                                channels.push(response_channel);
-                            }
-                            std::collections::hash_map::Entry::Vacant(entry) => {
-                                let query_id = kad.get_providers(key);
-                                entry.insert(KadQueryChannel::GetProviders {
-                                    found_providers: Default::default(),
-                                    query_id,
-                                    channels: vec![response_channel],
-                                    limit,
-                                });
-                            }
-                        }
+                    if self.swarm.behaviour().kad.is_enabled() {
+                        self.providers.push(key, limit, response_channel);
                     } else {
                         tokio::task::spawn(async move {
                             response_channel
@@ -964,7 +900,7 @@ mod tests {
             let mut chan = client.p2p.unwrap().fetch_providers_dht(&c).await?;
             while let Some(new_providers) = chan.next().await {
                 let new_providers = new_providers.unwrap();
-                println!("providers found");
+                println!("providers found: {}", new_providers.len());
                 assert!(!new_providers.is_empty());
 
                 for p in &new_providers {
