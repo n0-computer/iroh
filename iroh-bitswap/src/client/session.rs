@@ -479,40 +479,46 @@ impl LoopState {
 
         inc!(BitswapMetrics::ProviderQueryCreated);
         if let Ok(chan) = self.network.find_providers(cid, MAX_PROVIDERS).await {
-            let stream = tokio_stream::wrappers::ReceiverStream::new(chan);
-            stream
-                // Remove failed fetches
-                .filter_map(|providers_result| future::ready(providers_result.ok()))
-                // Flatten
-                .flat_map_unordered(Some(MAX_PROVIDERS), |providers| stream::iter(providers))
-                .filter_map(|provider| {
-                    let network = self.network.clone();
-                    async move {
-                        network
-                            .dial(provider, DEFAULT_TIMEOUT)
-                            .await
-                            .ok()
-                            .map(|_| provider)
-                    }
-                })
-                .for_each_concurrent(Some(MAX_PROVIDERS), |provider| {
-                    inc!(BitswapMetrics::ProvidersTotal);
-                    debug!("found provider for {}: {}", cid, provider);
-                    // When a provider indicates that it has a cid, it's equivalent to
-                    // the providing peer sending a HAVE.
-                    let incoming = self.incoming.clone();
-                    async move {
-                        let _ = incoming
-                            .send(Op::UpdateWantSender {
-                                from: provider,
-                                keys: Vec::new(),
-                                haves: vec![cid],
-                                dont_haves: Vec::new(),
-                            })
-                            .await;
-                    }
-                })
-                .await;
+            let network = self.network.clone();
+            let incoming = self.incoming.clone();
+            // TODO: maybe needs limiting
+            // TODO: shutdown & cancel
+            tokio::task::spawn(async move {
+                let stream = tokio_stream::wrappers::ReceiverStream::new(chan);
+                stream
+                    // Remove failed fetches
+                    .filter_map(|providers_result| future::ready(providers_result.ok()))
+                    // Flatten
+                    .flat_map_unordered(Some(MAX_PROVIDERS), |providers| stream::iter(providers))
+                    .filter_map(|provider| {
+                        let network = network.clone();
+                        async move {
+                            network
+                                .dial(provider, DEFAULT_TIMEOUT)
+                                .await
+                                .ok()
+                                .map(|_| provider)
+                        }
+                    })
+                    .for_each_concurrent(Some(MAX_PROVIDERS), |provider| {
+                        inc!(BitswapMetrics::ProvidersTotal);
+                        debug!("found provider for {}: {}", cid, provider);
+                        // When a provider indicates that it has a cid, it's equivalent to
+                        // the providing peer sending a HAVE.
+                        let incoming = incoming.clone();
+                        async move {
+                            let _ = incoming
+                                .send(Op::UpdateWantSender {
+                                    from: provider,
+                                    keys: Vec::new(),
+                                    haves: vec![cid],
+                                    dont_haves: Vec::new(),
+                                })
+                                .await;
+                        }
+                    })
+                    .await;
+            });
         }
     }
 
