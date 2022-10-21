@@ -132,7 +132,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
             rpc_task,
             use_dht: libp2p_config.kademlia,
             bitswap_sessions: Default::default(),
-            providers: Providers::new(64),
+            providers: Providers::new(4),
         })
     }
 
@@ -265,10 +265,12 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
 
     fn destroy_session(&mut self, ctx: u64, response_channel: oneshot::Sender<Result<()>>) {
         if let Some(bs) = self.swarm.behaviour().bitswap.as_ref() {
-            if let Some(workers) = self.bitswap_sessions.remove(&ctx) {
-                let client = bs.client().clone();
-                tokio::task::spawn(async move {
-                    debug!("stopping session {} ({} workers)", ctx, workers.len());
+            let workers = self.bitswap_sessions.remove(&ctx);
+            let client = bs.client().clone();
+            tokio::task::spawn(async move {
+                debug!("stopping session {}", ctx);
+                if let Some(workers) = workers {
+                    debug!("stopping workers {} for session {}", workers.len(), ctx);
                     // first shutdown workers
                     for (closer, worker) in workers {
                         if closer.send(()).is_ok() {
@@ -276,17 +278,15 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                         }
                     }
                     debug!("all workers stopped for session {}", ctx);
-                    if let Err(err) = client.stop_session(ctx).await {
-                        warn!("failed to stop session {}: {:?}", ctx, err);
-                    }
-                    if let Err(err) = response_channel.send(Ok(())) {
-                        warn!("session {} failed to send stop response: {:?}", ctx, err);
-                    }
-                    debug!("session {} stopped", ctx);
-                });
-            } else if let Err(err) = response_channel.send(Ok(())) {
-                warn!("session {} failed to send stop response: {:?}", ctx, err);
-            }
+                }
+                if let Err(err) = client.stop_session(ctx).await {
+                    warn!("failed to stop session {}: {:?}", ctx, err);
+                }
+                if let Err(err) = response_channel.send(Ok(())) {
+                    warn!("session {} failed to send stop response: {:?}", ctx, err);
+                }
+                debug!("session {} stopped", ctx);
+            });
         } else {
             let _ = response_channel.send(Err(anyhow!("no bitswap available")));
         }
