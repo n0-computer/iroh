@@ -6,20 +6,36 @@ use std::io::Write;
 use std::path::PathBuf;
 use sysinfo::{Pid, ProcessExt, ProcessStatus, System, SystemExt};
 use thiserror::Error;
-use tracing::log::warn;
+use tracing::warn;
 
-pub fn acquire_or_exit(lock: &mut ProgramLock, daemon_name: &str) -> Result<(), LockError> {
-    if lock.is_locked()? {
-        eprintln!("{} is already running, stopping.", daemon_name);
-        std::process::exit(crate::exitcodes::LOCKED);
+pub fn acquire_or_exit(lock: &mut ProgramLock) -> &mut ProgramLock {
+    match lock.is_locked() {
+        Ok(false) => {
+            if let Err(e) = lock.acquire() {
+                eprintln!("error locking {}: {}", lock.program_name(), e);
+                std::process::exit(crate::exitcodes::ERROR);
+            }
+            lock
+        }
+        Ok(true) => {
+            eprintln!("{} is already running, stopping.", lock.program_name());
+            std::process::exit(crate::exitcodes::LOCKED);
+        }
+        Err(err) => {
+            eprintln!("error checking lock {}: {}", lock.program_name(), err);
+            std::process::exit(crate::exitcodes::ERROR);
+        }
     }
-    lock.acquire()
 }
 
-/// Manages a lock file used to track if an iroh program
-/// is already running.
+/// Manages a lock file used to track if an iroh program is already running.
+/// Aquired locks write a file to iroh's application data path containing the
+/// process identifier (PID) of the process with the lock.
+/// The lock exclusion test requires both a lockfile AND a running process
+/// listed at the PID in the file
 /// An acquired lock is released either when the object is dropped
-/// or when the program stops, which removes the file from disk
+/// or when the program stops, which removes the file
+/// Invalid or corrupt locks are overwritten on acquisition
 pub struct ProgramLock {
     path: PathBuf,
     lock: Option<sysinfo::Pid>,
@@ -33,8 +49,40 @@ impl ProgramLock {
         Ok(Self { path, lock: None })
     }
 
+    /// Shorthand intended for main functions that need a lock to guard the process
+    pub fn acquire_or_exit(&mut self) -> &mut Self {
+        match self.is_locked() {
+            Ok(false) => {
+                if let Err(e) = self.acquire() {
+                    eprintln!("error locking {}: {}", self.program_name(), e);
+                    std::process::exit(crate::exitcodes::ERROR);
+                }
+                self
+            }
+            Ok(true) => {
+                eprintln!("{} is already running, stopping.", self.program_name());
+                std::process::exit(crate::exitcodes::LOCKED);
+            }
+            Err(err) => {
+                eprintln!("error checking lock {}: {}", self.program_name(), err);
+                std::process::exit(crate::exitcodes::ERROR);
+            }
+        }
+    }
+
     pub fn path(&self) -> &PathBuf {
         &self.path
+    }
+
+    pub fn program_name(&self) -> &str {
+        self.path
+            .file_name()
+            .unwrap_or_else(|| std::ffi::OsStr::new(""))
+            .to_str()
+            .unwrap()
+            .split('.')
+            .next()
+            .unwrap_or("")
     }
 
     /// Check if the current program is locked or not.
@@ -48,7 +96,7 @@ impl ProgramLock {
         process_is_running(pid).map_err(|e| LockError::Uncategorized { source: e })
     }
 
-    /// returns
+    /// returns the PID in the lockfile only if the process is active
     pub fn active_pid(&self) -> Result<Pid, LockError> {
         if !self.path.exists() {
             return Err(LockError::NoLock(self.path.clone()));
@@ -108,6 +156,7 @@ impl Drop for ProgramLock {
 }
 
 fn process_is_running(pid: Pid) -> AnyhowResult<bool> {
+    // existentialism is sometimes counterproductive
     let this_pid = sysinfo::get_current_pid().unwrap();
     if pid == this_pid {
         return Ok(true);
@@ -125,7 +174,7 @@ fn process_is_running(pid: Pid) -> AnyhowResult<bool> {
     match s.process(pid) {
         Some(process) => {
             match process.status() {
-                // see https://docs.rs/sysinfo/0.26.5/sysinfo/enum.ProcessStatus.html for details
+                // see https://docs.rs/sysinfo/0.26.5/sysinfo/enum.ProcessStatus.html for platform-specific details
                 ProcessStatus::Idle => Ok(true),
                 ProcessStatus::Run => Ok(true),
                 ProcessStatus::Sleep => Ok(true),
@@ -168,7 +217,7 @@ fn read_lock(path: &PathBuf) -> Result<Pid, LockError> {
     Ok(Pid::from(pid))
 }
 
-/// LockError classifies non-generic errors related to program locks
+/// LockError is the set of known program lock errors
 #[derive(Error, Debug)]
 pub enum LockError {
     // lock present when one is not expected
