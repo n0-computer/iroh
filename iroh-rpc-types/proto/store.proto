@@ -6,6 +6,7 @@ import "google/protobuf/empty.proto";
 
 service Store {
   rpc Version(google.protobuf.Empty) returns (VersionResponse) {}
+  rpc Status(google.protobuf.Empty) returns (StatusResponse) {}
   rpc Put(PutRequest) returns (google.protobuf.Empty) {}
   rpc Get(GetRequest) returns (GetResponse) {}
   rpc Has(HasRequest) returns (HasResponse) {}
@@ -16,6 +17,10 @@ service Store {
 
 message VersionResponse {
   string version = 1;
+}
+
+message StatusResponse {
+  uint64 uptime = 1;
 }
 
 message PutRequest {
