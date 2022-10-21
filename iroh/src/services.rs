@@ -5,10 +5,13 @@ use futures::StreamExt;
 use iroh_util::iroh_cache_path;
 use std::collections::HashSet;
 use std::io::{stdout, Write};
+use std::time::SystemTime;
 use tracing::info;
 
 use iroh_api::{Api, ServiceStatus, StatusRow, StatusTable};
 use iroh_util::lock::{LockError, ProgramLock};
+
+const SERVICE_START_TIMEOUT_SECONDS: u64 = 15;
 
 /// start any of {iroh-gateway,iroh-store,iroh-p2p} that aren't currently
 /// running.
@@ -72,16 +75,45 @@ async fn start_services(api: &impl Api, services: HashSet<&str>) -> Result<()> {
 
         print!("starting {}... ", &daemon_name.bold());
         iroh_localops::process::daemonize(bin_path, log_path)?;
-        println!("{}", "success".green());
+
         // TODO - confirm communication with RPC API
+        let status_stream = api.watch().await;
+        tokio::pin!(status_stream);
+        let start = SystemTime::now();
+        while let Some(table) = status_stream.next().await {
+            let is_up = table
+                .iter()
+                .filter(|row| row.name() == service)
+                .map(|row| row.status() == iroh_api::ServiceStatus::Serving)
+                .next()
+                .unwrap();
+            if is_up {
+                println!("{}", "success".green());
+                break;
+            }
+            if let Ok(elapsed) = start.elapsed() {
+                if elapsed.as_secs() > SERVICE_START_TIMEOUT_SECONDS {
+                    eprintln!(
+                        "{}",
+                        format!(
+                            "error: took more than {}s start",
+                            SERVICE_START_TIMEOUT_SECONDS
+                        )
+                        .red()
+                    );
+                    break;
+                }
+            }
+        }
     }
 
     Ok(())
 }
 
-///
+/// stop all services by sending SIGINT to any active daemons identified
+/// by lockfiles
 pub async fn stop() -> Result<()> {
-    for daemon_name in ["iroh-one", "iroh-gateway", "iroh-p2p", "iroh-store"] {
+    for daemon_name in ["iroh-gateway", "iroh-p2p", "iroh-store"] {
         info!("checking daemon {} lock", daemon_name);
         let lock = ProgramLock::new(daemon_name)?;
         match lock.active_pid() {
@@ -99,12 +131,10 @@ pub async fn stop() -> Result<()> {
             }
             Err(e) => match e {
                 LockError::NoLock(_) => {
-                    println!("{}", "already stopped".red());
+                    eprintln!("{}", format!("{} is already stopped", daemon_name).red());
                 }
                 e => {
-                    println!("lock error: {}", e);
-                    println!("removing bad lockfile for {} daemon", daemon_name);
-                    // std::fs::remove_file(lock.path()).map_err(|e| anyhow!("{}", e))?;
+                    eprintln!("lock error: {}", e);
                     continue;
                 }
             },
