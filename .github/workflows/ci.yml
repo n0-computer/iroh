@@ -50,6 +50,14 @@ jobs:
         echo "RELEASE_ARCH=${{ matrix.release-arch }}" >> $GITHUB_ENV
         echo "RELEASE_OS=${{ matrix.release-os }}" >> $GITHUB_ENV
     
+    - name: Claim back some disk space (ubuntu-latest)
+      if: matrix.os == 'ubuntu-latest'
+      run: |
+        sudo rm -rf /usr/share/dotnet
+        sudo rm -rf /opt/ghc
+        sudo rm -rf "/usr/local/share/boost"
+        sudo rm -rf "$AGENT_TOOLSDIRECTORY"
+
     - name: Install sccache (ubuntu-latest)
       if: matrix.os == 'ubuntu-latest'
       env:
