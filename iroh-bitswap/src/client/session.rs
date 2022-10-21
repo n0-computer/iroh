@@ -405,7 +405,7 @@ impl LoopState {
                             // Remove intermitten failures.
                             .filter_map(|providers_result| future::ready(providers_result.ok()))
                             // Flatten.
-                            .flat_map_unordered(Some(2), |providers| stream::iter(providers))
+                            .flat_map_unordered(None, |providers| stream::iter(providers))
                             // Attempt to dial the provider.
                             .filter_map(|provider| {
                                 let network = network.clone();
@@ -418,7 +418,7 @@ impl LoopState {
                                 }
                             })
                             // Notify the session about successfull ones.
-                            .for_each_concurrent(Some(2), |provider| {
+                            .for_each_concurrent(None, |provider| {
                                 inc!(BitswapMetrics::ProvidersTotal);
                                 debug!("found provider for {}: {}", cid, provider);
                                 // When a provider indicates that it has a cid, it's equivalent to

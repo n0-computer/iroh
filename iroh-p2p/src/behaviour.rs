@@ -217,10 +217,6 @@ impl NodeBehaviour {
         })
     }
 
-    pub fn is_bad_peer(&self, peer_id: &PeerId) -> bool {
-        self.peer_manager.is_bad_peer(peer_id)
-    }
-
     pub fn notify_new_blocks(&self, blocks: Vec<Block>) {
         if let Some(bs) = self.bitswap.as_ref() {
             let client = bs.client().clone();
@@ -229,14 +225,6 @@ impl NodeBehaviour {
                     warn!("failed to notify bitswap about blocks: {:?}", err);
                 }
             });
-        }
-    }
-
-    pub fn finish_query(&mut self, id: &libp2p::kad::QueryId) {
-        if let Some(kad) = self.kad.as_mut() {
-            if let Some(mut query) = kad.query_mut(id) {
-                query.finish();
-            }
         }
     }
 
