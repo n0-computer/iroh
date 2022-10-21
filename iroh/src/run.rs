@@ -134,7 +134,7 @@ impl Cli {
                 crate::services::status(api, *watch).await?;
             }
             Commands::Stop {} => {
-                crate::services::stop().await?;
+                crate::services::stop(api).await?;
             }
         };
 

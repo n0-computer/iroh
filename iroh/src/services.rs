@@ -61,11 +61,10 @@ async fn start_services(api: &impl Api, services: HashSet<&str>) -> Result<()> {
     }
 
     for &service in missing_services.iter() {
-        // let data_dir = iroh_util::iroh_data_root()?;
         let daemon_name = format!("iroh-{}", service);
         let log_path = iroh_cache_path(format!("iroh-{}.log", service).as_str())?;
 
-        // // check if a binary by this name exists
+        // check if a binary by this name exists
         let bin_path = which::which(&daemon_name).map_err(|_| {
             anyhow!(format!(
                 "can't find {} daemon binary on your $PATH. please install {}.\n visit https://iroh.computer/docs/install for more info",
@@ -74,37 +73,49 @@ async fn start_services(api: &impl Api, services: HashSet<&str>) -> Result<()> {
         })?;
 
         print!("starting {}... ", &daemon_name.bold());
-        iroh_localops::process::daemonize(bin_path, log_path)?;
 
-        // TODO - confirm communication with RPC API
-        let status_stream = api.watch().await;
-        tokio::pin!(status_stream);
-        let start = SystemTime::now();
-        while let Some(table) = status_stream.next().await {
-            let is_up = table
-                .iter()
-                .filter(|row| row.name() == service)
-                .map(|row| row.status() == iroh_api::ServiceStatus::Serving)
-                .next()
-                .unwrap();
-            if is_up {
-                println!("{}", "success".green());
-                break;
-            }
-            if let Ok(elapsed) = start.elapsed() {
-                if elapsed.as_secs() > SERVICE_START_TIMEOUT_SECONDS {
-                    eprintln!(
-                        "{}",
-                        format!(
-                            "error: took more than {}s start",
-                            SERVICE_START_TIMEOUT_SECONDS
-                        )
-                        .red()
-                    );
-                    break;
-                }
-            }
+        iroh_localops::process::daemonize(bin_path, log_path.clone())?;
+
+        let is_up = ensure_status(api, service, iroh_api::ServiceStatus::Serving).await?;
+        if is_up {
+            println!("{}", "success".green());
+        } else {
+            eprintln!(
+                "{}",
+                format!(
+                    "error: took more than {}s start.\n check log file for details: {}",
+                    SERVICE_START_TIMEOUT_SECONDS,
+                    log_path.display(),
+                )
+                .red()
+            );
         }
+        // while let Some(table) = status_stream.next().await {
+        //     let is_up = table
+        //         .iter()
+        //         .filter(|row| row.name() == service)
+        //         .map(|row| row.status() == iroh_api::ServiceStatus::Serving)
+        //         .next()
+        //         .unwrap();
+        //     if is_up {
+        //         println!("{}", "success".green());
+        //         break;
+        //     }
+        //     if let Ok(elapsed) = start.elapsed() {
+        //         if elapsed.as_secs() > SERVICE_START_TIMEOUT_SECONDS {
+                    // eprintln!(
+                    //     "{}",
+                    //     format!(
+                    //         "error: took more than {}s start.\n check log file for details: {}",
+                    //         SERVICE_START_TIMEOUT_SECONDS,
+                    //         log_path.display(),
+                    //     )
+                    //     .red()
+                    // );
+        //             break;
+        //         }
+        //     }
+        // }
     }
 
     Ok(())
@@ -112,16 +123,18 @@ async fn start_services(api: &impl Api, services: HashSet<&str>) -> Result<()> {
 
 /// stop all services by sending SIGINT to any active daemons identified
 /// by lockfiles
-pub async fn stop() -> Result<()> {
-    for daemon_name in ["iroh-gateway", "iroh-p2p", "iroh-store"] {
+pub async fn stop(_api: &impl Api) -> Result<()> {
+    for service in ["gateway", "p2p", "store"] {
+        let daemon_name = format!("iroh-{}", service);
         info!("checking daemon {} lock", daemon_name);
-        let lock = ProgramLock::new(daemon_name)?;
+        let lock = ProgramLock::new(&daemon_name)?;
         match lock.active_pid() {
             Ok(pid) => {
                 info!("stopping {} pid: {}", daemon_name, pid);
                 print!("stopping {}... ", &daemon_name);
                 match iroh_localops::process::stop(pid.into()) {
                     Ok(_) => {
+                        // let is_down = ensure_status(api, service, iroh_api::ServiceStatus::Down(())).await?;
                         println!("{}", "stopped".red());
                     }
                     Err(error) => {
@@ -218,6 +231,31 @@ where
     };
     w.queue(style::Print("\n"))?;
     Ok(())
+}
+
+/// poll until a service matches the desired status. returns Ok(true) if status was matched,
+/// and Ok(false) if desired status isn't reported before SERVICE_START_TIMEOUT_SECONDS
+async fn ensure_status(api: &impl Api, service: &str, status: iroh_api::ServiceStatus) -> Result<bool> {
+    let status_stream = api.watch().await;
+        tokio::pin!(status_stream);
+        let start = SystemTime::now();
+        while let Some(table) = status_stream.next().await {
+            let is_status = table
+                .iter()
+                .filter(|row| row.name() == service)
+                .map(|row| row.status() == status)
+                .next()
+                .unwrap();
+            if is_status {
+                return Ok(true)
+            }
+            if let Ok(elapsed) = start.elapsed() {
+                if elapsed.as_secs() > SERVICE_START_TIMEOUT_SECONDS {
+                    return Ok(false)
+                }
+            }
+        }
+        Err(anyhow!(""))
 }
 
 #[cfg(test)]
