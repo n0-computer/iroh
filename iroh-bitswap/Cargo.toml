@@ -41,6 +41,9 @@ derivative = "2.2.0"
 async-channel = "1.7.1"
 awaitgroup = "0.6.0"
 async-broadcast = "0.4.1"
+tokio-stream = "0.1.11"
+tokio-context = "0.1.3"
+deadqueue = "0.2.3"
 
 [dev-dependencies]
 criterion = "0.4.0"
