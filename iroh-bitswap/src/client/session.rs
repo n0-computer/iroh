@@ -477,6 +477,7 @@ impl LoopState {
 
         use futures::{future, stream, StreamExt};
 
+        inc!(BitswapMetrics::ProviderQueryCreated);
         if let Ok(chan) = self.network.find_providers(cid, MAX_PROVIDERS).await {
             let stream = tokio_stream::wrappers::ReceiverStream::new(chan);
             stream
