@@ -82,8 +82,12 @@ impl Block {
             return Err(InvalidMultihash(mh.to_bytes()).into());
         }
         // check that the links are complete
-        let links = parse_links(&self.cid, &self.data)?;
-        anyhow::ensure!(links == self.links, "links do not match");
+        let expected_links = parse_links(&self.cid, &self.data)?;
+        let mut actual_links = self.links.clone();
+        actual_links.sort();
+        // TODO: why do the actual links need to be deduplicated?
+        actual_links.dedup();
+        anyhow::ensure!(expected_links == actual_links, "links do not match");
         Ok(())
     }
 
@@ -1398,6 +1402,8 @@ impl<T: ContentLoader> Resolver<T> {
 }
 
 /// Extract links from the given content.
+///
+/// Links will be returned as a sorted vec
 pub fn parse_links(cid: &Cid, bytes: &[u8]) -> Result<Vec<Cid>> {
     let codec = Codec::try_from(cid.codec()).context("unknown codec")?;
     let mut cids = BTreeSet::new();
