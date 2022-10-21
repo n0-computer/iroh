@@ -16,11 +16,11 @@ const SERVICE_START_TIMEOUT_SECONDS: u64 = 15;
 /// start any of {iroh-gateway,iroh-store,iroh-p2p} that aren't currently
 /// running.
 pub async fn start(api: &impl Api) -> Result<()> {
-    // start_services(api, HashSet::from(["store"])).await
     start_services(api, HashSet::from(["store", "p2p", "gateway"])).await
 }
 
 // TODO(b5) - should check for configuration mismatch between iroh CLI configuration
+// TODO(b5) - services HashSet should be an enum
 async fn start_services(api: &impl Api, services: HashSet<&str>) -> Result<()> {
     // check for any running iroh services
     let table = api.check().await;
@@ -46,7 +46,8 @@ async fn start_services(api: &impl Api, services: HashSet<&str>) -> Result<()> {
             accum
         });
 
-    // construct a new set from the intersection of missing & expected services
+    // TODO (b5) - use services.difference here, but figure out how to
+    // .collect() to &str instead of &&str
     let missing_services: HashSet<&str> = services
         .into_iter()
         .filter(|&service| missing_services.contains(service))
@@ -60,7 +61,7 @@ async fn start_services(api: &impl Api, services: HashSet<&str>) -> Result<()> {
         return Ok(());
     }
 
-    for &service in missing_services.iter() {
+    for service in missing_services.iter() {
         let daemon_name = format!("iroh-{}", service);
         let log_path = iroh_cache_path(format!("iroh-{}.log", service).as_str())?;
 
@@ -95,13 +96,17 @@ async fn start_services(api: &impl Api, services: HashSet<&str>) -> Result<()> {
     Ok(())
 }
 
-/// stop all services by sending SIGINT to any active daemons identified
-/// by lockfiles
+/// stop the default set of services by sending SIGINT to any active daemons
+/// identified by lockfiles
 pub async fn stop(api: &impl Api) -> Result<()> {
-    for service in ["gateway", "p2p", "store"] {
+    stop_services(api, HashSet::from(["gateway", "p2p", "store"])).await
+}
+
+pub async fn stop_services(api: &impl Api, services: HashSet<&str>) -> Result<()> {
+    for service in services {
         let daemon_name = format!("iroh-{}", service);
         info!("checking daemon {} lock", daemon_name);
-        let lock = ProgramLock::new(&daemon_name)?;
+        let mut lock = ProgramLock::new(&daemon_name)?;
         match lock.active_pid() {
             Ok(pid) => {
                 info!("stopping {} pid: {}", daemon_name, pid);

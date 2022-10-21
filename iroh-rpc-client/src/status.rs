@@ -220,9 +220,6 @@ impl Iterator for StatusTableIterator<'_> {
         };
 
         self.iter += 1;
-        if current == None {
-            self.iter = 0;
-        }
         current
     }
 }

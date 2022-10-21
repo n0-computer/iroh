@@ -66,6 +66,9 @@ fn daemonize_process(bin_path: PathBuf, log_path: PathBuf) -> Result<()> {
     Err(anyhow!("daemonizing processes on windows is not supported"))
 }
 
+// TODO(b5) - this level of indirection isn't necessary, factor `stop_process`
+// directly into `stop`
+// https://github.com/n0-computer/iroh/pull/360#discussion_r1002000769
 pub fn stop(pid: i32) -> Result<()> {
     stop_process(pid)
 }

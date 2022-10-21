@@ -1,10 +1,12 @@
+use crate::exitcodes;
 use anyhow::{anyhow, Result as AnyhowResult};
 use std::fs::File;
 use std::io::prelude::*;
 use std::io::ErrorKind;
 use std::io::Write;
 use std::path::PathBuf;
-use sysinfo::{Pid, ProcessExt, ProcessStatus, System, SystemExt};
+use std::process;
+use sysinfo::{Pid, ProcessExt, ProcessStatus::*, System, SystemExt};
 use thiserror::Error;
 use tracing::warn;
 
@@ -13,17 +15,17 @@ pub fn acquire_or_exit(lock: &mut ProgramLock) -> &mut ProgramLock {
         Ok(false) => {
             if let Err(e) = lock.acquire() {
                 eprintln!("error locking {}: {}", lock.program_name(), e);
-                std::process::exit(crate::exitcodes::ERROR);
+                process::exit(exitcodes::ERROR);
             }
             lock
         }
         Ok(true) => {
             eprintln!("{} is already running, stopping.", lock.program_name());
-            std::process::exit(crate::exitcodes::LOCKED);
+            process::exit(exitcodes::LOCKED);
         }
         Err(err) => {
             eprintln!("error checking lock {}: {}", lock.program_name(), err);
-            std::process::exit(crate::exitcodes::ERROR);
+            process::exit(exitcodes::ERROR);
         }
     }
 }
@@ -39,6 +41,7 @@ pub fn acquire_or_exit(lock: &mut ProgramLock) -> &mut ProgramLock {
 pub struct ProgramLock {
     path: PathBuf,
     lock: Option<sysinfo::Pid>,
+    system: Option<sysinfo::System>,
 }
 
 impl ProgramLock {
@@ -46,7 +49,11 @@ impl ProgramLock {
     pub fn new(prog_name: &str) -> Result<Self, LockError> {
         let path = crate::iroh_data_path(&format!("{}.lock", prog_name))
             .map_err(|e| LockError::InvalidPath { source: e })?;
-        Ok(Self { path, lock: None })
+        Ok(Self {
+            path,
+            lock: None,
+            system: None,
+        })
     }
 
     /// Shorthand intended for main functions that need a lock to guard the process
@@ -55,17 +62,17 @@ impl ProgramLock {
             Ok(false) => {
                 if let Err(e) = self.acquire() {
                     eprintln!("error locking {}: {}", self.program_name(), e);
-                    std::process::exit(crate::exitcodes::ERROR);
+                    process::exit(exitcodes::ERROR);
                 }
                 self
             }
             Ok(true) => {
                 eprintln!("{} is already running, stopping.", self.program_name());
-                std::process::exit(crate::exitcodes::LOCKED);
+                process::exit(exitcodes::LOCKED);
             }
             Err(err) => {
                 eprintln!("error checking lock {}: {}", self.program_name(), err);
-                std::process::exit(crate::exitcodes::ERROR);
+                process::exit(exitcodes::ERROR);
             }
         }
     }
@@ -86,26 +93,28 @@ impl ProgramLock {
     }
 
     /// Check if the current program is locked or not.
-    pub fn is_locked(&self) -> Result<bool, LockError> {
+    pub fn is_locked(&mut self) -> Result<bool, LockError> {
         if !self.path.exists() {
             return Ok(false);
         }
 
         // path exists, examine lock PID
         let pid = read_lock(&self.path)?;
-        process_is_running(pid).map_err(|e| LockError::Uncategorized { source: e })
+        self.process_is_running(pid)
+            .map_err(|e| LockError::Uncategorized { source: e })
     }
 
     /// returns the PID in the lockfile only if the process is active
-    pub fn active_pid(&self) -> Result<Pid, LockError> {
+    pub fn active_pid(&mut self) -> Result<Pid, LockError> {
         if !self.path.exists() {
             return Err(LockError::NoLock(self.path.clone()));
         }
 
         // path exists, examine lock PID
         let pid = read_lock(&self.path)?;
-        let running =
-            process_is_running(pid).map_err(|e| LockError::Uncategorized { source: e })?;
+        let running = self
+            .process_is_running(pid)
+            .map_err(|e| LockError::Uncategorized { source: e })?;
         if running {
             Ok(pid)
         } else {
@@ -134,6 +143,32 @@ impl ProgramLock {
         }
     }
 
+    fn process_is_running(&mut self, pid: Pid) -> AnyhowResult<bool> {
+        // existentialism is sometimes counterproductive
+        let this_pid = sysinfo::get_current_pid().unwrap();
+        if pid == this_pid {
+            return Ok(true);
+        }
+
+        if self.system.is_none() {
+            self.system = Some(System::new());
+        }
+
+        let system = self.system.as_mut().unwrap();
+        if !system.refresh_process(pid) {
+            return Ok(false);
+        }
+
+        match system.process(pid) {
+            Some(process) => {
+                // see https://docs.rs/sysinfo/0.26.5/sysinfo/enum.ProcessStatus.html
+                // for platform-specific details
+                Ok(matches!(process.status(), Idle | Run | Sleep | Waking))
+            }
+            None => Err(anyhow!("couldn't find system process with id {}", pid)),
+        }
+    }
+
     fn write(&mut self) -> AnyhowResult<()> {
         // create lock. ensure path to lock exists
         std::fs::create_dir_all(&crate::iroh_data_root()?)?;
@@ -156,45 +191,6 @@ impl Drop for ProgramLock {
                 warn!("removing lock: {}", err);
             }
         }
-    }
-}
-
-fn process_is_running(pid: Pid) -> AnyhowResult<bool> {
-    // existentialism is sometimes counterproductive
-    let this_pid = sysinfo::get_current_pid().unwrap();
-    if pid == this_pid {
-        return Ok(true);
-    }
-
-    // TODO(b5) - docs say we shouldn't be allocating on each call like this:
-    // https://docs.rs/sysinfo/0.26.5/sysinfo/index.html#usage
-    // I'm suspicious this pattern might be alright. Seems the underlying lib
-    // doesn't do much hydrating, but System may be a large memory allocation
-    let mut s = System::new();
-    if !s.refresh_process(pid) {
-        return Ok(false);
-    }
-
-    match s.process(pid) {
-        Some(process) => {
-            match process.status() {
-                // see https://docs.rs/sysinfo/0.26.5/sysinfo/enum.ProcessStatus.html for platform-specific details
-                ProcessStatus::Idle => Ok(true),
-                ProcessStatus::Run => Ok(true),
-                ProcessStatus::Sleep => Ok(true),
-                ProcessStatus::Waking => Ok(true),
-
-                ProcessStatus::Stop => Ok(false),
-                ProcessStatus::Zombie => Ok(false),
-                ProcessStatus::Tracing => Ok(false),
-                ProcessStatus::Dead => Ok(false),
-                ProcessStatus::Wakekill => Ok(false),
-                ProcessStatus::Parked => Ok(false),
-                ProcessStatus::LockBlocked => Ok(false),
-                ProcessStatus::Unknown(_s) => Ok(false),
-            }
-        }
-        None => Err(anyhow!("couldn't find system process with id {}", pid)),
     }
 }
 
@@ -256,6 +252,7 @@ mod test {
         ProgramLock {
             path: PathBuf::from(name),
             lock: None,
+            system: None,
         }
     }
 
@@ -280,6 +277,7 @@ mod test {
         use std::time::Duration;
 
         // Start with no lock file.
+        // TODO (b5) - use tempfiles for these tests
         let _ = std::fs::remove_file("test1.lock");
 
         let mut lock = create_test_lock("test1.lock");
