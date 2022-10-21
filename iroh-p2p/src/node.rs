@@ -277,22 +277,28 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
 
     fn destroy_session(&mut self, ctx: u64, response_channel: oneshot::Sender<Result<()>>) {
         if let Some(bs) = self.swarm.behaviour().bitswap.as_ref() {
-            let client = bs.client().clone();
-            let workers = self.bitswap_sessions.remove(&ctx).unwrap_or_default();
-            tokio::task::spawn(async move {
-                debug!("stopping session {} ({} workers)", ctx, workers.len());
-                // first shutdown workers
-                for (closer, worker) in workers {
-                    if closer.send(()).is_ok() {
-                        worker.await.ok();
+            if let Some(workers) = self.bitswap_sessions.remove(&ctx) {
+                let client = bs.client().clone();
+                tokio::task::spawn(async move {
+                    debug!("stopping session {} ({} workers)", ctx, workers.len());
+                    // first shutdown workers
+                    for (closer, worker) in workers {
+                        if closer.send(()).is_ok() {
+                            worker.await.ok();
+                        }
                     }
-                }
-                debug!("all workers stopped for session {}", ctx);
-                if let Err(err) = client.stop_session(ctx).await {
-                    warn!("failed to stop session {}: {:?}", ctx, err);
-                }
-                let _ = response_channel.send(Ok(()));
-            });
+                    debug!("all workers stopped for session {}", ctx);
+                    if let Err(err) = client.stop_session(ctx).await {
+                        warn!("failed to stop session {}: {:?}", ctx, err);
+                    }
+                    if let Err(err) = response_channel.send(Ok(())) {
+                        warn!("session {} failed to send stop response: {:?}", ctx, err);
+                    }
+                    debug!("session {} stopped", ctx);
+                });
+            } else if let Err(err) = response_channel.send(Ok(())) {
+                warn!("session {} failed to send stop response: {:?}", ctx, err);
+            }
         } else {
             let _ = response_channel.send(Err(anyhow!("no bitswap available")));
         }
@@ -312,30 +318,25 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
 
             let entry = self.bitswap_sessions.entry(ctx).or_default();
             let worker = tokio::task::spawn(async move {
-                tokio::pin!(closer_r);
-                let block_receiver = client.get_block_with_session_id(ctx, &cid);
-
                 tokio::select! {
                     _ = closer_r => {
                         // Explicit sesssion stop.
-                        debug!("session {}: stopped", ctx);
+                        debug!("session {}: stopped: closed", ctx);
                     }
                     _ = chan.closed() => {
-                        debug!("session {}: request canceled", ctx);
                         // RPC dropped
+                        debug!("session {}: stopped: request canceled", ctx);
                     }
-                    block = block_receiver => {
-                        match block {
-                            Ok(block) => {
-                                if let Err(e) = chan.send(Ok(block)) {
-                                    warn!("failed to send block response: {:?}", e);
-                                }
-                            }
-                            Err(err) => {
-                                chan.send(Err(err.to_string())).ok();
+                    block = client.get_block_with_session_id(ctx, &cid) => match block {
+                        Ok(block) => {
+                            if let Err(e) = chan.send(Ok(block)) {
+                                warn!("failed to send block response: {:?}", e);
                             }
                         }
-                    }
+                        Err(err) => {
+                            chan.send(Err(err.to_string())).ok();
+                        }
+                    },
                 }
             });
             entry.push((closer_s, worker));
@@ -477,14 +478,12 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                                 ..
                             }) = self.kad_queries.get_mut(&QueryKey::ProviderKey(key))
                             {
-                                debug!("found providers: {:?}", providers);
                                 // filter out bad providers.
                                 let providers: HashSet<_> = providers
                                     .into_iter()
                                     .filter(|provider| {
                                         inc!(P2PMetrics::SkippedPeerKad);
                                         let is_bad = self.swarm.behaviour().is_bad_peer(provider);
-                                        debug!("filtering bad peer: {}", provider);
                                         !is_bad
                                     })
                                     .collect();
