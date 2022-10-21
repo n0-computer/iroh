@@ -30,6 +30,12 @@ impl StoreClient {
         Ok(res.version)
     }
 
+    #[tracing::instrument(skip(self))]
+    pub async fn uptime(&self) -> Result<u64> {
+        let res = self.backend.status(()).await?;
+        Ok(res.uptime)
+    }
+
     #[tracing::instrument(skip(self, blob))]
     pub async fn put(&self, cid: Cid, blob: Bytes, links: Vec<Cid>) -> Result<()> {
         let req = PutRequest {

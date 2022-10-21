@@ -1,14 +1,12 @@
 use std::collections::{HashMap, HashSet};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use ahash::AHashMap;
 use anyhow::{anyhow, bail, Context, Result};
 use cid::Cid;
-use futures::future::BoxFuture;
-use futures::FutureExt;
 use futures_util::stream::StreamExt;
 use iroh_metrics::{core::MRecorder, inc, libp2p_metrics, p2p::P2PMetrics};
-use iroh_rpc_client::Client as RpcClient;
+use iroh_rpc_client::{Client as RpcClient, StoreClient};
 use iroh_rpc_types::p2p::P2pServerAddr;
 use libp2p::core::Multiaddr;
 use libp2p::gossipsub::{GossipsubMessage, MessageId, TopicHash};
@@ -78,7 +76,7 @@ pub struct Node<KeyStorage: Storage> {
     #[allow(dead_code)]
     kad_last_range: Option<(Distance, Distance)>,
     rpc_task: JoinHandle<()>,
-    record_sync_task: JoinHandle<()>,
+    record_sync_task: Option<JoinHandle<()>>,
     use_dht: bool,
     bitswap_sessions: BitswapSessions,
 }
@@ -105,11 +103,14 @@ const NICE_INTERVAL: Duration = Duration::from_secs(6);
 const BOOTSTRAP_INTERVAL: Duration = Duration::from_secs(5 * 60);
 const EXPIRY_INTERVAL: Duration = Duration::from_secs(1);
 const PROVIDER_SYNC_INTERVAL: Duration = Duration::from_secs(3600);
+const STORE_CHECK_INTERVAL: Duration = Duration::from_secs(10);
 
 impl<KeyStorage: Storage> Drop for Node<KeyStorage> {
     fn drop(&mut self) {
         self.rpc_task.abort();
-        self.record_sync_task.abort();
+        if let Some(task) = self.record_sync_task.take() {
+            task.abort();
+        }
     }
 }
 
@@ -143,8 +144,17 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
         Swarm::listen_on(&mut swarm, libp2p_config.listening_multiaddr.clone()).unwrap();
         println!("{}", libp2p_config.listening_multiaddr);
 
-        let record_sync_task =
-            tokio::task::spawn(record_sync_task(rpc_client.clone(), network_sender_in_2));
+        // only start the record sync task if we have a way to reach the store
+        let record_sync_task = match rpc_client.try_store() {
+            Ok(store) => Some(tokio::task::spawn(record_sync_task(
+                store.clone(),
+                network_sender_in_2,
+            ))),
+            Err(cause) => {
+                info!("no store configured {}, not syncing records", cause);
+                None
+            }
+        };
 
         Ok(Node {
             swarm,
@@ -865,31 +875,68 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
     }
 }
 
-async fn record_sync_task(client: RpcClient, network_sender_in: Sender<RpcMessage>) {
+/// Asks the store for all its cids and adds them to the provider table
+///
+/// It will do this either when the store has been restarted
+async fn record_sync_task(store: StoreClient, network_sender_in: Sender<RpcMessage>) {
     // try to sync once with the store, failing as soon as something goes wrong
-    let sync_one = || -> BoxFuture<Result<()>> {
-        async {
-            let store = client.try_store()?;
-            let mut records = store.get_block_cids().await?;
-            while let Some(cid) = records.next().await {
-                let cid = cid?;
-                info!("starting to provide {} from the store", cid);
-                let record = cid.to_bytes();
-                let (s, _) = oneshot::channel();
-                network_sender_in
-                    .send(RpcMessage::StartProviding(s, record.into()))
-                    .await?;
-            }
-            Ok(())
+    let sync_one = || async {
+        let mut records = store.get_block_cids().await?;
+        let mut count = 0;
+        while let Some(cid) = records.next().await {
+            let cid = cid?;
+            debug!("starting to provide {} from the store", cid);
+            let record = cid.to_bytes();
+            let (s, _) = oneshot::channel();
+            network_sender_in
+                .send(RpcMessage::StartProviding(s, record.into()))
+                .await?;
+            count += 1;
         }
-        .boxed()
+        info!("Providing {} records from the store", count);
+        anyhow::Ok(())
     };
 
-    let mut provider_sync_interval = tokio::time::interval(PROVIDER_SYNC_INTERVAL);
-    loop {
-        provider_sync_interval.tick().await;
+    let mut store_check_interval = tokio::time::interval(STORE_CHECK_INTERVAL);
+    let mut last_sync_time = None;
+    let mut uptime = Some(0);
+
+    // sync once with the store, logging any error
+    let sync_one_and_log = || async {
         if let Err(cause) = sync_one().await {
-            warn!("Failed to sync provider records: {}", cause);
+            error!("failed to sync with store: {}", cause);
+            false
+        } else {
+            true
+        }
+    };
+    loop {
+        store_check_interval.tick().await;
+        let uptime1 = store.uptime().await.ok();
+        if let Some(uptime1) = uptime1 {
+            if uptime1 < uptime.unwrap_or(u64::MAX) {
+                info!("syncing store because store has restarted");
+                if sync_one_and_log().await {
+                    last_sync_time = Some(Instant::now());
+                }
+            }
+        } else if uptime.is_some() {
+            warn!("store has become unavailable");
+        }
+        uptime = uptime1;
+
+        // check if it is time for a sync despite no store restart
+        if last_sync_time
+            .map(|x| x.elapsed() > PROVIDER_SYNC_INTERVAL)
+            .unwrap_or(true)
+        {
+            info!(
+                "syncing store periodically, period {}s",
+                PROVIDER_SYNC_INTERVAL.as_secs()
+            );
+            if sync_one_and_log().await {
+                last_sync_time = Some(Instant::now());
+            }
         }
     }
 }
