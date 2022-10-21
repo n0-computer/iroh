@@ -5,7 +5,6 @@ use config::{ConfigError, Map, Source, Value};
 use iroh_metrics::config::Config as MetricsConfig;
 use iroh_p2p::Libp2pConfig;
 use iroh_rpc_client::Config as RpcClientConfig;
-use iroh_rpc_types::Addr;
 use iroh_store::config::config_data_path;
 use iroh_util::insert_into_config_map;
 use serde::{Deserialize, Serialize};
@@ -67,10 +66,22 @@ impl Config {
     /// The gateway itself is exposing a UDS rpc endpoint to be also usable
     /// as a single entry point for other system services if feature enabled.
     pub fn default_rpc_config() -> RpcClientConfig {
+<<<<<<< HEAD
         let path: PathBuf = TempDir::new().unwrap().path().join("iroh/ipfsd.http");
+=======
+        #[cfg(feature = "uds-gateway")]
+        let path: PathBuf = tempdir::TempDir::new("iroh")
+            .unwrap()
+            .path()
+            .join("ipfsd.http");
+>>>>>>> 8144e4e (fix: uds grpc error in iroh-one)
 
         RpcClientConfig {
-            gateway_addr: Some(Addr::GrpcUds(path)),
+            #[cfg(feature = "uds-gateway")]
+            gateway_addr: Some(iroh_rpc_types::Addr::GrpcUds(path)),
+            // TODO(ramfox): not sure what the correct option is when not running a uds gateway
+            #[cfg(not(feature = "uds-gateway"))]
+            gateway_addr: None,
             p2p_addr: None,
             store_addr: None,
         }
