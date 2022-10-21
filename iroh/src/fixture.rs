@@ -23,7 +23,10 @@ fn fixture_lookup() -> MockApi {
             Ok(Lookup {
                 peer_id,
                 listen_addrs: vec![],
-                local_addrs: vec![],
+                observed_addrs: vec![],
+                agent_version: String::new(),
+                protocols: vec![],
+                protocol_version: String::new(),
             })
         });
         Ok(mock_p2p)

@@ -11,7 +11,7 @@ mod store;
 
 pub use crate::client::Client;
 pub use crate::config::Config;
-pub use crate::network::P2pClient;
+pub use crate::network::{Lookup, P2pClient};
 #[cfg(feature = "grpc")]
 pub use crate::status::{ServiceStatus, StatusRow, StatusTable};
 pub use crate::store::StoreClient;

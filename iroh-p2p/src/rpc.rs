@@ -10,6 +10,7 @@ use libp2p::gossipsub::{
     error::{PublishError, SubscriptionError},
     MessageId, TopicHash,
 };
+use libp2p::identify::Info as IdentifyInfo;
 use libp2p::kad::record::Key;
 use libp2p::Multiaddr;
 use libp2p::PeerId;
@@ -20,12 +21,12 @@ use tracing::{debug, trace};
 use async_trait::async_trait;
 use iroh_bitswap::Block;
 use iroh_rpc_types::p2p::{
-    BitswapRequest, BitswapResponse, ConnectRequest, ConnectResponse, DisconnectRequest,
+    BitswapRequest, BitswapResponse, ConnectByPeerIdRequest, ConnectRequest, DisconnectRequest,
     GetListeningAddrsResponse, GetPeersResponse, GossipsubAllPeersResponse, GossipsubPeerAndTopics,
     GossipsubPeerIdMsg, GossipsubPeersResponse, GossipsubPublishRequest, GossipsubPublishResponse,
     GossipsubSubscribeResponse, GossipsubTopicHashMsg, GossipsubTopicsResponse, Key as ProviderKey,
-    Multiaddrs, NotifyNewBlocksBitswapRequest, P2p as RpcP2p, P2pServerAddr, PeerIdResponse,
-    Providers, StopSessionBitswapRequest, VersionResponse,
+    LookupRequest, Multiaddrs, NotifyNewBlocksBitswapRequest, P2p as RpcP2p, P2pServerAddr,
+    PeerIdResponse, PeerInfo, Providers, StopSessionBitswapRequest, VersionResponse,
 };
 
 use super::node::DEFAULT_PROVIDER_LIMIT;
@@ -255,15 +256,40 @@ impl RpcP2p for P2p {
     }
 
     #[tracing::instrument(skip(self, req))]
-    async fn peer_connect(&self, req: ConnectRequest) -> Result<ConnectResponse> {
+    /// First attempts to find the peer on the DHT, if found, it will then ensure we have
+    /// a connection to the peer.
+    async fn peer_connect_by_peer_id(&self, req: ConnectByPeerIdRequest) -> Result<()> {
+        let peer_id = peer_id_from_bytes(req.peer_id)?;
+        let (s, r) = oneshot::channel();
+        // ask the swarm if we already have address for this peer
+        let msg = RpcMessage::AddressesOfPeer(s, peer_id);
+        self.sender.send(msg).await?;
+        let res = r.await?;
+        if res.is_empty() {
+            // if we don't have the addr info for this peer, we need to try to
+            // find it on the dht
+            let (s, r) = oneshot::channel();
+            let msg = RpcMessage::FindPeerOnDHT(s, peer_id);
+            self.sender.send(msg).await?;
+            r.await??;
+        }
+        // now we know we have found the peer on the dht,
+        // we can attempt to dial it
+        let (s, r) = oneshot::channel();
+        let msg = RpcMessage::NetConnectByPeerId(s, peer_id);
+        self.sender.send(msg).await?;
+        r.await?
+    }
+
+    #[tracing::instrument(skip(self, req))]
+    /// Dial the peer directly using the PeerId and Multiaddr
+    async fn peer_connect(&self, req: ConnectRequest) -> Result<()> {
         let peer_id = peer_id_from_bytes(req.peer_id)?;
         let addrs = addrs_from_bytes(req.addrs)?;
         let (s, r) = oneshot::channel();
         let msg = RpcMessage::NetConnect(s, peer_id, addrs);
         self.sender.send(msg).await?;
-
-        let success = r.await?;
-        Ok(ConnectResponse { success })
+        r.await?
     }
 
     #[tracing::instrument(skip(self, req))]
@@ -275,6 +301,56 @@ impl RpcP2p for P2p {
         let ack = r.await?;
 
         Ok(ack)
+    }
+
+    #[tracing::instrument(skip(self, req))]
+    async fn lookup(&self, req: LookupRequest) -> Result<PeerInfo> {
+        let (s, r) = oneshot::channel();
+        let peer_id = peer_id_from_bytes(req.peer_id.clone())?;
+
+        // check if we have already encountered this peer, and already
+        // that the peer info
+        let msg = RpcMessage::LookupPeerInfo(s, peer_id);
+        self.sender.send(msg).await?;
+        if let Some(info) = r.await? {
+            return Ok(peer_info_from_identify_info(info));
+        }
+
+        // listen for if any peer info for this peer gets sent to us
+        let (s, r) = oneshot::channel();
+        let msg = RpcMessage::ListenForIdentify(s, peer_id);
+        self.sender.send(msg).await?;
+
+        // once we connect to the peer, the idenitfy protocol
+        // will attempt to exchange peer info
+        let res = match req.addr {
+            Some(addr) => {
+                self.peer_connect(ConnectRequest {
+                    peer_id: req.peer_id,
+                    addrs: vec![addr],
+                })
+                .await
+            }
+            None => {
+                self.peer_connect_by_peer_id(ConnectByPeerIdRequest {
+                    peer_id: req.peer_id,
+                })
+                .await
+            }
+        };
+
+        if let Err(e) = res {
+            let (s, r) = oneshot::channel();
+            self.sender
+                .send(RpcMessage::CancelListenForIdentify(s, peer_id))
+                .await?;
+            r.await?;
+            anyhow::bail!("Cannot get peer information: {}", e);
+        }
+
+        let info = r.await??;
+
+        Ok(peer_info_from_identify_info(info))
     }
 
     #[tracing::instrument(skip(self, req))]
@@ -418,6 +494,22 @@ pub async fn new(addr: P2pServerAddr, sender: Sender<RpcMessage>) -> Result<()> 
     iroh_rpc_types::p2p::serve(addr, p2p).await
 }
 
+fn peer_info_from_identify_info(i: IdentifyInfo) -> PeerInfo {
+    let peer_id = i.public_key.to_peer_id();
+    PeerInfo {
+        peer_id: peer_id.to_bytes(),
+        protocol_version: i.protocol_version,
+        agent_version: i.agent_version,
+        listen_addrs: i
+            .listen_addrs
+            .into_iter()
+            .map(|addr| addr.to_vec())
+            .collect(),
+        protocols: i.protocols,
+        observed_addr: i.observed_addr.to_vec(),
+    }
+}
+
 fn peer_id_from_bytes(p: Vec<u8>) -> Result<PeerId> {
     PeerId::from_bytes(&p[..]).context("invalid peer_id")
 }
@@ -465,9 +557,15 @@ pub enum RpcMessage {
     StopProviding(oneshot::Sender<Result<()>>, Key),
     NetListeningAddrs(oneshot::Sender<(PeerId, Vec<Multiaddr>)>),
     NetPeers(oneshot::Sender<HashMap<PeerId, Vec<Multiaddr>>>),
-    NetConnect(oneshot::Sender<bool>, PeerId, Vec<Multiaddr>),
+    NetConnectByPeerId(oneshot::Sender<Result<()>>, PeerId),
+    NetConnect(oneshot::Sender<Result<()>>, PeerId, Vec<Multiaddr>),
     NetDisconnect(oneshot::Sender<()>, PeerId),
     Gossipsub(GossipsubMessage),
+    FindPeerOnDHT(oneshot::Sender<Result<()>>, PeerId),
+    LookupPeerInfo(oneshot::Sender<Option<IdentifyInfo>>, PeerId),
+    ListenForIdentify(oneshot::Sender<Result<IdentifyInfo>>, PeerId),
+    CancelListenForIdentify(oneshot::Sender<()>, PeerId),
+    AddressesOfPeer(oneshot::Sender<Vec<Multiaddr>>, PeerId),
     Shutdown,
 }
 

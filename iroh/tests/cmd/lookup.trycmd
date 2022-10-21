@@ -1,5 +1,11 @@
 ```
 $ iroh p2p lookup 1AXRDqR8jTkwzGqyu3qknicAC5X578zTMxhAi2brppK2bB
+
 peer id: 1AXRDqR8jTkwzGqyu3qknicAC5X578zTMxhAi2brppK2bB
+listening addresses: []
+protocols: []
+protocol version: 
+observed addresses: []
+
 
 ```

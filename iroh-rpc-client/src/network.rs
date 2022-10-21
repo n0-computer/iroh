@@ -1,16 +1,16 @@
 use std::collections::{HashMap, HashSet};
 
-use anyhow::{ensure, Context, Result};
+use anyhow::{Context, Result};
 use bytes::Bytes;
 use cid::Cid;
 use futures::{Stream, StreamExt};
 #[cfg(feature = "grpc")]
 use iroh_rpc_types::p2p::p2p_client::P2pClient as GrpcP2pClient;
 use iroh_rpc_types::p2p::{
-    BitswapBlock, BitswapRequest, ConnectRequest, DisconnectRequest, GossipsubPeerAndTopics,
-    GossipsubPeerIdMsg, GossipsubPublishRequest, GossipsubTopicHashMsg, Key,
-    NotifyNewBlocksBitswapRequest, P2p, P2pClientAddr, P2pClientBackend, Providers,
-    StopSessionBitswapRequest,
+    BitswapBlock, BitswapRequest, ConnectByPeerIdRequest, ConnectRequest, DisconnectRequest,
+    GossipsubPeerAndTopics, GossipsubPeerIdMsg, GossipsubPublishRequest, GossipsubTopicHashMsg,
+    Key, LookupRequest, NotifyNewBlocksBitswapRequest, P2p, P2pClientAddr, P2pClientBackend,
+    PeerInfo, Providers, StopSessionBitswapRequest,
 };
 use iroh_rpc_types::Addr;
 use libp2p::gossipsub::{MessageId, TopicHash};
@@ -152,14 +152,32 @@ impl P2pClient {
     }
 
     #[tracing::instrument(skip(self))]
+    /// Attempts to connect to the given node. If only the `PeerId` is present, it will
+    /// attempt to find the given peer on the DHT before connecting. If the `PeerId` and any
+    /// `Multiaddr`s are present, it will attempt to connect to the peer directly.
     pub async fn connect(&self, peer_id: PeerId, addrs: Vec<Multiaddr>) -> Result<()> {
-        let req = ConnectRequest {
+        if !addrs.is_empty() {
+            let req = ConnectRequest {
+                peer_id: peer_id.to_bytes(),
+                addrs: addrs.iter().map(|a| a.to_vec()).collect(),
+            };
+            self.backend.peer_connect(req).await
+        } else {
+            let req = ConnectByPeerIdRequest {
+                peer_id: peer_id.to_bytes(),
+            };
+            self.backend.peer_connect_by_peer_id(req).await
+        }
+    }
+
+    #[tracing::instrument(skip(self))]
+    pub async fn lookup(&self, peer_id: PeerId, addr: Option<Multiaddr>) -> Result<Lookup> {
+        let req = LookupRequest {
             peer_id: peer_id.to_bytes(),
-            addrs: addrs.iter().map(|a| a.to_vec()).collect(),
+            addr: addr.map(|a| a.to_vec()),
         };
-        let res = self.backend.peer_connect(req).await?;
-        ensure!(res.success, "dial failed");
-        Ok(())
+        let peer_info = self.backend.lookup(req).await?;
+        Lookup::from_peer_info(peer_info)
     }
 
     #[tracing::instrument(skip(self))]
@@ -257,6 +275,32 @@ impl P2pClient {
     }
 }
 
+#[derive(Debug)]
+pub struct Lookup {
+    pub peer_id: PeerId,
+    pub listen_addrs: Vec<Multiaddr>,
+    pub observed_addrs: Vec<Multiaddr>,
+    pub protocol_version: String,
+    pub agent_version: String,
+    pub protocols: Vec<String>,
+}
+
+impl Lookup {
+    fn from_peer_info(p: PeerInfo) -> Result<Self> {
+        let peer_id = peer_id_from_bytes(p.peer_id)?;
+        let listen_addrs = addrs_from_bytes(p.listen_addrs)?;
+        let addr = addr_from_bytes(p.observed_addr)?;
+        Ok(Self {
+            peer_id,
+            protocol_version: p.protocol_version,
+            agent_version: p.agent_version,
+            listen_addrs,
+            protocols: p.protocols,
+            observed_addrs: vec![addr],
+        })
+    }
+}
+
 fn peers_and_topics_from_bytes(pt: GossipsubPeerAndTopics) -> Result<(PeerId, Vec<TopicHash>)> {
     let peer_id = peer_id_from_bytes(pt.peer_id)?;
     let topics = pt.topics.into_iter().map(TopicHash::from_raw).collect();
@@ -291,7 +335,7 @@ mod tests {
     use super::*;
     use async_trait::async_trait;
     use iroh_rpc_types::p2p::{
-        p2p_server, BitswapResponse, ConnectResponse, GetListeningAddrsResponse, GetPeersResponse,
+        p2p_server, BitswapResponse, GetListeningAddrsResponse, GetPeersResponse,
         GossipsubAllPeersResponse, GossipsubPeersResponse, GossipsubPublishResponse,
         GossipsubSubscribeResponse, GossipsubTopicsResponse, Multiaddrs, PeerIdResponse,
         VersionResponse,
@@ -429,12 +473,21 @@ mod tests {
         ) -> Result<tonic::Response<GetPeersResponse>, tonic::Status> {
             todo!()
         }
+
         async fn peer_connect(
             &self,
             _request: Request<ConnectRequest>,
-        ) -> Result<tonic::Response<ConnectResponse>, tonic::Status> {
+        ) -> Result<tonic::Response<()>, tonic::Status> {
             todo!()
         }
+
+        async fn peer_connect_by_peer_id(
+            &self,
+            _request: Request<ConnectByPeerIdRequest>,
+        ) -> Result<tonic::Response<()>, tonic::Status> {
+            todo!()
+        }
+
         async fn peer_disconnect(
             &self,
             _request: Request<DisconnectRequest>,
@@ -446,6 +499,13 @@ mod tests {
             &self,
             _request: Request<()>,
         ) -> Result<tonic::Response<()>, tonic::Status> {
+            todo!()
+        }
+
+        async fn lookup(
+            &self,
+            _request: Request<LookupRequest>,
+        ) -> Result<tonic::Response<PeerInfo>, tonic::Status> {
             todo!()
         }
 

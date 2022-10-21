@@ -10,7 +10,7 @@ use iroh_store::config::config_data_path;
 use iroh_util::insert_into_config_map;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use tempdir::TempDir;
+use tempfile::TempDir;
 
 /// CONFIG_FILE_NAME is the name of the optional config file located in the iroh home directory
 pub const CONFIG_FILE_NAME: &str = "one.config.toml";
@@ -67,7 +67,7 @@ impl Config {
     /// The gateway itself is exposing a UDS rpc endpoint to be also usable
     /// as a single entry point for other system services if feature enabled.
     pub fn default_rpc_config() -> RpcClientConfig {
-        let path: PathBuf = TempDir::new("iroh").unwrap().path().join("ipfsd.http");
+        let path: PathBuf = TempDir::new().unwrap().path().join("iroh/ipfsd.http");
 
         RpcClientConfig {
             gateway_addr: Some(Addr::GrpcUds(path)),
