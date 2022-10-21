@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 
 use ahash::AHashMap;
 use libp2p::{
@@ -9,10 +9,12 @@ use tokio::sync::mpsc;
 
 type ResponseChannel = mpsc::Sender<Result<HashSet<PeerId>, String>>;
 
+const OUTSTANDING_LIMIT: usize = 2048;
+
 /// Manages provider queries to the DHT.
 #[derive(Debug)]
 pub struct Providers {
-    outstanding_queries: (mpsc::Sender<Query>, mpsc::Receiver<Query>),
+    outstanding_queries: VecDeque<Query>,
     current_queries: AHashMap<Key, RunningQuery>,
     max_running_queries: usize,
 }
@@ -20,8 +22,7 @@ pub struct Providers {
 #[derive(Debug)]
 struct Query {
     key: Key,
-    limit: usize,
-    response_channel: ResponseChannel,
+    queries: Vec<QueryDetails>,
 }
 
 #[derive(Debug)]
@@ -39,10 +40,8 @@ struct QueryDetails {
 
 impl Providers {
     pub fn new(max_running_queries: usize) -> Self {
-        let outstanding_queries = mpsc::channel(2048);
-
         Self {
-            outstanding_queries,
+            outstanding_queries: Default::default(),
             current_queries: Default::default(),
             max_running_queries,
         }
@@ -73,15 +72,23 @@ impl Providers {
                 });
             }
             true
-        } else {
-            self.outstanding_queries
-                .0
-                .try_send(Query {
-                    key,
+        } else if let Some(entry) = self.outstanding_queries.iter_mut().find(|q| q.key == key) {
+            entry.queries.push(QueryDetails {
+                limit,
+                response_channel,
+            });
+            true
+        } else if self.outstanding_queries.len() < OUTSTANDING_LIMIT {
+            self.outstanding_queries.push_back(Query {
+                key,
+                queries: vec![QueryDetails {
                     limit,
                     response_channel,
-                })
-                .is_ok()
+                }],
+            });
+            true
+        } else {
+            false
         }
     }
 
@@ -184,22 +191,14 @@ impl Providers {
     pub fn poll(&mut self, kad: &mut Kademlia<MemoryStore>) {
         // Start a new query if not enough and have an outstanding one.
         if self.current_queries.len() < self.max_running_queries {
-            if let Ok(Query {
-                key,
-                limit,
-                response_channel,
-            }) = self.outstanding_queries.1.try_recv()
-            {
+            if let Some(Query { key, queries }) = self.outstanding_queries.pop_front() {
                 let query_id = kad.get_providers(key.clone());
                 self.current_queries.insert(
                     key,
                     RunningQuery {
                         query_id,
                         found_providers: Default::default(),
-                        queries: vec![QueryDetails {
-                            limit,
-                            response_channel,
-                        }],
+                        queries,
                     },
                 );
             }
