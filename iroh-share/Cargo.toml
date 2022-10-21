@@ -18,7 +18,7 @@ iroh-resolver = { path = "../iroh-resolver", default-features = false, features 
 iroh-util = { path = "../iroh-util" }
 tracing = "0.1.34"
 tokio = { version = "1" }
-libp2p = { version = "0.49", default-features = false, features = ["gossipsub"] }
+libp2p = { version = "0.50", default-features = false, features = ["gossipsub"] }
 serde = { version = "1", features = ["derive"] }
 futures = "0.3.21"
 bytes = "1.1.0"

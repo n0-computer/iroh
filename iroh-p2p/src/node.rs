@@ -11,7 +11,7 @@ use iroh_rpc_types::p2p::P2pServerAddr;
 use libp2p::core::Multiaddr;
 use libp2p::gossipsub::{GossipsubMessage, MessageId, TopicHash};
 pub use libp2p::gossipsub::{IdentTopic, Topic};
-use libp2p::identify::IdentifyEvent;
+use libp2p::identify::Event as IdentifyEvent;
 use libp2p::identity::Keypair;
 use libp2p::kad::kbucket::{Distance, NodeStatus};
 use libp2p::kad::BootstrapOk;

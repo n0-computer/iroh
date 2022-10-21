@@ -1,6 +1,6 @@
 use iroh_bitswap::BitswapEvent;
 use libp2p::{
-    autonat, dcutr, gossipsub::GossipsubEvent, identify::IdentifyEvent, kad::KademliaEvent,
+    autonat, dcutr, gossipsub::GossipsubEvent, identify::Event as IdentifyEvent, kad::KademliaEvent,
     mdns::MdnsEvent, ping::Event as PingEvent, relay,
 };
 

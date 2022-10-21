@@ -31,18 +31,18 @@ console-subscriber = { version = "0.1.7", optional = true }
 paste = "1.0.9"
 
 [dependencies.libp2p]
-version = "0.49"
+version = "0.50"
 default-features = false
 features = [
   "gossipsub",
   "kad",
   "identify",
   "ping",
-  "mdns-tokio",
+  "mdns",
   "noise",
   "yamux",
-  "tcp-tokio",
-  "dns-tokio",
+  "tcp",
+  "dns",
   "mplex",
   "request-response",
   "websocket",
@@ -51,6 +51,7 @@ features = [
   "relay",
   "dcutr",
   "autonat",
+  "tokio",
 ] 
 optional = true
 
