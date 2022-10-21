@@ -22,12 +22,7 @@ use tracing::{debug, error};
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<()> {
     let mut lock = ProgramLock::new("iroh-one")?;
-    if lock.is_locked() {
-        println!("iroh-one is already running, stopping.");
-        return Ok(());
-    } else {
-        lock.acquire()?;
-    }
+    lock.acquire_or_exit();
 
     let args = Args::parse();
 

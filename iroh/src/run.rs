@@ -37,14 +37,6 @@ impl Cli {
 
 #[derive(Subcommand, Debug, Clone)]
 enum Commands {
-    // status checks the health of the different processes
-    #[clap(about = "Check the health of the different iroh processes.")]
-    #[clap(after_help = doc::STATUS_LONG_DESCRIPTION)]
-    Status {
-        #[clap(short, long)]
-        /// Poll process for changes
-        watch: bool,
-    },
     P2p(P2p),
     #[clap(about = "Add a file or directory to iroh & make it available on IPFS")]
     Add {
@@ -65,6 +57,20 @@ enum Commands {
         /// filesystem path to write to. Optional and defaults to $CID
         output: Option<PathBuf>,
     },
+    #[clap(about = "Start iroh services locally")]
+    #[clap(after_help = doc::START_LONG_DESCRIPTION )]
+    Start {},
+    /// status checks the health of the different processes
+    #[clap(about = "Check the health of the different iroh services")]
+    #[clap(after_help = doc::STATUS_LONG_DESCRIPTION)]
+    Status {
+        #[clap(short, long)]
+        /// when true, updates the status table whenever a change in a process's status occurs
+        watch: bool,
+    },
+    #[clap(about = "Stop all local iroh services")]
+    #[clap(after_help = doc::STOP_LONG_DESCRIPTION )]
+    Stop {},
 }
 
 impl Cli {
@@ -106,10 +112,6 @@ impl Cli {
 
     async fn cli_command(&self, api: &impl Api) -> Result<()> {
         match &self.command {
-            Commands::Status { watch } => {
-                crate::status::status(api, *watch).await?;
-            }
-            Commands::P2p(p2p) => run_p2p_command(&api.p2p()?, p2p).await?,
             Commands::Add {
                 path,
                 recursive,
@@ -123,6 +125,16 @@ impl Cli {
             } => {
                 let root_path = api.get(path, output.as_deref()).await?;
                 println!("Saving file(s) to {}", root_path.to_str().unwrap());
+            }
+            Commands::P2p(p2p) => run_p2p_command(&api.p2p()?, p2p).await?,
+            Commands::Start {} => {
+                crate::services::start(api).await?;
+            }
+            Commands::Status { watch } => {
+                crate::services::status(api, *watch).await?;
+            }
+            Commands::Stop {} => {
+                crate::services::stop(api).await?;
             }
         };
 

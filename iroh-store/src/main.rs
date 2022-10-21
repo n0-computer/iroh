@@ -5,11 +5,15 @@ use iroh_store::{
     config::{config_data_path, CONFIG_FILE_NAME, ENV_PREFIX},
     metrics, rpc, Config, Store,
 };
+use iroh_util::lock::ProgramLock;
 use iroh_util::{block_until_sigint, iroh_config_path, make_config};
 use tracing::{debug, error, info};
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> anyhow::Result<()> {
+    let mut lock = ProgramLock::new("iroh-store")?;
+    lock.acquire_or_exit();
+
     let args = Args::parse();
 
     let version = env!("CARGO_PKG_VERSION");

@@ -2,12 +2,16 @@ use anyhow::{anyhow, Context, Result};
 use clap::Parser;
 use iroh_p2p::config::{Config, CONFIG_FILE_NAME, ENV_PREFIX};
 use iroh_p2p::{cli::Args, metrics, DiskStorage, Keychain, Node};
+use iroh_util::lock::ProgramLock;
 use iroh_util::{iroh_config_path, make_config};
 use tokio::task;
 use tracing::{debug, error};
 
 /// Starts daemon process
 fn main() -> Result<()> {
+    let mut lock = ProgramLock::new("iroh-p2p")?;
+    lock.acquire_or_exit();
+
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .max_blocking_threads(2048)
         .thread_stack_size(16 * 1024 * 1024)

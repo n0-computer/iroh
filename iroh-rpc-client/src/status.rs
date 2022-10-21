@@ -179,6 +179,13 @@ impl StatusTable {
         }
     }
 
+    pub fn iter(&self) -> StatusTableIterator<'_> {
+        StatusTableIterator {
+            table: self,
+            iter: 0,
+        }
+    }
+
     pub fn update(&mut self, s: StatusRow) -> Result<()> {
         if self.gateway.name() == s.name() {
             self.gateway = s;
@@ -193,6 +200,27 @@ impl StatusTable {
             return Ok(());
         }
         Err(anyhow::anyhow!("unknown service {}", s.name))
+    }
+}
+
+pub struct StatusTableIterator<'a> {
+    table: &'a StatusTable,
+    iter: usize,
+}
+
+impl Iterator for StatusTableIterator<'_> {
+    type Item = StatusRow;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let current = match self.iter {
+            0 => Some(self.table.store.to_owned()),
+            1 => Some(self.table.p2p.to_owned()),
+            2 => Some(self.table.gateway.to_owned()),
+            _ => None,
+        };
+
+        self.iter += 1;
+        current
     }
 }
 
@@ -307,5 +335,31 @@ mod tests {
         let expect = StatusTable::new(gateway, p2p.clone(), store);
         got.update(p2p.unwrap()).unwrap();
         assert_eq!(expect, got);
+    }
+
+    #[test]
+    fn status_table_iter() {
+        let table = StatusTable::default();
+        let rows: Vec<StatusRow> = table.iter().collect();
+        assert_eq!(
+            vec![
+                StatusRow {
+                    name: crate::store::NAME,
+                    number: 1,
+                    status: ServiceStatus::Unknown,
+                },
+                StatusRow {
+                    name: crate::network::NAME,
+                    number: 1,
+                    status: ServiceStatus::Unknown,
+                },
+                StatusRow {
+                    name: crate::gateway::NAME,
+                    number: 1,
+                    status: ServiceStatus::Unknown,
+                },
+            ],
+            rows
+        );
     }
 }

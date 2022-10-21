@@ -10,12 +10,16 @@ use iroh_gateway::{
     metrics,
 };
 use iroh_rpc_client::Client as RpcClient;
+use iroh_util::lock::ProgramLock;
 use iroh_util::{iroh_config_path, make_config};
 use tokio::sync::RwLock;
 use tracing::{debug, error};
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<()> {
+    let mut lock = ProgramLock::new("iroh-gateway")?;
+    lock.acquire_or_exit();
+
     let args = Args::parse();
 
     let cfg_path = iroh_config_path(CONFIG_FILE_NAME)?;

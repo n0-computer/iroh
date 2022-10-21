@@ -9,31 +9,58 @@ of the protocol.
 
 For more info see https://iroh.computer/docs";
 
+pub const START_LONG_DESCRIPTION: &str = "
+Iroh start kicks off 'daemons' on your local machine: long-running processes 
+that make iroh work. Iroh requires a running daemon to do anything meaningful 
+like add or get content, and `iroh start` is the fastest way to get iroh up &
+running locally. Once running, stop iroh with `iroh stop`.
+
+Use the start, stop, and status commands to monitor iroh on your local machine,
+and control it's uptime.
+
+Daemons provide 'services' like storage, peer-2-peer networking, and a gateway 
+to bridge IPFS to HTTP. Services work together to fullfill API requests. In this
+v0.1.0 release iroh is hard-coded to start three deamons: iroh-gateway, 
+iroh-p2p, and iroh-store. Each daemon provides gateway, p2p, and store services,
+respectively. To learn more about each service, see:
+  https://iroh.computer/docs/services
+
+Iroh start is a simple command, under the hood it just kicks off daemons to run 
+in the background. On startup each deamon writes its process identifier (PID) to
+a lock file, which iroh stop uses to lookup and terminate.  Iroh start is by no 
+means the only way to get iroh up & running. Long running local deployments
+should be scheduled by your operating systems daemon supervisior, and cloud
+deployments should invoke daemon binaries directly. Regardless of how iroh is 
+started, you can always use `iroh status` to monitor service health.
+";
+
+pub const STOP_LONG_DESCRIPTION: &str = "
+stop turns local iroh services off by killing daemon processes. When a deamon
+starts it creates a lockfile and writes it's process identifier (PID) to the 
+lock. Iroh stop uses this lock to lookup the process & send an interrupt signal 
+to the daemon, which halts the service.
+
+iroh stop will also try to clean up any stray lock files in the even that a
+program crash fails to remove the lockfile from the file system.
+";
+
 pub const STATUS_LONG_DESCRIPTION: &str = "
 status reports the current operational setup of iroh. Use status as a go-to
 command for understanding where iroh commands are being processed. different
 ops configurations utilize different network and service implementations
 under the hood, which can lead to varying performance characteristics.
 
-Status reports connectivity, which is either offline or online:
+Service status can be in one of four states:
 
-  offline: iroh is not connected to any background process, all commands
-           are one-off, any network connections are closed when a command
-           completes. Some network duties may be delegated to remote hosts.
-
-  online:  iroh has found a long-running process to issue commands to. Any
-           comand issued will be deletegated to the long-running process as a
-           remote procedure call
-
-If iroh is online, status also reports the service configuration of the
-long running process, including the health of the configured subsystem(s).
-Possible configurations fall into two buckets:
-
-  one:     Iroh is running with all services bundled into one single process,
-           this setup is common in desktop enviornments.
-
-  cloud:   Iroh is running with services split into separate processes, which
-           are speaking to each other via remote procedure calls.
+  Down:         The service is not currently running, or is 
+                not configured to connect to the proper port.
+                
+  Serving:      The service is running & healthy
+  
+  Not Serving:  The service is running, but unhealthy.
+  
+  Unknown:      The service is in an unknown state. 
+                This should not happen.
 
 Use the --watch flag to continually poll for changes.
 

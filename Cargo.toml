@@ -4,19 +4,20 @@ members = [
   "iroh-api",
   "iroh-bitswap",
   "iroh-car",
-  "iroh-rpc-client",
-  "iroh-rpc-types",
   "iroh-gateway",
+  "iroh-localops",
   "iroh-metrics",
   "iroh-one",
   "iroh-p2p",
   "iroh-resolver",
+  "iroh-rpc-client",
+  "iroh-rpc-types",
   "iroh-store",
   "iroh-share",
   "iroh-util",
   "stores/*",
   "examples",
-  "xtask"
+  "xtask",
 ]
 # even if all crates are set to edition 2021, we still need to force the
 # resolver to 2
