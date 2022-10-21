@@ -3,6 +3,7 @@ use std::{ops::Deref, pin::Pin, sync::Arc, time::Duration};
 use ahash::AHashSet;
 use anyhow::{anyhow, ensure, Result};
 use cid::Cid;
+use futures::{future, stream, StreamExt};
 use iroh_metrics::{bitswap::BitswapMetrics, core::MRecorder, inc, record};
 use libp2p::PeerId;
 use tokio::{
@@ -30,6 +31,9 @@ mod session_wants;
 pub use self::session_want_sender::Signaler;
 
 const BROADCAST_LIVE_WANTS_LIMIT: usize = 64;
+const MAX_IN_PROCESS_REQUESTS: usize = 6;
+const MAX_PROVIDERS: usize = 10;
+const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// The kind of operation being executed in the event loop.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -359,15 +363,14 @@ struct LoopState {
     session_wants: SessionWants,
     session_interest_manager: SessionInterestManager,
     session_want_sender: SessionWantSender,
-    network: Network,
     peer_manager: PeerManager,
     latency_tracker: LatencyTracker,
     idle_tick: Pin<Box<Sleep>>,
     base_tick_delay: Duration,
     initial_search_delay: Duration,
     workers: Vec<JoinHandle<Option<()>>>,
-    incoming: async_channel::Sender<Op>,
     task_controller: tokio_context::task::TaskController,
+    provider_search_queue: Arc<deadqueue::limited::Queue<Cid>>,
 }
 
 impl LoopState {
@@ -383,7 +386,60 @@ impl LoopState {
         incoming: async_channel::Sender<Op>,
     ) -> Self {
         let idle_tick = Box::pin(tokio::time::sleep(initial_search_delay));
-        let task_controller = tokio_context::task::TaskController::new();
+        let mut task_controller = tokio_context::task::TaskController::new();
+
+        let mut workers = Vec::new();
+        let queue = Arc::new(deadqueue::limited::Queue::new(128));
+
+        for _ in 0..MAX_IN_PROCESS_REQUESTS {
+            let network = network.clone();
+            let incoming = incoming.clone();
+            let queue = queue.clone();
+
+            workers.push(task_controller.spawn(async move {
+                loop {
+                    let cid = queue.pop().await;
+                    if let Ok(chan) = network.find_providers(cid, MAX_PROVIDERS).await {
+                        let stream = tokio_stream::wrappers::ReceiverStream::new(chan);
+                        stream
+                            // Remove intermitten failures.
+                            .filter_map(|providers_result| future::ready(providers_result.ok()))
+                            // Flatten.
+                            .flat_map_unordered(Some(2), |providers| stream::iter(providers))
+                            // Attempt to dial the provider.
+                            .filter_map(|provider| {
+                                let network = network.clone();
+                                async move {
+                                    network
+                                        .dial(provider, DEFAULT_TIMEOUT)
+                                        .await
+                                        .ok()
+                                        .map(|_| provider)
+                                }
+                            })
+                            // Notify the session about successfull ones.
+                            .for_each_concurrent(Some(2), |provider| {
+                                inc!(BitswapMetrics::ProvidersTotal);
+                                debug!("found provider for {}: {}", cid, provider);
+                                // When a provider indicates that it has a cid, it's equivalent to
+                                // the providing peer sending a HAVE.
+                                let incoming = incoming.clone();
+                                async move {
+                                    let _ = incoming
+                                        .send(Op::UpdateWantSender {
+                                            from: provider,
+                                            keys: Vec::new(),
+                                            haves: vec![cid],
+                                            dont_haves: Vec::new(),
+                                        })
+                                        .await;
+                                }
+                            })
+                            .await;
+                    }
+                }
+            }));
+        }
 
         LoopState {
             id,
@@ -391,15 +447,14 @@ impl LoopState {
             session_wants,
             session_want_sender,
             session_interest_manager,
-            network,
             peer_manager,
             latency_tracker: Default::default(),
             base_tick_delay: Duration::from_millis(500),
             initial_search_delay,
             idle_tick,
-            workers: Vec::new(),
-            incoming,
+            workers,
             task_controller,
+            provider_search_queue: queue,
         }
     }
 
@@ -468,60 +523,8 @@ impl LoopState {
     /// Attempts to find more peers for a session by searching for providers for the given cid.
     async fn find_more_peers(&mut self, cid: &Cid) {
         debug!("session:{}: find_more_peers {}", self.id, cid);
-        let cid = *cid;
-
-        const MAX_PROVIDERS: usize = 10;
-        const MAX_IN_PROCESS_REQUESTS: usize = 6;
-        const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
-
-        use futures::{future, stream, StreamExt};
-
         inc!(BitswapMetrics::ProviderQueryCreated);
-        if let Ok(chan) = self.network.find_providers(cid, MAX_PROVIDERS).await {
-            let network = self.network.clone();
-            let incoming = self.incoming.clone();
-            // TODO: maybe needs limiting
-            // TODO: shutdown & cancel
-            let worker = self.task_controller.spawn(async move {
-                let stream = tokio_stream::wrappers::ReceiverStream::new(chan);
-                stream
-                    // Remove failed fetches
-                    .filter_map(|providers_result| future::ready(providers_result.ok()))
-                    // Flatten
-                    .flat_map_unordered(Some(MAX_IN_PROCESS_REQUESTS), |providers| {
-                        stream::iter(providers)
-                    })
-                    .filter_map(|provider| {
-                        let network = network.clone();
-                        async move {
-                            network
-                                .dial(provider, DEFAULT_TIMEOUT)
-                                .await
-                                .ok()
-                                .map(|_| provider)
-                        }
-                    })
-                    .for_each_concurrent(Some(MAX_IN_PROCESS_REQUESTS), |provider| {
-                        inc!(BitswapMetrics::ProvidersTotal);
-                        debug!("found provider for {}: {}", cid, provider);
-                        // When a provider indicates that it has a cid, it's equivalent to
-                        // the providing peer sending a HAVE.
-                        let incoming = incoming.clone();
-                        async move {
-                            let _ = incoming
-                                .send(Op::UpdateWantSender {
-                                    from: provider,
-                                    keys: Vec::new(),
-                                    haves: vec![cid],
-                                    dont_haves: Vec::new(),
-                                })
-                                .await;
-                        }
-                    })
-                    .await;
-            });
-            self.workers.push(worker);
-        }
+        let _ = self.provider_search_queue.push(*cid).await;
     }
 
     /// Called when the session receives blocks from a peer.
