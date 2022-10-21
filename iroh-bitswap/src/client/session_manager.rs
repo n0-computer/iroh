@@ -18,8 +18,7 @@ use tracing::debug;
 use crate::{network::Network, Block};
 
 use super::{
-    block_presence_manager::BlockPresenceManager, peer_manager::PeerManager,
-    provider_query_manager::ProviderQueryManager, session::Session,
+    block_presence_manager::BlockPresenceManager, peer_manager::PeerManager, session::Session,
     session_interest_manager::SessionInterestManager,
 };
 

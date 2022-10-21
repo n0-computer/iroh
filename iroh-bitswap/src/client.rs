@@ -20,7 +20,6 @@ mod block_presence_manager;
 mod message_queue;
 mod peer_manager;
 mod peer_want_manager;
-mod provider_query_manager;
 mod session;
 mod session_interest_manager;
 mod session_manager;

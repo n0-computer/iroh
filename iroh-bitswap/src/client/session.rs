@@ -18,8 +18,7 @@ use self::{session_want_sender::SessionWantSender, session_wants::SessionWants};
 
 use super::{
     block_presence_manager::BlockPresenceManager, peer_manager::PeerManager,
-    provider_query_manager::ProviderQueryManager, session_interest_manager::SessionInterestManager,
-    session_manager::SessionManager,
+    session_interest_manager::SessionInterestManager, session_manager::SessionManager,
 };
 
 mod cid_queue;
@@ -489,7 +488,9 @@ impl LoopState {
                     // Remove failed fetches
                     .filter_map(|providers_result| future::ready(providers_result.ok()))
                     // Flatten
-                    .flat_map_unordered(Some(MAX_PROVIDERS), |providers| stream::iter(providers))
+                    .flat_map_unordered(Some(MAX_IN_PROCESS_REQUESTS), |providers| {
+                        stream::iter(providers)
+                    })
                     .filter_map(|provider| {
                         let network = network.clone();
                         async move {
@@ -500,7 +501,7 @@ impl LoopState {
                                 .map(|_| provider)
                         }
                     })
-                    .for_each_concurrent(Some(MAX_PROVIDERS), |provider| {
+                    .for_each_concurrent(Some(MAX_IN_PROCESS_REQUESTS), |provider| {
                         inc!(BitswapMetrics::ProvidersTotal);
                         debug!("found provider for {}: {}", cid, provider);
                         // When a provider indicates that it has a cid, it's equivalent to
