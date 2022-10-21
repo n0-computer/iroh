@@ -298,8 +298,8 @@ mod test {
                     let _ = std::fs::remove_file("lock_test.result");
                 }
                 Ok(Child) => {
-                    let lock = create_test_lock("test1.lock");
-                    let lock2 = create_test_lock("test2.lock");
+                    let mut lock = create_test_lock("test1.lock");
+                    let mut lock2 = create_test_lock("test2.lock");
                     let pid = read_lock(&PathBuf::from("test1.lock")).unwrap();
                     {
                         let mut result = std::fs::File::create("lock_test.result").unwrap();
