@@ -110,7 +110,7 @@ impl RpcP2p for P2p {
         self.sender.send(msg).await?;
         let block = r
             .await
-            .expect("should not drop accidentially")
+            .map_err(|_| anyhow!("bitswap req shut down"))?
             .map_err(|e| anyhow!("bitswap: {}", e))?;
 
         ensure!(
