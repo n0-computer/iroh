@@ -143,6 +143,10 @@ impl ProgramLock {
         self.lock = Some(pid);
         Ok(())
     }
+
+    pub fn destroy_without_checking(&self) -> AnyhowResult<()> {
+        std::fs::remove_file(&self.path).map_err(|e| e.into())
+    }
 }
 
 impl Drop for ProgramLock {
@@ -228,7 +232,7 @@ pub enum LockError {
     /// Failure to parse contents of lock file
     #[error("Corrupt lock file contents at {0}")]
     CorruptLock(PathBuf),
-    #[error("Cannot detrmine status of process holding this lock")]
+    #[error("Cannot determine status of process holding this lock")]
     ZombieLock(PathBuf),
     // location for lock no bueno
     #[error("invalid path for lock file: {source}")]
