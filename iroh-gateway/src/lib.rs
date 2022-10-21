@@ -10,4 +10,6 @@ pub mod headers;
 pub mod metrics;
 pub mod response;
 mod rpc;
+mod run;
 pub mod templates;
+pub use run::run;

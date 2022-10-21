@@ -1,0 +1,24 @@
+[package]
+name = "iroh-entry-point"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+anyhow = "1.0.66"
+clap = { version = "4.0.9", features = ["derive"] }
+iroh-gateway = {path = "../iroh-gateway"}
+iroh = {path = "../iroh"}
+iroh-metrics = {path = "../iroh-metrics", default-features = false}
+iroh-p2p = {path = "../iroh-p2p", default-features = false, features = ["rpc-mem"]}
+iroh-resolver = {path = "../iroh-resolver"}
+iroh-rpc-client = {path = "../iroh-rpc-client", default-features = false}
+iroh-rpc-types = {path = "../iroh-rpc-types", default-features = false}
+iroh-store = {path = "../iroh-store", default-features = false, features = ["rpc-mem"]}
+iroh-util = {path = "../iroh-util"}
+tokio = "1.21.2"
+
+[[bin]]
+name = "iroh"
+path = "src/main.rs"

@@ -37,3 +37,7 @@ iroh-api = { path = "../iroh-api", features = ["testing"] }
 # Unfortunately this also turns on the feature during development, which may be
 # confusing. See the comments in `run.rs` surrounding this.
 iroh = { path = ".", features = ["testing"] }
+
+[[bin]]
+name = "iroh-cli"
+path = "src/main.rs"
