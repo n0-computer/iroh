@@ -114,7 +114,9 @@ impl Providers {
             // If no queries are left we are done.
             if query.queries.is_empty() {
                 self.current_queries.remove(&key);
-                kad.query_mut(&id).map(|mut query| query.finish());
+                if let Some(mut query) = kad.query_mut(&id) {
+                    query.finish();
+                }
                 return;
             }
 
@@ -150,7 +152,9 @@ impl Providers {
                 // Check if ther are any queries left.
                 if query.queries.is_empty() {
                     self.current_queries.remove(&key);
-                    kad.query_mut(&id).map(|mut query| query.finish());
+                    if let Some(mut query) = kad.query_mut(&id) {
+                        query.finish();
+                    }
 
                     // we freed a spot, poll for advancing queries
                     self.poll(kad);
@@ -212,8 +216,9 @@ impl Providers {
         }
         self.current_queries.retain(|_, query| {
             if query.queries.is_empty() {
-                kad.query_mut(&query.query_id)
-                    .map(|mut query| query.finish());
+                if let Some(mut query) = kad.query_mut(&query.query_id) {
+                    query.finish();
+                }
                 false
             } else {
                 true

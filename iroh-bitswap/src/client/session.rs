@@ -405,7 +405,7 @@ impl LoopState {
                             // Remove intermitten failures.
                             .filter_map(|providers_result| future::ready(providers_result.ok()))
                             // Flatten.
-                            .flat_map_unordered(None, |providers| stream::iter(providers))
+                            .flat_map_unordered(None, stream::iter)
                             // Attempt to dial the provider.
                             .filter_map(|provider| {
                                 let network = network.clone();
@@ -524,7 +524,7 @@ impl LoopState {
     async fn find_more_peers(&mut self, cid: &Cid) {
         debug!("session:{}: find_more_peers {}", self.id, cid);
         inc!(BitswapMetrics::ProviderQueryCreated);
-        let _ = self.provider_search_queue.push(*cid).await;
+        self.provider_search_queue.push(*cid).await;
     }
 
     /// Called when the session receives blocks from a peer.
