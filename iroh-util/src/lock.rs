@@ -99,7 +99,7 @@ impl ProgramLock {
 
 impl Drop for ProgramLock {
     fn drop(&mut self) {
-        if let Some(_) = self.lock {
+        if self.lock.is_some() {
             if let Err(err) = std::fs::remove_file(&self.path) {
                 warn!("removing lock: {}", err);
             }
