@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{BTreeSet, VecDeque};
 use std::fmt::{self, Debug, Display, Formatter};
 use std::pin::Pin;
 use std::str::FromStr;
@@ -15,7 +15,7 @@ use cid::Cid;
 use futures::{Future, Stream};
 use iroh_metrics::inc;
 use iroh_rpc_client::Client;
-use libipld::codec::{Decode, Encode};
+use libipld::codec::Encode;
 use libipld::error::{InvalidMultihash, UnsupportedMultihash};
 use libipld::prelude::Codec as _;
 use libipld::{Ipld, IpldCodec};
@@ -82,8 +82,12 @@ impl Block {
             return Err(InvalidMultihash(mh.to_bytes()).into());
         }
         // check that the links are complete
-        let links = parse_links(&self.cid, &self.data)?;
-        anyhow::ensure!(links == self.links, "links do not match");
+        let expected_links = parse_links(&self.cid, &self.data)?;
+        let mut actual_links = self.links.clone();
+        actual_links.sort();
+        // TODO: why do the actual links need to be deduplicated?
+        actual_links.dedup();
+        anyhow::ensure!(expected_links == actual_links, "links do not match");
         Ok(())
     }
 
@@ -1398,20 +1402,20 @@ impl<T: ContentLoader> Resolver<T> {
 }
 
 /// Extract links from the given content.
+///
+/// Links will be returned as a sorted vec
 pub fn parse_links(cid: &Cid, bytes: &[u8]) -> Result<Vec<Cid>> {
     let codec = Codec::try_from(cid.codec()).context("unknown codec")?;
+    let mut cids = BTreeSet::new();
     let codec = match codec {
-        Codec::DagPb => IpldCodec::DagPb,
         Codec::DagCbor => IpldCodec::DagCbor,
+        Codec::DagPb => IpldCodec::DagPb,
         Codec::DagJson => IpldCodec::DagJson,
         Codec::Raw => IpldCodec::Raw,
         _ => bail!("unsupported codec {:?}", codec),
     };
-
-    let decoded: Ipld = Ipld::decode(codec, &mut std::io::Cursor::new(bytes))?;
-    let mut links = Vec::new();
-    decoded.references(&mut links);
-
+    codec.references::<Ipld, _>(bytes, &mut cids)?;
+    let links = cids.into_iter().collect();
     Ok(links)
 }
 
