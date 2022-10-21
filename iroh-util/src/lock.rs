@@ -6,6 +6,7 @@ use std::io::Write;
 use std::path::PathBuf;
 use sysinfo::{Pid, ProcessExt, ProcessStatus, System, SystemExt};
 use thiserror::Error;
+use tracing::log::warn;
 
 pub fn acquire_or_exit(lock: &mut ProgramLock, daemon_name: &str) -> Result<(), LockError> {
     if lock.is_locked()? {
@@ -17,8 +18,8 @@ pub fn acquire_or_exit(lock: &mut ProgramLock, daemon_name: &str) -> Result<(), 
 
 /// Manages a lock file used to track if an iroh program
 /// is already running.
-/// The lock is released either when the object is dropped
-/// or when the program stops.
+/// An acquired lock is released either when the object is dropped
+/// or when the program stops, which removes the file from disk
 pub struct ProgramLock {
     path: PathBuf,
     lock: Option<sysinfo::Pid>,
@@ -93,6 +94,16 @@ impl ProgramLock {
         file.write_all(pid.to_string().as_bytes())?;
         self.lock = Some(pid);
         Ok(())
+    }
+}
+
+impl Drop for ProgramLock {
+    fn drop(&mut self) {
+        if let Some(_) = self.lock {
+            if let Err(err) = std::fs::remove_file(&self.path) {
+                warn!("removing lock: {}", err);
+            }
+        }
     }
 }
 
