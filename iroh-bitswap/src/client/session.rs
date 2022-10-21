@@ -354,7 +354,6 @@ impl Session {
     }
 }
 
-#[derive(Debug)]
 struct LoopState {
     id: u64,
     consecutive_ticks: usize,
@@ -367,8 +366,9 @@ struct LoopState {
     idle_tick: Pin<Box<Sleep>>,
     base_tick_delay: Duration,
     initial_search_delay: Duration,
-    workers: Vec<(oneshot::Sender<()>, JoinHandle<()>)>,
+    workers: Vec<JoinHandle<Option<()>>>,
     incoming: async_channel::Sender<Op>,
+    task_controller: tokio_context::task::TaskController,
 }
 
 impl LoopState {
@@ -384,6 +384,7 @@ impl LoopState {
         incoming: async_channel::Sender<Op>,
     ) -> Self {
         let idle_tick = Box::pin(tokio::time::sleep(initial_search_delay));
+        let task_controller = tokio_context::task::TaskController::new();
 
         LoopState {
             id,
@@ -399,6 +400,7 @@ impl LoopState {
             idle_tick,
             workers: Vec::new(),
             incoming,
+            task_controller,
         }
     }
 
@@ -406,12 +408,10 @@ impl LoopState {
         debug!(
             "seesion loop stopping {} (workers {})",
             self.id,
-            self.workers.len()
+            self.workers.len(),
         );
-        while let Some((closer, worker)) = self.workers.pop() {
-            closer
-                .send(())
-                .map_err(|e| anyhow!("failed to shutdown worker: {:?}", e))?;
+        self.task_controller.cancel();
+        while let Some(worker) = self.workers.pop() {
             worker.await?;
         }
 
@@ -483,7 +483,7 @@ impl LoopState {
             let incoming = self.incoming.clone();
             // TODO: maybe needs limiting
             // TODO: shutdown & cancel
-            tokio::task::spawn(async move {
+            let worker = self.task_controller.spawn(async move {
                 let stream = tokio_stream::wrappers::ReceiverStream::new(chan);
                 stream
                     // Remove failed fetches
@@ -519,6 +519,7 @@ impl LoopState {
                     })
                     .await;
             });
+            self.workers.push(worker);
         }
     }
 
