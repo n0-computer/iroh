@@ -10,26 +10,6 @@ use sysinfo::{Pid, ProcessExt, ProcessStatus::*, System, SystemExt};
 use thiserror::Error;
 use tracing::warn;
 
-pub fn acquire_or_exit(lock: &mut ProgramLock) -> &mut ProgramLock {
-    match lock.is_locked() {
-        Ok(false) => {
-            if let Err(e) = lock.acquire() {
-                eprintln!("error locking {}: {}", lock.program_name(), e);
-                process::exit(exitcodes::ERROR);
-            }
-            lock
-        }
-        Ok(true) => {
-            eprintln!("{} is already running, stopping.", lock.program_name());
-            process::exit(exitcodes::LOCKED);
-        }
-        Err(err) => {
-            eprintln!("error checking lock {}: {}", lock.program_name(), err);
-            process::exit(exitcodes::ERROR);
-        }
-    }
-}
-
 /// Manages a lock file used to track if an iroh program is already running.
 /// Aquired locks write a file to iroh's application data path containing the
 /// process identifier (PID) of the process with the lock.
