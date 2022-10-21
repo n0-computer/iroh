@@ -23,7 +23,6 @@ const MIN_SEND_TIMEOUT: Duration = Duration::from_secs(2);
 const SEND_LATENCY: Duration = Duration::from_secs(2);
 // 100kbit/s
 const MIN_SEND_RATE: u64 = (100 * 1000) / 8;
-const DEFAULT_PROVIDER_LIMIT: usize = 10;
 
 #[derive(Debug, Clone)]
 pub struct Network {
@@ -187,13 +186,14 @@ impl Network {
     pub async fn find_providers(
         &self,
         key: Cid,
+        limit: usize,
     ) -> Result<mpsc::Receiver<std::result::Result<HashSet<PeerId>, String>>> {
-        let (s, r) = mpsc::channel(16);
+        let (s, r) = mpsc::channel(limit);
         self.network_out_sender
             .send(OutEvent::GenerateEvent(BitswapEvent::FindProviders {
                 key,
                 response: s,
-                limit: DEFAULT_PROVIDER_LIMIT,
+                limit,
             }))
             .await
             .map_err(|e| anyhow!("channel send: {:?}", e))?;

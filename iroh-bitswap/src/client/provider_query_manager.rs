@@ -10,7 +10,7 @@ use tracing::warn;
 use crate::network::Network;
 
 // TODO: limit requested providers
-// const MAX_PROVIDERS: usize = 10;
+const MAX_PROVIDERS: usize = 10;
 const MAX_IN_PROCESS_REQUESTS: usize = 6;
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -92,7 +92,7 @@ async fn run(network: Network, receiver: async_channel::Receiver<Message>) {
         match msg {
             Message::NewProvider { cid, response } => {
                 inc!(BitswapMetrics::ProviderQueryCreated);
-                match network.find_providers(cid).await {
+                match network.find_providers(cid, 10).await {
                     Ok(providers_r) => {
                         find_provider(network.clone(), response, providers_r).await;
                     }

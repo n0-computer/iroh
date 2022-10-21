@@ -33,7 +33,7 @@ struct Inner {
     session_interest_manager: SessionInterestManager,
     block_presence_manager: BlockPresenceManager,
     peer_manager: PeerManager,
-    provider_query_manager: ProviderQueryManager,
+    network: Network,
     sessions: RwLock<AHashMap<u64, Session>>,
     session_index: AtomicU64,
     notify: async_broadcast::Sender<Block>,
@@ -48,14 +48,13 @@ impl SessionManager {
         let session_interest_manager = SessionInterestManager::default();
         let block_presence_manager = BlockPresenceManager::new();
         let peer_manager = PeerManager::new(self_id, network.clone()).await;
-        let provider_query_manager = ProviderQueryManager::new(network.clone()).await;
 
         let this = SessionManager {
             inner: Arc::new(Inner {
                 session_interest_manager,
                 block_presence_manager,
                 peer_manager,
-                provider_query_manager,
+                network,
                 sessions: Default::default(),
                 session_index: Default::default(),
                 notify,
@@ -104,7 +103,6 @@ impl SessionManager {
         }
 
         inner.peer_manager.stop().await?;
-        inner.provider_query_manager.stop().await?;
 
         Ok(())
     }
@@ -134,7 +132,7 @@ impl SessionManager {
             self.inner.peer_manager.clone(),
             self.inner.session_interest_manager.clone(),
             self.inner.block_presence_manager.clone(),
-            self.inner.provider_query_manager.clone(),
+            self.inner.network.clone(),
             self.inner.notify.clone(),
             provider_search_delay,
             rebroadcast_delay,
