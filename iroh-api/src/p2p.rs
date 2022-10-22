@@ -1,4 +1,5 @@
 use crate::error::map_service_error;
+use std::collections::HashMap;
 use anyhow::Result;
 use async_trait::async_trait;
 use iroh_rpc_client::{Lookup, P2pClient};
@@ -28,6 +29,7 @@ pub trait P2p: Sync {
     async fn lookup_local(&self) -> Result<Lookup>;
     async fn lookup(&self, addr: &PeerIdOrAddr) -> Result<Lookup>;
     async fn connect(&self, addr: &PeerIdOrAddr) -> Result<()>;
+    async fn peers(&self) -> Result<HashMap<PeerId, Vec<Multiaddr>>>;
 }
 
 #[async_trait]
@@ -68,6 +70,10 @@ impl P2p for ClientP2p {
             }
         }
         .map_err(|e| map_service_error("p2p", e))
+    }
+
+    async fn peers(&self) -> Result<HashMap<PeerId, Vec<Multiaddr>>> {
+        self.client.get_peers().await
     }
 }
 
