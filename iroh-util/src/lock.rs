@@ -282,8 +282,7 @@ mod test {
                 Ok(Parent { child: _ }) => {
                     let _ = std::fs::remove_file("lock_test.result");
 
-                    // This needs to be long because github actions + macos filesystem is waaaaay slow
-                    std::thread::sleep(Duration::from_secs(3));
+                    std::thread::sleep(Duration::from_secs(1));
 
                     let mut result = std::fs::File::open("lock_test.result").unwrap();
                     let mut buf = String::new();
