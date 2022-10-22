@@ -140,6 +140,10 @@ jobs:
     - name: tests
       uses: actions-rs/cargo@v1
       timeout-minutes: 30
+      env:
+        # need this b/c our lock test uses a fork
+        # https://github.com/rails/rails/issues/38560
+        OBJC_DISABLE_INITIALIZE_FORK_SAFETY: YES
       with:
         command: test
         args: --all -j 4
