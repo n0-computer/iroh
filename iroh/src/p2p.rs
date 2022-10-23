@@ -97,12 +97,10 @@ observed addresses: {:?}
 }
 
 fn display_peers(peers: HashMap<PeerId, Vec<Multiaddr>>) {
-    let mut pid_str: String;
+    // let mut pid_str: String;
     for (peer_id, addrs) in peers {
-        pid_str = peer_id.to_string();
-        if pid_str.len() < 52 {
-            pid_str.push_str(&" ".repeat(52 - pid_str.len()));
+        if let Some(addr) = addrs.first() {
+            println!("{}/{}", addr, peer_id);
         }
-        println!("{}\t{} addresses", pid_str, addrs.len());
     }
 }
