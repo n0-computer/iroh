@@ -12,36 +12,51 @@ For more info see https://iroh.computer/docs";
 pub const START_LONG_DESCRIPTION: &str = "
 Iroh start kicks off 'daemons' on your local machine: long-running processes 
 that make iroh work. Iroh requires a running daemon to do anything meaningful 
-like add or get content, and `iroh start` is the fastest way to get iroh up &
-running locally. Once running, stop iroh with `iroh stop`.
+like get or add content, and `iroh start` is the fastest way to get iroh up &
+running locally
 
 Use the start, stop, and status commands to monitor iroh on your local machine,
-and control it's uptime.
+and control it's uptime. start runs daemons in the background, so there's no 
+need to keep your terminal open after running start. Once running, stop iroh 
+with `iroh stop`.
 
-Daemons provide 'services' like storage, peer-2-peer networking, and a gateway 
-to bridge IPFS to HTTP. Services work together to fullfill API requests. In this
-v0.1.0 release iroh is hard-coded to start three deamons: iroh-gateway, 
-iroh-p2p, and iroh-store. Each daemon provides gateway, p2p, and store services,
-respectively. To learn more about each service, see:
-  https://iroh.computer/docs/services
+Daemons provide 'services'. Services work together to fullfill requests.
+There are three services:
 
-Iroh start is a simple command, under the hood it just kicks off daemons to run 
-in the background. On startup each deamon writes its process identifier (PID) to
-a lock file, which iroh stop uses to lookup and terminate.  Iroh start is by no 
-means the only way to get iroh up & running. Long running local deployments
-should be scheduled by your operating systems daemon supervisior, and cloud
-deployments should invoke daemon binaries directly. Regardless of how iroh is 
-started, you can always use `iroh status` to monitor service health.
+  storage  -  a database of IPFS content
+  p2p      -  peer-2-peer networking functionality
+  gateway  -  bridge the IPFS network to HTTP
+
+By default iroh start spins up storage & gateway services. Start the p2p service
+with `iroh start p2p`.  To learn more about each service, see:
+https://iroh.computer/docs/services
+
+Iroh start is by no means the only way to get iroh up & running. Long running 
+local deployments should be scheduled by your operating systems daemon 
+supervisior, and cloud deployments should invoke daemon binaries directly. 
+Regardless of how iroh is started, you can always use `iroh status` to monitor 
+service health.
 ";
 
 pub const STOP_LONG_DESCRIPTION: &str = "
-stop turns local iroh services off by killing daemon processes. When a deamon
-starts it creates a lockfile and writes it's process identifier (PID) to the 
-lock. Iroh stop uses this lock to lookup the process & send an interrupt signal 
-to the daemon, which halts the service.
+stop turns local iroh services off by killing daemon processes. There are three
+iroh services, each backed by a daemon:
 
-iroh stop will also try to clean up any stray lock files in the even that a
-program crash fails to remove the lockfile from the file system.
+   storage  -  a database of IPFS content
+   p2p      -  peer-2-peer networking functionality
+   gateway  -  bridge the IPFS network to HTTP
+
+By default `iroh stop` attempts to stop all three services. To stop specific
+services, provide service names as arguments, eg: `iroh stop p2p`.
+
+When a deamon starts it creates a lockfile and writes it's process identifier 
+(PID) to the lock. Iroh stop uses this lock to lookup the process & send an 
+interrupt signal to the daemon, which halts the service. Stop will also try to 
+clean up any stray lock files in the even that a program crash fails to remove 
+the lockfile from the file system.
+
+Stop only works for local processes, and cannot be used to interact with remote
+services.
 ";
 
 pub const STATUS_LONG_DESCRIPTION: &str = "
