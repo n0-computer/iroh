@@ -123,3 +123,19 @@ Network's Distributed Hash Table (DHT) before connecting to the node. When
 provided with a multiaddress, the connection is dialed directly.
 
 Providing no <ADDR> argument will return your local node information.";
+
+pub const P2P_PEERS_LONG_DESCRIPTION: &str = "
+'p2p peers' lists the set of peer addresses this node is currently connected to.
+The address format is a multiaddress, or 'multiaddr' for short. For example:
+
+  /ip4/104.131.131.82/tcp/4001/p2p/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ
+
+The last element after the '/' is the Peer Identifier or 'PeerID'. Either the 
+PeerID or the entire multiaddr can be given to the 'p2p lookup' command
+for additional details about the peer. For example:
+
+  > iroh p2p lookup QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ
+  > iroh p2p lookup /ip4/104.131.131.82/tcp/4001/p2p/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ
+
+For more info on multiaddrs see https://iroh.computer/docs/concepts#multiaddr.
+";

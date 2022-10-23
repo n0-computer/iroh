@@ -2,7 +2,7 @@ use crate::doc;
 use anyhow::{Error, Result};
 use clap::{Args, Subcommand};
 use iroh_api::{Lookup, Multiaddr, P2pApi, PeerId, PeerIdOrAddr};
-use std::{fmt::Display, str::FromStr, collections::HashMap};
+use std::{collections::HashMap, fmt::Display, str::FromStr};
 
 #[derive(Args, Debug, Clone)]
 #[clap(about = "Peer-2-peer commands")]
@@ -29,8 +29,9 @@ pub enum P2pCommands {
         /// multiaddress or peer ID
         addr: Option<PeerIdOrAddrArg>,
     },
-    #[clap(about = "List known peers")]
-    Peers {}
+    #[clap(about = "List connected peers")]
+    #[clap(after_help = doc::P2P_PEERS_LONG_DESCRIPTION)]
+    Peers {},
 }
 
 #[derive(Debug, Clone)]
@@ -73,8 +74,8 @@ pub async fn run_command(p2p: &impl P2pApi, cmd: &P2p) -> Result<()> {
                 None => p2p.lookup_local().await?,
             };
             display_lookup(&lookup);
-        },
-        P2pCommands::Peers {  } => {
+        }
+        P2pCommands::Peers {} => {
             let peers = p2p.peers().await?;
             display_peers(peers);
         }
@@ -96,7 +97,7 @@ observed addresses: {:?}
 }
 
 fn display_peers(peers: HashMap<PeerId, Vec<Multiaddr>>) {
-    let mut pid_str:String;
+    let mut pid_str: String;
     for (peer_id, addrs) in peers {
         pid_str = peer_id.to_string();
         if pid_str.len() < 52 {
