@@ -20,4 +20,3 @@ pub use iroh_resolver::unixfs_builder::AddEvent;
 pub use iroh_rpc_client::{Lookup, ServiceStatus, StatusRow, StatusTable};
 pub use libp2p::gossipsub::MessageId;
 pub use libp2p::{Multiaddr, PeerId};
-pub use crate::error::ApiError;
