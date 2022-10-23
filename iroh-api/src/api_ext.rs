@@ -52,12 +52,10 @@ pub trait ApiExt: Api {
         let add_events = self.add_stream(path, wrap).await?;
 
         add_events
-            .try_fold(None, |acc, add_event| async move {
-                Ok(if let AddEvent::Done(cid) = add_event {
-                    Some(cid)
-                } else {
-                    acc
-                })
+            .try_fold(None, |_acc, add_event| async move {
+                match add_event {
+                    AddEvent::ProgressDelta { cid, .. } => Ok(Some(cid)),
+                }
             })
             .await?
             .context("No cid found")

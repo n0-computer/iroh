@@ -1,4 +1,3 @@
-use anyhow::Context;
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use futures::TryStreamExt;
 use iroh_metrics::config::Config as MetricsConfig;
@@ -51,32 +50,17 @@ pub fn add_benchmark(c: &mut Criterion) {
                     let rpc = Client::new(rpc_client).await.unwrap();
                     (task, rpc)
                 });
-                let rpc_ref = &rpc;
-                b.to_async(&executor).iter(|| async move {
-                    let stream =
-                        iroh_resolver::unixfs_builder::add_file(Some(rpc_ref), path, false)
-                            .await
-                            .unwrap();
-                    // we have to consume the stream here, otherwise we are
-                    // not actually benchmarking anything
-                    // TODO(faassen) rewrite the benchmark in terms of the iroh-api which
-                    // can consume the stream for you
-                    let cid = stream
-                        .try_fold(None, |acc, add_event| async move {
-                            Ok(
-                                if let iroh_resolver::unixfs_builder::AddEvent::Done(cid) =
-                                    add_event
-                                {
-                                    Some(cid)
-                                } else {
-                                    acc
-                                },
-                            )
-                        })
-                        .await
-                        .unwrap()
-                        .context("No cid found");
-                    black_box(cid)
+                b.to_async(&executor).iter(|| {
+                    let rpc = rpc.clone();
+                    async move {
+                        let stream =
+                            iroh_resolver::unixfs_builder::add_file(Some(rpc), path, false)
+                                .await
+                                .unwrap();
+
+                        let res: Vec<_> = stream.try_collect().await.unwrap();
+                        black_box(res)
+                    }
                 });
             },
         );

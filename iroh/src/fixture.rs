@@ -60,13 +60,13 @@ fn fixture_get() -> MockApi {
 fn fixture_add_file() -> MockApi {
     let mut api = MockApi::default();
     api.expect_add_file().returning(|_ipfs_path, _| {
-        let add_event = Cid::from_str("QmYbcW4tXLXHWw753boCK8Y7uxLu5abXjyYizhLznq9PUR")
-            .map(AddEvent::Done)
-            .map_err(|e| e.into());
+        let cid = Cid::from_str("QmYbcW4tXLXHWw753boCK8Y7uxLu5abXjyYizhLznq9PUR").unwrap();
+        let add_event = AddEvent::ProgressDelta { cid, size: Some(0) };
 
-        Box::pin(future::ready(Ok(
-            futures::stream::iter(vec![add_event]).boxed_local()
-        )))
+        Box::pin(future::ready(Ok(futures::stream::iter(vec![Ok(
+            add_event,
+        )])
+        .boxed_local())))
     });
     api
 }
@@ -74,13 +74,13 @@ fn fixture_add_file() -> MockApi {
 fn fixture_add_directory() -> MockApi {
     let mut api = MockApi::default();
     api.expect_add_dir().returning(|_ipfs_path, _| {
-        let add_event = Cid::from_str("QmYbcW4tXLXHWw753boCK8Y7uxLu5abXjyYizhLznq9PUR")
-            .map(AddEvent::Done)
-            .map_err(|e| e.into());
+        let cid = Cid::from_str("QmYbcW4tXLXHWw753boCK8Y7uxLu5abXjyYizhLznq9PUR").unwrap();
+        let add_event = AddEvent::ProgressDelta { cid, size: Some(0) };
 
-        Box::pin(future::ready(Ok(
-            futures::stream::iter(vec![add_event]).boxed_local()
-        )))
+        Box::pin(future::ready(Ok(futures::stream::iter(vec![Ok(
+            add_event,
+        )])
+        .boxed_local())))
     });
     api
 }

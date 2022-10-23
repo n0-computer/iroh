@@ -2,6 +2,7 @@ use std::{
     fmt::Debug,
     path::{Path, PathBuf},
     pin::Pin,
+    sync::Arc,
 };
 
 use anyhow::{ensure, Result};
@@ -28,6 +29,9 @@ use crate::{
 // (64 bytes + 256 bytes + 8 bytes) / 2 MB ≈ 6400
 // adding a generous buffer, we are using 6k as our link limit
 const DIRECTORY_LINK_LIMIT: usize = 6000;
+
+/// How many chunks to buffer up when adding content.
+const ADD_PAR: usize = 24;
 
 #[derive(Debug, PartialEq)]
 enum DirectoryType {
@@ -489,24 +493,33 @@ pub(crate) fn encode_unixfs_pb(
 }
 
 #[async_trait]
-pub trait Store {
+pub trait Store: 'static + Send + Sync + Clone {
+    async fn has(&self, &cid: Cid) -> Result<bool>;
     async fn put(&self, cid: Cid, blob: Bytes, links: Vec<Cid>) -> Result<()>;
 }
 
 #[async_trait]
-impl Store for &Client {
+impl Store for Client {
+    async fn has(&self, cid: Cid) -> Result<bool> {
+        self.try_store()?.has(cid).await
+    }
+
     async fn put(&self, cid: Cid, blob: Bytes, links: Vec<Cid>) -> Result<()> {
         self.try_store()?.put(cid, blob, links).await
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct StoreAndProvideClient {
     pub client: Client,
 }
 
 #[async_trait]
 impl Store for StoreAndProvideClient {
+    async fn has(&self, cid: Cid) -> Result<bool> {
+        self.client.try_store()?.has(cid).await
+    }
+
     async fn put(&self, cid: Cid, blob: Bytes, links: Vec<Cid>) -> Result<()> {
         self.client.try_store()?.put(cid, blob, links).await?;
         self.client.try_p2p()?.start_providing(&cid).await
@@ -514,7 +527,10 @@ impl Store for StoreAndProvideClient {
 }
 
 #[async_trait]
-impl Store for &tokio::sync::Mutex<std::collections::HashMap<Cid, Bytes>> {
+impl Store for Arc<tokio::sync::Mutex<std::collections::HashMap<Cid, Bytes>>> {
+    async fn has(&self, cid: Cid) -> Result<bool> {
+        Ok(self.lock().await.contains_key(&cid))
+    }
     async fn put(&self, cid: Cid, blob: Bytes, _links: Vec<Cid>) -> Result<()> {
         self.lock().await.insert(cid, blob);
         Ok(())
@@ -592,34 +608,38 @@ pub async fn add_symlink<S: Store>(
 
 /// An event on the add stream
 pub enum AddEvent {
-    /// Delta of progress in bytes
-    ProgressDelta(u64),
-    /// The root Cid of the added file, produced once in the end
-    Done(Cid),
+    ProgressDelta {
+        /// The current cid. This is the root on the last event.
+        cid: Cid,
+        /// Delta of progress in bytes
+        size: Option<u64>,
+    },
 }
 
 pub async fn add_blocks_to_store<S: Store>(
     store: Option<S>,
-    mut blocks: Pin<Box<dyn Stream<Item = Result<Block>>>>,
+    blocks: Pin<Box<dyn Stream<Item = Result<Block>>>>,
 ) -> impl Stream<Item = Result<AddEvent>> {
-    async_stream::try_stream! {
+    blocks
+        .map(move |block| {
+            let store = store.clone();
+            async move {
+                let block = block?;
+                let raw_data_size = block.raw_data_size();
+                let (cid, bytes, links) = block.into_parts();
+                if let Some(store) = store {
+                    if !store.has(cid).await? {
+                        store.put(cid, bytes, links).await?;
+                    }
+                }
 
-        let mut root = None;
-        while let Some(block) = blocks.next().await {
-            let block = block?;
-            let raw_data_size = block.raw_data_size();
-            let (cid, bytes, links) = block.into_parts();
-            if let Some(ref store) = store {
-                store.put(cid, bytes, links).await?;
+                Ok(AddEvent::ProgressDelta {
+                    cid,
+                    size: raw_data_size,
+                })
             }
-            if let Some(raw_data_size) = raw_data_size {
-                yield AddEvent::ProgressDelta(raw_data_size);
-            }
-            root = Some(cid);
-        }
-
-        yield AddEvent::Done(root.expect("missing root"))
-    }
+        })
+        .buffered(ADD_PAR)
 }
 
 #[async_recursion(?Send)]
@@ -631,6 +651,7 @@ async fn make_dir_from_path<P: Into<PathBuf>>(path: P) -> Result<Directory> {
             .and_then(|s| s.to_str())
             .unwrap_or_default(),
     );
+
     let mut directory_reader = tokio::fs::read_dir(path.clone()).await?;
     while let Some(entry) = directory_reader.next_entry().await? {
         let path = entry.path();
