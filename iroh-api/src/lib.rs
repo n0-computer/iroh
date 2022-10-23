@@ -1,6 +1,7 @@
 mod api;
 mod api_ext;
 mod config;
+mod error;
 mod p2p;
 
 #[cfg(feature = "testing")]
@@ -18,3 +19,4 @@ pub use iroh_resolver::unixfs_builder::AddEvent;
 pub use iroh_rpc_client::{Lookup, ServiceStatus, StatusRow, StatusTable};
 pub use libp2p::gossipsub::MessageId;
 pub use libp2p::{Multiaddr, PeerId};
+pub use crate::error::ApiError;
