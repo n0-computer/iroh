@@ -1,11 +1,11 @@
 use crate::error::map_service_error;
-use std::collections::HashMap;
 use anyhow::Result;
 use async_trait::async_trait;
 use iroh_rpc_client::{Lookup, P2pClient};
 use libp2p::{multiaddr::Protocol, Multiaddr, PeerId};
 #[cfg(feature = "testing")]
 use mockall::automock;
+use std::collections::HashMap;
 
 pub struct ClientP2p {
     client: P2pClient,
@@ -73,7 +73,10 @@ impl P2p for ClientP2p {
     }
 
     async fn peers(&self) -> Result<HashMap<PeerId, Vec<Multiaddr>>> {
-        self.client.get_peers().await
+        self.client
+            .get_peers()
+            .await
+            .map_err(|e| map_service_error("p2p", e))
     }
 }
 
