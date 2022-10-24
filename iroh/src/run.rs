@@ -162,7 +162,7 @@ async fn add(api: &impl Api, path: &Path, no_wrap: bool, recursive: bool) -> Res
             path.display()
         );
     }
-    println!("{} Calculating size...", style("[1/2]").bold().dim());
+    println!("{} Calculating size...", style("[1/3]").bold().dim());
 
     let pb = ProgressBar::new_spinner();
     let mut total_size: u64 = 0;
@@ -184,7 +184,7 @@ async fn add(api: &impl Api, path: &Path, no_wrap: bool, recursive: bool) -> Res
 
     println!(
         "{} Importing content {}...",
-        style("[2/2]").bold().dim(),
+        style("[2/3]").bold().dim(),
         human::format_bytes(total_size)
     );
 
@@ -197,11 +197,11 @@ async fn add(api: &impl Api, path: &Path, no_wrap: bool, recursive: bool) -> Res
     pb.inc(0);
 
     let mut progress = api.add_stream(path, !no_wrap).await?;
-    let mut root = None;
+    let mut cids = Vec::new();
     while let Some(add_event) = progress.next().await {
         match add_event? {
             AddEvent::ProgressDelta { cid, size } => {
-                root = Some(cid);
+                cids.push(cid);
                 if let Some(size) = size {
                     pb.inc(size);
                 }
@@ -209,9 +209,24 @@ async fn add(api: &impl Api, path: &Path, no_wrap: bool, recursive: bool) -> Res
         }
     }
     pb.finish_and_clear();
-    let root = root.context("File processing failed")?;
+
+    let pb = ProgressBar::new(cids.len().try_into().unwrap());
+    let root = *cids.last().context("File processing failed")?;
+    // remove everything but the root
+    cids.splice(0..cids.len() - 1, []);
+    println!(
+        "{} Providing {} records to DHT ...",
+        style("[3/3]").bold().dim(),
+        cids.len(),
+    );
+    pb.set_style(ProgressStyle::with_template("[{elapsed_precise}] {wide_bar} {pos}/{len} ({per_sec}) {msg}").unwrap());
+    pb.inc(0);
+    for cid in cids {
+        api.provide(cid).await?;
+        pb.inc(1);
+    }
+    pb.finish_and_clear();
     println!("/ipfs/{}", root);
-    api.provide(root).await?;
 
     Ok(())
 }
