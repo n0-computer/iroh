@@ -22,7 +22,7 @@ use libipld::{Ipld, IpldCodec};
 use tokio::io::{AsyncRead, AsyncSeek};
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
-use tracing::{debug, error, trace, warn};
+use tracing::{debug, trace, warn};
 
 use iroh_metrics::{
     core::{MObserver, MRecorder},
