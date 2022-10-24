@@ -10,6 +10,7 @@ use iroh_one::{
     cli::Args,
     config::{Config, CONFIG_FILE_NAME, ENV_PREFIX},
 };
+use iroh_resolver::racing::RacingLoader;
 use iroh_rpc_client::Client as RpcClient;
 use iroh_rpc_types::Addr;
 use iroh_util::lock::ProgramLock;
@@ -75,8 +76,7 @@ async fn main() -> Result<()> {
         false => Arc::new(None),
     };
 
-    // let content_loader = RpcClient::new(config.rpc_client.clone()).await?;
-    let content_loader = iroh_one::content_loader::RacingLoader::new(
+    let content_loader = RacingLoader::new(
         RpcClient::new(config.rpc_client.clone()).await?,
         config.resolver_gateway.clone(),
     );

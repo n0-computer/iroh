@@ -1,11 +1,9 @@
-//! A content loader implementation for iroh-one.
-
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use bytes::Bytes;
 use cid::{multibase, Cid};
 use futures::{future::FutureExt, pin_mut, select};
-use iroh_resolver::resolver::{
+use crate::resolver::{
     parse_links, ContentLoader, ContextId, LoadedCid, LoaderContext, Source, IROH_STORE,
 };
 use iroh_rpc_client::Client as RpcClient;
@@ -42,7 +40,8 @@ impl RacingLoader {
     async fn fetch_http(&self, cid: &Cid) -> Result<(Bytes, String), anyhow::Error> {
         let gateway = self.try_raw_gateway()?;
         let cid_str = multibase::encode(multibase::Base::Base32Lower, cid.to_bytes().as_slice());
-        let gateway_url = format!("https://{}.ipfs.{}?format=raw", cid_str, gateway);
+        // let gateway_url = format!("https://{}.ipfs.{}?format=raw", cid_str, gateway);
+        let gateway_url = format!("{}/ipfs/{}?format=raw", gateway, cid_str);
         debug!("Will fetch {}", gateway_url);
         let response = reqwest::get(gateway_url).await?;
         response

@@ -5,5 +5,6 @@ pub mod hamt;
 pub mod resolver;
 pub mod unixfs;
 pub mod unixfs_builder;
+pub mod racing;
 
 pub use crate::resolver::parse_links;
