@@ -13,6 +13,7 @@ use iroh_rpc_client::Client as RpcClient;
 use iroh_util::lock::ProgramLock;
 use iroh_util::{iroh_config_path, make_config};
 use tokio::sync::RwLock;
+#[cfg(unix)]
 use tracing::{debug, error};
 
 #[tokio::main(flavor = "multi_thread")]

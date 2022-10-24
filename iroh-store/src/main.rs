@@ -7,7 +7,9 @@ use iroh_store::{
 };
 use iroh_util::lock::ProgramLock;
 use iroh_util::{block_until_sigint, iroh_config_path, make_config};
-use tracing::{debug, error, info};
+use tracing::info;
+#[cfg(unix)]
+use tracing::{debug, error};
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> anyhow::Result<()> {

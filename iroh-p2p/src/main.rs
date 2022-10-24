@@ -5,7 +5,9 @@ use iroh_p2p::{cli::Args, metrics, DiskStorage, Keychain, Node};
 use iroh_util::lock::ProgramLock;
 use iroh_util::{iroh_config_path, make_config};
 use tokio::task;
-use tracing::{debug, error};
+#[cfg(unix)]
+use tracing::debug;
+use tracing::error;
 
 /// Starts daemon process
 fn main() -> Result<()> {

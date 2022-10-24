@@ -17,6 +17,7 @@ use iroh_util::{iroh_config_path, make_config};
 #[cfg(feature = "uds-gateway")]
 use tempdir::TempDir;
 use tokio::sync::RwLock;
+#[cfg(unix)]
 use tracing::{debug, error};
 
 #[tokio::main(flavor = "multi_thread")]
