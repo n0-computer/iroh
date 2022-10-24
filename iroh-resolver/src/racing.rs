@@ -46,11 +46,11 @@ impl RacingLoader {
     async fn fetch_http(&self, cid: &Cid) -> Result<(Bytes, String), anyhow::Error> {
         let gateway = self.try_raw_gateway()?;
         let cid_str = multibase::encode(multibase::Base::Base32Lower, cid.to_bytes().as_slice());
-        // support two gateway URL formats: subdomain gateways (eg: dweb.link) 
+        // support two gateway URL formats: subdomain gateways (eg: dweb.link)
         // and full URL (eg: https://ipfs.io)
         let gateway_url = if gateway.starts_with("https://") || gateway.starts_with("http://") {
             format!("{}/ipfs/{}?format=raw", gateway, cid_str)
-          } else {
+        } else {
             format!("https://{}.ipfs.{}?format=raw", cid_str, gateway)
         };
         debug!("Will fetch {}", gateway_url);
