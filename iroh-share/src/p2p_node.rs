@@ -136,11 +136,13 @@ impl P2pNode {
             p2p_addr: Some(rpc_p2p_addr_client.clone()),
             store_addr: Some(rpc_store_addr_client.clone()),
             gateway_addr: None,
+            channels: Some(1),
         };
         let rpc_p2p_client_config = iroh_rpc_client::Config {
             p2p_addr: Some(rpc_p2p_addr_client.clone()),
             store_addr: Some(rpc_store_addr_client.clone()),
             gateway_addr: None,
+            channels: Some(1),
         };
         let config = config::Config {
             libp2p: config::Libp2pConfig {

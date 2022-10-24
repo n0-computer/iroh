@@ -12,6 +12,8 @@ pub struct Config {
     pub p2p_addr: Option<P2pClientAddr>,
     // store rpc address
     pub store_addr: Option<StoreClientAddr>,
+    // number of concurent channels
+    pub channels: Option<usize>,
 }
 
 impl Source for Config {
@@ -30,6 +32,9 @@ impl Source for Config {
         if let Some(addr) = &self.store_addr {
             insert_into_config_map(&mut map, "store_addr", addr.to_string());
         }
+        if let Some(channels) = &self.channels {
+            insert_into_config_map(&mut map, "channels", channels.to_string());
+        }
         Ok(map)
     }
 }
@@ -40,6 +45,7 @@ impl Config {
             gateway_addr: Some("grpc://0.0.0.0:4400".parse().unwrap()),
             p2p_addr: Some("grpc://0.0.0.0:4401".parse().unwrap()),
             store_addr: Some("grpc://0.0.0.0:4402".parse().unwrap()),
+            channels: Some(16),
         }
     }
 }
@@ -64,6 +70,10 @@ mod tests {
         expect.insert(
             "store_addr".to_string(),
             Value::new(None, default.store_addr.unwrap().to_string()),
+        );
+        expect.insert(
+            "channels".to_string(),
+            Value::new(None, default.channels.unwrap().to_string()),
         );
         let got = Config::default().collect().unwrap();
         for key in got.keys() {

@@ -73,6 +73,7 @@ impl Config {
             gateway_addr: Some(Addr::GrpcUds(path)),
             p2p_addr: None,
             store_addr: None,
+            channels: Some(1),
         }
     }
 

@@ -1033,6 +1033,7 @@ mod tests {
 
         let cfg = iroh_rpc_client::Config {
             p2p_addr: Some(rpc_client_addr),
+            channels: Some(1),
             ..Default::default()
         };
         let p2p_task = tokio::task::spawn(async move {

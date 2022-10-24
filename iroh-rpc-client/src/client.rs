@@ -71,6 +71,7 @@ impl Client {
             gateway_addr,
             p2p_addr,
             store_addr,
+            channels,
         } = cfg;
 
         let gateway = if let Some(addr) = gateway_addr {
@@ -83,9 +84,11 @@ impl Client {
             None
         };
 
+        let n_channels = channels.unwrap_or(1);
+
         let mut p2p = P2pLBClient::new();
         if let Some(addr) = p2p_addr {
-            for _i in 0..16 {
+            for _i in 0..n_channels {
                 let sc = P2pClient::new(addr.clone())
                     .await
                     .context("Could not create store rpc client")?;
@@ -95,7 +98,7 @@ impl Client {
 
         let mut store = StoreLBClient::new();
         if let Some(addr) = store_addr {
-            for _i in 0..16 {
+            for _i in 0..n_channels {
                 let sc = StoreClient::new(addr.clone())
                     .await
                     .context("Could not create store rpc client")?;
