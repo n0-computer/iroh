@@ -213,7 +213,7 @@ mod tests {
         expect.insert("port".to_string(), Value::new(None, default.port as i64));
         expect.insert(
             "use_denylist".to_string(),
-            Value::new(None, default.denylist),
+            Value::new(None, default.use_denylist),
         );
         expect.insert(
             "headers".to_string(),

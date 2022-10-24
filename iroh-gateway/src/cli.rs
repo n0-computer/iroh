@@ -21,7 +21,7 @@ pub struct Args {
     #[clap(long)]
     pub cfg: Option<PathBuf>,
     #[clap(long)]
-    denylist: bool,
+    use_denylist: bool,
 }
 
 impl Args {
@@ -39,7 +39,7 @@ impl Args {
         if let Some(cache) = self.cache {
             map.insert("cache", cache.to_string());
         }
-        map.insert("denylist", self.denylist.to_string());
+        map.insert("use_denylist", self.use_denylist.to_string());
         map.insert("metrics.collect", self.metrics.to_string());
         map.insert("metrics.tracing", self.tracing.to_string());
         map
