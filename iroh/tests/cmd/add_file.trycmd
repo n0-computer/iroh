@@ -1,5 +1,7 @@
 ```
 $ iroh add file.txt
+[1/2] Calculating size...
+[2/2] Importing content 20 B...
 /ipfs/QmYbcW4tXLXHWw753boCK8Y7uxLu5abXjyYizhLznq9PUR
 
 ```
