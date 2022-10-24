@@ -182,6 +182,7 @@ mod tests {
                 gateway_addr: None,
                 p2p_addr: None,
                 store_addr: None,
+                channels: Some(1),
             },
         );
         config.set_default_headers();

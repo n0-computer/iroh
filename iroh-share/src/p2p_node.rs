@@ -136,11 +136,13 @@ impl P2pNode {
             p2p_addr: Some(rpc_p2p_addr_client.clone()),
             store_addr: Some(rpc_store_addr_client.clone()),
             gateway_addr: None,
+            channels: Some(1),
         };
         let rpc_p2p_client_config = iroh_rpc_client::Config {
             p2p_addr: Some(rpc_p2p_addr_client.clone()),
             store_addr: Some(rpc_store_addr_client.clone()),
             gateway_addr: None,
+            channels: Some(1),
         };
         let config = config::Config {
             libp2p: config::Libp2pConfig {
@@ -215,7 +217,7 @@ impl P2pNode {
     }
 
     pub async fn close(self) -> Result<()> {
-        self.rpc.p2p.unwrap().shutdown().await?;
+        self.rpc.try_p2p().unwrap().shutdown().await?;
         self.store_task.abort();
         self.p2p_task.await?;
         self.store_task.await.ok();

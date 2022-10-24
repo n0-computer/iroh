@@ -79,6 +79,7 @@ impl Config {
             gateway_addr: None,
             p2p_addr: None,
             store_addr: None,
+            channels: Some(1),
         }
     }
 

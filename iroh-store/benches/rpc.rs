@@ -88,8 +88,7 @@ pub fn put_benchmark(c: &mut Criterion) {
                     let rpc_ref = &rpc;
                     b.to_async(&executor).iter(|| async move {
                         rpc_ref
-                            .store
-                            .as_ref()
+                            .try_store()
                             .unwrap()
                             .put(*key, black_box(value.clone()), vec![])
                             .await
@@ -148,8 +147,7 @@ pub fn get_benchmark(c: &mut Criterion) {
                             let key = cid::Cid::new_v1(RAW, hash);
                             keys.push(key);
                             rpc_ref
-                                .store
-                                .as_ref()
+                                .try_store()
                                 .unwrap()
                                 .put(key, value.clone(), vec![])
                                 .await
@@ -166,8 +164,7 @@ pub fn get_benchmark(c: &mut Criterion) {
                         for i in 0..iters {
                             let key = keys_ref[(i as usize) % l];
                             let res = rpc_ref
-                                .store
-                                .as_ref()
+                                .try_store()
                                 .unwrap()
                                 .get(key)
                                 .await

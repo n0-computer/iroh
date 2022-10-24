@@ -115,8 +115,8 @@ impl ContentLoader for RacingLoader {
 
                 let len = cloned.len();
                 let links_len = links.len();
-                if let Some(store_rpc) = rpc.store.as_ref() {
-                    match store_rpc.put(cid, cloned, links).await {
+                if let Ok(store_rpc) = rpc.try_store() {
+                    match store_rpc.clone().put(cid, cloned, links).await {
                         Ok(_) => debug!("stored {} ({}bytes, {}links)", cid, len, links_len),
                         Err(err) => {
                             warn!("failed to store {}: {:?}", cid, err);

@@ -102,7 +102,7 @@ impl Api for Iroh {
 
     fn p2p(&self) -> Result<ClientP2p> {
         let p2p_client = self.client.try_p2p()?;
-        Ok(ClientP2p::new(p2p_client.clone()))
+        Ok(ClientP2p::new(p2p_client))
     }
 
     fn get_stream(
