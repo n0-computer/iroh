@@ -28,6 +28,7 @@ iroh-util = { path = "../iroh-util"}
 which = "4.3.0"
 sysinfo = "0.26.4"
 iroh-localops = { path = "../iroh-localops" }
+console = { version = "0.15", default-features = false }
 
 [dev-dependencies]
 trycmd = "0.13.7"

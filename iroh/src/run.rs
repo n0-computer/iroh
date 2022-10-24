@@ -1,17 +1,20 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+use anyhow::{ensure, Result};
+use clap::{Parser, Subcommand};
+use console::style;
+use futures::StreamExt;
+use indicatif::{ProgressBar, ProgressStyle};
+use iroh_api::{AddEvent, Api, ApiExt, IpfsPath, Iroh};
+use iroh_metrics::config::Config as MetricsConfig;
+use iroh_util::human;
+
 use crate::doc;
 #[cfg(feature = "testing")]
 use crate::fixture::get_fixture_api;
 use crate::p2p::{run_command as run_p2p_command, P2p};
 use crate::size::size_stream;
-use anyhow::Result;
-use clap::{Parser, Subcommand};
-use futures::StreamExt;
-use indicatif::{ProgressBar, ProgressStyle};
-use iroh_api::{AddEvent, Api, ApiExt, IpfsPath, Iroh};
-use iroh_metrics::config::Config as MetricsConfig;
 
 #[derive(Parser, Debug, Clone)]
 #[clap(version, long_about = None, propagate_version = true)]
@@ -159,15 +162,31 @@ async fn add(api: &impl Api, path: &Path, no_wrap: bool, recursive: bool) -> Res
             path.display()
         );
     }
+    println!("{} Calculating size...", style("[1/2]").bold().dim());
+
     let pb = ProgressBar::new_spinner();
-    pb.set_message("Calculating size...");
     let mut total_size: u64 = 0;
+
+    pb.set_message(format!(
+        "Discovered size: {}",
+        human::format_bytes(total_size)
+    ));
     let mut stream = Box::pin(size_stream(path));
     while let Some(size_info) = stream.next().await {
         total_size += size_info.size;
+        pb.set_message(format!(
+            "Discovered size: {}",
+            human::format_bytes(total_size)
+        ));
         pb.inc(1);
     }
     pb.finish_and_clear();
+
+    println!(
+        "{} Importing content {}...",
+        style("[2/2]").bold().dim(),
+        human::format_bytes(total_size)
+    );
 
     let pb = ProgressBar::new(total_size);
     pb.set_style(ProgressStyle::with_template(
@@ -178,16 +197,20 @@ async fn add(api: &impl Api, path: &Path, no_wrap: bool, recursive: bool) -> Res
     pb.inc(0);
 
     let mut progress = api.add_stream(path, !no_wrap).await?;
+    let mut root = None;
     while let Some(add_event) = progress.next().await {
         match add_event? {
-            AddEvent::ProgressDelta(size) => {
-                pb.inc(size);
-            }
-            AddEvent::Done(cid) => {
-                pb.finish_and_clear();
-                println!("/ipfs/{}", cid);
+            AddEvent::ProgressDelta { cid, size } => {
+                root = Some(cid);
+                if let Some(size) = size {
+                    pb.inc(size);
+                }
             }
         }
     }
+    pb.finish_and_clear();
+    ensure!(root.is_some(), "File processing failed");
+    println!("/ipfs/{}", root.unwrap());
+
     Ok(())
 }
