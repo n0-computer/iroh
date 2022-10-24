@@ -1,34 +1,44 @@
+use crate::resolver::{
+    parse_links, ContentLoader, ContextId, LoadedCid, LoaderContext, Source, IROH_STORE,
+};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use bytes::Bytes;
 use cid::{multibase, Cid};
 use futures::{future::FutureExt, pin_mut, select};
-use crate::resolver::{
-    parse_links, ContentLoader, ContextId, LoadedCid, LoaderContext, Source, IROH_STORE,
-};
 use iroh_rpc_client::Client as RpcClient;
+use rand::seq::SliceRandom;
 use tracing::{debug, error, trace, warn};
 
 #[derive(Clone, Debug)]
 pub struct RacingLoader {
     rpc_client: RpcClient,
-    gateway: Option<String>,
+    http_resolvers: Vec<String>,
 }
 
 impl RacingLoader {
-    pub fn new(rpc_client: RpcClient, gateway: Option<String>) -> Self {
+    pub fn new(rpc_client: RpcClient, http_resolvers: Vec<String>) -> Self {
         Self {
             rpc_client,
-            gateway,
+            http_resolvers,
         }
     }
 }
 
 impl RacingLoader {
     pub fn try_raw_gateway(&self) -> Result<&String> {
-        self.gateway
-            .as_ref()
-            .ok_or_else(|| anyhow!("no gateway configured to fetch raw CIDs"))
+        match self.http_resolvers.len() {
+            0 => Err(anyhow!("no gateway configured to fetch raw CIDs")),
+            1 => self
+                .http_resolvers
+                .first()
+                .ok_or_else(|| anyhow!("no gateway configured to fetch raw CIDs")),
+            _ => {
+                let mut rng = rand::thread_rng();
+                let gw = self.http_resolvers.choose(&mut rng).unwrap();
+                Ok(gw)
+            }
+        }
     }
 
     async fn fetch_p2p(&self, ctx: ContextId, cid: &Cid) -> Result<Bytes, anyhow::Error> {
