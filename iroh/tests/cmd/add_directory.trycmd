@@ -1,5 +1,7 @@
 ```
 $ iroh add -r mydir
+[1/2] Calculating size...
+[2/2] Importing content 5 B...
 /ipfs/QmYbcW4tXLXHWw753boCK8Y7uxLu5abXjyYizhLznq9PUR
 
 ```

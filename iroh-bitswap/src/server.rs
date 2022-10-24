@@ -293,7 +293,7 @@ impl<S: Store> Server<S> {
     }
 
     pub async fn receive_message(&self, peer: &PeerId, message: &BitswapMessage) {
-        trace!("server:receive_message from {}", peer);
+        trace!("server:receive_message from {}: {:?}", peer, message);
         inc!(BitswapMetrics::MessagesProcessingServer);
         self.engine.message_received(peer, message).await;
         // TODO: only track useful messages

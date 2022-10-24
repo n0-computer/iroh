@@ -1,17 +1,20 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+use anyhow::{ensure, Result};
+use clap::{Parser, Subcommand};
+use console::style;
+use futures::StreamExt;
+use indicatif::{ProgressBar, ProgressStyle};
+use iroh_api::{AddEvent, Api, ApiExt, IpfsPath, Iroh};
+use iroh_metrics::config::Config as MetricsConfig;
+use iroh_util::human;
+
 use crate::doc;
 #[cfg(feature = "testing")]
 use crate::fixture::get_fixture_api;
 use crate::p2p::{run_command as run_p2p_command, P2p};
 use crate::size::size_stream;
-use anyhow::Result;
-use clap::{Parser, Subcommand};
-use futures::StreamExt;
-use indicatif::{ProgressBar, ProgressStyle};
-use iroh_api::{AddEvent, Api, ApiExt, IpfsPath, Iroh};
-use iroh_metrics::config::Config as MetricsConfig;
 
 #[derive(Parser, Debug, Clone)]
 #[clap(version, long_about = None, propagate_version = true)]
@@ -57,9 +60,11 @@ enum Commands {
         /// filesystem path to write to. Optional and defaults to $CID
         output: Option<PathBuf>,
     },
-    #[clap(about = "Start iroh services locally")]
+    #[clap(about = "Start local iroh services")]
     #[clap(after_help = doc::START_LONG_DESCRIPTION )]
-    Start {},
+    Start {
+        service: Vec<String>,
+    },
     /// status checks the health of the different processes
     #[clap(about = "Check the health of the different iroh services")]
     #[clap(after_help = doc::STATUS_LONG_DESCRIPTION)]
@@ -68,9 +73,11 @@ enum Commands {
         /// when true, updates the status table whenever a change in a process's status occurs
         watch: bool,
     },
-    #[clap(about = "Stop all local iroh services")]
+    #[clap(about = "Stop local iroh services")]
     #[clap(after_help = doc::STOP_LONG_DESCRIPTION )]
-    Stop {},
+    Stop {
+        service: Vec<String>,
+    },
 }
 
 impl Cli {
@@ -127,14 +134,14 @@ impl Cli {
                 println!("Saving file(s) to {}", root_path.to_str().unwrap());
             }
             Commands::P2p(p2p) => run_p2p_command(&api.p2p()?, p2p).await?,
-            Commands::Start {} => {
-                crate::services::start(api).await?;
+            Commands::Start { service } => {
+                crate::services::start(api, service).await?;
             }
             Commands::Status { watch } => {
                 crate::services::status(api, *watch).await?;
             }
-            Commands::Stop {} => {
-                crate::services::stop(api).await?;
+            Commands::Stop { service } => {
+                crate::services::stop(api, service).await?;
             }
         };
 
@@ -155,15 +162,31 @@ async fn add(api: &impl Api, path: &Path, no_wrap: bool, recursive: bool) -> Res
             path.display()
         );
     }
+    println!("{} Calculating size...", style("[1/2]").bold().dim());
+
     let pb = ProgressBar::new_spinner();
-    pb.set_message("Calculating size...");
     let mut total_size: u64 = 0;
+
+    pb.set_message(format!(
+        "Discovered size: {}",
+        human::format_bytes(total_size)
+    ));
     let mut stream = Box::pin(size_stream(path));
     while let Some(size_info) = stream.next().await {
         total_size += size_info.size;
+        pb.set_message(format!(
+            "Discovered size: {}",
+            human::format_bytes(total_size)
+        ));
         pb.inc(1);
     }
     pb.finish_and_clear();
+
+    println!(
+        "{} Importing content {}...",
+        style("[2/2]").bold().dim(),
+        human::format_bytes(total_size)
+    );
 
     let pb = ProgressBar::new(total_size);
     pb.set_style(ProgressStyle::with_template(
@@ -174,16 +197,20 @@ async fn add(api: &impl Api, path: &Path, no_wrap: bool, recursive: bool) -> Res
     pb.inc(0);
 
     let mut progress = api.add_stream(path, !no_wrap).await?;
+    let mut root = None;
     while let Some(add_event) = progress.next().await {
         match add_event? {
-            AddEvent::ProgressDelta(size) => {
-                pb.inc(size);
-            }
-            AddEvent::Done(cid) => {
-                pb.finish_and_clear();
-                println!("/ipfs/{}", cid);
+            AddEvent::ProgressDelta { cid, size } => {
+                root = Some(cid);
+                if let Some(size) = size {
+                    pb.inc(size);
+                }
             }
         }
     }
+    pb.finish_and_clear();
+    ensure!(root.is_some(), "File processing failed");
+    println!("/ipfs/{}", root.unwrap());
+
     Ok(())
 }

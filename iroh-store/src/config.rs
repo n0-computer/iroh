@@ -94,7 +94,6 @@ impl Source for Config {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use config::Config as ConfigBuilder;
 
     #[test]
     #[cfg(all(feature = "rpc-grpc", unix))]
@@ -129,7 +128,7 @@ mod tests {
     fn test_build_config_from_struct() {
         let path = PathBuf::new().join("test");
         let expect = Config::new_grpc(path);
-        let got: Config = ConfigBuilder::builder()
+        let got: Config = config::Config::builder()
             .add_source(expect.clone())
             .build()
             .unwrap()

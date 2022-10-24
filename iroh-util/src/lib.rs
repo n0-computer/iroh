@@ -22,7 +22,9 @@ pub mod lock;
 
 /// name of directory that wraps all iroh files in a given application directory
 const IROH_DIR: &str = "iroh";
+#[cfg(unix)]
 const DEFAULT_NOFILE_LIMIT: u64 = 65536;
+#[cfg(unix)]
 const MIN_NOFILE_LIMIT: u64 = 2048;
 
 /// Blocks current thread until ctrl-c is received

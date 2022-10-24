@@ -5,7 +5,7 @@ use iroh_p2p::{cli::Args, metrics, DiskStorage, Keychain, Node};
 use iroh_util::lock::ProgramLock;
 use iroh_util::{iroh_config_path, make_config};
 use tokio::task;
-use tracing::{debug, error};
+use tracing::error;
 
 /// Starts daemon process
 fn main() -> Result<()> {
@@ -50,7 +50,7 @@ fn main() -> Result<()> {
         #[cfg(unix)]
         {
             match iroh_util::increase_fd_limit() {
-                Ok(soft) => debug!("NOFILE limit: soft = {}", soft),
+                Ok(soft) => tracing::debug!("NOFILE limit: soft = {}", soft),
                 Err(err) => error!("Error increasing NOFILE limit: {}", err),
             }
         }
