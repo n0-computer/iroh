@@ -683,7 +683,6 @@ mod tests {
     use rand::prelude::*;
     use rand_chacha::ChaCha8Rng;
     use std::{collections::BTreeMap, io::prelude::*, sync::Arc};
-    use tempfile;
     use tokio::io::AsyncReadExt;
 
     #[tokio::test]
@@ -974,7 +973,7 @@ mod tests {
     #[cfg(not(windows))]
     #[tokio::test]
     async fn symlink_from_disk_test() -> Result<()> {
-        let temp_dir = tempfile::tempdir()?;
+        let temp_dir = ::tempfile::tempdir()?;
         let expect_name = "path_to_symlink";
         let expect_target = temp_dir.path().join("path_to_target");
         let expect_path = temp_dir.path().join(expect_name);
