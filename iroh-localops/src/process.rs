@@ -4,6 +4,7 @@ use nix::sys::signal::{kill, Signal};
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 use nix::unistd::Pid;
 use std::path::PathBuf;
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 use std::process::{Command, Stdio};
 
 // TODO(b5): instead of using u32's for Process Identifiers, use a proper Pid type
@@ -33,7 +34,7 @@ pub fn daemonize(bin_path: PathBuf, log_path: PathBuf) -> Result<()> {
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
-fn daemonize_process(bin_path: PathBuf, log_path: PathBuf) -> Result<()> {
+fn daemonize_process(_bin_path: PathBuf, _log_path: PathBuf) -> Result<()> {
     Err(anyhow!(
         "daemonizing processes is not supported on your operating system"
     ))
@@ -62,7 +63,7 @@ fn daemonize_process(bin_path: PathBuf, log_path: PathBuf) -> Result<()> {
 }
 
 #[cfg(target_os = "windows")]
-fn daemonize_process(bin_path: PathBuf, log_path: PathBuf) -> Result<()> {
+fn daemonize_process(_bin_path: PathBuf, _log_path: PathBuf) -> Result<()> {
     Err(anyhow!("daemonizing processes on windows is not supported"))
 }
 
@@ -87,6 +88,6 @@ fn stop_process(pid: i32) -> Result<()> {
 }
 
 #[cfg(target_os = "windows")]
-fn stop_process(pid: i32) -> Result<()> {
+fn stop_process(_pid: i32) -> Result<()> {
     Err(anyhow!("stopping processes on windows is not supported"))
 }
