@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use anyhow::{ensure, Result};
+use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use console::style;
 use futures::StreamExt;
@@ -209,8 +209,9 @@ async fn add(api: &impl Api, path: &Path, no_wrap: bool, recursive: bool) -> Res
         }
     }
     pb.finish_and_clear();
-    ensure!(root.is_some(), "File processing failed");
-    println!("/ipfs/{}", root.unwrap());
+    let root = root.context("File processing failed")?;
+    println!("/ipfs/{}", root);
+    api.provide(root).await?;
 
     Ok(())
 }

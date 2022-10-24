@@ -521,8 +521,9 @@ impl Store for StoreAndProvideClient {
     }
 
     async fn put(&self, cid: Cid, blob: Bytes, links: Vec<Cid>) -> Result<()> {
-        self.client.try_store()?.put(cid, blob, links).await?;
-        self.client.try_p2p()?.start_providing(&cid).await
+        self.client.try_store()?.put(cid, blob, links).await
+        // we provide after insertion is finished
+        // self.client.try_p2p()?.start_providing(&cid).await
     }
 }
 
