@@ -1,3 +1,4 @@
+use crate::error::map_service_error;
 use anyhow::Result;
 use async_trait::async_trait;
 use iroh_rpc_client::{Lookup, P2pClient};
@@ -32,7 +33,11 @@ pub trait P2p: Sync {
 #[async_trait]
 impl P2p for ClientP2p {
     async fn lookup_local(&self) -> Result<Lookup> {
-        let (_, listen_addrs) = self.client.get_listening_addrs().await?;
+        let (_, listen_addrs) = self
+            .client
+            .get_listening_addrs()
+            .await
+            .map_err(|e| map_service_error("p2p", e))?;
         Ok(Lookup {
             peer_id: self.client.local_peer_id().await?,
             listen_addrs,
@@ -51,6 +56,7 @@ impl P2p for ClientP2p {
                 self.client.lookup(peer_id, Some(addr.clone())).await
             }
         }
+        .map_err(|e| map_service_error("p2p", e))
     }
 
     async fn connect(&self, addr: &PeerIdOrAddr) -> Result<()> {
@@ -61,6 +67,7 @@ impl P2p for ClientP2p {
                 self.client.connect(peer_id, vec![addr.clone()]).await
             }
         }
+        .map_err(|e| map_service_error("p2p", e))
     }
 }
 

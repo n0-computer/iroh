@@ -1,5 +1,7 @@
 use anyhow::{anyhow, Result};
 use clap::Parser;
+use crossterm::style::Stylize;
+use iroh_api::ApiError;
 use std::io;
 
 #[tokio::main(flavor = "multi_thread")]
@@ -30,8 +32,24 @@ fn transform_error(r: Result<()>) -> Result<()> {
             if let Some(io_error) = io_error {
                 if io_error.kind() == io::ErrorKind::ConnectionRefused {
                     return Err(anyhow!(
-                        "Connection refused. Are `iroh-p2p` and `iroh-store` running?"
+                        "Connection refused. Are services running?\n{}",
+                        "hint: see 'iroh start' for more on starting services".yellow(),
                     ));
+                }
+            }
+            let api_error = e.root_cause().downcast_ref::<ApiError>();
+            if let Some(api_error) = api_error {
+                match api_error {
+                    ApiError::ConnectionRefused { service } => {
+                        return Err(anyhow!(
+                            "Connection refused. This command requires a running {} service.\n{}",
+                            service,
+                            format!("hint: try 'iroh start {}'", service).yellow(),
+                        ));
+                    }
+                    _ => {
+                        return Err(e);
+                    }
                 }
             }
             Err(e)
