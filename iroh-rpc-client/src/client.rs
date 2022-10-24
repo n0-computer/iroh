@@ -17,6 +17,8 @@ pub struct Client {
     store: StoreLBClient,
 }
 
+/// Provides a load balanced client for the store service
+/// The client will round robin between all available StoreClients
 #[derive(Debug, Clone)]
 pub struct StoreLBClient {
     clients: Vec<StoreClient>,
@@ -24,6 +26,7 @@ pub struct StoreLBClient {
 }
 
 impl StoreLBClient {
+    /// round robin load balancing
     pub fn get(&self) -> Option<StoreClient> {
         if self.clients.is_empty() {
             return None;
@@ -41,6 +44,8 @@ impl StoreLBClient {
     }
 }
 
+/// Provides a load balanced client for the p2p service
+/// The client will round robin between all available P2pClients
 #[derive(Debug, Clone)]
 pub struct P2pLBClient {
     clients: Vec<P2pClient>,
@@ -48,6 +53,7 @@ pub struct P2pLBClient {
 }
 
 impl P2pLBClient {
+    /// round robin load balancing
     pub fn get(&self) -> Option<P2pClient> {
         if self.clients.is_empty() {
             return None;
