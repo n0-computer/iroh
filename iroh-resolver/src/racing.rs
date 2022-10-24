@@ -29,10 +29,6 @@ impl RacingLoader {
     pub fn try_raw_gateway(&self) -> Result<&String> {
         match self.http_resolvers.len() {
             0 => Err(anyhow!("no gateway configured to fetch raw CIDs")),
-            1 => self
-                .http_resolvers
-                .first()
-                .ok_or_else(|| anyhow!("no gateway configured to fetch raw CIDs")),
             _ => {
                 let mut rng = rand::thread_rng();
                 let gw = self.http_resolvers.choose(&mut rng).unwrap();
@@ -50,10 +46,13 @@ impl RacingLoader {
     async fn fetch_http(&self, cid: &Cid) -> Result<(Bytes, String), anyhow::Error> {
         let gateway = self.try_raw_gateway()?;
         let cid_str = multibase::encode(multibase::Base::Base32Lower, cid.to_bytes().as_slice());
-        let mut gateway_url = format!("https://{}.ipfs.{}?format=raw", cid_str, gateway);
-        if gateway.starts_with("https://") || gateway.starts_with("http://") {
-            gateway_url = format!("{}/ipfs/{}?format=raw", gateway, cid_str);
-        }
+        // support two gateway URL formats: subdomain gateways (eg: dweb.link) 
+        // and full URL (eg: https://ipfs.io)
+        let gateway_url = if gateway.starts_with("https://") || gateway.starts_with("http://") {
+            format!("{}/ipfs/{}?format=raw", gateway, cid_str)
+          } else {
+            format!("https://{}.ipfs.{}?format=raw", cid_str, gateway)
+        };
         debug!("Will fetch {}", gateway_url);
         let response = reqwest::get(gateway_url).await?;
         response
