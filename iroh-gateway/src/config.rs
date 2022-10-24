@@ -29,6 +29,9 @@ pub struct Config {
     /// flag to toggle whether the gateway should use denylist on requests
     pub use_denylist: bool,
     /// URL of gateways to be used by the racing resolver.
+    /// strings can either be urls or subdomain gateway roots
+    /// values without https:// prefix are treated as subdomain gateways (eg: dweb.link)
+    /// values with are treated as IPFS path gateways (eg: https://ipfs.io)
     pub http_resolvers: Option<Vec<String>>,
     /// rpc addresses for the gateway & addresses for the rpc client to dial
     pub rpc_client: RpcClientConfig,
@@ -208,7 +211,10 @@ mod tests {
             Value::new(None, default.public_url_base.clone()),
         );
         expect.insert("port".to_string(), Value::new(None, default.port as i64));
-        expect.insert("denylist".to_string(), Value::new(None, default.denylist));
+        expect.insert(
+            "use_denylist".to_string(),
+            Value::new(None, default.denylist),
+        );
         expect.insert(
             "headers".to_string(),
             Value::new(None, collect_headers(&default.headers).unwrap()),
