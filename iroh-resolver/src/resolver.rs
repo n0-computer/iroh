@@ -851,11 +851,11 @@ impl<T: ContentLoader> Resolver<T> {
                 let loader = loader_thread.clone();
 
                 tokio::task::spawn(async move {
-                    error!("stopping session {}", session);
+                    debug!("stopping session {}", session);
                     if let Err(err) = loader.stop_session(session).await {
                         warn!("failed to stop session {}: {:?}", session, err);
                     }
-                    error!("stopping session {} done", session);
+                    debug!("stopping session {} done", session);
                 });
             }
         });
