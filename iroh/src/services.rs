@@ -6,6 +6,7 @@ use iroh_util::iroh_cache_path;
 use std::collections::HashSet;
 use std::io::{stdout, Write};
 use std::time::SystemTime;
+use sysinfo::PidExt;
 use tracing::info;
 
 use iroh_api::{Api, ServiceStatus, StatusRow, StatusTable};
@@ -131,7 +132,7 @@ pub async fn stop_services(api: &impl Api, services: HashSet<&str>) -> Result<()
             Ok(pid) => {
                 info!("stopping {} pid: {}", daemon_name, pid);
                 print!("stopping {}... ", &daemon_name);
-                match iroh_localops::process::stop(pid.into()) {
+                match iroh_localops::process::stop(pid.as_u32()) {
                     Ok(_) => {
                         let is_down = ensure_status(
                             api,

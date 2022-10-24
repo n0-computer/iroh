@@ -950,6 +950,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(not(windows))]
     #[tokio::test]
     async fn symlink_from_disk_test() -> Result<()> {
         let temp_dir = tempfile::tempdir()?;

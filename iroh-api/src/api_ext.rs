@@ -90,11 +90,27 @@ async fn save_get_stream(
                 if let Some(parent) = path.parent() {
                     tokio::fs::create_dir_all(parent.to_path(root_path)).await?;
                 }
+                #[cfg(windows)]
+                tokio::task::spawn_blocking(move || {
+                    make_windows_symlink(target, full_path).map_err(|e| anyhow::anyhow!(e))
+                })
+                .await??;
+
+                #[cfg(unix)]
                 tokio::fs::symlink(target, full_path).await?;
             }
         }
     }
     Ok(())
+}
+
+#[cfg(windows)]
+fn make_windows_symlink(target: PathBuf, path: PathBuf) -> Result<()> {
+    if target.is_dir() {
+        std::os::windows::fs::symlink_dir(target, path).map_err(|e| anyhow::anyhow!(e))
+    } else {
+        std::os::windows::fs::symlink_file(target, path).map_err(|e| anyhow::anyhow!(e))
+    }
 }
 
 /// Given an cid and an optional output path, determine root path

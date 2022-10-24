@@ -4,6 +4,7 @@ use nix::sys::signal::{kill, Signal};
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 use nix::unistd::Pid;
 use std::path::PathBuf;
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 use std::process::{Command, Stdio};
 
 // TODO(b5): instead of using u32's for Process Identifiers, use a proper Pid type
@@ -33,7 +34,7 @@ pub fn daemonize(bin_path: PathBuf, log_path: PathBuf) -> Result<()> {
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
-fn daemonize_process(bin_path: PathBuf, log_path: PathBuf) -> Result<()> {
+fn daemonize_process(_bin_path: PathBuf, _log_path: PathBuf) -> Result<()> {
     Err(anyhow!(
         "daemonizing processes is not supported on your operating system"
     ))
@@ -62,31 +63,31 @@ fn daemonize_process(bin_path: PathBuf, log_path: PathBuf) -> Result<()> {
 }
 
 #[cfg(target_os = "windows")]
-fn daemonize_process(bin_path: PathBuf, log_path: PathBuf) -> Result<()> {
+fn daemonize_process(_bin_path: PathBuf, _log_path: PathBuf) -> Result<()> {
     Err(anyhow!("daemonizing processes on windows is not supported"))
 }
 
 // TODO(b5) - this level of indirection isn't necessary, factor `stop_process`
 // directly into `stop`
 // https://github.com/n0-computer/iroh/pull/360#discussion_r1002000769
-pub fn stop(pid: i32) -> Result<()> {
+pub fn stop(pid: u32) -> Result<()> {
     stop_process(pid)
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
-fn stop_process(pid: i32) -> Result<()> {
+fn stop_process(pid: u32) -> Result<()> {
     Err(anyhow!(
         "stopping processes is not supported on your operating system"
     ))
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-fn stop_process(pid: i32) -> Result<()> {
-    let id = Pid::from_raw(pid);
+fn stop_process(pid: u32) -> Result<()> {
+    let id = Pid::from_raw(pid as i32);
     kill(id, Signal::SIGINT).map_err(|e| anyhow!("killing process: {}", e))
 }
 
 #[cfg(target_os = "windows")]
-fn stop_process(pid: i32) -> Result<()> {
+fn stop_process(_pid: u32) -> Result<()> {
     Err(anyhow!("stopping processes on windows is not supported"))
 }

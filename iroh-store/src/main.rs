@@ -7,7 +7,7 @@ use iroh_store::{
 };
 use iroh_util::lock::ProgramLock;
 use iroh_util::{block_until_sigint, iroh_config_path, make_config};
-use tracing::{debug, error, info};
+use tracing::info;
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> anyhow::Result<()> {
@@ -44,8 +44,8 @@ async fn main() -> anyhow::Result<()> {
     #[cfg(unix)]
     {
         match iroh_util::increase_fd_limit() {
-            Ok(soft) => debug!("NOFILE limit: soft = {}", soft),
-            Err(err) => error!("Error increasing NOFILE limit: {}", err),
+            Ok(soft) => tracing::debug!("NOFILE limit: soft = {}", soft),
+            Err(err) => tracing::error!("Error increasing NOFILE limit: {}", err),
         }
     }
 
