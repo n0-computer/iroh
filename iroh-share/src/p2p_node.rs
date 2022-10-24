@@ -215,7 +215,7 @@ impl P2pNode {
     }
 
     pub async fn close(self) -> Result<()> {
-        self.rpc.p2p.unwrap().shutdown().await?;
+        self.rpc.try_p2p().unwrap().shutdown().await?;
         self.store_task.abort();
         self.p2p_task.await?;
         self.store_task.await.ok();

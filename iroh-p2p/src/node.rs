@@ -1048,7 +1048,7 @@ mod tests {
                 .unwrap();
 
             let mut providers = Vec::new();
-            let mut chan = client.p2p.unwrap().fetch_providers_dht(&c).await?;
+            let mut chan = client.try_p2p().unwrap().fetch_providers_dht(&c).await?;
             while let Some(new_providers) = chan.next().await {
                 let new_providers = new_providers.unwrap();
                 println!("providers found: {}", new_providers.len());

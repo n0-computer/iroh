@@ -797,8 +797,8 @@ impl ContentLoader for Client {
 
         // trigger storage in the background
         let clone = bytes.clone();
-        let store = self.store.as_ref().cloned();
-        let p2p = self.try_p2p()?.clone();
+        let store = self.try_store();
+        let p2p = self.try_p2p()?;
 
         tokio::spawn(async move {
             let clone2 = clone.clone();
@@ -809,7 +809,7 @@ impl ContentLoader for Client {
 
             let len = clone.len();
             let links_len = links.len();
-            if let Some(store_rpc) = store.as_ref() {
+            if let Ok(store_rpc) = store {
                 match store_rpc.put(cid, clone.clone(), links).await {
                     Ok(_) => {
                         debug!("stored {} ({}bytes, {}links)", cid, len, links_len);

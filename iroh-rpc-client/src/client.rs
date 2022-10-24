@@ -1,10 +1,9 @@
-use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
+use std::sync::Arc;
 
 use anyhow::{anyhow, Context, Result};
 #[cfg(feature = "grpc")]
 use futures::{Stream, StreamExt};
-use rand::Rng;
 
 use crate::config::Config;
 use crate::gateway::GatewayClient;
@@ -14,35 +13,55 @@ use crate::store::StoreClient;
 #[derive(Debug, Clone)]
 pub struct Client {
     pub gateway: Option<GatewayClient>,
-        pub p2p: Option<P2pLBClient>,
-    pub store: Option<StoreLBClient>,
+    p2p: P2pLBClient,
+    store: StoreLBClient,
 }
 
 #[derive(Debug, Clone)]
 pub struct StoreLBClient {
     clients: Vec<StoreClient>,
-    pos: usize,
+    pos: Arc<AtomicUsize>,
 }
 
 impl StoreLBClient {
-    pub fn get(&mut self) -> StoreClient {
-        let c = self.clients.get(self.pos).unwrap();
-        self.pos = (self.pos + 1) % self.clients.len();
-        c.clone()
+    pub fn get(&self) -> Option<StoreClient> {
+        if self.clients.is_empty() {
+            return None;
+        }
+        let pos = self.pos.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let c = self.clients.get(pos % self.clients.len()).unwrap();
+        Some(c.clone())
+    }
+
+    pub fn new() -> Self {
+        Self {
+            clients: vec![],
+            pos: Arc::new(AtomicUsize::new(0)),
+        }
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct P2pLBClient {
     clients: Vec<P2pClient>,
-    pos: usize,
+    pos: Arc<AtomicUsize>,
 }
 
 impl P2pLBClient {
-    pub fn get(&mut self) -> P2pClient {
-        let c = self.clients.get(self.pos).unwrap();
-        self.pos = (self.pos + 1) % self.clients.len();
-        c.clone()
+    pub fn get(&self) -> Option<P2pClient> {
+        if self.clients.is_empty() {
+            return None;
+        }
+        let pos = self.pos.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let c = self.clients.get(pos % self.clients.len()).unwrap();
+        Some(c.clone())
+    }
+
+    pub fn new() -> Self {
+        Self {
+            clients: vec![],
+            pos: Arc::new(AtomicUsize::new(0)),
+        }
     }
 }
 
@@ -64,30 +83,25 @@ impl Client {
             None
         };
 
-        let p2p = if let Some(addr) = p2p_addr {
-            let mut slb = P2pLBClient { clients: vec![], pos: 0};
-            for i in 0..32 {
+        let mut p2p = P2pLBClient::new();
+        if let Some(addr) = p2p_addr {
+            for _i in 0..32 {
                 let sc = P2pClient::new(addr.clone())
                     .await
                     .context("Could not create store rpc client")?;
-                slb.clients.push(sc);
+                p2p.clients.push(sc);
             }
-            Some(slb)
-        } else {
-            None
-        };
-        let store = if let Some(addr) = store_addr {
-            let mut slb = StoreLBClient { clients: vec![], pos: 0};
-            for i in 0..32 {
+        }
+
+        let mut store = StoreLBClient::new();
+        if let Some(addr) = store_addr {
+            for _i in 0..32 {
                 let sc = StoreClient::new(addr.clone())
                     .await
                     .context("Could not create store rpc client")?;
-                slb.clients.push(sc);
+                store.clients.push(sc);
             }
-            Some(slb)
-        } else {
-            None
-        };
+        }
 
         Ok(Client {
             gateway,
@@ -96,9 +110,11 @@ impl Client {
         })
     }
 
-    pub fn try_p2p(self) -> Result<P2pClient> {
-        let c = self.p2p.unwrap().clone().get();
-        return Ok(c);
+    pub fn try_p2p(&self) -> Result<P2pClient> {
+        if let Some(p2p_client) = self.p2p.get() {
+            return Ok(p2p_client);
+        }
+        Err(anyhow!("missing rpc p2p connnection"))
     }
 
     pub fn try_gateway(&self) -> Result<&GatewayClient> {
@@ -107,9 +123,11 @@ impl Client {
             .ok_or_else(|| anyhow!("missing rpc gateway connnection"))
     }
 
-    pub fn try_store(self) -> Result<StoreClient> {
-        let c = self.store.unwrap().clone().get();
-        return Ok(c);
+    pub fn try_store(&self) -> Result<StoreClient> {
+        if let Some(store_client) = self.store.get() {
+            return Ok(store_client);
+        }
+        Err(anyhow!("missing rpc store connnection"))
     }
 
     #[cfg(feature = "grpc")]
@@ -119,13 +137,13 @@ impl Client {
         } else {
             None
         };
-        let p = if let Some(ref p) = self.p2p {
-            Some(p.clone().get().check().await)
+        let p = if let Some(ref p) = self.p2p.get() {
+            Some(p.check().await)
         } else {
             None
         };
-        let s = if let Some(ref s) = self.store {
-            Some(s.clone().get().check().await)
+        let s = if let Some(ref s) = self.store.get() {
+            Some(s.check().await)
         } else {
             None
         };
@@ -142,12 +160,12 @@ impl Client {
                 let g = g.watch().await;
                 streams.push(g.boxed());
             }
-            if let Some(ref p) = self.p2p {
-                let p = p.clone().get().watch().await;
+            if let Some(ref p) = self.p2p.get() {
+                let p = p.watch().await;
                 streams.push(p.boxed());
             }
-            if let Some(ref s) = self.store {
-                let s = s.clone().get().watch().await;
+            if let Some(ref s) = self.store.get() {
+                let s = s.watch().await;
                 streams.push(s.boxed());
             }
 
