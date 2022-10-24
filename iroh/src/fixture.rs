@@ -68,6 +68,8 @@ fn fixture_add_file() -> MockApi {
         )])
         .boxed_local())))
     });
+    api.expect_provide()
+        .returning(|_| Box::pin(future::ready(Ok(()))));
     api
 }
 
@@ -82,6 +84,8 @@ fn fixture_add_directory() -> MockApi {
         )])
         .boxed_local())))
     });
+    api.expect_provide()
+        .returning(|_| Box::pin(future::ready(Ok(()))));
     api
 }
 
