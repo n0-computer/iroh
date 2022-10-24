@@ -1,7 +1,7 @@
 use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
 #[cfg(feature = "grpc")]
 use futures::{Stream, StreamExt};
 
@@ -111,23 +111,17 @@ impl Client {
     }
 
     pub fn try_p2p(&self) -> Result<P2pClient> {
-        if let Some(p2p_client) = self.p2p.get() {
-            return Ok(p2p_client);
-        }
-        Err(anyhow!("missing rpc p2p connnection"))
+        self.p2p.get().context("missing rpc p2p connnection")
     }
 
     pub fn try_gateway(&self) -> Result<&GatewayClient> {
         self.gateway
             .as_ref()
-            .ok_or_else(|| anyhow!("missing rpc gateway connnection"))
+            .context("missing rpc gateway connnection")
     }
 
     pub fn try_store(&self) -> Result<StoreClient> {
-        if let Some(store_client) = self.store.get() {
-            return Ok(store_client);
-        }
-        Err(anyhow!("missing rpc store connnection"))
+        self.store.get().context("missing rpc store connnection")
     }
 
     #[cfg(feature = "grpc")]
