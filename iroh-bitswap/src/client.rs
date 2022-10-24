@@ -65,7 +65,7 @@ pub struct Client<S: Store> {
     rebroadcast_delay: Duration,
     simulate_dont_haves_on_timeout: bool,
     #[derivative(Debug = "ignore")]
-    blocks_received_cb: Arc<Box<BlocksReceivedCb>>,
+    blocks_received_cb: Option<Arc<Box<BlocksReceivedCb>>>,
     notify: async_broadcast::Sender<Block>,
 }
 
@@ -76,7 +76,7 @@ impl<S: Store> Client<S> {
     pub async fn new(
         network: Network,
         store: S,
-        blocks_received_cb: Box<BlocksReceivedCb>,
+        blocks_received_cb: Option<Box<BlocksReceivedCb>>,
         config: Config,
     ) -> Self {
         let self_id = *network.self_id();

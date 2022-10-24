@@ -70,7 +70,7 @@ pub struct Bitswap<S: Store> {
     /// Set to true when dialing should be disabled because we have reached the conn limit.
     pause_dialing: bool,
     client: Client<S>,
-    server: Server<S>,
+    server: Option<Server<S>>,
     incoming_messages: mpsc::Sender<(PeerId, BitswapMessage)>,
     peers_connected: mpsc::Sender<PeerId>,
     peers_disconnected: mpsc::Sender<PeerId>,
@@ -101,16 +101,26 @@ impl PeerState {
 #[derive(Debug)]
 pub struct Config {
     pub client: ClientConfig,
-    pub server: ServerConfig,
+    /// If no server config is set, the server is disabled.
+    pub server: Option<ServerConfig>,
     pub protocol: ProtocolConfig,
     pub idle_timeout: Duration,
+}
+
+impl Config {
+    pub fn default_client_mode() -> Self {
+        Config {
+            server: None,
+            ..Default::default()
+        }
+    }
 }
 
 impl Default for Config {
     fn default() -> Self {
         Config {
             client: ClientConfig::default(),
-            server: ServerConfig::default(),
+            server: Some(ServerConfig::default()),
             protocol: ProtocolConfig::default(),
             idle_timeout: Duration::from_secs(30),
         }
@@ -127,16 +137,14 @@ pub trait Store: Debug + Clone + Send + Sync + 'static {
 impl<S: Store> Bitswap<S> {
     pub async fn new(self_id: PeerId, store: S, config: Config) -> Self {
         let network = Network::new(self_id);
-        let server = Server::new(network.clone(), store.clone(), config.server).await;
-        let client = Client::new(
-            network.clone(),
-            store,
-            server.received_blocks_cb(),
-            config.client,
-        )
-        .await;
+        let (server, cb) = if let Some(config) = config.server {
+            let server = Server::new(network.clone(), store.clone(), config).await;
+            (Some(server), Some(server.received_blocks_cb()))
+        } else {
+            (None, None)
+        };
+        let client = Client::new(network.clone(), store, cb, config.client).await;
 
-        // EVIL: must eventually not be unbounded !!!
         let (sender_msg, mut receiver_msg) = mpsc::channel(2048);
         let (sender_con, mut receiver_con) = mpsc::channel(2048);
         let (sender_dis, mut receiver_dis) = mpsc::channel(2048);
@@ -149,11 +157,15 @@ impl<S: Store> Bitswap<S> {
             async move {
                 // process messages serially but without blocking the p2p loop
                 while let Some((peer, message)) = receiver_msg.recv().await {
-                    futures::future::join(
-                        client.receive_message(&peer, &message),
-                        server.receive_message(&peer, &message),
-                    )
-                    .await;
+                    if let Some(server) = server {
+                        futures::future::join(
+                            client.receive_message(&peer, &message),
+                            server.receive_message(&peer, &message),
+                        )
+                        .await;
+                    } else {
+                        client.receive_message(&peer, &message).await;
+                    }
                 }
             }
         }));
@@ -165,6 +177,7 @@ impl<S: Store> Bitswap<S> {
             async move {
                 // process messages serially but without blocking the p2p loop
                 while let Some(peer) = receiver_con.recv().await {
+                    if let Some(server) = server {
                     futures::future::join(
                         client.peer_connected(&peer),
                         server.peer_connected(&peer),
