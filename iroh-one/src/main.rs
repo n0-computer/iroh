@@ -10,6 +10,7 @@ use iroh_one::{
     cli::Args,
     config::{Config, CONFIG_FILE_NAME, ENV_PREFIX},
 };
+use iroh_resolver::racing::RacingLoader;
 use iroh_rpc_client::Client as RpcClient;
 use iroh_rpc_types::Addr;
 use iroh_util::lock::ProgramLock;
@@ -70,15 +71,14 @@ async fn main() -> Result<()> {
         .server_rpc_addr()?
         .ok_or_else(|| anyhow!("missing gateway rpc addr"))?;
 
-    let bad_bits = match config.gateway.denylist {
+    let bad_bits = match config.gateway.use_denylist {
         true => Arc::new(Some(RwLock::new(BadBits::new()))),
         false => Arc::new(None),
     };
 
-    // let content_loader = RpcClient::new(config.rpc_client.clone()).await?;
-    let content_loader = iroh_one::content_loader::RacingLoader::new(
+    let content_loader = RacingLoader::new(
         RpcClient::new(config.rpc_client.clone()).await?,
-        config.resolver_gateway.clone(),
+        config.gateway.http_resolvers.clone().unwrap_or_default(),
     );
     let shared_state = Core::make_state(
         Arc::new(config.clone()),

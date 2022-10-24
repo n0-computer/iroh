@@ -27,7 +27,12 @@ pub struct Config {
     /// default port to listen on
     pub port: u16,
     /// flag to toggle whether the gateway should use denylist on requests
-    pub denylist: bool,
+    pub use_denylist: bool,
+    /// URL of gateways to be used by the racing resolver.
+    /// strings can either be urls or subdomain gateway roots
+    /// values without https:// prefix are treated as subdomain gateways (eg: dweb.link)
+    /// values with are treated as IPFS path gateways (eg: https://ipfs.io)
+    pub http_resolvers: Option<Vec<String>>,
     /// rpc addresses for the gateway & addresses for the rpc client to dial
     pub rpc_client: RpcClientConfig,
     /// metrics configuration
@@ -46,8 +51,9 @@ impl Config {
             headers: HeaderMap::new(),
             port,
             rpc_client,
+            http_resolvers: None,
             metrics: MetricsConfig::default(),
-            denylist: false,
+            use_denylist: false,
         }
     }
 
@@ -113,8 +119,9 @@ impl Default for Config {
             headers: HeaderMap::new(),
             port: DEFAULT_PORT,
             rpc_client,
+            http_resolvers: None,
             metrics: MetricsConfig::default(),
-            denylist: false,
+            use_denylist: false,
         };
         t.set_default_headers();
         t
@@ -130,7 +137,7 @@ impl Source for Config {
         let rpc_client = self.rpc_client.collect()?;
         let mut map: Map<String, Value> = Map::new();
         insert_into_config_map(&mut map, "public_url_base", self.public_url_base.clone());
-        insert_into_config_map(&mut map, "denylist", self.denylist);
+        insert_into_config_map(&mut map, "use_denylist", self.use_denylist);
         // Some issue between deserializing u64 & u16, converting this to
         // an signed int fixes the issue
         insert_into_config_map(&mut map, "port", self.port as i32);
@@ -138,6 +145,10 @@ impl Source for Config {
         insert_into_config_map(&mut map, "rpc_client", rpc_client);
         let metrics = self.metrics.collect()?;
         insert_into_config_map(&mut map, "metrics", metrics);
+
+        if let Some(http_resolvers) = &self.http_resolvers {
+            insert_into_config_map(&mut map, "http_resolvers", http_resolvers.clone());
+        }
         Ok(map)
     }
 }
@@ -200,7 +211,10 @@ mod tests {
             Value::new(None, default.public_url_base.clone()),
         );
         expect.insert("port".to_string(), Value::new(None, default.port as i64));
-        expect.insert("denylist".to_string(), Value::new(None, default.denylist));
+        expect.insert(
+            "use_denylist".to_string(),
+            Value::new(None, default.use_denylist),
+        );
         expect.insert(
             "headers".to_string(),
             Value::new(None, collect_headers(&default.headers).unwrap()),
