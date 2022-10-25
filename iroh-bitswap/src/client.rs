@@ -116,7 +116,7 @@ impl<S: Store> Client<S> {
             provider_search_delay: config.provider_search_delay,
             rebroadcast_delay: config.rebroadcast_delay,
             simulate_dont_haves_on_timeout: config.simluate_donthaves_on_timeout,
-            blocks_received_cb: Arc::new(blocks_received_cb),
+            blocks_received_cb: blocks_received_cb.map(Arc::new),
             notify,
         }
     }
@@ -229,7 +229,9 @@ impl<S: Store> Client<S> {
                 error!("failed to broadcast block {}: {:?}", block.cid(), err);
             }
         }
-        (self.blocks_received_cb)(*from, wanted.into_iter().cloned().collect()).await;
+        if let Some(ref cb) = self.blocks_received_cb {
+            (cb)(*from, wanted.into_iter().cloned().collect()).await;
+        }
 
         info!("recv_msg end");
         Ok(())

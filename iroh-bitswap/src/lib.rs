@@ -139,7 +139,8 @@ impl<S: Store> Bitswap<S> {
         let network = Network::new(self_id);
         let (server, cb) = if let Some(config) = config.server {
             let server = Server::new(network.clone(), store.clone(), config).await;
-            (Some(server), Some(server.received_blocks_cb()))
+            let cb = server.received_blocks_cb();
+            (Some(server), Some(cb))
         } else {
             (None, None)
         };
@@ -157,7 +158,7 @@ impl<S: Store> Bitswap<S> {
             async move {
                 // process messages serially but without blocking the p2p loop
                 while let Some((peer, message)) = receiver_msg.recv().await {
-                    if let Some(server) = server {
+                    if let Some(ref server) = server {
                         futures::future::join(
                             client.receive_message(&peer, &message),
                             server.receive_message(&peer, &message),
@@ -177,12 +178,15 @@ impl<S: Store> Bitswap<S> {
             async move {
                 // process messages serially but without blocking the p2p loop
                 while let Some(peer) = receiver_con.recv().await {
-                    if let Some(server) = server {
-                    futures::future::join(
-                        client.peer_connected(&peer),
-                        server.peer_connected(&peer),
-                    )
-                    .await;
+                    if let Some(ref server) = server {
+                        futures::future::join(
+                            client.peer_connected(&peer),
+                            server.peer_connected(&peer),
+                        )
+                        .await;
+                    } else {
+                        client.peer_connected(&peer).await;
+                    }
                 }
             }
         }));
@@ -194,11 +198,15 @@ impl<S: Store> Bitswap<S> {
             async move {
                 // process messages serially but without blocking the p2p loop
                 while let Some(peer) = receiver_dis.recv().await {
-                    futures::future::join(
-                        client.peer_disconnected(&peer),
-                        server.peer_disconnected(&peer),
-                    )
-                    .await;
+                    if let Some(ref server) = server {
+                        futures::future::join(
+                            client.peer_disconnected(&peer),
+                            server.peer_disconnected(&peer),
+                        )
+                        .await;
+                    } else {
+                        client.peer_disconnected(&peer).await;
+                    }
                 }
             }
         }));
@@ -219,8 +227,8 @@ impl<S: Store> Bitswap<S> {
         }
     }
 
-    pub fn server(&self) -> &Server<S> {
-        &self.server
+    pub fn server(&self) -> Option<&Server<S>> {
+        self.server.as_ref()
     }
 
     pub fn client(&self) -> &Client<S> {
@@ -229,16 +237,22 @@ impl<S: Store> Bitswap<S> {
 
     pub async fn stop(self) -> Result<()> {
         self.network.stop();
-        let (a, b) = futures::future::join(self.client.stop(), self.server.stop()).await;
-        a?;
-        b?;
+        if let Some(server) = self.server {
+            let (a, b) = futures::future::join(self.client.stop(), server.stop()).await;
+            a?;
+            b?;
+        } else {
+            self.client.stop().await?;
+        }
 
         Ok(())
     }
 
     pub async fn notify_new_blocks(&self, blocks: &[Block]) -> Result<()> {
         self.client.notify_new_blocks(blocks).await?;
-        self.server.notify_new_blocks(blocks).await?;
+        if let Some(ref server) = self.server {
+            server.notify_new_blocks(blocks).await?;
+        }
 
         Ok(())
     }
@@ -255,30 +269,16 @@ impl<S: Store> Bitswap<S> {
         }
     }
 
-    pub async fn stat(&self) -> Result<Stat> {
-        let client_stat = self.client.stat().await?;
-        let server_stat = self.server.stat().await?;
-
-        Ok(Stat {
-            wantlist: client_stat.wantlist,
-            blocks_received: client_stat.blocks_received,
-            data_received: client_stat.data_received,
-            dup_blks_received: client_stat.dup_blks_received,
-            dup_data_received: client_stat.dup_data_received,
-            messages_received: client_stat.messages_received,
-            peers: server_stat.peers,
-            blocks_sent: server_stat.blocks_sent,
-            data_sent: server_stat.data_sent,
-            provide_buf_len: server_stat.provide_buf_len,
-        })
-    }
-
     pub async fn wantlist_for_peer(&self, peer: &PeerId) -> Vec<Cid> {
         if peer == self.network.self_id() {
             return self.client.get_wantlist().await.into_iter().collect();
         }
 
-        self.server.wantlist_for_peer(peer).await
+        if let Some(ref server) = self.server {
+            server.wantlist_for_peer(peer).await
+        } else {
+            Vec::new()
+        }
     }
 
     fn peer_connected(&self, peer: PeerId) {
@@ -382,20 +382,6 @@ impl<S: Store> Bitswap<S> {
             }
         }
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Stat {
-    pub wantlist: Vec<Cid>,
-    pub peers: Vec<PeerId>,
-    pub blocks_received: u64,
-    pub data_received: u64,
-    pub dup_blks_received: u64,
-    pub dup_data_received: u64,
-    pub messages_received: u64,
-    pub blocks_sent: u64,
-    pub data_sent: u64,
-    pub provide_buf_len: usize,
 }
 
 #[derive(Debug)]

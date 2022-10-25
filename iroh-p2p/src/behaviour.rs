@@ -88,9 +88,14 @@ impl NodeBehaviour {
         let pub_key = local_key.public();
         let peer_id = pub_key.to_peer_id();
 
-        let bitswap = if config.bitswap {
+        let bitswap = if config.bitswap_client || config.bitswap_server {
             info!("init bitswap");
-            let bs_config = BitswapConfig::default();
+            // NOTE: server only mode is not implemented yet
+            let bs_config = if config.bitswap_server {
+                BitswapConfig::default()
+            } else {
+                BitswapConfig::default_client_mode()
+            };
             Some(Bitswap::new(peer_id, BitswapStore(rpc_client), bs_config).await)
         } else {
             None
