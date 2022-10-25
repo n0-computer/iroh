@@ -252,8 +252,12 @@ where
     Ok(())
 }
 
-/// require a set of services is up
-pub async fn require_services(api: &impl Api, services: HashSet<&str>) -> Result<()> {
+/// require a set of services is up. returns the underlying status table of all
+/// services for additional scrutiny
+pub async fn require_services(
+    api: &impl Api,
+    services: HashSet<&str>,
+) -> Result<iroh_api::StatusTable> {
     let table = api.check().await;
     for service in table.iter() {
         if services.contains(service.name()) && service.status() != iroh_api::ServiceStatus::Serving
@@ -263,7 +267,7 @@ pub async fn require_services(api: &impl Api, services: HashSet<&str>) -> Result
             }));
         }
     }
-    Ok(())
+    Ok(table)
 }
 
 /// poll until a service matches the desired status. returns Ok(true) if status was matched,
