@@ -221,6 +221,28 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
     }
 
     fn expiry(&mut self) -> Result<()> {
+        // Cleanup bitswap sessions
+        let mut to_remove = Vec::new();
+        for (session_id, workers) in &mut self.bitswap_sessions {
+            // Check if the workers are still active
+            workers.retain(|(_, worker)| !worker.is_finished());
+
+            if workers.is_empty() {
+                to_remove.push(*session_id);
+            }
+
+            // Only do a small chunk of cleanup on each iteration
+            // TODO(arqu): magic number
+            if to_remove.len() >= 10 {
+                break;
+            }
+        }
+
+        for session_id in to_remove {
+            let (s, _r) = oneshot::channel();
+            self.destroy_session(session_id, s);
+        }
+
         Ok(())
     }
 
