@@ -6,6 +6,7 @@ use std::str::FromStr;
 
 use futures::StreamExt;
 use iroh_api::{AddEvent, Cid, Lookup, MockApi, MockP2p, OutType, PeerId};
+use iroh_api::{ServiceStatus, StatusRow, StatusTable};
 use relative_path::RelativePathBuf;
 
 type GetFixture = fn() -> MockApi;
@@ -59,6 +60,13 @@ fn fixture_get() -> MockApi {
 
 fn fixture_add_file() -> MockApi {
     let mut api = MockApi::default();
+    api.expect_check().returning(|| {
+        Box::pin(future::ready(StatusTable::new(
+            Some(StatusRow::new("gateway", 1, ServiceStatus::Serving)),
+            Some(StatusRow::new("p2p", 1, ServiceStatus::Serving)),
+            Some(StatusRow::new("store", 1, ServiceStatus::Serving)),
+        )))
+    });
     api.expect_add_file().returning(|_ipfs_path, _| {
         let cid = Cid::from_str("QmYbcW4tXLXHWw753boCK8Y7uxLu5abXjyYizhLznq9PUR").unwrap();
         let add_event = AddEvent::ProgressDelta { cid, size: Some(0) };
@@ -75,6 +83,13 @@ fn fixture_add_file() -> MockApi {
 
 fn fixture_add_directory() -> MockApi {
     let mut api = MockApi::default();
+    api.expect_check().returning(|| {
+        Box::pin(future::ready(StatusTable::new(
+            Some(StatusRow::new("gateway", 1, ServiceStatus::Serving)),
+            Some(StatusRow::new("p2p", 1, ServiceStatus::Serving)),
+            Some(StatusRow::new("store", 1, ServiceStatus::Serving)),
+        )))
+    });
     api.expect_add_dir().returning(|_ipfs_path, _| {
         let cid = Cid::from_str("QmYbcW4tXLXHWw753boCK8Y7uxLu5abXjyYizhLznq9PUR").unwrap();
         let add_event = AddEvent::ProgressDelta { cid, size: Some(0) };
