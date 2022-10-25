@@ -654,17 +654,19 @@ fn add_blocks_to_store_chunked<S: Store>(
             let block = block?;
             let block_size = block.data().len() as u64;
             let cid = *block.cid();
+            let raw_data_size = block.raw_data_size();
             if chunk_size + block_size > MAX_CHUNK_SIZE {
                 tracing::info!("adding chunk of {} bytes", chunk_size);
                 store.put_many(chunk.clone()).await?;
                 chunk.clear();
                 chunk_size = 0;
             } else {
+                chunk.push(block);
                 chunk_size += block_size;
             }
             yield Ok(AddEvent::ProgressDelta {
                 cid,
-                size: block.raw_data_size(),
+                size: raw_data_size,
             });
         }
         // make sure to also send the last chunk!
