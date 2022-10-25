@@ -43,7 +43,7 @@ impl RpcStore for Store {
             let links = links_from_bytes(req.links)?;
             Ok((cid, req.blob, links))
         }).collect::<Result<Vec<_>>>()?;
-        self.put_many(req).await
+        self.put_many(req)
     }
 
     #[tracing::instrument(skip(self))]

@@ -646,7 +646,6 @@ fn add_blocks_to_store_chunked<S: Store>(
     store: S,
     mut blocks: Pin<Box<dyn Stream<Item = Result<Block>>>>,
 ) -> impl Stream<Item = Result<AddEvent>> {
-    println!("add_blocks_to_store_chunked");
     let mut chunk = Vec::new();
     let mut chunk_size = 0u64;
     const MAX_CHUNK_SIZE: u64  =1024 * 1024 * 16;
