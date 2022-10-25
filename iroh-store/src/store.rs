@@ -7,6 +7,7 @@ use std::{
 };
 
 use anyhow::{anyhow, bail, Context, Result};
+use bytes::Bytes;
 use cid::Cid;
 use iroh_metrics::{
     core::{MObserver, MRecorder},
@@ -234,6 +235,58 @@ impl Store {
         self.db().write(batch)?;
         observe!(StoreHistograms::PutRequests, start.elapsed().as_secs_f64());
         record!(StoreMetrics::PutBytes, blob_size as u64);
+
+        Ok(())
+    }
+
+
+    #[tracing::instrument(skip(self, blocks))]
+    pub async fn put_many(&self, blocks: impl IntoIterator<Item = (Cid, Bytes, Vec<Cid>)>) -> Result<()>
+    {
+        let cf_id = self.cf_id()?;
+        let cf_meta = self.cf_metadata()?;
+        let cf_graph = self.cf_graph()?;
+        let cf_blobs = self.cf_blobs()?;
+
+        let mut batch = WriteBatch::default();
+        for (cid, blob, links) in blocks.into_iter() {
+            if self.has(&cid).await? {
+                return Ok(());
+            }
+    
+            let id = self.next_id();
+    
+            let start = std::time::Instant::now();
+    
+            let id_bytes = id.to_be_bytes();
+    
+            // guranteed that the key does not exists, so we want to store it
+    
+            let metadata = MetadataV0 {
+                codec: cid.codec(),
+                multihash: cid.hash().to_bytes(),
+            };
+            let metadata_bytes = rkyv::to_bytes::<_, 1024>(&metadata)?; // TODO: is this the right amount of scratch space?
+            let id_key = id_key(&cid);
+    
+            let children = self.ensure_id_many(links.into_iter()).await?;
+    
+            let graph = GraphV0 { children };
+            let graph_bytes = rkyv::to_bytes::<_, 1024>(&graph)?; // TODO: is this the right amount of scratch space?
+    
+            let cf_id = self.cf_id()?;
+            let cf_meta = self.cf_metadata()?;
+            let cf_graph = self.cf_graph()?;
+            let cf_blobs = self.cf_blobs()?;
+            let blob_size = blob.as_ref().len();
+    
+            batch.put_cf(cf_id, id_key, &id_bytes);
+            batch.put_cf(cf_blobs, &id_bytes, blob);
+            batch.put_cf(cf_meta, &id_bytes, metadata_bytes);
+            batch.put_cf(cf_graph, &id_bytes, graph_bytes);
+        }
+
+        self.db().write(batch)?;
 
         Ok(())
     }

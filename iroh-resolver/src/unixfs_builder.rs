@@ -10,10 +10,11 @@ use async_recursion::async_recursion;
 use async_trait::async_trait;
 use bytes::Bytes;
 use cid::Cid;
-use futures::{stream::LocalBoxStream, Stream, StreamExt};
+use futures::{future, stream::LocalBoxStream, Stream, StreamExt};
 use iroh_rpc_client::Client;
 use prost::Message;
 use tokio::io::AsyncRead;
+use futures::stream::TryStreamExt;
 
 use crate::{
     balanced_tree::{TreeBuilder, DEFAULT_DEGREE},
@@ -496,6 +497,7 @@ pub(crate) fn encode_unixfs_pb(
 pub trait Store: 'static + Send + Sync + Clone {
     async fn has(&self, &cid: Cid) -> Result<bool>;
     async fn put(&self, cid: Cid, blob: Bytes, links: Vec<Cid>) -> Result<()>;
+    async fn put_many(&self, blocks: Vec<Block>) -> Result<()>;
 }
 
 #[async_trait]
@@ -506,6 +508,12 @@ impl Store for Client {
 
     async fn put(&self, cid: Cid, blob: Bytes, links: Vec<Cid>) -> Result<()> {
         self.try_store()?.put(cid, blob, links).await
+    }
+
+    async fn put_many(&self, blocks: Vec<Block>) -> Result<()> {
+        self.try_store()?
+            .put_many(blocks.into_iter().map(|x| x.into_parts()).collect())
+            .await
     }
 }
 
@@ -525,6 +533,13 @@ impl Store for StoreAndProvideClient {
         // we provide after insertion is finished
         // self.client.try_p2p()?.start_providing(&cid).await
     }
+
+    async fn put_many(&self, blocks: Vec<Block>) -> Result<()> {
+        self.client
+            .try_store()?
+            .put_many(blocks.into_iter().map(|x| x.into_parts()).collect())
+            .await
+    }
 }
 
 #[async_trait]
@@ -534,6 +549,14 @@ impl Store for Arc<tokio::sync::Mutex<std::collections::HashMap<Cid, Bytes>>> {
     }
     async fn put(&self, cid: Cid, blob: Bytes, _links: Vec<Cid>) -> Result<()> {
         self.lock().await.insert(cid, blob);
+        Ok(())
+    }
+
+    async fn put_many(&self, blocks: Vec<Block>) -> Result<()> {
+        let mut this = self.lock().await;
+        for block in blocks {
+            this.insert(*block.cid(), block.data().clone());
+        }
         Ok(())
     }
 }
@@ -617,20 +640,55 @@ pub enum AddEvent {
     },
 }
 
-pub async fn add_blocks_to_store<S: Store>(
+use async_stream::stream;
+
+fn add_blocks_to_store_chunked<S: Store>(
+    store: S,
+    mut blocks: Pin<Box<dyn Stream<Item = Result<Block>>>>,
+) -> impl Stream<Item = Result<AddEvent>> {
+    println!("add_blocks_to_store_chunked");
+    let mut chunk = Vec::new();
+    let mut chunk_size = 0u64;
+    const MAX_CHUNK_SIZE: u64  =1024 * 1024 * 16;
+    let t = stream!{
+        while let Some(block) = blocks.next().await {
+            let block = block?;
+            let block_size = block.data().len() as u64;
+            let cid = *block.cid();
+            if chunk_size + block_size > MAX_CHUNK_SIZE {
+                tracing::info!("adding chunk of {} bytes", chunk_size);
+                store.put_many(chunk.clone()).await?;
+                chunk.clear();
+                chunk_size = 0;
+            } else {
+                chunk_size += block_size;
+            }
+            yield Ok(AddEvent::ProgressDelta {
+                cid,
+                size: block.raw_data_size(),
+            });
+        }
+        // make sure to also send the last chunk!
+        store.put_many(chunk).await?;
+    };
+    t
+}
+
+fn add_blocks_to_store_single<S: Store>(
     store: Option<S>,
     blocks: Pin<Box<dyn Stream<Item = Result<Block>>>>,
 ) -> impl Stream<Item = Result<AddEvent>> {
     blocks
-        .map(move |block| {
+        .and_then(|x| future::ok(vec![x]))
+        .map(move |blocks| {
             let store = store.clone();
             async move {
-                let block = block?;
+                let block = blocks?[0].clone();
                 let raw_data_size = block.raw_data_size();
-                let (cid, bytes, links) = block.into_parts();
+                let cid = *block.cid();
                 if let Some(store) = store {
                     if !store.has(cid).await? {
-                        store.put(cid, bytes, links).await?;
+                        store.put_many(vec![block]).await?;
                     }
                 }
 
@@ -641,6 +699,13 @@ pub async fn add_blocks_to_store<S: Store>(
             }
         })
         .buffered(ADD_PAR)
+}
+
+pub async fn add_blocks_to_store<S: Store>(
+    store: Option<S>,
+    blocks: Pin<Box<dyn Stream<Item = Result<Block>>>>,
+) -> impl Stream<Item = Result<AddEvent>> {
+    add_blocks_to_store_chunked(store.unwrap(), blocks)
 }
 
 #[async_recursion(?Send)]

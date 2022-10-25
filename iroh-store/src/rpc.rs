@@ -6,7 +6,8 @@ use bytes::BytesMut;
 use cid::Cid;
 use iroh_rpc_types::store::{
     GetLinksRequest, GetLinksResponse, GetRequest, GetResponse, GetSizeRequest, GetSizeResponse,
-    HasRequest, HasResponse, PutRequest, Store as RpcStore, StoreServerAddr, VersionResponse,
+    HasRequest, HasResponse, PutManyRequest, PutRequest, Store as RpcStore, StoreServerAddr,
+    VersionResponse,
 };
 use tracing::info;
 
@@ -33,6 +34,16 @@ impl RpcStore for Store {
 
         info!("store rpc call: put cid {}", cid);
         Ok(res)
+    }
+
+    #[tracing::instrument(skip(self, req))]
+    async fn put_many(&self, req: PutManyRequest) -> Result<()> {
+        let req = req.blocks.into_iter().map(|req| {
+            let cid = cid_from_bytes(req.cid)?;
+            let links = links_from_bytes(req.links)?;
+            Ok((cid, req.blob, links))
+        }).collect::<Result<Vec<_>>>()?;
+        self.put_many(req).await
     }
 
     #[tracing::instrument(skip(self))]
