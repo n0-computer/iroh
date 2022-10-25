@@ -232,6 +232,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
             }
 
             // Only do a small chunk of cleanup on each iteration
+            // TODO(arqu): magic number
             if to_remove.len() >= 10 {
                 break;
             }
