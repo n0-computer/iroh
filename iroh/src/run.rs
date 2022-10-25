@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use console::style;
 use crossterm::style::Stylize;
@@ -194,16 +194,16 @@ async fn add(
     let svc_status = require_services(api, HashSet::from(["store"])).await?;
     match (provide, svc_status.p2p.status()) {
         (true, ServiceStatus::Down(_status)) => {
-            return Err(anyhow!("Add provides content to the IPFS network by default, but the p2p service is not running.\n{}",
+            anyhow::bail!("Add provides content to the IPFS network by default, but the p2p service is not running.\n{}",
             "hint: try using the --offline flag, or run 'iroh start p2p'".yellow()
-            ));
+            )
         }
         (true, ServiceStatus::Unknown)
         | (true, ServiceStatus::NotServing)
         | (true, ServiceStatus::ServiceUnknown) => {
-            return Err(anyhow!("Add provides content to the IPFS network by default, but the p2p service is not running.\n{}",
+            anyhow::bail!("Add provides content to the IPFS network by default, but the p2p service is not running.\n{}",
             "hint: try using the --offline flag, or run 'iroh start p2p'".yellow()
-            ));
+            )
         }
         (true, ServiceStatus::Serving) => {}
         (false, _) => {
