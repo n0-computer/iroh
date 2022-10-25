@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use clap::Parser;
 use iroh_gateway::{
     bad_bits::{self, BadBits},
@@ -9,7 +9,7 @@ use iroh_gateway::{
     core::Core,
     metrics,
 };
-use iroh_resolver::racing::RacingLoader;
+use iroh_resolver::content_loader::{FullLoader, FullLoaderConfig, GatewayUrl};
 use iroh_rpc_client::Client as RpcClient;
 use iroh_util::lock::ProgramLock;
 use iroh_util::{iroh_config_path, make_config};
@@ -47,10 +47,25 @@ async fn main() -> Result<()> {
         .server_rpc_addr()?
         .ok_or_else(|| anyhow!("missing gateway rpc addr"))?;
 
-    let content_loader = RacingLoader::new(
+    let content_loader = FullLoader::new(
         RpcClient::new(config.rpc_client.clone()).await?,
-        config.http_resolvers.clone().unwrap_or_default(),
-    );
+        FullLoaderConfig {
+            http_gateways: config
+                .http_resolvers
+                .clone()
+                .unwrap_or_default()
+                .into_iter()
+                .map(|u| GatewayUrl::from_str(&u))
+                .collect::<Result<_>>()
+                .context("invalid gateway url")?,
+            indexer: config
+                .indexer_endpoint
+                .as_ref()
+                .map(|u| u.parse())
+                .transpose()
+                .context("invalid indexer endpoint")?,
+        },
+    )?;
     let handler = Core::new(
         Arc::new(config),
         rpc_addr,

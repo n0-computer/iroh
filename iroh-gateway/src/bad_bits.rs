@@ -111,6 +111,9 @@ mod tests {
     use super::*;
     use hex_literal::hex;
     use http::StatusCode;
+    use iroh_resolver::content_loader::FullLoader;
+    use iroh_resolver::content_loader::FullLoaderConfig;
+    use iroh_resolver::content_loader::GatewayUrl;
     use iroh_rpc_client::Client as RpcClient;
     use iroh_rpc_client::Config as RpcClientConfig;
 
@@ -188,7 +191,20 @@ mod tests {
         config.set_default_headers();
 
         let rpc_addr = "grpc://0.0.0.0:0".parse().unwrap();
-        let content_loader = RpcClient::new(config.rpc_client.clone()).await.unwrap();
+        let rpc_client = RpcClient::new(config.rpc_client.clone()).await.unwrap();
+        let loader_config = FullLoaderConfig {
+            http_gateways: config
+                .http_resolvers
+                .as_ref()
+                .map(|s| &s[..])
+                .unwrap_or(&[][..])
+                .iter()
+                .map(|u| GatewayUrl::from_str(u).unwrap())
+                .collect(),
+            indexer: config.indexer_endpoint.as_ref().map(|p| p.parse().unwrap()),
+        };
+        let content_loader =
+            FullLoader::new(rpc_client.clone(), loader_config).expect("invalid config");
         let handler = crate::core::Core::new(
             Arc::new(config),
             rpc_addr,

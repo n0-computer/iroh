@@ -5,7 +5,8 @@ use anyhow::{ensure, Context as _, Result};
 use cid::Cid;
 use futures::stream::LocalBoxStream;
 use futures::{StreamExt, TryStreamExt};
-use iroh_resolver::unixfs_builder;
+use iroh_resolver::content_loader::{FullLoaderConfig, GatewayUrl};
+use iroh_resolver::{content_loader::FullLoader, resolver::Resolver, unixfs_builder};
 use iroh_rpc_client::Client;
 use iroh_rpc_client::StatusTable;
 use iroh_util::{iroh_config_path, make_config};
@@ -20,6 +21,7 @@ use crate::{AddEvent, IpfsPath};
 
 pub struct Api {
     client: Client,
+    resolver: Resolver<FullLoader>,
 }
 
 pub enum OutType {
@@ -52,12 +54,33 @@ impl Api {
         .unwrap();
 
         let client = Client::new(config.rpc_client).await?;
+        let content_loader = FullLoader::new(
+            client.clone(),
+            FullLoaderConfig {
+                http_gateways: config
+                    .http_resolvers
+                    .clone()
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|u| GatewayUrl::from_str(&u))
+                    .collect::<Result<_>>()
+                    .context("invalid gateway url")?,
+                indexer: config
+                    .indexer_endpoint
+                    .as_ref()
+                    .map(|u| u.parse())
+                    .transpose()
+                    .context("invalid indexer endpoint")?,
+            },
+        )?;
+        let resolver = Resolver::new(content_loader);
 
-        Ok(Self { client })
+        Ok(Self { client, resolver })
     }
 
     pub async fn provide(&self, cid: Cid) -> Result<()> {
-        self.client.try_p2p()?.start_providing(&cid).await
+        self.client.try_p2p()?.start_providing(&cid).await?;
+        Ok(())
     }
 
     pub fn p2p(&self) -> Result<P2pApi> {
@@ -76,7 +99,7 @@ impl Api {
         );
 
         tracing::debug!("get {:?}", ipfs_path);
-        let resolver = iroh_resolver::resolver::Resolver::new(self.client.clone());
+        let resolver = self.resolver.clone();
         let results = resolver.resolve_recursive_with_paths(ipfs_path.clone());
         let sub_path = ipfs_path.to_relative_string();
 

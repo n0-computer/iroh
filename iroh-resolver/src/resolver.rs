@@ -14,7 +14,6 @@ use cid::multihash::{Code, MultihashDigest};
 use cid::Cid;
 use futures::{Future, Stream, TryStreamExt};
 use iroh_metrics::inc;
-use iroh_rpc_client::Client;
 use libipld::codec::Encode;
 use libipld::error::{InvalidMultihash, UnsupportedMultihash};
 use libipld::prelude::Codec as _;
@@ -32,6 +31,7 @@ use iroh_metrics::{
 };
 
 use crate::codecs::Codec;
+use crate::content_loader::ContentLoader;
 use crate::unixfs::{
     poll_read_buf_at_pos, DataType, Link, UnixfsChildStream, UnixfsContentReader, UnixfsNode,
 };
@@ -730,113 +730,6 @@ struct InnerLoaderContext {
     #[allow(dead_code)]
     path: Path,
     closer: async_channel::Sender<ContextId>,
-}
-
-#[async_trait]
-pub trait ContentLoader: Sync + Send + std::fmt::Debug + Clone + 'static {
-    /// Loads the actual content of a given cid.
-    async fn load_cid(&self, cid: &Cid, ctx: &LoaderContext) -> Result<LoadedCid>;
-    /// Signal that the passend in session is not used anymore.
-    async fn stop_session(&self, ctx: ContextId) -> Result<()>;
-    /// Checks if the given cid is present in the local storage.
-    async fn has_cid(&self, cid: &Cid) -> Result<bool>;
-}
-
-#[async_trait]
-impl<T: ContentLoader> ContentLoader for Arc<T> {
-    async fn load_cid(&self, cid: &Cid, ctx: &LoaderContext) -> Result<LoadedCid> {
-        self.as_ref().load_cid(cid, ctx).await
-    }
-
-    async fn stop_session(&self, ctx: ContextId) -> Result<()> {
-        self.as_ref().stop_session(ctx).await
-    }
-
-    async fn has_cid(&self, cid: &Cid) -> Result<bool> {
-        self.as_ref().has_cid(cid).await
-    }
-}
-
-#[async_trait]
-impl ContentLoader for Client {
-    async fn stop_session(&self, ctx: ContextId) -> Result<()> {
-        self.try_p2p()?.stop_session_bitswap(ctx.into()).await?;
-        Ok(())
-    }
-
-    async fn load_cid(&self, cid: &Cid, ctx: &LoaderContext) -> Result<LoadedCid> {
-        trace!("{:?} loading {}", ctx.id(), cid);
-        // TODO: better strategy
-
-        let cid = *cid;
-        match self.try_store()?.get(cid).await {
-            Ok(Some(data)) => {
-                trace!("{:?} retrieved from store", ctx.id());
-                return Ok(LoadedCid {
-                    data,
-                    source: Source::Store(IROH_STORE),
-                });
-            }
-            Ok(None) => {}
-            Err(err) => {
-                warn!(
-                    "{:?} failed to fetch data from store {}: {:?}",
-                    ctx.id(),
-                    cid,
-                    err
-                );
-            }
-        }
-
-        // launch fetching using the initial set of cached providers
-        let bytes = self
-            .try_p2p()?
-            .fetch_bitswap(ctx.id().into(), cid, Default::default())
-            .await?;
-
-        // trigger storage in the background
-        let clone = bytes.clone();
-        let store = self.try_store();
-        let p2p = self.try_p2p()?;
-
-        tokio::spawn(async move {
-            let clone2 = clone.clone();
-            let links =
-                tokio::task::spawn_blocking(move || parse_links(&cid, &clone2).unwrap_or_default())
-                    .await
-                    .unwrap_or_default();
-
-            let len = clone.len();
-            let links_len = links.len();
-            if let Ok(store_rpc) = store {
-                match store_rpc.put(cid, clone.clone(), links).await {
-                    Ok(_) => {
-                        debug!("stored {} ({}bytes, {}links)", cid, len, links_len);
-
-                        // Notify bitswap about new blocks
-                        p2p.notify_new_blocks_bitswap(vec![(cid, clone)]).await.ok();
-                    }
-                    Err(err) => {
-                        warn!("failed to store {}: {:?}", cid, err);
-                    }
-                }
-            } else {
-                warn!("failed to store: missing store rpc conn");
-            }
-        });
-
-        trace!("retrieved from p2p");
-
-        Ok(LoadedCid {
-            data: bytes,
-            source: Source::Bitswap,
-        })
-    }
-
-    async fn has_cid(&self, cid: &Cid) -> Result<bool> {
-        let cid = *cid;
-        self.try_store()?.has(cid).await
-    }
 }
 
 impl<T: ContentLoader> Resolver<T> {

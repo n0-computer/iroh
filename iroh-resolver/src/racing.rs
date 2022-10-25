@@ -1,5 +1,6 @@
-use crate::resolver::{
-    parse_links, ContentLoader, ContextId, LoadedCid, LoaderContext, Source, IROH_STORE,
+use crate::{
+    content_loader::ContentLoader,
+    resolver::{parse_links, ContextId, LoadedCid, LoaderContext, Source, IROH_STORE},
 };
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
