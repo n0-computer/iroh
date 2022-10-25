@@ -5,8 +5,9 @@ use async_trait::async_trait;
 use cid::Cid;
 use iroh_p2p::{config, Keychain, MemoryStorage, NetworkEvent, Node};
 use iroh_resolver::{
+    content_loader::ContentLoader,
     parse_links,
-    resolver::{ContentLoader, ContextId, LoadedCid, LoaderContext, Resolver, Source, IROH_STORE},
+    resolver::{ContextId, LoadedCid, LoaderContext, Resolver, Source, IROH_STORE},
 };
 use iroh_rpc_client::Client;
 use iroh_rpc_types::Addr;

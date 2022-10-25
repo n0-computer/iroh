@@ -10,7 +10,7 @@ use iroh_one::{
     cli::Args,
     config::{Config, CONFIG_FILE_NAME, ENV_PREFIX},
 };
-use iroh_resolver::racing::RacingLoader;
+use iroh_resolver::content_loader::{FullLoader, FullLoaderConfig, GatewayUrl};
 use iroh_rpc_client::Client as RpcClient;
 use iroh_rpc_types::Addr;
 use iroh_util::lock::ProgramLock;
@@ -76,10 +76,20 @@ async fn main() -> Result<()> {
         false => Arc::new(None),
     };
 
-    let content_loader = RacingLoader::new(
+    let content_loader = FullLoader::new(
         RpcClient::new(config.rpc_client.clone()).await?,
-        config.gateway.http_resolvers.clone().unwrap_or_default(),
-    );
+        FullLoaderConfig {
+            http_gateways: config
+                .gateway
+                .http_resolvers
+                .clone()
+                .unwrap_or_default()
+                .into_iter()
+                .map(|u| GatewayUrl::from_str(&u))
+                .collect::<Result<_>>()?,
+            indexer: None, // TODO
+        },
+    )?;
     let shared_state = Core::make_state(
         Arc::new(config.clone()),
         Arc::clone(&bad_bits),

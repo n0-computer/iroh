@@ -66,11 +66,6 @@ features = [
   "tokio",
 ] 
 
-[dependencies.multihash]
-version = "0.16"
-default-features = false
-features = ["std", "multihash-impl", "identity", "sha2"]
-
 [dev-dependencies]
 
 [features]

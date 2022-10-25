@@ -6,12 +6,14 @@ use crate::config::{Config, CONFIG_FILE_NAME, ENV_PREFIX};
 use crate::p2p::MockP2p;
 use crate::p2p::{ClientP2p, P2p};
 use crate::{AddEvent, IpfsPath};
-use anyhow::Result;
+use anyhow::{Context, Result};
 use cid::Cid;
 use futures::future::{BoxFuture, LocalBoxFuture};
 use futures::stream::LocalBoxStream;
 use futures::FutureExt;
 use futures::StreamExt;
+use iroh_resolver::content_loader::{FullLoader, FullLoaderConfig, GatewayUrl};
+use iroh_resolver::resolver::Resolver;
 use iroh_resolver::unixfs_builder;
 use iroh_rpc_client::Client;
 use iroh_rpc_client::StatusTable;
@@ -23,6 +25,7 @@ use tokio::io::{AsyncRead, AsyncReadExt};
 
 pub struct Iroh {
     client: Client,
+    resolver: Resolver<FullLoader>,
 }
 
 pub enum OutType {
@@ -91,12 +94,28 @@ impl Iroh {
         .unwrap();
 
         let client = Client::new(config.rpc_client).await?;
+        let content_loader = FullLoader::new(
+            client.clone(),
+            FullLoaderConfig {
+                http_gateways: config
+                    .http_resolvers
+                    .clone()
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|u| GatewayUrl::from_str(&u))
+                    .collect::<Result<_>>()
+                    .context("invalid gateway url")?,
+                indexer: config
+                    .indexer_endpoint
+                    .as_ref()
+                    .map(|u| u.parse())
+                    .transpose()
+                    .context("invalid indexer endpoint")?,
+            },
+        )?;
+        let resolver = Resolver::new(content_loader);
 
-        Ok(Iroh::from_client(client))
-    }
-
-    fn from_client(client: Client) -> Self {
-        Self { client }
+        Ok(Iroh { client, resolver })
     }
 }
 
@@ -117,8 +136,9 @@ impl Api for Iroh {
         ipfs_path: &IpfsPath,
     ) -> LocalBoxStream<'_, Result<(RelativePathBuf, OutType)>> {
         tracing::debug!("get {:?}", ipfs_path);
-        let resolver = iroh_resolver::resolver::Resolver::new(self.client.clone());
-        let results = resolver.resolve_recursive_with_paths(ipfs_path.clone());
+        let results = self
+            .resolver
+            .resolve_recursive_with_paths(ipfs_path.clone());
         let sub_path = ipfs_path.to_relative_string();
         async_stream::try_stream! {
             tokio::pin!(results);
@@ -136,13 +156,13 @@ impl Api for Iroh {
                 if out.is_dir() {
                     yield (relative_path, OutType::Dir);
                 } else if out.is_symlink() {
-                    let mut reader = out.pretty(resolver.clone(), Default::default(), iroh_resolver::resolver::ResponseClip::NoClip)?;
+                    let mut reader = out.pretty(self.resolver.clone(), Default::default(), iroh_resolver::resolver::ResponseClip::NoClip)?;
                     let mut target = String::new();
                     reader.read_to_string(&mut target).await?;
                     let target = PathBuf::from(target);
                     yield (relative_path, OutType::Symlink(target));
                 } else {
-                    let reader = out.pretty(resolver.clone(), Default::default(), iroh_resolver::resolver::ResponseClip::NoClip)?;
+                    let reader = out.pretty(self.resolver.clone(), Default::default(), iroh_resolver::resolver::ResponseClip::NoClip)?;
                     yield (relative_path, OutType::Reader(Box::new(reader)));
                 }
             }

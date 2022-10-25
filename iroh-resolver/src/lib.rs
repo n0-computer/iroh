@@ -1,8 +1,9 @@
 pub mod balanced_tree;
 pub mod chunker;
 pub mod codecs;
+pub mod content_loader;
 pub mod hamt;
-pub mod racing;
+pub mod indexer;
 pub mod resolver;
 pub mod unixfs;
 pub mod unixfs_builder;

@@ -27,10 +27,15 @@ async-stream = "0.3.3"
 fastmurmur3 = "0.1.2"
 once_cell = "1.13.0"
 tokio-util = { version = "0.7", features = ["io"] }
-libp2p = { version = "0.50", default-features = false }
+libp2p = { version = "0.50", default-features = false, features = ["serde"] }
 async-channel = "1.7.1"
-reqwest = {version = "0.11", features = ["rustls-tls"], default-features = false}
+reqwest = { version = "0.11", features = ["rustls-tls", "json"], default-features = false }
 rand = "0.8.5"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1.0.87"
+base64 = "0.13.1"
+multihash = "0.16.3"
+
 
 [dev-dependencies]
 criterion = { version = "0.4.0", features = ["async_tokio"] }

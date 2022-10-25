@@ -15,7 +15,8 @@ use handlebars::Handlebars;
 use http::Method;
 use iroh_metrics::{core::MRecorder, gateway::GatewayMetrics, get_current_trace_id, inc};
 use iroh_resolver::{
-    resolver::{CidOrDomain, ContentLoader, OutMetrics, UnixfsType},
+    content_loader::ContentLoader,
+    resolver::{CidOrDomain, OutMetrics, UnixfsType},
     unixfs::Link,
 };
 use iroh_util::human::format_bytes;
