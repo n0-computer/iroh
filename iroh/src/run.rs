@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -14,6 +14,7 @@ use crate::doc;
 #[cfg(feature = "testing")]
 use crate::fixture::get_fixture_api;
 use crate::p2p::{run_command as run_p2p_command, P2p};
+use crate::services::require_services;
 use crate::size::size_stream;
 
 #[derive(Parser, Debug, Clone)]
@@ -162,6 +163,13 @@ async fn add(api: &impl Api, path: &Path, no_wrap: bool, recursive: bool) -> Res
             path.display()
         );
     }
+
+    // we require p2p for adding right now because we don't have a mechanism for
+    // hydrating only the root CID to the p2p node for providing if a CID were
+    // ingested offline. Offline adding should happen, but this is the current
+    // path of least confusion
+    require_services(api, HashSet::from(["store", "p2p"])).await?;
+
     println!("{} Calculating size...", style("[1/3]").bold().dim());
 
     let pb = ProgressBar::new_spinner();
@@ -214,12 +222,19 @@ async fn add(api: &impl Api, path: &Path, no_wrap: bool, recursive: bool) -> Res
     let root = *cids.last().context("File processing failed")?;
     // remove everything but the root
     cids.splice(0..cids.len() - 1, []);
+    let rec_str = if cids.len() == 1 { "record" } else { "records" };
     println!(
-        "{} Providing {} records to DHT ...",
+        "{} Providing {} {} to the distributed hash table ...",
         style("[3/3]").bold().dim(),
         cids.len(),
+        rec_str,
     );
-    pb.set_style(ProgressStyle::with_template("[{elapsed_precise}] {wide_bar} {pos}/{len} ({per_sec}) {msg}").unwrap());
+    pb.set_style(
+        ProgressStyle::with_template(
+            "[{elapsed_precise}] {wide_bar} {pos}/{len} ({per_sec}) {msg}",
+        )
+        .unwrap(),
+    );
     pb.inc(0);
     for cid in cids {
         api.provide(cid).await?;
