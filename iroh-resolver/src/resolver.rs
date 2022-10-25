@@ -1103,6 +1103,12 @@ impl<T: ContentLoader> Resolver<T> {
             let mut resolved_path = vec![cid];
 
             for part in tail {
+                // TODO(ramfox): we currently add an empty string to the path.tail vec
+                // when the original path ends in a "/". This is causing errors because
+                // we attempt to index into the data using an empty string, which fails
+                if part.is_empty() {
+                    continue;
+                }
                 self.inner_resolve(&mut current, &mut resolved_path, part, &mut ctx)
                     .await?;
             }
@@ -1200,6 +1206,12 @@ impl<T: ContentLoader> Resolver<T> {
         let mut codec = codec;
 
         for part in path {
+            // TODO(ramfox): we currently add an empty string to the path.tail vec
+            // when the original path ends in a "/". This is causing errors because
+            // we attempt to index into the data using an empty string, which fails
+            if part.is_empty() {
+                continue;
+            }
             if let libipld::Ipld::Link(c) = current {
                 (codec, current) = self.load_ipld_link(c, ctx).await?;
             }
