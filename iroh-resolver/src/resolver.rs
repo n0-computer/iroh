@@ -889,6 +889,17 @@ impl<T: ContentLoader> Resolver<T> {
             loop {
                 if let Some((current_output_path, current_out)) = blocks.pop_front() {
                     let current = current_out?;
+                    // if we have a unixfs::file, we have already followed these links when we
+                    // called this.resolve on the block, no need to double fetch the file
+                    // TODO(ramfox): it would be good to go through the possible
+                    // types that we are willing to support & try and understand if anything  other
+                    // than UnixfsNode::Hamt & UnixfsNode::Directory need to be resolved
+                    // recursively. EG, if we have a dag cbor block, are we expected to resolve all
+                    // the links the way we do with a unixfs dir
+                    if current.metadata().unixfs_type == Some(UnixfsType::File){
+                        yield (current_output_path, current);
+                        continue;
+                    }
                     let links = current.named_links()?;
                     // TODO: configurable limit
                     for link_chunk in links.chunks(8) {
@@ -1036,6 +1047,9 @@ impl<T: ContentLoader> Resolver<T> {
         }
     }
 
+    // TODO(ramfox): when get the cid of the next link, we should
+    // check the codec, and possibly resolve as ipld, allowing us to bridge
+    // between unixfs & ipld data (going one way)
     async fn inner_resolve(
         &self,
         current: &mut UnixfsNode,
@@ -1232,8 +1246,9 @@ impl<T: ContentLoader> Resolver<T> {
         let links = ipld
             .take("Links")
             .map_err(|_| anyhow!("Expected the DagPb node to have a list of links."))?;
-        // first iteration is the link list itself
         let mut links_iter = links.iter();
+
+        // first iteration is the link list itself
         let _ = links_iter
             .next()
             .ok_or(anyhow!("expected DagPb links to exist"));
