@@ -649,21 +649,20 @@ fn add_blocks_to_store_chunked<S: Store>(
     let mut chunk = Vec::new();
     let mut chunk_size = 0u64;
     const MAX_CHUNK_SIZE: u64 = 1024 * 1024 * 16;
-    let t = stream! {
+    stream! {
         while let Some(block) = blocks.next().await {
             let block = block?;
             let block_size = block.data().len() as u64;
             let cid = *block.cid();
             let raw_data_size = block.raw_data_size();
+            tracing::info!("adding chunk of {} bytes", chunk_size);
             if chunk_size + block_size > MAX_CHUNK_SIZE {
-                tracing::info!("adding chunk of {} bytes", chunk_size);
                 store.put_many(chunk.clone()).await?;
                 chunk.clear();
                 chunk_size = 0;
-            } else {
-                chunk.push(block);
-                chunk_size += block_size;
             }
+            chunk.push(block);
+            chunk_size += block_size;
             yield Ok(AddEvent::ProgressDelta {
                 cid,
                 size: raw_data_size,
@@ -671,8 +670,7 @@ fn add_blocks_to_store_chunked<S: Store>(
         }
         // make sure to also send the last chunk!
         store.put_many(chunk).await?;
-    };
-    t
+    }
 }
 
 fn _add_blocks_to_store_single<S: Store>(
