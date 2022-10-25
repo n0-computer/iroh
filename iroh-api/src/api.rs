@@ -12,7 +12,7 @@ use futures::future::{BoxFuture, LocalBoxFuture};
 use futures::stream::LocalBoxStream;
 use futures::FutureExt;
 use futures::StreamExt;
-use iroh_resolver::content_loader::{FullLoader, FullLoaderConfig, GatewayUrl};
+use iroh_resolver::content_loader::{FullLoader, FullLoaderConfig};
 use iroh_resolver::resolver::Resolver;
 use iroh_resolver::unixfs_builder;
 use iroh_rpc_client::Client;
@@ -102,7 +102,7 @@ impl Iroh {
                     .clone()
                     .unwrap_or_default()
                     .into_iter()
-                    .map(|u| GatewayUrl::from_str(&u))
+                    .map(|u| u.parse())
                     .collect::<Result<_>>()
                     .context("invalid gateway url")?,
                 indexer: config

@@ -1,4 +1,4 @@
-use std::{collections::HashSet, sync::Arc};
+use std::{collections::HashSet, str::FromStr, sync::Arc};
 
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
@@ -63,8 +63,9 @@ pub enum GatewayUrl {
     Subdomain(String),
 }
 
-impl GatewayUrl {
-    pub fn from_str(input: &str) -> Result<Self> {
+impl FromStr for GatewayUrl {
+    type Err = anyhow::Error;
+    fn from_str(input: &str) -> Result<Self> {
         if input.starts_with("http") || input.starts_with("https") {
             let url = input.parse()?;
             return Ok(GatewayUrl::Full(url));
@@ -72,6 +73,9 @@ impl GatewayUrl {
 
         Ok(GatewayUrl::Subdomain(input.to_string()))
     }
+}
+
+impl GatewayUrl {
     pub fn as_string(&self) -> String {
         match self {
             GatewayUrl::Full(url) => url.to_string(),
@@ -96,7 +100,7 @@ impl GatewayUrl {
 
 impl FullLoader {
     pub fn new(client: Client, config: FullLoaderConfig) -> Result<Self> {
-        let indexer = config.indexer.map(|url| Indexer::new(url)).transpose()?;
+        let indexer = config.indexer.map(Indexer::new).transpose()?;
 
         Ok(Self {
             client,
