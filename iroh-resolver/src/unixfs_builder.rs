@@ -657,8 +657,7 @@ fn add_blocks_to_store_chunked<S: Store>(
             let raw_data_size = block.raw_data_size();
             tracing::info!("adding chunk of {} bytes", chunk_size);
             if chunk_size + block_size > MAX_CHUNK_SIZE {
-                store.put_many(chunk.clone()).await?;
-                chunk.clear();
+                store.put_many(std::mem::take(&mut chunk)).await?;
                 chunk_size = 0;
             }
             chunk.push(block);
