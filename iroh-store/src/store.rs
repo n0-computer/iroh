@@ -205,7 +205,13 @@ impl Store {
         self.put0(cid, blob, links, &self.cfs()?)
     }
 
-    fn put0<T: AsRef<[u8]>, L>(&self, cid: Cid, blob: T, links: L, cf: &ColumnFamilies) -> Result<()>
+    fn put0<T: AsRef<[u8]>, L>(
+        &self,
+        cid: Cid,
+        blob: T,
+        links: L,
+        cf: &ColumnFamilies,
+    ) -> Result<()>
     where
         L: IntoIterator<Item = Cid>,
     {
@@ -248,10 +254,8 @@ impl Store {
         Ok(())
     }
 
-
     #[tracing::instrument(skip(self, blocks))]
-    pub fn put_many(&self, blocks: impl IntoIterator<Item = (Cid, Bytes, Vec<Cid>)>) -> Result<()>
-    {
+    pub fn put_many(&self, blocks: impl IntoIterator<Item = (Cid, Bytes, Vec<Cid>)>) -> Result<()> {
         let cf = self.cfs()?;
 
         let mut batch = WriteBatch::default();
@@ -259,27 +263,27 @@ impl Store {
             if self.has0(&cid, &cf)? {
                 return Ok(());
             }
-    
+
             let id = self.next_id();
-    
+
             let id_bytes = id.to_be_bytes();
-    
+
             // guranteed that the key does not exists, so we want to store it
-    
+
             let metadata = MetadataV0 {
                 codec: cid.codec(),
                 multihash: cid.hash().to_bytes(),
             };
             let metadata_bytes = rkyv::to_bytes::<_, 1024>(&metadata)?; // TODO: is this the right amount of scratch space?
             let id_key = id_key(&cid);
-    
+
             let children = self.ensure_id_many(links.into_iter(), &cf)?;
-    
+
             let graph = GraphV0 { children };
             let graph_bytes = rkyv::to_bytes::<_, 1024>(&graph)?; // TODO: is this the right amount of scratch space?
-    
+
             let _blob_size = blob.as_ref().len();
-    
+
             batch.put_cf(cf.id, id_key, &id_bytes);
             batch.put_cf(cf.blobs, &id_bytes, blob);
             batch.put_cf(cf.metadata, &id_bytes, metadata_bytes);
@@ -491,7 +495,10 @@ impl Store {
             Some(links_id) => {
                 let graph = rkyv::check_archived_root::<GraphV0>(&links_id)
                     .map_err(|e| anyhow!("{:?}", e))?;
-                let keys = graph.children.iter().map(|id| (&cf.metadata, id.to_be_bytes()));
+                let keys = graph
+                    .children
+                    .iter()
+                    .map(|id| (&cf.metadata, id.to_be_bytes()));
                 let meta = self.db().multi_get_cf(keys);
                 let mut links = Vec::with_capacity(meta.len());
                 for (i, meta) in meta.into_iter().enumerate() {

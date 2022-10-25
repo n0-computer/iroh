@@ -10,11 +10,11 @@ use async_recursion::async_recursion;
 use async_trait::async_trait;
 use bytes::Bytes;
 use cid::Cid;
+use futures::stream::TryStreamExt;
 use futures::{future, stream::LocalBoxStream, Stream, StreamExt};
 use iroh_rpc_client::Client;
 use prost::Message;
 use tokio::io::AsyncRead;
-use futures::stream::TryStreamExt;
 
 use crate::{
     balanced_tree::{TreeBuilder, DEFAULT_DEGREE},
@@ -32,7 +32,7 @@ use crate::{
 const DIRECTORY_LINK_LIMIT: usize = 6000;
 
 /// How many chunks to buffer up when adding content.
-const ADD_PAR: usize = 24;
+const _ADD_PAR: usize = 24;
 
 #[derive(Debug, PartialEq)]
 enum DirectoryType {
@@ -648,8 +648,8 @@ fn add_blocks_to_store_chunked<S: Store>(
 ) -> impl Stream<Item = Result<AddEvent>> {
     let mut chunk = Vec::new();
     let mut chunk_size = 0u64;
-    const MAX_CHUNK_SIZE: u64  =1024 * 1024 * 16;
-    let t = stream!{
+    const MAX_CHUNK_SIZE: u64 = 1024 * 1024 * 16;
+    let t = stream! {
         while let Some(block) = blocks.next().await {
             let block = block?;
             let block_size = block.data().len() as u64;
@@ -673,7 +673,7 @@ fn add_blocks_to_store_chunked<S: Store>(
     t
 }
 
-fn add_blocks_to_store_single<S: Store>(
+fn _add_blocks_to_store_single<S: Store>(
     store: Option<S>,
     blocks: Pin<Box<dyn Stream<Item = Result<Block>>>>,
 ) -> impl Stream<Item = Result<AddEvent>> {
@@ -697,7 +697,7 @@ fn add_blocks_to_store_single<S: Store>(
                 })
             }
         })
-        .buffered(ADD_PAR)
+        .buffered(_ADD_PAR)
 }
 
 pub async fn add_blocks_to_store<S: Store>(

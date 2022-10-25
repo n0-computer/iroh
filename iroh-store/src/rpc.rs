@@ -38,11 +38,15 @@ impl RpcStore for Store {
 
     #[tracing::instrument(skip(self, req))]
     async fn put_many(&self, req: PutManyRequest) -> Result<()> {
-        let req = req.blocks.into_iter().map(|req| {
-            let cid = cid_from_bytes(req.cid)?;
-            let links = links_from_bytes(req.links)?;
-            Ok((cid, req.blob, links))
-        }).collect::<Result<Vec<_>>>()?;
+        let req = req
+            .blocks
+            .into_iter()
+            .map(|req| {
+                let cid = cid_from_bytes(req.cid)?;
+                let links = links_from_bytes(req.links)?;
+                Ok((cid, req.blob, links))
+            })
+            .collect::<Result<Vec<_>>>()?;
         self.put_many(req)
     }
 
