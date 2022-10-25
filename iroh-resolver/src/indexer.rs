@@ -116,7 +116,7 @@ mod tests {
   }]
 }]}
 "#;
-        let res: FindResult = serde_json::from_str(&input).unwrap();
+        let res: FindResult = serde_json::from_str(input).unwrap();
         assert_eq!(res.multihash_results.len(), 1);
         let res = &res.multihash_results[0];
         assert_eq!(res.provider_results.len(), 1);

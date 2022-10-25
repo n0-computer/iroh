@@ -119,7 +119,7 @@ mod tests {
     use super::*;
     use cid::Cid;
     use futures::{StreamExt, TryStreamExt};
-    use iroh_resolver::content_loader::{FullLoader, FullLoaderConfig, GatewayUrl};
+    use iroh_resolver::content_loader::{FullLoader, FullLoaderConfig};
     use iroh_resolver::unixfs::UnixfsNode;
     use iroh_resolver::unixfs_builder::{DirectoryBuilder, FileBuilder};
     use iroh_rpc_client::Client as RpcClient;
@@ -143,7 +143,7 @@ mod tests {
                 .map(|s| &s[..])
                 .unwrap_or(&[][..])
                 .iter()
-                .map(|u| GatewayUrl::from_str(u).unwrap())
+                .map(|u| u.parse().unwrap())
                 .collect(),
             indexer: config.indexer_endpoint.as_ref().map(|p| p.parse().unwrap()),
         };

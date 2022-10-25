@@ -5,7 +5,7 @@ use anyhow::{ensure, Context as _, Result};
 use cid::Cid;
 use futures::stream::LocalBoxStream;
 use futures::{StreamExt, TryStreamExt};
-use iroh_resolver::content_loader::{FullLoaderConfig, GatewayUrl};
+use iroh_resolver::content_loader::FullLoaderConfig;
 use iroh_resolver::{content_loader::FullLoader, resolver::Resolver, unixfs_builder};
 use iroh_rpc_client::Client;
 use iroh_rpc_client::StatusTable;
@@ -62,7 +62,7 @@ impl Api {
                     .clone()
                     .unwrap_or_default()
                     .into_iter()
-                    .map(|u| GatewayUrl::from_str(&u))
+                    .map(|u| u.parse())
                     .collect::<Result<_>>()
                     .context("invalid gateway url")?,
                 indexer: config

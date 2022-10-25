@@ -10,7 +10,7 @@ use iroh_one::{
     cli::Args,
     config::{Config, CONFIG_FILE_NAME, ENV_PREFIX},
 };
-use iroh_resolver::content_loader::{FullLoader, FullLoaderConfig, GatewayUrl};
+use iroh_resolver::content_loader::{FullLoader, FullLoaderConfig};
 use iroh_rpc_client::Client as RpcClient;
 use iroh_rpc_types::Addr;
 use iroh_util::lock::ProgramLock;
@@ -85,7 +85,7 @@ async fn main() -> Result<()> {
                 .clone()
                 .unwrap_or_default()
                 .into_iter()
-                .map(|u| GatewayUrl::from_str(&u))
+                .map(|u| u.parse())
                 .collect::<Result<_>>()?,
             indexer: None, // TODO
         },

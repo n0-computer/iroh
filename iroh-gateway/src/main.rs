@@ -9,7 +9,7 @@ use iroh_gateway::{
     core::Core,
     metrics,
 };
-use iroh_resolver::content_loader::{FullLoader, FullLoaderConfig, GatewayUrl};
+use iroh_resolver::content_loader::{FullLoader, FullLoaderConfig};
 use iroh_rpc_client::Client as RpcClient;
 use iroh_util::lock::ProgramLock;
 use iroh_util::{iroh_config_path, make_config};
@@ -55,7 +55,7 @@ async fn main() -> Result<()> {
                 .clone()
                 .unwrap_or_default()
                 .into_iter()
-                .map(|u| GatewayUrl::from_str(&u))
+                .map(|u| u.parse())
                 .collect::<Result<_>>()
                 .context("invalid gateway url")?,
             indexer: config
