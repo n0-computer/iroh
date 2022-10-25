@@ -135,8 +135,16 @@ impl<S: Store> Client<S> {
         block
     }
 
-    pub async fn get_block_with_session_id(&self, session_id: u64, key: &Cid) -> Result<Block> {
+    pub async fn get_block_with_session_id(
+        &self,
+        session_id: u64,
+        key: &Cid,
+        providers: &[PeerId],
+    ) -> Result<Block> {
         let session = self.get_or_create_session(session_id).await;
+        for provider in providers {
+            session.add_provider(key, *provider).await;
+        }
         session.get_block(key).await
     }
 
