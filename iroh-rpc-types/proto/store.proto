@@ -7,6 +7,7 @@ import "google/protobuf/empty.proto";
 service Store {
   rpc Version(google.protobuf.Empty) returns (VersionResponse) {}
   rpc Put(PutRequest) returns (google.protobuf.Empty) {}
+  rpc PutMany(PutManyRequest) returns (google.protobuf.Empty) {}
   rpc Get(GetRequest) returns (GetResponse) {}
   rpc Has(HasRequest) returns (HasResponse) {}
   rpc GetLinks(GetLinksRequest) returns(GetLinksResponse) {}
@@ -15,6 +16,12 @@ service Store {
 
 message VersionResponse {
   string version = 1;
+}
+
+// this should really be a stream
+// but that would require a rewrite of the proxy! macro
+message PutManyRequest {
+  repeated PutRequest blocks = 1;
 }
 
 message PutRequest {

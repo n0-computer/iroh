@@ -7,6 +7,7 @@ use std::{
 };
 
 use anyhow::{anyhow, bail, Context, Result};
+use bytes::Bytes;
 use cid::Cid;
 use iroh_metrics::{
     core::{MObserver, MRecorder},
@@ -90,6 +91,13 @@ struct CodeAndId {
     code: u64,
     // the id for the cid, used in most other column families
     id: u64,
+}
+
+struct ColumnFamilies<'a> {
+    id: &'a ColumnFamily,
+    metadata: &'a ColumnFamily,
+    graph: &'a ColumnFamily,
+    blobs: &'a ColumnFamily,
 }
 
 impl Store {
@@ -194,9 +202,73 @@ impl Store {
     where
         L: IntoIterator<Item = Cid>,
     {
+        self.put0(cid, blob, links, &self.cfs()?)
+    }
+
+    #[tracing::instrument(skip(self, blocks))]
+    pub fn put_many(&self, blocks: impl IntoIterator<Item = (Cid, Bytes, Vec<Cid>)>) -> Result<()> {
+        self.put_many0(blocks, &self.cfs()?)
+    }
+
+    #[tracing::instrument(skip(self))]
+    pub async fn get_blob_by_hash(&self, hash: &Multihash) -> Result<Option<DBPinnableSlice<'_>>> {
+        let cf = self.cfs()?;
+        for elem in self.get_ids_for_hash(hash)? {
+            let id = elem?.id;
+            let id_bytes = id.to_be_bytes();
+            if let Some(blob) = self.inner.content.get_pinned_cf(cf.blobs, &id_bytes)? {
+                return Ok(Some(blob));
+            }
+        }
+        Ok(None)
+    }
+
+    #[tracing::instrument(skip(self))]
+    pub async fn has_blob_for_hash(&self, hash: &Multihash) -> Result<bool> {
+        let cf = self.cfs()?;
+        for elem in self.get_ids_for_hash(hash)? {
+            let id = elem?.id;
+            let id_bytes = id.to_be_bytes();
+            if let Some(_blob) = self.inner.content.get_pinned_cf(cf.blobs, &id_bytes)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    #[tracing::instrument(skip(self))]
+    pub async fn get(&self, cid: &Cid) -> Result<Option<DBPinnableSlice<'_>>> {
+        self.get0(cid, &self.cfs()?)
+    }
+
+    #[tracing::instrument(skip(self))]
+    pub async fn get_size(&self, cid: &Cid) -> Result<Option<usize>> {
+        self.get_size0(cid, &self.cfs()?)
+    }
+
+    #[tracing::instrument(skip(self))]
+    pub async fn has(&self, cid: &Cid) -> Result<bool> {
+        self.has0(cid, &self.cfs()?)
+    }
+
+    #[tracing::instrument(skip(self))]
+    pub async fn get_links(&self, cid: &Cid) -> Result<Option<Vec<Cid>>> {
+        self.get_links0(cid, &self.cfs()?)
+    }
+
+    fn put0<T: AsRef<[u8]>, L>(
+        &self,
+        cid: Cid,
+        blob: T,
+        links: L,
+        cf: &ColumnFamilies,
+    ) -> Result<()>
+    where
+        L: IntoIterator<Item = Cid>,
+    {
         inc!(StoreMetrics::PutRequests);
 
-        if self.has(&cid).await? {
+        if self.has0(&cid, cf)? {
             return Ok(());
         }
 
@@ -215,22 +287,17 @@ impl Store {
         let metadata_bytes = rkyv::to_bytes::<_, 1024>(&metadata)?; // TODO: is this the right amount of scratch space?
         let id_key = id_key(&cid);
 
-        let children = self.ensure_id_many(links.into_iter()).await?;
+        let children = self.ensure_id_many(links.into_iter(), cf)?;
 
         let graph = GraphV0 { children };
         let graph_bytes = rkyv::to_bytes::<_, 1024>(&graph)?; // TODO: is this the right amount of scratch space?
-
-        let cf_id = self.cf_id()?;
-        let cf_meta = self.cf_metadata()?;
-        let cf_graph = self.cf_graph()?;
-        let cf_blobs = self.cf_blobs()?;
         let blob_size = blob.as_ref().len();
 
         let mut batch = WriteBatch::default();
-        batch.put_cf(cf_id, id_key, &id_bytes);
-        batch.put_cf(cf_blobs, &id_bytes, blob);
-        batch.put_cf(cf_meta, &id_bytes, metadata_bytes);
-        batch.put_cf(cf_graph, &id_bytes, graph_bytes);
+        batch.put_cf(cf.id, id_key, &id_bytes);
+        batch.put_cf(cf.blobs, &id_bytes, blob);
+        batch.put_cf(cf.metadata, &id_bytes, metadata_bytes);
+        batch.put_cf(cf.graph, &id_bytes, graph_bytes);
         self.db().write(batch)?;
         observe!(StoreHistograms::PutRequests, start.elapsed().as_secs_f64());
         record!(StoreMetrics::PutBytes, blob_size as u64);
@@ -238,47 +305,61 @@ impl Store {
         Ok(())
     }
 
-    #[tracing::instrument(skip(self))]
-    pub async fn get_blob_by_hash(&self, hash: &Multihash) -> Result<Option<DBPinnableSlice<'_>>> {
-        let cf_blobs = self
-            .inner
-            .content
-            .cf_handle(CF_BLOBS_V0)
-            .ok_or_else(|| anyhow!("missing column family: blobs"))?;
-        for elem in self.get_ids_for_hash(hash)? {
-            let id = elem?.id;
-            let id_bytes = id.to_be_bytes();
-            if let Some(blob) = self.inner.content.get_pinned_cf(&cf_blobs, &id_bytes)? {
-                return Ok(Some(blob));
+    fn put_many0(
+        &self,
+        blocks: impl IntoIterator<Item = (Cid, Bytes, Vec<Cid>)>,
+        cf: &ColumnFamilies,
+    ) -> Result<()> {
+        inc!(StoreMetrics::PutRequests);
+        let start = std::time::Instant::now();
+        let mut total_blob_size = 0;
+
+        let mut batch = WriteBatch::default();
+        for (cid, blob, links) in blocks.into_iter() {
+            if self.has0(&cid, cf)? {
+                return Ok(());
             }
+
+            let id = self.next_id();
+
+            let id_bytes = id.to_be_bytes();
+
+            // guranteed that the key does not exists, so we want to store it
+
+            let metadata = MetadataV0 {
+                codec: cid.codec(),
+                multihash: cid.hash().to_bytes(),
+            };
+            let metadata_bytes = rkyv::to_bytes::<_, 1024>(&metadata)?; // TODO: is this the right amount of scratch space?
+            let id_key = id_key(&cid);
+
+            let children = self.ensure_id_many(links.into_iter(), cf)?;
+
+            let graph = GraphV0 { children };
+            let graph_bytes = rkyv::to_bytes::<_, 1024>(&graph)?; // TODO: is this the right amount of scratch space?
+
+            let blob_size = blob.as_ref().len();
+            total_blob_size += blob_size as u64;
+
+            batch.put_cf(cf.id, id_key, &id_bytes);
+            batch.put_cf(cf.blobs, &id_bytes, blob);
+            batch.put_cf(cf.metadata, &id_bytes, metadata_bytes);
+            batch.put_cf(cf.graph, &id_bytes, graph_bytes);
         }
-        Ok(None)
+
+        self.db().write(batch)?;
+        observe!(StoreHistograms::PutRequests, start.elapsed().as_secs_f64());
+        record!(StoreMetrics::PutBytes, total_blob_size);
+
+        Ok(())
     }
 
-    #[tracing::instrument(skip(self))]
-    pub async fn has_blob_for_hash(&self, hash: &Multihash) -> Result<bool> {
-        let cf_blobs = self
-            .inner
-            .content
-            .cf_handle(CF_BLOBS_V0)
-            .ok_or_else(|| anyhow!("missing column family: blobs"))?;
-        for elem in self.get_ids_for_hash(hash)? {
-            let id = elem?.id;
-            let id_bytes = id.to_be_bytes();
-            if let Some(_blob) = self.inner.content.get_pinned_cf(&cf_blobs, &id_bytes)? {
-                return Ok(true);
-            }
-        }
-        Ok(false)
-    }
-
-    #[tracing::instrument(skip(self))]
-    pub async fn get(&self, cid: &Cid) -> Result<Option<DBPinnableSlice<'_>>> {
+    fn get0(&self, cid: &Cid, cf: &ColumnFamilies) -> Result<Option<DBPinnableSlice<'_>>> {
         inc!(StoreMetrics::GetRequests);
         let start = std::time::Instant::now();
-        let res = match self.get_id(cid).await? {
+        let res = match self.get_id(cid, cf)? {
             Some(id) => {
-                let maybe_blob = self.get_by_id(id).await?;
+                let maybe_blob = self.get_by_id(id, cf)?;
                 inc!(StoreMetrics::StoreHit);
                 record!(
                     StoreMetrics::GetBytes,
@@ -295,12 +376,11 @@ impl Store {
         res
     }
 
-    #[tracing::instrument(skip(self))]
-    pub async fn get_size(&self, cid: &Cid) -> Result<Option<usize>> {
-        match self.get_id(cid).await? {
+    fn get_size0(&self, cid: &Cid, cf: &ColumnFamilies) -> Result<Option<usize>> {
+        match self.get_id(cid, cf)? {
             Some(id) => {
                 inc!(StoreMetrics::StoreHit);
-                let maybe_size = self.get_size_by_id(id).await?;
+                let maybe_size = self.get_size_by_id(id)?;
                 Ok(maybe_size)
             }
             None => {
@@ -310,14 +390,12 @@ impl Store {
         }
     }
 
-    #[tracing::instrument(skip(self))]
-    pub async fn has(&self, cid: &Cid) -> Result<bool> {
-        match self.get_id(cid).await? {
+    fn has0(&self, cid: &Cid, cf: &ColumnFamilies) -> Result<bool> {
+        match self.get_id(cid, cf)? {
             Some(id) => {
-                let cf_blobs = self.cf_blobs()?;
                 let exists = self
                     .db()
-                    .get_pinned_cf(cf_blobs, id.to_be_bytes())?
+                    .get_pinned_cf(cf.blobs, id.to_be_bytes())?
                     .is_some();
                 Ok(exists)
             }
@@ -325,13 +403,12 @@ impl Store {
         }
     }
 
-    #[tracing::instrument(skip(self))]
-    pub async fn get_links(&self, cid: &Cid) -> Result<Option<Vec<Cid>>> {
+    fn get_links0(&self, cid: &Cid, cf: &ColumnFamilies) -> Result<Option<Vec<Cid>>> {
         inc!(StoreMetrics::GetLinksRequests);
         let start = std::time::Instant::now();
-        let res = match self.get_id(cid).await? {
+        let res = match self.get_id(cid, cf)? {
             Some(id) => {
-                let maybe_links = self.get_links_by_id(id).await?;
+                let maybe_links = self.get_links_by_id(id, cf)?;
                 inc!(StoreMetrics::GetLinksHit);
                 Ok(maybe_links)
             }
@@ -347,11 +424,10 @@ impl Store {
         res
     }
 
-    #[tracing::instrument(skip(self))]
-    async fn get_id(&self, cid: &Cid) -> Result<Option<u64>> {
-        let cf_id = self.cf_id()?;
+    #[tracing::instrument(skip(self, cf))]
+    fn get_id(&self, cid: &Cid, cf: &ColumnFamilies) -> Result<Option<u64>> {
         let id_key = id_key(cid);
-        let maybe_id_bytes = self.db().get_pinned_cf(cf_id, id_key)?;
+        let maybe_id_bytes = self.db().get_pinned_cf(cf.id, id_key)?;
         match maybe_id_bytes {
             Some(bytes) => {
                 let arr = bytes[..8].try_into().map_err(|e| anyhow!("{:?}", e))?;
@@ -393,16 +469,15 @@ impl Store {
             }))
     }
 
-    #[tracing::instrument(skip(self))]
-    async fn get_by_id(&self, id: u64) -> Result<Option<DBPinnableSlice<'_>>> {
-        let cf_blobs = self.cf_blobs()?;
-        let maybe_blob = self.db().get_pinned_cf(cf_blobs, id.to_be_bytes())?;
+    #[tracing::instrument(skip(self, cf))]
+    fn get_by_id(&self, id: u64, cf: &ColumnFamilies) -> Result<Option<DBPinnableSlice<'_>>> {
+        let maybe_blob = self.db().get_pinned_cf(cf.blobs, id.to_be_bytes())?;
 
         Ok(maybe_blob)
     }
 
     #[tracing::instrument(skip(self))]
-    async fn get_size_by_id(&self, id: u64) -> Result<Option<usize>> {
+    fn get_size_by_id(&self, id: u64) -> Result<Option<usize>> {
         let cf_blobs = self
             .inner
             .content
@@ -416,17 +491,18 @@ impl Store {
         Ok(maybe_size)
     }
 
-    #[tracing::instrument(skip(self))]
-    async fn get_links_by_id(&self, id: u64) -> Result<Option<Vec<Cid>>> {
-        let cf_graph = self.cf_graph()?;
+    #[tracing::instrument(skip(self, cf))]
+    fn get_links_by_id(&self, id: u64, cf: &ColumnFamilies) -> Result<Option<Vec<Cid>>> {
         let id_bytes = id.to_be_bytes();
         // FIXME: can't use pinned because otherwise this can trigger alignment issues :/
-        match self.db().get_cf(cf_graph, &id_bytes)? {
+        match self.db().get_cf(cf.graph, &id_bytes)? {
             Some(links_id) => {
-                let cf_meta = self.cf_metadata()?;
                 let graph = rkyv::check_archived_root::<GraphV0>(&links_id)
                     .map_err(|e| anyhow!("{:?}", e))?;
-                let keys = graph.children.iter().map(|id| (&cf_meta, id.to_be_bytes()));
+                let keys = graph
+                    .children
+                    .iter()
+                    .map(|id| (&cf.metadata, id.to_be_bytes()));
                 let meta = self.db().multi_get_cf(keys);
                 let mut links = Vec::with_capacity(meta.len());
                 for (i, meta) in meta.into_iter().enumerate() {
@@ -450,19 +526,16 @@ impl Store {
     }
 
     /// Takes a list of cids and gives them ids, which are boths stored and then returned.
-    #[tracing::instrument(skip(self, cids))]
-    async fn ensure_id_many<I>(&self, cids: I) -> Result<Vec<u64>>
+    #[tracing::instrument(skip(self, cids, cf))]
+    fn ensure_id_many<I>(&self, cids: I, cf: &ColumnFamilies) -> Result<Vec<u64>>
     where
         I: IntoIterator<Item = Cid>,
     {
-        let cf_id = self.cf_id()?;
-        let cf_meta = self.cf_metadata()?;
-
         let mut ids = Vec::new();
         let mut batch = WriteBatch::default();
         for cid in cids {
             let id_key = id_key(&cid);
-            let id = if let Some(id) = self.db().get_pinned_cf(cf_id, &id_key)? {
+            let id = if let Some(id) = self.db().get_pinned_cf(cf.id, &id_key)? {
                 u64::from_be_bytes(id.as_ref().try_into()?)
             } else {
                 let id = self.next_id();
@@ -473,8 +546,8 @@ impl Store {
                     multihash: cid.hash().to_bytes(),
                 };
                 let metadata_bytes = rkyv::to_bytes::<_, 1024>(&metadata)?; // TODO: is this the right amount of scratch space?
-                batch.put_cf(&cf_id, id_key, &id_bytes);
-                batch.put_cf(&cf_meta, &id_bytes, metadata_bytes);
+                batch.put_cf(&cf.id, id_key, &id_bytes);
+                batch.put_cf(&cf.metadata, &id_bytes, metadata_bytes);
                 id
             };
             ids.push(id);
@@ -492,32 +565,26 @@ impl Store {
         id
     }
 
+    fn cfs(&self) -> Result<ColumnFamilies> {
+        let db = self.db();
+        Ok(ColumnFamilies {
+            id: db
+                .cf_handle(CF_ID_V0)
+                .context("missing column family: id")?,
+            metadata: db
+                .cf_handle(CF_METADATA_V0)
+                .context("missing column family: metadata")?,
+            graph: db
+                .cf_handle(CF_GRAPH_V0)
+                .context("missing column family: graph")?,
+            blobs: db
+                .cf_handle(CF_BLOBS_V0)
+                .context("missing column family: blobs")?,
+        })
+    }
+
     fn db(&self) -> &RocksDb {
         &self.inner.content
-    }
-
-    fn cf_id(&self) -> Result<&ColumnFamily> {
-        self.db()
-            .cf_handle(CF_ID_V0)
-            .context("missing column family: id")
-    }
-
-    fn cf_metadata(&self) -> Result<&ColumnFamily> {
-        self.db()
-            .cf_handle(CF_METADATA_V0)
-            .context("missing column family: metadata")
-    }
-
-    fn cf_blobs(&self) -> Result<&ColumnFamily> {
-        self.db()
-            .cf_handle(CF_BLOBS_V0)
-            .context("missing column family: blobs")
-    }
-
-    fn cf_graph(&self) -> Result<&ColumnFamily> {
-        self.db()
-            .cf_handle(CF_GRAPH_V0)
-            .context("missing column family: graph")
     }
 }
 
