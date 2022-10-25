@@ -1263,9 +1263,9 @@ impl<T: ContentLoader> Resolver<T> {
         // first iteration is the link list itself
         let _ = links_iter
             .next()
-            .ok_or(anyhow!("expected DagPb links to exist"));
+            .ok_or_else(|| anyhow!("expected DagPb links to exist"));
 
-        while let Some(dagpb_link) = links_iter.next() {
+        for dagpb_link in links_iter {
             match dagpb_link
                 .clone()
                 .take("Name")
