@@ -8,8 +8,8 @@ use futures::Stream;
 #[cfg(feature = "grpc")]
 use iroh_rpc_types::store::store_client::StoreClient as GrpcStoreClient;
 use iroh_rpc_types::store::{
-    GetLinksRequest, GetRequest, GetSizeRequest, HasRequest, PutRequest, Store, StoreClientAddr,
-    StoreClientBackend,
+    GetLinksRequest, GetRequest, GetSizeRequest, HasRequest, PutManyRequest, PutRequest, Store,
+    StoreClientAddr, StoreClientBackend,
 };
 use iroh_rpc_types::Addr;
 #[cfg(feature = "grpc")]
@@ -37,6 +37,20 @@ impl StoreClient {
             links: links.iter().map(|l| l.to_bytes()).collect(),
         };
         self.backend.put(req).await?;
+        Ok(())
+    }
+
+    #[tracing::instrument(skip(self, blocks))]
+    pub async fn put_many(&self, blocks: Vec<(Cid, Bytes, Vec<Cid>)>) -> Result<()> {
+        let blocks = blocks
+            .into_iter()
+            .map(|(cid, blob, links)| PutRequest {
+                cid: cid.to_bytes(),
+                blob,
+                links: links.iter().map(|l| l.to_bytes()).collect(),
+            })
+            .collect();
+        self.backend.put_many(PutManyRequest { blocks }).await?;
         Ok(())
     }
 
