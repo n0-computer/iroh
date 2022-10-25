@@ -4,7 +4,7 @@ use anyhow::Result;
 use async_stream::try_stream;
 use bytes::{Bytes, BytesMut};
 use cid::Cid;
-use futures::{Stream, StreamExt};
+use futures::{Stream, StreamExt, TryFutureExt, TryStreamExt};
 
 use crate::resolver::Block;
 use crate::unixfs::{dag_pb, unixfs_pb, DataType, Node, UnixfsNode};
@@ -77,11 +77,18 @@ fn stream_balanced_tree(
         let mut tree: VecDeque<Vec<(Cid, LinkInfo)>> = VecDeque::new();
         tree.push_back(Vec::with_capacity(degree));
 
+        let hash_par: usize = 8;
+
+        let in_stream = in_stream.err_into::<anyhow::Error>().map(|chunk| {
+            tokio::task::spawn_blocking(|| {
+                chunk.and_then(|chunk| TreeNode::Leaf(chunk.freeze()).encode())
+            }).err_into::<anyhow::Error>()
+        }).buffered(hash_par).map(|x| x.and_then(|x| x));
+
         tokio::pin!(in_stream);
 
         while let Some(chunk) = in_stream.next().await {
-            let chunk = chunk?;
-            let chunk = chunk.freeze();
+            let ((block, link_info)) = chunk?;
             let tree_len = tree.len();
 
             // check if the leaf node of the tree is full
@@ -115,7 +122,6 @@ fn stream_balanced_tree(
 
             // now that we know the tree is in a "healthy" state to
             // recieve more links, add the link to the tree
-            let (block, link_info) = TreeNode::Leaf(chunk).encode()?;
             tree[0].push((*block.cid(), link_info));
             yield block;
             // at this point, the leaf node may have `degree` number of
