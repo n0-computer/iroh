@@ -65,6 +65,9 @@ enum Commands {
     #[clap(after_help = doc::START_LONG_DESCRIPTION )]
     Start {
         service: Vec<String>,
+        /// Start all services
+        #[clap(short, long)]
+        all: bool,
     },
     /// status checks the health of the different processes
     #[clap(about = "Check the health of the different iroh services")]
@@ -135,8 +138,16 @@ impl Cli {
                 println!("Saving file(s) to {}", root_path.to_str().unwrap());
             }
             Commands::P2p(p2p) => run_p2p_command(&api.p2p()?, p2p).await?,
-            Commands::Start { service } => {
-                crate::services::start(api, service).await?;
+            Commands::Start { service, all } => {
+                let mut svc = &vec![
+                    String::from("store"),
+                    String::from("p2p"),
+                    String::from("gateway"),
+                ];
+                if !*all {
+                    svc = service;
+                };
+                crate::services::start(api, svc).await?;
             }
             Commands::Status { watch } => {
                 crate::services::status(api, *watch).await?;
