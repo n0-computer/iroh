@@ -9,7 +9,7 @@ use std::time::SystemTime;
 use sysinfo::PidExt;
 use tracing::info;
 
-use iroh_api::{Api, ServiceStatus, StatusRow, StatusTable};
+use iroh_api::{Api, ApiError, ServiceStatus, StatusRow, StatusTable};
 use iroh_util::lock::{LockError, ProgramLock};
 
 const SERVICE_START_TIMEOUT_SECONDS: u64 = 15;
@@ -88,7 +88,7 @@ async fn start_services(api: &impl Api, services: HashSet<&str>) -> Result<()> {
 
         iroh_localops::process::daemonize(bin_path, log_path.clone())?;
 
-        let is_up = ensure_status(api, service, iroh_api::ServiceStatus::Serving).await?;
+        let is_up = poll_until_status(api, service, iroh_api::ServiceStatus::Serving).await?;
         if is_up {
             println!("{}", "success".green());
         } else {
@@ -134,7 +134,7 @@ pub async fn stop_services(api: &impl Api, services: HashSet<&str>) -> Result<()
                 print!("stopping {}... ", &daemon_name);
                 match iroh_localops::process::stop(pid.as_u32()) {
                     Ok(_) => {
-                        let is_down = ensure_status(
+                        let is_down = poll_until_status(
                             api,
                             service,
                             iroh_api::ServiceStatus::Down(tonic::Status::unavailable(
@@ -252,9 +252,23 @@ where
     Ok(())
 }
 
+/// require a set of services is up
+pub async fn require_services(api: &impl Api, services: HashSet<&str>) -> Result<()> {
+    let table = api.check().await;
+    for service in table.iter() {
+        if services.contains(service.name()) && service.status() != iroh_api::ServiceStatus::Serving
+        {
+            return Err(anyhow!(ApiError::ConnectionRefused {
+                service: service.name()
+            }));
+        }
+    }
+    Ok(())
+}
+
 /// poll until a service matches the desired status. returns Ok(true) if status was matched,
 /// and Ok(false) if desired status isn't reported before SERVICE_START_TIMEOUT_SECONDS
-async fn ensure_status(
+async fn poll_until_status(
     api: &impl Api,
     service: &str,
     status: iroh_api::ServiceStatus,

@@ -7,6 +7,7 @@ use crate::p2p::MockP2p;
 use crate::p2p::{ClientP2p, P2p};
 use crate::{AddEvent, IpfsPath};
 use anyhow::Result;
+use cid::Cid;
 use futures::future::{BoxFuture, LocalBoxFuture};
 use futures::stream::LocalBoxStream;
 use futures::FutureExt;
@@ -39,6 +40,8 @@ pub trait Api {
     type P: P2p;
 
     fn p2p(&self) -> Result<Self::P>;
+
+    fn provide(&self, cid: Cid) -> LocalBoxFuture<'_, Result<()>>;
 
     /// Produces a asynchronous stream of file descriptions
     /// Each description is a tuple of a relative path, and either a `Directory` or a `Reader`
@@ -99,6 +102,10 @@ impl Iroh {
 
 impl Api for Iroh {
     type P = ClientP2p;
+
+    fn provide(&self, cid: Cid) -> LocalBoxFuture<'_, Result<()>> {
+        async move { self.client.try_p2p()?.start_providing(&cid).await }.boxed_local()
+    }
 
     fn p2p(&self) -> Result<ClientP2p> {
         let p2p_client = self.client.try_p2p()?;

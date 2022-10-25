@@ -1,7 +1,6 @@
+use anyhow::{anyhow, Error};
 use std::io;
 use thiserror::Error as ThisError;
-// use std::error::Error;
-use anyhow::{anyhow, Error};
 
 /// LockError is the set of known program lock errors
 #[derive(ThisError, Debug)]
