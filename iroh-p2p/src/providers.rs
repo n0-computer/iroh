@@ -147,7 +147,7 @@ impl Providers {
                 // Cleanup all that are finished.
                 query
                     .queries
-                    .retain(|q| dbg!(q.limit) >= dbg!(query.found_providers.len()));
+                    .retain(|q| q.limit >= query.found_providers.len());
 
                 // Check if ther are any queries left.
                 if query.queries.is_empty() {
