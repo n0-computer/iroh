@@ -21,7 +21,7 @@ use rocksdb::{
     WriteBatch, DB as RocksDb,
 };
 use smallvec::SmallVec;
-use tokio::task;
+use tokio::{sync::RwLock, task};
 
 use crate::cf::{GraphV0, MetadataV0, CF_BLOBS_V0, CF_GRAPH_V0, CF_ID_V0, CF_METADATA_V0};
 use crate::Config;
@@ -32,7 +32,7 @@ pub struct Store {
 }
 
 struct InnerStore {
-    content: RocksDb,
+    content: RwLock<RocksDb>,
     next_id: AtomicU64,
     _cache: Cache,
     _rpc_client: RpcClient,
@@ -130,7 +130,7 @@ impl Store {
 
         Ok(Store {
             inner: Arc::new(InnerStore {
-                content: db,
+                content: RwLock::new(db),
                 next_id: 1.into(),
                 _cache: cache,
                 _rpc_client,
@@ -182,7 +182,7 @@ impl Store {
 
         Ok(Store {
             inner: Arc::new(InnerStore {
-                content: db,
+                content: RwLock::new(db),
                 next_id: next_id.into(),
                 _cache: cache,
                 _rpc_client,
@@ -191,58 +191,75 @@ impl Store {
     }
 
     #[tracing::instrument(skip(self, links, blob))]
-    pub fn put<T: AsRef<[u8]>, L>(&self, cid: Cid, blob: T, links: L) -> Result<()>
+    pub async fn put<T: AsRef<[u8]>, L>(&self, cid: Cid, blob: T, links: L) -> Result<()>
     where
         L: IntoIterator<Item = Cid>,
     {
-        self.local_store()?.put(cid, blob, links)
+        self.write_local_store(|x| x.put(cid, blob, links)).await
     }
 
     #[tracing::instrument(skip(self, blocks))]
-    pub fn put_many(&self, blocks: impl IntoIterator<Item = (Cid, Bytes, Vec<Cid>)>) -> Result<()> {
-        self.local_store()?.put_many(blocks)
+    pub async fn put_many(
+        &self,
+        blocks: impl IntoIterator<Item = (Cid, Bytes, Vec<Cid>)>,
+    ) -> Result<()> {
+        self.write_local_store(|x| x.put_many(blocks)).await
     }
 
     #[tracing::instrument(skip(self))]
-    pub fn get_blob_by_hash(&self, hash: &Multihash) -> Result<Option<DBPinnableSlice<'_>>> {
-        self.local_store()?.get_blob_by_hash(hash)
+    pub async fn get_blob_by_hash(&self, hash: &Multihash) -> Result<Option<Bytes>> {
+        self.read_local_store(|x| x.get_blob_by_hash(hash)).await
     }
 
     #[tracing::instrument(skip(self))]
-    pub fn has_blob_for_hash(&self, hash: &Multihash) -> Result<bool> {
-        self.local_store()?.has_blob_for_hash(hash)
+    pub async fn has_blob_for_hash(&self, hash: &Multihash) -> Result<bool> {
+        self.read_local_store(|x| x.has_blob_for_hash(hash)).await
     }
 
     #[tracing::instrument(skip(self))]
-    pub fn get(&self, cid: &Cid) -> Result<Option<DBPinnableSlice<'_>>> {
-        self.local_store()?.get(cid)
+    pub async fn get(&self, cid: &Cid) -> Result<Option<Bytes>> {
+        self.read_local_store(|x| x.get(cid)).await
     }
 
     #[tracing::instrument(skip(self))]
     pub async fn get_size(&self, cid: &Cid) -> Result<Option<usize>> {
-        self.local_store()?.get_size(cid)
+        self.read_local_store(|x| x.get_size(cid)).await
     }
 
     #[tracing::instrument(skip(self))]
-    pub fn has(&self, cid: &Cid) -> Result<bool> {
-        self.local_store()?.has(cid)
+    pub async fn has(&self, cid: &Cid) -> Result<bool> {
+        self.read_local_store(|x| x.has(cid)).await
     }
 
     #[tracing::instrument(skip(self))]
-    pub fn get_links(&self, cid: &Cid) -> Result<Option<Vec<Cid>>> {
-        self.local_store()?.get_links(cid)
+    pub async fn get_links(&self, cid: &Cid) -> Result<Option<Vec<Cid>>> {
+        self.read_local_store(|x| x.get_links(cid)).await
     }
 
     #[cfg(test)]
-    fn get_ids_for_hash(
-        &self,
-        hash: &Multihash,
-    ) -> Result<impl Iterator<Item = Result<CodeAndId>> + '_> {
-        self.local_store()?.get_ids_for_hash(hash)
+    async fn get_ids_for_hash(&self, hash: &Multihash) -> Result<Vec<CodeAndId>> {
+        self.read_local_store(|x| x.get_ids_for_hash(hash)).await
     }
 
-    fn local_store(&self) -> Result<LocalStore> {
-        let db = &self.inner.content;
+    async fn read_local_store<T, F>(&self, f: F) -> Result<T>
+    where
+        F: for<'a> FnOnce(&'a LocalStore) -> Result<T>,
+    {
+        let db = self.inner.content.read().await;
+        let local = Self::local_store(&db, &self.inner.next_id)?;
+        f(&local)
+    }
+
+    async fn write_local_store<T, F>(&self, f: F) -> Result<T>
+    where
+        F: for<'a> FnOnce(&'a mut LocalStore) -> Result<T>,
+    {
+        let db = self.inner.content.write().await;
+        let mut local = Self::local_store(&db, &self.inner.next_id)?;
+        f(&mut local)
+    }
+
+    fn local_store<'a>(db: &'a RocksDb, next_id: &'a AtomicU64) -> Result<LocalStore<'a>> {
         Ok(LocalStore {
             db,
             id: db
@@ -257,7 +274,7 @@ impl Store {
             blobs: db
                 .cf_handle(CF_BLOBS_V0)
                 .context("missing column family: blobs")?,
-            next_id: &self.inner.next_id,
+            next_id,
         })
     }
 }
@@ -277,7 +294,7 @@ struct LocalStore<'a> {
 }
 
 impl<'a> LocalStore<'a> {
-    fn put<T: AsRef<[u8]>, L>(&self, cid: Cid, blob: T, links: L) -> Result<()>
+    fn put<T: AsRef<[u8]>, L>(&mut self, cid: Cid, blob: T, links: L) -> Result<()>
     where
         L: IntoIterator<Item = Cid>,
     {
@@ -286,7 +303,6 @@ impl<'a> LocalStore<'a> {
         if self.has(&cid)? {
             return Ok(());
         }
-        let cf = self;
 
         let id = self.next_id();
 
@@ -303,17 +319,17 @@ impl<'a> LocalStore<'a> {
         let metadata_bytes = rkyv::to_bytes::<_, 1024>(&metadata)?; // TODO: is this the right amount of scratch space?
         let id_key = id_key(&cid);
 
-        let children = self.ensure_id_many(links.into_iter(), cf)?;
+        let children = self.ensure_id_many(links.into_iter())?;
 
         let graph = GraphV0 { children };
         let graph_bytes = rkyv::to_bytes::<_, 1024>(&graph)?; // TODO: is this the right amount of scratch space?
         let blob_size = blob.as_ref().len();
 
         let mut batch = WriteBatch::default();
-        batch.put_cf(cf.id, id_key, &id_bytes);
-        batch.put_cf(cf.blobs, &id_bytes, blob);
-        batch.put_cf(cf.metadata, &id_bytes, metadata_bytes);
-        batch.put_cf(cf.graph, &id_bytes, graph_bytes);
+        batch.put_cf(self.id, id_key, &id_bytes);
+        batch.put_cf(self.blobs, &id_bytes, blob);
+        batch.put_cf(self.metadata, &id_bytes, metadata_bytes);
+        batch.put_cf(self.graph, &id_bytes, graph_bytes);
         self.db.write(batch)?;
         observe!(StoreHistograms::PutRequests, start.elapsed().as_secs_f64());
         record!(StoreMetrics::PutBytes, blob_size as u64);
@@ -321,11 +337,10 @@ impl<'a> LocalStore<'a> {
         Ok(())
     }
 
-    fn put_many(&self, blocks: impl IntoIterator<Item = (Cid, Bytes, Vec<Cid>)>) -> Result<()> {
+    fn put_many(&mut self, blocks: impl IntoIterator<Item = (Cid, Bytes, Vec<Cid>)>) -> Result<()> {
         inc!(StoreMetrics::PutRequests);
         let start = std::time::Instant::now();
         let mut total_blob_size = 0;
-        let cf = self;
 
         let mut batch = WriteBatch::default();
         for (cid, blob, links) in blocks.into_iter() {
@@ -346,7 +361,7 @@ impl<'a> LocalStore<'a> {
             let metadata_bytes = rkyv::to_bytes::<_, 1024>(&metadata)?; // TODO: is this the right amount of scratch space?
             let id_key = id_key(&cid);
 
-            let children = self.ensure_id_many(links.into_iter(), cf)?;
+            let children = self.ensure_id_many(links.into_iter())?;
 
             let graph = GraphV0 { children };
             let graph_bytes = rkyv::to_bytes::<_, 1024>(&graph)?; // TODO: is this the right amount of scratch space?
@@ -354,10 +369,10 @@ impl<'a> LocalStore<'a> {
             let blob_size = blob.as_ref().len();
             total_blob_size += blob_size as u64;
 
-            batch.put_cf(cf.id, id_key, &id_bytes);
-            batch.put_cf(cf.blobs, &id_bytes, blob);
-            batch.put_cf(cf.metadata, &id_bytes, metadata_bytes);
-            batch.put_cf(cf.graph, &id_bytes, graph_bytes);
+            batch.put_cf(self.id, id_key, &id_bytes);
+            batch.put_cf(self.blobs, &id_bytes, blob);
+            batch.put_cf(self.metadata, &id_bytes, metadata_bytes);
+            batch.put_cf(self.graph, &id_bytes, graph_bytes);
         }
 
         self.db.write(batch)?;
@@ -367,7 +382,7 @@ impl<'a> LocalStore<'a> {
         Ok(())
     }
 
-    fn get(&self, cid: &Cid) -> Result<Option<DBPinnableSlice<'a>>> {
+    fn get(&self, cid: &Cid) -> Result<Option<Bytes>> {
         inc!(StoreMetrics::GetRequests);
         let start = std::time::Instant::now();
         let res = match self.get_id(cid)? {
@@ -378,7 +393,7 @@ impl<'a> LocalStore<'a> {
                     StoreMetrics::GetBytes,
                     maybe_blob.as_ref().map(|b| b.len()).unwrap_or(0) as u64
                 );
-                Ok(maybe_blob)
+                Ok(maybe_blob.map(|x| x.to_vec().into()))
             }
             None => {
                 inc!(StoreMetrics::StoreMiss);
@@ -450,38 +465,34 @@ impl<'a> LocalStore<'a> {
         }
     }
 
-    fn get_ids_for_hash(
-        &self,
-        hash: &Multihash,
-    ) -> Result<impl Iterator<Item = Result<CodeAndId>> + 'a> {
+    fn get_ids_for_hash(&self, hash: &Multihash) -> Result<Vec<CodeAndId>> {
         let hash = hash.to_bytes();
         let iter = self
             .db
             .iterator_cf(self.id, IteratorMode::From(&hash, Direction::Forward));
         let hash_len = hash.len();
-        Ok(iter
-            .take_while(move |elem| {
-                if let Ok((k, _)) = elem {
-                    k.len() == hash_len + 8 && k.starts_with(&hash)
-                } else {
-                    // we don't want to swallow errors. An error is not the same as no result!
-                    true
-                }
-            })
-            .map(move |elem| {
-                let (k, v) = elem?;
-                let code = u64::from_be_bytes(k[hash_len..].try_into()?);
-                let id = u64::from_be_bytes(v[..8].try_into()?);
-                Ok(CodeAndId { code, id })
-            }))
+        iter.take_while(move |elem| {
+            if let Ok((k, _)) = elem {
+                k.len() == hash_len + 8 && k.starts_with(&hash)
+            } else {
+                // we don't want to swallow errors. An error is not the same as no result!
+                true
+            }
+        })
+        .map(move |elem| {
+            let (k, v) = elem?;
+            let code = u64::from_be_bytes(k[hash_len..].try_into()?);
+            let id = u64::from_be_bytes(v[..8].try_into()?);
+            Ok(CodeAndId { code, id })
+        })
+        .collect()
     }
 
-    fn get_blob_by_hash(&self, hash: &Multihash) -> Result<Option<DBPinnableSlice<'a>>> {
+    fn get_blob_by_hash(&self, hash: &Multihash) -> Result<Option<Bytes>> {
         for elem in self.get_ids_for_hash(hash)? {
-            let id = elem?.id;
-            let id_bytes = id.to_be_bytes();
+            let id_bytes = elem.id.to_be_bytes();
             if let Some(blob) = self.db.get_pinned_cf(self.blobs, &id_bytes)? {
-                return Ok(Some(blob));
+                return Ok(Some(blob.to_vec().into()));
             }
         }
         Ok(None)
@@ -490,8 +501,7 @@ impl<'a> LocalStore<'a> {
     #[tracing::instrument(skip(self))]
     fn has_blob_for_hash(&self, hash: &Multihash) -> Result<bool> {
         for elem in self.get_ids_for_hash(hash)? {
-            let id = elem?.id;
-            let id_bytes = id.to_be_bytes();
+            let id_bytes = elem.id.to_be_bytes();
             if let Some(_blob) = self.db.get_pinned_cf(self.blobs, &id_bytes)? {
                 return Ok(true);
             }
@@ -549,11 +559,12 @@ impl<'a> LocalStore<'a> {
     }
 
     /// Takes a list of cids and gives them ids, which are boths stored and then returned.
-    #[tracing::instrument(skip(self, cids, cf))]
-    fn ensure_id_many<I>(&self, cids: I, cf: &LocalStore) -> Result<Vec<u64>>
+    #[tracing::instrument(skip(self, cids))]
+    fn ensure_id_many<I>(&self, cids: I) -> Result<Vec<u64>>
     where
         I: IntoIterator<Item = Cid>,
     {
+        let cf = self;
         let mut ids = Vec::new();
         let mut batch = WriteBatch::default();
         for cid in cids {
@@ -627,17 +638,17 @@ mod tests {
 
             let links = [link];
 
-            store.put(c, &data, links).unwrap();
+            store.put(c, &data, links).await.unwrap();
             values.push((c, data, links));
         }
 
         for (i, (c, expected_data, expected_links)) in values.iter().enumerate() {
             dbg!(i);
-            assert!(store.has(c).unwrap());
-            let data = store.get(c).unwrap().unwrap();
+            assert!(store.has(c).await.unwrap());
+            let data = store.get(c).await.unwrap().unwrap();
             assert_eq!(expected_data, &data[..]);
 
-            let links = store.get_links(c).unwrap().unwrap();
+            let links = store.get_links(c).await.unwrap().unwrap();
             assert_eq!(expected_links, &links[..]);
         }
     }
@@ -666,15 +677,15 @@ mod tests {
 
             let links = [link];
 
-            store.put(c, &data, links).unwrap();
+            store.put(c, &data, links).await.unwrap();
             values.push((c, data, links));
         }
 
         for (c, expected_data, expected_links) in values.iter() {
-            let data = store.get(c).unwrap().unwrap();
+            let data = store.get(c).await.unwrap().unwrap();
             assert_eq!(expected_data, &data[..]);
 
-            let links = store.get_links(c).unwrap().unwrap();
+            let links = store.get_links(c).await.unwrap().unwrap();
             assert_eq!(expected_links, &links[..]);
         }
 
@@ -682,10 +693,10 @@ mod tests {
 
         let store = Store::open(config).await.unwrap();
         for (c, expected_data, expected_links) in values.iter() {
-            let data = store.get(c).unwrap().unwrap();
+            let data = store.get(c).await.unwrap().unwrap();
             assert_eq!(expected_data, &data[..]);
 
-            let links = store.get_links(c).unwrap().unwrap();
+            let links = store.get_links(c).await.unwrap().unwrap();
             assert_eq!(expected_links, &links[..]);
         }
 
@@ -699,15 +710,15 @@ mod tests {
 
             let links = [link];
 
-            store.put(c, &data, links).unwrap();
+            store.put(c, &data, links).await.unwrap();
             values.push((c, data, links));
         }
 
         for (c, expected_data, expected_links) in values.iter() {
-            let data = store.get(c).unwrap().unwrap();
+            let data = store.get(c).await.unwrap().unwrap();
             assert_eq!(expected_data, &data[..]);
 
-            let links = store.get_links(c).unwrap().unwrap();
+            let links = store.get_links(c).await.unwrap().unwrap();
             assert_eq!(expected_links, &links[..]);
         }
     }
@@ -741,13 +752,13 @@ mod tests {
         let cbor_cid = Cid::new_v1(IpldCodec::DagCbor.into(), hash);
 
         let (store, _dir) = test_store().await?;
-        store.put(raw_cid, &blob, vec![])?;
-        store.put(cbor_cid, &blob, vec![link1, link2])?;
-        assert_eq!(store.get_links(&raw_cid)?.unwrap().len(), 0);
-        assert_eq!(store.get_links(&cbor_cid)?.unwrap().len(), 2);
+        store.put(raw_cid, &blob, vec![]).await?;
+        store.put(cbor_cid, &blob, vec![link1, link2]).await?;
+        assert_eq!(store.get_links(&raw_cid).await?.unwrap().len(), 0);
+        assert_eq!(store.get_links(&cbor_cid).await?.unwrap().len(), 2);
 
-        let ids = store.get_ids_for_hash(&hash)?;
-        assert_eq!(ids.count(), 2);
+        let ids = store.get_ids_for_hash(&hash).await?;
+        assert_eq!(ids.len(), 2);
         Ok(())
     }
 
@@ -768,18 +779,18 @@ mod tests {
 
         let (store, _dir) = test_store().await?;
         // we don't have it yet
-        assert!(!store.has_blob_for_hash(&hash)?);
-        let actual = store.get_blob_by_hash(&hash)?.map(|x| x.to_vec());
+        assert!(!store.has_blob_for_hash(&hash).await?);
+        let actual = store.get_blob_by_hash(&hash).await?.map(|x| x.to_vec());
         assert_eq!(actual, None);
 
-        store.put(raw_cid, &expected, vec![])?;
-        assert!(store.has_blob_for_hash(&hash)?);
-        let actual = store.get_blob_by_hash(&hash)?.map(|x| x.to_vec());
+        store.put(raw_cid, &expected, vec![]).await?;
+        assert!(store.has_blob_for_hash(&hash).await?);
+        let actual = store.get_blob_by_hash(&hash).await?.map(|x| x.to_vec());
         assert_eq!(actual, Some(expected.clone()));
 
-        store.put(cbor_cid, &expected, vec![link1, link2])?;
-        assert!(store.has_blob_for_hash(&hash)?);
-        let actual = store.get_blob_by_hash(&hash)?.map(|x| x.to_vec());
+        store.put(cbor_cid, &expected, vec![link1, link2]).await?;
+        assert!(store.has_blob_for_hash(&hash).await?);
+        let actual = store.get_blob_by_hash(&hash).await?.map(|x| x.to_vec());
         assert_eq!(actual, Some(expected));
         Ok(())
     }

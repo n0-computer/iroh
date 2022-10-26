@@ -31,8 +31,9 @@ pub fn put_benchmark(c: &mut Criterion) {
                 };
                 let store = executor.block_on(async { Store::create(config).await.unwrap() });
                 let store_ref = &store;
-                b.to_async(&executor)
-                    .iter(|| async move { store_ref.put(*key, black_box(value), []).unwrap() });
+                b.to_async(&executor).iter(|| async move {
+                    store_ref.put(*key, black_box(value), []).await.unwrap()
+                });
             },
         );
     }
@@ -64,7 +65,7 @@ pub fn get_benchmark(c: &mut Criterion) {
                         let hash = Code::Sha2_256.digest(&value);
                         let key = cid::Cid::new_v1(RAW, hash);
                         keys.push(key);
-                        store_ref.put(key, &value, []).unwrap();
+                        store_ref.put(key, &value, []).await.unwrap();
                     }
                     keys
                 });
@@ -76,7 +77,7 @@ pub fn get_benchmark(c: &mut Criterion) {
                     let start = Instant::now();
                     for i in 0..iters {
                         let key = &keys_ref[(i as usize) % l];
-                        let res = store_ref.get(key).unwrap().unwrap();
+                        let res = store_ref.get(key).await.unwrap().unwrap();
                         black_box(res);
                     }
                     start.elapsed()

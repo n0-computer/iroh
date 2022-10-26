@@ -2,7 +2,6 @@ use std::io::Cursor;
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use bytes::BytesMut;
 use cid::Cid;
 use iroh_rpc_types::store::{
     GetLinksRequest, GetLinksResponse, GetRequest, GetResponse, GetSizeRequest, GetSizeResponse,
@@ -30,7 +29,7 @@ impl RpcStore for Store {
     async fn put(&self, req: PutRequest) -> Result<()> {
         let cid = cid_from_bytes(req.cid)?;
         let links = links_from_bytes(req.links)?;
-        let res = self.put(cid, req.blob, links)?;
+        let res = self.put(cid, req.blob, links).await?;
 
         info!("store rpc call: put cid {}", cid);
         Ok(res)
@@ -47,25 +46,21 @@ impl RpcStore for Store {
                 Ok((cid, req.blob, links))
             })
             .collect::<Result<Vec<_>>>()?;
-        self.put_many(req)
+        self.put_many(req).await
     }
 
     #[tracing::instrument(skip(self))]
     async fn get(&self, req: GetRequest) -> Result<GetResponse> {
         let cid = cid_from_bytes(req.cid)?;
-        if let Some(res) = self.get(&cid)? {
-            Ok(GetResponse {
-                data: Some(BytesMut::from(&res[..]).freeze()),
-            })
-        } else {
-            Ok(GetResponse { data: None })
-        }
+        Ok(GetResponse {
+            data: self.get(&cid).await?,
+        })
     }
 
     #[tracing::instrument(skip(self))]
     async fn has(&self, req: HasRequest) -> Result<HasResponse> {
         let cid = cid_from_bytes(req.cid)?;
-        let has = self.has(&cid)?;
+        let has = self.has(&cid).await?;
 
         Ok(HasResponse { has })
     }
@@ -73,7 +68,7 @@ impl RpcStore for Store {
     #[tracing::instrument(skip(self))]
     async fn get_links(&self, req: GetLinksRequest) -> Result<GetLinksResponse> {
         let cid = cid_from_bytes(req.cid)?;
-        if let Some(res) = self.get_links(&cid)? {
+        if let Some(res) = self.get_links(&cid).await? {
             let links = res.into_iter().map(|cid| cid.to_bytes()).collect();
             Ok(GetLinksResponse { links })
         } else {
