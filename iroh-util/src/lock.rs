@@ -48,7 +48,7 @@ impl ProgramLock {
                 self
             }
             Ok(true) => {
-                eprintln!("{} is already running, stopping.", self.program_name());
+                eprintln!("{} is already running", self.program_name());
                 process::exit(exitcodes::LOCKED);
             }
             Err(err) => {
