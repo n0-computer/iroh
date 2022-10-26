@@ -86,16 +86,11 @@ pub async fn run_command(p2p: &impl P2pApi, cmd: &P2p) -> Result<()> {
 
 fn display_lookup(l: &Lookup) {
     println!("{}\n  {}", "Peer ID:".bold().dim(), l.peer_id);
+    println!("{}\n  {}", "Agent Version:".bold().dim(), l.agent_version);
     println!(
         "{}\n  {}",
         "Protocol Version:".bold().dim(),
         l.protocol_version
-    );
-    println!(
-        "{} {}\n  {}",
-        "Protocols".bold().dim(),
-        format!("({}):", l.protocols.len()).bold().dim(),
-        l.protocols.join("\n  ")
     );
     println!(
         "{} {}",
@@ -113,6 +108,12 @@ fn display_lookup(l: &Lookup) {
     l.listen_addrs
         .iter()
         .for_each(|addr| println!("  {}", addr));
+    println!(
+        "{} {}\n  {}",
+        "Protocols".bold().dim(),
+        format!("({}):", l.protocols.len()).bold().dim(),
+        l.protocols.join("\n  ")
+    );
 }
 
 fn display_peers(peers: HashMap<PeerId, Vec<Multiaddr>>) {

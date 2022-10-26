@@ -169,7 +169,20 @@ protocol. When provided with a peer ID, the address is looked up on the
 Network's Distributed Hash Table (DHT) before connecting to the node. When 
 provided with a multiaddress, the connection is dialed directly.
 
-Providing no <ADDR> argument will return your local node information.";
+Providing no <ADDR> argument will return your local node information.
+
+lookup will output 6 types of the info about the peer:
+
+  Peer ID             - the identifier of the peer
+  Agent Version       - software identifier similar to a web browser's user agent
+  Protocol Version    - broad identifier for the peer & it's network
+  Observed Addresses  - the peer's best guess at it's own public address(es)
+                        based on feedback from other peers
+  Listening Addresses - address this peer is listening for connections on
+  Protocols           - identifiers for protocols this peer speaks
+
+This command is a direct port of libp2p-lookup by mxinden:
+https://github.com/mxinden/libp2p-lookup";
 
 pub const P2P_PEERS_LONG_DESCRIPTION: &str = "
 'p2p peers' lists the set of peer addresses this node is currently connected to.
