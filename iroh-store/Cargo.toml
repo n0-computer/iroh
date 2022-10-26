@@ -8,7 +8,7 @@ repository = "https://github.com/n0-computer/iroh"
 description = "Implementation of the storage part of iroh"
 
 [dependencies]
-rocksdb = "0.19.0"
+libmdbx = { git = "https://github.com/vorot93/libmdbx-rs" }
 anyhow = "1.0.57"
 tokio = { version = "1", features = ["rt"] }
 cid = "0.8.4"
@@ -23,7 +23,9 @@ iroh-rpc-types = { path = "../iroh-rpc-types", default-features = false }
 iroh-rpc-client = { path = "../iroh-rpc-client", default-features = false }
 iroh-util = { path = "../iroh-util" }
 bytes = "1.1.0"
-iroh-metrics = { path = "../iroh-metrics", default-features = false, features=["store"] }
+iroh-metrics = { path = "../iroh-metrics", default-features = false, features = [
+    "store",
+] }
 tracing-opentelemetry = "0.18"
 opentelemetry = { version = "0.18", features = ["rt-tokio"] }
 names = { version = "0.14.0", default-features = false }
@@ -42,7 +44,11 @@ libipld = "0.14.0"
 
 [features]
 default = ["rpc-grpc", "rpc-mem"]
-rpc-grpc = ["iroh-rpc-types/grpc", "iroh-rpc-client/grpc", "iroh-metrics/rpc-grpc"]
+rpc-grpc = [
+    "iroh-rpc-types/grpc",
+    "iroh-rpc-client/grpc",
+    "iroh-metrics/rpc-grpc",
+]
 rpc-mem = ["iroh-rpc-types/mem", "iroh-rpc-client/mem"]
 
 [[bench]]
