@@ -57,12 +57,21 @@ pub async fn block_until_sigint() {
 /// | Platform | Value                                 | Example                          |
 /// | -------- | ------------------------------------- | -------------------------------- |
 /// | Linux    | `$XDG_CONFIG_HOME` or `$HOME`/.config/iroh | /home/alice/.config/iroh              |
-/// | macOS    | `$HOME`/Library/Application Support/iroh   | /Users/Alice/Library/Application Support/iroh |
+/// | macOS    | `$HOME`/.config/iroh   | /Users/Alice/.config/iroh |
 /// | Windows  | `{FOLDERID_RoamingAppData}`/iroh           | C:\Users\Alice\AppData\Roaming\iroh   |
+#[cfg(not(target_os = "macos"))]
 pub fn iroh_config_root() -> Result<PathBuf> {
     let cfg = dirs_next::config_dir()
         .ok_or_else(|| anyhow!("operating environment provides no directory for configuration"))?;
     Ok(cfg.join(&IROH_DIR))
+}
+
+#[cfg(target_os = "macos")]
+pub fn iroh_config_root() -> Result<PathBuf> {
+    let path = dirs_next::home_dir().ok_or_else(|| {
+        anyhow!("operating environment provides no directory for application data")
+    })?;
+    Ok(path.join(format!(".config/{}", &IROH_DIR)))
 }
 
 // Path that leads to a file in the iroh config directory.
@@ -78,13 +87,22 @@ pub fn iroh_config_path(file_name: &str) -> Result<PathBuf> {
 /// | Platform | Value                                         | Example                                  |
 /// | -------- | --------------------------------------------- | ---------------------------------------- |
 /// | Linux    | `$XDG_DATA_HOME`/iroh or `$HOME`/.local/share/iroh | /home/alice/.local/share/iroh                 |
-/// | macOS    | `$HOME`/Library/Application Support/iroh      | /Users/Alice/Library/Application Support/iroh |
+/// | macOS    | `$HOME`/.config/iroh      | /Users/Alice/.config/iroh |
 /// | Windows  | `{FOLDERID_RoamingAppData}/iroh`              | C:\Users\Alice\AppData\Roaming\iroh           |
+#[cfg(not(target_os = "macos"))]
 pub fn iroh_data_root() -> Result<PathBuf> {
     let path = dirs_next::data_dir().ok_or_else(|| {
         anyhow!("operating environment provides no directory for application data")
     })?;
     Ok(path.join(&IROH_DIR))
+}
+
+#[cfg(target_os = "macos")]
+pub fn iroh_data_root() -> Result<PathBuf> {
+    let path = dirs_next::home_dir().ok_or_else(|| {
+        anyhow!("operating environment provides no directory for application data")
+    })?;
+    Ok(path.join(format!(".config/{}", &IROH_DIR)))
 }
 
 /// Path that leads to a file in the iroh data directory.
