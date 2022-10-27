@@ -36,6 +36,30 @@ async fn start_services(api: &impl Api, services: HashSet<&str>) -> Result<()> {
     // check for any running iroh services
     let table = api.check().await;
 
+    let mut expected_services = HashSet::new();
+    let expected_services = table
+        .iter()
+        .fold(&mut expected_services, |accum, status_row| {
+            match status_row.status() {
+                iroh_api::ServiceStatus::ServiceUnknown => (),
+                _ => {
+                    accum.insert(status_row.name());
+                }
+            }
+            accum
+        });
+
+    let unknown_services: HashSet<&str> = services.difference(expected_services).copied().collect();
+
+    if !unknown_services.is_empty() {
+        let u = unknown_services.into_iter().collect::<Vec<&str>>();
+        let mut e = "Unknown services";
+        if u.len() == 1 {
+            e = "Unknown service";
+        }
+        return Err(anyhow!("{} {}.", e, u.join(", ")));
+    }
+
     let mut missing_services = HashSet::new();
     let missing_services = table
         .iter()
@@ -67,7 +91,7 @@ async fn start_services(api: &impl Api, services: HashSet<&str>) -> Result<()> {
     if missing_services.is_empty() {
         println!(
             "{}",
-            "All iroh daemons are already running. all systems nominal.".green()
+            "All iroh daemons are already running. all systems normal.".green()
         );
         return Ok(());
     }
