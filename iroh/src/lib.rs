@@ -1,3 +1,4 @@
+mod config;
 pub mod doc;
 #[cfg(feature = "testing")]
 mod fixture;
