@@ -45,5 +45,45 @@ impl Source for Config {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-// TODO(b5): TESTS
+    #[test]
+    fn test_collect() {
+        let default = Config::new();
+
+        let mut expect: Map<String, Value> = Map::new();
+        expect.insert(
+            "start_default_services".to_string(),
+            Value::new(
+                None,
+                vec![
+                    "store".to_string(),
+                    "p2p".to_string(),
+                    "gateway".to_string(),
+                ],
+            ),
+        );
+
+        let got = default.collect().unwrap();
+        for key in got.keys() {
+            let left = expect.get(key).unwrap();
+            let right = got.get(key).unwrap();
+            assert_eq!(left, right);
+        }
+    }
+
+    #[test]
+    fn test_build_config_from_struct() {
+        let expect = Config::new();
+        let got: Config = config::Config::builder()
+            .add_source(expect.clone())
+            .build()
+            .unwrap()
+            .try_deserialize()
+            .unwrap();
+
+        assert_eq!(expect, got);
+    }
+}
