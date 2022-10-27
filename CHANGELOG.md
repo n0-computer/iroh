@@ -5,7 +5,7 @@ We’re on the board 🎉! This first release of iroh brings a new implementatio
 Key things to highlight about the first release of iroh:
 
 * **Exchange Data with Kubo**. Iroh can interoperate with [kubo](https://github.com/ipfs/kubo) nodes on the IPFS network, pushing & fetching data.
-* **Service Oriented architecture**. Don't want p2p? Turn it off! Iroh will still work without it. This prepares us for
+* **Service Oriented architecture**. Don't want p2p? Turn it off! Iroh will still work without it.
 * **Single CLI to control all services**. 
 * **Built for efficiency**. Iroh's memory footprint & CPU usage are either on par or better than the best interoperable IPFS implementations out there.
 * **Runs well on a laptop**. We have a custom installer script that will configure iroh for your laptop. See our [install docs](https://iroh.computer/docs/install)
@@ -24,7 +24,7 @@ Please do give iroh a try, we'd love to [hear your feedback](https://github.com/
 We're runnning benchmarks on a relatively stock AWS box for ease-of-replication. We don't have benchmarks for IPFS network retrieval this round.
 
 ### Adding Single Files
-Add a single file of different sizes with `iroh add --no-wrap --offline`:
+Add a single file with `iroh add --no-wrap --offline`:
 
 | file size  | real (s) |	user(s) |	sys(s)   |	cpu %      |	cpu/total % |
 | ---------- | -------- | ------- | -------- | ----------- | ------------ |   
@@ -53,7 +53,7 @@ The v0.1.0 moniker should testify to just how new this software is. Please don't
 ### Things you should know about this release:
 There are two problems we couldn't properly address
 * _There is no delete command._ Data added to iroh will stay there until a future release where we add content removal.  See [issue #432](https://github.com/n0-computer/iroh/issues/432) for details. The workaround for now is to blow away the storage database.
-* _We have one particularly nasty known bug that can cause iroh to not persist data upon add_ we plan to address ASAP in a patch release. See [issue #423](https://github.com/n0-computer/iroh/issues/423).
+* _We have one particularly nasty known bug that can cause iroh to not persist data for highly nested directories upon add_ we plan to address ASAP in a patch release. See [issue #423](https://github.com/n0-computer/iroh/issues/423).
 
 ### Bug Fixes
 
