@@ -1,0 +1,46 @@
+version: '2.4'
+
+networks:
+  haven:
+    external: true
+    name: haven
+
+services:
+  iroh:
+    container_name: iroh
+    # user: "2002:2002" # iroh
+    build: docker
+    image: "iroh:latest"
+
+    # entrypoint: [ "tail", "-f", "/dev/null" ] 
+    # entrypoint: [ "./setup.sh", "start", "&&", "tail", "-f", "/dev/null" ] 
+    entrypoint: /bin/sh -c "./setup.sh start && tail -n 100 -f ~/.iroh/log/iroh-gateway.log"
+    
+    # command: sh -c 'watch -n 60 "~/.iroh/bin/iroh status || ./setup.sh start"' 
+    # command: -h
+    # command: [ "tail", "-f", "/dev/null" ]
+    # command: ./setup.sh start && watch -n 60 ~/.iroh/bin/iroh status
+    # volumes:
+    #   - ./storage:/mnt/filestash
+    #   - ./filestash-state/:/app/data/state
+
+    # environment:
+    # This did not seem to make any difference (even though it makes sense to me that it should)
+    #   - IROH_GATEWAY_PUBLIC_URL_BASE=${PUBLIC_URL_BASE:-http://localhost}
+    
+    ports: 
+     - 9050:9050
+
+    # NOT YET WORKING (gateway timeout - even though wget from within the container works)
+    # http://iroh.1zm.in:9050/ipfs/QmbWqxBEKC3P8tqsKc98xmWNzrzDtRLMiMPL8wBuTGsMnR?filename=test.jpg
+    # wget http://0.0.0.0:9050/ipfs/QmbWqxBEKC3P8tqsKc98xmWNzrzDtRLMiMPL8wBuTGsMnR?filename=test.jpg
+
+    # labels:
+    #   traefik.enable: true
+
+    #   traefik.http.routers.iroh.rule: "Host(`${APP_HOST:-localhost}`)"
+    #   traefik.http.services.iroh.loadbalancer.server.port: 9050 # internal port to be exposed on https://HOSTNAME
+    #   traefik.http.routers.iroh.entrypoints: https
+    #   traefik.http.routers.iroh.tls: true
+    #   traefik.http.routers.iroh.tls.certresolver: default
+    #   traefik.docker.network: haven
