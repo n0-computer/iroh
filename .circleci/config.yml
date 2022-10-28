@@ -370,6 +370,7 @@ jobs:
           profile-name: default
       - run:
           name: build x86_64 release
+          no_output_timeout: 60m
           command: cargo build --profile ci -v
       - push-to-s3:
           path: ./target/ci/
@@ -397,6 +398,7 @@ jobs:
           profile-name: default
       - run:
           name: build aarch64 release
+          no_output_timeout: 60m
           command: cargo build --profile ci -v
       - push-to-s3:
           path: ./target/ci/
