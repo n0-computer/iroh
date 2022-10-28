@@ -1,6 +1,7 @@
 version: '2.4'
 
 networks:
+  # haven is a traefik network that is setup elsewhere (and beyond the scope of this example)
   haven:
     external: true
     name: haven
@@ -14,27 +15,31 @@ services:
 
     # entrypoint: [ "tail", "-f", "/dev/null" ] 
     # entrypoint: [ "./setup.sh", "start", "&&", "tail", "-f", "/dev/null" ] 
-    entrypoint: /bin/sh -c "./setup.sh start && tail -n 100 -f ~/.iroh/log/*"
+    # entrypoint: /bin/sh -c "./setup.sh start && tail -n 100 -f ~/.iroh/log/*"
     
     # command: sh -c 'watch -n 60 "~/.iroh/bin/iroh status || ./setup.sh start"' 
     # command: -h
     # command: [ "tail", "-f", "/dev/null" ]
     # command: ./setup.sh start && watch -n 60 ~/.iroh/bin/iroh status
+
     # volumes:
     #   - ./storage:/mnt/filestash
     #   - ./filestash-state/:/app/data/state
 
-    # environment:
-    # This did not seem to make any difference (even though it makes sense to me that it should)
-    #   - IROH_GATEWAY_PUBLIC_URL_BASE=${PUBLIC_URL_BASE:-http://localhost}
+    environment:
+      - IROH_GATEWAY_PUBLIC_URL_BASE=${PUBLIC_URL_BASE:-http://localhost}
     
     ports: 
      - 9050:9050
 
-    # NOT YET WORKING (gateway timeout - even though wget from within the container works)
+    # test fetch URLs
+    # https://iroh.1zm.in/ipfs/QmbWqxBEKC3P8tqsKc98xmWNzrzDtRLMiMPL8wBuTGsMnR?filename=test.jpg
     # http://iroh.1zm.in:9050/ipfs/QmbWqxBEKC3P8tqsKc98xmWNzrzDtRLMiMPL8wBuTGsMnR?filename=test.jpg
+    # from inside the running container
     # wget http://0.0.0.0:9050/ipfs/QmbWqxBEKC3P8tqsKc98xmWNzrzDtRLMiMPL8wBuTGsMnR?filename=test.jpg
 
+    networks:
+      - haven 
     labels:
       traefik.enable: true
 

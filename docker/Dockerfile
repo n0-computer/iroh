@@ -7,5 +7,5 @@ COPY ./setup.sh /setup.sh
 # RUN  wget https://sh.iroh.computer/setup.sh && chmod 700 setup.sh
 RUN chmod 700 setup.sh
 RUN ./setup.sh init
-ENTRYPOINT [ "./setup.sh" ] 
-CMD [ "start", "&" ]
+
+CMD /bin/sh -c "./setup.sh start && tail -n 100 -f ~/.iroh/log/*"
