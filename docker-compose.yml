@@ -14,7 +14,7 @@ services:
 
     # entrypoint: [ "tail", "-f", "/dev/null" ] 
     # entrypoint: [ "./setup.sh", "start", "&&", "tail", "-f", "/dev/null" ] 
-    entrypoint: /bin/sh -c "./setup.sh start && tail -n 100 -f ~/.iroh/log/iroh-gateway.log"
+    entrypoint: /bin/sh -c "./setup.sh start && tail -n 100 -f ~/.iroh/log/*"
     
     # command: sh -c 'watch -n 60 "~/.iroh/bin/iroh status || ./setup.sh start"' 
     # command: -h
@@ -35,12 +35,12 @@ services:
     # http://iroh.1zm.in:9050/ipfs/QmbWqxBEKC3P8tqsKc98xmWNzrzDtRLMiMPL8wBuTGsMnR?filename=test.jpg
     # wget http://0.0.0.0:9050/ipfs/QmbWqxBEKC3P8tqsKc98xmWNzrzDtRLMiMPL8wBuTGsMnR?filename=test.jpg
 
-    # labels:
-    #   traefik.enable: true
+    labels:
+      traefik.enable: true
 
-    #   traefik.http.routers.iroh.rule: "Host(`${APP_HOST:-localhost}`)"
-    #   traefik.http.services.iroh.loadbalancer.server.port: 9050 # internal port to be exposed on https://HOSTNAME
-    #   traefik.http.routers.iroh.entrypoints: https
-    #   traefik.http.routers.iroh.tls: true
-    #   traefik.http.routers.iroh.tls.certresolver: default
-    #   traefik.docker.network: haven
+      traefik.http.routers.iroh.rule: "Host(`${APP_HOST:-localhost}`)"
+      traefik.http.services.iroh.loadbalancer.server.port: 9050 # internal port to be exposed on https://HOSTNAME
+      traefik.http.routers.iroh.entrypoints: https
+      traefik.http.routers.iroh.tls: true
+      traefik.http.routers.iroh.tls.certresolver: default
+      traefik.docker.network: haven
