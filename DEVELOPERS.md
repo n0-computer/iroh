@@ -55,7 +55,7 @@ For example:
 $ cargo run -p iroh-p2p
 $ cargo run -p iroh-gateway
 $ cargo run -p iroh-store
-$ cargo run -p iroh-ctl -- status --watch
+$ cargo run -p iroh -- status --watch
 ```
 
 ## <a name="rules"></a> Coding Rules
@@ -141,7 +141,7 @@ Must be one of the following:
 
 ### Scope
 
-The scope could be anything specifying place of the commit change. For example, if I am refactoring something in the `iroh-ctl` package, I may start my commit with "refactor(iroh-ctl)".
+The scope could be anything specifying place of the commit change. For example, if I am refactoring something in the `iroh` package, I may start my commit with "refactor(iroh)".
 
 You can use `*` when the change affects more than a single scope.
 
