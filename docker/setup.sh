@@ -128,6 +128,10 @@ main() {
                 cmd="start"
                 shift
                 ;;
+            run)
+                cmd="run"
+                shift
+                ;;
             stop)
                 cmd="stop"
                 shift
@@ -148,6 +152,14 @@ main() {
     if [ "$cmd" = "start" ]; then
         start
         exit 0
+    fi
+    if [ "$cmd" = "run" ]; then
+        if [ "$cmd" = "run" ]; then
+            run_service "$1" "$2"
+            exit 0
+        fi
+        echo "run needs a service name:   iroh-gateway, iroh-p2p, iroh-store"
+        exit 1
     fi
     if [ "$cmd" = "stop" ]; then
         stop

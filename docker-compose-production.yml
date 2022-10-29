@@ -1,0 +1,91 @@
+version: '2.4'
+
+networks:
+  # haven is a traefik network that is setup elsewhere (and beyond the scope of this example)
+  haven:
+    external: true
+    name: haven
+
+services:
+  iroh:
+    container_name: iroh
+    # user: "2002:2002" # iroh
+    build: docker
+    image: "iroh:latest"
+
+    
+    command: /bin/sh -c "./setup.sh run iroh-gateway --tracing && tail -n 100 -f ~/.iroh/log/iroh-gateway.log"
+    
+
+    # volumes:
+    #   - ./storage:/mnt/filestash
+    #   - ./filestash-state/:/app/data/state
+
+    environment:
+      - IROH_GATEWAY_PUBLIC_URL_BASE=${PUBLIC_URL_BASE:-http://localhost}
+    
+    ports: 
+     - 9050:9050
+
+    # test fetch URLs
+    # https://iroh.1zm.in/ipfs/QmbWqxBEKC3P8tqsKc98xmWNzrzDtRLMiMPL8wBuTGsMnR?filename=test.jpg
+    # http://iroh.1zm.in:9050/ipfs/QmbWqxBEKC3P8tqsKc98xmWNzrzDtRLMiMPL8wBuTGsMnR?filename=test.jpg
+    # from inside the running container
+    # wget http://0.0.0.0:9050/ipfs/QmbWqxBEKC3P8tqsKc98xmWNzrzDtRLMiMPL8wBuTGsMnR?filename=test.jpg
+
+    networks:
+      - haven 
+      - default
+    labels:
+      traefik.enable: true
+
+      traefik.http.routers.iroh.rule: "Host(`${APP_HOST:-localhost}`)"
+      traefik.http.services.iroh.loadbalancer.server.port: 9050 # internal port to be exposed on https://HOSTNAME
+      traefik.http.routers.iroh.entrypoints: https
+      traefik.http.routers.iroh.tls: true
+      traefik.http.routers.iroh.tls.certresolver: default
+      traefik.docker.network: haven
+
+  iroh-p2p:
+    container_name: iroh-p2p
+    # user: "2002:2002" # iroh
+    build: docker
+    image: "iroh:latest"
+
+    
+    command: /bin/sh -c "./setup.sh run iroh-p2p && tail -n 100 -f ~/.iroh/log/iroh-p2p.log"
+    
+
+    # volumes:
+    #   - ./storage:/mnt/filestash
+    #   - ./filestash-state/:/app/data/state
+
+    # ports: 
+    #  - 9050:9050
+
+    networks:
+      # - haven 
+      - default
+    
+
+  iroh-store:
+    container_name: iroh-store
+    # user: "2002:2002" # iroh
+    build: docker
+    image: "iroh:latest"
+
+    
+    command: /bin/sh -c "./setup.sh run iroh-store  && tail -n 100 -f ~/.iroh/log/iroh-store.log"
+    
+
+    # volumes:
+    #   - ./storage:/mnt/filestash
+    #   - ./filestash-state/:/app/data/state
+
+    # ports: 
+    #  - 9050:9050
+
+    networks:
+      # - haven 
+      - default
+    
