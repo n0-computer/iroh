@@ -17,7 +17,7 @@ $ curl -fsSL https://sh.iroh.computer/setup.sh | sh -s -- quickstart
 Running stuff from the internet directly on your terminal is generally a bad idea. Feel free to read through the script first 😄 by dropping the pipe `|` character and everything after it to print `[setup.sh](https://sh.iroh.computer/setup.sh)` to your terminal. The setup script takes a bit of time to fetch precompiled binaries. Once up and running you should see terminal output that looks like this:
 
 ```
-$ curl -fsSL https://sh.iroh.computer/setup.sh | sh-s--quickstart
+$ curl -fsSL https://sh.iroh.computer/setup.sh | sh -s --quickstart
 Fetching https://vorc.iroh.computer/bin/iroh-gateway/darwin/aarch64/latest
 Fetching https://vorc.iroh.computer/bin/iroh-p2p/darwin/aarch64/latest
 Fetching https://vorc.iroh.computer/bin/iroh-store/darwin/aarch64/latest
