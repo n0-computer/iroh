@@ -33,7 +33,7 @@ iroh-gateway started
 view logs at ~/.iroh/log/iroh-gateway.log
 iroh started
 iroh-gateway available at http: //localhost:9050
-you can run iroh-ctl from ~/.iroh/bin/iroh-ctl
+you can run iroh (CLI) from ~/.iroh/bin/iroh
 ```
 
 
@@ -43,9 +43,9 @@ you can run iroh-ctl from ~/.iroh/bin/iroh-ctl
 
 Open a web browser and visit [`http://127.0.0.1:9050/ipfs/QmbWqxBEKC3P8tqsKc98xmWNzrzDtRLMiMPL8wBuTGsMnR?filename=test.jpg`](http://127.0.0.1:9050/ipfs/QmbWqxBEKC3P8tqsKc98xmWNzrzDtRLMiMPL8wBuTGsMnR?filename=test.jpg) . If working, you should see a funny looking “cat”. If so, congrats! You’ve used iroh to load something from the public IPFS network. If you reload this page that same content will be served from a local cache instead of hitting the network again. Feel free to experiment with other IPFS content!
 
-## 3. Hello `iroh-ctl`
+## 3. Hello `iroh`
 
-Run `~/.iroh/bin/iroh-ctl status` to get a summary of the health of your iroh cloud services. You should see something like:
+Run `~/.iroh/bin/iroh status` to get a summary of the health of your iroh cloud services. You should see something like:
 
 ```
 ~/.iroh/bin/iroh-ctl status
