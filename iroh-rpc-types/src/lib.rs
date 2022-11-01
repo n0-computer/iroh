@@ -1,5 +1,8 @@
 use serde::{Deserialize, Serialize};
 
+pub extern crate bincode;
+pub extern crate tarpc;
+
 #[macro_use]
 pub mod macros;
 

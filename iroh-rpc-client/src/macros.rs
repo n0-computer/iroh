@@ -22,13 +22,17 @@ macro_rules! impl_client {
                     let backend = &mut *self.backend.write().await;
                     match backend {
                         [<$label BackendState>]::Disconnected(server_addr) => {
-                            let transport = tarpc::serde_transport::tcp::connect(
+                            use bincode::Options;
+                            let mut transport = tarpc::serde_transport::tcp::connect(
                                 *server_addr,
-                                tarpc::tokio_serde::formats::Bincode::default,
-                            ).await?;
+                                || tarpc::tokio_serde::formats::Bincode::from(bincode::options().with_no_limit()),
+                            );
+                            transport.config_mut().max_frame_length(usize::MAX);
+                            let transport = transport.await?;
 
+                            let config = tarpc::client::Config::default();
                             let client = iroh_rpc_types::[<$label:snake>]::[<$label Client>]::new(
-                                tarpc::client::Config::default(),
+                                config,
                                 transport,
                             ).spawn();
                             *backend = [<$label BackendState>]::Connected(client.clone());

@@ -3,7 +3,7 @@ macro_rules! impl_serve {
     ($label:ident, $server:ty, $req:ty, $resp:ty) => {
         paste::paste! {
             pub type [<$label ServerAddr>] = $crate::Addr<
-                tarpc::ClientMessage<$req>, tarpc::Response<$resp>
+                $crate::tarpc::ClientMessage<$req>, $crate::tarpc::Response<$resp>
             >;
 
             pub async fn serve(
@@ -23,23 +23,24 @@ macro_rules! impl_serve {
                 server: $server,
             ) -> anyhow::Result<()> {
                 use futures::{Sink, StreamExt};
-                use tarpc::server::{incoming::Incoming, Channel};
+                use $crate::tarpc::server::{incoming::Incoming, Channel};
                 use iroh_rpc_types::[<$label:snake>]::$label;
+                use $crate::bincode::Options;
 
                 // TODO: configurable
                 let max_channels_per_ip = 500;
                 let max_channels = 500;
 
-                let mut listener = tarpc::serde_transport::tcp::listen(
+                let mut listener = $crate::tarpc::serde_transport::tcp::listen(
                     &server_addr,
-                    tarpc::tokio_serde::formats::Bincode::default,
+                    || $crate::tarpc::tokio_serde::formats::Bincode::from($crate::bincode::options().with_no_limit()),
                 )
                     .await?;
                 listener.config_mut().max_frame_length(usize::MAX);
                 listener
                 // Ignore accept errors.
                     .filter_map(|r| futures::future::ready(r.ok()))
-                    .map(tarpc::server::BaseChannel::with_defaults)
+                    .map($crate::tarpc::server::BaseChannel::with_defaults)
                 // Limit channels  per IP.
                     .max_channels_per_key(max_channels_per_ip, |t| {
                         t.transport().peer_addr().unwrap().ip()
@@ -57,14 +58,14 @@ macro_rules! impl_serve {
             }
 
             async fn serve_mem(
-                server_transport: $crate::Channel<tarpc::ClientMessage<$req>, tarpc::Response<$resp>>,
+                server_transport: $crate::Channel<$crate::tarpc::ClientMessage<$req>, $crate::tarpc::Response<$resp>>,
                 server: $server,
             ) -> anyhow::Result<()> {
-                use tarpc::server::Channel;
-                use tarpc::server::Serve;
+                use $crate::tarpc::server::Channel;
+                use $crate::tarpc::server::Serve;
                 use iroh_rpc_types::[<$label:snake>]::$label;
 
-                let transport = tarpc::server::BaseChannel::with_defaults(server_transport);
+                let transport = $crate::tarpc::server::BaseChannel::with_defaults(server_transport);
                 let t = server.serve();
                 transport.execute(|a, b| t.serve(a, b)).await;
                 Ok(())
