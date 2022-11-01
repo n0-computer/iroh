@@ -57,7 +57,6 @@ async fn main() -> Result<()> {
 
     let content_loader = RacingLoader::new(
         rpc_client,
-        RpcClient::new(config.rpc_client.clone()).await?,
         config.http_resolvers.clone().unwrap_or_default(),
     );
     let handler = Core::new(
