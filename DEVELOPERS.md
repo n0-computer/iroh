@@ -23,7 +23,9 @@ machine:
 
 #### Protobuf compiler
 
-[Protobuf compiler](https://github.com/protocolbuffers/protobuf#protocol-compiler-installation): Download it from the [Protobuf Releases page](https://github.com/protocolbuffers/protobuf/releases); you need to get the `protoc-` release for your platform. To install, make sure the `protoc` compiler is on your path. If you get errors during build about `experimental_allow_proto3_optional` or inability to import `/google/protobuf/empty.proto` you're likely using a version of the compiler that's too old.
+[Protobuf compiler](https://github.com/protocolbuffers/protobuf#protocol-compiler-installation): Download it from the [Protobuf Releases page](https://github.com/protocolbuffers/protobuf/releases)
+
+You need to get the `protoc-` release for your platform (they can be found at the very bottom of the list of release binaries). To install, make sure the `protoc` compiler is on your path. If you get errors during build about `experimental_allow_proto3_optional` or inability to import `/google/protobuf/empty.proto` you're likely using a version of the compiler that's too old.
 
 It may be that Rust Analyzer does not find the protobuf compiler even after installation. You can point it in the right direction using a configuration like this:
 
@@ -56,6 +58,20 @@ $ cargo run -p iroh-p2p
 $ cargo run -p iroh-gateway
 $ cargo run -p iroh-store
 $ cargo run -p iroh -- status --watch
+```
+
+If you want to use the `iroh` binary to start and stop the services, you can
+use `xtask` to move previously built binaries to the correct bin:
+
+```shell
+# build the binaries
+$ cargo build
+
+# or build the binaries for release:
+$ cargo build --release
+
+# move the binaries to the correct location
+$ cargo xtask dev-install
 ```
 
 ## <a name="rules"></a> Coding Rules
