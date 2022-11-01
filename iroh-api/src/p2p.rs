@@ -1,7 +1,8 @@
 use crate::error::map_service_error;
 use anyhow::Result;
 use async_trait::async_trait;
-use iroh_rpc_client::{Lookup, P2pClient};
+use iroh_rpc_client::P2pClient;
+use iroh_rpc_types::p2p::PeerInfo;
 use libp2p::{multiaddr::Protocol, Multiaddr, PeerId};
 #[cfg(feature = "testing")]
 use mockall::automock;
@@ -26,21 +27,21 @@ impl ClientP2p {
 #[cfg_attr(feature = "testing", automock)]
 #[async_trait]
 pub trait P2p: Sync {
-    async fn lookup_local(&self) -> Result<Lookup>;
-    async fn lookup(&self, addr: &PeerIdOrAddr) -> Result<Lookup>;
+    async fn lookup_local(&self) -> Result<PeerInfo>;
+    async fn lookup(&self, addr: &PeerIdOrAddr) -> Result<PeerInfo>;
     async fn connect(&self, addr: &PeerIdOrAddr) -> Result<()>;
     async fn peers(&self) -> Result<HashMap<PeerId, Vec<Multiaddr>>>;
 }
 
 #[async_trait]
 impl P2p for ClientP2p {
-    async fn lookup_local(&self) -> Result<Lookup> {
+    async fn lookup_local(&self) -> Result<PeerInfo> {
         let (_, listen_addrs) = self
             .client
             .get_listening_addrs()
             .await
             .map_err(|e| map_service_error("p2p", e))?;
-        Ok(Lookup {
+        Ok(PeerInfo {
             peer_id: self.client.local_peer_id().await?,
             listen_addrs,
             observed_addrs: self.client.external_addresses().await?,
@@ -50,7 +51,7 @@ impl P2p for ClientP2p {
         })
     }
 
-    async fn lookup(&self, addr: &PeerIdOrAddr) -> Result<Lookup> {
+    async fn lookup(&self, addr: &PeerIdOrAddr) -> Result<PeerInfo> {
         match addr {
             PeerIdOrAddr::PeerId(peer_id) => self.client.lookup(*peer_id, None).await,
             PeerIdOrAddr::Multiaddr(addr) => {

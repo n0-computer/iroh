@@ -7,7 +7,7 @@ use console::style;
 use crossterm::style::Stylize;
 use futures::StreamExt;
 use indicatif::{ProgressBar, ProgressStyle};
-use iroh_api::{AddEvent, Api, ApiExt, IpfsPath, Iroh, ServiceStatus};
+use iroh_api::{AddEvent, Api, ApiExt, IpfsPath, Iroh};
 use iroh_metrics::config::Config as MetricsConfig;
 use iroh_util::{human, iroh_config_path, make_config};
 
@@ -16,7 +16,7 @@ use crate::doc;
 #[cfg(feature = "testing")]
 use crate::fixture::get_fixture_api;
 use crate::p2p::{run_command as run_p2p_command, P2p};
-use crate::services::require_services;
+// use crate::services::require_services;
 use crate::size::size_stream;
 
 #[derive(Parser, Debug, Clone)]
@@ -227,25 +227,25 @@ async fn add(
     // hydrating only the root CID to the p2p node for providing if a CID were
     // ingested offline. Offline adding should happen, but this is the current
     // path of least confusion
-    let svc_status = require_services(api, HashSet::from(["store"])).await?;
-    match (provide, svc_status.p2p.status()) {
-        (true, ServiceStatus::Down(_status)) => {
-            anyhow::bail!("Add provides content to the IPFS network by default, but the p2p service is not running.\n{}",
-            "hint: try using the --offline flag, or run 'iroh start p2p'".yellow()
-            )
-        }
-        (true, ServiceStatus::Unknown)
-        | (true, ServiceStatus::NotServing)
-        | (true, ServiceStatus::ServiceUnknown) => {
-            anyhow::bail!("Add provides content to the IPFS network by default, but the p2p service is not running.\n{}",
-            "hint: try using the --offline flag, or run 'iroh start p2p'".yellow()
-            )
-        }
-        (true, ServiceStatus::Serving) => {}
-        (false, _) => {
-            steps -= 1;
-        }
-    }
+    // let svc_status = require_services(api, HashSet::from(["store"])).await?;
+    // match (provide, svc_status.p2p.status()) {
+    //     (true, ServiceStatus::Down(_status)) => {
+    //         anyhow::bail!("Add provides content to the IPFS network by default, but the p2p service is not running.\n{}",
+    //         "hint: try using the --offline flag, or run 'iroh start p2p'".yellow()
+    //         )
+    //     }
+    //     (true, ServiceStatus::Unknown)
+    //     | (true, ServiceStatus::NotServing)
+    //     | (true, ServiceStatus::ServiceUnknown) => {
+    //         anyhow::bail!("Add provides content to the IPFS network by default, but the p2p service is not running.\n{}",
+    //         "hint: try using the --offline flag, or run 'iroh start p2p'".yellow()
+    //         )
+    //     }
+    //     (true, ServiceStatus::Serving) => {}
+    //     (false, _) => {
+    //         steps -= 1;
+    //     }
+    // }
 
     println!(
         "{} Calculating size...",

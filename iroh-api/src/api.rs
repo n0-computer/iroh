@@ -8,13 +8,13 @@ use crate::p2p::{ClientP2p, P2p};
 use crate::{AddEvent, IpfsPath};
 use anyhow::Result;
 use cid::Cid;
-use futures::future::{BoxFuture, LocalBoxFuture};
+use futures::future::LocalBoxFuture;
 use futures::stream::LocalBoxStream;
 use futures::FutureExt;
 use futures::StreamExt;
 use iroh_resolver::unixfs_builder;
 use iroh_rpc_client::Client;
-use iroh_rpc_client::StatusTable;
+// use iroh_rpc_client::StatusTable;
 use iroh_util::{iroh_config_path, make_config};
 #[cfg(feature = "testing")]
 use mockall::automock;
@@ -67,8 +67,8 @@ pub trait Api {
         wrap: bool,
     ) -> LocalBoxFuture<'_, Result<LocalBoxStream<'static, Result<AddEvent>>>>;
 
-    fn check(&self) -> BoxFuture<'_, StatusTable>;
-    fn watch(&self) -> LocalBoxFuture<'static, LocalBoxStream<'static, StatusTable>>;
+    // fn check(&self) -> BoxFuture<'_, StatusTable>;
+    // fn watch(&self) -> LocalBoxFuture<'static, LocalBoxStream<'static, StatusTable>>;
 }
 
 impl Iroh {
@@ -104,7 +104,7 @@ impl Api for Iroh {
     type P = ClientP2p;
 
     fn provide(&self, cid: Cid) -> LocalBoxFuture<'_, Result<()>> {
-        async move { self.client.try_p2p()?.start_providing(&cid).await }.boxed_local()
+        async move { self.client.try_p2p()?.start_providing(cid).await }.boxed_local()
     }
 
     fn p2p(&self) -> Result<ClientP2p> {
@@ -201,14 +201,14 @@ impl Api for Iroh {
         .boxed_local()
     }
 
-    fn check(&self) -> BoxFuture<'_, StatusTable> {
-        async { self.client.check().await }.boxed()
-    }
+    // fn check(&self) -> BoxFuture<'_, StatusTable> {
+    //     async { self.client.check().await }.boxed()
+    // }
 
-    fn watch(
-        &self,
-    ) -> LocalBoxFuture<'static, LocalBoxStream<'static, iroh_rpc_client::StatusTable>> {
-        let client = self.client.clone();
-        async { client.watch().await.boxed_local() }.boxed_local()
-    }
+    // fn watch(
+    //     &self,
+    // ) -> LocalBoxFuture<'static, LocalBoxStream<'static, iroh_rpc_client::StatusTable>> {
+    //     let client = self.client.clone();
+    //     async { client.watch().await.boxed_local() }.boxed_local()
+    // }
 }

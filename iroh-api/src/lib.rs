@@ -17,6 +17,6 @@ pub use bytes::Bytes;
 pub use cid::Cid;
 pub use iroh_resolver::resolver::Path as IpfsPath;
 pub use iroh_resolver::unixfs_builder::AddEvent;
-pub use iroh_rpc_client::{Lookup, ServiceStatus, StatusRow, StatusTable};
+pub use iroh_rpc_types::p2p::PeerInfo;
 pub use libp2p::gossipsub::MessageId;
 pub use libp2p::{Multiaddr, PeerId};

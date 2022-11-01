@@ -5,8 +5,8 @@ use std::path::PathBuf;
 use std::str::FromStr;
 
 use futures::StreamExt;
-use iroh_api::{AddEvent, Cid, Lookup, MockApi, MockP2p, OutType, PeerId};
-use iroh_api::{ServiceStatus, StatusRow, StatusTable};
+use iroh_api::{AddEvent, Cid, MockApi, MockP2p, OutType, PeerId, PeerInfo};
+// use iroh_api::{ServiceStatus, StatusRow, StatusTable};
 use relative_path::RelativePathBuf;
 
 type GetFixture = fn() -> MockApi;
@@ -21,7 +21,7 @@ fn fixture_lookup() -> MockApi {
             let peer_id = "1AXRDqR8jTkwzGqyu3qknicAC5X578zTMxhAi2brppK2bB"
                 .parse::<PeerId>()
                 .unwrap();
-            Ok(Lookup {
+            Ok(PeerInfo {
                 peer_id,
                 listen_addrs: vec![],
                 observed_addrs: vec![],
@@ -58,51 +58,51 @@ fn fixture_get() -> MockApi {
     api
 }
 
-fn fixture_add_file() -> MockApi {
-    let mut api = MockApi::default();
-    api.expect_check().returning(|| {
-        Box::pin(future::ready(StatusTable::new(
-            Some(StatusRow::new("gateway", 1, ServiceStatus::Serving)),
-            Some(StatusRow::new("p2p", 1, ServiceStatus::Serving)),
-            Some(StatusRow::new("store", 1, ServiceStatus::Serving)),
-        )))
-    });
-    api.expect_add_file().returning(|_ipfs_path, _| {
-        let cid = Cid::from_str("QmYbcW4tXLXHWw753boCK8Y7uxLu5abXjyYizhLznq9PUR").unwrap();
-        let add_event = AddEvent::ProgressDelta { cid, size: Some(0) };
+// fn fixture_add_file() -> MockApi {
+//     let mut api = MockApi::default();
+//     api.expect_check().returning(|| {
+//         Box::pin(future::ready(StatusTable::new(
+//             Some(StatusRow::new("gateway", 1, ServiceStatus::Serving)),
+//             Some(StatusRow::new("p2p", 1, ServiceStatus::Serving)),
+//             Some(StatusRow::new("store", 1, ServiceStatus::Serving)),
+//         )))
+//     });
+//     api.expect_add_file().returning(|_ipfs_path, _| {
+//         let cid = Cid::from_str("QmYbcW4tXLXHWw753boCK8Y7uxLu5abXjyYizhLznq9PUR").unwrap();
+//         let add_event = AddEvent::ProgressDelta { cid, size: Some(0) };
 
-        Box::pin(future::ready(Ok(futures::stream::iter(vec![Ok(
-            add_event,
-        )])
-        .boxed_local())))
-    });
-    api.expect_provide()
-        .returning(|_| Box::pin(future::ready(Ok(()))));
-    api
-}
+//         Box::pin(future::ready(Ok(futures::stream::iter(vec![Ok(
+//             add_event,
+//         )])
+//         .boxed_local())))
+//     });
+//     api.expect_provide()
+//         .returning(|_| Box::pin(future::ready(Ok(()))));
+//     api
+// }
 
-fn fixture_add_directory() -> MockApi {
-    let mut api = MockApi::default();
-    api.expect_check().returning(|| {
-        Box::pin(future::ready(StatusTable::new(
-            Some(StatusRow::new("gateway", 1, ServiceStatus::Serving)),
-            Some(StatusRow::new("p2p", 1, ServiceStatus::Serving)),
-            Some(StatusRow::new("store", 1, ServiceStatus::Serving)),
-        )))
-    });
-    api.expect_add_dir().returning(|_ipfs_path, _| {
-        let cid = Cid::from_str("QmYbcW4tXLXHWw753boCK8Y7uxLu5abXjyYizhLznq9PUR").unwrap();
-        let add_event = AddEvent::ProgressDelta { cid, size: Some(0) };
+// fn fixture_add_directory() -> MockApi {
+//     let mut api = MockApi::default();
+//     api.expect_check().returning(|| {
+//         Box::pin(future::ready(StatusTable::new(
+//             Some(StatusRow::new("gateway", 1, ServiceStatus::Serving)),
+//             Some(StatusRow::new("p2p", 1, ServiceStatus::Serving)),
+//             Some(StatusRow::new("store", 1, ServiceStatus::Serving)),
+//         )))
+//     });
+//     api.expect_add_dir().returning(|_ipfs_path, _| {
+//         let cid = Cid::from_str("QmYbcW4tXLXHWw753boCK8Y7uxLu5abXjyYizhLznq9PUR").unwrap();
+//         let add_event = AddEvent::ProgressDelta { cid, size: Some(0) };
 
-        Box::pin(future::ready(Ok(futures::stream::iter(vec![Ok(
-            add_event,
-        )])
-        .boxed_local())))
-    });
-    api.expect_provide()
-        .returning(|_| Box::pin(future::ready(Ok(()))));
-    api
-}
+//         Box::pin(future::ready(Ok(futures::stream::iter(vec![Ok(
+//             add_event,
+//         )])
+//         .boxed_local())))
+//     });
+//     api.expect_provide()
+//         .returning(|_| Box::pin(future::ready(Ok(()))));
+//     api
+// }
 
 fn fixture_get_wrapped_file() -> MockApi {
     let mut api = MockApi::default();
@@ -170,11 +170,11 @@ fn register_fixtures() -> FixtureRegistry {
             "get_unwrapped_file".to_string(),
             fixture_get_unwrapped_file as GetFixture,
         ),
-        ("add_file".to_string(), fixture_add_file as GetFixture),
-        (
-            "add_directory".to_string(),
-            fixture_add_directory as GetFixture,
-        ),
+        // ("add_file".to_string(), fixture_add_file as GetFixture),
+        // (
+        //     "add_directory".to_string(),
+        //     fixture_add_directory as GetFixture,
+        // ),
         (
             "get_wrapped_symlink".to_string(),
             fixture_get_wrapped_symlink as GetFixture,

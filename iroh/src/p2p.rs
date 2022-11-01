@@ -2,7 +2,7 @@ use crate::doc;
 use anyhow::{Error, Result};
 use clap::{Args, Subcommand};
 use crossterm::style::Stylize;
-use iroh_api::{Lookup, Multiaddr, P2pApi, PeerId, PeerIdOrAddr};
+use iroh_api::{Multiaddr, P2pApi, PeerId, PeerIdOrAddr, PeerInfo};
 use std::{collections::HashMap, fmt::Display, str::FromStr};
 
 #[derive(Args, Debug, Clone)]
@@ -84,7 +84,7 @@ pub async fn run_command(p2p: &impl P2pApi, cmd: &P2p) -> Result<()> {
     Ok(())
 }
 
-fn display_lookup(l: &Lookup) {
+fn display_lookup(l: &PeerInfo) {
     println!("{}\n  {}", "Peer ID:".bold().dim(), l.peer_id);
     println!("{}\n  {}", "Agent Version:".bold().dim(), l.agent_version);
     println!(

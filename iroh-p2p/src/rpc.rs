@@ -535,6 +535,6 @@ fn peer_info_from_identify_info(i: IdentifyInfo) -> PeerInfo {
         agent_version: i.agent_version,
         listen_addrs: i.listen_addrs.into_iter().collect(),
         protocols: i.protocols,
-        observed_addr: i.observed_addr,
+        observed_addrs: vec![i.observed_addr],
     }
 }

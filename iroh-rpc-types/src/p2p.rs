@@ -46,5 +46,5 @@ pub struct PeerInfo {
     pub agent_version: String,
     pub listen_addrs: Vec<Multiaddr>,
     pub protocols: Vec<String>,
-    pub observed_addr: Multiaddr,
+    pub observed_addrs: Vec<Multiaddr>,
 }
