@@ -33,7 +33,7 @@ serde = { version = "1.0", features = ["derive"] }
 config = "0.13.1"
 
 [dev-dependencies]
-trycmd = "0.13.7"
+trycmd = "0.14.1"
 iroh-api = { path = "../iroh-api", features = ["testing"] }
 # We want to compile `iroh` in test mode, but we can't specify that yet:
 # https://github.com/rust-lang/cargo/issues/1982
