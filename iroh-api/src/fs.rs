@@ -1,13 +1,30 @@
 use std::path::{Path, PathBuf};
 
-use crate::{IpfsPath, OutType};
-use anyhow::Result;
-use futures::Stream;
-use futures::StreamExt;
+use anyhow::{anyhow, ensure, Result};
+use futures::{Stream, StreamExt};
 use relative_path::RelativePathBuf;
 
-/// take a stream of blocks as from `get_stream` and write them to the filesystem
-pub async fn save_get_stream(
+use crate::{IpfsPath, OutType};
+
+/// Takes a stream of blocks as from `get` and writes it to the filesystem.
+pub async fn write_get_stream(
+    ipfs_path: &IpfsPath,
+    blocks: impl Stream<Item = Result<(RelativePathBuf, OutType)>>,
+    output_path: Option<&Path>,
+) -> Result<PathBuf> {
+    let root_path = get_root_path(ipfs_path, output_path)
+        .ok_or_else(|| anyhow!("IPFS path does not refer to a CID"))?;
+    ensure!(
+        !root_path.exists(),
+        "output path {} already exists",
+        root_path.display()
+    );
+
+    save_get_stream(&root_path, blocks).await?;
+    Ok(root_path)
+}
+
+async fn save_get_stream(
     root_path: &Path,
     blocks: impl Stream<Item = Result<(RelativePathBuf, OutType)>>,
 ) -> Result<()> {
@@ -45,7 +62,7 @@ pub async fn save_get_stream(
 }
 
 #[cfg(windows)]
-pub fn make_windows_symlink(target: PathBuf, path: PathBuf) -> Result<()> {
+fn make_windows_symlink(target: PathBuf, path: PathBuf) -> Result<()> {
     if target.is_dir() {
         std::os::windows::fs::symlink_dir(target, path).map_err(|e| anyhow::anyhow!(e))
     } else {
@@ -54,14 +71,14 @@ pub fn make_windows_symlink(target: PathBuf, path: PathBuf) -> Result<()> {
 }
 
 /// Given an cid and an optional output path, determine root path
-pub fn get_root_path(ipfs_path: &IpfsPath, output_path: Option<&Path>) -> PathBuf {
+fn get_root_path(ipfs_path: &IpfsPath, output_path: Option<&Path>) -> Option<PathBuf> {
     match output_path {
-        Some(path) => path.to_path_buf(),
+        Some(path) => Some(path.to_path_buf()),
         None => {
             if ipfs_path.tail().is_empty() {
-                PathBuf::from(ipfs_path.cid().unwrap().to_string())
+                ipfs_path.cid().map(|c| PathBuf::from(c.to_string()))
             } else {
-                PathBuf::from(ipfs_path.tail().last().unwrap())
+                Some(PathBuf::from(ipfs_path.tail().last().unwrap()))
             }
         }
     }
@@ -102,11 +119,11 @@ mod tests {
         let ipfs_path =
             IpfsPath::from_str("/ipfs/QmYyQSo1c1Ym7orWxLYvCrM2EmxFTANf8wXmmE7DWjhx5N").unwrap();
         assert_eq!(
-            get_root_path(&ipfs_path, None),
+            get_root_path(&ipfs_path, None).unwrap(),
             PathBuf::from("QmYyQSo1c1Ym7orWxLYvCrM2EmxFTANf8wXmmE7DWjhx5N")
         );
         assert_eq!(
-            get_root_path(&ipfs_path, Some(Path::new("bar"))),
+            get_root_path(&ipfs_path, Some(Path::new("bar"))).unwrap(),
             PathBuf::from("bar")
         );
     }
@@ -116,9 +133,12 @@ mod tests {
         let ipfs_path =
             IpfsPath::from_str("/ipfs/QmYyQSo1c1Ym7orWxLYvCrM2EmxFTANf8wXmmE7DWjhx5N/tail")
                 .unwrap();
-        assert_eq!(get_root_path(&ipfs_path, None), PathBuf::from("tail"));
         assert_eq!(
-            get_root_path(&ipfs_path, Some(Path::new("bar"))),
+            get_root_path(&ipfs_path, None).unwrap(),
+            PathBuf::from("tail")
+        );
+        assert_eq!(
+            get_root_path(&ipfs_path, Some(Path::new("bar"))).unwrap(),
             PathBuf::from("bar")
         );
     }

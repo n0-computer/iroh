@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 use std::env;
-use std::future;
 use std::path::PathBuf;
 use std::str::FromStr;
 
@@ -38,9 +37,8 @@ fn fixture_lookup() -> Api {
 
 fn fixture_get() -> Api {
     let mut api = Api::default();
-    api.expect_get().once();
-    api.expect_get_stream().returning(|_ipfs_path| {
-        futures::stream::iter(vec![
+    api.expect_get().returning(|_ipfs_path| {
+        Ok(futures::stream::iter(vec![
             Ok((RelativePathBuf::from_path("").unwrap(), OutType::Dir)),
             Ok((RelativePathBuf::from_path("a").unwrap(), OutType::Dir)),
             // git doesn't like empty directories, nor does trycmd trip if it's missingj
@@ -55,7 +53,7 @@ fn fixture_get() -> Api {
                 OutType::Reader(Box::new(std::io::Cursor::new("hello"))),
             )),
         ])
-        .boxed_local()
+        .boxed_local())
     });
     api
 }
@@ -63,11 +61,11 @@ fn fixture_get() -> Api {
 fn fixture_add_file() -> Api {
     let mut api = Api::default();
     api.expect_check().returning(|| {
-        Box::pin(future::ready(StatusTable::new(
+        StatusTable::new(
             Some(StatusRow::new("gateway", 1, ServiceStatus::Serving)),
             Some(StatusRow::new("p2p", 1, ServiceStatus::Serving)),
             Some(StatusRow::new("store", 1, ServiceStatus::Serving)),
-        )))
+        )
     });
     api.expect_add_stream().returning(|_ipfs_path, _| {
         let cid = Cid::from_str("QmYbcW4tXLXHWw753boCK8Y7uxLu5abXjyYizhLznq9PUR").unwrap();
@@ -77,76 +75,79 @@ fn fixture_add_file() -> Api {
 
         Ok(Box::pin(stream))
     });
-    api.expect_provide()
-        .returning(|_| Box::pin(future::ready(Ok(()))));
+    api.expect_provide().returning(|_| Ok(()));
     api
 }
 
 fn fixture_add_directory() -> Api {
     let mut api = Api::default();
     api.expect_check().returning(|| {
-        Box::pin(future::ready(StatusTable::new(
+        StatusTable::new(
             Some(StatusRow::new("gateway", 1, ServiceStatus::Serving)),
             Some(StatusRow::new("p2p", 1, ServiceStatus::Serving)),
             Some(StatusRow::new("store", 1, ServiceStatus::Serving)),
-        )))
+        )
     });
     api.expect_add_stream().returning(|_ipfs_path, _| {
         let cid = Cid::from_str("QmYbcW4tXLXHWw753boCK8Y7uxLu5abXjyYizhLznq9PUR").unwrap();
         let add_event = AddEvent::ProgressDelta { cid, size: Some(0) };
 
-        Ok(Box::pin(futures::stream::iter(vec![Ok(
-            add_event,
-        )])))
+        Ok(Box::pin(futures::stream::iter(vec![Ok(add_event)])))
     });
-    api.expect_provide()
-        .returning(|_| Box::pin(future::ready(Ok(()))));
+    api.expect_provide().returning(|_| Ok(()));
     api
 }
 
 fn fixture_get_wrapped_file() -> Api {
     let mut api = Api::default();
-    api.expect_get().returning(|_, _| {
-        Ok(PathBuf::from("QmP8jTG1m9GSDJLCbeWhVSVgEzCPPwXRdCRuJtQ5Tz9Kc9"))
+    api.expect_get().returning(|_ipfs_path| {
+        Ok(futures::stream::iter(vec![
+            Ok((RelativePathBuf::from_path("").unwrap(), OutType::Dir)),
+            Ok((
+                RelativePathBuf::from_path("file.txt").unwrap(),
+                OutType::Reader(Box::new(std::io::Cursor::new("hello"))),
+            )),
+        ])
+        .boxed_local())
     });
     api
 }
 
 fn fixture_get_unwrapped_file() -> Api {
     let mut api = Api::default();
-    api.expect_get_stream().returning(|_ipfs_path| {
-        futures::stream::iter(vec![Ok((
+    api.expect_get().returning(|_ipfs_path| {
+        Ok(futures::stream::iter(vec![Ok((
             RelativePathBuf::from_path("").unwrap(),
             OutType::Reader(Box::new(std::io::Cursor::new("hello"))),
         ))])
-        .boxed_local()
+        .boxed_local())
     });
     api
 }
 
 fn fixture_get_wrapped_symlink() -> Api {
     let mut api = Api::default();
-    api.expect_get_stream().returning(|_ipfs_path| {
-        futures::stream::iter(vec![
+    api.expect_get().returning(|_ipfs_path| {
+        Ok(futures::stream::iter(vec![
             Ok((RelativePathBuf::from_path("").unwrap(), OutType::Dir)),
             Ok((
                 RelativePathBuf::from_path("symlink.txt").unwrap(),
                 OutType::Symlink(PathBuf::from("target/path/foo.txt")),
             )),
         ])
-        .boxed_local()
+        .boxed_local())
     });
     api
 }
 
 fn fixture_get_unwrapped_symlink() -> Api {
     let mut api = Api::default();
-    api.expect_get_stream().returning(|_ipfs_path| {
-        futures::stream::iter(vec![Ok((
+    api.expect_get().returning(|_ipfs_path| {
+        Ok(futures::stream::iter(vec![Ok((
             RelativePathBuf::from_path("").unwrap(),
             OutType::Symlink(PathBuf::from("target/path/foo.txt")),
         ))])
-        .boxed_local()
+        .boxed_local())
     });
     api
 }

@@ -136,7 +136,9 @@ impl Cli {
                 ipfs_path: path,
                 output,
             } => {
-                let root_path = api.get(path, output.as_deref()).await?;
+                let blocks = api.get(path)?;
+                let root_path =
+                    iroh_api::fs::write_get_stream(path, blocks, output.as_deref()).await?;
                 println!("Saving file(s) to {}", root_path.to_str().unwrap());
             }
             Commands::P2p(p2p) => run_p2p_command(&api.p2p()?, p2p).await?,

@@ -1,15 +1,9 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use crate::api_ext::{get_root_path, save_get_stream};
-use crate::config::{Config, CONFIG_FILE_NAME, ENV_PREFIX};
-use crate::P2pApi;
-use crate::{AddEvent, IpfsPath};
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{ensure, Context as _, Result};
 use cid::Cid;
-use futures::future::{BoxFuture, LocalBoxFuture};
 use futures::stream::LocalBoxStream;
-use futures::FutureExt;
 use futures::{StreamExt, TryStreamExt};
 use iroh_resolver::unixfs_builder;
 use iroh_rpc_client::Client;
@@ -19,6 +13,10 @@ use iroh_util::{iroh_config_path, make_config};
 use mockall::automock;
 use relative_path::RelativePathBuf;
 use tokio::io::{AsyncRead, AsyncReadExt};
+
+use crate::config::{Config, CONFIG_FILE_NAME, ENV_PREFIX};
+use crate::P2pApi;
+use crate::{AddEvent, IpfsPath};
 
 pub struct Api {
     client: Client,
@@ -52,15 +50,11 @@ impl Api {
 
         let client = Client::new(config.rpc_client).await?;
 
-        Ok(Api::from_client(client))
+        Ok(Self { client })
     }
 
-    fn from_client(client: Client) -> Self {
-        Self { client }
-    }
-
-    pub fn provide(&self, cid: Cid) -> LocalBoxFuture<'_, Result<()>> {
-        async move { self.client.try_p2p()?.start_providing(&cid).await }.boxed_local()
+    pub async fn provide(&self, cid: Cid) -> Result<()> {
+        self.client.try_p2p()?.start_providing(&cid).await
     }
 
     pub fn p2p(&self) -> Result<P2pApi> {
@@ -68,15 +62,22 @@ impl Api {
         Ok(P2pApi::new(p2p_client))
     }
 
-    pub fn get_stream(
+    /// High level get, equivalent of CLI `iroh get`.
+    pub fn get(
         &self,
         ipfs_path: &IpfsPath,
-    ) -> LocalBoxStream<'_, Result<(RelativePathBuf, OutType)>> {
+    ) -> Result<LocalBoxStream<'static, Result<(RelativePathBuf, OutType)>>> {
+        ensure!(
+            ipfs_path.cid().is_some(),
+            "IPFS path does not refer to a CID"
+        );
+
         tracing::debug!("get {:?}", ipfs_path);
         let resolver = iroh_resolver::resolver::Resolver::new(self.client.clone());
         let results = resolver.resolve_recursive_with_paths(ipfs_path.clone());
         let sub_path = ipfs_path.to_relative_string();
-        async_stream::try_stream! {
+
+        let stream = async_stream::try_stream! {
             tokio::pin!(results);
             while let Some(res) = results.next().await {
                 let (relative_ipfs_path, out) = res?;
@@ -102,91 +103,59 @@ impl Api {
                     yield (relative_path, OutType::Reader(Box::new(reader)));
                 }
             }
-        }
-        .boxed_local()
+        };
+
+        Ok(stream.boxed_local())
     }
 
-    pub fn add_file(
+    pub async fn add_file(
         &self,
         path: &Path,
         wrap: bool,
-    ) -> LocalBoxFuture<'_, Result<LocalBoxStream<'static, Result<AddEvent>>>> {
+    ) -> Result<LocalBoxStream<'static, Result<AddEvent>>> {
         let providing_client = iroh_resolver::unixfs_builder::StoreAndProvideClient {
             client: self.client.clone(),
         };
         let path = path.to_path_buf();
-        async move {
-            unixfs_builder::add_file(Some(providing_client), &path, wrap)
-                .await
-                .map(|s| s.boxed_local())
-        }
-        .boxed_local()
+        let stream = unixfs_builder::add_file(Some(providing_client), &path, wrap).await?;
+
+        Ok(stream.boxed_local())
     }
 
-    pub fn add_dir(
+    pub async fn add_dir(
         &self,
         path: &Path,
         wrap: bool,
-    ) -> LocalBoxFuture<'_, Result<LocalBoxStream<'static, Result<AddEvent>>>> {
+    ) -> Result<LocalBoxStream<'static, Result<AddEvent>>> {
         let providing_client = iroh_resolver::unixfs_builder::StoreAndProvideClient {
             client: self.client.clone(),
         };
         let path = path.to_path_buf();
-        async move {
-            unixfs_builder::add_dir(Some(providing_client), &path, wrap)
-                .await
-                .map(|s| s.boxed_local())
-        }
-        .boxed_local()
+        let stream = unixfs_builder::add_dir(Some(providing_client), &path, wrap).await?;
+
+        Ok(stream.boxed_local())
     }
 
-    pub fn add_symlink(
+    pub async fn add_symlink(
         &self,
         path: &Path,
         wrap: bool,
-    ) -> LocalBoxFuture<'_, Result<LocalBoxStream<'static, Result<AddEvent>>>> {
+    ) -> Result<LocalBoxStream<'static, Result<AddEvent>>> {
         let providing_client = iroh_resolver::unixfs_builder::StoreAndProvideClient {
             client: self.client.clone(),
         };
         let path = path.to_path_buf();
-        async move {
-            unixfs_builder::add_symlink(Some(providing_client), &path, wrap)
-                .await
-                .map(|s| s.boxed_local())
-        }
-        .boxed_local()
+        let stream = unixfs_builder::add_symlink(Some(providing_client), &path, wrap).await?;
+
+        Ok(stream.boxed_local())
     }
 
-    pub fn check(&self) -> BoxFuture<'_, StatusTable> {
-        async { self.client.check().await }.boxed()
+    pub async fn check(&self) -> StatusTable {
+        self.client.check().await
     }
 
-    pub fn watch(
-        &self,
-    ) -> LocalBoxFuture<'static, LocalBoxStream<'static, iroh_rpc_client::StatusTable>> {
-        let client = self.client.clone();
-        async { client.watch().await.boxed_local() }.boxed_local()
-    }
-
-    /// High level get, equivalent of CLI `iroh get`
-    pub async fn get<'a>(
-        &self,
-        ipfs_path: &IpfsPath,
-        output_path: Option<&'a Path>,
-    ) -> Result<PathBuf> {
-        if ipfs_path.cid().is_none() {
-            return Err(anyhow!("IPFS path does not refer to a CID"));
-        }
-        let root_path = get_root_path(ipfs_path, output_path);
-        if root_path.exists() {
-            return Err(anyhow!(
-                "output path {} already exists",
-                root_path.display()
-            ));
-        }
-        let blocks = self.get_stream(ipfs_path);
-        save_get_stream(&root_path, blocks).await?;
-        Ok(root_path)
+    pub async fn watch(&self) -> LocalBoxStream<'static, iroh_rpc_client::StatusTable> {
+        self.client.clone().watch().await.boxed_local()
     }
 
     pub async fn add_stream(
