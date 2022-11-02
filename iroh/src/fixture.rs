@@ -41,7 +41,7 @@ fn fixture_get() -> Api {
         Ok(futures::stream::iter(vec![
             Ok((RelativePathBuf::from_path("").unwrap(), OutType::Dir)),
             Ok((RelativePathBuf::from_path("a").unwrap(), OutType::Dir)),
-            // git doesn't like empty directories, nor does trycmd trip if it's missingj
+            // git doesn't like empty directories, nor does trycmd trip if it's missing
             // we rely on the unit test for save_get_stream elsewhere to check empty
             // directories are created
             Ok((
