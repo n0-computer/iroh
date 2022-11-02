@@ -284,9 +284,9 @@ fn retry<T, E, F: FnMut() -> std::result::Result<T, E>>(mut f: F) -> std::result
             }
         },
     );
-    res.or_else(|err| match err {
-        Error::Permanent(err) => Err(err),
-        Error::Transient { err, .. } => Err(err),
+    res.map_err(|err| match err {
+        Error::Permanent(err) => err,
+        Error::Transient { err, .. } => err,
     })
 }
 

@@ -152,7 +152,7 @@ impl ProgramLock {
 
     fn write(&mut self) -> AnyhowResult<()> {
         // create lock. ensure path to lock exists
-        std::fs::create_dir_all(&crate::iroh_data_root()?)?;
+        std::fs::create_dir_all(crate::iroh_data_root()?)?;
         let mut file = File::create(&self.path)?;
         let pid = sysinfo::get_current_pid().unwrap();
         file.write_all(pid.to_string().as_bytes())?;
