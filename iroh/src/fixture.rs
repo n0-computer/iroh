@@ -38,11 +38,12 @@ fn fixture_lookup() -> Api {
 
 fn fixture_get() -> Api {
     let mut api = Api::default();
+    api.expect_get().once();
     api.expect_get_stream().returning(|_ipfs_path| {
         futures::stream::iter(vec![
             Ok((RelativePathBuf::from_path("").unwrap(), OutType::Dir)),
             Ok((RelativePathBuf::from_path("a").unwrap(), OutType::Dir)),
-            // git doesn't like empty directories, nor does trycmd trip if it's missing
+            // git doesn't like empty directories, nor does trycmd trip if it's missingj
             // we rely on the unit test for save_get_stream elsewhere to check empty
             // directories are created
             Ok((
@@ -68,14 +69,13 @@ fn fixture_add_file() -> Api {
             Some(StatusRow::new("store", 1, ServiceStatus::Serving)),
         )))
     });
-    api.expect_add_file().returning(|_ipfs_path, _| {
+    api.expect_add_stream().returning(|_ipfs_path, _| {
         let cid = Cid::from_str("QmYbcW4tXLXHWw753boCK8Y7uxLu5abXjyYizhLznq9PUR").unwrap();
         let add_event = AddEvent::ProgressDelta { cid, size: Some(0) };
 
-        Box::pin(future::ready(Ok(futures::stream::iter(vec![Ok(
-            add_event,
-        )])
-        .boxed_local())))
+        let stream = futures::stream::iter(vec![Ok(add_event)]);
+
+        Ok(Box::pin(stream))
     });
     api.expect_provide()
         .returning(|_| Box::pin(future::ready(Ok(()))));
@@ -91,14 +91,13 @@ fn fixture_add_directory() -> Api {
             Some(StatusRow::new("store", 1, ServiceStatus::Serving)),
         )))
     });
-    api.expect_add_dir().returning(|_ipfs_path, _| {
+    api.expect_add_stream().returning(|_ipfs_path, _| {
         let cid = Cid::from_str("QmYbcW4tXLXHWw753boCK8Y7uxLu5abXjyYizhLznq9PUR").unwrap();
         let add_event = AddEvent::ProgressDelta { cid, size: Some(0) };
 
-        Box::pin(future::ready(Ok(futures::stream::iter(vec![Ok(
+        Ok(Box::pin(futures::stream::iter(vec![Ok(
             add_event,
-        )])
-        .boxed_local())))
+        )])))
     });
     api.expect_provide()
         .returning(|_| Box::pin(future::ready(Ok(()))));
@@ -107,15 +106,8 @@ fn fixture_add_directory() -> Api {
 
 fn fixture_get_wrapped_file() -> Api {
     let mut api = Api::default();
-    api.expect_get_stream().returning(|_ipfs_path| {
-        futures::stream::iter(vec![
-            Ok((RelativePathBuf::from_path("").unwrap(), OutType::Dir)),
-            Ok((
-                RelativePathBuf::from_path("file.txt").unwrap(),
-                OutType::Reader(Box::new(std::io::Cursor::new("hello"))),
-            )),
-        ])
-        .boxed_local()
+    api.expect_get().returning(|_, _| {
+        Ok(PathBuf::from("QmP8jTG1m9GSDJLCbeWhVSVgEzCPPwXRdCRuJtQ5Tz9Kc9"))
     });
     api
 }

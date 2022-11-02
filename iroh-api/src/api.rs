@@ -3,10 +3,7 @@ use std::path::{Path, PathBuf};
 
 use crate::api_ext::{get_root_path, save_get_stream};
 use crate::config::{Config, CONFIG_FILE_NAME, ENV_PREFIX};
-#[cfg(feature = "testing")]
-use crate::p2p::MockP2p as P2p;
-#[cfg(not(feature = "testing"))]
-use crate::p2p::P2p;
+use crate::P2pApi;
 use crate::{AddEvent, IpfsPath};
 use anyhow::{anyhow, Context as _, Result};
 use cid::Cid;
@@ -20,8 +17,6 @@ use iroh_rpc_client::StatusTable;
 use iroh_util::{iroh_config_path, make_config};
 #[cfg(feature = "testing")]
 use mockall::automock;
-#[cfg(feature = "testing")]
-use mockall_double::double;
 use relative_path::RelativePathBuf;
 use tokio::io::{AsyncRead, AsyncReadExt};
 
@@ -68,9 +63,9 @@ impl Api {
         async move { self.client.try_p2p()?.start_providing(&cid).await }.boxed_local()
     }
 
-    pub fn p2p(&self) -> Result<P2p> {
+    pub fn p2p(&self) -> Result<P2pApi> {
         let p2p_client = self.client.try_p2p()?;
-        Ok(P2p::new(p2p_client))
+        Ok(P2pApi::new(p2p_client))
     }
 
     pub fn get_stream(
