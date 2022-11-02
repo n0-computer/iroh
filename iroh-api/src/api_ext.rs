@@ -1,71 +1,13 @@
 use std::path::{Path, PathBuf};
 
-use crate::{AddEvent, Api, Cid, IpfsPath, OutType};
-use anyhow::{anyhow, Context, Result};
-use async_trait::async_trait;
-use futures::stream::LocalBoxStream;
+use crate::{IpfsPath, OutType};
+use anyhow::Result;
 use futures::Stream;
 use futures::StreamExt;
-use futures::TryStreamExt;
 use relative_path::RelativePathBuf;
 
-#[async_trait(?Send)]
-pub trait ApiExt: Api {
-    /// High level get, equivalent of CLI `iroh get`
-    async fn get<'a>(
-        &self,
-        ipfs_path: &IpfsPath,
-        output_path: Option<&'a Path>,
-    ) -> Result<PathBuf> {
-        if ipfs_path.cid().is_none() {
-            return Err(anyhow!("IPFS path does not refer to a CID"));
-        }
-        let root_path = get_root_path(ipfs_path, output_path);
-        if root_path.exists() {
-            return Err(anyhow!(
-                "output path {} already exists",
-                root_path.display()
-            ));
-        }
-        let blocks = self.get_stream(ipfs_path);
-        save_get_stream(&root_path, blocks).await?;
-        Ok(root_path)
-    }
-
-    async fn add_stream(
-        &self,
-        path: &Path,
-        wrap: bool,
-    ) -> Result<LocalBoxStream<'static, Result<AddEvent>>> {
-        if path.is_dir() {
-            self.add_dir(path, wrap).await
-        } else if path.is_symlink() {
-            self.add_symlink(path, wrap).await
-        } else if path.is_file() {
-            self.add_file(path, wrap).await
-        } else {
-            anyhow::bail!("can only add files or directories")
-        }
-    }
-
-    async fn add(&self, path: &Path, wrap: bool) -> Result<Cid> {
-        let add_events = self.add_stream(path, wrap).await?;
-
-        add_events
-            .try_fold(None, |_acc, add_event| async move {
-                match add_event {
-                    AddEvent::ProgressDelta { cid, .. } => Ok(Some(cid)),
-                }
-            })
-            .await?
-            .context("No cid found")
-    }
-}
-
-impl<T> ApiExt for T where T: Api {}
-
 /// take a stream of blocks as from `get_stream` and write them to the filesystem
-async fn save_get_stream(
+pub async fn save_get_stream(
     root_path: &Path,
     blocks: impl Stream<Item = Result<(RelativePathBuf, OutType)>>,
 ) -> Result<()> {
@@ -103,7 +45,7 @@ async fn save_get_stream(
 }
 
 #[cfg(windows)]
-fn make_windows_symlink(target: PathBuf, path: PathBuf) -> Result<()> {
+pub fn make_windows_symlink(target: PathBuf, path: PathBuf) -> Result<()> {
     if target.is_dir() {
         std::os::windows::fs::symlink_dir(target, path).map_err(|e| anyhow::anyhow!(e))
     } else {
@@ -112,7 +54,7 @@ fn make_windows_symlink(target: PathBuf, path: PathBuf) -> Result<()> {
 }
 
 /// Given an cid and an optional output path, determine root path
-fn get_root_path(ipfs_path: &IpfsPath, output_path: Option<&Path>) -> PathBuf {
+pub fn get_root_path(ipfs_path: &IpfsPath, output_path: Option<&Path>) -> PathBuf {
     match output_path {
         Some(path) => path.to_path_buf(),
         None => {

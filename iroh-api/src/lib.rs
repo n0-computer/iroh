@@ -5,12 +5,14 @@ mod error;
 mod p2p;
 
 #[cfg(feature = "testing")]
-pub use crate::api::MockApi;
-pub use crate::api::{Api, Iroh, OutType};
-pub use crate::api_ext::ApiExt;
+pub use crate::api::MockApi as Api;
+#[cfg(not(feature = "testing"))]
+pub use crate::api::Api;
+pub use crate::api::OutType;
 pub use crate::error::ApiError;
 #[cfg(feature = "testing")]
-pub use crate::p2p::MockP2p;
+pub use crate::p2p::MockP2p as P2pApi;
+#[cfg(not(feature = "testing"))]
 pub use crate::p2p::P2p as P2pApi;
 pub use crate::p2p::PeerIdOrAddr;
 pub use bytes::Bytes;

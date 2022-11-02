@@ -5,17 +5,18 @@ use std::path::PathBuf;
 use std::str::FromStr;
 
 use futures::StreamExt;
-use iroh_api::{AddEvent, Cid, Lookup, MockApi, MockP2p, OutType, PeerId};
+use iroh_api::{AddEvent, Cid, Lookup, OutType, PeerId};
+use iroh_api::{Api, P2pApi};
 use iroh_api::{ServiceStatus, StatusRow, StatusTable};
 use relative_path::RelativePathBuf;
 
-type GetFixture = fn() -> MockApi;
+type GetFixture = fn() -> Api;
 type FixtureRegistry = HashMap<String, GetFixture>;
 
-fn fixture_lookup() -> MockApi {
-    let mut api = MockApi::default();
+fn fixture_lookup() -> Api {
+    let mut api = Api::default();
     api.expect_p2p().returning(|| {
-        let mut mock_p2p = MockP2p::default();
+        let mut mock_p2p = P2pApi::default();
 
         mock_p2p.expect_lookup().returning(|_addr| {
             let peer_id = "1AXRDqR8jTkwzGqyu3qknicAC5X578zTMxhAi2brppK2bB"
@@ -35,8 +36,8 @@ fn fixture_lookup() -> MockApi {
     api
 }
 
-fn fixture_get() -> MockApi {
-    let mut api = MockApi::default();
+fn fixture_get() -> Api {
+    let mut api = Api::default();
     api.expect_get_stream().returning(|_ipfs_path| {
         futures::stream::iter(vec![
             Ok((RelativePathBuf::from_path("").unwrap(), OutType::Dir)),
@@ -58,8 +59,8 @@ fn fixture_get() -> MockApi {
     api
 }
 
-fn fixture_add_file() -> MockApi {
-    let mut api = MockApi::default();
+fn fixture_add_file() -> Api {
+    let mut api = Api::default();
     api.expect_check().returning(|| {
         Box::pin(future::ready(StatusTable::new(
             Some(StatusRow::new("gateway", 1, ServiceStatus::Serving)),
@@ -81,8 +82,8 @@ fn fixture_add_file() -> MockApi {
     api
 }
 
-fn fixture_add_directory() -> MockApi {
-    let mut api = MockApi::default();
+fn fixture_add_directory() -> Api {
+    let mut api = Api::default();
     api.expect_check().returning(|| {
         Box::pin(future::ready(StatusTable::new(
             Some(StatusRow::new("gateway", 1, ServiceStatus::Serving)),
@@ -104,8 +105,8 @@ fn fixture_add_directory() -> MockApi {
     api
 }
 
-fn fixture_get_wrapped_file() -> MockApi {
-    let mut api = MockApi::default();
+fn fixture_get_wrapped_file() -> Api {
+    let mut api = Api::default();
     api.expect_get_stream().returning(|_ipfs_path| {
         futures::stream::iter(vec![
             Ok((RelativePathBuf::from_path("").unwrap(), OutType::Dir)),
@@ -119,8 +120,8 @@ fn fixture_get_wrapped_file() -> MockApi {
     api
 }
 
-fn fixture_get_unwrapped_file() -> MockApi {
-    let mut api = MockApi::default();
+fn fixture_get_unwrapped_file() -> Api {
+    let mut api = Api::default();
     api.expect_get_stream().returning(|_ipfs_path| {
         futures::stream::iter(vec![Ok((
             RelativePathBuf::from_path("").unwrap(),
@@ -131,8 +132,8 @@ fn fixture_get_unwrapped_file() -> MockApi {
     api
 }
 
-fn fixture_get_wrapped_symlink() -> MockApi {
-    let mut api = MockApi::default();
+fn fixture_get_wrapped_symlink() -> Api {
+    let mut api = Api::default();
     api.expect_get_stream().returning(|_ipfs_path| {
         futures::stream::iter(vec![
             Ok((RelativePathBuf::from_path("").unwrap(), OutType::Dir)),
@@ -146,8 +147,8 @@ fn fixture_get_wrapped_symlink() -> MockApi {
     api
 }
 
-fn fixture_get_unwrapped_symlink() -> MockApi {
-    let mut api = MockApi::default();
+fn fixture_get_unwrapped_symlink() -> Api {
+    let mut api = Api::default();
     api.expect_get_stream().returning(|_ipfs_path| {
         futures::stream::iter(vec![Ok((
             RelativePathBuf::from_path("").unwrap(),
@@ -188,7 +189,7 @@ fn register_fixtures() -> FixtureRegistry {
     .collect()
 }
 
-pub fn get_fixture_api() -> MockApi {
+pub fn get_fixture_api() -> Api {
     let registry = register_fixtures();
     let fixture_name = env::var("IROH_CTL_FIXTURE").expect("IROH_CTL_FIXTURE must be set");
     let fixture = registry

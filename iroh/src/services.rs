@@ -16,7 +16,7 @@ const SERVICE_START_TIMEOUT_SECONDS: u64 = 15;
 
 /// start any of {iroh-gateway,iroh-store,iroh-p2p} that aren't currently
 /// running.
-pub async fn start(api: &impl Api, services: &Vec<String>) -> Result<()> {
+pub async fn start(api: &Api, services: &Vec<String>) -> Result<()> {
     let services = match services.is_empty() {
         true => HashSet::from(["gateway", "store"]),
         false => {
@@ -32,7 +32,7 @@ pub async fn start(api: &impl Api, services: &Vec<String>) -> Result<()> {
 
 // TODO(b5) - should check for configuration mismatch between iroh CLI configuration
 // TODO(b5) - services HashSet should be an enum
-async fn start_services(api: &impl Api, services: HashSet<&str>) -> Result<()> {
+async fn start_services(api: &Api, services: HashSet<&str>) -> Result<()> {
     // check for any running iroh services
     let table = api.check().await;
 
@@ -133,7 +133,7 @@ async fn start_services(api: &impl Api, services: HashSet<&str>) -> Result<()> {
 
 /// stop the default set of services by sending SIGINT to any active daemons
 /// identified by lockfiles
-pub async fn stop(api: &impl Api, services: &Vec<String>) -> Result<()> {
+pub async fn stop(api: &Api, services: &Vec<String>) -> Result<()> {
     let services = match services.is_empty() {
         true => HashSet::from(["store", "p2p", "gateway"]),
         false => {
@@ -147,7 +147,7 @@ pub async fn stop(api: &impl Api, services: &Vec<String>) -> Result<()> {
     stop_services(api, services).await
 }
 
-pub async fn stop_services(api: &impl Api, services: HashSet<&str>) -> Result<()> {
+pub async fn stop_services(api: &Api, services: HashSet<&str>) -> Result<()> {
     for service in services {
         let daemon_name = format!("iroh-{}", service);
         info!("checking daemon {} lock", daemon_name);
@@ -199,7 +199,7 @@ pub async fn stop_services(api: &impl Api, services: HashSet<&str>) -> Result<()
     Ok(())
 }
 
-pub async fn status(api: &impl Api, watch: bool) -> Result<()> {
+pub async fn status(api: &Api, watch: bool) -> Result<()> {
     let mut stdout = stdout();
     if watch {
         let status_stream = api.watch().await;
@@ -278,10 +278,7 @@ where
 
 /// require a set of services is up. returns the underlying status table of all
 /// services for additional scrutiny
-pub async fn require_services(
-    api: &impl Api,
-    services: HashSet<&str>,
-) -> Result<iroh_api::StatusTable> {
+pub async fn require_services(api: &Api, services: HashSet<&str>) -> Result<iroh_api::StatusTable> {
     let table = api.check().await;
     for service in table.iter() {
         if services.contains(service.name()) && service.status() != iroh_api::ServiceStatus::Serving
@@ -297,7 +294,7 @@ pub async fn require_services(
 /// poll until a service matches the desired status. returns Ok(true) if status was matched,
 /// and Ok(false) if desired status isn't reported before SERVICE_START_TIMEOUT_SECONDS
 async fn poll_until_status(
-    api: &impl Api,
+    api: &Api,
     service: &str,
     status: iroh_api::ServiceStatus,
 ) -> Result<bool> {
