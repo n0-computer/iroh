@@ -34,7 +34,7 @@ config = "0.13.1"
 dirs = "4.0.0"
 toml = "0.5.9"
 zeroize = "1.4"
-ssh-key = { version = "0.4.2", features = ["ed25519", "std", "rand_core"], default-features = false }
+ssh-key = { version = "0.5.1", features = ["ed25519", "std", "rand_core"], default-features = false }
 rand = "0.8.5"
 async-stream = "0.3.3"
 tempfile = "3.3.0"

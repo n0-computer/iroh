@@ -10,11 +10,7 @@ This repo is a common core for three distributions of iroh:
 - **Iroh One:** A select set of iroh cloud features packaged as a single binary for simplified deployment.
 - **Iroh Mobile:** iOS & Android libraries that bring efficient data distribution to mobile apps.
 
-## Project Status: Early Days
-
-Iroh has yet to publish a release. We are targeting the end of October 2022 for an initial version, which will coincide with the launch of a proper web site & documentation. Before iroh's first release we're in build-from-source and read-source-to-understand-how-it-works territory.
-
-In the meantime, there's a [quickstart guide](./quickstart.md) if you'd like to get a feel for running an iroh cloud gateway.
+Here is an [install guide](https://iroh.computer/install).
 
 ## Working on Iroh
 Check out the [CONTRIBUTOR docs](./CONTRIBUTOR.md) to get familiar with ways you can contribute to the Iroh project. The [DEVELOPERS docs](./DEVELOPERS.md) will help you get starting with building and developing Iroh.
@@ -25,7 +21,7 @@ A full suite of automated benchmarks is in the works. [this talk](https://www.yo
 
 ## Who's behind this?
 
-Iroh is built & maintained by [number 0](https://n0.computer). We're a founder-backed startup hell-bent on building efficient distributed systems software.
+[Iroh](https://iroh.computer) is built & maintained by [number 0](https://n0.computer). We're a founder-backed startup hell-bent on building efficient distributed systems software.
 
 ## License
 
