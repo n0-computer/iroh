@@ -29,7 +29,10 @@ pub enum OutType {
 }
 
 #[cfg_attr(feature = "testing", automock)]
+#[cfg_attr(feature = "testing", allow(dead_code))]
 impl Api {
+    // The lifetime is needed for mocking.
+    #[allow(clippy::needless_lifetimes)]
     pub async fn new<'a>(
         config_path: Option<&'a Path>,
         overrides_map: HashMap<String, String>,

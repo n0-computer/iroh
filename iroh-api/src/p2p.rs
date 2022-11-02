@@ -17,6 +17,7 @@ pub enum PeerIdOrAddr {
 }
 
 #[cfg_attr(feature = "testing", automock)]
+#[cfg_attr(feature = "testing", allow(dead_code))]
 impl P2p {
     pub fn new(client: P2pClient) -> Self {
         Self { client }
