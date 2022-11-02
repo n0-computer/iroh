@@ -152,11 +152,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
     pub async fn run(&mut self) -> anyhow::Result<()> {
         info!("Local Peer ID: {}", self.swarm.local_peer_id());
 
-        let mut nice_interval = if self.use_dht {
-            Some(tokio::time::interval(NICE_INTERVAL))
-        } else {
-            None
-        };
+        let mut nice_interval = self.use_dht.then(|| tokio::time::interval(NICE_INTERVAL));
         let mut bootstrap_interval = tokio::time::interval(BOOTSTRAP_INTERVAL);
         let mut expiry_interval = tokio::time::interval(EXPIRY_INTERVAL);
 
