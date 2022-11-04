@@ -33,7 +33,7 @@ config = "0.13.1"
 async-trait = "0.1.56"
 smallvec = { version = "1.10.0", features = ["write"] }
 multihash = "0.16.3"
-tarpc = { version = "0.30.0", features = ["serde1", "tokio1", "serde-transport", "serde-transport-bincode", "tcp"] }
+tarpc = { version = "0.31.0", features = ["serde1", "tokio1", "serde-transport", "serde-transport-bincode", "tcp"] }
 paste = "1.0.9"
 
 [dev-dependencies]

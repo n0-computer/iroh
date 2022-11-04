@@ -16,7 +16,7 @@ iroh-metrics = { path = "../iroh-metrics", default-features = false }
 tokio = { version = "1", features = ["net", "sync"] }
 tokio-stream = { version = "0.1.9", optional = true, features = ["net"] }
 futures = "0.3.24"
-tarpc = { version = "0.30.0", features = ["serde1", "tokio1", "serde-transport", "serde-transport-bincode", "tcp"] }
+tarpc = { version = "0.31.0", features = ["serde1", "tokio1", "serde-transport", "serde-transport-bincode", "tcp"] }
 cid = { version = "0.8.6", features = ["serde-codec"] }
 bytes = { version = "1.2.1", features = ["serde"] }
 libp2p = { version = "0.50", default-features = false, features = ["serde"] }
