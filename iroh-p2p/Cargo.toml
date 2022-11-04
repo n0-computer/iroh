@@ -71,9 +71,14 @@ default-features = false
 features = ["std", "multihash-impl", "identity", "sha2"]
 
 [dev-dependencies]
+criterion = "0.3"
+lru = "0.8.1"
 
 [features]
 default = ["rpc-grpc", "rpc-mem"]
 rpc-grpc = ["iroh-rpc-types/grpc", "iroh-rpc-client/grpc", "iroh-metrics/rpc-grpc"]
 rpc-mem = ["iroh-rpc-types/mem", "iroh-rpc-client/mem"]
 
+[[bench]]
+name = "lru_cache"
+harness = false
