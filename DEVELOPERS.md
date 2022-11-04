@@ -96,7 +96,7 @@ cargo clippy --workspace --examples --tests --benches && cargo test --workspace 
 
 The tests must pass and you must get an approval from someone on the Iroh team before you can merge your PR.
 
-Depending on your permissions in the `iroh` repo, you may not have the the ability to "request a review". Instead, please tag your selected reviewers in the PR itself (using the `@`) and specify that you would like them to review. If you are apart of our discord community, you can and should ping your reviewer(s) there as well.
+Depending on your permissions in the `iroh` repo, you may not have the the ability to "request a review". Instead, please tag your selected reviewers in the PR itself (using the `@`) and specify that you would like them to review. If you are a member of our discord community, you can and should ping your reviewer(s) there as well.
 
 If you don't know who to tag for review, here are some good guidelines. For any markdown documentations changes, tag `ramfox` or `b5`. If your PR solves an issue that someone else created, tag that person in review. If it's an issue you have created, tag team members who have been discussing the issue. Otherwise, create the PR and note that you aren't sure who to tag! Someone will drop in to give you guidance. If you are apart of our discord community, ask who should be tagged in the `iroh` channel.
 

@@ -61,7 +61,7 @@ impl Display for PeerIdOrAddrArg {
     }
 }
 
-pub async fn run_command(p2p: &impl P2pApi, cmd: &P2p) -> Result<()> {
+pub async fn run_command(p2p: &P2pApi, cmd: &P2p) -> Result<()> {
     match &cmd.command {
         P2pCommands::Connect { addr } => match p2p.connect(&addr.0).await {
             Ok(_) => {
