@@ -210,12 +210,28 @@ jobs:
         aws s3 cp ./target/ci/iroh s3://vorc/iroh-${RELEASE_OS}-${RELEASE_ARCH}-${GITHUB_SHA::7} --no-progress
 
     - name: push release latest
-      if: matrix.os != 'macOS-latest' && matrix.rust=='stable' && github.ref_name=='main'
+      if: matrix.os == 'macOS-latest' && matrix.rust=='stable' && github.ref_name=='main'
       run: |
         aws s3 cp ./target/ci/iroh-gateway s3://vorc/iroh-gateway-${RELEASE_OS}-${RELEASE_ARCH}-latest --no-progress
         aws s3 cp ./target/ci/iroh-p2p s3://vorc/iroh-p2p-${RELEASE_OS}-${RELEASE_ARCH}-latest --no-progress
         aws s3 cp ./target/ci/iroh-store s3://vorc/iroh-store-${RELEASE_OS}-${RELEASE_ARCH}-latest --no-progress
         aws s3 cp ./target/ci/iroh s3://vorc/iroh-${RELEASE_OS}-${RELEASE_ARCH}-latest --no-progress
+
+    - name: push release aarch64
+      if: matrix.os == 'macOS-latest' && matrix.rust=='stable' && github.ref_name=='main'
+      run: |
+        aws s3 cp ./target/aarch64-apple-darwin/ci/iroh-gateway s3://vorc/iroh-gateway-${RELEASE_OS}-aarch64-${GITHUB_SHA::7} --no-progress
+        aws s3 cp ./target/aarch64-apple-darwin/ci/iroh-p2p s3://vorc/iroh-p2p-${RELEASE_OS}-aarch64-${GITHUB_SHA::7} --no-progress
+        aws s3 cp ./target/aarch64-apple-darwin/ci/iroh-store s3://vorc/iroh-store-${RELEASE_OS}-aarch64-${GITHUB_SHA::7} --no-progress
+        aws s3 cp ./target/aarch64-apple-darwin/ci/iroh s3://vorc/iroh-${RELEASE_OS}-aarch64-${GITHUB_SHA::7} --no-progress
+
+    - name: push release latest aarch64
+      if: matrix.os == 'macOS-latest' && matrix.rust=='stable' && github.ref_name=='main'
+      run: |
+        aws s3 cp ./target/aarch64-apple-darwin/ci/iroh-gateway s3://vorc/iroh-gateway-${RELEASE_OS}-aarch64-latest --no-progress
+        aws s3 cp ./target/aarch64-apple-darwin/ci/iroh-p2p s3://vorc/iroh-p2p-${RELEASE_OS}-aarch64-latest --no-progress
+        aws s3 cp ./target/aarch64-apple-darwin/ci/iroh-store s3://vorc/iroh-store-${RELEASE_OS}-aarch64-latest --no-progress
+        aws s3 cp ./target/aarch64-apple-darwin/ci/iroh s3://vorc/iroh-${RELEASE_OS}-aarch64-latest --no-progress
     
     - name: Print sccache stats
       run: sccache --show-stats
