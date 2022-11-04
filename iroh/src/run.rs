@@ -7,7 +7,7 @@ use console::style;
 use crossterm::style::Stylize;
 use futures::StreamExt;
 use indicatif::{ProgressBar, ProgressStyle};
-use iroh_api::{AddEvent, Api, ApiExt, IpfsPath, Iroh, ServiceStatus};
+use iroh_api::{AddEvent, Api, IpfsPath, ServiceStatus};
 use iroh_metrics::config::Config as MetricsConfig;
 use iroh_util::{human, iroh_config_path, make_config};
 
@@ -31,14 +31,6 @@ pub struct Cli {
     no_metrics: bool,
     #[clap(subcommand)]
     command: Commands,
-}
-
-impl Cli {
-    fn make_overrides_map(&self) -> HashMap<String, String> {
-        let mut map = HashMap::new();
-        map.insert("metrics.debug".to_string(), (self.no_metrics).to_string());
-        map
-    }
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -90,45 +82,7 @@ enum Commands {
 }
 
 impl Cli {
-    // Rust analyzer sees this function as unused, because in development
-    // mode the `testing` feature is enabled. This needs to be done in order
-    // to compile the CLI with the testing feature, which is needed to create
-    // trycmd tests.
-    #[cfg(not(feature = "testing"))]
     pub async fn run(&self) -> Result<()> {
-        // extracted the function body into its own function so it's
-        // not all considered unused
-        self.run_impl().await
-    }
-
-    // this version of the CLI runs in testing mode only
-    #[cfg(feature = "testing")]
-    pub async fn run(&self) -> Result<()> {
-        let config_path = iroh_config_path(CONFIG_FILE_NAME)?;
-        // TODO(b5): allow suppliying some sort of config flag. maybe --config-cli?
-        let sources = vec![Some(config_path)];
-        let config = make_config(
-            // default
-            Config::new(),
-            // potential config files
-            sources,
-            // env var prefix for this config
-            ENV_PREFIX,
-            // map of present command line arguments
-            // args.make_overrides_map(),
-            HashMap::<String, String>::new(),
-        )
-        .unwrap();
-
-        let api = get_fixture_api();
-        self.cli_command(&config, &api).await
-    }
-
-    // this is a separate function and marked `allow[unused]` so
-    // that we don't get Rust analyzer unused code warnings, which we do get if
-    // we inline this code inside of run.
-    #[allow(unused)]
-    async fn run_impl(&self) -> Result<()> {
         let config_path = iroh_config_path(CONFIG_FILE_NAME)?;
         // TODO(b5): allow suppliying some sort of config flag. maybe --config-cli?
         let sources = vec![Some(config_path)];
@@ -149,7 +103,10 @@ impl Cli {
             .await
             .expect("failed to initialize metrics");
 
-        let api = Iroh::new(self.cfg.as_deref(), self.make_overrides_map()).await?;
+        #[cfg(feature = "testing")]
+        let api = get_fixture_api();
+        #[cfg(not(feature = "testing"))]
+        let api = iroh_api::Iroh::new(self.cfg.as_deref(), self.make_overrides_map()).await?;
 
         self.cli_command(&config, &api).await?;
 
@@ -158,7 +115,14 @@ impl Cli {
         Ok(())
     }
 
-    async fn cli_command(&self, config: &Config, api: &impl Api) -> Result<()> {
+    #[cfg(not(feature = "testing"))]
+    fn make_overrides_map(&self) -> HashMap<String, String> {
+        let mut map = HashMap::new();
+        map.insert("metrics.debug".to_string(), (self.no_metrics).to_string());
+        map
+    }
+
+    async fn cli_command(&self, config: &Config, api: &Api) -> Result<()> {
         match &self.command {
             Commands::Add {
                 path,
@@ -172,7 +136,9 @@ impl Cli {
                 ipfs_path: path,
                 output,
             } => {
-                let root_path = api.get(path, output.as_deref()).await?;
+                let blocks = api.get(path)?;
+                let root_path =
+                    iroh_api::fs::write_get_stream(path, blocks, output.as_deref()).await?;
                 println!("Saving file(s) to {}", root_path.to_str().unwrap());
             }
             Commands::P2p(p2p) => run_p2p_command(&api.p2p()?, p2p).await?,
@@ -202,13 +168,7 @@ impl Cli {
     }
 }
 
-async fn add(
-    api: &impl Api,
-    path: &Path,
-    no_wrap: bool,
-    recursive: bool,
-    provide: bool,
-) -> Result<()> {
+async fn add(api: &Api, path: &Path, no_wrap: bool, recursive: bool, provide: bool) -> Result<()> {
     if !path.exists() {
         anyhow::bail!("Path does not exist");
     }
