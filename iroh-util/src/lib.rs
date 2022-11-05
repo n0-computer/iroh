@@ -236,7 +236,7 @@ mod tests {
     fn test_iroh_config_path() {
         let got = iroh_config_path("foo.bar").unwrap();
         let got = got.to_str().unwrap().to_string();
-        let got = got.replace("\\", "/"); // handle windows paths
+        let got = got.replace('\\', "/"); // handle windows paths
         assert!(got.ends_with("/iroh/foo.bar"));
     }
 }
