@@ -1,5 +1,6 @@
 [workspace]
 members = [
+  "examples",
   "iroh",
   "iroh-api",
   "iroh-bitswap",
@@ -12,11 +13,10 @@ members = [
   "iroh-resolver",
   "iroh-rpc-client",
   "iroh-rpc-types",
-  "iroh-store",
   "iroh-share",
+  "iroh-store",
   "iroh-util",
   "stores/*",
-  "examples",
   "xtask",
 ]
 # even if all crates are set to edition 2021, we still need to force the

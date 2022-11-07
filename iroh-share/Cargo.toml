@@ -9,28 +9,28 @@ description = "Sharing files with iroh"
 
 [dependencies]
 anyhow = "1.0.58"
-iroh-p2p = { path = "../iroh-p2p", default-features = false, features = ["rpc-mem"] }
-iroh-store = {path = "../iroh-store", default-features = false, features = ["rpc-mem"] }
-iroh-rpc-client = { path = "../iroh-rpc-client", default-features = false, features = ["mem"] }
-iroh-rpc-types = { path = "../iroh-rpc-types", default-features = false, features = ["mem"] }
-iroh-metrics = { path = "../iroh-metrics", default-features = false }
-iroh-resolver = { path = "../iroh-resolver", default-features = false, features = ["rpc-mem"] }
-iroh-util = { path = "../iroh-util" }
-tracing = "0.1.34"
-tokio = { version = "1" }
-libp2p = { version = "0.50", default-features = false, features = ["gossipsub"] }
-serde = { version = "1", features = ["derive"] }
-futures = "0.3.21"
+async-trait = "0.1.56"
+bincode = "1.3.3"
 bytes = "1.1.0"
 cid = { version = "0.8.5", features = ["serde-codec"] }
-async-trait = "0.1.56"
 clap = { version = "4.0.9", features = ["derive"] }
-bincode = "1.3.3"
+futures = "0.3.21"
+iroh-metrics = { path = "../iroh-metrics", default-features = false }
+iroh-p2p = { path = "../iroh-p2p", default-features = false, features = ["rpc-mem"] }
+iroh-resolver = { path = "../iroh-resolver", default-features = false, features = ["rpc-mem"] }
+iroh-rpc-client = { path = "../iroh-rpc-client", default-features = false, features = ["mem"] }
+iroh-rpc-types = { path = "../iroh-rpc-types", default-features = false, features = ["mem"] }
+iroh-store = {path = "../iroh-store", default-features = false, features = ["rpc-mem"] }
+iroh-util = { path = "../iroh-util" }
+libp2p = { version = "0.50", default-features = false, features = ["gossipsub"] }
 multibase = "0.9.1"
-tempfile = "3.3"
-tracing-subscriber = "0.3.14"
 rand = "0.8.5"
+serde = { version = "1", features = ["derive"] }
+tempfile = "3.3"
+tokio = { version = "1" }
 tokio-stream = "0.1.9"
+tracing = "0.1.34"
+tracing-subscriber = "0.3.14"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }

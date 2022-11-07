@@ -8,37 +8,37 @@ repository = "https://github.com/n0-computer/iroh"
 description = "Implementation of the storage part of iroh"
 
 [dependencies]
-rocksdb = "0.19.0"
 anyhow = "1.0.57"
-tokio = { version = "1", features = ["rt"] }
-cid = "0.8.4"
-rkyv = { version = "0.7.37", features = ["validation"] }
+async-trait = "0.1.56"
 bytecheck = "0.6.7"
-tracing-subscriber = { version = "0.3.11", features = ["env-filter"] }
+bytes = "1.1.0"
+cid = "0.8.4"
 clap = { version = "4.0.9", features = ["derive"] }
+config = "0.13.1"
 ctrlc = "3.2.2"
 futures = "0.3.21"
-tracing = "0.1.34"
-iroh-rpc-types = { path = "../iroh-rpc-types", default-features = false }
-iroh-rpc-client = { path = "../iroh-rpc-client", default-features = false }
-iroh-util = { path = "../iroh-util" }
-bytes = "1.1.0"
-iroh-metrics = { path = "../iroh-metrics", default-features = false, features=["store"] }
-tracing-opentelemetry = "0.18"
-opentelemetry = { version = "0.18", features = ["rt-tokio"] }
-names = { version = "0.14.0", default-features = false }
 git-version = "0.3.5"
-serde = { version = "1.0", features = ["derive"] }
-config = "0.13.1"
-async-trait = "0.1.56"
-smallvec = { version = "1.10.0", features = ["write"] }
+iroh-metrics = { path = "../iroh-metrics", default-features = false, features=["store"] }
+iroh-rpc-client = { path = "../iroh-rpc-client", default-features = false }
+iroh-rpc-types = { path = "../iroh-rpc-types", default-features = false }
+iroh-util = { path = "../iroh-util" }
 multihash = "0.16.3"
+names = { version = "0.14.0", default-features = false }
+opentelemetry = { version = "0.18", features = ["rt-tokio"] }
+rkyv = { version = "0.7.37", features = ["validation"] }
+rocksdb = "0.19.0"
+serde = { version = "1.0", features = ["derive"] }
+smallvec = { version = "1.10.0", features = ["write"] }
+tokio = { version = "1", features = ["rt"] }
+tracing = "0.1.34"
+tracing-opentelemetry = "0.18"
+tracing-subscriber = { version = "0.3.11", features = ["env-filter"] }
 
 [dev-dependencies]
 criterion = { version = "0.4.0", features = ["async_tokio"] }
+libipld = "0.14.0"
 tempfile = "3.3.0"
 tokio = { version = "1", features = ["rt", "macros", "rt-multi-thread"] }
-libipld = "0.14.0"
 
 [features]
 default = ["rpc-grpc", "rpc-mem"]
