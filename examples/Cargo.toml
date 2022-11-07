@@ -9,17 +9,17 @@ description = "Examples"
 
 [dependencies]
 anyhow = "1"
-clap = { version = "4.0.9", features = ["derive"] }
-iroh-rpc-client = { path = "../iroh-rpc-client" }
-tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
-iroh-car = { path = "../iroh-car" }
-futures = "0.3.21"
-iroh-resolver = { path = "../iroh-resolver" }
 bytes = "1.1.0"
 bytesize = "1.1.0"
-par-stream = { version = "0.10.2", default-features = false, features = ["runtime-tokio"] }
+clap = { version = "4.0.9", features = ["derive"] }
+futures = "0.3.21"
 indicatif = "0.17.0"
+iroh-car = { path = "../iroh-car" }
+iroh-resolver = { path = "../iroh-resolver" }
+iroh-rpc-client = { path = "../iroh-rpc-client" }
 iroh-util = { path = "../iroh-util" }
+par-stream = { version = "0.10.2", default-features = false, features = ["runtime-tokio"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 
 [features]
 default = []

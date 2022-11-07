@@ -8,32 +8,32 @@ repository = "https://github.com/n0-computer/iroh"
 description = "RPC type client for iroh"
 
 [dependencies]
-async-stream = "0.3.3"
-iroh-util = { path = "../iroh-util" }
-iroh-rpc-types = { path = "../iroh-rpc-types", default-features = false }
-cid = "0.8.0"
-futures = "0.3.21"
-tokio = { version = "1", features = ["sync"] }
-prost = "0.11"
-anyhow = "1.0.57"
-bytes = "1.1.0"
-libp2p = { version = "0.50", default-features = false, features = ["gossipsub"] }
-iroh-metrics = { path = "../iroh-metrics", default-features = false }
-tracing = "0.1.34"
-toml = "0.5.9"
-serde = { version = "1.0", features = ["derive"] }
-config = "0.13.1"
 
+anyhow = "1.0.57"
+async-stream = "0.3.3"
+async-trait = "0.1.56"
+bytes = "1.1.0"
+cid = "0.8.0"
+config = "0.13.1"
+futures = "0.3.21"
+iroh-metrics = { path = "../iroh-metrics", default-features = false }
+iroh-rpc-types = { path = "../iroh-rpc-types", default-features = false }
+iroh-util = { path = "../iroh-util" }
+libp2p = { version = "0.50", default-features = false, features = ["gossipsub"] }
+paste = "1.0.7"
+prost = "0.11"
+serde = { version = "1.0", features = ["derive"] }
+tokio = { version = "1", features = ["sync"] }
+toml = "0.5.9"
 tonic = { version = "0.8", optional = true }
 tonic-health = { version = "0.7", optional = true }
-async-trait = "0.1.56"
 tower = { version = "0.4.13", optional = true }
-paste = "1.0.7"
+tracing = "0.1.34"
 
 
 [dev-dependencies]
-tokio-stream = { version = "0.1.9", features = ["net"]}
 iroh-rpc-types = { path = "../iroh-rpc-types", features = ["testing"] }
+tokio-stream = { version = "0.1.9", features = ["net"]}
 
 [features]
 default = ["mem", "grpc"]

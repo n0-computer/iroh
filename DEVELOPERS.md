@@ -92,6 +92,12 @@ Setting up a [git hook][git-hook] to run these commands can save you many headac
 cargo clippy --workspace --examples --tests --benches && cargo test --workspace --examples
 ```
 
+## <a name="dependecies"></a> Dependencies
+
+Any crate added to iroh will need to use a license compatible with ours.  Any PR that introduces a new crate will require additional review time to audit the crate being introduced, including rationale on why you chose *this* crate, and what alternatives you considered willl speed up the review process.
+
+Crate lists in `Cargo.toml` files must be kept alphabetically sorted.
+
 ## <a name="prs"></a> Pull Request Guidelines
 
 The tests must pass and you must get an approval from someone on the Iroh team before you can merge your PR.

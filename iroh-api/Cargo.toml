@@ -10,24 +10,24 @@ description = "Rust API for Iroh"
 testing = ["dep:mockall"]
 
 [dependencies]
+anyhow = "1"
+async-stream = "0.3.3"
+bytes = "1.1.0"
 cid = "0.8.5"
 config = "0.13.1"
+futures = "0.3.21"
 iroh-metrics = { path = "../iroh-metrics", default-features = false, features = ["rpc-grpc"] }
 iroh-resolver = { path = "../iroh-resolver" }
-iroh-rpc-types = { path = "../iroh-rpc-types" }
 iroh-rpc-client = { path = "../iroh-rpc-client" }
+iroh-rpc-types = { path = "../iroh-rpc-types" }
 iroh-util = { path = "../iroh-util" }
-anyhow = "1"
-tokio = { version = "1" }
-bytes = "1.1.0"
 libp2p = "0.50"
-tracing = "0.1.34"
-futures = "0.3.21"
-async-stream = "0.3.3"
 mockall = { version = "0.11.2", optional = true }
-serde = { version = "1.0", features = ["derive"] }
 relative-path = "1.7.2"
+serde = { version = "1.0", features = ["derive"] }
 thiserror = "1.0"
+tokio = { version = "1" }
+tracing = "0.1.34"
 
 [dev-dependencies]
 tempfile = "3.3.0"
