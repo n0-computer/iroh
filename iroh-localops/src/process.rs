@@ -42,7 +42,7 @@ fn daemonize_process(_bin_path: PathBuf, _log_path: PathBuf) -> Result<()> {
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 fn daemonize_process(bin_path: PathBuf, log_path: PathBuf) -> Result<()> {
-    std::fs::create_dir_all(&log_path.parent().unwrap())?;
+    std::fs::create_dir_all(log_path.parent().unwrap())?;
     // ¯\_(ツ)_/¯
     let status = Command::new("bash")
         .arg("-c")

@@ -62,7 +62,7 @@ pub async fn block_until_sigint() {
 pub fn iroh_config_root() -> Result<PathBuf> {
     let cfg = dirs_next::config_dir()
         .ok_or_else(|| anyhow!("operating environment provides no directory for configuration"))?;
-    Ok(cfg.join(&IROH_DIR))
+    Ok(cfg.join(IROH_DIR))
 }
 
 // Path that leads to a file in the iroh config directory.
@@ -84,7 +84,7 @@ pub fn iroh_data_root() -> Result<PathBuf> {
     let path = dirs_next::data_dir().ok_or_else(|| {
         anyhow!("operating environment provides no directory for application data")
     })?;
-    Ok(path.join(&IROH_DIR))
+    Ok(path.join(IROH_DIR))
 }
 
 /// Path that leads to a file in the iroh data directory.
@@ -106,7 +106,7 @@ pub fn iroh_cache_root() -> Result<PathBuf> {
     let path = dirs_next::cache_dir().ok_or_else(|| {
         anyhow!("operating environment provides no directory for application data")
     })?;
-    Ok(path.join(&IROH_DIR))
+    Ok(path.join(IROH_DIR))
 }
 
 /// Path that leads to a file in the iroh cache directory.

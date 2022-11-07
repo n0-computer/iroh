@@ -310,10 +310,10 @@ impl<'a> LocalStore<'a> {
         let blob_size = blob.as_ref().len();
 
         let mut batch = WriteBatch::default();
-        batch.put_cf(cf.id, id_key, &id_bytes);
-        batch.put_cf(cf.blobs, &id_bytes, blob);
-        batch.put_cf(cf.metadata, &id_bytes, metadata_bytes);
-        batch.put_cf(cf.graph, &id_bytes, graph_bytes);
+        batch.put_cf(cf.id, id_key, id_bytes);
+        batch.put_cf(cf.blobs, id_bytes, blob);
+        batch.put_cf(cf.metadata, id_bytes, metadata_bytes);
+        batch.put_cf(cf.graph, id_bytes, graph_bytes);
         self.db.write(batch)?;
         observe!(StoreHistograms::PutRequests, start.elapsed().as_secs_f64());
         record!(StoreMetrics::PutBytes, blob_size as u64);
@@ -354,10 +354,10 @@ impl<'a> LocalStore<'a> {
             let blob_size = blob.as_ref().len();
             total_blob_size += blob_size as u64;
 
-            batch.put_cf(cf.id, id_key, &id_bytes);
-            batch.put_cf(cf.blobs, &id_bytes, blob);
-            batch.put_cf(cf.metadata, &id_bytes, metadata_bytes);
-            batch.put_cf(cf.graph, &id_bytes, graph_bytes);
+            batch.put_cf(cf.id, id_key, id_bytes);
+            batch.put_cf(cf.blobs, id_bytes, blob);
+            batch.put_cf(cf.metadata, id_bytes, metadata_bytes);
+            batch.put_cf(cf.graph, id_bytes, graph_bytes);
         }
 
         self.db.write(batch)?;
@@ -480,7 +480,7 @@ impl<'a> LocalStore<'a> {
         for elem in self.get_ids_for_hash(hash)? {
             let id = elem?.id;
             let id_bytes = id.to_be_bytes();
-            if let Some(blob) = self.db.get_pinned_cf(self.blobs, &id_bytes)? {
+            if let Some(blob) = self.db.get_pinned_cf(self.blobs, id_bytes)? {
                 return Ok(Some(blob));
             }
         }
@@ -492,7 +492,7 @@ impl<'a> LocalStore<'a> {
         for elem in self.get_ids_for_hash(hash)? {
             let id = elem?.id;
             let id_bytes = id.to_be_bytes();
-            if let Some(_blob) = self.db.get_pinned_cf(self.blobs, &id_bytes)? {
+            if let Some(_blob) = self.db.get_pinned_cf(self.blobs, id_bytes)? {
                 return Ok(true);
             }
         }
@@ -518,7 +518,7 @@ impl<'a> LocalStore<'a> {
         let id_bytes = id.to_be_bytes();
         // FIXME: can't use pinned because otherwise this can trigger alignment issues :/
         let cf = self;
-        match self.db.get_cf(cf.graph, &id_bytes)? {
+        match self.db.get_cf(cf.graph, id_bytes)? {
             Some(links_id) => {
                 let graph = rkyv::check_archived_root::<GraphV0>(&links_id)
                     .map_err(|e| anyhow!("{:?}", e))?;
@@ -569,8 +569,8 @@ impl<'a> LocalStore<'a> {
                     multihash: cid.hash().to_bytes(),
                 };
                 let metadata_bytes = rkyv::to_bytes::<_, 1024>(&metadata)?; // TODO: is this the right amount of scratch space?
-                batch.put_cf(&cf.id, id_key, &id_bytes);
-                batch.put_cf(&cf.metadata, &id_bytes, metadata_bytes);
+                batch.put_cf(&cf.id, id_key, id_bytes);
+                batch.put_cf(&cf.metadata, id_bytes, metadata_bytes);
                 id
             };
             ids.push(id);
