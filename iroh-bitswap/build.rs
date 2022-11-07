@@ -1,6 +1,6 @@
 fn main() {
     prost_build::Config::new()
-        .bytes(&[
+        .bytes([
             ".bitswap_pb.Message.Block.data",
             ".bitswap_pb.Message.blocks",
         ])

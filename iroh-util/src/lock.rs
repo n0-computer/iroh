@@ -183,7 +183,7 @@ pub fn read_lock_pid(prog_name: &str) -> Result<Pid, LockError> {
 }
 
 fn read_lock(path: &PathBuf) -> Result<Pid, LockError> {
-    let mut file = File::open(&path).map_err(|e| match e.kind() {
+    let mut file = File::open(path).map_err(|e| match e.kind() {
         ErrorKind::NotFound => LockError::NoLock(path.clone()),
         e => LockError::Uncategorized {
             source: anyhow!("{}", e),

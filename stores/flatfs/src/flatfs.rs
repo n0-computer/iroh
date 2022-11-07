@@ -51,7 +51,7 @@ impl Flatfs {
 
         // Make sure the sharding directory exists.
         if !parent_dir.exists() {
-            if let Err(err) = retry(|| fs::create_dir(&parent_dir)) {
+            if let Err(err) = retry(|| fs::create_dir(parent_dir)) {
                 // Directory got already created, that's fine.
                 if err.kind() != io::ErrorKind::AlreadyExists {
                     return Err(err)
