@@ -111,11 +111,8 @@ mod tests {
     use super::*;
     use hex_literal::hex;
     use http::StatusCode;
-    use iroh_resolver::content_loader::FullLoader;
-    use iroh_resolver::content_loader::FullLoaderConfig;
-    use iroh_resolver::content_loader::GatewayUrl;
-    use iroh_rpc_client::Client as RpcClient;
-    use iroh_rpc_client::Config as RpcClientConfig;
+    use iroh_resolver::content_loader::{FullLoader, FullLoaderConfig, GatewayUrl};
+    use iroh_rpc_client::{Client as RpcClient, Config as RpcClientConfig};
 
     #[tokio::test]
     async fn bad_bits_anchor() {
