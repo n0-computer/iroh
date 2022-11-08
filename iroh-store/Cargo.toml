@@ -37,6 +37,7 @@ tracing-subscriber = { version = "0.3.11", features = ["env-filter"] }
 [dev-dependencies]
 criterion = { version = "0.4.0", features = ["async_tokio"] }
 libipld = "0.14.0"
+rayon = "1.5.3"
 tempfile = "3.3.0"
 tokio = { version = "1", features = ["rt", "macros", "rt-multi-thread"] }
 

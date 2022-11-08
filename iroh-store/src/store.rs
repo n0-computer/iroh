@@ -233,6 +233,11 @@ impl Store {
         self.local_store()?.get_links(cid)
     }
 
+    #[tracing::instrument(skip(self))]
+    pub fn consistency_check(&self) -> Result<Vec<String>> {
+        self.local_store()?.consistency_check()
+    }
+
     #[cfg(test)]
     fn get_ids_for_hash(
         &self,
@@ -587,11 +592,28 @@ impl<'a> LocalStore<'a> {
         assert!(id > 0, "this store is full");
         id
     }
+
+    /// Perform an internal consistency check on the store, and return all internal errors found.
+    fn consistency_check(&self) -> anyhow::Result<Vec<String>> {
+        let mut res = Vec::new();
+        let n_meta = self
+            .db
+            .iterator_cf(&self.metadata, IteratorMode::Start)
+            .count();
+        let n_id = self.db.iterator_cf(&self.id, IteratorMode::Start).count();
+        if n_meta != n_id {
+            res.push(format!(
+                "non bijective mapping between cid and id. Metadata and id cfs have different lengths: {} != {}",
+                n_meta, n_id
+            ));
+        }
+        Ok(res)
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::str::FromStr;
+    use std::{str::FromStr, sync::Mutex};
 
     use super::*;
 
@@ -599,9 +621,14 @@ mod tests {
     use iroh_rpc_client::Config as RpcClientConfig;
 
     use cid::multihash::{Code, MultihashDigest};
-    use libipld::{prelude::Encode, IpldCodec};
+    use libipld::{
+        cbor::DagCborCodec,
+        prelude::{Codec, Encode},
+        Ipld, IpldCodec,
+    };
     use tempfile::TempDir;
     const RAW: u64 = 0x55;
+    const DAG_CBOR: u64 = 0x71;
 
     #[tokio::test]
     async fn test_basics() {
@@ -781,6 +808,42 @@ mod tests {
         assert!(store.has_blob_for_hash(&hash)?);
         let actual = store.get_blob_by_hash(&hash)?.map(|x| x.to_vec());
         assert_eq!(actual, Some(expected));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_add_consistency() -> anyhow::Result<()> {
+        use rayon::prelude::*;
+        let leafs = (0..10000u64)
+            .map(|i| Cid::new_v1(RAW, Code::Sha2_256.digest(&i.to_be_bytes())))
+            .collect::<Vec<_>>();
+        let branches = leafs
+            .chunks(100)
+            .map(|links| {
+                let data = Ipld::List(links.iter().cloned().map(Ipld::Link).collect());
+                let data = DagCborCodec.encode(&data).unwrap();
+                let cid = Cid::new_v1(DAG_CBOR, Code::Sha2_256.digest(&data));
+                (cid, data, links.to_vec())
+            })
+            .collect::<Vec<_>>();
+        let (store, _dir) = futures::executor::block_on(test_store())?;
+        let workers = (0..std::thread::available_parallelism()?.get()).collect::<Vec<_>>();
+        let mutex = Arc::new(Mutex::new(()));
+        for branch in branches {
+            // for each batch, do a concurrent insert from as many parallel threads as possible
+            workers
+                .par_iter()
+                .map(|_| {
+                    let store = store.local_store()?;
+                    let (cid, data, links) = branch.clone();
+                    let t = mutex.lock().unwrap();
+                    store.put(cid, &data, links)?;
+                    drop(t);
+                    anyhow::Ok(())
+                })
+                .collect::<anyhow::Result<Vec<_>>>()?;
+        }
+        assert_eq!(Vec::<String>::new(), store.consistency_check()?);
         Ok(())
     }
 }
