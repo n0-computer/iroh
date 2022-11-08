@@ -72,7 +72,7 @@ features = ["std", "multihash-impl", "identity", "sha2"]
 
 [dev-dependencies]
 caches = "0.2.2"
-criterion = "0.3"
+criterion = "0.4"
 
 [features]
 default = ["rpc-grpc", "rpc-mem"]
