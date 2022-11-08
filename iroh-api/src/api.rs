@@ -2,8 +2,6 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use crate::config::{Config, CONFIG_FILE_NAME, ENV_PREFIX};
-#[cfg(feature = "testing")]
-use crate::p2p::MockP2p;
 use crate::P2pApi;
 use crate::{AddEvent, IpfsPath};
 use anyhow::{ensure, Context, Result};
