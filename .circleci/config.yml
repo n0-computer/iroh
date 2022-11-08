@@ -363,13 +363,14 @@ jobs:
           arch: "x86_64"
       - set-env-path:
           arch: "x86_64"
-      - setup-sccache:
-          arch: "x86_64"
-      - restore-sccache-cache
+      # - setup-sccache:
+      #     arch: "x86_64"
+      # - restore-sccache-cache
       - aws-cli/setup:
           profile-name: default
       - run:
           name: build x86_64 release
+          no_output_timeout: 60m
           command: cargo build --profile ci -v
       - push-to-s3:
           path: ./target/ci/
@@ -379,7 +380,7 @@ jobs:
           path: ./target/ci/
           os: linux
           arch: amd64
-      - save-sccache-cache
+      # - save-sccache-cache
 
   build_release_aarch64:
     executor: arm-executor
@@ -390,13 +391,14 @@ jobs:
           arch: "aarch_64"
       - set-env-path:
           arch: "aarch64"
-      - setup-sccache:
-          arch: "aarch64"
-      - restore-sccache-cache
+      # - setup-sccache:
+      #     arch: "aarch64"
+      # - restore-sccache-cache
       - aws-cli/setup:
           profile-name: default
       - run:
           name: build aarch64 release
+          no_output_timeout: 60m
           command: cargo build --profile ci -v
       - push-to-s3:
           path: ./target/ci/
@@ -406,7 +408,7 @@ jobs:
           path: ./target/ci/
           os: linux
           arch: aarch64
-      - save-sccache-cache
+      # - save-sccache-cache
 
   build_release_osx:
     #executor: mac-executor

@@ -9,6 +9,53 @@ of the protocol.
 
 For more info see https://iroh.computer/docs";
 
+pub const ADD_LONG_DESCRIPTION: &str = "
+WARNING 1: IROH CURRENTLY PROVIDES NO WAY TO REMOVE CONTENT ONCE ADDED. 
+This will be addressed in a future release.
+
+Add copies the file or directory specified by <PATH> into the iroh store,
+splitting the input file into a tree of immutable blocks. Each block is labeled
+by the hash of its content. The final output of the add command is the hash of
+the root of the tree, which contains references to all other blocks:
+
+  > iroh add cat.jpg
+  [1/2] Calculating size...
+  [2/2] Importing content 643 B...
+  /ipfs/bafybeihjgu5w6wbbxqevdgccj5xm453dbzpkwmkyoepvs3vh6wft4uvf2q
+
+The 'bafybei...' text after /ipfs/ is a Content IDentifier (or CID). The CID for 
+different things will always be a different set of characters. Once content is
+in IPFS, we refer to it by the CID. The opposite of the add command is the get 
+command, which accepts a CID and turns it back into files or directories:
+
+  > iroh get /ipfs/bafybeihjgu5w6wbbxqevdgccj5xm453dbzpkwmkyoepvs3vh6wft4uvf2q
+  Saving file(s) to bafybeihjgu5w6wbbxqevdgccj5xm453dbzpkwmkyoepvs3vh6wft4uvf2q
+
+This will create a directory with our cat image inside. We can also make this a 
+little nicer for humans by getting just the cat picture:
+
+  > iroh get /ipfs/bafybeihjgu5w6wbbxqevdgccj5xm453dbzpkwmkyoepvs3vh6wft4uvf2q/cat.jpg cat.jpg
+
+The stored result of add is a 'MerkleDAG'. Merkle proofs (hashes) are a fast
+method of proving and checking data inclusion, and the tree formed by chunking
+the input into blocks is always a directed acyclic graph (DAG). These MerkleDAGs
+can be provably checked for tamper resistance by anyone who fetches all blocks
+in the tree, which means MerkleDAGs can be provided by anyone, without concern
+for tampering.
+
+By default all content added to iroh is available to the configured network, and
+the default network is the public IPFS network. We can use a HTTPS gateway 
+hosted at https://gateway.lol to fetch the content from our local node:
+
+  > curl https://gateway.lol/ipfs/bafybeihjgu5w6wbbxqevdgccj5xm453dbzpkwmkyoepvs3vh6wft4uvf2q/cat.jpg
+
+Implementation Interop:
+Iroh does *not* produce the same hashes as other IPFS implementations when given
+the same data. Iroh & other valid implementations can read each other's data,
+but if given the same file, Iroh will almost certianly produce a different hash
+value.
+";
+
 pub const START_LONG_DESCRIPTION: &str = "
 Iroh start kicks off 'daemons' on your local machine: long-running processes 
 that make iroh work. Iroh requires a running daemon to do anything meaningful 
@@ -122,7 +169,20 @@ protocol. When provided with a peer ID, the address is looked up on the
 Network's Distributed Hash Table (DHT) before connecting to the node. When 
 provided with a multiaddress, the connection is dialed directly.
 
-Providing no <ADDR> argument will return your local node information.";
+Providing no <ADDR> argument will return your local node information.
+
+lookup will output 6 types of the info about the peer:
+
+  Peer ID             - the identifier of the peer
+  Agent Version       - software identifier similar to a web browser's user agent
+  Protocol Version    - broad identifier for the peer & it's network
+  Observed Addresses  - the peer's best guess at it's own public address(es)
+                        based on feedback from other peers
+  Listening Addresses - address this peer is listening for connections on
+  Protocols           - identifiers for protocols this peer speaks
+
+This command is a direct port of libp2p-lookup by mxinden:
+https://github.com/mxinden/libp2p-lookup";
 
 pub const P2P_PEERS_LONG_DESCRIPTION: &str = "
 'p2p peers' lists the set of peer addresses this node is currently connected to.

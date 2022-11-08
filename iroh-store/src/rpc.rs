@@ -6,7 +6,8 @@ use bytes::BytesMut;
 use cid::Cid;
 use iroh_rpc_types::store::{
     GetLinksRequest, GetLinksResponse, GetRequest, GetResponse, GetSizeRequest, GetSizeResponse,
-    HasRequest, HasResponse, PutRequest, Store as RpcStore, StoreServerAddr, VersionResponse,
+    HasRequest, HasResponse, PutManyRequest, PutRequest, Store as RpcStore, StoreServerAddr,
+    VersionResponse,
 };
 use tracing::info;
 
@@ -29,16 +30,30 @@ impl RpcStore for Store {
     async fn put(&self, req: PutRequest) -> Result<()> {
         let cid = cid_from_bytes(req.cid)?;
         let links = links_from_bytes(req.links)?;
-        let res = self.put(cid, req.blob, links).await?;
+        let res = self.put(cid, req.blob, links)?;
 
         info!("store rpc call: put cid {}", cid);
         Ok(res)
     }
 
+    #[tracing::instrument(skip(self, req))]
+    async fn put_many(&self, req: PutManyRequest) -> Result<()> {
+        let req = req
+            .blocks
+            .into_iter()
+            .map(|req| {
+                let cid = cid_from_bytes(req.cid)?;
+                let links = links_from_bytes(req.links)?;
+                Ok((cid, req.blob, links))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        self.put_many(req)
+    }
+
     #[tracing::instrument(skip(self))]
     async fn get(&self, req: GetRequest) -> Result<GetResponse> {
         let cid = cid_from_bytes(req.cid)?;
-        if let Some(res) = self.get(&cid).await? {
+        if let Some(res) = self.get(&cid)? {
             Ok(GetResponse {
                 data: Some(BytesMut::from(&res[..]).freeze()),
             })
@@ -50,7 +65,7 @@ impl RpcStore for Store {
     #[tracing::instrument(skip(self))]
     async fn has(&self, req: HasRequest) -> Result<HasResponse> {
         let cid = cid_from_bytes(req.cid)?;
-        let has = self.has(&cid).await?;
+        let has = self.has(&cid)?;
 
         Ok(HasResponse { has })
     }
@@ -58,7 +73,7 @@ impl RpcStore for Store {
     #[tracing::instrument(skip(self))]
     async fn get_links(&self, req: GetLinksRequest) -> Result<GetLinksResponse> {
         let cid = cid_from_bytes(req.cid)?;
-        if let Some(res) = self.get_links(&cid).await? {
+        if let Some(res) = self.get_links(&cid)? {
             let links = res.into_iter().map(|cid| cid.to_bytes()).collect();
             Ok(GetLinksResponse { links })
         } else {

@@ -1,6 +1,6 @@
 fn main() {
     let mut config = prost_build::Config::new();
-    config.bytes(&[
+    config.bytes([
         ".p2p.BitswapBlock.data",
         ".p2p.BitswapResponse",
         ".p2p.GossipsubPublishRequest.data",

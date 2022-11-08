@@ -12,27 +12,27 @@ testing = ["dep:relative-path"]
 
 [dependencies]
 anyhow = "1.0"
-futures = "0.3.21"
-tokio = { version = "1", features = ["fs", "io-util"] }
-tracing = "0.1.34"
-clap = { version = "4.0.15", features = ["derive"] }
-crossterm = "0.25"
-tonic = "0.8"
-git-version = "0.3.5"
-iroh-metrics = { path = "../iroh-metrics", default-features = false, features = ["rpc-grpc"] }
-iroh-api = { path = "../iroh-api"}
-relative-path = { version = "1.7.2", optional = true }
 async-stream = "0.3.3"
-indicatif = "0.17.1"
-iroh-util = { path = "../iroh-util"}
-which = "4.3.0"
-sysinfo = "0.26.4"
-iroh-localops = { path = "../iroh-localops" }
+clap = { version = "4.0.15", features = ["derive"] }
+config = "0.13.1"
 console = { version = "0.15", default-features = false }
+crossterm = "0.25"
+futures = "0.3.21"
+git-version = "0.3.5"
+indicatif = "0.17.1"
+iroh-api = { path = "../iroh-api"}
+iroh-localops = { path = "../iroh-localops" }
+iroh-metrics = { path = "../iroh-metrics", default-features = false, features = ["rpc-grpc"] }
+iroh-util = { path = "../iroh-util"}
+relative-path = { version = "1.7.2", optional = true }
+serde = { version = "1.0", features = ["derive"] }
+sysinfo = "0.26.4"
+tokio = { version = "1", features = ["fs", "io-util"] }
+tonic = "0.8"
+tracing = "0.1.34"
+which = "4.3.0"
 
 [dev-dependencies]
-trycmd = "0.13.7"
-iroh-api = { path = "../iroh-api", features = ["testing"] }
 # We want to compile `iroh` in test mode, but we can't specify that yet:
 # https://github.com/rust-lang/cargo/issues/1982
 # This is a workaround for enabling features only during testing: 
@@ -42,3 +42,5 @@ iroh-api = { path = "../iroh-api", features = ["testing"] }
 # Unfortunately this also turns on the feature during development, which may be
 # confusing. See the comments in `run.rs` surrounding this.
 iroh = { path = ".", features = ["testing"] }
+iroh-api = { path = "../iroh-api", features = ["testing"] }
+trycmd = "0.14.1"

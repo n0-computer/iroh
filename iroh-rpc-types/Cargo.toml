@@ -9,19 +9,18 @@ description = "RPC type definitions for iroh"
 
 
 [dependencies]
+anyhow = "1.0.58"
+async-trait = "0.1.56"
+futures = "0.3.24"
+iroh-metrics = { path = "../iroh-metrics", default-features = false }
+paste = "1.0.7"
 prost = "0.11"
 prost-types = "0.11.1"
-async-trait = "0.1.56"
-anyhow = "1.0.58"
 serde_with = "2.0.0"
-iroh-metrics = { path = "../iroh-metrics", default-features = false }
-
-tonic = { version = "0.8", optional = true }
-tonic-health = { version = "0.7", optional = true }
 tokio = { version = "1", features = ["net", "sync"] }
 tokio-stream = { version = "0.1.9", optional = true, features = ["net"] }
-paste = "1.0.7"
-futures = "0.3.24"
+tonic = { version = "0.8", optional = true }
+tonic-health = { version = "0.7", optional = true }
 
 [build-dependencies]
 prost-build = "0.11.1"

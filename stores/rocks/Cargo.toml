@@ -9,12 +9,12 @@ description = "Implementation of RocksDB based Store"
 
 [dependencies]
 anyhow = "1.0.57"
-rocksdb = "0.19.0"
 flatfs-store = { path = "../flatfs", optional = true }
+rocksdb = "0.19.0"
 
 [dev-dependencies]
-tempfile = "3.3.0"
 flatfs-store = { path = "../flatfs" }
+tempfile = "3.3.0"
 
 
 [features]

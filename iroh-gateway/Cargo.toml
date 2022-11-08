@@ -8,62 +8,58 @@ description = "IPFS gateway"
 repository = "https://github.com/dignifiedquire/iroh"
 
 [dependencies]
+anyhow = "1"
+async-recursion = "1.0.0"
+async-trait = "0.1.56"
+axum = "0.5.15"
+bytes = "1.1.0"
+cid = "0.8.6"
+clap = { version = "4.0.9", features = ["derive"] }
+config = "0.13.1"
+futures = "0.3.21"
+git-version = "0.3.5"
+handlebars = "4"
+headers = "0.3.7"
+hex = "0.4.3"
+hex-literal = "0.3.4"
+http = "0.2"
+http-body = "0.4.5"
+http-serde = "1.1.0"
+hyper = "0.14.19"
+iroh-car = { path = "../iroh-car" }
+iroh-metrics = { path = "../iroh-metrics", default-features = false, features = ["gateway"] }
+iroh-resolver = { path = "../iroh-resolver" }
 iroh-rpc-client = { path = "../iroh-rpc-client", default-features = false }
 iroh-rpc-types = { path = "../iroh-rpc-types", default-features = false }
-
-cid = "0.8.6"
-
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "process", "fs", "io-util"] }
-axum = "0.5.15"
-clap = { version = "4.0.9", features = ["derive"] }
+iroh-util = { path = "../iroh-util" }
+libp2p = { version = "0.50", default-features = false }
+mime = "0.3"
+mime_classifier = "0.0.1"
+mime_guess = "2.0.4"
+names = { version = "0.14.0", default-features = false }
+once_cell = "1.15.0"
+opentelemetry = { version = "0.18.0", features = ["rt-tokio"] }
+phf = { version = "0.11", features = ["macros"] }
+rand = "0.8.5"
+reqwest = { version = "0.11.10", features = ["rustls-tls"], default-features = false}
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0.78"
 serde_qs = "0.10.1"
-tower = { version = "0.4", features = ["util", "timeout", "load-shed", "limit"] }
-mime_guess = "2.0.4"
-iroh-metrics = { path = "../iroh-metrics", default-features = false, features = ["gateway"] }
-tracing = "0.1.33"
-names = { version = "0.14.0", default-features = false }
-git-version = "0.3.5"
-rand = "0.8.5"
-tracing-opentelemetry = "0.18"
-opentelemetry = { version = "0.18.0", features = ["rt-tokio"] }
+sha2 = { version = "0.10", default-features = false }
 time = "0.3.9"
-headers = "0.3.7"
-hyper = "0.14.19"
-libp2p = { version = "0.50", default-features = false }
-iroh-util = { path = "../iroh-util" }
-anyhow = "1"
-futures = "0.3.21"
-tracing-subscriber = { version = "0.3.11", features = ["env-filter"] }
-iroh-resolver = { path = "../iroh-resolver" }
-iroh-car = { path = "../iroh-car" }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "process", "fs", "io-util"] }
 tokio-util = { version = "0.7", features = ["io"] }
-bytes = "1.1.0"
-tower-layer = { version = "0.3" }
+toml = "0.5.9"
+tower = { version = "0.4", features = ["util", "timeout", "load-shed", "limit"] }
 tower-http = { version = "0.3", features = ["trace", "compression-full"] }
-http = "0.2"
-async-recursion = "1.0.0"
-handlebars = "4"
+tower-layer = { version = "0.3" }
+tracing = "0.1.33"
+tracing-opentelemetry = "0.18"
+tracing-subscriber = { version = "0.3.11", features = ["env-filter"] }
 url = "2.2.2"
 urlencoding = "2.1.0"
-dirs = "4.0.0"
-toml = "0.5.9"
-http-serde = "1.1.0"
-config = "0.13.1"
-async-trait = "0.1.56"
-sha2 = { version = "0.10", default-features = false }
-reqwest = { version = "0.11.10", features = ["rustls-tls"], default-features = false}
-hex-literal = "0.3.4"
-hex = "0.4.3"
-http-body = "0.4.5"
-mime_classifier = "0.0.1"
-mime = "0.3"
-phf = { version = "0.11", features = ["macros"] }
-once_cell = "1.15.0"
 
 [dev-dependencies]
-axum-macros = "0.2.0" # use #[axum_macros::debug_handler] for better error messages on handlers
 iroh-store = { path = "../iroh-store" }
 tempfile = "3.3.0"
 

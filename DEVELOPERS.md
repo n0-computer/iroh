@@ -23,7 +23,9 @@ machine:
 
 #### Protobuf compiler
 
-[Protobuf compiler](https://github.com/protocolbuffers/protobuf#protocol-compiler-installation): Download it from the [Protobuf Releases page](https://github.com/protocolbuffers/protobuf/releases); you need to get the `protoc-` release for your platform. To install, make sure the `protoc` compiler is on your path. If you get errors during build about `experimental_allow_proto3_optional` or inability to import `/google/protobuf/empty.proto` you're likely using a version of the compiler that's too old.
+[Protobuf compiler](https://github.com/protocolbuffers/protobuf#protocol-compiler-installation): Download it from the [Protobuf Releases page](https://github.com/protocolbuffers/protobuf/releases)
+
+You need to get the `protoc-` release for your platform (they can be found at the very bottom of the list of release binaries). To install, make sure the `protoc` compiler is on your path. If you get errors during build about `experimental_allow_proto3_optional` or inability to import `/google/protobuf/empty.proto` you're likely using a version of the compiler that's too old.
 
 It may be that Rust Analyzer does not find the protobuf compiler even after installation. You can point it in the right direction using a configuration like this:
 
@@ -55,7 +57,21 @@ For example:
 $ cargo run -p iroh-p2p
 $ cargo run -p iroh-gateway
 $ cargo run -p iroh-store
-$ cargo run -p iroh-ctl -- status --watch
+$ cargo run -p iroh -- status --watch
+```
+
+If you want to use the `iroh` binary to start and stop the services, you can
+use `xtask` to move previously built binaries to the correct bin:
+
+```shell
+# build the binaries
+$ cargo build
+
+# or build the binaries for release:
+$ cargo build --release
+
+# move the binaries to the correct location
+$ cargo xtask dev-install
 ```
 
 ## <a name="rules"></a> Coding Rules
@@ -76,11 +92,17 @@ Setting up a [git hook][git-hook] to run these commands can save you many headac
 cargo clippy --workspace --examples --tests --benches && cargo test --workspace --examples
 ```
 
+## <a name="dependecies"></a> Dependencies
+
+Any crate added to iroh will need to use a license compatible with ours.  Any PR that introduces a new crate will require additional review time to audit the crate being introduced, including rationale on why you chose *this* crate, and what alternatives you considered willl speed up the review process.
+
+Crate lists in `Cargo.toml` files must be kept alphabetically sorted.
+
 ## <a name="prs"></a> Pull Request Guidelines
 
 The tests must pass and you must get an approval from someone on the Iroh team before you can merge your PR.
 
-Depending on your permissions in the `iroh` repo, you may not have the the ability to "request a review". Instead, please tag your selected reviewers in the PR itself (using the `@`) and specify that you would like them to review. If you are apart of our discord community, you can and should ping your reviewer(s) there as well.
+Depending on your permissions in the `iroh` repo, you may not have the the ability to "request a review". Instead, please tag your selected reviewers in the PR itself (using the `@`) and specify that you would like them to review. If you are a member of our discord community, you can and should ping your reviewer(s) there as well.
 
 If you don't know who to tag for review, here are some good guidelines. For any markdown documentations changes, tag `ramfox` or `b5`. If your PR solves an issue that someone else created, tag that person in review. If it's an issue you have created, tag team members who have been discussing the issue. Otherwise, create the PR and note that you aren't sure who to tag! Someone will drop in to give you guidance. If you are apart of our discord community, ask who should be tagged in the `iroh` channel.
 
@@ -141,7 +163,7 @@ Must be one of the following:
 
 ### Scope
 
-The scope could be anything specifying place of the commit change. For example, if I am refactoring something in the `iroh-ctl` package, I may start my commit with "refactor(iroh-ctl)".
+The scope could be anything specifying place of the commit change. For example, if I am refactoring something in the `iroh` package, I may start my commit with "refactor(iroh)".
 
 You can use `*` when the change affects more than a single scope.
 

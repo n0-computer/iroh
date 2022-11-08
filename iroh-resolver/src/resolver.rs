@@ -12,7 +12,7 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use cid::multihash::{Code, MultihashDigest};
 use cid::Cid;
-use futures::{Future, Stream};
+use futures::{Future, Stream, TryStreamExt};
 use iroh_metrics::inc;
 use libipld::codec::Encode;
 use libipld::error::{InvalidMultihash, UnsupportedMultihash};
@@ -33,7 +33,7 @@ use iroh_metrics::{
 use crate::codecs::Codec;
 use crate::content_loader::ContentLoader;
 use crate::unixfs::{
-    poll_read_buf_at_pos, DataType, UnixfsChildStream, UnixfsContentReader, UnixfsNode,
+    poll_read_buf_at_pos, DataType, Link, UnixfsChildStream, UnixfsContentReader, UnixfsNode,
 };
 
 pub const IROH_STORE: &str = "iroh-store";
@@ -782,30 +782,32 @@ impl<T: ContentLoader> Resolver<T> {
             loop {
                 if let Some((current_output_path, current_out)) = blocks.pop_front() {
                     let current = current_out?;
-                    // if we have a unixfs::file, we have already followed these links when we
-                    // called this.resolve on the block, no need to double fetch the file
-                    // TODO(ramfox): it would be good to go through the possible
-                    // types that we are willing to support & try and understand if anything  other
-                    // than UnixfsNode::Hamt & UnixfsNode::Directory need to be resolved
-                    // recursively. EG, if we have a dag cbor block, are we expected to resolve all
-                    // the links the way we do with a unixfs dir
-                    if current.metadata().unixfs_type == Some(UnixfsType::File){
+                    if !current.is_dir() {
                         yield (current_output_path, current);
-                        continue;
+                        continue
                     }
-                    let links = current.named_links()?;
+
+                    // TODO(ramfox): we may want to just keep the stream and iterate over the links
+                    // that way, rather than gathering and then chunking again
+                    let links: Result<Vec<Link>> = current
+                        .unixfs_read_dir(&this, OutMetrics::default())?
+                        .expect("already know this is a directory")
+                        .try_collect()
+                        .await;
+                    let links = links?;
                     // TODO: configurable limit
                     for link_chunk in links.chunks(8) {
                         let next = futures::future::join_all(
-                            link_chunk.iter().map(|(link_name, link)| {
+                            link_chunk.iter().map(|link| {
                                 let this = this.clone();
                                 let mut this_path = current_output_path.clone();
-                                match link_name {
-                                    None => this_path.push(link.to_string()),
+                                let name = link.name.clone();
+                                match name {
+                                    None => this_path.push(link.cid.to_string()),
                                     Some(p) =>  this_path.push(p),
                                 };
                                 async move {
-                                    (this_path, this.resolve(Path::from_cid(*link)).await)
+                                    (this_path, this.resolve(Path::from_cid(link.cid)).await)
                                 }
                             })
                         ).await;
@@ -995,13 +997,7 @@ impl<T: ContentLoader> Resolver<T> {
             let mut current = node;
             let mut resolved_path = vec![cid];
 
-            for part in tail {
-                // TODO(ramfox): we currently add an empty string to the path.tail vec
-                // when the original path ends in a "/". This is causing errors because
-                // we attempt to index into the data using an empty string, which fails
-                if part.is_empty() {
-                    continue;
-                }
+            for part in tail.iter().filter(|s| !s.is_empty()) {
                 self.inner_resolve(&mut current, &mut resolved_path, part, &mut ctx)
                     .await?;
             }
@@ -1098,13 +1094,7 @@ impl<T: ContentLoader> Resolver<T> {
         let mut current = root;
         let mut codec = codec;
 
-        for part in path {
-            // TODO(ramfox): we currently add an empty string to the path.tail vec
-            // when the original path ends in a "/". This is causing errors because
-            // we attempt to index into the data using an empty string, which fails
-            if part.is_empty() {
-                continue;
-            }
+        for part in path.iter().filter(|s| !s.is_empty()) {
             if let libipld::Ipld::Link(c) = current {
                 (codec, current) = self.load_ipld_link(c, ctx).await?;
             }

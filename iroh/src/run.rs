@@ -4,12 +4,14 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use console::style;
+use crossterm::style::Stylize;
 use futures::StreamExt;
 use indicatif::{ProgressBar, ProgressStyle};
-use iroh_api::{AddEvent, Api, ApiExt, IpfsPath, Iroh};
+use iroh_api::{AddEvent, Api, IpfsPath, ServiceStatus};
 use iroh_metrics::config::Config as MetricsConfig;
-use iroh_util::human;
+use iroh_util::{human, iroh_config_path, make_config};
 
+use crate::config::{Config, CONFIG_FILE_NAME, ENV_PREFIX};
 use crate::doc;
 #[cfg(feature = "testing")]
 use crate::fixture::get_fixture_api;
@@ -31,14 +33,6 @@ pub struct Cli {
     command: Commands,
 }
 
-impl Cli {
-    fn make_overrides_map(&self) -> HashMap<String, String> {
-        let mut map = HashMap::new();
-        map.insert("metrics.debug".to_string(), (self.no_metrics).to_string());
-        map
-    }
-}
-
 #[derive(Subcommand, Debug, Clone)]
 enum Commands {
     P2p(P2p),
@@ -52,6 +46,9 @@ enum Commands {
         /// Do not wrap added content with a directory
         #[clap(long)]
         no_wrap: bool,
+        /// Don't provide added content to the network
+        #[clap(long)]
+        offline: bool,
     },
     #[clap(about = "Fetch IPFS content and write it to disk")]
     #[clap(after_help = doc::GET_LONG_DESCRIPTION )]
@@ -85,69 +82,79 @@ enum Commands {
 }
 
 impl Cli {
-    // Rust analyzer sees this function as unused, because in development
-    // mode the `testing` feature is enabled. This needs to be done in order
-    // to compile the CLI with the testing feature, which is needed to create
-    // trycmd tests.
-    #[cfg(not(feature = "testing"))]
     pub async fn run(&self) -> Result<()> {
-        // extracted the function body into its own function so it's
-        // not all considered unused
-        self.run_impl().await
-    }
+        let config_path = iroh_config_path(CONFIG_FILE_NAME)?;
+        // TODO(b5): allow suppliying some sort of config flag. maybe --config-cli?
+        let sources = vec![Some(config_path)];
+        let config = make_config(
+            // default
+            Config::new(),
+            // potential config files
+            sources,
+            // env var prefix for this config
+            ENV_PREFIX,
+            // map of present command line arguments
+            // args.make_overrides_map(),
+            HashMap::<String, String>::new(),
+        )
+        .unwrap();
 
-    // this version of the CLI runs in testing mode only
-    #[cfg(feature = "testing")]
-    pub async fn run(&self) -> Result<()> {
-        let api = get_fixture_api();
-        self.cli_command(&api).await
-    }
-
-    // this is a separate function and marked `allow[unused]` so
-    // that we don't get Rust analyzer unused code warnings, which we do get if
-    // we inline this code inside of run.
-    #[allow(unused)]
-    async fn run_impl(&self) -> Result<()> {
         let metrics_handler = iroh_metrics::MetricsHandle::new(MetricsConfig::default())
             .await
             .expect("failed to initialize metrics");
 
-        let api = Iroh::new(self.cfg.as_deref(), self.make_overrides_map()).await?;
+        #[cfg(feature = "testing")]
+        let api = get_fixture_api();
+        #[cfg(not(feature = "testing"))]
+        let api = iroh_api::Api::new(self.cfg.as_deref(), self.make_overrides_map()).await?;
 
-        self.cli_command(&api).await?;
+        self.cli_command(&config, &api).await?;
 
         metrics_handler.shutdown();
 
         Ok(())
     }
 
-    async fn cli_command(&self, api: &impl Api) -> Result<()> {
+    #[cfg(not(feature = "testing"))]
+    fn make_overrides_map(&self) -> HashMap<String, String> {
+        let mut map = HashMap::new();
+        map.insert("metrics.debug".to_string(), (self.no_metrics).to_string());
+        map
+    }
+
+    async fn cli_command(&self, config: &Config, api: &Api) -> Result<()> {
         match &self.command {
             Commands::Add {
                 path,
                 recursive,
                 no_wrap,
+                offline,
             } => {
-                add(api, path, *no_wrap, *recursive).await?;
+                add(api, path, *no_wrap, *recursive, !*offline).await?;
             }
             Commands::Get {
                 ipfs_path: path,
                 output,
             } => {
-                let root_path = api.get(path, output.as_deref()).await?;
+                let blocks = api.get(path)?;
+                let root_path =
+                    iroh_api::fs::write_get_stream(path, blocks, output.as_deref()).await?;
                 println!("Saving file(s) to {}", root_path.to_str().unwrap());
             }
             Commands::P2p(p2p) => run_p2p_command(&api.p2p()?, p2p).await?,
             Commands::Start { service, all } => {
-                let mut svc = &vec![
-                    String::from("store"),
-                    String::from("p2p"),
-                    String::from("gateway"),
-                ];
-                if !*all {
-                    svc = service;
+                let svc = match *all {
+                    true => vec![
+                        String::from("store"),
+                        String::from("p2p"),
+                        String::from("gateway"),
+                    ],
+                    false => match service.is_empty() {
+                        true => config.start_default_services.clone(),
+                        false => service.clone(),
+                    },
                 };
-                crate::services::start(api, svc).await?;
+                crate::services::start(api, &svc).await?;
             }
             Commands::Status { watch } => {
                 crate::services::status(api, *watch).await?;
@@ -161,7 +168,7 @@ impl Cli {
     }
 }
 
-async fn add(api: &impl Api, path: &Path, no_wrap: bool, recursive: bool) -> Result<()> {
+async fn add(api: &Api, path: &Path, no_wrap: bool, recursive: bool, provide: bool) -> Result<()> {
     if !path.exists() {
         anyhow::bail!("Path does not exist");
     }
@@ -175,13 +182,35 @@ async fn add(api: &impl Api, path: &Path, no_wrap: bool, recursive: bool) -> Res
         );
     }
 
+    let mut steps = 3;
     // we require p2p for adding right now because we don't have a mechanism for
     // hydrating only the root CID to the p2p node for providing if a CID were
     // ingested offline. Offline adding should happen, but this is the current
     // path of least confusion
-    require_services(api, HashSet::from(["store", "p2p"])).await?;
+    let svc_status = require_services(api, HashSet::from(["store"])).await?;
+    match (provide, svc_status.p2p.status()) {
+        (true, ServiceStatus::Down(_status)) => {
+            anyhow::bail!("Add provides content to the IPFS network by default, but the p2p service is not running.\n{}",
+            "hint: try using the --offline flag, or run 'iroh start p2p'".yellow()
+            )
+        }
+        (true, ServiceStatus::Unknown)
+        | (true, ServiceStatus::NotServing)
+        | (true, ServiceStatus::ServiceUnknown) => {
+            anyhow::bail!("Add provides content to the IPFS network by default, but the p2p service is not running.\n{}",
+            "hint: try using the --offline flag, or run 'iroh start p2p'".yellow()
+            )
+        }
+        (true, ServiceStatus::Serving) => {}
+        (false, _) => {
+            steps -= 1;
+        }
+    }
 
-    println!("{} Calculating size...", style("[1/3]").bold().dim());
+    println!(
+        "{} Calculating size...",
+        style(format!("[1/{}]", steps)).bold().dim()
+    );
 
     let pb = ProgressBar::new_spinner();
     let mut total_size: u64 = 0;
@@ -203,7 +232,7 @@ async fn add(api: &impl Api, path: &Path, no_wrap: bool, recursive: bool) -> Res
 
     println!(
         "{} Importing content {}...",
-        style("[2/3]").bold().dim(),
+        style(format!("[2/{}]", steps)).bold().dim(),
         human::format_bytes(total_size)
     );
 
@@ -229,29 +258,33 @@ async fn add(api: &impl Api, path: &Path, no_wrap: bool, recursive: bool) -> Res
     }
     pb.finish_and_clear();
 
-    let pb = ProgressBar::new(cids.len().try_into().unwrap());
     let root = *cids.last().context("File processing failed")?;
-    // remove everything but the root
-    cids.splice(0..cids.len() - 1, []);
-    let rec_str = if cids.len() == 1 { "record" } else { "records" };
-    println!(
-        "{} Providing {} {} to the distributed hash table ...",
-        style("[3/3]").bold().dim(),
-        cids.len(),
-        rec_str,
-    );
-    pb.set_style(
-        ProgressStyle::with_template(
-            "[{elapsed_precise}] {wide_bar} {pos}/{len} ({per_sec}) {msg}",
-        )
-        .unwrap(),
-    );
-    pb.inc(0);
-    for cid in cids {
-        api.provide(cid).await?;
-        pb.inc(1);
+
+    if provide {
+        let pb = ProgressBar::new(cids.len().try_into().unwrap());
+        // remove everything but the root
+        cids.splice(0..cids.len() - 1, []);
+        let rec_str = if cids.len() == 1 { "record" } else { "records" };
+        println!(
+            "{} Providing {} {} to the distributed hash table ...",
+            style(format!("[3/{}]", steps)).bold().dim(),
+            cids.len(),
+            rec_str,
+        );
+        pb.set_style(
+            ProgressStyle::with_template(
+                "[{elapsed_precise}] {wide_bar} {pos}/{len} ({per_sec}) {msg}",
+            )
+            .unwrap(),
+        );
+        pb.inc(0);
+        for cid in cids {
+            api.provide(cid).await?;
+            pb.inc(1);
+        }
+        pb.finish_and_clear();
     }
-    pb.finish_and_clear();
+
     println!("/ipfs/{}", root);
 
     Ok(())
