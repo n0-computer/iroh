@@ -89,10 +89,10 @@ impl Api {
     }
 
     /// High level get, equivalent of CLI `iroh get`.
-    pub fn get<'a>(
-        &'a self,
+    pub fn get(
+        &self,
         ipfs_path: &IpfsPath,
-    ) -> Result<LocalBoxStream<'a, Result<(RelativePathBuf, OutType)>>> {
+    ) -> Result<LocalBoxStream<'static, Result<(RelativePathBuf, OutType)>>> {
         ensure!(
             ipfs_path.cid().is_some(),
             "IPFS path does not refer to a CID"
@@ -119,13 +119,13 @@ impl Api {
                 if out.is_dir() {
                     yield (relative_path, OutType::Dir);
                 } else if out.is_symlink() {
-                    let mut reader = out.pretty(self.resolver.clone(), Default::default(), iroh_resolver::resolver::ResponseClip::NoClip)?;
+                    let mut reader = out.pretty(resolver.clone(), Default::default(), iroh_resolver::resolver::ResponseClip::NoClip)?;
                     let mut target = String::new();
                     reader.read_to_string(&mut target).await?;
                     let target = PathBuf::from(target);
                     yield (relative_path, OutType::Symlink(target));
                 } else {
-                    let reader = out.pretty(self.resolver.clone(), Default::default(), iroh_resolver::resolver::ResponseClip::NoClip)?;
+                    let reader = out.pretty(resolver.clone(), Default::default(), iroh_resolver::resolver::ResponseClip::NoClip)?;
                     yield (relative_path, OutType::Reader(Box::new(reader)));
                 }
             }
