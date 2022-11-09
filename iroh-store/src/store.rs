@@ -1,7 +1,4 @@
-use std::{
-    sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard},
-    thread::available_parallelism,
-};
+use std::{sync::Arc, thread::available_parallelism};
 
 use anyhow::{anyhow, bail, Context, Result};
 use bytes::Bytes;
@@ -13,6 +10,7 @@ use iroh_metrics::{
 };
 use iroh_rpc_client::Client as RpcClient;
 use multihash::Multihash;
+use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use rocksdb::{
     BlockBasedOptions, Cache, ColumnFamily, DBPinnableSlice, Direction, IteratorMode, Options,
     WriteBatch, DB as RocksDb,
@@ -248,7 +246,7 @@ impl Store {
         Ok(WriteStore {
             db,
             cf: ColumnFamilies::new(db)?,
-            next_id: self.inner.next_id.write().unwrap(),
+            next_id: self.inner.next_id.write(),
         })
     }
 
@@ -257,7 +255,7 @@ impl Store {
         Ok(ReadStore {
             db,
             cf: ColumnFamilies::new(db)?,
-            _next_id: self.inner.next_id.read().unwrap(),
+            _next_id: self.inner.next_id.read(),
         })
     }
 
