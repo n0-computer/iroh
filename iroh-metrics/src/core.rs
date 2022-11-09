@@ -36,7 +36,7 @@ pub(crate) struct Core {
 
 impl Default for Core {
     fn default() -> Self {
-        let mut reg = Registry::default();
+        let reg = Registry::default();
         Core {
             enabled: AtomicBool::new(false),
             #[cfg(feature = "gateway")]
