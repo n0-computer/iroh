@@ -1,10 +1,10 @@
 use std::{
+    num::NonZeroUsize,
     task::{Context, Poll},
     time::Duration,
 };
 
 use ahash::AHashMap;
-use caches::{Cache, PutResult};
 use iroh_metrics::{core::MRecorder, inc, p2p::P2PMetrics};
 use libp2p::{
     core::{connection::ConnectionId, transport::ListenerId, ConnectedPoint},
@@ -16,10 +16,11 @@ use libp2p::{
     },
     Multiaddr, PeerId,
 };
+use lru::LruCache;
 
 pub struct PeerManager {
     info: AHashMap<PeerId, Info>,
-    bad_peers: caches::RawLRU<PeerId, ()>,
+    bad_peers: LruCache<PeerId, ()>,
 }
 
 #[derive(Default, Debug, Clone)]
@@ -35,13 +36,13 @@ impl Info {
     }
 }
 
-const DEFAULT_BAD_PEER_CAP: usize = 10 * 4096;
+const DEFAULT_BAD_PEER_CAP: Option<NonZeroUsize> = NonZeroUsize::new(10 * 4096);
 
 impl Default for PeerManager {
     fn default() -> Self {
         PeerManager {
             info: Default::default(),
-            bad_peers: caches::RawLRU::new(DEFAULT_BAD_PEER_CAP).unwrap(),
+            bad_peers: LruCache::new(DEFAULT_BAD_PEER_CAP.unwrap()),
         }
     }
 }
@@ -94,7 +95,7 @@ impl NetworkBehaviour for PeerManager {
         other_established: usize,
     ) {
         if other_established == 0 {
-            let p = self.bad_peers.remove(peer_id);
+            let p = self.bad_peers.pop(peer_id);
             if p.is_some() {
                 inc!(P2PMetrics::BadPeerRemoved);
             }
@@ -150,10 +151,9 @@ impl NetworkBehaviour for PeerManager {
             match error {
                 DialError::ConnectionLimit(_) | DialError::DialPeerConditionFalse(_) => {}
                 _ => {
-                    if PutResult::Put == self.bad_peers.put(peer_id, ()) {
+                    if self.bad_peers.put(peer_id, ()).is_none() {
                         inc!(P2PMetrics::BadPeer);
                     }
-
                     self.info.remove(&peer_id);
                 }
             }
