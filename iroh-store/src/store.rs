@@ -1,8 +1,5 @@
 use std::{
-    sync::{
-        atomic::{AtomicU64, Ordering},
-        Arc,
-    },
+    sync::{Arc, RwLock, RwLockWriteGuard},
     thread::available_parallelism,
 };
 
@@ -33,7 +30,7 @@ pub struct Store {
 
 struct InnerStore {
     content: RocksDb,
-    next_id: AtomicU64,
+    next_id: RwLock<u64>,
     _cache: Cache,
     _rpc_client: RpcClient,
 }
@@ -262,7 +259,7 @@ impl Store {
             blobs: db
                 .cf_handle(CF_BLOBS_V0)
                 .context("missing column family: blobs")?,
-            next_id: &self.inner.next_id,
+            next_id: self.inner.next_id.write().unwrap(),
         })
     }
 }
@@ -278,11 +275,11 @@ struct LocalStore<'a> {
     metadata: &'a ColumnFamily,
     graph: &'a ColumnFamily,
     blobs: &'a ColumnFamily,
-    next_id: &'a AtomicU64,
+    next_id: RwLockWriteGuard<'a, u64>,
 }
 
 impl<'a> LocalStore<'a> {
-    fn put<T: AsRef<[u8]>, L>(&self, cid: Cid, blob: T, links: L) -> Result<()>
+    fn put<T: AsRef<[u8]>, L>(&mut self, cid: Cid, blob: T, links: L) -> Result<()>
     where
         L: IntoIterator<Item = Cid>,
     {
@@ -291,7 +288,6 @@ impl<'a> LocalStore<'a> {
         if self.has(&cid)? {
             return Ok(());
         }
-        let cf = self;
 
         let id = self.next_id();
 
@@ -308,17 +304,17 @@ impl<'a> LocalStore<'a> {
         let metadata_bytes = rkyv::to_bytes::<_, 1024>(&metadata)?; // TODO: is this the right amount of scratch space?
         let id_key = id_key(&cid);
 
-        let children = self.ensure_id_many(links.into_iter(), cf)?;
+        let children = self.ensure_id_many(links.into_iter())?;
 
         let graph = GraphV0 { children };
         let graph_bytes = rkyv::to_bytes::<_, 1024>(&graph)?; // TODO: is this the right amount of scratch space?
         let blob_size = blob.as_ref().len();
 
         let mut batch = WriteBatch::default();
-        batch.put_cf(cf.id, id_key, id_bytes);
-        batch.put_cf(cf.blobs, id_bytes, blob);
-        batch.put_cf(cf.metadata, id_bytes, metadata_bytes);
-        batch.put_cf(cf.graph, id_bytes, graph_bytes);
+        batch.put_cf(self.id, id_key, id_bytes);
+        batch.put_cf(self.blobs, id_bytes, blob);
+        batch.put_cf(self.metadata, id_bytes, metadata_bytes);
+        batch.put_cf(self.graph, id_bytes, graph_bytes);
         self.db.write(batch)?;
         observe!(StoreHistograms::PutRequests, start.elapsed().as_secs_f64());
         record!(StoreMetrics::PutBytes, blob_size as u64);
@@ -326,11 +322,10 @@ impl<'a> LocalStore<'a> {
         Ok(())
     }
 
-    fn put_many(&self, blocks: impl IntoIterator<Item = (Cid, Bytes, Vec<Cid>)>) -> Result<()> {
+    fn put_many(&mut self, blocks: impl IntoIterator<Item = (Cid, Bytes, Vec<Cid>)>) -> Result<()> {
         inc!(StoreMetrics::PutRequests);
         let start = std::time::Instant::now();
         let mut total_blob_size = 0;
-        let cf = self;
 
         let mut batch = WriteBatch::default();
         for (cid, blob, links) in blocks.into_iter() {
@@ -351,7 +346,7 @@ impl<'a> LocalStore<'a> {
             let metadata_bytes = rkyv::to_bytes::<_, 1024>(&metadata)?; // TODO: is this the right amount of scratch space?
             let id_key = id_key(&cid);
 
-            let children = self.ensure_id_many(links.into_iter(), cf)?;
+            let children = self.ensure_id_many(links.into_iter())?;
 
             let graph = GraphV0 { children };
             let graph_bytes = rkyv::to_bytes::<_, 1024>(&graph)?; // TODO: is this the right amount of scratch space?
@@ -359,10 +354,10 @@ impl<'a> LocalStore<'a> {
             let blob_size = blob.as_ref().len();
             total_blob_size += blob_size as u64;
 
-            batch.put_cf(cf.id, id_key, id_bytes);
-            batch.put_cf(cf.blobs, id_bytes, blob);
-            batch.put_cf(cf.metadata, id_bytes, metadata_bytes);
-            batch.put_cf(cf.graph, id_bytes, graph_bytes);
+            batch.put_cf(self.id, id_key, id_bytes);
+            batch.put_cf(self.blobs, id_bytes, blob);
+            batch.put_cf(self.metadata, id_bytes, metadata_bytes);
+            batch.put_cf(self.graph, id_bytes, graph_bytes);
         }
 
         self.db.write(batch)?;
@@ -554,8 +549,8 @@ impl<'a> LocalStore<'a> {
     }
 
     /// Takes a list of cids and gives them ids, which are boths stored and then returned.
-    #[tracing::instrument(skip(self, cids, cf))]
-    fn ensure_id_many<I>(&self, cids: I, cf: &LocalStore) -> Result<Vec<u64>>
+    #[tracing::instrument(skip(self, cids))]
+    fn ensure_id_many<I>(&mut self, cids: I) -> Result<Vec<u64>>
     where
         I: IntoIterator<Item = Cid>,
     {
@@ -563,7 +558,7 @@ impl<'a> LocalStore<'a> {
         let mut batch = WriteBatch::default();
         for cid in cids {
             let id_key = id_key(&cid);
-            let id = if let Some(id) = self.db.get_pinned_cf(cf.id, &id_key)? {
+            let id = if let Some(id) = self.db.get_pinned_cf(self.id, &id_key)? {
                 u64::from_be_bytes(id.as_ref().try_into()?)
             } else {
                 let id = self.next_id();
@@ -574,8 +569,8 @@ impl<'a> LocalStore<'a> {
                     multihash: cid.hash().to_bytes(),
                 };
                 let metadata_bytes = rkyv::to_bytes::<_, 1024>(&metadata)?; // TODO: is this the right amount of scratch space?
-                batch.put_cf(&cf.id, id_key, id_bytes);
-                batch.put_cf(&cf.metadata, id_bytes, metadata_bytes);
+                batch.put_cf(&self.id, id_key, id_bytes);
+                batch.put_cf(&self.metadata, id_bytes, metadata_bytes);
                 id
             };
             ids.push(id);
@@ -586,8 +581,9 @@ impl<'a> LocalStore<'a> {
     }
 
     #[tracing::instrument(skip(self))]
-    fn next_id(&self) -> u64 {
-        let id = self.next_id.fetch_add(1, Ordering::SeqCst);
+    fn next_id(&mut self) -> u64 {
+        let id = *self.next_id;
+        *self.next_id = id + 1;
         // TODO: better handling
         assert!(id > 0, "this store is full");
         id
@@ -834,7 +830,7 @@ mod tests {
             workers
                 .par_iter()
                 .map(|_| {
-                    let store = store.local_store()?;
+                    let mut store = store.local_store()?;
                     let (cid, data, links) = branch.clone();
                     let t = mutex.lock().unwrap();
                     store.put(cid, &data, links)?;
