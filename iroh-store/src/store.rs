@@ -216,7 +216,7 @@ impl Store {
     }
 
     #[tracing::instrument(skip(self))]
-    pub async fn get_size(&self, cid: &Cid) -> Result<Option<usize>> {
+    pub fn get_size(&self, cid: &Cid) -> Result<Option<usize>> {
         self.read_store()?.get_size(cid)
     }
 
@@ -259,6 +259,14 @@ impl Store {
             cf: ColumnFamilies::new(db)?,
             _next_id: self.inner.next_id.read().unwrap(),
         })
+    }
+
+    pub(crate) async fn spawn<T: Send + Sync + 'static>(
+        &self,
+        f: impl FnOnce(Self) -> anyhow::Result<T> + Send + Sync + 'static,
+    ) -> anyhow::Result<T> {
+        let this = self.clone();
+        tokio::task::spawn_blocking(move || f(this)).await?
     }
 }
 
