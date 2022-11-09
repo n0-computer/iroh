@@ -16,8 +16,13 @@
 //! ```shell
 //! cargo criterion -p iroh-p2p
 //! ```
+//!
+//! # Disabled benches
+//!
+//! The bench functions for the `caches` crate are commented out in order not to require a
+//! dependency on the crate.
 
-use caches::Cache;
+// use caches::Cache;
 use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
 use libp2p::PeerId;
 
@@ -26,30 +31,30 @@ const CACHE_SIZE: usize = 10 * 4096;
 
 fn bench_contains_empty(c: &mut Criterion) {
     let mut group = c.benchmark_group("Contains, almost empty cache");
-    group.bench_function("caches", |bencher| {
-        bencher.iter_batched(
-            // setup
-            || {
-                let mut cache = caches::RawLRU::new(CACHE_SIZE).unwrap();
-                let peer = PeerId::random();
-                cache.put(peer, ());
-                for _ in 0..16 {
-                    cache.put(PeerId::random(), ());
-                }
-                let missing = PeerId::random();
-                assert!(cache.contains(&peer));
-                assert!(!cache.contains(&missing));
-                (cache, peer, missing)
-            },
-            // routine
-            |(cache, peer, missing)| {
-                cache.contains(&peer);
-                cache.contains(&missing);
-                cache // drop outside of routine
-            },
-            BatchSize::SmallInput,
-        )
-    });
+    // group.bench_function("caches", |bencher| {
+    //     bencher.iter_batched(
+    //         // setup
+    //         || {
+    //             let mut cache = caches::RawLRU::new(CACHE_SIZE).unwrap();
+    //             let peer = PeerId::random();
+    //             cache.put(peer, ());
+    //             for _ in 0..16 {
+    //                 cache.put(PeerId::random(), ());
+    //             }
+    //             let missing = PeerId::random();
+    //             assert!(cache.contains(&peer));
+    //             assert!(!cache.contains(&missing));
+    //             (cache, peer, missing)
+    //         },
+    //         // routine
+    //         |(cache, peer, missing)| {
+    //             cache.contains(&peer);
+    //             cache.contains(&missing);
+    //             cache // drop outside of routine
+    //         },
+    //         BatchSize::SmallInput,
+    //     )
+    // });
     group.bench_function("lru", |bencher| {
         bencher.iter_batched(
             // setup
@@ -79,30 +84,30 @@ fn bench_contains_empty(c: &mut Criterion) {
 
 fn bench_contains_full(c: &mut Criterion) {
     let mut group = c.benchmark_group("Contains, full cache");
-    group.bench_function("caches", |bencher| {
-        bencher.iter_batched(
-            // setup
-            || {
-                let mut cache = caches::RawLRU::new(CACHE_SIZE).unwrap();
-                for _ in 0..CACHE_SIZE {
-                    cache.put(PeerId::random(), ());
-                }
-                let peer = PeerId::random();
-                cache.put(peer, ());
-                let missing = PeerId::random();
-                assert!(cache.contains(&peer));
-                assert!(!cache.contains(&missing));
-                (cache, peer, missing)
-            },
-            // routine
-            |(cache, peer, missing)| {
-                cache.contains(&peer);
-                cache.contains(&missing);
-                cache // drop outside of routine
-            },
-            BatchSize::LargeInput,
-        )
-    });
+    // group.bench_function("caches", |bencher| {
+    //     bencher.iter_batched(
+    //         // setup
+    //         || {
+    //             let mut cache = caches::RawLRU::new(CACHE_SIZE).unwrap();
+    //             for _ in 0..CACHE_SIZE {
+    //                 cache.put(PeerId::random(), ());
+    //             }
+    //             let peer = PeerId::random();
+    //             cache.put(peer, ());
+    //             let missing = PeerId::random();
+    //             assert!(cache.contains(&peer));
+    //             assert!(!cache.contains(&missing));
+    //             (cache, peer, missing)
+    //         },
+    //         // routine
+    //         |(cache, peer, missing)| {
+    //             cache.contains(&peer);
+    //             cache.contains(&missing);
+    //             cache // drop outside of routine
+    //         },
+    //         BatchSize::LargeInput,
+    //     )
+    // });
     group.bench_function("lru", |bencher| {
         bencher.iter_batched(
             // setup
@@ -132,22 +137,22 @@ fn bench_contains_full(c: &mut Criterion) {
 
 fn bench_put_empty(c: &mut Criterion) {
     let mut group = c.benchmark_group("put, almost empty cache");
-    group.bench_function("caches", |bencher| {
-        bencher.iter_batched(
-            // setup
-            || {
-                let cache = caches::RawLRU::new(CACHE_SIZE).unwrap();
-                let peer_id = PeerId::random();
-                (cache, peer_id)
-            },
-            // routine
-            |(mut cache, peer_id)| {
-                cache.put(peer_id, ());
-                (cache, peer_id) // drop outside of routine
-            },
-            BatchSize::SmallInput,
-        )
-    });
+    // group.bench_function("caches", |bencher| {
+    //     bencher.iter_batched(
+    //         // setup
+    //         || {
+    //             let cache = caches::RawLRU::new(CACHE_SIZE).unwrap();
+    //             let peer_id = PeerId::random();
+    //             (cache, peer_id)
+    //         },
+    //         // routine
+    //         |(mut cache, peer_id)| {
+    //             cache.put(peer_id, ());
+    //             (cache, peer_id) // drop outside of routine
+    //         },
+    //         BatchSize::SmallInput,
+    //     )
+    // });
     group.bench_function("lru", |bencher| {
         bencher.iter_batched(
             // setup
@@ -169,25 +174,25 @@ fn bench_put_empty(c: &mut Criterion) {
 
 fn bench_put_full(c: &mut Criterion) {
     let mut group = c.benchmark_group("put, full cache");
-    group.bench_function("caches", |bencher| {
-        bencher.iter_batched(
-            // setup
-            || {
-                let mut cache = caches::RawLRU::new(CACHE_SIZE).unwrap();
-                for _ in 0..CACHE_SIZE {
-                    cache.put(PeerId::random(), ());
-                }
-                let peer_id = PeerId::random();
-                (cache, peer_id)
-            },
-            // routine
-            |(mut cache, peer_id)| {
-                cache.put(peer_id, ());
-                (cache, peer_id) // drop outside of routine
-            },
-            BatchSize::LargeInput,
-        )
-    });
+    // group.bench_function("caches", |bencher| {
+    //     bencher.iter_batched(
+    //         // setup
+    //         || {
+    //             let mut cache = caches::RawLRU::new(CACHE_SIZE).unwrap();
+    //             for _ in 0..CACHE_SIZE {
+    //                 cache.put(PeerId::random(), ());
+    //             }
+    //             let peer_id = PeerId::random();
+    //             (cache, peer_id)
+    //         },
+    //         // routine
+    //         |(mut cache, peer_id)| {
+    //             cache.put(peer_id, ());
+    //             (cache, peer_id) // drop outside of routine
+    //         },
+    //         BatchSize::LargeInput,
+    //     )
+    // });
     group.bench_function("lru", |bencher| {
         bencher.iter_batched(
             // setup
@@ -212,26 +217,26 @@ fn bench_put_full(c: &mut Criterion) {
 
 fn bench_pop_empty(c: &mut Criterion) {
     let mut group = c.benchmark_group("pop, almost empty cache");
-    group.bench_function("caches", |benches| {
-        benches.iter_batched(
-            // setup
-            || {
-                let mut cache = caches::RawLRU::new(CACHE_SIZE).unwrap();
-                for _ in 0..16 {
-                    cache.put(PeerId::random(), ());
-                }
-                let peer_id = PeerId::random();
-                cache.put(peer_id, ());
-                (cache, peer_id)
-            },
-            // routine
-            |(mut cache, peer_id)| {
-                cache.remove(&peer_id);
-                (cache, peer_id) // drop outside of routine
-            },
-            BatchSize::SmallInput,
-        )
-    });
+    // group.bench_function("caches", |benches| {
+    //     benches.iter_batched(
+    //         // setup
+    //         || {
+    //             let mut cache = caches::RawLRU::new(CACHE_SIZE).unwrap();
+    //             for _ in 0..16 {
+    //                 cache.put(PeerId::random(), ());
+    //             }
+    //             let peer_id = PeerId::random();
+    //             cache.put(peer_id, ());
+    //             (cache, peer_id)
+    //         },
+    //         // routine
+    //         |(mut cache, peer_id)| {
+    //             cache.remove(&peer_id);
+    //             (cache, peer_id) // drop outside of routine
+    //         },
+    //         BatchSize::SmallInput,
+    //     )
+    // });
     group.bench_function("lru", |benches| {
         benches.iter_batched(
             // setup
@@ -256,26 +261,26 @@ fn bench_pop_empty(c: &mut Criterion) {
 }
 fn bench_pop_full(c: &mut Criterion) {
     let mut group = c.benchmark_group("pop, full cache");
-    group.bench_function("caches", |benches| {
-        benches.iter_batched(
-            // setup
-            || {
-                let mut cache = caches::RawLRU::new(CACHE_SIZE).unwrap();
-                for _ in 0..CACHE_SIZE {
-                    cache.put(PeerId::random(), ());
-                }
-                let peer_id = PeerId::random();
-                cache.put(peer_id, ());
-                (cache, peer_id)
-            },
-            // routine
-            |(mut cache, peer_id)| {
-                cache.remove(&peer_id);
-                (cache, peer_id) // drop outside of routine
-            },
-            BatchSize::LargeInput,
-        )
-    });
+    // group.bench_function("caches", |benches| {
+    //     benches.iter_batched(
+    //         // setup
+    //         || {
+    //             let mut cache = caches::RawLRU::new(CACHE_SIZE).unwrap();
+    //             for _ in 0..CACHE_SIZE {
+    //                 cache.put(PeerId::random(), ());
+    //             }
+    //             let peer_id = PeerId::random();
+    //             cache.put(peer_id, ());
+    //             (cache, peer_id)
+    //         },
+    //         // routine
+    //         |(mut cache, peer_id)| {
+    //             cache.remove(&peer_id);
+    //             (cache, peer_id) // drop outside of routine
+    //         },
+    //         BatchSize::LargeInput,
+    //     )
+    // });
     group.bench_function("lru", |benches| {
         benches.iter_batched(
             // setup

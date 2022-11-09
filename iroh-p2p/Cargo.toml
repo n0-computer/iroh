@@ -71,7 +71,6 @@ default-features = false
 features = ["std", "multihash-impl", "identity", "sha2"]
 
 [dev-dependencies]
-caches = "0.2.2"
 criterion = "0.4"
 
 [features]
