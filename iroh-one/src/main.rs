@@ -82,9 +82,8 @@ async fn main() -> Result<()> {
             http_gateways: config
                 .gateway
                 .http_resolvers
-                .clone()
-                .unwrap_or_default()
-                .into_iter()
+                .iter()
+                .flatten()
                 .map(|u| u.parse())
                 .collect::<Result<_>>()?,
             indexer: None, // TODO

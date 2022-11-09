@@ -58,9 +58,8 @@ impl Api {
             FullLoaderConfig {
                 http_gateways: config
                     .http_resolvers
-                    .clone()
-                    .unwrap_or_default()
-                    .into_iter()
+                    .iter()
+                    .flatten()
                     .map(|u| u.parse())
                     .collect::<Result<_>>()
                     .context("invalid gateway url")?,

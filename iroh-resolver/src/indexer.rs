@@ -136,7 +136,7 @@ mod base64_provider {
     {
         let mut bytes = unsigned_varint::encode::u32_buffer();
         unsigned_varint::encode::u32(*t as u32, &mut bytes);
-        serializer.serialize_str(&base64::encode(&bytes))
+        serializer.serialize_str(&base64::encode(bytes))
     }
 
     pub fn deserialize<'de, D>(deserializer: D) -> Result<Transport, D::Error>

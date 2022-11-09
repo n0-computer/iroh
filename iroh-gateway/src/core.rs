@@ -139,10 +139,8 @@ mod tests {
         let loader_config = FullLoaderConfig {
             http_gateways: config
                 .http_resolvers
-                .as_ref()
-                .map(|s| &s[..])
-                .unwrap_or(&[][..])
                 .iter()
+                .flatten()
                 .map(|u| u.parse().unwrap())
                 .collect(),
             indexer: config.indexer_endpoint.as_ref().map(|p| p.parse().unwrap()),
@@ -205,6 +203,7 @@ mod tests {
         core_task.await.unwrap_err();
     }
 
+    // TODO(b5) - refactor to return anyhow::Result<()>
     #[tokio::test]
     async fn fetch_car_recursive() {
         let (store_client_addr, store_task) = spawn_store().await;

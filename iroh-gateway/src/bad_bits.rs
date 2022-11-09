@@ -192,10 +192,8 @@ mod tests {
         let loader_config = FullLoaderConfig {
             http_gateways: config
                 .http_resolvers
-                .as_ref()
-                .map(|s| &s[..])
-                .unwrap_or(&[][..])
                 .iter()
+                .flatten()
                 .map(|u| GatewayUrl::from_str(u).unwrap())
                 .collect(),
             indexer: config.indexer_endpoint.as_ref().map(|p| p.parse().unwrap()),
