@@ -67,6 +67,7 @@ features = [
 
 [dev-dependencies]
 criterion = "0.4"
+rand_chacha = "0.3.1"
 
 [features]
 default = ["rpc-grpc", "rpc-mem"]
