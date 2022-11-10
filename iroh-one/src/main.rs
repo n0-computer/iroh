@@ -15,7 +15,6 @@ use iroh_rpc_client::Client as RpcClient;
 use iroh_rpc_types::Addr;
 use iroh_util::lock::ProgramLock;
 use iroh_util::{iroh_config_path, make_config};
-#[cfg(feature = "uds-gateway")]
 use tokio::sync::RwLock;
 
 #[tokio::main(flavor = "multi_thread")]
