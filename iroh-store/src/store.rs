@@ -10,12 +10,12 @@ use iroh_metrics::{
 };
 use iroh_rpc_client::Client as RpcClient;
 use multihash::Multihash;
-use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use rocksdb::{
     BlockBasedOptions, Cache, ColumnFamily, DBPinnableSlice, Direction, IteratorMode, Options,
     WriteBatch, DB as RocksDb,
 };
 use smallvec::SmallVec;
+use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use tokio::task;
 
 use crate::cf::{GraphV0, MetadataV0, CF_BLOBS_V0, CF_GRAPH_V0, CF_ID_V0, CF_METADATA_V0};
@@ -246,7 +246,7 @@ impl Store {
         Ok(WriteStore {
             db,
             cf: ColumnFamilies::new(db)?,
-            next_id: self.inner.next_id.write(),
+            next_id: self.inner.next_id.write().unwrap(),
         })
     }
 
@@ -255,7 +255,7 @@ impl Store {
         Ok(ReadStore {
             db,
             cf: ColumnFamilies::new(db)?,
-            _next_id: self.inner.next_id.read(),
+            _next_id: self.inner.next_id.read().unwrap(),
         })
     }
 
