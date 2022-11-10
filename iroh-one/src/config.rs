@@ -70,9 +70,8 @@ impl Config {
         RpcClientConfig {
             #[cfg(feature = "uds-gateway")]
             gateway_addr: Some(iroh_rpc_types::Addr::GrpcUds(path)),
-            // TODO(ramfox): not sure what the correct option is when not running a uds gateway
             #[cfg(not(feature = "uds-gateway"))]
-            gateway_addr: None,
+            gateway_addr: Some("grpc://0.0.0.0:4400".parse().unwrap()),
             p2p_addr: None,
             store_addr: None,
             channels: Some(1),
