@@ -148,7 +148,7 @@ jobs:
         OBJC_DISABLE_INITIALIZE_FORK_SAFETY: "YES"
       with:
         command: test
-        args: -j 4 --workspace --all-features --examples --benches --bins
+        args: -j 2 --workspace --all-features --examples --benches --bins
 
     - name: clippy
       uses: actions-rs/cargo@v1
