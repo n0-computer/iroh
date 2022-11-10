@@ -1,5 +1,6 @@
 use config::{ConfigError, Map, Source, Value};
 use iroh_metrics::config::Config as MetricsConfig;
+use iroh_resolver::indexer::CID_CONTACT;
 use iroh_rpc_client::Config as RpcClientConfig;
 use iroh_util::insert_into_config_map;
 use serde::{Deserialize, Serialize};
@@ -14,6 +15,8 @@ pub const ENV_PREFIX: &str = "IROH_CTL";
 pub struct Config {
     pub rpc_client: RpcClientConfig,
     pub metrics: MetricsConfig,
+    pub http_resolvers: Option<Vec<String>>,
+    pub indexer_endpoint: Option<String>,
 }
 
 impl Default for Config {
@@ -21,6 +24,8 @@ impl Default for Config {
         Self {
             rpc_client: RpcClientConfig::default_grpc(),
             metrics: Default::default(),
+            http_resolvers: None,
+            indexer_endpoint: Some(CID_CONTACT.into()),
         }
     }
 }
@@ -33,6 +38,13 @@ impl Source for Config {
         let mut map: Map<String, Value> = Map::new();
         insert_into_config_map(&mut map, "rpc_client", self.rpc_client.collect()?);
         insert_into_config_map(&mut map, "metrics", self.metrics.collect()?);
+        if let Some(http_resolvers) = &self.http_resolvers {
+            insert_into_config_map(&mut map, "http_resolvers", http_resolvers.clone());
+        }
+        if let Some(indexer_endpoint) = &self.indexer_endpoint {
+            insert_into_config_map(&mut map, "indexer_endpoint", indexer_endpoint.clone());
+        }
+
         Ok(map)
     }
 }
@@ -54,6 +66,16 @@ mod tests {
             "metrics".to_string(),
             Value::new(None, default.metrics.collect().unwrap()),
         );
+        expect.insert(
+            "indexer_endpoint".to_string(),
+            Value::new(None, default.indexer_endpoint.clone()),
+        );
+
+        expect.insert(
+            "http_resolvers".to_string(),
+            Value::new(None, default.http_resolvers.clone()),
+        );
+
         let got = default.collect().unwrap();
 
         for key in got.keys() {

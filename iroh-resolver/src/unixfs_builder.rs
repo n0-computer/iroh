@@ -737,10 +737,10 @@ async fn make_dir_from_path<P: Into<PathBuf>>(path: P) -> Result<Directory> {
 
 #[cfg(test)]
 mod tests {
-    use crate::resolver::{ContentLoader, Out, OutMetrics, Resolver};
+    use crate::content_loader::ContentLoader;
+    use crate::resolver::{Out, OutMetrics, Resolver, ResponseClip};
 
     use super::*;
-    use crate::resolver::ResponseClip;
     use anyhow::{Context, Result};
     use futures::TryStreamExt;
     use proptest::prelude::*;

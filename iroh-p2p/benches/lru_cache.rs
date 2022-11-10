@@ -5,7 +5,13 @@
 //!
 //! # Running the benchmarks
 //!
-//! Install `cargo-criterion`:
+//! You can run the benchmarks either by directly using cargo:
+//!
+//! ```shell
+//!    cargo bench -p iroh-p2p
+//! ```
+//!
+//! Or by installing `cargo-criterion`, which gives you slightly prettier output:
 //!
 //! ```shell
 //! cargo install cargo-criterion
@@ -20,7 +26,10 @@
 use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
 use libp2p::PeerId;
 
-// The size of the cache to make.  Taken from behaviour::peer_manager::DEFAULT_BAD_PEER_CAP.
+/// The size of the cache to make.
+///
+/// Taken from behaviour::peer_manager::DEFAULT_BAD_PEER_CAP, but that's not `pub` (nor does
+/// it need to be).
 const CACHE_SIZE: usize = 10 * 4096;
 
 fn bench_contains_empty(c: &mut Criterion) {
