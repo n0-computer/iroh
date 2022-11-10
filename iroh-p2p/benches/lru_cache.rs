@@ -5,7 +5,7 @@
 //!
 //! # Running the benchmarks
 //!
-//! You can run the benchmarks using either by directly using cargo:
+//! You can run the benchmarks either by directly using cargo:
 //!
 //! ```shell
 //!    cargo bench -p iroh-p2p
