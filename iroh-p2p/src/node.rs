@@ -987,9 +987,12 @@ async fn load_identity<S: Storage>(kc: &mut Keychain<S>) -> Result<Keypair> {
 mod tests {
     use crate::keys::{Keypair, MemoryStorage};
 
+    use bytes::Bytes;
     use rand::prelude::*;
     use rand_chacha::ChaCha8Rng;
     use ssh_key::private::Ed25519Keypair;
+
+    use libp2p::identity::Keypair as Libp2pKeypair;
 
     use super::*;
     use anyhow::Result;
@@ -1113,8 +1116,11 @@ mod tests {
                 ])
                 .unwrap()
             };
+            let keypair = Keypair::Ed25519(keypair);
+            let libp2p_keypair: Libp2pKeypair = keypair.clone().into();
+            let peer_id = PeerId::from(libp2p_keypair.public());
             let mut storage = MemoryStorage::default();
-            storage.put(Keypair::Ed25519(keypair)).await?;
+            storage.put(keypair).await?;
             let kc = Keychain::from_storage(storage);
 
             let mut p2p = Node::new(network_config, rpc_server_addr, kc).await?;
@@ -1125,10 +1131,14 @@ mod tests {
             };
 
             let client = RpcClient::new(cfg).await?;
+
+            let network_events = p2p.network_events();
             let task = tokio::task::spawn(async move { p2p.run().await.unwrap() });
             Ok(TestRunner {
                 task,
                 client: client.try_p2p()?,
+                peer_id,
+                network_events,
             })
         }
     }
@@ -1136,6 +1146,8 @@ mod tests {
     struct TestRunner {
         task: JoinHandle<()>,
         client: P2pClient,
+        peer_id: PeerId,
+        network_events: Receiver<NetworkEvent>,
     }
 
     impl Drop for TestRunner {
@@ -1203,27 +1215,180 @@ mod tests {
 
     #[tokio::test]
     async fn test_two_nodes() -> Result<()> {
-        let addr_a = "/ip4/0.0.0.0/tcp/5005".parse().unwrap();
-        let addr_b = "/ip4/0.0.0.0/tcp/5006".parse().unwrap();
-        let test_runner_a = TestRunnerBuilder::new(addr_a)
+        let addr_a: Multiaddr = "/ip4/127.0.0.1/tcp/5005".parse().unwrap();
+        let addr_b: Multiaddr = "/ip4/127.0.0.1/tcp/5006".parse().unwrap();
+        let addrs_b = vec![addr_b.clone()];
+        let addr_b_with_peer_id: Multiaddr =
+            "/ip4/127.0.0.1/tcp/5006/p2p/12D3KooWLo6JTNKXfjkZtKf8ooLQoXVXUEeuu4YDY3CYqK6rxHXt"
+                .parse()
+                .unwrap();
+        let test_runner_a = TestRunnerBuilder::new(addr_a.clone())
             .no_bootstrap()
             .build()
             .await?;
         // peer_id 12D3KooWLo6JTNKXfjkZtKf8ooLQoXVXUEeuu4YDY3CYqK6rxHXt
-        let test_runner_b = TestRunnerBuilder::new(addr_b)
+        let test_runner_b = TestRunnerBuilder::new(addr_b.clone())
             .no_bootstrap()
             .with_seed(ChaCha8Rng::from_seed([0; 32]))
             .build()
             .await?;
         let peer_id_a = test_runner_a.client.local_peer_id().await?;
+        assert_eq!(test_runner_a.peer_id, peer_id_a);
         let peer_id_b = test_runner_b.client.local_peer_id().await?;
-        // net_connect
-        // net_external_addrs
-        // net_peers
-        // lookup_peer_info
-        //
-        println!("{:?}", peer_id_a);
-        println!("{:?}", peer_id_b);
+        assert_eq!(test_runner_b.peer_id, peer_id_b);
+
+        // - connect
+        test_runner_a.client.connect(peer_id_b, addrs_b).await?;
+        // Make sure we have exchanged identity information
+        // peer b should be in the list of peers that peer a is connected to
+        let peers = test_runner_a.client.get_peers().await?;
+        assert!(peers.len() == 1);
+        let got_peer = peers.get(&peer_id_b).unwrap();
+        assert!(got_peer.contains(&addr_b_with_peer_id));
+
+        // lookup
+        let lookup_b = test_runner_a.client.lookup(peer_id_b, None).await?;
+        assert_eq!(peer_id_b, lookup_b.peer_id);
+
+        // now that we are connected & have exchanged identity information,
+        // we should now be able to view the node's external addrs
+        // these are the addresses that other nodes tell you "this is the address I see for you"
+        let external_addrs_a = test_runner_a.client.external_addresses().await?;
+        assert_eq!(vec![addr_a], external_addrs_a);
+
+        // peer_disconnect NOT YET IMPLEMENTED
+        // test_runner_a.client.disconnect(peer_id_b).await?;
+        // let peers = test_runner_a.client.get_peers().await?;
+        // assert!(peers.len() == 0);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_gossipsub() -> Result<()> {
+        let addr_a: Multiaddr = "/ip4/127.0.0.1/tcp/5007".parse().unwrap();
+        let addr_b: Multiaddr = "/ip4/127.0.0.1/tcp/5008".parse().unwrap();
+        let addrs_b = vec![addr_b.clone()];
+
+        let mut test_runner_a = TestRunnerBuilder::new(addr_a.clone())
+            .no_bootstrap()
+            .build()
+            .await?;
+        // peer_id 12D3KooWLo6JTNKXfjkZtKf8ooLQoXVXUEeuu4YDY3CYqK6rxHXt
+        let test_runner_b = TestRunnerBuilder::new(addr_b.clone())
+            .no_bootstrap()
+            .with_seed(ChaCha8Rng::from_seed([0; 32]))
+            .build()
+            .await?;
+
+        test_runner_a
+            .client
+            .connect(test_runner_b.peer_id, addrs_b)
+            .await?;
+
+        match test_runner_a.network_events.recv().await {
+            Some(NetworkEvent::PeerConnected(peer_id)) => {
+                assert_eq!(test_runner_b.peer_id, peer_id);
+            }
+            Some(n) => {
+                anyhow::bail!("unexpected network event: {:?}", n);
+            }
+            None => {
+                anyhow::bail!("expected NetworkEvent::PeerConnected, received no event");
+            }
+        };
+        let peers = test_runner_a.client.gossipsub_all_peers().await?;
+        assert!(peers.len() == 1);
+        let got_peer = peers.get(0).unwrap();
+        assert_eq!(test_runner_b.peer_id, got_peer.0);
+
+        // create topic
+        let topic = TopicHash::from_raw("test_topic");
+        // subscribe both to same topic
+        test_runner_a
+            .client
+            .gossipsub_subscribe(topic.clone())
+            .await?;
+        test_runner_b
+            .client
+            .gossipsub_subscribe(topic.clone())
+            .await?;
+
+        match test_runner_a.network_events.recv().await {
+            Some(NetworkEvent::Gossipsub(GossipsubEvent::Subscribed {
+                peer_id,
+                topic: subscribed_topic,
+            })) => {
+                assert_eq!(test_runner_b.peer_id, peer_id);
+                assert_eq!(topic, subscribed_topic);
+            }
+            Some(n) => {
+                anyhow::bail!("unexpected network event: {:?}", n);
+            }
+            None => {
+                anyhow::bail!("expected NetworkEvent::Gossipsub(Subscribed), received no event");
+            }
+        };
+
+        let peers = test_runner_a.client.gossipsub_all_peers().await?;
+        assert!(peers.len() == 1);
+        let got_peer = peers.get(0).unwrap();
+        assert_eq!(test_runner_b.peer_id, got_peer.0);
+        assert_eq!(&topic, got_peer.1.get(0).unwrap());
+
+        // get mesh peer for topic
+        let peers = test_runner_a
+            .client
+            .gossipsub_mesh_peers(topic.clone())
+            .await?;
+
+        assert!(peers.len() == 1);
+        assert_eq!(test_runner_b.peer_id, *peers.get(0).unwrap());
+
+        let peers = test_runner_a.client.gossipsub_all_mesh_peers().await?;
+        assert!(peers.len() == 1);
+        assert_eq!(&test_runner_b.peer_id, peers.get(0).unwrap());
+
+        let msg = Bytes::from(&b"hello world!"[..]);
+        test_runner_b
+            .client
+            .gossipsub_publish(topic.clone(), msg.clone())
+            .await?;
+
+        match test_runner_a.network_events.recv().await {
+            Some(NetworkEvent::Gossipsub(GossipsubEvent::Message { from, message, .. })) => {
+                assert_eq!(test_runner_b.peer_id, from);
+                assert_eq!(topic, message.topic);
+                assert_eq!(test_runner_b.peer_id, message.source.unwrap());
+                assert_eq!(msg.to_vec(), message.data);
+            }
+            Some(n) => {
+                anyhow::bail!("unexpected network event: {:?}", n);
+            }
+            None => {
+                anyhow::bail!("expected NetworkEvent::Gossipsub(Message), received no event");
+            }
+        };
+
+        test_runner_b
+            .client
+            .gossipsub_unsubscribe(topic.clone())
+            .await?;
+        match test_runner_a.network_events.recv().await {
+            Some(NetworkEvent::Gossipsub(GossipsubEvent::Unsubscribed {
+                peer_id,
+                topic: unsubscribe_topic,
+            })) => {
+                assert_eq!(test_runner_b.peer_id, peer_id);
+                assert_eq!(topic, unsubscribe_topic);
+            }
+            Some(n) => {
+                anyhow::bail!("unexpected network event: {:?}", n);
+            }
+            None => {
+                anyhow::bail!("expected NetworkEvent::Gossipsub(Unsubscribed), received no event");
+            }
+        };
         Ok(())
     }
 }
