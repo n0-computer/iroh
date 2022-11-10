@@ -259,7 +259,7 @@ impl Store {
         })
     }
 
-    pub(crate) async fn spawn<T: Send + Sync + 'static>(
+    pub(crate) async fn spawn_blocking<T: Send + Sync + 'static>(
         &self,
         f: impl FnOnce(Self) -> anyhow::Result<T> + Send + Sync + 'static,
     ) -> anyhow::Result<T> {
@@ -400,7 +400,7 @@ impl<'a> WriteStore<'a> {
         Ok(())
     }
 
-    /// Takes a list of cids and gives them ids, which are boths stored and then returned.
+    /// Takes a list of cids and gives them ids, which are both stored and then returned.
     #[tracing::instrument(skip(self, cids))]
     fn ensure_id_many<I>(&mut self, cids: I) -> Result<Vec<u64>>
     where
@@ -435,9 +435,11 @@ impl<'a> WriteStore<'a> {
     #[tracing::instrument(skip(self))]
     fn next_id(&mut self) -> u64 {
         let id = *self.next_id;
-        *self.next_id = id + 1;
-        // TODO: better handling
-        assert!(id > 0, "this store is full");
+        if let Some(next_id) = self.next_id.checked_add(1) {
+            *self.next_id = next_id;
+        } else {
+            panic!("this store is full");
+        }
         id
     }
 
