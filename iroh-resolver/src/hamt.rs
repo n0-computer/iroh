@@ -4,7 +4,8 @@ use futures::{stream::BoxStream, Stream, StreamExt};
 use once_cell::sync::OnceCell;
 
 use crate::{
-    resolver::{ContentLoader, LoaderContext, OutContent, Path, Resolver},
+    content_loader::ContentLoader,
+    resolver::{LoaderContext, OutContent, Path, Resolver},
     unixfs::{self, HamtHashFunction, Link, Links, PbLinks, UnixfsNode},
 };
 

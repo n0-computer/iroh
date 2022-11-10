@@ -279,6 +279,19 @@ impl Session {
         Ok(block)
     }
 
+    pub async fn add_provider(&self, cid: &Cid, provider: PeerId) {
+        let _ = self
+            .inner
+            .incoming
+            .send(Op::UpdateWantSender {
+                from: provider,
+                keys: Vec::new(),
+                haves: vec![*cid],
+                dont_haves: Vec::new(),
+            })
+            .await;
+    }
+
     /// Fetches a set of blocks within the context of this session and
     /// returns a channel that found blocks will be returned on. No order is
     /// guaranteed on the returned blocks.

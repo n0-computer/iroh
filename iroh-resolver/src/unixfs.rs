@@ -16,8 +16,9 @@ use tokio::io::{AsyncRead, AsyncSeek};
 use crate::{
     chunker::DEFAULT_CHUNK_SIZE_LIMIT,
     codecs::Codec,
+    content_loader::ContentLoader,
     hamt::Hamt,
-    resolver::{Block, ContentLoader, LoaderContext, OutMetrics, Resolver, ResponseClip},
+    resolver::{Block, LoaderContext, OutMetrics, Resolver, ResponseClip},
 };
 
 pub(crate) mod unixfs_pb {
