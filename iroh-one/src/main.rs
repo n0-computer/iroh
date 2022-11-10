@@ -16,7 +16,6 @@ use iroh_rpc_types::Addr;
 use iroh_util::lock::ProgramLock;
 use iroh_util::{iroh_config_path, make_config};
 #[cfg(feature = "uds-gateway")]
-use tempdir::TempDir;
 use tokio::sync::RwLock;
 
 #[tokio::main(flavor = "multi_thread")]
@@ -100,7 +99,11 @@ async fn main() -> Result<()> {
 
     #[cfg(feature = "uds-gateway")]
     let uds_server_task = {
-        let mut path = TempDir::new("iroh")?.path().join("ipfsd.http");
+        let mut path = tempfile::Builder::new()
+            .prefix("iroh")
+            .tempdir()?
+            .path()
+            .join("ipfsd.http");
         if let Some(uds_path) = config.gateway_uds_path {
             path = uds_path;
         } else {
