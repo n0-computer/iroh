@@ -1,5 +1,6 @@
 use std::{sync::Arc};
 use anyhow::{anyhow, Result};
+use iroh_api::Api;
 use iroh_metrics::MetricsHandle;
 use crate::{
   config::Config,
@@ -120,6 +121,14 @@ impl <'a>Core<'a> {
     }
 
     Ok(())
+  }
+
+  pub async fn api(&self) -> Result<Api> {
+    let cfg = iroh_api::config::Config{
+      rpc_client: self.config.rpc_client.clone(),
+      metrics: self.config.metrics.clone(),
+    };
+    Api::new(cfg).await
   }
 
   pub fn stop(&mut self) -> Result<()> {

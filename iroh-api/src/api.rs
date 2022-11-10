@@ -33,7 +33,7 @@ pub enum OutType {
 impl Api {
     // The lifetime is needed for mocking.
     #[allow(clippy::needless_lifetimes)]
-    pub async fn new<'a>(
+    pub async fn new_from_config_file<'a>(
         config_path: Option<&'a Path>,
         overrides_map: HashMap<String, String>,
     ) -> Result<Self> {
@@ -51,8 +51,11 @@ impl Api {
         )
         .unwrap();
 
-        let client = Client::new(config.rpc_client).await?;
-
+        Self::new(config).await
+    }
+    
+    pub async fn new(cfg: Config) -> Result<Self> {
+        let client = Client::new(cfg.rpc_client).await?;
         Ok(Self { client })
     }
 

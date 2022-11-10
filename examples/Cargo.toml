@@ -15,6 +15,7 @@ clap = { version = "4.0.9", features = ["derive"] }
 futures = "0.3.21"
 indicatif = "0.17.0"
 iroh-car = { path = "../iroh-car" }
+iroh-one = { path = "../iroh-one" }
 iroh-resolver = { path = "../iroh-resolver" }
 iroh-rpc-client = { path = "../iroh-rpc-client" }
 iroh-util = { path = "../iroh-util" }

@@ -1,5 +1,5 @@
 mod api;
-mod config;
+pub mod config;
 mod error;
 mod p2p;
 

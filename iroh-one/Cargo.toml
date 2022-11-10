@@ -19,6 +19,7 @@ futures = "0.3.21"
 headers = "0.3.7"
 http-serde = "1.1.0"
 hyper = "0.14.19"
+iroh-api = {path = "../iroh-api"}
 iroh-gateway = {path = "../iroh-gateway"}
 iroh-metrics = {path = "../iroh-metrics", default-features = false}
 iroh-p2p = {path = "../iroh-p2p", default-features = false, features = ["rpc-mem"]}
