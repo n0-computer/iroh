@@ -268,17 +268,22 @@ impl Store {
     }
 }
 
-/// The local store is fully synchronous and is not Send.
+/// Groups all write operations.
 ///
-/// Due to this, it can store column family handles.
+/// Not Send, so must be used from a single thread.
 ///
-/// All interacion with the database is done through this struct.
+/// All write interacion with the database is done through this struct.
 struct WriteStore<'a> {
     db: &'a RocksDb,
     cf: ColumnFamilies<'a>,
     next_id: RwLockWriteGuard<'a, u64>,
 }
 
+/// Groups all read operations.
+///
+/// Not Send, so must be used from a single thread.
+///
+/// All read interacion with the database is done through this struct.
 struct ReadStore<'a> {
     db: &'a RocksDb,
     cf: ColumnFamilies<'a>,
