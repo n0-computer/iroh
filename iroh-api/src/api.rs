@@ -39,7 +39,7 @@ impl Api {
         overrides_map: HashMap<String, String>,
     ) -> Result<Self> {
         let cfg_path = iroh_config_path(CONFIG_FILE_NAME)?;
-        let sources = vec![Some(cfg_path), config_path.map(PathBuf::from)];
+        let sources = vec![Some(cfg_path.as_path()), config_path];
         let config = make_config(
             // default
             Config::default(),
