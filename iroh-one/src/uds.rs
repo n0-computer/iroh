@@ -8,7 +8,7 @@ use hyper::{
     server::accept::Accept,
 };
 use iroh_gateway::{core::State, handlers::get_app_routes};
-use iroh_resolver::resolver::ContentLoader;
+use iroh_resolver::content_loader::ContentLoader;
 use std::path::PathBuf;
 use std::{
     io,
