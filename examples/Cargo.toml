@@ -14,6 +14,7 @@ bytesize = "1.1.0"
 clap = { version = "4.0.9", features = ["derive"] }
 futures = "0.3.21"
 indicatif = "0.17.0"
+iroh-api = { path = "../iroh-api" }
 iroh-car = { path = "../iroh-car" }
 iroh-one = { path = "../iroh-one" }
 iroh-resolver = { path = "../iroh-resolver" }
@@ -24,7 +25,3 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 
 [features]
 default = []
-
-
-[[bin]]
-name = "importer"

@@ -53,7 +53,7 @@ impl Api {
 
         Self::new(config).await
     }
-    
+
     pub async fn new(cfg: Config) -> Result<Self> {
         let client = Client::new(cfg.rpc_client).await?;
         Ok(Self { client })
