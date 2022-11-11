@@ -27,7 +27,7 @@ fn main() -> Result<()> {
 
         // TODO: configurable network
         let cfg_path = iroh_config_path(CONFIG_FILE_NAME)?;
-        let sources = vec![Some(cfg_path), args.cfg.clone()];
+        let sources = vec![Some(cfg_path.as_path()), args.cfg.as_deref()];
         let network_config = make_config(
             // default
             Config::default_grpc(),

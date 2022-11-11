@@ -85,7 +85,7 @@ impl Cli {
     pub async fn run(&self) -> Result<()> {
         let config_path = iroh_config_path(CONFIG_FILE_NAME)?;
         // TODO(b5): allow suppliying some sort of config flag. maybe --config-cli?
-        let sources = vec![Some(config_path)];
+        let sources = vec![Some(config_path.as_path())];
         let config = make_config(
             // default
             Config::new(),

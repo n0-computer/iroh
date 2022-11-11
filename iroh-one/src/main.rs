@@ -27,7 +27,7 @@ async fn main() -> Result<()> {
     let args = Args::parse();
 
     let cfg_path = iroh_config_path(CONFIG_FILE_NAME)?;
-    let sources = vec![Some(cfg_path), args.cfg.clone()];
+    let sources = vec![Some(cfg_path.as_path()), args.cfg.as_deref()];
     let mut config = make_config(
         // default
         Config::default(),
