@@ -118,7 +118,7 @@ async fn main() -> Result<()> {
             // Create the parent path when using the default value since it's likely
             // it won't exist yet.
             if let Some(parent) = path.parent() {
-                let _ = std::fs::create_dir_all(&parent);
+                let _ = std::fs::create_dir_all(parent);
             }
         }
 
