@@ -988,11 +988,12 @@ mod tests {
     use crate::keys::{Keypair, MemoryStorage};
 
     use bytes::Bytes;
+    use futures::TryStreamExt;
     use rand::prelude::*;
     use rand_chacha::ChaCha8Rng;
     use ssh_key::private::Ed25519Keypair;
 
-    use libp2p::identity::Keypair as Libp2pKeypair;
+    use libp2p::{identity::Keypair as Libp2pKeypair, kad::record::Key};
 
     use super::*;
     use anyhow::Result;
@@ -1057,6 +1058,7 @@ mod tests {
         rpc_addrs: Option<(P2pServerAddr, P2pClientAddr)>,
         bootstrap: bool,
         seed: Option<ChaCha8Rng>,
+        keys: Option<Vec<Key>>,
     }
 
     impl TestRunnerBuilder {
@@ -1066,6 +1068,7 @@ mod tests {
                 rpc_addrs: None,
                 bootstrap: true,
                 seed: None,
+                keys: None,
             }
         }
 
@@ -1129,6 +1132,16 @@ mod tests {
                 channels: Some(1),
                 ..Default::default()
             };
+
+            if let Some(keys) = self.keys {
+                if let Some(kad) = p2p.swarm.behaviour_mut().kad.as_mut() {
+                    for k in keys {
+                        kad.start_providing(k)?;
+                    }
+                } else {
+                    anyhow::bail!("expected kad behaviour to exist");
+                }
+            }
 
             let client = RpcClient::new(cfg).await?;
 
@@ -1389,6 +1402,95 @@ mod tests {
                 anyhow::bail!("expected NetworkEvent::Gossipsub(Unsubscribed), received no event");
             }
         };
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_dht() -> Result<()> {
+        // set up three nodes
+        // two connect to one
+        // try to connect via id
+        let addr_a: Multiaddr = "/ip4/127.0.0.1/tcp/5009".parse().unwrap();
+        let addr_b: Multiaddr = "/ip4/127.0.0.1/tcp/5010".parse().unwrap();
+        let addr_c: Multiaddr = "/ip4/127.0.0.1/tcp/5011".parse().unwrap();
+
+        let cid: Cid = "bafkreieq5jui4j25lacwomsqgjeswwl3y5zcdrresptwgmfylxo2depppq"
+            .parse()
+            .unwrap();
+
+        let addrs = vec![addr_b.clone()];
+
+        let test_runner_a = TestRunnerBuilder::new(addr_a.clone())
+            .no_bootstrap()
+            .build()
+            .await?;
+
+        println!("peer_a: {:?}", test_runner_a.peer_id);
+
+        // peer_id 12D3KooWLo6JTNKXfjkZtKf8ooLQoXVXUEeuu4YDY3CYqK6rxHXt
+        let test_runner_b = TestRunnerBuilder::new(addr_b.clone())
+            .no_bootstrap()
+            .with_seed(ChaCha8Rng::from_seed([0; 32]))
+            .build()
+            .await?;
+
+        println!("peer_b: {:?}", test_runner_b.peer_id);
+
+        let test_runner_c = TestRunnerBuilder::new(addr_c.clone())
+            .no_bootstrap()
+            .with_seed(ChaCha8Rng::from_seed([1; 32]))
+            .build()
+            .await?;
+
+        println!("peer_c: {:?}", test_runner_c.peer_id);
+
+        // connect a and c to b
+        test_runner_a
+            .client
+            .connect(test_runner_b.peer_id, addrs.clone())
+            .await?;
+        test_runner_c
+            .client
+            .connect(test_runner_b.peer_id, addrs.clone())
+            .await?;
+
+        // give time for dht records to update
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        // c start providing
+        test_runner_c.client.start_providing(&cid).await?;
+
+        // when `start_providing` waits for the record to make it to the dht
+        // we can remove this `sleep` call
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        // a fetch providers dht for content
+        let stream = test_runner_a.client.fetch_providers_dht(&cid).await?;
+
+        let providers: Vec<_> = stream.try_collect().await.unwrap();
+
+        assert!(providers.len() == 1);
+        assert!(providers.get(0).unwrap().contains(&test_runner_c.peer_id));
+
+        // when `stop_providing` waits for the record to make it to the dht
+        // we can remove this `sleep` call
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        // c stop providing
+        test_runner_c.client.stop_providing(&cid).await?;
+
+        // a fetch providers dht should not get any providers
+        let stream = test_runner_a.client.fetch_providers_dht(&cid).await?;
+        let providers: Vec<_> = stream.try_collect().await.unwrap();
+
+        assert!(providers.is_empty());
+
+        // try to connect a to c using only peer_id
+        test_runner_a
+            .client
+            .connect(test_runner_c.peer_id, vec![])
+            .await?;
+
         Ok(())
     }
 }
