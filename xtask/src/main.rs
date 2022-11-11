@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{bail, Result};
 use clap::{CommandFactory, Parser, Subcommand};
 use std::{
     env, fs, io,
@@ -63,6 +63,12 @@ fn dev_install(build: bool) -> Result<()> {
     let home = dirs_next::home_dir().unwrap();
     for bin in bins {
         let from = project_root().join(format!("target/release/{}", bin));
+        if !from.try_exists()? {
+            bail!(
+                "{} not found, did you run `cargo build --release`?",
+                from.display()
+            );
+        }
         let to = home.join(format!(".cargo/bin/{}", bin));
         println!("copying {} to {}", bin, to.display());
         fs::copy(from, to)?;
