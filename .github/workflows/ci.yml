@@ -34,6 +34,8 @@ jobs:
             release-arch: amd64
     env:
       RUST_BACKTRACE: full
+      # Force not building debuginfo to save space on disk.
+      RUSTFLAGS: "-C debuginfo=0"
       RUSTC_WRAPPER: sccache
       RUSTV: ${{ matrix.rust }}
       SCCACHE_CACHE_SIZE: 2G
