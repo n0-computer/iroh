@@ -1,15 +1,12 @@
-use crate::exitcodes;
-use anyhow::{anyhow, Result as AnyhowResult};
-use std::fs::File;
-use std::io::prelude::*;
-use std::io::ErrorKind;
-use std::io::Write;
-use std::path::PathBuf;
-use std::process;
+use std::{fs::File, io, io::ErrorKind, io::Read, io::Write, path::PathBuf, process, result};
+
 use sysinfo::PidExt;
 use sysinfo::{Pid, ProcessExt, ProcessStatus::*, System, SystemExt};
 use thiserror::Error;
 use tracing::warn;
+
+use crate::exitcodes;
+use crate::UtilError;
 
 /// Manages a lock file used to track if an iroh program is already running.
 /// Aquired locks write a file to iroh's application data path containing the
@@ -27,7 +24,7 @@ pub struct ProgramLock {
 
 impl ProgramLock {
     /// Create a new lock for the given program. This does not yet acquire the lock.
-    pub fn new(prog_name: &str) -> Result<Self, LockError> {
+    pub fn new(prog_name: &str) -> Result<Self> {
         let path = crate::iroh_data_path(&format!("{}.lock", prog_name))
             .map_err(|e| LockError::InvalidPath { source: e })?;
         Ok(Self {
@@ -74,7 +71,7 @@ impl ProgramLock {
     }
 
     /// Check if the current program is locked or not.
-    pub fn is_locked(&mut self) -> Result<bool, LockError> {
+    pub fn is_locked(&mut self) -> Result<bool> {
         if !self.path.exists() {
             return Ok(false);
         }
@@ -82,49 +79,40 @@ impl ProgramLock {
         // path exists, examine lock PID
         let pid = read_lock(&self.path)?;
         self.process_is_running(pid)
-            .map_err(|e| LockError::Uncategorized { source: e })
     }
 
     /// returns the PID in the lockfile only if the process is active
-    pub fn active_pid(&mut self) -> Result<Pid, LockError> {
+    pub fn active_pid(&mut self) -> Result<Pid> {
         if !self.path.exists() {
             return Err(LockError::NoLock(self.path.clone()));
         }
 
         // path exists, examine lock PID
         let pid = read_lock(&self.path)?;
-        let running = self
-            .process_is_running(pid)
-            .map_err(|e| LockError::Uncategorized { source: e })?;
+        let running = self.process_is_running(pid)?;
         if running {
             Ok(pid)
         } else {
-            Err(LockError::ZombieLock(self.path.clone()))
+            Err(LockError::NoSuchProcess(pid, self.path.clone()))
         }
     }
 
     /// Try to acquire a lock for this program.
-    pub fn acquire(&mut self) -> Result<(), LockError> {
+    pub fn acquire(&mut self) -> Result<()> {
         match self.is_locked() {
-            Ok(false) => self
-                .write()
-                .map_err(|e| LockError::Uncategorized { source: anyhow!(e) }),
+            Ok(false) => self.write(),
             Ok(true) => Err(LockError::Locked(self.path.clone())),
             Err(e) => match e {
                 LockError::CorruptLock(_) => {
                     // overwrite corrupt locks
-                    self.write().map_err(|e| LockError::Uncategorized {
-                        source: anyhow!("{}", e),
-                    })
+                    self.write()
                 }
-                e => Err(LockError::Uncategorized {
-                    source: anyhow!("{}", e),
-                }),
+                e => Err(e),
             },
         }
     }
 
-    fn process_is_running(&mut self, pid: Pid) -> AnyhowResult<bool> {
+    fn process_is_running(&mut self, pid: Pid) -> Result<bool> {
         // existentialism is sometimes counterproductive
         let this_pid = sysinfo::get_current_pid().unwrap();
         if pid == this_pid {
@@ -146,11 +134,11 @@ impl ProgramLock {
                 // for platform-specific details
                 Ok(matches!(process.status(), Idle | Run | Sleep | Waking))
             }
-            None => Err(anyhow!("couldn't find system process with id {}", pid)),
+            None => Err(LockError::NoSuchProcess(pid, self.path.clone())),
         }
     }
 
-    fn write(&mut self) -> AnyhowResult<()> {
+    fn write(&mut self) -> Result<()> {
         // create lock. ensure path to lock exists
         std::fs::create_dir_all(&crate::iroh_data_root()?)?;
         let mut file = File::create(&self.path)?;
@@ -160,7 +148,7 @@ impl ProgramLock {
         Ok(())
     }
 
-    pub fn destroy_without_checking(&self) -> AnyhowResult<()> {
+    pub fn destroy_without_checking(&self) -> Result<()> {
         std::fs::remove_file(&self.path).map_err(|e| e.into())
     }
 }
@@ -176,18 +164,15 @@ impl Drop for ProgramLock {
 }
 
 /// Report Process ID stored in a lock file
-pub fn read_lock_pid(prog_name: &str) -> Result<Pid, LockError> {
-    let path = crate::iroh_data_path(&format!("{}.lock", prog_name))
-        .map_err(|e| LockError::Uncategorized { source: e })?;
+pub fn read_lock_pid(prog_name: &str) -> Result<Pid> {
+    let path = crate::iroh_data_path(&format!("{}.lock", prog_name))?;
     read_lock(&path)
 }
 
-fn read_lock(path: &PathBuf) -> Result<Pid, LockError> {
+fn read_lock(path: &PathBuf) -> Result<Pid> {
     let mut file = File::open(path).map_err(|e| match e.kind() {
         ErrorKind::NotFound => LockError::NoLock(path.clone()),
-        e => LockError::Uncategorized {
-            source: anyhow!("{}", e),
-        },
+        _ => e.into(),
     })?;
     let mut pid = String::new();
     file.read_to_string(&mut pid)
@@ -198,10 +183,13 @@ fn read_lock(path: &PathBuf) -> Result<Pid, LockError> {
     Ok(Pid::from_u32(pid))
 }
 
+/// Alias for a `Result` with the error type set to `LockError`
+pub type Result<T> = result::Result<T, LockError>;
+
 /// LockError is the set of known program lock errors
 #[derive(Error, Debug)]
 pub enum LockError {
-    // lock present when one is not expected
+    /// lock present when one is not expected
     #[error("Locked")]
     Locked(PathBuf),
     #[error("No lock file at {0}")]
@@ -209,19 +197,23 @@ pub enum LockError {
     /// Failure to parse contents of lock file
     #[error("Corrupt lock file contents at {0}")]
     CorruptLock(PathBuf),
-    #[error("Cannot determine status of process holding this lock")]
-    ZombieLock(PathBuf),
+    #[error("could not find process with id: {0}")]
+    NoSuchProcess(Pid, PathBuf),
     // location for lock no bueno
     #[error("invalid path for lock file: {source}")]
     InvalidPath {
         #[source]
-        source: anyhow::Error,
+        source: UtilError,
     },
-    /// catchall error type
-    #[error("{source}")]
-    Uncategorized {
+    #[error("operating system i/o: {source}")]
+    Io {
         #[from]
-        source: anyhow::Error,
+        source: io::Error,
+    },
+    #[error("{source}")]
+    Util {
+        #[from]
+        source: UtilError,
     },
 }
 
