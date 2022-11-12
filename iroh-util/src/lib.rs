@@ -2,18 +2,19 @@ use std::{
     cell::RefCell,
     collections::HashMap,
     path::{Path, PathBuf},
+    result,
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
     },
 };
 
-use anyhow::{anyhow, Result};
 use cid::{
     multihash::{Code, MultihashDigest},
     Cid,
 };
 use config::{Config, ConfigError, Environment, File, Map, Source, Value, ValueKind};
+use thiserror::Error;
 use tracing::debug;
 
 pub mod exitcodes;
@@ -60,8 +61,9 @@ pub async fn block_until_sigint() {
 /// | macOS    | `$HOME`/Library/Application Support/iroh   | /Users/Alice/Library/Application Support/iroh |
 /// | Windows  | `{FOLDERID_RoamingAppData}`/iroh           | C:\Users\Alice\AppData\Roaming\iroh   |
 pub fn iroh_config_root() -> Result<PathBuf> {
-    let cfg = dirs_next::config_dir()
-        .ok_or_else(|| anyhow!("operating environment provides no directory for configuration"))?;
+    let cfg = dirs_next::config_dir().ok_or_else(|| UtilError::NoDir {
+        purpose: String::from("configuration data"),
+    })?;
     Ok(cfg.join(IROH_DIR))
 }
 
@@ -81,8 +83,8 @@ pub fn iroh_config_path(file_name: &str) -> Result<PathBuf> {
 /// | macOS    | `$HOME`/Library/Application Support/iroh      | /Users/Alice/Library/Application Support/iroh |
 /// | Windows  | `{FOLDERID_RoamingAppData}/iroh`              | C:\Users\Alice\AppData\Roaming\iroh           |
 pub fn iroh_data_root() -> Result<PathBuf> {
-    let path = dirs_next::data_dir().ok_or_else(|| {
-        anyhow!("operating environment provides no directory for application data")
+    let path = dirs_next::data_dir().ok_or_else(|| UtilError::NoDir {
+        purpose: String::from("application data"),
     })?;
     Ok(path.join(IROH_DIR))
 }
@@ -103,8 +105,8 @@ pub fn iroh_data_path(file_name: &str) -> Result<PathBuf> {
 /// | macOS    | `$HOME`/Library/Caches/iroh                   | /Users/Alice/Library/Caches/iroh         |
 /// | Windows  | `{FOLDERID_LocalAppData}/iroh`                | C:\Users\Alice\AppData\Roaming\iroh      |
 pub fn iroh_cache_root() -> Result<PathBuf> {
-    let path = dirs_next::cache_dir().ok_or_else(|| {
-        anyhow!("operating environment provides no directory for application data")
+    let path = dirs_next::cache_dir().ok_or_else(|| UtilError::NoDir {
+        purpose: String::from("application data"),
     })?;
     Ok(path.join(IROH_DIR))
 }
@@ -134,7 +136,7 @@ impl Source for MetricsSource {
     fn clone_into_box(&self) -> Box<dyn Source + Send + Sync> {
         Box::new(self.clone())
     }
-    fn collect(&self) -> Result<Map<String, Value>, ConfigError> {
+    fn collect(&self) -> result::Result<Map<String, Value>, ConfigError> {
         let metrics = self.metrics.collect()?;
         let mut map = Map::new();
         insert_into_config_map(&mut map, "metrics", metrics);
@@ -168,7 +170,7 @@ where
     // layer on config options from files
     for path in file_paths.into_iter().flatten() {
         if path.exists() {
-            let p = path.to_str().ok_or_else(|| anyhow::anyhow!("empty path"))?;
+            let p = path.to_str().ok_or(UtilError::EmptyPath)?;
             builder = builder.add_source(File::with_name(p));
         }
     }
@@ -227,6 +229,22 @@ pub fn increase_fd_limit() -> std::io::Result<u64> {
         ));
     }
     Ok(soft)
+}
+
+/// Alias for a `Result` with the error type set to `UtilError`
+pub type Result<T> = result::Result<T, UtilError>;
+
+#[derive(Error, Debug)]
+pub enum UtilError {
+    #[error("empty path")]
+    EmptyPath,
+    #[error("operating environment provides no directory for {purpose}")]
+    NoDir { purpose: String },
+    #[error("configuration error: {source}")]
+    BadConfig {
+        #[from]
+        source: config::ConfigError,
+    },
 }
 
 #[cfg(test)]
