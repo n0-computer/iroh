@@ -37,6 +37,7 @@ pub struct Cli {
 enum Commands {
     P2p(P2p),
     #[clap(about = "Add a file or directory to iroh & make it available on IPFS")]
+    #[clap(after_help = doc::ADD_LONG_DESCRIPTION )]
     Add {
         /// The path to a file or directory to be added
         path: PathBuf,
