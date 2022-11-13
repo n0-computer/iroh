@@ -17,7 +17,7 @@ macro_rules! impl_client {
             }
 
             impl [<$label Client>] {
-                pub async fn new(addr: [<$label ClientAddr>]) -> Result<Self> {
+                pub async fn new(addr: [<$label ClientAddr>]) -> Result<Self, $crate::error::Error> {
                     tracing::info!("connecting to {}", addr);
                     match addr {
                         #[cfg(feature = "grpc")]

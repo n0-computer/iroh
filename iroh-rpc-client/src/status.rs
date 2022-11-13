@@ -1,5 +1,4 @@
-use crate::{gateway, network, store};
-use anyhow::Result;
+use crate::{error::Error, gateway, network, store};
 use async_stream::stream;
 use futures::Stream;
 use tonic::transport::channel::Channel;
@@ -186,7 +185,7 @@ impl StatusTable {
         }
     }
 
-    pub fn update(&mut self, s: StatusRow) -> Result<()> {
+    pub fn update(&mut self, s: StatusRow) -> Result<(), Error> {
         if self.gateway.name() == s.name() {
             self.gateway = s;
             return Ok(());
@@ -199,7 +198,7 @@ impl StatusTable {
             self.store = s;
             return Ok(());
         }
-        Err(anyhow::anyhow!("unknown service {}", s.name))
+        Err(Error::UnknownService(s.name.to_string()))
     }
 }
 

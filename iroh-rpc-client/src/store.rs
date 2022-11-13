@@ -1,6 +1,5 @@
 use std::io::Cursor;
 
-use anyhow::{Context, Result};
 use bytes::Bytes;
 use cid::Cid;
 #[cfg(feature = "grpc")]
@@ -20,17 +19,19 @@ use tonic_health::proto::health_client::HealthClient;
 #[cfg(feature = "grpc")]
 use crate::status::{self, StatusRow};
 
+use crate::error::Error;
+
 impl_client!(Store);
 
 impl StoreClient {
     #[tracing::instrument(skip(self))]
-    pub async fn version(&self) -> Result<String> {
+    pub async fn version(&self) -> Result<String, Error> {
         let res = self.backend.version(()).await?;
         Ok(res.version)
     }
 
     #[tracing::instrument(skip(self, blob))]
-    pub async fn put(&self, cid: Cid, blob: Bytes, links: Vec<Cid>) -> Result<()> {
+    pub async fn put(&self, cid: Cid, blob: Bytes, links: Vec<Cid>) -> Result<(), Error> {
         let req = PutRequest {
             cid: cid.to_bytes(),
             blob,
@@ -41,7 +42,7 @@ impl StoreClient {
     }
 
     #[tracing::instrument(skip(self, blocks))]
-    pub async fn put_many(&self, blocks: Vec<(Cid, Bytes, Vec<Cid>)>) -> Result<()> {
+    pub async fn put_many(&self, blocks: Vec<(Cid, Bytes, Vec<Cid>)>) -> Result<(), Error> {
         let blocks = blocks
             .into_iter()
             .map(|(cid, blob, links)| PutRequest {
@@ -55,7 +56,7 @@ impl StoreClient {
     }
 
     #[tracing::instrument(skip(self))]
-    pub async fn get(&self, cid: Cid) -> Result<Option<Bytes>> {
+    pub async fn get(&self, cid: Cid) -> Result<Option<Bytes>, Error> {
         let req = GetRequest {
             cid: cid.to_bytes(),
         };
@@ -64,7 +65,7 @@ impl StoreClient {
     }
 
     #[tracing::instrument(skip(self))]
-    pub async fn has(&self, cid: Cid) -> Result<bool> {
+    pub async fn has(&self, cid: Cid) -> Result<bool, Error> {
         let req = HasRequest {
             cid: cid.to_bytes(),
         };
@@ -73,7 +74,7 @@ impl StoreClient {
     }
 
     #[tracing::instrument(skip(self))]
-    pub async fn get_links(&self, cid: Cid) -> Result<Option<Vec<Cid>>> {
+    pub async fn get_links(&self, cid: Cid) -> Result<Option<Vec<Cid>>, Error> {
         let req = GetLinksRequest {
             cid: cid.to_bytes(),
         };
@@ -81,16 +82,16 @@ impl StoreClient {
         if links.is_empty() {
             Ok(None)
         } else {
-            let links: Result<Vec<Cid>> = links
+            let links: Result<Vec<Cid>, Error> = links
                 .iter()
-                .map(|l| Cid::read_bytes(Cursor::new(l)).context(format!("invalid cid: {:?}", l)))
+                .map(|l| Cid::read_bytes(Cursor::new(l)).map_err(Error::from))
                 .collect();
             Ok(Some(links?))
         }
     }
 
     #[tracing::instrument(skip(self))]
-    pub async fn get_size(&self, cid: Cid) -> Result<Option<u64>> {
+    pub async fn get_size(&self, cid: Cid) -> Result<Option<u64>, Error> {
         let req = GetSizeRequest {
             cid: cid.to_bytes(),
         };

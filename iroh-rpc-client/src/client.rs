@@ -1,11 +1,11 @@
 use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 
-use anyhow::{Context, Result};
 #[cfg(feature = "grpc")]
 use futures::{Stream, StreamExt};
 
 use crate::config::Config;
+use crate::error::Error;
 use crate::gateway::GatewayClient;
 use crate::network::P2pClient;
 use crate::store::StoreClient;
@@ -72,7 +72,7 @@ impl P2pLBClient {
 }
 
 impl Client {
-    pub async fn new(cfg: Config) -> Result<Self> {
+    pub async fn new(cfg: Config) -> Result<Self, Error> {
         let Config {
             gateway_addr,
             p2p_addr,
@@ -81,11 +81,7 @@ impl Client {
         } = cfg;
 
         let gateway = if let Some(addr) = gateway_addr {
-            Some(
-                GatewayClient::new(addr)
-                    .await
-                    .context("Could not create gateway rpc client")?,
-            )
+            Some(GatewayClient::new(addr).await?)
         } else {
             None
         };
@@ -95,9 +91,7 @@ impl Client {
         let mut p2p = P2pLBClient::new();
         if let Some(addr) = p2p_addr {
             for _i in 0..n_channels {
-                let sc = P2pClient::new(addr.clone())
-                    .await
-                    .context("Could not create store rpc client")?;
+                let sc = P2pClient::new(addr.clone()).await?;
                 p2p.clients.push(sc);
             }
         }
@@ -105,9 +99,7 @@ impl Client {
         let mut store = StoreLBClient::new();
         if let Some(addr) = store_addr {
             for _i in 0..n_channels {
-                let sc = StoreClient::new(addr.clone())
-                    .await
-                    .context("Could not create store rpc client")?;
+                let sc = StoreClient::new(addr.clone()).await?;
                 store.clients.push(sc);
             }
         }
@@ -119,18 +111,18 @@ impl Client {
         })
     }
 
-    pub fn try_p2p(&self) -> Result<P2pClient> {
-        self.p2p.get().context("missing rpc p2p connnection")
+    pub fn try_p2p(&self) -> Result<P2pClient, Error> {
+        self.p2p.get().ok_or_else(|| Error::MissingP2pConn)
     }
 
-    pub fn try_gateway(&self) -> Result<&GatewayClient> {
+    pub fn try_gateway(&self) -> Result<&GatewayClient, Error> {
         self.gateway
             .as_ref()
-            .context("missing rpc gateway connnection")
+            .ok_or_else(|| Error::MissingRpcGatewayConn)
     }
 
-    pub fn try_store(&self) -> Result<StoreClient> {
-        self.store.get().context("missing rpc store connnection")
+    pub fn try_store(&self) -> Result<StoreClient, Error> {
+        self.store.get().ok_or_else(|| Error::MissingRpcStoreConn)
     }
 
     #[cfg(feature = "grpc")]
@@ -204,7 +196,7 @@ mod tests {
     async fn make_service(
         name: &'static str,
         addr: SocketAddr,
-    ) -> Result<(HealthReporter, tokio::task::JoinHandle<()>)> {
+    ) -> Result<(HealthReporter, tokio::task::JoinHandle<()>), Error> {
         let (mut reporter, service) = health_reporter();
         reporter
             .set_serving::<test_server::TestServer<TestService>>()

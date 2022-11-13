@@ -1,6 +1,5 @@
 use std::collections::{HashMap, HashSet};
 
-use anyhow::{Context, Result};
 use bytes::Bytes;
 use cid::Cid;
 use futures::{Stream, StreamExt};
@@ -24,24 +23,26 @@ use tracing::{debug, warn};
 #[cfg(feature = "grpc")]
 use crate::status::{self, StatusRow};
 
+use crate::error::Error;
+
 impl_client!(P2p);
 
 impl P2pClient {
     #[tracing::instrument(skip(self))]
-    pub async fn version(&self) -> Result<String> {
+    pub async fn version(&self) -> Result<String, Error> {
         let res = self.backend.version(()).await?;
         Ok(res.version)
     }
 
     #[tracing::instrument(skip(self))]
-    pub async fn local_peer_id(&self) -> Result<PeerId> {
+    pub async fn local_peer_id(&self) -> Result<PeerId, Error> {
         let res = self.backend.local_peer_id(()).await?;
         let peer_id = PeerId::from_bytes(&res.peer_id[..])?;
         Ok(peer_id)
     }
 
     #[tracing::instrument(skip(self))]
-    pub async fn external_addresses(&self) -> Result<Vec<Multiaddr>> {
+    pub async fn external_addresses(&self) -> Result<Vec<Multiaddr>, Error> {
         let res = self.backend.external_addrs(()).await?;
         let addrs = addrs_from_bytes(res.addrs)?;
         Ok(addrs)
@@ -54,7 +55,7 @@ impl P2pClient {
         ctx: u64,
         cid: Cid,
         providers: HashSet<PeerId>,
-    ) -> Result<Bytes> {
+    ) -> Result<Bytes, Error> {
         debug!("rpc p2p client fetch_bitswap: {:?}", cid);
         let providers = Providers {
             providers: providers.into_iter().map(|id| id.to_bytes()).collect(),
@@ -70,14 +71,14 @@ impl P2pClient {
     }
 
     #[tracing::instrument(skip(self))]
-    pub async fn stop_session_bitswap(&self, ctx: u64) -> Result<()> {
+    pub async fn stop_session_bitswap(&self, ctx: u64) -> Result<(), Error> {
         let req = StopSessionBitswapRequest { ctx };
         self.backend.stop_session_bitswap(req).await?;
         Ok(())
     }
 
     #[tracing::instrument(skip(self))]
-    pub async fn notify_new_blocks_bitswap(&self, blocks: Vec<(Cid, Bytes)>) -> Result<()> {
+    pub async fn notify_new_blocks_bitswap(&self, blocks: Vec<(Cid, Bytes)>) -> Result<(), Error> {
         let req = NotifyNewBlocksBitswapRequest {
             blocks: blocks
                 .into_iter()
@@ -96,7 +97,7 @@ impl P2pClient {
     pub async fn fetch_providers_dht(
         &self,
         key: &Cid,
-    ) -> Result<impl Stream<Item = Result<HashSet<PeerId>>>> {
+    ) -> Result<impl Stream<Item = Result<HashSet<PeerId>, Error>>, Error> {
         let req = Key {
             key: key.hash().to_bytes(),
         };
@@ -114,7 +115,7 @@ impl P2pClient {
     }
 
     #[tracing::instrument(skip(self))]
-    pub async fn start_providing(&self, key: &Cid) -> Result<()> {
+    pub async fn start_providing(&self, key: &Cid) -> Result<(), Error> {
         let req = Key {
             key: key.hash().to_bytes(),
         };
@@ -123,7 +124,7 @@ impl P2pClient {
     }
 
     #[tracing::instrument(skip(self))]
-    pub async fn stop_providing(&self, key: &Cid) -> Result<()> {
+    pub async fn stop_providing(&self, key: &Cid) -> Result<(), Error> {
         let req = Key {
             key: key.hash().to_bytes(),
         };
@@ -132,7 +133,7 @@ impl P2pClient {
     }
 
     #[tracing::instrument(skip(self))]
-    pub async fn get_listening_addrs(&self) -> Result<(PeerId, Vec<Multiaddr>)> {
+    pub async fn get_listening_addrs(&self) -> Result<(PeerId, Vec<Multiaddr>), Error> {
         let res = self.backend.get_listening_addrs(()).await?;
         let peer_id = PeerId::from_bytes(&res.peer_id[..])?;
         let addrs = addrs_from_bytes(res.addrs)?;
@@ -140,11 +141,16 @@ impl P2pClient {
     }
 
     #[tracing::instrument(skip(self))]
-    pub async fn get_peers(&self) -> Result<HashMap<PeerId, Vec<Multiaddr>>> {
+    pub async fn get_peers(&self) -> Result<HashMap<PeerId, Vec<Multiaddr>>, Error> {
         let peers = self.backend.get_peers(()).await?.peers;
         let mut peers_map = HashMap::new();
         for (peer, addrs) in peers.into_iter() {
-            let peer = peer.parse()?;
+            // TODO: See https://github.com/libp2p/rust-libp2p/pull/3113
+            let peer = peer
+                .parse()
+                .map_err(|e: <PeerId as std::str::FromStr>::Err| {
+                    Error::ParsingPeerId(e.to_string())
+                })?;
             let addrs = addrs_from_bytes(addrs.addrs)?;
             peers_map.insert(peer, addrs);
         }
@@ -155,23 +161,26 @@ impl P2pClient {
     /// Attempts to connect to the given node. If only the `PeerId` is present, it will
     /// attempt to find the given peer on the DHT before connecting. If the `PeerId` and any
     /// `Multiaddr`s are present, it will attempt to connect to the peer directly.
-    pub async fn connect(&self, peer_id: PeerId, addrs: Vec<Multiaddr>) -> Result<()> {
+    pub async fn connect(&self, peer_id: PeerId, addrs: Vec<Multiaddr>) -> Result<(), Error> {
         if !addrs.is_empty() {
             let req = ConnectRequest {
                 peer_id: peer_id.to_bytes(),
                 addrs: addrs.iter().map(|a| a.to_vec()).collect(),
             };
-            self.backend.peer_connect(req).await
+            self.backend.peer_connect(req).await.map_err(Error::from)
         } else {
             let req = ConnectByPeerIdRequest {
                 peer_id: peer_id.to_bytes(),
             };
-            self.backend.peer_connect_by_peer_id(req).await
+            self.backend
+                .peer_connect_by_peer_id(req)
+                .await
+                .map_err(Error::from)
         }
     }
 
     #[tracing::instrument(skip(self))]
-    pub async fn lookup(&self, peer_id: PeerId, addr: Option<Multiaddr>) -> Result<Lookup> {
+    pub async fn lookup(&self, peer_id: PeerId, addr: Option<Multiaddr>) -> Result<Lookup, Error> {
         let req = LookupRequest {
             peer_id: peer_id.to_bytes(),
             addr: addr.map(|a| a.to_vec()),
@@ -181,7 +190,7 @@ impl P2pClient {
     }
 
     #[tracing::instrument(skip(self))]
-    pub async fn disconnect(&self, peer_id: PeerId) -> Result<()> {
+    pub async fn disconnect(&self, peer_id: PeerId) -> Result<(), Error> {
         warn!("NetDisconnect not yet implemented on p2p node");
         let req = DisconnectRequest {
             peer_id: peer_id.to_bytes(),
@@ -191,13 +200,13 @@ impl P2pClient {
     }
 
     #[tracing::instrument(skip(self))]
-    pub async fn shutdown(&self) -> Result<()> {
+    pub async fn shutdown(&self) -> Result<(), Error> {
         self.backend.shutdown(()).await?;
         Ok(())
     }
 
     #[tracing::instrument(skip(self))]
-    pub async fn gossipsub_add_explicit_peer(&self, peer_id: PeerId) -> Result<()> {
+    pub async fn gossipsub_add_explicit_peer(&self, peer_id: PeerId) -> Result<(), Error> {
         let req = GossipsubPeerIdMsg {
             peer_id: peer_id.to_bytes(),
         };
@@ -206,21 +215,21 @@ impl P2pClient {
     }
 
     #[tracing::instrument(skip(self))]
-    pub async fn gossipsub_all_mesh_peers(&self) -> Result<Vec<PeerId>> {
+    pub async fn gossipsub_all_mesh_peers(&self) -> Result<Vec<PeerId>, Error> {
         let res = self.backend.gossipsub_all_mesh_peers(()).await?;
         let peer_ids = peer_ids_from_bytes(res.peers)?;
         Ok(peer_ids)
     }
 
     #[tracing::instrument(skip(self))]
-    pub async fn gossipsub_all_peers(&self) -> Result<Vec<(PeerId, Vec<TopicHash>)>> {
+    pub async fn gossipsub_all_peers(&self) -> Result<Vec<(PeerId, Vec<TopicHash>)>, Error> {
         let res = self.backend.gossipsub_all_peers(()).await?.all;
         let peers_and_topics = all_peers_from_bytes(res)?;
         Ok(peers_and_topics)
     }
 
     #[tracing::instrument(skip(self))]
-    pub async fn gossipsub_mesh_peers(&self, topic: TopicHash) -> Result<Vec<PeerId>> {
+    pub async fn gossipsub_mesh_peers(&self, topic: TopicHash) -> Result<Vec<PeerId>, Error> {
         let req = GossipsubTopicHashMsg {
             topic_hash: topic.into_string(),
         };
@@ -230,7 +239,11 @@ impl P2pClient {
     }
 
     #[tracing::instrument(skip(self, data))]
-    pub async fn gossipsub_publish(&self, topic_hash: TopicHash, data: Bytes) -> Result<MessageId> {
+    pub async fn gossipsub_publish(
+        &self,
+        topic_hash: TopicHash,
+        data: Bytes,
+    ) -> Result<MessageId, Error> {
         let req = GossipsubPublishRequest {
             topic_hash: topic_hash.to_string(),
             data,
@@ -241,7 +254,7 @@ impl P2pClient {
     }
 
     #[tracing::instrument(skip(self))]
-    pub async fn gossipsub_remove_explicit_peer(&self, peer_id: PeerId) -> Result<()> {
+    pub async fn gossipsub_remove_explicit_peer(&self, peer_id: PeerId) -> Result<(), Error> {
         let req = GossipsubPeerIdMsg {
             peer_id: peer_id.to_bytes(),
         };
@@ -250,7 +263,7 @@ impl P2pClient {
     }
 
     #[tracing::instrument(skip(self))]
-    pub async fn gossipsub_subscribe(&self, topic: TopicHash) -> Result<bool> {
+    pub async fn gossipsub_subscribe(&self, topic: TopicHash) -> Result<bool, Error> {
         let req = GossipsubTopicHashMsg {
             topic_hash: topic.to_string(),
         };
@@ -259,14 +272,14 @@ impl P2pClient {
     }
 
     #[tracing::instrument(skip(self))]
-    pub async fn gossipsub_topics(&self) -> Result<Vec<TopicHash>> {
+    pub async fn gossipsub_topics(&self) -> Result<Vec<TopicHash>, Error> {
         let res = self.backend.gossipsub_topics(()).await?;
         let topics = res.topics.into_iter().map(TopicHash::from_raw).collect();
         Ok(topics)
     }
 
     #[tracing::instrument(skip(self))]
-    pub async fn gossipsub_unsubscribe(&self, topic: TopicHash) -> Result<bool> {
+    pub async fn gossipsub_unsubscribe(&self, topic: TopicHash) -> Result<bool, Error> {
         let req = GossipsubTopicHashMsg {
             topic_hash: topic.to_string(),
         };
@@ -286,7 +299,7 @@ pub struct Lookup {
 }
 
 impl Lookup {
-    fn from_peer_info(p: PeerInfo) -> Result<Self> {
+    fn from_peer_info(p: PeerInfo) -> Result<Self, Error> {
         let peer_id = peer_id_from_bytes(p.peer_id)?;
         let listen_addrs = addrs_from_bytes(p.listen_addrs)?;
         let addr = addr_from_bytes(p.observed_addr)?;
@@ -301,29 +314,33 @@ impl Lookup {
     }
 }
 
-fn peers_and_topics_from_bytes(pt: GossipsubPeerAndTopics) -> Result<(PeerId, Vec<TopicHash>)> {
+fn peers_and_topics_from_bytes(
+    pt: GossipsubPeerAndTopics,
+) -> Result<(PeerId, Vec<TopicHash>), Error> {
     let peer_id = peer_id_from_bytes(pt.peer_id)?;
     let topics = pt.topics.into_iter().map(TopicHash::from_raw).collect();
     Ok((peer_id, topics))
 }
 
-fn all_peers_from_bytes(a: Vec<GossipsubPeerAndTopics>) -> Result<Vec<(PeerId, Vec<TopicHash>)>> {
+fn all_peers_from_bytes(
+    a: Vec<GossipsubPeerAndTopics>,
+) -> Result<Vec<(PeerId, Vec<TopicHash>)>, Error> {
     a.into_iter().map(peers_and_topics_from_bytes).collect()
 }
 
-fn peer_id_from_bytes(p: Vec<u8>) -> Result<PeerId> {
-    PeerId::from_bytes(&p).context("invalid PeerId")
+fn peer_id_from_bytes(p: Vec<u8>) -> Result<PeerId, Error> {
+    PeerId::from_bytes(&p).map_err(Error::from)
 }
 
-fn peer_ids_from_bytes(p: Vec<Vec<u8>>) -> Result<Vec<PeerId>> {
+fn peer_ids_from_bytes(p: Vec<Vec<u8>>) -> Result<Vec<PeerId>, Error> {
     p.into_iter().map(peer_id_from_bytes).collect()
 }
 
-fn addr_from_bytes(m: Vec<u8>) -> Result<Multiaddr> {
-    Multiaddr::try_from(m).context("invalid multiaddr")
+fn addr_from_bytes(m: Vec<u8>) -> Result<Multiaddr, Error> {
+    Multiaddr::try_from(m).map_err(Error::from)
 }
 
-fn addrs_from_bytes(a: Vec<Vec<u8>>) -> Result<Vec<Multiaddr>> {
+fn addrs_from_bytes(a: Vec<Vec<u8>>) -> Result<Vec<Multiaddr>, Error> {
     a.into_iter().map(addr_from_bytes).collect()
 }
 

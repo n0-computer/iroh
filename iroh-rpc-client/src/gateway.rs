@@ -1,6 +1,5 @@
 #[cfg(feature = "grpc")]
 use crate::status::{self, StatusRow};
-use anyhow::Result;
 #[cfg(feature = "grpc")]
 use futures::Stream;
 #[cfg(feature = "grpc")]
@@ -14,11 +13,13 @@ use tonic::transport::Endpoint;
 #[cfg(feature = "grpc")]
 use tonic_health::proto::health_client::HealthClient;
 
+use crate::error::Error;
+
 impl_client!(Gateway);
 
 impl GatewayClient {
     #[tracing::instrument(skip(self))]
-    pub async fn version(&self) -> Result<String> {
+    pub async fn version(&self) -> Result<String, Error> {
         let res = self.backend.version(()).await?;
         Ok(res.version)
     }
