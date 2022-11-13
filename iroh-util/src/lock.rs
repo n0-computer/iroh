@@ -93,7 +93,7 @@ impl ProgramLock {
         if running {
             Ok(pid)
         } else {
-            Err(LockError::ZombieLock(self.path.clone()))
+            Err(LockError::NoSuchProcess(pid, self.path.clone()))
         }
     }
 
@@ -134,7 +134,7 @@ impl ProgramLock {
                 // for platform-specific details
                 Ok(matches!(process.status(), Idle | Run | Sleep | Waking))
             }
-            None => Err(LockError::NoSuchProcess(pid)),
+            None => Err(LockError::NoSuchProcess(pid, self.path.clone())),
         }
     }
 
@@ -189,7 +189,7 @@ pub type Result<T> = result::Result<T, LockError>;
 /// LockError is the set of known program lock errors
 #[derive(Error, Debug)]
 pub enum LockError {
-    // lock present when one is not expected
+    /// lock present when one is not expected
     #[error("Locked")]
     Locked(PathBuf),
     #[error("No lock file at {0}")]
@@ -197,10 +197,8 @@ pub enum LockError {
     /// Failure to parse contents of lock file
     #[error("Corrupt lock file contents at {0}")]
     CorruptLock(PathBuf),
-    #[error("Cannot determine status of process holding this lock")]
-    ZombieLock(PathBuf),
     #[error("could not find process with id: {0}")]
-    NoSuchProcess(Pid),
+    NoSuchProcess(Pid, PathBuf),
     // location for lock no bueno
     #[error("invalid path for lock file: {source}")]
     InvalidPath {
@@ -216,12 +214,7 @@ pub enum LockError {
     Util {
         #[from]
         source: UtilError,
-    }, // /// catchall error type
-       // #[error("{source}")]
-       // Uncategorized {
-       //     #[from]
-       //     source: dyn std::error::Error,
-       // },
+    },
 }
 
 #[cfg(all(test, unix))]

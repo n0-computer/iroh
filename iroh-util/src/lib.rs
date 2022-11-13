@@ -61,7 +61,7 @@ pub async fn block_until_sigint() {
 /// | macOS    | `$HOME`/Library/Application Support/iroh   | /Users/Alice/Library/Application Support/iroh |
 /// | Windows  | `{FOLDERID_RoamingAppData}`/iroh           | C:\Users\Alice\AppData\Roaming\iroh   |
 pub fn iroh_config_root() -> Result<PathBuf> {
-    let cfg = dirs_next::config_dir().ok_or_else(|| UtilError::NoDir {
+    let cfg = dirs_next::config_dir().ok_or(UtilError::NoDir {
         purpose: "configuration data",
     })?;
     Ok(cfg.join(IROH_DIR))
@@ -83,7 +83,7 @@ pub fn iroh_config_path(file_name: &str) -> Result<PathBuf> {
 /// | macOS    | `$HOME`/Library/Application Support/iroh      | /Users/Alice/Library/Application Support/iroh |
 /// | Windows  | `{FOLDERID_RoamingAppData}/iroh`              | C:\Users\Alice\AppData\Roaming\iroh           |
 pub fn iroh_data_root() -> Result<PathBuf> {
-    let path = dirs_next::data_dir().ok_or_else(|| UtilError::NoDir {
+    let path = dirs_next::data_dir().ok_or(UtilError::NoDir {
         purpose: "application data",
     })?;
     Ok(path.join(IROH_DIR))
@@ -105,7 +105,7 @@ pub fn iroh_data_path(file_name: &str) -> Result<PathBuf> {
 /// | macOS    | `$HOME`/Library/Caches/iroh                   | /Users/Alice/Library/Caches/iroh         |
 /// | Windows  | `{FOLDERID_LocalAppData}/iroh`                | C:\Users\Alice\AppData\Roaming\iroh      |
 pub fn iroh_cache_root() -> Result<PathBuf> {
-    let path = dirs_next::cache_dir().ok_or_else(|| UtilError::NoDir {
+    let path = dirs_next::cache_dir().ok_or(UtilError::NoDir {
         purpose: "application data",
     })?;
     Ok(path.join(IROH_DIR))
