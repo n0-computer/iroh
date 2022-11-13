@@ -1,6 +1,7 @@
 mod behaviour;
 pub mod cli;
 pub mod config;
+pub mod error;
 mod keys;
 pub mod metrics;
 mod node;

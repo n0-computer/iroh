@@ -1,6 +1,5 @@
 use std::time::Duration;
 
-use anyhow::Result;
 use async_trait::async_trait;
 use cid::Cid;
 use iroh_bitswap::{Bitswap, Block, Config as BitswapConfig, Store};
@@ -23,6 +22,7 @@ use tracing::{info, warn};
 pub(crate) use self::event::Event;
 use self::peer_manager::PeerManager;
 use crate::config::Libp2pConfig;
+use crate::error::Error;
 
 mod event;
 mod peer_manager;
@@ -49,27 +49,23 @@ pub(crate) struct BitswapStore(Client);
 
 #[async_trait]
 impl Store for BitswapStore {
-    async fn get(&self, cid: &Cid) -> Result<Block> {
+    type Error = Error;
+
+    async fn get(&self, cid: &Cid) -> Result<Block, Error> {
         let store = self.0.try_store()?;
         let cid = *cid;
-        let data = store
-            .get(cid)
-            .await?
-            .ok_or_else(|| anyhow::anyhow!("not found"))?;
+        let data = store.get(cid).await?.ok_or_else(|| Error::NotFound)?;
         Ok(Block::new(data, cid))
     }
 
-    async fn get_size(&self, cid: &Cid) -> Result<usize> {
+    async fn get_size(&self, cid: &Cid) -> Result<usize, Error> {
         let store = self.0.try_store()?;
         let cid = *cid;
-        let size = store
-            .get_size(cid)
-            .await?
-            .ok_or_else(|| anyhow::anyhow!("not found"))?;
+        let size = store.get_size(cid).await?.ok_or_else(|| Error::NotFound)?;
         Ok(size as usize)
     }
 
-    async fn has(&self, cid: &Cid) -> Result<bool> {
+    async fn has(&self, cid: &Cid) -> Result<bool, Error> {
         let store = self.0.try_store()?;
         let cid = *cid;
         let res = store.has(cid).await?;
@@ -83,7 +79,7 @@ impl NodeBehaviour {
         config: &Libp2pConfig,
         relay_client: Option<relay::v2::client::Client>,
         rpc_client: Client,
-    ) -> Result<Self> {
+    ) -> Result<Self, Error> {
         let peer_manager = PeerManager::default();
         let pub_key = local_key.public();
         let peer_id = pub_key.to_peer_id();
@@ -195,7 +191,7 @@ impl NodeBehaviour {
             let message_authenticity = MessageAuthenticity::Signed(local_key.clone());
             Some(
                 gossipsub::Gossipsub::new(message_authenticity, gossipsub_config)
-                    .map_err(|e| anyhow::anyhow!("{}", e))?,
+                    .map_err(Error::Gossipsub)?,
             )
         } else {
             None
@@ -228,9 +224,10 @@ impl NodeBehaviour {
         }
     }
 
-    pub fn kad_bootstrap(&mut self) -> Result<()> {
+    pub fn kad_bootstrap(&mut self) -> Result<(), Error> {
         if let Some(kad) = self.kad.as_mut() {
-            kad.bootstrap()?;
+            // TODO: See https://github.com/libp2p/rust-libp2p/pull/3114
+            kad.bootstrap().map_err(|_| Error::NoKnownPeers)?;
         }
         Ok(())
     }

@@ -1,6 +1,5 @@
 use std::time::Duration;
 
-use anyhow::Result;
 use iroh_rpc_client::Client;
 use libp2p::{
     core::{
@@ -16,6 +15,7 @@ use libp2p::{
     PeerId, Swarm, Transport,
 };
 
+use crate::error::Error;
 use crate::{behaviour::NodeBehaviour, Libp2pConfig};
 
 /// Builds the transport stack that LibP2P will communicate over.
@@ -92,7 +92,7 @@ pub(crate) async fn build_swarm(
     config: &Libp2pConfig,
     keypair: &Keypair,
     rpc_client: Client,
-) -> Result<Swarm<NodeBehaviour>> {
+) -> Result<Swarm<NodeBehaviour>, Error> {
     let peer_id = keypair.public().to_peer_id();
 
     let (transport, relay_client) = build_transport(keypair, config).await;

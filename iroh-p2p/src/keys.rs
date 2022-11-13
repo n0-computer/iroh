@@ -2,13 +2,14 @@
 
 use std::path::{Path, PathBuf};
 
-use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use futures::{Stream, StreamExt, TryStreamExt};
 use ssh_key::LineEnding;
 use tokio::fs;
 use tracing::warn;
 use zeroize::Zeroizing;
+
+use crate::error::Error;
 
 /// Supported keypairs.
 #[derive(Clone, Debug)]
@@ -19,7 +20,7 @@ pub enum Keypair {
 
 impl Keypair {
     /// Encodes the private part of the keypair into the ssh-key file format.
-    fn to_private_openssh(&self) -> Result<Zeroizing<String>> {
+    fn to_private_openssh(&self) -> Result<Zeroizing<String>, Error> {
         match self {
             Keypair::Ed25519(kp) => {
                 let res = ssh_key::private::PrivateKey::from(kp.clone())
@@ -37,12 +38,12 @@ impl Keypair {
 }
 
 impl TryFrom<&'_ ssh_key::private::PrivateKey> for Keypair {
-    type Error = anyhow::Error;
+    type Error = Error;
 
     fn try_from(key: &ssh_key::private::PrivateKey) -> Result<Self, Self::Error> {
         match key.key_data() {
             ssh_key::private::KeypairData::Ed25519(kp) => Ok(Keypair::Ed25519(kp.clone())),
-            _ => Err(anyhow!("unsupported key format: {}", key.algorithm())),
+            _ => Err(Error::UnsupportedKeyFormat(key.algorithm())),
         }
     }
 }
@@ -73,7 +74,7 @@ impl<S: Storage> Keychain<S> {
     }
 
     /// Creates a new Ed25519 based key and stores it.
-    pub async fn create_ed25519_key(&mut self) -> Result<()> {
+    pub async fn create_ed25519_key(&mut self) -> Result<(), Error> {
         let keypair = ssh_key::private::Ed25519Keypair::random(rand::thread_rng());
         let keypair = Keypair::Ed25519(keypair);
 
@@ -83,17 +84,17 @@ impl<S: Storage> Keychain<S> {
     }
 
     /// Returns a stream of all keys stored.
-    pub fn keys(&self) -> impl Stream<Item = Result<Keypair>> + '_ {
+    pub fn keys(&self) -> impl Stream<Item = Result<Keypair, Error>> + '_ {
         self.storage.keys()
     }
 
     /// Returns how many keys are stored in this keychain.
-    pub async fn len(&self) -> Result<usize> {
+    pub async fn len(&self) -> Result<usize, Error> {
         self.storage.len().await
     }
 
     /// Returns true if there are no keys stored.
-    pub async fn is_empty(&self) -> Result<bool> {
+    pub async fn is_empty(&self) -> Result<bool, Error> {
         Ok(self.storage.len().await? == 0)
     }
 }
@@ -113,14 +114,14 @@ impl Keychain<MemoryStorage> {
 
 impl Keychain<DiskStorage> {
     /// Creates a new on disk keychain, with the root defaulting to `.iroh`.
-    pub async fn new(root: PathBuf) -> Result<Self> {
+    pub async fn new(root: PathBuf) -> Result<Self, Error> {
         Self::with_root(root).await
     }
 
     /// Creates a new on disk keychain, located at the given path.
     ///
     /// If the path does not exist it is created.
-    pub async fn with_root(root: PathBuf) -> Result<Self> {
+    pub async fn with_root(root: PathBuf) -> Result<Self, Error> {
         let storage = DiskStorage::new(&root).await?;
         Ok(Self::from_storage(storage))
     }
@@ -139,7 +140,7 @@ pub struct DiskStorage {
 }
 
 impl DiskStorage {
-    async fn new<P: AsRef<Path>>(path: P) -> Result<Self> {
+    async fn new<P: AsRef<Path>>(path: P) -> Result<Self, Error> {
         let path = path.as_ref();
 
         if !path.exists() {
@@ -149,14 +150,14 @@ impl DiskStorage {
         Ok(DiskStorage { path: path.into() })
     }
 
-    async fn generate_name(&self, alg: ssh_key::Algorithm) -> Result<String> {
+    async fn generate_name(&self, alg: ssh_key::Algorithm) -> Result<String, Error> {
         let count = self.next_count_for_alg(alg).await?;
         let name = format!("id_{}_{}", print_algorithm(alg), count);
 
         Ok(name)
     }
 
-    async fn next_count_for_alg(&self, alg: ssh_key::Algorithm) -> Result<usize> {
+    async fn next_count_for_alg(&self, alg: ssh_key::Algorithm) -> Result<usize, Error> {
         let matcher = format!("id_{}", print_algorithm(alg));
         let key_files = self.key_files();
         futures::pin_mut!(key_files);
@@ -178,7 +179,7 @@ impl DiskStorage {
         Ok(counts.last().map(|c| c + 1).unwrap_or_default())
     }
 
-    fn key_files(&self) -> impl Stream<Item = Result<PathBuf>> + '_ {
+    fn key_files(&self) -> impl Stream<Item = Result<PathBuf, Error>> + '_ {
         async_stream::try_stream! {
             let mut reader = fs::read_dir(&self.path).await?;
 
@@ -196,24 +197,24 @@ impl DiskStorage {
 
 #[async_trait]
 pub trait Storage: std::fmt::Debug {
-    async fn put(&mut self, keypair: Keypair) -> Result<()>;
-    async fn len(&self) -> Result<usize>;
+    async fn put(&mut self, keypair: Keypair) -> Result<(), Error>;
+    async fn len(&self) -> Result<usize, Error>;
 
-    fn keys(&self) -> Box<dyn Stream<Item = Result<Keypair>> + Unpin + Send + '_>;
+    fn keys(&self) -> Box<dyn Stream<Item = Result<Keypair, Error>> + Unpin + Send + '_>;
 }
 
 #[async_trait]
 impl Storage for MemoryStorage {
-    async fn put(&mut self, keypair: Keypair) -> Result<()> {
+    async fn put(&mut self, keypair: Keypair) -> Result<(), Error> {
         self.keys.push(keypair);
         Ok(())
     }
 
-    async fn len(&self) -> Result<usize> {
+    async fn len(&self) -> Result<usize, Error> {
         Ok(self.keys.len())
     }
 
-    fn keys(&self) -> Box<dyn Stream<Item = Result<Keypair>> + Unpin + Send + '_> {
+    fn keys(&self) -> Box<dyn Stream<Item = Result<Keypair, Error>> + Unpin + Send + '_> {
         let s = async_stream::stream! {
             for key in &self.keys {
                 yield Ok(key.clone());
@@ -226,7 +227,7 @@ impl Storage for MemoryStorage {
 
 #[async_trait]
 impl Storage for DiskStorage {
-    async fn put(&mut self, keypair: Keypair) -> Result<()> {
+    async fn put(&mut self, keypair: Keypair) -> Result<(), Error> {
         let name = self.generate_name(keypair.algorithm()).await?;
         let path = self.path.join(name);
         let encoded_keypair = keypair.to_private_openssh()?;
@@ -235,12 +236,12 @@ impl Storage for DiskStorage {
         Ok(())
     }
 
-    async fn len(&self) -> Result<usize> {
+    async fn len(&self) -> Result<usize, Error> {
         let files: Vec<_> = self.key_files().try_collect().await?;
         Ok(files.len())
     }
 
-    fn keys(&self) -> Box<dyn Stream<Item = Result<Keypair>> + Unpin + Send + '_> {
+    fn keys(&self) -> Box<dyn Stream<Item = Result<Keypair, Error>> + Unpin + Send + '_> {
         let s = async_stream::try_stream! {
             let mut reader = fs::read_dir(&self.path).await?;
 

@@ -1,6 +1,5 @@
 use std::path::PathBuf;
 
-use anyhow::{bail, Result};
 use config::{ConfigError, Map, Source, Value};
 use iroh_metrics::config::Config as MetricsConfig;
 use iroh_rpc_client::Config as RpcClientConfig;
@@ -11,6 +10,8 @@ use iroh_rpc_types::{
 use iroh_util::{insert_into_config_map, iroh_data_root};
 use libp2p::Multiaddr;
 use serde::{Deserialize, Serialize};
+
+use crate::error::Error;
 
 /// CONFIG_FILE_NAME is the name of the optional config file located in the iroh home directory
 pub const CONFIG_FILE_NAME: &str = "p2p.config.toml";
@@ -204,7 +205,7 @@ impl Config {
     }
 
     /// Derive server addr for non memory addrs.
-    pub fn server_rpc_addr(&self) -> Result<Option<P2pServerAddr>> {
+    pub fn server_rpc_addr(&self) -> Result<Option<P2pServerAddr>, Error> {
         self.rpc_client
             .p2p_addr
             .as_ref()
@@ -216,8 +217,8 @@ impl Config {
                     #[cfg(all(feature = "rpc-grpc", unix))]
                     Addr::GrpcUds(path) => Ok(Addr::GrpcUds(path.clone())),
                     #[cfg(feature = "rpc-mem")]
-                    Addr::Mem(_) => bail!("can not derive rpc_addr for mem addr"),
-                    _ => bail!("invalid rpc_addr"),
+                    Addr::Mem(_) => Err(Error::CannotDeriveRpcAddrFromMemAddr),
+                    _ => Err(Error::InvalidRpcAddr),
                 }
             })
             .transpose()
