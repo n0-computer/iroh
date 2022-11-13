@@ -7,7 +7,7 @@ proxy!(
     fetch_bitswap: BitswapRequest => BitswapResponse => BitswapResponse,
     fetch_provider_dht: Key =>
         std::pin::Pin<Box<dyn futures::Stream<Item = Result<Providers, tonic::Status>> + Send>> =>
-        std::pin::Pin<Box<dyn futures::Stream<Item = anyhow::Result<Providers>> + Send>> [FetchProviderDhtStream],
+        std::pin::Pin<Box<dyn futures::Stream<Item = Result<Providers, crate::error::Error>> + Send>> [FetchProviderDhtStream],
     stop_session_bitswap: StopSessionBitswapRequest => () => (),
     notify_new_blocks_bitswap: NotifyNewBlocksBitswapRequest => () => (),
     get_listening_addrs: () => GetListeningAddrsResponse =>  GetListeningAddrsResponse,

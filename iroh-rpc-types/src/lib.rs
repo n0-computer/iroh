@@ -1,6 +1,7 @@
 #[macro_use]
 mod macros;
 
+pub mod error;
 pub mod gateway;
 pub mod p2p;
 pub mod store;
