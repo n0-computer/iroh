@@ -62,7 +62,7 @@ pub async fn block_until_sigint() {
 /// | Windows  | `{FOLDERID_RoamingAppData}`/iroh           | C:\Users\Alice\AppData\Roaming\iroh   |
 pub fn iroh_config_root() -> Result<PathBuf> {
     let cfg = dirs_next::config_dir().ok_or_else(|| UtilError::NoDir {
-        purpose: String::from("configuration data"),
+        purpose: "configuration data",
     })?;
     Ok(cfg.join(IROH_DIR))
 }
@@ -84,7 +84,7 @@ pub fn iroh_config_path(file_name: &str) -> Result<PathBuf> {
 /// | Windows  | `{FOLDERID_RoamingAppData}/iroh`              | C:\Users\Alice\AppData\Roaming\iroh           |
 pub fn iroh_data_root() -> Result<PathBuf> {
     let path = dirs_next::data_dir().ok_or_else(|| UtilError::NoDir {
-        purpose: String::from("application data"),
+        purpose: "application data",
     })?;
     Ok(path.join(IROH_DIR))
 }
@@ -106,7 +106,7 @@ pub fn iroh_data_path(file_name: &str) -> Result<PathBuf> {
 /// | Windows  | `{FOLDERID_LocalAppData}/iroh`                | C:\Users\Alice\AppData\Roaming\iroh      |
 pub fn iroh_cache_root() -> Result<PathBuf> {
     let path = dirs_next::cache_dir().ok_or_else(|| UtilError::NoDir {
-        purpose: String::from("application data"),
+        purpose: "application data",
     })?;
     Ok(path.join(IROH_DIR))
 }
@@ -239,7 +239,7 @@ pub enum UtilError {
     #[error("empty path")]
     EmptyPath,
     #[error("operating environment provides no directory for {purpose}")]
-    NoDir { purpose: String },
+    NoDir { purpose: &'static str },
     #[error("configuration error: {source}")]
     BadConfig {
         #[from]
