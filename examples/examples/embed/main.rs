@@ -1,5 +1,5 @@
 use anyhow::Result;
-use iroh_one::{config::Config, Iroh};
+use iroh_one::{config::Config, iroh::Iroh};
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<()> {
