@@ -7,7 +7,6 @@ use std::{
 };
 
 use ahash::AHashMap;
-use anyhow::{anyhow, Result};
 use cid::Cid;
 use futures::FutureExt;
 use iroh_metrics::{bitswap::BitswapMetrics, core::MRecorder, inc};
@@ -15,6 +14,7 @@ use libp2p::PeerId;
 use tokio::sync::RwLock;
 use tracing::debug;
 
+use crate::error::Error;
 use crate::{network::Network, Block};
 
 use super::{
@@ -85,9 +85,9 @@ impl SessionManager {
         &self.inner.session_interest_manager
     }
 
-    pub async fn stop(self) -> Result<()> {
-        let inner = Arc::try_unwrap(self.inner)
-            .map_err(|_| anyhow!("session manager refs not shutdown"))?;
+    pub async fn stop(self) -> Result<(), Error> {
+        let inner =
+            Arc::try_unwrap(self.inner).map_err(|_| Error::SessionManagerRefsNotShutdown)?;
 
         let sessions = RwLock::into_inner(inner.sessions);
         let results = futures::future::join_all(
@@ -169,7 +169,7 @@ impl SessionManager {
         sessions.get(&session_id).cloned()
     }
 
-    pub async fn remove_session(&self, session_id: u64) -> Result<()> {
+    pub async fn remove_session(&self, session_id: u64) -> Result<(), Error> {
         debug!(
             "stopping session {} ({} sessions)",
             session_id,

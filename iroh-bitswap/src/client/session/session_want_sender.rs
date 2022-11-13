@@ -1,7 +1,6 @@
 use std::cmp::Ordering;
 
 use ahash::{AHashMap, AHashSet};
-use anyhow::Result;
 use cid::Cid;
 use iroh_metrics::core::MRecorder;
 use iroh_metrics::{bitswap::BitswapMetrics, inc};
@@ -13,6 +12,7 @@ use crate::client::{
     block_presence_manager::BlockPresenceManager, peer_manager::PeerManager,
     session_manager::SessionManager,
 };
+use crate::error::Error;
 
 use super::{
     peer_response_tracker::PeerResponseTracker, sent_want_blocks_tracker::SentWantBlocksTracker,
@@ -201,7 +201,7 @@ impl SessionWantSender {
         }
     }
 
-    pub async fn stop(self) -> Result<()> {
+    pub async fn stop(self) -> Result<(), Error> {
         debug!("stopping session_want_sender");
         if self.closer.send(()).is_ok() {
             self.worker.await?;
@@ -422,7 +422,7 @@ impl LoopState {
         }
     }
 
-    async fn stop(self) -> Result<()> {
+    async fn stop(self) -> Result<(), Error> {
         // Unregister the session with the PeerManager
         self.peer_manager.unregister_session(self.signaler.id).await;
 

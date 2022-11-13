@@ -4,7 +4,6 @@ use std::{
 };
 
 use ahash::AHashSet;
-use anyhow::{ensure, Result};
 use cid::Cid;
 use iroh_metrics::core::MRecorder;
 use iroh_metrics::{bitswap::BitswapMetrics, inc};
@@ -12,6 +11,7 @@ use libp2p::PeerId;
 use tokio::{sync::mpsc, task::JoinHandle};
 use tracing::{debug, error, warn};
 
+use crate::error::Error;
 use crate::{
     message::{BitswapMessage, Entry, WantType},
     network::{MessageSender, MessageSenderConfig, Network},
@@ -130,7 +130,7 @@ impl MessageQueue {
 
     #[cfg(test)]
     #[allow(dead_code)]
-    pub(crate) async fn wants(&self) -> Result<Wants> {
+    pub(crate) async fn wants(&self) -> Result<Wants, Error> {
         let (s, r) = tokio::sync::oneshot::channel();
         self.send_wants_update(WantsUpdate::GetWants(s)).await;
         let wants = r.await?;
@@ -201,12 +201,10 @@ impl MessageQueue {
     }
 
     /// Shuts down this message queue.
-    pub async fn stop(mut self) -> Result<()> {
-        ensure!(
-            self.sender_responses.is_some(),
-            "message queue {} already stopped",
-            self.peer
-        );
+    pub async fn stop(mut self) -> Result<(), Error> {
+        if self.sender_responses.is_none() {
+            return Err(Error::MessageQueueAlreadyStopped(self.peer));
+        }
         inc!(BitswapMetrics::MessageQueuesStopped);
 
         let _ = self.sender_wants.take();
@@ -363,7 +361,7 @@ impl MessageQueueActor {
         }
     }
 
-    async fn stop(self) -> Result<()> {
+    async fn stop(self) -> Result<(), Error> {
         self.dh_timeout_manager.stop().await?;
         Ok(())
     }
@@ -587,12 +585,15 @@ impl MessageQueueActor {
     /// Convert the lists of wants into a bitswap message
     async fn extract_outgoing_message(
         &mut self,
-    ) -> Result<(
-        BitswapMessage,
-        &MessageSender,
-        Vec<super::wantlist::Entry>,
-        Vec<super::wantlist::Entry>,
-    )> {
+    ) -> Result<
+        (
+            BitswapMessage,
+            &MessageSender,
+            Vec<super::wantlist::Entry>,
+            Vec<super::wantlist::Entry>,
+        ),
+        Error,
+    > {
         if self.sender.is_none() {
             let sender = self
                 .network

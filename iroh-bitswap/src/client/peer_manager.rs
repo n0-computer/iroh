@@ -1,7 +1,6 @@
 use std::{fmt::Debug, sync::Arc};
 
 use ahash::{AHashMap, AHashSet};
-use anyhow::Result;
 use cid::Cid;
 use derivative::Derivative;
 use futures::{future::BoxFuture, FutureExt};
@@ -10,6 +9,7 @@ use libp2p::PeerId;
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, trace, warn};
 
+use crate::error::Error;
 use crate::network::Network;
 
 use super::{message_queue::MessageQueue, peer_want_manager::PeerWantManager, session::Signaler};
@@ -206,7 +206,7 @@ impl PeerManager {
     }
 
     /// Shutdown this peer manager.
-    pub async fn stop(self) -> Result<()> {
+    pub async fn stop(self) -> Result<(), Error> {
         debug!("stopping peer manager");
         // dropping will stop the loop
 
@@ -451,7 +451,7 @@ impl PeerManagerActor {
         }
     }
 
-    async fn stop(self) -> Result<()> {
+    async fn stop(self) -> Result<(), Error> {
         let results = futures::future::join_all(
             self.peers
                 .into_iter()

@@ -10,7 +10,6 @@ use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 
 use ahash::AHashMap;
-use anyhow::Result;
 use async_trait::async_trait;
 use cid::Cid;
 use handler::{BitswapHandler, HandlerEvent};
@@ -49,6 +48,7 @@ pub mod peer_task_queue;
 
 pub use self::block::{tests::*, Block};
 pub use self::protocol::ProtocolId;
+use crate::error::Error;
 
 const DIAL_BACK_OFF: Duration = Duration::from_secs(10 * 60);
 
@@ -119,9 +119,11 @@ impl Default for Config {
 
 #[async_trait]
 pub trait Store: Debug + Clone + Send + Sync + 'static {
-    async fn get_size(&self, cid: &Cid) -> Result<usize>;
-    async fn get(&self, cid: &Cid) -> Result<Block>;
-    async fn has(&self, cid: &Cid) -> Result<bool>;
+    type Error: Send;
+
+    async fn get_size(&self, cid: &Cid) -> Result<usize, Self::Error>;
+    async fn get(&self, cid: &Cid) -> Result<Block, Self::Error>;
+    async fn has(&self, cid: &Cid) -> Result<bool, Self::Error>;
 }
 
 impl<S: Store> Bitswap<S> {
@@ -214,7 +216,7 @@ impl<S: Store> Bitswap<S> {
         &self.client
     }
 
-    pub async fn stop(self) -> Result<()> {
+    pub async fn stop(self) -> Result<(), Error> {
         self.network.stop();
         let (a, b) = futures::future::join(self.client.stop(), self.server.stop()).await;
         a?;
@@ -223,7 +225,7 @@ impl<S: Store> Bitswap<S> {
         Ok(())
     }
 
-    pub async fn notify_new_blocks(&self, blocks: &[Block]) -> Result<()> {
+    pub async fn notify_new_blocks(&self, blocks: &[Block]) -> Result<(), Error> {
         self.client.notify_new_blocks(blocks).await?;
         self.server.notify_new_blocks(blocks).await?;
 
@@ -242,7 +244,7 @@ impl<S: Store> Bitswap<S> {
         }
     }
 
-    pub async fn stat(&self) -> Result<Stat> {
+    pub async fn stat(&self) -> Result<Stat, Error> {
         let client_stat = self.client.stat().await?;
         let server_stat = self.server.stat().await?;
 
@@ -660,13 +662,15 @@ mod tests {
 
     #[async_trait]
     impl Store for DummyStore {
-        async fn get_size(&self, _: &Cid) -> Result<usize> {
+        type Error = ();
+
+        async fn get_size(&self, _: &Cid) -> Result<usize, Self::Error> {
             todo!()
         }
-        async fn get(&self, _: &Cid) -> Result<Block> {
+        async fn get(&self, _: &Cid) -> Result<Block, Self::Error> {
             todo!()
         }
-        async fn has(&self, _: &Cid) -> Result<bool> {
+        async fn has(&self, _: &Cid) -> Result<bool, Self::Error> {
             todo!()
         }
     }
@@ -707,7 +711,9 @@ mod tests {
 
     #[async_trait]
     impl Store for TestStore {
-        async fn get_size(&self, cid: &Cid) -> Result<usize> {
+        type Error = anyhow::Error;
+
+        async fn get_size(&self, cid: &Cid) -> Result<usize, Self::Error> {
             self.store
                 .read()
                 .await
@@ -716,7 +722,7 @@ mod tests {
                 .ok_or_else(|| anyhow!("missing"))
         }
 
-        async fn get(&self, cid: &Cid) -> Result<Block> {
+        async fn get(&self, cid: &Cid) -> Result<Block, Self::Error> {
             self.store
                 .read()
                 .await
@@ -725,7 +731,7 @@ mod tests {
                 .ok_or_else(|| anyhow!("missing"))
         }
 
-        async fn has(&self, cid: &Cid) -> Result<bool> {
+        async fn has(&self, cid: &Cid) -> Result<bool, Self::Error> {
             Ok(self.store.read().await.contains_key(cid))
         }
     }

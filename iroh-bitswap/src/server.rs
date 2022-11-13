@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use anyhow::{anyhow, Result};
 use cid::Cid;
 use futures::future::BoxFuture;
 use futures::FutureExt;
@@ -16,6 +15,7 @@ use self::{
     decision::{Config as DecisionConfig, Engine as DecisionEngine, Envelope},
     score_ledger::Receipt,
 };
+use crate::error::Error;
 use crate::{block::Block, message::BitswapMessage, network::Network, Store};
 
 mod blockstore_manager;
@@ -231,32 +231,31 @@ impl<S: Store> Server<S> {
             .collect()
     }
 
-    pub async fn stop(self) -> Result<()> {
+    pub async fn stop(self) -> Result<(), Error> {
         // trigger shutdown of the worker threads
         // wait for all workers to be done
-        let mut inner =
-            Arc::try_unwrap(self.inner).map_err(|_| anyhow!("Server refs not shutdown yet"))?;
+        let mut inner = Arc::try_unwrap(self.inner).map_err(|_| Error::ServerRefsNotShutdown)?;
         while let Some((closer, handle)) = inner.workers.pop() {
             if closer.send(()).is_ok() {
-                handle.await.map_err(|e| anyhow!("{:?}", e))?;
+                handle.await?;
             }
         }
 
         if let Some((closer, handle)) = inner.provide_collector.take() {
             if closer.send(()).is_ok() {
-                handle.await.map_err(|e| anyhow!("{:?}", e))?;
+                handle.await?;
             }
         }
 
         if let Some((closer, handle)) = inner.provide_worker.take() {
             if closer.send(()).is_ok() {
-                handle.await.map_err(|e| anyhow!("{:?}", e))?;
+                handle.await?;
             }
         }
 
         // stop the decision engine
         Arc::try_unwrap(self.engine)
-            .map_err(|_| anyhow!("engine refs not shutdown yet"))?
+            .map_err(|_| Error::EngineRefsNotShutdown)?
             .stop()
             .await?;
 
@@ -264,7 +263,7 @@ impl<S: Store> Server<S> {
     }
 
     /// Returns aggregated stats about the server operations.
-    pub async fn stat(&self) -> Result<Stat> {
+    pub async fn stat(&self) -> Result<Stat, Error> {
         let mut counters = self.inner.counters.lock().await;
         // TODO:
         // counters.provide_buf_len = self.new_blocks.len();
@@ -278,7 +277,7 @@ impl<S: Store> Server<S> {
     /// Potentially it will notify its peers about it.
     /// The blocks are not stored by bitswap, so the caller has to ensure to
     /// store them in the store, befor calling this method.
-    pub async fn notify_new_blocks(&self, blocks: &[Block]) -> Result<()> {
+    pub async fn notify_new_blocks(&self, blocks: &[Block]) -> Result<(), Error> {
         //  send wanted blocks to the decision engine
         self.engine.notify_new_blocks(blocks).await;
         if self.inner.provide_enabled {

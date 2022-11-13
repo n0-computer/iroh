@@ -6,7 +6,6 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{anyhow, bail, Result};
 use cid::Cid;
 use futures::Stream;
 use iroh_metrics::{bitswap::BitswapMetrics, inc};
@@ -15,6 +14,7 @@ use libp2p::{core::connection::ConnectionId, PeerId};
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, info, trace};
 
+use crate::error::Error;
 use crate::{message::BitswapMessage, protocol::ProtocolId, BitswapEvent};
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
@@ -80,7 +80,7 @@ impl Network {
         &self.self_id
     }
 
-    pub async fn ping(&self, peer: &PeerId) -> Result<Duration> {
+    pub async fn ping(&self, peer: &PeerId) -> Result<Duration, Error> {
         let (s, r) = oneshot::channel();
         let res = tokio::time::timeout(Duration::from_secs(30), async {
             self.network_out_sender
@@ -89,10 +89,10 @@ impl Network {
                     response: s,
                 }))
                 .await
-                .map_err(|e| anyhow!("channel send: {:?}", e))?;
+                .map_err(Error::from)?;
 
-            let r = r.await?.ok_or_else(|| anyhow!("no ping available"))?;
-            Ok::<Duration, anyhow::Error>(r)
+            let r = r.await?.ok_or_else(|| Error::NoPingAvailable)?;
+            Ok::<Duration, Error>(r)
         })
         .await??;
         Ok(res)
@@ -110,7 +110,7 @@ impl Network {
         retries: usize,
         timeout: Duration,
         backoff: Duration,
-    ) -> Result<()> {
+    ) -> Result<(), Error> {
         debug!("send:{}: start: {:#?}", peer, message);
         inc!(BitswapMetrics::MessagesAttempted);
 
@@ -118,7 +118,7 @@ impl Network {
         let num_block_bytes = message.blocks().map(|b| b.data.len() as u64).sum();
 
         tokio::time::timeout(timeout, async {
-            let mut errors: Vec<anyhow::Error> = Vec::new();
+            let mut errors: Vec<Error> = Vec::new();
             for i in 1..=retries {
                 debug!("send:{}: try {}/{}", peer, i, retries);
                 let (s, r) = oneshot::channel();
@@ -134,7 +134,7 @@ impl Network {
                         connection_id,
                     })
                     .await
-                    .map_err(|e| anyhow!("send:{}: channel send failed: {:?}", peer, e))?;
+                    .map_err(|e| Error::ChannelSendFailed(peer, e))?;
 
                 match r.await {
                     Ok(Ok(res)) => {
@@ -144,21 +144,21 @@ impl Network {
                     Ok(Err(SendError::ProtocolNotSupported)) => {
                         // No point in using this peer if they don't speak our protocol.
                         self.disconnect(peer).await?;
-                        return Err(SendError::ProtocolNotSupported.into());
+                        return Err(Error::from(SendError::ProtocolNotSupported));
                     }
                     Err(channel_err) => {
                         debug!(
                             "send:{}: try {}/{} failed with channel: {:?}",
                             peer, i, retries, channel_err
                         );
-                        return Err(anyhow!("send:{}: channel gone: {:?}", peer, channel_err));
+                        return Err(Error::from(Error::SendChannelGone(peer, channel_err)));
                     }
                     Ok(Err(other)) => {
                         debug!(
                             "send:{}: try {}/{} failed with: {:?}",
                             peer, i, retries, other
                         );
-                        errors.push(other.into());
+                        errors.push(Error::SendError(other));
                         if i < retries - 1 {
                             // backoff until we retry
                             tokio::time::sleep(backoff).await;
@@ -166,10 +166,10 @@ impl Network {
                     }
                 }
             }
-            bail!("send:{}: failed {:?}", peer, errors);
+
+            Err(Error::SendFailed(peer, errors))
         })
-        .await
-        .map_err(|e| anyhow!("send:{}: {:?}", peer, e))??;
+        .await??;
 
         debug!("send:{}: success", peer);
         // Record successfull stats
@@ -187,7 +187,7 @@ impl Network {
         &self,
         key: Cid,
         limit: usize,
-    ) -> Result<mpsc::Receiver<std::result::Result<HashSet<PeerId>, String>>> {
+    ) -> Result<mpsc::Receiver<std::result::Result<HashSet<PeerId>, String>>, Error> {
         let (s, r) = mpsc::channel(limit);
         self.network_out_sender
             .send(OutEvent::GenerateEvent(BitswapEvent::FindProviders {
@@ -195,8 +195,7 @@ impl Network {
                 response: s,
                 limit,
             }))
-            .await
-            .map_err(|e| anyhow!("channel send: {:?}", e))?;
+            .await?;
 
         Ok(r)
     }
@@ -205,7 +204,7 @@ impl Network {
         &self,
         peer: PeerId,
         timeout: Duration,
-    ) -> Result<(ConnectionId, Option<ProtocolId>)> {
+    ) -> Result<(ConnectionId, Option<ProtocolId>), Error> {
         let dial_id = self
             .dial_id
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -221,15 +220,13 @@ impl Network {
                     id: dial_id,
                 })
                 .await
-                .map_err(|e| anyhow!("dial:{}: channel send: {:?}", dial_id, e))?;
+                .map_err(|e| Error::DialChannelSend(dial_id, e))?;
 
-            let res = r
-                .await?
-                .map_err(|e| anyhow!("dial:{} failed: {}", dial_id, e))?;
-            Ok::<_, anyhow::Error>(res)
+            let res = r.await?.map_err(|e| Error::DialFailed(dial_id, e))?;
+            Ok::<_, Error>(res)
         })
         .await
-        .map_err(|e| anyhow!("dial:{} error: {:?}", dial_id, e))??;
+        .map_err(|e| Error::DialError(dial_id, e))??;
 
         debug!("dial:{}: success {}", dial_id, peer);
         inc!(BitswapMetrics::Dials);
@@ -241,7 +238,7 @@ impl Network {
         &self,
         to: PeerId,
         config: MessageSenderConfig,
-    ) -> Result<MessageSender> {
+    ) -> Result<MessageSender, Error> {
         let (connection_id, protocol_id) = self.dial(to, CONNECT_TIMEOUT).await?;
 
         Ok(MessageSender {
@@ -253,7 +250,7 @@ impl Network {
         })
     }
 
-    pub async fn send_message(&self, peer: PeerId, message: BitswapMessage) -> Result<()> {
+    pub async fn send_message(&self, peer: PeerId, message: BitswapMessage) -> Result<(), Error> {
         let (connection_id, _) = self.dial(peer, CONNECT_TIMEOUT).await?;
         let timeout = send_timeout(message.encoded_len());
         self.send_message_with_retry_and_timeout(
@@ -267,22 +264,20 @@ impl Network {
         .await
     }
 
-    pub async fn disconnect(&self, peer: PeerId) -> Result<()> {
+    pub async fn disconnect(&self, peer: PeerId) -> Result<(), Error> {
         let (s, r) = oneshot::channel();
         self.network_out_sender
             .send(OutEvent::Disconnect(peer, s))
-            .await
-            .map_err(|e| anyhow!("channel send: {:?}", e))?;
+            .await?;
         r.await?;
 
         Ok(())
     }
 
-    pub async fn provide(&self, key: Cid) -> Result<()> {
+    pub async fn provide(&self, key: Cid) -> Result<(), Error> {
         self.network_out_sender
             .send(OutEvent::GenerateEvent(BitswapEvent::Provide { key }))
-            .await
-            .map_err(|e| anyhow!("channel send: {:?}", e))?;
+            .await?;
 
         Ok(())
     }
@@ -367,7 +362,7 @@ impl MessageSender {
         self.protocol_id.map(|p| p.supports_have()).unwrap_or(true) // optimisticallly assume haves are supported
     }
 
-    pub async fn send_message(&self, message: BitswapMessage) -> Result<()> {
+    pub async fn send_message(&self, message: BitswapMessage) -> Result<(), Error> {
         self.network
             .send_message_with_retry_and_timeout(
                 self.to,
@@ -380,7 +375,7 @@ impl MessageSender {
             .await
     }
 
-    pub async fn disconnect(&self) -> Result<()> {
+    pub async fn disconnect(&self) -> Result<(), Error> {
         self.network.disconnect(self.to).await
     }
 }

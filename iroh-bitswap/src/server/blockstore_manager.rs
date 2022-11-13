@@ -1,8 +1,8 @@
 use ahash::AHashMap;
-use anyhow::Result;
 use cid::Cid;
 use tokio::sync::mpsc;
 
+use crate::error::Error;
 use crate::{block::Block, Store};
 
 /// Maintains a pool of workers that make requests to the blockstore.
@@ -19,11 +19,11 @@ impl<S: Store> BlockstoreManager<S> {
         BlockstoreManager { store }
     }
 
-    pub async fn stop(self) -> Result<()> {
+    pub async fn stop(self) -> Result<(), Error> {
         Ok(())
     }
 
-    pub async fn get_block_sizes(&self, keys: &[Cid]) -> Result<AHashMap<Cid, usize>> {
+    pub async fn get_block_sizes(&self, keys: &[Cid]) -> Result<AHashMap<Cid, usize>, Error> {
         let mut res = AHashMap::new();
         if keys.is_empty() {
             return Ok(res);
@@ -51,7 +51,7 @@ impl<S: Store> BlockstoreManager<S> {
         Ok(res)
     }
 
-    pub async fn get_blocks(&self, keys: &[Cid]) -> Result<AHashMap<Cid, Block>> {
+    pub async fn get_blocks(&self, keys: &[Cid]) -> Result<AHashMap<Cid, Block>, Error> {
         let mut res = AHashMap::new();
         if keys.is_empty() {
             return Ok(res);

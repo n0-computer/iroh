@@ -1,7 +1,6 @@
 use std::{ops::Deref, pin::Pin, sync::Arc, time::Duration};
 
 use ahash::AHashSet;
-use anyhow::{anyhow, ensure, Result};
 use cid::Cid;
 use futures::{future, stream, StreamExt};
 use iroh_metrics::{bitswap::BitswapMetrics, core::MRecorder, inc, record};
@@ -13,6 +12,7 @@ use tokio::{
 };
 use tracing::{debug, error, info, warn};
 
+use crate::error::Error;
 use crate::{network::Network, Block};
 
 use self::{session_want_sender::SessionWantSender, session_wants::SessionWants};
@@ -182,14 +182,12 @@ impl Session {
         Session { inner }
     }
 
-    pub async fn stop(self) -> Result<()> {
+    pub async fn stop(self) -> Result<(), Error> {
         let count = Arc::strong_count(&self.inner);
         info!("stopping session {} ({})", self.inner.id, count,);
-        ensure!(
-            count == 2,
-            "session {}: too many session refs",
-            self.inner.id
-        );
+        if !(count == 2) {
+            return Err(Error::SessionTooManyRefs(self.inner.id));
+        }
 
         // Remove from the session manager list, to ensure this is the last ref.
         self.inner
@@ -197,13 +195,12 @@ impl Session {
             .remove_session(self.inner.id)
             .await?;
 
-        let inner = Arc::try_unwrap(self.inner).map_err(|inner| {
-            anyhow!("session refs not shutdown ({})", Arc::strong_count(&inner))
-        })?;
+        let inner = Arc::try_unwrap(self.inner)
+            .map_err(|inner| Error::SessionRefsNotShutdown(Arc::strong_count(&inner)))?;
         inner
             .closer
             .send(())
-            .map_err(|e| anyhow!("failed to stop worker: {:?}", e))?;
+            .map_err(|_| Error::FailedToStopWorker)?;
         inner.worker.await?;
 
         inc!(BitswapMetrics::SessionsDestroyed);
@@ -273,9 +270,9 @@ impl Session {
     }
 
     /// Fetches a single block.
-    pub async fn get_block(&self, key: &Cid) -> Result<Block> {
+    pub async fn get_block(&self, key: &Cid) -> Result<Block, Error> {
         let r = self.get_blocks(&[*key][..]).await?;
-        let block = r.recv().await?;
+        let block = r.recv().await.map_err(Error::RecvBlock)?;
         Ok(block)
     }
 
@@ -295,8 +292,10 @@ impl Session {
     /// Fetches a set of blocks within the context of this session and
     /// returns a channel that found blocks will be returned on. No order is
     /// guaranteed on the returned blocks.
-    pub async fn get_blocks(&self, keys: &[Cid]) -> Result<BlockReceiver> {
-        ensure!(!keys.is_empty(), "missing keys");
+    pub async fn get_blocks(&self, keys: &[Cid]) -> Result<BlockReceiver, Error> {
+        if keys.is_empty() {
+            return Err(Error::MissingKeys);
+        }
         debug!("get blocks: {:?}", keys);
 
         let (s, r) = async_channel::bounded(8);
@@ -358,7 +357,11 @@ impl Session {
             }
         });
 
-        self.inner.incoming.send(Op::Want(keys.to_vec())).await?;
+        self.inner
+            .incoming
+            .send(Op::Want(keys.to_vec()))
+            .await
+            .map_err(|_| Error::SendOp)?;
 
         Ok(BlockReceiver {
             receiver: r,
@@ -471,7 +474,7 @@ impl LoopState {
         }
     }
 
-    async fn stop(mut self) -> Result<()> {
+    async fn stop(mut self) -> Result<(), Error> {
         debug!(
             "seesion loop stopping {} (workers {})",
             self.id,

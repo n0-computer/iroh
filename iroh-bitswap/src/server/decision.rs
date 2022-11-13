@@ -1,7 +1,6 @@
 use std::{fmt::Debug, sync::Arc, time::Duration};
 
 use ahash::{AHashMap, AHashSet};
-use anyhow::{anyhow, Result};
 use cid::Cid;
 use iroh_metrics::{bitswap::BitswapMetrics, inc, record};
 use libp2p::PeerId;
@@ -14,6 +13,7 @@ use tracing::{debug, error, info, warn};
 use crate::{
     block::Block,
     client::wantlist,
+    error::Error,
     message::{BitswapMessage, BlockPresence, BlockPresenceType, Entry, WantType},
     peer_task_queue::{Config as PTQConfig, PeerTaskQueue, Task},
     Store,
@@ -100,7 +100,7 @@ impl Default for Config {
 pub struct Engine<S: Store> {
     /// Priority queue of requests received from peers.
     peer_task_queue: PeerTaskQueue<Cid, TaskData, TaskMerger>,
-    outbox: async_channel::Receiver<Result<Envelope>>,
+    outbox: async_channel::Receiver<Result<Envelope, Error>>,
     blockstore_manager: Arc<RwLock<BlockstoreManager<S>>>,
     ledger_map: RwLock<AHashMap<PeerId, Arc<Mutex<Ledger>>>>,
     /// Tracks which peers are waiting for a Cid,
@@ -288,24 +288,22 @@ impl<S: Store> Engine<S> {
         }
     }
 
-    pub fn outbox(&self) -> async_channel::Receiver<Result<Envelope>> {
+    pub fn outbox(&self) -> async_channel::Receiver<Result<Envelope, Error>> {
         self.outbox.clone()
     }
 
     /// Shuts down.
-    pub async fn stop(mut self) -> Result<()> {
+    pub async fn stop(mut self) -> Result<(), Error> {
         Arc::try_unwrap(self.blockstore_manager)
-            .map_err(|_| anyhow!("blockstore manager refs not shutdown"))?
+            .map_err(|_| Error::BlockstoreManagerRefsNotShutdown)?
             .into_inner()
             .stop()
             .await?;
         self.score_ledger.stop().await?;
 
         while let Some((closer, handle)) = self.workers.pop() {
-            closer
-                .send(())
-                .map_err(|e| anyhow!("failed to send close {:?}", e))?;
-            handle.await.map_err(|e| anyhow!("{:?}", e))?;
+            closer.send(()).map_err(|_| Error::FailedToSendClose)?;
+            handle.await?;
         }
 
         Ok(())

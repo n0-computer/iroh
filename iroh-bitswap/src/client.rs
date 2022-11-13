@@ -4,13 +4,13 @@ use iroh_metrics::bitswap::BitswapMetrics;
 use iroh_metrics::{core::MRecorder, inc, record};
 
 use ahash::AHashSet;
-use anyhow::Result;
 use cid::Cid;
 use derivative::Derivative;
 use futures::future::BoxFuture;
 use libp2p::PeerId;
 use tracing::{debug, error, info, warn};
 
+use crate::error::Error;
 use crate::{block::Block, message::BitswapMessage, network::Network, Store};
 
 use self::session::BlockReceiver;
@@ -121,14 +121,14 @@ impl<S: Store> Client<S> {
         }
     }
 
-    pub async fn stop(self) -> Result<()> {
+    pub async fn stop(self) -> Result<(), Error> {
         self.session_manager.stop().await?;
 
         Ok(())
     }
 
     /// Attempts to retrieve a particular block from peers.
-    pub async fn get_block(&self, key: &Cid) -> Result<Block> {
+    pub async fn get_block(&self, key: &Cid) -> Result<Block, Error> {
         let session = self.new_session().await;
         let block = session.get_block(key).await;
         session.stop().await?;
@@ -140,7 +140,7 @@ impl<S: Store> Client<S> {
         session_id: u64,
         key: &Cid,
         providers: &[PeerId],
-    ) -> Result<Block> {
+    ) -> Result<Block, Error> {
         let session = self.get_or_create_session(session_id).await;
         for provider in providers {
             session.add_provider(key, *provider).await;
@@ -152,14 +152,14 @@ impl<S: Store> Client<S> {
         &self,
         session_id: u64,
         keys: &[Cid],
-    ) -> Result<BlockReceiver> {
+    ) -> Result<BlockReceiver, Error> {
         let session = self.get_or_create_session(session_id).await;
         session.get_blocks(keys).await
     }
 
     /// Returns a channel where the caller may receive blocks that correspond to the
     /// provided `keys`.
-    pub async fn get_blocks(&self, keys: &[Cid]) -> Result<BlockReceiver> {
+    pub async fn get_blocks(&self, keys: &[Cid]) -> Result<BlockReceiver, Error> {
         let session = self.new_session().await;
         session.get_blocks(keys).await
     }
@@ -167,7 +167,7 @@ impl<S: Store> Client<S> {
     /// Announces the existence of blocks to this bitswap service.
     /// Bitswap itself doesn't store new blocks. It's the caller responsibility to ensure
     /// that those blocks are available in the blockstore before calling this function.
-    pub async fn notify_new_blocks(&self, blocks: &[Block]) -> Result<()> {
+    pub async fn notify_new_blocks(&self, blocks: &[Block]) -> Result<(), Error> {
         let block_cids: Vec<Cid> = blocks.iter().map(|b| *b.cid()).collect();
         // Send all block keys (including duplicates) to any session that wants them.
         self.session_manager
@@ -193,7 +193,7 @@ impl<S: Store> Client<S> {
         incoming: &BitswapMessage,
         haves: &[Cid],
         dont_haves: &[Cid],
-    ) -> Result<()> {
+    ) -> Result<(), Error> {
         info!("recv_msg start");
         let all_keys: Vec<Cid> = incoming.blocks().map(|b| *b.cid()).collect();
         // Determine wanted and unwanted blocks
@@ -318,7 +318,7 @@ impl<S: Store> Client<S> {
             .await
     }
 
-    pub async fn stop_session(&self, session_id: u64) -> Result<()> {
+    pub async fn stop_session(&self, session_id: u64) -> Result<(), Error> {
         if let Some(session) = self.session_manager.get_session(session_id).await {
             session.stop().await?;
         }
@@ -327,7 +327,7 @@ impl<S: Store> Client<S> {
     }
 
     /// Returns aggregated statistics about bitswap operations.
-    pub async fn stat(&self) -> Result<Stat> {
+    pub async fn stat(&self) -> Result<Stat, Error> {
         todo!()
     }
 }

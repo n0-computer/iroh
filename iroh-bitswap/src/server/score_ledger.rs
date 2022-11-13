@@ -5,7 +5,6 @@ use std::{
 };
 
 use ahash::AHashMap;
-use anyhow::{anyhow, Result};
 use iroh_metrics::core::MRecorder;
 use iroh_metrics::{bitswap::BitswapMetrics, inc};
 use libp2p::PeerId;
@@ -15,6 +14,7 @@ use tokio::{
 };
 use tracing::error;
 
+use crate::error::Error;
 use crate::server::ewma::ewma;
 
 use super::decision::ScorePeerFunc;
@@ -222,10 +222,10 @@ impl DefaultScoreLedger {
         }
     }
 
-    pub async fn stop(self) -> Result<()> {
+    pub async fn stop(self) -> Result<(), Error> {
         match self.closer.send(()) {
             Ok(_) => {
-                self.worker.await.map_err(|e| anyhow!("{:?}", e))?;
+                self.worker.await?;
             }
             Err(err) => {
                 error!("failed to stop score ledger: {:?}", err);

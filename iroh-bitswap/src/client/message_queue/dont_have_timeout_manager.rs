@@ -5,7 +5,6 @@ use std::{
 };
 
 use ahash::{AHashMap, AHashSet};
-use anyhow::Result;
 use cid::Cid;
 use derivative::Derivative;
 use iroh_metrics::core::MRecorder;
@@ -17,6 +16,7 @@ use tokio::{
 };
 use tracing::debug;
 
+use crate::error::Error;
 use crate::{client::peer_manager::DontHaveTimeout, network::Network};
 
 /// Used to simulate a DONT_HAVE when communicating with a peer
@@ -171,7 +171,7 @@ impl DontHaveTimeoutManager {
         self.worker = Some((trigger_s, closer_s, worker));
     }
 
-    pub async fn stop(self) -> Result<()> {
+    pub async fn stop(self) -> Result<(), Error> {
         if let Some((_, closer, worker)) = self.worker {
             if closer.send(()).is_ok() {
                 worker.await?;
