@@ -161,12 +161,12 @@ impl P2pClient {
                 peer_id: peer_id.to_bytes(),
                 addrs: addrs.iter().map(|a| a.to_vec()).collect(),
             };
-            self.backend.peer_connect(req).await
+            self.backend.peer_connect(req).await.map_err(anyhow::Error::from)
         } else {
             let req = ConnectByPeerIdRequest {
                 peer_id: peer_id.to_bytes(),
             };
-            self.backend.peer_connect_by_peer_id(req).await
+            self.backend.peer_connect_by_peer_id(req).await.map_err(anyhow::Error::from)
         }
     }
 
