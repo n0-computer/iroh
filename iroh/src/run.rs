@@ -106,7 +106,9 @@ impl Cli {
         #[cfg(feature = "testing")]
         let api = get_fixture_api();
         #[cfg(not(feature = "testing"))]
-        let api = iroh_api::Api::new_from_config_file(self.cfg.as_deref(), self.make_overrides_map()).await?;
+        let api =
+            iroh_api::Api::new_from_config_file(self.cfg.as_deref(), self.make_overrides_map())
+                .await?;
 
         self.cli_command(&config, &api).await?;
 
