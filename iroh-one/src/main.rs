@@ -11,7 +11,7 @@ use iroh_util::{iroh_config_path, make_config};
 #[cfg(feature = "uds-gateway")]
 use tempdir::TempDir;
 
-use iroh_one::core::Core;
+use iroh_one::iroh::Iroh;
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<()> {
@@ -42,7 +42,7 @@ async fn main() -> Result<()> {
         }
     }
 
-    let mut iroh = Core::new(&mut config)?;
+    let mut iroh = Iroh::new(&mut config)?;
     iroh.start().await?;
 
     iroh_util::block_until_sigint().await;

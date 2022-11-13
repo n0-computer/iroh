@@ -15,7 +15,7 @@ use tempdir::TempDir;
 use tokio::sync::RwLock;
 use tokio::task;
 
-pub struct Core<'a> {
+pub struct Iroh<'a> {
     config: &'a mut Config,
 
     core_task: Option<task::JoinHandle<()>>,
@@ -26,9 +26,9 @@ pub struct Core<'a> {
     uds_service_task: Option<JoinHandle<()>>,
 }
 
-impl<'a> Core<'a> {
+impl<'a> Iroh<'a> {
     pub fn new(config: &'a mut Config) -> Result<Self> {
-        Ok(Core {
+        Ok(Iroh {
             config,
             core_task: None,
             metrics_handle: None,
