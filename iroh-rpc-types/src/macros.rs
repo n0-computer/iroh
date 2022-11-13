@@ -138,31 +138,38 @@ macro_rules! proxy_serve_types {
 }
 
 macro_rules! proxy_traits {
-    ($label:ident, $($name:ident: $req:ty => $tonic_res:ty => $res:ty $([$stream_type_name:ident])?),+) => {
+    ($label:ident, $errty:ty, $($name:ident: $req:ty => $tonic_res:ty => $res:ty $([$stream_type_name:ident])?),+) => {
         paste::paste! {
             #[async_trait::async_trait]
             pub trait $label: Send + Sync + 'static {
+                type Error: std::fmt::Display + From<$crate::error::Error>;
+
                 $(
-                    async fn $name(&self, request: $req) -> Result<$res, $crate::error::Error>;
+                    async fn $name(&self, request: $req) -> Result<$res, Self::Error>;
                 )+
             }
 
             #[async_trait::async_trait]
             impl $label for [<$label ClientBackend>] {
+                type Error = $errty;
+
                 $(
-                    async fn $name(&self, req: $req) -> Result<$res, $crate::error::Error> {
+                    async fn $name(&self, req: $req) -> Result<$res, Self::Error> {
                         match self {
                             #[cfg(feature = "grpc")]
                             Self::Grpc { client, .. } => {
                                 let req = iroh_metrics::req::trace_tonic_req(req);
                                 let mut c = client.clone();
-                                let res = [<$label:lower _client>]::[<$label Client>]::$name(&mut c, req).await?;
+                                let res = [<$label:lower _client>]::[<$label Client>]::$name(&mut c, req)
+                                    .await
+                                    .map_err(Self::Error::from)?;
                                 let res = res.into_inner();
                                 $(
                                     let res = {
                                         use futures::StreamExt;
                                         Box::pin(res.map(|p| {
                                             p.map_err(|e| $crate::error::Error::Str(e.to_string()))
+                                                .map_err(Self::Error::from)
                                         }))
                                     };
                                     // hack
@@ -176,14 +183,15 @@ macro_rules! proxy_traits {
                             #[cfg(feature = "mem")]
                             Self::Mem(s) => {
                                 let (s_res, r_res) = tokio::sync::oneshot::channel();
-                                s.send(([<$label Request>]::$name(req), s_res)).await.map_err(|_| $crate::error::Error::SendFailed)?;
+                                s.send(([<$label Request>]::$name(req), s_res)).await.map_err(|_| $crate::error::Error::SendFailed).map_err(Self::Error::from)?;
 
                                 let res = r_res.await?;
                                 #[allow(irrefutable_let_patterns)]
                                 if let [<$label Response>]::$name(res) = res {
                                     return res.map_err(|e| $crate::error::Error::Str(e))
+                                        .map_err(Self::Error::from)
                                 } else {
-                                    Err($crate::error::Error::InvalidResponse)
+                                    Err($crate::error::Error::InvalidResponse).map_err(Self::Error::from)
                                 }
                             }
                         }
@@ -237,12 +245,12 @@ macro_rules! proxy_grpc {
 
 #[macro_export]
 macro_rules! proxy {
-    ($label:ident, $(
+    ($label:ident, $errty:ty, $(
         $name:ident: $req:ty => $tonic_res:ty => $res:ty $([$stream_type_name:ident])?
     ),+) => {
         proxy_serve!($label, $($name: $req => $res),+);
         proxy_serve_types!($label, $($name: $req => $res),+);
-        proxy_traits!($label, $($name: $req => $tonic_res => $res $([$stream_type_name])?),+);
+        proxy_traits!($label, $errty, $($name: $req => $tonic_res => $res $([$stream_type_name])?),+);
         proxy_grpc!($label, $($name: $req => $tonic_res => $res $([$stream_type_name])?),+);
     }
 }

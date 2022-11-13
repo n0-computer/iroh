@@ -2,6 +2,7 @@ include_proto!("p2p");
 
 proxy!(
     P2p,
+    crate::error::Error,
     version: () => VersionResponse => VersionResponse,
     shutdown: () => () => (),
     fetch_bitswap: BitswapRequest => BitswapResponse => BitswapResponse,

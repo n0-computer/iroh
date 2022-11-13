@@ -2,6 +2,7 @@ include_proto!("store");
 
 proxy!(
     Store,
+    crate::error::Error,
     version: () => VersionResponse => VersionResponse,
 
     put: PutRequest => () => (),
