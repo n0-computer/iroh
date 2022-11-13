@@ -85,7 +85,7 @@ impl Cli {
     pub async fn run(&self) -> Result<()> {
         let config_path = iroh_config_path(CONFIG_FILE_NAME)?;
         // TODO(b5): allow suppliying some sort of config flag. maybe --config-cli?
-        let sources = vec![Some(config_path)];
+        let sources = vec![Some(config_path.as_path())];
         let config = make_config(
             // default
             Config::new(),
@@ -106,7 +106,7 @@ impl Cli {
         #[cfg(feature = "testing")]
         let api = get_fixture_api();
         #[cfg(not(feature = "testing"))]
-        let api = iroh_api::Api::new(self.cfg.as_deref(), self.make_overrides_map()).await?;
+        let api = iroh_api::Api::new_from_config_file(self.cfg.as_deref(), self.make_overrides_map()).await?;
 
         self.cli_command(&config, &api).await?;
 

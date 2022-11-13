@@ -1,10 +1,15 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use anyhow::{ensure, Context as _, Result};
+use crate::config::{Config, CONFIG_FILE_NAME, ENV_PREFIX};
+use crate::P2pApi;
+use crate::{AddEvent, IpfsPath};
+use anyhow::{ensure, Context, Result};
 use cid::Cid;
 use futures::stream::LocalBoxStream;
 use futures::{StreamExt, TryStreamExt};
+use iroh_resolver::content_loader::{FullLoader, FullLoaderConfig};
+use iroh_resolver::resolver::Resolver;
 use iroh_resolver::unixfs_builder;
 use iroh_rpc_client::Client;
 use iroh_rpc_client::StatusTable;
@@ -14,12 +19,9 @@ use mockall::automock;
 use relative_path::RelativePathBuf;
 use tokio::io::{AsyncRead, AsyncReadExt};
 
-use crate::config::{Config, CONFIG_FILE_NAME, ENV_PREFIX};
-use crate::P2pApi;
-use crate::{AddEvent, IpfsPath};
-
 pub struct Api {
     client: Client,
+    resolver: Resolver<FullLoader>,
 }
 
 pub enum OutType {
@@ -28,8 +30,7 @@ pub enum OutType {
     Symlink(PathBuf),
 }
 
-#[cfg_attr(feature = "testing", automock)]
-#[cfg_attr(feature = "testing", allow(dead_code))]
+#[cfg_attr(feature = "testing", allow(dead_code), automock)]
 impl Api {
     // The lifetime is needed for mocking.
     #[allow(clippy::needless_lifetimes)]
@@ -38,7 +39,7 @@ impl Api {
         overrides_map: HashMap<String, String>,
     ) -> Result<Self> {
         let cfg_path = iroh_config_path(CONFIG_FILE_NAME)?;
-        let sources = vec![Some(cfg_path), config_path.map(PathBuf::from)];
+        let sources = vec![Some(cfg_path.as_path()), config_path];
         let config = make_config(
             // default
             Config::default(),
@@ -56,7 +57,27 @@ impl Api {
 
     pub async fn new(cfg: Config) -> Result<Self> {
         let client = Client::new(cfg.rpc_client).await?;
-        Ok(Self { client })
+        let content_loader = FullLoader::new(
+            client.clone(),
+            FullLoaderConfig {
+                http_gateways: cfg
+                    .http_resolvers
+                    .iter()
+                    .flatten()
+                    .map(|u| u.parse())
+                    .collect::<Result<_>>()
+                    .context("invalid gateway url")?,
+                indexer: cfg
+                    .indexer_endpoint
+                    .as_ref()
+                    .map(|u| u.parse())
+                    .transpose()
+                    .context("invalid indexer endpoint")?,
+            },
+        )?;
+        let resolver = Resolver::new(content_loader);
+
+        Ok(Self { client, resolver })
     }
 
     pub async fn provide(&self, cid: Cid) -> Result<()> {
@@ -79,7 +100,7 @@ impl Api {
         );
 
         tracing::debug!("get {:?}", ipfs_path);
-        let resolver = iroh_resolver::resolver::Resolver::new(self.client.clone());
+        let resolver = self.resolver.clone();
         let results = resolver.resolve_recursive_with_paths(ipfs_path.clone());
         let sub_path = ipfs_path.to_relative_string();
 

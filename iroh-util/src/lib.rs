@@ -1,7 +1,7 @@
 use std::{
     cell::RefCell,
     collections::HashMap,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
@@ -153,7 +153,7 @@ impl Source for MetricsSource {
 /// a metrics field, eg, `IROH_CONFIG_METRICS.SERVICE_NAME`, but only if your environment allows it
 pub fn make_config<T, S, V>(
     default: T,
-    file_paths: Vec<Option<PathBuf>>,
+    file_paths: Vec<Option<&Path>>,
     env_prefix: &str,
     flag_overrides: HashMap<S, V>,
 ) -> Result<T>

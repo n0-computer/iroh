@@ -1,5 +1,5 @@
 use axum::Router;
-use iroh_resolver::resolver::ContentLoader;
+use iroh_resolver::content_loader::ContentLoader;
 use iroh_rpc_types::gateway::GatewayServerAddr;
 
 use std::{collections::HashMap, sync::Arc};
@@ -119,6 +119,7 @@ mod tests {
     use super::*;
     use cid::Cid;
     use futures::{StreamExt, TryStreamExt};
+    use iroh_resolver::content_loader::{FullLoader, FullLoaderConfig};
     use iroh_resolver::unixfs::UnixfsNode;
     use iroh_resolver::unixfs_builder::{DirectoryBuilder, FileBuilder};
     use iroh_rpc_client::Client as RpcClient;
@@ -135,7 +136,18 @@ mod tests {
     ) -> (SocketAddr, RpcClient, tokio::task::JoinHandle<()>) {
         let rpc_addr = "grpc://0.0.0.0:0".parse().unwrap();
         let rpc_client = RpcClient::new(config.rpc_client().clone()).await.unwrap();
-        let core = Core::new(config, rpc_addr, Arc::new(None), rpc_client.clone())
+        let loader_config = FullLoaderConfig {
+            http_gateways: config
+                .http_resolvers
+                .iter()
+                .flatten()
+                .map(|u| u.parse().unwrap())
+                .collect(),
+            indexer: config.indexer_endpoint.as_ref().map(|p| p.parse().unwrap()),
+        };
+        let content_loader =
+            FullLoader::new(rpc_client.clone(), loader_config).expect("invalid config");
+        let core = Core::new(config, rpc_addr, Arc::new(None), content_loader)
             .await
             .unwrap();
         let server = core.server();
@@ -191,6 +203,7 @@ mod tests {
         core_task.await.unwrap_err();
     }
 
+    // TODO(b5) - refactor to return anyhow::Result<()>
     #[tokio::test]
     async fn fetch_car_recursive() {
         let (store_client_addr, store_task) = spawn_store().await;

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use clap::Parser;
 use iroh_gateway::{
     bad_bits::{self, BadBits},
@@ -9,7 +9,7 @@ use iroh_gateway::{
     core::Core,
     metrics,
 };
-use iroh_resolver::racing::RacingLoader;
+use iroh_resolver::content_loader::{FullLoader, FullLoaderConfig};
 use iroh_rpc_client::Client as RpcClient;
 use iroh_util::lock::ProgramLock;
 use iroh_util::{iroh_config_path, make_config};
@@ -23,7 +23,7 @@ async fn main() -> Result<()> {
     let args = Args::parse();
 
     let cfg_path = iroh_config_path(CONFIG_FILE_NAME)?;
-    let sources = vec![Some(cfg_path), args.cfg.clone()];
+    let sources = vec![Some(cfg_path.as_path()), args.cfg.as_deref()];
     let mut config = make_config(
         // default
         Config::default(),
@@ -47,10 +47,24 @@ async fn main() -> Result<()> {
         .server_rpc_addr()?
         .ok_or_else(|| anyhow!("missing gateway rpc addr"))?;
 
-    let content_loader = RacingLoader::new(
+    let content_loader = FullLoader::new(
         RpcClient::new(config.rpc_client.clone()).await?,
-        config.http_resolvers.clone().unwrap_or_default(),
-    );
+        FullLoaderConfig {
+            http_gateways: config
+                .http_resolvers
+                .iter()
+                .flatten()
+                .map(|u| u.parse())
+                .collect::<Result<_>>()
+                .context("invalid gateway url")?,
+            indexer: config
+                .indexer_endpoint
+                .as_ref()
+                .map(|u| u.parse())
+                .transpose()
+                .context("invalid indexer endpoint")?,
+        },
+    )?;
     let handler = Core::new(
         Arc::new(config),
         rpc_addr,

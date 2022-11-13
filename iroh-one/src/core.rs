@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 #[cfg(feature = "uds-gateway")]
 use iroh_one::uds;
-use iroh_resolver::racing::RacingLoader;
+use iroh_resolver::content_loader::{FullLoader, FullLoaderConfig};
 use iroh_rpc_types::Addr;
 #[cfg(feature = "uds-gateway")]
 use tempdir::TempDir;
@@ -70,14 +70,25 @@ impl<'a> Core<'a> {
             false => Arc::new(None),
         };
 
-        let content_loader = RacingLoader::new(
+        let content_loader = FullLoader::new(
             RpcClient::new(self.config.rpc_client.clone()).await?,
-            self.config
-                .gateway
-                .http_resolvers
-                .clone()
-                .unwrap_or_default(),
-        );
+            FullLoaderConfig {
+                http_gateways: self
+                    .config
+                    .gateway
+                    .http_resolvers
+                    .iter()
+                    .flatten()
+                    .map(|u| u.parse())
+                    .collect::<Result<_>>()?,
+                indexer: self
+                    .config
+                    .gateway
+                    .indexer_endpoint
+                    .as_ref()
+                    .map(|p| p.parse().unwrap()),
+            },
+        )?;
         let shared_state = iroh_gateway::core::Core::make_state(
             Arc::new(self.config.clone()),
             Arc::clone(&bad_bits),
@@ -129,6 +140,8 @@ impl<'a> Core<'a> {
         let cfg = iroh_api::config::Config {
             rpc_client: self.config.rpc_client.clone(),
             metrics: self.config.metrics.clone(),
+            indexer_endpoint: self.config.gateway.indexer_endpoint.clone(),
+            http_resolvers: self.config.gateway.http_resolvers.clone(),
         };
         Api::new(cfg).await
     }

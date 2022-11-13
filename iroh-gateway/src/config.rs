@@ -33,6 +33,8 @@ pub struct Config {
     /// values without https:// prefix are treated as subdomain gateways (eg: dweb.link)
     /// values with are treated as IPFS path gateways (eg: https://ipfs.io)
     pub http_resolvers: Option<Vec<String>>,
+    /// Indexer node to use.
+    pub indexer_endpoint: Option<String>,
     /// rpc addresses for the gateway & addresses for the rpc client to dial
     pub rpc_client: RpcClientConfig,
     /// metrics configuration
@@ -52,6 +54,7 @@ impl Config {
             port,
             rpc_client,
             http_resolvers: None,
+            indexer_endpoint: None,
             metrics: MetricsConfig::default(),
             use_denylist: false,
         }
@@ -120,6 +123,7 @@ impl Default for Config {
             port: DEFAULT_PORT,
             rpc_client,
             http_resolvers: None,
+            indexer_endpoint: None,
             metrics: MetricsConfig::default(),
             use_denylist: false,
         };
@@ -148,6 +152,9 @@ impl Source for Config {
 
         if let Some(http_resolvers) = &self.http_resolvers {
             insert_into_config_map(&mut map, "http_resolvers", http_resolvers.clone());
+        }
+        if let Some(indexer_endpoint) = &self.indexer_endpoint {
+            insert_into_config_map(&mut map, "indexer_endpoint", indexer_endpoint.clone());
         }
         Ok(map)
     }

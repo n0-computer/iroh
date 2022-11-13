@@ -13,9 +13,12 @@ use iroh_metrics::{
     gateway::{GatewayHistograms, GatewayMetrics},
     observe, record,
 };
-use iroh_resolver::resolver::{
-    CidOrDomain, ContentLoader, Metadata, Out, OutMetrics, OutPrettyReader, OutType, Resolver,
-    ResponseClip, Source,
+use iroh_resolver::{
+    content_loader::ContentLoader,
+    resolver::{
+        CidOrDomain, Metadata, Out, OutMetrics, OutPrettyReader, OutType, Resolver, ResponseClip,
+        Source,
+    },
 };
 use mime::Mime;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, AsyncWrite};

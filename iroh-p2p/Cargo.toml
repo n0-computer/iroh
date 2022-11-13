@@ -14,7 +14,6 @@ async-stream = "0.3.3"
 async-trait = "0.1.56"
 asynchronous-codec = "0.6.0"
 bytes = "1.1.0"
-caches = "0.2.2"
 cid = "0.8.0"
 clap = { version = "4.0.9", features = ["derive"] }
 config = "0.13.1"
@@ -27,6 +26,7 @@ iroh-rpc-client = { path = "../iroh-rpc-client", default-features = false }
 iroh-rpc-types = { path = "../iroh-rpc-types", default-features = false }
 iroh-util = { path = "../iroh-util" }
 lazy_static = "1.4"
+lru = "0.8"
 names = { version = "0.14.0", default-features = false }
 rand = "0.8.5"
 serde = { version = "1.0", features = ["derive"] }
@@ -65,15 +65,14 @@ features = [
   "tokio",
 ] 
 
-[dependencies.multihash]
-version = "0.16"
-default-features = false
-features = ["std", "multihash-impl", "identity", "sha2"]
-
 [dev-dependencies]
+criterion = "0.4"
 
 [features]
 default = ["rpc-grpc", "rpc-mem"]
 rpc-grpc = ["iroh-rpc-types/grpc", "iroh-rpc-client/grpc", "iroh-metrics/rpc-grpc"]
 rpc-mem = ["iroh-rpc-types/mem", "iroh-rpc-client/mem"]
 
+[[bench]]
+name = "lru_cache"
+harness = false

@@ -1,10 +1,4 @@
-use std::{
-    sync::{
-        atomic::{AtomicU64, Ordering},
-        Arc,
-    },
-    thread::available_parallelism,
-};
+use std::{sync::Arc, thread::available_parallelism};
 
 use anyhow::{anyhow, bail, Context, Result};
 use bytes::Bytes;
@@ -21,6 +15,7 @@ use rocksdb::{
     WriteBatch, DB as RocksDb,
 };
 use smallvec::SmallVec;
+use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use tokio::task;
 
 use crate::cf::{GraphV0, MetadataV0, CF_BLOBS_V0, CF_GRAPH_V0, CF_ID_V0, CF_METADATA_V0};
@@ -33,7 +28,7 @@ pub struct Store {
 
 struct InnerStore {
     content: RocksDb,
-    next_id: AtomicU64,
+    next_id: RwLock<u64>,
     _cache: Cache,
     _rpc_client: RpcClient,
 }
@@ -195,42 +190,47 @@ impl Store {
     where
         L: IntoIterator<Item = Cid>,
     {
-        self.local_store()?.put(cid, blob, links)
+        self.write_store()?.put(cid, blob, links)
     }
 
     #[tracing::instrument(skip(self, blocks))]
     pub fn put_many(&self, blocks: impl IntoIterator<Item = (Cid, Bytes, Vec<Cid>)>) -> Result<()> {
-        self.local_store()?.put_many(blocks)
+        self.write_store()?.put_many(blocks)
     }
 
     #[tracing::instrument(skip(self))]
     pub fn get_blob_by_hash(&self, hash: &Multihash) -> Result<Option<DBPinnableSlice<'_>>> {
-        self.local_store()?.get_blob_by_hash(hash)
+        self.read_store()?.get_blob_by_hash(hash)
     }
 
     #[tracing::instrument(skip(self))]
     pub fn has_blob_for_hash(&self, hash: &Multihash) -> Result<bool> {
-        self.local_store()?.has_blob_for_hash(hash)
+        self.read_store()?.has_blob_for_hash(hash)
     }
 
     #[tracing::instrument(skip(self))]
     pub fn get(&self, cid: &Cid) -> Result<Option<DBPinnableSlice<'_>>> {
-        self.local_store()?.get(cid)
+        self.read_store()?.get(cid)
     }
 
     #[tracing::instrument(skip(self))]
-    pub async fn get_size(&self, cid: &Cid) -> Result<Option<usize>> {
-        self.local_store()?.get_size(cid)
+    pub fn get_size(&self, cid: &Cid) -> Result<Option<usize>> {
+        self.read_store()?.get_size(cid)
     }
 
     #[tracing::instrument(skip(self))]
     pub fn has(&self, cid: &Cid) -> Result<bool> {
-        self.local_store()?.has(cid)
+        self.read_store()?.has(cid)
     }
 
     #[tracing::instrument(skip(self))]
     pub fn get_links(&self, cid: &Cid) -> Result<Option<Vec<Cid>>> {
-        self.local_store()?.get_links(cid)
+        self.read_store()?.get_links(cid)
+    }
+
+    #[tracing::instrument(skip(self))]
+    pub fn consistency_check(&self) -> Result<Vec<String>> {
+        self.read_store()?.consistency_check()
     }
 
     #[cfg(test)]
@@ -238,13 +238,68 @@ impl Store {
         &self,
         hash: &Multihash,
     ) -> Result<impl Iterator<Item = Result<CodeAndId>> + '_> {
-        self.local_store()?.get_ids_for_hash(hash)
+        self.read_store()?.get_ids_for_hash(hash)
     }
 
-    fn local_store(&self) -> Result<LocalStore> {
+    fn write_store(&self) -> Result<WriteStore> {
         let db = &self.inner.content;
-        Ok(LocalStore {
+        Ok(WriteStore {
             db,
+            cf: ColumnFamilies::new(db)?,
+            next_id: self.inner.next_id.write().unwrap(),
+        })
+    }
+
+    fn read_store(&self) -> Result<ReadStore> {
+        let db = &self.inner.content;
+        Ok(ReadStore {
+            db,
+            cf: ColumnFamilies::new(db)?,
+            _next_id: self.inner.next_id.read().unwrap(),
+        })
+    }
+
+    pub(crate) async fn spawn_blocking<T: Send + Sync + 'static>(
+        &self,
+        f: impl FnOnce(Self) -> anyhow::Result<T> + Send + Sync + 'static,
+    ) -> anyhow::Result<T> {
+        let this = self.clone();
+        tokio::task::spawn_blocking(move || f(this)).await?
+    }
+}
+
+/// Groups all write operations.
+///
+/// Not Send, so must be used from a single thread.
+///
+/// All write interacion with the database is done through this struct.
+struct WriteStore<'a> {
+    db: &'a RocksDb,
+    cf: ColumnFamilies<'a>,
+    next_id: RwLockWriteGuard<'a, u64>,
+}
+
+/// Groups all read operations.
+///
+/// Not Send, so must be used from a single thread.
+///
+/// All read interacion with the database is done through this struct.
+struct ReadStore<'a> {
+    db: &'a RocksDb,
+    cf: ColumnFamilies<'a>,
+    _next_id: RwLockReadGuard<'a, u64>,
+}
+
+struct ColumnFamilies<'a> {
+    id: &'a ColumnFamily,
+    metadata: &'a ColumnFamily,
+    graph: &'a ColumnFamily,
+    blobs: &'a ColumnFamily,
+}
+
+impl<'a> ColumnFamilies<'a> {
+    fn new(db: &'a RocksDb) -> anyhow::Result<Self> {
+        Ok(Self {
             id: db
                 .cf_handle(CF_ID_V0)
                 .context("missing column family: id")?,
@@ -257,27 +312,12 @@ impl Store {
             blobs: db
                 .cf_handle(CF_BLOBS_V0)
                 .context("missing column family: blobs")?,
-            next_id: &self.inner.next_id,
         })
     }
 }
 
-/// The local store is fully synchronous and is not Send.
-///
-/// Due to this, it can store column family handles.
-///
-/// All interacion with the database is done through this struct.
-struct LocalStore<'a> {
-    db: &'a RocksDb,
-    id: &'a ColumnFamily,
-    metadata: &'a ColumnFamily,
-    graph: &'a ColumnFamily,
-    blobs: &'a ColumnFamily,
-    next_id: &'a AtomicU64,
-}
-
-impl<'a> LocalStore<'a> {
-    fn put<T: AsRef<[u8]>, L>(&self, cid: Cid, blob: T, links: L) -> Result<()>
+impl<'a> WriteStore<'a> {
+    fn put<T: AsRef<[u8]>, L>(&mut self, cid: Cid, blob: T, links: L) -> Result<()>
     where
         L: IntoIterator<Item = Cid>,
     {
@@ -286,7 +326,6 @@ impl<'a> LocalStore<'a> {
         if self.has(&cid)? {
             return Ok(());
         }
-        let cf = self;
 
         let id = self.next_id();
 
@@ -303,17 +342,17 @@ impl<'a> LocalStore<'a> {
         let metadata_bytes = rkyv::to_bytes::<_, 1024>(&metadata)?; // TODO: is this the right amount of scratch space?
         let id_key = id_key(&cid);
 
-        let children = self.ensure_id_many(links.into_iter(), cf)?;
+        let children = self.ensure_id_many(links.into_iter())?;
 
         let graph = GraphV0 { children };
         let graph_bytes = rkyv::to_bytes::<_, 1024>(&graph)?; // TODO: is this the right amount of scratch space?
         let blob_size = blob.as_ref().len();
 
         let mut batch = WriteBatch::default();
-        batch.put_cf(cf.id, id_key, id_bytes);
-        batch.put_cf(cf.blobs, id_bytes, blob);
-        batch.put_cf(cf.metadata, id_bytes, metadata_bytes);
-        batch.put_cf(cf.graph, id_bytes, graph_bytes);
+        batch.put_cf(self.cf.id, id_key, id_bytes);
+        batch.put_cf(self.cf.blobs, id_bytes, blob);
+        batch.put_cf(self.cf.metadata, id_bytes, metadata_bytes);
+        batch.put_cf(self.cf.graph, id_bytes, graph_bytes);
         self.db.write(batch)?;
         observe!(StoreHistograms::PutRequests, start.elapsed().as_secs_f64());
         record!(StoreMetrics::PutBytes, blob_size as u64);
@@ -321,11 +360,10 @@ impl<'a> LocalStore<'a> {
         Ok(())
     }
 
-    fn put_many(&self, blocks: impl IntoIterator<Item = (Cid, Bytes, Vec<Cid>)>) -> Result<()> {
+    fn put_many(&mut self, blocks: impl IntoIterator<Item = (Cid, Bytes, Vec<Cid>)>) -> Result<()> {
         inc!(StoreMetrics::PutRequests);
         let start = std::time::Instant::now();
         let mut total_blob_size = 0;
-        let cf = self;
 
         let mut batch = WriteBatch::default();
         for (cid, blob, links) in blocks.into_iter() {
@@ -346,7 +384,7 @@ impl<'a> LocalStore<'a> {
             let metadata_bytes = rkyv::to_bytes::<_, 1024>(&metadata)?; // TODO: is this the right amount of scratch space?
             let id_key = id_key(&cid);
 
-            let children = self.ensure_id_many(links.into_iter(), cf)?;
+            let children = self.ensure_id_many(links.into_iter())?;
 
             let graph = GraphV0 { children };
             let graph_bytes = rkyv::to_bytes::<_, 1024>(&graph)?; // TODO: is this the right amount of scratch space?
@@ -354,10 +392,10 @@ impl<'a> LocalStore<'a> {
             let blob_size = blob.as_ref().len();
             total_blob_size += blob_size as u64;
 
-            batch.put_cf(cf.id, id_key, id_bytes);
-            batch.put_cf(cf.blobs, id_bytes, blob);
-            batch.put_cf(cf.metadata, id_bytes, metadata_bytes);
-            batch.put_cf(cf.graph, id_bytes, graph_bytes);
+            batch.put_cf(self.cf.id, id_key, id_bytes);
+            batch.put_cf(self.cf.blobs, id_bytes, blob);
+            batch.put_cf(self.cf.metadata, id_bytes, metadata_bytes);
+            batch.put_cf(self.cf.graph, id_bytes, graph_bytes);
         }
 
         self.db.write(batch)?;
@@ -367,6 +405,77 @@ impl<'a> LocalStore<'a> {
         Ok(())
     }
 
+    /// Takes a list of cids and gives them ids, which are both stored and then returned.
+    #[tracing::instrument(skip(self, cids))]
+    fn ensure_id_many<I>(&mut self, cids: I) -> Result<Vec<u64>>
+    where
+        I: IntoIterator<Item = Cid>,
+    {
+        let mut ids = Vec::new();
+        let mut batch = WriteBatch::default();
+        for cid in cids {
+            let id_key = id_key(&cid);
+            let id = if let Some(id) = self.db.get_pinned_cf(self.cf.id, &id_key)? {
+                u64::from_be_bytes(id.as_ref().try_into()?)
+            } else {
+                let id = self.next_id();
+                let id_bytes = id.to_be_bytes();
+
+                let metadata = MetadataV0 {
+                    codec: cid.codec(),
+                    multihash: cid.hash().to_bytes(),
+                };
+                let metadata_bytes = rkyv::to_bytes::<_, 1024>(&metadata)?; // TODO: is this the right amount of scratch space?
+                batch.put_cf(&self.cf.id, id_key, id_bytes);
+                batch.put_cf(&self.cf.metadata, id_bytes, metadata_bytes);
+                id
+            };
+            ids.push(id);
+        }
+        self.db.write(batch)?;
+
+        Ok(ids)
+    }
+
+    #[tracing::instrument(skip(self))]
+    fn next_id(&mut self) -> u64 {
+        let id = *self.next_id;
+        if let Some(next_id) = self.next_id.checked_add(1) {
+            *self.next_id = next_id;
+        } else {
+            panic!("this store is full");
+        }
+        id
+    }
+
+    #[tracing::instrument(skip(self))]
+    fn get_id(&self, cid: &Cid) -> Result<Option<u64>> {
+        let id_key = id_key(cid);
+        let maybe_id_bytes = self.db.get_pinned_cf(self.cf.id, id_key)?;
+        match maybe_id_bytes {
+            Some(bytes) => {
+                let arr = bytes[..8].try_into().map_err(|e| anyhow!("{:?}", e))?;
+                Ok(Some(u64::from_be_bytes(arr)))
+            }
+            None => Ok(None),
+        }
+    }
+
+    fn has(&self, cid: &Cid) -> Result<bool> {
+        match self.get_id(cid)? {
+            Some(id) => {
+                let exists = self
+                    .db
+                    .get_pinned_cf(self.cf.blobs, id.to_be_bytes())?
+                    .is_some();
+                Ok(exists)
+            }
+            None => Ok(false),
+        }
+    }
+}
+
+impl<'a> ReadStore<'a> {
     fn get(&self, cid: &Cid) -> Result<Option<DBPinnableSlice<'a>>> {
         inc!(StoreMetrics::GetRequests);
         let start = std::time::Instant::now();
@@ -408,7 +517,7 @@ impl<'a> LocalStore<'a> {
             Some(id) => {
                 let exists = self
                     .db
-                    .get_pinned_cf(self.blobs, id.to_be_bytes())?
+                    .get_pinned_cf(self.cf.blobs, id.to_be_bytes())?
                     .is_some();
                 Ok(exists)
             }
@@ -440,7 +549,7 @@ impl<'a> LocalStore<'a> {
     #[tracing::instrument(skip(self))]
     fn get_id(&self, cid: &Cid) -> Result<Option<u64>> {
         let id_key = id_key(cid);
-        let maybe_id_bytes = self.db.get_pinned_cf(self.id, id_key)?;
+        let maybe_id_bytes = self.db.get_pinned_cf(self.cf.id, id_key)?;
         match maybe_id_bytes {
             Some(bytes) => {
                 let arr = bytes[..8].try_into().map_err(|e| anyhow!("{:?}", e))?;
@@ -457,7 +566,7 @@ impl<'a> LocalStore<'a> {
         let hash = hash.to_bytes();
         let iter = self
             .db
-            .iterator_cf(self.id, IteratorMode::From(&hash, Direction::Forward));
+            .iterator_cf(self.cf.id, IteratorMode::From(&hash, Direction::Forward));
         let hash_len = hash.len();
         Ok(iter
             .take_while(move |elem| {
@@ -480,7 +589,7 @@ impl<'a> LocalStore<'a> {
         for elem in self.get_ids_for_hash(hash)? {
             let id = elem?.id;
             let id_bytes = id.to_be_bytes();
-            if let Some(blob) = self.db.get_pinned_cf(self.blobs, id_bytes)? {
+            if let Some(blob) = self.db.get_pinned_cf(self.cf.blobs, id_bytes)? {
                 return Ok(Some(blob));
             }
         }
@@ -492,7 +601,7 @@ impl<'a> LocalStore<'a> {
         for elem in self.get_ids_for_hash(hash)? {
             let id = elem?.id;
             let id_bytes = id.to_be_bytes();
-            if let Some(_blob) = self.db.get_pinned_cf(self.blobs, id_bytes)? {
+            if let Some(_blob) = self.db.get_pinned_cf(self.cf.blobs, id_bytes)? {
                 return Ok(true);
             }
         }
@@ -501,14 +610,14 @@ impl<'a> LocalStore<'a> {
 
     #[tracing::instrument(skip(self))]
     fn get_by_id(&self, id: u64) -> Result<Option<DBPinnableSlice<'a>>> {
-        let maybe_blob = self.db.get_pinned_cf(self.blobs, id.to_be_bytes())?;
+        let maybe_blob = self.db.get_pinned_cf(self.cf.blobs, id.to_be_bytes())?;
 
         Ok(maybe_blob)
     }
 
     #[tracing::instrument(skip(self))]
     fn get_size_by_id(&self, id: u64) -> Result<Option<usize>> {
-        let maybe_blob = self.db.get_pinned_cf(self.blobs, id.to_be_bytes())?;
+        let maybe_blob = self.db.get_pinned_cf(self.cf.blobs, id.to_be_bytes())?;
         let maybe_size = maybe_blob.map(|b| b.len());
         Ok(maybe_size)
     }
@@ -517,7 +626,7 @@ impl<'a> LocalStore<'a> {
     fn get_links_by_id(&self, id: u64) -> Result<Option<Vec<Cid>>> {
         let id_bytes = id.to_be_bytes();
         // FIXME: can't use pinned because otherwise this can trigger alignment issues :/
-        let cf = self;
+        let cf = &self.cf;
         match self.db.get_cf(cf.graph, id_bytes)? {
             Some(links_id) => {
                 let graph = rkyv::check_archived_root::<GraphV0>(&links_id)
@@ -548,50 +657,28 @@ impl<'a> LocalStore<'a> {
         }
     }
 
-    /// Takes a list of cids and gives them ids, which are boths stored and then returned.
-    #[tracing::instrument(skip(self, cids, cf))]
-    fn ensure_id_many<I>(&self, cids: I, cf: &LocalStore) -> Result<Vec<u64>>
-    where
-        I: IntoIterator<Item = Cid>,
-    {
-        let mut ids = Vec::new();
-        let mut batch = WriteBatch::default();
-        for cid in cids {
-            let id_key = id_key(&cid);
-            let id = if let Some(id) = self.db.get_pinned_cf(cf.id, &id_key)? {
-                u64::from_be_bytes(id.as_ref().try_into()?)
-            } else {
-                let id = self.next_id();
-                let id_bytes = id.to_be_bytes();
-
-                let metadata = MetadataV0 {
-                    codec: cid.codec(),
-                    multihash: cid.hash().to_bytes(),
-                };
-                let metadata_bytes = rkyv::to_bytes::<_, 1024>(&metadata)?; // TODO: is this the right amount of scratch space?
-                batch.put_cf(&cf.id, id_key, id_bytes);
-                batch.put_cf(&cf.metadata, id_bytes, metadata_bytes);
-                id
-            };
-            ids.push(id);
+    /// Perform an internal consistency check on the store, and return all internal errors found.
+    fn consistency_check(&self) -> anyhow::Result<Vec<String>> {
+        let mut res = Vec::new();
+        let cf = &self.cf;
+        let n_meta = self
+            .db
+            .iterator_cf(&cf.metadata, IteratorMode::Start)
+            .count();
+        let n_id = self.db.iterator_cf(&cf.id, IteratorMode::Start).count();
+        if n_meta != n_id {
+            res.push(format!(
+                "non bijective mapping between cid and id. Metadata and id cfs have different lengths: {} != {}",
+                n_meta, n_id
+            ));
         }
-        self.db.write(batch)?;
-
-        Ok(ids)
-    }
-
-    #[tracing::instrument(skip(self))]
-    fn next_id(&self) -> u64 {
-        let id = self.next_id.fetch_add(1, Ordering::SeqCst);
-        // TODO: better handling
-        assert!(id > 0, "this store is full");
-        id
+        Ok(res)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::str::FromStr;
+    use std::{str::FromStr, sync::Mutex};
 
     use super::*;
 
@@ -599,9 +686,14 @@ mod tests {
     use iroh_rpc_client::Config as RpcClientConfig;
 
     use cid::multihash::{Code, MultihashDigest};
-    use libipld::{prelude::Encode, IpldCodec};
+    use libipld::{
+        cbor::DagCborCodec,
+        prelude::{Codec, Encode},
+        Ipld, IpldCodec,
+    };
     use tempfile::TempDir;
     const RAW: u64 = 0x55;
+    const DAG_CBOR: u64 = 0x71;
 
     #[tokio::test]
     async fn test_basics() {
@@ -781,6 +873,42 @@ mod tests {
         assert!(store.has_blob_for_hash(&hash)?);
         let actual = store.get_blob_by_hash(&hash)?.map(|x| x.to_vec());
         assert_eq!(actual, Some(expected));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_add_consistency() -> anyhow::Result<()> {
+        use rayon::prelude::*;
+        let leafs = (0..10000u64)
+            .map(|i| Cid::new_v1(RAW, Code::Sha2_256.digest(&i.to_be_bytes())))
+            .collect::<Vec<_>>();
+        let branches = leafs
+            .chunks(100)
+            .map(|links| {
+                let data = Ipld::List(links.iter().cloned().map(Ipld::Link).collect());
+                let data = DagCborCodec.encode(&data).unwrap();
+                let cid = Cid::new_v1(DAG_CBOR, Code::Sha2_256.digest(&data));
+                (cid, data, links.to_vec())
+            })
+            .collect::<Vec<_>>();
+        let (store, _dir) = futures::executor::block_on(test_store())?;
+        let workers = (0..std::thread::available_parallelism()?.get()).collect::<Vec<_>>();
+        let mutex = Arc::new(Mutex::new(()));
+        for branch in branches {
+            // for each batch, do a concurrent insert from as many parallel threads as possible
+            workers
+                .par_iter()
+                .map(|_| {
+                    let mut store = store.write_store()?;
+                    let (cid, data, links) = branch.clone();
+                    let t = mutex.lock().unwrap();
+                    store.put(cid, &data, links)?;
+                    drop(t);
+                    anyhow::Ok(())
+                })
+                .collect::<anyhow::Result<Vec<_>>>()?;
+        }
+        assert_eq!(Vec::<String>::new(), store.consistency_check()?);
         Ok(())
     }
 }
