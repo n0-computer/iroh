@@ -5,7 +5,6 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::{ensure, Result};
 use async_recursion::async_recursion;
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -19,6 +18,7 @@ use tokio::io::AsyncRead;
 use crate::{
     balanced_tree::{TreeBuilder, DEFAULT_DEGREE},
     chunker::{Chunker, DEFAULT_CHUNKS_SIZE, DEFAULT_CHUNK_SIZE_LIMIT},
+    error::Error,
     resolver::Block,
     unixfs::{dag_pb, unixfs_pb, DataType, Node, UnixfsNode},
 };
@@ -62,7 +62,7 @@ impl Directory {
         }
     }
 
-    pub async fn encode_root(self) -> Result<Block> {
+    pub async fn encode_root(self) -> Result<Block, Error> {
         let mut current = None;
         let parts = self.encode();
         tokio::pin!(parts);
@@ -74,7 +74,7 @@ impl Directory {
         current.expect("must not be empty")
     }
 
-    pub fn encode<'a>(self) -> LocalBoxStream<'a, Result<Block>> {
+    pub fn encode<'a>(self) -> LocalBoxStream<'a, Result<Block, Error>> {
         async_stream::try_stream! {
             let mut links = Vec::new();
             for entry in self.entries {
@@ -190,7 +190,7 @@ impl File {
         }
     }
 
-    pub async fn encode_root(self) -> Result<Block> {
+    pub async fn encode_root(self) -> Result<Block, Error> {
         let mut current = None;
         let parts = self.encode().await?;
         tokio::pin!(parts);
@@ -202,7 +202,7 @@ impl File {
         current.expect("must not be empty")
     }
 
-    pub async fn encode(self) -> Result<impl Stream<Item = Result<Block>>> {
+    pub async fn encode(self) -> Result<impl Stream<Item = Result<Block, Error>>, Error> {
         let reader = match self.content {
             Content::Path(path) => {
                 let f = tokio::fs::File::open(path).await?;
@@ -247,11 +247,11 @@ impl Symlink {
         &self.name
     }
 
-    pub fn encode(self) -> Result<Block> {
+    pub fn encode(self) -> Result<Block, Error> {
         let target = self
             .target
             .to_str()
-            .ok_or_else(|| anyhow::anyhow!("target path {:?} is not valid unicode", self.target))?;
+            .ok_or_else(|| Error::PathNotUnicode(self.target.to_path_buf()))?;
         let target = String::from(target);
         let inner = unixfs_pb::Data {
             r#type: DataType::Symlink as i32,
@@ -328,7 +328,7 @@ impl FileBuilder {
         self
     }
 
-    pub async fn build(self) -> Result<File> {
+    pub async fn build(self) -> Result<File, Error> {
         let chunk_size = self.chunk_size.unwrap_or(DEFAULT_CHUNKS_SIZE);
         let degree = self.degree.unwrap_or(DEFAULT_DEGREE);
         let chunker = Chunker::fixed_with_size(chunk_size);
@@ -351,9 +351,7 @@ impl FileBuilder {
         }
 
         if let Some(reader) = self.reader {
-            let name = self.name.ok_or_else(|| {
-                anyhow::anyhow!("must add a name when building a file from a reader or bytes")
-            })?;
+            let name = self.name.ok_or_else(|| Error::MissingNameForFile)?;
 
             return Ok(File {
                 content: Content::Reader(reader),
@@ -362,7 +360,8 @@ impl FileBuilder {
                 tree_builder,
             });
         }
-        anyhow::bail!("must have a path to the content or a reader for the content");
+
+        Err(Error::MissingPathToContent)
     }
 }
 
@@ -408,7 +407,7 @@ impl DirectoryBuilder {
         self
     }
 
-    pub fn add_dir(&mut self, dir: Directory) -> Result<&mut Self> {
+    pub fn add_dir(&mut self, dir: Directory) -> Result<&mut Self, Error> {
         Ok(self.entry(Entry::Directory(dir)))
     }
 
@@ -428,12 +427,14 @@ impl DirectoryBuilder {
         self
     }
 
-    pub fn build(self) -> Result<Directory> {
+    pub fn build(self) -> Result<Directory, Error> {
         let DirectoryBuilder {
             name, entries, typ, ..
         } = self;
 
-        ensure!(typ == DirectoryType::Basic, "too many links to fit into one chunk, must be encoded as a HAMT. However, HAMT creation has not yet been implemented.");
+        if !(typ == DirectoryType::Basic) {
+            return Err(Error::TooManyLinksForChunk);
+        }
 
         let name = name.unwrap_or_default();
 
@@ -461,7 +462,7 @@ impl SymlinkBuilder {
         self
     }
 
-    pub async fn build(self) -> Result<Symlink> {
+    pub async fn build(self) -> Result<Symlink, Error> {
         let name = self
             .path
             .file_name()
@@ -479,13 +480,11 @@ impl SymlinkBuilder {
 pub(crate) fn encode_unixfs_pb(
     inner: &unixfs_pb::Data,
     links: Vec<dag_pb::PbLink>,
-) -> Result<dag_pb::PbNode> {
+) -> Result<dag_pb::PbNode, Error> {
     let data = inner.encode_to_vec();
-    ensure!(
-        data.len() <= DEFAULT_CHUNK_SIZE_LIMIT,
-        "node is too large: {} bytes",
-        data.len()
-    );
+    if !(data.len() <= DEFAULT_CHUNK_SIZE_LIMIT) {
+        return Err(Error::NodeTooLarge(data.len()));
+    }
 
     Ok(dag_pb::PbNode {
         links,
@@ -495,25 +494,29 @@ pub(crate) fn encode_unixfs_pb(
 
 #[async_trait]
 pub trait Store: 'static + Send + Sync + Clone {
-    async fn has(&self, &cid: Cid) -> Result<bool>;
-    async fn put(&self, cid: Cid, blob: Bytes, links: Vec<Cid>) -> Result<()>;
-    async fn put_many(&self, blocks: Vec<Block>) -> Result<()>;
+    async fn has(&self, &cid: Cid) -> Result<bool, Error>;
+    async fn put(&self, cid: Cid, blob: Bytes, links: Vec<Cid>) -> Result<(), Error>;
+    async fn put_many(&self, blocks: Vec<Block>) -> Result<(), Error>;
 }
 
 #[async_trait]
 impl Store for Client {
-    async fn has(&self, cid: Cid) -> Result<bool> {
-        self.try_store()?.has(cid).await
+    async fn has(&self, cid: Cid) -> Result<bool, Error> {
+        self.try_store()?.has(cid).await.map_err(Error::from)
     }
 
-    async fn put(&self, cid: Cid, blob: Bytes, links: Vec<Cid>) -> Result<()> {
-        self.try_store()?.put(cid, blob, links).await
+    async fn put(&self, cid: Cid, blob: Bytes, links: Vec<Cid>) -> Result<(), Error> {
+        self.try_store()?
+            .put(cid, blob, links)
+            .await
+            .map_err(Error::from)
     }
 
-    async fn put_many(&self, blocks: Vec<Block>) -> Result<()> {
+    async fn put_many(&self, blocks: Vec<Block>) -> Result<(), Error> {
         self.try_store()?
             .put_many(blocks.into_iter().map(|x| x.into_parts()).collect())
             .await
+            .map_err(Error::from)
     }
 }
 
@@ -524,35 +527,41 @@ pub struct StoreAndProvideClient {
 
 #[async_trait]
 impl Store for StoreAndProvideClient {
-    async fn has(&self, cid: Cid) -> Result<bool> {
-        self.client.try_store()?.has(cid).await
+    async fn has(&self, cid: Cid) -> Result<bool, Error> {
+        self.client.try_store()?.has(cid).await.map_err(Error::from)
     }
 
-    async fn put(&self, cid: Cid, blob: Bytes, links: Vec<Cid>) -> Result<()> {
-        self.client.try_store()?.put(cid, blob, links).await
+    async fn put(&self, cid: Cid, blob: Bytes, links: Vec<Cid>) -> Result<(), Error> {
+        self.client
+            .try_store()?
+            .put(cid, blob, links)
+            .await
+            .map_err(Error::from)
         // we provide after insertion is finished
         // self.client.try_p2p()?.start_providing(&cid).await
     }
 
-    async fn put_many(&self, blocks: Vec<Block>) -> Result<()> {
+    async fn put_many(&self, blocks: Vec<Block>) -> Result<(), Error> {
         self.client
             .try_store()?
             .put_many(blocks.into_iter().map(|x| x.into_parts()).collect())
             .await
+            .map_err(Error::from)
     }
 }
 
 #[async_trait]
 impl Store for Arc<tokio::sync::Mutex<std::collections::HashMap<Cid, Bytes>>> {
-    async fn has(&self, cid: Cid) -> Result<bool> {
+    async fn has(&self, cid: Cid) -> Result<bool, Error> {
         Ok(self.lock().await.contains_key(&cid))
     }
-    async fn put(&self, cid: Cid, blob: Bytes, _links: Vec<Cid>) -> Result<()> {
+
+    async fn put(&self, cid: Cid, blob: Bytes, _links: Vec<Cid>) -> Result<(), Error> {
         self.lock().await.insert(cid, blob);
         Ok(())
     }
 
-    async fn put_many(&self, blocks: Vec<Block>) -> Result<()> {
+    async fn put_many(&self, blocks: Vec<Block>) -> Result<(), Error> {
         let mut this = self.lock().await;
         for block in blocks {
             this.insert(*block.cid(), block.data().clone());
@@ -569,8 +578,10 @@ pub async fn add_file<S: Store>(
     store: Option<S>,
     path: &Path,
     wrap: bool,
-) -> Result<impl Stream<Item = Result<AddEvent>>> {
-    ensure!(path.is_file(), "provided path was not a file");
+) -> Result<impl Stream<Item = Result<AddEvent, Error>>, Error> {
+    if !path.is_file() {
+        return Err(Error::PathNotFile(path.to_path_buf()));
+    }
 
     let file = FileBuilder::new().path(path).build().await?;
 
@@ -593,8 +604,10 @@ pub async fn add_dir<S: Store>(
     store: Option<S>,
     path: &Path,
     wrap: bool,
-) -> Result<impl Stream<Item = Result<AddEvent>>> {
-    ensure!(path.is_dir(), "provided path was not a directory");
+) -> Result<impl Stream<Item = Result<AddEvent, Error>>, Error> {
+    if !path.is_dir() {
+        return Err(Error::PathNotDirectory(path.to_path_buf()));
+    }
 
     let dir = make_dir_from_path(path).await?;
 
@@ -616,8 +629,11 @@ pub async fn add_symlink<S: Store>(
     store: Option<S>,
     path: &Path,
     wrap: bool,
-) -> Result<impl Stream<Item = Result<AddEvent>>> {
-    ensure!(path.is_symlink(), "provided path was not a symlink");
+) -> Result<impl Stream<Item = Result<AddEvent, Error>>, Error> {
+    if !path.is_symlink() {
+        return Err(Error::PathNotSymlink(path.to_path_buf()));
+    }
+
     let symlink = SymlinkBuilder::new(path).build().await?;
     if wrap {
         let dir = symlink.wrap();
@@ -644,8 +660,8 @@ use async_stream::stream;
 
 fn add_blocks_to_store_chunked<S: Store>(
     store: S,
-    mut blocks: Pin<Box<dyn Stream<Item = Result<Block>>>>,
-) -> impl Stream<Item = Result<AddEvent>> {
+    mut blocks: Pin<Box<dyn Stream<Item = Result<Block, Error>>>>,
+) -> impl Stream<Item = Result<AddEvent, Error>> {
     let mut chunk = Vec::new();
     let mut chunk_size = 0u64;
     const MAX_CHUNK_SIZE: u64 = 1024 * 1024 * 16;
@@ -674,8 +690,8 @@ fn add_blocks_to_store_chunked<S: Store>(
 
 fn _add_blocks_to_store_single<S: Store>(
     store: Option<S>,
-    blocks: Pin<Box<dyn Stream<Item = Result<Block>>>>,
-) -> impl Stream<Item = Result<AddEvent>> {
+    blocks: Pin<Box<dyn Stream<Item = Result<Block, Error>>>>,
+) -> impl Stream<Item = Result<AddEvent, Error>> {
     blocks
         .and_then(|x| future::ok(vec![x]))
         .map(move |blocks| {
@@ -701,13 +717,13 @@ fn _add_blocks_to_store_single<S: Store>(
 
 pub async fn add_blocks_to_store<S: Store>(
     store: Option<S>,
-    blocks: Pin<Box<dyn Stream<Item = Result<Block>>>>,
-) -> impl Stream<Item = Result<AddEvent>> {
+    blocks: Pin<Box<dyn Stream<Item = Result<Block, Error>>>>,
+) -> impl Stream<Item = Result<AddEvent, Error>> {
     add_blocks_to_store_chunked(store.unwrap(), blocks)
 }
 
 #[async_recursion(?Send)]
-async fn make_dir_from_path<P: Into<PathBuf>>(path: P) -> Result<Directory> {
+async fn make_dir_from_path<P: Into<PathBuf>>(path: P) -> Result<Directory, Error> {
     let path = path.into();
     let mut dir = DirectoryBuilder::new();
     dir.name(
@@ -729,7 +745,7 @@ async fn make_dir_from_path<P: Into<PathBuf>>(path: P) -> Result<Directory> {
             let d = make_dir_from_path(path).await?;
             dir.add_dir(d)?;
         } else {
-            anyhow::bail!("directory entry is neither file nor directory")
+            return Err(Error::DirEntryNotFileOrDirectory);
         }
     }
     dir.build()

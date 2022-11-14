@@ -1,10 +1,10 @@
-use anyhow::{bail, ensure, Result};
 use async_recursion::async_recursion;
 use futures::{stream::BoxStream, Stream, StreamExt};
 use once_cell::sync::OnceCell;
 
 use crate::{
     content_loader::ContentLoader,
+    error::Error,
     resolver::{LoaderContext, OutContent, Path, Resolver},
     unixfs::{self, HamtHashFunction, Link, Links, PbLinks, UnixfsNode},
 };
@@ -49,7 +49,7 @@ enum InnerNode {
 }
 
 impl Hamt {
-    pub fn from_node(node: &unixfs::Node) -> Result<Self> {
+    pub fn from_node(node: &unixfs::Node) -> Result<Self, Error> {
         let root = Node::from_node(node)?;
         Ok(Self { root })
     }
@@ -59,7 +59,7 @@ impl Hamt {
         ctx: LoaderContext,
         loader: &Resolver<C>,
         key: &[u8],
-    ) -> Result<Option<(&Link, &UnixfsNode)>> {
+    ) -> Result<Option<(&Link, &UnixfsNode)>, Error> {
         self.root.get(ctx, loader, key).await
     }
 
@@ -78,7 +78,7 @@ impl Hamt {
         &'a self,
         ctx: LoaderContext,
         loader: &'b Resolver<C>,
-    ) -> impl Stream<Item = Result<Link>> + 'a {
+    ) -> impl Stream<Item = Result<Link, Error>> + 'a {
         self.root.children(ctx, loader)
     }
 }
@@ -88,7 +88,7 @@ impl InnerNode {
         ctx: crate::resolver::LoaderContext,
         link: &Link,
         loader: &Resolver<C>,
-    ) -> Result<Self> {
+    ) -> Result<Self, Error> {
         let path = Path::from_cid(link.cid);
         let out = loader.resolve_with_ctx(ctx, path).await?;
 
@@ -115,19 +115,20 @@ impl InnerNode {
                     value: node,
                 })
             }
-            _ => bail!("unexpected node: {:?}", out.content.typ()),
+            _ => return Err(Error::UnexpectedNode(out.content.typ())),
         }
     }
     fn children<'a, 'b: 'a, C: ContentLoader>(
         &'a self,
         ctx: LoaderContext,
         loader: &'b Resolver<C>,
-    ) -> impl Stream<Item = Result<Link>> + 'a {
+    ) -> impl Stream<Item = Result<Link, Error>> + 'a {
         async_stream::try_stream! {
             match self {
                 InnerNode::Node { node, .. } => {
                     let mut children = node.children(ctx, loader);
                     while let Some(link) = children.next().await {
+                        let link: Result<_, Error> = link; // Type annotation to help compiler
                         let link = link?;
                         yield link;
                     }
@@ -136,6 +137,7 @@ impl InnerNode {
                 InnerNode::Leaf { value, .. } => match value {
                     UnixfsNode::Directory(_) => {
                         for link in value.links() {
+                            let link: Result<_, Error> = link; // Type annotation to help compiler
                             let link = link?;
                             yield link.to_owned();
                         }
@@ -143,6 +145,7 @@ impl InnerNode {
                     UnixfsNode::HamtShard(_, hamt) => {
                         let mut children = hamt.children(ctx, loader);
                         while let Some(link) = children.next().await {
+                            let link: Result<_, Error> = link; // Type annotation to help compiler
                             let link = link?;
                             yield link;
                         }
@@ -155,13 +158,15 @@ impl InnerNode {
 }
 
 impl Node {
-    pub fn from_node(node: &unixfs::Node) -> Result<Self> {
-        ensure!(
-            node.hash_type() == Some(HamtHashFunction::Murmur3),
-            "hamt: only murmur3 is supported"
-        );
+    pub fn from_node(node: &unixfs::Node) -> Result<Self, Error> {
+        if !(node.hash_type() == Some(HamtHashFunction::Murmur3)) {
+            return Err(Error::HamtOnlyMurmur3);
+        }
         let fanout = node.fanout().unwrap_or(DEFAULT_FANOUT);
-        ensure!(fanout > 0, "fanout must be non zero");
+
+        if !(fanout > 0) {
+            return Err(Error::FanoutMustBeNonZero);
+        }
 
         let data = node.data().as_ref().unwrap().clone();
         let bitfield = Bitfield::from_slice(&data[..])?;
@@ -170,12 +175,12 @@ impl Node {
         let pointers = links
             .map(|l| {
                 let l = l?;
-                Ok(NodeLink {
+                Ok::<_, Error>(NodeLink {
                     link: l.to_owned(),
                     cache: Default::default(),
                 })
             })
-            .collect::<Result<_>>()?;
+            .collect::<Result<_, _>>()?;
 
         let bit_width = log2(fanout);
         let padding = format!("{:X}", fanout - 1);
@@ -194,7 +199,7 @@ impl Node {
         ctx: LoaderContext,
         loader: &Resolver<C>,
         key: &[u8],
-    ) -> Result<Option<(&Link, &UnixfsNode)>> {
+    ) -> Result<Option<(&Link, &UnixfsNode)>, Error> {
         let hashed_key = hash_key(key);
         let res = self
             .get_value(ctx, loader, &mut HashBits::new(&hashed_key), key, 0)
@@ -211,8 +216,10 @@ impl Node {
         hashed_key: &mut HashBits<'_, HASH_BIT_LENGTH>,
         key: &[u8],
         depth: usize,
-    ) -> Result<Option<(&Link, &UnixfsNode)>> {
-        ensure!(depth < MAX_DEPTH, "max depth reached");
+    ) -> Result<Option<(&Link, &UnixfsNode)>, Error> {
+        if !(depth < MAX_DEPTH) {
+            return Err(Error::MaxDepthReached);
+        }
         let idx = hashed_key.next(self.bit_width)?;
         if !self.bitfield.test_bit(idx) {
             return Ok(None);
@@ -257,7 +264,7 @@ impl Node {
         ctx: LoaderContext,
         loader: &Resolver<C>,
         child: &'a NodeLink,
-    ) -> Result<&'a InnerNode> {
+    ) -> Result<&'a InnerNode, Error> {
         if let Some(cached_node) = child.cache.get() {
             Ok(cached_node)
         } else {
@@ -280,7 +287,7 @@ impl Node {
         &'a self,
         ctx: LoaderContext,
         loader: &'b Resolver<C>,
-    ) -> BoxStream<'a, Result<Link>> {
+    ) -> BoxStream<'a, Result<Link, Error>> {
         async_stream::try_stream! {
             let padding_len = self.padding_len;
             for pointer in &self.pointers {
@@ -299,6 +306,7 @@ impl Node {
                         let children = child.children(ctx.clone(), loader);
                         tokio::pin!(children);
                         while let Some(link) = children.next().await {
+                            let link: Result<_, Error> = link; // To give a type annotation (hacky)
                             let link = link?;
                             yield link;
                         }

@@ -1,6 +1,6 @@
 use std::cmp::Ordering;
 
-use anyhow::{bail, ensure, Result};
+use crate::error::Error;
 
 /// Helper struct which indexes and allows returning bits from a hashed key
 #[derive(Debug, Clone, Copy)]
@@ -29,10 +29,12 @@ impl<'a, const S: usize> HashBits<'a, S> {
 
     /// Returns next `i` bits of the hash and returns the value as an integer and returns
     /// Error when maximum depth is reached
-    pub fn next(&mut self, i: u32) -> Result<u32> {
-        ensure!(i <= 8, "invalid hash bit length");
+    pub fn next(&mut self, i: u32) -> Result<u32, Error> {
+        if !(i <= 8) {
+            return Err(Error::InvalidHashBitLength);
+        }
         if (self.consumed + i) as usize > self.b.len() * 8 {
-            bail!("maxium depth reached");
+            return Err(Error::MaxDepthReached);
         }
         Ok(self.next_bits(i))
     }

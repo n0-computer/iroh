@@ -6,7 +6,6 @@ use std::{
     task::{Context, Poll},
 };
 
-use anyhow::{anyhow, bail, ensure, Result};
 use bytes::{Buf, Bytes};
 use cid::{multihash::MultihashDigest, Cid};
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt, Stream, StreamExt};
@@ -17,6 +16,7 @@ use crate::{
     chunker::DEFAULT_CHUNK_SIZE_LIMIT,
     codecs::Codec,
     content_loader::ContentLoader,
+    error::Error,
     hamt::Hamt,
     resolver::{Block, LoaderContext, OutMetrics, Resolver, ResponseClip},
 };
@@ -50,7 +50,7 @@ pub struct Unixfs {
 }
 
 impl Unixfs {
-    pub fn from_bytes<B: Buf>(bytes: B) -> Result<Self> {
+    pub fn from_bytes<B: Buf>(bytes: B) -> Result<Self, Error> {
         let proto = unixfs_pb::Data::decode(bytes)?;
 
         Ok(Unixfs { inner: proto })
@@ -125,7 +125,7 @@ pub struct Node {
 }
 
 impl Node {
-    fn encode(&self) -> Result<Bytes> {
+    fn encode(&self) -> Result<Bytes, Error> {
         let bytes = self.outer.encode_to_vec();
         Ok(bytes.into())
     }
@@ -183,7 +183,7 @@ impl Node {
 }
 
 impl UnixfsNode {
-    pub fn decode(cid: &Cid, buf: Bytes) -> Result<Self> {
+    pub fn decode(cid: &Cid, buf: Bytes) -> Result<Self, Error> {
         match cid.codec() {
             c if c == Codec::Raw as u64 => Ok(UnixfsNode::Raw(buf)),
             _ => {
@@ -192,7 +192,7 @@ impl UnixfsNode {
                     .data
                     .as_ref()
                     .cloned()
-                    .ok_or_else(|| anyhow!("missing data"))?;
+                    .ok_or_else(|| Error::MissingData)?;
                 let inner = unixfs_pb::Data::decode(inner_data)?;
                 let typ: DataType = inner.r#type.try_into()?;
                 let node = Node { outer, inner };
@@ -207,13 +207,13 @@ impl UnixfsNode {
                         let hamt = Hamt::from_node(&node)?;
                         Ok(UnixfsNode::HamtShard(node, hamt))
                     }
-                    DataType::Metadata => bail!("unixfs metadata is not supported"),
+                    DataType::Metadata => Err(Error::UnixFsMetadataUnsupported),
                 }
             }
         }
     }
 
-    pub fn encode(&self) -> Result<Block> {
+    pub fn encode(&self) -> Result<Block, Error> {
         let res = match self {
             UnixfsNode::Raw(data) => {
                 let out = data.clone();
@@ -230,7 +230,7 @@ impl UnixfsNode {
                 let links = node
                     .links()
                     .map(|x| Ok(x?.cid))
-                    .collect::<Result<Vec<_>>>()?;
+                    .collect::<Result<Vec<_>, Error>>()?;
                 let cid = Cid::new_v1(
                     Codec::DagPb as _,
                     cid::multihash::Code::Sha2_256.digest(&out),
@@ -239,11 +239,9 @@ impl UnixfsNode {
             }
         };
 
-        ensure!(
-            res.data().len() <= DEFAULT_CHUNK_SIZE_LIMIT,
-            "node is too large: {} bytes",
-            res.data().len()
-        );
+        if !(res.data().len() <= DEFAULT_CHUNK_SIZE_LIMIT) {
+            return Err(Error::NodeTooLarge(res.data().len()));
+        }
 
         Ok(res)
     }
@@ -309,7 +307,7 @@ impl UnixfsNode {
         }
     }
 
-    pub fn links_owned(&self) -> Result<VecDeque<Link>> {
+    pub fn links_owned(&self) -> Result<VecDeque<Link>, Error> {
         self.links().map(|l| l.map(|l| l.to_owned())).collect()
     }
 
@@ -320,7 +318,7 @@ impl UnixfsNode {
     pub async fn get_link_by_name<S: AsRef<str>>(
         &self,
         link_name: S,
-    ) -> Result<Option<LinkRef<'_>>> {
+    ) -> Result<Option<LinkRef<'_>>, Error> {
         let link_name = link_name.as_ref();
         self.links()
             .find(|l| match l {
@@ -330,7 +328,7 @@ impl UnixfsNode {
             .transpose()
     }
 
-    pub fn symlink(&self) -> Result<Option<&str>> {
+    pub fn symlink(&self) -> Result<Option<&str>, Error> {
         if let Self::Symlink(ref node) = self {
             let link = std::str::from_utf8(node.inner.data.as_deref().unwrap_or_default())?;
             Ok(Some(link))
@@ -345,7 +343,7 @@ impl UnixfsNode {
         ctx: LoaderContext,
         loader: &'b Resolver<T>,
         om: OutMetrics,
-    ) -> Result<Option<UnixfsChildStream<'a>>> {
+    ) -> Result<Option<UnixfsChildStream<'a>>, Error> {
         match self {
             UnixfsNode::Raw(_)
             | UnixfsNode::RawNode(_)
@@ -374,7 +372,7 @@ impl UnixfsNode {
         loader: Resolver<T>,
         om: OutMetrics,
         pos_max: ResponseClip,
-    ) -> Result<Option<UnixfsContentReader<T>>> {
+    ) -> Result<Option<UnixfsContentReader<T>>, Error> {
         match self {
             UnixfsNode::Raw(_)
             | UnixfsNode::RawNode(_)
@@ -401,12 +399,12 @@ impl UnixfsNode {
 
 pub enum UnixfsChildStream<'a> {
     Hamt {
-        stream: BoxStream<'a, Result<Link>>,
+        stream: BoxStream<'a, Result<Link, Error>>,
         pos: usize,
         out_metrics: OutMetrics,
     },
     Directory {
-        stream: BoxStream<'a, Result<Link>>,
+        stream: BoxStream<'a, Result<Link, Error>>,
         out_metrics: OutMetrics,
     },
 }
@@ -443,7 +441,7 @@ impl<T: ContentLoader> UnixfsContentReader<T> {
 }
 
 impl Stream for UnixfsChildStream<'_> {
-    type Item = Result<Link>;
+    type Item = Result<Link, Error>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         match &mut *self {
@@ -629,7 +627,7 @@ pub enum CurrentNodeState {
     Outer,
     None,
     Loaded(usize, UnixfsNode),
-    Loading(BoxFuture<'static, Result<UnixfsNode>>),
+    Loading(BoxFuture<'static, Result<UnixfsNode, Error>>),
 }
 
 impl Debug for CurrentNodeState {
@@ -873,7 +871,7 @@ impl<'a> PbLinks<'a> {
 }
 
 impl<'a> Iterator for Links<'a> {
-    type Item = Result<LinkRef<'a>>;
+    type Item = Result<LinkRef<'a>, Error>;
 
     fn next(&mut self) -> Option<Self::Item> {
         match self {
@@ -899,7 +897,7 @@ impl<'a> Iterator for Links<'a> {
 }
 
 impl<'a> Iterator for PbLinks<'a> {
-    type Item = Result<LinkRef<'a>>;
+    type Item = Result<LinkRef<'a>, Error>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.i == self.outer.links.len() {
@@ -912,7 +910,7 @@ impl<'a> Iterator for PbLinks<'a> {
         let res = l
             .hash
             .as_ref()
-            .ok_or_else(|| anyhow!("missing link"))
+            .ok_or_else(|| Error::MissingLink)
             .and_then(|c| {
                 Ok(LinkRef {
                     cid: Cid::read_bytes(Cursor::new(c))?,

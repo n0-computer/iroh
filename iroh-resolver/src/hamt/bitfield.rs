@@ -1,4 +1,4 @@
-use anyhow::{ensure, Result};
+use crate::error::Error;
 
 pub const BITWIDTH: usize = 256;
 
@@ -17,7 +17,7 @@ impl Bitfield {
         v
     }
 
-    pub fn from_bytes(arr: [u8; BITWIDTH / 8]) -> Result<Self> {
+    pub fn from_bytes(arr: [u8; BITWIDTH / 8]) -> Result<Self, Error> {
         let mut res = Bitfield::zero();
 
         res.0[3] = u64::from_be_bytes(arr[..8].try_into()?);
@@ -28,8 +28,10 @@ impl Bitfield {
         Ok(res)
     }
 
-    pub fn from_slice(bytes: &[u8]) -> Result<Self> {
-        ensure!(bytes.len() <= 32, "bitfield too large {}", bytes.len());
+    pub fn from_slice(bytes: &[u8]) -> Result<Self, Error> {
+        if !(bytes.len() <= 32) {
+            return Err(Error::BitfieldTooLarge(bytes.len()));
+        }
         let mut arr = [0u8; BITWIDTH / 8];
         arr[32 - bytes.len()..].copy_from_slice(bytes);
 

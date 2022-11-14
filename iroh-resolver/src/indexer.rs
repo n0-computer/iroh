@@ -1,10 +1,11 @@
-use anyhow::Result;
 use cid::Cid;
 use libp2p::{Multiaddr, PeerId};
 use multihash::Multihash;
 use reqwest::{Client, Url};
 use serde::{Deserialize, Serialize};
 use tracing::trace;
+
+use crate::error::Error;
 
 /// API connection to the indexer nodes, as implemented in
 /// https://github.com/filecoin-project/storetheindex.
@@ -26,14 +27,14 @@ pub struct Provider {
 }
 
 impl Indexer {
-    pub fn new(endpoint: Url) -> Result<Self> {
+    pub fn new(endpoint: Url) -> Result<Self, Error> {
         let client = Client::new();
 
         Ok(Self { client, endpoint })
     }
 
     /// Returns all available bitswap providers.
-    pub async fn find_providers(&self, cid: Cid) -> Result<Vec<Provider>> {
+    pub async fn find_providers(&self, cid: Cid) -> Result<Vec<Provider>, Error> {
         let url = self.endpoint.join(&cid.to_string())?;
         trace!("requesting providers from {}", url);
         let result = self

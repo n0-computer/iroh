@@ -1,11 +1,11 @@
 use std::collections::VecDeque;
 
-use anyhow::Result;
 use async_stream::try_stream;
 use bytes::{Bytes, BytesMut};
 use cid::Cid;
-use futures::{Stream, StreamExt, TryFutureExt, TryStreamExt};
+use futures::{Stream, StreamExt, TryStreamExt};
 
+use crate::error::Error;
 use crate::resolver::Block;
 use crate::unixfs::{dag_pb, unixfs_pb, DataType, Node, UnixfsNode};
 use crate::unixfs_builder::encode_unixfs_pb;
@@ -34,7 +34,7 @@ impl TreeBuilder {
     pub fn stream_tree(
         &self,
         chunks: impl Stream<Item = std::io::Result<BytesMut>>,
-    ) -> impl Stream<Item = Result<Block>> {
+    ) -> impl Stream<Item = Result<Block, Error>> {
         match self {
             TreeBuilder::Balanced { degree } => stream_balanced_tree(chunks, *degree),
         }
@@ -50,7 +50,7 @@ struct LinkInfo {
 fn stream_balanced_tree(
     in_stream: impl Stream<Item = std::io::Result<BytesMut>>,
     degree: usize,
-) -> impl Stream<Item = Result<Block>> {
+) -> impl Stream<Item = Result<Block, Error>> {
     try_stream! {
         // degree = 8
         // VecDeque![ vec![] ]
@@ -79,11 +79,11 @@ fn stream_balanced_tree(
 
         let hash_par: usize = 8;
 
-        let in_stream = in_stream.err_into::<anyhow::Error>().map(|chunk| {
+        let in_stream = in_stream.map_err(Error::from).map(|chunk| {
             tokio::task::spawn_blocking(|| {
-                chunk.and_then(|chunk| TreeNode::Leaf(chunk.freeze()).encode())
-            }).err_into::<anyhow::Error>()
-        }).buffered(hash_par).map(|x| x.and_then(|x| x));
+                chunk.and_then(|chunk| TreeNode::Leaf(chunk.freeze()).encode().map_err(Error::from))
+            })
+        }).buffered(hash_par).map(|x| x.map_err(Error::from).and_then(|x| x.map_err(Error::from)));
 
         tokio::pin!(in_stream);
 
@@ -150,7 +150,7 @@ fn stream_balanced_tree(
     }
 }
 
-fn create_unixfs_node_from_links(links: Vec<(Cid, LinkInfo)>) -> Result<UnixfsNode> {
+fn create_unixfs_node_from_links(links: Vec<(Cid, LinkInfo)>) -> Result<UnixfsNode, Error> {
     let blocksizes: Vec<u64> = links.iter().map(|l| l.1.raw_data_len).collect();
     let filesize: u64 = blocksizes.iter().sum();
     let links = links
@@ -197,7 +197,7 @@ enum TreeNode {
 }
 
 impl TreeNode {
-    fn encode(self) -> Result<(Block, LinkInfo)> {
+    fn encode(self) -> Result<(Block, LinkInfo), Error> {
         match self {
             TreeNode::Leaf(bytes) => {
                 let len = bytes.len();
@@ -396,7 +396,7 @@ mod tests {
 
     async fn ensure_equal(
         expect: Vec<Block>,
-        got: impl Stream<Item = Result<Block>>,
+        got: impl Stream<Item = Result<Block, Error>>,
         expected_filesize: u64,
     ) {
         let mut i = 0;

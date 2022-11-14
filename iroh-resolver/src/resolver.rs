@@ -7,7 +7,6 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Instant;
 
-use anyhow::{anyhow, bail, Context as _, Result};
 use async_trait::async_trait;
 use bytes::Bytes;
 use cid::multihash::{Code, MultihashDigest};
@@ -22,6 +21,8 @@ use tokio::io::{AsyncRead, AsyncSeek};
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use tracing::{debug, trace, warn};
+
+use crate::error::Error;
 
 use iroh_metrics::{
     core::{MObserver, MRecorder},
@@ -71,7 +72,7 @@ impl Block {
     }
 
     /// Validate the block. Will return an error if the hash or the links are wrong.
-    pub fn validate(&self) -> Result<()> {
+    pub fn validate(&self) -> Result<(), Error> {
         // check that the cid is supported
         let code = self.cid.hash().code();
         let mh = Code::try_from(code)
@@ -87,7 +88,9 @@ impl Block {
         actual_links.sort();
         // TODO: why do the actual links need to be deduplicated?
         actual_links.dedup();
-        anyhow::ensure!(expected_links == actual_links, "links do not match");
+        if !(expected_links == actual_links) {
+            return Err(Error::LinksNotMatch);
+        }
         Ok(())
     }
 
@@ -220,14 +223,14 @@ impl PathType {
 }
 
 impl FromStr for Path {
-    type Err = anyhow::Error;
+    type Err = Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let mut parts = s.split(&['/', '\\']).filter(|s| !s.is_empty());
 
-        let first_part = parts.next().ok_or_else(|| anyhow!("path too short"))?;
+        let first_part = parts.next().ok_or_else(|| Error::PathTooShort)?;
         let (typ, root) = if first_part.eq_ignore_ascii_case("ipns") {
-            let root = parts.next().ok_or_else(|| anyhow!("path too short"))?;
+            let root = parts.next().ok_or_else(|| Error::PathTooShort)?;
             let root = if let Ok(c) = Cid::from_str(root) {
                 CidOrDomain::Cid(c)
             } else {
@@ -238,12 +241,12 @@ impl FromStr for Path {
             (PathType::Ipns, root)
         } else {
             let root = if first_part.eq_ignore_ascii_case("ipfs") {
-                parts.next().ok_or_else(|| anyhow!("path too short"))?
+                parts.next().ok_or_else(|| Error::PathTooShort)?
             } else {
                 first_part
             };
 
-            let root = Cid::from_str(root).context("invalid cid")?;
+            let root = Cid::from_str(root)?;
 
             (PathType::Ipfs, CidOrDomain::Cid(root))
         };
@@ -261,19 +264,19 @@ impl FromStr for Path {
 #[async_trait]
 pub trait LinksContainer: Sync + Send + std::fmt::Debug + Clone + 'static {
     /// Extract links out of a container struct.
-    fn links(&self) -> Result<Vec<Cid>>;
+    fn links(&self) -> Result<Vec<Cid>, Error>;
 }
 
 #[async_trait]
 impl LinksContainer for OutRaw {
-    fn links(&self) -> Result<Vec<Cid>> {
+    fn links(&self) -> Result<Vec<Cid>, Error> {
         parse_links(&self.cid, &self.content)
     }
 }
 
 #[async_trait]
 impl LinksContainer for Out {
-    fn links(&self) -> Result<Vec<Cid>> {
+    fn links(&self) -> Result<Vec<Cid>, Error> {
         Out::links(self)
     }
 }
@@ -341,13 +344,13 @@ impl Out {
         self.content.typ()
     }
 
-    pub fn links(&self) -> Result<Vec<Cid>> {
+    pub fn links(&self) -> Result<Vec<Cid>, Error> {
         self.content.links()
     }
 
     /// Returns links with an associated file or directory name if the content
     /// is unixfs
-    pub fn named_links(&self) -> Result<Vec<(Option<&str>, Cid)>> {
+    pub fn named_links(&self) -> Result<Vec<(Option<&str>, Cid)>, Error> {
         match &self.content {
             OutContent::Unixfs(node) => node.links().map(|l| l.map(|l| (l.name, l.cid))).collect(),
             _ => {
@@ -363,7 +366,7 @@ impl Out {
         &'a self,
         loader: &'b Resolver<C>,
         om: OutMetrics,
-    ) -> Result<Option<UnixfsChildStream<'a>>> {
+    ) -> Result<Option<UnixfsChildStream<'a>>, Error> {
         match &self.content {
             OutContent::Unixfs(node) => node.as_child_reader(self.context.clone(), loader, om),
             _ => Ok(None),
@@ -375,7 +378,7 @@ impl Out {
         loader: Resolver<T>,
         om: OutMetrics,
         clip: ResponseClip,
-    ) -> Result<OutPrettyReader<T>> {
+    ) -> Result<OutPrettyReader<T>, Error> {
         let pos = 0;
         match self.content {
             OutContent::DagPb(_, mut bytes) => {
@@ -406,7 +409,7 @@ impl Out {
                 let ctx = self.context;
                 let reader = node
                     .into_content_reader(ctx, loader, om, clip)?
-                    .ok_or_else(|| anyhow!("cannot read the contents of a directory"))?;
+                    .ok_or_else(|| Error::CannotReadDirContents)?;
 
                 Ok(OutPrettyReader::Unixfs(reader))
             }
@@ -434,7 +437,7 @@ impl OutContent {
         }
     }
 
-    pub(crate) fn links(&self) -> Result<Vec<Cid>> {
+    pub(crate) fn links(&self) -> Result<Vec<Cid>, Error> {
         match self {
             OutContent::DagPb(ipld, _)
             | OutContent::DagCbor(ipld, _)
@@ -773,7 +776,7 @@ impl<T: ContentLoader> Resolver<T> {
     pub fn resolve_recursive_with_paths(
         &self,
         root: Path,
-    ) -> impl Stream<Item = Result<(Path, Out)>> {
+    ) -> impl Stream<Item = Result<(Path, Out), Error>> {
         let mut blocks = VecDeque::new();
         let this = self.clone();
         async_stream::try_stream! {
@@ -789,7 +792,7 @@ impl<T: ContentLoader> Resolver<T> {
 
                     // TODO(ramfox): we may want to just keep the stream and iterate over the links
                     // that way, rather than gathering and then chunking again
-                    let links: Result<Vec<Link>> = current
+                    let links: Result<Vec<Link>, Error> = current
                         .unixfs_read_dir(&this, OutMetrics::default())?
                         .expect("already know this is a directory")
                         .try_collect()
@@ -825,7 +828,7 @@ impl<T: ContentLoader> Resolver<T> {
     }
 
     #[tracing::instrument(skip(self))]
-    pub fn resolve_recursive(&self, root: Path) -> impl Stream<Item = Result<Out>> {
+    pub fn resolve_recursive(&self, root: Path) -> impl Stream<Item = Result<Out, Error>> {
         let this = self.clone();
         self.resolve_recursive_mapped(root, None, move |cid, ctx| {
             let this = this.clone();
@@ -839,7 +842,7 @@ impl<T: ContentLoader> Resolver<T> {
         &self,
         root: Path,
         recursion_limit: Option<usize>,
-    ) -> impl Stream<Item = Result<OutRaw>> {
+    ) -> impl Stream<Item = Result<OutRaw, Error>> {
         let this = self.clone();
         self.resolve_recursive_mapped(root, recursion_limit, move |cid, mut ctx| {
             let this = this.clone();
@@ -858,11 +861,11 @@ impl<T: ContentLoader> Resolver<T> {
         root: Path,
         recursion_limit: Option<usize>,
         resolve: M,
-    ) -> impl Stream<Item = Result<O>>
+    ) -> impl Stream<Item = Result<O, Error>>
     where
         O: LinksContainer,
         M: Fn(Cid, LoaderContext) -> F + Clone,
-        F: Future<Output = Result<O>> + Send + 'static,
+        F: Future<Output = Result<O, Error>> + Send + 'static,
     {
         let mut ctx =
             LoaderContext::from_path(self.next_id(), self.session_closer.clone(), root.clone());
@@ -881,7 +884,7 @@ impl<T: ContentLoader> Resolver<T> {
                     counter += links.len();
                     if let Some(limit) = recursion_limit {
                         if counter > limit {
-                            Err(anyhow::anyhow!("Number of links exceeds the recursion limit."))?;
+                            Err(Error::LinkNumExceedsRecursionLimit)?
                         }
                     }
 
@@ -902,7 +905,6 @@ impl<T: ContentLoader> Resolver<T> {
                         }
                     }
                     yield current;
-
                 } else {
                     // no links left to resolve
                     break;
@@ -913,14 +915,14 @@ impl<T: ContentLoader> Resolver<T> {
 
     /// Resolves through a given path, returning the [`Cid`] and raw bytes of the final leaf.
     #[tracing::instrument(skip(self))]
-    pub async fn resolve(&self, path: Path) -> Result<Out> {
+    pub async fn resolve(&self, path: Path) -> Result<Out, Error> {
         let ctx =
             LoaderContext::from_path(self.next_id(), self.session_closer.clone(), path.clone());
 
         self.resolve_with_ctx(ctx, path).await
     }
 
-    pub async fn resolve_with_ctx(&self, mut ctx: LoaderContext, path: Path) -> Result<Out> {
+    pub async fn resolve_with_ctx(&self, mut ctx: LoaderContext, path: Path) -> Result<Out, Error> {
         // Resolve the root block.
         let (root_cid, loaded_cid) = self.resolve_root(&path, &mut ctx).await?;
         match loaded_cid.source {
@@ -928,7 +930,7 @@ impl<T: ContentLoader> Resolver<T> {
             _ => inc!(ResolverMetrics::CacheMiss),
         }
 
-        let codec = Codec::try_from(root_cid.codec()).context("unknown codec")?;
+        let codec = Codec::try_from(root_cid.codec())?;
 
         match codec {
             Codec::DagPb => {
@@ -938,7 +940,7 @@ impl<T: ContentLoader> Resolver<T> {
             Codec::DagCbor | Codec::DagJson | Codec::Raw => {
                 self.resolve_ipld(path, root_cid, loaded_cid, ctx).await
             }
-            _ => bail!("unsupported codec {:?}", codec),
+            _ => Err(Error::UnsupportedCodec(codec)),
         }
     }
 
@@ -951,13 +953,13 @@ impl<T: ContentLoader> Resolver<T> {
         resolved_path: &mut Vec<Cid>,
         part: &str,
         ctx: &mut LoaderContext,
-    ) -> Result<()> {
+    ) -> Result<(), Error> {
         match current {
             UnixfsNode::Directory(_) => {
                 let next_link = current
                     .get_link_by_name(&part)
                     .await?
-                    .ok_or_else(|| anyhow!("UnixfsNode::Directory link '{}' not found", part))?;
+                    .ok_or_else(|| Error::UnixFSNodeDirectoryLinkNotFound(part.to_string()))?;
                 let loaded_cid = self.load_cid(&next_link.cid, ctx).await?;
                 let next_node = UnixfsNode::decode(&next_link.cid, loaded_cid.data)?;
                 resolved_path.push(next_link.cid);
@@ -968,15 +970,13 @@ impl<T: ContentLoader> Resolver<T> {
                 let (next_link, next_node) = hamt
                     .get(ctx.clone(), self, part.as_bytes())
                     .await?
-                    .ok_or_else(|| anyhow!("UnixfsNode::HamtShard link '{}' not found", part))?;
+                    .ok_or_else(|| Error::HamtShardLinkNotFound(part.to_string()))?;
                 // TODO: is this the right way to to resolved path here?
                 resolved_path.push(next_link.cid);
 
                 *current = next_node.clone();
             }
-            _ => {
-                bail!("unexpected unixfs type {:?}", current.typ());
-            }
+            _ => return Err(Error::UnexpectedUnixFsType(current.typ())),
         }
 
         Ok(())
@@ -990,7 +990,7 @@ impl<T: ContentLoader> Resolver<T> {
         cid: Cid,
         loaded_cid: LoadedCid,
         mut ctx: LoaderContext,
-    ) -> Result<Out> {
+    ) -> Result<Out, Error> {
         trace!("{:?} resolving {} for {}", ctx.id(), cid, root_path);
         if let Ok(node) = UnixfsNode::decode(&cid, loaded_cid.data.clone()) {
             let tail = &root_path.tail;
@@ -1038,12 +1038,10 @@ impl<T: ContentLoader> Resolver<T> {
         cid: Cid,
         loaded_cid: LoadedCid,
         mut ctx: LoaderContext,
-    ) -> Result<Out> {
+    ) -> Result<Out, Error> {
         trace!("{:?} resolving {} for {}", ctx.id(), cid, root_path);
         let codec: libipld::IpldCodec = cid.codec().try_into()?;
-        let ipld: libipld::Ipld = codec
-            .decode(&loaded_cid.data)
-            .map_err(|e| anyhow!("invalid {:?}: {:?}", codec, e))?;
+        let ipld: libipld::Ipld = codec.decode(&loaded_cid.data)?;
 
         let (codec, out) = self
             .resolve_ipld_path(cid, codec, ipld, &root_path.tail, &mut ctx)
@@ -1090,7 +1088,7 @@ impl<T: ContentLoader> Resolver<T> {
         root: Ipld,
         path: &[String],
         ctx: &mut LoaderContext,
-    ) -> Result<(IpldCodec, Ipld)> {
+    ) -> Result<(IpldCodec, Ipld), Error> {
         let mut current = root;
         let mut codec = codec;
 
@@ -1106,13 +1104,9 @@ impl<T: ContentLoader> Resolver<T> {
                 } else {
                     part.clone().into()
                 };
-                current = current.take(index).map_err(|_| {
-                    anyhow!(
-                        "IPLD resolve error: Couldn't find part {} in path '{}'",
-                        part,
-                        path.join("/")
-                    )
-                })?;
+                current = current
+                    .take(index)
+                    .map_err(|_| Error::IPLDResolveError(part.to_string(), path.to_vec()))?;
             }
         }
         if let libipld::Ipld::Link(c) = current {
@@ -1123,53 +1117,59 @@ impl<T: ContentLoader> Resolver<T> {
     }
 
     #[tracing::instrument(skip(self))]
-    async fn load_ipld_link(&self, cid: Cid, ctx: &mut LoaderContext) -> Result<(IpldCodec, Ipld)> {
+    async fn load_ipld_link(
+        &self,
+        cid: Cid,
+        ctx: &mut LoaderContext,
+    ) -> Result<(IpldCodec, Ipld), Error> {
         let codec: libipld::IpldCodec = cid.codec().try_into()?;
 
         // resolve link and update if we have encountered a link
         let loaded_cid = self.load_cid(&cid, ctx).await?;
 
-        let ipld: Ipld = codec
-            .decode(&loaded_cid.data)
-            .map_err(|e| anyhow!("invalid {:?}: {:?}", codec, e))?;
+        let ipld: Ipld = codec.decode(&loaded_cid.data)?;
         Ok((codec, ipld))
     }
 
     #[tracing::instrument(skip(self, name))]
-    fn get_dagpb_link<I: Into<String>>(&self, ipld: Ipld, name: I) -> Result<Ipld> {
+    fn get_dagpb_link<I: Into<String>>(&self, ipld: Ipld, name: I) -> Result<Ipld, Error> {
         let name = name.into();
         let links = ipld
             .take("Links")
-            .map_err(|_| anyhow!("Expected the DagPb node to have a list of links."))?;
+            .map_err(|_| Error::ExpectedDagPbToHaveLinks)?;
         let mut links_iter = links.iter();
 
         // first iteration is the link list itself
         let _ = links_iter
             .next()
-            .ok_or_else(|| anyhow!("expected DagPb links to exist"));
+            .ok_or_else(|| Error::ExpectedDagPbLinksToExist)?;
 
         for dagpb_link in links_iter {
             match dagpb_link
                 .clone()
                 .take("Name")
-                .map_err(|_| anyhow!("Expected the Dagpb link to have a 'Name' field"))?
+                .map_err(|_| Error::ExpectedDagPbLinkToHaveField("Name"))?
             {
                 libipld::Ipld::String(n) => {
                     if n == name {
-                        let link = dagpb_link.clone().take("Hash").map_err(|_| {
-                            anyhow!("Expected the DagPb link to have a 'Hash' field")
-                        })?;
-                        return Ok(link);
+                        return dagpb_link
+                            .clone()
+                            .take("Hash")
+                            .map_err(|_| Error::ExpectedDagPbLinkToHaveField("Hash"));
                     }
                 }
-                _ => return Err(anyhow!("expected DagPb link to have a string Name field")),
+                _ => return Err(Error::ExpectedDagPbLinkToHaveStringNameField),
             }
         }
-        anyhow::bail!("could not find DagPb link '{}'", name);
+        Err(Error::CouldNotFindDagPbLink(name))
     }
 
     #[tracing::instrument(skip(self))]
-    async fn resolve_path_to_cid(&self, root: &Path, ctx: &mut LoaderContext) -> Result<Cid> {
+    async fn resolve_path_to_cid(
+        &self,
+        root: &Path,
+        ctx: &mut LoaderContext,
+    ) -> Result<Cid, Error> {
         let mut current = root.clone();
 
         // maximum cursion of ipns lookups
@@ -1181,7 +1181,7 @@ impl<T: ContentLoader> Resolver<T> {
                     CidOrDomain::Cid(ref c) => {
                         return Ok(*c);
                     }
-                    CidOrDomain::Domain(_) => bail!("invalid domain encountered"),
+                    CidOrDomain::Domain(_) => return Err(Error::InvalidDomain),
                 },
                 PathType::Ipns => match current.root {
                     CidOrDomain::Cid(ref c) => {
@@ -1191,7 +1191,7 @@ impl<T: ContentLoader> Resolver<T> {
                     CidOrDomain::Domain(ref domain) => {
                         let mut records = resolve_dnslink(domain).await?;
                         if records.is_empty() {
-                            bail!("no valid dnslink records found for {}", domain);
+                            return Err(Error::NoValidDnsLinkRecords(domain.to_string()));
                         }
                         current = records.remove(0);
                     }
@@ -1199,28 +1199,32 @@ impl<T: ContentLoader> Resolver<T> {
             }
         }
 
-        bail!("cannot resolve {}, too many recursive lookups", root);
+        Err(Error::TooManyRecursiveLookups(root.to_string()))
     }
 
     #[tracing::instrument(skip(self))]
-    async fn resolve_root(&self, root: &Path, ctx: &mut LoaderContext) -> Result<(Cid, LoadedCid)> {
+    async fn resolve_root(
+        &self,
+        root: &Path,
+        ctx: &mut LoaderContext,
+    ) -> Result<(Cid, LoadedCid), Error> {
         let cid = self.resolve_path_to_cid(root, ctx).await?;
         let loaded_cid = self.load_cid(&cid, ctx).await?;
         Ok((cid, loaded_cid))
     }
 
     #[tracing::instrument(skip(self))]
-    async fn load_cid(&self, cid: &Cid, ctx: &mut LoaderContext) -> Result<LoadedCid> {
+    async fn load_cid(&self, cid: &Cid, ctx: &mut LoaderContext) -> Result<LoadedCid, Error> {
         self.loader.load_cid(cid, ctx).await
     }
 
     #[tracing::instrument(skip(self))]
-    pub async fn has_cid(&self, cid: &Cid) -> Result<bool> {
+    pub async fn has_cid(&self, cid: &Cid) -> Result<bool, Error> {
         self.loader.has_cid(cid).await
     }
 
     #[tracing::instrument(skip(self))]
-    async fn load_ipns_record(&self, cid: &Cid) -> Result<Cid> {
+    async fn load_ipns_record(&self, cid: &Cid) -> Result<Cid, Error> {
         todo!()
     }
 }
@@ -1228,15 +1232,15 @@ impl<T: ContentLoader> Resolver<T> {
 /// Extract links from the given content.
 ///
 /// Links will be returned as a sorted vec
-pub fn parse_links(cid: &Cid, bytes: &[u8]) -> Result<Vec<Cid>> {
-    let codec = Codec::try_from(cid.codec()).context("unknown codec")?;
+pub fn parse_links(cid: &Cid, bytes: &[u8]) -> Result<Vec<Cid>, Error> {
+    let codec = Codec::try_from(cid.codec())?;
     let mut cids = BTreeSet::new();
     let codec = match codec {
         Codec::DagCbor => IpldCodec::DagCbor,
         Codec::DagPb => IpldCodec::DagPb,
         Codec::DagJson => IpldCodec::DagJson,
         Codec::Raw => IpldCodec::Raw,
-        _ => bail!("unsupported codec {:?}", codec),
+        _ => return Err(Error::UnsupportedCodec(codec)),
     };
     codec.references::<Ipld, _>(bytes, &mut cids)?;
     let links = cids.into_iter().collect();
@@ -1244,7 +1248,7 @@ pub fn parse_links(cid: &Cid, bytes: &[u8]) -> Result<Vec<Cid>> {
 }
 
 #[tracing::instrument]
-async fn resolve_dnslink(url: &str) -> Result<Vec<Path>> {
+async fn resolve_dnslink(url: &str) -> Result<Vec<Path>, Error> {
     let url = format!("_dnslink.{}.", url);
     let records = resolve_txt_record(&url).await?;
     let records = records
@@ -1254,11 +1258,11 @@ async fn resolve_dnslink(url: &str) -> Result<Vec<Path>> {
             let p = r.trim_start_matches("dnslink=").trim();
             p.parse()
         })
-        .collect::<Result<_>>()?;
+        .collect::<Result<_, Error>>()?;
     Ok(records)
 }
 
-async fn resolve_txt_record(url: &str) -> Result<Vec<String>> {
+async fn resolve_txt_record(url: &str) -> Result<Vec<String>, Error> {
     use trust_dns_resolver::config::*;
     use trust_dns_resolver::AsyncResolver;
 
@@ -1280,6 +1284,7 @@ mod tests {
     };
 
     use super::*;
+    use anyhow::Result;
     use cid::multihash::{Code, MultihashDigest};
     use futures::{StreamExt, TryStreamExt};
     use libipld::{codec::Encode, Ipld, IpldCodec};
