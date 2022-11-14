@@ -26,7 +26,7 @@ libp2p = { version = "0.50", default-features = false, features = ["gossipsub"] 
 multibase = "0.9.1"
 rand = "0.8.5"
 serde = { version = "1", features = ["derive"] }
-tempfile = "3.3"
+tempfile = "3.3.0"
 tokio = { version = "1" }
 tokio-stream = "0.1.9"
 tracing = "0.1.34"

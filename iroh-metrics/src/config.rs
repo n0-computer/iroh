@@ -133,7 +133,7 @@ mod tests {
         #[cfg(feature = "tokio-console")]
         expect.insert(
             "tokio_console".to_string(),
-            Value::new(None, cfg.tokio_console.clone()),
+            Value::new(None, cfg.tokio_console),
         );
         let got = cfg.collect().unwrap();
         for key in got.keys() {
