@@ -2,9 +2,9 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use crate::config::{Config, CONFIG_FILE_NAME, ENV_PREFIX};
+use crate::error::Error;
 use crate::P2pApi;
 use crate::{AddEvent, IpfsPath};
-use anyhow::{ensure, Context, Result};
 use cid::Cid;
 use futures::stream::LocalBoxStream;
 use futures::{StreamExt, TryStreamExt};
@@ -37,7 +37,7 @@ impl Api {
     pub async fn new<'a>(
         config_path: Option<&'a Path>,
         overrides_map: HashMap<String, String>,
-    ) -> Result<Self> {
+    ) -> Result<Self, Error> {
         let cfg_path = iroh_config_path(CONFIG_FILE_NAME)?;
         let sources = vec![Some(cfg_path.as_path()), config_path];
         let config = make_config(
@@ -61,14 +61,12 @@ impl Api {
                     .iter()
                     .flatten()
                     .map(|u| u.parse())
-                    .collect::<Result<_>>()
-                    .context("invalid gateway url")?,
+                    .collect::<Result<_, _>>()?,
                 indexer: config
                     .indexer_endpoint
                     .as_ref()
-                    .map(|u| u.parse())
-                    .transpose()
-                    .context("invalid indexer endpoint")?,
+                    .map(|u| u.parse().map_err(Error::from))
+                    .transpose()?,
             },
         )?;
         let resolver = Resolver::new(content_loader);
@@ -76,11 +74,15 @@ impl Api {
         Ok(Self { client, resolver })
     }
 
-    pub async fn provide(&self, cid: Cid) -> Result<()> {
-        self.client.try_p2p()?.start_providing(&cid).await
+    pub async fn provide(&self, cid: Cid) -> Result<(), Error> {
+        self.client
+            .try_p2p()?
+            .start_providing(&cid)
+            .await
+            .map_err(Error::from)
     }
 
-    pub fn p2p(&self) -> Result<P2pApi> {
+    pub fn p2p(&self) -> Result<P2pApi, Error> {
         let p2p_client = self.client.try_p2p()?;
         Ok(P2pApi::new(p2p_client))
     }
@@ -89,11 +91,10 @@ impl Api {
     pub fn get(
         &self,
         ipfs_path: &IpfsPath,
-    ) -> Result<LocalBoxStream<'static, Result<(RelativePathBuf, OutType)>>> {
-        ensure!(
-            ipfs_path.cid().is_some(),
-            "IPFS path does not refer to a CID"
-        );
+    ) -> Result<LocalBoxStream<'static, Result<(RelativePathBuf, OutType), Error>>, Error> {
+        if ipfs_path.cid().is_none() {
+            return Err(Error::PathNotCid);
+        }
 
         tracing::debug!("get {:?}", ipfs_path);
         let resolver = self.resolver.clone();
@@ -135,42 +136,42 @@ impl Api {
         &self,
         path: &Path,
         wrap: bool,
-    ) -> Result<LocalBoxStream<'static, Result<AddEvent>>> {
+    ) -> Result<LocalBoxStream<'static, Result<AddEvent, Error>>, Error> {
         let providing_client = iroh_resolver::unixfs_builder::StoreAndProvideClient {
             client: self.client.clone(),
         };
         let path = path.to_path_buf();
         let stream = unixfs_builder::add_file(Some(providing_client), &path, wrap).await?;
 
-        Ok(stream.boxed_local())
+        Ok(stream.map_err(Error::from).boxed_local())
     }
 
     pub async fn add_dir(
         &self,
         path: &Path,
         wrap: bool,
-    ) -> Result<LocalBoxStream<'static, Result<AddEvent>>> {
+    ) -> Result<LocalBoxStream<'static, Result<AddEvent, Error>>, Error> {
         let providing_client = iroh_resolver::unixfs_builder::StoreAndProvideClient {
             client: self.client.clone(),
         };
         let path = path.to_path_buf();
         let stream = unixfs_builder::add_dir(Some(providing_client), &path, wrap).await?;
 
-        Ok(stream.boxed_local())
+        Ok(stream.map_err(Error::from).boxed_local())
     }
 
     pub async fn add_symlink(
         &self,
         path: &Path,
         wrap: bool,
-    ) -> Result<LocalBoxStream<'static, Result<AddEvent>>> {
+    ) -> Result<LocalBoxStream<'static, Result<AddEvent, Error>>, Error> {
         let providing_client = iroh_resolver::unixfs_builder::StoreAndProvideClient {
             client: self.client.clone(),
         };
         let path = path.to_path_buf();
         let stream = unixfs_builder::add_symlink(Some(providing_client), &path, wrap).await?;
 
-        Ok(stream.boxed_local())
+        Ok(stream.map_err(Error::from).boxed_local())
     }
 
     pub async fn check(&self) -> StatusTable {
@@ -185,7 +186,7 @@ impl Api {
         &self,
         path: &Path,
         wrap: bool,
-    ) -> Result<LocalBoxStream<'static, Result<AddEvent>>> {
+    ) -> Result<LocalBoxStream<'static, Result<AddEvent, Error>>, Error> {
         if path.is_dir() {
             self.add_dir(path, wrap).await
         } else if path.is_symlink() {
@@ -193,11 +194,11 @@ impl Api {
         } else if path.is_file() {
             self.add_file(path, wrap).await
         } else {
-            anyhow::bail!("can only add files or directories")
+            return Err(Error::CanOnlyAddFilesOrDirs);
         }
     }
 
-    pub async fn add(&self, path: &Path, wrap: bool) -> Result<Cid> {
+    pub async fn add(&self, path: &Path, wrap: bool) -> Result<Cid, Error> {
         let add_events = self.add_stream(path, wrap).await?;
 
         add_events
@@ -207,6 +208,6 @@ impl Api {
                 }
             })
             .await?
-            .context("No cid found")
+            .ok_or_else(|| Error::NoCidFound)
     }
 }

@@ -1,24 +1,22 @@
 use std::path::{Path, PathBuf};
 
-use anyhow::{anyhow, ensure, Result};
 use futures::{Stream, StreamExt};
 use relative_path::RelativePathBuf;
 
+use crate::error::Error;
 use crate::{IpfsPath, OutType};
 
 /// Takes a stream of blocks as from `get` and writes it to the filesystem.
 pub async fn write_get_stream(
     ipfs_path: &IpfsPath,
-    blocks: impl Stream<Item = Result<(RelativePathBuf, OutType)>>,
+    blocks: impl Stream<Item = Result<(RelativePathBuf, OutType), Error>>,
     output_path: Option<&Path>,
-) -> Result<PathBuf> {
-    let root_path = get_root_path(ipfs_path, output_path)
-        .ok_or_else(|| anyhow!("IPFS path does not refer to a CID"))?;
-    ensure!(
-        !root_path.exists(),
-        "output path {} already exists",
-        root_path.display()
-    );
+) -> Result<PathBuf, Error> {
+    let root_path = get_root_path(ipfs_path, output_path).ok_or_else(|| Error::PathNotCid)?;
+
+    if root_path.exists() {
+        return Err(Error::OutputPathExists(root_path.to_path_buf()));
+    }
 
     save_get_stream(&root_path, blocks).await?;
     Ok(root_path)
@@ -26,8 +24,8 @@ pub async fn write_get_stream(
 
 async fn save_get_stream(
     root_path: &Path,
-    blocks: impl Stream<Item = Result<(RelativePathBuf, OutType)>>,
-) -> Result<()> {
+    blocks: impl Stream<Item = Result<(RelativePathBuf, OutType), Error>>,
+) -> Result<(), Error> {
     tokio::pin!(blocks);
     while let Some(block) = blocks.next().await {
         let (path, out) = block?;
@@ -49,7 +47,7 @@ async fn save_get_stream(
                 }
                 #[cfg(windows)]
                 tokio::task::spawn_blocking(move || {
-                    make_windows_symlink(target, full_path).map_err(|e| anyhow::anyhow!(e))
+                    make_windows_symlink(target, full_path).map_err(Error::from)
                 })
                 .await??;
 
@@ -62,11 +60,11 @@ async fn save_get_stream(
 }
 
 #[cfg(windows)]
-fn make_windows_symlink(target: PathBuf, path: PathBuf) -> Result<()> {
+fn make_windows_symlink(target: PathBuf, path: PathBuf) -> Result<(), Error> {
     if target.is_dir() {
-        std::os::windows::fs::symlink_dir(target, path).map_err(|e| anyhow::anyhow!(e))
+        std::os::windows::fs::symlink_dir(target, path).map_err(Error::from)
     } else {
-        std::os::windows::fs::symlink_file(target, path).map_err(|e| anyhow::anyhow!(e))
+        std::os::windows::fs::symlink_file(target, path).map_err(Error::from)
     }
 }
 
