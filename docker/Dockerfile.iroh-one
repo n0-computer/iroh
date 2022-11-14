@@ -2,20 +2,9 @@
 ## Builder
 ################################################################################
 # FROM --platform=linux/amd64 rust:latest AS builder
-FROM arm64v8/rust:latest AS builder
+FROM rust:latest AS builder
 
 RUN update-ca-certificates
-
-# Create appuser
-ENV USER=iroh
-ENV UID=10001
-
-RUN adduser \
-    --disabled-password \
-    --gecos "" \
-    --shell "/sbin/nologin" \
-    --uid "${UID}" \
-    "${USER}"
 
 # rocksDB needs libclang
 RUN apt-get update && \
@@ -53,16 +42,16 @@ RUN cargo build --bin iroh-one --release
 ################################################################################
 FROM gcr.io/distroless/cc
 
-# Import from builder.
-COPY --from=builder /etc/passwd /etc/passwd
-COPY --from=builder /etc/group /etc/group
-
 WORKDIR /iroh
 
-# Copy our build
-COPY --from=builder /iroh/target/release/iroh-one ./
+# Copy our build, changing owndership to distroless-provided "nonroot" user,
+# (65532:65532)
+COPY --from=builder --chown=65532:65532 /iroh/target/release/iroh-one ./
 
-# Use an unprivileged user.
-USER iroh:iroh
+# Use nonroot (unprivileged) user
+USER nonroot
+
+# expose gateway port
+EXPOSE 9050
 
 CMD ["/iroh/iroh-one"]

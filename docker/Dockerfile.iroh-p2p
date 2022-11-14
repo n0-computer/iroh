@@ -1,21 +1,9 @@
 ################################################################################
 ## Builder
 ################################################################################
-# FROM --platform=linux/amd64 rust:latest AS builder
-FROM arm64v8/rust:latest AS builder
+FROM rust:latest AS builder
 
 RUN update-ca-certificates
-
-# Create appuser
-ENV USER=iroh
-ENV UID=10001
-
-RUN adduser \
-    --disabled-password \
-    --gecos "" \
-    --shell "/sbin/nologin" \
-    --uid "${UID}" \
-    "${USER}"
 
 # install latest protocol buffer compiler. Yes, it's really this irritating.
 # recent build URLs are missing "3" version prefix. version is actually "3.21.9"
@@ -48,20 +36,16 @@ RUN cargo build --bin iroh-p2p --release
 ################################################################################
 FROM gcr.io/distroless/cc
 
-# Import from builder.
-COPY --from=builder /etc/passwd /etc/passwd
-COPY --from=builder /etc/group /etc/group
-
 WORKDIR /iroh
 
-# Copy our build
-COPY --from=builder /iroh/target/release/iroh-p2p ./
+# Copy our build, changing owndership to distroless-provided "nonroot" user,
+# (65532:65532)
+COPY --from=builder --chown=65532:65532 /iroh/target/release/iroh-p2p ./
 
-# Use an unprivileged user.
-# TODO(b5) - iroh needs to be able to write to the filesystem (lockfiles, etc.)
-# USER iroh:iroh
+# Use nonroot (unprivileged) user
+USER nonroot
 
-# expose the default port
+# expose the default RPC port
 EXPOSE 4401
 
 CMD ["/iroh/iroh-p2p"]

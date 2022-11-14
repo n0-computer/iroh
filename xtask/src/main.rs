@@ -30,8 +30,8 @@ enum Commands {
     Docker {
         #[clap(short, long)]
         all: bool,
-        images: Vec<String>
-    }
+        images: Vec<String>,
+    },
 }
 
 fn main() {
@@ -47,7 +47,7 @@ fn run_subcommand(args: Cli) -> Result<()> {
         Commands::Dist {} => dist()?,
         Commands::Man {} => dist_manpage()?,
         Commands::DevInstall { build } => dev_install(build)?,
-        Commands::Docker { all, images } => build_docker(all, images)?
+        Commands::Docker { all, images } => build_docker(all, images)?,
     }
     Ok(())
 }
@@ -148,13 +148,16 @@ fn build_docker(all: bool, build_images: Vec<String>) -> Result<()> {
         let status = Command::new("docker")
             .current_dir(project_root())
             .args([
-                "build", 
-                "-t", format!("{}:distroless", image).as_str(), 
-                "-f", format!("docker/Dockerfile.{}", image).as_str(),
+                "build",
+                "-t",
+                format!("{}:distroless", image).as_str(),
+                "-f",
+                format!("docker/Dockerfile.{}", image).as_str(),
                 // "--progress=plain",
-                "."])
+                ".",
+            ])
             .status()?;
-    
+
         if !status.success() {
             Err(anyhow::anyhow!("cargo build failed"))?;
         }
