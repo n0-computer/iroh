@@ -1,0 +1,67 @@
+################################################################################
+## Builder
+################################################################################
+# FROM --platform=linux/amd64 rust:latest AS builder
+FROM arm64v8/rust:latest AS builder
+
+RUN update-ca-certificates
+
+# Create appuser
+ENV USER=iroh
+ENV UID=10001
+
+RUN adduser \
+    --disabled-password \
+    --gecos "" \
+    --shell "/sbin/nologin" \
+    --uid "${UID}" \
+    "${USER}"
+
+# install latest protocol buffer compiler. Yes, it's really this irritating.
+# recent build URLs are missing "3" version prefix. version is actually "3.21.9"
+ENV RUST_BACKTRACE=1 \
+  PROTOC_VERSION=21.9 \
+  PROTOC_ZIP=protoc-21.9-linux-aarch_64.zip \
+  # PROTOC_ZIP=protoc-21.9-linux-x86_64.zip \
+  PROTOC=/usr/local/bin/protoc \
+  PROTOC_INCLUDE=/usr/local/include
+
+RUN curl -OL https://github.com/protocolbuffers/protobuf/releases/download/v$PROTOC_VERSION/$PROTOC_ZIP \
+  && unzip -o $PROTOC_ZIP -d /usr/local bin/protoc \
+  && unzip -o $PROTOC_ZIP -d /usr/local 'include/*' \
+  && rm -f $PROTOC_ZIP \
+  && echo $($PROTOC --version)
+
+# has the side effect of updating the crates.io index & installing rust toolchain
+# called in a separate step for nicer caching. the command itself will fail,
+# b/c empty-library is not a dependency, so we override with an exit code 0
+RUN cargo install empty-library; exit 0
+
+WORKDIR /iroh
+
+COPY ../ .
+
+RUN cargo build --bin iroh-gateway --release
+
+################################################################################
+## Final image
+################################################################################
+FROM gcr.io/distroless/cc
+
+# Import from builder.
+COPY --from=builder /etc/passwd /etc/passwd
+COPY --from=builder /etc/group /etc/group
+
+WORKDIR /iroh
+
+# Copy our build
+COPY --from=builder /iroh/target/release/iroh-gateway ./
+
+# Use an unprivileged user.
+# TODO(b5) - iroh needs to be able to write to the filesystem (lockfiles, etc.)
+# USER iroh:iroh
+
+# expose the default port, and default gateway port
+EXPOSE 4400 9050
+
+CMD ["/iroh/iroh-gateway"]

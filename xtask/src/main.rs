@@ -26,6 +26,12 @@ enum Commands {
         #[clap(short, long)]
         build: bool,
     },
+    #[command(about = "build docker images")]
+    Docker {
+        #[clap(short, long)]
+        all: bool,
+        images: Vec<String>
+    }
 }
 
 fn main() {
@@ -41,6 +47,7 @@ fn run_subcommand(args: Cli) -> Result<()> {
         Commands::Dist {} => dist()?,
         Commands::Man {} => dist_manpage()?,
         Commands::DevInstall { build } => dev_install(build)?,
+        Commands::Docker { all, images } => build_docker(all, images)?
     }
     Ok(())
 }
@@ -129,4 +136,29 @@ fn project_root() -> PathBuf {
 
 fn dist_dir() -> PathBuf {
     project_root().join("target/dist")
+}
+
+fn build_docker(all: bool, build_images: Vec<String>) -> Result<()> {
+    let mut images = build_images;
+    if all {
+        images = vec![String::from("iroh-one"), String::from("iroh-p2p")];
+    }
+
+    for image in images {
+        let status = Command::new("docker")
+            .current_dir(project_root())
+            .args([
+                "build", 
+                "-t", format!("{}:distroless", image).as_str(), 
+                "-f", format!("docker/Dockerfile.{}", image).as_str(),
+                // "--progress=plain",
+                "."])
+            .status()?;
+    
+        if !status.success() {
+            Err(anyhow::anyhow!("cargo build failed"))?;
+        }
+    }
+
+    Ok(())
 }
