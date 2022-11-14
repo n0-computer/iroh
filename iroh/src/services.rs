@@ -14,8 +14,7 @@ use iroh_util::lock::{LockError, ProgramLock};
 
 const SERVICE_START_TIMEOUT_SECONDS: u64 = 15;
 
-/// start any of {iroh-gateway,iroh-store,iroh-p2p} that aren't currently
-/// running.
+/// Start any given services that aren't currently running.
 pub async fn start(api: &Api, services: &Vec<String>) -> Result<()> {
     let services = match services.is_empty() {
         true => HashSet::from(["gateway", "store"]),
@@ -232,7 +231,7 @@ where
     W: Write,
 {
     w.queue(style::PrintStyledContent(
-        "Process\t\t\tNumber\tStatus\n".bold(),
+        "Service\t\t\tNumber\tStatus\n".bold(),
     ))?;
     queue_row(&table.gateway, &mut w)?;
     queue_row(&table.p2p, &mut w)?;
@@ -326,7 +325,7 @@ mod tests {
 
     #[test]
     fn status_table_queue() {
-        let expect = format!("{}gateway\t\t\t1/1\t{}\np2p\t\t\t1/1\t{}\nstore\t\t\t1/1\t{}\tThe service is currently unavailable\n", "Process\t\t\tNumber\tStatus\n".bold(), "Unknown".dark_yellow(), "Serving".green(), "Down".grey());
+        let expect = format!("{}gateway\t\t\t1/1\t{}\np2p\t\t\t1/1\t{}\nstore\t\t\t1/1\t{}\tThe service is currently unavailable\n", "Service\t\t\tNumber\tStatus\n".bold(), "Unknown".dark_yellow(), "Serving".green(), "Down".grey());
         let table = StatusTable::new(
             Some(StatusRow::new("gateway", 1, ServiceStatus::Unknown)),
             Some(StatusRow::new("p2p", 1, ServiceStatus::Serving)),
