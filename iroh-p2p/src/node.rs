@@ -692,6 +692,11 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                     )
                     .ok();
             }
+            RpcMessage::Listeners(response_channel) => {
+                response_channel
+                    .send(self.swarm.listeners().cloned().collect())
+                    .ok();
+            }
             RpcMessage::LocalPeerId(response_channel) => {
                 response_channel.send(*self.swarm.local_peer_id()).ok();
             }
@@ -1054,22 +1059,36 @@ mod tests {
     }
 
     struct TestRunnerBuilder {
-        addr: Multiaddr,
+        // optional listening address for this node, when None, the swarm will connect to a random
+        // tcp port
+        addr: Option<Multiaddr>,
+        // listening addresses for the p2p client, when None, the client will communicate over
+        // a memory rpc channel
         rpc_addrs: Option<(P2pServerAddr, P2pClientAddr)>,
+        // when true, allow bootstrapping to the network, otherwise don't provide any addresses
+        // from which to bootstrap
         bootstrap: bool,
+        // optional seed to use when building a peer_id, when None will use a previously derived
+        // peer_id 12D3KooWFma2D63TG9ToSiRsjFkoNm2tTihScTBAEdXxinYk5rwE
         seed: Option<ChaCha8Rng>,
+        // optional keys to tell the node to provide on the dht
         keys: Option<Vec<Key>>,
     }
 
     impl TestRunnerBuilder {
-        fn new(addr: Multiaddr) -> Self {
+        fn new() -> Self {
             Self {
-                addr,
+                addr: None,
                 rpc_addrs: None,
                 bootstrap: true,
                 seed: None,
                 keys: None,
             }
+        }
+
+        fn with_addr(mut self, addr: Multiaddr) -> Self {
+            self.addr = Some(addr);
+            self
         }
 
         fn with_rpc_addrs(
@@ -1103,7 +1122,13 @@ mod tests {
                 }
             };
             let mut network_config = Config::default_with_rpc(rpc_client_addr.clone());
-            network_config.libp2p.listening_multiaddr = self.addr;
+
+            if let Some(addr) = self.addr {
+                network_config.libp2p.listening_multiaddr = addr;
+            } else {
+                network_config.libp2p.listening_multiaddr = "/ip4/0.0.0.0/tcp/0".parse().unwrap();
+            }
+
             if !self.bootstrap {
                 network_config.libp2p.bootstrap_peers = vec![];
             }
@@ -1147,20 +1172,51 @@ mod tests {
 
             let network_events = p2p.network_events();
             let task = tokio::task::spawn(async move { p2p.run().await.unwrap() });
+
+            let client = client.try_p2p()?;
+
+            let addr = get_addr(client.clone()).await?;
+            let mut dial_addr = addr.clone();
+            dial_addr.push(Protocol::P2p(peer_id.into()));
             Ok(TestRunner {
                 task,
-                client: client.try_p2p()?,
+                client,
                 peer_id,
                 network_events,
+                addr,
+                dial_addr,
             })
         }
     }
 
+    async fn get_addr(client: P2pClient) -> Result<Multiaddr> {
+        loop {
+            tokio::select! {
+                _ = tokio::time::sleep(Duration::from_millis(500)) => {
+                    return Err(anyhow!("timed out before we could get a listening address for the node"));
+                },
+                l = client.listeners() => {
+                    if let Some(a) = l?.get(0) {
+                        return Ok(a.clone());
+                    }
+                }
+            }
+        }
+    }
+
     struct TestRunner {
+        // task for the running p2p node
         task: JoinHandle<()>,
+        // rpc client, can use it to communicate with the p2p node
         client: P2pClient,
+        // the node's peer_id
         peer_id: PeerId,
+        // a channel to recieve network events read by the node
         network_events: Receiver<NetworkEvent>,
+        // listening address for this node
+        addr: Multiaddr,
+        // multiaddr that is a combination of the listening addr and peer_id
+        dial_addr: Multiaddr,
     }
 
     impl Drop for TestRunner {
@@ -1174,7 +1230,8 @@ mod tests {
         rpc_server_addr: P2pServerAddr,
         rpc_client_addr: P2pClientAddr,
     ) -> Result<()> {
-        let test_runner = TestRunnerBuilder::new(addr)
+        let test_runner = TestRunnerBuilder::new()
+            .with_addr(addr)
             .with_rpc_addrs(rpc_server_addr, rpc_client_addr)
             .build()
             .await?;
@@ -1214,10 +1271,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_local_peer_id() -> Result<()> {
-        let test_runner = TestRunnerBuilder::new("/ip4/0.0.0.0/tcp/5004".parse().unwrap())
-            .no_bootstrap()
-            .build()
-            .await?;
+        let test_runner = TestRunnerBuilder::new().no_bootstrap().build().await?;
         let got_peer_id = test_runner.client.local_peer_id().await?;
         let expect_peer_id: PeerId = "12D3KooWFma2D63TG9ToSiRsjFkoNm2tTihScTBAEdXxinYk5rwE"
             .parse()
@@ -1228,36 +1282,28 @@ mod tests {
 
     #[tokio::test]
     async fn test_two_nodes() -> Result<()> {
-        let addr_a: Multiaddr = "/ip4/127.0.0.1/tcp/5005".parse().unwrap();
-        let addr_b: Multiaddr = "/ip4/127.0.0.1/tcp/5006".parse().unwrap();
-        let addrs_b = vec![addr_b.clone()];
-        let addr_b_with_peer_id: Multiaddr =
-            "/ip4/127.0.0.1/tcp/5006/p2p/12D3KooWLo6JTNKXfjkZtKf8ooLQoXVXUEeuu4YDY3CYqK6rxHXt"
-                .parse()
-                .unwrap();
-        let test_runner_a = TestRunnerBuilder::new(addr_a.clone())
-            .no_bootstrap()
-            .build()
-            .await?;
+        let test_runner_a = TestRunnerBuilder::new().no_bootstrap().build().await?;
         // peer_id 12D3KooWLo6JTNKXfjkZtKf8ooLQoXVXUEeuu4YDY3CYqK6rxHXt
-        let test_runner_b = TestRunnerBuilder::new(addr_b.clone())
+        let test_runner_b = TestRunnerBuilder::new()
             .no_bootstrap()
             .with_seed(ChaCha8Rng::from_seed([0; 32]))
             .build()
             .await?;
+        let addrs_b = vec![test_runner_b.addr.clone()];
+
         let peer_id_a = test_runner_a.client.local_peer_id().await?;
         assert_eq!(test_runner_a.peer_id, peer_id_a);
         let peer_id_b = test_runner_b.client.local_peer_id().await?;
         assert_eq!(test_runner_b.peer_id, peer_id_b);
 
-        // - connect
+        // connect
         test_runner_a.client.connect(peer_id_b, addrs_b).await?;
         // Make sure we have exchanged identity information
         // peer b should be in the list of peers that peer a is connected to
         let peers = test_runner_a.client.get_peers().await?;
         assert!(peers.len() == 1);
         let got_peer = peers.get(&peer_id_b).unwrap();
-        assert!(got_peer.contains(&addr_b_with_peer_id));
+        assert!(got_peer.contains(&test_runner_b.dial_addr));
 
         // lookup
         let lookup_b = test_runner_a.client.lookup(peer_id_b, None).await?;
@@ -1267,7 +1313,7 @@ mod tests {
         // we should now be able to view the node's external addrs
         // these are the addresses that other nodes tell you "this is the address I see for you"
         let external_addrs_a = test_runner_a.client.external_addresses().await?;
-        assert_eq!(vec![addr_a], external_addrs_a);
+        assert_eq!(vec![test_runner_a.addr.clone()], external_addrs_a);
 
         // peer_disconnect NOT YET IMPLEMENTED
         // test_runner_a.client.disconnect(peer_id_b).await?;
@@ -1279,20 +1325,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_gossipsub() -> Result<()> {
-        let addr_a: Multiaddr = "/ip4/127.0.0.1/tcp/5007".parse().unwrap();
-        let addr_b: Multiaddr = "/ip4/127.0.0.1/tcp/5008".parse().unwrap();
-        let addrs_b = vec![addr_b.clone()];
-
-        let mut test_runner_a = TestRunnerBuilder::new(addr_a.clone())
-            .no_bootstrap()
-            .build()
-            .await?;
+        let mut test_runner_a = TestRunnerBuilder::new().no_bootstrap().build().await?;
         // peer_id 12D3KooWLo6JTNKXfjkZtKf8ooLQoXVXUEeuu4YDY3CYqK6rxHXt
-        let test_runner_b = TestRunnerBuilder::new(addr_b.clone())
+        let test_runner_b = TestRunnerBuilder::new()
             .no_bootstrap()
             .with_seed(ChaCha8Rng::from_seed([0; 32]))
             .build()
             .await?;
+        let addrs_b = vec![test_runner_b.addr.clone()];
 
         test_runner_a
             .client
@@ -1410,33 +1450,24 @@ mod tests {
         // set up three nodes
         // two connect to one
         // try to connect via id
-        let addr_a: Multiaddr = "/ip4/127.0.0.1/tcp/5009".parse().unwrap();
-        let addr_b: Multiaddr = "/ip4/127.0.0.1/tcp/5010".parse().unwrap();
-        let addr_c: Multiaddr = "/ip4/127.0.0.1/tcp/5011".parse().unwrap();
-
         let cid: Cid = "bafkreieq5jui4j25lacwomsqgjeswwl3y5zcdrresptwgmfylxo2depppq"
             .parse()
             .unwrap();
 
-        let addrs = vec![addr_b.clone()];
-
-        let test_runner_a = TestRunnerBuilder::new(addr_a.clone())
-            .no_bootstrap()
-            .build()
-            .await?;
-
+        let test_runner_a = TestRunnerBuilder::new().no_bootstrap().build().await?;
         println!("peer_a: {:?}", test_runner_a.peer_id);
 
         // peer_id 12D3KooWLo6JTNKXfjkZtKf8ooLQoXVXUEeuu4YDY3CYqK6rxHXt
-        let test_runner_b = TestRunnerBuilder::new(addr_b.clone())
+        let mut test_runner_b = TestRunnerBuilder::new()
             .no_bootstrap()
             .with_seed(ChaCha8Rng::from_seed([0; 32]))
             .build()
             .await?;
+        let addrs = vec![test_runner_b.addr.clone()];
 
         println!("peer_b: {:?}", test_runner_b.peer_id);
 
-        let test_runner_c = TestRunnerBuilder::new(addr_c.clone())
+        let test_runner_c = TestRunnerBuilder::new()
             .no_bootstrap()
             .with_seed(ChaCha8Rng::from_seed([1; 32]))
             .build()
@@ -1454,27 +1485,55 @@ mod tests {
             .connect(test_runner_b.peer_id, addrs.clone())
             .await?;
 
-        // give time for dht records to update
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        // expect a network event showing a & b have connected
+        match test_runner_b.network_events.recv().await {
+            Some(NetworkEvent::PeerConnected(peer_id)) => {
+                assert_eq!(test_runner_a.peer_id, peer_id);
+            }
+            Some(n) => {
+                anyhow::bail!("unexpected network event: {:?}", n);
+            }
+            None => {
+                anyhow::bail!("expected NetworkEvent::PeerConnected, received no event");
+            }
+        };
+
+        // expect a network event showing b & c have connected
+        match test_runner_b.network_events.recv().await {
+            Some(NetworkEvent::PeerConnected(peer_id)) => {
+                assert_eq!(test_runner_c.peer_id, peer_id);
+            }
+            Some(n) => {
+                anyhow::bail!("unexpected network event: {:?}", n);
+            }
+            None => {
+                anyhow::bail!("expected NetworkEvent::PeerConnected, received no event");
+            }
+        };
 
         // c start providing
         test_runner_c.client.start_providing(&cid).await?;
 
         // when `start_providing` waits for the record to make it to the dht
-        // we can remove this `sleep` call
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        // we can remove this polling
+        loop {
+            tokio::select! {
+                _ = tokio::time::sleep(Duration::from_millis(500)) => {
+                    return Err(anyhow!("timed out before we were able to fetch providers off the dht"));
+                },
+                s = test_runner_a.client.fetch_providers_dht(&cid) => {
+                    let stream = s?;
+                    let providers: Vec<_> = stream.try_collect().await.unwrap();
+                    if providers.len() == 0 {
+                        continue;
+                    }
 
-        // a fetch providers dht for content
-        let stream = test_runner_a.client.fetch_providers_dht(&cid).await?;
-
-        let providers: Vec<_> = stream.try_collect().await.unwrap();
-
-        assert!(providers.len() == 1);
-        assert!(providers.get(0).unwrap().contains(&test_runner_c.peer_id));
-
-        // when `stop_providing` waits for the record to make it to the dht
-        // we can remove this `sleep` call
-        tokio::time::sleep(Duration::from_millis(500)).await;
+                    assert!(providers.len() == 1);
+                    assert!(providers.get(0).unwrap().contains(&test_runner_c.peer_id));
+                    break;
+                }
+            }
+        }
 
         // c stop providing
         test_runner_c.client.stop_providing(&cid).await?;
