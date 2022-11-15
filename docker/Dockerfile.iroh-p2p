@@ -1,0 +1,53 @@
+################################################################################
+## Builder
+################################################################################
+FROM rust:latest AS builder
+
+RUN update-ca-certificates
+
+# install latest protocol buffer compiler.
+ARG TARGETPLATFORM
+COPY ../docker/install_protoc.sh .
+RUN ./install_protoc.sh
+
+# set build env vars
+ENV RUST_BACKTRACE=1 \
+  PROTOC=/usr/local/bin/protoc \
+  PROTOC_INCLUDE=/usr/local/include
+
+# has the side effect of updating the crates.io index & installing rust toolchain
+# called in a separate step for nicer caching. the command itself will fail,
+# b/c empty-library is not a dependency, so we override with an exit code 0
+RUN cargo install empty-library; exit 0
+
+WORKDIR /iroh
+
+COPY ../ .
+
+RUN cargo build --bin iroh-p2p --profile=docker
+
+################################################################################
+## Final image
+################################################################################
+FROM gcr.io/distroless/cc
+
+WORKDIR /iroh
+
+# Copy our build, changing owndership to distroless-provided "nonroot" user,
+# (65532:65532)
+COPY --from=builder --chown=65532:65532 /iroh/target/docker/iroh-p2p ./
+
+# TODO (b5) - investigate max file descriptor limits within the container image
+# libp2p needs lots of FDs for open ports, and we should be maxing them out.
+# I have no idea if distroless honors ERL_MAX_PORTS, consider this a starting
+# point for experimentation
+# ENV ERL_MAX_PORTS=65536
+
+# Use nonroot (unprivileged) user
+USER nonroot
+
+# expose the default RPC port
+EXPOSE 4401 4444
+EXPOSE 4444/udp
+
+CMD ["/iroh/iroh-p2p"]

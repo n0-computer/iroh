@@ -4,6 +4,7 @@ use std::{
     env, fs, io,
     path::{Path, PathBuf},
     process::Command,
+    str,
 };
 
 #[derive(Debug, Parser)]
@@ -26,6 +27,15 @@ enum Commands {
         #[clap(short, long)]
         build: bool,
     },
+    #[command(about = "build docker images")]
+    Docker {
+        #[clap(short, long)]
+        all: bool,
+        /// Set type of progress output (auto, plain, tty). Use plain to show container output (default "auto")
+        #[clap(short, long, default_value_t = String::from("auto"))]
+        progress: String,
+        images: Vec<String>,
+    },
 }
 
 fn main() {
@@ -41,6 +51,11 @@ fn run_subcommand(args: Cli) -> Result<()> {
         Commands::Dist {} => dist()?,
         Commands::Man {} => dist_manpage()?,
         Commands::DevInstall { build } => dev_install(build)?,
+        Commands::Docker {
+            all,
+            images,
+            progress,
+        } => build_docker(all, images, progress)?,
     }
     Ok(())
 }
@@ -129,4 +144,51 @@ fn project_root() -> PathBuf {
 
 fn dist_dir() -> PathBuf {
     project_root().join("target/dist")
+}
+
+fn build_docker(all: bool, build_images: Vec<String>, progress: String) -> Result<()> {
+    let mut images = build_images;
+    if all {
+        images = vec![
+            String::from("iroh-one"),
+            String::from("iroh-store"),
+            String::from("iroh-p2p"),
+            String::from("iroh-gateway"),
+        ];
+    }
+
+    let commit = current_git_commit()?;
+
+    for image in images {
+        println!("building {}:{}", image, commit);
+        let status = Command::new("docker")
+            .current_dir(project_root())
+            .args([
+                "build",
+                "-t",
+                format!("n0computer/{}:{}", image, commit).as_str(),
+                "-t",
+                format!("n0computer/{}:latest", image).as_str(),
+                "-f",
+                format!("docker/Dockerfile.{}", image).as_str(),
+                format!("--progress={}", progress).as_str(),
+                ".",
+            ])
+            .status()?;
+
+        if !status.success() {
+            Err(anyhow::anyhow!("cargo build failed"))?;
+        }
+    }
+
+    Ok(())
+}
+
+fn current_git_commit() -> Result<String> {
+    let output = Command::new("git")
+        .current_dir(project_root())
+        .args(["log", "-1", "--pretty=%h"])
+        .output()?;
+    let commitish = str::from_utf8(&output.stdout)?.trim_end();
+    Ok(String::from(commitish))
 }
