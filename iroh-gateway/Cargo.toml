@@ -49,7 +49,7 @@ serde_qs = "0.10.1"
 sha2 = { version = "0.10", default-features = false }
 time = "0.3.9"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "process", "fs", "io-util"] }
-tokio-util = { version = "0.7", features = ["io"] }
+tokio-util = { version = "0.7", features = ["compat", "io"] }
 toml = "0.5.9"
 tower = { version = "0.4", features = ["util", "timeout", "load-shed", "limit"] }
 tower-http = { version = "0.3", features = ["trace", "compression-full", "cors"] }

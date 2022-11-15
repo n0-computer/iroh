@@ -24,6 +24,13 @@ pub trait ContentLoader: Sync + Send + std::fmt::Debug + Clone + 'static {
     async fn stop_session(&self, ctx: ContextId) -> Result<()>;
     /// Checks if the given cid is present in the local storage.
     async fn has_cid(&self, cid: &Cid) -> Result<bool>;
+    /// Store some content
+    async fn store_file<T: tokio::io::AsyncRead + 'static + std::marker::Send>(
+        &self,
+        _content: T,
+    ) -> Result<cid::Cid, anyhow::Error> {
+        unimplemented!()
+    }
 }
 
 #[async_trait]
@@ -38,6 +45,13 @@ impl<T: ContentLoader> ContentLoader for Arc<T> {
 
     async fn has_cid(&self, cid: &Cid) -> Result<bool> {
         self.as_ref().has_cid(cid).await
+    }
+
+    async fn store_file<C: tokio::io::AsyncRead + 'static + std::marker::Send>(
+        &self,
+        content: C,
+    ) -> Result<cid::Cid, anyhow::Error> {
+        self.as_ref().store_file(content).await
     }
 }
 
@@ -265,5 +279,36 @@ impl ContentLoader for FullLoader {
 
     async fn has_cid(&self, cid: &Cid) -> Result<bool> {
         self.client.try_store()?.has(*cid).await
+    }
+
+    async fn store_file<T: tokio::io::AsyncRead + 'static + std::marker::Send>(
+        &self,
+        content: T,
+    ) -> Result<cid::Cid, anyhow::Error> {
+        use crate::unixfs_builder::FileBuilder;
+        use futures::StreamExt;
+
+        let store = self.client.try_store()?;
+
+        let file_builder = FileBuilder::new()
+            .content_reader(content)
+            .name("_http_upload_");
+        let file = file_builder.build().await?;
+
+        let mut cids: Vec<cid::Cid> = vec![];
+        let mut blocks = Box::pin(file.encode().await?);
+        while let Some(block) = blocks.next().await {
+            let (cid, bytes, links) = block.unwrap().into_parts();
+            cids.push(cid);
+            store.put(cid, bytes, links).await?;
+        }
+
+        match cids.last() {
+            Some(root_cid) => {
+                self.client.try_p2p()?.start_providing(&root_cid).await?;
+                Ok(*root_cid)
+            }
+            None => Err(anyhow!("no root cid!")),
+        }
     }
 }

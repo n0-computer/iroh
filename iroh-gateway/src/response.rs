@@ -176,6 +176,12 @@ impl GatewayResponse {
             HeaderMap::new(),
         )
     }
+
+    // TODO: better type for url.
+    pub fn created(url: &str, mut headers: HeaderMap) -> Self {
+        headers.insert(http::header::LOCATION, HeaderValue::from_str(url).unwrap());
+        Self::new(StatusCode::CREATED, BoxBody::default(), headers)
+    }
 }
 
 #[cfg(test)]

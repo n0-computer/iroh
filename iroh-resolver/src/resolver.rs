@@ -659,7 +659,7 @@ pub enum Source {
 
 #[derive(Debug, Clone)]
 pub struct Resolver<T: ContentLoader> {
-    loader: T,
+    pub loader: T,
     dns_resolver: Arc<DnsResolver>,
     next_id: Arc<AtomicU64>,
     _worker: Arc<JoinHandle<()>>,

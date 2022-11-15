@@ -35,6 +35,8 @@ pub enum ChunkerStream<'a> {
     Rabin(LocalBoxStream<'a, io::Result<Bytes>>),
 }
 
+unsafe impl<'a> Send for ChunkerStream<'a> {}
+
 impl<'a> Stream for ChunkerStream<'a> {
     type Item = io::Result<Bytes>;
 
@@ -57,7 +59,10 @@ impl<'a> Stream for ChunkerStream<'a> {
 }
 
 impl Chunker {
-    pub fn chunks<'a, R: AsyncRead + Unpin + 'a>(self, source: R) -> ChunkerStream<'a> {
+    pub fn chunks<'a, R: AsyncRead + Unpin + std::marker::Send + 'a>(
+        self,
+        source: R,
+    ) -> ChunkerStream<'a> {
         match self {
             Self::Fixed(chunker) => ChunkerStream::Fixed(chunker.chunks(source)),
             Self::Rabin(chunker) => ChunkerStream::Rabin(chunker.chunks(source)),

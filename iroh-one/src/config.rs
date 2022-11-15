@@ -173,4 +173,8 @@ impl iroh_gateway::handlers::StateConfig for Config {
     fn user_headers(&self) -> &HeaderMap<HeaderValue> {
         &self.gateway.headers
     }
+
+    fn writeable_gateway(&self) -> bool {
+        self.gateway.writeable
+    }
 }

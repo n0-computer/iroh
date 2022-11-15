@@ -136,9 +136,11 @@ impl Directory {
 }
 
 enum Content {
-    Reader(Pin<Box<dyn AsyncRead>>),
+    Reader(Pin<Box<dyn AsyncRead + std::marker::Send>>),
     Path(PathBuf),
 }
+
+unsafe impl Send for Content {}
 
 impl Debug for Content {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -167,6 +169,8 @@ pub struct File {
     tree_builder: TreeBuilder,
     chunker: Chunker,
 }
+
+unsafe impl Send for File {}
 
 impl Debug for File {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -269,7 +273,7 @@ impl Symlink {
 pub struct FileBuilder {
     name: Option<String>,
     path: Option<PathBuf>,
-    reader: Option<Pin<Box<dyn AsyncRead>>>,
+    reader: Option<Pin<Box<dyn AsyncRead + std::marker::Send>>>,
     chunker: Chunker,
     degree: usize,
 }
@@ -302,6 +306,8 @@ impl Debug for FileBuilder {
             .finish()
     }
 }
+
+unsafe impl Send for FileBuilder {}
 
 /// FileBuilder separates uses a reader or bytes to chunk the data into raw unixfs nodes
 impl FileBuilder {
@@ -347,7 +353,10 @@ impl FileBuilder {
         self
     }
 
-    pub fn content_reader<T: tokio::io::AsyncRead + 'static>(mut self, content: T) -> Self {
+    pub fn content_reader<T: tokio::io::AsyncRead + std::marker::Send + 'static>(
+        mut self,
+        content: T,
+    ) -> Self {
         self.reader = Some(Box::pin(content));
         self
     }
