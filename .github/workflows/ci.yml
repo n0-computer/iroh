@@ -34,6 +34,8 @@ jobs:
             release-arch: amd64
     env:
       RUST_BACKTRACE: full
+      # Force not building debuginfo to save space on disk.
+      RUSTFLAGS: "-C debuginfo=0"
       RUSTC_WRAPPER: sccache
       RUSTV: ${{ matrix.rust }}
       SCCACHE_CACHE_SIZE: 2G
@@ -135,7 +137,7 @@ jobs:
       uses: actions-rs/cargo@v1
       with:
         command: check
-        args: --all --bins --tests --examples
+        args: --workspace --all-features --bins --tests --examples --benches
 
     - name: tests
       uses: actions-rs/cargo@v1
@@ -145,17 +147,17 @@ jobs:
         # GHA if this is not present
         # https://twitter.com/steipete/status/921066430220652544?lang=en
         # https://blog.phusion.nl/2017/10/13/why-ruby-app-servers-break-on-macos-high-sierra-and-what-can-be-done-about-it/
-        OBJC_DISABLE_INITIALIZE_FORK_SAFETY: YES
+        OBJC_DISABLE_INITIALIZE_FORK_SAFETY: "YES"
       with:
         command: test
-        args: --all -j 4
+        args: -j 2 --workspace --all-features --examples --benches --bins
 
-    - name: clipy
+    - name: clippy
       uses: actions-rs/cargo@v1
       if: matrix.os == 'ubuntu-latest' && matrix.rust=='stable'
       with:
-          command: clippy
-          args: --all --tests --benches --all-targets -- -D warnings
+        command: clippy
+        args: --workspace --all-features --tests --benches --examples --bins --all-targets -- -D warnings
 
     - name: build release
       uses: actions-rs/cargo@v1
