@@ -28,5 +28,6 @@ proxy!(
     start_providing: Key => () => (),
     stop_providing: Key => () => (),
     local_peer_id: () => PeerIdResponse => PeerIdResponse,
-    external_addrs: () => Multiaddrs => Multiaddrs
+    external_addrs: () => Multiaddrs => Multiaddrs,
+    listeners: () => Multiaddrs => Multiaddrs
 );
