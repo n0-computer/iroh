@@ -1059,19 +1059,19 @@ mod tests {
     }
 
     struct TestRunnerBuilder {
-        // optional listening address for this node, when None, the swarm will connect to a random
-        // tcp port
+        /// optional listening address for this node, when None, the swarm will connect to a random
+        /// tcp port
         addr: Option<Multiaddr>,
-        // listening addresses for the p2p client, when None, the client will communicate over
-        // a memory rpc channel
+        /// listening addresses for the p2p client, when None, the client will communicate over
+        /// a memory rpc channel
         rpc_addrs: Option<(P2pServerAddr, P2pClientAddr)>,
-        // when true, allow bootstrapping to the network, otherwise don't provide any addresses
-        // from which to bootstrap
+        /// when true, allow bootstrapping to the network, otherwise don't provide any addresses
+        /// from which to bootstrap
         bootstrap: bool,
-        // optional seed to use when building a peer_id, when None will use a previously derived
-        // peer_id 12D3KooWFma2D63TG9ToSiRsjFkoNm2tTihScTBAEdXxinYk5rwE
+        /// optional seed to use when building a peer_id, when None will use a previously derived
+        /// peer_id 12D3KooWFma2D63TG9ToSiRsjFkoNm2tTihScTBAEdXxinYk5rwE
         seed: Option<ChaCha8Rng>,
-        // optional keys to tell the node to provide on the dht
+        /// optional keys to tell the node to provide on the dht
         keys: Option<Vec<Key>>,
     }
 
@@ -1175,7 +1175,10 @@ mod tests {
 
             let client = client.try_p2p()?;
 
-            let addr = get_addr(client.clone()).await?;
+            let addr =
+                tokio::time::timeout(Duration::from_millis(500), get_addr_loop(client.clone()))
+                    .await
+                    .context("timed out before getting a listening address for the node")??;
             let mut dial_addr = addr.clone();
             dial_addr.push(Protocol::P2p(peer_id.into()));
             Ok(TestRunner {
@@ -1189,33 +1192,27 @@ mod tests {
         }
     }
 
-    async fn get_addr(client: P2pClient) -> Result<Multiaddr> {
+    async fn get_addr_loop(client: P2pClient) -> Result<Multiaddr> {
         loop {
-            tokio::select! {
-                _ = tokio::time::sleep(Duration::from_millis(500)) => {
-                    return Err(anyhow!("timed out before we could get a listening address for the node"));
-                },
-                l = client.listeners() => {
-                    if let Some(a) = l?.get(0) {
-                        return Ok(a.clone());
-                    }
-                }
+            let l = client.listeners().await?;
+            if let Some(a) = l.get(0) {
+                return Ok(a.clone());
             }
         }
     }
 
     struct TestRunner {
-        // task for the running p2p node
+        /// task for the running p2p node
         task: JoinHandle<()>,
-        // rpc client, can use it to communicate with the p2p node
+        /// rpc client, can use it to communicate with the p2p node
         client: P2pClient,
-        // the node's peer_id
+        /// the node's peer_id
         peer_id: PeerId,
-        // a channel to recieve network events read by the node
+        /// a channel to recieve network events read by the node
         network_events: Receiver<NetworkEvent>,
-        // listening address for this node
+        /// listening address for this node
         addr: Multiaddr,
-        // multiaddr that is a combination of the listening addr and peer_id
+        /// multiaddr that is a combination of the listening addr and peer_id
         dial_addr: Multiaddr,
     }
 
@@ -1516,24 +1513,15 @@ mod tests {
 
         // when `start_providing` waits for the record to make it to the dht
         // we can remove this polling
-        loop {
-            tokio::select! {
-                _ = tokio::time::sleep(Duration::from_millis(500)) => {
-                    return Err(anyhow!("timed out before we were able to fetch providers off the dht"));
-                },
-                s = test_runner_a.client.fetch_providers_dht(&cid) => {
-                    let stream = s?;
-                    let providers: Vec<_> = stream.try_collect().await.unwrap();
-                    if providers.len() == 0 {
-                        continue;
-                    }
+        let providers = tokio::time::timeout(
+            Duration::from_millis(2500),
+            poll_for_providers(test_runner_a.client.clone(), &cid),
+        )
+        .await
+        .context("timed out before finding providers for the given cid")??;
 
-                    assert!(providers.len() == 1);
-                    assert!(providers.get(0).unwrap().contains(&test_runner_c.peer_id));
-                    break;
-                }
-            }
-        }
+        assert!(providers.len() == 1);
+        assert!(providers.get(0).unwrap().contains(&test_runner_c.peer_id));
 
         // c stop providing
         test_runner_c.client.stop_providing(&cid).await?;
@@ -1551,5 +1539,16 @@ mod tests {
             .await?;
 
         Ok(())
+    }
+
+    async fn poll_for_providers(client: P2pClient, cid: &Cid) -> Result<Vec<HashSet<PeerId>>> {
+        loop {
+            let stream = client.fetch_providers_dht(cid).await?;
+            let providers: Vec<_> = stream.try_collect().await.unwrap();
+            if providers.is_empty() {
+                continue;
+            }
+            return Ok(providers);
+        }
     }
 }
