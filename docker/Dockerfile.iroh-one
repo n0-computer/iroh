@@ -35,7 +35,7 @@ WORKDIR /iroh
 
 COPY ../ .
 
-RUN cargo build --bin iroh-one --release
+RUN cargo build --bin iroh-one --profile=docker
 
 ################################################################################
 ## Final image
@@ -46,12 +46,12 @@ WORKDIR /iroh
 
 # Copy our build, changing owndership to distroless-provided "nonroot" user,
 # (65532:65532)
-COPY --from=builder --chown=65532:65532 /iroh/target/release/iroh-one ./
+COPY --from=builder --chown=65532:65532 /iroh/target/docker/iroh-one ./
 
 # Use nonroot (unprivileged) user
 USER nonroot
 
-# expose gateway port
-EXPOSE 9050
+# expose gateway, p2p & all default RPC ports
+EXPOSE 4400 4401 4402 4403 4444 9050
 
 CMD ["/iroh/iroh-one"]

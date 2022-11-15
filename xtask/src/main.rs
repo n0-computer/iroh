@@ -4,6 +4,7 @@ use std::{
     env, fs, io,
     path::{Path, PathBuf},
     process::Command,
+    str,
 };
 
 #[derive(Debug, Parser)]
@@ -144,13 +145,18 @@ fn build_docker(all: bool, build_images: Vec<String>) -> Result<()> {
         images = vec![String::from("iroh-one"), String::from("iroh-p2p")];
     }
 
+    let commit = current_git_commit()?;
+
     for image in images {
+        println!("building {}:{}", image, commit);
         let status = Command::new("docker")
             .current_dir(project_root())
             .args([
                 "build",
                 "-t",
-                format!("{}:distroless", image).as_str(),
+                format!("{}:{}", image, commit).as_str(),
+                "-t",
+                format!("{}:latest", image).as_str(),
                 "-f",
                 format!("docker/Dockerfile.{}", image).as_str(),
                 // "--progress=plain",
@@ -164,4 +170,13 @@ fn build_docker(all: bool, build_images: Vec<String>) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn current_git_commit() -> Result<String> {
+    let output = Command::new("git")
+        .current_dir(project_root())
+        .args(["log", "-1", "--pretty=%h"])
+        .output()?;
+    let commitish = str::from_utf8(&output.stdout)?.trim_end();
+    Ok(String::from(commitish))
 }

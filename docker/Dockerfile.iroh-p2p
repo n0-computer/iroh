@@ -29,7 +29,7 @@ WORKDIR /iroh
 
 COPY ../ .
 
-RUN cargo build --bin iroh-p2p --release
+RUN cargo build --bin iroh-p2p --profile=docker
 
 ################################################################################
 ## Final image
@@ -40,12 +40,12 @@ WORKDIR /iroh
 
 # Copy our build, changing owndership to distroless-provided "nonroot" user,
 # (65532:65532)
-COPY --from=builder --chown=65532:65532 /iroh/target/release/iroh-p2p ./
+COPY --from=builder --chown=65532:65532 /iroh/target/docker/iroh-p2p ./
 
 # Use nonroot (unprivileged) user
 USER nonroot
 
 # expose the default RPC port
-EXPOSE 4401
+EXPOSE 4401 4444
 
 CMD ["/iroh/iroh-p2p"]

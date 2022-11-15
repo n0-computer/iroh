@@ -34,7 +34,7 @@ WORKDIR /iroh
 
 COPY ../ .
 
-RUN cargo build --bin iroh-store --release
+RUN cargo build --bin iroh-store --profile=docker
 
 ################################################################################
 ## Final image
@@ -45,7 +45,7 @@ WORKDIR /iroh
 
 # Copy our build, changing owndership to distroless-provided "nonroot" user,
 # (65532:65532)
-COPY --from=builder --chown=65532:65532 /iroh/target/release/iroh-store ./
+COPY --from=builder --chown=65532:65532 /iroh/target/docker/iroh-store ./
 
 # Use nonroot (unprivileged) user
 USER nonroot
