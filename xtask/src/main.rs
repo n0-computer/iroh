@@ -32,7 +32,7 @@ enum Commands {
         #[clap(short, long)]
         all: bool,
         /// Set type of progress output (auto, plain, tty). Use plain to show container output (default "auto")
-        #[clap(long)]
+        #[clap(short, long, default_value_t = String::from("auto"))]
         progress: String,
         images: Vec<String>,
     },
