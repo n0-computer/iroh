@@ -5,93 +5,95 @@ on:
   push:
     branches:
       - main
-      - staging
-      - trying
 
 jobs:
   build_and_test:
     name: Build and test
-    runs-on: ${{ matrix.os }}
-    continue-on-error: ${{ matrix.experimental }}
+    # runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.runner }}
+    continue-on-error: false
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macOS-latest, windows-latest]
+        # os: [ubuntu-latest, macOS-latest, windows-latest]
+        os: [ubuntu-latest, macOS-latest]
         rust: [stable]
         experimental: [false]
         include:
           - os: ubuntu-latest
-            sccache-path: /home/runner/.cache/sccache
+            # sccache-path: /home/runner/.cache/sccache
             release-os: linux
             release-arch: amd64
+            runner: [self-hosted, linux]
           - os: macos-latest
-            sccache-path: /Users/runner/Library/Caches/Mozilla.sccache
+          #   sccache-path: /Users/runner/Library/Caches/Mozilla.sccache
             release-os: darwin
             release-arch: x86_64
-          - os: windows-latest
-            sccache-path: "%LOCALAPPDATA%\\sccache"
-            release-os: windows
-            release-arch: amd64
+            runner: [self-hosted, macOS]
+          # - os: windows-latest
+          #   sccache-path: "%LOCALAPPDATA%\\sccache"
+          #   release-os: windows
+          #   release-arch: amd64
     env:
       RUST_BACKTRACE: full
       # Force not building debuginfo to save space on disk.
       RUSTFLAGS: "-C debuginfo=0"
-      RUSTC_WRAPPER: sccache
+      # RUSTC_WRAPPER: sccache
       RUSTV: ${{ matrix.rust }}
-      SCCACHE_CACHE_SIZE: 2G
+      # SCCACHE_CACHE_SIZE: 2G
       # SCCACHE_RECACHE: 1 # Uncomment this to clear cache, then comment it back out
     steps:
     - uses: actions/checkout@master
 
-    - name: Set sccache env path
-      if: matrix.os != 'windows-latest'
-      run: |
-          echo "SCCACHE_DIR=${{ matrix.sccache-path }}" >> $GITHUB_ENV
+    # - name: Set sccache env path
+    #   if: matrix.os != 'windows-latest'
+    #   run: |
+    #       echo "SCCACHE_DIR=${{ matrix.sccache-path }}" >> $GITHUB_ENV
     - name: Set build arch
       run: |
         echo "RELEASE_ARCH=${{ matrix.release-arch }}" >> $GITHUB_ENV
         echo "RELEASE_OS=${{ matrix.release-os }}" >> $GITHUB_ENV
     
-    - name: Claim back some disk space (ubuntu-latest)
-      if: matrix.os == 'ubuntu-latest'
-      run: |
-        sudo rm -rf /usr/share/dotnet
-        sudo rm -rf /opt/ghc
-        sudo rm -rf "/usr/local/share/boost"
-        sudo rm -rf "$AGENT_TOOLSDIRECTORY"
+    # - name: Claim back some disk space (ubuntu-latest)
+    #   if: matrix.os == 'ubuntu-latest'
+    #   run: |
+    #     sudo rm -rf /usr/share/dotnet
+    #     sudo rm -rf /opt/ghc
+    #     sudo rm -rf "/usr/local/share/boost"
+    #     sudo rm -rf "$AGENT_TOOLSDIRECTORY"
 
-    - name: Install sccache (ubuntu-latest)
-      if: matrix.os == 'ubuntu-latest'
-      env:
-        LINK: https://github.com/mozilla/sccache/releases/download
-        SCCACHE_VERSION: v0.2.15
-      run: |
-        SCCACHE_FILE=sccache-$SCCACHE_VERSION-x86_64-unknown-linux-musl
-        mkdir -p $HOME/.local/bin
-        curl -L "$LINK/$SCCACHE_VERSION/$SCCACHE_FILE.tar.gz" | tar xz
-        mv -f $SCCACHE_FILE/sccache $HOME/.local/bin/sccache
-        chmod 755 $HOME/.local/bin/sccache
-        echo "$HOME/.local/bin" >> $GITHUB_PATH  
+    # - name: Install sccache (ubuntu-latest)
+    #   if: matrix.os == 'ubuntu-latest'
+    #   env:
+    #     LINK: https://github.com/mozilla/sccache/releases/download
+    #     SCCACHE_VERSION: v0.2.15
+    #   run: |
+    #     SCCACHE_FILE=sccache-$SCCACHE_VERSION-x86_64-unknown-linux-musl
+    #     mkdir -p $HOME/.local/bin
+    #     curl -L "$LINK/$SCCACHE_VERSION/$SCCACHE_FILE.tar.gz" | tar xz
+    #     mv -f $SCCACHE_FILE/sccache $HOME/.local/bin/sccache
+    #     chmod 755 $HOME/.local/bin/sccache
+    #     echo "$HOME/.local/bin" >> $GITHUB_PATH  
     
-    - name: Install scoop (windows-latest)
-      if: matrix.os == 'windows-latest'
-      shell: powershell
-      run: |
-        Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
-        iwr -useb get.scoop.sh -outfile 'install.ps1'
-        .\\install.ps1 -RunAsAdmin
-        Join-Path (Resolve-Path ~).Path "scoop\shims" >> $Env:GITHUB_PATH
+    # - name: Install scoop (windows-latest)
+    #   if: matrix.os == 'windows-latest'
+    #   shell: powershell
+    #   run: |
+    #     Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+    #     iwr -useb get.scoop.sh -outfile 'install.ps1'
+    #     .\\install.ps1 -RunAsAdmin
+    #     Join-Path (Resolve-Path ~).Path "scoop\shims" >> $Env:GITHUB_PATH
     
-    - name: Install sccache (windows-latest)
-      if: matrix.os == 'windows-latest'
-      shell: powershell
-      run: scoop install sccache
+    # - name: Install sccache (windows-latest)
+    #   if: matrix.os == 'windows-latest'
+    #   shell: powershell
+    #   run: scoop install sccache
     
-    - name: Install sccache (macos-latest)
-      if: matrix.os == 'macos-latest'
-      run: |
-        brew update
-        brew install sccache          
+    # - name: Install sccache (macos-latest)
+    #   if: matrix.os == 'macos-latest'
+    #   run: |
+    #     brew update
+    #     brew install sccache          
     
     - name: Install ${{ matrix.rust }}
       uses: actions-rs/toolchain@v1
@@ -99,33 +101,33 @@ jobs:
         toolchain: ${{ matrix.rust }}
         override: true
     
-    - name: Cache cargo registry
-      uses: actions/cache@v2
-      continue-on-error: false
-      with:
-        path: |
-          ~/.cargo/registry          
-          ~/.cargo/bin
-          ~/.cargo/registry/index
-          ~/.cargo/registry/cache
-          ~/.cargo/git
-          ~/.cargo/.crates.toml
-          ~/.cargo/.crates2.json
-          ./target
+    # - name: Cache cargo registry
+    #   uses: actions/cache@v2
+    #   continue-on-error: false
+    #   with:
+    #     path: |
+    #       ~/.cargo/registry          
+    #       ~/.cargo/bin
+    #       ~/.cargo/registry/index
+    #       ~/.cargo/registry/cache
+    #       ~/.cargo/git
+    #       ~/.cargo/.crates.toml
+    #       ~/.cargo/.crates2.json
+    #       ./target
             
-        key: ${{ runner.os }}-${{ matrix.rust }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-        restore-keys: |
-                      ${{ runner.os }}-${{ matrix.rust }}-cargo-
-    - name: Save sccache
-      uses: actions/cache@v2
-      continue-on-error: false
-      with:
-        path: ${{ matrix.sccache-path }}
-        key: ${{ runner.os }}-${{ matrix.rust }}-sccache-${{ hashFiles('**/Cargo.lock') }}
-        restore-keys: |
-                      ${{ runner.os }}-${{ matrix.rust }}-sccache-
-    - name: Start sccache server
-      run: sccache --start-server
+    #     key: ${{ runner.os }}-${{ matrix.rust }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+    #     restore-keys: |
+    #                   ${{ runner.os }}-${{ matrix.rust }}-cargo-
+    # - name: Save sccache
+    #   uses: actions/cache@v2
+    #   continue-on-error: false
+    #   with:
+    #     path: ${{ matrix.sccache-path }}
+    #     key: ${{ runner.os }}-${{ matrix.rust }}-sccache-${{ hashFiles('**/Cargo.lock') }}
+    #     restore-keys: |
+    #                   ${{ runner.os }}-${{ matrix.rust }}-sccache-
+    # - name: Start sccache server
+    #   run: sccache --start-server
 
     - name: Install Protoc
       uses: arduino/setup-protoc@v1
@@ -138,6 +140,13 @@ jobs:
       with:
         command: check
         args: --workspace --all-features --bins --tests --examples --benches
+    
+    - name: clippy
+      uses: actions-rs/cargo@v1
+      if: matrix.os == 'ubuntu-latest' && matrix.rust=='stable'
+      with:
+        command: clippy
+        args: --workspace --all-features --tests --benches --examples --bins --all-targets -- -D warnings
 
     - name: tests
       uses: actions-rs/cargo@v1
@@ -150,14 +159,20 @@ jobs:
         OBJC_DISABLE_INITIALIZE_FORK_SAFETY: "YES"
       with:
         command: test
-        args: -j 2 --workspace --all-features --examples --benches --bins
-
-    - name: clippy
+        args: --workspace --all-features --examples --benches --bins
+    
+    - name: tests w/o default features
       uses: actions-rs/cargo@v1
-      if: matrix.os == 'ubuntu-latest' && matrix.rust=='stable'
+      timeout-minutes: 30
+      env:
+        # iroh-util/src/lock.rs#test_locks uses a fork() command & fails only in
+        # GHA if this is not present
+        # https://twitter.com/steipete/status/921066430220652544?lang=en
+        # https://blog.phusion.nl/2017/10/13/why-ruby-app-servers-break-on-macos-high-sierra-and-what-can-be-done-about-it/
+        OBJC_DISABLE_INITIALIZE_FORK_SAFETY: "YES"
       with:
-        command: clippy
-        args: --workspace --all-features --tests --benches --examples --bins --all-targets -- -D warnings
+        command: test
+        args: --workspace --no-default-features --examples --benches --bins
 
     - name: build release
       uses: actions-rs/cargo@v1
@@ -234,11 +249,6 @@ jobs:
         aws s3 cp ./target/aarch64-apple-darwin/ci/iroh-p2p s3://vorc/iroh-p2p-${RELEASE_OS}-aarch64-latest --no-progress
         aws s3 cp ./target/aarch64-apple-darwin/ci/iroh-store s3://vorc/iroh-store-${RELEASE_OS}-aarch64-latest --no-progress
         aws s3 cp ./target/aarch64-apple-darwin/ci/iroh s3://vorc/iroh-${RELEASE_OS}-aarch64-latest --no-progress
-    
-    - name: Print sccache stats
-      run: sccache --show-stats
-    - name: Stop sccache server
-      run: sccache --stop-server || true
 
   fmt:
     name: Rustfmt
@@ -260,3 +270,29 @@ jobs:
         with:
           command: fmt
           args: --all -- --check
+    
+  audit:
+    name: audit
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        rust:
+          - stable
+
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: ${{ matrix.rust }}
+          override: true
+      - uses: actions-rs/cargo@v1
+        with:
+          command: install
+          args: --force cargo-audit
+      - uses: actions-rs/cargo@v1
+        with:
+          command: generate-lockfile
+      - uses: actions-rs/cargo@v1
+        with:
+          command: audit
