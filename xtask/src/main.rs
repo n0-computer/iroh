@@ -31,6 +31,9 @@ enum Commands {
     Docker {
         #[clap(short, long)]
         all: bool,
+        /// Set type of progress output (auto, plain, tty). Use plain to show container output (default "auto")
+        #[clap(long)]
+        progress: String,
         images: Vec<String>,
     },
 }
@@ -48,7 +51,11 @@ fn run_subcommand(args: Cli) -> Result<()> {
         Commands::Dist {} => dist()?,
         Commands::Man {} => dist_manpage()?,
         Commands::DevInstall { build } => dev_install(build)?,
-        Commands::Docker { all, images } => build_docker(all, images)?,
+        Commands::Docker {
+            all,
+            images,
+            progress,
+        } => build_docker(all, images, progress)?,
     }
     Ok(())
 }
@@ -139,7 +146,7 @@ fn dist_dir() -> PathBuf {
     project_root().join("target/dist")
 }
 
-fn build_docker(all: bool, build_images: Vec<String>) -> Result<()> {
+fn build_docker(all: bool, build_images: Vec<String>, progress: String) -> Result<()> {
     let mut images = build_images;
     if all {
         images = vec![String::from("iroh-one"), String::from("iroh-p2p")];
@@ -159,7 +166,7 @@ fn build_docker(all: bool, build_images: Vec<String>) -> Result<()> {
                 format!("{}:latest", image).as_str(),
                 "-f",
                 format!("docker/Dockerfile.{}", image).as_str(),
-                // "--progress=plain",
+                format!("--progress={}", progress).as_str(),
                 ".",
             ])
             .status()?;

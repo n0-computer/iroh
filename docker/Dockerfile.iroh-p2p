@@ -5,20 +5,15 @@ FROM rust:latest AS builder
 
 RUN update-ca-certificates
 
-# install latest protocol buffer compiler. Yes, it's really this irritating.
-# recent build URLs are missing "3" version prefix. version is actually "3.21.9"
+# install latest protocol buffer compiler.
+ARG TARGETPLATFORM
+COPY ../docker/install_protoc.sh .
+RUN ./install_protoc.sh
+
+# set build env vars
 ENV RUST_BACKTRACE=1 \
-  PROTOC_VERSION=21.9 \
-  PROTOC_ZIP=protoc-21.9-linux-aarch_64.zip \
-  # PROTOC_ZIP=protoc-21.9-linux-x86_64.zip \
   PROTOC=/usr/local/bin/protoc \
   PROTOC_INCLUDE=/usr/local/include
-
-RUN curl -OL https://github.com/protocolbuffers/protobuf/releases/download/v$PROTOC_VERSION/$PROTOC_ZIP \
-  && unzip -o $PROTOC_ZIP -d /usr/local bin/protoc \
-  && unzip -o $PROTOC_ZIP -d /usr/local 'include/*' \
-  && rm -f $PROTOC_ZIP \
-  && echo $($PROTOC --version)
 
 # has the side effect of updating the crates.io index & installing rust toolchain
 # called in a separate step for nicer caching. the command itself will fail,
@@ -41,6 +36,12 @@ WORKDIR /iroh
 # Copy our build, changing owndership to distroless-provided "nonroot" user,
 # (65532:65532)
 COPY --from=builder --chown=65532:65532 /iroh/target/docker/iroh-p2p ./
+
+# TODO (b5) - investigate max file descriptor limits within the container image
+# libp2p needs lots of FDs for open ports, and we should be maxing them out.
+# I have no idea if distroless honors ERL_MAX_PORTS, consider this a starting
+# point for experimentation
+# ENV ERL_MAX_PORTS=65536
 
 # Use nonroot (unprivileged) user
 USER nonroot

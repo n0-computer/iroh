@@ -11,20 +11,15 @@ RUN apt-get update && \
   apt-get install -y \
   clang libclang-dev
 
-# install latest protocol buffer compiler. Yes, it's really this irritating.
-# recent build URLs are missing "3" version prefix. version is actually "3.21.9"
+# install latest protocol buffer compiler.
+ARG TARGETPLATFORM
+COPY ../docker/install_protoc.sh .
+RUN ./install_protoc.sh
+
+# set build env vars
 ENV RUST_BACKTRACE=1 \
-  PROTOC_VERSION=21.9 \
-  PROTOC_ZIP=protoc-21.9-linux-aarch_64.zip \
-  # PROTOC_ZIP=protoc-21.9-linux-x86_64.zip \
   PROTOC=/usr/local/bin/protoc \
   PROTOC_INCLUDE=/usr/local/include
-
-RUN curl -OL https://github.com/protocolbuffers/protobuf/releases/download/v$PROTOC_VERSION/$PROTOC_ZIP \
-  && unzip -o $PROTOC_ZIP -d /usr/local bin/protoc \
-  && unzip -o $PROTOC_ZIP -d /usr/local 'include/*' \
-  && rm -f $PROTOC_ZIP \
-  && echo $($PROTOC --version)
 
 # has the side effect of updating the crates.io index & installing rust toolchain
 # called in a separate step for nicer caching. the command itself will fail,
