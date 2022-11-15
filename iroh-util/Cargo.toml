@@ -8,7 +8,7 @@ repository = "https://github.com/n0-computer/iroh"
 description = "Utilities for iroh"
 
 [dependencies]
-anyhow = "1.0.57"
+anyhow = "1"
 cid = "0.8.4"
 config = "0.13.1"
 ctrlc = "3.2.2"

@@ -9,7 +9,7 @@ description = "Implementation of the p2p part of iroh"
 
 [dependencies]
 ahash = "0.8.0"
-anyhow = "1.0"
+anyhow = "1"
 async-stream = "0.3.3"
 async-trait = "0.1.56"
 asynchronous-codec = "0.6.0"
