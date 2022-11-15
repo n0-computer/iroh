@@ -149,7 +149,12 @@ fn dist_dir() -> PathBuf {
 fn build_docker(all: bool, build_images: Vec<String>, progress: String) -> Result<()> {
     let mut images = build_images;
     if all {
-        images = vec![String::from("iroh-one"), String::from("iroh-p2p")];
+        images = vec![
+            String::from("iroh-one"),
+            String::from("iroh-store"),
+            String::from("iroh-p2p"),
+            String::from("iroh-gateway"),
+        ];
     }
 
     let commit = current_git_commit()?;
@@ -161,9 +166,9 @@ fn build_docker(all: bool, build_images: Vec<String>, progress: String) -> Resul
             .args([
                 "build",
                 "-t",
-                format!("{}:{}", image, commit).as_str(),
+                format!("n0computer/{}:{}", image, commit).as_str(),
                 "-t",
-                format!("{}:latest", image).as_str(),
+                format!("n0computer/{}:latest", image).as_str(),
                 "-f",
                 format!("docker/Dockerfile.{}", image).as_str(),
                 format!("--progress={}", progress).as_str(),

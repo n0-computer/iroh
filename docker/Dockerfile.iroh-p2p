@@ -48,5 +48,6 @@ USER nonroot
 
 # expose the default RPC port
 EXPOSE 4401 4444
+EXPOSE 4444/udp
 
 CMD ["/iroh/iroh-p2p"]
