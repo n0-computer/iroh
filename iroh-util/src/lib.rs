@@ -174,7 +174,11 @@ where
     }
 
     // next, add any environment variables
-    builder = builder.add_source(Environment::with_prefix(env_prefix).try_parsing(true));
+    builder = builder.add_source(
+        Environment::with_prefix(env_prefix)
+            .separator("__")
+            .try_parsing(true),
+    );
 
     // pull metrics config from env variables
     // nesting into this odd `MetricsSource` struct, gives us the option of
@@ -232,6 +236,7 @@ pub fn increase_fd_limit() -> std::io::Result<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn test_iroh_config_path() {
         let got = iroh_config_path("foo.bar").unwrap();
