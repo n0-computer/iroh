@@ -4,7 +4,7 @@ use std::sync::Arc;
 use anyhow::{anyhow, Result};
 use clap::Parser;
 use iroh_gateway::{bad_bits::BadBits, core::Core, metrics};
-#[cfg(feature = "uds-gateway")]
+#[cfg(all(feature = "uds-gateway", unix))]
 use iroh_one::uds;
 use iroh_one::{
     cli::Args,
@@ -105,7 +105,7 @@ async fn main() -> Result<()> {
         server.await.unwrap();
     });
 
-    #[cfg(feature = "uds-gateway")]
+    #[cfg(all(feature = "uds-gateway", unix))]
     let uds_server_task = {
         let mut path = tempfile::Builder::new()
             .prefix("iroh")
@@ -135,7 +135,7 @@ async fn main() -> Result<()> {
 
     store_rpc.abort();
     p2p_rpc.abort();
-    #[cfg(feature = "uds-gateway")]
+    #[cfg(all(feature = "uds-gateway", unix))]
     uds_server_task.abort();
     core_task.abort();
 
