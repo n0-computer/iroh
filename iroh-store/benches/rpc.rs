@@ -18,6 +18,7 @@ const VALUES: [usize; 4] = [32, 256, 1024, 256 * 1024];
 #[derive(Debug, Copy, Clone)]
 enum Transport {
     GrpcHttp2,
+    #[cfg(unix)]
     GrpcUds,
     Mem,
 }
@@ -30,6 +31,7 @@ impl Transport {
                 "grpc://127.0.0.1:4001".parse().unwrap(),
                 None,
             ),
+            #[cfg(unix)]
             Transport::GrpcUds => {
                 let dir = tempfile::tempdir().unwrap();
                 let file = dir.path().join("iroh-store.uds");
@@ -46,7 +48,10 @@ impl Transport {
 pub fn put_benchmark(c: &mut Criterion) {
     let mut group = c.benchmark_group("rpc_store_put");
 
+    #[cfg(unix)]
     let addrs = [Transport::GrpcHttp2, Transport::GrpcUds, Transport::Mem];
+    #[cfg(not(unix))]
+    let addrs = [Transport::GrpcHttp2, Transport::Mem];
     for transport in addrs.into_iter() {
         for value_size in VALUES.iter() {
             let value = Bytes::from(vec![8u8; *value_size]);
@@ -103,7 +108,10 @@ pub fn put_benchmark(c: &mut Criterion) {
 
 pub fn get_benchmark(c: &mut Criterion) {
     let mut group = c.benchmark_group("rpc_store_get");
+    #[cfg(unix)]
     let addrs = [Transport::GrpcHttp2, Transport::GrpcUds, Transport::Mem];
+    #[cfg(not(unix))]
+    let addrs = [Transport::GrpcHttp2, Transport::Mem];
     for transport in addrs.into_iter() {
         for value_size in VALUES.iter() {
             group.throughput(criterion::Throughput::Bytes(*value_size as u64));
