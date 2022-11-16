@@ -174,13 +174,20 @@ where
     }
 
     // next, add any environment variables
-    builder = builder.add_source(Environment::with_prefix(env_prefix).try_parsing(true));
+    builder = builder.add_source(
+        Environment::with_prefix(env_prefix)
+            .separator("__")
+            .try_parsing(true),
+    );
 
     // pull metrics config from env variables
     // nesting into this odd `MetricsSource` struct, gives us the option of
     // using the more convienient prefix `IROH_METRICS` to set metrics env vars
-    let mut metrics =
-        Config::builder().add_source(Environment::with_prefix("IROH_METRICS").try_parsing(true));
+    let mut metrics = Config::builder().add_source(
+        Environment::with_prefix("IROH_METRICS")
+            .separator("__")
+            .try_parsing(true),
+    );
 
     // allow custom `IROH_INSTANCE_ID` env var
     if let Ok(instance_id) = std::env::var("IROH_INSTANCE_ID") {
@@ -232,6 +239,7 @@ pub fn increase_fd_limit() -> std::io::Result<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn test_iroh_config_path() {
         let got = iroh_config_path("foo.bar").unwrap();

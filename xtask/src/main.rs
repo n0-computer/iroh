@@ -36,6 +36,14 @@ enum Commands {
         progress: String,
         images: Vec<String>,
     },
+    #[command(about = "push docker images. requires image push credentials.")]
+    DockerPush {
+        /// Publish all images, overrides images args
+        #[clap(short, long)]
+        all: bool,
+        /// Set of services to publish. Any of {iroh-store,iroh-p2p,iroh-gateway,iroh-one}
+        images: Vec<String>,
+    },
 }
 
 fn main() {
@@ -56,6 +64,7 @@ fn run_subcommand(args: Cli) -> Result<()> {
             images,
             progress,
         } => build_docker(all, images, progress)?,
+        Commands::DockerPush { all, images } => push_docker(all, images)?,
     }
     Ok(())
 }
@@ -146,17 +155,20 @@ fn dist_dir() -> PathBuf {
     project_root().join("target/dist")
 }
 
-fn build_docker(all: bool, build_images: Vec<String>, progress: String) -> Result<()> {
-    let mut images = build_images;
+fn docker_images(all: bool, build_images: Vec<String>) -> Vec<String> {
     if all {
-        images = vec![
+        return vec![
             String::from("iroh-one"),
             String::from("iroh-store"),
             String::from("iroh-p2p"),
             String::from("iroh-gateway"),
         ];
     }
+    build_images
+}
 
+fn build_docker(all: bool, build_images: Vec<String>, progress: String) -> Result<()> {
+    let images = docker_images(all, build_images);
     let commit = current_git_commit()?;
 
     for image in images {
@@ -177,10 +189,44 @@ fn build_docker(all: bool, build_images: Vec<String>, progress: String) -> Resul
             .status()?;
 
         if !status.success() {
-            Err(anyhow::anyhow!("cargo build failed"))?;
+            Err(anyhow::anyhow!("docker build failed"))?;
         }
     }
 
+    Ok(())
+}
+
+fn push_docker(all: bool, images: Vec<String>) -> Result<()> {
+    let images = docker_images(all, images);
+    let commit = current_git_commit()?;
+    let mut success_count = 0;
+    let count = images.len() * 2;
+
+    for image in images {
+        println!("pushing {}:{}", image, commit);
+        Command::new("docker")
+            .current_dir(project_root())
+            .args(["push", format!("n0computer/{}:{}", image, commit).as_str()])
+            .status()?
+            .success()
+            .then(|| {
+                success_count += 1;
+            });
+
+        println!("pushing {}:{}", image, commit);
+        Command::new("docker")
+            .current_dir(project_root())
+            .args(["push", format!("n0computer/{}:latest", image).as_str()])
+            .status()?
+            .success()
+            .then(|| {
+                success_count += 1;
+            });
+
+        println!();
+    }
+
+    println!("{}/{} tags pushed.", success_count, count);
     Ok(())
 }
 
