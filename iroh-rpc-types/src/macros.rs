@@ -19,6 +19,11 @@ macro_rules! proxy_serve {
                         Ok(())
                     }
 
+                    #[cfg(feature = "grpc")]
+                    $crate::Addr::GrpcHttp2Lookup(name) => {
+                        anyhow::bail!("cannot serve on lookup address: {}", name);
+                    }
+
                     #[cfg(all(feature = "grpc", unix))]
                     $crate::Addr::GrpcUds(path) => {
                         use anyhow::Context;
