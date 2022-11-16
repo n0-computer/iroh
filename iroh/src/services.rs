@@ -82,7 +82,7 @@ async fn start_services(api: &Api, services: HashSet<&str>) -> Result<()> {
         });
 
     let missing_services: HashSet<&str> = services
-        .difference(&missing_services)
+        .difference(missing_services)
         .map(Deref::deref)
         .collect();
 
