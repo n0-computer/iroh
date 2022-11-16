@@ -11,7 +11,7 @@ description = "Command line interface for interacting with iroh."
 testing = ["dep:relative-path"]
 
 [dependencies]
-anyhow = "1.0"
+anyhow = "1"
 async-stream = "0.3.3"
 clap = { version = "4.0.15", features = ["derive"] }
 config = "0.13.1"

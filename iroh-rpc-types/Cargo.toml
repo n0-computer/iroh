@@ -9,7 +9,7 @@ description = "RPC type definitions for iroh"
 
 
 [dependencies]
-anyhow = "1.0.58"
+anyhow = "1"
 async-trait = "0.1.56"
 futures = "0.3.24"
 iroh-metrics = { path = "../iroh-metrics", default-features = false }
