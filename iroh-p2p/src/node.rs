@@ -1058,20 +1058,21 @@ mod tests {
         Ok(())
     }
 
+    #[derive(Debug)]
     struct TestRunnerBuilder {
-        /// optional listening address for this node, when None, the swarm will connect to a random
-        /// tcp port
+        /// An Optional listening address for this node
+        /// When `None`, the swarm will connect to a random tcp port.
         addr: Option<Multiaddr>,
-        /// listening addresses for the p2p client, when None, the client will communicate over
-        /// a memory rpc channel
+        /// The listening addresses for the p2p client.
+        /// When `None`, the client will communicate over a memory rpc channel
         rpc_addrs: Option<(P2pServerAddr, P2pClientAddr)>,
-        /// when true, allow bootstrapping to the network, otherwise don't provide any addresses
-        /// from which to bootstrap
+        /// When `true`, allow bootstrapping to the network.
+        /// Otherwise, don't provide any addresses from which to bootstrap.
         bootstrap: bool,
-        /// optional seed to use when building a peer_id, when None will use a previously derived
-        /// peer_id 12D3KooWFma2D63TG9ToSiRsjFkoNm2tTihScTBAEdXxinYk5rwE
+        /// An optional seed to use when building a peer_id.
+        /// When `None`, it will use a previously derived peer_id `12D3KooWFma2D63TG9ToSiRsjFkoNm2tTihScTBAEdXxinYk5rwE`.
         seed: Option<ChaCha8Rng>,
-        /// optional keys to tell the node to provide on the dht
+        /// Optional `Keys` the node should provide to the DHT on start up.
         keys: Option<Vec<Key>>,
     }
 
@@ -1202,17 +1203,19 @@ mod tests {
     }
 
     struct TestRunner {
-        /// task for the running p2p node
+        /// The task that runs the p2p node.
         task: JoinHandle<()>,
-        /// rpc client, can use it to communicate with the p2p node
+        /// The RPC client
+        /// Used to communicate with the p2p node.
         client: P2pClient,
-        /// the node's peer_id
+        /// The node's peer_id
         peer_id: PeerId,
-        /// a channel to recieve network events read by the node
+        /// A channel to read the network events received by the node.
         network_events: Receiver<NetworkEvent>,
-        /// listening address for this node
+        /// The listening address for this node.
         addr: Multiaddr,
-        /// multiaddr that is a combination of the listening addr and peer_id
+        /// A multiaddr that is a combination of the listening addr and peer_id.
+        /// This address can be used by another node to dial this peer directly.
         dial_addr: Multiaddr,
     }
 
@@ -1514,7 +1517,7 @@ mod tests {
         // when `start_providing` waits for the record to make it to the dht
         // we can remove this polling
         let providers = tokio::time::timeout(
-            Duration::from_millis(2500),
+            Duration::from_millis(5000),
             poll_for_providers(test_runner_a.client.clone(), &cid),
         )
         .await
