@@ -130,7 +130,7 @@ impl Client {
     }
 
     pub fn try_store(&self) -> Result<StoreClient> {
-        self.store.get().context("missing rpc store connnection")
+        self.store.get().context("missing rpc store connection")
     }
 
     #[cfg(feature = "grpc")]
