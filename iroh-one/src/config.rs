@@ -23,7 +23,7 @@ pub const DEFAULT_PORT: u16 = 9050;
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct Config {
     /// Path for the UDS socket for the gateway.
-    #[cfg(feature = "uds-gateway")]
+    #[cfg(all(feature = "uds-gateway", unix))]
     pub gateway_uds_path: Option<PathBuf>,
     /// Gateway specific configuration.
     pub gateway: iroh_gateway::config::Config,
@@ -43,7 +43,7 @@ impl Config {
         store: iroh_store::config::Config,
         p2p: iroh_p2p::config::Config,
         rpc_client: RpcClientConfig,
-        #[cfg(feature = "uds-gateway")] gateway_uds_path: Option<PathBuf>,
+        #[cfg(all(feature = "uds-gateway", unix))] gateway_uds_path: Option<PathBuf>,
     ) -> Self {
         Self {
             gateway,
@@ -51,7 +51,7 @@ impl Config {
             p2p,
             rpc_client,
             metrics: MetricsConfig::default(),
-            #[cfg(feature = "uds-gateway")]
+            #[cfg(all(feature = "uds-gateway", unix))]
             gateway_uds_path,
         }
     }
@@ -61,7 +61,7 @@ impl Config {
     /// The gateway itself is exposing a UDS rpc endpoint to be also usable
     /// as a single entry point for other system services if feature enabled.
     pub fn default_rpc_config() -> RpcClientConfig {
-        #[cfg(feature = "uds-gateway")]
+        #[cfg(all(feature = "uds-gateway", unix))]
         let path: PathBuf = tempfile::Builder::new()
             .prefix("iroh")
             .tempfile()
@@ -70,10 +70,10 @@ impl Config {
             .join("ipfsd.http");
 
         RpcClientConfig {
-            #[cfg(feature = "uds-gateway")]
+            #[cfg(all(feature = "uds-gateway", unix))]
             gateway_addr: Some(iroh_rpc_types::Addr::GrpcUds(path)),
             // TODO(ramfox): not sure what the correct option is when not running a uds gateway
-            #[cfg(not(feature = "uds-gateway"))]
+            #[cfg(any(not(feature = "uds-gateway"), not(unix)))]
             gateway_addr: None,
             p2p_addr: None,
             store_addr: None,
@@ -94,7 +94,7 @@ impl Config {
 
 impl Default for Config {
     fn default() -> Self {
-        #[cfg(feature = "uds-gateway")]
+        #[cfg(all(feature = "uds-gateway", unix))]
         let gateway_uds_path: PathBuf = tempfile::Builder::new()
             .prefix("iroh")
             .tempfile()
@@ -112,7 +112,7 @@ impl Default for Config {
             gateway: iroh_gateway::config::Config::default(),
             store: store_config,
             p2p: default_p2p_config(rpc_client, metrics_config, key_store_path),
-            #[cfg(feature = "uds-gateway")]
+            #[cfg(all(feature = "uds-gateway", unix))]
             gateway_uds_path: Some(gateway_uds_path),
         }
     }
@@ -157,7 +157,7 @@ impl Source for Config {
         insert_into_config_map(&mut map, "p2p", self.p2p.collect()?);
         insert_into_config_map(&mut map, "rpc_client", self.rpc_client.collect()?);
         insert_into_config_map(&mut map, "metrics", self.metrics.collect()?);
-        #[cfg(feature = "uds-gateway")]
+        #[cfg(all(feature = "uds-gateway", unix))]
         if let Some(uds_path) = self.gateway_uds_path.as_ref() {
             insert_into_config_map(
                 &mut map,
