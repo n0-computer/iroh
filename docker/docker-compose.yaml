@@ -13,7 +13,6 @@ services:
     environment:
       - "IROH_GATEWAY__RPC_CLIENT__P2P_ADDR=grpc://iroh-p2p:4401"
       - "IROH_GATEWAY__RPC_CLIENT__STORE_ADDR=grpc://iroh-store:4402"
-      - "RUST_LOG=debug"
     ports:
       - "9050:9050"
       - "4400:4400"
@@ -28,7 +27,5 @@ services:
   iroh-store:
     container_name: "iroh-store"
     image: "n0computer/iroh-store:latest"
-    environment:
-      - "RUST_LOG=debug"
     ports:
       - "4402:4402"

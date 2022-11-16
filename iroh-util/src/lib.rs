@@ -183,8 +183,11 @@ where
     // pull metrics config from env variables
     // nesting into this odd `MetricsSource` struct, gives us the option of
     // using the more convienient prefix `IROH_METRICS` to set metrics env vars
-    let mut metrics =
-        Config::builder().add_source(Environment::with_prefix("IROH_METRICS").try_parsing(true));
+    let mut metrics = Config::builder().add_source(
+        Environment::with_prefix("IROH_METRICS")
+            .separator("__")
+            .try_parsing(true),
+    );
 
     // allow custom `IROH_INSTANCE_ID` env var
     if let Ok(instance_id) = std::env::var("IROH_INSTANCE_ID") {
