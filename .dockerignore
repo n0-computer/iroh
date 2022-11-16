@@ -1,0 +1,4 @@
+**/target*
+# ignore edits to dockerfiles so they don't invalidate cache
+# dockerfiles shouldn't be in the build image anyway
+**/docker/Dockerfile*

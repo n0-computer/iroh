@@ -34,3 +34,10 @@ lto = true
 panic = 'abort'
 incremental = false
 codegen-units = 8
+
+[profile.docker]
+inherits = 'release'
+lto = true
+panic = 'abort'
+incremental = false
+codegen-units = 8
