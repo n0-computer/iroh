@@ -8,7 +8,7 @@ repository = "https://github.com/n0-computer/iroh"
 description = "Sharing files with iroh"
 
 [dependencies]
-anyhow = "1.0.58"
+anyhow = "1"
 async-trait = "0.1.56"
 bincode = "1.3.3"
 bytes = "1.1.0"

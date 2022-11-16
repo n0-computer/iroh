@@ -9,7 +9,7 @@ description = "RPC type client for iroh"
 
 [dependencies]
 
-anyhow = "1.0.57"
+anyhow = "1"
 async-stream = "0.3.3"
 async-trait = "0.1.56"
 bytes = "1.1.0"
