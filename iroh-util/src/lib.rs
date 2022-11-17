@@ -241,7 +241,6 @@ pub fn increase_fd_limit() -> std::io::Result<u64> {
 #[cfg(test)]
 mod tests {
     use serde::Deserialize;
-    use testdir::testdir;
 
     use super::*;
 
@@ -273,10 +272,10 @@ mod tests {
     #[test]
     fn test_make_config_priority() {
         // Asserting that later items have a higher priority
-        let cfgdir = testdir!();
-        let cfgfile0 = cfgdir.join("cfg0.toml");
+        let cfgdir = tempfile::tempdir().unwrap();
+        let cfgfile0 = cfgdir.path().join("cfg0.toml");
         std::fs::write(&cfgfile0, r#"item = "zero""#).unwrap();
-        let cfgfile1 = cfgdir.join("cfg1.toml");
+        let cfgfile1 = cfgdir.path().join("cfg1.toml");
         std::fs::write(&cfgfile1, r#"item = "one""#).unwrap();
         let cfg = make_config(
             Config {
