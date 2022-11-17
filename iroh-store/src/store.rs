@@ -1,6 +1,6 @@
-use std::collections::HashSet;
 use std::{sync::Arc, thread::available_parallelism};
 
+use ahash::AHashSet;
 use anyhow::{anyhow, bail, Context, Result};
 use bytes::Bytes;
 use cid::Cid;
@@ -367,9 +367,9 @@ impl<'a> WriteStore<'a> {
         let mut total_blob_size = 0;
 
         let mut batch = WriteBatch::default();
-        let mut cid_tracker: HashSet<Cid> = std::collections::HashSet::default();
+        let mut cid_tracker: AHashSet<Cid> = AHashSet::default();
         for (cid, blob, links) in blocks.into_iter() {
-            if self.has(&cid)? || cid_tracker.contains(&cid) {
+            if cid_tracker.contains(&cid) || self.has(&cid)? {
                 continue;
             }
 
