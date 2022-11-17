@@ -153,7 +153,7 @@ impl Source for MetricsSource {
 /// a metrics field, eg, `IROH_CONFIG_METRICS.SERVICE_NAME`, but only if your environment allows it
 pub fn make_config<T, S, V>(
     default: T,
-    file_paths: Vec<Option<&Path>>,
+    file_paths: &[Option<&Path>],
     env_prefix: &str,
     flag_overrides: HashMap<S, V>,
 ) -> Result<T>
@@ -166,7 +166,7 @@ where
     let mut builder = Config::builder().add_source(default);
 
     // layer on config options from files
-    for path in file_paths.into_iter().flatten() {
+    for path in file_paths.iter().flatten() {
         if path.exists() {
             let p = path.to_str().ok_or_else(|| anyhow::anyhow!("empty path"))?;
             builder = builder.add_source(File::with_name(p));

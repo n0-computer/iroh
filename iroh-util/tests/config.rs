@@ -179,7 +179,7 @@ fn test_make_config() {
         || {
             let got = make_config(
                 TestConfig::new(),
-                vec![
+                &[
                     Some(&PathBuf::from(CONFIG_A)),
                     Some(&PathBuf::from(CONFIG_B)),
                     None,

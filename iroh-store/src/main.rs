@@ -20,7 +20,7 @@ async fn main() -> anyhow::Result<()> {
     println!("Starting iroh-store, version {version}");
 
     let config_path = iroh_config_path(CONFIG_FILE_NAME)?;
-    let sources = vec![Some(config_path.as_path()), args.cfg.as_deref()];
+    let sources = &[Some(config_path.as_path()), args.cfg.as_deref()];
     let config_data_path = config_data_path(args.path.clone())?;
     let config = make_config(
         // default
