@@ -113,7 +113,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     continue-on-error: false
     needs: build_and_test
-    if: ${{ always() }}
+    if: ${{ always() && github.ref_name=='main' }}
     strategy:
       fail-fast: false
       matrix:
