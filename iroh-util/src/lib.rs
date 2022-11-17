@@ -1,6 +1,7 @@
 use std::{
     cell::RefCell,
     collections::HashMap,
+    env,
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicUsize, Ordering},
@@ -52,7 +53,9 @@ pub async fn block_until_sigint() {
 
 /// Returns the path to the user's iroh config directory.
 ///
-/// The returned value depends on the operating system and is either a `Some`, containing a value from the following table, or a `None`.
+/// If the `IROH_CONFIG_DIR` environment variable is set it will be used unconditionally.
+/// Otherwise the returned value depends on the operating system according to the following
+/// table.
 ///
 /// | Platform | Value                                 | Example                          |
 /// | -------- | ------------------------------------- | -------------------------------- |
@@ -60,6 +63,9 @@ pub async fn block_until_sigint() {
 /// | macOS    | `$HOME`/Library/Application Support/iroh   | /Users/Alice/Library/Application Support/iroh |
 /// | Windows  | `{FOLDERID_RoamingAppData}`/iroh           | C:\Users\Alice\AppData\Roaming\iroh   |
 pub fn iroh_config_root() -> Result<PathBuf> {
+    if let Some(val) = env::var_os("IROH_CONFIG_DIR") {
+        return Ok(PathBuf::from(val));
+    }
     let cfg = dirs_next::config_dir()
         .ok_or_else(|| anyhow!("operating environment provides no directory for configuration"))?;
     Ok(cfg.join(IROH_DIR))
@@ -73,7 +79,9 @@ pub fn iroh_config_path(file_name: &str) -> Result<PathBuf> {
 
 /// Returns the path to the user's iroh data directory.
 ///
-/// The returned value depends on the operating system and is either a `Some`, containing a value from the following table, or a `None`.
+/// If the `IROH_DATA_DIR` environment variable is set it will be used unconditionally.
+/// Otherwise the returned value depends on the operating system according to the following
+/// table.
 ///
 /// | Platform | Value                                         | Example                                  |
 /// | -------- | --------------------------------------------- | ---------------------------------------- |
@@ -81,6 +89,9 @@ pub fn iroh_config_path(file_name: &str) -> Result<PathBuf> {
 /// | macOS    | `$HOME`/Library/Application Support/iroh      | /Users/Alice/Library/Application Support/iroh |
 /// | Windows  | `{FOLDERID_RoamingAppData}/iroh`              | C:\Users\Alice\AppData\Roaming\iroh           |
 pub fn iroh_data_root() -> Result<PathBuf> {
+    if let Some(val) = env::var_os("IROH_DATA_DIR") {
+        return Ok(PathBuf::from(val));
+    }
     let path = dirs_next::data_dir().ok_or_else(|| {
         anyhow!("operating environment provides no directory for application data")
     })?;
@@ -95,7 +106,9 @@ pub fn iroh_data_path(file_name: &str) -> Result<PathBuf> {
 
 /// Returns the path to the user's iroh cache directory.
 ///
-/// The returned value depends on the operating system and is either a `Some`, containing a value from the following table, or a `None`.
+/// If the `IROH_CACHE_DIR` environment variable is set it will be used unconditionally.
+/// Otherwise the returned value depends on the operating system according to the following
+/// table.
 ///
 /// | Platform | Value                                         | Example                                  |
 /// | -------- | --------------------------------------------- | ---------------------------------------- |
@@ -103,6 +116,9 @@ pub fn iroh_data_path(file_name: &str) -> Result<PathBuf> {
 /// | macOS    | `$HOME`/Library/Caches/iroh                   | /Users/Alice/Library/Caches/iroh         |
 /// | Windows  | `{FOLDERID_LocalAppData}/iroh`                | C:\Users\Alice\AppData\Roaming\iroh      |
 pub fn iroh_cache_root() -> Result<PathBuf> {
+    if let Some(val) = env::var_os("IROH_CACHE_DIR") {
+        return Ok(PathBuf::from(val));
+    }
     let path = dirs_next::cache_dir().ok_or_else(|| {
         anyhow!("operating environment provides no directory for application data")
     })?;
@@ -192,11 +208,11 @@ where
     );
 
     // allow custom `IROH_INSTANCE_ID` env var
-    if let Ok(instance_id) = std::env::var("IROH_INSTANCE_ID") {
+    if let Ok(instance_id) = env::var("IROH_INSTANCE_ID") {
         metrics = metrics.set_override("instance_id", instance_id)?;
     }
     // allow custom `IROH_ENV` env var
-    if let Ok(service_env) = std::env::var("IROH_ENV") {
+    if let Ok(service_env) = env::var("IROH_ENV") {
         metrics = metrics.set_override("service_env", service_env)?;
     }
     let metrics = metrics.build().unwrap();
@@ -240,17 +256,70 @@ pub fn increase_fd_limit() -> std::io::Result<u64> {
 
 #[cfg(test)]
 mod tests {
+    use std::ffi::{OsStr, OsString};
+
     use serde::Deserialize;
     use testdir::testdir;
 
     use super::*;
+
+    /// Helper struct to restore an environment variable once dropped.
+    struct EnvDropGuard {
+        name: OsString,
+        value: Option<OsString>,
+    }
+
+    impl EnvDropGuard {
+        /// Which environment variable to preserve.
+        fn new(name: impl AsRef<OsStr>) -> Option<Self> {
+            let original = env::var_os(name.as_ref());
+            Some(EnvDropGuard {
+                name: name.as_ref().to_os_string(),
+                value: original,
+            })
+        }
+    }
+
+    impl Drop for EnvDropGuard {
+        fn drop(&mut self) {
+            match self.value {
+                Some(ref value) => {
+                    env::set_var(self.name.as_os_str(), value.as_os_str());
+                }
+                None => {
+                    env::remove_var(self.name.as_os_str());
+                }
+            }
+        }
+    }
 
     #[test]
     fn test_iroh_config_path() {
         let got = iroh_config_path("foo.bar").unwrap();
         let got = got.to_str().unwrap().to_string();
         let got = got.replace('\\', "/"); // handle windows paths
-        assert!(got.ends_with("/iroh/foo.bar"));
+        assert!(dbg!(got).ends_with("/iroh/foo.bar"));
+
+        // Now test the overrides by environment variable.  We have to do this in the same
+        // test since tests are run in parallel but changing environment variables affects
+        // the entire process.
+        let _guard = EnvDropGuard::new("IROH_CONFIG_DIR");
+        env::set_var("IROH_CONFIG_DIR", "/a/config/dir");
+
+        let res = iroh_config_path("iroh-test").unwrap();
+        assert_eq!(res, PathBuf::from("/a/config/dir/iroh-test"));
+
+        let _guard = EnvDropGuard::new("IROH_DATA_DIR");
+        env::set_var("IROH_DATA_DIR", "/a/data/dir");
+
+        let res = iroh_data_path("iroh-test").unwrap();
+        assert_eq!(res, PathBuf::from("/a/data/dir/iroh-test"));
+
+        let _guard = EnvDropGuard::new("IROH_CACHE_DIR");
+        env::set_var("IROH_CACHE_DIR", "/a/cache/dir");
+
+        let res = iroh_cache_path("iroh-test").unwrap();
+        assert_eq!(res, PathBuf::from("/a/cache/dir/iroh-test"));
     }
 
     #[derive(Debug, Clone, Deserialize)]
@@ -289,4 +358,6 @@ mod tests {
         .unwrap();
         assert_eq!(cfg.item, "one");
     }
+    #[test]
+    fn test_env_override() {}
 }
