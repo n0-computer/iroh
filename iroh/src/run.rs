@@ -85,13 +85,12 @@ enum Commands {
 impl Cli {
     pub async fn run(&self) -> Result<()> {
         let config_path = iroh_config_path(CONFIG_FILE_NAME)?;
-        // TODO(b5): allow suppliying some sort of config flag. maybe --config-cli?
-        let sources = vec![Some(config_path.as_path())];
+        let sources = [Some(config_path.as_path()), self.cfg.as_deref()];
         let config = make_config(
             // default
             Config::new(),
             // potential config files
-            sources,
+            &sources,
             // env var prefix for this config
             ENV_PREFIX,
             // map of present command line arguments
