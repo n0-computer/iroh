@@ -90,7 +90,7 @@ impl NodeBehaviour {
 
         let bitswap = if config.bitswap_client || config.bitswap_server {
             info!("init bitswap");
-            // NOTE: server only mode is not implemented yet
+            // TODO(dig): server only mode is not implemented yet
             let bs_config = if config.bitswap_server {
                 BitswapConfig::default()
             } else {

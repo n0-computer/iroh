@@ -238,9 +238,7 @@ impl<S: Store> Bitswap<S> {
     pub async fn stop(self) -> Result<()> {
         self.network.stop();
         if let Some(server) = self.server {
-            let (a, b) = futures::future::join(self.client.stop(), server.stop()).await;
-            a?;
-            b?;
+            futures::future::try_join(self.client.stop(), server.stop()).await?;
         } else {
             self.client.stop().await?;
         }
