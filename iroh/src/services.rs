@@ -5,6 +5,7 @@ use futures::StreamExt;
 use iroh_util::iroh_cache_path;
 use std::collections::HashSet;
 use std::io::{stdout, Write};
+use std::ops::Deref;
 use std::time::SystemTime;
 use sysinfo::PidExt;
 use tracing::info;
@@ -80,11 +81,9 @@ async fn start_services(api: &Api, services: HashSet<&str>) -> Result<()> {
             accum
         });
 
-    // TODO (b5) - use services.difference here, but figure out how to
-    // .collect() to &str instead of &&str
     let missing_services: HashSet<&str> = services
-        .into_iter()
-        .filter(|&service| missing_services.contains(service))
+        .difference(missing_services)
+        .map(Deref::deref)
         .collect();
 
     if missing_services.is_empty() {
