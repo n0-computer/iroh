@@ -66,6 +66,22 @@ impl RpcP2p for P2p {
     }
 
     #[tracing::instrument(skip(self))]
+    async fn listeners(&self, _: ()) -> Result<Multiaddrs> {
+        trace!("received Listeners request");
+
+        let (s, r) = oneshot::channel();
+        let msg = RpcMessage::Listeners(s);
+
+        self.sender.send(msg).await?;
+
+        let addrs = r.await?;
+
+        Ok(Multiaddrs {
+            addrs: addrs.into_iter().map(|addr| addr.to_vec()).collect(),
+        })
+    }
+
+    #[tracing::instrument(skip(self))]
     async fn local_peer_id(&self, _: ()) -> Result<PeerIdResponse> {
         trace!("received LocalPeerId request");
 
@@ -533,6 +549,7 @@ pub enum ProviderRequestKey {
 #[derive(Debug)]
 pub enum RpcMessage {
     ExternalAddrs(oneshot::Sender<Vec<Multiaddr>>),
+    Listeners(oneshot::Sender<Vec<Multiaddr>>),
     LocalPeerId(oneshot::Sender<PeerId>),
     BitswapRequest {
         ctx: u64,
