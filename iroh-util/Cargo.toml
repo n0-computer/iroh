@@ -23,5 +23,8 @@ thiserror = "1.0"
 toml = "0.5.9"
 tracing = "0.1.34"
 
+[dev-dependencies]
+testdir = "0.6.0"
+
 [target.'cfg(unix)'.dev-dependencies]
 nix = "0.25"

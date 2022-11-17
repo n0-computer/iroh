@@ -142,15 +142,17 @@ impl Source for MetricsSource {
     }
 }
 
-/// make a config using a default, file sources, environment variables, and commandline flag
-/// overrides
+/// Make a config using a default, files, environment variables, and commandline flags.
 ///
-/// environment variables are expected to start with the `env_prefix`. Nested fields can be
+/// Later items in the *file_paths* slice will have a higher priority than earlier ones.
+///
+/// Environment variables are expected to start with the *env_prefix*. Nested fields can be
 /// accessed using `.`, if your environment allows env vars with `.`
 ///
-/// Note: For the metrics configuration env vars, it is recommended to use the metrics specific
-/// prefix `IROH_METRICS` to set a field in the metrics config. You can use the above dot notation to set
-/// a metrics field, eg, `IROH_CONFIG_METRICS.SERVICE_NAME`, but only if your environment allows it
+/// Note: For the metrics configuration env vars, it is recommended to use the metrics
+/// specific prefix `IROH_METRICS` to set a field in the metrics config. You can use the
+/// above dot notation to set a metrics field, eg, `IROH_CONFIG_METRICS.SERVICE_NAME`, but
+/// only if your environment allows it
 pub fn make_config<T, S, V>(
     default: T,
     file_paths: &[Option<&Path>],
@@ -238,6 +240,9 @@ pub fn increase_fd_limit() -> std::io::Result<u64> {
 
 #[cfg(test)]
 mod tests {
+    use serde::Deserialize;
+    use testdir::testdir;
+
     use super::*;
 
     #[test]
@@ -246,5 +251,42 @@ mod tests {
         let got = got.to_str().unwrap().to_string();
         let got = got.replace('\\', "/"); // handle windows paths
         assert!(got.ends_with("/iroh/foo.bar"));
+    }
+
+    #[derive(Debug, Clone, Deserialize)]
+    struct Config {
+        item: String,
+    }
+
+    impl Source for Config {
+        fn clone_into_box(&self) -> Box<dyn Source + Send + Sync> {
+            Box::new(self.clone())
+        }
+
+        fn collect(&self) -> Result<Map<String, Value>, ConfigError> {
+            let mut map = Map::new();
+            insert_into_config_map(&mut map, "item", self.item.clone());
+            Ok(map)
+        }
+    }
+
+    #[test]
+    fn test_make_config_priority() {
+        // Asserting that later items have a higher priority
+        let cfgdir = testdir!();
+        let cfgfile0 = cfgdir.join("cfg0.toml");
+        std::fs::write(&cfgfile0, r#"item = "zero""#).unwrap();
+        let cfgfile1 = cfgdir.join("cfg1.toml");
+        std::fs::write(&cfgfile1, r#"item = "one""#).unwrap();
+        let cfg = make_config(
+            Config {
+                item: String::from("default"),
+            },
+            &[Some(cfgfile0.as_path()), Some(cfgfile1.as_path())],
+            "NO_PREFIX_PLEASE_",
+            HashMap::<String, String>::new(),
+        )
+        .unwrap();
+        assert_eq!(cfg.item, "one");
     }
 }
