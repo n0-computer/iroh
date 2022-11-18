@@ -26,7 +26,7 @@ jobs:
           - os: macos-latest
             release-os: darwin
             release-arch: aarch64
-            protoc-arch: osx-x86_64 # no official binaries run under rosetta2
+            protoc-arch: osx-aarch_64
             runner: [self-hosted, macOS, ARM64]
           - os: windows-latest
             release-os: windows
@@ -49,6 +49,7 @@ jobs:
       with:
         toolchain: ${{ matrix.rust }}
         components: clippy
+        override: true
     
     - name: Install Protoc windows
       if: matrix.os == 'windows-latest'
@@ -150,7 +151,7 @@ jobs:
           - os: macos-arm-latest
             release-os: darwin
             release-arch: aarch64
-            protoc-arch: osx-x86_64 # no official binaries run under rosetta2
+            protoc-arch: osx-aarch_64
             runner: [self-hosted, macOS, ARM64]
           # - os: windows-latest
           #   release-os: windows
@@ -175,6 +176,7 @@ jobs:
       uses: dtolnay/rust-toolchain@stable
       with:
         toolchain: ${{ matrix.rust }}
+        override: true
     
     - name: Install Protoc windows
       if: matrix.os == 'windows-latest'
