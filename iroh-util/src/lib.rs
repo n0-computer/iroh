@@ -294,7 +294,7 @@ mod tests {
     }
 
     #[test]
-    fn test_iroh_config_path() {
+    fn test_iroh_directory_paths() {
         let got = iroh_config_path("foo.bar").unwrap();
         let got = got.to_str().unwrap().to_string();
         let got = got.replace('\\', "/"); // handle windows paths
@@ -358,6 +358,4 @@ mod tests {
         .unwrap();
         assert_eq!(cfg.item, "one");
     }
-    #[test]
-    fn test_env_override() {}
 }
