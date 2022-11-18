@@ -51,7 +51,7 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread", "process", "fs
 tokio-util = { version = "0.7", features = ["io"] }
 toml = "0.5.9"
 tower = { version = "0.4", features = ["util", "timeout", "load-shed", "limit"] }
-tower-http = { version = "0.3", features = ["trace", "compression-full"] }
+tower-http = { version = "0.3", features = ["trace", "compression-full", "cors"] }
 tower-layer = { version = "0.3" }
 tracing = "0.1.33"
 tracing-opentelemetry = "0.18"
