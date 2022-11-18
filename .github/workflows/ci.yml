@@ -31,7 +31,7 @@ jobs:
           - os: windows-latest
             release-os: windows
             release-arch: amd64
-            runner: [windows-latest]
+            runner: [self-hosted, windows, X64]
     env:
       RUST_BACKTRACE: full
       # Force not building debuginfo to save space on disk.
