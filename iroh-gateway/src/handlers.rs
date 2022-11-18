@@ -688,7 +688,7 @@ async fn serve_fs_dir<T: ContentLoader + std::marker::Unpin>(
             let mut el = HashMap::new();
             let path = match accum.last() {
                 Some(prev) => match prev.get("path") {
-                    Some(base) => format!("/{}/{}", base, encode(path_el)),
+                    Some(base) => format!("{}/{}", base, encode(path_el)),
                     None => format!("/{}", encode(path_el)),
                 },
                 None => {
