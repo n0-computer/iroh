@@ -36,8 +36,6 @@ jobs:
       RUST_BACKTRACE: full
       # Force not building debuginfo to save space on disk.
       RUSTFLAGS: "-C debuginfo=0"
-      # Force all builds to be non-incremental - better for cache
-      CARGO_INCREMENTAL: 0
       RUSTV: ${{ matrix.rust }}
     steps:
     - uses: actions/checkout@master
@@ -70,9 +68,6 @@ jobs:
         rm -f $PROTOC_ZIP
         echo "PROTOC=/usr/local/bin/protoc" >> $GITHUB_ENV
         echo "PROTOC_INCLUDE=/usr/local/include" >> $GITHUB_ENV
-
-    - name: Cache rust cargo artifacts
-      uses: swatinem/rust-cache@v2
 
     - name: check
       uses: actions-rs/cargo@v1
@@ -153,8 +148,6 @@ jobs:
       RUST_BACKTRACE: full
       # Force not building debuginfo to save space on disk.
       RUSTFLAGS: "-C debuginfo=0"
-      # Force all builds to be non-incremental - better for cache
-      CARGO_INCREMENTAL: 0
       RUSTV: ${{ matrix.rust }}
     steps:
     - uses: actions/checkout@master
