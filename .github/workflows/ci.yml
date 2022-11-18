@@ -47,10 +47,10 @@ jobs:
         echo "PROTOC_ARCH=${{ matrix.protoc-arch }}" >> $GITHUB_ENV        
     
     - name: Install ${{ matrix.rust }}
-      uses: actions-rs/toolchain@v1
+      uses: dtolnay/rust-toolchain@master
       with:
         toolchain: ${{ matrix.rust }}
-        override: true
+        components: clippy
     
     - name: Install Protoc windows
       if: matrix.os == 'windows-latest'
@@ -166,10 +166,9 @@ jobs:
         echo "PROTOC_ARCH=${{ matrix.protoc-arch }}" >> $GITHUB_ENV        
     
     - name: Install ${{ matrix.rust }}
-      uses: actions-rs/toolchain@v1
+      uses: dtolnay/rust-toolchain@master
       with:
         toolchain: ${{ matrix.rust }}
-        override: true
     
     - name: Install Protoc windows
       if: matrix.os == 'windows-latest'
