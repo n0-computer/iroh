@@ -157,12 +157,49 @@ jobs:
       with:
         toolchain: ${{ matrix.rust }}
         override: true
-
-    - name: Install Protoc
+    
+    - name: Install Protoc windows
+      if: matrix.os == 'windows-latest'
       uses: arduino/setup-protoc@v1
       with:
         version: '3.20.1'
         repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Install Protoc linux
+      if: matrix.os == 'ubuntu-latest'
+      run: |
+        PROTOC_VERSION=3.20.1
+        PROTOC_ZIP=protoc-$PROTOC_VERSION-linux-x86_64.zip
+        curl -OL https://github.com/protocolbuffers/protobuf/releases/download/v$PROTOC_VERSION/$PROTOC_ZIP
+        sudo unzip -o $PROTOC_ZIP -d /usr/local bin/protoc
+        sudo unzip -o $PROTOC_ZIP -d /usr/local 'include/*'
+        rm -f $PROTOC_ZIP
+        echo "PROTOC=/usr/local/bin/protoc" >> $GITHUB_ENV
+        echo "PROTOC_INCLUDE=/usr/local/include" >> $GITHUB_ENV
+    
+    - name: Install Protoc arm linux
+      if: matrix.os == 'ubuntu-arm-latest'
+      run: |
+        PROTOC_VERSION=3.20.1
+        PROTOC_ZIP=protoc-$PROTOC_VERSION-linux-aarch_64.zip
+        curl -OL https://github.com/protocolbuffers/protobuf/releases/download/v$PROTOC_VERSION/$PROTOC_ZIP
+        sudo unzip -o $PROTOC_ZIP -d /usr/local bin/protoc
+        sudo unzip -o $PROTOC_ZIP -d /usr/local 'include/*'
+        rm -f $PROTOC_ZIP
+        echo "PROTOC=/usr/local/bin/protoc" >> $GITHUB_ENV
+        echo "PROTOC_INCLUDE=/usr/local/include" >> $GITHUB_ENV
+    
+    - name: Install Protoc macOS
+      if: matrix.os == 'macOS-latest'
+      run: |
+        PROTOC_VERSION=3.20.1
+        PROTOC_ZIP=protoc-$PROTOC_VERSION-osx-x86_64.zip
+        curl -OL https://github.com/protocolbuffers/protobuf/releases/download/v$PROTOC_VERSION/$PROTOC_ZIP
+        sudo unzip -o $PROTOC_ZIP -d /usr/local bin/protoc
+        sudo unzip -o $PROTOC_ZIP -d /usr/local 'include/*'
+        rm -f $PROTOC_ZIP
+        echo "PROTOC=/usr/local/bin/protoc" >> $GITHUB_ENV
+        echo "PROTOC_INCLUDE=/usr/local/include" >> $GITHUB_ENV
 
     - name: build release
       uses: actions-rs/cargo@v1
