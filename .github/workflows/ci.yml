@@ -128,7 +128,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macOS-latest]
+        name: [ubuntu-latest, ubuntu-arm-latest, macOS-latest, macOS-arm-latest]
         rust: [stable]
         experimental: [false]
         include:
@@ -144,14 +144,14 @@ jobs:
             release-arch: amd64
             protoc-arch: linux-x86_64
             runner: [self-hosted, linux, X64]
-          - name: macos-latest
-            os: macos-latest
+          - name: macOS-latest
+            os: macOS-latest
             release-os: darwin
             release-arch: x86_64
             protoc-arch: osx-x86_64
             runner: [self-hosted, macOS, X64]
-          - name: macos-arm-latest
-            os: macos-latest
+          - name: macOS-arm-latest
+            os: macOS-latest
             release-os: darwin
             release-arch: aarch64
             protoc-arch: osx-aarch_64
