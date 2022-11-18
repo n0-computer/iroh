@@ -53,6 +53,7 @@ jobs:
     - name: Install ${{ matrix.rust }}
       run: |
         rustup toolchain install ${{ matrix.rust }}
+        
     
     - name: Install Protoc windows
       if: matrix.os == 'windows-latest'
