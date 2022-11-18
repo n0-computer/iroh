@@ -35,6 +35,7 @@ jobs:
       # Force not building debuginfo to save space on disk.
       RUSTFLAGS: "-C debuginfo=0"
       # Force all builds to be non-incremental - better for cache
+      CARGO_INCREMENTAL: 0
       RUSTV: ${{ matrix.rust }}
     steps:
     - uses: actions/checkout@master
@@ -45,23 +46,8 @@ jobs:
         toolchain: ${{ matrix.rust }}
         override: true
 
-    # - name: Cache cargo registry
-    #   uses: actions/cache@v3
-    #   continue-on-error: false
-    #   with:
-    #     path: |
-    #       ~/.cargo/registry          
-    #       ~/.cargo/bin
-    #       ~/.cargo/registry/index
-    #       ~/.cargo/registry/cache
-    #       ~/.cargo/git
-    #       ~/.cargo/.crates.toml
-    #       ~/.cargo/.crates2.json
-    #       ./target
-            
-    #     key: ${{ runner.os }}-${{ matrix.rust }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-    #     restore-keys: |
-    #                   ${{ runner.os }}-${{ matrix.rust }}-cargo-
+    - name: Cache rust cargo artifacts
+      uses: swatinem/rust-cache@v2
 
     - name: Install Protoc
       uses: arduino/setup-protoc@v1
@@ -73,14 +59,13 @@ jobs:
       uses: actions-rs/cargo@v1
       with:
         command: check
-        args: --workspace --all-features --bins --tests --examples --benches
+        args: --workspace --all-features --all-targets
     
     - name: clippy
       uses: actions-rs/cargo@v1
-      if: matrix.os == 'ubuntu-latest'
       with:
         command: clippy
-        args: --workspace --all-features --tests --benches --examples --bins --all-targets -- -D warnings
+        args: --workspace --all-features --all-targets -- -D warnings
 
     - name: tests
       uses: actions-rs/cargo@v1
@@ -93,7 +78,7 @@ jobs:
         OBJC_DISABLE_INITIALIZE_FORK_SAFETY: "YES"
       with:
         command: test
-        args: --workspace --all-features --examples --benches --bins
+        args: --workspace --all-features --all-targets
     
     - name: tests w/o default features
       uses: actions-rs/cargo@v1
@@ -106,7 +91,7 @@ jobs:
         OBJC_DISABLE_INITIALIZE_FORK_SAFETY: "YES"
       with:
         command: test
-        args: --workspace --no-default-features --examples --benches --bins
+        args: --workspace --no-default-features --all-targets
 
   build_release:
     name: Build release binaries
@@ -211,6 +196,13 @@ jobs:
       if: matrix.os == 'ubuntu-latest'
       run: |
         curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+        unzip awscliv2.zip
+        sudo ./aws/install --update
+    
+    - name: Setup awscli on linux
+      if: matrix.os == 'ubuntu-arm-latest'
+      run: |
+        curl "https://awscli.amazonaws.com/awscli-exe-linux-aarch64.zip" -o "awscliv2.zip"
         unzip awscliv2.zip
         sudo ./aws/install --update
 
