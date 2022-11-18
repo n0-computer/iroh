@@ -21,11 +21,13 @@ jobs:
           - os: ubuntu-latest
             release-os: linux
             release-arch: amd64
+            protoc-arch: linux-x86_64
             runner: [self-hosted, linux, X64]
           - os: macos-latest
             release-os: darwin
-            release-arch: x86_64
-            runner: [self-hosted, macOS, X64]
+            release-arch: aarch64
+            protoc-arch: osx-x86_64 # no official binaries run under rosetta2
+            runner: [self-hosted, macOS, ARM64]
           - os: windows-latest
             release-os: windows
             release-arch: amd64
@@ -40,20 +42,37 @@ jobs:
     steps:
     - uses: actions/checkout@master
 
+    - name: Set build arch
+      run: |
+        echo "PROTOC_ARCH=${{ matrix.protoc-arch }}" >> $GITHUB_ENV        
+    
     - name: Install ${{ matrix.rust }}
       uses: actions-rs/toolchain@v1
       with:
         toolchain: ${{ matrix.rust }}
         override: true
-
-    - name: Cache rust cargo artifacts
-      uses: swatinem/rust-cache@v2
-
-    - name: Install Protoc
+    
+    - name: Install Protoc windows
+      if: matrix.os == 'windows-latest'
       uses: arduino/setup-protoc@v1
       with:
         version: '3.20.1'
         repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Install Protoc
+      if: matrix.os != 'windows-latest'
+      run: |
+        PROTOC_VERSION=3.20.1
+        PROTOC_ZIP=protoc-$PROTOC_VERSION-$PROTOC_ARCH.zip
+        curl -OL https://github.com/protocolbuffers/protobuf/releases/download/v$PROTOC_VERSION/$PROTOC_ZIP
+        sudo unzip -o $PROTOC_ZIP -d /usr/local bin/protoc
+        sudo unzip -o $PROTOC_ZIP -d /usr/local 'include/*'
+        rm -f $PROTOC_ZIP
+        echo "PROTOC=/usr/local/bin/protoc" >> $GITHUB_ENV
+        echo "PROTOC_INCLUDE=/usr/local/include" >> $GITHUB_ENV
+
+    - name: Cache rust cargo artifacts
+      uses: swatinem/rust-cache@v2
 
     - name: check
       uses: actions-rs/cargo@v1
@@ -109,15 +128,23 @@ jobs:
           - os: ubuntu-arm-latest
             release-os: linux
             release-arch: aarch64
+            protoc-arch: linux-aarch_64
             runner: [self-hosted, linux, ARM64]
           - os: ubuntu-latest
             release-os: linux
             release-arch: amd64
+            protoc-arch: linux-x86_64
             runner: [self-hosted, linux, X64]
           - os: macos-latest
             release-os: darwin
             release-arch: x86_64
+            protoc-arch: osx-x86_64
             runner: [self-hosted, macOS, X64]
+          - os: macos-arm-latest
+            release-os: darwin
+            release-arch: aarch64
+            protoc-arch: osx-x86_64 # no official binaries run under rosetta2
+            runner: [self-hosted, macOS, ARM64]
           # - os: windows-latest
           #   release-os: windows
           #   release-arch: amd64
@@ -135,7 +162,8 @@ jobs:
     - name: Set build arch
       run: |
         echo "RELEASE_ARCH=${{ matrix.release-arch }}" >> $GITHUB_ENV
-        echo "RELEASE_OS=${{ matrix.release-os }}" >> $GITHUB_ENV        
+        echo "RELEASE_OS=${{ matrix.release-os }}" >> $GITHUB_ENV       
+        echo "PROTOC_ARCH=${{ matrix.protoc-arch }}" >> $GITHUB_ENV        
     
     - name: Install ${{ matrix.rust }}
       uses: actions-rs/toolchain@v1
@@ -150,35 +178,11 @@ jobs:
         version: '3.20.1'
         repo-token: ${{ secrets.GITHUB_TOKEN }}
 
-    - name: Install Protoc linux
-      if: matrix.os == 'ubuntu-latest'
+    - name: Install Protoc
+      if: matrix.os != 'windows-latest'
       run: |
         PROTOC_VERSION=3.20.1
-        PROTOC_ZIP=protoc-$PROTOC_VERSION-linux-x86_64.zip
-        curl -OL https://github.com/protocolbuffers/protobuf/releases/download/v$PROTOC_VERSION/$PROTOC_ZIP
-        sudo unzip -o $PROTOC_ZIP -d /usr/local bin/protoc
-        sudo unzip -o $PROTOC_ZIP -d /usr/local 'include/*'
-        rm -f $PROTOC_ZIP
-        echo "PROTOC=/usr/local/bin/protoc" >> $GITHUB_ENV
-        echo "PROTOC_INCLUDE=/usr/local/include" >> $GITHUB_ENV
-    
-    - name: Install Protoc arm linux
-      if: matrix.os == 'ubuntu-arm-latest'
-      run: |
-        PROTOC_VERSION=3.20.1
-        PROTOC_ZIP=protoc-$PROTOC_VERSION-linux-aarch_64.zip
-        curl -OL https://github.com/protocolbuffers/protobuf/releases/download/v$PROTOC_VERSION/$PROTOC_ZIP
-        sudo unzip -o $PROTOC_ZIP -d /usr/local bin/protoc
-        sudo unzip -o $PROTOC_ZIP -d /usr/local 'include/*'
-        rm -f $PROTOC_ZIP
-        echo "PROTOC=/usr/local/bin/protoc" >> $GITHUB_ENV
-        echo "PROTOC_INCLUDE=/usr/local/include" >> $GITHUB_ENV
-    
-    - name: Install Protoc macOS
-      if: matrix.os == 'macOS-latest'
-      run: |
-        PROTOC_VERSION=3.20.1
-        PROTOC_ZIP=protoc-$PROTOC_VERSION-osx-x86_64.zip
+        PROTOC_ZIP=protoc-$PROTOC_VERSION-$PROTOC_ARCH.zip
         curl -OL https://github.com/protocolbuffers/protobuf/releases/download/v$PROTOC_VERSION/$PROTOC_ZIP
         sudo unzip -o $PROTOC_ZIP -d /usr/local bin/protoc
         sudo unzip -o $PROTOC_ZIP -d /usr/local 'include/*'
@@ -228,45 +232,6 @@ jobs:
         aws s3 cp ./target/optimized-release/iroh-p2p s3://vorc/iroh-p2p-${RELEASE_OS}-${RELEASE_ARCH}-latest --no-progress
         aws s3 cp ./target/optimized-release/iroh-store s3://vorc/iroh-store-${RELEASE_OS}-${RELEASE_ARCH}-latest --no-progress
         aws s3 cp ./target/optimized-release/iroh s3://vorc/iroh-${RELEASE_OS}-${RELEASE_ARCH}-latest --no-progress
-
-    - name: Install rust toolchain
-      uses: actions-rs/toolchain@v1
-      if: matrix.os == 'macOS-latest'
-      with:
-        profile: minimal
-        override: true
-        default: true
-        toolchain: ${{ matrix.rust }}
-        target: aarch64-apple-darwin
-    
-    - name: build release
-      uses: actions-rs/cargo@v1
-      if: matrix.os == 'macOS-latest'
-      with:
-        command: build
-        args: --profile optimized-release -p iroh -p iroh-gateway -p iroh-p2p -p iroh-store --target aarch64-apple-darwin
-
-    - name: Setup awscli on mac
-      if: matrix.os == 'macos-latest'
-      run: |
-        curl "https://awscli.amazonaws.com/AWSCLIV2.pkg" -o "AWSCLIV2.pkg"
-        sudo installer -pkg AWSCLIV2.pkg -target /
-
-    - name: push release macOS aarch64
-      if: matrix.os == 'macOS-latest'
-      run: |
-        aws s3 cp ./target/aarch64-apple-darwin/optimized-release/iroh-gateway s3://vorc/iroh-gateway-${RELEASE_OS}-aarch64-${GITHUB_SHA::7} --no-progress
-        aws s3 cp ./target/aarch64-apple-darwin/optimized-release/iroh-p2p s3://vorc/iroh-p2p-${RELEASE_OS}-aarch64-${GITHUB_SHA::7} --no-progress
-        aws s3 cp ./target/aarch64-apple-darwin/optimized-release/iroh-store s3://vorc/iroh-store-${RELEASE_OS}-aarch64-${GITHUB_SHA::7} --no-progress
-        aws s3 cp ./target/aarch64-apple-darwin/optimized-release/iroh s3://vorc/iroh-${RELEASE_OS}-aarch64-${GITHUB_SHA::7} --no-progress
-
-    - name: push release latest macOS aarch64
-      if: matrix.os == 'macOS-latest'
-      run: |
-        aws s3 cp ./target/aarch64-apple-darwin/optimized-release/iroh-gateway s3://vorc/iroh-gateway-${RELEASE_OS}-aarch64-latest --no-progress
-        aws s3 cp ./target/aarch64-apple-darwin/optimized-release/iroh-p2p s3://vorc/iroh-p2p-${RELEASE_OS}-aarch64-latest --no-progress
-        aws s3 cp ./target/aarch64-apple-darwin/optimized-release/iroh-store s3://vorc/iroh-store-${RELEASE_OS}-aarch64-latest --no-progress
-        aws s3 cp ./target/aarch64-apple-darwin/optimized-release/iroh s3://vorc/iroh-${RELEASE_OS}-aarch64-latest --no-progress
 
   fmt:
     name: Rustfmt
