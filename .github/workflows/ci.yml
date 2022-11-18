@@ -112,8 +112,8 @@ jobs:
     name: Build release binaries
     runs-on: ${{ matrix.runner }}
     continue-on-error: false
-    needs: build_and_test
-    if: ${{ always() && github.ref_name=='main' }}
+    # needs: build_and_test
+    # if: ${{ always() && github.ref_name=='main' }}
     strategy:
       fail-fast: false
       matrix:
