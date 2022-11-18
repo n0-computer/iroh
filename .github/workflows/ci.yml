@@ -44,11 +44,11 @@ jobs:
       run: |
         echo "PROTOC_ARCH=${{ matrix.protoc-arch }}" >> $GITHUB_ENV        
     
-    # - name: Install ${{ matrix.rust }}
-    #   uses: dtolnay/rust-toolchain@stable
-    #   with:
-    #     toolchain: ${{ matrix.rust }}
-    #     components: clippy
+    - name: Install ${{ matrix.rust }}
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        toolchain: ${{ matrix.rust }}
+        components: clippy
 
     - name: Install ${{ matrix.rust }}
       run: |
