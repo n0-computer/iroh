@@ -18,7 +18,7 @@ const SERVICE_START_TIMEOUT_SECONDS: u64 = 15;
 /// Start any given services that aren't currently running.
 pub async fn start(api: &Api, services: &Vec<String>) -> Result<()> {
     let services = match services.is_empty() {
-        true => HashSet::from(["gateway", "store"]),
+        true => HashSet::from(["gateway", "store", "p2p"]),
         false => {
             let mut hs: HashSet<&str> = HashSet::new();
             for s in services {
@@ -82,7 +82,7 @@ async fn start_services(api: &Api, services: HashSet<&str>) -> Result<()> {
         });
 
     let missing_services: HashSet<&str> = services
-        .difference(missing_services)
+        .intersection(missing_services)
         .map(Deref::deref)
         .collect();
 
