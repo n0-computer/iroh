@@ -75,6 +75,7 @@ jobs:
     
     - name: clippy
       run: |
+        rustup component add clippy
         cargo clippy --workspace --all-features --all-targets -- -D warnings
 
     - name: tests
