@@ -31,7 +31,7 @@ jobs:
           - os: windows-latest
             release-os: windows
             release-arch: amd64
-            runner: [windows-latest]
+            runner: [self-hosted, windows, X64]
     env:
       RUST_BACKTRACE: full
       # Force not building debuginfo to save space on disk.
@@ -43,12 +43,10 @@ jobs:
     - name: Set build arch
       run: |
         echo "PROTOC_ARCH=${{ matrix.protoc-arch }}" >> $GITHUB_ENV        
-    
+
     - name: Install ${{ matrix.rust }}
-      uses: dtolnay/rust-toolchain@stable
-      with:
-        toolchain: ${{ matrix.rust }}
-        components: clippy
+      run: |
+        rustup toolchain install ${{ matrix.rust }}
     
     - name: Install Protoc windows
       if: matrix.os == 'windows-latest'
@@ -156,9 +154,8 @@ jobs:
         echo "PROTOC_ARCH=${{ matrix.protoc-arch }}" >> $GITHUB_ENV        
     
     - name: Install ${{ matrix.rust }}
-      uses: dtolnay/rust-toolchain@stable
-      with:
-        toolchain: ${{ matrix.rust }}
+      run: |
+        rustup toolchain install ${{ matrix.rust }}
     
     - name: Install Protoc windows
       if: matrix.os == 'windows-latest'
