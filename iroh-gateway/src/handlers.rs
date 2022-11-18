@@ -61,6 +61,8 @@ pub trait StateConfig: std::fmt::Debug + Sync + Send {
 }
 
 pub fn get_app_routes<T: ContentLoader + std::marker::Unpin>(state: &Arc<State<T>>) -> Router {
+    let cors = crate::cors::cors_from_headers(state.config.user_headers());
+
     // todo(arqu): ?uri=... https://github.com/ipfs/go-ipfs/pull/7802
     Router::new()
         .route("/:scheme/:cid", get(get_handler::<T>))
@@ -68,6 +70,7 @@ pub fn get_app_routes<T: ContentLoader + std::marker::Unpin>(state: &Arc<State<T
         .route("/health", get(health_check))
         .route("/icons.css", get(stylesheet_icons))
         .route("/style.css", get(stylesheet_main))
+        .layer(cors)
         .layer(Extension(Arc::clone(state)))
         .layer(
             ServiceBuilder::new()
