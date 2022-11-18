@@ -49,7 +49,6 @@ jobs:
       with:
         toolchain: ${{ matrix.rust }}
         components: clippy
-        override: true
     
     - name: Install Protoc windows
       if: matrix.os == 'windows-latest'
@@ -133,22 +132,26 @@ jobs:
         rust: [stable]
         experimental: [false]
         include:
-          - os: ubuntu-arm-latest
+          - name: ubuntu-arm-latest
+            os: ubuntu-latest
             release-os: linux
             release-arch: aarch64
             protoc-arch: linux-aarch_64
             runner: [self-hosted, linux, ARM64]
-          - os: ubuntu-latest
+          - name: ubuntu-latest
+            os: ubuntu-latest
             release-os: linux
             release-arch: amd64
             protoc-arch: linux-x86_64
             runner: [self-hosted, linux, X64]
-          - os: macos-latest
+          - name: macos-latest
+            os: macos-latest
             release-os: darwin
             release-arch: x86_64
             protoc-arch: osx-x86_64
             runner: [self-hosted, macOS, X64]
-          - os: macos-arm-latest
+          - name: macos-arm-latest
+            os: macos-latest
             release-os: darwin
             release-arch: aarch64
             protoc-arch: osx-aarch_64
@@ -176,7 +179,6 @@ jobs:
       uses: dtolnay/rust-toolchain@stable
       with:
         toolchain: ${{ matrix.rust }}
-        override: true
     
     - name: Install Protoc windows
       if: matrix.os == 'windows-latest'
