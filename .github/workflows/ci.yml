@@ -179,10 +179,8 @@ jobs:
         echo "PROTOC_INCLUDE=/usr/local/include" >> $GITHUB_ENV
 
     - name: build release
-      uses: actions-rs/cargo@v1
-      with:
-        command: build
-        args: --profile optimized-release -p iroh -p iroh-gateway -p iroh-p2p -p iroh-store
+      run: |
+        cargo build --profile optimized-release -p iroh -p iroh-gateway -p iroh-p2p -p iroh-store
 
     - name: Setup awscli on linux
       if: matrix.os == 'ubuntu-latest'
