@@ -183,18 +183,24 @@ jobs:
         cargo build --profile optimized-release -p iroh -p iroh-gateway -p iroh-p2p -p iroh-store
 
     - name: Setup awscli on linux
-      if: matrix.os == 'ubuntu-latest'
+      if: matrix.name == 'ubuntu-latest'
       run: |
         curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
         unzip awscliv2.zip
         sudo ./aws/install --update
     
     - name: Setup awscli on linux
-      if: matrix.os == 'ubuntu-arm-latest'
+      if: matrix.name == 'ubuntu-arm-latest'
       run: |
         curl "https://awscli.amazonaws.com/awscli-exe-linux-aarch64.zip" -o "awscliv2.zip"
         unzip awscliv2.zip
         sudo ./aws/install --update
+
+    - name: Setup awscli on mac
+      if: matrix.os == 'macos-latest'
+      run: |
+        curl "https://awscli.amazonaws.com/AWSCLIV2.pkg" -o "AWSCLIV2.pkg"
+        sudo installer -pkg AWSCLIV2.pkg -target /
 
     - name: Set aws credentials
       if: matrix.os != 'windows-latest'
