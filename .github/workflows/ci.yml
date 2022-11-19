@@ -5,14 +5,12 @@ on:
   push:
     branches:
       - main
-      - staging
-      - trying
 
 jobs:
   build_and_test:
     name: Build and test
-    runs-on: ${{ matrix.os }}
-    continue-on-error: ${{ matrix.experimental }}
+    runs-on: ${{ matrix.runner }}
+    continue-on-error: false
     strategy:
       fail-fast: false
       matrix:
@@ -21,126 +19,64 @@ jobs:
         experimental: [false]
         include:
           - os: ubuntu-latest
-            sccache-path: /home/runner/.cache/sccache
             release-os: linux
             release-arch: amd64
+            protoc-arch: linux-x86_64
+            runner: [self-hosted, linux, X64]
           - os: macos-latest
-            sccache-path: /Users/runner/Library/Caches/Mozilla.sccache
             release-os: darwin
-            release-arch: x86_64
+            release-arch: aarch64
+            protoc-arch: osx-aarch_64
+            runner: [self-hosted, macOS, ARM64]
           - os: windows-latest
-            sccache-path: "%LOCALAPPDATA%\\sccache"
             release-os: windows
             release-arch: amd64
+            runner: [self-hosted, windows, X64]
     env:
       RUST_BACKTRACE: full
       # Force not building debuginfo to save space on disk.
       RUSTFLAGS: "-C debuginfo=0"
-      RUSTC_WRAPPER: sccache
       RUSTV: ${{ matrix.rust }}
-      SCCACHE_CACHE_SIZE: 2G
-      # SCCACHE_RECACHE: 1 # Uncomment this to clear cache, then comment it back out
     steps:
     - uses: actions/checkout@master
 
-    - name: Set sccache env path
-      if: matrix.os != 'windows-latest'
-      run: |
-          echo "SCCACHE_DIR=${{ matrix.sccache-path }}" >> $GITHUB_ENV
     - name: Set build arch
       run: |
-        echo "RELEASE_ARCH=${{ matrix.release-arch }}" >> $GITHUB_ENV
-        echo "RELEASE_OS=${{ matrix.release-os }}" >> $GITHUB_ENV
-    
-    - name: Claim back some disk space (ubuntu-latest)
-      if: matrix.os == 'ubuntu-latest'
-      run: |
-        sudo rm -rf /usr/share/dotnet
-        sudo rm -rf /opt/ghc
-        sudo rm -rf "/usr/local/share/boost"
-        sudo rm -rf "$AGENT_TOOLSDIRECTORY"
+        echo "PROTOC_ARCH=${{ matrix.protoc-arch }}" >> $GITHUB_ENV        
 
-    - name: Install sccache (ubuntu-latest)
-      if: matrix.os == 'ubuntu-latest'
-      env:
-        LINK: https://github.com/mozilla/sccache/releases/download
-        SCCACHE_VERSION: v0.2.15
-      run: |
-        SCCACHE_FILE=sccache-$SCCACHE_VERSION-x86_64-unknown-linux-musl
-        mkdir -p $HOME/.local/bin
-        curl -L "$LINK/$SCCACHE_VERSION/$SCCACHE_FILE.tar.gz" | tar xz
-        mv -f $SCCACHE_FILE/sccache $HOME/.local/bin/sccache
-        chmod 755 $HOME/.local/bin/sccache
-        echo "$HOME/.local/bin" >> $GITHUB_PATH  
-    
-    - name: Install scoop (windows-latest)
-      if: matrix.os == 'windows-latest'
-      shell: powershell
-      run: |
-        Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
-        iwr -useb get.scoop.sh -outfile 'install.ps1'
-        .\\install.ps1 -RunAsAdmin
-        Join-Path (Resolve-Path ~).Path "scoop\shims" >> $Env:GITHUB_PATH
-    
-    - name: Install sccache (windows-latest)
-      if: matrix.os == 'windows-latest'
-      shell: powershell
-      run: scoop install sccache
-    
-    - name: Install sccache (macos-latest)
-      if: matrix.os == 'macos-latest'
-      run: |
-        brew update
-        brew install sccache          
-    
     - name: Install ${{ matrix.rust }}
-      uses: actions-rs/toolchain@v1
-      with:
-        toolchain: ${{ matrix.rust }}
-        override: true
+      run: |
+        rustup toolchain install ${{ matrix.rust }}
     
-    - name: Cache cargo registry
-      uses: actions/cache@v2
-      continue-on-error: false
-      with:
-        path: |
-          ~/.cargo/registry          
-          ~/.cargo/bin
-          ~/.cargo/registry/index
-          ~/.cargo/registry/cache
-          ~/.cargo/git
-          ~/.cargo/.crates.toml
-          ~/.cargo/.crates2.json
-          ./target
-            
-        key: ${{ runner.os }}-${{ matrix.rust }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-        restore-keys: |
-                      ${{ runner.os }}-${{ matrix.rust }}-cargo-
-    - name: Save sccache
-      uses: actions/cache@v2
-      continue-on-error: false
-      with:
-        path: ${{ matrix.sccache-path }}
-        key: ${{ runner.os }}-${{ matrix.rust }}-sccache-${{ hashFiles('**/Cargo.lock') }}
-        restore-keys: |
-                      ${{ runner.os }}-${{ matrix.rust }}-sccache-
-    - name: Start sccache server
-      run: sccache --start-server
-
-    - name: Install Protoc
+    - name: Install Protoc windows
+      if: matrix.os == 'windows-latest'
       uses: arduino/setup-protoc@v1
       with:
         version: '3.20.1'
         repo-token: ${{ secrets.GITHUB_TOKEN }}
 
+    - name: Install Protoc
+      if: matrix.os != 'windows-latest'
+      run: |
+        PROTOC_VERSION=3.20.1
+        PROTOC_ZIP=protoc-$PROTOC_VERSION-$PROTOC_ARCH.zip
+        curl -OL https://github.com/protocolbuffers/protobuf/releases/download/v$PROTOC_VERSION/$PROTOC_ZIP
+        sudo unzip -o $PROTOC_ZIP -d /usr/local bin/protoc
+        sudo unzip -o $PROTOC_ZIP -d /usr/local 'include/*'
+        rm -f $PROTOC_ZIP
+        echo "PROTOC=/usr/local/bin/protoc" >> $GITHUB_ENV
+        echo "PROTOC_INCLUDE=/usr/local/include" >> $GITHUB_ENV
+
     - name: check
-      uses: actions-rs/cargo@v1
-      with:
-        command: check
-        args: --workspace --all-features --bins --tests --examples --benches
+      run: |
+        cargo check --workspace --all-features --all-targets
+    
+    - name: clippy
+      run: |
+        rustup component add clippy
+        cargo clippy --workspace --all-features --all-targets -- -D warnings
 
     - name: tests
-      uses: actions-rs/cargo@v1
       timeout-minutes: 30
       env:
         # iroh-util/src/lock.rs#test_locks uses a fork() command & fails only in
@@ -148,53 +84,121 @@ jobs:
         # https://twitter.com/steipete/status/921066430220652544?lang=en
         # https://blog.phusion.nl/2017/10/13/why-ruby-app-servers-break-on-macos-high-sierra-and-what-can-be-done-about-it/
         OBJC_DISABLE_INITIALIZE_FORK_SAFETY: "YES"
-      with:
-        command: test
-        args: -j 2 --workspace --all-features --examples --benches --bins
-
-    - name: clippy
-      uses: actions-rs/cargo@v1
-      if: matrix.os == 'ubuntu-latest' && matrix.rust=='stable'
-      with:
-        command: clippy
-        args: --workspace --all-features --tests --benches --examples --bins --all-targets -- -D warnings
-
-    - name: build release
-      uses: actions-rs/cargo@v1
-      if: matrix.rust=='stable' && github.ref_name=='main'
-      with:
-        command: build
-        args: --profile ci
-    
-    - name: Install rust toolchain
-      uses: actions-rs/toolchain@v1
-      if: matrix.rust=='stable' && matrix.os == 'macOS-latest' && github.ref_name=='main'
-      with:
-        profile: minimal
-        override: true
-        default: true
-        toolchain: ${{ matrix.rust }}
-        target: aarch64-apple-darwin
-    
-    - name: build release
-      uses: actions-rs/cargo@v1
-      if: matrix.rust=='stable' && matrix.os == 'macOS-latest' && github.ref_name=='main'
-      with:
-        command: build
-        args: --profile ci --target aarch64-apple-darwin
-
-    - name: Setup awscli on mac
-      if: matrix.os == 'macos-latest' && matrix.rust=='stable' && github.ref_name=='main'
       run: |
-        curl "https://awscli.amazonaws.com/AWSCLIV2.pkg" -o "AWSCLIV2.pkg"
-        sudo installer -pkg AWSCLIV2.pkg -target /
+        cargo test --workspace --all-features --all-targets
+      
+    - name: tests w/o default features
+      timeout-minutes: 30
+      env:
+        # iroh-util/src/lock.rs#test_locks uses a fork() command & fails only in
+        # GHA if this is not present
+        # https://twitter.com/steipete/status/921066430220652544?lang=en
+        # https://blog.phusion.nl/2017/10/13/why-ruby-app-servers-break-on-macos-high-sierra-and-what-can-be-done-about-it/
+        OBJC_DISABLE_INITIALIZE_FORK_SAFETY: "YES"
+      run: |
+        cargo test --workspace --no-default-features --all-targets
+
+  build_release:
+    name: Build release binaries
+    runs-on: ${{ matrix.runner }}
+    continue-on-error: false
+    needs: build_and_test
+    if: ${{ always() && github.ref_name=='main' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        name: [ubuntu-latest, ubuntu-arm-latest, macOS-latest, macOS-arm-latest]
+        rust: [stable]
+        experimental: [false]
+        include:
+          - name: ubuntu-arm-latest
+            os: ubuntu-latest
+            release-os: linux
+            release-arch: aarch64
+            protoc-arch: linux-aarch_64
+            runner: [self-hosted, linux, ARM64]
+          - name: ubuntu-latest
+            os: ubuntu-latest
+            release-os: linux
+            release-arch: amd64
+            protoc-arch: linux-x86_64
+            runner: [self-hosted, linux, X64]
+          - name: macOS-latest
+            os: macOS-latest
+            release-os: darwin
+            release-arch: x86_64
+            protoc-arch: osx-x86_64
+            runner: [self-hosted, macOS, X64]
+          - name: macOS-arm-latest
+            os: macOS-latest
+            release-os: darwin
+            release-arch: aarch64
+            protoc-arch: osx-aarch_64
+            runner: [self-hosted, macOS, ARM64]
+          # - os: windows-latest
+          #   release-os: windows
+          #   release-arch: amd64
+          #   runner: [windows-latest]
+    env:
+      RUST_BACKTRACE: full
+      # Force not building debuginfo to save space on disk.
+      RUSTFLAGS: "-C debuginfo=0"
+      RUSTV: ${{ matrix.rust }}
+    steps:
+    - uses: actions/checkout@master
+
+    - name: Set build arch
+      run: |
+        echo "RELEASE_ARCH=${{ matrix.release-arch }}" >> $GITHUB_ENV
+        echo "RELEASE_OS=${{ matrix.release-os }}" >> $GITHUB_ENV       
+        echo "PROTOC_ARCH=${{ matrix.protoc-arch }}" >> $GITHUB_ENV        
+    
+    - name: Install ${{ matrix.rust }}
+      run: |
+        rustup toolchain install ${{ matrix.rust }}
+    
+    - name: Install Protoc windows
+      if: matrix.os == 'windows-latest'
+      uses: arduino/setup-protoc@v1
+      with:
+        version: '3.20.1'
+        repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Install Protoc
+      if: matrix.os != 'windows-latest'
+      run: |
+        PROTOC_VERSION=3.20.1
+        PROTOC_ZIP=protoc-$PROTOC_VERSION-$PROTOC_ARCH.zip
+        curl -OL https://github.com/protocolbuffers/protobuf/releases/download/v$PROTOC_VERSION/$PROTOC_ZIP
+        sudo unzip -o $PROTOC_ZIP -d /usr/local bin/protoc
+        sudo unzip -o $PROTOC_ZIP -d /usr/local 'include/*'
+        rm -f $PROTOC_ZIP
+        echo "PROTOC=/usr/local/bin/protoc" >> $GITHUB_ENV
+        echo "PROTOC_INCLUDE=/usr/local/include" >> $GITHUB_ENV
+
+    - name: build release
+      run: |
+        cargo build --profile optimized-release -p iroh -p iroh-gateway -p iroh-p2p -p iroh-store
 
     - name: Setup awscli on linux
-      if: matrix.os == 'ubuntu-latest' && matrix.rust=='stable' && github.ref_name=='main'
+      if: matrix.name == 'ubuntu-latest'
       run: |
         curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
         unzip awscliv2.zip
         sudo ./aws/install --update
+    
+    - name: Setup awscli on linux
+      if: matrix.name == 'ubuntu-arm-latest'
+      run: |
+        curl "https://awscli.amazonaws.com/awscli-exe-linux-aarch64.zip" -o "awscliv2.zip"
+        unzip awscliv2.zip
+        sudo ./aws/install --update
+
+    - name: Setup awscli on mac
+      if: matrix.os == 'macos-latest'
+      run: |
+        curl "https://awscli.amazonaws.com/AWSCLIV2.pkg" -o "AWSCLIV2.pkg"
+        sudo installer -pkg AWSCLIV2.pkg -target /
 
     - name: Set aws credentials
       if: matrix.os != 'windows-latest'
@@ -204,41 +208,20 @@ jobs:
           echo "AWS_DEFAULT_REGION=us-west-2" >> $GITHUB_ENV
 
     - name: push release
-      if: matrix.os == 'macOS-latest' && matrix.rust=='stable' && github.ref_name=='main'
+      if: matrix.os != 'windows-latest'
       run: |
-        aws s3 cp ./target/ci/iroh-gateway s3://vorc/iroh-gateway-${RELEASE_OS}-${RELEASE_ARCH}-${GITHUB_SHA::7} --no-progress
-        aws s3 cp ./target/ci/iroh-p2p s3://vorc/iroh-p2p-${RELEASE_OS}-${RELEASE_ARCH}-${GITHUB_SHA::7} --no-progress
-        aws s3 cp ./target/ci/iroh-store s3://vorc/iroh-store-${RELEASE_OS}-${RELEASE_ARCH}-${GITHUB_SHA::7} --no-progress
-        aws s3 cp ./target/ci/iroh s3://vorc/iroh-${RELEASE_OS}-${RELEASE_ARCH}-${GITHUB_SHA::7} --no-progress
+        aws s3 cp ./target/optimized-release/iroh-gateway s3://vorc/iroh-gateway-${RELEASE_OS}-${RELEASE_ARCH}-${GITHUB_SHA::7} --no-progress
+        aws s3 cp ./target/optimized-release/iroh-p2p s3://vorc/iroh-p2p-${RELEASE_OS}-${RELEASE_ARCH}-${GITHUB_SHA::7} --no-progress
+        aws s3 cp ./target/optimized-release/iroh-store s3://vorc/iroh-store-${RELEASE_OS}-${RELEASE_ARCH}-${GITHUB_SHA::7} --no-progress
+        aws s3 cp ./target/optimized-release/iroh s3://vorc/iroh-${RELEASE_OS}-${RELEASE_ARCH}-${GITHUB_SHA::7} --no-progress
 
     - name: push release latest
-      if: matrix.os == 'macOS-latest' && matrix.rust=='stable' && github.ref_name=='main'
+      if: matrix.os != 'windows-latest'
       run: |
-        aws s3 cp ./target/ci/iroh-gateway s3://vorc/iroh-gateway-${RELEASE_OS}-${RELEASE_ARCH}-latest --no-progress
-        aws s3 cp ./target/ci/iroh-p2p s3://vorc/iroh-p2p-${RELEASE_OS}-${RELEASE_ARCH}-latest --no-progress
-        aws s3 cp ./target/ci/iroh-store s3://vorc/iroh-store-${RELEASE_OS}-${RELEASE_ARCH}-latest --no-progress
-        aws s3 cp ./target/ci/iroh s3://vorc/iroh-${RELEASE_OS}-${RELEASE_ARCH}-latest --no-progress
-
-    - name: push release aarch64
-      if: matrix.os == 'macOS-latest' && matrix.rust=='stable' && github.ref_name=='main'
-      run: |
-        aws s3 cp ./target/aarch64-apple-darwin/ci/iroh-gateway s3://vorc/iroh-gateway-${RELEASE_OS}-aarch64-${GITHUB_SHA::7} --no-progress
-        aws s3 cp ./target/aarch64-apple-darwin/ci/iroh-p2p s3://vorc/iroh-p2p-${RELEASE_OS}-aarch64-${GITHUB_SHA::7} --no-progress
-        aws s3 cp ./target/aarch64-apple-darwin/ci/iroh-store s3://vorc/iroh-store-${RELEASE_OS}-aarch64-${GITHUB_SHA::7} --no-progress
-        aws s3 cp ./target/aarch64-apple-darwin/ci/iroh s3://vorc/iroh-${RELEASE_OS}-aarch64-${GITHUB_SHA::7} --no-progress
-
-    - name: push release latest aarch64
-      if: matrix.os == 'macOS-latest' && matrix.rust=='stable' && github.ref_name=='main'
-      run: |
-        aws s3 cp ./target/aarch64-apple-darwin/ci/iroh-gateway s3://vorc/iroh-gateway-${RELEASE_OS}-aarch64-latest --no-progress
-        aws s3 cp ./target/aarch64-apple-darwin/ci/iroh-p2p s3://vorc/iroh-p2p-${RELEASE_OS}-aarch64-latest --no-progress
-        aws s3 cp ./target/aarch64-apple-darwin/ci/iroh-store s3://vorc/iroh-store-${RELEASE_OS}-aarch64-latest --no-progress
-        aws s3 cp ./target/aarch64-apple-darwin/ci/iroh s3://vorc/iroh-${RELEASE_OS}-aarch64-latest --no-progress
-    
-    - name: Print sccache stats
-      run: sccache --show-stats
-    - name: Stop sccache server
-      run: sccache --stop-server || true
+        aws s3 cp ./target/optimized-release/iroh-gateway s3://vorc/iroh-gateway-${RELEASE_OS}-${RELEASE_ARCH}-latest --no-progress
+        aws s3 cp ./target/optimized-release/iroh-p2p s3://vorc/iroh-p2p-${RELEASE_OS}-${RELEASE_ARCH}-latest --no-progress
+        aws s3 cp ./target/optimized-release/iroh-store s3://vorc/iroh-store-${RELEASE_OS}-${RELEASE_ARCH}-latest --no-progress
+        aws s3 cp ./target/optimized-release/iroh s3://vorc/iroh-${RELEASE_OS}-${RELEASE_ARCH}-latest --no-progress
 
   fmt:
     name: Rustfmt
@@ -260,3 +243,29 @@ jobs:
         with:
           command: fmt
           args: --all -- --check
+    
+  audit:
+    name: audit
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        rust:
+          - stable
+
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: ${{ matrix.rust }}
+          override: true
+      - uses: actions-rs/cargo@v1
+        with:
+          command: install
+          args: --force cargo-audit
+      - uses: actions-rs/cargo@v1
+        with:
+          command: generate-lockfile
+      - uses: actions-rs/cargo@v1
+        with:
+          command: audit
