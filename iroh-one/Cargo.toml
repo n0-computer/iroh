@@ -29,17 +29,15 @@ iroh-store = {path = "../iroh-store", default-features = false, features = ["rpc
 iroh-util = {path = "../iroh-util"}
 reqwest = {version = "0.11", features = ["rustls-tls"], default-features = false}
 serde = {version = "1.0", features = ["derive"]}
-tempfile = { version = "3.3.0", optional = true }
+tempfile = {version = "3.3.0", optional = true}
 tokio = {version = "1", features = ["macros", "rt-multi-thread", "process"]}
 tracing = "0.1.33"
 
 [dev-dependencies]
-http = "0.2" 
+http = "0.2"
 
 [features]
 default = ["rpc-mem", "rpc-grpc"]
+http-uds-gateway = ["tempfile"]
 rpc-grpc = ["iroh-rpc-types/grpc", "iroh-rpc-client/grpc", "iroh-metrics/rpc-grpc"]
 rpc-mem = ["iroh-rpc-types/mem", "iroh-rpc-client/mem"]
-# uds-gateway controls whether http over uds is enabled. This is independent of the
-# rpc-grpc control endpoint.
-uds-gateway = ["tempfile"]

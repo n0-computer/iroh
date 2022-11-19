@@ -21,7 +21,7 @@ pub struct Args {
     tracing: bool,
     #[clap(long)]
     denylist: bool,
-    #[cfg(all(feature = "uds-gateway", unix))]
+    #[cfg(all(feature = "http-uds-gateway", unix))]
     #[clap(long = "gateway-uds-path")]
     pub gateway_uds_path: Option<PathBuf>,
     /// Path to the store
@@ -52,7 +52,7 @@ impl Args {
         if let Some(path) = self.store_path.clone() {
             map.insert("store.path", path.to_str().unwrap_or("").to_string());
         }
-        #[cfg(all(feature = "uds-gateway", unix))]
+        #[cfg(all(feature = "http-uds-gateway", unix))]
         if let Some(path) = self.gateway_uds_path.clone() {
             map.insert("gateway_uds_path", path.to_str().unwrap_or("").to_string());
         }
