@@ -205,7 +205,7 @@ fn register_fixtures() -> FixtureRegistry {
         ),
         (
             "start_status_stop".to_string(),
-            fixture_start_status_stop as GetFixture
+            fixture_start_status_stop as GetFixture,
         ),
     ]
     .into_iter()

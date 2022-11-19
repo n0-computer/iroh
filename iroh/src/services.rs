@@ -49,7 +49,8 @@ async fn start_services(api: &Api, services: BTreeSet<&str>) -> Result<()> {
             accum
         });
 
-    let unknown_services: BTreeSet<&str> = services.difference(expected_services).copied().collect();
+    let unknown_services: BTreeSet<&str> =
+        services.difference(expected_services).copied().collect();
 
     if !unknown_services.is_empty() {
         let u = unknown_services.into_iter().collect::<Vec<&str>>();
@@ -276,7 +277,10 @@ where
 
 /// require a set of services is up. returns the underlying status table of all
 /// services for additional scrutiny
-pub async fn require_services(api: &Api, services: BTreeSet<&str>) -> Result<iroh_api::StatusTable> {
+pub async fn require_services(
+    api: &Api,
+    services: BTreeSet<&str>,
+) -> Result<iroh_api::StatusTable> {
     let table = api.check().await;
     for service in table.iter() {
         if services.contains(service.name()) && service.status() != iroh_api::ServiceStatus::Serving
