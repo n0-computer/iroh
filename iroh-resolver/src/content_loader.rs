@@ -83,18 +83,19 @@ impl GatewayUrl {
         }
     }
 
-    pub fn as_url(&self, cid: &Cid) -> Url {
-        let cid_str = cid.to_string_of_base(Base::Base32Lower).unwrap();
-        match self {
+    pub fn as_url(&self, cid: &Cid) -> Result<Url> {
+        let cid_str = cid.into_v1()?.to_string_of_base(Base::Base32Lower)?;
+        let url = match self {
             GatewayUrl::Full(raw) => {
                 let mut url = raw.join(&cid_str).unwrap();
                 url.set_query(Some("format=raw"));
                 url
             }
-            GatewayUrl::Subdomain(raw) => format!("https://{}.ipfs.{}?format=raw", cid_str, raw)
-                .parse()
-                .unwrap(),
-        }
+            GatewayUrl::Subdomain(raw) => {
+                format!("https://{}.ipfs.{}?format=raw", cid_str, raw).parse()?
+            }
+        };
+        Ok(url)
     }
 }
 
@@ -161,7 +162,7 @@ impl FullLoader {
     async fn fetch_gateway(&self, cid: &Cid) -> Result<Option<LoadedCid>> {
         match self.next_gateway().await {
             Some(url) => {
-                let response = reqwest::get(url.as_url(cid)).await?;
+                let response = reqwest::get(url.as_url(cid)?).await?;
                 // Filter out non http 200 responses.
                 if !response.status().is_success() {
                     return Err(anyhow!("unexpected http status"));
