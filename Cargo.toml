@@ -25,8 +25,8 @@ members = [
 resolver = "2"
 
 [patch.crates-io]
-libp2p = { git = "https://github.com/dignifiedquire/rust-libp2p", branch = "iroh-0-50" }
-# libp2p = { path = "../rust-libp2p" }
+libp2p = { git = "https://github.com/dignifiedquire/rust-libp2p", branch = "iroh-0-50-1" }
+#libp2p = { path = "../rust-libp2p" }
 
 [profile.optimized-release]
 inherits = 'release'
