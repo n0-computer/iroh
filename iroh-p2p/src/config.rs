@@ -170,7 +170,7 @@ impl Default for Libp2pConfig {
             relay_client: true,
             gossipsub: true,
             bitswap_client: true,
-            bitswap_server: false,
+            bitswap_server: true,
             max_conns_pending_out: 256,
             max_conns_pending_in: 256,
             max_conns_in: 256,
