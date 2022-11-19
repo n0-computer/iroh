@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -187,7 +187,7 @@ async fn add(api: &Api, path: &Path, no_wrap: bool, recursive: bool, provide: bo
     // hydrating only the root CID to the p2p node for providing if a CID were
     // ingested offline. Offline adding should happen, but this is the current
     // path of least confusion
-    let svc_status = require_services(api, HashSet::from(["store"])).await?;
+    let svc_status = require_services(api, BTreeSet::from(["store"])).await?;
     match (provide, svc_status.p2p.status()) {
         (true, ServiceStatus::Down(_status)) => {
             anyhow::bail!("Add provides content to the IPFS network by default, but the p2p service is not running.\n{}",
