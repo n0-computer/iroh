@@ -1,0 +1,16 @@
+```
+$ iroh start
+[38;5;10mAll iroh daemons are already running. all systems normal.[39m
+
+$ iroh status
+[1mService			Number	Status
+[0mgateway			1/1	[38;5;10mServing[39m
+p2p			1/1	[38;5;10mServing[39m
+store			1/1	[38;5;10mServing[39m
+
+$ iroh stop
+[38;5;15miroh-gateway is already stopped[39m
+[38;5;15miroh-p2p is already stopped[39m
+[38;5;15miroh-store is already stopped[39m
+
+```
