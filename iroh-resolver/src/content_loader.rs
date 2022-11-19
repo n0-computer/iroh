@@ -164,7 +164,7 @@ impl FullLoader {
                 let response = reqwest::get(url.as_url(cid)).await?;
                 // Filter out non http 200 responses.
                 if !response.status().is_success() {
-                    return Ok(None);
+                    return Err(anyhow!("unexpected http status"));
                 }
                 let data = response.bytes().await?;
                 // Make sure the content is not tampered with.
@@ -174,7 +174,7 @@ impl FullLoader {
                         source: Source::Http(url.as_string()),
                     }))
                 } else {
-                    Ok(None)
+                    Err(anyhow!("invalid CID hash"))
                 }
             }
             None => Ok(None),
