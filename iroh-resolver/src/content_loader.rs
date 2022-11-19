@@ -84,7 +84,11 @@ impl GatewayUrl {
     }
 
     pub fn as_url(&self, cid: &Cid) -> Url {
-        let cid_str = cid.to_string_of_base(Base::Base32Lower).unwrap();
+        let cid_str = cid
+            .into_v1()
+            .unwrap()
+            .to_string_of_base(Base::Base32Lower)
+            .unwrap();
         match self {
             GatewayUrl::Full(raw) => {
                 let mut url = raw.join(&cid_str).unwrap();
