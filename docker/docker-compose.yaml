@@ -27,11 +27,11 @@ services:
       - "IROH_P2P__RPC_CLIENT__STORE_ADDR=grpc://iroh-store:4402"
     ports:
       # libp2p connection port. peers will dial your node here
-      - "4401:4401"
+      - "4444:4444"
       # RPC port, iroh CLI uses this to control your p2p service
       # this shouldn't be publically accessible, so we explicitly wire it
       # to the local loopback address: 127.0.0.1
-      - "127.0.0.1:4444:4444"
+      - "127.0.0.1:4401:4401"
   iroh-store:
     container_name: "iroh-store"
     image: "n0computer/iroh-store:latest"
