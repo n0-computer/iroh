@@ -161,11 +161,21 @@ impl FullLoader {
     async fn fetch_gateway(&self, cid: &Cid) -> Result<Option<LoadedCid>> {
         match self.next_gateway().await {
             Some(url) => {
-                let data = reqwest::get(url.as_url(cid)).await?.bytes().await?;
-                Ok(Some(LoadedCid {
-                    data,
-                    source: Source::Http(url.as_string()),
-                }))
+                let response = reqwest::get(url.as_url(cid)).await?;
+                // Filter out non http 200 responses.
+                if !response.status().is_success() {
+                    return Err(anyhow!("unexpected http status"));
+                }
+                let data = response.bytes().await?;
+                // Make sure the content is not tampered with.
+                if iroh_util::verify_hash(cid, &data) == Some(true) {
+                    Ok(Some(LoadedCid {
+                        data,
+                        source: Source::Http(url.as_string()),
+                    }))
+                } else {
+                    Err(anyhow!("invalid CID hash"))
+                }
             }
             None => Ok(None),
         }
