@@ -1,10 +1,14 @@
+use axum::body::HttpBody;
 use axum::{
+    body,
     body::BoxBody,
     http::{header::*, HeaderValue, StatusCode},
     response::{IntoResponse, Redirect, Response},
 };
+use bytes::Bytes;
 use iroh_metrics::get_current_trace_id;
 use opentelemetry::trace::TraceId;
+use std::error::Error;
 
 use crate::constants::*;
 
@@ -88,7 +92,7 @@ impl ResponseFormat {
 #[tracing::instrument()]
 pub fn get_response_format(
     request_headers: &HeaderMap,
-    query_format: Option<String>,
+    query_format: &Option<String>,
 ) -> Result<ResponseFormat, String> {
     if let Some(format) = query_format {
         if !format.is_empty() {
@@ -135,15 +139,28 @@ impl IntoResponse for GatewayResponse {
 }
 
 impl GatewayResponse {
+    #[tracing::instrument(skip(body))]
+    pub fn new<B>(status_code: StatusCode, body: B, headers: HeaderMap) -> GatewayResponse
+    where
+        B: 'static + HttpBody<Data = Bytes> + Send,
+        <B as HttpBody>::Error: Into<Box<dyn Error + Send + Sync + 'static>>,
+    {
+        GatewayResponse {
+            status_code,
+            body: body::boxed(body),
+            headers,
+            trace_id: get_current_trace_id(),
+        }
+    }
+
     fn _redirect(to: &str, status_code: StatusCode) -> Self {
         let mut headers = HeaderMap::new();
         headers.insert(LOCATION, HeaderValue::from_str(to).unwrap());
-        GatewayResponse {
-            status_code,
-            body: BoxBody::default(),
-            headers: HeaderMap::new(),
-            trace_id: get_current_trace_id(),
-        }
+        Self::new(status_code, BoxBody::default(), headers)
+    }
+
+    pub fn empty(headers: HeaderMap) -> Self {
+        Self::new(StatusCode::OK, BoxBody::default(), headers)
     }
 
     pub fn redirect(to: &str) -> Self {
@@ -155,12 +172,11 @@ impl GatewayResponse {
     }
 
     pub fn not_modified() -> Self {
-        Self {
-            status_code: StatusCode::NOT_MODIFIED,
-            body: BoxBody::default(),
-            headers: HeaderMap::new(),
-            trace_id: get_current_trace_id(),
-        }
+        Self::new(
+            StatusCode::NOT_MODIFIED,
+            BoxBody::default(),
+            HeaderMap::new(),
+        )
     }
 }
 
