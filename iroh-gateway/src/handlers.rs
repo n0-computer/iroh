@@ -213,7 +213,11 @@ async fn request_preprocessing<T: ContentLoader + std::marker::Unpin>(
         format,
         cid: resolved_path.root().clone(),
         resolved_path,
-        query_file_name: query_params.filename.as_deref().unwrap_or_default().to_string(),
+        query_file_name: query_params
+            .filename
+            .as_deref()
+            .unwrap_or_default()
+            .to_string(),
         download: query_params.download.unwrap_or_default(),
         query_params: query_params.clone(),
     };
