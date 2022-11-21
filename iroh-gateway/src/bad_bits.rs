@@ -19,7 +19,7 @@ where
     D: Deserializer<'de>,
 {
     let s = String::deserialize(deserializer)?;
-    let b = hex::decode(&s).unwrap();
+    let b = hex::decode(s).unwrap();
     b[..32].try_into().map_err(de::Error::custom)
 }
 

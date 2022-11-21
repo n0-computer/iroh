@@ -9,6 +9,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use http::{HeaderMap, HeaderValue};
+use iroh_metrics::{core::MRecorder, gateway::GatewayMetrics, get_current_trace_id, inc};
 use opentelemetry::trace::TraceId;
 use serde_json::json;
 
@@ -23,6 +24,17 @@ pub struct GatewayError {
 }
 
 impl GatewayError {
+    #[tracing::instrument()]
+    pub fn new(status_code: StatusCode, message: &str) -> GatewayError {
+        inc!(GatewayMetrics::ErrorCount);
+        GatewayError {
+            status_code,
+            message: message.to_string(),
+            trace_id: get_current_trace_id(),
+            method: None,
+        }
+    }
+
     pub fn with_method(self, method: http::Method) -> Self {
         Self {
             method: Some(method),
