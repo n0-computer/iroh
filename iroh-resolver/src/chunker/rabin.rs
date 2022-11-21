@@ -58,13 +58,27 @@ impl Rabin {
 
             while !use_entire_buffer {
                 // Fill buffer
-                let original_len = buf.len();
-                source.read_buf(&mut buf).await?;
+                let mut total_read = 0;
+                while buf.len() < target_size {
+                    let read = source.read_buf(&mut buf).await?;
+                    total_read += read;
+                    if read == 0 {
+                        break;
+                    }
+                }
+
+                // abort early if we have not received enough data
+                if buf.len() < self.config.min_size {
+                    if !buf.is_empty() {
+                        yield Ok(buf.freeze());
+                    }
+                    break;
+                }
+
                 let post_buf_idx = buf.len();
 
                 // read 0 bytes => the source is exhausted
-                let read_len = buf.len() - original_len;
-                use_entire_buffer = read_len < self.config.min_size;
+                use_entire_buffer = total_read == 0;
 
                 let mut cur_idx = 0;
 
@@ -807,13 +821,31 @@ mod tests {
             let mut data = vec![0u8; size];
             rng.fill_bytes(&mut data);
             test_rabin_roundtrip_data(data).await;
+            println!("----");
         }
     }
 
     async fn test_rabin_roundtrip_data(data: Vec<u8>) {
         let config = Config::default();
         let chunker = Rabin::new(config.clone(), GO_IPFS_V0_PRESET);
-        let reader = std::io::Cursor::new(&data);
+
+        let mut rng = StdRng::seed_from_u64(0);
+        // split into randomized chunks
+        let mut chunks: Vec<Vec<u8>> = Vec::new();
+        let mut index = 0; 
+        while index < data.len() {
+            let split = rng.gen_range(index..=data.len());
+            if split != index {
+                let chunk = data[index..split].to_vec();
+                index = split;
+                chunks.push(chunk);
+            }
+        }
+        println!("chunks: {:?}", chunks.iter().map(|c| c.len()).collect::<Vec<_>>());
+        let stream = futures::stream::iter(chunks.iter().map(|s| -> io::Result<&[u8]> {
+            Ok(&s[..])
+        }));
+        let reader = tokio_util::io::StreamReader::new(stream);
         let split = chunker.chunks(reader);
         let chunks = split.try_collect::<Vec<_>>().await.unwrap();
 
