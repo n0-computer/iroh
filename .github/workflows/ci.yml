@@ -278,6 +278,8 @@ jobs:
           command: audit
 
   MSRV:
+    name: MSRV
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
