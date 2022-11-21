@@ -304,7 +304,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             files
                 .iter()
-                .map(|(name, _content)| name.clone())
+                .map(|(name, _content)| name.to_string())
                 .collect::<Vec<_>>()
         );
 
