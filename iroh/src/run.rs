@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -85,13 +85,12 @@ enum Commands {
 impl Cli {
     pub async fn run(&self) -> Result<()> {
         let config_path = iroh_config_path(CONFIG_FILE_NAME)?;
-        // TODO(b5): allow suppliying some sort of config flag. maybe --config-cli?
-        let sources = vec![Some(config_path.as_path())];
+        let sources = [Some(config_path.as_path()), self.cfg.as_deref()];
         let config = make_config(
             // default
             Config::new(),
             // potential config files
-            sources,
+            &sources,
             // env var prefix for this config
             ENV_PREFIX,
             // map of present command line arguments
@@ -188,7 +187,7 @@ async fn add(api: &Api, path: &Path, no_wrap: bool, recursive: bool, provide: bo
     // hydrating only the root CID to the p2p node for providing if a CID were
     // ingested offline. Offline adding should happen, but this is the current
     // path of least confusion
-    let svc_status = require_services(api, HashSet::from(["store"])).await?;
+    let svc_status = require_services(api, BTreeSet::from(["store"])).await?;
     match (provide, svc_status.p2p.status()) {
         (true, ServiceStatus::Down(_status)) => {
             anyhow::bail!("Add provides content to the IPFS network by default, but the p2p service is not running.\n{}",

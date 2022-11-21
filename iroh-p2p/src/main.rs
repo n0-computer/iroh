@@ -27,12 +27,12 @@ fn main() -> Result<()> {
 
         // TODO: configurable network
         let cfg_path = iroh_config_path(CONFIG_FILE_NAME)?;
-        let sources = vec![Some(cfg_path.as_path()), args.cfg.as_deref()];
+        let sources = [Some(cfg_path.as_path()), args.cfg.as_deref()];
         let network_config = make_config(
             // default
             Config::default_grpc(),
             // potential config files
-            sources,
+            &sources,
             // env var prefix for this config
             ENV_PREFIX,
             // map of present command line arguments

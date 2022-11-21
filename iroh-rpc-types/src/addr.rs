@@ -1,6 +1,6 @@
 use std::{
     fmt::{Debug, Display},
-    net::SocketAddr,
+    net::{SocketAddr, ToSocketAddrs},
     str::FromStr,
 };
 
@@ -12,6 +12,8 @@ use tokio::sync::mpsc::{Receiver, Sender};
 pub enum Addr<T = ()> {
     #[cfg(feature = "grpc")]
     GrpcHttp2(SocketAddr),
+    #[cfg(feature = "grpc")]
+    GrpcHttp2Lookup(String),
     #[cfg(all(feature = "grpc", unix))]
     GrpcUds(std::path::PathBuf),
     #[cfg(feature = "mem")]
@@ -23,6 +25,8 @@ impl<T> PartialEq for Addr<T> {
         match (self, other) {
             #[cfg(feature = "grpc")]
             (Self::GrpcHttp2(addr1), Self::GrpcHttp2(addr2)) => addr1.eq(addr2),
+            #[cfg(feature = "grpc")]
+            (Self::GrpcHttp2Lookup(addr1), Self::GrpcHttp2Lookup(addr2)) => addr1.eq(addr2),
             #[cfg(all(feature = "grpc", unix))]
             (Self::GrpcUds(path1), Self::GrpcUds(path2)) => path1.eq(path2),
             _ => false,
@@ -53,6 +57,8 @@ impl<T> Display for Addr<T> {
         match self {
             #[cfg(feature = "grpc")]
             Addr::GrpcHttp2(addr) => write!(f, "grpc://{}", addr),
+            #[cfg(feature = "grpc")]
+            Addr::GrpcHttp2Lookup(addr) => write!(f, "grpc://{}", addr),
             #[cfg(all(feature = "grpc", unix))]
             Addr::GrpcUds(path) => write!(f, "grpc://{}", path.display()),
             #[cfg(feature = "mem")]
@@ -87,6 +93,13 @@ impl<T> FromStr for Addr<T> {
                         if let Ok(addr) = part.parse::<SocketAddr>() {
                             return Ok(Addr::GrpcHttp2(addr));
                         }
+                        // attempt to resolve the address, if it can be resolved,
+                        // it's considered a lookup address
+                        if let Ok(mut addr_iter) = part.to_socket_addrs() {
+                            if addr_iter.next().is_some() {
+                                return Ok(Addr::GrpcHttp2Lookup(String::from(part)));
+                            }
+                        }
                         #[cfg(unix)]
                         if let Ok(path) = part.parse::<std::path::PathBuf>() {
                             return Ok(Addr::GrpcUds(path));
@@ -112,6 +125,18 @@ mod tests {
 
         assert_eq!(addr.to_string().parse::<Addr>().unwrap(), addr);
         assert_eq!(addr.to_string(), "grpc://198.168.2.1:1234");
+    }
+
+    // TODO(b5): only running this on unix b/c windows doesn't have localhost
+    // enabled by default
+    #[cfg(all(feature = "grpc", unix))]
+    #[test]
+    fn test_addr_roundtrip_http2_lookup() {
+        let name = "localhost:1234".to_string();
+        let addr = Addr::GrpcHttp2Lookup(name);
+
+        assert_eq!(addr.to_string().parse::<Addr>().unwrap(), addr);
+        assert_eq!(addr.to_string(), "grpc://localhost:1234");
     }
 
     #[cfg(all(feature = "grpc", unix))]

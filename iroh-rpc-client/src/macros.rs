@@ -33,6 +33,19 @@ macro_rules! impl_client {
                                 backend: [<$label ClientBackend>]::Grpc { client, health },
                             })
                         }
+                        #[cfg(feature = "grpc")]
+                        Addr::GrpcHttp2Lookup(addr) => {
+                            let conn = Endpoint::new(format!("http://{}", addr))?
+                                .keep_alive_while_idle(true)
+                                .connect_lazy();
+
+                            let client = [<Grpc $label Client>]::new(conn.clone());
+                            let health = HealthClient::new(conn);
+
+                            Ok([<$label Client>] {
+                                backend: [<$label ClientBackend>]::Grpc { client, health },
+                            })
+                        }
                         #[cfg(all(feature = "grpc", unix))]
                         Addr::GrpcUds(path) => {
                             use tokio::net::UnixStream;

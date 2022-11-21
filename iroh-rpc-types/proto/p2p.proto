@@ -8,6 +8,7 @@ service P2p {
   rpc Version(google.protobuf.Empty) returns (VersionResponse) {}
   rpc LocalPeerId(google.protobuf.Empty) returns (PeerIdResponse) {}
   rpc ExternalAddrs(google.protobuf.Empty) returns (Multiaddrs) {}
+  rpc Listeners(google.protobuf.Empty) returns (Multiaddrs) {}
   rpc FetchBitswap(BitswapRequest) returns (BitswapResponse) {}
   rpc FetchProviderDht(Key) returns (stream Providers) {}
   rpc NotifyNewBlocksBitswap(NotifyNewBlocksBitswapRequest) returns (google.protobuf.Empty) {}

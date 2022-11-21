@@ -18,6 +18,7 @@ use libp2p::kad::{
     self, BootstrapOk, GetClosestPeersError, GetClosestPeersOk, GetProvidersOk, KademliaEvent,
     QueryId, QueryResult,
 };
+use libp2p::mdns;
 use libp2p::metrics::Recorder;
 use libp2p::multiaddr::Protocol;
 use libp2p::ping::Result as PingResult;
@@ -666,6 +667,25 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                     ));
                 }
             }
+            Event::Mdns(e) => match e {
+                mdns::Event::Discovered(peers) => {
+                    for (peer_id, addr) in peers {
+                        let is_connected = self.swarm.is_connected(&peer_id);
+                        debug!(
+                            "mdns: discovered {} at {} (connected: {:?})",
+                            peer_id, addr, is_connected
+                        );
+                        if !is_connected {
+                            let dial_opts =
+                                DialOpts::peer_id(peer_id).addresses(vec![addr]).build();
+                            if let Err(e) = Swarm::dial(&mut self.swarm, dial_opts) {
+                                warn!("invalid dial options: {:?}", e);
+                            }
+                        }
+                    }
+                }
+                mdns::Event::Expired(_) => {}
+            },
             _ => {
                 // TODO: check all important events are handled
             }
@@ -686,6 +706,11 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                             .map(|r| r.addr.clone())
                             .collect(),
                     )
+                    .ok();
+            }
+            RpcMessage::Listeners(response_channel) => {
+                response_channel
+                    .send(self.swarm.listeners().cloned().collect())
                     .ok();
             }
             RpcMessage::LocalPeerId(response_channel) => {
@@ -981,10 +1006,19 @@ async fn load_identity<S: Storage>(kc: &mut Keychain<S>) -> Result<Keypair> {
 
 #[cfg(test)]
 mod tests {
-    use crate::keys::MemoryStorage;
+    use crate::keys::{Keypair, MemoryStorage};
+
+    use bytes::Bytes;
+    use futures::TryStreamExt;
+    use rand::prelude::*;
+    use rand_chacha::ChaCha8Rng;
+    use ssh_key::private::Ed25519Keypair;
+
+    use libp2p::{identity::Keypair as Libp2pKeypair, kad::record::Key};
 
     use super::*;
     use anyhow::Result;
+    use iroh_rpc_client::P2pClient;
     use iroh_rpc_types::{
         p2p::{P2pClientAddr, P2pServerAddr},
         Addr,
@@ -1040,36 +1074,193 @@ mod tests {
         Ok(())
     }
 
+    #[derive(Debug)]
+    struct TestRunnerBuilder {
+        /// An Optional listening address for this node
+        /// When `None`, the swarm will connect to a random tcp port.
+        addr: Option<Multiaddr>,
+        /// The listening addresses for the p2p client.
+        /// When `None`, the client will communicate over a memory rpc channel
+        rpc_addrs: Option<(P2pServerAddr, P2pClientAddr)>,
+        /// When `true`, allow bootstrapping to the network.
+        /// Otherwise, don't provide any addresses from which to bootstrap.
+        bootstrap: bool,
+        /// An optional seed to use when building a peer_id.
+        /// When `None`, it will use a previously derived peer_id `12D3KooWFma2D63TG9ToSiRsjFkoNm2tTihScTBAEdXxinYk5rwE`.
+        seed: Option<ChaCha8Rng>,
+        /// Optional `Keys` the node should provide to the DHT on start up.
+        keys: Option<Vec<Key>>,
+    }
+
+    impl TestRunnerBuilder {
+        fn new() -> Self {
+            Self {
+                addr: None,
+                rpc_addrs: None,
+                bootstrap: true,
+                seed: None,
+                keys: None,
+            }
+        }
+
+        fn with_addr(mut self, addr: Multiaddr) -> Self {
+            self.addr = Some(addr);
+            self
+        }
+
+        fn with_rpc_addrs(
+            mut self,
+            rpc_server_addr: P2pServerAddr,
+            rpc_client_addr: P2pClientAddr,
+        ) -> Self {
+            self.rpc_addrs = Some((rpc_server_addr, rpc_client_addr));
+            self
+        }
+
+        fn no_bootstrap(mut self) -> Self {
+            self.bootstrap = false;
+            self
+        }
+
+        fn with_seed(mut self, seed: ChaCha8Rng) -> Self {
+            self.seed = Some(seed);
+            self
+        }
+
+        async fn build(self) -> Result<TestRunner> {
+            let (rpc_server_addr, rpc_client_addr) = match self.rpc_addrs {
+                Some((rpc_server_addr, rpc_client_addr)) => (rpc_server_addr, rpc_client_addr),
+                None => {
+                    if cfg!(feature = "rpc-mem") {
+                        Addr::new_mem()
+                    } else {
+                        anyhow::bail!("no rpc addrs given")
+                    }
+                }
+            };
+            let mut network_config = Config::default_with_rpc(rpc_client_addr.clone());
+
+            if let Some(addr) = self.addr {
+                network_config.libp2p.listening_multiaddr = addr;
+            } else {
+                network_config.libp2p.listening_multiaddr = "/ip4/0.0.0.0/tcp/0".parse().unwrap();
+            }
+
+            if !self.bootstrap {
+                network_config.libp2p.bootstrap_peers = vec![];
+            }
+            let keypair = if let Some(seed) = self.seed {
+                Ed25519Keypair::random(seed)
+            } else {
+                // public key 12D3KooWFma2D63TG9ToSiRsjFkoNm2tTihScTBAEdXxinYk5rwE
+                Ed25519Keypair::from_bytes(&[
+                    76, 8, 66, 244, 198, 186, 191, 7, 108, 12, 45, 193, 111, 155, 197, 0, 2, 9, 43,
+                    174, 135, 222, 200, 126, 94, 73, 205, 84, 201, 4, 70, 60, 88, 110, 199, 251,
+                    116, 51, 223, 7, 47, 24, 92, 233, 253, 5, 82, 72, 156, 214, 211, 143, 182, 206,
+                    76, 207, 121, 235, 48, 31, 50, 60, 219, 157,
+                ])
+                .unwrap()
+            };
+            let keypair = Keypair::Ed25519(keypair);
+            let libp2p_keypair: Libp2pKeypair = keypair.clone().into();
+            let peer_id = PeerId::from(libp2p_keypair.public());
+            let mut storage = MemoryStorage::default();
+            storage.put(keypair).await?;
+            let kc = Keychain::from_storage(storage);
+
+            let mut p2p = Node::new(network_config, rpc_server_addr, kc).await?;
+            let cfg = iroh_rpc_client::Config {
+                p2p_addr: Some(rpc_client_addr),
+                channels: Some(1),
+                ..Default::default()
+            };
+
+            if let Some(keys) = self.keys {
+                if let Some(kad) = p2p.swarm.behaviour_mut().kad.as_mut() {
+                    for k in keys {
+                        kad.start_providing(k)?;
+                    }
+                } else {
+                    anyhow::bail!("expected kad behaviour to exist");
+                }
+            }
+
+            let client = RpcClient::new(cfg).await?;
+
+            let network_events = p2p.network_events();
+            let task = tokio::task::spawn(async move { p2p.run().await.unwrap() });
+
+            let client = client.try_p2p()?;
+
+            let addr =
+                tokio::time::timeout(Duration::from_millis(500), get_addr_loop(client.clone()))
+                    .await
+                    .context("timed out before getting a listening address for the node")??;
+            let mut dial_addr = addr.clone();
+            dial_addr.push(Protocol::P2p(peer_id.into()));
+            Ok(TestRunner {
+                task,
+                client,
+                peer_id,
+                network_events,
+                addr,
+                dial_addr,
+            })
+        }
+    }
+
+    async fn get_addr_loop(client: P2pClient) -> Result<Multiaddr> {
+        loop {
+            let l = client.listeners().await?;
+            if let Some(a) = l.get(0) {
+                return Ok(a.clone());
+            }
+        }
+    }
+
+    struct TestRunner {
+        /// The task that runs the p2p node.
+        task: JoinHandle<()>,
+        /// The RPC client
+        /// Used to communicate with the p2p node.
+        client: P2pClient,
+        /// The node's peer_id
+        peer_id: PeerId,
+        /// A channel to read the network events received by the node.
+        network_events: Receiver<NetworkEvent>,
+        /// The listening address for this node.
+        addr: Multiaddr,
+        /// A multiaddr that is a combination of the listening addr and peer_id.
+        /// This address can be used by another node to dial this peer directly.
+        dial_addr: Multiaddr,
+    }
+
+    impl Drop for TestRunner {
+        fn drop(&mut self) {
+            self.task.abort();
+        }
+    }
+
     async fn fetch_providers(
         addr: Multiaddr,
         rpc_server_addr: P2pServerAddr,
         rpc_client_addr: P2pClientAddr,
     ) -> Result<()> {
-        let mut network_config = Config::default_with_rpc(rpc_client_addr.clone());
-        network_config.libp2p.listening_multiaddr = addr;
-
-        let kc = Keychain::<MemoryStorage>::new();
-        let mut p2p = Node::new(network_config, rpc_server_addr, kc).await?;
-
-        let cfg = iroh_rpc_client::Config {
-            p2p_addr: Some(rpc_client_addr),
-            channels: Some(1),
-            ..Default::default()
-        };
-        let p2p_task = tokio::task::spawn(async move {
-            p2p.run().await.unwrap();
-        });
+        let test_runner = TestRunnerBuilder::new()
+            .with_addr(addr)
+            .with_rpc_addrs(rpc_server_addr, rpc_client_addr)
+            .build()
+            .await?;
 
         {
             // Make sure we are bootstrapped.
             tokio::time::sleep(Duration::from_millis(2500)).await;
-            let client = RpcClient::new(cfg).await?;
             let c = "QmbWqxBEKC3P8tqsKc98xmWNzrzDtRLMiMPL8wBuTGsMnR"
                 .parse()
                 .unwrap();
 
             let mut providers = Vec::new();
-            let mut chan = client.try_p2p().unwrap().fetch_providers_dht(&c).await?;
+            let mut chan = test_runner.client.fetch_providers_dht(&c).await?;
             while let Some(new_providers) = chan.next().await {
                 let new_providers = new_providers.unwrap();
                 println!("providers found: {}", new_providers.len());
@@ -1091,7 +1282,293 @@ mod tests {
             );
         };
 
-        p2p_task.abort();
         Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_local_peer_id() -> Result<()> {
+        let test_runner = TestRunnerBuilder::new().no_bootstrap().build().await?;
+        let got_peer_id = test_runner.client.local_peer_id().await?;
+        let expect_peer_id: PeerId = "12D3KooWFma2D63TG9ToSiRsjFkoNm2tTihScTBAEdXxinYk5rwE"
+            .parse()
+            .unwrap();
+        assert_eq!(expect_peer_id, got_peer_id);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_two_nodes() -> Result<()> {
+        let test_runner_a = TestRunnerBuilder::new().no_bootstrap().build().await?;
+        // peer_id 12D3KooWLo6JTNKXfjkZtKf8ooLQoXVXUEeuu4YDY3CYqK6rxHXt
+        let test_runner_b = TestRunnerBuilder::new()
+            .no_bootstrap()
+            .with_seed(ChaCha8Rng::from_seed([0; 32]))
+            .build()
+            .await?;
+        let addrs_b = vec![test_runner_b.addr.clone()];
+
+        let peer_id_a = test_runner_a.client.local_peer_id().await?;
+        assert_eq!(test_runner_a.peer_id, peer_id_a);
+        let peer_id_b = test_runner_b.client.local_peer_id().await?;
+        assert_eq!(test_runner_b.peer_id, peer_id_b);
+
+        // connect
+        test_runner_a.client.connect(peer_id_b, addrs_b).await?;
+        // Make sure we have exchanged identity information
+        // peer b should be in the list of peers that peer a is connected to
+        let peers = test_runner_a.client.get_peers().await?;
+        assert!(peers.len() == 1);
+        let got_peer = peers.get(&peer_id_b).unwrap();
+        assert!(got_peer.contains(&test_runner_b.dial_addr));
+
+        // lookup
+        let lookup_b = test_runner_a.client.lookup(peer_id_b, None).await?;
+        assert_eq!(peer_id_b, lookup_b.peer_id);
+
+        // now that we are connected & have exchanged identity information,
+        // we should now be able to view the node's external addrs
+        // these are the addresses that other nodes tell you "this is the address I see for you"
+        let external_addrs_a = test_runner_a.client.external_addresses().await?;
+        assert_eq!(vec![test_runner_a.addr.clone()], external_addrs_a);
+
+        // peer_disconnect NOT YET IMPLEMENTED
+        // test_runner_a.client.disconnect(peer_id_b).await?;
+        // let peers = test_runner_a.client.get_peers().await?;
+        // assert!(peers.len() == 0);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_gossipsub() -> Result<()> {
+        let mut test_runner_a = TestRunnerBuilder::new().no_bootstrap().build().await?;
+        // peer_id 12D3KooWLo6JTNKXfjkZtKf8ooLQoXVXUEeuu4YDY3CYqK6rxHXt
+        let test_runner_b = TestRunnerBuilder::new()
+            .no_bootstrap()
+            .with_seed(ChaCha8Rng::from_seed([0; 32]))
+            .build()
+            .await?;
+        let addrs_b = vec![test_runner_b.addr.clone()];
+
+        test_runner_a
+            .client
+            .connect(test_runner_b.peer_id, addrs_b)
+            .await?;
+
+        match test_runner_a.network_events.recv().await {
+            Some(NetworkEvent::PeerConnected(peer_id)) => {
+                assert_eq!(test_runner_b.peer_id, peer_id);
+            }
+            Some(n) => {
+                anyhow::bail!("unexpected network event: {:?}", n);
+            }
+            None => {
+                anyhow::bail!("expected NetworkEvent::PeerConnected, received no event");
+            }
+        };
+        let peers = test_runner_a.client.gossipsub_all_peers().await?;
+        assert!(peers.len() == 1);
+        let got_peer = peers.get(0).unwrap();
+        assert_eq!(test_runner_b.peer_id, got_peer.0);
+
+        // create topic
+        let topic = TopicHash::from_raw("test_topic");
+        // subscribe both to same topic
+        test_runner_a
+            .client
+            .gossipsub_subscribe(topic.clone())
+            .await?;
+        test_runner_b
+            .client
+            .gossipsub_subscribe(topic.clone())
+            .await?;
+
+        match test_runner_a.network_events.recv().await {
+            Some(NetworkEvent::Gossipsub(GossipsubEvent::Subscribed {
+                peer_id,
+                topic: subscribed_topic,
+            })) => {
+                assert_eq!(test_runner_b.peer_id, peer_id);
+                assert_eq!(topic, subscribed_topic);
+            }
+            Some(n) => {
+                anyhow::bail!("unexpected network event: {:?}", n);
+            }
+            None => {
+                anyhow::bail!("expected NetworkEvent::Gossipsub(Subscribed), received no event");
+            }
+        };
+
+        let peers = test_runner_a.client.gossipsub_all_peers().await?;
+        assert!(peers.len() == 1);
+        let got_peer = peers.get(0).unwrap();
+        assert_eq!(test_runner_b.peer_id, got_peer.0);
+        assert_eq!(&topic, got_peer.1.get(0).unwrap());
+
+        // get mesh peer for topic
+        let peers = test_runner_a
+            .client
+            .gossipsub_mesh_peers(topic.clone())
+            .await?;
+
+        assert!(peers.len() == 1);
+        assert_eq!(test_runner_b.peer_id, *peers.get(0).unwrap());
+
+        let peers = test_runner_a.client.gossipsub_all_mesh_peers().await?;
+        assert!(peers.len() == 1);
+        assert_eq!(&test_runner_b.peer_id, peers.get(0).unwrap());
+
+        let msg = Bytes::from(&b"hello world!"[..]);
+        test_runner_b
+            .client
+            .gossipsub_publish(topic.clone(), msg.clone())
+            .await?;
+
+        match test_runner_a.network_events.recv().await {
+            Some(NetworkEvent::Gossipsub(GossipsubEvent::Message { from, message, .. })) => {
+                assert_eq!(test_runner_b.peer_id, from);
+                assert_eq!(topic, message.topic);
+                assert_eq!(test_runner_b.peer_id, message.source.unwrap());
+                assert_eq!(msg.to_vec(), message.data);
+            }
+            Some(n) => {
+                anyhow::bail!("unexpected network event: {:?}", n);
+            }
+            None => {
+                anyhow::bail!("expected NetworkEvent::Gossipsub(Message), received no event");
+            }
+        };
+
+        test_runner_b
+            .client
+            .gossipsub_unsubscribe(topic.clone())
+            .await?;
+        match test_runner_a.network_events.recv().await {
+            Some(NetworkEvent::Gossipsub(GossipsubEvent::Unsubscribed {
+                peer_id,
+                topic: unsubscribe_topic,
+            })) => {
+                assert_eq!(test_runner_b.peer_id, peer_id);
+                assert_eq!(topic, unsubscribe_topic);
+            }
+            Some(n) => {
+                anyhow::bail!("unexpected network event: {:?}", n);
+            }
+            None => {
+                anyhow::bail!("expected NetworkEvent::Gossipsub(Unsubscribed), received no event");
+            }
+        };
+        Ok(())
+    }
+
+    #[ignore = "flakey"]
+    #[tokio::test]
+    async fn test_dht() -> Result<()> {
+        // set up three nodes
+        // two connect to one
+        // try to connect via id
+        let cid: Cid = "bafkreieq5jui4j25lacwomsqgjeswwl3y5zcdrresptwgmfylxo2depppq"
+            .parse()
+            .unwrap();
+
+        let test_runner_a = TestRunnerBuilder::new().no_bootstrap().build().await?;
+        println!("peer_a: {:?}", test_runner_a.peer_id);
+
+        // peer_id 12D3KooWLo6JTNKXfjkZtKf8ooLQoXVXUEeuu4YDY3CYqK6rxHXt
+        let mut test_runner_b = TestRunnerBuilder::new()
+            .no_bootstrap()
+            .with_seed(ChaCha8Rng::from_seed([0; 32]))
+            .build()
+            .await?;
+        let addrs = vec![test_runner_b.addr.clone()];
+
+        println!("peer_b: {:?}", test_runner_b.peer_id);
+
+        let test_runner_c = TestRunnerBuilder::new()
+            .no_bootstrap()
+            .with_seed(ChaCha8Rng::from_seed([1; 32]))
+            .build()
+            .await?;
+
+        println!("peer_c: {:?}", test_runner_c.peer_id);
+
+        // connect a and c to b
+        test_runner_a
+            .client
+            .connect(test_runner_b.peer_id, addrs.clone())
+            .await?;
+        test_runner_c
+            .client
+            .connect(test_runner_b.peer_id, addrs.clone())
+            .await?;
+
+        // expect a network event showing a & b have connected
+        match test_runner_b.network_events.recv().await {
+            Some(NetworkEvent::PeerConnected(peer_id)) => {
+                assert_eq!(test_runner_a.peer_id, peer_id);
+            }
+            Some(n) => {
+                anyhow::bail!("unexpected network event: {:?}", n);
+            }
+            None => {
+                anyhow::bail!("expected NetworkEvent::PeerConnected, received no event");
+            }
+        };
+
+        // expect a network event showing b & c have connected
+        match test_runner_b.network_events.recv().await {
+            Some(NetworkEvent::PeerConnected(peer_id)) => {
+                assert_eq!(test_runner_c.peer_id, peer_id);
+            }
+            Some(n) => {
+                anyhow::bail!("unexpected network event: {:?}", n);
+            }
+            None => {
+                anyhow::bail!("expected NetworkEvent::PeerConnected, received no event");
+            }
+        };
+
+        // c start providing
+        test_runner_c.client.start_providing(&cid).await?;
+
+        // when `start_providing` waits for the record to make it to the dht
+        // we can remove this polling
+        let providers = tokio::time::timeout(
+            Duration::from_millis(5000),
+            poll_for_providers(test_runner_a.client.clone(), &cid),
+        )
+        .await
+        .context("timed out before finding providers for the given cid")??;
+
+        assert!(providers.len() == 1);
+        assert!(providers.get(0).unwrap().contains(&test_runner_c.peer_id));
+
+        // c stop providing
+        test_runner_c.client.stop_providing(&cid).await?;
+
+        // a fetch providers dht should not get any providers
+        let stream = test_runner_a.client.fetch_providers_dht(&cid).await?;
+        let providers: Vec<_> = stream.try_collect().await.unwrap();
+
+        assert!(providers.is_empty());
+
+        // try to connect a to c using only peer_id
+        test_runner_a
+            .client
+            .connect(test_runner_c.peer_id, vec![])
+            .await?;
+
+        Ok(())
+    }
+
+    async fn poll_for_providers(client: P2pClient, cid: &Cid) -> Result<Vec<HashSet<PeerId>>> {
+        loop {
+            let stream = client.fetch_providers_dht(cid).await?;
+            let providers: Vec<_> = stream.try_collect().await.unwrap();
+            if providers.is_empty() {
+                continue;
+            }
+            return Ok(providers);
+        }
     }
 }

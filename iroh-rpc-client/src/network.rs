@@ -47,6 +47,13 @@ impl P2pClient {
         Ok(addrs)
     }
 
+    #[tracing::instrument(skip(self))]
+    pub async fn listeners(&self) -> Result<Vec<Multiaddr>> {
+        let res = self.backend.listeners(()).await?;
+        let addrs = addrs_from_bytes(res.addrs)?;
+        Ok(addrs)
+    }
+
     // Fetches a block directly from the network.
     #[tracing::instrument(skip(self))]
     pub async fn fetch_bitswap(
@@ -412,6 +419,13 @@ mod tests {
         }
 
         async fn external_addrs(
+            &self,
+            _request: Request<()>,
+        ) -> Result<tonic::Response<Multiaddrs>, tonic::Status> {
+            todo!()
+        }
+
+        async fn listeners(
             &self,
             _request: Request<()>,
         ) -> Result<tonic::Response<Multiaddrs>, tonic::Status> {

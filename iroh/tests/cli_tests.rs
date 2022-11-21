@@ -143,3 +143,11 @@ fn version_test() {
         .case("tests/cmd/version.trycmd")
         .run();
 }
+
+#[test]
+fn start_status_stop_test() {
+    trycmd::TestCases::new()
+        .env("IROH_CTL_FIXTURE", "start_status_stop")
+        .case("tests/cmd/start_status_stop.trycmd")
+        .run();
+}

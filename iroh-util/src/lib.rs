@@ -142,18 +142,20 @@ impl Source for MetricsSource {
     }
 }
 
-/// make a config using a default, file sources, environment variables, and commandline flag
-/// overrides
+/// Make a config using a default, files, environment variables, and commandline flags.
 ///
-/// environment variables are expected to start with the `env_prefix`. Nested fields can be
+/// Later items in the *file_paths* slice will have a higher priority than earlier ones.
+///
+/// Environment variables are expected to start with the *env_prefix*. Nested fields can be
 /// accessed using `.`, if your environment allows env vars with `.`
 ///
-/// Note: For the metrics configuration env vars, it is recommended to use the metrics specific
-/// prefix `IROH_METRICS` to set a field in the metrics config. You can use the above dot notation to set
-/// a metrics field, eg, `IROH_CONFIG_METRICS.SERVICE_NAME`, but only if your environment allows it
+/// Note: For the metrics configuration env vars, it is recommended to use the metrics
+/// specific prefix `IROH_METRICS` to set a field in the metrics config. You can use the
+/// above dot notation to set a metrics field, eg, `IROH_CONFIG_METRICS.SERVICE_NAME`, but
+/// only if your environment allows it
 pub fn make_config<T, S, V>(
     default: T,
-    file_paths: Vec<Option<&Path>>,
+    file_paths: &[Option<&Path>],
     env_prefix: &str,
     flag_overrides: HashMap<S, V>,
 ) -> Result<T>
@@ -166,7 +168,7 @@ where
     let mut builder = Config::builder().add_source(default);
 
     // layer on config options from files
-    for path in file_paths.into_iter().flatten() {
+    for path in file_paths.iter().flatten() {
         if path.exists() {
             let p = path.to_str().ok_or_else(|| anyhow::anyhow!("empty path"))?;
             builder = builder.add_source(File::with_name(p));
@@ -174,13 +176,20 @@ where
     }
 
     // next, add any environment variables
-    builder = builder.add_source(Environment::with_prefix(env_prefix).try_parsing(true));
+    builder = builder.add_source(
+        Environment::with_prefix(env_prefix)
+            .separator("__")
+            .try_parsing(true),
+    );
 
     // pull metrics config from env variables
     // nesting into this odd `MetricsSource` struct, gives us the option of
     // using the more convienient prefix `IROH_METRICS` to set metrics env vars
-    let mut metrics =
-        Config::builder().add_source(Environment::with_prefix("IROH_METRICS").try_parsing(true));
+    let mut metrics = Config::builder().add_source(
+        Environment::with_prefix("IROH_METRICS")
+            .separator("__")
+            .try_parsing(true),
+    );
 
     // allow custom `IROH_INSTANCE_ID` env var
     if let Ok(instance_id) = std::env::var("IROH_INSTANCE_ID") {
@@ -231,12 +240,52 @@ pub fn increase_fd_limit() -> std::io::Result<u64> {
 
 #[cfg(test)]
 mod tests {
+    use serde::Deserialize;
+
     use super::*;
+
     #[test]
     fn test_iroh_config_path() {
         let got = iroh_config_path("foo.bar").unwrap();
         let got = got.to_str().unwrap().to_string();
         let got = got.replace('\\', "/"); // handle windows paths
         assert!(got.ends_with("/iroh/foo.bar"));
+    }
+
+    #[derive(Debug, Clone, Deserialize)]
+    struct Config {
+        item: String,
+    }
+
+    impl Source for Config {
+        fn clone_into_box(&self) -> Box<dyn Source + Send + Sync> {
+            Box::new(self.clone())
+        }
+
+        fn collect(&self) -> Result<Map<String, Value>, ConfigError> {
+            let mut map = Map::new();
+            insert_into_config_map(&mut map, "item", self.item.clone());
+            Ok(map)
+        }
+    }
+
+    #[test]
+    fn test_make_config_priority() {
+        // Asserting that later items have a higher priority
+        let cfgdir = tempfile::tempdir().unwrap();
+        let cfgfile0 = cfgdir.path().join("cfg0.toml");
+        std::fs::write(&cfgfile0, r#"item = "zero""#).unwrap();
+        let cfgfile1 = cfgdir.path().join("cfg1.toml");
+        std::fs::write(&cfgfile1, r#"item = "one""#).unwrap();
+        let cfg = make_config(
+            Config {
+                item: String::from("default"),
+            },
+            &[Some(cfgfile0.as_path()), Some(cfgfile1.as_path())],
+            "NO_PREFIX_PLEASE_",
+            HashMap::<String, String>::new(),
+        )
+        .unwrap();
+        assert_eq!(cfg.item, "one");
     }
 }

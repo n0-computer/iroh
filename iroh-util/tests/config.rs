@@ -165,12 +165,12 @@ fn test_make_config() {
     temp_env::with_vars(
         vec![
             // set config field using env var
-            ("IROH_TEST_CONFIG_PORT", Some("4000")),
-            // set metrics fiels using `env_prefix` prefix & dot notation to set a nested field
-            // most terminal environments do not allow this
-            ("IROH_TEST_CONFIG_METRICS.FOO", Some("true")),
+            ("IROH_TEST__PORT", Some("4000")),
+            // set metrics fiels using `env_prefix`, double-underbar for deep
+            // nesting
+            ("IROH_TEST__METRICS__FOO", Some("true")),
             // set metrics field using `IROH_METRICS` prefix
-            ("IROH_METRICS_BAR", Some("10")),
+            ("IROH_METRICS__BAR", Some("10")),
             // custom metrics env var
             ("IROH_INSTANCE_ID", Some("new_id")),
             // custom metrics env var
@@ -179,12 +179,12 @@ fn test_make_config() {
         || {
             let got = make_config(
                 TestConfig::new(),
-                vec![
+                &[
                     Some(&PathBuf::from(CONFIG_A)),
                     Some(&PathBuf::from(CONFIG_B)),
                     None,
                 ],
-                "IROH_TEST_CONFIG",
+                "IROH_TEST",
                 HashMap::from([("enabled", "false"), ("metrics.debug", "true")]),
             )
             .unwrap();

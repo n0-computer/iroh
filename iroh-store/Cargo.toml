@@ -8,7 +8,8 @@ repository = "https://github.com/n0-computer/iroh"
 description = "Implementation of the storage part of iroh"
 
 [dependencies]
-anyhow = "1.0.57"
+anyhow = "1"
+ahash = "0.8.0"
 async-trait = "0.1.56"
 bytecheck = "0.6.7"
 bytes = "1.1.0"
