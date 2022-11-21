@@ -70,7 +70,7 @@ pub struct Bitswap<S: Store> {
     /// Set to true when dialing should be disabled because we have reached the conn limit.
     pause_dialing: bool,
     client: Client<S>,
-    server: Server<S>,
+    server: Option<Server<S>>,
     incoming_messages: mpsc::Sender<(PeerId, BitswapMessage)>,
     peers_connected: mpsc::Sender<PeerId>,
     peers_disconnected: mpsc::Sender<PeerId>,
@@ -101,16 +101,26 @@ impl PeerState {
 #[derive(Debug)]
 pub struct Config {
     pub client: ClientConfig,
-    pub server: ServerConfig,
+    /// If no server config is set, the server is disabled.
+    pub server: Option<ServerConfig>,
     pub protocol: ProtocolConfig,
     pub idle_timeout: Duration,
+}
+
+impl Config {
+    pub fn default_client_mode() -> Self {
+        Config {
+            server: None,
+            ..Default::default()
+        }
+    }
 }
 
 impl Default for Config {
     fn default() -> Self {
         Config {
             client: ClientConfig::default(),
-            server: ServerConfig::default(),
+            server: Some(ServerConfig::default()),
             protocol: ProtocolConfig::default(),
             idle_timeout: Duration::from_secs(30),
         }
@@ -127,16 +137,15 @@ pub trait Store: Debug + Clone + Send + Sync + 'static {
 impl<S: Store> Bitswap<S> {
     pub async fn new(self_id: PeerId, store: S, config: Config) -> Self {
         let network = Network::new(self_id);
-        let server = Server::new(network.clone(), store.clone(), config.server).await;
-        let client = Client::new(
-            network.clone(),
-            store,
-            server.received_blocks_cb(),
-            config.client,
-        )
-        .await;
+        let (server, cb) = if let Some(config) = config.server {
+            let server = Server::new(network.clone(), store.clone(), config).await;
+            let cb = server.received_blocks_cb();
+            (Some(server), Some(cb))
+        } else {
+            (None, None)
+        };
+        let client = Client::new(network.clone(), store, cb, config.client).await;
 
-        // EVIL: must eventually not be unbounded !!!
         let (sender_msg, mut receiver_msg) = mpsc::channel(2048);
         let (sender_con, mut receiver_con) = mpsc::channel(2048);
         let (sender_dis, mut receiver_dis) = mpsc::channel(2048);
@@ -149,11 +158,15 @@ impl<S: Store> Bitswap<S> {
             async move {
                 // process messages serially but without blocking the p2p loop
                 while let Some((peer, message)) = receiver_msg.recv().await {
-                    futures::future::join(
-                        client.receive_message(&peer, &message),
-                        server.receive_message(&peer, &message),
-                    )
-                    .await;
+                    if let Some(ref server) = server {
+                        futures::future::join(
+                            client.receive_message(&peer, &message),
+                            server.receive_message(&peer, &message),
+                        )
+                        .await;
+                    } else {
+                        client.receive_message(&peer, &message).await;
+                    }
                 }
             }
         }));
@@ -165,11 +178,15 @@ impl<S: Store> Bitswap<S> {
             async move {
                 // process messages serially but without blocking the p2p loop
                 while let Some(peer) = receiver_con.recv().await {
-                    futures::future::join(
-                        client.peer_connected(&peer),
-                        server.peer_connected(&peer),
-                    )
-                    .await;
+                    if let Some(ref server) = server {
+                        futures::future::join(
+                            client.peer_connected(&peer),
+                            server.peer_connected(&peer),
+                        )
+                        .await;
+                    } else {
+                        client.peer_connected(&peer).await;
+                    }
                 }
             }
         }));
@@ -181,11 +198,15 @@ impl<S: Store> Bitswap<S> {
             async move {
                 // process messages serially but without blocking the p2p loop
                 while let Some(peer) = receiver_dis.recv().await {
-                    futures::future::join(
-                        client.peer_disconnected(&peer),
-                        server.peer_disconnected(&peer),
-                    )
-                    .await;
+                    if let Some(ref server) = server {
+                        futures::future::join(
+                            client.peer_disconnected(&peer),
+                            server.peer_disconnected(&peer),
+                        )
+                        .await;
+                    } else {
+                        client.peer_disconnected(&peer).await;
+                    }
                 }
             }
         }));
@@ -206,8 +227,8 @@ impl<S: Store> Bitswap<S> {
         }
     }
 
-    pub fn server(&self) -> &Server<S> {
-        &self.server
+    pub fn server(&self) -> Option<&Server<S>> {
+        self.server.as_ref()
     }
 
     pub fn client(&self) -> &Client<S> {
@@ -216,16 +237,20 @@ impl<S: Store> Bitswap<S> {
 
     pub async fn stop(self) -> Result<()> {
         self.network.stop();
-        let (a, b) = futures::future::join(self.client.stop(), self.server.stop()).await;
-        a?;
-        b?;
+        if let Some(server) = self.server {
+            futures::future::try_join(self.client.stop(), server.stop()).await?;
+        } else {
+            self.client.stop().await?;
+        }
 
         Ok(())
     }
 
     pub async fn notify_new_blocks(&self, blocks: &[Block]) -> Result<()> {
         self.client.notify_new_blocks(blocks).await?;
-        self.server.notify_new_blocks(blocks).await?;
+        if let Some(ref server) = self.server {
+            server.notify_new_blocks(blocks).await?;
+        }
 
         Ok(())
     }
@@ -242,30 +267,16 @@ impl<S: Store> Bitswap<S> {
         }
     }
 
-    pub async fn stat(&self) -> Result<Stat> {
-        let client_stat = self.client.stat().await?;
-        let server_stat = self.server.stat().await?;
-
-        Ok(Stat {
-            wantlist: client_stat.wantlist,
-            blocks_received: client_stat.blocks_received,
-            data_received: client_stat.data_received,
-            dup_blks_received: client_stat.dup_blks_received,
-            dup_data_received: client_stat.dup_data_received,
-            messages_received: client_stat.messages_received,
-            peers: server_stat.peers,
-            blocks_sent: server_stat.blocks_sent,
-            data_sent: server_stat.data_sent,
-            provide_buf_len: server_stat.provide_buf_len,
-        })
-    }
-
     pub async fn wantlist_for_peer(&self, peer: &PeerId) -> Vec<Cid> {
         if peer == self.network.self_id() {
             return self.client.get_wantlist().await.into_iter().collect();
         }
 
-        self.server.wantlist_for_peer(peer).await
+        if let Some(ref server) = self.server {
+            server.wantlist_for_peer(peer).await
+        } else {
+            Vec::new()
+        }
     }
 
     fn peer_connected(&self, peer: PeerId) {
@@ -369,20 +380,6 @@ impl<S: Store> Bitswap<S> {
             }
         }
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Stat {
-    pub wantlist: Vec<Cid>,
-    pub peers: Vec<PeerId>,
-    pub blocks_received: u64,
-    pub data_received: u64,
-    pub dup_blks_received: u64,
-    pub dup_data_received: u64,
-    pub messages_received: u64,
-    pub blocks_sent: u64,
-    pub data_sent: u64,
-    pub provide_buf_len: usize,
 }
 
 #[derive(Debug)]
@@ -642,8 +639,8 @@ mod tests {
     use libp2p::core::transport::upgrade::Version;
     use libp2p::core::transport::Boxed;
     use libp2p::identity::Keypair;
-    use libp2p::swarm::{SwarmBuilder, SwarmEvent};
-    use libp2p::tcp::{GenTcpConfig, TokioTcpTransport};
+    use libp2p::swarm::SwarmEvent;
+    use libp2p::tcp::{tokio::Transport as TcpTransport, Config as TcpConfig};
     use libp2p::yamux::YamuxConfig;
     use libp2p::{noise, PeerId, Swarm, Transport};
     use tokio::sync::{mpsc, RwLock};
@@ -689,7 +686,7 @@ mod tests {
         };
 
         let peer_id = local_key.public().to_peer_id();
-        let transport = TokioTcpTransport::new(GenTcpConfig::default().nodelay(true))
+        let transport = TcpTransport::new(TcpConfig::default().nodelay(true))
             .upgrade(Version::V1)
             .authenticate(auth_config)
             .multiplex(YamuxConfig::default())
@@ -779,12 +776,7 @@ mod tests {
         let (peer1_id, trans) = mk_transport();
         let store1 = TestStore::default();
         let bs1 = Bitswap::new(peer1_id, store1.clone(), Config::default()).await;
-        let mut swarm1 = SwarmBuilder::new(trans, bs1, peer1_id)
-            .executor(Box::new(|fut| {
-                tokio::task::spawn(fut);
-            }))
-            .build();
-
+        let mut swarm1 = Swarm::with_tokio_executor(trans, bs1, peer1_id);
         let blocks = (0..N).map(|_| create_random_block_v1()).collect::<Vec<_>>();
 
         for block in &blocks {
@@ -817,11 +809,7 @@ mod tests {
         let store2 = TestStore::default();
         let bs2 = Bitswap::new(peer2_id, store2.clone(), Config::default()).await;
 
-        let mut swarm2 = SwarmBuilder::new(trans, bs2, peer2_id)
-            .executor(Box::new(|fut| {
-                tokio::task::spawn(fut);
-            }))
-            .build();
+        let mut swarm2 = Swarm::with_tokio_executor(trans, bs2, peer2_id);
 
         let swarm2_bs = swarm2.behaviour().clone();
         let peer2 = tokio::task::spawn(async move {

@@ -102,10 +102,8 @@ pub fn get_response_format(
         }
     }
 
-    match ResponseFormat::try_from_headers(request_headers) {
-        Ok(format) => Ok(format),
-        Err(_) => Ok(ResponseFormat::Fs(String::new())),
-    }
+    ResponseFormat::try_from_headers(request_headers)
+        .or_else(|_| Ok(ResponseFormat::Fs(String::new())))
 }
 
 #[derive(Debug)]

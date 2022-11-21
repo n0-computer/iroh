@@ -18,6 +18,7 @@ use libp2p::kad::{
     self, BootstrapOk, GetClosestPeersError, GetClosestPeersOk, GetProvidersOk, KademliaEvent,
     QueryId, QueryResult,
 };
+use libp2p::mdns;
 use libp2p::metrics::Recorder;
 use libp2p::multiaddr::Protocol;
 use libp2p::ping::Result as PingResult;
@@ -152,11 +153,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
     pub async fn run(&mut self) -> anyhow::Result<()> {
         info!("Local Peer ID: {}", self.swarm.local_peer_id());
 
-        let mut nice_interval = if self.use_dht {
-            Some(tokio::time::interval(NICE_INTERVAL))
-        } else {
-            None
-        };
+        let mut nice_interval = self.use_dht.then(|| tokio::time::interval(NICE_INTERVAL));
         let mut bootstrap_interval = tokio::time::interval(BOOTSTRAP_INTERVAL);
         let mut expiry_interval = tokio::time::interval(EXPIRY_INTERVAL);
 
@@ -670,6 +667,25 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                     ));
                 }
             }
+            Event::Mdns(e) => match e {
+                mdns::Event::Discovered(peers) => {
+                    for (peer_id, addr) in peers {
+                        let is_connected = self.swarm.is_connected(&peer_id);
+                        debug!(
+                            "mdns: discovered {} at {} (connected: {:?})",
+                            peer_id, addr, is_connected
+                        );
+                        if !is_connected {
+                            let dial_opts =
+                                DialOpts::peer_id(peer_id).addresses(vec![addr]).build();
+                            if let Err(e) = Swarm::dial(&mut self.swarm, dial_opts) {
+                                warn!("invalid dial options: {:?}", e);
+                            }
+                        }
+                    }
+                }
+                mdns::Event::Expired(_) => {}
+            },
             _ => {
                 // TODO: check all important events are handled
             }

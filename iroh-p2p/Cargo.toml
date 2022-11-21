@@ -63,6 +63,7 @@ features = [
   "autonat",
   "rsa",
   "tokio",
+  "macros",
 ] 
 
 [dev-dependencies]
