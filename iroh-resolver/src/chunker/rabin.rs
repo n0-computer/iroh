@@ -832,7 +832,7 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(0);
         // split into randomized chunks
         let mut chunks: Vec<Vec<u8>> = Vec::new();
-        let mut index = 0; 
+        let mut index = 0;
         while index < data.len() {
             let split = rng.gen_range(index..=data.len());
             if split != index {
@@ -841,10 +841,12 @@ mod tests {
                 chunks.push(chunk);
             }
         }
-        println!("chunks: {:?}", chunks.iter().map(|c| c.len()).collect::<Vec<_>>());
-        let stream = futures::stream::iter(chunks.iter().map(|s| -> io::Result<&[u8]> {
-            Ok(&s[..])
-        }));
+        println!(
+            "chunks: {:?}",
+            chunks.iter().map(|c| c.len()).collect::<Vec<_>>()
+        );
+        let stream =
+            futures::stream::iter(chunks.iter().map(|s| -> io::Result<&[u8]> { Ok(&s[..]) }));
         let reader = tokio_util::io::StreamReader::new(stream);
         let split = chunker.chunks(reader);
         let chunks = split.try_collect::<Vec<_>>().await.unwrap();
