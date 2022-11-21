@@ -164,7 +164,7 @@ impl Default for Libp2pConfig {
         Self {
             listening_multiaddrs: vec![
                 "/ip4/0.0.0.0/tcp/4444".parse().unwrap(),
-                "/ip4/0.0.0.0/udp/4445/quic".parse().unwrap(),
+                "/ip4/0.0.0.0/udp/4445/quic-v1".parse().unwrap(),
             ],
             bootstrap_peers,
             mdns: false,
