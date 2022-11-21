@@ -42,12 +42,12 @@ jobs:
 
     - name: Set build arch
       run: |
-        echo "PROTOC_ARCH=${{ matrix.protoc-arch }}" >> $GITHUB_ENV        
+        echo "PROTOC_ARCH=${{ matrix.protoc-arch }}" >> $GITHUB_ENV
 
     - name: Install ${{ matrix.rust }}
       run: |
         rustup toolchain install --profile default ${{ matrix.rust }}
-    
+
     - name: Install Protoc windows
       if: matrix.os == 'windows-latest'
       uses: arduino/setup-protoc@v1
@@ -74,7 +74,7 @@ jobs:
     - name: check all features
       run: |
         cargo check --workspace --all-features --all-targets
-    
+
     - name: clippy default features
       run: |
         cargo clippy --workspace --all-targets -- -D warnings
@@ -93,7 +93,7 @@ jobs:
         OBJC_DISABLE_INITIALIZE_FORK_SAFETY: "YES"
       run: |
         cargo test --workspace --all-features --all-targets
-      
+
     - name: tests w/o default features
       timeout-minutes: 30
       env:
@@ -157,13 +157,13 @@ jobs:
     - name: Set build arch
       run: |
         echo "RELEASE_ARCH=${{ matrix.release-arch }}" >> $GITHUB_ENV
-        echo "RELEASE_OS=${{ matrix.release-os }}" >> $GITHUB_ENV       
-        echo "PROTOC_ARCH=${{ matrix.protoc-arch }}" >> $GITHUB_ENV        
-    
+        echo "RELEASE_OS=${{ matrix.release-os }}" >> $GITHUB_ENV
+        echo "PROTOC_ARCH=${{ matrix.protoc-arch }}" >> $GITHUB_ENV
+
     - name: Install ${{ matrix.rust }}
       run: |
         rustup toolchain install ${{ matrix.rust }}
-    
+
     - name: Install Protoc windows
       if: matrix.os == 'windows-latest'
       uses: arduino/setup-protoc@v1
@@ -193,7 +193,7 @@ jobs:
         curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
         unzip awscliv2.zip
         sudo ./aws/install --update
-    
+
     - name: Setup awscli on linux
       if: matrix.name == 'ubuntu-arm-latest'
       run: |
@@ -250,7 +250,7 @@ jobs:
         with:
           command: fmt
           args: --all -- --check
-    
+
   audit:
     name: audit
     runs-on: ubuntu-latest
@@ -309,10 +309,36 @@ jobs:
     steps:
       - name: Checkout sources
         uses: actions/checkout@v2
+
+      - name: Set build arch
+        run: |
+          echo "PROTOC_ARCH=${{ matrix.protoc-arch }}" >> $GITHUB_ENV
+
       - name: Install ${{ matrix.rust }}
         run: |
           rustup toolchain install --profile minimal ${{ matrix.rust }}
+
+      - name: Install Protoc windows
+        if: matrix.os == 'windows-latest'
+        uses: arduino/setup-protoc@v1
+        with:
+          version: '3.20.1'
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install Protoc
+        if: matrix.os != 'windows-latest'
+        run: |
+          PROTOC_VERSION=3.20.1
+          PROTOC_ZIP=protoc-$PROTOC_VERSION-$PROTOC_ARCH.zip
+          curl -OL https://github.com/protocolbuffers/protobuf/releases/download/v$PROTOC_VERSION/$PROTOC_ZIP
+          sudo unzip -o $PROTOC_ZIP -d /usr/local bin/protoc
+          sudo unzip -o $PROTOC_ZIP -d /usr/local 'include/*'
+          rm -f $PROTOC_ZIP
+          echo "PROTOC=/usr/local/bin/protoc" >> $GITHUB_ENV
+          echo "PROTOC_INCLUDE=/usr/local/include" >> $GITHUB_ENV
+
       - name: Cargo check default features
         run: "cargo check --workspace --all-targets"
+
       - name: Cargo check all features
         run: "cargo check --workspace --all-features --all-targets"
