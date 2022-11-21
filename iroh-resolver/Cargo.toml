@@ -44,7 +44,7 @@ fnv = "1.0.7"
 iroh-car = { path = "../iroh-car" }
 iroh-rpc-types = { path = "../iroh-rpc-types", default-features = false }
 iroh-store = { path = "../iroh-store", default-features = false }
-proptest = "1.0.0"
+proptest = { version = "1.0.0" }
 rand = "0.8.5"
 rand_chacha = "0.3.1"
 tempfile = "3.3.0"

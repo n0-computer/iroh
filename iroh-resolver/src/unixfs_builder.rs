@@ -18,7 +18,7 @@ use tokio::io::AsyncRead;
 
 use crate::{
     balanced_tree::{TreeBuilder, DEFAULT_DEGREE},
-    chunker::{Chunker, DEFAULT_CHUNKS_SIZE, DEFAULT_CHUNK_SIZE_LIMIT},
+    chunker::{self, Chunker, DEFAULT_CHUNK_SIZE_LIMIT},
     resolver::Block,
     unixfs::{dag_pb, unixfs_pb, DataType, Node, UnixfsNode},
 };
@@ -265,13 +265,24 @@ impl Symlink {
 }
 
 /// Constructs a UnixFS file.
-#[derive(Default)]
 pub struct FileBuilder {
     name: Option<String>,
     path: Option<PathBuf>,
     reader: Option<Pin<Box<dyn AsyncRead>>>,
-    chunk_size: Option<usize>,
-    degree: Option<usize>,
+    chunker: Chunker,
+    degree: usize,
+}
+
+impl Default for FileBuilder {
+    fn default() -> Self {
+        Self {
+            name: None,
+            path: None,
+            reader: None,
+            chunker: Chunker::Rabin(Box::new(chunker::Rabin::default())),
+            degree: DEFAULT_DEGREE,
+        }
+    }
 }
 
 impl Debug for FileBuilder {
@@ -284,7 +295,7 @@ impl Debug for FileBuilder {
         f.debug_struct("FileBuilder")
             .field("path", &self.path)
             .field("name", &self.name)
-            .field("chunk_size", &self.chunk_size)
+            .field("chunker", &self.chunker)
             .field("degree", &self.degree)
             .field("reader", &reader)
             .finish()
@@ -307,13 +318,20 @@ impl FileBuilder {
         self
     }
 
-    pub fn chunk_size(&mut self, chunk_size: usize) -> &mut Self {
-        self.chunk_size = Some(chunk_size);
+    /// Set the chunker to be fixed size.
+    pub fn fixed_chunker(&mut self, chunk_size: usize) -> &mut Self {
+        self.chunker = Chunker::Fixed(chunker::Fixed::new(chunk_size));
+        self
+    }
+
+    /// Use the rabin chunker.
+    pub fn rabin_chunker(&mut self) -> &mut Self {
+        self.chunker = Chunker::Rabin(Box::new(chunker::Rabin::default()));
         self
     }
 
     pub fn degree(&mut self, degree: usize) -> &mut Self {
-        self.degree = Some(degree);
+        self.degree = degree;
         self
     }
 
@@ -329,9 +347,8 @@ impl FileBuilder {
     }
 
     pub async fn build(self) -> Result<File> {
-        let chunk_size = self.chunk_size.unwrap_or(DEFAULT_CHUNKS_SIZE);
-        let degree = self.degree.unwrap_or(DEFAULT_DEGREE);
-        let chunker = Chunker::fixed_with_size(chunk_size);
+        let degree = self.degree;
+        let chunker = self.chunker;
         let tree_builder = TreeBuilder::balanced_tree_with_degree(degree);
         if let Some(path) = self.path {
             let name = match self.name {
@@ -737,6 +754,7 @@ async fn make_dir_from_path<P: Into<PathBuf>>(path: P) -> Result<Directory> {
 
 #[cfg(test)]
 mod tests {
+    use crate::chunker::DEFAULT_CHUNKS_SIZE;
     use crate::content_loader::ContentLoader;
     use crate::resolver::{Out, OutMetrics, Resolver, ResponseClip};
 
@@ -996,7 +1014,7 @@ mod tests {
         let mut builder = FileBuilder::new();
         builder
             .name("file.bin")
-            .chunk_size(chunk_size)
+            .fixed_chunker(chunk_size)
             .degree(degree)
             .content_bytes(data.clone());
         let file = builder.build().await?;
@@ -1131,7 +1149,7 @@ mod tests {
             let bar = bar.build().await?;
             bar.encode().await?.try_collect().await?
         };
-        assert_eq!(bar_encoded.len(), 5);
+        assert_eq!(bar_encoded.len(), 4);
 
         // Add a file
         let mut baz = FileBuilder::new();
@@ -1152,7 +1170,7 @@ mod tests {
             let baz = baz.build().await?;
             baz.encode().await?.try_collect().await?
         };
-        assert_eq!(baz_encoded.len(), 9);
+        assert_eq!(baz_encoded.len(), 16);
 
         dir.add_file(bar).add_file(baz);
 
@@ -1163,18 +1181,18 @@ mod tests {
 
         let links = decoded_dir.links().collect::<Result<Vec<_>>>().unwrap();
         assert_eq!(links[0].name.unwrap(), "bar.txt");
-        assert_eq!(links[0].cid, *bar_encoded[4].cid());
+        assert_eq!(links[0].cid, *bar_encoded[3].cid());
         assert_eq!(links[1].name.unwrap(), "baz.txt");
-        assert_eq!(links[1].cid, *baz_encoded[8].cid());
+        assert_eq!(links[1].cid, *baz_encoded[15].cid());
 
         for (i, encoded) in baz_encoded.iter().enumerate() {
             let node = UnixfsNode::decode(encoded.cid(), encoded.data().clone())?;
-            if i == 8 {
+            if i == 15 {
                 assert_eq!(node.typ(), Some(DataType::File));
-                assert_eq!(node.links().count(), 8);
+                assert_eq!(node.links().count(), 15);
             } else {
                 assert_eq!(node.typ(), None); // raw leaves
-                assert_eq!(node.size(), Some(1024 * 256));
+                assert!(node.size().unwrap() > 0);
                 assert_eq!(node.links().count(), 0);
             }
         }
