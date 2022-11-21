@@ -46,7 +46,7 @@ jobs:
 
     - name: Install ${{ matrix.rust }}
       run: |
-        rustup toolchain install ${{ matrix.rust }}
+        rustup toolchain install --profile default ${{ matrix.rust }}
     
     - name: Install Protoc windows
       if: matrix.os == 'windows-latest'
@@ -67,13 +67,20 @@ jobs:
         echo "PROTOC=/usr/local/bin/protoc" >> $GITHUB_ENV
         echo "PROTOC_INCLUDE=/usr/local/include" >> $GITHUB_ENV
 
-    - name: check
+    - name: check default features
+      run: |
+        cargo check --workspace --all-targets
+
+    - name: check all features
       run: |
         cargo check --workspace --all-features --all-targets
     
-    - name: clippy
+    - name: clippy default features
       run: |
-        rustup component add clippy
+        cargo clippy --workspace --all-targets -- -D warnings
+
+    - name: clippy all features
+      run: |
         cargo clippy --workspace --all-features --all-targets -- -D warnings
 
     - name: tests
@@ -269,3 +276,41 @@ jobs:
       - uses: actions-rs/cargo@v1
         with:
           command: audit
+
+  MSRV:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macOS-latest, windows-latest]
+        rust: ["1.63"]
+        experimental: [false]
+        include:
+          - os: ubuntu-latest
+            release-os: linux
+            release-arch: amd64
+            protoc-arch: linux-x86_64
+            runner: [self-hosted, linux, X64]
+          - os: macos-latest
+            release-os: darwin
+            release-arch: aarch64
+            protoc-arch: osx-aarch_64
+            runner: [self-hosted, macOS, ARM64]
+          - os: windows-latest
+            release-os: windows
+            release-arch: amd64
+            runner: [self-hosted, windows, X64]
+    env:
+      RUST_BACKTRACE: full
+      # Force not building debuginfo to save space on disk.
+      RUSTFLAGS: "-C debuginfo=0"
+      RUSTV: ${{ matrix.rust }}
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v2
+      - name: Install ${{ matrix.rust }}
+        run: |
+          rustup toolchain install --profile minimal ${{ matrix.rust }}
+      - name: Cargo check default features
+        run: "cargo check --workspace --all-targets -- -Dwarnings"
+      - name: Cargo check all features
+        run: "cargo check --workspace --all-features --all-targets -- -Dwarnings"
