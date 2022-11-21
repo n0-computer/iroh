@@ -89,7 +89,7 @@ Setting up a [git hook][git-hook] to run these commands can save you many headac
 
 ```shell
 #!/bin/sh
-cargo clippy --workspace --all-features --akk-targets && cargo test --workspace --all-features --all-targets
+cargo clippy --workspace --all-features --all-targets && cargo test --workspace --all-features --all-targets
 ```
 
 ## <a name="dependecies"></a> Dependencies
