@@ -20,7 +20,7 @@ services as micro services.
 
 ### Features
 
-- `uds-gateway` - enables the usage and binding of the http gateway over UDS.
+- `http-uds-gateway` - enables the usage and binding of the http gateway over UDS. This is independent from the rpc control endpoint which uses the same default and configuration as `iroh-gateway`.
 
 ### Reference
 
