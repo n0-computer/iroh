@@ -4,6 +4,7 @@ pub mod client;
 pub mod config;
 pub mod constants;
 pub mod core;
+mod cors;
 mod error;
 pub mod handlers;
 pub mod headers;

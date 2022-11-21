@@ -1,7 +1,7 @@
 use iroh_bitswap::BitswapEvent;
 use libp2p::{
     autonat, dcutr, gossipsub::GossipsubEvent, identify::Event as IdentifyEvent,
-    kad::KademliaEvent, mdns::MdnsEvent, ping::Event as PingEvent, relay,
+    kad::KademliaEvent, mdns::Event as MdnsEvent, ping::Event as PingEvent, relay,
 };
 
 use super::peer_manager::PeerManagerEvent;

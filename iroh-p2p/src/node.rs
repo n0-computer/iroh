@@ -18,6 +18,7 @@ use libp2p::kad::{
     self, BootstrapOk, GetClosestPeersError, GetClosestPeersOk, GetProvidersOk, KademliaEvent,
     QueryId, QueryResult,
 };
+use libp2p::mdns;
 use libp2p::metrics::Recorder;
 use libp2p::multiaddr::Protocol;
 use libp2p::ping::Result as PingResult;
@@ -670,6 +671,25 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                     ));
                 }
             }
+            Event::Mdns(e) => match e {
+                mdns::Event::Discovered(peers) => {
+                    for (peer_id, addr) in peers {
+                        let is_connected = self.swarm.is_connected(&peer_id);
+                        debug!(
+                            "mdns: discovered {} at {} (connected: {:?})",
+                            peer_id, addr, is_connected
+                        );
+                        if !is_connected {
+                            let dial_opts =
+                                DialOpts::peer_id(peer_id).addresses(vec![addr]).build();
+                            if let Err(e) = Swarm::dial(&mut self.swarm, dial_opts) {
+                                warn!("invalid dial options: {:?}", e);
+                            }
+                        }
+                    }
+                }
+                mdns::Event::Expired(_) => {}
+            },
             _ => {
                 // TODO: check all important events are handled
             }
@@ -1445,6 +1465,7 @@ mod tests {
         Ok(())
     }
 
+    #[ignore = "flakey"]
     #[tokio::test]
     async fn test_dht() -> Result<()> {
         // set up three nodes
