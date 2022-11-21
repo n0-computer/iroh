@@ -5,6 +5,7 @@ edition = "2021"
 license = "Apache-2.0/MIT"
 readme = "README.md"
 description = "Rust API for Iroh"
+rust-version = "1.63"
 
 [features]
 testing = ["dep:mockall"]

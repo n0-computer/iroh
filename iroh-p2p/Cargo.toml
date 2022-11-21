@@ -6,6 +6,7 @@ authors = ["Friedel Ziegelmayer <me@dignifiedquire.com>"]
 license = "Apache-2.0/MIT"
 repository = "https://github.com/n0-computer/iroh"
 description = "Implementation of the p2p part of iroh"
+rust-version = "1.63"
 
 [dependencies]
 ahash = "0.8.0"

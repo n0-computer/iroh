@@ -6,6 +6,7 @@ license = "Apache-2.0/MIT"
 readme = "README.md"
 description = "Iroh metrics"
 repository = "https://github.com/n0-computer/iroh"
+rust-version = "1.63"
 
 [dependencies]
 async-trait = "0.1.57"
