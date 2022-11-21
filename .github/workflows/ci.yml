@@ -16,7 +16,6 @@ jobs:
       matrix:
         os: [ubuntu-latest, macOS-latest, windows-latest]
         rust: [stable]
-        rust-msrv: ["1.63"]
         experimental: [false]
         include:
           - os: ubuntu-latest
@@ -38,6 +37,7 @@ jobs:
       # Force not building debuginfo to save space on disk.
       RUSTFLAGS: "-C debuginfo=0"
       RUSTV: ${{ matrix.rust }}
+      MSRV: "1.63"
     steps:
     - uses: actions/checkout@master
 
@@ -50,8 +50,14 @@ jobs:
         rustup toolchain install --profile default ${{ matrix.rust }}
 
     - name: Install Rust MSRV
+      if: matrix.os != 'windows-latest'
       run: |
-        rustup toolchain install --profile minimal ${{ matrix.rust-msrv }}
+        rustup toolchain install --profile minimal $MSRV
+
+    - name: Install Rust MSRV
+      if: matrix.os == 'windows-latest'
+      run: |
+        rustup toolchain install --profile minimal $Env:MSRV
 
     - name: Install Protoc windows
       if: matrix.os == 'windows-latest'
@@ -73,12 +79,24 @@ jobs:
         echo "PROTOC_INCLUDE=/usr/local/include" >> $GITHUB_ENV
 
     - name: check MSRV default features
+      if: matrix.os != 'windows-latest'
       run: |
-        cargo +${{ matrix.rust-msrv }} check --workspace --all-targets
+        cargo +$MSRV check --workspace --all-targets
 
     - name: check MSRV all features
+      if: matrix.os != 'windows-latest'
       run: |
-        cargo +${{ matrix.rust-msrv }} check --workspace --all-features --all-targets
+        cargo +$MSRV check --workspace --all-features --all-targets
+
+    - name: check MSRV default features
+      if: matrix.os == 'windows-latest'
+      run: |
+        cargo +$Env:MSRV check --workspace --all-targets
+
+    - name: check MSRV all features
+      if: matrix.os == 'windows-latest'
+      run: |
+        cargo +$Env:MSRV check --workspace --all-features --all-targets
 
     - name: check default features
       run: |
