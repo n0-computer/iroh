@@ -11,7 +11,7 @@ use libp2p::{
     dns,
     identity::Keypair,
     mplex, noise,
-    swarm::{ConnectionLimits, SwarmBuilder},
+    swarm::{ConnectionLimits, Executor, SwarmBuilder},
     yamux::{self, WindowUpdateMode},
     PeerId, Swarm, Transport,
 };
@@ -28,10 +28,10 @@ async fn build_transport(
 ) {
     // TODO: make transports configurable
 
-    let tcp_config = libp2p::tcp::GenTcpConfig::default().port_reuse(true);
-    let transport = libp2p::tcp::TokioTcpTransport::new(tcp_config.clone());
+    let tcp_config = libp2p::tcp::Config::default().port_reuse(true);
+    let transport = libp2p::tcp::tokio::Transport::new(tcp_config.clone());
     let transport =
-        libp2p::websocket::WsConfig::new(libp2p::tcp::TokioTcpTransport::new(tcp_config))
+        libp2p::websocket::WsConfig::new(libp2p::tcp::tokio::Transport::new(tcp_config))
             .or_transport(transport);
 
     // TODO: configurable
@@ -104,15 +104,19 @@ pub(crate) async fn build_swarm(
         .with_max_established_incoming(Some(config.max_conns_in))
         .with_max_established_outgoing(Some(config.max_conns_out))
         .with_max_established_per_peer(Some(config.max_conns_per_peer));
-    let swarm = SwarmBuilder::new(transport, behaviour, peer_id)
+    let swarm = SwarmBuilder::with_executor(transport, behaviour, peer_id, Tokio)
         .connection_limits(limits)
         .notify_handler_buffer_size(config.notify_handler_buffer_size.try_into()?)
         .connection_event_buffer_size(config.connection_event_buffer_size)
         .dial_concurrency_factor(config.dial_concurrency_factor.try_into().unwrap())
-        .executor(Box::new(|fut| {
-            tokio::task::spawn(fut);
-        }))
         .build();
 
     Ok(swarm)
+}
+
+struct Tokio;
+impl Executor for Tokio {
+    fn exec(&self, fut: std::pin::Pin<Box<dyn futures::Future<Output = ()> + Send>>) {
+        tokio::task::spawn(fut);
+    }
 }

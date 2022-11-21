@@ -11,12 +11,12 @@ use libp2p::gossipsub::{self, MessageAuthenticity};
 use libp2p::identify;
 use libp2p::kad::store::{MemoryStore, MemoryStoreConfig};
 use libp2p::kad::{Kademlia, KademliaConfig};
-use libp2p::mdns::TokioMdns as Mdns;
+use libp2p::mdns::tokio::Behaviour as Mdns;
 use libp2p::multiaddr::Protocol;
 use libp2p::ping::Behaviour as Ping;
 use libp2p::relay;
 use libp2p::swarm::behaviour::toggle::Toggle;
-use libp2p::NetworkBehaviour;
+use libp2p::swarm::NetworkBehaviour;
 use libp2p::{autonat, dcutr};
 use tracing::{info, warn};
 
@@ -29,7 +29,7 @@ mod peer_manager;
 
 /// Libp2p behaviour for the node.
 #[derive(NetworkBehaviour)]
-#[behaviour(out_event = "Event", event_process = false)]
+#[behaviour(out_event = "Event")]
 pub(crate) struct NodeBehaviour {
     ping: Ping,
     identify: identify::Behaviour,

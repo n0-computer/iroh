@@ -639,8 +639,8 @@ mod tests {
     use libp2p::core::transport::upgrade::Version;
     use libp2p::core::transport::Boxed;
     use libp2p::identity::Keypair;
-    use libp2p::swarm::{SwarmBuilder, SwarmEvent};
-    use libp2p::tcp::{GenTcpConfig, TokioTcpTransport};
+    use libp2p::swarm::SwarmEvent;
+    use libp2p::tcp::{tokio::Transport as TcpTransport, Config as TcpConfig};
     use libp2p::yamux::YamuxConfig;
     use libp2p::{noise, PeerId, Swarm, Transport};
     use tokio::sync::{mpsc, RwLock};
@@ -686,7 +686,7 @@ mod tests {
         };
 
         let peer_id = local_key.public().to_peer_id();
-        let transport = TokioTcpTransport::new(GenTcpConfig::default().nodelay(true))
+        let transport = TcpTransport::new(TcpConfig::default().nodelay(true))
             .upgrade(Version::V1)
             .authenticate(auth_config)
             .multiplex(YamuxConfig::default())
@@ -776,12 +776,7 @@ mod tests {
         let (peer1_id, trans) = mk_transport();
         let store1 = TestStore::default();
         let bs1 = Bitswap::new(peer1_id, store1.clone(), Config::default()).await;
-        let mut swarm1 = SwarmBuilder::new(trans, bs1, peer1_id)
-            .executor(Box::new(|fut| {
-                tokio::task::spawn(fut);
-            }))
-            .build();
-
+        let mut swarm1 = Swarm::with_tokio_executor(trans, bs1, peer1_id);
         let blocks = (0..N).map(|_| create_random_block_v1()).collect::<Vec<_>>();
 
         for block in &blocks {
@@ -814,11 +809,7 @@ mod tests {
         let store2 = TestStore::default();
         let bs2 = Bitswap::new(peer2_id, store2.clone(), Config::default()).await;
 
-        let mut swarm2 = SwarmBuilder::new(trans, bs2, peer2_id)
-            .executor(Box::new(|fut| {
-                tokio::task::spawn(fut);
-            }))
-            .build();
+        let mut swarm2 = Swarm::with_tokio_executor(trans, bs2, peer2_id);
 
         let swarm2_bs = swarm2.behaviour().clone();
         let peer2 = tokio::task::spawn(async move {
