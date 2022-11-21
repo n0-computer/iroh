@@ -100,17 +100,14 @@ pub struct GetParams {
     /// specifies the expected format of the response
     format: Option<String>,
     /// specifies the desired filename of the response
-    #[serde(default)]
-    filename: String,
+    filename: Option<String>,
     /// specifies whether the response should be of disposition inline or attachment
-    #[serde(default)]
-    download: bool,
+    download: Option<bool>,
     /// specifies whether the response should render a directory even if index.html is present
     force_dir: Option<bool>,
     /// uri query parameter for handling navigator.registerProtocolHandler Web API requests
     uri: Option<String>,
-    #[serde(default)]
-    recursive: bool,
+    recursive: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -216,8 +213,8 @@ async fn request_preprocessing<T: ContentLoader + std::marker::Unpin>(
         format,
         cid: resolved_path.root().clone(),
         resolved_path,
-        query_file_name: query_params.filename.clone(),
-        download: query_params.download,
+        query_file_name: query_params.filename.as_deref().unwrap_or_default().to_string(),
+        download: query_params.download.unwrap_or_default(),
         query_params: query_params.clone(),
     };
     Ok(RequestPreprocessingResult::FurtherRequest(Box::new(req)))
@@ -245,7 +242,7 @@ pub async fn get_handler<T: ContentLoader + std::marker::Unpin>(
     {
         RequestPreprocessingResult::Response(gateway_response) => Ok(gateway_response),
         RequestPreprocessingResult::FurtherRequest(req) => {
-            if query_params.recursive {
+            if query_params.recursive.unwrap_or_default() {
                 serve_car_recursive(&req, state, response_headers, start_time).await
             } else {
                 match req.format {
