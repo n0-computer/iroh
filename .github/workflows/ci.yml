@@ -313,6 +313,6 @@ jobs:
         run: |
           rustup toolchain install --profile minimal ${{ matrix.rust }}
       - name: Cargo check default features
-        run: "cargo check --workspace --all-targets -- -Dwarnings"
+        run: "cargo check --workspace --all-targets"
       - name: Cargo check all features
-        run: "cargo check --workspace --all-features --all-targets -- -Dwarnings"
+        run: "cargo check --workspace --all-features --all-targets"
