@@ -104,11 +104,7 @@ async fn init_metrics(cfg: Config) -> Option<JoinHandle<()>> {
 /// Initialize the tracing subsystem.
 fn init_tracer(cfg: Config) -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(feature = "tokio-console")]
-    let console_subscriber = if cfg.tokio_console {
-        Some(console_subscriber::spawn())
-    } else {
-        None
-    };
+    let console_subscriber = cfg.tokio_console.then(console_subscriber::spawn);
 
     let log_subscriber = fmt::layer()
         .pretty()

@@ -173,13 +173,7 @@ impl Flatfs {
         };
 
         self.walk().filter_map(move |r| match r {
-            Ok(entry) => {
-                if entry.path().is_file() {
-                    Some(read_file(entry.path()))
-                } else {
-                    None
-                }
-            }
+            Ok(entry) => entry.path().is_file().then(|| read_file(entry.path())),
             Err(err) => Some(Err(err.into())),
         })
     }
@@ -187,13 +181,7 @@ impl Flatfs {
     /// Iterates over all keys (in no guranteed order).
     pub fn keys(&self) -> impl Iterator<Item = Result<String>> {
         self.walk().filter_map(move |r| match r {
-            Ok(entry) => {
-                if entry.path().is_file() {
-                    Some(key_from_path(entry.path()))
-                } else {
-                    None
-                }
-            }
+            Ok(entry) => entry.path().is_file().then(|| key_from_path(entry.path())),
             Err(err) => Some(Err(err.into())),
         })
     }
@@ -201,13 +189,10 @@ impl Flatfs {
     /// Iterates over all keys and returns stats for them (in no guranteed order).
     pub fn stats(&self) -> impl Iterator<Item = Result<KvStats>> {
         self.walk().filter_map(move |r| match r {
-            Ok(entry) => {
-                if entry.path().is_file() {
-                    Some(KvStats::from_path(entry.path()))
-                } else {
-                    None
-                }
-            }
+            Ok(entry) => entry
+                .path()
+                .is_file()
+                .then(|| KvStats::from_path(entry.path())),
             Err(err) => Some(Err(err.into())),
         })
     }
@@ -215,13 +200,10 @@ impl Flatfs {
     /// Iterates over all values (in no guranteed order).
     pub fn values(&self) -> impl Iterator<Item = Result<Vec<u8>>> {
         self.walk().filter_map(move |r| match r {
-            Ok(entry) => {
-                if entry.path().is_file() {
-                    Some(fs::read(entry.path()).map_err(Into::into))
-                } else {
-                    None
-                }
-            }
+            Ok(entry) => entry
+                .path()
+                .is_file()
+                .then(|| fs::read(entry.path()).map_err(Into::into)),
             Err(err) => Some(Err(err.into())),
         })
     }
@@ -302,13 +284,10 @@ fn retry<T, E, F: FnMut() -> std::result::Result<T, E>>(mut f: F) -> std::result
             }
         },
     );
-    match res {
-        Ok(res) => Ok(res),
-        Err(err) => match err {
-            Error::Permanent(err) => Err(err),
-            Error::Transient { err, .. } => Err(err),
-        },
-    }
+    res.map_err(|err| match err {
+        Error::Permanent(err) => err,
+        Error::Transient { err, .. } => err,
+    })
 }
 
 impl Drop for Flatfs {
