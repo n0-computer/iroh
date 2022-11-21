@@ -6,13 +6,13 @@ use libp2p::{
     core::{
         self,
         muxing::StreamMuxerBox,
-        transport::{timeout::TransportTimeout, Boxed, OrTransport},
+        transport::{Boxed, OrTransport},
     },
     dns,
     identity::Keypair,
     mplex, noise, quic,
     swarm::{derive_prelude::EitherOutput, ConnectionLimits, Executor, SwarmBuilder},
-    tcp, websocket,
+    tcp,
     yamux::{self, WindowUpdateMode},
     PeerId, Swarm, Transport,
 };
@@ -36,7 +36,7 @@ async fn build_transport(
     let quic_transport = quic::tokio::Transport::new(quic_config);
 
     let tcp_config = tcp::Config::default().port_reuse(port_reuse);
-    let tcp_transport = tcp::tokio::Transport::new(tcp_config.clone());
+    let tcp_transport = tcp::tokio::Transport::new(tcp_config);
 
     let auth_config = {
         let dh_keys = noise::Keypair::<noise::X25519Spec>::new()
