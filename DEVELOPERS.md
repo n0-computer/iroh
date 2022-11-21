@@ -81,15 +81,15 @@ When you push your branch to github and open up a pull request, it will automati
 In order to catch linting and testing errors before pushing the code to github, be sure to run:
 
 ```shell
-$ cargo clippy --workspace --all-features --examples --benches --tests --bins
-$ cargo test --workspace --all-features --examples --benches --bins
+$ cargo clippy --workspace --all-features --all-targets
+$ cargo test --workspace --all-features --all-targets
 ```
 
 Setting up a [git hook][git-hook] to run these commands can save you many headaches:
 
 ```shell
 #!/bin/sh
-cargo clippy --workspace --all-features --examples --benches --tests --bins && cargo test --workspace --all-features --examples --benches --bins
+cargo clippy --workspace --all-features --all-targets && cargo test --workspace --all-features --all-targets
 ```
 
 ## <a name="dependecies"></a> Dependencies
