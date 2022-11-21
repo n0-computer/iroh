@@ -256,41 +256,10 @@ pub fn increase_fd_limit() -> std::io::Result<u64> {
 
 #[cfg(test)]
 mod tests {
-    use std::ffi::{OsStr, OsString};
-
     use serde::Deserialize;
+    use testdir::testdir;
 
     use super::*;
-
-    /// Helper struct to restore an environment variable once dropped.
-    struct EnvDropGuard {
-        name: OsString,
-        value: Option<OsString>,
-    }
-
-    impl EnvDropGuard {
-        /// Which environment variable to preserve.
-        fn new(name: impl AsRef<OsStr>) -> Option<Self> {
-            let original = env::var_os(name.as_ref());
-            Some(EnvDropGuard {
-                name: name.as_ref().to_os_string(),
-                value: original,
-            })
-        }
-    }
-
-    impl Drop for EnvDropGuard {
-        fn drop(&mut self) {
-            match self.value {
-                Some(ref value) => {
-                    env::set_var(self.name.as_os_str(), value.as_os_str());
-                }
-                None => {
-                    env::remove_var(self.name.as_os_str());
-                }
-            }
-        }
-    }
 
     #[test]
     fn test_iroh_directory_paths() {
@@ -302,23 +271,20 @@ mod tests {
         // Now test the overrides by environment variable.  We have to do this in the same
         // test since tests are run in parallel but changing environment variables affects
         // the entire process.
-        let _guard = EnvDropGuard::new("IROH_CONFIG_DIR");
-        env::set_var("IROH_CONFIG_DIR", "/a/config/dir");
+        temp_env::with_var("IROH_CONFIG_DIR", Some("/a/config/dir"), || {
+            let res = iroh_config_path("iroh-test").unwrap();
+            assert_eq!(res, PathBuf::from("/a/config/dir/iroh-test"));
+        });
 
-        let res = iroh_config_path("iroh-test").unwrap();
-        assert_eq!(res, PathBuf::from("/a/config/dir/iroh-test"));
+        temp_env::with_var("IROH_DATA_DIR", Some("/a/data/dir"), || {
+            let res = iroh_data_path("iroh-test").unwrap();
+            assert_eq!(res, PathBuf::from("/a/data/dir/iroh-test"));
+        });
 
-        let _guard = EnvDropGuard::new("IROH_DATA_DIR");
-        env::set_var("IROH_DATA_DIR", "/a/data/dir");
-
-        let res = iroh_data_path("iroh-test").unwrap();
-        assert_eq!(res, PathBuf::from("/a/data/dir/iroh-test"));
-
-        let _guard = EnvDropGuard::new("IROH_CACHE_DIR");
-        env::set_var("IROH_CACHE_DIR", "/a/cache/dir");
-
-        let res = iroh_cache_path("iroh-test").unwrap();
-        assert_eq!(res, PathBuf::from("/a/cache/dir/iroh-test"));
+        temp_env::with_var("IROH_CACHE_DIR", Some("/a/cache/dir"), || {
+            let res = iroh_cache_path("iroh-test").unwrap();
+            assert_eq!(res, PathBuf::from("/a/cache/dir/iroh-test"));
+        });
     }
 
     #[derive(Debug, Clone, Deserialize)]
@@ -341,10 +307,10 @@ mod tests {
     #[test]
     fn test_make_config_priority() {
         // Asserting that later items have a higher priority
-        let cfgdir = tempfile::tempdir().unwrap();
-        let cfgfile0 = cfgdir.path().join("cfg0.toml");
+        let cfgdir = testdir!();
+        let cfgfile0 = cfgdir.join("cfg0.toml");
         std::fs::write(&cfgfile0, r#"item = "zero""#).unwrap();
-        let cfgfile1 = cfgdir.path().join("cfg1.toml");
+        let cfgfile1 = cfgdir.join("cfg1.toml");
         std::fs::write(&cfgfile1, r#"item = "one""#).unwrap();
         let cfg = make_config(
             Config {
