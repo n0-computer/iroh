@@ -153,7 +153,8 @@ async fn request_preprocessing<T: ContentLoader + std::marker::Unpin>(
 
     let uri_param = query_params.uri.clone().unwrap_or_default();
     if !uri_param.is_empty() {
-        return protocol_handler_redirect(uri_param, state).map(RequestPreprocessingResult::Response);
+        return protocol_handler_redirect(uri_param, state)
+            .map(RequestPreprocessingResult::Response);
     }
     service_worker_check(&request_headers, cpath.to_string(), state)?;
     unsuported_header_check(&request_headers, state)?;

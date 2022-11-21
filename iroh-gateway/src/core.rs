@@ -172,6 +172,31 @@ mod tests {
         (client_addr, task)
     }
 
+    async fn put_directory_with_files(
+        rpc_client: &RpcClient,
+        dir: &str,
+        files: &[(&str, Vec<u8>)],
+    ) -> (Cid, Vec<Cid>) {
+        let store = rpc_client.try_store().unwrap();
+        let mut cids = vec![];
+        let mut dir_builder = DirectoryBuilder::new();
+        dir_builder.name(dir);
+        for (name, content) in files {
+            let mut file = FileBuilder::new();
+            file.name(*name).content_bytes(content.clone());
+            dir_builder.add_file(file.build().await.unwrap());
+        }
+
+        let root_dir = dir_builder.build().unwrap();
+        let mut parts = root_dir.encode();
+        while let Some(part) = parts.next().await {
+            let (cid, bytes, links) = part.unwrap().into_parts();
+            cids.push(cid);
+            store.put(cid, bytes, links).await.unwrap();
+        }
+        (*cids.last().unwrap(), cids)
+    }
+
     #[tokio::test]
     async fn gateway_health() {
         let mut config = Config::new(
@@ -222,31 +247,12 @@ mod tests {
 
         let dir = "demo";
         let files = [
-            ("hello.txt".to_string(), b"ola".to_vec()),
-            ("world.txt".to_string(), b"mundo".to_vec()),
+            ("hello.txt", b"ola".to_vec()),
+            ("world.txt", b"mundo".to_vec()),
         ];
 
         // add a directory with two files to the store.
-        let (root_cid, all_cids) = {
-            let store = rpc_client.try_store().unwrap();
-            let mut cids = vec![];
-            let mut dir_builder = DirectoryBuilder::new();
-            dir_builder.name(dir);
-            for (name, content) in &files {
-                let mut file = FileBuilder::new();
-                file.name(name).content_bytes(content.clone());
-                dir_builder.add_file(file.build().await.unwrap());
-            }
-
-            let root_dir = dir_builder.build().unwrap();
-            let mut parts = root_dir.encode();
-            while let Some(part) = parts.next().await {
-                let (cid, bytes, links) = part.unwrap().into_parts();
-                cids.push(cid);
-                store.put(cid, bytes, links).await.unwrap();
-            }
-            (*cids.last().unwrap(), cids)
-        };
+        let (root_cid, all_cids) = put_directory_with_files(&rpc_client, dir, &files).await;
 
         // request the root cid as a recursive car
         let res = {
@@ -305,6 +311,61 @@ mod tests {
         for (i, node) in nodes[1..].iter().enumerate() {
             assert_eq!(node, &UnixfsNode::Raw(files[i].1.clone().into()));
         }
+
+        core_task.abort();
+        core_task.await.unwrap_err();
+        store_task.abort();
+        store_task.await.unwrap_err();
+    }
+
+    #[tokio::test]
+    async fn test_head_request_to_file() {
+        let (store_client_addr, store_task) = spawn_store().await;
+        let mut config = Config::new(
+            0,
+            RpcClientConfig {
+                gateway_addr: None,
+                p2p_addr: None,
+                store_addr: Some(store_client_addr),
+                channels: Some(1),
+            },
+        );
+        config.set_default_headers();
+
+        let (addr, rpc_client, core_task) = spawn_gateway(Arc::new(config)).await;
+
+        let dir = "demo";
+        let files = [
+            ("hello.txt", b"ola".to_vec()),
+            ("world.txt", b"mundo".to_vec()),
+        ];
+
+        // add a directory with two files to the store.
+        let (root_cid, _) = put_directory_with_files(&rpc_client, dir, &files).await;
+
+        // request the root cid as a recursive car
+        let res = {
+            let client = hyper::Client::new();
+            let uri = hyper::Uri::builder()
+                .scheme("http")
+                .authority(format!("localhost:{}", addr.port()))
+                .path_and_query(format!("/ipfs/{}/{}", root_cid, "world.txt"))
+                .build()
+                .unwrap();
+            let req = hyper::Request::builder()
+                .method("HEAD")
+                .uri(uri)
+                .body(hyper::Body::empty())
+                .unwrap();
+            client.request(req).await.unwrap()
+        };
+
+        assert_eq!(http::StatusCode::OK, res.status());
+        assert!(res.headers().get("content-length").is_some());
+        assert_eq!(res.headers().get("content-length").unwrap(), "5");
+
+        let (body, _) = res.into_body().into_future().await;
+        assert!(body.is_none());
 
         core_task.abort();
         core_task.await.unwrap_err();
