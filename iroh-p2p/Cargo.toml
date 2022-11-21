@@ -53,6 +53,7 @@ features = [
   "noise",
   "yamux",
   "tcp",
+  "quic",
   "dns",
   "mplex",
   "request-response",
