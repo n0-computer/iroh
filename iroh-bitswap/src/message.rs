@@ -273,7 +273,7 @@ impl BitswapMessage {
     fn get_block_presence_by_type(&self, typ: BlockPresenceType) -> impl Iterator<Item = &Cid> {
         self.block_presences
             .iter()
-            .filter_map(move |(cid, t)| if *t == typ { Some(cid) } else { None })
+            .filter_map(move |(cid, t)| (*t == typ).then_some(cid))
     }
 
     pub fn pending_bytes(&self) -> i32 {
