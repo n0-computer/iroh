@@ -37,7 +37,7 @@ jobs:
       # Force not building debuginfo to save space on disk.
       RUSTFLAGS: "-C debuginfo=0"
       RUSTV: ${{ matrix.rust }}
-      RUST_MSRV: "1.63"
+      MSRV: "1.63"
     steps:
     - uses: actions/checkout@master
 
@@ -51,7 +51,7 @@ jobs:
 
     - name: Install Rust MSRV
       run: |
-        rustup toolchain install --profile minimal $RUST_MSRV
+        rustup toolchain install --profile minimal $MSRV
 
     - name: Install Protoc windows
       if: matrix.os == 'windows-latest'
@@ -74,11 +74,11 @@ jobs:
 
     - name: check MSRV default features
       run: |
-        cargo +$RUST_MSRV check --workspace --all-targets
+        cargo +$MSRV check --workspace --all-targets
 
     - name: check MSRV all features
       run: |
-        cargo +$RUST_MSRV check --workspace --all-features --all-targets
+        cargo +$MSRV check --workspace --all-features --all-targets
 
     - name: check default features
       run: |
