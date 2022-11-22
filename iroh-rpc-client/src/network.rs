@@ -1,6 +1,5 @@
 use anyhow::{Context, Result};
 use bytes::Bytes;
-use cid::multihash::Multihash;
 use cid::Cid;
 use futures::{Stream, StreamExt};
 #[cfg(feature = "grpc")]
@@ -23,6 +22,7 @@ use tracing::{debug, warn};
 
 #[cfg(feature = "grpc")]
 use crate::status::{self, StatusRow};
+use crate::ServiceStatus;
 
 impl_client!(P2p);
 
@@ -285,11 +285,26 @@ impl P2pClient {
 use iroh_rpc_types::qrpc;
 use iroh_rpc_types::qrpc::p2p::*;
 
-struct P2pClient2 {
+#[derive(Debug, Clone)]
+pub struct P2pClient2 {
     client: quic_rpc::RpcClient<P2pService, crate::ChannelTypes>,
 }
 
 impl P2pClient2 {
+    pub async fn new(addr: iroh_rpc_types::qrpc::addr::Addr<P2pService>) -> anyhow::Result<Self> {
+        match addr {
+            iroh_rpc_types::qrpc::addr::Addr::Qrpc(addr) => {
+                todo!()
+            }
+            iroh_rpc_types::qrpc::addr::Addr::Mem(channel) => {
+                let channel = quic_rpc::combined::Channel::new(Some(channel), None);
+                Ok(Self {
+                    client: quic_rpc::RpcClient::new(channel),
+                })
+            }
+        }
+    }
+
     #[tracing::instrument(skip(self))]
     pub async fn version(&self) -> Result<String> {
         let res = self.client.rpc(qrpc::p2p::VersionRequest).await?;
@@ -367,18 +382,17 @@ impl P2pClient2 {
         key: &Cid,
     ) -> Result<impl Stream<Item = Result<HashSet<PeerId>>>> {
         let key = qrpc::p2p::DhtKey(key.hash().to_bytes().into());
-        todo!();
-        // let res = self.client.server_streaming(qrpc::p2p::FetchProvidersDhtRequest { key }).await?;
-
-        // let providers_stream = res.map(|p| {
-        //     let p = p?;
-        //     let mut providers = HashSet::new();
-        //     for provider in p.providers.into_iter() {
-        //         providers.insert(PeerId::from_bytes(&provider[..])?);
-        //     }
-        //     Ok(providers)
-        // });
-        Ok(futures::stream::empty())
+        let res = self
+            .client
+            .server_streaming(qrpc::p2p::FetchProvidersDhtRequest { key })
+            .await?;
+        let providers_stream = res.map(|p| {
+            p?.providers
+                .into_iter()
+                .map(qrpc::p2p::PeerId::try_into_libp2p)
+                .collect::<Result<HashSet<PeerId>>>()
+        });
+        Ok(providers_stream)
     }
 
     #[tracing::instrument(skip(self))]
@@ -569,6 +583,25 @@ impl P2pClient2 {
         };
         let res = self.client.rpc(req).await?;
         Ok(res.was_subscribed)
+    }
+
+    #[tracing::instrument(skip(self))]
+    pub async fn check(&self) -> StatusRow {
+        let status: ServiceStatus = self
+            .version()
+            .await
+            .map(|_| ServiceStatus::Serving)
+            .unwrap_or_else(|e| ServiceStatus::Unknown);
+        StatusRow {
+            name: "p2p",
+            number: 2,
+            status,
+        }
+    }
+
+    #[tracing::instrument(skip(self))]
+    pub async fn watch(&self) -> impl Stream<Item = StatusRow> {
+        futures::stream::pending()
     }
 }
 

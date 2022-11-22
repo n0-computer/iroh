@@ -19,6 +19,7 @@ use tonic_health::proto::health_client::HealthClient;
 
 #[cfg(feature = "grpc")]
 use crate::status::{self, StatusRow};
+use crate::ServiceStatus;
 
 impl_client!(Store);
 
@@ -102,11 +103,26 @@ impl StoreClient {
 use iroh_rpc_types::qrpc;
 use iroh_rpc_types::qrpc::store::*;
 
+#[derive(Debug, Clone)]
 pub struct StoreClient2 {
     client: quic_rpc::RpcClient<StoreService, crate::ChannelTypes>,
 }
 
 impl StoreClient2 {
+    pub async fn new(addr: iroh_rpc_types::qrpc::addr::Addr<StoreService>) -> anyhow::Result<Self> {
+        match addr {
+            iroh_rpc_types::qrpc::addr::Addr::Qrpc(addr) => {
+                todo!()
+            }
+            iroh_rpc_types::qrpc::addr::Addr::Mem(channel) => {
+                let channel = quic_rpc::combined::Channel::new(Some(channel), None);
+                Ok(Self {
+                    client: quic_rpc::RpcClient::new(channel),
+                })
+            }
+        }
+    }
+
     #[tracing::instrument(skip(self))]
     pub async fn version(&self) -> Result<String> {
         let res = self.client.rpc(VersionRequest).await?;
@@ -158,5 +174,24 @@ impl StoreClient2 {
     pub async fn get_size(&self, cid: Cid) -> Result<Option<u64>> {
         let res = self.client.rpc(qrpc::store::GetSizeRequest { cid }).await?;
         Ok(res.size)
+    }
+
+    #[tracing::instrument(skip(self))]
+    pub async fn check(&self) -> StatusRow {
+        let status: ServiceStatus = self
+            .version()
+            .await
+            .map(|_| ServiceStatus::Serving)
+            .unwrap_or_else(|e| ServiceStatus::Unknown);
+        StatusRow {
+            name: "store",
+            number: 3,
+            status,
+        }
+    }
+
+    #[tracing::instrument(skip(self))]
+    pub async fn watch(&self) -> impl Stream<Item = StatusRow> {
+        futures::stream::pending()
     }
 }

@@ -2,7 +2,10 @@ use bytes::Bytes;
 use cid::{multihash::Multihash, Cid};
 use derive_more::{From, TryInto};
 use multiaddr::Multiaddr;
-use quic_rpc::{message::RpcMsg, Service};
+use quic_rpc::{
+    message::{Msg, RpcMsg, ServerStreaming},
+    Service,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -382,8 +385,12 @@ impl RpcMsg<P2pService> for FetchBitswapRequest {
     type Response = FetchBitswapResponse;
 }
 
-impl RpcMsg<P2pService> for FetchProvidersDhtRequest {
+impl Msg<P2pService> for FetchProvidersDhtRequest {
     type Response = FetchProvidersDhtResponse;
+
+    type Update = Self;
+
+    type Pattern = ServerStreaming;
 }
 
 impl RpcMsg<P2pService> for StopSessionBitswapRequest {
