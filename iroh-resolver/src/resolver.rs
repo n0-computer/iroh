@@ -23,6 +23,8 @@ use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use tracing::{debug, trace, warn};
 
+use crate::dns_resolver::DnsResolver;
+
 use iroh_metrics::{
     core::{MObserver, MRecorder},
     gateway::{GatewayHistograms, GatewayMetrics},
@@ -658,6 +660,7 @@ pub enum Source {
 #[derive(Debug, Clone)]
 pub struct Resolver<T: ContentLoader> {
     loader: T,
+    dns_resolver: Arc<DnsResolver>,
     next_id: Arc<AtomicU64>,
     _worker: Arc<JoinHandle<()>>,
     session_closer: async_channel::Sender<ContextId>,
@@ -754,6 +757,7 @@ impl<T: ContentLoader> Resolver<T> {
 
         Resolver {
             loader,
+            dns_resolver: Arc::new(DnsResolver::new()),
             next_id: Arc::new(AtomicU64::new(0)),
             _worker: Arc::new(worker),
             session_closer: session_closer_s,
@@ -1189,7 +1193,7 @@ impl<T: ContentLoader> Resolver<T> {
                         current = Path::from_cid(c);
                     }
                     CidOrDomain::Domain(ref domain) => {
-                        let mut records = resolve_dnslink(domain).await?;
+                        let mut records = self.dns_resolver.resolve_dnslink(domain).await?;
                         if records.is_empty() {
                             bail!("no valid dnslink records found for {}", domain);
                         }
@@ -1241,34 +1245,6 @@ pub fn parse_links(cid: &Cid, bytes: &[u8]) -> Result<Vec<Cid>> {
     codec.references::<Ipld, _>(bytes, &mut cids)?;
     let links = cids.into_iter().collect();
     Ok(links)
-}
-
-#[tracing::instrument]
-async fn resolve_dnslink(url: &str) -> Result<Vec<Path>> {
-    let url = format!("_dnslink.{}.", url);
-    let records = resolve_txt_record(&url).await?;
-    let records = records
-        .into_iter()
-        .filter(|r| r.starts_with("dnslink="))
-        .map(|r| {
-            let p = r.trim_start_matches("dnslink=").trim();
-            p.parse()
-        })
-        .collect::<Result<_>>()?;
-    Ok(records)
-}
-
-async fn resolve_txt_record(url: &str) -> Result<Vec<String>> {
-    use trust_dns_resolver::config::*;
-    use trust_dns_resolver::AsyncResolver;
-
-    // Construct a new Resolver with default configuration options
-    let resolver = AsyncResolver::tokio(ResolverConfig::default(), ResolverOpts::default())?;
-
-    let txt_response = resolver.txt_lookup(url).await?;
-
-    let out = txt_response.into_iter().map(|r| r.to_string()).collect();
-    Ok(out)
 }
 
 #[cfg(test)]
@@ -2509,30 +2485,6 @@ mod tests {
                 panic!("invalid result: {:?}", ipld_bar_txt);
             }
         }
-    }
-
-    #[tokio::test]
-    async fn test_resolve_txt_record() {
-        let result = resolve_txt_record("_dnslink.ipfs.io.").await.unwrap();
-        assert!(!result.is_empty());
-        assert_eq!(result[0], "dnslink=/ipns/website.ipfs.io");
-
-        let result = resolve_txt_record("_dnslink.website.ipfs.io.")
-            .await
-            .unwrap();
-        assert!(!result.is_empty());
-        assert!(&result[0].starts_with("dnslink=/ipfs"));
-    }
-
-    #[tokio::test]
-    async fn test_resolve_dnslink() {
-        let result = resolve_dnslink("ipfs.io").await.unwrap();
-        assert!(!result.is_empty());
-        assert_eq!(result[0], "/ipns/website.ipfs.io".parse().unwrap());
-
-        let result = resolve_dnslink("website.ipfs.io").await.unwrap();
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].typ(), PathType::Ipfs);
     }
 
     #[tokio::test]
