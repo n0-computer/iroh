@@ -6,6 +6,7 @@ authors = ["David Craven <david@craven.ch>", "Friedel Ziegelmayer <me@dignifiedq
 license = "Apache-2.0/MIT"
 repository = "https://github.com/n0-computer/iroh"
 description = "Implementation of the bitswap protocol"
+rust-version = "1.63"
 
 [build-dependencies]
 prost-build = "0.11.1"

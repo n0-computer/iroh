@@ -37,17 +37,28 @@ jobs:
       # Force not building debuginfo to save space on disk.
       RUSTFLAGS: "-C debuginfo=0"
       RUSTV: ${{ matrix.rust }}
+      MSRV: "1.63"
     steps:
     - uses: actions/checkout@master
 
     - name: Set build arch
       run: |
-        echo "PROTOC_ARCH=${{ matrix.protoc-arch }}" >> $GITHUB_ENV        
+        echo "PROTOC_ARCH=${{ matrix.protoc-arch }}" >> $GITHUB_ENV
 
     - name: Install ${{ matrix.rust }}
       run: |
-        rustup toolchain install ${{ matrix.rust }}
-    
+        rustup toolchain install --profile default ${{ matrix.rust }}
+
+    - name: Install Rust MSRV
+      if: matrix.os != 'windows-latest'
+      run: |
+        rustup toolchain install --profile minimal $MSRV
+
+    - name: Install Rust MSRV
+      if: matrix.os == 'windows-latest'
+      run: |
+        rustup toolchain install --profile minimal $Env:MSRV
+
     - name: Install Protoc windows
       if: matrix.os == 'windows-latest'
       uses: arduino/setup-protoc@v1
@@ -67,13 +78,40 @@ jobs:
         echo "PROTOC=/usr/local/bin/protoc" >> $GITHUB_ENV
         echo "PROTOC_INCLUDE=/usr/local/include" >> $GITHUB_ENV
 
-    - name: check
+    - name: check MSRV default features
+      if: matrix.os != 'windows-latest'
+      run: |
+        cargo +$MSRV check --workspace --all-targets
+
+    - name: check MSRV all features
+      if: matrix.os != 'windows-latest'
+      run: |
+        cargo +$MSRV check --workspace --all-features --all-targets
+
+    - name: check MSRV default features
+      if: matrix.os == 'windows-latest'
+      run: |
+        cargo +$Env:MSRV check --workspace --all-targets
+
+    - name: check MSRV all features
+      if: matrix.os == 'windows-latest'
+      run: |
+        cargo +$Env:MSRV check --workspace --all-features --all-targets
+
+    - name: check default features
+      run: |
+        cargo check --workspace --all-targets
+
+    - name: check all features
       run: |
         cargo check --workspace --all-features --all-targets
-    
-    - name: clippy
+
+    - name: clippy default features
       run: |
-        rustup component add clippy
+        cargo clippy --workspace --all-targets -- -D warnings
+
+    - name: clippy all features
+      run: |
         cargo clippy --workspace --all-features --all-targets -- -D warnings
 
     - name: tests
@@ -86,7 +124,7 @@ jobs:
         OBJC_DISABLE_INITIALIZE_FORK_SAFETY: "YES"
       run: |
         cargo test --workspace --all-features --all-targets
-      
+
     - name: tests w/o default features
       timeout-minutes: 30
       env:
@@ -150,13 +188,13 @@ jobs:
     - name: Set build arch
       run: |
         echo "RELEASE_ARCH=${{ matrix.release-arch }}" >> $GITHUB_ENV
-        echo "RELEASE_OS=${{ matrix.release-os }}" >> $GITHUB_ENV       
-        echo "PROTOC_ARCH=${{ matrix.protoc-arch }}" >> $GITHUB_ENV        
-    
+        echo "RELEASE_OS=${{ matrix.release-os }}" >> $GITHUB_ENV
+        echo "PROTOC_ARCH=${{ matrix.protoc-arch }}" >> $GITHUB_ENV
+
     - name: Install ${{ matrix.rust }}
       run: |
         rustup toolchain install ${{ matrix.rust }}
-    
+
     - name: Install Protoc windows
       if: matrix.os == 'windows-latest'
       uses: arduino/setup-protoc@v1
@@ -186,7 +224,7 @@ jobs:
         curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
         unzip awscliv2.zip
         sudo ./aws/install --update
-    
+
     - name: Setup awscli on linux
       if: matrix.name == 'ubuntu-arm-latest'
       run: |
@@ -243,7 +281,7 @@ jobs:
         with:
           command: fmt
           args: --all -- --check
-    
+
   audit:
     name: audit
     runs-on: ubuntu-latest
