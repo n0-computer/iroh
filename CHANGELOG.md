@@ -6,13 +6,20 @@ Iroh can now run in "client mode", which can _fetch_ content from bitswap, but n
 bitswap_server = false
 ```
 
+## Use indexer nodes to find content providers
+Iroh can use network indexers like [cid.contact](https://cid.contact) to find providers of a given CID. To use the cid.contact indexer adjust your `gateway.config.toml` to add an `indexer_endpoint` URL:
+
+```
+indexer_endpoint = https://cid.contact/cid/
+```
+
 ## Docker support
 Iroh now ships with docker images! Spin iroh up locally with:
 ```
 $ cd iroh/docker
 $ docker-compose up
 ```
-then run `iroh status` from another terminal if you already have iroh installed. Now you're backing iroh with docker! `docker-compose down` to stop.
+then run `iroh status` from another terminal if you already have iroh installed. Now you're backing iroh with docker! `docker-compose down` to stop. The docker compose file also includes helpful guidance on which ports to expose from each iroh service.
 
 We're shipping multi-arch [distroless](https://github.com/GoogleContainerTools/distroless) builds for amd64 & arm64 architectures.
 
