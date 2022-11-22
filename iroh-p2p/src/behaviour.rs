@@ -27,6 +27,9 @@ use crate::config::Libp2pConfig;
 mod event;
 mod peer_manager;
 
+pub const PROTOCOL_VERSION: &str = "ipfs/0.1.0";
+pub const AGENT_VERSION: &str = concat!("iroh/", env!("CARGO_PKG_VERSION"));
+
 /// Libp2p behaviour for the node.
 #[derive(NetworkBehaviour)]
 #[behaviour(out_event = "Event")]
@@ -188,8 +191,8 @@ impl NodeBehaviour {
         };
 
         let identify = {
-            let config = identify::Config::new("ipfs/0.1.0".into(), local_key.public())
-                .with_agent_version(format!("iroh/{}", env!("CARGO_PKG_VERSION")))
+            let config = identify::Config::new(PROTOCOL_VERSION.into(), local_key.public())
+                .with_agent_version(String::from(AGENT_VERSION))
                 .with_cache_size(64 * 1024);
             identify::Behaviour::new(config)
         };
