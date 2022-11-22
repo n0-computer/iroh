@@ -8,6 +8,7 @@ use quic_rpc::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use std::time::{Duration, Instant};
 
 use crate::{RpcResult, VersionRequest, VersionResponse, WatchRequest, WatchResponse};
 
@@ -38,6 +39,20 @@ pub struct ListenersRequest;
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ListenersResponse {
     pub addrs: Vec<Multiaddr>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct DhtGetRequest {
+    pub key: Key,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct PeerRecord {
+    pub peer_id: Option<Bytes>,
+    pub key: Bytes,
+    pub value: Bytes,
+    pub ttl: u32,
+    pub publisher: Option<Bytes>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -219,6 +234,7 @@ pub enum P2pRequest {
     Watch(WatchRequest),
     Version(VersionRequest),
     Shutdown(ShutdownRequest),
+    DhtGet(DhtGetRequest),
     FetchBitswap(BitswapRequest),
     FetchProviderDht(FetchProvidersDhtRequest),
     StopSessionBitswap(StopSessionBitswapRequest),
@@ -250,6 +266,7 @@ pub enum P2pRequest {
 pub enum P2pResponse {
     Watch(WatchResponse),
     Version(VersionResponse),
+    DhtGet(RpcResult<PeerRecord>),
     FetchBitswap(RpcResult<BitswapResponse>),
     FetchProviderDht(RpcResult<FetchProvidersDhtResponse>),
     GetListeningAddrs(RpcResult<GetListeningAddrsResponse>),
@@ -289,6 +306,14 @@ impl RpcMsg<P2pService> for VersionRequest {
 
 impl RpcMsg<P2pService> for ShutdownRequest {
     type Response = RpcResult<()>;
+}
+
+impl Msg<P2pService> for DhtGetRequest {
+    type Response = RpcResult<PeerRecord>;
+
+    type Update = Self;
+
+    type Pattern = ServerStreaming;
 }
 
 impl RpcMsg<P2pService> for BitswapRequest {
@@ -393,4 +418,54 @@ impl RpcMsg<P2pService> for ExternalAddrsRequest {
 
 impl RpcMsg<P2pService> for ListenersRequest {
     type Response = RpcResult<ListenersResponse>;
+}
+
+impl From<libp2p::kad::PeerRecord> for PeerRecord {
+    fn from(peer_record: libp2p::kad::PeerRecord) -> Self {
+        PeerRecord {
+            peer_id: peer_record.peer.map(|peer| Bytes::from(peer.to_bytes())),
+            key: peer_record.record.key.to_vec().into(),
+            ttl: peer_record
+                .record
+                .expires
+                .map(|t| {
+                    let now = Instant::now();
+                    if t > now {
+                        (t - now).as_secs() as u32
+                    } else {
+                        1 // because 0 means "does not expire"
+                    }
+                })
+                .unwrap_or(0),
+            value: peer_record.record.value.into(),
+            publisher: peer_record
+                .record
+                .publisher
+                .map(|publisher| Bytes::from(publisher.to_bytes())),
+        }
+    }
+}
+
+impl From<PeerRecord> for libp2p::kad::PeerRecord {
+    fn from(peer_record: PeerRecord) -> Self {
+        let peer = peer_record
+            .peer_id
+            .as_ref()
+            .map(|peer_id| libp2p::PeerId::from_bytes(peer_id).unwrap());
+        let key = libp2p::kad::record::Key::from(peer_record.key.to_vec());
+        let value = peer_record.value;
+        let publisher = peer_record
+            .publisher
+            .as_ref()
+            .map(|publisher| libp2p::PeerId::from_bytes(publisher).unwrap());
+        let expires = (peer_record.ttl > 0)
+            .then(|| Instant::now() + Duration::from_secs(peer_record.ttl as u64));
+        let record = libp2p::kad::Record {
+            key,
+            value: value.to_vec(),
+            publisher,
+            expires,
+        };
+        libp2p::kad::PeerRecord { peer, record }
+    }
 }

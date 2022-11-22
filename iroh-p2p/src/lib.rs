@@ -1,6 +1,7 @@
 mod behaviour;
 pub mod cli;
 pub mod config;
+mod dht_records;
 mod keys;
 pub mod metrics;
 mod node;

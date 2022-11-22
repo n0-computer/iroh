@@ -35,6 +35,11 @@ use crate::dns_resolver::{Config, DnsResolver};
 
 pub const IROH_STORE: &str = "iroh-store";
 
+pub(crate) mod ipns_pb {
+    #![allow(clippy::all)]
+    include!(concat!(env!("OUT_DIR"), "/ipns_pb.rs"));
+}
+
 // ToDo: Remove this function
 // Related issue: https://github.com/n0-computer/iroh/issues/593
 fn from_peer_id(id: &str) -> Option<libipld::Multihash> {
@@ -1066,8 +1071,12 @@ impl<T: ContentLoader> Resolver<T> {
                 },
                 PathType::Ipns => match current.root() {
                     CidOrDomain::Cid(ref c) => {
-                        let c = self.load_ipns_record(c).await?;
-                        current = Path::from_cid(c);
+                        let resolved_record = Bytes::from(self.load_ipns_record(c).await?.value);
+                        let proto = ipns_pb::IpnsEntry::decode(resolved_record).unwrap();
+                        current = Path::from_str(
+                            &String::from_utf8(proto.value.clone().unwrap()).unwrap(),
+                        )
+                        .unwrap();
                     }
                     CidOrDomain::Domain(ref domain) => {
                         let mut records = self.dns_resolver.resolve_dnslink(domain).await?;
@@ -1102,7 +1111,7 @@ impl<T: ContentLoader> Resolver<T> {
 
     #[tracing::instrument(skip(self))]
     async fn load_ipns_record(&self, cid: &Cid) -> Result<Cid> {
-        todo!()
+        self.loader.load_record_from_dht(cid).await
     }
 }
 

@@ -34,6 +34,7 @@ use tracing::{debug, error, info, trace, warn};
 use iroh_bitswap::{BitswapEvent, Block};
 use iroh_rpc_client::Lookup;
 
+use crate::dht_records::{DhtGetQuery, DhtRecords};
 use crate::keys::{Keychain, Storage};
 use crate::providers::Providers;
 use crate::rpc::{P2p, ProviderRequestKey};
@@ -87,6 +88,7 @@ pub struct Node<KeyStorage: Storage> {
     use_dht: bool,
     bitswap_sessions: BitswapSessions,
     providers: Providers,
+    dht_records: DhtRecords,
     listen_addrs: Vec<Multiaddr>,
 }
 
@@ -175,6 +177,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
             use_dht: libp2p_config.kademlia,
             bitswap_sessions: Default::default(),
             providers: Providers::new(4),
+            dht_records: DhtRecords::default(),
             listen_addrs,
         })
     }
@@ -522,7 +525,6 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
             }
             Event::Kademlia(e) => {
                 libp2p_metrics().record(&e);
-
                 if let KademliaEvent::OutboundQueryProgressed {
                     id, result, step, ..
                 } = e
@@ -627,6 +629,11 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                                 });
                             }
                         }
+                        QueryResult::GetRecord(get_record_result) => self
+                            .dht_records
+                            .handle_get_record_result(id, get_record_result),
+                        QueryResult::PutRecord(_) => todo!(),
+                        QueryResult::RepublishRecord(_) => todo!(),
                         other => {
                             debug!("Libp2p => Unhandled Kademlia query result: {:?}", other)
                         }
@@ -1060,6 +1067,16 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
             }
             RpcMessage::Shutdown => {
                 return Ok(true);
+            }
+            RpcMessage::DhtGet {
+                key,
+                response_channel,
+            } => {
+                if let Some(kad) = self.swarm.behaviour_mut().kad.as_mut() {
+                    let query_id = kad.get_record(key);
+                    self.dht_records
+                        .insert(query_id, DhtGetQuery::new(response_channel));
+                }
             }
         }
 

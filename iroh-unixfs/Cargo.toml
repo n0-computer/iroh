@@ -22,6 +22,7 @@ fastmurmur3.workspace = true
 futures.workspace = true
 iroh-metrics = { workspace = true, features = ["resolver", "gateway"] }
 iroh-rpc-client.workspace = true
+iroh-rpc-types.workspace = true
 iroh-util.workspace = true
 libipld.workspace = true
 libp2p = { workspace = true, features = ["serde"] }

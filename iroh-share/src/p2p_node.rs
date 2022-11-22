@@ -127,6 +127,10 @@ impl ContentLoader for Loader {
     async fn has_cid(&self, cid: &Cid) -> Result<bool> {
         Ok(self.client.try_store()?.has(*cid).await?)
     }
+
+    async fn load_record_from_dht(&self, _: &Cid) -> Result<iroh_rpc_types::p2p::PeerRecord> {
+        todo!()
+    }
 }
 
 impl P2pNode {

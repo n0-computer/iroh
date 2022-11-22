@@ -1,3 +1,4 @@
+use crate::{StatusType, HEALTH_POLL_WAIT};
 use anyhow::Result;
 use async_stream::stream;
 use bytes::Bytes;
@@ -8,8 +9,6 @@ use libp2p::gossipsub::{MessageId, TopicHash};
 use libp2p::{Multiaddr, PeerId};
 use std::collections::{HashMap, HashSet};
 use tracing::{debug, warn};
-
-use crate::{StatusType, HEALTH_POLL_WAIT};
 
 #[derive(Debug, Clone)]
 pub struct P2pClient {
@@ -99,6 +98,17 @@ impl P2pClient {
         let providers_stream =
             res.map(|p| Ok(p??.providers.into_iter().collect::<HashSet<PeerId>>()));
         Ok(providers_stream)
+    }
+
+    #[tracing::instrument(skip(self))]
+    pub async fn dht_get(
+        &self,
+        key: &libp2p::kad::record::Key,
+    ) -> Result<impl Stream<Item = Result<iroh_rpc_types::p2p::PeerRecord>>> {
+        let key = Key(key.to_vec().into());
+        let res = self.client.server_streaming(DhtGetRequest { key }).await?;
+        let peer_records_stream = res.map(|p| Ok(p??));
+        Ok(peer_records_stream)
     }
 
     #[tracing::instrument(skip(self))]

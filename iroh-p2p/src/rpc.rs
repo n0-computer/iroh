@@ -6,7 +6,6 @@ use futures::{
     stream::{BoxStream, Stream},
     TryFutureExt,
 };
-use iroh_bitswap::Block;
 use iroh_rpc_client::{
     create_server, Lookup, P2pServer, ServerError, ServerSocket, HEALTH_POLL_WAIT,
 };
@@ -26,6 +25,17 @@ use std::result;
 use tokio::sync::mpsc::{channel, Sender};
 use tokio::sync::oneshot;
 use tracing::{debug, info, trace};
+
+use async_trait::async_trait;
+use iroh_bitswap::Block;
+use iroh_rpc_types::p2p::{
+    BitswapRequest, BitswapResponse, ConnectByPeerIdRequest, ConnectRequest, DhtGetRequest,
+    DisconnectRequest, GetListeningAddrsResponse, GetPeersResponse, GossipsubAllPeersResponse,
+    GossipsubPublishResponse, GossipsubSubscribeResponse,
+    GossipsubTopicsResponse, Key as ProviderKey, LookupRequest,
+    NotifyNewBlocksBitswapRequest, StopSessionBitswapRequest, VersionResponse,
+};
+use libp2p::kad::PeerRecord;
 
 use super::node::DEFAULT_PROVIDER_LIMIT;
 use crate::VERSION;
@@ -229,6 +239,24 @@ impl P2p {
             .boxed();
 
         Ok(stream)
+    }
+
+    #[tracing::instrument(skip(self, req))]
+    async fn dht_get(
+        &self,
+        req: DhtGetRequest,
+    ) -> anyhow::Result<BoxStream<'static, anyhow::Result<iroh_rpc_types::p2p::PeerRecord>>> {
+        // ToDo: parametrize size of channel in a proper way
+        let (sender, receiver) = channel(64);
+        let msg = RpcMessage::DhtGet {
+            key: Key::from(req.key.0.to_vec()),
+            response_channel: sender,
+        };
+        self.sender.send(msg).await?;
+        let receiver = tokio_stream::wrappers::ReceiverStream::new(receiver)
+            .map(|peer_record| peer_record.map(|peer_record| peer_record.into()));
+
+        Ok(Box::pin(receiver))
     }
 
     #[tracing::instrument(skip(self, req))]
@@ -620,6 +648,10 @@ pub enum RpcMessage {
     ExternalAddrs(oneshot::Sender<Vec<Multiaddr>>),
     Listeners(oneshot::Sender<Vec<Multiaddr>>),
     LocalPeerId(oneshot::Sender<PeerId>),
+    DhtGet {
+        key: Key,
+        response_channel: Sender<Result<PeerRecord>>,
+    },
     BitswapRequest {
         ctx: u64,
         cids: Vec<Cid>,

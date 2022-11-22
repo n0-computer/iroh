@@ -12,7 +12,10 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use cid::{multibase::Base, Cid};
 use futures::future::Either;
+use futures::StreamExt;
 use iroh_rpc_client::Client;
+use libp2p::kad::record::Key;
+use libp2p::PeerId;
 use rand::seq::SliceRandom;
 use reqwest::Url;
 use tracing::{debug, info, trace, warn};
@@ -33,6 +36,8 @@ pub trait ContentLoader: Sync + Send + std::fmt::Debug + Clone + 'static {
     async fn stop_session(&self, ctx: ContextId) -> Result<()>;
     /// Checks if the given cid is present in the local storage.
     async fn has_cid(&self, cid: &Cid) -> Result<bool>;
+    /// Does request to DHT, collapses set of retrieved records and returns a singular record.
+    async fn load_record_from_dht(&self, cid: &Cid) -> Result<iroh_rpc_types::p2p::PeerRecord>;
 }
 
 #[async_trait]
@@ -47,6 +52,10 @@ impl<T: ContentLoader> ContentLoader for Arc<T> {
 
     async fn has_cid(&self, cid: &Cid) -> Result<bool> {
         self.as_ref().has_cid(cid).await
+    }
+
+    async fn load_record_from_dht(&self, cid: &Cid) -> Result<iroh_rpc_types::p2p::PeerRecord> {
+        self.as_ref().load_record_from_dht(cid).await
     }
 }
 
@@ -139,6 +148,32 @@ impl FullLoader {
                 info!("No store available: {:?}", err);
                 Ok(None)
             }
+        }
+    }
+
+    async fn fetch_dht_record(&self, cid: &Cid) -> Result<iroh_rpc_types::p2p::PeerRecord> {
+        let key_value = "/ipns/"
+            .bytes()
+            .into_iter()
+            .chain(
+                PeerId::from_multihash(*cid.hash())
+                    .unwrap()
+                    .to_bytes()
+                    .into_iter(),
+            )
+            .collect::<Vec<_>>();
+        let key = Key::from(key_value);
+        match self.client.try_p2p() {
+            Ok(p2p) => Ok(p2p
+                .dht_get(&key)
+                .await?
+                .take(1)
+                .into_future()
+                .await
+                .0
+                .unwrap()
+                .unwrap()),
+            Err(_) => todo!(),
         }
     }
 
@@ -290,6 +325,9 @@ impl ContentLoader for FullLoader {
 
     async fn has_cid(&self, cid: &Cid) -> Result<bool> {
         self.client.try_store()?.has(*cid).await
+    }
+    async fn load_record_from_dht(&self, cid: &Cid) -> Result<iroh_rpc_types::p2p::PeerRecord> {
+        self.fetch_dht_record(cid).await
     }
 }
 
