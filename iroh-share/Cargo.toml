@@ -6,6 +6,7 @@ authors = ["Friedel Ziegelmayer <me@dignifiedquire.com>"]
 license = "Apache-2.0/MIT"
 repository = "https://github.com/n0-computer/iroh"
 description = "Sharing files with iroh"
+rust-version = "1.63"
 
 [dependencies]
 anyhow = "1"

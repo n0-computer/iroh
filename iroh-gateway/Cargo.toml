@@ -6,6 +6,7 @@ license = "Apache-2.0/MIT"
 readme = "README.md"
 description = "IPFS gateway"
 repository = "https://github.com/dignifiedquire/iroh"
+rust-version = "1.63"
 
 [dependencies]
 anyhow = "1"
