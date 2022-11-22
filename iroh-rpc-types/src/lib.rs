@@ -3,6 +3,7 @@ mod macros;
 
 pub mod gateway;
 pub mod p2p;
+pub mod qrpc;
 pub mod store;
 
 // Reexport for convenience.

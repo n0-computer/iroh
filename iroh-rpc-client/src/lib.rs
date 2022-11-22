@@ -15,3 +15,8 @@ pub use crate::network::{Lookup, P2pClient};
 #[cfg(feature = "grpc")]
 pub use crate::status::{ServiceStatus, StatusRow, StatusTable};
 pub use crate::store::StoreClient;
+
+pub type ChannelTypes = quic_rpc::combined::CombinedChannelTypes<
+    quic_rpc::mem::MemChannelTypes,
+    quic_rpc::quinn::QuinnChannelTypes,
+>;

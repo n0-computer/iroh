@@ -23,3 +23,17 @@ impl GatewayClient {
         Ok(res.version)
     }
 }
+
+use iroh_rpc_types::qrpc::gateway::*;
+
+pub struct GatewayClient2 {
+    client: quic_rpc::RpcClient<GatewayService, crate::ChannelTypes>,
+}
+
+impl GatewayClient2 {
+    #[tracing::instrument(skip(self))]
+    pub async fn version(&self) -> Result<String> {
+        let res = self.client.rpc(VersionRequest).await?;
+        Ok(res.version)
+    }
+}
