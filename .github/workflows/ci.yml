@@ -262,6 +262,70 @@ jobs:
         aws s3 cp ./target/optimized-release/iroh-store s3://vorc/iroh-store-${RELEASE_OS}-${RELEASE_ARCH}-latest --no-progress
         aws s3 cp ./target/optimized-release/iroh s3://vorc/iroh-${RELEASE_OS}-${RELEASE_ARCH}-latest --no-progress
 
+  coverage:
+    name: Coverage
+    runs-on: ${{ matrix.runner }}
+    continue-on-error: false
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+        rust: [stable]
+        experimental: [false]
+        include:
+          - os: ubuntu-latest
+            release-os: linux
+            release-arch: amd64
+            protoc-arch: linux-x86_64
+            runner: [self-hosted, linux, X64]
+    env:
+      RUST_BACKTRACE: full
+      RUSTV: ${{ matrix.rust }}
+    steps:
+    - uses: actions/checkout@master
+
+    - name: Set build arch
+      run: |
+        echo "PROTOC_ARCH=${{ matrix.protoc-arch }}" >> $GITHUB_ENV
+
+    - name: Install ${{ matrix.rust }}
+      run: |
+        rustup toolchain install --profile default ${{ matrix.rust }}
+        rustup component add llvm-tools-preview
+
+    - name: Install Protoc
+      run: |
+        PROTOC_VERSION=3.20.1
+        PROTOC_ZIP=protoc-$PROTOC_VERSION-$PROTOC_ARCH.zip
+        curl --retry 3 --retry-max-time 90 -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" -OL https://github.com/protocolbuffers/protobuf/releases/download/v$PROTOC_VERSION/$PROTOC_ZIP
+        sudo unzip -o $PROTOC_ZIP -d /usr/local bin/protoc
+        sudo unzip -o $PROTOC_ZIP -d /usr/local 'include/*'
+        rm -f $PROTOC_ZIP
+        echo "PROTOC=/usr/local/bin/protoc" >> $GITHUB_ENV
+        echo "PROTOC_INCLUDE=/usr/local/include" >> $GITHUB_ENV
+
+    - name: Install grcov
+      run: |
+        mkdir -p "${HOME}/.local/bin"
+        curl -sL https://github.com/mozilla/grcov/releases/download/v0.8.10/grcov-x86_64-unknown-linux-gnu.tar.bz2 | tar jxf - -C "${HOME}/.local/bin"
+        echo "$HOME/.local/bin" >> $GITHUB_PATH
+ 
+    - name: coverage
+      timeout-minutes: 30
+      env:
+        # iroh-util/src/lock.rs#test_locks uses a fork() command & fails only in
+        # GHA if this is not present
+        # https://twitter.com/steipete/status/921066430220652544?lang=en
+        # https://blog.phusion.nl/2017/10/13/why-ruby-app-servers-break-on-macos-high-sierra-and-what-can-be-done-about-it/
+        OBJC_DISABLE_INITIALIZE_FORK_SAFETY: "YES"
+      run: |
+        cargo xtask coverage
+    
+    - name: Upload to codecov.io
+      uses: codecov/codecov-action@v3
+      with:
+        files: coverage/*.lcov
+
   fmt:
     name: Rustfmt
     runs-on: ubuntu-latest

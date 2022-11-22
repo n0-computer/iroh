@@ -18,6 +18,8 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Commands {
+    #[command(about = "generate code coverage report", long_about = None)]
+    Coverage {},
     #[command(about = "build application and man pages", long_about = None)]
     Dist {},
     #[command(about = "build man pages")]
@@ -68,6 +70,7 @@ fn main() {
 
 fn run_subcommand(args: Cli) -> Result<()> {
     match args.command {
+        Commands::Coverage {} => coverage()?,
         Commands::Dist {} => dist()?,
         Commands::Man {} => dist_manpage()?,
         Commands::DevInstall { build } => dev_install(build)?,
@@ -83,6 +86,11 @@ fn run_subcommand(args: Cli) -> Result<()> {
             platforms,
         } => buildx_docker(all, images, platforms)?,
     }
+    Ok(())
+}
+
+fn coverage() -> Result<()> {
+    xtaskops::tasks::coverage(false)?;
     Ok(())
 }
 

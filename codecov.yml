@@ -1,0 +1,4 @@
+codecov:
+  notify:
+    wait_for_ci: false
+  comment: false
