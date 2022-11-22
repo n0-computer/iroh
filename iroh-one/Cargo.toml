@@ -4,7 +4,7 @@ edition = "2021"
 license = "Apache-2.0/MIT"
 name = "iroh-one"
 readme = "README.md"
-repository = "https://github.com/dignifiedquire/iroh"
+repository = "https://github.com/n0-computer/iroh"
 version = "0.1.0"
 rust-version = "1.63"
 

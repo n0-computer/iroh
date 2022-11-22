@@ -69,6 +69,7 @@ pub fn get_app_routes<T: ContentLoader + std::marker::Unpin>(state: &Arc<State<T
         .route("/health", get(health_check))
         .route("/icons.css", get(stylesheet_icons))
         .route("/style.css", get(stylesheet_main))
+        .route("/about", get(about))
         .layer(cors)
         .layer(Extension(Arc::clone(state)))
         .layer(
@@ -299,6 +300,18 @@ pub async fn head_handler<T: ContentLoader + std::marker::Unpin>(
 #[tracing::instrument()]
 pub async fn health_check() -> String {
     "OK".to_string()
+}
+
+#[tracing::instrument]
+pub async fn about() -> String {
+    format!(
+        "{bin} {version}\n\n{description}\n{license}\n{url}",
+        bin = std::env!("CARGO_CRATE_NAME"),
+        version = std::env!("CARGO_PKG_VERSION"),
+        description = std::env!("CARGO_PKG_DESCRIPTION"),
+        license = std::env!("CARGO_PKG_LICENSE"),
+        url = env!("CARGO_PKG_REPOSITORY"),
+    )
 }
 
 async fn stylesheet_main() -> (HeaderMap, &'static str) {
