@@ -23,7 +23,7 @@ use tokio_util::io::ReaderStream;
 use tracing::{info, warn};
 
 use crate::response::ResponseFormat;
-use crate::{constants::RECURSION_LIMIT, handlers::GetParams};
+use crate::{constants::RECURSION_LIMIT, handler_params::GetParams};
 
 #[derive(Debug, Clone)]
 pub struct Client<T: ContentLoader> {
@@ -231,13 +231,24 @@ impl<T: ContentLoader> Client<T> {
 }
 
 #[derive(Debug, Clone)]
-pub struct Request {
+pub struct IpfsRequest {
     pub format: ResponseFormat,
     pub cid: CidOrDomain,
     pub resolved_path: iroh_resolver::resolver::Path,
     pub query_file_name: String,
     pub download: bool,
     pub query_params: GetParams,
+    pub is_subdomain_mode: bool,
+}
+
+impl IpfsRequest {
+    pub fn request_path_for_redirection(&self) -> String {
+        if self.is_subdomain_mode {
+            self.resolved_path.to_relative_string()
+        } else {
+            self.resolved_path.to_string()
+        }
+    }
 }
 
 async fn fetch_car_recursive<T, W>(

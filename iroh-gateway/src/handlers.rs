@@ -1,14 +1,17 @@
 use async_recursion::async_recursion;
+use axum::extract::Host;
+use axum::routing::any;
 use axum::{
     body::Body,
     error_handling::HandleErrorLayer,
-    extract::{Extension, Path, Query},
+    extract::{Extension, Path as AxumPath, Query},
     http::{header::*, Request as HttpRequest, StatusCode},
     middleware,
     response::IntoResponse,
     routing::{get, head},
     BoxError, Router,
 };
+use cid::Cid;
 use futures::TryStreamExt;
 use handlebars::Handlebars;
 use http::Method;
@@ -16,12 +19,10 @@ use iroh_metrics::{core::MRecorder, gateway::GatewayMetrics, inc, resolver::OutM
 use iroh_resolver::resolver::{CidOrDomain, UnixfsType};
 use iroh_unixfs::{content_loader::ContentLoader, Link};
 use iroh_util::human::format_bytes;
-use serde::{Deserialize, Serialize};
 use serde_json::{
     json,
     value::{Map, Value as Json},
 };
-use serde_qs;
 use std::{
     collections::HashMap,
     fmt::Write,
@@ -30,14 +31,20 @@ use std::{
     time::{self, Duration},
 };
 
-use tower::ServiceBuilder;
+use iroh_resolver::Path;
+use tower::{ServiceBuilder, ServiceExt};
 use tower_http::{compression::CompressionLayer, trace::TraceLayer};
 use tracing::info_span;
 use url::Url;
 use urlencoding::encode;
 
+use crate::handler_params::{
+    inlined_dns_link_to_dns_link, recode_path_to_inlined_dns_link, DefaultHandlerPathParams,
+    GetParams, SubdomainHandlerPathParams,
+};
+use crate::text::IpfsSubdomain;
 use crate::{
-    client::{FileResult, Request},
+    client::{FileResult, IpfsRequest},
     constants::*,
     core::State,
     error::GatewayError,
@@ -46,6 +53,11 @@ use crate::{
     templates::{icon_class_name, ICONS_STYLESHEET, STYLESHEET},
 };
 
+enum RequestPreprocessingResult {
+    ResponseImmediately(GatewayResponse),
+    ShouldRequestData(Box<IpfsRequest>),
+}
+
 /// Trait describing what needs to be accessed on the configuration
 /// from the shared state.
 pub trait StateConfig: std::fmt::Debug + Sync + Send {
@@ -53,20 +65,44 @@ pub trait StateConfig: std::fmt::Debug + Sync + Send {
     fn public_url_base(&self) -> &str;
     fn port(&self) -> u16;
     fn user_headers(&self) -> &HeaderMap<HeaderValue>;
+    fn redirect_to_subdomain(&self) -> bool;
 }
 
-pub fn get_app_routes<T: ContentLoader + std::marker::Unpin>(state: &Arc<State<T>>) -> Router {
+pub fn get_app_routes<T: ContentLoader + Unpin>(state: &Arc<State<T>>) -> Router {
     let cors = crate::cors::cors_from_headers(state.config.user_headers());
 
     // todo(arqu): ?uri=... https://github.com/ipfs/go-ipfs/pull/7802
-    Router::new()
-        .route("/:scheme/:cid", get(get_handler::<T>))
-        .route("/:scheme/:cid/*cpath", get(get_handler::<T>))
-        .route("/:scheme/:cid/*cpath", head(head_handler::<T>))
+    let path_router = Router::new()
+        .route("/:scheme/:cid_or_domain", get(path_handler::<T>))
+        .route(
+            "/:scheme/:cid_or_domain/*content_path",
+            get(path_handler::<T>),
+        )
+        .route(
+            "/:scheme/:cid_or_domain/*content_path",
+            head(path_handler::<T>),
+        )
         .route("/health", get(health_check))
         .route("/icons.css", get(stylesheet_icons))
         .route("/style.css", get(stylesheet_main))
-        .route("/info", get(info))
+        .route("/info", get(info));
+
+    let subdomain_router = Router::new()
+        .route("/*content_path", get(subdomain_handler::<T>))
+        .route("/*content_path", head(subdomain_handler::<T>));
+
+    Router::new()
+        .route(
+            "/*path",
+            any(
+                |Host(hostname): Host, request: hyper::Request<Body>| async move {
+                    match IpfsSubdomain::try_from_str(&hostname) {
+                        Some(_) => subdomain_router.oneshot(request).await,
+                        None => path_router.oneshot(request).await,
+                    }
+                },
+            ),
+        )
         .layer(cors)
         .layer(Extension(Arc::clone(state)))
         .layer(
@@ -93,109 +129,60 @@ pub fn get_app_routes<T: ContentLoader + std::marker::Unpin>(state: &Arc<State<T
         )
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
-pub struct GetParams {
-    /// specifies the expected format of the response
-    format: Option<String>,
-    /// specifies the desired filename of the response
-    filename: Option<String>,
-    /// specifies whether the response should be of disposition inline or attachment
-    download: Option<bool>,
-    /// specifies whether the response should render a directory even if index.html is present
-    force_dir: Option<bool>,
-    /// uri query parameter for handling navigator.registerProtocolHandler Web API requests
-    uri: Option<String>,
-    recursive: Option<bool>,
-}
-
-#[derive(Debug, Deserialize, Serialize, Clone)]
-pub struct PathParams {
-    scheme: String,
-    cid: String,
-    cpath: Option<String>,
-}
-
-impl GetParams {
-    pub fn to_query_string(&self) -> String {
-        let q = serde_qs::to_string(self).unwrap();
-        if q.is_empty() {
-            q
-        } else {
-            format!("?{}", q)
-        }
-    }
-}
-
-enum RequestPreprocessingResult {
-    Response(GatewayResponse),
-    FurtherRequest(Box<Request>),
-}
-
-async fn request_preprocessing<T: ContentLoader + std::marker::Unpin>(
+async fn request_preprocessing<T: ContentLoader + Unpin>(
     state: &Arc<State<T>>,
-    path_params: &PathParams,
+    path: &Path,
     query_params: &GetParams,
-    request_headers: HeaderMap,
+    request_headers: &HeaderMap,
     response_headers: &mut HeaderMap,
+    is_subdomain_mode: bool,
 ) -> Result<RequestPreprocessingResult, GatewayError> {
-    if path_params.scheme != SCHEME_IPFS && path_params.scheme != SCHEME_IPNS {
+    if path.typ().as_str() != SCHEME_IPFS && path.typ().as_str() != SCHEME_IPNS {
         return Err(GatewayError::new(
             StatusCode::BAD_REQUEST,
             "invalid scheme, must be ipfs or ipns",
         ));
     }
-    let cpath = path_params.cpath.as_deref().unwrap_or("");
+    let content_path = path.to_relative_string();
 
     let uri_param = query_params.uri.clone().unwrap_or_default();
     if !uri_param.is_empty() {
-        return protocol_handler_redirect(uri_param, state)
-            .map(RequestPreprocessingResult::Response);
+        return protocol_handler_redirect(uri_param)
+            .map(RequestPreprocessingResult::ResponseImmediately);
     }
-    service_worker_check(&request_headers, cpath.to_string(), state)?;
-    unsuported_header_check(&request_headers, state)?;
+    service_worker_check(request_headers, &content_path)?;
+    unsupported_header_check(request_headers)?;
 
-    if check_bad_bits(state, &path_params.cid, cpath).await {
-        return Err(GatewayError::new(
-            StatusCode::GONE,
-            "CID is in the denylist",
-        ));
+    if let Some(cid) = path.cid() {
+        if check_bad_bits(state, cid, &content_path).await {
+            return Err(GatewayError::new(
+                StatusCode::GONE,
+                "CID is in the denylist",
+            ));
+        }
     }
 
-    let full_content_path = format!("/{}/{}{}", path_params.scheme, path_params.cid, cpath);
-    let resolved_path: iroh_resolver::resolver::Path = full_content_path
-        .parse()
-        .map_err(|e: anyhow::Error| e.to_string())
-        .map_err(|e| GatewayError::new(StatusCode::BAD_REQUEST, &e))?;
     // TODO: handle 404 or error
-    let resolved_cid = resolved_path.root();
+    let resolved_cid = path.root();
 
-    if handle_only_if_cached(&request_headers, state, resolved_cid).await? {
-        return Ok(RequestPreprocessingResult::Response(GatewayResponse::new(
-            StatusCode::OK,
-            Body::empty(),
-            HeaderMap::new(),
-        )));
-    }
-
-    if check_bad_bits(state, resolved_cid.to_string().as_str(), cpath).await {
-        return Err(GatewayError::new(
-            StatusCode::GONE,
-            "CID is in the denylist",
+    if handle_only_if_cached(request_headers, state, path.root()).await? {
+        return Ok(RequestPreprocessingResult::ResponseImmediately(
+            GatewayResponse::new(StatusCode::OK, Body::empty(), HeaderMap::new()),
         ));
     }
 
     // parse query params
-    let format = get_response_format(&request_headers, &query_params.format)
+    let format = get_response_format(request_headers, &query_params.format)
         .map_err(|err| GatewayError::new(StatusCode::BAD_REQUEST, &err))?;
 
-    if let Some(resp) = etag_check(&request_headers, resolved_cid, &format, state) {
-        return Ok(RequestPreprocessingResult::Response(resp));
+    if let Some(resp) = etag_check(request_headers, resolved_cid, &format) {
+        return Ok(RequestPreprocessingResult::ResponseImmediately(resp));
     }
 
     // init headers
     format.write_headers(response_headers);
     add_user_headers(response_headers, state.config.user_headers().clone());
-    let hv = match HeaderValue::from_str(&full_content_path) {
+    let hv = match HeaderValue::from_str(&path.to_string()) {
         Ok(hv) => hv,
         Err(err) => {
             return Err(GatewayError::new(
@@ -207,10 +194,10 @@ async fn request_preprocessing<T: ContentLoader + std::marker::Unpin>(
     response_headers.insert(&HEADER_X_IPFS_PATH, hv);
 
     // handle request and fetch data
-    let req = Request {
+    let req = IpfsRequest {
         format,
-        cid: resolved_path.root().clone(),
-        resolved_path,
+        cid: path.root().clone(),
+        resolved_path: path.clone(),
         query_file_name: query_params
             .filename
             .as_deref()
@@ -218,79 +205,129 @@ async fn request_preprocessing<T: ContentLoader + std::marker::Unpin>(
             .to_string(),
         download: query_params.download.unwrap_or_default(),
         query_params: query_params.clone(),
+        is_subdomain_mode,
     };
-    Ok(RequestPreprocessingResult::FurtherRequest(Box::new(req)))
+    Ok(RequestPreprocessingResult::ShouldRequestData(Box::new(req)))
 }
 
-#[tracing::instrument(skip(state))]
-pub async fn get_handler<T: ContentLoader + std::marker::Unpin>(
-    Extension(state): Extension<Arc<State<T>>>,
-    Path(path_params): Path<PathParams>,
-    Query(query_params): Query<GetParams>,
+pub async fn handler<T: ContentLoader + Unpin>(
+    state: Arc<State<T>>,
+    method: Method,
+    path: &Path,
+    query_params: &GetParams,
+    request_headers: &HeaderMap,
     http_req: HttpRequest<Body>,
-    request_headers: HeaderMap,
+    is_subdomain_mode: bool,
 ) -> Result<GatewayResponse, GatewayError> {
-    inc!(GatewayMetrics::Requests);
     let start_time = time::Instant::now();
     let mut response_headers = HeaderMap::new();
     match request_preprocessing(
         &state,
-        &path_params,
-        &query_params,
+        path,
+        query_params,
         request_headers,
         &mut response_headers,
+        is_subdomain_mode,
     )
     .await?
     {
-        RequestPreprocessingResult::Response(gateway_response) => Ok(gateway_response),
-        RequestPreprocessingResult::FurtherRequest(req) => {
-            if query_params.recursive.unwrap_or_default() {
-                serve_car_recursive(&req, state, response_headers, start_time).await
-            } else {
-                match req.format {
-                    ResponseFormat::Raw => {
-                        serve_raw(&req, state, response_headers, &http_req, start_time).await
-                    }
-                    ResponseFormat::Car => {
-                        serve_car(&req, state, response_headers, start_time).await
-                    }
-                    ResponseFormat::Fs(_) => {
-                        serve_fs(&req, state, response_headers, &http_req, start_time).await
+        RequestPreprocessingResult::ResponseImmediately(gateway_response) => Ok(gateway_response),
+        RequestPreprocessingResult::ShouldRequestData(req) => match method {
+            Method::HEAD => {
+                let path_metadata = state
+                    .client
+                    .retrieve_path_metadata(req.resolved_path)
+                    .await
+                    .map_err(|e| GatewayError::new(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
+                add_content_length_header(&mut response_headers, path_metadata.metadata().clone());
+                Ok(GatewayResponse::empty(response_headers))
+            }
+            Method::GET => {
+                if query_params.recursive.unwrap_or_default() {
+                    serve_car_recursive(&req, state, response_headers, start_time).await
+                } else {
+                    match req.format {
+                        ResponseFormat::Raw => {
+                            serve_raw(&req, state, response_headers, &http_req, start_time).await
+                        }
+                        ResponseFormat::Car => {
+                            serve_car(&req, state, response_headers, start_time).await
+                        }
+                        ResponseFormat::Fs(_) => {
+                            serve_fs(&req, state, response_headers, &http_req, start_time).await
+                        }
                     }
                 }
             }
-        }
+            _ => Err(GatewayError::new(
+                StatusCode::METHOD_NOT_ALLOWED,
+                "method not allowed",
+            )),
+        },
     }
 }
 
 #[tracing::instrument(skip(state))]
-pub async fn head_handler<T: ContentLoader + std::marker::Unpin>(
+pub async fn subdomain_handler<T: ContentLoader + Unpin>(
     Extension(state): Extension<Arc<State<T>>>,
-    Path(path_params): Path<PathParams>,
+    method: Method,
+    Host(host): Host,
+    AxumPath(path_params): AxumPath<SubdomainHandlerPathParams>,
     Query(query_params): Query<GetParams>,
     request_headers: HeaderMap,
+    http_req: HttpRequest<Body>,
 ) -> Result<GatewayResponse, GatewayError> {
     inc!(GatewayMetrics::Requests);
-    let mut response_headers = HeaderMap::new();
-    match request_preprocessing(
-        &state,
-        &path_params,
-        &query_params,
-        request_headers,
-        &mut response_headers,
+    let parsed_subdomain_url = IpfsSubdomain::try_from_str(&host)
+        .ok_or_else(|| GatewayError::new(StatusCode::BAD_REQUEST, "hostname is not compliant"))?;
+    let path = Path::from_parts(
+        parsed_subdomain_url.scheme,
+        &inlined_dns_link_to_dns_link(parsed_subdomain_url.cid_or_domain),
+        path_params.content_path.as_deref().unwrap_or(""),
     )
-    .await?
-    {
-        RequestPreprocessingResult::Response(gateway_response) => Ok(gateway_response),
-        RequestPreprocessingResult::FurtherRequest(req) => {
-            let path_metadata = state
-                .client
-                .retrieve_path_metadata(req.resolved_path)
-                .await
-                .map_err(|e| GatewayError::new(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
-            add_content_length_header(&mut response_headers, path_metadata.metadata().clone());
-            Ok(GatewayResponse::empty(response_headers))
-        }
+    .map_err(|e| GatewayError::new(StatusCode::BAD_REQUEST, &e.to_string()))?;
+    handler(
+        state,
+        method,
+        &path,
+        &query_params,
+        &request_headers,
+        http_req,
+        true,
+    )
+    .await
+}
+
+#[tracing::instrument(skip(state))]
+pub async fn path_handler<T: ContentLoader + Unpin>(
+    Extension(state): Extension<Arc<State<T>>>,
+    method: Method,
+    Host(host): Host,
+    AxumPath(path_params): AxumPath<DefaultHandlerPathParams>,
+    Query(query_params): Query<GetParams>,
+    request_headers: HeaderMap,
+    http_req: HttpRequest<Body>,
+) -> Result<GatewayResponse, GatewayError> {
+    inc!(GatewayMetrics::Requests);
+    let path = Path::from_parts(
+        &path_params.scheme,
+        &path_params.cid_or_domain,
+        path_params.content_path.as_deref().unwrap_or(""),
+    )
+    .map_err(|e| GatewayError::new(StatusCode::BAD_REQUEST, &e.to_string()))?;
+    if state.config.redirect_to_subdomain() {
+        Ok(redirect_path_handlers(&host, &path, &request_headers))
+    } else {
+        handler(
+            state,
+            method,
+            &path,
+            &query_params,
+            &request_headers,
+            http_req,
+            false,
+        )
+        .await
     }
 }
 
@@ -336,10 +373,7 @@ pub async fn stylesheet_icons() -> (HeaderMap, &'static str) {
 }
 
 #[tracing::instrument()]
-fn protocol_handler_redirect<T: ContentLoader>(
-    uri_param: String,
-    state: &State<T>,
-) -> Result<GatewayResponse, GatewayError> {
+fn protocol_handler_redirect(uri_param: String) -> Result<GatewayResponse, GatewayError> {
     let u = match Url::parse(&uri_param) {
         Ok(u) => u,
         Err(e) => {
@@ -369,14 +403,13 @@ fn protocol_handler_redirect<T: ContentLoader>(
 }
 
 #[tracing::instrument()]
-fn service_worker_check<T: ContentLoader>(
+fn service_worker_check(
     request_headers: &HeaderMap,
-    cpath: String,
-    state: &State<T>,
+    content_path: &str,
 ) -> Result<(), GatewayError> {
     if request_headers.contains_key(&HEADER_SERVICE_WORKER) {
         let sw = request_headers.get(&HEADER_SERVICE_WORKER).unwrap();
-        if sw.to_str().unwrap() == "script" && cpath.is_empty() {
+        if sw.to_str().unwrap() == "script" && content_path.is_empty() {
             return Err(GatewayError::new(
                 StatusCode::BAD_REQUEST,
                 "Service Worker not supported",
@@ -387,10 +420,7 @@ fn service_worker_check<T: ContentLoader>(
 }
 
 #[tracing::instrument()]
-fn unsuported_header_check<T: ContentLoader>(
-    request_headers: &HeaderMap,
-    state: &State<T>,
-) -> Result<(), GatewayError> {
+fn unsupported_header_check(request_headers: &HeaderMap) -> Result<(), GatewayError> {
     if request_headers.contains_key(&HEADER_X_IPFS_GATEWAY_PREFIX) {
         return Err(GatewayError::new(
             StatusCode::BAD_REQUEST,
@@ -398,6 +428,27 @@ fn unsuported_header_check<T: ContentLoader>(
         ));
     }
     Ok(())
+}
+
+#[tracing::instrument()]
+fn redirect_path_handlers(host: &str, path: &Path, request_headers: &HeaderMap) -> GatewayResponse {
+    let target_host = request_headers
+        .get(&HEADER_X_FORWARDED_HOST)
+        .map(|hv| hv.to_str().unwrap())
+        .unwrap_or(host);
+    let target_proto = request_headers
+        .get(&HEADER_X_FORWARDED_PROTO)
+        .map(|hv| hv.to_str().unwrap())
+        .unwrap_or("http");
+    let content_path = path.to_relative_string();
+    GatewayResponse::redirect_permanently(&format!(
+        "{}://{}.{}.{}/{}",
+        target_proto,
+        recode_path_to_inlined_dns_link(path),
+        path.typ().as_str(),
+        target_host,
+        content_path.strip_prefix('/').unwrap_or(&content_path)
+    ))
 }
 
 #[tracing::instrument()]
@@ -432,12 +483,16 @@ async fn handle_only_if_cached<T: ContentLoader>(
     Ok(false)
 }
 
-pub async fn check_bad_bits<T: ContentLoader>(state: &State<T>, cid: &str, path: &str) -> bool {
+pub async fn check_bad_bits<T: ContentLoader>(
+    state: &State<T>,
+    cid: &Cid,
+    content_path: &str,
+) -> bool {
     // check if cid is in the denylist
     if state.bad_bits.is_some() {
         let bad_bits = state.bad_bits.as_ref();
         if let Some(bbits) = bad_bits {
-            if bbits.read().await.is_bad(cid, path) {
+            if bbits.read().await.is_bad(cid, content_path) {
                 return true;
             }
         }
@@ -446,11 +501,10 @@ pub async fn check_bad_bits<T: ContentLoader>(state: &State<T>, cid: &str, path:
 }
 
 #[tracing::instrument()]
-fn etag_check<T: ContentLoader>(
+fn etag_check(
     request_headers: &HeaderMap,
     resolved_cid: &CidOrDomain,
     format: &ResponseFormat,
-    state: &State<T>,
 ) -> Option<GatewayResponse> {
     if request_headers.contains_key("If-None-Match") {
         let inm = request_headers
@@ -471,12 +525,12 @@ fn etag_check<T: ContentLoader>(
 }
 
 #[tracing::instrument()]
-async fn serve_raw<T: ContentLoader + std::marker::Unpin>(
-    req: &Request,
+async fn serve_raw<T: ContentLoader + Unpin>(
+    req: &IpfsRequest,
     state: Arc<State<T>>,
     mut headers: HeaderMap,
     http_req: &HttpRequest<Body>,
-    start_time: std::time::Instant,
+    start_time: time::Instant,
 ) -> Result<GatewayResponse, GatewayError> {
     let range: Option<Range<u64>> = if http_req.headers().contains_key(RANGE) {
         parse_range_header(http_req.headers().get(RANGE).unwrap())
@@ -499,7 +553,7 @@ async fn serve_raw<T: ContentLoader + std::marker::Unpin>(
 
             set_content_disposition_headers(&mut headers, &file_name, DISPOSITION_ATTACHMENT);
             set_etag_headers(&mut headers, get_etag(&req.cid, Some(req.format.clone())));
-            if let Some(res) = etag_check(&headers, &req.cid, &req.format, &state) {
+            if let Some(res) = etag_check(&headers, &req.cid, &req.format) {
                 return Ok(res);
             }
             add_cache_control_headers(&mut headers, metadata.clone());
@@ -529,11 +583,11 @@ async fn serve_raw<T: ContentLoader + std::marker::Unpin>(
 }
 
 #[tracing::instrument()]
-async fn serve_car<T: ContentLoader + std::marker::Unpin>(
-    req: &Request,
+async fn serve_car<T: ContentLoader + Unpin>(
+    req: &IpfsRequest,
     state: Arc<State<T>>,
     mut headers: HeaderMap,
-    start_time: std::time::Instant,
+    start_time: time::Instant,
 ) -> Result<GatewayResponse, GatewayError> {
     // TODO: handle car versions
     // FIXME: we currently only retrieve full cids
@@ -556,7 +610,7 @@ async fn serve_car<T: ContentLoader + std::marker::Unpin>(
             add_content_length_header(&mut headers, metadata.clone());
             let etag = format!("W/{}", get_etag(&req.cid, Some(req.format.clone())));
             set_etag_headers(&mut headers, etag);
-            if let Some(res) = etag_check(&headers, &req.cid, &req.format, &state) {
+            if let Some(res) = etag_check(&headers, &req.cid, &req.format) {
                 return Ok(res);
             }
             add_ipfs_roots_headers(&mut headers, metadata);
@@ -570,11 +624,11 @@ async fn serve_car<T: ContentLoader + std::marker::Unpin>(
 }
 
 #[tracing::instrument()]
-async fn serve_car_recursive<T: ContentLoader + std::marker::Unpin>(
-    req: &Request,
+async fn serve_car_recursive<T: ContentLoader + Unpin>(
+    req: &IpfsRequest,
     state: Arc<State<T>>,
     mut headers: HeaderMap,
-    start_time: std::time::Instant,
+    start_time: time::Instant,
 ) -> Result<GatewayResponse, GatewayError> {
     let body = state
         .client
@@ -593,7 +647,7 @@ async fn serve_car_recursive<T: ContentLoader + std::marker::Unpin>(
     // add_cache_control_headers(&mut headers, metadata.clone());
     let etag = format!("W/{}", get_etag(&req.cid, Some(req.format.clone())));
     set_etag_headers(&mut headers, etag);
-    if let Some(res) = etag_check(&headers, &req.cid, &req.format, &state) {
+    if let Some(res) = etag_check(&headers, &req.cid, &req.format) {
         return Ok(res);
     }
     // add_ipfs_roots_headers(&mut headers, metadata);
@@ -602,26 +656,24 @@ async fn serve_car_recursive<T: ContentLoader + std::marker::Unpin>(
 
 #[tracing::instrument()]
 #[async_recursion]
-async fn serve_fs<T: ContentLoader + std::marker::Unpin>(
-    req: &Request,
+async fn serve_fs<T: ContentLoader + Unpin>(
+    req: &IpfsRequest,
     state: Arc<State<T>>,
     mut headers: HeaderMap,
     http_req: &HttpRequest<Body>,
-    start_time: std::time::Instant,
+    start_time: time::Instant,
 ) -> Result<GatewayResponse, GatewayError> {
     let range: Option<Range<u64>> = if http_req.headers().contains_key(RANGE) {
         parse_range_header(http_req.headers().get(RANGE).unwrap())
     } else {
         None
     };
-
     // FIXME: we currently only retrieve full cids
     let (body, metadata) = state
         .client
         .get_file(req.resolved_path.clone(), start_time, range.clone())
         .await
         .map_err(|e| GatewayError::new(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
-
     add_ipfs_roots_headers(&mut headers, metadata.clone());
     match body {
         FileResult::Directory(res) => {
@@ -652,7 +704,7 @@ async fn serve_fs<T: ContentLoader + std::marker::Unpin>(
                     add_cache_control_headers(&mut headers, metadata.clone());
                     add_content_length_header(&mut headers, metadata.clone());
                     set_etag_headers(&mut headers, get_etag(&req.cid, Some(req.format.clone())));
-                    if let Some(res) = etag_check(&headers, &req.cid, &req.format, &state) {
+                    if let Some(res) = etag_check(&headers, &req.cid, &req.format) {
                         return Ok(res);
                     }
                     let name = add_content_disposition_headers(
@@ -670,7 +722,6 @@ async fn serve_fs<T: ContentLoader + std::marker::Unpin>(
                         let content_sniffed_mime = body.get_mime();
                         add_content_type_headers(&mut headers, &name, content_sniffed_mime);
                     }
-
                     if let Some(mut capped_range) = range {
                         if let Some(size) = metadata.size {
                             capped_range.end = std::cmp::min(capped_range.end, size);
@@ -698,7 +749,7 @@ async fn serve_fs<T: ContentLoader + std::marker::Unpin>(
             add_cache_control_headers(&mut headers, metadata.clone());
             add_content_length_header(&mut headers, metadata.clone());
             set_etag_headers(&mut headers, get_etag(&req.cid, Some(req.format.clone())));
-            if let Some(res) = etag_check(&headers, &req.cid, &req.format, &state) {
+            if let Some(res) = etag_check(&headers, &req.cid, &req.format) {
                 return Ok(res);
             }
             let name = add_content_disposition_headers(
@@ -715,9 +766,9 @@ async fn serve_fs<T: ContentLoader + std::marker::Unpin>(
 }
 
 #[tracing::instrument()]
-async fn serve_fs_dir<T: ContentLoader + std::marker::Unpin>(
+async fn serve_fs_dir<T: ContentLoader + Unpin>(
     dir_list: &[Link],
-    req: &Request,
+    req: &IpfsRequest,
     state: Arc<State<T>>,
     mut headers: HeaderMap,
     http_req: &HttpRequest<Body>,
@@ -734,7 +785,7 @@ async fn serve_fs_dir<T: ContentLoader + std::marker::Unpin>(
         if !req.resolved_path.has_trailing_slash() {
             let redirect_path = format!(
                 "{}/{}",
-                req.resolved_path,
+                req.request_path_for_redirection(),
                 req.query_params.to_query_string()
             );
             return Ok(GatewayResponse::redirect_permanently(&redirect_path));
@@ -746,7 +797,7 @@ async fn serve_fs_dir<T: ContentLoader + std::marker::Unpin>(
 
     headers.insert(CONTENT_TYPE, HeaderValue::from_str("text/html").unwrap());
     set_etag_headers(&mut headers, get_dir_etag(&req.cid));
-    if let Some(res) = etag_check(&headers, &req.cid, &req.format, &state) {
+    if let Some(res) = etag_check(&headers, &req.cid, &req.format) {
         return Ok(res);
     }
 
@@ -823,8 +874,8 @@ async fn serve_fs_dir<T: ContentLoader + std::marker::Unpin>(
 
 // #[tracing::instrument()]
 pub async fn request_middleware<B>(
-    request: axum::http::Request<B>,
-    next: axum::middleware::Next<B>,
+    request: http::Request<B>,
+    next: middleware::Next<B>,
 ) -> axum::response::Response {
     let method = request.method().clone();
     let mut r = next.run(request).await;
@@ -838,7 +889,6 @@ pub async fn request_middleware<B>(
 #[tracing::instrument()]
 pub async fn middleware_error_handler<T: ContentLoader>(
     method: Method,
-    Extension(state): Extension<Arc<State<T>>>,
     err: BoxError,
 ) -> impl IntoResponse {
     inc!(GatewayMetrics::FailCount);

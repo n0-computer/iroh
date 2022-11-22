@@ -54,7 +54,7 @@ async fn test_dagger_testdata() -> Result<()> {
         },
         Param {
             degree: 174,
-            chunker: Chunker::Rabin(Box::new(chunker::Rabin::default())),
+            chunker: Chunker::Rabin(Box::default()),
         },
     ];
 

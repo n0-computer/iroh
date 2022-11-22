@@ -248,7 +248,7 @@ pub fn increase_fd_limit() -> std::io::Result<u64> {
     if soft < MIN_NOFILE_LIMIT {
         return Err(std::io::Error::new(
             std::io::ErrorKind::Other,
-            format!("NOFILE limit too low: {}", soft),
+            format!("NOFILE limit too low: {soft}"),
         ));
     }
     Ok(soft)

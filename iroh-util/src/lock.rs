@@ -25,7 +25,7 @@ pub struct ProgramLock {
 impl ProgramLock {
     /// Create a new lock for the given program. This does not yet acquire the lock.
     pub fn new(prog_name: &str) -> Result<Self> {
-        let path = crate::iroh_data_path(&format!("{}.lock", prog_name))
+        let path = crate::iroh_data_path(&format!("{prog_name}.lock"))
             .map_err(|e| LockError::InvalidPath { source: e })?;
         Ok(Self {
             path,
@@ -165,7 +165,7 @@ impl Drop for ProgramLock {
 
 /// Report Process ID stored in a lock file
 pub fn read_lock_pid(prog_name: &str) -> Result<Pid> {
-    let path = crate::iroh_data_path(&format!("{}.lock", prog_name))?;
+    let path = crate::iroh_data_path(&format!("{prog_name}.lock"))?;
     read_lock(&path)
 }
 
