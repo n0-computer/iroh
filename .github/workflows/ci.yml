@@ -32,6 +32,7 @@ jobs:
             release-os: windows
             release-arch: amd64
             runner: [self-hosted, windows, X64]
+
     env:
       RUST_BACKTRACE: full
       # Force not building debuginfo to save space on disk.
@@ -71,7 +72,7 @@ jobs:
       run: |
         PROTOC_VERSION=3.20.1
         PROTOC_ZIP=protoc-$PROTOC_VERSION-$PROTOC_ARCH.zip
-        curl -OL https://github.com/protocolbuffers/protobuf/releases/download/v$PROTOC_VERSION/$PROTOC_ZIP
+        curl --retry 3 --retry-max-time 90 -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" -OL https://github.com/protocolbuffers/protobuf/releases/download/v$PROTOC_VERSION/$PROTOC_ZIP
         sudo unzip -o $PROTOC_ZIP -d /usr/local bin/protoc
         sudo unzip -o $PROTOC_ZIP -d /usr/local 'include/*'
         rm -f $PROTOC_ZIP
