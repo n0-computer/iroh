@@ -5,10 +5,9 @@ proxy!(
     version: () => VersionResponse => VersionResponse
 );
 
-
 mod qrpc {
-    use quic_rpc::{message::RpcMsg, Service};
     use derive_more::{From, TryInto};
+    use quic_rpc::{message::RpcMsg, Service};
     use serde::{Deserialize, Serialize};
 
     #[derive(Serialize, Deserialize, Debug)]

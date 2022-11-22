@@ -13,10 +13,10 @@ proxy!(
 );
 
 mod qrpc {
-    use quic_rpc::{message::RpcMsg, Service};
     use bytes::Bytes;
     use cid::Cid;
     use derive_more::{From, TryInto};
+    use quic_rpc::{message::RpcMsg, Service};
     use serde::{Deserialize, Serialize};
 
     #[derive(Serialize, Deserialize, Debug)]
@@ -122,8 +122,8 @@ mod qrpc {
     }
 
     impl RpcMsg<StoreService> for HasRequest {
-      type Response = HasResponse;
-  }
+        type Response = HasResponse;
+    }
 
     impl RpcMsg<StoreService> for PutManyRequest {
         type Response = ();
