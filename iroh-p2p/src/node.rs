@@ -1391,7 +1391,7 @@ mod tests {
             "/meshsub/1.0.0",
         ];
         let expected_protocol_version = "ipfs/0.1.0";
-        let expected_agent_version = "iroh/0.1.0";
+        let expected_agent_version = "iroh/0.1.1";
 
         assert_eq!(expected_peer_id, got.peer_id);
         assert!(got.listen_addrs.contains(expected_addr));
