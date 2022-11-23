@@ -2,6 +2,7 @@ use axum::Router;
 use iroh_resolver::content_loader::ContentLoader;
 use iroh_rpc_types::gateway::GatewayServerAddr;
 
+use iroh_resolver::dns_resolver::DnsResolverConfig;
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::RwLock;
 
@@ -33,6 +34,7 @@ impl<T: ContentLoader + std::marker::Unpin> Core<T> {
         rpc_addr: GatewayServerAddr,
         bad_bits: Arc<Option<RwLock<BadBits>>>,
         content_loader: T,
+        dns_resolver_config: DnsResolverConfig,
     ) -> anyhow::Result<Self> {
         tokio::spawn(async move {
             if let Err(err) = rpc::new(rpc_addr, Gateway::default()).await {
@@ -48,7 +50,7 @@ impl<T: ContentLoader + std::marker::Unpin> Core<T> {
             "not_found".to_string(),
             templates::NOT_FOUND_TEMPLATE.to_string(),
         );
-        let client = Client::<T>::new(&content_loader);
+        let client = Client::<T>::new(&content_loader, dns_resolver_config);
 
         Ok(Self {
             state: Arc::new(State {
@@ -76,6 +78,7 @@ impl<T: ContentLoader + std::marker::Unpin> Core<T> {
         config: Arc<dyn StateConfig>,
         bad_bits: Arc<Option<RwLock<BadBits>>>,
         content_loader: T,
+        dns_resolver_config: DnsResolverConfig,
     ) -> anyhow::Result<Arc<State<T>>> {
         let mut templates = HashMap::new();
         templates.insert(
@@ -86,7 +89,7 @@ impl<T: ContentLoader + std::marker::Unpin> Core<T> {
             "not_found".to_string(),
             templates::NOT_FOUND_TEMPLATE.to_string(),
         );
-        let client = Client::new(&content_loader);
+        let client = Client::new(&content_loader, dns_resolver_config);
         Ok(Arc::new(State {
             config,
             client,
@@ -147,9 +150,15 @@ mod tests {
         };
         let content_loader =
             FullLoader::new(rpc_client.clone(), loader_config).expect("invalid config");
-        let core = Core::new(config, rpc_addr, Arc::new(None), content_loader)
-            .await
-            .unwrap();
+        let core = Core::new(
+            config,
+            rpc_addr,
+            Arc::new(None),
+            content_loader,
+            DnsResolverConfig::default(),
+        )
+        .await
+        .unwrap();
         let server = core.server();
         let addr = server.local_addr();
         let core_task = tokio::spawn(async move {

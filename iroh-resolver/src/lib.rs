@@ -2,7 +2,7 @@ pub mod balanced_tree;
 pub mod chunker;
 pub mod codecs;
 pub mod content_loader;
-pub(crate) mod dns_resolver;
+pub mod dns_resolver;
 pub mod hamt;
 pub mod indexer;
 pub mod resolver;

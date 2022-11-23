@@ -23,7 +23,7 @@ use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use tracing::{debug, trace, warn};
 
-use crate::dns_resolver::DnsResolver;
+use crate::dns_resolver::{DnsResolver, DnsResolverConfig};
 
 use iroh_metrics::{
     core::{MObserver, MRecorder},
@@ -737,8 +737,11 @@ struct InnerLoaderContext {
 
 impl<T: ContentLoader> Resolver<T> {
     pub fn new(loader: T) -> Self {
-        let (session_closer_s, session_closer_r) = async_channel::bounded(2048);
+        Self::with_dns_resolver(loader, DnsResolverConfig::default())
+    }
 
+    pub fn with_dns_resolver(loader: T, dns_resolver_config: DnsResolverConfig) -> Self {
+        let (session_closer_s, session_closer_r) = async_channel::bounded(2048);
         let loader_thread = loader.clone();
         let worker = tokio::task::spawn(async move {
             // GC Loop for sessions
@@ -757,7 +760,7 @@ impl<T: ContentLoader> Resolver<T> {
 
         Resolver {
             loader,
-            dns_resolver: Arc::new(DnsResolver::new()),
+            dns_resolver: Arc::new(DnsResolver::from_config(dns_resolver_config)),
             next_id: Arc::new(AtomicU64::new(0)),
             _worker: Arc::new(worker),
             session_closer: session_closer_s,
