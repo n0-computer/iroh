@@ -6,7 +6,7 @@ use std::net::{IpAddr, Ipv4Addr};
 use trust_dns_resolver::config::{NameServerConfigGroup, ResolverConfig, ResolverOpts};
 use trust_dns_resolver::{AsyncResolver, TokioAsyncResolver};
 
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct DnsResolverConfig {
     /// Mapping from TLD to the specific instance of resolver
     tld_resolvers: Option<HashMap<String, ResolverConfig>>,
