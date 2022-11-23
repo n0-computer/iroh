@@ -6,8 +6,7 @@ use bytes::BytesMut;
 use cid::Cid;
 use iroh_rpc_types::store::{
     GetLinksRequest, GetLinksResponse, GetRequest, GetResponse, GetSizeRequest, GetSizeResponse,
-    HasRequest, HasResponse, PutManyRequest, PutRequest, Store as RpcStore, StoreServerAddr,
-    VersionResponse,
+    HasRequest, HasResponse, PutManyRequest, PutRequest, StoreServerAddr, VersionResponse,
 };
 use tracing::info;
 
@@ -18,8 +17,7 @@ impl iroh_rpc_types::NamedService for Store {
     const NAME: &'static str = "store";
 }
 
-#[async_trait]
-impl RpcStore for Store {
+impl Store {
     #[tracing::instrument(skip(self))]
     async fn version(&self, _: ()) -> Result<VersionResponse> {
         let version = env!("CARGO_PKG_VERSION").to_string();
@@ -28,14 +26,13 @@ impl RpcStore for Store {
 
     #[tracing::instrument(skip(self, req))]
     async fn put(&self, req: PutRequest) -> Result<()> {
-        let cid = cid_from_bytes(req.cid)?;
-        let links = links_from_bytes(req.links)?;
-        let res = self
-            .spawn_blocking(move |x| x.put(cid, req.blob, links))
+        let cid = req.cid;
+        let links = req.links;
+        self.spawn_blocking(move |x| x.put0(cid, req.blob, links))
             .await?;
 
         info!("store rpc call: put cid {}", cid);
-        Ok(res)
+        Ok(())
     }
 
     #[tracing::instrument(skip(self, req))]
@@ -44,34 +41,29 @@ impl RpcStore for Store {
             .blocks
             .into_iter()
             .map(|req| {
-                let cid = cid_from_bytes(req.cid)?;
-                let links = links_from_bytes(req.links)?;
+                let cid = req.cid;
+                let links = req.links;
                 Ok((cid, req.blob, links))
             })
             .collect::<Result<Vec<_>>>()?;
-        self.spawn_blocking(move |x| x.put_many(req)).await
+        self.spawn_blocking(move |x| x.put_many0(req)).await
     }
 
     #[tracing::instrument(skip(self))]
     async fn get(&self, req: GetRequest) -> Result<GetResponse> {
-        let cid = cid_from_bytes(req.cid)?;
+        let cid = req.cid;
         self.spawn_blocking(move |x| {
-            if let Some(res) = x.get(&cid)? {
-                Ok(GetResponse {
-                    data: Some(BytesMut::from(&res[..]).freeze()),
-                })
-            } else {
-                Ok(GetResponse { data: None })
-            }
+            let data = x.get0(&cid)?.map(|x| x.to_vec().into());
+            Ok(GetResponse { data })
         })
         .await
     }
 
     #[tracing::instrument(skip(self))]
     async fn has(&self, req: HasRequest) -> Result<HasResponse> {
-        let cid = cid_from_bytes(req.cid)?;
-        self.spawn_blocking(move |self| {
-            let has = self.has(&cid)?;
+        let cid = req.cid;
+        self.spawn_blocking(move |x| {
+            let has = x.has0(&cid)?;
             Ok(HasResponse { has })
         })
         .await
@@ -79,29 +71,20 @@ impl RpcStore for Store {
 
     #[tracing::instrument(skip(self))]
     async fn get_links(&self, req: GetLinksRequest) -> Result<GetLinksResponse> {
-        let cid = cid_from_bytes(req.cid)?;
-        self.spawn_blocking(move |self| {
-            if let Some(res) = self.get_links(&cid)? {
-                let links = res.into_iter().map(|cid| cid.to_bytes()).collect();
-                Ok(GetLinksResponse { links })
-            } else {
-                Ok(GetLinksResponse { links: Vec::new() })
-            }
+        let cid = req.cid;
+        self.spawn_blocking(move |x| {
+            let links = x.get_links0(&cid)?;
+            Ok(GetLinksResponse { links })
         })
         .await
     }
 
     #[tracing::instrument(skip(self))]
     async fn get_size(&self, req: GetSizeRequest) -> Result<GetSizeResponse> {
-        let cid = cid_from_bytes(req.cid)?;
-        self.spawn_blocking(move |self| {
-            if let Some(size) = self.get_size(&cid)? {
-                Ok(GetSizeResponse {
-                    size: Some(size as u64),
-                })
-            } else {
-                Ok(GetSizeResponse { size: None })
-            }
+        let cid = req.cid;
+        self.spawn_blocking(move |x| {
+            let size = x.get_size0(&cid)?.map(|x| x as u64);
+            Ok(GetSizeResponse { size })
         })
         .await
     }
@@ -110,7 +93,8 @@ impl RpcStore for Store {
 #[tracing::instrument(skip(store))]
 pub async fn new(addr: StoreServerAddr, store: Store) -> Result<()> {
     info!("rpc listening on: {}", addr);
-    iroh_rpc_types::store::serve(addr, store).await
+    todo!()
+    // iroh_rpc_types::store::serve(addr, store).await
 }
 
 #[tracing::instrument]

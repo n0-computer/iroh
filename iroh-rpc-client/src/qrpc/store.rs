@@ -15,7 +15,7 @@ pub struct StoreClient {
 }
 
 impl StoreClient {
-    pub async fn new(addr: iroh_rpc_types::qrpc::addr::Addr<StoreService>) -> anyhow::Result<Self> {
+    pub async fn new(addr: StoreClientAddr) -> anyhow::Result<Self> {
         match addr {
             iroh_rpc_types::qrpc::addr::Addr::Qrpc(addr) => {
                 todo!()

@@ -187,7 +187,7 @@ impl Store {
     }
 
     #[tracing::instrument(skip(self, links, blob))]
-    pub fn put<T: AsRef<[u8]>, L>(&self, cid: Cid, blob: T, links: L) -> Result<()>
+    pub fn put0<T: AsRef<[u8]>, L>(&self, cid: Cid, blob: T, links: L) -> Result<()>
     where
         L: IntoIterator<Item = Cid>,
     {
@@ -195,7 +195,10 @@ impl Store {
     }
 
     #[tracing::instrument(skip(self, blocks))]
-    pub fn put_many(&self, blocks: impl IntoIterator<Item = (Cid, Bytes, Vec<Cid>)>) -> Result<()> {
+    pub fn put_many0(
+        &self,
+        blocks: impl IntoIterator<Item = (Cid, Bytes, Vec<Cid>)>,
+    ) -> Result<()> {
         self.write_store()?.put_many(blocks)
     }
 
@@ -210,22 +213,22 @@ impl Store {
     }
 
     #[tracing::instrument(skip(self))]
-    pub fn get(&self, cid: &Cid) -> Result<Option<DBPinnableSlice<'_>>> {
+    pub fn get0(&self, cid: &Cid) -> Result<Option<DBPinnableSlice<'_>>> {
         self.read_store()?.get(cid)
     }
 
     #[tracing::instrument(skip(self))]
-    pub fn get_size(&self, cid: &Cid) -> Result<Option<usize>> {
+    pub fn get_size0(&self, cid: &Cid) -> Result<Option<usize>> {
         self.read_store()?.get_size(cid)
     }
 
     #[tracing::instrument(skip(self))]
-    pub fn has(&self, cid: &Cid) -> Result<bool> {
+    pub fn has0(&self, cid: &Cid) -> Result<bool> {
         self.read_store()?.has(cid)
     }
 
     #[tracing::instrument(skip(self))]
-    pub fn get_links(&self, cid: &Cid) -> Result<Option<Vec<Cid>>> {
+    pub fn get_links0(&self, cid: &Cid) -> Result<Option<Vec<Cid>>> {
         self.read_store()?.get_links(cid)
     }
 
@@ -723,17 +726,17 @@ mod tests {
 
             let links = [link];
 
-            store.put(c, &data, links).unwrap();
+            store.put0(c, &data, links).unwrap();
             values.push((c, data, links));
         }
 
         for (i, (c, expected_data, expected_links)) in values.iter().enumerate() {
             dbg!(i);
-            assert!(store.has(c).unwrap());
-            let data = store.get(c).unwrap().unwrap();
+            assert!(store.has0(c).unwrap());
+            let data = store.get0(c).unwrap().unwrap();
             assert_eq!(expected_data, &data[..]);
 
-            let links = store.get_links(c).unwrap().unwrap();
+            let links = store.get_links0(c).unwrap().unwrap();
             assert_eq!(expected_links, &links[..]);
         }
     }
@@ -762,15 +765,15 @@ mod tests {
 
             let links = [link];
 
-            store.put(c, &data, links).unwrap();
+            store.put0(c, &data, links).unwrap();
             values.push((c, data, links));
         }
 
         for (c, expected_data, expected_links) in values.iter() {
-            let data = store.get(c).unwrap().unwrap();
+            let data = store.get0(c).unwrap().unwrap();
             assert_eq!(expected_data, &data[..]);
 
-            let links = store.get_links(c).unwrap().unwrap();
+            let links = store.get_links0(c).unwrap().unwrap();
             assert_eq!(expected_links, &links[..]);
         }
 
@@ -778,10 +781,10 @@ mod tests {
 
         let store = Store::open(config).await.unwrap();
         for (c, expected_data, expected_links) in values.iter() {
-            let data = store.get(c).unwrap().unwrap();
+            let data = store.get0(c).unwrap().unwrap();
             assert_eq!(expected_data, &data[..]);
 
-            let links = store.get_links(c).unwrap().unwrap();
+            let links = store.get_links0(c).unwrap().unwrap();
             assert_eq!(expected_links, &links[..]);
         }
 
@@ -795,15 +798,15 @@ mod tests {
 
             let links = [link];
 
-            store.put(c, &data, links).unwrap();
+            store.put0(c, &data, links).unwrap();
             values.push((c, data, links));
         }
 
         for (c, expected_data, expected_links) in values.iter() {
-            let data = store.get(c).unwrap().unwrap();
+            let data = store.get0(c).unwrap().unwrap();
             assert_eq!(expected_data, &data[..]);
 
-            let links = store.get_links(c).unwrap().unwrap();
+            let links = store.get_links0(c).unwrap().unwrap();
             assert_eq!(expected_links, &links[..]);
         }
     }
@@ -837,10 +840,10 @@ mod tests {
         let cbor_cid = Cid::new_v1(IpldCodec::DagCbor.into(), hash);
 
         let (store, _dir) = test_store().await?;
-        store.put(raw_cid, &blob, vec![])?;
-        store.put(cbor_cid, &blob, vec![link1, link2])?;
-        assert_eq!(store.get_links(&raw_cid)?.unwrap().len(), 0);
-        assert_eq!(store.get_links(&cbor_cid)?.unwrap().len(), 2);
+        store.put0(raw_cid, &blob, vec![])?;
+        store.put0(cbor_cid, &blob, vec![link1, link2])?;
+        assert_eq!(store.get_links0(&raw_cid)?.unwrap().len(), 0);
+        assert_eq!(store.get_links0(&cbor_cid)?.unwrap().len(), 2);
 
         let ids = store.get_ids_for_hash(&hash)?;
         assert_eq!(ids.count(), 2);
@@ -868,12 +871,12 @@ mod tests {
         let actual = store.get_blob_by_hash(&hash)?.map(|x| x.to_vec());
         assert_eq!(actual, None);
 
-        store.put(raw_cid, &expected, vec![])?;
+        store.put0(raw_cid, &expected, vec![])?;
         assert!(store.has_blob_for_hash(&hash)?);
         let actual = store.get_blob_by_hash(&hash)?.map(|x| x.to_vec());
         assert_eq!(actual, Some(expected.clone()));
 
-        store.put(cbor_cid, &expected, vec![link1, link2])?;
+        store.put0(cbor_cid, &expected, vec![link1, link2])?;
         assert!(store.has_blob_for_hash(&hash)?);
         let actual = store.get_blob_by_hash(&hash)?.map(|x| x.to_vec());
         assert_eq!(actual, Some(expected));
@@ -926,9 +929,9 @@ mod tests {
 
         let (store, _dir) = test_store().await?;
         let blocks = vec![(cid1, blob.clone(), vec![]), (cid2, blob.clone(), vec![])];
-        store.put_many(blocks)?;
-        assert!(store.has(&cid1)?);
-        assert!(store.has(&cid2)?);
+        store.put_many0(blocks)?;
+        assert!(store.has0(&cid1)?);
+        assert!(store.has0(&cid2)?);
 
         let blocks = vec![
             (cid1, blob.clone(), vec![]),
@@ -936,10 +939,10 @@ mod tests {
             (cid3, blob.clone(), vec![]),
         ];
 
-        store.put_many(blocks)?;
-        assert!(store.has(&cid1)?);
-        assert!(store.has(&cid2)?);
-        assert!(store.has(&cid3)?);
+        store.put_many0(blocks)?;
+        assert!(store.has0(&cid1)?);
+        assert!(store.has0(&cid2)?);
+        assert!(store.has0(&cid3)?);
 
         Ok(())
     }

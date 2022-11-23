@@ -1,12 +1,11 @@
 use anyhow::Result;
 use async_trait::async_trait;
-use iroh_rpc_types::gateway::{Gateway as RpcGateway, GatewayServerAddr, VersionResponse};
+use iroh_rpc_types::gateway::{GatewayServerAddr, VersionResponse};
 
 #[derive(Default)]
 pub struct Gateway {}
 
-#[async_trait]
-impl RpcGateway for Gateway {
+impl Gateway {
     #[tracing::instrument(skip(self))]
     async fn version(&self, _: ()) -> Result<VersionResponse> {
         let version = env!("CARGO_PKG_VERSION").to_string();
@@ -14,11 +13,10 @@ impl RpcGateway for Gateway {
     }
 }
 
-#[cfg(feature = "grpc")]
 impl iroh_rpc_types::NamedService for Gateway {
     const NAME: &'static str = "gateway";
 }
 
 pub async fn new(addr: GatewayServerAddr, gateway: Gateway) -> Result<()> {
-    iroh_rpc_types::gateway::serve(addr, gateway).await
+    todo!()
 }

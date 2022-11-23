@@ -9,11 +9,11 @@ use quic_rpc::{
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-pub type P2pClientAddr = super::addr::Addr<P2pService>;
-pub type P2pServerAddr = super::addr::Addr<P2pService>;
+pub type P2pClientAddr = super::addr::Addr<P2pResponse, P2pRequest>;
+pub type P2pServerAddr = super::addr::Addr<P2pRequest, P2pResponse>;
 
 /// wrap multihash instead of using peerid from libp2p to avoid the dependency
-#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Hash)]
 pub struct PeerId(pub Multihash);
 
 impl PeerId {

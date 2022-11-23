@@ -21,9 +21,7 @@ impl fmt::Debug for GatewayClient {
 }
 
 impl GatewayClient {
-    pub async fn new(
-        addr: iroh_rpc_types::qrpc::addr::Addr<GatewayService>,
-    ) -> anyhow::Result<Self> {
+    pub async fn new(addr: GatewayClientAddr) -> anyhow::Result<Self> {
         match addr {
             iroh_rpc_types::qrpc::addr::Addr::Qrpc(addr) => {
                 todo!()

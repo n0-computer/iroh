@@ -17,29 +17,21 @@ const RAW: u64 = 0x55;
 const VALUES: [usize; 4] = [32, 256, 1024, 256 * 1024];
 #[derive(Debug, Copy, Clone)]
 enum Transport {
-    GrpcHttp2,
-    #[cfg(unix)]
-    GrpcUds,
+    Qrpc,
     Mem,
 }
 
 impl Transport {
     fn new_addr(self) -> (StoreServerAddr, StoreClientAddr, Option<tempfile::TempDir>) {
         match self {
-            Transport::GrpcHttp2 => (
-                "grpc://127.0.0.1:4001".parse().unwrap(),
-                "grpc://127.0.0.1:4001".parse().unwrap(),
+            Transport::Qrpc => (
+                "qrpc://127.0.0.1:4001".parse().unwrap(),
+                "qrpc://127.0.0.1:4001".parse().unwrap(),
                 None,
             ),
-            #[cfg(unix)]
-            Transport::GrpcUds => {
-                let dir = tempfile::tempdir().unwrap();
-                let file = dir.path().join("iroh-store.uds");
-                (Addr::GrpcUds(file.clone()), Addr::GrpcUds(file), Some(dir))
-            }
             Transport::Mem => {
-                let (a, b) = Addr::new_mem();
-                (a, b, None)
+                let (server, client) = Addr::new_mem();
+                (server, client, None)
             }
         }
     }
@@ -49,7 +41,7 @@ pub fn put_benchmark(c: &mut Criterion) {
     let mut group = c.benchmark_group("rpc_store_put");
 
     #[cfg(unix)]
-    let addrs = [Transport::GrpcHttp2, Transport::GrpcUds, Transport::Mem];
+    let addrs = [Transport::Qrpc, Transport::Mem];
     #[cfg(not(unix))]
     let addrs = [Transport::GrpcHttp2, Transport::Mem];
     for transport in addrs.into_iter() {
@@ -109,7 +101,7 @@ pub fn put_benchmark(c: &mut Criterion) {
 pub fn get_benchmark(c: &mut Criterion) {
     let mut group = c.benchmark_group("rpc_store_get");
     #[cfg(unix)]
-    let addrs = [Transport::GrpcHttp2, Transport::GrpcUds, Transport::Mem];
+    let addrs = [Transport::Qrpc, Transport::Mem];
     #[cfg(not(unix))]
     let addrs = [Transport::GrpcHttp2, Transport::Mem];
     for transport in addrs.into_iter() {

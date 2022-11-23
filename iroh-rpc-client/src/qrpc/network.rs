@@ -19,7 +19,7 @@ pub struct P2pClient {
 }
 
 impl P2pClient {
-    pub async fn new(addr: iroh_rpc_types::qrpc::addr::Addr<P2pService>) -> anyhow::Result<Self> {
+    pub async fn new(addr: P2pClientAddr) -> anyhow::Result<Self> {
         match addr {
             iroh_rpc_types::qrpc::addr::Addr::Qrpc(addr) => {
                 todo!()
