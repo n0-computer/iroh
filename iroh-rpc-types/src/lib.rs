@@ -11,7 +11,5 @@ pub mod grpc;
 #[cfg(any(feature = "grpc", feature = "mem"))]
 pub use grpc::*;
 
-#[cfg(not(any(feature = "grpc", feature = "mem")))]
-pub mod qrpc;
-#[cfg(not(any(feature = "grpc", feature = "mem")))]
-pub use qrpc::*;
+// pub mod qrpc;
+// pub use qrpc::*;

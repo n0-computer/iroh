@@ -1,3 +1,4 @@
+pub mod client;
 pub mod config;
 pub mod gateway;
 pub mod network;
@@ -13,3 +14,4 @@ pub use self::config::Config;
 pub use network::{Lookup, P2pClient};
 pub use status::{ServiceStatus, StatusRow, StatusTable};
 pub use store::StoreClient;
+pub use client::Client;

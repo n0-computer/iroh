@@ -9,6 +9,9 @@ use quic_rpc::{
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+pub type P2pClientAddr = super::addr::Addr<P2pService>;
+pub type P2pServerAddr = super::addr::Addr<P2pService>;
+
 /// wrap multihash instead of using peerid from libp2p to avoid the dependency
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct PeerId(pub Multihash);
@@ -23,7 +26,7 @@ impl PeerId {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct DhtKey(pub Bytes);
+pub struct Key(pub Bytes);
 
 // rpc Version(google.protobuf.Empty) returns (VersionResponse) {}
 #[derive(Serialize, Deserialize, Debug)]
@@ -69,7 +72,7 @@ pub struct ListenersResponse {
 //     uint64 ctx = 3;
 // }
 #[derive(Serialize, Deserialize, Debug)]
-pub struct FetchBitswapRequest {
+pub struct BitswapRequest {
     pub cid: Cid,
     pub providers: Vec<PeerId>,
     pub ctx: u64,
@@ -80,7 +83,7 @@ pub struct FetchBitswapRequest {
 //     uint64 ctx = 2;
 // }
 #[derive(Serialize, Deserialize, Debug)]
-pub struct FetchBitswapResponse {
+pub struct BitswapResponse {
     pub data: Bytes,
     pub ctx: u64,
 }
@@ -88,7 +91,7 @@ pub struct FetchBitswapResponse {
 // rpc FetchProviderDht(Key) returns (stream Providers) {}
 #[derive(Serialize, Deserialize, Debug)]
 pub struct FetchProvidersDhtRequest {
-    pub key: DhtKey,
+    pub key: Key,
 }
 
 // message Providers {
@@ -125,13 +128,13 @@ pub struct StopSessionBitswapRequest {
 // rpc StartProviding(Key) returns (google.protobuf.Empty) {}
 #[derive(Serialize, Deserialize, Debug)]
 pub struct StartProvidingRequest {
-    pub key: DhtKey,
+    pub key: Key,
 }
 
 // rpc StopProviding(Key) returns (google.protobuf.Empty) {}
 #[derive(Serialize, Deserialize, Debug)]
 pub struct StopProvidingRequest {
-    pub key: DhtKey,
+    pub key: Key,
 }
 
 // rpc GetListeningAddrs(google.protobuf.Empty) returns (GetListeningAddrsResponse) {}
@@ -168,20 +171,20 @@ pub struct GetPeersResponse {
 
 // rpc PeerConnect(ConnectRequest) returns (google.protobuf.Empty) {}
 #[derive(Serialize, Deserialize, Debug)]
-pub struct PeerConnectRequest {
+pub struct ConnectRequest {
     pub peer_id: PeerId,
     pub addrs: Vec<Multiaddr>,
 }
 
 // rpc PeerConnectByPeerId(ConnectByPeerIdRequest) returns (google.protobuf.Empty) {}
 #[derive(Serialize, Deserialize, Debug)]
-pub struct PeerConnectByPeerIdRequest {
+pub struct ConnectByPeerIdRequest {
     pub peer_id: PeerId,
 }
 
 // rpc PeerDisconnect(DisconnectRequest) returns (google.protobuf.Empty) {}
 #[derive(Serialize, Deserialize, Debug)]
-pub struct PeerDisconnectRequest {
+pub struct DisconnectRequest {
     pub peer_id: PeerId,
 }
 // rpc Shutdown(google.protobuf.Empty) returns (google.protobuf.Empty) {}
@@ -319,15 +322,15 @@ pub struct GossipsubUnsubscribeResponse {
 pub enum P2pRequest {
     Version(VersionRequest),
     Shutdown(ShutdownRequest),
-    FetchBitswap(FetchBitswapRequest),
+    FetchBitswap(BitswapRequest),
     FetchProviderDht(FetchProvidersDhtRequest),
     StopSessionBitswap(StopSessionBitswapRequest),
     NotifyNewBlocksBitswap(NotifyNewBlocksBitswapRequest),
     GetListeningAddrs(GetListeningAddrsRequest),
     GetPeers(GetPeersRequest),
-    PeerConnect(PeerConnectRequest),
-    PeerConnectByPeerId(PeerConnectByPeerIdRequest),
-    PeerDisconnect(PeerDisconnectRequest),
+    PeerConnect(ConnectRequest),
+    PeerConnectByPeerId(ConnectByPeerIdRequest),
+    PeerDisconnect(DisconnectRequest),
     Lookup(LookupRequest),
     GossipsubAddExplicitPeer(GossipsubAddExplicitPeerRequest),
     GossipsubAllMeshPeers(GossipsubAllMeshPeersRequest),
@@ -348,7 +351,7 @@ pub enum P2pRequest {
 #[derive(Serialize, Deserialize, Debug, From, TryInto)]
 pub enum P2pResponse {
     Version(VersionResponse),
-    FetchBitswap(FetchBitswapResponse),
+    FetchBitswap(BitswapResponse),
     FetchProviderDht(FetchProvidersDhtResponse),
     GetListeningAddrs(GetListeningAddrsResponse),
     GetPeers(GetPeersResponse),
@@ -381,8 +384,8 @@ impl RpcMsg<P2pService> for ShutdownRequest {
     type Response = ();
 }
 
-impl RpcMsg<P2pService> for FetchBitswapRequest {
-    type Response = FetchBitswapResponse;
+impl RpcMsg<P2pService> for BitswapRequest {
+    type Response = BitswapResponse;
 }
 
 impl Msg<P2pService> for FetchProvidersDhtRequest {
@@ -409,15 +412,15 @@ impl RpcMsg<P2pService> for GetPeersRequest {
     type Response = GetPeersResponse;
 }
 
-impl RpcMsg<P2pService> for PeerConnectRequest {
+impl RpcMsg<P2pService> for ConnectRequest {
     type Response = ();
 }
 
-impl RpcMsg<P2pService> for PeerConnectByPeerIdRequest {
+impl RpcMsg<P2pService> for ConnectByPeerIdRequest {
     type Response = ();
 }
 
-impl RpcMsg<P2pService> for PeerDisconnectRequest {
+impl RpcMsg<P2pService> for DisconnectRequest {
     type Response = ();
 }
 

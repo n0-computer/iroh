@@ -22,7 +22,7 @@ iroh-util = { path = "../iroh-util" }
 libp2p = { version = "0.50", default-features = false, features = ["gossipsub"] }
 paste = "1.0.7"
 prost = "0.11"
-quic-rpc = { path = "../../quic-rpc", optional = true }
+quic-rpc = { path = "../../quic-rpc" }
 quinn = { version = "0.9.1", optional = true }
 serde = { version = "1.0", features = ["derive"] }
 tokio = { version = "1", features = ["sync"] }
@@ -38,6 +38,6 @@ iroh-rpc-types = { path = "../iroh-rpc-types", features = ["testing"] }
 tokio-stream = { version = "0.1.9", features = ["net"] }
 
 [features]
-default = ["grpc", "mem"]
+default = []
 grpc = ["tonic", "tonic-health", "iroh-rpc-types/grpc", "iroh-rpc-types/mem", "iroh-metrics/rpc-grpc", "tower"]
 mem = ["iroh-rpc-types/mem"]

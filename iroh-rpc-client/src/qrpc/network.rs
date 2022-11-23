@@ -4,7 +4,6 @@ use anyhow::{Context, Result};
 use bytes::Bytes;
 use cid::Cid;
 use futures::{Stream, StreamExt};
-use iroh_rpc_types::p2p::{GossipsubPeerAndTopics, PeerInfo};
 use iroh_rpc_types::qrpc;
 use iroh_rpc_types::qrpc::p2p::*;
 use libp2p::gossipsub::{MessageId, TopicHash};
@@ -75,7 +74,7 @@ impl P2pClient {
             .collect();
         let res = self
             .client
-            .rpc(qrpc::p2p::FetchBitswapRequest {
+            .rpc(qrpc::p2p::BitswapRequest {
                 ctx,
                 cid,
                 providers,
@@ -110,7 +109,7 @@ impl P2pClient {
         &self,
         key: &Cid,
     ) -> Result<impl Stream<Item = Result<HashSet<PeerId>>>> {
-        let key = qrpc::p2p::DhtKey(key.hash().to_bytes().into());
+        let key = qrpc::p2p::Key(key.hash().to_bytes().into());
         let res = self
             .client
             .server_streaming(qrpc::p2p::FetchProvidersDhtRequest { key })
@@ -126,7 +125,7 @@ impl P2pClient {
 
     #[tracing::instrument(skip(self))]
     pub async fn start_providing(&self, key: &Cid) -> Result<()> {
-        let key = qrpc::p2p::DhtKey(key.hash().to_bytes().into());
+        let key = qrpc::p2p::Key(key.hash().to_bytes().into());
         self.client
             .rpc(qrpc::p2p::StartProvidingRequest { key })
             .await?;
@@ -135,7 +134,7 @@ impl P2pClient {
 
     #[tracing::instrument(skip(self))]
     pub async fn stop_providing(&self, key: &Cid) -> Result<()> {
-        let key = qrpc::p2p::DhtKey(key.hash().to_bytes().into());
+        let key = qrpc::p2p::Key(key.hash().to_bytes().into());
         self.client
             .rpc(qrpc::p2p::StopProvidingRequest { key })
             .await?;
@@ -169,13 +168,13 @@ impl P2pClient {
     /// `Multiaddr`s are present, it will attempt to connect to the peer directly.
     pub async fn connect(&self, peer_id: PeerId, addrs: Vec<Multiaddr>) -> Result<()> {
         if !addrs.is_empty() {
-            let req = qrpc::p2p::PeerConnectRequest {
+            let req = qrpc::p2p::ConnectRequest {
                 peer_id: qrpc::p2p::PeerId::from_libp2p(peer_id),
                 addrs,
             };
             self.client.rpc(req).await?;
         } else {
-            let req = qrpc::p2p::PeerConnectByPeerIdRequest {
+            let req = qrpc::p2p::ConnectByPeerIdRequest {
                 peer_id: qrpc::p2p::PeerId::from_libp2p(peer_id),
             };
             self.client.rpc(req).await?;
@@ -203,7 +202,7 @@ impl P2pClient {
     #[tracing::instrument(skip(self))]
     pub async fn disconnect(&self, peer_id: PeerId) -> Result<()> {
         warn!("NetDisconnect not yet implemented on p2p node");
-        let req = qrpc::p2p::PeerDisconnectRequest {
+        let req = qrpc::p2p::DisconnectRequest {
             peer_id: qrpc::p2p::PeerId::from_libp2p(peer_id),
         };
         self.client.rpc(req).await?;
@@ -341,46 +340,4 @@ pub struct Lookup {
     pub protocol_version: String,
     pub agent_version: String,
     pub protocols: Vec<String>,
-}
-
-impl Lookup {
-    fn from_peer_info(p: PeerInfo) -> Result<Self> {
-        let peer_id = peer_id_from_bytes(p.peer_id)?;
-        let listen_addrs = addrs_from_bytes(p.listen_addrs)?;
-        let addr = addr_from_bytes(p.observed_addr)?;
-        Ok(Self {
-            peer_id,
-            protocol_version: p.protocol_version,
-            agent_version: p.agent_version,
-            listen_addrs,
-            protocols: p.protocols,
-            observed_addrs: vec![addr],
-        })
-    }
-}
-
-fn peers_and_topics_from_bytes(pt: GossipsubPeerAndTopics) -> Result<(PeerId, Vec<TopicHash>)> {
-    let peer_id = peer_id_from_bytes(pt.peer_id)?;
-    let topics = pt.topics.into_iter().map(TopicHash::from_raw).collect();
-    Ok((peer_id, topics))
-}
-
-fn all_peers_from_bytes(a: Vec<GossipsubPeerAndTopics>) -> Result<Vec<(PeerId, Vec<TopicHash>)>> {
-    a.into_iter().map(peers_and_topics_from_bytes).collect()
-}
-
-fn peer_id_from_bytes(p: Vec<u8>) -> Result<PeerId> {
-    PeerId::from_bytes(&p).context("invalid PeerId")
-}
-
-fn peer_ids_from_bytes(p: Vec<Vec<u8>>) -> Result<Vec<PeerId>> {
-    p.into_iter().map(peer_id_from_bytes).collect()
-}
-
-fn addr_from_bytes(m: Vec<u8>) -> Result<Multiaddr> {
-    Multiaddr::try_from(m).context("invalid multiaddr")
-}
-
-fn addrs_from_bytes(a: Vec<Vec<u8>>) -> Result<Vec<Multiaddr>> {
-    a.into_iter().map(addr_from_bytes).collect()
 }

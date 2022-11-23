@@ -8,8 +8,5 @@ mod grpc;
 #[cfg(any(feature = "grpc", feature = "mem"))]
 pub use grpc::*;
 
-#[cfg(not(any(feature = "grpc", feature = "mem")))]
-mod qrpc;
-
-#[cfg(not(any(feature = "grpc", feature = "mem")))]
-pub use qrpc::*;
+// mod qrpc;
+// pub use qrpc::*;
