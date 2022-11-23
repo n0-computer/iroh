@@ -40,7 +40,7 @@ impl Source for Config {
 }
 
 impl Config {
-    pub fn default_qrpc() -> Self {
+    pub fn default_network() -> Self {
         Self {
             gateway_addr: Some("qrpc://0.0.0.0:4400".parse().unwrap()),
             p2p_addr: Some("qrpc://0.0.0.0:4401".parse().unwrap()),
@@ -57,7 +57,7 @@ mod tests {
 
     #[test]
     fn test_collect() {
-        let default = Config::default_qrpc();
+        let default = Config::default_network();
         let mut expect: Map<String, Value> = Map::new();
         expect.insert(
             "gateway_addr".to_string(),

@@ -196,8 +196,8 @@ impl Config {
         }
     }
 
-    pub fn default_grpc() -> Self {
-        let rpc_client = RpcClientConfig::default_grpc();
+    pub fn default_network() -> Self {
+        let rpc_client = RpcClientConfig::default_network();
 
         Self {
             libp2p: Libp2pConfig::default(),
@@ -235,7 +235,7 @@ mod tests {
 
     #[test]
     fn test_collect() {
-        let default = Config::default_grpc();
+        let default = Config::default_network();
         let bootstrap_peers: Vec<String> = default
             .libp2p
             .bootstrap_peers
@@ -348,7 +348,7 @@ mod tests {
 
     #[test]
     fn test_build_config_from_struct() {
-        let expect = Config::default_grpc();
+        let expect = Config::default_network();
         let got: Config = ConfigBuilder::builder()
             .add_source(expect.clone())
             .build()

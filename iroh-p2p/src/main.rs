@@ -30,7 +30,7 @@ fn main() -> Result<()> {
         let sources = [Some(cfg_path.as_path()), args.cfg.as_deref()];
         let network_config = make_config(
             // default
-            Config::default_grpc(),
+            Config::default_network(),
             // potential config files
             &sources,
             // env var prefix for this config

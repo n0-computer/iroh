@@ -116,7 +116,7 @@ fn default_headers() -> HeaderMap {
 
 impl Default for Config {
     fn default() -> Self {
-        let rpc_client = RpcClientConfig::default_grpc();
+        let rpc_client = RpcClientConfig::default_network();
         let mut t = Self {
             public_url_base: String::new(),
             headers: HeaderMap::new(),

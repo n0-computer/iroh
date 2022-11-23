@@ -11,7 +11,7 @@ pub type ChannelTypes = quic_rpc::combined::CombinedChannelTypes<
 >;
 
 pub use self::config::Config;
+pub use client::Client;
 pub use network::{Lookup, P2pClient};
 pub use status::{ServiceStatus, StatusRow, StatusTable};
 pub use store::StoreClient;
-pub use client::Client;

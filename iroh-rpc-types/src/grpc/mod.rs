@@ -7,3 +7,7 @@ pub mod store;
 pub mod test;
 
 pub use addr::Addr;
+
+// Reexport for convenience.
+#[cfg(feature = "grpc")]
+pub use tonic::transport::NamedService;

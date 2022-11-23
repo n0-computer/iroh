@@ -226,7 +226,7 @@ mod tests {
 
     #[tokio::test]
     async fn client_status() {
-        let cfg = Config::default_grpc();
+        let cfg = Config::default_network();
 
         let gateway_name = gateway::NAME;
         let p2p_name = network::NAME;
