@@ -1,6 +1,6 @@
 /// A store instance listening on a memory rpc channel.
 use iroh_rpc_types::store::StoreServerAddr;
-use iroh_store::{rpc, Config, Store};
+use iroh_store::{new_server, Config, Store};
 use tokio::task::JoinHandle;
 use tracing::info;
 
@@ -14,7 +14,7 @@ pub async fn start(rpc_addr: StoreServerAddr, config: Config) -> anyhow::Result<
         Store::create(config).await?
     };
 
-    let rpc_task = tokio::spawn(async move { rpc::new(rpc_addr, store).await.unwrap() });
+    let rpc_task = tokio::spawn(async move { new_server(rpc_addr, store).await.unwrap() });
 
     Ok(rpc_task)
 }

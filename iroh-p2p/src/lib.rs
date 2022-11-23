@@ -5,7 +5,7 @@ mod keys;
 pub mod metrics;
 mod node;
 mod providers;
-pub mod rpc;
+mod rpc;
 mod swarm;
 
 pub use self::config::*;

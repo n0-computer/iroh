@@ -3,7 +3,7 @@ use clap::Parser;
 use iroh_store::{
     cli::Args,
     config::{config_data_path, CONFIG_FILE_NAME, ENV_PREFIX},
-    metrics, rpc, Config, Store,
+    metrics, new_server, Config, Store,
 };
 use iroh_util::lock::ProgramLock;
 use iroh_util::{block_until_sigint, iroh_config_path, make_config};
@@ -60,7 +60,7 @@ async fn main() -> anyhow::Result<()> {
         Store::create(config).await?
     };
 
-    let rpc_task = tokio::spawn(async move { rpc::new(rpc_addr, store).await.unwrap() });
+    let rpc_task = tokio::spawn(async move { new_server(rpc_addr, store).await.unwrap() });
 
     block_until_sigint().await;
     rpc_task.abort();

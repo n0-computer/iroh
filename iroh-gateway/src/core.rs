@@ -168,7 +168,7 @@ mod tests {
         };
         let store = iroh_store::Store::create(config).await.unwrap();
         let task =
-            tokio::spawn(async move { iroh_store::rpc::new(server_addr, store).await.unwrap() });
+            tokio::spawn(async move { iroh_store::new_server(server_addr, store).await.unwrap() });
         (client_addr, task)
     }
 

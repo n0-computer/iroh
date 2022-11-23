@@ -193,7 +193,7 @@ impl P2pNode {
         });
 
         let store_task = tokio::spawn(async move {
-            iroh_store::rpc::new(rpc_store_addr_server, store)
+            iroh_store::new_server(rpc_store_addr_server, store)
                 .await
                 .unwrap()
         });
