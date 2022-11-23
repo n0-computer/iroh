@@ -32,7 +32,7 @@ impl P2pClient {
 
     // #[tracing::instrument(skip(self))]
     pub async fn local_peer_id(&self) -> Result<PeerId> {
-        let res = self.client.rpc(LocalPeerIdRequest).await?;
+        let res = self.client.rpc(LocalPeerIdRequest).await??;
         let peer_id = PeerId::from_multihash(res.peer_id.0)
             .map_err(|e| anyhow::anyhow!("invalid peer id"))?;
         Ok(peer_id)
@@ -40,13 +40,13 @@ impl P2pClient {
 
     #[tracing::instrument(skip(self))]
     pub async fn external_addresses(&self) -> Result<Vec<Multiaddr>> {
-        let res = self.client.rpc(ExternalAddrsRequest).await?;
+        let res = self.client.rpc(ExternalAddrsRequest).await??;
         Ok(res.addrs)
     }
 
     #[tracing::instrument(skip(self))]
     pub async fn listeners(&self) -> Result<Vec<Multiaddr>> {
-        let res = self.client.rpc(ListenersRequest).await?;
+        let res = self.client.rpc(ListenersRequest).await??;
         Ok(res.addrs)
     }
 
@@ -70,13 +70,13 @@ impl P2pClient {
                 cid,
                 providers,
             })
-            .await?;
+            .await??;
         Ok(res.data)
     }
 
     #[tracing::instrument(skip(self))]
     pub async fn stop_session_bitswap(&self, ctx: u64) -> Result<()> {
-        self.client.rpc(StopSessionBitswapRequest { ctx }).await?;
+        self.client.rpc(StopSessionBitswapRequest { ctx }).await??;
         Ok(())
     }
 
@@ -128,14 +128,14 @@ impl P2pClient {
 
     #[tracing::instrument(skip(self))]
     pub async fn get_listening_addrs(&self) -> Result<(PeerId, Vec<Multiaddr>)> {
-        let res = self.client.rpc(GetListeningAddrsRequest).await?;
+        let res = self.client.rpc(GetListeningAddrsRequest).await??;
         let peer_id = res.peer_id.try_into_libp2p()?;
         Ok((peer_id, res.addrs))
     }
 
     #[tracing::instrument(skip(self))]
     pub async fn get_peers(&self) -> Result<HashMap<PeerId, Vec<Multiaddr>>> {
-        let res = self.client.rpc(GetPeersRequest).await?;
+        let res = self.client.rpc(GetPeersRequest).await??;
         let peers_map = res
             .peers
             .into_iter()
@@ -173,7 +173,7 @@ impl P2pClient {
             peer_id: p2p::PeerId::from_libp2p(peer_id),
             addr,
         };
-        let res = self.client.rpc(req).await?;
+        let res = self.client.rpc(req).await??;
         Ok(Lookup {
             peer_id: res.peer_id.try_into_libp2p()?,
             listen_addrs: res.listen_addrs,
@@ -206,13 +206,13 @@ impl P2pClient {
             .rpc(GossipsubAddExplicitPeerRequest {
                 peer_id: p2p::PeerId::from_libp2p(peer_id),
             })
-            .await?;
+            .await??;
         Ok(())
     }
 
     #[tracing::instrument(skip(self))]
     pub async fn gossipsub_all_mesh_peers(&self) -> Result<Vec<PeerId>> {
-        let res = self.client.rpc(GossipsubAllMeshPeersRequest).await?;
+        let res = self.client.rpc(GossipsubAllMeshPeersRequest).await??;
         Ok(res
             .peers
             .into_iter()
@@ -222,7 +222,7 @@ impl P2pClient {
 
     #[tracing::instrument(skip(self))]
     pub async fn gossipsub_all_peers(&self) -> Result<Vec<(PeerId, Vec<TopicHash>)>> {
-        let res = self.client.rpc(GossipsubAllPeersRequest).await?;
+        let res = self.client.rpc(GossipsubAllPeersRequest).await??;
         let res = res
             .all
             .into_iter()
@@ -242,7 +242,7 @@ impl P2pClient {
             .rpc(GossipsubMeshPeersRequest {
                 topic_hash: topic.to_string(),
             })
-            .await?;
+            .await??;
         res.peers
             .into_iter()
             .map(|p| p.try_into_libp2p())
@@ -255,7 +255,7 @@ impl P2pClient {
             topic_hash: topic_hash.to_string(),
             data,
         };
-        let res = self.client.rpc(req).await?;
+        let res = self.client.rpc(req).await??;
         let message_id = MessageId::new(&res.message_id);
         Ok(message_id)
     }
@@ -265,7 +265,7 @@ impl P2pClient {
         let req = GossipsubRemoveExplicitPeerRequest {
             peer_id: p2p::PeerId::from_libp2p(peer_id),
         };
-        self.client.rpc(req).await?;
+        self.client.rpc(req).await??;
         Ok(())
     }
 
@@ -274,13 +274,13 @@ impl P2pClient {
         let req = GossipsubSubscribeRequest {
             topic_hash: topic.to_string(),
         };
-        let res = self.client.rpc(req).await?;
+        let res = self.client.rpc(req).await??;
         Ok(res.was_subscribed)
     }
 
     #[tracing::instrument(skip(self))]
     pub async fn gossipsub_topics(&self) -> Result<Vec<TopicHash>> {
-        let res = self.client.rpc(GossipsubTopicsRequest).await?;
+        let res = self.client.rpc(GossipsubTopicsRequest).await??;
         let topics = res.topics.into_iter().map(TopicHash::from_raw).collect();
         Ok(topics)
     }
@@ -290,7 +290,7 @@ impl P2pClient {
         let req = GossipsubUnsubscribeRequest {
             topic_hash: topic.to_string(),
         };
-        let res = self.client.rpc(req).await?;
+        let res = self.client.rpc(req).await??;
         Ok(res.was_subscribed)
     }
 

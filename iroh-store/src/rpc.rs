@@ -1,8 +1,6 @@
 use std::io::Cursor;
 
 use anyhow::{Context, Result};
-use async_trait::async_trait;
-use bytes::BytesMut;
 use cid::Cid;
 use iroh_rpc_client::open_server;
 use iroh_rpc_types::store::{
@@ -98,14 +96,4 @@ pub async fn new(addr: StoreServerAddr, store: Store) -> Result<()> {
     let server = open_server::<StoreService>(addr).await?;
     todo!()
     // iroh_rpc_types::store::serve(addr, store).await
-}
-
-#[tracing::instrument]
-fn cid_from_bytes(b: Vec<u8>) -> Result<Cid> {
-    Cid::read_bytes(Cursor::new(b)).context("invalid cid")
-}
-
-#[tracing::instrument]
-fn links_from_bytes(l: Vec<Vec<u8>>) -> Result<Vec<Cid>> {
-    l.into_iter().map(cid_from_bytes).collect()
 }

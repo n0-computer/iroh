@@ -7,7 +7,7 @@ use quic_rpc::{
     Service,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, fmt};
 
 pub type P2pClientAddr = super::addr::Addr<P2pResponse, P2pRequest>;
 pub type P2pServerAddr = super::addr::Addr<P2pRequest, P2pResponse>;
@@ -351,22 +351,63 @@ pub enum P2pRequest {
 #[derive(Serialize, Deserialize, Debug, From, TryInto)]
 pub enum P2pResponse {
     Version(VersionResponse),
-    FetchBitswap(BitswapResponse),
+    FetchBitswap(P2pResult<BitswapResponse>),
     FetchProviderDht(FetchProvidersDhtResponse),
-    GetListeningAddrs(GetListeningAddrsResponse),
-    GetPeers(GetPeersResponse),
-    Lookup(LookupResponse),
-    GossipsubPeers(GossipsubPeersResponse),
-    GossipsubAllPeers(GossipsubAllPeersResponse),
-    GossipsubPublish(GossipsubPublishResponse),
-    GossipsubSubscribe(GossipsubSubscribeResponse),
-    GossipsubTopics(GossipsubTopicsResponse),
-    GossipsubUnsubscribe(GossipsubUnsubscribeResponse),
-    LocalPeerId(LocalPeerIdResponse),
-    ExternalAddrs(ExternalAddrsResponse),
-    Listeners(ListenersResponse),
-    Void(()),
+    GetListeningAddrs(P2pResult<GetListeningAddrsResponse>),
+    GetPeers(P2pResult<GetPeersResponse>),
+    Lookup(P2pResult<LookupResponse>),
+    GossipsubPeers(P2pResult<GossipsubPeersResponse>),
+    GossipsubAllPeers(P2pResult<GossipsubAllPeersResponse>),
+    GossipsubPublish(P2pResult<GossipsubPublishResponse>),
+    GossipsubSubscribe(P2pResult<GossipsubSubscribeResponse>),
+    GossipsubTopics(P2pResult<GossipsubTopicsResponse>),
+    GossipsubUnsubscribe(P2pResult<GossipsubUnsubscribeResponse>),
+    LocalPeerId(P2pResult<LocalPeerIdResponse>),
+    ExternalAddrs(P2pResult<ExternalAddrsResponse>),
+    Listeners(P2pResult<ListenersResponse>),
+    ResultVoid(P2pResult<()>),
 }
+
+#[derive(Serialize, Deserialize, Debug, From, TryInto)]
+pub enum P2pError {
+    Anyhow(serde_error::Error),
+    SendError,
+    RecvError,
+}
+
+impl std::error::Error for P2pError {}
+
+impl fmt::Display for P2pError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(self, f)
+    }
+}
+
+impl From<anyhow::Error> for P2pError {
+    fn from(e: anyhow::Error) -> Self {
+        P2pError::Anyhow(serde_error::Error::new(&*e))
+    }
+}
+
+impl<T> From<tokio::sync::mpsc::error::SendError<T>> for P2pError {
+    fn from(_: tokio::sync::mpsc::error::SendError<T>) -> Self {
+        P2pError::SendError
+    }
+}
+
+impl From<tokio::sync::oneshot::error::RecvError> for P2pError {
+    fn from(_: tokio::sync::oneshot::error::RecvError) -> Self {
+        P2pError::RecvError
+    }
+}
+
+impl From<tokio::sync::oneshot::error::TryRecvError> for P2pError {
+    fn from(_: tokio::sync::oneshot::error::TryRecvError) -> Self {
+        P2pError::RecvError
+    }
+}
+
+pub type P2pResult<T> = std::result::Result<T, P2pError>;
 
 #[derive(Debug, Clone)]
 pub struct P2pService;
@@ -381,11 +422,11 @@ impl RpcMsg<P2pService> for VersionRequest {
 }
 
 impl RpcMsg<P2pService> for ShutdownRequest {
-    type Response = ();
+    type Response = P2pResult<()>;
 }
 
 impl RpcMsg<P2pService> for BitswapRequest {
-    type Response = BitswapResponse;
+    type Response = P2pResult<BitswapResponse>;
 }
 
 impl Msg<P2pService> for FetchProvidersDhtRequest {
@@ -397,89 +438,89 @@ impl Msg<P2pService> for FetchProvidersDhtRequest {
 }
 
 impl RpcMsg<P2pService> for StopSessionBitswapRequest {
-    type Response = ();
+    type Response = P2pResult<()>;
 }
 
 impl RpcMsg<P2pService> for NotifyNewBlocksBitswapRequest {
-    type Response = ();
+    type Response = P2pResult<()>;
 }
 
 impl RpcMsg<P2pService> for GetListeningAddrsRequest {
-    type Response = GetListeningAddrsResponse;
+    type Response = P2pResult<GetListeningAddrsResponse>;
 }
 
 impl RpcMsg<P2pService> for GetPeersRequest {
-    type Response = GetPeersResponse;
+    type Response = P2pResult<GetPeersResponse>;
 }
 
 impl RpcMsg<P2pService> for ConnectRequest {
-    type Response = ();
+    type Response = P2pResult<()>;
 }
 
 impl RpcMsg<P2pService> for ConnectByPeerIdRequest {
-    type Response = ();
+    type Response = P2pResult<()>;
 }
 
 impl RpcMsg<P2pService> for DisconnectRequest {
-    type Response = ();
+    type Response = P2pResult<()>;
 }
 
 impl RpcMsg<P2pService> for LookupRequest {
-    type Response = LookupResponse;
+    type Response = P2pResult<LookupResponse>;
 }
 
 impl RpcMsg<P2pService> for GossipsubAddExplicitPeerRequest {
-    type Response = ();
+    type Response = P2pResult<()>;
 }
 
 impl RpcMsg<P2pService> for GossipsubAllMeshPeersRequest {
-    type Response = GossipsubPeersResponse;
+    type Response = P2pResult<GossipsubPeersResponse>;
 }
 
 impl RpcMsg<P2pService> for GossipsubMeshPeersRequest {
-    type Response = GossipsubPeersResponse;
+    type Response = P2pResult<GossipsubPeersResponse>;
 }
 
 impl RpcMsg<P2pService> for GossipsubAllPeersRequest {
-    type Response = GossipsubAllPeersResponse;
+    type Response = P2pResult<GossipsubAllPeersResponse>;
 }
 
 impl RpcMsg<P2pService> for GossipsubPublishRequest {
-    type Response = GossipsubPublishResponse;
+    type Response = P2pResult<GossipsubPublishResponse>;
 }
 
 impl RpcMsg<P2pService> for GossipsubTopicsRequest {
-    type Response = GossipsubTopicsResponse;
+    type Response = P2pResult<GossipsubTopicsResponse>;
 }
 
 impl RpcMsg<P2pService> for GossipsubSubscribeRequest {
-    type Response = GossipsubSubscribeResponse;
+    type Response = P2pResult<GossipsubSubscribeResponse>;
 }
 
 impl RpcMsg<P2pService> for GossipsubUnsubscribeRequest {
-    type Response = GossipsubUnsubscribeResponse;
+    type Response = P2pResult<GossipsubUnsubscribeResponse>;
 }
 
 impl RpcMsg<P2pService> for GossipsubRemoveExplicitPeerRequest {
-    type Response = ();
+    type Response = P2pResult<()>;
 }
 
 impl RpcMsg<P2pService> for StartProvidingRequest {
-    type Response = ();
+    type Response = P2pResult<()>;
 }
 
 impl RpcMsg<P2pService> for StopProvidingRequest {
-    type Response = ();
+    type Response = P2pResult<()>;
 }
 
 impl RpcMsg<P2pService> for LocalPeerIdRequest {
-    type Response = LocalPeerIdResponse;
+    type Response = P2pResult<LocalPeerIdResponse>;
 }
 
 impl RpcMsg<P2pService> for ExternalAddrsRequest {
-    type Response = ExternalAddrsResponse;
+    type Response = P2pResult<ExternalAddrsResponse>;
 }
 
 impl RpcMsg<P2pService> for ListenersRequest {
-    type Response = ListenersResponse;
+    type Response = P2pResult<ListenersResponse>;
 }
