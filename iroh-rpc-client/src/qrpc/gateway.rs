@@ -1,5 +1,5 @@
-use crate::status::StatusRow;
-use crate::ServiceStatus;
+use super::status::StatusRow;
+use super::ServiceStatus;
 use anyhow::Result;
 use futures::Stream;
 use iroh_rpc_types::qrpc::gateway::*;

@@ -21,7 +21,7 @@ use tonic_health::proto::health_client::HealthClient;
 use tracing::{debug, warn};
 
 #[cfg(feature = "grpc")]
-use crate::status::{self, StatusRow};
+use super::status::{self, StatusRow};
 
 impl_client!(P2p);
 

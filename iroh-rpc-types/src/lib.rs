@@ -1,4 +1,3 @@
-
 #[cfg(any(feature = "grpc", feature = "mem"))]
 #[macro_use]
 mod macros;
@@ -8,13 +7,11 @@ mod macros;
 pub use tonic::transport::NamedService;
 
 #[cfg(any(feature = "grpc", feature = "mem"))]
-mod grpc;
+pub mod grpc;
 #[cfg(any(feature = "grpc", feature = "mem"))]
 pub use grpc::*;
 
-#[cfg(any(feature = "qrpc"))]
+#[cfg(not(any(feature = "grpc", feature = "mem")))]
 pub mod qrpc;
-#[cfg(any(feature = "qrpc"))]
+#[cfg(not(any(feature = "grpc", feature = "mem")))]
 pub use qrpc::*;
-
-pub use crate::addr::Addr;

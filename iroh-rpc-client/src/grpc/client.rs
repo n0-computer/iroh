@@ -5,10 +5,10 @@ use anyhow::{Context, Result};
 #[cfg(feature = "grpc")]
 use futures::{Stream, StreamExt};
 
-use crate::config::Config;
-use crate::gateway::GatewayClient;
-use crate::network::P2pClient;
-use crate::store::StoreClient;
+use super::config::Config;
+use super::gateway::GatewayClient;
+use super::network::P2pClient;
+use super::store::StoreClient;
 
 #[derive(Debug, Clone)]
 pub struct Client {
@@ -134,7 +134,7 @@ impl Client {
     }
 
     #[cfg(feature = "grpc")]
-    pub async fn check(&self) -> crate::status::StatusTable {
+    pub async fn check(&self) -> super::status::StatusTable {
         let g = if let Some(ref g) = self.gateway {
             Some(g.check().await)
         } else {
@@ -150,13 +150,13 @@ impl Client {
         } else {
             None
         };
-        crate::status::StatusTable::new(g, p, s)
+        super::status::StatusTable::new(g, p, s)
     }
 
     #[cfg(feature = "grpc")]
-    pub async fn watch(self) -> impl Stream<Item = crate::status::StatusTable> {
+    pub async fn watch(self) -> impl Stream<Item = super::status::StatusTable> {
         async_stream::stream! {
-            let mut status_table: crate::status::StatusTable = Default::default();
+            let mut status_table: super::status::StatusTable = Default::default();
             let mut streams = Vec::new();
 
             if let Some(ref g) = self.gateway {
@@ -194,8 +194,8 @@ mod tests {
         ServingStatus,
     };
 
-    use crate::status::{ServiceStatus, StatusRow, StatusTable};
-    use crate::{gateway, network, store};
+    use super::super::status::{ServiceStatus, StatusRow, StatusTable};
+    use super::super::{gateway, network, store};
 
     struct TestService {}
     #[tonic::async_trait]

@@ -55,6 +55,7 @@ prost-build = "0.11.1"
 
 [features]
 default = ["rpc-grpc", "rpc-mem"]
+# default = ["rpc-qrpc"]
 rpc-grpc = ["iroh-rpc-client/grpc", "iroh-metrics/rpc-grpc", "iroh-rpc-types/grpc", "iroh-store/rpc-grpc"]
 rpc-mem = ["iroh-rpc-client/mem", "iroh-rpc-types/mem", "iroh-store/rpc-mem"]
 

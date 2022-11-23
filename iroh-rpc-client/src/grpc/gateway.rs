@@ -1,5 +1,5 @@
 #[cfg(feature = "grpc")]
-use crate::status::{self, StatusRow};
+use super::status::{self, StatusRow};
 use anyhow::Result;
 #[cfg(feature = "grpc")]
 use futures::Stream;

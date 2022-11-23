@@ -1,7 +1,5 @@
 use config::{ConfigError, Map, Source, Value};
-use iroh_rpc_types::qrpc::{
-    addr::Addr, gateway::GatewayService, p2p::P2pService, store::StoreService,
-};
+use iroh_rpc_types::{addr::Addr, gateway::GatewayService, p2p::P2pService, store::StoreService};
 use iroh_util::insert_into_config_map;
 use serde::{Deserialize, Serialize};
 

@@ -4,7 +4,7 @@ macro_rules! proxy_serve {
             pub async fn serve<T: $label>(addr: [<$label ServerAddr>], source: T) -> anyhow::Result<()> {
                 match addr {
                     #[cfg(feature = "grpc")]
-                    $crate::Addr::GrpcHttp2(addr) => {
+                    $crate::grpc::Addr::GrpcHttp2(addr) => {
                         let (mut health_reporter, health_service) = tonic_health::server::health_reporter();
                         health_reporter
                             .set_serving::<[<$label:lower _server>]::[<$label Server>]<T>>()
@@ -20,12 +20,12 @@ macro_rules! proxy_serve {
                     }
 
                     #[cfg(feature = "grpc")]
-                    $crate::Addr::GrpcHttp2Lookup(name) => {
+                    $crate::grpc::Addr::GrpcHttp2Lookup(name) => {
                         anyhow::bail!("cannot serve on lookup address: {}", name);
                     }
 
                     #[cfg(all(feature = "grpc", unix))]
-                    $crate::Addr::GrpcUds(path) => {
+                    $crate::grpc::Addr::GrpcUds(path) => {
                         use anyhow::Context;
                         use tokio::net::UnixListener;
                         use tokio_stream::wrappers::UnixListenerStream;
@@ -74,7 +74,7 @@ macro_rules! proxy_serve {
                         Ok(())
                     }
                     #[cfg(feature = "mem")]
-                    $crate::Addr::Mem(mut receiver) => {
+                    $crate::grpc::Addr::Mem(mut receiver) => {
                         while let Some((msg, sender)) = receiver.recv().await {
                             match msg {
                                 $(
@@ -97,12 +97,12 @@ macro_rules! proxy_serve {
 macro_rules! proxy_serve_types {
     ($label:ident, $($name:ident: $req:ty => $res:ty),+) => {
         paste::paste! {
-            pub type [<$label ServerAddr>] = $crate::Addr<
+            pub type [<$label ServerAddr>] = $crate::grpc::Addr<
                     tokio::sync::mpsc::Receiver<
                             ([<$label Request>], tokio::sync::oneshot::Sender<[<$label Response>]>),
                         >
                     >;
-            pub type [<$label ClientAddr>] = $crate::Addr<
+            pub type [<$label ClientAddr>] = $crate::grpc::Addr<
                     tokio::sync::mpsc::Sender<
                             ([<$label Request>], tokio::sync::oneshot::Sender<[<$label Response>]>),
                         >
