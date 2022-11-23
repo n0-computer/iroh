@@ -18,7 +18,7 @@ impl PeerId {
         Self(peer_id.into())
     }
     pub fn try_into_libp2p<T: TryFrom<Multihash>>(self) -> anyhow::Result<T> {
-        T::try_from(self.0).map_err(|e| anyhow::anyhow!("invalid peer id"))
+        T::try_from(self.0).map_err(|_| anyhow::anyhow!("invalid peer id"))
     }
 }
 
