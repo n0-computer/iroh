@@ -170,7 +170,12 @@ impl Store {
         })
         .await??;
 
-        let _rpc_client = RpcClient::new(config.rpc_client)
+        // TODO: why does the store need to initiate requests with anybody?
+        let mut rpc_client_config = config.rpc_client.clone();
+        rpc_client_config.gateway_addr = None;
+        rpc_client_config.p2p_addr = None;
+        rpc_client_config.store_addr = None;
+        let _rpc_client = RpcClient::new(rpc_client_config)
             .await
             // TODO: first conflict between `anyhow` & `anyhow`
             // .map_err(|e| e.context("Error creating rpc client for store"))?;

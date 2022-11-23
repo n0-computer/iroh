@@ -4,9 +4,11 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use bytes::BytesMut;
 use cid::Cid;
+use iroh_rpc_client::open_server;
 use iroh_rpc_types::store::{
     GetLinksRequest, GetLinksResponse, GetRequest, GetResponse, GetSizeRequest, GetSizeResponse,
-    HasRequest, HasResponse, PutManyRequest, PutRequest, StoreServerAddr, VersionResponse,
+    HasRequest, HasResponse, PutManyRequest, PutRequest, StoreServerAddr, StoreService,
+    VersionResponse,
 };
 use tracing::info;
 
@@ -93,6 +95,7 @@ impl Store {
 #[tracing::instrument(skip(store))]
 pub async fn new(addr: StoreServerAddr, store: Store) -> Result<()> {
     info!("rpc listening on: {}", addr);
+    let server = open_server::<StoreService>(addr).await?;
     todo!()
     // iroh_rpc_types::store::serve(addr, store).await
 }

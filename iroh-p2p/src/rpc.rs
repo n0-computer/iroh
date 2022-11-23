@@ -1,12 +1,9 @@
-use std::collections::{BTreeMap, HashMap, HashSet};
-use std::io;
-use std::pin::Pin;
-
 use anyhow::{anyhow, ensure, Context, Result};
 use bytes::Bytes;
 use cid::Cid;
 use futures::{Stream, StreamExt};
 use iroh_bitswap::Block;
+use iroh_rpc_client::open_server;
 use iroh_rpc_types::p2p::{
     BitswapRequest, BitswapResponse, ConnectByPeerIdRequest, ConnectRequest, DisconnectRequest,
     ExternalAddrsRequest, ExternalAddrsResponse, FetchProvidersDhtRequest,
@@ -16,10 +13,10 @@ use iroh_rpc_types::p2p::{
     GossipsubMeshPeersRequest, GossipsubPeersResponse, GossipsubPublishRequest,
     GossipsubPublishResponse, GossipsubRemoveExplicitPeerRequest, GossipsubSubscribeRequest,
     GossipsubSubscribeResponse, GossipsubTopicsRequest, GossipsubTopicsResponse,
-    GossipsubUnsubscribeRequest, Key as ProviderKey, ListenersRequest, ListenersResponse,
-    LocalPeerIdRequest, LocalPeerIdResponse, LookupRequest, LookupResponse,
-    NotifyNewBlocksBitswapRequest, P2pServerAddr, ShutdownRequest, StartProvidingRequest,
-    StopProvidingRequest, StopSessionBitswapRequest, VersionRequest, VersionResponse,
+    GossipsubUnsubscribeRequest, ListenersRequest, ListenersResponse, LocalPeerIdRequest,
+    LocalPeerIdResponse, LookupRequest, LookupResponse, NotifyNewBlocksBitswapRequest,
+    P2pServerAddr, P2pService, ShutdownRequest, StartProvidingRequest, StopProvidingRequest,
+    StopSessionBitswapRequest, VersionRequest, VersionResponse,
 };
 use libp2p::gossipsub::{
     error::{PublishError, SubscriptionError},
@@ -29,6 +26,7 @@ use libp2p::identify::Info as IdentifyInfo;
 use libp2p::kad::record::Key;
 use libp2p::Multiaddr;
 use libp2p::PeerId;
+use std::collections::{HashMap, HashSet};
 use tokio::sync::mpsc::{channel, Sender};
 use tokio::sync::oneshot;
 use tracing::{debug, trace};
@@ -532,6 +530,7 @@ impl P2p {
 pub async fn new(addr: P2pServerAddr, sender: Sender<RpcMessage>) -> Result<()> {
     let p2p = P2p { sender };
 
+    let server = open_server::<P2pService>(addr).await?;
     todo!()
     // iroh_rpc_types::p2p::serve(addr, p2p).await
 }

@@ -1,5 +1,5 @@
 use anyhow::{anyhow, bail};
-use quic_rpc::{RpcMessage, Service};
+use quic_rpc::RpcMessage;
 use serde_with::{DeserializeFromStr, SerializeDisplay};
 use std::{
     fmt::{Debug, Display},
@@ -7,8 +7,8 @@ use std::{
     str::FromStr,
 };
 
-/// A client addr for a service. This can be either a socket address or
-/// the actual mem channel to use to reach the server side.
+/// An address. This can be either a memory address, already containing the channel, or a network
+/// address which will have to be opened.
 #[derive(SerializeDisplay, DeserializeFromStr)]
 pub enum Addr<In: RpcMessage, Out: RpcMessage> {
     Qrpc(SocketAddr),

@@ -59,6 +59,7 @@ tracing-opentelemetry = "0.18"
 tracing-subscriber = { version = "0.3.11", features = ["env-filter"] }
 url = "2.2.2"
 urlencoding = "2.1.0"
+quic-rpc = "0.1.4"
 
 [dev-dependencies]
 iroh-store = { path = "../iroh-store" }

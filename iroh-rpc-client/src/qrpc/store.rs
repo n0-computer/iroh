@@ -1,5 +1,5 @@
 use crate::status::StatusRow;
-use crate::ServiceStatus;
+use crate::{open_client, ServiceStatus};
 use anyhow::Result;
 use bytes::Bytes;
 use cid::Cid;
@@ -16,17 +16,8 @@ pub struct StoreClient {
 
 impl StoreClient {
     pub async fn new(addr: StoreClientAddr) -> anyhow::Result<Self> {
-        match addr {
-            iroh_rpc_types::qrpc::addr::Addr::Qrpc(addr) => {
-                todo!()
-            }
-            iroh_rpc_types::qrpc::addr::Addr::Mem(channel) => {
-                let channel = quic_rpc::combined::Channel::new(Some(channel), None);
-                Ok(Self {
-                    client: quic_rpc::RpcClient::new(channel),
-                })
-            }
-        }
+        let client = open_client(addr).await?;
+        Ok(Self { client })
     }
 
     #[tracing::instrument(skip(self))]

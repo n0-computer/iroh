@@ -48,7 +48,7 @@ impl Config {
     }
 
     pub fn new_grpc(path: PathBuf) -> Self {
-        let addr = "grpc://0.0.0.0:4402";
+        let addr = "qrpc://0.0.0.0:4402";
         Self::new_with_rpc(path, addr.parse().unwrap())
     }
 

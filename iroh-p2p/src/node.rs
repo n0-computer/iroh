@@ -112,7 +112,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
 
         let Config {
             libp2p: libp2p_config,
-            rpc_client,
+            mut rpc_client,
             ..
         } = config;
 
@@ -121,6 +121,8 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
             rpc::new(rpc_addr, network_sender_in).await.unwrap()
         });
 
+        rpc_client.p2p_addr = None;
+        rpc_client.gateway_addr = None;
         let rpc_client = RpcClient::new(rpc_client)
             .await
             .context("failed to create rpc client")?;
@@ -1028,8 +1030,8 @@ mod tests {
     #[cfg(feature = "rpc-grpc")]
     #[tokio::test]
     async fn test_fetch_providers_grpc_dht() -> Result<()> {
-        let server_addr = "grpc://0.0.0.0:4401".parse().unwrap();
-        let client_addr = "grpc://0.0.0.0:4401".parse().unwrap();
+        let server_addr = "qrpc://0.0.0.0:4401".parse().unwrap();
+        let client_addr = "qrpc://0.0.0.0:4401".parse().unwrap();
         fetch_providers(
             "/ip4/0.0.0.0/tcp/5001".parse().unwrap(),
             server_addr,

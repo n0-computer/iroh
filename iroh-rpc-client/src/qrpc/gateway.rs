@@ -22,17 +22,8 @@ impl fmt::Debug for GatewayClient {
 
 impl GatewayClient {
     pub async fn new(addr: GatewayClientAddr) -> anyhow::Result<Self> {
-        match addr {
-            iroh_rpc_types::qrpc::addr::Addr::Qrpc(addr) => {
-                todo!()
-            }
-            iroh_rpc_types::qrpc::addr::Addr::Mem(channel) => {
-                let channel = quic_rpc::combined::Channel::new(Some(channel), None);
-                Ok(Self {
-                    client: quic_rpc::RpcClient::new(channel),
-                })
-            }
-        }
+        let client = crate::open_client::<GatewayService>(addr).await?;
+        Ok(Self { client })
     }
 
     #[tracing::instrument(skip(self))]

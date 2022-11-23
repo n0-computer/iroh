@@ -47,8 +47,10 @@ async fn main() -> Result<()> {
         .server_rpc_addr()?
         .ok_or_else(|| anyhow!("missing gateway rpc addr"))?;
 
+    let mut rpc_client_config = config.rpc_client.clone();
+    rpc_client_config.gateway_addr = None;
     let content_loader = FullLoader::new(
-        RpcClient::new(config.rpc_client.clone()).await?,
+        RpcClient::new(rpc_client_config).await?,
         FullLoaderConfig {
             http_gateways: config
                 .http_resolvers
