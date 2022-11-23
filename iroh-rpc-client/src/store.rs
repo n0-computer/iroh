@@ -4,8 +4,7 @@ use anyhow::Result;
 use bytes::Bytes;
 use cid::Cid;
 use futures::Stream;
-use iroh_rpc_types::qrpc;
-use iroh_rpc_types::qrpc::store::*;
+use iroh_rpc_types::store::*;
 
 pub(crate) const NAME: &str = "store";
 
@@ -28,9 +27,7 @@ impl StoreClient {
 
     #[tracing::instrument(skip(self, blob))]
     pub async fn put(&self, cid: Cid, blob: Bytes, links: Vec<Cid>) -> Result<()> {
-        self.client
-            .rpc(qrpc::store::PutRequest { cid, blob, links })
-            .await?;
+        self.client.rpc(PutRequest { cid, blob, links }).await?;
         Ok(())
     }
 
@@ -38,38 +35,33 @@ impl StoreClient {
     pub async fn put_many(&self, blocks: Vec<(Cid, Bytes, Vec<Cid>)>) -> Result<()> {
         let blocks = blocks
             .into_iter()
-            .map(|(cid, blob, links)| qrpc::store::PutRequest { cid, blob, links })
+            .map(|(cid, blob, links)| PutRequest { cid, blob, links })
             .collect();
-        self.client
-            .rpc(qrpc::store::PutManyRequest { blocks })
-            .await?;
+        self.client.rpc(PutManyRequest { blocks }).await?;
         Ok(())
     }
 
     #[tracing::instrument(skip(self))]
     pub async fn get(&self, cid: Cid) -> Result<Option<Bytes>> {
-        let res = self.client.rpc(qrpc::store::GetRequest { cid }).await?;
+        let res = self.client.rpc(GetRequest { cid }).await?;
         Ok(res.data)
     }
 
     #[tracing::instrument(skip(self))]
     pub async fn has(&self, cid: Cid) -> Result<bool> {
-        let res = self.client.rpc(qrpc::store::HasRequest { cid }).await?;
+        let res = self.client.rpc(HasRequest { cid }).await?;
         Ok(res.has)
     }
 
     #[tracing::instrument(skip(self))]
     pub async fn get_links(&self, cid: Cid) -> Result<Option<Vec<Cid>>> {
-        let res = self
-            .client
-            .rpc(qrpc::store::GetLinksRequest { cid })
-            .await?;
+        let res = self.client.rpc(GetLinksRequest { cid }).await?;
         Ok(res.links)
     }
 
     #[tracing::instrument(skip(self))]
     pub async fn get_size(&self, cid: Cid) -> Result<Option<u64>> {
-        let res = self.client.rpc(qrpc::store::GetSizeRequest { cid }).await?;
+        let res = self.client.rpc(GetSizeRequest { cid }).await?;
         Ok(res.size)
     }
 

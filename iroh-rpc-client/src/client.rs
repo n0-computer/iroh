@@ -2,6 +2,7 @@ use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
+use futures::{Stream, StreamExt};
 #[cfg(feature = "grpc")]
 use futures::{Stream, StreamExt};
 
@@ -133,7 +134,6 @@ impl Client {
         self.store.get().context("missing rpc store connection")
     }
 
-    #[cfg(feature = "grpc")]
     pub async fn check(&self) -> super::status::StatusTable {
         let g = if let Some(ref g) = self.gateway {
             Some(g.check().await)
@@ -153,7 +153,6 @@ impl Client {
         super::status::StatusTable::new(g, p, s)
     }
 
-    #[cfg(feature = "grpc")]
     pub async fn watch(self) -> impl Stream<Item = super::status::StatusTable> {
         async_stream::stream! {
             let mut status_table: super::status::StatusTable = Default::default();

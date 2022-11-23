@@ -73,8 +73,8 @@ rand_chacha = "0.3.1"
 
 [features]
 default = ["rpc-grpc", "rpc-mem"]
-rpc-grpc = ["iroh-rpc-types/grpc", "iroh-rpc-client/grpc", "iroh-metrics/rpc-grpc"]
-rpc-mem = ["iroh-rpc-types/mem", "iroh-rpc-client/mem"]
+rpc-grpc = ["iroh-metrics/rpc-grpc"]
+rpc-mem = []
 
 [[bench]]
 name = "lru_cache"

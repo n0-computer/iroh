@@ -40,5 +40,5 @@ http = "0.2"
 [features]
 default = ["rpc-mem", "rpc-grpc"]
 http-uds-gateway = ["tempfile"]
-rpc-grpc = ["iroh-rpc-types/grpc", "iroh-rpc-client/grpc", "iroh-metrics/rpc-grpc"]
-rpc-mem = ["iroh-rpc-types/mem", "iroh-rpc-client/mem"]
+rpc-grpc = ["iroh-metrics/rpc-grpc"]
+rpc-mem = []

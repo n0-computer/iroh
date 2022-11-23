@@ -189,7 +189,7 @@ async fn add(api: &Api, path: &Path, no_wrap: bool, recursive: bool, provide: bo
     // path of least confusion
     let svc_status = require_services(api, BTreeSet::from(["store"])).await?;
     match (provide, svc_status.p2p.status()) {
-        (true, ServiceStatus::Down(_status)) => {
+        (true, ServiceStatus::Down) => {
             anyhow::bail!("Add provides content to the IPFS network by default, but the p2p service is not running.\n{}",
             "hint: try using the --offline flag, or run 'iroh start p2p'".yellow()
             )

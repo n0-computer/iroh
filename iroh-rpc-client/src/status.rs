@@ -1,81 +1,10 @@
 use crate::{gateway, network, store};
 use anyhow::Result;
-use async_stream::stream;
-use futures::Stream;
-use tonic::transport::channel::Channel;
-use tonic_health::proto::{
-    health_check_response::ServingStatus, health_client::HealthClient, HealthCheckRequest,
-    HealthCheckResponse,
-};
 
 // TODO: make configurable
 const WAIT: std::time::Duration = std::time::Duration::from_millis(1000);
 
-#[tracing::instrument(skip(health_client))]
-pub async fn check(
-    health_client: HealthClient<Channel>,
-    service: &'static str,
-    display_name: &'static str,
-) -> StatusRow {
-    let req = iroh_metrics::req::trace_tonic_req(HealthCheckRequest {
-        service: service.to_string(),
-    });
-    let res = health_client.clone().check(req).await;
-    let status = match res {
-        Ok(res) => res.into_inner().into(),
-        Err(s) => ServiceStatus::Down(s),
-    };
-    StatusRow::new(display_name, 1, status)
-}
-
-#[tracing::instrument(skip(health_client))]
-pub async fn watch(
-    health_client: HealthClient<Channel>,
-    service: &'static str,
-    display_name: &'static str,
-) -> impl Stream<Item = StatusRow> {
-    stream! {
-        loop {
-            let req = iroh_metrics::req::trace_tonic_req(HealthCheckRequest { service: service.to_string() });
-            let res = health_client.clone().watch(req).await;
-            match res {
-                Ok(stream) => {
-                    let mut stream = stream.into_inner();
-                    // loop over the stream, breaking if we get an error or stop receiving messages
-                    loop {
-                        match stream.message().await {
-                            Ok(Some(message)) => yield StatusRow::new(display_name, 1, message.into()),
-                            Ok(None) => {
-                                yield StatusRow::new(display_name, 1, ServiceStatus::Down(tonic::Status::new(tonic::Code::Unavailable, format!("No more health messages from service `{}`", service))));
-                                break;
-                            }
-                            Err(status) => {
-                                yield StatusRow::new(display_name, 1, ServiceStatus::Down(status));
-                                break;
-                            }
-                        }
-                    }
-                },
-                Err(status) => yield StatusRow::new(display_name, 1, ServiceStatus::Down(status)),
-            }
-            /// wait before attempting to start a watch stream again
-            tokio::time::sleep(WAIT).await;
-        };
-    }
-}
-
-impl std::convert::From<HealthCheckResponse> for ServiceStatus {
-    fn from(h: HealthCheckResponse) -> Self {
-        match h.status() {
-            ServingStatus::Unknown => ServiceStatus::Unknown,
-            ServingStatus::Serving => ServiceStatus::Serving,
-            ServingStatus::NotServing => ServiceStatus::NotServing,
-            ServingStatus::ServiceUnknown => ServiceStatus::ServiceUnknown,
-        }
-    }
-}
-
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ServiceStatus {
     ///  Indicates rpc server is in an unknown state
     Unknown,
@@ -85,39 +14,8 @@ pub enum ServiceStatus {
     NotServing,
     /// Indicates that the requested service is unknown
     ServiceUnknown,
-    /// Indicates that the service is down. This ServiceStatus is assigned when
-    /// a `check` or `watch` call has returned an error with `tonic::Status`
-    Down(tonic::Status),
-}
-
-impl std::clone::Clone for ServiceStatus {
-    fn clone(&self) -> Self {
-        match self {
-            ServiceStatus::Down(status) => {
-                ServiceStatus::Down(tonic::Status::new(status.code(), status.message()))
-            }
-            ServiceStatus::Unknown => ServiceStatus::Unknown,
-            ServiceStatus::Serving => ServiceStatus::Serving,
-            ServiceStatus::NotServing => ServiceStatus::NotServing,
-            ServiceStatus::ServiceUnknown => ServiceStatus::ServiceUnknown,
-        }
-    }
-}
-
-// Should only be used for testing purposes
-// Implementation does not compare `ServiceStatus::Down(tonic::Status)`
-// with thorough rigor
-impl std::cmp::PartialEq for ServiceStatus {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (ServiceStatus::Unknown, ServiceStatus::Unknown) => true,
-            (ServiceStatus::Serving, ServiceStatus::Serving) => true,
-            (ServiceStatus::NotServing, ServiceStatus::NotServing) => true,
-            (ServiceStatus::ServiceUnknown, ServiceStatus::ServiceUnknown) => true,
-            (ServiceStatus::Down(s), ServiceStatus::Down(o)) => s.code() == o.code(),
-            _ => false,
-        }
-    }
+    /// Indicates that the service is down.
+    Down,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -330,8 +228,7 @@ mod tests {
         got.update(gateway.clone().unwrap()).unwrap();
         assert_eq!(expect, got);
 
-        p2p.as_mut().unwrap().status =
-            ServiceStatus::Down(tonic::Status::new(tonic::Code::Unavailable, ""));
+        p2p.as_mut().unwrap().status = ServiceStatus::Down;
         let expect = StatusTable::new(gateway, p2p.clone(), store);
         got.update(p2p.unwrap()).unwrap();
         assert_eq!(expect, got);

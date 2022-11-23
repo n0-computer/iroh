@@ -2,7 +2,7 @@ use super::status::StatusRow;
 use super::ServiceStatus;
 use anyhow::Result;
 use futures::Stream;
-use iroh_rpc_types::qrpc::gateway::*;
+use iroh_rpc_types::gateway::*;
 use std::fmt;
 
 pub(crate) const NAME: &str = "gateway";
