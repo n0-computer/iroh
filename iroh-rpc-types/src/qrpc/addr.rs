@@ -7,10 +7,12 @@ use std::{
     str::FromStr,
 };
 
-#[derive(DeserializeFromStr, Clone)]
-pub enum Addr<S: Service> {
+/// A client addr for a service. This can be either a socket address or
+/// the actual mem channel to use to reach the server side.
+#[derive(SerializeDisplay, DeserializeFromStr)]
+pub enum Addr<Sv: Service> {
     Qrpc(SocketAddr),
-    Mem(quic_rpc::mem::Channel<S::Res, S::Req>),
+    Mem(quic_rpc::mem::Channel<Sv::Res, Sv::Req>),
 }
 
 impl<S: Service> PartialEq for Addr<S> {
@@ -56,6 +58,15 @@ impl<S: Service> Debug for Addr<S> {
     }
 }
 
+impl<S: Service> Clone for Addr<S> {
+    fn clone(&self) -> Self {
+        match self {
+            Addr::Qrpc(addr) => Addr::Qrpc(*addr),
+            Addr::Mem(mem) => Addr::Mem(mem.clone()),
+        }
+    }
+}
+
 impl<S: Service> FromStr for Addr<S> {
     type Err = anyhow::Error;
 
@@ -66,7 +77,7 @@ impl<S: Service> FromStr for Addr<S> {
 
         let mut parts = s.split("://");
         if let Some(prefix) = parts.next() {
-            if prefix == "grpc" {
+            if prefix == "qrpc" {
                 if let Some(part) = parts.next() {
                     if let Ok(addr) = part.parse::<SocketAddr>() {
                         return Ok(Addr::Qrpc(addr));
@@ -95,7 +106,7 @@ mod tests {
             addr.to_string().parse::<Addr<GatewayService>>().unwrap(),
             addr
         );
-        assert_eq!(addr.to_string(), "grpc://198.168.2.1:1234");
+        assert_eq!(addr.to_string(), "qrpc://198.168.2.1:1234");
     }
 
     // // TODO(b5): only running this on unix b/c windows doesn't have localhost
