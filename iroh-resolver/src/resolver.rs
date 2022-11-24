@@ -1,5 +1,6 @@
-use std::collections::{BTreeSet, VecDeque};
+use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::fmt::{self, Debug, Display, Formatter};
+use std::hash::BuildHasher;
 use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -1271,53 +1272,49 @@ async fn resolve_txt_record(url: &str) -> Result<Vec<String>> {
     Ok(out)
 }
 
+#[async_trait]
+impl<S: BuildHasher + Clone + Send + Sync + 'static> ContentLoader for HashMap<Cid, Bytes, S> {
+    async fn load_cid(&self, cid: &Cid, _ctx: &LoaderContext) -> Result<LoadedCid> {
+        match self.get(cid) {
+            Some(b) => Ok(LoadedCid {
+                data: b.clone(),
+                source: Source::Bitswap,
+            }),
+            None => bail!("not found"),
+        }
+    }
+
+    async fn stop_session(&self, _ctx: ContextId) -> Result<()> {
+        // no session tracking
+        Ok(())
+    }
+
+    async fn has_cid(&self, cid: &Cid) -> Result<bool> {
+        Ok(self.contains_key(cid))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::{
         collections::{BTreeMap, HashMap},
-        hash::BuildHasher,
         sync::Arc,
     };
+
+    use crate::unixfs_builder::read_to_vec;
 
     use super::*;
     use cid::multihash::{Code, MultihashDigest};
     use futures::{StreamExt, TryStreamExt};
     use libipld::{codec::Encode, Ipld, IpldCodec};
-    use tokio::io::{AsyncReadExt, AsyncSeekExt};
-
-    #[async_trait]
-    impl<S: BuildHasher + Clone + Send + Sync + 'static> ContentLoader for HashMap<Cid, Bytes, S> {
-        async fn load_cid(&self, cid: &Cid, _ctx: &LoaderContext) -> Result<LoadedCid> {
-            match self.get(cid) {
-                Some(b) => Ok(LoadedCid {
-                    data: b.clone(),
-                    source: Source::Bitswap,
-                }),
-                None => bail!("not found"),
-            }
-        }
-
-        async fn stop_session(&self, _ctx: ContextId) -> Result<()> {
-            // no session tracking
-            Ok(())
-        }
-
-        async fn has_cid(&self, cid: &Cid) -> Result<bool> {
-            Ok(self.contains_key(cid))
-        }
-    }
+    use tokio::io::AsyncSeekExt;
 
     async fn load_fixture(p: &str) -> Bytes {
         Bytes::from(tokio::fs::read(format!("./fixtures/{p}")).await.unwrap())
     }
 
-    async fn read_to_vec<T: AsyncRead + Unpin>(mut reader: T) -> Vec<u8> {
-        let mut out = Vec::new();
-        reader.read_to_end(&mut out).await.unwrap();
-        out
-    }
     async fn read_to_string<T: AsyncRead + Unpin>(reader: T) -> String {
-        String::from_utf8(read_to_vec(reader).await).unwrap()
+        String::from_utf8(read_to_vec(reader).await.unwrap()).unwrap()
     }
 
     async fn seek_and_clip<T: ContentLoader + Unpin>(
@@ -1476,7 +1473,8 @@ mod tests {
                         )
                         .unwrap(),
                 )
-                .await;
+                .await
+                .unwrap();
                 let out_ipld: Ipld = codec.decode(&out_bytes).unwrap();
                 assert_eq!(out_ipld, Ipld::String("Foo".to_string()));
 
@@ -1508,7 +1506,8 @@ mod tests {
                         )
                         .unwrap(),
                 )
-                .await;
+                .await
+                .unwrap();
                 let out_ipld: Ipld = codec.decode(&out_bytes).unwrap();
                 assert_eq!(out_ipld, Ipld::Integer(1));
 

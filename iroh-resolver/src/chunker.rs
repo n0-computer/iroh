@@ -1,4 +1,4 @@
-use std::{io, pin::Pin, task};
+use std::{fmt::Display, io, pin::Pin, task};
 
 use bytes::Bytes;
 use futures::{stream::LocalBoxStream, Stream};
@@ -19,6 +19,15 @@ pub use self::{
 pub enum Chunker {
     Fixed(Fixed),
     Rabin(Box<Rabin>),
+}
+
+impl Display for Chunker {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Fixed(c) => write!(f, "Chunker::Fixed({})", c.chunk_size),
+            Self::Rabin(_) => write!(f, "Chunker::Rabin"),
+        }
+    }
 }
 
 pub enum ChunkerStream<'a> {

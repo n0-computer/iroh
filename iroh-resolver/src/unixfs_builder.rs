@@ -318,6 +318,11 @@ impl FileBuilder {
         self
     }
 
+    pub fn chunker(&mut self, chunker: Chunker) -> &mut Self {
+        self.chunker = chunker;
+        self
+    }
+
     /// Set the chunker to be fixed size.
     pub fn fixed_chunker(&mut self, chunk_size: usize) -> &mut Self {
         self.chunker = Chunker::Fixed(chunker::Fixed::new(chunk_size));
@@ -752,6 +757,43 @@ async fn make_dir_from_path<P: Into<PathBuf>>(path: P) -> Result<Directory> {
     dir.build()
 }
 
+/// Read an `AsyncRead` into a `Vec` completely.
+#[doc(hidden)]
+pub async fn read_to_vec<T: AsyncRead + Unpin>(mut reader: T) -> Result<Vec<u8>> {
+    use tokio::io::AsyncReadExt;
+
+    let mut out = Vec::new();
+    reader.read_to_end(&mut out).await?;
+    Ok(out)
+}
+
+/// Read a stream of (cid, block) pairs into an in memory store and return the store and the root cid.
+#[doc(hidden)]
+pub async fn stream_to_resolver(
+    stream: impl Stream<Item = Result<Block>>,
+) -> Result<(
+    Cid,
+    crate::resolver::Resolver<Arc<fnv::FnvHashMap<Cid, Bytes>>>,
+)> {
+    use anyhow::Context;
+
+    tokio::pin!(stream);
+    let blocks: Vec<_> = stream.try_collect().await?;
+    for block in &blocks {
+        block.validate()?;
+    }
+    let root_block = blocks.last().context("no root")?.clone();
+    let store: fnv::FnvHashMap<Cid, Bytes> = blocks
+        .into_iter()
+        .map(|block| {
+            let (cid, bytes, _) = block.into_parts();
+            (cid, bytes)
+        })
+        .collect();
+    let resolver = crate::resolver::Resolver::new(Arc::new(store));
+    Ok((*root_block.cid(), resolver))
+}
+
 #[cfg(test)]
 mod tests {
     use crate::chunker::DEFAULT_CHUNKS_SIZE;
@@ -759,12 +801,12 @@ mod tests {
     use crate::resolver::{Out, OutMetrics, Resolver, ResponseClip};
 
     use super::*;
-    use anyhow::{Context, Result};
+    use anyhow::Result;
     use futures::TryStreamExt;
     use proptest::prelude::*;
     use rand::prelude::*;
     use rand_chacha::ChaCha8Rng;
-    use std::{collections::BTreeMap, io::prelude::*, sync::Arc};
+    use std::{collections::BTreeMap, io::prelude::*};
     use tokio::io::AsyncReadExt;
 
     #[tokio::test]
@@ -871,34 +913,6 @@ mod tests {
 
         // TODO: check content
         Ok(())
-    }
-
-    // read an AsyncRead into a vec completely
-    async fn read_to_vec<T: AsyncRead + Unpin>(mut reader: T) -> Result<Vec<u8>> {
-        let mut out = Vec::new();
-        reader.read_to_end(&mut out).await?;
-        Ok(out)
-    }
-
-    /// Read a stream of (cid, block) pairs into an in memory store and return the store and the root cid
-    async fn stream_to_resolver(
-        stream: impl Stream<Item = Result<Block>>,
-    ) -> Result<(Cid, Resolver<Arc<fnv::FnvHashMap<Cid, Bytes>>>)> {
-        tokio::pin!(stream);
-        let blocks: Vec<_> = stream.try_collect().await?;
-        for block in &blocks {
-            block.validate()?;
-        }
-        let root_block = blocks.last().context("no root")?.clone();
-        let store: fnv::FnvHashMap<Cid, Bytes> = blocks
-            .into_iter()
-            .map(|block| {
-                let (cid, bytes, _) = block.into_parts();
-                (cid, bytes)
-            })
-            .collect();
-        let resolver = Resolver::new(Arc::new(store));
-        Ok((*root_block.cid(), resolver))
     }
 
     #[derive(Debug, Clone, PartialEq, Eq)]
