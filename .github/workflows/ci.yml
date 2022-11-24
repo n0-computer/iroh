@@ -205,7 +205,7 @@ jobs:
 
     - name: build release
       run: |
-        cargo build --profile optimized-release -p iroh -p iroh-gateway -p iroh-p2p -p iroh-store
+        cargo build --profile optimized-release -p iroh -p iroh-gateway -p iroh-p2p -p iroh-store -p iroh-one
 
     - name: Setup awscli on linux
       if: matrix.name == 'ubuntu-latest'
@@ -241,6 +241,7 @@ jobs:
         aws s3 cp ./target/optimized-release/iroh-p2p s3://vorc/iroh-p2p-${RELEASE_OS}-${RELEASE_ARCH}-${GITHUB_SHA::7} --no-progress
         aws s3 cp ./target/optimized-release/iroh-store s3://vorc/iroh-store-${RELEASE_OS}-${RELEASE_ARCH}-${GITHUB_SHA::7} --no-progress
         aws s3 cp ./target/optimized-release/iroh s3://vorc/iroh-${RELEASE_OS}-${RELEASE_ARCH}-${GITHUB_SHA::7} --no-progress
+        aws s3 cp ./target/optimized-release/iroh-one s3://vorc/iroh-one-${RELEASE_OS}-${RELEASE_ARCH}-${GITHUB_SHA::7} --no-progress
 
     - name: push release latest
       if: matrix.os != 'windows-latest'
@@ -249,6 +250,7 @@ jobs:
         aws s3 cp ./target/optimized-release/iroh-p2p s3://vorc/iroh-p2p-${RELEASE_OS}-${RELEASE_ARCH}-latest --no-progress
         aws s3 cp ./target/optimized-release/iroh-store s3://vorc/iroh-store-${RELEASE_OS}-${RELEASE_ARCH}-latest --no-progress
         aws s3 cp ./target/optimized-release/iroh s3://vorc/iroh-${RELEASE_OS}-${RELEASE_ARCH}-latest --no-progress
+        aws s3 cp ./target/optimized-release/iroh-one s3://vorc/iroh-one-${RELEASE_OS}-${RELEASE_ARCH}-latest --no-progress
 
   coverage:
     name: Coverage
