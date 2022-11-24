@@ -2,7 +2,7 @@ use axum::Router;
 use iroh_resolver::content_loader::ContentLoader;
 use iroh_rpc_types::gateway::GatewayServerAddr;
 
-use iroh_resolver::dns_resolver::DnsResolverConfig;
+use iroh_resolver::dns_resolver::Config as DnsResolverConfig;
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::RwLock;
 

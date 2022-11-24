@@ -112,7 +112,7 @@ mod tests {
     use hex_literal::hex;
     use http::StatusCode;
     use iroh_resolver::content_loader::{FullLoader, FullLoaderConfig, GatewayUrl};
-    use iroh_resolver::dns_resolver::DnsResolverConfig;
+    use iroh_resolver::dns_resolver::Config as DnsResolverConfig;
     use iroh_rpc_client::{Client as RpcClient, Config as RpcClientConfig};
 
     #[tokio::test]

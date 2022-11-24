@@ -6,7 +6,7 @@ use headers::{
     AccessControlAllowHeaders, AccessControlAllowMethods, AccessControlAllowOrigin, HeaderMapExt,
 };
 use iroh_metrics::config::Config as MetricsConfig;
-use iroh_resolver::dns_resolver::DnsResolverConfig;
+use iroh_resolver::dns_resolver::Config as DnsResolverConfig;
 use iroh_rpc_client::Config as RpcClientConfig;
 use iroh_rpc_types::{gateway::GatewayServerAddr, Addr};
 use iroh_util::insert_into_config_map;

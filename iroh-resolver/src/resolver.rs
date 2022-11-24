@@ -23,7 +23,7 @@ use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use tracing::{debug, trace, warn};
 
-use crate::dns_resolver::{DnsResolver, DnsResolverConfig};
+use crate::dns_resolver::{Config, DnsResolver};
 
 use iroh_metrics::{
     core::{MObserver, MRecorder},
@@ -737,10 +737,10 @@ struct InnerLoaderContext {
 
 impl<T: ContentLoader> Resolver<T> {
     pub fn new(loader: T) -> Self {
-        Self::with_dns_resolver(loader, DnsResolverConfig::default())
+        Self::with_dns_resolver(loader, Config::default())
     }
 
-    pub fn with_dns_resolver(loader: T, dns_resolver_config: DnsResolverConfig) -> Self {
+    pub fn with_dns_resolver(loader: T, dns_resolver_config: Config) -> Self {
         let (session_closer_s, session_closer_r) = async_channel::bounded(2048);
         let loader_thread = loader.clone();
         let worker = tokio::task::spawn(async move {

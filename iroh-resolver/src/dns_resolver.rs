@@ -7,22 +7,23 @@ use trust_dns_resolver::config::{NameServerConfigGroup, ResolverConfig, Resolver
 use trust_dns_resolver::{AsyncResolver, TokioAsyncResolver};
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
-pub struct DnsResolverConfig {
+pub struct Config {
     /// Mapping from TLD to the specific instance of resolver
     tld_resolvers: Option<HashMap<String, ResolverConfig>>,
 }
 
-impl DnsResolverConfig {
+impl Config {
     pub fn empty() -> Self {
-        DnsResolverConfig {
+        Config {
             tld_resolvers: None,
         }
     }
 }
 
-impl Default for DnsResolverConfig {
+impl Default for Config {
     fn default() -> Self {
-        DnsResolverConfig {
+        Config {
+            /// Documentation on .eth TLD lives on https://eth.link/
             tld_resolvers: Some(HashMap::from_iter(vec![(
                 "eth".to_string(),
                 ResolverConfig::from_parts(
@@ -51,7 +52,7 @@ pub struct DnsResolver {
 
 impl DnsResolver {
     /// Creates resolver from its config
-    pub fn from_config(dns_resolver_config: DnsResolverConfig) -> DnsResolver {
+    pub fn from_config(dns_resolver_config: Config) -> DnsResolver {
         let tld_resolvers = dns_resolver_config
             .tld_resolvers
             .map(|dns_resolver_config| {
@@ -107,7 +108,7 @@ impl DnsResolver {
 
 impl Default for DnsResolver {
     fn default() -> Self {
-        DnsResolver::from_config(DnsResolverConfig::default())
+        DnsResolver::from_config(Config::default())
     }
 }
 
