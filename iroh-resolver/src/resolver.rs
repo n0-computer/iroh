@@ -23,8 +23,6 @@ use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use tracing::{debug, trace, warn};
 
-use crate::dns_resolver::{Config, DnsResolver};
-
 use iroh_metrics::{
     core::{MObserver, MRecorder},
     gateway::{GatewayHistograms, GatewayMetrics},
@@ -34,6 +32,7 @@ use iroh_metrics::{
 
 use crate::codecs::Codec;
 use crate::content_loader::ContentLoader;
+use crate::dns_resolver::{Config, DnsResolver};
 use crate::unixfs::{
     poll_read_buf_at_pos, DataType, Link, UnixfsChildStream, UnixfsContentReader, UnixfsNode,
 };

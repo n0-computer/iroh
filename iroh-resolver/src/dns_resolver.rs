@@ -1,10 +1,12 @@
-use crate::resolver::Path;
-use anyhow::Result;
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr};
+
+use anyhow::Result;
+use serde::{Deserialize, Serialize};
 use trust_dns_resolver::config::{NameServerConfigGroup, ResolverConfig, ResolverOpts};
 use trust_dns_resolver::{AsyncResolver, TokioAsyncResolver};
+
+use crate::resolver::Path;
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct Config {
