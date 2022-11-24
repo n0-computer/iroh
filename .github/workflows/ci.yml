@@ -117,23 +117,11 @@ jobs:
 
     - name: tests
       timeout-minutes: 30
-      env:
-        # iroh-util/src/lock.rs#test_locks uses a fork() command & fails only in
-        # GHA if this is not present
-        # https://twitter.com/steipete/status/921066430220652544?lang=en
-        # https://blog.phusion.nl/2017/10/13/why-ruby-app-servers-break-on-macos-high-sierra-and-what-can-be-done-about-it/
-        OBJC_DISABLE_INITIALIZE_FORK_SAFETY: "YES"
       run: |
         cargo test --workspace --all-features --all-targets
 
     - name: tests w/o default features
       timeout-minutes: 30
-      env:
-        # iroh-util/src/lock.rs#test_locks uses a fork() command & fails only in
-        # GHA if this is not present
-        # https://twitter.com/steipete/status/921066430220652544?lang=en
-        # https://blog.phusion.nl/2017/10/13/why-ruby-app-servers-break-on-macos-high-sierra-and-what-can-be-done-about-it/
-        OBJC_DISABLE_INITIALIZE_FORK_SAFETY: "YES"
       run: |
         cargo test --workspace --no-default-features --all-targets
 
@@ -312,12 +300,6 @@ jobs:
  
     - name: coverage
       timeout-minutes: 30
-      env:
-        # iroh-util/src/lock.rs#test_locks uses a fork() command & fails only in
-        # GHA if this is not present
-        # https://twitter.com/steipete/status/921066430220652544?lang=en
-        # https://blog.phusion.nl/2017/10/13/why-ruby-app-servers-break-on-macos-high-sierra-and-what-can-be-done-about-it/
-        OBJC_DISABLE_INITIALIZE_FORK_SAFETY: "YES"
       run: |
         cargo xtask coverage
     
