@@ -19,7 +19,7 @@ futures = "0.3.21"
 iroh-metrics = { path = "../iroh-metrics", default-features = false }
 iroh-util = { path = "../iroh-util" }
 libp2p = { version = "0.50", default-features = false, features = ["gossipsub"] }
-quic-rpc = { version = "0.1.4" }
+quic-rpc = { version = "0.1.5" }
 serde = { version = "1.0", features = ["derive"] }
 tokio = { version = "1", features = ["sync"] }
 toml = "0.5.9"

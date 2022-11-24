@@ -15,7 +15,7 @@ cid = { version = "0.8.6", features = ["serde-codec"] }
 derive_more = "0.99.17"
 futures = "0.3.24"
 multiaddr = "0.16.0"
-quic-rpc = { version = "0.1.4" }
+quic-rpc = { version = "0.1.5" }
 serde = { version = "1" }
 serde-error = "0.1.2"
 serde_with = "2.0.0"
