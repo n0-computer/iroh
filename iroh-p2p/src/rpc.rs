@@ -294,7 +294,7 @@ impl P2p {
         let (s, r) = oneshot::channel();
         let msg = RpcMessage::NetConnect(s, peer_id, addrs);
         self.sender.send(msg).await?;
-        Ok(r.await??)
+        r.await?
     }
 
     #[tracing::instrument(skip(self, req))]

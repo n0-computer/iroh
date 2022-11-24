@@ -43,25 +43,25 @@ impl StoreClient {
 
     #[tracing::instrument(skip(self))]
     pub async fn get(&self, cid: Cid) -> Result<Option<Bytes>> {
-        let res = self.client.rpc(GetRequest { cid }).await?;
+        let res = self.client.rpc(GetRequest { cid }).await??;
         Ok(res.data)
     }
 
     #[tracing::instrument(skip(self))]
     pub async fn has(&self, cid: Cid) -> Result<bool> {
-        let res = self.client.rpc(HasRequest { cid }).await?;
+        let res = self.client.rpc(HasRequest { cid }).await??;
         Ok(res.has)
     }
 
     #[tracing::instrument(skip(self))]
     pub async fn get_links(&self, cid: Cid) -> Result<Option<Vec<Cid>>> {
-        let res = self.client.rpc(GetLinksRequest { cid }).await?;
+        let res = self.client.rpc(GetLinksRequest { cid }).await??;
         Ok(res.links)
     }
 
     #[tracing::instrument(skip(self))]
     pub async fn get_size(&self, cid: Cid) -> Result<Option<u64>> {
-        let res = self.client.rpc(GetSizeRequest { cid }).await?;
+        let res = self.client.rpc(GetSizeRequest { cid }).await??;
         Ok(res.size)
     }
 

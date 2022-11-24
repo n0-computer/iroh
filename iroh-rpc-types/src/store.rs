@@ -3,6 +3,7 @@ use cid::Cid;
 use derive_more::{From, TryInto};
 use quic_rpc::{message::RpcMsg, Service};
 use serde::{Deserialize, Serialize};
+use crate::RpcResult;
 
 pub type StoreClientAddr = super::addr::Addr<StoreResponse, StoreRequest>;
 pub type StoreServerAddr = super::addr::Addr<StoreRequest, StoreResponse>;
@@ -81,11 +82,12 @@ pub enum StoreRequest {
 #[derive(Serialize, Deserialize, Debug, From, TryInto)]
 pub enum StoreResponse {
     Version(VersionResponse),
-    Get(GetResponse),
-    Has(HasResponse),
-    GetLinks(GetLinksResponse),
-    GetSize(GetSizeResponse),
+    Get(RpcResult<GetResponse>),
+    Has(RpcResult<HasResponse>),
+    GetLinks(RpcResult<GetLinksResponse>),
+    GetSize(RpcResult<GetSizeResponse>),
     Unit(()),
+    UnitResult(RpcResult<()>),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -102,25 +104,25 @@ impl RpcMsg<StoreService> for VersionRequest {
 }
 
 impl RpcMsg<StoreService> for GetRequest {
-    type Response = GetResponse;
+    type Response = RpcResult<GetResponse>;
 }
 
 impl RpcMsg<StoreService> for PutRequest {
-    type Response = ();
+    type Response = RpcResult<()>;
 }
 
 impl RpcMsg<StoreService> for HasRequest {
-    type Response = HasResponse;
+    type Response = RpcResult<HasResponse>;
 }
 
 impl RpcMsg<StoreService> for PutManyRequest {
-    type Response = ();
+    type Response = RpcResult<()>;
 }
 
 impl RpcMsg<StoreService> for GetLinksRequest {
-    type Response = GetLinksResponse;
+    type Response = RpcResult<GetLinksResponse>;
 }
 
 impl RpcMsg<StoreService> for GetSizeRequest {
-    type Response = GetSizeResponse;
+    type Response = RpcResult<GetSizeResponse>;
 }
