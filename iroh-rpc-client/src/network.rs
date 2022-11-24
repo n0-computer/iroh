@@ -47,6 +47,13 @@ impl P2pClient {
         Ok(addrs)
     }
 
+    #[tracing::instrument(skip(self))]
+    pub async fn listeners(&self) -> Result<Vec<Multiaddr>> {
+        let res = self.backend.listeners(()).await?;
+        let addrs = addrs_from_bytes(res.addrs)?;
+        Ok(addrs)
+    }
+
     // Fetches a block directly from the network.
     #[tracing::instrument(skip(self))]
     pub async fn fetch_bitswap(
@@ -181,6 +188,12 @@ impl P2pClient {
     }
 
     #[tracing::instrument(skip(self))]
+    pub async fn lookup_local(&self) -> Result<Lookup> {
+        let peer_info = self.backend.lookup_local(()).await?;
+        Lookup::from_peer_info(peer_info)
+    }
+
+    #[tracing::instrument(skip(self))]
     pub async fn disconnect(&self, peer_id: PeerId) -> Result<()> {
         warn!("NetDisconnect not yet implemented on p2p node");
         let req = DisconnectRequest {
@@ -289,14 +302,14 @@ impl Lookup {
     fn from_peer_info(p: PeerInfo) -> Result<Self> {
         let peer_id = peer_id_from_bytes(p.peer_id)?;
         let listen_addrs = addrs_from_bytes(p.listen_addrs)?;
-        let addr = addr_from_bytes(p.observed_addr)?;
+        let observed_addrs = addrs_from_bytes(p.observed_addrs)?;
         Ok(Self {
             peer_id,
             protocol_version: p.protocol_version,
             agent_version: p.agent_version,
             listen_addrs,
             protocols: p.protocols,
-            observed_addrs: vec![addr],
+            observed_addrs,
         })
     }
 }
@@ -418,6 +431,13 @@ mod tests {
             todo!()
         }
 
+        async fn listeners(
+            &self,
+            _request: Request<()>,
+        ) -> Result<tonic::Response<Multiaddrs>, tonic::Status> {
+            todo!()
+        }
+
         async fn start_providing(
             &self,
             _request: Request<Key>,
@@ -505,6 +525,13 @@ mod tests {
         async fn lookup(
             &self,
             _request: Request<LookupRequest>,
+        ) -> Result<tonic::Response<PeerInfo>, tonic::Status> {
+            todo!()
+        }
+
+        async fn lookup_local(
+            &self,
+            _request: Request<()>,
         ) -> Result<tonic::Response<PeerInfo>, tonic::Status> {
             todo!()
         }

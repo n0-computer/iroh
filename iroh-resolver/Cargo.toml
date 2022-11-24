@@ -1,11 +1,12 @@
 [package]
 name = "iroh-resolver"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 authors = ["Friedel Ziegelmayer <me@dignifiedquire.com>"]
 license = "Apache-2.0/MIT"
 repository = "https://github.com/n0-computer/iroh"
 description = "Implementation of path resolution for iroh"
+rust-version = "1.63"
 
 [dependencies]
 anyhow = "1"
@@ -15,13 +16,13 @@ async-stream = "0.3.3"
 async-trait = "0.1.53"
 base64 = "0.13.1"
 bytes = "1.1.0"
-cid = "0.8.4"
+cid = "0.9"
 fastmurmur3 = "0.1.2"
 futures = "0.3.21"
 iroh-metrics = { path = "../iroh-metrics", default-features = false, features = ["resolver", "gateway"] }
 iroh-rpc-client = { path = "../iroh-rpc-client", default-features = false }
 iroh-util = { path = "../iroh-util", default-features = false }
-libipld = "0.14.0"
+libipld = "0.15.0"
 libp2p = { version = "0.50", default-features = false, features = ["serde"] }
 multihash = "0.16.3"
 num_enum = "0.5.7"

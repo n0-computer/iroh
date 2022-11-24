@@ -157,7 +157,7 @@ impl RocksFs {
         let size = self
             .db
             .property_int_value(rocksdb::properties::TOTAL_SST_FILES_SIZE)?;
-        Ok(size.unwrap_or_default() as u64)
+        Ok(size.unwrap_or_default())
     }
 }
 
@@ -192,14 +192,14 @@ mod tests {
         let rocksfs = RocksFs::new(dir.path()).unwrap();
 
         for i in 0..10 {
-            rocksfs.put(&format!("foo{i}"), [i; 128]).unwrap();
+            rocksfs.put(format!("foo{i}"), [i; 128]).unwrap();
         }
 
         assert_eq!(rocksfs.number_of_keys().unwrap(), 10);
 
         for i in 0..10 {
             assert_eq!(&rocksfs.get(&format!("foo{i}")).unwrap()[..], [i; 128]);
-            assert_eq!(rocksfs.get_size(&format!("foo{i}")).unwrap(), 128);
+            assert_eq!(rocksfs.get_size(format!("foo{i}")).unwrap(), 128);
         }
 
         drop(rocksfs);
@@ -215,7 +215,7 @@ mod tests {
         let rocksfs = RocksFs::new(dir.path()).unwrap();
 
         for i in 0..10 {
-            rocksfs.put(&format!("foo{i}"), [i; 128]).unwrap();
+            rocksfs.put(format!("foo{i}"), [i; 128]).unwrap();
         }
 
         assert_eq!(rocksfs.number_of_keys().unwrap(), 10);
@@ -225,7 +225,7 @@ mod tests {
         }
 
         for i in 0..5 {
-            rocksfs.del(&format!("foo{}", i)).unwrap();
+            rocksfs.del(format!("foo{}", i)).unwrap();
         }
 
         assert_eq!(rocksfs.number_of_keys().unwrap(), 5);
@@ -245,7 +245,7 @@ mod tests {
         let rocksfs = RocksFs::new(dir.path()).unwrap();
 
         for i in 0..10 {
-            rocksfs.put(&format!("foo{i}"), [i; 128]).unwrap();
+            rocksfs.put(format!("foo{i}"), [i; 128]).unwrap();
         }
 
         assert_eq!(rocksfs.number_of_keys().unwrap(), 10);

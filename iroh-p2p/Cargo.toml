@@ -1,20 +1,21 @@
 [package]
 name = "iroh-p2p"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 authors = ["Friedel Ziegelmayer <me@dignifiedquire.com>"]
 license = "Apache-2.0/MIT"
 repository = "https://github.com/n0-computer/iroh"
 description = "Implementation of the p2p part of iroh"
+rust-version = "1.63"
 
 [dependencies]
 ahash = "0.8.0"
-anyhow = "1.0"
+anyhow = "1"
 async-stream = "0.3.3"
 async-trait = "0.1.56"
 asynchronous-codec = "0.6.0"
 bytes = "1.1.0"
-cid = "0.8.0"
+cid = "0.9"
 clap = { version = "4.0.9", features = ["derive"] }
 config = "0.13.1"
 futures = "0.3.21"
@@ -63,10 +64,12 @@ features = [
   "autonat",
   "rsa",
   "tokio",
+  "macros",
 ] 
 
 [dev-dependencies]
 criterion = "0.4"
+rand_chacha = "0.3.1"
 
 [features]
 default = ["rpc-grpc", "rpc-mem"]

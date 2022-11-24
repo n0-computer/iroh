@@ -3,8 +3,9 @@ use crossterm::terminal::{Clear, ClearType};
 use crossterm::{cursor, style, style::Stylize, QueueableCommand};
 use futures::StreamExt;
 use iroh_util::iroh_cache_path;
-use std::collections::HashSet;
+use std::collections::BTreeSet;
 use std::io::{stdout, Write};
+use std::ops::Deref;
 use std::time::SystemTime;
 use sysinfo::PidExt;
 use tracing::info;
@@ -14,13 +15,12 @@ use iroh_util::lock::{LockError, ProgramLock};
 
 const SERVICE_START_TIMEOUT_SECONDS: u64 = 15;
 
-/// start any of {iroh-gateway,iroh-store,iroh-p2p} that aren't currently
-/// running.
+/// Start any given services that aren't currently running.
 pub async fn start(api: &Api, services: &Vec<String>) -> Result<()> {
     let services = match services.is_empty() {
-        true => HashSet::from(["gateway", "store"]),
+        true => BTreeSet::from(["gateway", "store", "p2p"]),
         false => {
-            let mut hs: HashSet<&str> = HashSet::new();
+            let mut hs: BTreeSet<&str> = BTreeSet::new();
             for s in services {
                 hs.insert(s.as_str());
             }
@@ -31,12 +31,12 @@ pub async fn start(api: &Api, services: &Vec<String>) -> Result<()> {
 }
 
 // TODO(b5) - should check for configuration mismatch between iroh CLI configuration
-// TODO(b5) - services HashSet should be an enum
-async fn start_services(api: &Api, services: HashSet<&str>) -> Result<()> {
+// TODO(b5) - services BTreeSet should be an enum
+async fn start_services(api: &Api, services: BTreeSet<&str>) -> Result<()> {
     // check for any running iroh services
     let table = api.check().await;
 
-    let mut expected_services = HashSet::new();
+    let mut expected_services = BTreeSet::new();
     let expected_services = table
         .iter()
         .fold(&mut expected_services, |accum, status_row| {
@@ -49,7 +49,8 @@ async fn start_services(api: &Api, services: HashSet<&str>) -> Result<()> {
             accum
         });
 
-    let unknown_services: HashSet<&str> = services.difference(expected_services).copied().collect();
+    let unknown_services: BTreeSet<&str> =
+        services.difference(expected_services).copied().collect();
 
     if !unknown_services.is_empty() {
         let u = unknown_services.into_iter().collect::<Vec<&str>>();
@@ -60,7 +61,7 @@ async fn start_services(api: &Api, services: HashSet<&str>) -> Result<()> {
         return Err(anyhow!("{} {}.", e, u.join(", ")));
     }
 
-    let mut missing_services = HashSet::new();
+    let mut missing_services = BTreeSet::new();
     let missing_services = table
         .iter()
         .fold(&mut missing_services, |accum, status_row| {
@@ -81,11 +82,9 @@ async fn start_services(api: &Api, services: HashSet<&str>) -> Result<()> {
             accum
         });
 
-    // TODO (b5) - use services.difference here, but figure out how to
-    // .collect() to &str instead of &&str
-    let missing_services: HashSet<&str> = services
-        .into_iter()
-        .filter(|&service| missing_services.contains(service))
+    let missing_services: BTreeSet<&str> = services
+        .intersection(missing_services)
+        .map(Deref::deref)
         .collect();
 
     if missing_services.is_empty() {
@@ -135,9 +134,9 @@ async fn start_services(api: &Api, services: HashSet<&str>) -> Result<()> {
 /// identified by lockfiles
 pub async fn stop(api: &Api, services: &Vec<String>) -> Result<()> {
     let services = match services.is_empty() {
-        true => HashSet::from(["store", "p2p", "gateway"]),
+        true => BTreeSet::from(["store", "p2p", "gateway"]),
         false => {
-            let mut hs: HashSet<&str> = HashSet::new();
+            let mut hs: BTreeSet<&str> = BTreeSet::new();
             for s in services {
                 hs.insert(s.as_str());
             }
@@ -147,7 +146,7 @@ pub async fn stop(api: &Api, services: &Vec<String>) -> Result<()> {
     stop_services(api, services).await
 }
 
-pub async fn stop_services(api: &Api, services: HashSet<&str>) -> Result<()> {
+pub async fn stop_services(api: &Api, services: BTreeSet<&str>) -> Result<()> {
     for service in services {
         let daemon_name = format!("iroh-{}", service);
         info!("checking daemon {} lock", daemon_name);
@@ -232,7 +231,7 @@ where
     W: Write,
 {
     w.queue(style::PrintStyledContent(
-        "Process\t\t\tNumber\tStatus\n".bold(),
+        "Service\t\t\tNumber\tStatus\n".bold(),
     ))?;
     queue_row(&table.gateway, &mut w)?;
     queue_row(&table.p2p, &mut w)?;
@@ -278,7 +277,10 @@ where
 
 /// require a set of services is up. returns the underlying status table of all
 /// services for additional scrutiny
-pub async fn require_services(api: &Api, services: HashSet<&str>) -> Result<iroh_api::StatusTable> {
+pub async fn require_services(
+    api: &Api,
+    services: BTreeSet<&str>,
+) -> Result<iroh_api::StatusTable> {
     let table = api.check().await;
     for service in table.iter() {
         if services.contains(service.name()) && service.status() != iroh_api::ServiceStatus::Serving
@@ -326,7 +328,7 @@ mod tests {
 
     #[test]
     fn status_table_queue() {
-        let expect = format!("{}gateway\t\t\t1/1\t{}\np2p\t\t\t1/1\t{}\nstore\t\t\t1/1\t{}\tThe service is currently unavailable\n", "Process\t\t\tNumber\tStatus\n".bold(), "Unknown".dark_yellow(), "Serving".green(), "Down".grey());
+        let expect = format!("{}gateway\t\t\t1/1\t{}\np2p\t\t\t1/1\t{}\nstore\t\t\t1/1\t{}\tThe service is currently unavailable\n", "Service\t\t\tNumber\tStatus\n".bold(), "Unknown".dark_yellow(), "Serving".green(), "Down".grey());
         let table = StatusTable::new(
             Some(StatusRow::new("gateway", 1, ServiceStatus::Unknown)),
             Some(StatusRow::new("p2p", 1, ServiceStatus::Serving)),

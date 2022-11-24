@@ -1,18 +1,19 @@
 [package]
 name = "iroh-share"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 authors = ["Friedel Ziegelmayer <me@dignifiedquire.com>"]
 license = "Apache-2.0/MIT"
 repository = "https://github.com/n0-computer/iroh"
 description = "Sharing files with iroh"
+rust-version = "1.63"
 
 [dependencies]
-anyhow = "1.0.58"
+anyhow = "1"
 async-trait = "0.1.56"
 bincode = "1.3.3"
 bytes = "1.1.0"
-cid = { version = "0.8.5", features = ["serde-codec"] }
+cid = { version = "0.9", features = ["serde-codec"] }
 clap = { version = "4.0.9", features = ["derive"] }
 futures = "0.3.21"
 iroh-metrics = { path = "../iroh-metrics", default-features = false }
@@ -26,7 +27,7 @@ libp2p = { version = "0.50", default-features = false, features = ["gossipsub"] 
 multibase = "0.9.1"
 rand = "0.8.5"
 serde = { version = "1", features = ["derive"] }
-tempfile = "3.3"
+tempfile = "3.3.0"
 tokio = { version = "1" }
 tokio-stream = "0.1.9"
 tracing = "0.1.34"

@@ -1,5 +1,6 @@
 use std::{sync::Arc, thread::available_parallelism};
 
+use ahash::AHashSet;
 use anyhow::{anyhow, bail, Context, Result};
 use bytes::Bytes;
 use cid::Cid;
@@ -366,10 +367,13 @@ impl<'a> WriteStore<'a> {
         let mut total_blob_size = 0;
 
         let mut batch = WriteBatch::default();
+        let mut cid_tracker: AHashSet<Cid> = AHashSet::default();
         for (cid, blob, links) in blocks.into_iter() {
-            if self.has(&cid)? {
-                return Ok(());
+            if cid_tracker.contains(&cid) || self.has(&cid)? {
+                continue;
             }
+
+            cid_tracker.insert(cid);
 
             let id = self.next_id();
 
@@ -909,6 +913,34 @@ mod tests {
                 .collect::<anyhow::Result<Vec<_>>>()?;
         }
         assert_eq!(Vec::<String>::new(), store.consistency_check()?);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_put_many_repeat_ids() -> anyhow::Result<()> {
+        let cid1 = Cid::from_str("bafybeib4tddkl4oalrhe7q66rrz5dcpz4qwv5lmpstuqrls3djikw566y4")?;
+        let cid2 = Cid::from_str("QmcBphfXUFUNLcfAm31WEqYjrjEh19G5x4iAQANSK151DD")?;
+        let cid3 = Cid::from_str("bafkreieq5jui4j25lacwomsqgjeswwl3y5zcdrresptwgmfylxo2depppq")?;
+
+        let blob = Bytes::from(vec![0u8]);
+
+        let (store, _dir) = test_store().await?;
+        let blocks = vec![(cid1, blob.clone(), vec![]), (cid2, blob.clone(), vec![])];
+        store.put_many(blocks)?;
+        assert!(store.has(&cid1)?);
+        assert!(store.has(&cid2)?);
+
+        let blocks = vec![
+            (cid1, blob.clone(), vec![]),
+            (cid2, blob.clone(), vec![]),
+            (cid3, blob.clone(), vec![]),
+        ];
+
+        store.put_many(blocks)?;
+        assert!(store.has(&cid1)?);
+        assert!(store.has(&cid2)?);
+        assert!(store.has(&cid3)?);
+
         Ok(())
     }
 }

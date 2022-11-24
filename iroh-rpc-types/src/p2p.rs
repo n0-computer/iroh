@@ -16,6 +16,7 @@ proxy!(
     peer_connect_by_peer_id: ConnectByPeerIdRequest => () => (),
     peer_disconnect: DisconnectRequest => () =>  (),
     lookup: LookupRequest => PeerInfo => PeerInfo,
+    lookup_local: () => PeerInfo => PeerInfo,
     gossipsub_add_explicit_peer: GossipsubPeerIdMsg => () =>  (),
     gossipsub_all_mesh_peers: () => GossipsubPeersResponse =>  GossipsubPeersResponse,
     gossipsub_all_peers: () => GossipsubAllPeersResponse =>  GossipsubAllPeersResponse,
@@ -28,5 +29,6 @@ proxy!(
     start_providing: Key => () => (),
     stop_providing: Key => () => (),
     local_peer_id: () => PeerIdResponse => PeerIdResponse,
-    external_addrs: () => Multiaddrs => Multiaddrs
+    external_addrs: () => Multiaddrs => Multiaddrs,
+    listeners: () => Multiaddrs => Multiaddrs
 );

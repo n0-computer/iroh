@@ -1,15 +1,15 @@
 [package]
 name = "iroh-rpc-types"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 authors = ["Friedel Ziegelmayer <me@dignifiedquire.com>", "ramfox"]
 license = "Apache-2.0/MIT"
 repository = "https://github.com/n0-computer/iroh"
 description = "RPC type definitions for iroh"
-
+rust-version = "1.63"
 
 [dependencies]
-anyhow = "1.0.58"
+anyhow = "1"
 async-trait = "0.1.56"
 futures = "0.3.24"
 iroh-metrics = { path = "../iroh-metrics", default-features = false }

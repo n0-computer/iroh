@@ -11,12 +11,12 @@ use libp2p::gossipsub::{self, MessageAuthenticity};
 use libp2p::identify;
 use libp2p::kad::store::{MemoryStore, MemoryStoreConfig};
 use libp2p::kad::{Kademlia, KademliaConfig};
-use libp2p::mdns::TokioMdns as Mdns;
+use libp2p::mdns::tokio::Behaviour as Mdns;
 use libp2p::multiaddr::Protocol;
 use libp2p::ping::Behaviour as Ping;
 use libp2p::relay;
 use libp2p::swarm::behaviour::toggle::Toggle;
-use libp2p::NetworkBehaviour;
+use libp2p::swarm::NetworkBehaviour;
 use libp2p::{autonat, dcutr};
 use tracing::{info, warn};
 
@@ -27,9 +27,12 @@ use crate::config::Libp2pConfig;
 mod event;
 mod peer_manager;
 
+pub const PROTOCOL_VERSION: &str = "ipfs/0.1.0";
+pub const AGENT_VERSION: &str = concat!("iroh/", env!("CARGO_PKG_VERSION"));
+
 /// Libp2p behaviour for the node.
 #[derive(NetworkBehaviour)]
-#[behaviour(out_event = "Event", event_process = false)]
+#[behaviour(out_event = "Event")]
 pub(crate) struct NodeBehaviour {
     ping: Ping,
     identify: identify::Behaviour,
@@ -88,9 +91,14 @@ impl NodeBehaviour {
         let pub_key = local_key.public();
         let peer_id = pub_key.to_peer_id();
 
-        let bitswap = if config.bitswap {
+        let bitswap = if config.bitswap_client || config.bitswap_server {
             info!("init bitswap");
-            let bs_config = BitswapConfig::default();
+            // TODO(dig): server only mode is not implemented yet
+            let bs_config = if config.bitswap_server {
+                BitswapConfig::default()
+            } else {
+                BitswapConfig::default_client_mode()
+            };
             Some(Bitswap::new(peer_id, BitswapStore(rpc_client), bs_config).await)
         } else {
             None
@@ -183,8 +191,8 @@ impl NodeBehaviour {
         };
 
         let identify = {
-            let config = identify::Config::new("ipfs/0.1.0".into(), local_key.public())
-                .with_agent_version(format!("iroh/{}", env!("CARGO_PKG_VERSION")))
+            let config = identify::Config::new(PROTOCOL_VERSION.into(), local_key.public())
+                .with_agent_version(String::from(AGENT_VERSION))
                 .with_cache_size(64 * 1024);
             identify::Behaviour::new(config)
         };

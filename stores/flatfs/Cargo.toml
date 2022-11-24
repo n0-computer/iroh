@@ -6,9 +6,10 @@ authors = ["Friedel Ziegelmayer <me@dignifiedquire.com>"]
 license = "Apache-2.0/MIT"
 repository = "https://github.com/n0-computer/iroh"
 description = "Implementation of FlatFS"
+rust-version = "1.63"
 
 [dependencies]
-anyhow = "1.0.57"
+anyhow = "1"
 backoff = "0.4.0"
 ignore = "0.4.18"
 

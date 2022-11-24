@@ -4,7 +4,7 @@ use std::sync::Arc;
 use anyhow::{anyhow, Result};
 use clap::Parser;
 use iroh_gateway::{bad_bits::BadBits, core::Core, metrics};
-#[cfg(feature = "uds-gateway")]
+#[cfg(all(feature = "http-uds-gateway", unix))]
 use iroh_one::uds;
 use iroh_one::{
     cli::Args,
@@ -15,8 +15,6 @@ use iroh_rpc_client::Client as RpcClient;
 use iroh_rpc_types::Addr;
 use iroh_util::lock::ProgramLock;
 use iroh_util::{iroh_config_path, make_config};
-#[cfg(feature = "uds-gateway")]
-use tempdir::TempDir;
 use tokio::sync::RwLock;
 
 #[tokio::main(flavor = "multi_thread")]
@@ -27,12 +25,12 @@ async fn main() -> Result<()> {
     let args = Args::parse();
 
     let cfg_path = iroh_config_path(CONFIG_FILE_NAME)?;
-    let sources = vec![Some(cfg_path.as_path()), args.cfg.as_deref()];
+    let sources = [Some(cfg_path.as_path()), args.cfg.as_deref()];
     let mut config = make_config(
         // default
         Config::default(),
         // potential config files
-        sources,
+        &sources,
         // env var prefix for this config
         ENV_PREFIX,
         // map of present command line arguments
@@ -107,16 +105,20 @@ async fn main() -> Result<()> {
         server.await.unwrap();
     });
 
-    #[cfg(feature = "uds-gateway")]
+    #[cfg(all(feature = "http-uds-gateway", unix))]
     let uds_server_task = {
-        let mut path = TempDir::new("iroh")?.path().join("ipfsd.http");
+        let mut path = tempfile::Builder::new()
+            .prefix("iroh")
+            .tempdir()?
+            .path()
+            .join("ipfsd.http");
         if let Some(uds_path) = config.gateway_uds_path {
             path = uds_path;
         } else {
             // Create the parent path when using the default value since it's likely
             // it won't exist yet.
             if let Some(parent) = path.parent() {
-                let _ = std::fs::create_dir_all(&parent);
+                let _ = std::fs::create_dir_all(parent);
             }
         }
 
@@ -133,7 +135,7 @@ async fn main() -> Result<()> {
 
     store_rpc.abort();
     p2p_rpc.abort();
-    #[cfg(feature = "uds-gateway")]
+    #[cfg(all(feature = "http-uds-gateway", unix))]
     uds_server_task.abort();
     core_task.abort();
 

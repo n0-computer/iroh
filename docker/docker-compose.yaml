@@ -1,0 +1,42 @@
+# this is a standard, bare bones iroh configuration. More sophisticated setups
+# will take advantage of metrics, and provide custom configuration
+#
+# Usage:
+# run 'docker-compose up' from the docker directory, use 'iroh status' from
+# another terminal to interact with services, or visit localhost:9050 on a
+# browser to utilize the gateway
+version: "3.9"
+services:
+  iroh-gateway:
+    container_name: "iroh-gateway"
+    image: "n0computer/iroh-gateway:latest"
+    environment:
+      - "IROH_GATEWAY__RPC_CLIENT__P2P_ADDR=grpc://iroh-p2p:4401"
+      - "IROH_GATEWAY__RPC_CLIENT__STORE_ADDR=grpc://iroh-store:4402"
+    ports:
+      # public HTTP gateway port. eg: http://localhost:9050/ipfs/bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi
+      - "9050:9050"
+      # RPC port, iroh CLI uses this to control your gateway service
+      # this shouldn't be publically accessible, so we explicitly wire it
+      # to the local loopback address: 127.0.0.1
+      - "127.0.0.1:4400:4400"
+  iroh-p2p:
+    container_name: "iroh-p2p"
+    image: "n0computer/iroh-p2p:latest"
+    environment:
+      - "IROH_P2P__RPC_CLIENT__STORE_ADDR=grpc://iroh-store:4402"
+    ports:
+      # libp2p connection port. peers will dial your node here
+      - "4444:4444"
+      # RPC port, iroh CLI uses this to control your p2p service
+      # this shouldn't be publically accessible, so we explicitly wire it
+      # to the local loopback address: 127.0.0.1
+      - "127.0.0.1:4401:4401"
+  iroh-store:
+    container_name: "iroh-store"
+    image: "n0computer/iroh-store:latest"
+    ports:
+      # RPC port, iroh CLI uses this to control your store service
+      # this shouldn't be publically accessible, so we explicitly wire it
+      # to the local loopback address: 127.0.0.1
+      - "127.0.0.1:4402:4402"

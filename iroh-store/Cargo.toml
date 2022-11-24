@@ -1,18 +1,20 @@
 [package]
 name = "iroh-store"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 authors = ["Friedel Ziegelmayer <me@dignifiedquire.com>"]
 license = "Apache-2.0/MIT"
 repository = "https://github.com/n0-computer/iroh"
 description = "Implementation of the storage part of iroh"
+rust-version = "1.63"
 
 [dependencies]
-anyhow = "1.0.57"
+anyhow = "1"
+ahash = "0.8.0"
 async-trait = "0.1.56"
 bytecheck = "0.6.7"
 bytes = "1.1.0"
-cid = "0.8.4"
+cid = "0.9"
 clap = { version = "4.0.9", features = ["derive"] }
 config = "0.13.1"
 ctrlc = "3.2.2"
@@ -22,7 +24,7 @@ iroh-metrics = { path = "../iroh-metrics", default-features = false, features=["
 iroh-rpc-client = { path = "../iroh-rpc-client", default-features = false }
 iroh-rpc-types = { path = "../iroh-rpc-types", default-features = false }
 iroh-util = { path = "../iroh-util" }
-multihash = "0.16.3"
+multihash = "0.17"
 names = { version = "0.14.0", default-features = false }
 opentelemetry = { version = "0.18", features = ["rt-tokio"] }
 rkyv = { version = "0.7.37", features = ["validation"] }
@@ -36,7 +38,7 @@ tracing-subscriber = { version = "0.3.11", features = ["env-filter"] }
 
 [dev-dependencies]
 criterion = { version = "0.4.0", features = ["async_tokio"] }
-libipld = "0.14.0"
+libipld = "0.15.0"
 rayon = "1.5.3"
 tempfile = "3.3.0"
 tokio = { version = "1", features = ["rt", "macros", "rt-multi-thread"] }

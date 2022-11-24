@@ -1,20 +1,20 @@
 use std::{
     cell::RefCell,
     collections::HashMap,
+    env,
     path::{Path, PathBuf},
-    result,
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
     },
 };
 
+use anyhow::{anyhow, Result};
 use cid::{
     multihash::{Code, MultihashDigest},
     Cid,
 };
 use config::{Config, ConfigError, Environment, File, Map, Source, Value, ValueKind};
-use thiserror::Error;
 use tracing::debug;
 
 pub mod exitcodes;
@@ -53,7 +53,9 @@ pub async fn block_until_sigint() {
 
 /// Returns the path to the user's iroh config directory.
 ///
-/// The returned value depends on the operating system and is either a `Some`, containing a value from the following table, or a `None`.
+/// If the `IROH_CONFIG_DIR` environment variable is set it will be used unconditionally.
+/// Otherwise the returned value depends on the operating system according to the following
+/// table.
 ///
 /// | Platform | Value                                 | Example                          |
 /// | -------- | ------------------------------------- | -------------------------------- |
@@ -61,9 +63,11 @@ pub async fn block_until_sigint() {
 /// | macOS    | `$HOME`/Library/Application Support/iroh   | /Users/Alice/Library/Application Support/iroh |
 /// | Windows  | `{FOLDERID_RoamingAppData}`/iroh           | C:\Users\Alice\AppData\Roaming\iroh   |
 pub fn iroh_config_root() -> Result<PathBuf> {
-    let cfg = dirs_next::config_dir().ok_or(UtilError::NoDir {
-        purpose: "configuration data",
-    })?;
+    if let Some(val) = env::var_os("IROH_CONFIG_DIR") {
+        return Ok(PathBuf::from(val));
+    }
+    let cfg = dirs_next::config_dir()
+        .ok_or_else(|| anyhow!("operating environment provides no directory for configuration"))?;
     Ok(cfg.join(IROH_DIR))
 }
 
@@ -75,7 +79,9 @@ pub fn iroh_config_path(file_name: &str) -> Result<PathBuf> {
 
 /// Returns the path to the user's iroh data directory.
 ///
-/// The returned value depends on the operating system and is either a `Some`, containing a value from the following table, or a `None`.
+/// If the `IROH_DATA_DIR` environment variable is set it will be used unconditionally.
+/// Otherwise the returned value depends on the operating system according to the following
+/// table.
 ///
 /// | Platform | Value                                         | Example                                  |
 /// | -------- | --------------------------------------------- | ---------------------------------------- |
@@ -83,8 +89,11 @@ pub fn iroh_config_path(file_name: &str) -> Result<PathBuf> {
 /// | macOS    | `$HOME`/Library/Application Support/iroh      | /Users/Alice/Library/Application Support/iroh |
 /// | Windows  | `{FOLDERID_RoamingAppData}/iroh`              | C:\Users\Alice\AppData\Roaming\iroh           |
 pub fn iroh_data_root() -> Result<PathBuf> {
-    let path = dirs_next::data_dir().ok_or(UtilError::NoDir {
-        purpose: "application data",
+    if let Some(val) = env::var_os("IROH_DATA_DIR") {
+        return Ok(PathBuf::from(val));
+    }
+    let path = dirs_next::data_dir().ok_or_else(|| {
+        anyhow!("operating environment provides no directory for application data")
     })?;
     Ok(path.join(IROH_DIR))
 }
@@ -97,7 +106,9 @@ pub fn iroh_data_path(file_name: &str) -> Result<PathBuf> {
 
 /// Returns the path to the user's iroh cache directory.
 ///
-/// The returned value depends on the operating system and is either a `Some`, containing a value from the following table, or a `None`.
+/// If the `IROH_CACHE_DIR` environment variable is set it will be used unconditionally.
+/// Otherwise the returned value depends on the operating system according to the following
+/// table.
 ///
 /// | Platform | Value                                         | Example                                  |
 /// | -------- | --------------------------------------------- | ---------------------------------------- |
@@ -105,8 +116,11 @@ pub fn iroh_data_path(file_name: &str) -> Result<PathBuf> {
 /// | macOS    | `$HOME`/Library/Caches/iroh                   | /Users/Alice/Library/Caches/iroh         |
 /// | Windows  | `{FOLDERID_LocalAppData}/iroh`                | C:\Users\Alice\AppData\Roaming\iroh      |
 pub fn iroh_cache_root() -> Result<PathBuf> {
-    let path = dirs_next::cache_dir().ok_or(UtilError::NoDir {
-        purpose: "application data",
+    if let Some(val) = env::var_os("IROH_CACHE_DIR") {
+        return Ok(PathBuf::from(val));
+    }
+    let path = dirs_next::cache_dir().ok_or_else(|| {
+        anyhow!("operating environment provides no directory for application data")
     })?;
     Ok(path.join(IROH_DIR))
 }
@@ -136,7 +150,7 @@ impl Source for MetricsSource {
     fn clone_into_box(&self) -> Box<dyn Source + Send + Sync> {
         Box::new(self.clone())
     }
-    fn collect(&self) -> result::Result<Map<String, Value>, ConfigError> {
+    fn collect(&self) -> Result<Map<String, Value>, ConfigError> {
         let metrics = self.metrics.collect()?;
         let mut map = Map::new();
         insert_into_config_map(&mut map, "metrics", metrics);
@@ -144,18 +158,20 @@ impl Source for MetricsSource {
     }
 }
 
-/// make a config using a default, file sources, environment variables, and commandline flag
-/// overrides
+/// Make a config using a default, files, environment variables, and commandline flags.
 ///
-/// environment variables are expected to start with the `env_prefix`. Nested fields can be
+/// Later items in the *file_paths* slice will have a higher priority than earlier ones.
+///
+/// Environment variables are expected to start with the *env_prefix*. Nested fields can be
 /// accessed using `.`, if your environment allows env vars with `.`
 ///
-/// Note: For the metrics configuration env vars, it is recommended to use the metrics specific
-/// prefix `IROH_METRICS` to set a field in the metrics config. You can use the above dot notation to set
-/// a metrics field, eg, `IROH_CONFIG_METRICS.SERVICE_NAME`, but only if your environment allows it
+/// Note: For the metrics configuration env vars, it is recommended to use the metrics
+/// specific prefix `IROH_METRICS` to set a field in the metrics config. You can use the
+/// above dot notation to set a metrics field, eg, `IROH_CONFIG_METRICS.SERVICE_NAME`, but
+/// only if your environment allows it
 pub fn make_config<T, S, V>(
     default: T,
-    file_paths: Vec<Option<&Path>>,
+    file_paths: &[Option<&Path>],
     env_prefix: &str,
     flag_overrides: HashMap<S, V>,
 ) -> Result<T>
@@ -168,28 +184,35 @@ where
     let mut builder = Config::builder().add_source(default);
 
     // layer on config options from files
-    for path in file_paths.into_iter().flatten() {
+    for path in file_paths.iter().flatten() {
         if path.exists() {
-            let p = path.to_str().ok_or(UtilError::EmptyPath)?;
+            let p = path.to_str().ok_or_else(|| anyhow::anyhow!("empty path"))?;
             builder = builder.add_source(File::with_name(p));
         }
     }
 
     // next, add any environment variables
-    builder = builder.add_source(Environment::with_prefix(env_prefix).try_parsing(true));
+    builder = builder.add_source(
+        Environment::with_prefix(env_prefix)
+            .separator("__")
+            .try_parsing(true),
+    );
 
     // pull metrics config from env variables
     // nesting into this odd `MetricsSource` struct, gives us the option of
     // using the more convienient prefix `IROH_METRICS` to set metrics env vars
-    let mut metrics =
-        Config::builder().add_source(Environment::with_prefix("IROH_METRICS").try_parsing(true));
+    let mut metrics = Config::builder().add_source(
+        Environment::with_prefix("IROH_METRICS")
+            .separator("__")
+            .try_parsing(true),
+    );
 
     // allow custom `IROH_INSTANCE_ID` env var
-    if let Ok(instance_id) = std::env::var("IROH_INSTANCE_ID") {
+    if let Ok(instance_id) = env::var("IROH_INSTANCE_ID") {
         metrics = metrics.set_override("instance_id", instance_id)?;
     }
     // allow custom `IROH_ENV` env var
-    if let Ok(service_env) = std::env::var("IROH_ENV") {
+    if let Ok(service_env) = env::var("IROH_ENV") {
         metrics = metrics.set_override("service_env", service_env)?;
     }
     let metrics = metrics.build().unwrap();
@@ -231,30 +254,73 @@ pub fn increase_fd_limit() -> std::io::Result<u64> {
     Ok(soft)
 }
 
-/// Alias for a `Result` with the error type set to `UtilError`
-pub type Result<T> = result::Result<T, UtilError>;
-
-#[derive(Error, Debug)]
-pub enum UtilError {
-    #[error("empty path")]
-    EmptyPath,
-    #[error("operating environment provides no directory for {purpose}")]
-    NoDir { purpose: &'static str },
-    #[error("configuration error: {source}")]
-    BadConfig {
-        #[from]
-        source: config::ConfigError,
-    },
-}
-
 #[cfg(test)]
 mod tests {
+    use serde::Deserialize;
+    use testdir::testdir;
+
     use super::*;
+
     #[test]
-    fn test_iroh_config_path() {
+    fn test_iroh_directory_paths() {
         let got = iroh_config_path("foo.bar").unwrap();
         let got = got.to_str().unwrap().to_string();
         let got = got.replace('\\', "/"); // handle windows paths
-        assert!(got.ends_with("/iroh/foo.bar"));
+        assert!(dbg!(got).ends_with("/iroh/foo.bar"));
+
+        // Now test the overrides by environment variable.  We have to do this in the same
+        // test since tests are run in parallel but changing environment variables affects
+        // the entire process.
+        temp_env::with_var("IROH_CONFIG_DIR", Some("/a/config/dir"), || {
+            let res = iroh_config_path("iroh-test").unwrap();
+            assert_eq!(res, PathBuf::from("/a/config/dir/iroh-test"));
+        });
+
+        temp_env::with_var("IROH_DATA_DIR", Some("/a/data/dir"), || {
+            let res = iroh_data_path("iroh-test").unwrap();
+            assert_eq!(res, PathBuf::from("/a/data/dir/iroh-test"));
+        });
+
+        temp_env::with_var("IROH_CACHE_DIR", Some("/a/cache/dir"), || {
+            let res = iroh_cache_path("iroh-test").unwrap();
+            assert_eq!(res, PathBuf::from("/a/cache/dir/iroh-test"));
+        });
+    }
+
+    #[derive(Debug, Clone, Deserialize)]
+    struct Config {
+        item: String,
+    }
+
+    impl Source for Config {
+        fn clone_into_box(&self) -> Box<dyn Source + Send + Sync> {
+            Box::new(self.clone())
+        }
+
+        fn collect(&self) -> Result<Map<String, Value>, ConfigError> {
+            let mut map = Map::new();
+            insert_into_config_map(&mut map, "item", self.item.clone());
+            Ok(map)
+        }
+    }
+
+    #[test]
+    fn test_make_config_priority() {
+        // Asserting that later items have a higher priority
+        let cfgdir = testdir!();
+        let cfgfile0 = cfgdir.join("cfg0.toml");
+        std::fs::write(&cfgfile0, r#"item = "zero""#).unwrap();
+        let cfgfile1 = cfgdir.join("cfg1.toml");
+        std::fs::write(&cfgfile1, r#"item = "one""#).unwrap();
+        let cfg = make_config(
+            Config {
+                item: String::from("default"),
+            },
+            &[Some(cfgfile0.as_path()), Some(cfgfile1.as_path())],
+            "NO_PREFIX_PLEASE_",
+            HashMap::<String, String>::new(),
+        )
+        .unwrap();
+        assert_eq!(cfg.item, "one");
     }
 }

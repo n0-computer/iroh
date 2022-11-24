@@ -6,7 +6,6 @@ use thiserror::Error;
 use tracing::warn;
 
 use crate::exitcodes;
-use crate::UtilError;
 
 /// Manages a lock file used to track if an iroh program is already running.
 /// Aquired locks write a file to iroh's application data path containing the
@@ -140,7 +139,7 @@ impl ProgramLock {
 
     fn write(&mut self) -> Result<()> {
         // create lock. ensure path to lock exists
-        std::fs::create_dir_all(&crate::iroh_data_root()?)?;
+        std::fs::create_dir_all(crate::iroh_data_root()?)?;
         let mut file = File::create(&self.path)?;
         let pid = sysinfo::get_current_pid().unwrap();
         file.write_all(pid.to_string().as_bytes())?;
@@ -203,7 +202,7 @@ pub enum LockError {
     #[error("invalid path for lock file: {source}")]
     InvalidPath {
         #[source]
-        source: UtilError,
+        source: anyhow::Error,
     },
     #[error("operating system i/o: {source}")]
     Io {
@@ -213,7 +212,7 @@ pub enum LockError {
     #[error("{source}")]
     Util {
         #[from]
-        source: UtilError,
+        source: anyhow::Error,
     },
 }
 

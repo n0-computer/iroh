@@ -24,19 +24,7 @@ impl P2p {
     }
 
     pub async fn lookup_local(&self) -> Result<Lookup> {
-        let (_, listen_addrs) = self
-            .client
-            .get_listening_addrs()
-            .await
-            .map_err(|e| map_service_error("p2p", e))?;
-        Ok(Lookup {
-            peer_id: self.client.local_peer_id().await?,
-            listen_addrs,
-            observed_addrs: self.client.external_addresses().await?,
-            protocol_version: String::new(),
-            agent_version: String::new(),
-            protocols: Default::default(),
-        })
+        self.client.lookup_local().await
     }
 
     pub async fn lookup(&self, addr: &PeerIdOrAddr) -> Result<Lookup> {
