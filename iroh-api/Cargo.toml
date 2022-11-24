@@ -14,7 +14,7 @@ testing = ["dep:mockall"]
 anyhow = "1"
 async-stream = "0.3.3"
 bytes = "1.1.0"
-cid = "0.8.5"
+cid = "0.9"
 config = "0.13.1"
 futures = "0.3.21"
 iroh-metrics = { path = "../iroh-metrics", default-features = false, features = ["rpc-grpc"] }
