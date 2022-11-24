@@ -14,7 +14,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macOS-latest, windows-latest]
+        os: [ubuntu-latest, macOS-latest]
         rust: [stable]
         experimental: [false]
         include:
@@ -28,10 +28,10 @@ jobs:
             release-arch: aarch64
             protoc-arch: osx-aarch_64
             runner: [self-hosted, macOS, ARM64]
-          - os: windows-latest
-            release-os: windows
-            release-arch: amd64
-            runner: [self-hosted, windows, X64]
+          # - os: windows-latest
+          #   release-os: windows
+          #   release-arch: amd64
+          #   runner: [self-hosted, windows, X64]
 
     env:
       RUST_BACKTRACE: full
