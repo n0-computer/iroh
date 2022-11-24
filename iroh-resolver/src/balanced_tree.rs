@@ -241,9 +241,7 @@ mod tests {
     const CHUNK_SIZE: u64 = std::mem::size_of::<usize>() as u64;
 
     fn test_chunk_stream(num_chunks: usize) -> impl Stream<Item = std::io::Result<Bytes>> {
-        futures::stream::iter(
-            (0..num_chunks).map(|n| Ok(BytesMut::from(&n.to_be_bytes()[..]).freeze())),
-        )
+        futures::stream::iter((0..num_chunks).map(|n| Ok(n.to_be_bytes().to_vec().into())))
     }
 
     async fn build_expect_tree(num_chunks: usize, degree: usize) -> Vec<Vec<Block>> {

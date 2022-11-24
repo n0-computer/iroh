@@ -845,8 +845,7 @@ mod tests {
             "chunks: {:?}",
             chunks.iter().map(|c| c.len()).collect::<Vec<_>>()
         );
-        let stream =
-            futures::stream::iter(chunks.iter().map(|s| -> io::Result<&[u8]> { Ok(&s[..]) }));
+        let stream = futures::stream::iter(chunks.iter().map(|s| io::Result::Ok(&s[..])));
         let reader = tokio_util::io::StreamReader::new(stream);
         let split = chunker.chunks(reader);
         let chunks = split.try_collect::<Vec<_>>().await.unwrap();
