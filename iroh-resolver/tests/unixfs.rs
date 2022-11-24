@@ -1,4 +1,4 @@
-use std::{path::PathBuf, time::Instant};
+use std::{io::Read, path::PathBuf, time::Instant};
 
 use anyhow::Result;
 use bytes::Bytes;
@@ -12,7 +12,9 @@ async fn read_fixture(path: impl AsRef<std::path::Path>) -> Result<Vec<u8>> {
     let path = path.as_ref().to_owned();
     tokio::task::spawn_blocking(move || {
         let mut file = std::fs::File::open(path)?;
-        let decompressed = zstd::stream::decode_all(&mut file)?;
+        let mut decompressed = Vec::new();
+        let mut decoder = ruzstd::streaming_decoder::StreamingDecoder::new(&mut file)?;
+        decoder.read_to_end(&mut decompressed)?;
 
         Ok(decompressed)
     })
