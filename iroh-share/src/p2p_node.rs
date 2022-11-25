@@ -147,7 +147,7 @@ impl P2pNode {
         };
         let config = config::Config {
             libp2p: config::Libp2pConfig {
-                listening_multiaddr: format!("/ip4/0.0.0.0/tcp/{port}").parse().unwrap(),
+                listening_multiaddrs: vec![format!("/ip4/0.0.0.0/tcp/{port}").parse().unwrap()],
                 mdns: false,
                 kademlia: true,
                 autonat: true,

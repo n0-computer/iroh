@@ -129,8 +129,10 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
         let keypair = load_identity(&mut keychain).await?;
         let mut swarm = build_swarm(&libp2p_config, &keypair, rpc_client.clone()).await?;
 
-        Swarm::listen_on(&mut swarm, libp2p_config.listening_multiaddr.clone()).unwrap();
-        println!("{}", libp2p_config.listening_multiaddr);
+        for addr in &libp2p_config.listening_multiaddrs {
+            Swarm::listen_on(&mut swarm, addr.clone())?;
+            println!("{}", addr);
+        }
 
         Ok(Node {
             swarm,
@@ -490,27 +492,35 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                 } = e
                 {
                     match result {
-                        QueryResult::GetProviders(Ok(GetProvidersOk {
-                            key, providers, ..
-                        })) => {
-                            let swarm = self.swarm.behaviour_mut();
-                            if let Some(kad) = swarm.kad.as_mut() {
-                                debug!("provider results for {:?} last: {}", key, step.last);
+                        QueryResult::GetProviders(Ok(p)) => {
+                            match p {
+                                GetProvidersOk::FoundProviders { key, providers } => {
+                                    let swarm = self.swarm.behaviour_mut();
+                                    if let Some(kad) = swarm.kad.as_mut() {
+                                        debug!(
+                                            "provider results for {:?} last: {}",
+                                            key, step.last
+                                        );
 
-                                // filter out bad providers.
-                                let providers: HashSet<_> = providers
-                                    .into_iter()
-                                    .filter(|provider| {
-                                        let is_bad = swarm.peer_manager.is_bad_peer(provider);
-                                        if is_bad {
-                                            inc!(P2PMetrics::SkippedPeerKad);
-                                        }
-                                        !is_bad
-                                    })
-                                    .collect();
+                                        // Filter out bad providers.
+                                        let providers: HashSet<_> = providers
+                                            .into_iter()
+                                            .filter(|provider| {
+                                                let is_bad =
+                                                    swarm.peer_manager.is_bad_peer(provider);
+                                                if is_bad {
+                                                    inc!(P2PMetrics::SkippedPeerKad);
+                                                }
+                                                !is_bad
+                                            })
+                                            .collect();
 
-                                self.providers
-                                    .handle_get_providers_ok(id, step.last, key, providers, kad);
+                                        self.providers.handle_get_providers_ok(
+                                            id, step.last, key, providers, kad,
+                                        );
+                                    }
+                                }
+                                GetProvidersOk::FinishedWithNoAdditionalRecord { .. } => {}
                             }
                         }
                         QueryResult::GetProviders(Err(error)) => {
@@ -1102,7 +1112,7 @@ mod tests {
     struct TestRunnerBuilder {
         /// An Optional listening address for this node
         /// When `None`, the swarm will connect to a random tcp port.
-        addr: Option<Multiaddr>,
+        addrs: Option<Vec<Multiaddr>>,
         /// The listening addresses for the p2p client.
         /// When `None`, the client will communicate over a memory rpc channel
         rpc_addrs: Option<(P2pServerAddr, P2pClientAddr)>,
@@ -1119,7 +1129,7 @@ mod tests {
     impl TestRunnerBuilder {
         fn new() -> Self {
             Self {
-                addr: None,
+                addrs: None,
                 rpc_addrs: None,
                 bootstrap: true,
                 seed: None,
@@ -1127,8 +1137,8 @@ mod tests {
             }
         }
 
-        fn with_addr(mut self, addr: Multiaddr) -> Self {
-            self.addr = Some(addr);
+        fn with_addrs(mut self, addrs: Vec<Multiaddr>) -> Self {
+            self.addrs = Some(addrs);
             self
         }
 
@@ -1164,10 +1174,11 @@ mod tests {
             };
             let mut network_config = Config::default_with_rpc(rpc_client_addr.clone());
 
-            if let Some(addr) = self.addr {
-                network_config.libp2p.listening_multiaddr = addr;
+            if let Some(addr) = self.addrs {
+                network_config.libp2p.listening_multiaddrs = addr;
             } else {
-                network_config.libp2p.listening_multiaddr = "/ip4/0.0.0.0/tcp/0".parse().unwrap();
+                network_config.libp2p.listening_multiaddrs =
+                    vec!["/ip4/0.0.0.0/tcp/0".parse().unwrap()];
             }
 
             if !self.bootstrap {
@@ -1271,7 +1282,7 @@ mod tests {
         rpc_client_addr: P2pClientAddr,
     ) -> Result<()> {
         let test_runner = TestRunnerBuilder::new()
-            .with_addr(addr)
+            .with_addrs(vec![addr])
             .with_rpc_addrs(rpc_server_addr, rpc_client_addr)
             .build()
             .await?;
