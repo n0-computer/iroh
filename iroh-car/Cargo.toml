@@ -9,16 +9,16 @@ description = "Implementation the car files for iroh"
 rust-version = "1.63"
 
 [dependencies]
-cid = "0.8"
+cid = "0.9"
 futures = "0.3.21"
 integer-encoding = { version = "3.0", features = ["tokio_async"] }
-ipld = { package = "libipld", version = "0.14"}
-ipld-cbor = { package = "libipld-cbor", version = "0.14" }
-multihash = "0.16"
+ipld = { package = "libipld", version = "0.15"}
+ipld-cbor = { package = "libipld-cbor", version = "0.15" }
 thiserror = "1.0"
 tokio = { version = "1", features = ["io-util"] }
 
 [dev-dependencies]
+multihash = "0.17"
 tokio = { version = "1", features = ["macros", "sync", "rt", "fs", "io-util"] }
 
 [features]

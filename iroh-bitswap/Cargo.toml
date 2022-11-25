@@ -19,7 +19,7 @@ async-channel = "1.7.1"
 async-trait = "0.1.57"
 asynchronous-codec = "0.6.0"
 bytes = "1.1.0"
-cid = "0.8.0"
+cid = "0.9"
 deadqueue = "0.2.3"
 derivative = "2.2.0"
 futures = "0.3.21"
@@ -27,7 +27,7 @@ iroh-metrics = { path = "../iroh-metrics", default-features = false, features = 
 iroh-util = { path = "../iroh-util" }
 keyed_priority_queue = "0.4.1"
 libp2p = { version = "0.50", default-features = false, features = ["ping"] }
-multihash = "0.16.0"
+multihash = "0.17"
 names = { version = "0.14.0", default-features = false }
 num_enum = "0.5.7"
 once_cell = "1.14.0"
