@@ -6,12 +6,13 @@ use libp2p::{
     core::{
         self,
         muxing::StreamMuxerBox,
-        transport::{timeout::TransportTimeout, Boxed, OrTransport},
+        transport::{Boxed, OrTransport},
     },
     dns,
     identity::Keypair,
-    mplex, noise,
-    swarm::{ConnectionLimits, Executor, SwarmBuilder},
+    mplex, noise, quic,
+    swarm::{derive_prelude::EitherOutput, ConnectionLimits, Executor, SwarmBuilder},
+    tcp, websocket,
     yamux::{self, WindowUpdateMode},
     PeerId, Swarm, Transport,
 };
@@ -28,18 +29,22 @@ async fn build_transport(
 ) {
     // TODO: make transports configurable
 
-    let tcp_config = libp2p::tcp::Config::default().port_reuse(true);
-    let transport = libp2p::tcp::tokio::Transport::new(tcp_config.clone());
-    let transport =
-        libp2p::websocket::WsConfig::new(libp2p::tcp::tokio::Transport::new(tcp_config))
-            .or_transport(transport);
+    let port_reuse = true;
+    let connection_timeout = Duration::from_secs(30);
 
-    // TODO: configurable
-    let transport = TransportTimeout::new(transport, Duration::from_secs(10));
-    let dns_cfg = dns::ResolverConfig::cloudflare();
-    let dns_opts = dns::ResolverOpts::default();
-    let transport = dns::TokioDnsConfig::custom(transport, dns_cfg, dns_opts).unwrap();
+    // TCP
+    let tcp_config = tcp::Config::default().port_reuse(port_reuse);
+    let tcp_transport = tcp::tokio::Transport::new(tcp_config.clone());
 
+    // Websockets
+    let ws_tcp = websocket::WsConfig::new(tcp::tokio::Transport::new(tcp_config));
+    let tcp_ws_transport = tcp_transport.or_transport(ws_tcp);
+
+    // Quic
+    let quic_config = quic::Config::new(keypair);
+    let quic_transport = quic::tokio::Transport::new(quic_config);
+
+    // Noise config for TCP & Websockets
     let auth_config = {
         let dh_keys = noise::Keypair::<noise::X25519Spec>::new()
             .into_authentic(keypair)
@@ -48,6 +53,7 @@ async fn build_transport(
         noise::NoiseConfig::xx(dh_keys).into_authenticated()
     };
 
+    // Stream muxer config for TCP & Websockets
     let muxer_config = {
         let mut mplex_config = mplex::MplexConfig::new();
         mplex_config.set_max_buffer_size(usize::MAX);
@@ -59,15 +65,14 @@ async fn build_transport(
         core::upgrade::SelectUpgrade::new(yamux_config, mplex_config)
     };
 
-    // TODO: configurable
-    let connection_timeout = Duration::from_secs(30);
-    if config.relay_client {
+    // Enable Relay if enabled
+    let (tcp_ws_transport, relay_client) = if config.relay_client {
         let (relay_transport, relay_client) =
             libp2p::relay::v2::client::Client::new_transport_and_behaviour(
                 keypair.public().to_peer_id(),
             );
 
-        let transport = OrTransport::new(relay_transport, transport);
+        let transport = OrTransport::new(relay_transport, tcp_ws_transport);
         let transport = transport
             .upgrade(core::upgrade::Version::V1Lazy)
             .authenticate(auth_config)
@@ -77,15 +82,32 @@ async fn build_transport(
 
         (transport, Some(relay_client))
     } else {
-        let transport = transport
+        let tcp_transport = tcp_ws_transport
             .upgrade(core::upgrade::Version::V1Lazy)
             .authenticate(auth_config)
             .multiplex(muxer_config)
-            .timeout(connection_timeout)
             .boxed();
 
-        (transport, None)
-    }
+        (tcp_transport, None)
+    };
+
+    // Merge in Quick
+    let transport = OrTransport::new(quic_transport, tcp_ws_transport)
+        .map(|o, _| match o {
+            EitherOutput::First((peer_id, muxer)) => (peer_id, StreamMuxerBox::new(muxer)),
+            EitherOutput::Second((peer_id, muxer)) => (peer_id, StreamMuxerBox::new(muxer)),
+        })
+        .boxed();
+
+    // Setup dns resolution
+
+    let dns_cfg = dns::ResolverConfig::cloudflare();
+    let dns_opts = dns::ResolverOpts::default();
+    let transport = dns::TokioDnsConfig::custom(transport, dns_cfg, dns_opts)
+        .unwrap()
+        .boxed();
+
+    (transport, relay_client)
 }
 
 pub(crate) async fn build_swarm(

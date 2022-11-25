@@ -1,6 +1,6 @@
 use std::{
     fmt::{Debug, Display},
-    net::{SocketAddr, ToSocketAddrs},
+    net::SocketAddr,
     str::FromStr,
 };
 
@@ -86,6 +86,7 @@ impl<T> FromStr for Addr<T> {
 
         #[cfg(feature = "grpc")]
         {
+            use std::net::ToSocketAddrs;
             let mut parts = s.split("://");
             if let Some(prefix) = parts.next() {
                 if prefix == "grpc" {
