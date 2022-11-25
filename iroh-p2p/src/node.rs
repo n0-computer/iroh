@@ -492,27 +492,35 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                 } = e
                 {
                     match result {
-                        QueryResult::GetProviders(Ok(GetProvidersOk {
-                            key, providers, ..
-                        })) => {
-                            let swarm = self.swarm.behaviour_mut();
-                            if let Some(kad) = swarm.kad.as_mut() {
-                                debug!("provider results for {:?} last: {}", key, step.last);
+                        QueryResult::GetProviders(Ok(p)) => {
+                            match p {
+                                GetProvidersOk::FoundProviders { key, providers } => {
+                                    let swarm = self.swarm.behaviour_mut();
+                                    if let Some(kad) = swarm.kad.as_mut() {
+                                        debug!(
+                                            "provider results for {:?} last: {}",
+                                            key, step.last
+                                        );
 
-                                // filter out bad providers.
-                                let providers: HashSet<_> = providers
-                                    .into_iter()
-                                    .filter(|provider| {
-                                        let is_bad = swarm.peer_manager.is_bad_peer(provider);
-                                        if is_bad {
-                                            inc!(P2PMetrics::SkippedPeerKad);
-                                        }
-                                        !is_bad
-                                    })
-                                    .collect();
+                                        // Filter out bad providers.
+                                        let providers: HashSet<_> = providers
+                                            .into_iter()
+                                            .filter(|provider| {
+                                                let is_bad =
+                                                    swarm.peer_manager.is_bad_peer(provider);
+                                                if is_bad {
+                                                    inc!(P2PMetrics::SkippedPeerKad);
+                                                }
+                                                !is_bad
+                                            })
+                                            .collect();
 
-                                self.providers
-                                    .handle_get_providers_ok(id, step.last, key, providers, kad);
+                                        self.providers.handle_get_providers_ok(
+                                            id, step.last, key, providers, kad,
+                                        );
+                                    }
+                                }
+                                GetProvidersOk::FinishedWithNoAdditionalRecord { .. } => {}
                             }
                         }
                         QueryResult::GetProviders(Err(error)) => {
