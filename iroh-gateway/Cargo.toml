@@ -1,6 +1,6 @@
 [package]
 name = "iroh-gateway"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 license = "Apache-2.0/MIT"
 readme = "README.md"
@@ -14,7 +14,7 @@ async-recursion = "1.0.0"
 async-trait = "0.1.56"
 axum = "0.5.15"
 bytes = "1.1.0"
-cid = "0.8.6"
+cid = "0.9"
 clap = { version = "4.0.9", features = ["derive"] }
 config = "0.13.1"
 futures = "0.3.21"

@@ -1,6 +1,6 @@
 [package]
 name = "xtask"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 publish = false
 rust-version = "1.63"
@@ -10,4 +10,5 @@ anyhow = "1"
 clap = { version = "4.0.9", features = ["derive"] }
 clap_mangen = "0.2.2"
 dirs-next = "2.0.0"
+xtaskops = "0.2.2"
 iroh = { path = "../iroh" }

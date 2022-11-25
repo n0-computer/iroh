@@ -20,6 +20,7 @@ use tracing::{debug, trace};
 
 use async_trait::async_trait;
 use iroh_bitswap::Block;
+use iroh_rpc_client::Lookup;
 use iroh_rpc_types::p2p::{
     BitswapRequest, BitswapResponse, ConnectByPeerIdRequest, ConnectRequest, DisconnectRequest,
     GetListeningAddrsResponse, GetPeersResponse, GossipsubAllPeersResponse, GossipsubPeerAndTopics,
@@ -319,6 +320,14 @@ impl RpcP2p for P2p {
         Ok(ack)
     }
 
+    #[tracing::instrument(skip(self))]
+    async fn lookup_local(&self, _: ()) -> Result<PeerInfo> {
+        let (s, r) = oneshot::channel();
+        self.sender.send(RpcMessage::LookupLocalPeerInfo(s)).await?;
+        let lookup = r.await?;
+        Ok(peer_info_from_lookup(lookup))
+    }
+
     #[tracing::instrument(skip(self, req))]
     async fn lookup(&self, req: LookupRequest) -> Result<PeerInfo> {
         let (s, r) = oneshot::channel();
@@ -522,7 +531,18 @@ fn peer_info_from_identify_info(i: IdentifyInfo) -> PeerInfo {
             .map(|addr| addr.to_vec())
             .collect(),
         protocols: i.protocols,
-        observed_addr: i.observed_addr.to_vec(),
+        observed_addrs: vec![i.observed_addr.to_vec()],
+    }
+}
+
+fn peer_info_from_lookup(l: Lookup) -> PeerInfo {
+    PeerInfo {
+        peer_id: l.peer_id.to_bytes(),
+        protocol_version: l.protocol_version,
+        agent_version: l.agent_version,
+        listen_addrs: l.listen_addrs.iter().map(|a| a.to_vec()).collect(),
+        protocols: l.protocols,
+        observed_addrs: l.observed_addrs.iter().map(|a| a.to_vec()).collect(),
     }
 }
 
@@ -583,6 +603,7 @@ pub enum RpcMessage {
     ListenForIdentify(oneshot::Sender<Result<IdentifyInfo>>, PeerId),
     CancelListenForIdentify(oneshot::Sender<()>, PeerId),
     AddressesOfPeer(oneshot::Sender<Vec<Multiaddr>>, PeerId),
+    LookupLocalPeerInfo(oneshot::Sender<Lookup>),
     Shutdown,
 }
 

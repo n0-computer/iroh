@@ -21,6 +21,7 @@ use lru::LruCache;
 pub struct PeerManager {
     info: AHashMap<PeerId, Info>,
     bad_peers: LruCache<PeerId, ()>,
+    supported_protocols: Vec<String>,
 }
 
 #[derive(Default, Debug, Clone)]
@@ -43,6 +44,7 @@ impl Default for PeerManager {
         PeerManager {
             info: Default::default(),
             bad_peers: LruCache::new(DEFAULT_BAD_PEER_CAP.unwrap()),
+            supported_protocols: Default::default(),
         }
     }
 }
@@ -67,6 +69,10 @@ impl PeerManager {
 
     pub fn info_for_peer(&self, peer_id: &PeerId) -> Option<&Info> {
         self.info.get(peer_id)
+    }
+
+    pub fn supported_protocols(&self) -> Vec<String> {
+        self.supported_protocols.clone()
     }
 }
 
@@ -186,8 +192,26 @@ impl NetworkBehaviour for PeerManager {
     fn poll(
         &mut self,
         _cx: &mut Context<'_>,
-        _params: &mut impl PollParameters,
+        params: &mut impl PollParameters,
     ) -> Poll<NetworkBehaviourAction<Self::OutEvent, Self::ConnectionHandler>> {
+        // TODO(ramfox):
+        // We can only get the supported protocols of the local node by examining the
+        // `PollParameters`, which mean you can only get the supported protocols by examining the
+        // `PollParameters` in this method (`poll`) of a network behaviour.
+        // I injected this responsibility in the `peer_manager`, because it's the only "simple"
+        // network behaviour we have implemented.
+        // There is an issue up to remove `PollParameters`, and a discussion into how to instead
+        // get the `supported_protocols` of the node:
+        // https://github.com/libp2p/rust-libp2p/issues/3124
+        // When that is resolved, we can hopefully remove this responsibility from the `peer_manager`,
+        // where it, frankly, doesn't belong.
+        if self.supported_protocols.is_empty() {
+            self.supported_protocols = params
+                .supported_protocols()
+                .map(|p| String::from_utf8_lossy(&p).to_string())
+                .collect();
+        }
+
         Poll::Pending
     }
 }

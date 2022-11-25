@@ -22,6 +22,7 @@ service P2p {
   rpc PeerDisconnect(DisconnectRequest) returns (google.protobuf.Empty) {}
   rpc Shutdown(google.protobuf.Empty) returns (google.protobuf.Empty) {}
   rpc Lookup(LookupRequest) returns (PeerInfo) {}
+  rpc LookupLocal(google.protobuf.Empty) returns (PeerInfo) {}
 
   rpc GossipsubAddExplicitPeer(GossipsubPeerIdMsg) returns (google.protobuf.Empty) {}
   rpc GossipsubAllMeshPeers(google.protobuf.Empty) returns (GossipsubPeersResponse) {}
@@ -132,8 +133,8 @@ message PeerInfo {
   repeated bytes listen_addrs = 4;
   // vec of Strings
   repeated string protocols = 5;
-  // Multiaddr
-  bytes observed_addr = 6;
+  // vec of Multiaddr
+  repeated bytes observed_addrs = 6;
 }
 message Multiaddrs {
   // Serialized list of multiaddrs

@@ -14,7 +14,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macOS-latest, windows-latest]
+        os: [ubuntu-latest, macOS-latest]
         rust: [stable]
         experimental: [false]
         include:
@@ -28,10 +28,11 @@ jobs:
             release-arch: aarch64
             protoc-arch: osx-aarch_64
             runner: [self-hosted, macOS, ARM64]
-          - os: windows-latest
-            release-os: windows
-            release-arch: amd64
-            runner: [self-hosted, windows, X64]
+          # - os: windows-latest
+          #   release-os: windows
+          #   release-arch: amd64
+          #   runner: [self-hosted, windows, X64]
+
     env:
       RUST_BACKTRACE: full
       # Force not building debuginfo to save space on disk.
@@ -71,7 +72,7 @@ jobs:
       run: |
         PROTOC_VERSION=3.20.1
         PROTOC_ZIP=protoc-$PROTOC_VERSION-$PROTOC_ARCH.zip
-        curl -OL https://github.com/protocolbuffers/protobuf/releases/download/v$PROTOC_VERSION/$PROTOC_ZIP
+        curl --retry 3 --retry-max-time 90 -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" -OL https://github.com/protocolbuffers/protobuf/releases/download/v$PROTOC_VERSION/$PROTOC_ZIP
         sudo unzip -o $PROTOC_ZIP -d /usr/local bin/protoc
         sudo unzip -o $PROTOC_ZIP -d /usr/local 'include/*'
         rm -f $PROTOC_ZIP
@@ -116,23 +117,11 @@ jobs:
 
     - name: tests
       timeout-minutes: 30
-      env:
-        # iroh-util/src/lock.rs#test_locks uses a fork() command & fails only in
-        # GHA if this is not present
-        # https://twitter.com/steipete/status/921066430220652544?lang=en
-        # https://blog.phusion.nl/2017/10/13/why-ruby-app-servers-break-on-macos-high-sierra-and-what-can-be-done-about-it/
-        OBJC_DISABLE_INITIALIZE_FORK_SAFETY: "YES"
       run: |
         cargo test --workspace --all-features --all-targets
 
     - name: tests w/o default features
       timeout-minutes: 30
-      env:
-        # iroh-util/src/lock.rs#test_locks uses a fork() command & fails only in
-        # GHA if this is not present
-        # https://twitter.com/steipete/status/921066430220652544?lang=en
-        # https://blog.phusion.nl/2017/10/13/why-ruby-app-servers-break-on-macos-high-sierra-and-what-can-be-done-about-it/
-        OBJC_DISABLE_INITIALIZE_FORK_SAFETY: "YES"
       run: |
         cargo test --workspace --no-default-features --all-targets
 
@@ -216,7 +205,7 @@ jobs:
 
     - name: build release
       run: |
-        cargo build --profile optimized-release -p iroh -p iroh-gateway -p iroh-p2p -p iroh-store
+        cargo build --profile optimized-release -p iroh -p iroh-gateway -p iroh-p2p -p iroh-store -p iroh-one
 
     - name: Setup awscli on linux
       if: matrix.name == 'ubuntu-latest'
@@ -252,6 +241,7 @@ jobs:
         aws s3 cp ./target/optimized-release/iroh-p2p s3://vorc/iroh-p2p-${RELEASE_OS}-${RELEASE_ARCH}-${GITHUB_SHA::7} --no-progress
         aws s3 cp ./target/optimized-release/iroh-store s3://vorc/iroh-store-${RELEASE_OS}-${RELEASE_ARCH}-${GITHUB_SHA::7} --no-progress
         aws s3 cp ./target/optimized-release/iroh s3://vorc/iroh-${RELEASE_OS}-${RELEASE_ARCH}-${GITHUB_SHA::7} --no-progress
+        aws s3 cp ./target/optimized-release/iroh-one s3://vorc/iroh-one-${RELEASE_OS}-${RELEASE_ARCH}-${GITHUB_SHA::7} --no-progress
 
     - name: push release latest
       if: matrix.os != 'windows-latest'
@@ -260,6 +250,65 @@ jobs:
         aws s3 cp ./target/optimized-release/iroh-p2p s3://vorc/iroh-p2p-${RELEASE_OS}-${RELEASE_ARCH}-latest --no-progress
         aws s3 cp ./target/optimized-release/iroh-store s3://vorc/iroh-store-${RELEASE_OS}-${RELEASE_ARCH}-latest --no-progress
         aws s3 cp ./target/optimized-release/iroh s3://vorc/iroh-${RELEASE_OS}-${RELEASE_ARCH}-latest --no-progress
+        aws s3 cp ./target/optimized-release/iroh-one s3://vorc/iroh-one-${RELEASE_OS}-${RELEASE_ARCH}-latest --no-progress
+
+  coverage:
+    name: Coverage
+    runs-on: ${{ matrix.runner }}
+    continue-on-error: false
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+        rust: [stable]
+        experimental: [false]
+        include:
+          - os: ubuntu-latest
+            release-os: linux
+            release-arch: amd64
+            protoc-arch: linux-x86_64
+            runner: [self-hosted, linux, X64]
+    env:
+      RUST_BACKTRACE: full
+      RUSTV: ${{ matrix.rust }}
+    steps:
+    - uses: actions/checkout@master
+
+    - name: Set build arch
+      run: |
+        echo "PROTOC_ARCH=${{ matrix.protoc-arch }}" >> $GITHUB_ENV
+
+    - name: Install ${{ matrix.rust }}
+      run: |
+        rustup toolchain install --profile default ${{ matrix.rust }}
+        rustup component add llvm-tools-preview
+
+    - name: Install Protoc
+      run: |
+        PROTOC_VERSION=3.20.1
+        PROTOC_ZIP=protoc-$PROTOC_VERSION-$PROTOC_ARCH.zip
+        curl --retry 3 --retry-max-time 90 -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" -OL https://github.com/protocolbuffers/protobuf/releases/download/v$PROTOC_VERSION/$PROTOC_ZIP
+        sudo unzip -o $PROTOC_ZIP -d /usr/local bin/protoc
+        sudo unzip -o $PROTOC_ZIP -d /usr/local 'include/*'
+        rm -f $PROTOC_ZIP
+        echo "PROTOC=/usr/local/bin/protoc" >> $GITHUB_ENV
+        echo "PROTOC_INCLUDE=/usr/local/include" >> $GITHUB_ENV
+
+    - name: Install grcov
+      run: |
+        mkdir -p "${HOME}/.local/bin"
+        curl -sL https://github.com/mozilla/grcov/releases/download/v0.8.10/grcov-x86_64-unknown-linux-gnu.tar.bz2 | tar jxf - -C "${HOME}/.local/bin"
+        echo "$HOME/.local/bin" >> $GITHUB_PATH
+ 
+    - name: coverage
+      timeout-minutes: 30
+      run: |
+        cargo xtask coverage
+    
+    - name: Upload to codecov.io
+      uses: codecov/codecov-action@v3
+      with:
+        files: coverage/*.lcov
 
   fmt:
     name: Rustfmt

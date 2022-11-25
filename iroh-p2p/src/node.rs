@@ -31,6 +31,7 @@ use tokio::task::JoinHandle;
 use tracing::{debug, error, info, trace, warn};
 
 use iroh_bitswap::{BitswapEvent, Block};
+use iroh_rpc_client::Lookup;
 
 use crate::keys::{Keychain, Storage};
 use crate::providers::Providers;
@@ -953,6 +954,29 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                     response_channel.send(None).ok();
                 }
             }
+            RpcMessage::LookupLocalPeerInfo(response_channel) => {
+                let peer_id = self.swarm.local_peer_id();
+                let listen_addrs = self.swarm.listeners().cloned().collect();
+                let observed_addrs = self
+                    .swarm
+                    .external_addresses()
+                    .map(|a| a.addr.clone())
+                    .collect();
+                let protocol_version = String::from(crate::behaviour::PROTOCOL_VERSION);
+                let agent_version = String::from(crate::behaviour::AGENT_VERSION);
+                let protocols = self.swarm.behaviour().peer_manager.supported_protocols();
+
+                response_channel
+                    .send(Lookup {
+                        peer_id: *peer_id,
+                        listen_addrs,
+                        observed_addrs,
+                        agent_version,
+                        protocol_version,
+                        protocols,
+                    })
+                    .ok();
+            }
             RpcMessage::CancelListenForIdentify(response_channel, peer_id) => {
                 self.lookup_queries.remove(&peer_id);
                 response_channel.send(()).ok();
@@ -1312,6 +1336,12 @@ mod tests {
         let peer_id_b = test_runner_b.client.local_peer_id().await?;
         assert_eq!(test_runner_b.peer_id, peer_id_b);
 
+        let lookup_a = test_runner_a.client.lookup_local().await?;
+        // since we aren't connected to any other nodes, we should not
+        // have any information about our observed addresses
+        assert!(lookup_a.observed_addrs.is_empty());
+        assert_lookup(lookup_a, test_runner_a.peer_id, &test_runner_a.addr)?;
+
         // connect
         test_runner_a.client.connect(peer_id_b, addrs_b).await?;
         // Make sure we have exchanged identity information
@@ -1323,8 +1353,7 @@ mod tests {
 
         // lookup
         let lookup_b = test_runner_a.client.lookup(peer_id_b, None).await?;
-        assert_eq!(peer_id_b, lookup_b.peer_id);
-
+        assert_lookup(lookup_b, test_runner_b.peer_id, &test_runner_b.addr)?;
         // now that we are connected & have exchanged identity information,
         // we should now be able to view the node's external addrs
         // these are the addresses that other nodes tell you "this is the address I see for you"
@@ -1336,6 +1365,39 @@ mod tests {
         // let peers = test_runner_a.client.get_peers().await?;
         // assert!(peers.len() == 0);
 
+        Ok(())
+    }
+
+    // assert_lookup ensures each part of the lookup is equal
+    fn assert_lookup(
+        got: Lookup,
+        expected_peer_id: PeerId,
+        expected_addr: &Multiaddr,
+    ) -> Result<()> {
+        let expected_protocols = vec![
+            "/ipfs/ping/1.0.0",
+            "/ipfs/id/1.0.0",
+            "/ipfs/id/push/1.0.0",
+            "/ipfs/bitswap/1.2.0",
+            "/ipfs/bitswap/1.1.0",
+            "/ipfs/bitswap/1.0.0",
+            "/ipfs/bitswap",
+            "/ipfs/kad/1.0.0",
+            "/libp2p/autonat/1.0.0",
+            "/libp2p/circuit/relay/0.2.0/hop",
+            "/libp2p/circuit/relay/0.2.0/stop",
+            "/libp2p/dcutr",
+            "/meshsub/1.1.0",
+            "/meshsub/1.0.0",
+        ];
+        let expected_protocol_version = "ipfs/0.1.0";
+        let expected_agent_version = "iroh/0.1.1";
+
+        assert_eq!(expected_peer_id, got.peer_id);
+        assert!(got.listen_addrs.contains(expected_addr));
+        assert_eq!(expected_protocols, got.protocols);
+        assert_eq!(expected_protocol_version, got.protocol_version);
+        assert_eq!(expected_agent_version, got.agent_version);
         Ok(())
     }
 
