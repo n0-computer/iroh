@@ -69,7 +69,7 @@ pub fn get_app_routes<T: ContentLoader + std::marker::Unpin>(state: &Arc<State<T
         .route("/health", get(health_check))
         .route("/icons.css", get(stylesheet_icons))
         .route("/style.css", get(stylesheet_main))
-        .route("/about", get(about))
+        .route("/info", get(info))
         .layer(cors)
         .layer(Extension(Arc::clone(state)))
         .layer(
@@ -302,12 +302,14 @@ pub async fn health_check() -> String {
     "OK".to_string()
 }
 
+/// Some basic info about the service to respond from a `GET /info` request.
 #[tracing::instrument]
-pub async fn about() -> String {
+pub async fn info() -> String {
     format!(
-        "{bin} {version}\n\n{description}\n{license}\n{url}",
+        "{bin} {version} ({git})\n\n{description}\n{license}\n{url}",
         bin = std::env!("CARGO_CRATE_NAME"),
         version = std::env!("CARGO_PKG_VERSION"),
+        git = git_version::git_version!(),
         description = std::env!("CARGO_PKG_DESCRIPTION"),
         license = std::env!("CARGO_PKG_LICENSE"),
         url = env!("CARGO_PKG_REPOSITORY"),
