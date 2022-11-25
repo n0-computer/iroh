@@ -182,9 +182,13 @@ mod tests {
         let mut dir_builder = DirectoryBuilder::new();
         dir_builder.name(dir);
         for (name, content) in files {
-            let mut file = FileBuilder::new();
-            file.name(*name).content_bytes(content.clone());
-            dir_builder.add_file(file.build().await.unwrap());
+            let file = FileBuilder::new()
+                .name(*name)
+                .content_bytes(content.clone())
+                .build()
+                .await
+                .unwrap();
+            dir_builder.add_file(file);
         }
 
         let root_dir = dir_builder.build().unwrap();

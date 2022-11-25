@@ -67,14 +67,14 @@ async fn test_dagger_testdata() -> Result<()> {
 
             let start = Instant::now();
 
-            let mut builder = FileBuilder::new();
-            builder
+            let file = FileBuilder::new()
                 .name(source.to_string_lossy().into_owned())
                 .chunker(param.chunker.clone())
                 .degree(param.degree)
-                .content_bytes(data.clone());
-            let file_builder = builder.build().await?;
-            let stream = file_builder.encode().await?;
+                .content_bytes(data.clone())
+                .build()
+                .await?;
+            let stream = file.encode().await?;
             let (root, resolver) = stream_to_resolver(stream).await?;
             let out = resolver.resolve(Path::from_cid(root)).await?;
             let t =

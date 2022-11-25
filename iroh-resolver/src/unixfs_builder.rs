@@ -1,11 +1,12 @@
 use std::{
-    fmt::Debug,
+    fmt::{Debug, Display},
     path::{Path, PathBuf},
     pin::Pin,
+    str::FromStr,
     sync::Arc,
 };
 
-use anyhow::{ensure, Result};
+use anyhow::{anyhow, ensure, Context, Result};
 use async_recursion::async_recursion;
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -18,7 +19,7 @@ use tokio::io::AsyncRead;
 
 use crate::{
     balanced_tree::{TreeBuilder, DEFAULT_DEGREE},
-    chunker::{self, Chunker, DEFAULT_CHUNK_SIZE_LIMIT},
+    chunker::{self, Chunker, DEFAULT_CHUNKS_SIZE, DEFAULT_CHUNK_SIZE_LIMIT},
     resolver::Block,
     unixfs::{dag_pb, unixfs_pb, DataType, Node, UnixfsNode},
 };
@@ -279,7 +280,7 @@ impl Default for FileBuilder {
             name: None,
             path: None,
             reader: None,
-            chunker: Chunker::Rabin(Box::new(chunker::Rabin::default())),
+            chunker: Chunker::Fixed(chunker::Fixed::default()),
             degree: DEFAULT_DEGREE,
         }
     }
@@ -313,40 +314,40 @@ impl FileBuilder {
         self
     }
 
-    pub fn name<N: Into<String>>(&mut self, name: N) -> &mut Self {
+    pub fn name<N: Into<String>>(mut self, name: N) -> Self {
         self.name = Some(name.into());
         self
     }
 
-    pub fn chunker(&mut self, chunker: Chunker) -> &mut Self {
+    pub fn chunker(mut self, chunker: Chunker) -> Self {
         self.chunker = chunker;
         self
     }
 
     /// Set the chunker to be fixed size.
-    pub fn fixed_chunker(&mut self, chunk_size: usize) -> &mut Self {
+    pub fn fixed_chunker(mut self, chunk_size: usize) -> Self {
         self.chunker = Chunker::Fixed(chunker::Fixed::new(chunk_size));
         self
     }
 
     /// Use the rabin chunker.
-    pub fn rabin_chunker(&mut self) -> &mut Self {
+    pub fn rabin_chunker(mut self) -> Self {
         self.chunker = Chunker::Rabin(Box::new(chunker::Rabin::default()));
         self
     }
 
-    pub fn degree(&mut self, degree: usize) -> &mut Self {
+    pub fn degree(mut self, degree: usize) -> Self {
         self.degree = degree;
         self
     }
 
-    pub fn content_bytes<B: Into<Bytes>>(&mut self, content: B) -> &mut Self {
+    pub fn content_bytes<B: Into<Bytes>>(mut self, content: B) -> Self {
         let bytes = content.into();
         self.reader = Some(Box::pin(std::io::Cursor::new(bytes)));
         self
     }
 
-    pub fn content_reader<T: tokio::io::AsyncRead + 'static>(&mut self, content: T) -> &mut Self {
+    pub fn content_reader<T: tokio::io::AsyncRead + 'static>(mut self, content: T) -> Self {
         self.reader = Some(Box::pin(content));
         self
     }
@@ -583,6 +584,68 @@ impl Store for Arc<tokio::sync::Mutex<std::collections::HashMap<Cid, Bytes>>> {
     }
 }
 
+/// Configuration for adding unixfs content
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Config {
+    /// Should the outer object be wrapped in a directory?
+    pub wrap: bool,
+    pub chunker: ChunkerConfig,
+}
+
+/// Chunker configuration.
+#[derive(Debug, Clone, PartialEq, Eq, Copy)]
+pub enum ChunkerConfig {
+    /// Fixed sized chunker.
+    Fixed(usize),
+    /// Rabin chunker.
+    Rabin,
+}
+
+impl Display for ChunkerConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Fixed(chunk_size) => write!(f, "fixed-{}", chunk_size),
+            Self::Rabin => write!(f, "rabin"),
+        }
+    }
+}
+
+impl FromStr for ChunkerConfig {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s == "rabin" {
+            return Ok(ChunkerConfig::Rabin);
+        }
+
+        if let Some(rest) = s.strip_prefix("fixed") {
+            if rest.is_empty() {
+                return Ok(ChunkerConfig::Fixed(DEFAULT_CHUNKS_SIZE));
+            }
+
+            if let Some(rest) = rest.strip_prefix('-') {
+                let chunk_size: usize = rest.parse().context("invalid chunk size")?;
+                if chunk_size > DEFAULT_CHUNK_SIZE_LIMIT {
+                    return Err(anyhow!("chunk size too large"));
+                }
+
+                return Ok(ChunkerConfig::Fixed(chunk_size));
+            }
+        }
+
+        Err(anyhow!("unknown chunker: {}", s))
+    }
+}
+
+impl From<ChunkerConfig> for Chunker {
+    fn from(cfg: ChunkerConfig) -> Self {
+        match cfg {
+            ChunkerConfig::Fixed(chunk_size) => Chunker::Fixed(chunker::Fixed::new(chunk_size)),
+            ChunkerConfig::Rabin => Chunker::Rabin(Box::new(chunker::Rabin::default())),
+        }
+    }
+}
+
 /// Adds a single file.
 /// - storing the content using `rpc.store`
 /// - returns a stream of AddEvent
@@ -590,14 +653,19 @@ impl Store for Arc<tokio::sync::Mutex<std::collections::HashMap<Cid, Bytes>>> {
 pub async fn add_file<S: Store>(
     store: Option<S>,
     path: &Path,
-    wrap: bool,
+    config: Config,
 ) -> Result<impl Stream<Item = Result<AddEvent>>> {
     ensure!(path.is_file(), "provided path was not a file");
 
-    let file = FileBuilder::new().path(path).build().await?;
+    let chunker = config.chunker.into();
+    let file = FileBuilder::new()
+        .chunker(chunker)
+        .path(path)
+        .build()
+        .await?;
 
     let blocks = {
-        if wrap {
+        if config.wrap {
             // wrap file in dir to preserve file name
             file.wrap().encode()
         } else {
@@ -614,15 +682,15 @@ pub async fn add_file<S: Store>(
 pub async fn add_dir<S: Store>(
     store: Option<S>,
     path: &Path,
-    wrap: bool,
+    config: Config,
 ) -> Result<impl Stream<Item = Result<AddEvent>>> {
     ensure!(path.is_dir(), "provided path was not a directory");
 
-    let dir = make_dir_from_path(path).await?;
+    let dir = make_dir_from_path(path, config.chunker.into()).await?;
 
     // encode and store
     let blocks = {
-        if wrap {
+        if config.wrap {
             // wrap dir in dir to preserve file name
             dir.wrap().encode()
         } else {
@@ -729,7 +797,7 @@ pub async fn add_blocks_to_store<S: Store>(
 }
 
 #[async_recursion(?Send)]
-async fn make_dir_from_path<P: Into<PathBuf>>(path: P) -> Result<Directory> {
+async fn make_dir_from_path<P: Into<PathBuf>>(path: P, chunker: Chunker) -> Result<Directory> {
     let path = path.into();
     let mut dir = DirectoryBuilder::new();
     dir.name(
@@ -745,10 +813,14 @@ async fn make_dir_from_path<P: Into<PathBuf>>(path: P) -> Result<Directory> {
             let s = SymlinkBuilder::new(path).build().await?;
             dir.add_symlink(s);
         } else if path.is_file() {
-            let f = FileBuilder::new().path(path).build().await?;
+            let f = FileBuilder::new()
+                .chunker(chunker.clone())
+                .path(path)
+                .build()
+                .await?;
             dir.add_file(f);
         } else if path.is_dir() {
-            let d = make_dir_from_path(path).await?;
+            let d = make_dir_from_path(path, chunker.clone()).await?;
             dir.add_dir(d)?;
         } else {
             anyhow::bail!("directory entry is neither file nor directory")
@@ -775,8 +847,6 @@ pub async fn stream_to_resolver(
     Cid,
     crate::resolver::Resolver<Arc<fnv::FnvHashMap<Cid, Bytes>>>,
 )> {
-    use anyhow::Context;
-
     tokio::pin!(stream);
     let blocks: Vec<_> = stream.try_collect().await?;
     for block in &blocks {
@@ -816,13 +886,17 @@ mod tests {
         dir.name("foo");
 
         // Add a file
-        let mut bar = FileBuilder::new();
-        bar.name("bar.txt").content_bytes(b"bar".to_vec());
-        let bar = bar.build().await?;
+        let bar = FileBuilder::new()
+            .name("bar.txt")
+            .content_bytes(b"bar".to_vec())
+            .build()
+            .await?;
         let bar_encoded: Vec<_> = {
-            let mut bar = FileBuilder::new();
-            bar.name("bar.txt").content_bytes(b"bar".to_vec());
-            let bar = bar.build().await?;
+            let bar = FileBuilder::new()
+                .name("bar.txt")
+                .content_bytes(b"bar".to_vec())
+                .build()
+                .await?;
             bar.encode().await?.try_collect().await?
         };
         assert_eq!(bar_encoded.len(), 1);
@@ -874,15 +948,19 @@ mod tests {
         dir.name("foo");
 
         // Add a file
-        let mut bar = FileBuilder::new();
         let bar_reader = std::io::Cursor::new(b"bar");
-        bar.name("bar.txt").content_reader(bar_reader);
-        let bar = bar.build().await?;
+        let bar = FileBuilder::new()
+            .name("bar.txt")
+            .content_reader(bar_reader)
+            .build()
+            .await?;
         let bar_encoded: Vec<_> = {
-            let mut bar = FileBuilder::new();
             let bar_reader = std::io::Cursor::new(b"bar");
-            bar.name("bar.txt").content_reader(bar_reader);
-            let bar = bar.build().await?;
+            let bar = FileBuilder::new()
+                .name("bar.txt")
+                .content_reader(bar_reader)
+                .build()
+                .await?;
             bar.encode().await?.try_collect().await?
         };
         assert_eq!(bar_encoded.len(), 1);
@@ -930,9 +1008,12 @@ mod tests {
         for (name, entry) in dir {
             match entry {
                 TestDirEntry::File(content) => {
-                    let mut file = FileBuilder::new();
-                    file.name(name).content_bytes(content.to_vec());
-                    builder.add_file(file.build().await?);
+                    let file = FileBuilder::new()
+                        .name(name)
+                        .content_bytes(content.to_vec())
+                        .build()
+                        .await?;
+                    builder.add_file(file);
                 }
                 TestDirEntry::Directory(dir) => {
                     let dir = build_directory(name, dir).await?;
@@ -1025,13 +1106,13 @@ mod tests {
 
     /// a roundtrip test that converts a file to an unixfs DAG and back
     async fn file_roundtrip_test(data: Bytes, chunk_size: usize, degree: usize) -> Result<bool> {
-        let mut builder = FileBuilder::new();
-        builder
+        let file = FileBuilder::new()
             .name("file.bin")
             .fixed_chunker(chunk_size)
             .degree(degree)
-            .content_bytes(data.clone());
-        let file = builder.build().await?;
+            .content_bytes(data.clone())
+            .build()
+            .await?;
         let stream = file.encode().await?;
         let (root, resolver) = stream_to_resolver(stream).await?;
         let out = resolver
@@ -1152,21 +1233,24 @@ mod tests {
         dir.name("foo");
 
         // Add a file
-        let mut bar = FileBuilder::new();
         let bar_reader = std::io::Cursor::new(vec![1u8; 1024 * 1024]);
-        bar.name("bar.txt").content_reader(bar_reader);
-        let bar = bar.build().await?;
+        let bar = FileBuilder::new()
+            .name("bar.txt")
+            .content_reader(bar_reader)
+            .build()
+            .await?;
         let bar_encoded: Vec<_> = {
-            let mut bar = FileBuilder::new();
             let bar_reader = std::io::Cursor::new(vec![1u8; 1024 * 1024]);
-            bar.name("bar.txt").content_reader(bar_reader);
-            let bar = bar.build().await?;
+            let bar = FileBuilder::new()
+                .name("bar.txt")
+                .content_reader(bar_reader)
+                .build()
+                .await?;
             bar.encode().await?.try_collect().await?
         };
-        assert_eq!(bar_encoded.len(), 4);
+        assert_eq!(bar_encoded.len(), 5);
 
         // Add a file
-        let mut baz = FileBuilder::new();
         let mut baz_content = Vec::with_capacity(1024 * 1024 * 2);
         for i in 0..2 {
             for _ in 0..(1024 * 1024) {
@@ -1175,16 +1259,21 @@ mod tests {
         }
 
         let baz_reader = std::io::Cursor::new(baz_content.clone());
-        baz.name("baz.txt").content_reader(baz_reader);
-        let baz = baz.build().await?;
+        let baz = FileBuilder::new()
+            .name("baz.txt")
+            .content_reader(baz_reader)
+            .build()
+            .await?;
         let baz_encoded: Vec<_> = {
-            let mut baz = FileBuilder::new();
             let baz_reader = std::io::Cursor::new(baz_content);
-            baz.name("baz.txt").content_reader(baz_reader);
-            let baz = baz.build().await?;
+            let baz = FileBuilder::new()
+                .name("baz.txt")
+                .content_reader(baz_reader)
+                .build()
+                .await?;
             baz.encode().await?.try_collect().await?
         };
-        assert_eq!(baz_encoded.len(), 16);
+        assert_eq!(baz_encoded.len(), 9);
 
         dir.add_file(bar).add_file(baz);
 
@@ -1195,15 +1284,15 @@ mod tests {
 
         let links = decoded_dir.links().collect::<Result<Vec<_>>>().unwrap();
         assert_eq!(links[0].name.unwrap(), "bar.txt");
-        assert_eq!(links[0].cid, *bar_encoded[3].cid());
+        assert_eq!(links[0].cid, *bar_encoded[4].cid());
         assert_eq!(links[1].name.unwrap(), "baz.txt");
-        assert_eq!(links[1].cid, *baz_encoded[15].cid());
+        assert_eq!(links[1].cid, *baz_encoded[8].cid());
 
         for (i, encoded) in baz_encoded.iter().enumerate() {
             let node = UnixfsNode::decode(encoded.cid(), encoded.data().clone())?;
-            if i == 15 {
+            if i == 8 {
                 assert_eq!(node.typ(), Some(DataType::File));
-                assert_eq!(node.links().count(), 15);
+                assert_eq!(node.links().count(), 8);
             } else {
                 assert_eq!(node.typ(), None); // raw leaves
                 assert!(node.size().unwrap() > 0);
@@ -1227,20 +1316,22 @@ mod tests {
         let mut builder = DirectoryBuilder::new();
 
         for _i in 0..DIRECTORY_LINK_LIMIT {
-            let mut file_builder = FileBuilder::new();
-            file_builder.name("foo.txt");
-            file_builder.content_bytes(Bytes::from("hello world"));
-            let file = file_builder.build().await?;
+            let file = FileBuilder::new()
+                .name("foo.txt")
+                .content_bytes(Bytes::from("hello world"))
+                .build()
+                .await?;
             builder.add_file(file);
         }
 
         // under DIRECTORY_LINK_LIMIT should still be a basic directory
         assert_eq!(DirectoryType::Basic, builder.typ);
 
-        let mut file_builder = FileBuilder::new();
-        file_builder.name("foo.txt");
-        file_builder.content_bytes(Bytes::from("hello world"));
-        let file = file_builder.build().await?;
+        let file = FileBuilder::new()
+            .name("foo.txt")
+            .content_bytes(Bytes::from("hello world"))
+            .build()
+            .await?;
         builder.add_file(file);
 
         // at directory link limit should be processed as a hamt
@@ -1296,7 +1387,7 @@ mod tests {
             entries: vec![Entry::File(file), Entry::Directory(nested_dir)],
         };
 
-        let mut got = make_dir_from_path(dir).await?;
+        let mut got = make_dir_from_path(dir, Chunker::Fixed(chunker::Fixed::default())).await?;
 
         // Before comparison sort entries to make test deterministic.
         // The readdir_r function is used in the underlying platform which
@@ -1310,5 +1401,29 @@ mod tests {
 
         assert_eq!(expected, got);
         Ok(())
+    }
+
+    #[test]
+    fn test_chunk_config_from_str() {
+        assert_eq!(
+            "fixed".parse::<ChunkerConfig>().unwrap(),
+            ChunkerConfig::Fixed(DEFAULT_CHUNKS_SIZE)
+        );
+        assert_eq!(
+            "fixed-123".parse::<ChunkerConfig>().unwrap(),
+            ChunkerConfig::Fixed(123)
+        );
+
+        assert!("fixed-".parse::<ChunkerConfig>().is_err());
+        assert!(format!("fixed-{}", DEFAULT_CHUNK_SIZE_LIMIT + 1)
+            .parse::<ChunkerConfig>()
+            .is_err());
+        assert!("foo-123".parse::<ChunkerConfig>().is_err());
+        assert!("foo".parse::<ChunkerConfig>().is_err());
+
+        assert_eq!(
+            "rabin".parse::<ChunkerConfig>().unwrap(),
+            ChunkerConfig::Rabin
+        );
     }
 }

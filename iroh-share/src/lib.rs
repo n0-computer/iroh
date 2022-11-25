@@ -104,19 +104,19 @@ mod tests {
             println!("waiting for progress");
             let progress = receiver_transfer.progress()?;
             let progress: Vec<_> = progress.try_collect().await.unwrap();
-            assert_eq!(progress.len(), 62);
+            assert_eq!(progress.len(), 22);
             assert_eq!(
                 progress[0],
                 ProgressEvent::Piece {
                     index: 1,
-                    total: 62
+                    total: 22
                 }
             );
             assert_eq!(
                 progress[1],
                 ProgressEvent::Piece {
                     index: 2,
-                    total: 62
+                    total: 22
                 }
             );
         }
@@ -138,17 +138,23 @@ mod tests {
 
         let mut dir_builder = DirectoryBuilder::new();
         dir_builder.name("foo");
-        let mut file = FileBuilder::new();
-        file.name("bar.txt").content_bytes(&b"bar"[..]);
-        dir_builder.add_file(file.build().await?);
+        let file = FileBuilder::new()
+            .name("bar.txt")
+            .content_bytes(&b"bar"[..])
+            .build()
+            .await?;
+        dir_builder.add_file(file);
 
-        let mut file = FileBuilder::new();
         let mut bytes = vec![0u8; 5 * 1024 * 1024 - 8];
         rand::thread_rng().fill_bytes(&mut bytes);
         tokio::fs::write(sender_dir.path().join("baz.txt"), &bytes).await?;
         let f = tokio::fs::File::open(sender_dir.path().join("baz.txt")).await?;
-        file.name("baz.txt").content_reader(f);
-        dir_builder.add_file(file.build().await?);
+        let file = FileBuilder::new()
+            .name("baz.txt")
+            .content_reader(f)
+            .build()
+            .await?;
+        dir_builder.add_file(file);
 
         let sender_transfer = sender
             .transfer_from_dir_builder(dir_builder)
@@ -199,54 +205,54 @@ mod tests {
         {
             let progress = receiver_transfer.progress()?;
             let progress: Vec<_> = progress.try_collect().await.unwrap();
-            assert_eq!(progress.len(), 63);
+            assert_eq!(progress.len(), 23);
             assert_eq!(
                 progress[0],
                 ProgressEvent::Piece {
                     index: 1,
-                    total: 63
+                    total: 23
                 }
             );
             assert_eq!(
                 progress[1],
                 ProgressEvent::Piece {
                     index: 2,
-                    total: 63
+                    total: 23
                 }
             );
             assert_eq!(
                 progress[2],
                 ProgressEvent::Piece {
                     index: 3,
-                    total: 63
+                    total: 23
                 }
             );
             assert_eq!(
                 progress[3],
                 ProgressEvent::Piece {
                     index: 4,
-                    total: 63
+                    total: 23
                 }
             );
             assert_eq!(
                 progress[4],
                 ProgressEvent::Piece {
                     index: 5,
-                    total: 63
+                    total: 23
                 }
             );
             assert_eq!(
                 progress[5],
                 ProgressEvent::Piece {
                     index: 6,
-                    total: 63
+                    total: 23
                 }
             );
             assert_eq!(
                 progress[6],
                 ProgressEvent::Piece {
                     index: 7,
-                    total: 63
+                    total: 23
                 }
             );
         }

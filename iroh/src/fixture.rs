@@ -67,7 +67,7 @@ fn fixture_add_file() -> Api {
             Some(StatusRow::new("store", 1, ServiceStatus::Serving)),
         )
     });
-    api.expect_add_stream().returning(|_ipfs_path, _| {
+    api.expect_add_stream().returning(|_ipfs_path, _, _| {
         let cid = Cid::from_str("QmYbcW4tXLXHWw753boCK8Y7uxLu5abXjyYizhLznq9PUR").unwrap();
         let add_event = AddEvent::ProgressDelta { cid, size: Some(0) };
 
@@ -88,7 +88,7 @@ fn fixture_add_directory() -> Api {
             Some(StatusRow::new("store", 1, ServiceStatus::Serving)),
         )
     });
-    api.expect_add_stream().returning(|_ipfs_path, _| {
+    api.expect_add_stream().returning(|_ipfs_path, _, _| {
         let cid = Cid::from_str("QmYbcW4tXLXHWw753boCK8Y7uxLu5abXjyYizhLznq9PUR").unwrap();
         let add_event = AddEvent::ProgressDelta { cid, size: Some(0) };
 
