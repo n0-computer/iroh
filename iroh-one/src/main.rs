@@ -48,16 +48,16 @@ async fn main() -> Result<()> {
 
     let (store_rpc, p2p_rpc) = {
         let (store_recv, store_sender) = Addr::new_mem();
-        config.rpc_client.store_addr = Some(store_sender);
-        let store_rpc = iroh_one::mem_store::start(store_recv, config.clone().store).await?;
-
         let (p2p_recv, p2p_sender) = Addr::new_mem();
+        config.rpc_client.store_addr = Some(store_sender);
         config.rpc_client.p2p_addr = Some(p2p_sender);
-        let p2p_rpc = iroh_one::mem_p2p::start(p2p_recv, config.clone().p2p).await?;
+        config.synchronize_subconfigs();
+
+        let store_rpc = iroh_one::mem_store::start(store_recv, config.store.clone()).await?;
+
+        let p2p_rpc = iroh_one::mem_p2p::start(p2p_recv, config.p2p.clone()).await?;
         (store_rpc, p2p_rpc)
     };
-
-    config.synchronize_subconfigs();
 
     config.metrics = metrics::metrics_config_with_compile_time_info(config.metrics);
     println!("{:#?}", config);
@@ -91,6 +91,7 @@ async fn main() -> Result<()> {
         Arc::new(config.clone()),
         Arc::clone(&bad_bits),
         content_loader,
+        config.gateway.dns_resolver,
     )
     .await?;
 

@@ -39,6 +39,7 @@ async fn main() -> Result<()> {
     println!("{:#?}", config);
 
     let metrics_config = config.metrics.clone();
+    let dns_resolver_config = config.dns_resolver.clone();
     let bad_bits = match config.use_denylist {
         true => Arc::new(Some(RwLock::new(BadBits::new()))),
         false => Arc::new(None),
@@ -70,6 +71,7 @@ async fn main() -> Result<()> {
         rpc_addr,
         Arc::clone(&bad_bits),
         content_loader,
+        dns_resolver_config,
     )
     .await?;
 

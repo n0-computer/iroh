@@ -6,6 +6,7 @@ use headers::{
     AccessControlAllowHeaders, AccessControlAllowMethods, AccessControlAllowOrigin, HeaderMapExt,
 };
 use iroh_metrics::config::Config as MetricsConfig;
+use iroh_resolver::dns_resolver::Config as DnsResolverConfig;
 use iroh_rpc_client::Config as RpcClientConfig;
 use iroh_rpc_types::{gateway::GatewayServerAddr, Addr};
 use iroh_util::insert_into_config_map;
@@ -29,10 +30,13 @@ pub struct Config {
     /// flag to toggle whether the gateway should use denylist on requests
     pub use_denylist: bool,
     /// URL of gateways to be used by the racing resolver.
-    /// strings can either be urls or subdomain gateway roots
+    /// Strings can either be urls or subdomain gateway roots
     /// values without https:// prefix are treated as subdomain gateways (eg: dweb.link)
     /// values with are treated as IPFS path gateways (eg: https://ipfs.io)
     pub http_resolvers: Option<Vec<String>>,
+    /// Separate resolvers for particular TLDs
+    #[serde(default = "DnsResolverConfig::default")]
+    pub dns_resolver: DnsResolverConfig,
     /// Indexer node to use.
     pub indexer_endpoint: Option<String>,
     /// rpc addresses for the gateway & addresses for the rpc client to dial
@@ -54,6 +58,7 @@ impl Config {
             port,
             rpc_client,
             http_resolvers: None,
+            dns_resolver: DnsResolverConfig::default(),
             indexer_endpoint: None,
             metrics: MetricsConfig::default(),
             use_denylist: false,
@@ -123,6 +128,7 @@ impl Default for Config {
             port: DEFAULT_PORT,
             rpc_client,
             http_resolvers: None,
+            dns_resolver: DnsResolverConfig::default(),
             indexer_endpoint: None,
             metrics: MetricsConfig::default(),
             use_denylist: false,
