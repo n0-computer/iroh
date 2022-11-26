@@ -2,7 +2,8 @@ use std::io::Cursor;
 
 use anyhow::{Context, Result};
 use cid::Cid;
-use iroh_rpc_client::open_server;
+use futures::StreamExt;
+use iroh_rpc_client::{configure_server, create_server_stream, ChannelTypes};
 use iroh_rpc_types::store::*;
 use tracing::info;
 
@@ -86,23 +87,48 @@ impl Store {
     }
 }
 
-#[tracing::instrument(skip(store))]
-pub async fn new(addr: StoreServerAddr, store: Store) -> Result<()> {
-    use StoreRequest::*;
-    info!("rpc listening on: {}", addr);
-    let server = open_server::<StoreService>(addr).await?;
+/// Handle a session with a client. This will loop until either the client closes the connection or
+/// one of the requests produces an error.
+async fn handle_session(
+    server: quic_rpc::RpcServer<StoreService, ChannelTypes>,
+    store: Store,
+) -> Result<()> {
+    let s = server.clone();
     loop {
-        let s = server.clone();
         let (req, chan) = s.accept_one().await?;
+        println!("rpc request: {:?}", req);
         let store = store.clone();
-        match req {
-            Version(req) => s.rpc(req, chan, store, Store::version).await?,
-            Put(req) => s.rpc_map_err(req, chan, store, Store::put).await?,
-            PutMany(req) => s.rpc_map_err(req, chan, store, Store::put_many).await?,
-            Get(req) => s.rpc_map_err(req, chan, store, Store::get).await?,
-            Has(req) => s.rpc_map_err(req, chan, store, Store::has).await?,
-            GetLinks(req) => s.rpc_map_err(req, chan, store, Store::get_links).await?,
-            GetSize(req) => s.rpc_map_err(req, chan, store, Store::get_size).await?,
+        use StoreRequest::*;
+        let res = match req {
+            Version(req) => s.rpc(req, chan, store, Store::version).await,
+            Put(req) => s.rpc_map_err(req, chan, store, Store::put).await,
+            PutMany(req) => s.rpc_map_err(req, chan, store, Store::put_many).await,
+            Get(req) => s.rpc_map_err(req, chan, store, Store::get).await,
+            Has(req) => s.rpc_map_err(req, chan, store, Store::has).await,
+            GetLinks(req) => s.rpc_map_err(req, chan, store, Store::get_links).await,
+            GetSize(req) => s.rpc_map_err(req, chan, store, Store::get_size).await,
+        };
+        if let Err(res) = res {
+            println!("rpc error: {:?}", res);
+            break Err(res.into());
         }
     }
+}
+
+#[tracing::instrument(skip(store))]
+pub async fn new(addr: StoreServerAddr, store: Store) -> Result<()> {
+    info!("rpc listening on: {}", addr);
+    let (server_config, _server_cert) = configure_server()?;
+    let mut stream = create_server_stream::<StoreService>(server_config, addr).await?;
+    while let Some(server) = stream.next().await {
+        match server {
+            Ok(server) => {
+                tokio::spawn(handle_session(server, store.clone()));
+            }
+            Err(e) => {
+                tracing::error!("rpc server error: {}", e);
+            }
+        }
+    }
+    Ok(())
 }

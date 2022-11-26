@@ -3,7 +3,7 @@ use bytes::Bytes;
 use cid::Cid;
 use futures::{Stream, StreamExt};
 use iroh_bitswap::Block;
-use iroh_rpc_client::open_server;
+use iroh_rpc_client::{configure_server, create_server_stream};
 use iroh_rpc_types::p2p::*;
 use libp2p::gossipsub::{
     error::{PublishError, SubscriptionError},
@@ -518,9 +518,16 @@ impl P2p {
 
 pub async fn new(addr: P2pServerAddr, sender: Sender<RpcMessage>) -> Result<()> {
     let p2p = P2p { sender };
-
-    let server = open_server::<P2pService>(addr).await?;
-    loop {
+    let (server_config, _server_cert) = configure_server()?;
+    let mut stream = create_server_stream::<P2pService>(server_config, addr).await?;
+    while let Some(server) = stream.next().await {
+        let server = match server {
+            Ok(server) => server,
+            Err(e) => {
+                tracing::error!("rpc server error: {}", e);
+                continue;
+            }
+        };
         let (req, chan) = server.accept_one().await?;
         use P2pRequest::*;
         let s = server.clone();
@@ -555,6 +562,7 @@ pub async fn new(addr: P2pServerAddr, sender: Sender<RpcMessage>) -> Result<()> 
             FetchProviderDht(req) => todo!(),
         }?;
     }
+    Ok(())
 }
 
 fn peer_info_from_identify_info(i: IdentifyInfo) -> LookupResponse {

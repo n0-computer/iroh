@@ -35,6 +35,7 @@ tokio = { version = "1", features = ["rt"] }
 tracing = "0.1.34"
 tracing-opentelemetry = "0.18"
 tracing-subscriber = { version = "0.3.11", features = ["env-filter"] }
+quic-rpc = "0.1.8"
 
 [dev-dependencies]
 criterion = { version = "0.4.0", features = ["async_tokio"] }

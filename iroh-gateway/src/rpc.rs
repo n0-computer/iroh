@@ -1,5 +1,6 @@
 use anyhow::Result;
-use iroh_rpc_client::open_server;
+use futures::StreamExt;
+use iroh_rpc_client::{configure_server, create_server_stream};
 use iroh_rpc_types::gateway::{
     GatewayRequest, GatewayServerAddr, GatewayService, VersionRequest, VersionResponse,
 };
@@ -20,8 +21,10 @@ impl iroh_rpc_types::NamedService for Gateway {
 }
 
 pub async fn new(addr: GatewayServerAddr, gw: Gateway) -> Result<()> {
-    let s = open_server::<GatewayService>(addr).await?;
-    loop {
+    let (server_config, _server_cert) = configure_server()?;
+    let mut stream = create_server_stream::<GatewayService>(server_config, addr).await?;
+    while let Some(server) = stream.next().await {
+        let s = server?;
         if let Ok((req, chan)) = s.accept_one().await {
             tracing::info!("accepted connection");
             let s = s.clone();
@@ -38,4 +41,5 @@ pub async fn new(addr: GatewayServerAddr, gw: Gateway) -> Result<()> {
             tracing::warn!("accept failed");
         }
     }
+    Ok(())
 }

@@ -14,28 +14,50 @@ use std::{io, net::SocketAddr, sync::Arc};
 
 pub use self::config::Config;
 pub use client::Client;
+use futures::{stream::BoxStream, StreamExt};
 use iroh_rpc_types::Addr;
 pub use network::{Lookup, P2pClient};
-use quic_rpc::{channel_factory::LazyChannelFactory, combined, RpcClient, RpcServer, Service};
+use quic_rpc::{
+    channel_factory::LazyChannelFactory, combined, mem::MemChannelTypes, quinn::QuinnChannelTypes,
+    RpcClient, RpcServer, Service,
+};
 use quinn::{ClientConfig, Endpoint, ServerConfig};
 pub use status::{ServiceStatus, StatusRow, StatusTable};
 pub use store::StoreClient;
 
-pub async fn open_server<S: Service>(
+pub async fn create_server_stream<S: Service>(
+    server_config: ServerConfig,
     addr: Addr<S::Req, S::Res>,
-) -> anyhow::Result<RpcServer<S, ChannelTypes>> {
+) -> anyhow::Result<
+    BoxStream<
+        'static,
+        Result<
+            RpcServer<S, ChannelTypes>,
+            quic_rpc::combined::CreateChannelError<MemChannelTypes, QuinnChannelTypes>,
+        >,
+    >,
+> {
     // make a channel matching the channel types for this crate
-    let channel = match addr {
-        Addr::Mem(addr) => anyhow::Ok(combined::Channel::new(Some(addr), None)),
+    match addr {
+        Addr::Mem(_addr) => {
+            todo!()
+            // Ok(Some(RpcServer::new(combined::Channel::new(Some(addr), None))))
+        }
         Addr::Qrpc(addr) => {
             println!("Opening server on {}", addr);
-            let (endpoint, _cert) = make_server_endpoint(addr)?;
-            let conn = endpoint.accept().await.unwrap().await.unwrap();
-            let channel = quic_rpc::quinn::Channel::new(conn);
-            Ok(combined::Channel::new(None, Some(channel)))
+            let endpoint = make_server_endpoint(server_config, addr)?;
+            Ok(async_stream::stream! {
+                while let Some(connecting) = endpoint.accept().await {
+                    let conn = connecting.await
+                        .map_err(quic_rpc::quinn::CreateChannelError::Connection)
+                        .map_err(quic_rpc::combined::CreateChannelError::B)?;
+                    let channel = quic_rpc::quinn::Channel::new(conn);
+                    yield Ok(RpcServer::new(combined::Channel::new(None, Some(channel))));
+                }
+            }
+            .boxed())
         }
-    }?;
-    Ok(RpcServer::new(channel))
+    }
 }
 
 async fn create_quinn_client_channel<S: Service>(
@@ -107,13 +129,15 @@ impl rustls::client::ServerCertVerifier for SkipServerVerification {
     }
 }
 
-fn make_server_endpoint(bind_addr: SocketAddr) -> anyhow::Result<(Endpoint, Vec<u8>)> {
-    let (server_config, server_cert) = configure_server()?;
+fn make_server_endpoint(
+    server_config: ServerConfig,
+    bind_addr: SocketAddr,
+) -> io::Result<Endpoint> {
     let endpoint = Endpoint::server(server_config, bind_addr)?;
-    Ok((endpoint, server_cert))
+    Ok(endpoint)
 }
 
-fn configure_server() -> anyhow::Result<(ServerConfig, Vec<u8>)> {
+pub fn configure_server() -> anyhow::Result<(ServerConfig, Vec<u8>)> {
     let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()])?;
     let cert_der = cert.serialize_der()?;
     let priv_key = cert.serialize_private_key_der();
