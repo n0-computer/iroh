@@ -13,6 +13,7 @@ use iroh_metrics::{
     gateway::{GatewayHistograms, GatewayMetrics},
     observe, record,
 };
+use iroh_resolver::dns_resolver::Config;
 use iroh_resolver::{
     content_loader::ContentLoader,
     resolver::{
@@ -90,9 +91,9 @@ impl<T: ContentLoader + std::marker::Unpin> http_body::Body for PrettyStreamBody
 }
 
 impl<T: ContentLoader + std::marker::Unpin> Client<T> {
-    pub fn new(rpc_client: &T) -> Self {
+    pub fn new(rpc_client: &T, dns_resolver_config: Config) -> Self {
         Self {
-            resolver: Resolver::new(rpc_client.clone()),
+            resolver: Resolver::with_dns_resolver(rpc_client.clone(), dns_resolver_config),
         }
     }
 
