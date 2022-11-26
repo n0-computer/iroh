@@ -35,7 +35,7 @@ serde_json = "1.0.87"
 tokio = { version = "1", features = ["fs"] }
 tokio-util = { version = "0.7", features = ["io"] }
 tracing = "0.1.34"
-trust-dns-resolver = { version = "0.22.0", features = ["tokio-runtime"] }
+trust-dns-resolver = { version = "0.22.0", features = ["dns-over-https-rustls", "serde-config", "tokio-runtime"] }
 unsigned-varint = "0.7.1"
 
 [dev-dependencies]

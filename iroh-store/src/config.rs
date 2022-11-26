@@ -1,4 +1,4 @@
-use anyhow::{bail, Result};
+use anyhow::{anyhow, bail, Result};
 use config::{ConfigError, Map, Source, Value};
 use iroh_metrics::config::Config as MetricsConfig;
 use iroh_rpc_client::Config as RpcClientConfig;
@@ -22,7 +22,7 @@ pub const ENV_PREFIX: &str = "IROH_STORE";
 pub fn config_data_path(arg_path: Option<PathBuf>) -> Result<PathBuf> {
     match arg_path {
         Some(p) => Ok(p),
-        None => iroh_data_path("store"),
+        None => iroh_data_path("store").map_err(|e| anyhow!("{}", e)),
     }
 }
 

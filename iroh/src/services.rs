@@ -180,7 +180,7 @@ pub async fn stop_services(api: &Api, services: BTreeSet<&str>) -> Result<()> {
                 LockError::NoLock(_) => {
                     eprintln!("{}", format!("{} is already stopped", daemon_name).white());
                 }
-                LockError::ZombieLock(_) => {
+                LockError::NoSuchProcess(_, _) => {
                     lock.destroy_without_checking().unwrap();
                     println!(
                         "stopping {}:, {}",

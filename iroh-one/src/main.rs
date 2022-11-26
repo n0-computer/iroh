@@ -91,6 +91,7 @@ async fn main() -> Result<()> {
         Arc::new(config.clone()),
         Arc::clone(&bad_bits),
         content_loader,
+        config.gateway.dns_resolver,
     )
     .await?;
 
