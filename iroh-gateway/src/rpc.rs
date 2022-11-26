@@ -22,12 +22,20 @@ impl iroh_rpc_types::NamedService for Gateway {
 pub async fn new(addr: GatewayServerAddr, gw: Gateway) -> Result<()> {
     let s = open_server::<GatewayService>(addr).await?;
     loop {
-        let (req, chan) = s.accept_one().await?;
-        use GatewayRequest::*;
-        let target = gw.clone();
-        #[rustfmt::skip]
-        match req {
-            Version(req) => s.rpc(req, chan, target, Gateway::version).await,
-        }?;
+        if let Ok((req, chan)) = s.accept_one().await {
+            tracing::info!("accepted connection");
+            let s = s.clone();
+            let gw = gw.clone();
+            tokio::spawn(async move {
+                println!("gateway got request: {:?}", req);
+                use GatewayRequest::*;
+                let target = gw.clone();
+                match req {
+                    Version(req) => s.rpc(req, chan, target, Gateway::version).await,
+                }
+            });
+        } else {
+            tracing::warn!("accept failed");
+        }
     }
 }

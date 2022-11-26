@@ -6,7 +6,7 @@ pub mod store;
 use std::fmt;
 
 pub use addr::Addr;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 pub trait NamedService {
     const NAME: &'static str;

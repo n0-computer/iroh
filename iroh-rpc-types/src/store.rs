@@ -1,9 +1,9 @@
+use crate::RpcResult;
 use bytes::Bytes;
 use cid::Cid;
 use derive_more::{From, TryInto};
 use quic_rpc::{message::RpcMsg, Service};
 use serde::{Deserialize, Serialize};
-use crate::RpcResult;
 
 pub type StoreClientAddr = super::addr::Addr<StoreResponse, StoreRequest>;
 pub type StoreServerAddr = super::addr::Addr<StoreRequest, StoreResponse>;

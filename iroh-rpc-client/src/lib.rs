@@ -16,7 +16,7 @@ pub use self::config::Config;
 pub use client::Client;
 use iroh_rpc_types::Addr;
 pub use network::{Lookup, P2pClient};
-use quic_rpc::{combined, RpcClient, RpcServer, Service, channel_factory::LazyChannelFactory};
+use quic_rpc::{channel_factory::LazyChannelFactory, combined, RpcClient, RpcServer, Service};
 use quinn::{ClientConfig, Endpoint, ServerConfig};
 pub use status::{ServiceStatus, StatusRow, StatusTable};
 pub use store::StoreClient;
@@ -38,9 +38,18 @@ pub async fn open_server<S: Service>(
     Ok(RpcServer::new(channel))
 }
 
-async fn create_quinn_client_channel<S: Service>(bind_addr: SocketAddr, addr: SocketAddr) -> Result<quic_rpc::quinn::Channel<S::Res, S::Req>, quic_rpc::quinn::CreateChannelError> {
+async fn create_quinn_client_channel<S: Service>(
+    bind_addr: SocketAddr,
+    addr: SocketAddr,
+) -> Result<quic_rpc::quinn::Channel<S::Res, S::Req>, quic_rpc::quinn::CreateChannelError> {
+    let server_name = "localhost";
+    println!("Creating insecure client endpoint for {}", bind_addr);
     let endpoint = make_insecure_client_endpoint(bind_addr)?;
-    let conn = endpoint.connect(addr, "localhost")?.await?;
+    println!("Connecting to {}, server name {}", addr, server_name);
+    let connecting = endpoint.connect(addr, server_name)?;
+    println!("Awaiting connection");
+    let conn = connecting.await?;
+    println!("Channel created");
     let channel = quic_rpc::quinn::Channel::new(conn);
     Ok(channel)
 }
@@ -54,17 +63,18 @@ pub async fn open_client<S: Service>(
         Addr::Mem(addr) => {
             let channel = combined::Channel::new(Some(addr), None);
             anyhow::Ok(RpcClient::<S, ChannelTypes>::new(channel))
-        },
+        }
         Addr::Qrpc(addr) => {
             let bind_addr = SocketAddr::from(([0, 0, 0, 0], 0));
-            let f = move || { async move {
-                    let channel = create_quinn_client_channel::<S>(bind_addr, addr).await
-                        .map_err(combined::CreateChannelError::B)?;
-                    let channel = combined::Channel::new(None, Some(channel));
-                    Ok(channel)
-                }
+            let f = move || async move {
+                let channel = create_quinn_client_channel::<S>(bind_addr, addr)
+                    .await
+                    .map_err(|e| dbg!(e))
+                    .map_err(combined::CreateChannelError::B)?;
+                let channel = combined::Channel::new(None, Some(channel));
+                Ok(channel)
             };
-            let factory = Arc::new(LazyChannelFactory::lazy(f));
+            let factory = Arc::new(LazyChannelFactory::eager(f).await);
             Ok(RpcClient::<S, ChannelTypes>::from_factory(factory))
         }
     }
