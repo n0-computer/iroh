@@ -24,10 +24,6 @@ members = [
 # https://github.com/gfx-rs/wgpu/issues/2356#issuecomment-1005134986
 resolver = "2"
 
-[patch.crates-io]
-libp2p = { git = "https://github.com/dignifiedquire/rust-libp2p", branch = "iroh-0-50-1" }
-#libp2p = { path = "../rust-libp2p" }
-
 [profile.optimized-release]
 inherits = 'release'
 lto = true
