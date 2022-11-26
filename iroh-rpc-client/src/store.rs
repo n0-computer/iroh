@@ -37,7 +37,7 @@ impl StoreClient {
             .into_iter()
             .map(|(cid, blob, links)| PutRequest { cid, blob, links })
             .collect();
-        self.client.rpc(PutManyRequest { blocks }).await?;
+        self.client.rpc(PutManyRequest { blocks }).await??;
         Ok(())
     }
 

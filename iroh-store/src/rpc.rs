@@ -96,7 +96,7 @@ async fn handle_session(
     let s = server.clone();
     loop {
         let (req, chan) = s.accept_one().await?;
-        println!("rpc request: {:?}", req);
+        tracing::info!("rpc request: {:?}", req);
         let store = store.clone();
         use StoreRequest::*;
         let res = match req {

@@ -1,3 +1,5 @@
+use std::fmt::{Debug, self};
+
 use crate::RpcResult;
 use bytes::Bytes;
 use cid::Cid;
@@ -16,11 +18,21 @@ pub struct VersionResponse {
     pub version: String,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize)]
 pub struct PutRequest {
     pub cid: Cid,
     pub blob: Bytes,
     pub links: Vec<Cid>,
+}
+
+impl fmt::Debug for PutRequest {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("PutRequest")
+            .field("cid", &self.cid)
+            .field("blob", &self.blob.len())
+            .field("links", &self.links)
+            .finish()
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug)]
