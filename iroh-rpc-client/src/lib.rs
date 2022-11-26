@@ -16,7 +16,7 @@ pub use self::config::Config;
 pub use client::Client;
 use iroh_rpc_types::Addr;
 pub use network::{Lookup, P2pClient};
-use quic_rpc::{combined, RpcClient, RpcServer, Service};
+use quic_rpc::{combined, RpcClient, RpcServer, Service, channel_factory::LazyChannelFactory};
 use quinn::{ClientConfig, Endpoint, ServerConfig};
 pub use status::{ServiceStatus, StatusRow, StatusTable};
 pub use store::StoreClient;
@@ -38,21 +38,36 @@ pub async fn open_server<S: Service>(
     Ok(RpcServer::new(channel))
 }
 
+async fn create_quinn_client_channel<S: Service>(bind_addr: SocketAddr, addr: SocketAddr) -> Result<quic_rpc::quinn::Channel<S::Res, S::Req>, quic_rpc::quinn::CreateChannelError> {
+    let endpoint = make_insecure_client_endpoint(bind_addr)?;
+    let conn = endpoint.connect(addr, "localhost")?.await?;
+    let channel = quic_rpc::quinn::Channel::new(conn);
+    Ok(channel)
+}
+
 pub async fn open_client<S: Service>(
     addr: Addr<S::Res, S::Req>,
 ) -> anyhow::Result<RpcClient<S, ChannelTypes>> {
     println!("open_client: {} {:?}", std::any::type_name::<S>(), addr);
     // make a channel matching the channel types for this crate
-    let channel = match addr {
-        Addr::Mem(addr) => anyhow::Ok(combined::Channel::new(Some(addr), None)),
+    match addr {
+        Addr::Mem(addr) => {
+            let channel = combined::Channel::new(Some(addr), None);
+            anyhow::Ok(RpcClient::<S, ChannelTypes>::new(channel))
+        },
         Addr::Qrpc(addr) => {
-            let endpoint = make_insecure_client_endpoint("0.0.0.0:0".parse()?)?;
-            let conn = endpoint.connect(addr, "localhost")?.await?;
-            let channel = quic_rpc::quinn::Channel::new(conn);
-            Ok(combined::Channel::new(None, Some(channel)))
+            let bind_addr = SocketAddr::from(([0, 0, 0, 0], 0));
+            let f = move || { async move {
+                    let channel = create_quinn_client_channel::<S>(bind_addr, addr).await
+                        .map_err(combined::CreateChannelError::B)?;
+                    let channel = combined::Channel::new(None, Some(channel));
+                    Ok(channel)
+                }
+            };
+            let factory = Arc::new(LazyChannelFactory::lazy(f));
+            Ok(RpcClient::<S, ChannelTypes>::from_factory(factory))
         }
-    }?;
-    Ok(RpcClient::new(channel))
+    }
 }
 
 pub fn make_insecure_client_endpoint(bind_addr: SocketAddr) -> io::Result<Endpoint> {

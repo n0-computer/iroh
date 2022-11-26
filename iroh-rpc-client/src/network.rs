@@ -9,6 +9,7 @@ use iroh_rpc_types::p2p::*;
 use libp2p::gossipsub::{MessageId, TopicHash};
 use libp2p::{Multiaddr, PeerId};
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 use tracing::{debug, warn};
 
 pub(crate) const NAME: &str = "p2p";
@@ -89,7 +90,7 @@ impl P2pClient {
                 .collect(),
         };
 
-        self.client.rpc(req).await?;
+        self.client.rpc(req).await??;
         Ok(())
     }
 
