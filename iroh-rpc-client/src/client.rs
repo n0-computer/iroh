@@ -91,7 +91,7 @@ impl Client {
             None
         };
 
-        let n_channels = channels.unwrap_or(1);
+        let n_channels = 1; // TODO channels.unwrap_or(1);
 
         let mut p2p = P2pLBClient::new();
         if let Some(addr) = p2p_addr {
