@@ -1,6 +1,6 @@
 [package]
 name = "iroh"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 authors = ["Kasey Huizinga <klhuizinga@gmail.com>", "Martijn Faassen <faassen@startifact.com>"]
 license = "Apache-2.0/MIT"
@@ -21,10 +21,10 @@ crossterm = "0.25"
 futures = "0.3.21"
 git-version = "0.3.5"
 indicatif = "0.17.1"
-iroh-api = { version = "0.1.1", path = "../iroh-api"}
-iroh-localops = { version = "0.1.1", path = "../iroh-localops" }
-iroh-metrics = { version = "0.1.1", path = "../iroh-metrics", default-features = false, features = ["rpc-grpc"] }
-iroh-util = { version = "0.1.1", path = "../iroh-util"}
+iroh-api = { version = "0.1.2", path = "../iroh-api"}
+iroh-localops = { version = "0.1.2", path = "../iroh-localops" }
+iroh-metrics = { version = "0.1.2", path = "../iroh-metrics", default-features = false, features = ["rpc-grpc"] }
+iroh-util = { version = "0.1.2", path = "../iroh-util"}
 relative-path = { version = "1.7.2", optional = true }
 serde = { version = "1.0", features = ["derive"] }
 sysinfo = "0.26.4"
@@ -42,6 +42,6 @@ which = "4.3.0"
 # mode. trycmd needs to have an actual binary to invoke.
 # Unfortunately this also turns on the feature during development, which may be
 # confusing. See the comments in `run.rs` surrounding this.
-iroh = { version = "0.1.1", path = ".", features = ["testing"] }
-iroh-api = { version = "0.1.1", path = "../iroh-api", features = ["testing"] }
+iroh = { version = "0.1.2", path = ".", features = ["testing"] }
+iroh-api = { version = "0.1.2", path = "../iroh-api", features = ["testing"] }
 trycmd = "0.14.1"

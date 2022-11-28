@@ -1,6 +1,6 @@
 [package]
 name = "iroh-share"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 authors = ["dignifiedquire <me@dignifiedquire.com>"]
 license = "Apache-2.0/MIT"
@@ -16,13 +16,13 @@ bytes = "1.1.0"
 cid = { version = "0.9", features = ["serde-codec"] }
 clap = { version = "4.0.9", features = ["derive"] }
 futures = "0.3.21"
-iroh-metrics = { version = "0.1.1", path = "../iroh-metrics", default-features = false }
-iroh-p2p = { version = "0.1.1", path = "../iroh-p2p", default-features = false, features = ["rpc-mem"] }
-iroh-resolver = { version = "0.1.1", path = "../iroh-resolver", default-features = false, features = ["rpc-mem"] }
-iroh-rpc-client = { version = "0.1.1", path = "../iroh-rpc-client", default-features = false, features = ["mem"] }
-iroh-rpc-types = { version = "0.1.1", path = "../iroh-rpc-types", default-features = false, features = ["mem"] }
-iroh-store = { version = "0.1.1", path = "../iroh-store", default-features = false, features = ["rpc-mem"] }
-iroh-util = { version = "0.1.1", path = "../iroh-util" }
+iroh-metrics = { version = "0.1.2", path = "../iroh-metrics", default-features = false }
+iroh-p2p = { version = "0.1.2", path = "../iroh-p2p", default-features = false, features = ["rpc-mem"] }
+iroh-resolver = { version = "0.1.2", path = "../iroh-resolver", default-features = false, features = ["rpc-mem"] }
+iroh-rpc-client = { version = "0.1.2", path = "../iroh-rpc-client", default-features = false, features = ["mem"] }
+iroh-rpc-types = { version = "0.1.2", path = "../iroh-rpc-types", default-features = false, features = ["mem"] }
+iroh-store = { version = "0.1.2", path = "../iroh-store", default-features = false, features = ["rpc-mem"] }
+iroh-util = { version = "0.1.2", path = "../iroh-util" }
 libp2p = { version = "0.50", default-features = false, features = ["gossipsub"] }
 multibase = "0.9.1"
 rand = "0.8.5"

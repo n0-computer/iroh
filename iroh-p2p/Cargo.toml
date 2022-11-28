@@ -1,6 +1,6 @@
 [package]
 name = "iroh-p2p"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 authors = ["dignifiedquire <me@dignifiedquire.com>"]
 license = "Apache-2.0/MIT"
@@ -21,11 +21,11 @@ config = "0.13.1"
 futures = "0.3.21"
 futures-util = "0.3.21"
 git-version = "0.3.5"
-iroh-bitswap = { version = "0.1.1", path = "../iroh-bitswap" }
-iroh-metrics = { version = "0.1.1", path = "../iroh-metrics", default-features = false, features = ["bitswap", "p2p"] }
-iroh-rpc-client = { version = "0.1.1", path = "../iroh-rpc-client", default-features = false }
-iroh-rpc-types = { version = "0.1.1", path = "../iroh-rpc-types", default-features = false }
-iroh-util = { version = "0.1.1", path = "../iroh-util" }
+iroh-bitswap = { version = "0.1.2", path = "../iroh-bitswap" }
+iroh-metrics = { version = "0.1.2", path = "../iroh-metrics", default-features = false, features = ["bitswap", "p2p"] }
+iroh-rpc-client = { version = "0.1.2", path = "../iroh-rpc-client", default-features = false }
+iroh-rpc-types = { version = "0.1.2", path = "../iroh-rpc-types", default-features = false }
+iroh-util = { version = "0.1.2", path = "../iroh-util" }
 lazy_static = "1.4"
 lru = "0.8"
 names = { version = "0.14.0", default-features = false }
