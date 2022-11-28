@@ -7,6 +7,7 @@ license = "Apache-2.0/MIT"
 repository = "https://github.com/n0-computer/iroh"
 description = "Examples"
 rust-version = "1.63"
+publish = false
 
 [dependencies]
 anyhow = "1"
