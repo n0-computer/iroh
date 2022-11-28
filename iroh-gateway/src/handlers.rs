@@ -309,7 +309,11 @@ pub async fn info() -> String {
         "{bin} {version} ({git})\n\n{description}\n{license}\n{url}",
         bin = std::env!("CARGO_CRATE_NAME"),
         version = std::env!("CARGO_PKG_VERSION"),
-        git = git_version::git_version!(),
+        git = git_version::git_version!(
+            prefix = "git:",
+            cargo_prefix = "cargo:",
+            fallback = "unknown"
+        ),
         description = std::env!("CARGO_PKG_DESCRIPTION"),
         license = std::env!("CARGO_PKG_LICENSE"),
         url = env!("CARGO_PKG_REPOSITORY"),

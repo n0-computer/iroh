@@ -8,6 +8,11 @@ repository = "https://github.com/n0-computer/iroh"
 description = "Implementation of path resolution for iroh"
 rust-version = "1.63"
 
+exclude = [
+  "tests/**",
+  "fixtures/**",
+]
+
 [dependencies]
 anyhow = "1"
 async-channel = "1.7.1"

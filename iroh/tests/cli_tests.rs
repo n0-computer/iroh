@@ -141,7 +141,8 @@ fn lookup_test() {
 fn version_test() {
     trycmd::TestCases::new()
         .case("tests/cmd/version.trycmd")
-        .run();
+        .insert_var("[VERSION]", std::env::var("CARGO_PKG_VERSION").unwrap())
+        .unwrap();
 }
 
 #[test]
