@@ -12,7 +12,7 @@ rust-version = "1.63"
 anyhow = "1"
 async-trait = "0.1.56"
 futures = "0.3.24"
-iroh-metrics = { path = "../iroh-metrics", default-features = false }
+iroh-metrics = { version = "0.1.1", path = "../iroh-metrics", default-features = false }
 paste = "1.0.7"
 prost = "0.11"
 prost-types = "0.11.1"

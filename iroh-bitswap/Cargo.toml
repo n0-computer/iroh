@@ -23,8 +23,8 @@ cid = "0.9"
 deadqueue = "0.2.3"
 derivative = "2.2.0"
 futures = "0.3.21"
-iroh-metrics = { path = "../iroh-metrics", default-features = false, features = ["bitswap"] }
-iroh-util = { path = "../iroh-util" }
+iroh-metrics = { version = "0.1.1", path = "../iroh-metrics", default-features = false, features = ["bitswap"] }
+iroh-util = { version = "0.1.1", path = "../iroh-util" }
 keyed_priority_queue = "0.4.1"
 libp2p = { version = "0.50", default-features = false, features = ["ping"] }
 multihash = "0.17"
