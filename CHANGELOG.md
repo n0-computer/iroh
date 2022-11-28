@@ -1,3 +1,22 @@
+# [v0.1.2](https://github.com/n0-computer/iroh/compare/v0.1.1...v0.1.2) (2022-11-28)
+
+This relase brings about a couple of highlights, the first of which is the first relase of all `iroh-*` crates to crates.io. The second one being that we now support the experimental quic transport in libp2p.
+
+### Bug Fixes
+
+* **iroh-one:** Wire up mem addresses to each other ([#555](https://github.com/n0-computer/iroh/issues/555)) ([ee9677d](https://github.com/n0-computer/iroh/commit/ee9677d4001f15516068bf0f376e01199a1824aa))
+
+
+### Features
+
+* **ci:** improve protoc install & add code coverage checks ([#538](https://github.com/n0-computer/iroh/issues/538)) ([bcc20ce](https://github.com/n0-computer/iroh/commit/bcc20ce00fb19abc5ebbe03e9d315a01a7088881))
+* enable quic transport ([18e2f40](https://github.com/n0-computer/iroh/commit/18e2f400ed79c3522e290fe1c77b289879af6154))
+* **gateway:** add info page ([35955d6](https://github.com/n0-computer/iroh/commit/35955d6b9b505d2c35f99e4c618293c70bcca1a7))
+* Support `eth` domains  ([1d6b825](https://github.com/n0-computer/iroh/commit/1d6b825fe357a9fa958fdf426967516d3f689259))
+* switch to released libp2p@0.50 ([ae30f9e](https://github.com/n0-computer/iroh/commit/ae30f9ebadb2e3cf7e8bb53ce955dc043d5a8cfe))
+* **unixfs:** add rabin based chunking  ([b0a5783](https://github.com/n0-computer/iroh/commit/b0a57831ed4d5c2fcaeb535e6281216f81f7b108))
+
+
 # [v0.1.1](https://github.com/n0-computer/iroh/compare/v0.1.0...v0.1.1) (2022-11-21)
 
 ## Bitswap client mode
