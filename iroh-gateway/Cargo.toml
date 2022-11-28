@@ -5,7 +5,7 @@ edition = "2021"
 license = "Apache-2.0/MIT"
 readme = "README.md"
 description = "IPFS gateway"
-repository = "https://github.com/dignifiedquire/iroh"
+repository = "https://github.com/n0-computer/iroh"
 rust-version = "1.63"
 
 [dependencies]
