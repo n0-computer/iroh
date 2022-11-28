@@ -26,6 +26,14 @@ becomes:
 
 Publishing on crates.io, bumping version & generating tags is done using [`cargo-release`](https://github.com/crate-ci/cargo-release).
 
+This requires the following permissions 
+
+- on github.com/n0-computer/iroh
+  - creating tags 
+  - pushing to `main`
+- on crates.io
+  - publish access to all published crates
+
 Dry run
 
 ```sh
