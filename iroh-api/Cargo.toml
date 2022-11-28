@@ -6,6 +6,7 @@ license = "Apache-2.0/MIT"
 readme = "README.md"
 description = "Rust API for Iroh"
 rust-version = "1.63"
+repository = "https://github.com/n0-computer/iroh"
 
 [features]
 testing = ["dep:mockall"]

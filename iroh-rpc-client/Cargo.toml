@@ -2,7 +2,7 @@
 name = "iroh-rpc-client"
 version = "0.1.1"
 edition = "2021"
-authors = ["Friedel Ziegelmayer <me@dignifiedquire.com>", "ramfox"]
+authors = ["dignifiedquire <me@dignifiedquire.com>", "ramfox"]
 license = "Apache-2.0/MIT"
 repository = "https://github.com/n0-computer/iroh"
 description = "RPC type client for iroh"
