@@ -1,10 +1,13 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use futures::TryStreamExt;
 use iroh_metrics::config::Config as MetricsConfig;
+use iroh_resolver::chunker::DEFAULT_CHUNKS_SIZE;
+use iroh_resolver::unixfs_builder::ChunkerConfig;
+use iroh_resolver::unixfs_builder::Config as UnixfsConfig;
 use iroh_rpc_client::Client;
 use iroh_rpc_client::Config as RpcClientConfig;
 use iroh_rpc_types::Addr;
-use iroh_store::{Config, Store};
+use iroh_store::{Config as StoreConfig, Store};
 use tokio::runtime::Runtime;
 
 pub fn add_benchmark(c: &mut Criterion) {
@@ -34,7 +37,7 @@ pub fn add_benchmark(c: &mut Criterion) {
                     ..Default::default()
                 };
 
-                let config = Config {
+                let config = StoreConfig {
                     path: dir.path().join("db"),
                     rpc_client: rpc_client.clone(),
                     metrics: MetricsConfig::default(),
@@ -53,10 +56,16 @@ pub fn add_benchmark(c: &mut Criterion) {
                 b.to_async(&executor).iter(|| {
                     let rpc = rpc.clone();
                     async move {
-                        let stream =
-                            iroh_resolver::unixfs_builder::add_file(Some(rpc), path, false)
-                                .await
-                                .unwrap();
+                        let stream = iroh_resolver::unixfs_builder::add_file(
+                            Some(rpc),
+                            path,
+                            UnixfsConfig {
+                                wrap: false,
+                                chunker: ChunkerConfig::Fixed(DEFAULT_CHUNKS_SIZE),
+                            },
+                        )
+                        .await
+                        .unwrap();
 
                         let res: Vec<_> = stream.try_collect().await.unwrap();
                         black_box(res)

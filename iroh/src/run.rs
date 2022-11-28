@@ -7,7 +7,7 @@ use console::style;
 use crossterm::style::Stylize;
 use futures::StreamExt;
 use indicatif::{ProgressBar, ProgressStyle};
-use iroh_api::{AddEvent, Api, IpfsPath, ServiceStatus};
+use iroh_api::{AddEvent, Api, ChunkerConfig, IpfsPath, ServiceStatus, DEFAULT_CHUNKS_SIZE};
 use iroh_metrics::config::Config as MetricsConfig;
 use iroh_util::{human, iroh_config_path, make_config};
 
@@ -50,6 +50,9 @@ enum Commands {
         /// Don't provide added content to the network
         #[clap(long)]
         offline: bool,
+        /// Select the chunker to use, when chunking data. Available chunkers are currently "fixed" and "rabin".
+        #[clap(long, default_value_t = ChunkerConfig::Fixed(DEFAULT_CHUNKS_SIZE))]
+        chunker: ChunkerConfig,
     },
     #[clap(about = "Fetch IPFS content and write it to disk")]
     #[clap(after_help = doc::GET_LONG_DESCRIPTION )]
@@ -129,8 +132,9 @@ impl Cli {
                 recursive,
                 no_wrap,
                 offline,
+                chunker,
             } => {
-                add(api, path, *no_wrap, *recursive, !*offline).await?;
+                add(api, path, *no_wrap, *recursive, *chunker, !*offline).await?;
             }
             Commands::Get {
                 ipfs_path: path,
@@ -168,7 +172,14 @@ impl Cli {
     }
 }
 
-async fn add(api: &Api, path: &Path, no_wrap: bool, recursive: bool, provide: bool) -> Result<()> {
+async fn add(
+    api: &Api,
+    path: &Path,
+    no_wrap: bool,
+    recursive: bool,
+    chunker: ChunkerConfig,
+    provide: bool,
+) -> Result<()> {
     if !path.exists() {
         anyhow::bail!("Path does not exist");
     }
@@ -244,7 +255,7 @@ async fn add(api: &Api, path: &Path, no_wrap: bool, recursive: bool, provide: bo
     // a while before it starts ending progress reports
     pb.inc(0);
 
-    let mut progress = api.add_stream(path, !no_wrap).await?;
+    let mut progress = api.add_stream(path, !no_wrap, chunker).await?;
     let mut cids = Vec::new();
     while let Some(add_event) = progress.next().await {
         match add_event? {

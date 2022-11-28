@@ -138,17 +138,23 @@ mod tests {
 
         let mut dir_builder = DirectoryBuilder::new();
         dir_builder.name("foo");
-        let mut file = FileBuilder::new();
-        file.name("bar.txt").content_bytes(&b"bar"[..]);
-        dir_builder.add_file(file.build().await?);
+        let file = FileBuilder::new()
+            .name("bar.txt")
+            .content_bytes(&b"bar"[..])
+            .build()
+            .await?;
+        dir_builder.add_file(file);
 
-        let mut file = FileBuilder::new();
         let mut bytes = vec![0u8; 5 * 1024 * 1024 - 8];
         rand::thread_rng().fill_bytes(&mut bytes);
         tokio::fs::write(sender_dir.path().join("baz.txt"), &bytes).await?;
         let f = tokio::fs::File::open(sender_dir.path().join("baz.txt")).await?;
-        file.name("baz.txt").content_reader(f);
-        dir_builder.add_file(file.build().await?);
+        let file = FileBuilder::new()
+            .name("baz.txt")
+            .content_reader(f)
+            .build()
+            .await?;
+        dir_builder.add_file(file);
 
         let sender_transfer = sender
             .transfer_from_dir_builder(dir_builder)

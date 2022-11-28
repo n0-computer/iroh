@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 
 use anyhow::Result;
 use async_stream::try_stream;
-use bytes::{Bytes, BytesMut};
+use bytes::Bytes;
 use cid::Cid;
 use futures::{Stream, StreamExt, TryFutureExt, TryStreamExt};
 
@@ -33,7 +33,7 @@ impl TreeBuilder {
 
     pub fn stream_tree(
         &self,
-        chunks: impl Stream<Item = std::io::Result<BytesMut>>,
+        chunks: impl Stream<Item = std::io::Result<Bytes>>,
     ) -> impl Stream<Item = Result<Block>> {
         match self {
             TreeBuilder::Balanced { degree } => stream_balanced_tree(chunks, *degree),
@@ -48,7 +48,7 @@ struct LinkInfo {
 }
 
 fn stream_balanced_tree(
-    in_stream: impl Stream<Item = std::io::Result<BytesMut>>,
+    in_stream: impl Stream<Item = std::io::Result<Bytes>>,
     degree: usize,
 ) -> impl Stream<Item = Result<Block>> {
     try_stream! {
@@ -81,7 +81,7 @@ fn stream_balanced_tree(
 
         let in_stream = in_stream.err_into::<anyhow::Error>().map(|chunk| {
             tokio::task::spawn_blocking(|| {
-                chunk.and_then(|chunk| TreeNode::Leaf(chunk.freeze()).encode())
+                chunk.and_then(|chunk| TreeNode::Leaf(chunk).encode())
             }).err_into::<anyhow::Error>()
         }).buffered(hash_par).map(|x| x.and_then(|x| x));
 
@@ -234,13 +234,14 @@ impl TreeNode {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bytes::BytesMut;
     use futures::StreamExt;
 
     // chunks are just a single usize integer
     const CHUNK_SIZE: u64 = std::mem::size_of::<usize>() as u64;
 
-    fn test_chunk_stream(num_chunks: usize) -> impl Stream<Item = std::io::Result<BytesMut>> {
-        futures::stream::iter((0..num_chunks).map(|n| Ok(BytesMut::from(&n.to_be_bytes()[..]))))
+    fn test_chunk_stream(num_chunks: usize) -> impl Stream<Item = std::io::Result<Bytes>> {
+        futures::stream::iter((0..num_chunks).map(|n| Ok(n.to_be_bytes().to_vec().into())))
     }
 
     async fn build_expect_tree(num_chunks: usize, degree: usize) -> Vec<Vec<Block>> {
@@ -251,7 +252,7 @@ mod tests {
 
         if num_chunks / degree == 0 {
             let chunk = chunks.next().await.unwrap().unwrap();
-            let leaf = TreeNode::Leaf(chunk.freeze());
+            let leaf = TreeNode::Leaf(chunk);
             let (block, _) = leaf.encode().unwrap();
             tree[0].push(block);
             return tree;
@@ -259,7 +260,7 @@ mod tests {
 
         while let Some(chunk) = chunks.next().await {
             let chunk = chunk.unwrap();
-            let leaf = TreeNode::Leaf(chunk.freeze());
+            let leaf = TreeNode::Leaf(chunk);
             let (block, link_info) = leaf.encode().unwrap();
             links[0].push((*block.cid(), link_info));
             tree[0].push(block);

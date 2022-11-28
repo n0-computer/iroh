@@ -10,7 +10,7 @@ use futures::stream::LocalBoxStream;
 use futures::{StreamExt, TryStreamExt};
 use iroh_resolver::content_loader::{FullLoader, FullLoaderConfig};
 use iroh_resolver::resolver::Resolver;
-use iroh_resolver::unixfs_builder;
+use iroh_resolver::unixfs_builder::{self, ChunkerConfig};
 use iroh_rpc_client::Client;
 use iroh_rpc_client::StatusTable;
 use iroh_util::{iroh_config_path, make_config};
@@ -135,12 +135,18 @@ impl Api {
         &self,
         path: &Path,
         wrap: bool,
+        chunker: ChunkerConfig,
     ) -> Result<LocalBoxStream<'static, Result<AddEvent>>> {
         let providing_client = iroh_resolver::unixfs_builder::StoreAndProvideClient {
             client: self.client.clone(),
         };
         let path = path.to_path_buf();
-        let stream = unixfs_builder::add_file(Some(providing_client), &path, wrap).await?;
+        let stream = unixfs_builder::add_file(
+            Some(providing_client),
+            &path,
+            iroh_resolver::unixfs_builder::Config { wrap, chunker },
+        )
+        .await?;
 
         Ok(stream.boxed_local())
     }
@@ -149,12 +155,18 @@ impl Api {
         &self,
         path: &Path,
         wrap: bool,
+        chunker: ChunkerConfig,
     ) -> Result<LocalBoxStream<'static, Result<AddEvent>>> {
         let providing_client = iroh_resolver::unixfs_builder::StoreAndProvideClient {
             client: self.client.clone(),
         };
         let path = path.to_path_buf();
-        let stream = unixfs_builder::add_dir(Some(providing_client), &path, wrap).await?;
+        let stream = unixfs_builder::add_dir(
+            Some(providing_client),
+            &path,
+            iroh_resolver::unixfs_builder::Config { wrap, chunker },
+        )
+        .await?;
 
         Ok(stream.boxed_local())
     }
@@ -185,20 +197,21 @@ impl Api {
         &self,
         path: &Path,
         wrap: bool,
+        chunker: ChunkerConfig,
     ) -> Result<LocalBoxStream<'static, Result<AddEvent>>> {
         if path.is_dir() {
-            self.add_dir(path, wrap).await
+            self.add_dir(path, wrap, chunker).await
         } else if path.is_symlink() {
             self.add_symlink(path, wrap).await
         } else if path.is_file() {
-            self.add_file(path, wrap).await
+            self.add_file(path, wrap, chunker).await
         } else {
             anyhow::bail!("can only add files or directories")
         }
     }
 
-    pub async fn add(&self, path: &Path, wrap: bool) -> Result<Cid> {
-        let add_events = self.add_stream(path, wrap).await?;
+    pub async fn add(&self, path: &Path, wrap: bool, chunker: ChunkerConfig) -> Result<Cid> {
+        let add_events = self.add_stream(path, wrap, chunker).await?;
 
         add_events
             .try_fold(None, |_acc, add_event| async move {
