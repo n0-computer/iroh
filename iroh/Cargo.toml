@@ -42,6 +42,6 @@ which = "4.3.0"
 # mode. trycmd needs to have an actual binary to invoke.
 # Unfortunately this also turns on the feature during development, which may be
 # confusing. See the comments in `run.rs` surrounding this.
-iroh = { version = "0.1.2", path = ".", features = ["testing"] }
+iroh = { path = ".", features = ["testing"] }
 iroh-api = { version = "0.1.2", path = "../iroh-api", features = ["testing"] }
 trycmd = "0.14.1"
