@@ -1,6 +1,6 @@
 [package]
 name = "iroh-gateway"
-version = "0.1.2"
+version = "0.1.3"
 edition = "2021"
 license = "Apache-2.0/MIT"
 readme = "README.md"
@@ -27,12 +27,12 @@ http = "0.2"
 http-body = "0.4.5"
 http-serde = "1.1.0"
 hyper = "0.14.19"
-iroh-car = { version = "0.1.2", path = "../iroh-car" }
-iroh-metrics = { version = "0.1.2", path = "../iroh-metrics", default-features = false, features = ["gateway"] }
-iroh-resolver = { version = "0.1.2", path = "../iroh-resolver" }
-iroh-rpc-client = { version = "0.1.2", path = "../iroh-rpc-client", default-features = false }
-iroh-rpc-types = { version = "0.1.2", path = "../iroh-rpc-types", default-features = false }
-iroh-util = { version = "0.1.2", path = "../iroh-util" }
+iroh-car = { version = "0.1.3", path = "../iroh-car" }
+iroh-metrics = { version = "0.1.3", path = "../iroh-metrics", default-features = false, features = ["gateway"] }
+iroh-resolver = { version = "0.1.3", path = "../iroh-resolver" }
+iroh-rpc-client = { version = "0.1.3", path = "../iroh-rpc-client", default-features = false }
+iroh-rpc-types = { version = "0.1.3", path = "../iroh-rpc-types", default-features = false }
+iroh-util = { version = "0.1.3", path = "../iroh-util" }
 libp2p = { version = "0.50", default-features = false }
 mime = "0.3"
 mime_classifier = "0.0.1"
@@ -61,7 +61,7 @@ url = "2.2.2"
 urlencoding = "2.1.0"
 
 [dev-dependencies]
-iroh-store = { version = "0.1.2", path = "../iroh-store" }
+iroh-store = { version = "0.1.3", path = "../iroh-store" }
 tempfile = "3.3.0"
 
 
