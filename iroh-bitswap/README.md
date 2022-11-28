@@ -1,4 +1,9 @@
-# iroh-p2p
+# iroh bitswap
+
+[![crates.io](https://img.shields.io/crates/v/iroh-bitswap.svg?style=flat-square)](https://crates.io/crates/iroh-bitswap)
+[![Released API docs](https://img.shields.io/docsrs/iroh-bitswap?style=flat-square)](https://docs.rs/iroh-bitswap)
+[![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/iroh-bitswap?style=flat-square)](../LICENSE-MIT)
+[![CI](https://img.shields.io/github/workflow/status/n0-computer/iroh/Continuous%20integration?style=flat-square)](https://github.com/n0-computer/iroh/actions?query=workflow%3A%22Continuous+integration%22)
 
 This contains an implementation of the [IPFS bitswap
 protocol](https://docs.ipfs.tech/concepts/bitswap/). It sends blocks of data to

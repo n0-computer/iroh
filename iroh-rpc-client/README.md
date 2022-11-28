@@ -1,4 +1,9 @@
-# iroh-rpc-client
+# iroh rpc client
+
+[![crates.io](https://img.shields.io/crates/v/iroh-rpc-client.svg?style=flat-square)](https://crates.io/crates/iroh-rpc-client)
+[![Released API docs](https://img.shields.io/docsrs/iroh-rpc-client?style=flat-square)](https://docs.rs/iroh-rpc-client)
+[![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/iroh-rpc-client?style=flat-square)](../LICENSE-MIT)
+[![CI](https://img.shields.io/github/workflow/status/n0-computer/iroh/Continuous%20integration?style=flat-square)](https://github.com/n0-computer/iroh/actions?query=workflow%3A%22Continuous+integration%22)
 
 [iroh](https://github.com/n0-computer/iroh) services internally communicate via
 RPC, using the [gRPC protocol](https://grpc.io/) and [protocol
