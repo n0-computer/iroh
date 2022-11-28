@@ -1,4 +1,15 @@
-# [v0.1.2](https://github.com/n0-computer/iroh/compare/v0.1.1...v0.1.2) (2022-11-28)
+# [v0.1.3](https://github.com/n0-computer/iroh/compare/iroh-v0.1.2...iroh-v0.1.3) (2022-11-28)
+
+Bug fix release, for issues discovered while publishing to crates.io.
+
+### Bug Fixes
+
+* **iroh:** do not use self version dep ([6f6fee0](https://github.com/n0-computer/iroh/commit/6f6fee0aed2f0d6d2381ac2b731d05cadfcfff52))
+* **iroh:** exclude tests and fixtures from publishing ([6ebee5f](https://github.com/n0-computer/iroh/commit/6ebee5f3082f08d19662b8ee84b257df27d60d15))
+* version handling in tests & git_version ([59c5dc7](https://github.com/n0-computer/iroh/commit/59c5dc78cf8067a3be3a19329d1998b69f9414a9))
+
+
+# [v0.1.2](https://github.com/n0-computer/iroh/compare/v0.1.1...iroh-v0.1.2) (2022-11-28)
 
 This relase brings about a couple of highlights, the first of which is the first relase of all `iroh-*` crates to crates.io. The second one being that we now support the experimental quic transport in libp2p.
 
