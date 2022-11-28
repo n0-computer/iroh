@@ -1,5 +1,10 @@
 # iroh-car
 
+[![crates.io](https://img.shields.io/crates/v/iroh-car.svg?style=flat-square)](https://crates.io/crates/iroh-car)
+[![Released API docs](https://img.shields.io/docsrs/iroh-car?style=flat-square)](https://docs.rs/iroh-car)
+[![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/iroh-car?style=flat-square)](../LICENSE-MIT)
+[![CI](https://img.shields.io/github/workflow/status/n0-computer/iroh/Continuous%20integration?style=flat-square)](https://github.com/n0-computer/iroh/actions?query=workflow%3A%22Continuous+integration%22)
+
 [CAR file](https://ipld.io/specs/transport/car/) support for iroh. "CAR" stands
 for Content Addressable aRchives. A CAR file typically contains a serialized
 representation of an [IPLD

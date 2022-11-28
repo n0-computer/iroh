@@ -1,4 +1,9 @@
-# iroh-store
+# iroh store
+
+[![crates.io](https://img.shields.io/crates/v/iroh-store.svg?style=flat-square)](https://crates.io/crates/iroh-store)
+[![Released API docs](https://img.shields.io/docsrs/iroh-store?style=flat-square)](https://docs.rs/iroh-store)
+[![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/iroh-store?style=flat-square)](../LICENSE-MIT)
+[![CI](https://img.shields.io/github/workflow/status/n0-computer/iroh/Continuous%20integration?style=flat-square)](https://github.com/n0-computer/iroh/actions?query=workflow%3A%22Continuous+integration%22)
 
 Storage for [iroh](https://github.com/n0-computer/iroh). This provides an gRPC
 API for storing IPFS data in a [RocksDB database](http://rocksdb.org/).

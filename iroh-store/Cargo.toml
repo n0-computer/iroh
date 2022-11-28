@@ -20,10 +20,10 @@ config = "0.13.1"
 ctrlc = "3.2.2"
 futures = "0.3.21"
 git-version = "0.3.5"
-iroh-metrics = { path = "../iroh-metrics", default-features = false, features=["store"] }
-iroh-rpc-client = { path = "../iroh-rpc-client", default-features = false }
-iroh-rpc-types = { path = "../iroh-rpc-types", default-features = false }
-iroh-util = { path = "../iroh-util" }
+iroh-metrics = { version = "0.1.1", path = "../iroh-metrics", default-features = false, features=["store"] }
+iroh-rpc-client = { version = "0.1.1", path = "../iroh-rpc-client", default-features = false }
+iroh-rpc-types = { version = "0.1.1", path = "../iroh-rpc-types", default-features = false }
+iroh-util = { version = "0.1.1", path = "../iroh-util" }
 multihash = "0.17"
 names = { version = "0.14.0", default-features = false }
 opentelemetry = { version = "0.18", features = ["rt-tokio"] }

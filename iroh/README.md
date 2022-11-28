@@ -1,4 +1,9 @@
-# iroh-ctl
+# iroh
+
+[![crates.io](https://img.shields.io/crates/v/iroh.svg?style=flat-square)](https://crates.io/crates/iroh)
+[![Released API docs](https://img.shields.io/docsrs/iroh?style=flat-square)](https://docs.rs/iroh)
+[![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/iroh?style=flat-square)](../LICENSE-MIT)
+[![CI](https://img.shields.io/github/workflow/status/n0-computer/iroh/Continuous%20integration?style=flat-square)](https://github.com/n0-computer/iroh/actions?query=workflow%3A%22Continuous+integration%22)
 
 This contains the implementation of a command-line tool for controlling
 [iroh](https://github.com/n0-computer/iroh).

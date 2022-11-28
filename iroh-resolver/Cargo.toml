@@ -19,9 +19,9 @@ bytes = "1.1.0"
 cid = "0.9"
 fastmurmur3 = "0.1.2"
 futures = "0.3.21"
-iroh-metrics = { path = "../iroh-metrics", default-features = false, features = ["resolver", "gateway"] }
-iroh-rpc-client = { path = "../iroh-rpc-client", default-features = false }
-iroh-util = { path = "../iroh-util", default-features = false }
+iroh-metrics = { version = "0.1.1", path = "../iroh-metrics", default-features = false, features = ["resolver", "gateway"] }
+iroh-rpc-client = { version = "0.1.1", path = "../iroh-rpc-client", default-features = false }
+iroh-util = { version = "0.1.1", path = "../iroh-util", default-features = false }
 libipld = "0.15.0"
 libp2p = { version = "0.50", default-features = false, features = ["serde"] }
 multihash = "0.16.3"
@@ -41,10 +41,10 @@ fnv = "1.0.7"
 
 [dev-dependencies]
 criterion = { version = "0.4.0", features = ["async_tokio"] }
-iroh-car = { path = "../iroh-car" }
-iroh-rpc-types = { path = "../iroh-rpc-types", default-features = false }
-iroh-store = { path = "../iroh-store", default-features = false }
-proptest = { version = "1.0.0" }
+iroh-car = { version = "0.1.1", path = "../iroh-car" }
+iroh-rpc-types = { version = "0.1.1", path = "../iroh-rpc-types", default-features = false }
+iroh-store = { version = "0.1.1", path = "../iroh-store", default-features = false }
+proptest = "1.0.0"
 rand = "0.8.5"
 rand_chacha = "0.3.1"
 tempfile = "3.3.0"

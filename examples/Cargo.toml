@@ -7,6 +7,7 @@ license = "Apache-2.0/MIT"
 repository = "https://github.com/n0-computer/iroh"
 description = "Examples"
 rust-version = "1.63"
+publish = false
 
 [dependencies]
 anyhow = "1"
@@ -15,10 +16,10 @@ bytesize = "1.1.0"
 clap = { version = "4.0.9", features = ["derive"] }
 futures = "0.3.21"
 indicatif = "0.17.0"
-iroh-car = { path = "../iroh-car" }
-iroh-resolver = { path = "../iroh-resolver" }
-iroh-rpc-client = { path = "../iroh-rpc-client" }
-iroh-util = { path = "../iroh-util" }
+iroh-car = { version = "0.1.1", path = "../iroh-car" }
+iroh-resolver = { version = "0.1.1", path = "../iroh-resolver" }
+iroh-rpc-client = { version = "0.1.1", path = "../iroh-rpc-client" }
+iroh-util = { version = "0.1.1", path = "../iroh-util" }
 par-stream = { version = "0.10.2", default-features = false, features = ["runtime-tokio"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 
