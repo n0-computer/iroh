@@ -8,6 +8,11 @@ repository = "https://github.com/n0-computer/iroh"
 description = "Command line interface for interacting with iroh."
 rust-version = "1.63"
 
+exclude = [
+  "tests/**",
+  "fixtures/**",
+]
+
 [features]
 testing = ["dep:relative-path"]
 
