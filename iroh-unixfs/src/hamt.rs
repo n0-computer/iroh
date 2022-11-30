@@ -1,13 +1,10 @@
-use anyhow::{bail, ensure, Result};
-use async_recursion::async_recursion;
+use anyhow::{ensure, Result};
 use futures::{stream::BoxStream, Stream, StreamExt};
 use once_cell::sync::OnceCell;
 
-use crate::{
-    content_loader::ContentLoader,
-    resolver::{LoaderContext, OutContent, Path, Resolver},
-    unixfs::{self, HamtHashFunction, Link, Links, PbLinks, UnixfsNode},
-};
+use crate::unixfs::{self, HamtHashFunction, Link, Links, PbLinks, UnixfsNode};
+use async_recursion::async_recursion;
+use iroh_content::content_loader::{ContentLoader, LoaderContext};
 
 use self::{bitfield::Bitfield, hash_bits::HashBits};
 
@@ -57,7 +54,7 @@ impl Hamt {
     pub async fn get<C: ContentLoader>(
         &self,
         ctx: LoaderContext,
-        loader: &Resolver<C>,
+        loader: C,
         key: &[u8],
     ) -> Result<Option<(&Link, &UnixfsNode)>> {
         self.root.get(ctx, loader, key).await
@@ -74,10 +71,11 @@ impl Hamt {
         padding.len()
     }
 
-    pub fn children<'a, 'b: 'a, C: ContentLoader>(
+    #[allow(clippy::needless_lifetimes)]
+    pub fn children<'a, C: ContentLoader>(
         &'a self,
         ctx: LoaderContext,
-        loader: &'b Resolver<C>,
+        loader: C,
     ) -> impl Stream<Item = Result<Link>> + 'a {
         self.root.children(ctx, loader)
     }
@@ -85,43 +83,36 @@ impl Hamt {
 
 impl InnerNode {
     pub async fn load_from_link<C: ContentLoader>(
-        ctx: crate::resolver::LoaderContext,
+        ctx: LoaderContext,
         link: &Link,
-        loader: &Resolver<C>,
+        loader: C,
     ) -> Result<Self> {
-        let path = Path::from_cid(link.cid);
-        let out = loader.resolve_with_ctx(ctx, path).await?;
-
-        match out.content {
-            OutContent::Unixfs(value) => match value {
-                UnixfsNode::HamtShard(_, ref hamt) => Ok(InnerNode::Node {
-                    node: hamt.root.clone(),
-                    value,
-                }),
-                UnixfsNode::RawNode(_)
-                | UnixfsNode::File(_)
-                | UnixfsNode::Directory(_)
-                | UnixfsNode::Raw(_)
-                | UnixfsNode::Symlink(_) => Ok(InnerNode::Leaf {
-                    link: link.clone(),
-                    value,
-                }),
-            },
-            OutContent::Raw(_, bytes) => {
-                let node = UnixfsNode::decode(&link.cid, bytes)?;
-
-                Ok(InnerNode::Leaf {
-                    link: link.clone(),
-                    value: node,
-                })
-            }
-            _ => bail!("unexpected node: {:?}", out.content.typ()),
+        let cid = link.cid;
+        let loaded_cid = loader.load_cid(&cid, &ctx).await?;
+        let node = UnixfsNode::decode(&cid, loaded_cid.data)?;
+        //
+        // TODO(ramfox): should this then attempt to resolve as ipld?
+        match node {
+            UnixfsNode::HamtShard(_, ref hamt) => Ok(InnerNode::Node {
+                node: hamt.root.clone(),
+                value: node,
+            }),
+            UnixfsNode::RawNode(_)
+            | UnixfsNode::File(_)
+            | UnixfsNode::Directory(_)
+            | UnixfsNode::Raw(_)
+            | UnixfsNode::Symlink(_) => Ok(InnerNode::Leaf {
+                link: link.clone(),
+                value: node,
+            }),
         }
     }
-    fn children<'a, 'b: 'a, C: ContentLoader>(
+
+    #[allow(clippy::needless_lifetimes)]
+    fn children<'a, C: ContentLoader>(
         &'a self,
         ctx: LoaderContext,
-        loader: &'b Resolver<C>,
+        loader: C,
     ) -> impl Stream<Item = Result<Link>> + 'a {
         async_stream::try_stream! {
             match self {
@@ -192,7 +183,7 @@ impl Node {
     pub async fn get<C: ContentLoader>(
         &self,
         ctx: LoaderContext,
-        loader: &Resolver<C>,
+        loader: C,
         key: &[u8],
     ) -> Result<Option<(&Link, &UnixfsNode)>> {
         let hashed_key = hash_key(key);
@@ -207,7 +198,7 @@ impl Node {
     pub async fn get_value<C: ContentLoader>(
         &self,
         ctx: LoaderContext,
-        loader: &Resolver<C>,
+        loader: C,
         hashed_key: &mut HashBits<'_, HASH_BIT_LENGTH>,
         key: &[u8],
         depth: usize,
@@ -220,7 +211,7 @@ impl Node {
 
         let cindex = self.index_for_bit_pos(idx);
         let child = self.get_child(cindex);
-        let cached_node = self.load_child(ctx.clone(), loader, child).await?;
+        let cached_node = self.load_child(ctx.clone(), loader.clone(), child).await?;
         match cached_node {
             InnerNode::Node { node, value } => {
                 let name = child
@@ -255,7 +246,7 @@ impl Node {
     async fn load_child<'a, C: ContentLoader>(
         &self,
         ctx: LoaderContext,
-        loader: &Resolver<C>,
+        loader: C,
         child: &'a NodeLink,
     ) -> Result<&'a InnerNode> {
         if let Some(cached_node) = child.cache.get() {
@@ -276,11 +267,7 @@ impl Node {
         &self.pointers[i]
     }
 
-    fn children<'a, 'b: 'a, C: ContentLoader>(
-        &'a self,
-        ctx: LoaderContext,
-        loader: &'b Resolver<C>,
-    ) -> BoxStream<'a, Result<Link>> {
+    fn children<C: ContentLoader>(&self, ctx: LoaderContext, loader: C) -> BoxStream<Result<Link>> {
         async_stream::try_stream! {
             let padding_len = self.padding_len;
             for pointer in &self.pointers {
@@ -295,8 +282,8 @@ impl Node {
                         };
                     } else {
                         // recurse
-                        let child = self.load_child(ctx.clone(), loader, pointer).await?;
-                        let children = child.children(ctx.clone(), loader);
+                        let child = self.load_child(ctx.clone(), loader.clone(), pointer).await?;
+                        let children = child.children(ctx.clone(), loader.clone());
                         tokio::pin!(children);
                         while let Some(link) = children.next().await {
                             let link = link?;

@@ -13,14 +13,16 @@ use bytes::Bytes;
 use cid::Cid;
 use futures::stream::TryStreamExt;
 use futures::{future, stream::LocalBoxStream, Stream, StreamExt};
+use iroh_content::{
+    chunker::{self, Chunker, DEFAULT_CHUNKS_SIZE, DEFAULT_CHUNK_SIZE_LIMIT},
+    content::Block,
+};
 use iroh_rpc_client::Client;
 use prost::Message;
 use tokio::io::AsyncRead;
 
 use crate::{
     balanced_tree::{TreeBuilder, DEFAULT_DEGREE},
-    chunker::{self, Chunker, DEFAULT_CHUNKS_SIZE, DEFAULT_CHUNK_SIZE_LIMIT},
-    resolver::Block,
     unixfs::{dag_pb, unixfs_pb, DataType, Node, UnixfsNode},
 };
 
@@ -867,13 +869,14 @@ pub async fn stream_to_resolver(
 
 #[cfg(test)]
 mod tests {
-    use crate::chunker::DEFAULT_CHUNKS_SIZE;
-    use crate::content_loader::ContentLoader;
-    use crate::resolver::{Out, OutMetrics, Resolver, ResponseClip};
-
     use super::*;
+    use crate::resolver::Resolver;
     use anyhow::Result;
     use futures::TryStreamExt;
+    use iroh_content::{
+        content::{Out, OutMetrics, ResponseClip},
+        content_loader::ContentLoader,
+    };
     use proptest::prelude::*;
     use rand::prelude::*;
     use rand_chacha::ChaCha8Rng;
@@ -1027,7 +1030,7 @@ mod tests {
 
     /// builds a TestDir out of a stream of blocks and a resolver
     async fn build_testdir(
-        stream: impl Stream<Item = Result<(crate::resolver::Path, Out)>>,
+        stream: impl Stream<Item = Result<(iroh_content::content::Path, Out)>>,
         resolver: Resolver<impl ContentLoader + Unpin>,
     ) -> Result<TestDir> {
         tokio::pin!(stream);
@@ -1091,7 +1094,8 @@ mod tests {
         let directory = build_directory("", &dir).await?;
         let stream = directory.encode();
         let (root, resolver) = stream_to_resolver(stream).await?;
-        let stream = resolver.resolve_recursive_with_paths(crate::resolver::Path::from_cid(root));
+        let stream =
+            resolver.resolve_recursive_with_paths(iroh_content::content::Path::from_cid(root));
         let reference = build_testdir(stream, resolver).await?;
         Ok(dir == reference)
     }
@@ -1117,7 +1121,7 @@ mod tests {
         let stream = file.encode().await?;
         let (root, resolver) = stream_to_resolver(stream).await?;
         let out = resolver
-            .resolve(crate::resolver::Path::from_cid(root))
+            .resolve(iroh_content::content::Path::from_cid(root))
             .await?;
         let t =
             read_to_vec(out.pretty(resolver, OutMetrics::default(), ResponseClip::NoClip)?).await?;
@@ -1138,7 +1142,7 @@ mod tests {
         };
         let (root, resolver) = stream_to_resolver(stream).await?;
         let out = resolver
-            .resolve(crate::resolver::Path::from_cid(root))
+            .resolve(iroh_content::content::Path::from_cid(root))
             .await?;
         let mut reader = out.pretty(resolver, OutMetrics::default(), ResponseClip::NoClip)?;
         let mut t = String::new();

@@ -1,12 +1,13 @@
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     fmt::{self, Debug, Display, Formatter},
+    hash::BuildHasher,
     str::FromStr,
     sync::Arc,
     sync::Mutex,
 };
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, bail, Result};
 use async_trait::async_trait;
 use bytes::Bytes;
 use cid::{multibase::Base, Cid};
@@ -318,7 +319,7 @@ impl Drop for LoaderContext {
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub struct ContextId(u64);
+pub struct ContextId(pub u64);
 
 impl Display for ContextId {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
@@ -339,8 +340,30 @@ impl From<ContextId> for u64 {
 }
 
 #[derive(Debug)]
-struct InnerLoaderContext {
+pub struct InnerLoaderContext {
     #[allow(dead_code)]
     path: Path,
     closer: async_channel::Sender<ContextId>,
+}
+
+#[async_trait]
+impl<S: BuildHasher + Clone + Send + Sync + 'static> ContentLoader for HashMap<Cid, Bytes, S> {
+    async fn load_cid(&self, cid: &Cid, _ctx: &LoaderContext) -> Result<LoadedCid> {
+        match self.get(cid) {
+            Some(b) => Ok(LoadedCid {
+                data: b.clone(),
+                source: Source::Bitswap,
+            }),
+            None => bail!("not found"),
+        }
+    }
+
+    async fn stop_session(&self, _ctx: ContextId) -> Result<()> {
+        // no session tracking
+        Ok(())
+    }
+
+    async fn has_cid(&self, cid: &Cid) -> Result<bool> {
+        Ok(self.contains_key(cid))
+    }
 }

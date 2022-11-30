@@ -10,16 +10,16 @@ use anyhow::{anyhow, bail, ensure, Result};
 use bytes::{Buf, Bytes};
 use cid::{multihash::MultihashDigest, Cid};
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt, Stream, StreamExt};
+use iroh_content::{
+    chunker::DEFAULT_CHUNK_SIZE_LIMIT,
+    codec::Codec,
+    content::{Block, OutMetrics, ResponseClip},
+    content_loader::{ContentLoader, LoaderContext},
+};
 use prost::Message;
 use tokio::io::{AsyncRead, AsyncSeek};
 
-use crate::{
-    chunker::DEFAULT_CHUNK_SIZE_LIMIT,
-    codecs::Codec,
-    content_loader::ContentLoader,
-    hamt::Hamt,
-    resolver::{Block, LoaderContext, OutMetrics, Resolver, ResponseClip},
-};
+use crate::hamt::Hamt;
 
 pub(crate) mod unixfs_pb {
     #![allow(clippy::all)]
@@ -340,10 +340,10 @@ impl UnixfsNode {
     }
 
     /// If this is a directory or hamt shard, returns a stream that yields all children of it.
-    pub fn as_child_reader<'a, 'b: 'a, T: ContentLoader>(
+    pub fn as_child_reader<'a, 'b: 'a, C: ContentLoader>(
         &'a self,
         ctx: LoaderContext,
-        loader: &'b Resolver<T>,
+        loader: C,
         om: OutMetrics,
     ) -> Result<Option<UnixfsChildStream<'a>>> {
         match self {
@@ -368,13 +368,13 @@ impl UnixfsNode {
         }
     }
 
-    pub fn into_content_reader<T: ContentLoader>(
+    pub fn into_content_reader<C: ContentLoader>(
         self,
         ctx: LoaderContext,
-        loader: Resolver<T>,
+        loader: C,
         om: OutMetrics,
         pos_max: ResponseClip,
-    ) -> Result<Option<UnixfsContentReader<T>>> {
+    ) -> Result<Option<UnixfsContentReader<C>>> {
         match self {
             UnixfsNode::Raw(_)
             | UnixfsNode::RawNode(_)
@@ -411,33 +411,8 @@ pub enum UnixfsChildStream<'a> {
     },
 }
 
-impl<'a> fmt::Debug for UnixfsChildStream<'a> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Hamt {
-                stream: _,
-                pos,
-                out_metrics,
-            } => f
-                .debug_struct("Hamt")
-                .field("stream", &"impl Stream<Item=Result<Link>>")
-                .field("pos", pos)
-                .field("out_metrics", out_metrics)
-                .finish(),
-            Self::Directory {
-                stream: _,
-                out_metrics,
-            } => f
-                .debug_struct("Directory")
-                .field("stream", &"impl Stream<Item=Result<Link>")
-                .field("out_metrics", out_metrics)
-                .finish(),
-        }
-    }
-}
-
 #[derive(Debug)]
-pub enum UnixfsContentReader<T: ContentLoader> {
+pub enum UnixfsContentReader<C: ContentLoader> {
     File {
         root_node: UnixfsNode,
         /// Absolute position in bytes
@@ -450,13 +425,13 @@ pub enum UnixfsContentReader<T: ContentLoader> {
         current_node: CurrentNodeState,
         /// Stack of links left to traverse.
         current_links: Vec<VecDeque<Link>>,
-        loader: Resolver<T>,
+        loader: C,
         out_metrics: OutMetrics,
         ctx: std::sync::Arc<tokio::sync::Mutex<LoaderContext>>,
     },
 }
 
-impl<T: ContentLoader> UnixfsContentReader<T> {
+impl<C: ContentLoader> UnixfsContentReader<C> {
     /// Returns the size in bytes, if known in advance.
     pub fn size(&self) -> Option<u64> {
         match self {
@@ -486,7 +461,7 @@ impl Stream for UnixfsChildStream<'_> {
     }
 }
 
-impl<T: ContentLoader + Unpin + 'static> AsyncRead for UnixfsContentReader<T> {
+impl<C: ContentLoader + Unpin + 'static> AsyncRead for UnixfsContentReader<C> {
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -541,7 +516,7 @@ impl<T: ContentLoader + Unpin + 'static> AsyncRead for UnixfsContentReader<T> {
     }
 }
 
-impl<T: ContentLoader + Unpin + 'static> AsyncSeek for UnixfsContentReader<T> {
+impl<C: ContentLoader + Unpin + 'static> AsyncSeek for UnixfsContentReader<C> {
     fn start_seek(mut self: Pin<&mut Self>, position: std::io::SeekFrom) -> std::io::Result<()> {
         match &mut *self {
             UnixfsContentReader::File {
@@ -671,10 +646,10 @@ impl Debug for CurrentNodeState {
     }
 }
 
-fn load_next_node<T: ContentLoader + 'static>(
+fn load_next_node<C: ContentLoader + 'static>(
     current_node: &mut CurrentNodeState,
     current_links: &mut Vec<VecDeque<Link>>,
-    loader: Resolver<T>,
+    loader: C,
     ctx: std::sync::Arc<tokio::sync::Mutex<LoaderContext>>,
 ) -> bool {
     // Load next node
@@ -699,7 +674,7 @@ fn load_next_node<T: ContentLoader + 'static>(
 
     let fut = async move {
         let ctx = ctx.lock().await;
-        let loaded_cid = loader.loader().load_cid(&link.cid, &ctx).await?;
+        let loaded_cid = loader.load_cid(&link.cid, &ctx).await?;
         let node = UnixfsNode::decode(&link.cid, loaded_cid.data)?;
 
         Ok(node)
@@ -710,10 +685,10 @@ fn load_next_node<T: ContentLoader + 'static>(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn poll_read_file_at<T: ContentLoader + 'static>(
+fn poll_read_file_at<C: ContentLoader + 'static>(
     cx: &mut Context<'_>,
     root_node: &Node,
-    loader: Resolver<T>,
+    loader: C,
     pos: &mut usize,
     skip_pos: &mut usize,
     pos_max: ResponseClip,

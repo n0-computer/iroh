@@ -1,12 +1,12 @@
 [package]
-name = "iroh-resolver"
+name = "iroh-unixfs"
 version = "0.1.3"
 edition = "2021"
 authors = ["dignifiedquire <me@dignifiedquire.com>"]
 license = "Apache-2.0/MIT"
 repository = "https://github.com/n0-computer/iroh"
-description = "Implementation of path resolution for iroh"
-rust-version = "1.65"
+description = "Implementation of unixfs for iroh"
+rust-version = "1.63"
 
 exclude = [
   "tests/**",
@@ -14,7 +14,7 @@ exclude = [
 ]
 
 [dependencies]
-anyhow = { version = "1", features = ["backtrace"] }
+anyhow = "1"
 async-channel = "1.7.1"
 async-recursion = "1.0.0"
 async-stream = "0.3.3"
@@ -30,7 +30,7 @@ iroh-util = { version = "0.1.3", path = "../iroh-util", default-features = false
 iroh-content = { path = "../iroh-content" }
 libipld = "0.15.0"
 libp2p = { version = "0.50", default-features = false, features = ["serde"] }
-multihash = "0.17"
+multihash = "0.16.3"
 num_enum = "0.5.7"
 once_cell = "1.13.0"
 prost = "0.11"
@@ -59,6 +59,11 @@ ruzstd = "0.3"
 
 [build-dependencies]
 prost-build = "0.11.1"
+
+[features]
+default = ["rpc-grpc", "rpc-mem"]
+rpc-grpc = ["iroh-rpc-client/grpc", "iroh-metrics/rpc-grpc", "iroh-rpc-types/grpc", "iroh-store/rpc-grpc"]
+rpc-mem = ["iroh-rpc-client/mem", "iroh-rpc-types/mem", "iroh-store/rpc-mem"]
 
 [[bench]]
 name = "unixfs"

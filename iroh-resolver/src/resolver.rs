@@ -1,264 +1,37 @@
-use std::collections::{BTreeSet, HashMap, VecDeque};
-use std::fmt::{self, Debug, Display, Formatter};
-use std::hash::BuildHasher;
+use std::collections::VecDeque;
+use std::fmt::{self, Debug, Formatter};
 use std::pin::Pin;
-use std::str::FromStr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::task::{Context, Poll};
-use std::time::Instant;
 
 use anyhow::{anyhow, bail, Context as _, Result};
 use async_trait::async_trait;
 use bytes::Bytes;
-use cid::multihash::{Code, MultihashDigest};
 use cid::Cid;
 use futures::{Future, Stream, TryStreamExt};
 use iroh_metrics::inc;
+use iroh_unixfs::unixfs{
+    poll_read_buf_at_pos, DataType, Link, UnixfsChildStream, UnixfsContentReader, UnixfsNode,
+};
 use libipld::codec::Encode;
-use libipld::error::{InvalidMultihash, UnsupportedMultihash};
 use libipld::prelude::Codec as _;
 use libipld::{Ipld, IpldCodec};
 use tokio::io::{AsyncRead, AsyncSeek};
-use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use tracing::{debug, trace, warn};
 
-use iroh_metrics::{
-    core::{MObserver, MRecorder},
-    gateway::{GatewayHistograms, GatewayMetrics},
-    observe, record,
-    resolver::ResolverMetrics,
-};
+use iroh_metrics::{core::MRecorder, resolver::ResolverMetrics};
 
-use crate::codecs::Codec;
-use crate::content_loader::ContentLoader;
 use crate::dns_resolver::{Config, DnsResolver};
-use crate::unixfs::{
-    poll_read_buf_at_pos, DataType, Link, UnixfsChildStream, UnixfsContentReader, UnixfsNode,
+use iroh_content::{
+    codec::Codec,
+    content::{CidOrDomain, LoadedCid, OutMetrics, Path, PathType, ResponseClip, Source},
+    content_loader::{ContentLoader, ContextId, LoaderContext},
+    util::parse_links,
 };
 
 pub const IROH_STORE: &str = "iroh-store";
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Block {
-    cid: Cid,
-    data: Bytes,
-    links: Vec<Cid>,
-}
-
-impl Block {
-    pub fn new(cid: Cid, data: Bytes, links: Vec<Cid>) -> Self {
-        Self { cid, data, links }
-    }
-
-    pub fn cid(&self) -> &Cid {
-        &self.cid
-    }
-
-    pub fn data(&self) -> &Bytes {
-        &self.data
-    }
-
-    pub fn links(&self) -> &[Cid] {
-        &self.links
-    }
-
-    pub fn raw_data_size(&self) -> Option<u64> {
-        let codec = Codec::try_from(self.cid.codec()).unwrap();
-        match codec {
-            Codec::Raw => Some(self.data.len() as u64),
-            _ => None,
-        }
-    }
-
-    /// Validate the block. Will return an error if the hash or the links are wrong.
-    pub fn validate(&self) -> Result<()> {
-        // check that the cid is supported
-        let code = self.cid.hash().code();
-        let mh = Code::try_from(code)
-            .map_err(|_| UnsupportedMultihash(code))?
-            .digest(&self.data);
-        // check that the hash matches the data
-        if mh.digest() != self.cid.hash().digest() {
-            return Err(InvalidMultihash(mh.to_bytes()).into());
-        }
-        // check that the links are complete
-        let expected_links = parse_links(&self.cid, &self.data)?;
-        let mut actual_links = self.links.clone();
-        actual_links.sort();
-        // TODO: why do the actual links need to be deduplicated?
-        actual_links.dedup();
-        anyhow::ensure!(expected_links == actual_links, "links do not match");
-        Ok(())
-    }
-
-    pub fn into_parts(self) -> (Cid, Bytes, Vec<Cid>) {
-        (self.cid, self.data, self.links)
-    }
-}
-
-/// Represents an ipfs path.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Path {
-    typ: PathType,
-    root: CidOrDomain,
-    tail: Vec<String>,
-}
-
-impl Path {
-    pub fn from_cid(cid: Cid) -> Self {
-        Path {
-            typ: PathType::Ipfs,
-            root: CidOrDomain::Cid(cid),
-            tail: Vec::new(),
-        }
-    }
-
-    pub fn typ(&self) -> PathType {
-        self.typ
-    }
-
-    pub fn root(&self) -> &CidOrDomain {
-        &self.root
-    }
-
-    pub fn tail(&self) -> &[String] {
-        &self.tail
-    }
-
-    // used only for string path manipulation
-    pub fn has_trailing_slash(&self) -> bool {
-        !self.tail.is_empty() && self.tail.last().unwrap().is_empty()
-    }
-
-    pub fn push(&mut self, str: impl AsRef<str>) {
-        self.tail.push(str.as_ref().to_owned());
-    }
-
-    // Empty path segments in the *middle* shouldn't occur,
-    // though they can occur at the end, which `join` handles.
-    // TODO(faassen): it would make sense to return a `RelativePathBuf` here at some
-    // point in the future so we don't deal with bare strings anymore and
-    // we're forced to handle various cases more explicitly.
-    pub fn to_relative_string(&self) -> String {
-        self.tail.join("/")
-    }
-
-    pub fn cid(&self) -> Option<&Cid> {
-        match &self.root {
-            CidOrDomain::Cid(cid) => Some(cid),
-            CidOrDomain::Domain(_) => None,
-        }
-    }
-}
-
-/// Holds information if we should clip the response and to what offset
-#[derive(Debug, Clone, Copy)]
-pub enum ResponseClip {
-    NoClip,
-    Clip(usize),
-}
-
-impl From<usize> for ResponseClip {
-    fn from(item: usize) -> Self {
-        if item == 0 {
-            ResponseClip::NoClip
-        } else {
-            ResponseClip::Clip(item)
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum CidOrDomain {
-    Cid(Cid),
-    Domain(String),
-}
-
-impl Display for CidOrDomain {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        match self {
-            CidOrDomain::Cid(c) => std::fmt::Display::fmt(&c, f),
-            CidOrDomain::Domain(s) => std::fmt::Display::fmt(&s, f),
-        }
-    }
-}
-
-impl Display for Path {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "/{}/{}", self.typ.as_str(), self.root)?;
-
-        for part in &self.tail {
-            if part.is_empty() {
-                continue;
-            }
-            write!(f, "/{}", part)?;
-        }
-
-        if self.has_trailing_slash() {
-            write!(f, "/")?;
-        }
-
-        Ok(())
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PathType {
-    /// `/ipfs`
-    Ipfs,
-    /// `/ipns`
-    Ipns,
-}
-
-impl PathType {
-    pub const fn as_str(&self) -> &'static str {
-        match self {
-            PathType::Ipfs => "ipfs",
-            PathType::Ipns => "ipns",
-        }
-    }
-}
-
-impl FromStr for Path {
-    type Err = anyhow::Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let mut parts = s.split(&['/', '\\']).filter(|s| !s.is_empty());
-
-        let first_part = parts.next().ok_or_else(|| anyhow!("path too short"))?;
-        let (typ, root) = if first_part.eq_ignore_ascii_case("ipns") {
-            let root = parts.next().ok_or_else(|| anyhow!("path too short"))?;
-            let root = if let Ok(c) = Cid::from_str(root) {
-                CidOrDomain::Cid(c)
-            } else {
-                // TODO: url validation?
-                CidOrDomain::Domain(root.to_string())
-            };
-
-            (PathType::Ipns, root)
-        } else {
-            let root = if first_part.eq_ignore_ascii_case("ipfs") {
-                parts.next().ok_or_else(|| anyhow!("path too short"))?
-            } else {
-                first_part
-            };
-
-            let root = Cid::from_str(root).context("invalid cid")?;
-
-            (PathType::Ipfs, CidOrDomain::Cid(root))
-        };
-
-        let mut tail: Vec<String> = parts.map(Into::into).collect();
-
-        if s.ends_with('/') {
-            tail.push("".to_owned());
-        }
-
-        Ok(Path { typ, root, tail })
-    }
-}
 
 #[async_trait]
 pub trait LinksContainer: Sync + Send + std::fmt::Debug + Clone + 'static {
@@ -311,7 +84,7 @@ impl OutRaw {
 #[derive(Debug, Clone)]
 pub struct Out {
     metadata: Metadata,
-    pub(crate) content: OutContent,
+    pub content: OutContent,
     context: LoaderContext,
 }
 
@@ -324,7 +97,7 @@ impl Out {
     ///
     /// Returns `true` if the underlying root is an IPNS entry.
     pub fn is_mutable(&self) -> bool {
-        matches!(self.metadata.path.typ, PathType::Ipns)
+        matches!(self.metadata.path.typ(), PathType::Ipns)
     }
 
     pub fn is_dir(&self) -> bool {
@@ -351,7 +124,9 @@ impl Out {
     /// is unixfs
     pub fn named_links(&self) -> Result<Vec<(Option<&str>, Cid)>> {
         match &self.content {
-            OutContent::Unixfs(node) => node.links().map(|l| l.map(|l| (l.name, l.cid))).collect(),
+            // TODO(ramfox): add back in when we figure out circular dependencies
+            // OutContent::Unixfs(node) => node.links().map(|l| l.map(|l| (l.name, l.cid))).collect(),
+            OutContent::Unixfs(_) => todo!(),
             _ => {
                 let links = self.content.links();
                 links.map(|l| l.into_iter().map(|l| (None, l)).collect())
@@ -359,6 +134,7 @@ impl Out {
         }
     }
 
+    // TODO(ramfox): figure out circular dependencies
     /// Returns a stream over the content of this directory.
     /// Only if this is of type `unixfs` and a directory.
     pub fn unixfs_read_dir<'a, 'b: 'a, C: ContentLoader>(
@@ -367,7 +143,9 @@ impl Out {
         om: OutMetrics,
     ) -> Result<Option<UnixfsChildStream<'a>>> {
         match &self.content {
-            OutContent::Unixfs(node) => node.as_child_reader(self.context.clone(), loader, om),
+            OutContent::Unixfs(node) => {
+                node.as_child_reader(self.context.clone(), loader.loader().clone(), om)
+            }
             _ => Ok(None),
         }
     }
@@ -407,7 +185,7 @@ impl Out {
             OutContent::Unixfs(node) => {
                 let ctx = self.context;
                 let reader = node
-                    .into_content_reader(ctx, loader, om, clip)?
+                    .into_content_reader(ctx, loader.loader().clone(), om, clip)?
                     .ok_or_else(|| anyhow!("cannot read the contents of a directory"))?;
 
                 Ok(OutPrettyReader::Unixfs(reader))
@@ -417,7 +195,7 @@ impl Out {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) enum OutContent {
+pub enum OutContent {
     DagPb(Ipld, Bytes),
     Unixfs(UnixfsNode),
     DagCbor(Ipld, Bytes),
@@ -446,7 +224,9 @@ impl OutContent {
                 ipld.references(&mut links);
                 Ok(links)
             }
-            OutContent::Unixfs(node) => node.links().map(|r| r.map(|r| r.cid)).collect(),
+            // TODO(ramfox): add back in when we figure out circular dependencies
+            // OutContent::Unixfs(node) => node.links().map(|r| r.map(|r| r.cid)).collect(),
+            OutContent::Unixfs(_node) => todo!(),
         }
     }
 }
@@ -484,9 +264,9 @@ pub enum UnixfsType {
     Symlink,
 }
 
-pub enum OutPrettyReader<T: ContentLoader> {
+pub enum OutPrettyReader<C: ContentLoader> {
     DagPb(BytesReader),
-    Unixfs(UnixfsContentReader<T>),
+    Unixfs(UnixfsContentReader<C>),
     DagCbor(BytesReader),
     DagJson(BytesReader),
     Raw(BytesReader),
@@ -528,41 +308,6 @@ impl BytesReader {
     /// Returns the size in bytes, if known in advance.
     pub fn size(&self) -> Option<u64> {
         Some(self.bytes.len() as u64)
-    }
-}
-
-#[derive(Debug)]
-pub struct OutMetrics {
-    pub start: Instant,
-}
-
-impl OutMetrics {
-    pub fn observe_bytes_read(&self, pos: usize, bytes_read: usize) {
-        if pos == 0 && bytes_read > 0 {
-            record!(
-                GatewayMetrics::TimeToServeFirstBlock,
-                self.start.elapsed().as_millis() as u64
-            );
-        }
-        if bytes_read == 0 {
-            record!(
-                GatewayMetrics::TimeToServeFullFile,
-                self.start.elapsed().as_millis() as u64
-            );
-            observe!(
-                GatewayHistograms::TimeToServeFullFile,
-                self.start.elapsed().as_millis() as f64
-            );
-        }
-        record!(GatewayMetrics::BytesStreamed, bytes_read as u64);
-    }
-}
-
-impl Default for OutMetrics {
-    fn default() -> Self {
-        Self {
-            start: Instant::now(),
-        }
     }
 }
 
@@ -646,19 +391,6 @@ impl<T: ContentLoader + Unpin + 'static> AsyncSeek for OutPrettyReader<T> {
     }
 }
 
-#[derive(Debug)]
-pub struct LoadedCid {
-    pub data: Bytes,
-    pub source: Source,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Source {
-    Bitswap,
-    Http(String),
-    Store(&'static str),
-}
-
 #[derive(Debug, Clone)]
 pub struct Resolver<T: ContentLoader> {
     loader: T,
@@ -666,75 +398,6 @@ pub struct Resolver<T: ContentLoader> {
     next_id: Arc<AtomicU64>,
     _worker: Arc<JoinHandle<()>>,
     session_closer: async_channel::Sender<ContextId>,
-}
-
-#[derive(Debug, Clone)]
-pub struct LoaderContext {
-    id: ContextId,
-    inner: Arc<Mutex<InnerLoaderContext>>,
-}
-
-impl LoaderContext {
-    pub fn from_path(id: ContextId, closer: async_channel::Sender<ContextId>, path: Path) -> Self {
-        trace!("new loader context: {:?}", id);
-        LoaderContext {
-            id,
-            inner: Arc::new(Mutex::new(InnerLoaderContext { path, closer })),
-        }
-    }
-
-    pub fn id(&self) -> ContextId {
-        self.id
-    }
-}
-
-impl Drop for LoaderContext {
-    fn drop(&mut self) {
-        let count = Arc::strong_count(&self.inner);
-        debug!("session {} dropping loader context {}", self.id, count);
-        if count == 1 {
-            if let Err(err) = self
-                .inner
-                .try_lock()
-                .expect("last reference, no lock")
-                .closer
-                .send_blocking(self.id)
-            {
-                warn!(
-                    "failed to send session stop for session {}: {:?}",
-                    self.id, err
-                );
-            }
-        }
-    }
-}
-
-#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub struct ContextId(u64);
-
-impl Display for ContextId {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "ContextId({})", self.0)
-    }
-}
-
-impl From<u64> for ContextId {
-    fn from(id: u64) -> Self {
-        ContextId(id)
-    }
-}
-
-impl From<ContextId> for u64 {
-    fn from(id: ContextId) -> Self {
-        id.0
-    }
-}
-
-#[derive(Debug)]
-struct InnerLoaderContext {
-    #[allow(dead_code)]
-    path: Path,
-    closer: async_channel::Sender<ContextId>,
 }
 
 impl<T: ContentLoader> Resolver<T> {
@@ -975,7 +638,7 @@ impl<T: ContentLoader> Resolver<T> {
             }
             UnixfsNode::HamtShard(_, hamt) => {
                 let (next_link, next_node) = hamt
-                    .get(ctx.clone(), self, part.as_bytes())
+                    .get(ctx.clone(), self.loader().clone(), part.as_bytes())
                     .await?
                     .ok_or_else(|| anyhow!("UnixfsNode::HamtShard link '{}' not found", part))?;
                 // TODO: is this the right way to to resolved path here?
@@ -1002,7 +665,7 @@ impl<T: ContentLoader> Resolver<T> {
     ) -> Result<Out> {
         trace!("{:?} resolving {} for {}", ctx.id(), cid, root_path);
         if let Ok(node) = UnixfsNode::decode(&cid, loaded_cid.data.clone()) {
-            let tail = &root_path.tail;
+            let tail = &root_path.tail();
             let mut current = node;
             let mut resolved_path = vec![cid];
 
@@ -1055,11 +718,11 @@ impl<T: ContentLoader> Resolver<T> {
             .map_err(|e| anyhow!("invalid {:?}: {:?}", codec, e))?;
 
         let (codec, out) = self
-            .resolve_ipld_path(cid, codec, ipld, &root_path.tail, &mut ctx)
+            .resolve_ipld_path(cid, codec, ipld, root_path.tail(), &mut ctx)
             .await?;
 
         // reencode if we only return part of the original
-        let bytes = if root_path.tail.is_empty() {
+        let bytes = if root_path.tail().is_empty() {
             loaded_cid.data
         } else {
             let mut bytes = Vec::new();
@@ -1185,14 +848,14 @@ impl<T: ContentLoader> Resolver<T> {
         const MAX_LOOKUPS: usize = 16;
 
         for _ in 0..MAX_LOOKUPS {
-            match current.typ {
-                PathType::Ipfs => match current.root {
+            match current.typ() {
+                PathType::Ipfs => match current.root() {
                     CidOrDomain::Cid(ref c) => {
                         return Ok(*c);
                     }
                     CidOrDomain::Domain(_) => bail!("invalid domain encountered"),
                 },
-                PathType::Ipns => match current.root {
+                PathType::Ipns => match current.root() {
                     CidOrDomain::Cid(ref c) => {
                         let c = self.load_ipns_record(c).await?;
                         current = Path::from_cid(c);
@@ -1234,46 +897,6 @@ impl<T: ContentLoader> Resolver<T> {
     }
 }
 
-/// Extract links from the given content.
-///
-/// Links will be returned as a sorted vec
-pub fn parse_links(cid: &Cid, bytes: &[u8]) -> Result<Vec<Cid>> {
-    let codec = Codec::try_from(cid.codec()).context("unknown codec")?;
-    let mut cids = BTreeSet::new();
-    let codec = match codec {
-        Codec::DagCbor => IpldCodec::DagCbor,
-        Codec::DagPb => IpldCodec::DagPb,
-        Codec::DagJson => IpldCodec::DagJson,
-        Codec::Raw => IpldCodec::Raw,
-        _ => bail!("unsupported codec {:?}", codec),
-    };
-    codec.references::<Ipld, _>(bytes, &mut cids)?;
-    let links = cids.into_iter().collect();
-    Ok(links)
-}
-
-#[async_trait]
-impl<S: BuildHasher + Clone + Send + Sync + 'static> ContentLoader for HashMap<Cid, Bytes, S> {
-    async fn load_cid(&self, cid: &Cid, _ctx: &LoaderContext) -> Result<LoadedCid> {
-        match self.get(cid) {
-            Some(b) => Ok(LoadedCid {
-                data: b.clone(),
-                source: Source::Bitswap,
-            }),
-            None => bail!("not found"),
-        }
-    }
-
-    async fn stop_session(&self, _ctx: ContextId) -> Result<()> {
-        // no session tracking
-        Ok(())
-    }
-
-    async fn has_cid(&self, cid: &Cid) -> Result<bool> {
-        Ok(self.contains_key(cid))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::{
@@ -1307,7 +930,7 @@ mod tests {
             .clone()
             .into_content_reader(
                 ctx,
-                resolver.clone(),
+                resolver.loader().clone(),
                 OutMetrics::default(),
                 ResponseClip::Clip(range.end as usize),
             )

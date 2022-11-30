@@ -1,22 +1,22 @@
 use std::{
     fmt::{self, Display, Formatter},
     str::FromStr,
-    time::Instant,
 };
 
 use anyhow::{anyhow, Context as _, Result};
-use async_trait::async_trait;
 use bytes::Bytes;
 use cid::Cid;
+use multihash::{Code, MultihashDigest};
 
 use iroh_metrics::{
     core::{MObserver, MRecorder},
     gateway::{GatewayHistograms, GatewayMetrics},
     observe, record,
 };
-use libipld::Ipld;
+use libipld::error::{InvalidMultihash, UnsupportedMultihash};
+use tokio::time::Instant;
 
-use crate::{content_loader::LoaderContext, util::parse_links};
+use crate::{codec::Codec, util::parse_links};
 
 #[derive(Debug)]
 pub struct LoadedCid {
@@ -29,6 +29,64 @@ pub enum Source {
     Bitswap,
     Http(String),
     Store(&'static str),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Block {
+    cid: Cid,
+    data: Bytes,
+    links: Vec<Cid>,
+}
+
+impl Block {
+    pub fn new(cid: Cid, data: Bytes, links: Vec<Cid>) -> Self {
+        Self { cid, data, links }
+    }
+
+    pub fn cid(&self) -> &Cid {
+        &self.cid
+    }
+
+    pub fn data(&self) -> &Bytes {
+        &self.data
+    }
+
+    pub fn links(&self) -> &[Cid] {
+        &self.links
+    }
+
+    pub fn raw_data_size(&self) -> Option<u64> {
+        let codec = Codec::try_from(self.cid.codec()).unwrap();
+        match codec {
+            Codec::Raw => Some(self.data.len() as u64),
+            _ => None,
+        }
+    }
+
+    /// Validate the block. Will return an error if the hash or the links are wrong.
+    pub fn validate(&self) -> Result<()> {
+        // check that the cid is supported
+        let code = self.cid.hash().code();
+        let mh = Code::try_from(code)
+            .map_err(|_| UnsupportedMultihash(code))?
+            .digest(&self.data);
+        // check that the hash matches the data
+        if mh.digest() != self.cid.hash().digest() {
+            return Err(InvalidMultihash(mh.to_bytes()).into());
+        }
+        // check that the links are complete
+        let expected_links = parse_links(&self.cid, &self.data)?;
+        let mut actual_links = self.links.clone();
+        actual_links.sort();
+        // TODO: why do the actual links need to be deduplicated?
+        actual_links.dedup();
+        anyhow::ensure!(expected_links == actual_links, "links do not match");
+        Ok(())
+    }
+
+    pub fn into_parts(self) -> (Cid, Bytes, Vec<Cid>) {
+        (self.cid, self.data, self.links)
+    }
 }
 
 /// Represents an ipfs path.
@@ -193,235 +251,6 @@ impl FromStr for Path {
     }
 }
 
-#[async_trait]
-pub trait LinksContainer: Sync + Send + std::fmt::Debug + Clone + 'static {
-    /// Extract links out of a container struct.
-    fn links(&self) -> Result<Vec<Cid>>;
-}
-
-#[async_trait]
-impl LinksContainer for OutRaw {
-    fn links(&self) -> Result<Vec<Cid>> {
-        parse_links(&self.cid, &self.content)
-    }
-}
-
-#[async_trait]
-impl LinksContainer for Out {
-    fn links(&self) -> Result<Vec<Cid>> {
-        Out::links(self)
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct OutRaw {
-    source: Source,
-    content: Bytes,
-    cid: Cid,
-}
-
-impl OutRaw {
-    pub fn from_loaded(cid: Cid, loaded: LoadedCid) -> Self {
-        Self {
-            source: loaded.source,
-            content: loaded.data,
-            cid,
-        }
-    }
-    pub fn source(&self) -> &Source {
-        &self.source
-    }
-
-    pub fn cid(&self) -> &Cid {
-        &self.cid
-    }
-
-    pub fn content(&self) -> &Bytes {
-        &self.content
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct Out {
-    metadata: Metadata,
-    pub(crate) content: OutContent,
-    context: LoaderContext,
-}
-
-impl Out {
-    pub fn metadata(&self) -> &Metadata {
-        &self.metadata
-    }
-
-    /// Is this content mutable?
-    ///
-    /// Returns `true` if the underlying root is an IPNS entry.
-    pub fn is_mutable(&self) -> bool {
-        matches!(self.metadata.path.typ, PathType::Ipns)
-    }
-
-    pub fn is_dir(&self) -> bool {
-        match &self.content {
-            OutContent::Unixfs(node) => node.is_dir(),
-            _ => false,
-        }
-    }
-
-    pub fn is_symlink(&self) -> bool {
-        self.metadata.unixfs_type == Some(UnixfsType::Symlink)
-    }
-
-    /// What kind of content this is this.
-    pub fn typ(&self) -> OutType {
-        self.content.typ()
-    }
-
-    pub fn links(&self) -> Result<Vec<Cid>> {
-        self.content.links()
-    }
-
-    /// Returns links with an associated file or directory name if the content
-    /// is unixfs
-    pub fn named_links(&self) -> Result<Vec<(Option<&str>, Cid)>> {
-        match &self.content {
-            // TODO(ramfox): add back in when we figure out circular dependencies
-            // OutContent::Unixfs(node) => node.links().map(|l| l.map(|l| (l.name, l.cid))).collect(),
-            OutContent::Unixfs(_) => todo!(),
-            _ => {
-                let links = self.content.links();
-                links.map(|l| l.into_iter().map(|l| (None, l)).collect())
-            }
-        }
-    }
-
-    // TODO(ramfox): figure out circular dependencies
-    //     /// Returns a stream over the content of this directory.
-    //     /// Only if this is of type `unixfs` and a directory.
-    //     pub fn unixfs_read_dir<'a, 'b: 'a, C: ContentLoader>(
-    //         &'a self,
-    //         loader: &'b Resolver<C>,
-    //         om: OutMetrics,
-    //     ) -> Result<Option<UnixfsChildStream<'a>>> {
-    //         match &self.content {
-    //             OutContent::Unixfs(node) => node.as_child_reader(self.context.clone(), loader, om),
-    //             _ => Ok(None),
-    //         }
-    //     }
-
-    //     pub fn pretty<T: ContentLoader>(
-    //         self,
-    //         loader: Resolver<T>,
-    //         om: OutMetrics,
-    //         clip: ResponseClip,
-    //     ) -> Result<OutPrettyReader<T>> {
-    //         let pos = 0;
-    //         match self.content {
-    //             OutContent::DagPb(_, mut bytes) => {
-    //                 if let ResponseClip::Clip(n) = clip {
-    //                     bytes.truncate(n);
-    //                 }
-    //                 Ok(OutPrettyReader::DagPb(BytesReader { pos, bytes, om }))
-    //             }
-    //             OutContent::DagCbor(_, mut bytes) => {
-    //                 if let ResponseClip::Clip(n) = clip {
-    //                     bytes.truncate(n);
-    //                 }
-    //                 Ok(OutPrettyReader::DagCbor(BytesReader { pos, bytes, om }))
-    //             }
-    //             OutContent::DagJson(_, mut bytes) => {
-    //                 if let ResponseClip::Clip(n) = clip {
-    //                     bytes.truncate(n);
-    //                 }
-    //                 Ok(OutPrettyReader::DagJson(BytesReader { pos, bytes, om }))
-    //             }
-    //             OutContent::Raw(_, mut bytes) => {
-    //                 if let ResponseClip::Clip(n) = clip {
-    //                     bytes.truncate(n);
-    //                 }
-    //                 Ok(OutPrettyReader::Raw(BytesReader { pos, bytes, om }))
-    //             }
-    //             OutContent::Unixfs(node) => {
-    //                 let ctx = self.context;
-    //                 let reader = node
-    //                     .into_content_reader(ctx, loader, om, clip)?
-    //                     .ok_or_else(|| anyhow!("cannot read the contents of a directory"))?;
-
-    //                 Ok(OutPrettyReader::Unixfs(reader))
-    //             }
-    //         }
-    //     }
-}
-
-#[derive(Debug, Clone)]
-pub(crate) enum OutContent {
-    DagPb(Ipld, Bytes),
-    Unixfs(UnixfsNode),
-    DagCbor(Ipld, Bytes),
-    DagJson(Ipld, Bytes),
-    Raw(Ipld, Bytes),
-}
-
-impl OutContent {
-    pub(crate) fn typ(&self) -> OutType {
-        match self {
-            OutContent::DagPb(_, _) => OutType::DagPb,
-            OutContent::Unixfs(_) => OutType::Unixfs,
-            OutContent::DagCbor(_, _) => OutType::DagCbor,
-            OutContent::DagJson(_, _) => OutType::DagJson,
-            OutContent::Raw(_, _) => OutType::Raw,
-        }
-    }
-
-    pub(crate) fn links(&self) -> Result<Vec<Cid>> {
-        match self {
-            OutContent::DagPb(ipld, _)
-            | OutContent::DagCbor(ipld, _)
-            | OutContent::DagJson(ipld, _)
-            | OutContent::Raw(ipld, _) => {
-                let mut links = Vec::new();
-                ipld.references(&mut links);
-                Ok(links)
-            }
-            // TODO(ramfox): add back in when we figure out circular dependencies
-            // OutContent::Unixfs(node) => node.links().map(|r| r.map(|r| r.cid)).collect(),
-            OutContent::Unixfs(_node) => todo!(),
-        }
-    }
-}
-
-/// Metadata for the reolution result.
-#[derive(Debug, Clone)]
-pub struct Metadata {
-    /// The original path for that was resolved.
-    pub path: Path,
-    /// Size in bytes.
-    pub size: Option<u64>,
-    pub typ: OutType,
-    pub unixfs_type: Option<UnixfsType>,
-    /// List of resolved cids. In order of the `path`.
-    ///
-    /// Only contains the "top level cids", and only path segments that actually map
-    /// to a block.
-    pub resolved_path: Vec<Cid>,
-    pub source: Source,
-}
-
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub enum OutType {
-    DagPb,
-    Unixfs,
-    DagCbor,
-    DagJson,
-    Raw,
-}
-
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub enum UnixfsType {
-    Dir,
-    File,
-    Symlink,
-}
-
 pub struct OutMetrics {
     pub start: Instant,
 }
@@ -455,26 +284,3 @@ impl Default for OutMetrics {
         }
     }
 }
-
-// TODO(ramfox): use actual UnixfsNode impl
-#[derive(Debug, PartialEq, Clone)]
-pub enum UnixfsNode {
-    Raw(Bytes),
-    RawNode(Node),
-    Directory(Node),
-    File(Node),
-    Symlink(Node),
-    HamtShard(Node, Hamt),
-}
-
-impl UnixfsNode {
-    pub fn is_dir(&self) -> bool {
-        todo!()
-    }
-}
-
-#[derive(Debug, PartialEq, Clone)]
-pub struct Node {}
-
-#[derive(Debug, PartialEq, Clone)]
-pub struct Hamt {}

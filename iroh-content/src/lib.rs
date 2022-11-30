@@ -1,3 +1,4 @@
+pub mod chunker;
 pub mod codec;
 pub mod content;
 pub mod content_loader;
