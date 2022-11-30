@@ -11,6 +11,7 @@ pub const CONFIG_FILE_NAME: &str = "ctl.config.toml";
 /// environment variables
 pub const ENV_PREFIX: &str = "IROH_CTL";
 
+/// Configuration for [`iroh-api`].
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Config {
     pub rpc_client: RpcClientConfig,

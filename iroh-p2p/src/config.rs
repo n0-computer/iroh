@@ -66,7 +66,7 @@ pub struct Libp2pConfig {
     pub dial_concurrency_factor: u8,
 }
 
-/// Configuration for the node.
+/// Configuration for the [`iroh-p2p`] node.
 #[derive(PartialEq, Debug, Clone, Deserialize, Serialize)]
 pub struct Config {
     pub libp2p: Libp2pConfig,

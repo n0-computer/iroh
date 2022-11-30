@@ -20,6 +20,7 @@ pub const CONFIG_FILE_NAME: &str = "gateway.config.toml";
 pub const ENV_PREFIX: &str = "IROH_GATEWAY";
 pub const DEFAULT_PORT: u16 = 9050;
 
+/// Configuration for [`iroh-gateway`].
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct Config {
     /// Pretty URL to redirect to

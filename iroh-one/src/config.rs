@@ -18,8 +18,10 @@ pub const CONFIG_FILE_NAME: &str = "one.config.toml";
 pub const ENV_PREFIX: &str = "IROH_ONE";
 pub const DEFAULT_PORT: u16 = 9050;
 
-/// The configuration includes gateway, store and p2p specific items
-/// as well as the common rpc & metrics ones.
+/// Configuration for [`iroh-one`].
+///
+/// The configuration includes gateway, store and p2p specific items as well as the common
+/// rpc & metrics ones.
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct Config {
     /// Path for the UDS socket for the gateway.

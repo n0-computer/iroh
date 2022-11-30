@@ -1,0 +1,20 @@
+[package]
+name = "iroh-embed"
+version = "0.1.1"
+edition = "2021"
+license = "Apache-2.0/MIT"
+description = "Embedable iroh library"
+rust-version = "1.63"
+
+[dependencies]
+anyhow = "1"
+iroh-api = { path = "../iroh-api" }
+iroh-gateway = { path = "../iroh-gateway" }
+iroh-metrics = { path = "../iroh-metrics" }
+iroh-one = { path = "../iroh-one" }
+iroh-p2p = { path = "../iroh-p2p" }
+iroh-resolver = { path = "../iroh-resolver" }
+iroh-rpc-client = { path = "../iroh-rpc-client" }
+iroh-rpc-types = { path = "../iroh-rpc-types" }
+iroh-store = { path = "../iroh-store" }
+tokio = "1"

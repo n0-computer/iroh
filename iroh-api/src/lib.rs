@@ -1,10 +1,3 @@
-mod api;
-mod config;
-mod error;
-mod p2p;
-
-pub mod fs;
-
 #[cfg(not(feature = "testing"))]
 pub use crate::api::Api;
 #[cfg(feature = "testing")]
@@ -24,3 +17,10 @@ pub use iroh_resolver::unixfs_builder::{AddEvent, ChunkerConfig, Config as Unixf
 pub use iroh_rpc_client::{Lookup, ServiceStatus, StatusRow, StatusTable};
 pub use libp2p::gossipsub::MessageId;
 pub use libp2p::{Multiaddr, PeerId};
+
+mod api;
+mod error;
+mod p2p;
+
+pub mod config;
+pub mod fs;

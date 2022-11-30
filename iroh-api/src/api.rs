@@ -1,3 +1,4 @@
+use core::fmt;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -19,6 +20,7 @@ use mockall::automock;
 use relative_path::RelativePathBuf;
 use tokio::io::{AsyncRead, AsyncReadExt};
 
+#[derive(Debug, Clone)]
 pub struct Api {
     client: Client,
     resolver: Resolver<FullLoader>,
@@ -30,11 +32,25 @@ pub enum OutType {
     Symlink(PathBuf),
 }
 
+impl fmt::Debug for OutType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Dir => write!(f, "Dir"),
+            Self::Reader(_) => write!(f, "Reader(Box<dyn AsyncRead + Unpin>)"),
+            Self::Symlink(arg0) => f.debug_tuple("Symlink").field(arg0).finish(),
+        }
+    }
+}
+
 #[cfg_attr(feature = "testing", allow(dead_code), automock)]
 impl Api {
+    /// Creates a new [`Api`] instance from the iroh configuration.
+    ///
+    /// This loads configuration from an optional configuration file and environment
+    /// variables.
     // The lifetime is needed for mocking.
     #[allow(clippy::needless_lifetimes)]
-    pub async fn new<'a>(
+    pub async fn from_iroh_env<'a>(
         config_path: Option<&'a Path>,
         overrides_map: HashMap<String, String>,
     ) -> Result<Self> {
@@ -49,9 +65,12 @@ impl Api {
             ENV_PREFIX,
             // map of present command line arguments
             overrides_map,
-        )
-        .unwrap();
+        )?;
+        Self::new(config).await
+    }
 
+    /// Creates a new [`Api`] from the provided configuration.
+    pub async fn new(config: Config) -> Result<Self> {
         let client = Client::new(config.rpc_client).await?;
         let content_loader = FullLoader::new(
             client.clone(),
@@ -76,6 +95,10 @@ impl Api {
         Ok(Self { client, resolver })
     }
 
+    /// Announces to the DHT that this node can offer the given [`Cid`].
+    ///
+    /// This publishes a provider record for the [`Cid`] to the DHT, establishing the local
+    /// node as provider for the [`Cid`].
     pub async fn provide(&self, cid: Cid) -> Result<()> {
         self.client.try_p2p()?.start_providing(&cid).await
     }
