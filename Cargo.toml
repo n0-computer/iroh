@@ -1,6 +1,7 @@
 [workspace]
 members = [
   "examples/embed",
+  "examples/importer",
   "iroh",
   "iroh-api",
   "iroh-bitswap",

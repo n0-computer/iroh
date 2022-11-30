@@ -1,7 +1,7 @@
 [package]
 name = "iroh-example-embed"
 publish = false
-version = "0.1.0"
+version = "0.1.3"
 edition = "2021"
 authors = ["team@n0.computer"]
 license = "Apache-2.0/MIT"
@@ -9,7 +9,7 @@ repository = "https://github.com/n0-computer/iroh"
 description = "Example of using iroh-embed"
 
 [dependencies]
-anyhow = "1.0"
+anyhow = "1"
 futures-util = "0.3.21"
 iroh-api = { path = "../../iroh-api" }
 iroh-embed = { path = "../../iroh-embed" }
