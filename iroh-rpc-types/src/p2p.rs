@@ -54,6 +54,19 @@ pub struct BitswapResponse {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
+pub struct MemesyncRequest {
+    pub query: iroh_memesync::Query,
+    pub providers: Vec<PeerId>,
+    pub ctx: u64,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct MemesyncResponse {
+    pub data: Bytes,
+    pub ctx: u64,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
 pub struct FetchProvidersDhtRequest {
     pub key: Key,
 }
@@ -220,6 +233,7 @@ pub enum P2pRequest {
     Version(VersionRequest),
     Shutdown(ShutdownRequest),
     FetchBitswap(BitswapRequest),
+    FetchMemesync(MemesyncRequest),
     FetchProviderDht(FetchProvidersDhtRequest),
     StopSessionBitswap(StopSessionBitswapRequest),
     NotifyNewBlocksBitswap(NotifyNewBlocksBitswapRequest),
@@ -251,6 +265,7 @@ pub enum P2pResponse {
     Watch(WatchResponse),
     Version(VersionResponse),
     FetchBitswap(RpcResult<BitswapResponse>),
+    FetchMemesync(RpcResult<MemesyncResponse>),
     FetchProviderDht(RpcResult<FetchProvidersDhtResponse>),
     GetListeningAddrs(RpcResult<GetListeningAddrsResponse>),
     GetPeers(RpcResult<GetPeersResponse>),

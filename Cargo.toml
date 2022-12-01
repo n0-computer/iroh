@@ -10,6 +10,7 @@ members = [
   "iroh-gateway",
   "iroh-localops",
   "iroh-metrics",
+  "iroh-memesync",
   "iroh-one",
   "iroh-p2p",
   "iroh-resolver",
@@ -98,6 +99,7 @@ iroh-car = { version = "0.2.0", path = "./iroh-car" }
 iroh-embed = { version = "0.2.0", path = "./iroh-embed" }
 iroh-gateway = { version = "0.2.0", path = "./iroh-gateway" }
 iroh-localops = { version = "0.2.0", path = "./iroh-localops" }
+iroh-memesync = { version = "0.2.0", path = "./iroh-memesync" }
 iroh-metrics = { version = "0.2.0", path = "./iroh-metrics" }
 iroh-one = { version = "0.2.0", path = "./iroh-one" }
 iroh-p2p = { version = "0.2.0", path = "./iroh-p2p" }

@@ -4,6 +4,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use cid::Cid;
 use iroh_bitswap::{Bitswap, Block, Config as BitswapConfig, Store};
+use iroh_memesync::Memesync;
 use iroh_rpc_client::Client;
 use libp2p::core::identity::Keypair;
 use libp2p::core::PeerId;
@@ -45,6 +46,27 @@ pub(crate) struct NodeBehaviour {
     dcutr: Toggle<dcutr::behaviour::Behaviour>,
     pub(crate) gossipsub: Toggle<gossipsub::Gossipsub>,
     pub(crate) peer_manager: PeerManager,
+    pub(crate) memesync: Toggle<Memesync<MemesyncStore>>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct MemesyncStore(Client);
+
+#[async_trait]
+impl iroh_memesync::store::Store for MemesyncStore {
+    type Error = anyhow::Error;
+
+    async fn get(&self, cid: Cid) -> Result<Option<iroh_memesync::store::GetResult>> {
+        let store = self.0.try_store()?;
+        if let Some(data) = store.get(cid).await? {
+            let links = store.get_links(cid).await?.unwrap_or_default();
+            let links = links.into_iter().map(|l| (None, l)).collect();
+
+            return Ok(Some(iroh_memesync::store::GetResult { data, links }));
+        }
+
+        Ok(None)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -99,7 +121,16 @@ impl NodeBehaviour {
             } else {
                 BitswapConfig::default_client_mode()
             };
-            Some(Bitswap::new(peer_id, BitswapStore(rpc_client), bs_config).await)
+            Some(Bitswap::new(peer_id, BitswapStore(rpc_client.clone()), bs_config).await)
+        } else {
+            None
+        }
+        .into();
+
+        let memesync = if config.memesync {
+            info!("init memesync");
+            let config = Default::default();
+            Some(Memesync::new(MemesyncStore(rpc_client), config))
         } else {
             None
         }
@@ -222,6 +253,7 @@ impl NodeBehaviour {
             relay_client: relay_client.into(),
             gossipsub,
             peer_manager,
+            memesync,
         })
     }
 

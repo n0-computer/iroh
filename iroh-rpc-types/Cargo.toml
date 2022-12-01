@@ -14,6 +14,7 @@ bytes = { workspace = true, features = ["serde"] }
 cid = { workspace = true, features = ["serde-codec"] }
 derive_more.workspace = true
 futures.workspace = true
+iroh-memesync.workspace = true
 libp2p = { workspace = true, features = ["serde"] }
 quic-rpc.workspace = true
 serde.workspace = true

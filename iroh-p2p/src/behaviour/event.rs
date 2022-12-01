@@ -1,4 +1,5 @@
 use iroh_bitswap::BitswapEvent;
+use iroh_memesync::MemesyncEvent;
 use libp2p::{
     autonat, dcutr, gossipsub::GossipsubEvent, identify::Event as IdentifyEvent,
     kad::KademliaEvent, mdns::Event as MdnsEvent, ping::Event as PingEvent, relay,
@@ -22,6 +23,7 @@ pub enum Event {
     Dcutr(dcutr::behaviour::Event),
     Gossipsub(GossipsubEvent),
     PeerManager(PeerManagerEvent),
+    Memesync(MemesyncEvent),
 }
 
 impl From<PingEvent> for Event {
@@ -87,5 +89,11 @@ impl From<dcutr::behaviour::Event> for Event {
 impl From<PeerManagerEvent> for Event {
     fn from(event: PeerManagerEvent) -> Self {
         Event::PeerManager(event)
+    }
+}
+
+impl From<MemesyncEvent> for Event {
+    fn from(event: MemesyncEvent) -> Self {
+        Event::Memesync(event)
     }
 }

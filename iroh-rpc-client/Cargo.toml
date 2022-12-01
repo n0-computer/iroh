@@ -16,6 +16,7 @@ cid.workspace = true
 config.workspace = true
 futures.workspace = true
 hyper.workspace = true
+iroh-memesync.workspace = true
 iroh-metrics.workspace = true
 iroh-rpc-types.workspace = true
 iroh-util.workspace = true

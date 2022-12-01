@@ -83,6 +83,8 @@ pub struct Libp2pConfig {
     pub bitswap_server: bool,
     /// Bitswap client mode enabled.
     pub bitswap_client: bool,
+    /// Memesync enabled.
+    pub memesync: bool,
     /// Kademlia discovery enabled.
     pub kademlia: bool,
     /// Autonat holepunching enabled.
@@ -172,6 +174,7 @@ impl Source for Libp2pConfig {
         insert_into_config_map(&mut map, "autonat", self.autonat);
         insert_into_config_map(&mut map, "bitswap_client", self.bitswap_client);
         insert_into_config_map(&mut map, "bitswap_server", self.bitswap_server);
+        insert_into_config_map(&mut map, "memesync", self.memesync);
         insert_into_config_map(&mut map, "mdns", self.mdns);
         insert_into_config_map(&mut map, "relay_server", self.relay_server);
         insert_into_config_map(&mut map, "relay_client", self.relay_client);
@@ -221,6 +224,7 @@ impl Default for Libp2pConfig {
             relay_server: true,
             relay_client: true,
             gossipsub: true,
+            memesync: true,
             bitswap_client: true,
             bitswap_server: true,
             max_conns_pending_out: 256,
@@ -346,6 +350,7 @@ mod tests {
         expect.insert("kademlia".to_string(), Value::new(None, default.kademlia));
         expect.insert("autonat".to_string(), Value::new(None, default.autonat));
         expect.insert("mdns".to_string(), Value::new(None, default.mdns));
+        expect.insert("memesync".to_string(), Value::new(None, default.memesync));
         expect.insert(
             "bitswap_server".to_string(),
             Value::new(None, default.bitswap_server),

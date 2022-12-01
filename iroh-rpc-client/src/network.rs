@@ -68,6 +68,35 @@ impl P2pClient {
     }
 
     #[tracing::instrument(skip(self))]
+    pub async fn fetch_memesync(
+        &self,
+        ctx: u64,
+        query: iroh_memesync::Query,
+        providers: HashSet<PeerId>,
+    ) -> Result<Bytes> {
+        debug!("rpc p2p client fetch_memesync: {}", query.path);
+        let providers = Providers {
+            providers: providers.into_iter().map(|id| id.to_bytes()).collect(),
+        };
+
+        let (recursion_direction, recursion_depth) = match query.recursion {
+            iroh_memesync::Recursion::None => (false, 0),
+            iroh_memesync::Recursion::Some { depth, direction } => (direction.into(), depth as u32),
+        };
+
+        let req = MemesyncRequest {
+            root: query.path.root.to_bytes(),
+            tail: query.path.tail,
+            recursion_direction,
+            recursion_depth,
+            providers: Some(providers),
+            ctx,
+        };
+        let res = self.backend.fetch_memesync(req).await?;
+        Ok(res.data)
+    }
+
+    #[tracing::instrument(skip(self))]
     pub async fn stop_session_bitswap(&self, ctx: u64) -> Result<()> {
         self.client.rpc(StopSessionBitswapRequest { ctx }).await??;
         Ok(())

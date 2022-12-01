@@ -87,6 +87,8 @@ pub struct Node<KeyStorage: Storage> {
     use_dht: bool,
     bitswap_sessions: BitswapSessions,
     providers: Providers,
+    memesync_queries:
+        AHashMap<iroh_memesync::QueryId, OneShotSender<Result<iroh_memesync::Response, String>>>,
 }
 
 impl<T: Storage> fmt::Debug for Node<T> {
@@ -173,6 +175,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
             use_dht: libp2p_config.kademlia,
             bitswap_sessions: Default::default(),
             providers: Providers::new(4),
+            memesync_queries: Default::default(),
         })
     }
 
@@ -395,6 +398,22 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
         }
     }
 
+    fn get_memesync(
+        &mut self,
+        ctx: u64,
+        query: iroh_memesync::Query,
+        providers: Vec<(PeerId, Vec<Multiaddr>)>,
+        chan: OneShotSender<Result<iroh_memesync::Response, String>>,
+    ) -> Result<()> {
+        if let Some(ms) = self.swarm.behaviour_mut().memesync.as_mut() {
+            let query_id = ms.get(query, providers);
+            self.memesync_queries.insert(query_id, chan);
+            Ok(())
+        } else {
+            bail!("no memesync available");
+        }
+    }
+
     #[tracing::instrument(skip(self))]
     fn handle_swarm_event(
         &mut self,
@@ -469,6 +488,18 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
     #[tracing::instrument(skip(self))]
     fn handle_node_event(&mut self, event: Event) -> Result<()> {
         match event {
+            Event::Memesync(e) => match e {
+                iroh_memesync::MemesyncEvent::OutboundQueryProgress(res) => {
+                    if let Some(chan) = self.memesync_queries.remove(&res.id) {
+                        chan.send(Ok(res)).ok();
+                    }
+                }
+                iroh_memesync::MemesyncEvent::OutboundQueryFailed { id, reason } => {
+                    if let Some(chan) = self.memesync_queries.remove(&id) {
+                        chan.send(Err(format!("{:?}", reason))).ok();
+                    }
+                }
+            },
             Event::Bitswap(e) => {
                 match e {
                     BitswapEvent::Provide { key } => {
@@ -771,6 +802,16 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                     self.want_block(ctx, cid, providers.clone(), response_channel)
                         .map_err(|err| anyhow!("Failed to send a bitswap want_block: {:?}", err))?;
                 }
+            }
+            RpcMessage::MemesyncRequest {
+                ctx,
+                query,
+                response_channel,
+                providers,
+            } => {
+                trace!("context:{} bitswap_request", ctx);
+                self.get_memesync(ctx, query, providers, response_channel)
+                    .map_err(|err| anyhow!("memesync: {:?}", err))?;
             }
             RpcMessage::BitswapNotifyNewBlocks {
                 blocks,
@@ -1408,6 +1449,7 @@ mod tests {
             "/libp2p/dcutr",
             "/meshsub/1.1.0",
             "/meshsub/1.0.0",
+            "/ipfs/memesync/1.0.0",
         ];
         let expected_protocol_version = "ipfs/0.1.0";
         let expected_agent_version =

@@ -145,6 +145,63 @@ impl P2p {
         })
     }
 
+    async fn fetch_memesync(self, req: MemesyncRequest) -> Result<MemesyncResponse> {
+        let ctx = req.ctx;
+        let path = iroh_memesync::Path {
+            root: Cid::read_bytes(io::Cursor::new(req.root))?,
+            tail: req.tail,
+        };
+        let recursion = if req.recursion_depth == 0 {
+            iroh_memesync::Recursion::None
+        } else {
+            iroh_memesync::Recursion::Some {
+                depth: req.recursion_depth as u8,
+                direction: req.recursion_direction.into(),
+            }
+        };
+        let query = iroh_memesync::Query { path, recursion };
+
+        trace!("context:{}, received fetch_memesync: {:?}", ctx, query);
+        let providers = req
+            .providers
+            .with_context(|| format!("missing providers for: {}", query.path))?;
+
+        let providers: Vec<(PeerId, Vec<Multiaddr>)> = providers
+            .providers
+            .into_iter()
+            .map(|p| Ok((PeerId::from_bytes(&p).context("invalid provider")?, vec![])))
+            .collect::<Result<_>>()?;
+
+        let (s, r) = oneshot::channel();
+        let msg = RpcMessage::MemesyncRequest {
+            ctx,
+            query: query.clone(),
+            providers,
+            response_channel: s,
+        };
+
+        trace!(
+            "context:{} making memesync request for {:?}",
+            ctx,
+            query.path
+        );
+        self.sender.send(msg).await?;
+        let response = r
+            .await
+            .map_err(|_| anyhow!("memesync req shut down"))?
+            .map_err(|e| anyhow!("memesync: {}", e))?;
+
+        trace!("context:{} got memesync response for {:?}", ctx, query.path);
+
+        match response.response {
+            Ok(res) => Ok(MemesyncResponse {
+                data: res.data,
+                ctx,
+            }),
+            Err(err) => Err(anyhow!("failed: {:?}", err)),
+        }
+    }
+
     #[tracing::instrument(skip(self, req))]
     async fn stop_session_bitswap(self, req: StopSessionBitswapRequest) -> Result<()> {
         let ctx = req.ctx;
@@ -625,6 +682,12 @@ pub enum RpcMessage {
         cids: Vec<Cid>,
         response_channels: Vec<oneshot::Sender<Result<Block, String>>>,
         providers: HashSet<PeerId>,
+    },
+    MemesyncRequest {
+        ctx: u64,
+        query: iroh_memesync::Query,
+        response_channel: oneshot::Sender<Result<iroh_memesync::Response, String>>,
+        providers: Vec<(PeerId, Vec<Multiaddr>)>,
     },
     BitswapNotifyNewBlocks {
         blocks: Vec<Block>,
