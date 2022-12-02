@@ -21,7 +21,7 @@ use quic_rpc::{
     channel_factory::LazyChannelFactory, combined, mem::MemChannelTypes, quinn::QuinnChannelTypes,
     RpcClient, RpcServer, Service,
 };
-use quinn::{ClientConfig, Endpoint, ServerConfig};
+use quinn::{ClientConfig, Endpoint, ServerConfig, EndpointConfig, TokioRuntime};
 pub use status::{ServiceStatus, StatusRow, StatusTable};
 pub use store::StoreClient;
 
@@ -109,7 +109,14 @@ pub fn make_insecure_client_endpoint(bind_addr: SocketAddr) -> io::Result<Endpoi
         .with_no_client_auth();
 
     let client_cfg = ClientConfig::new(Arc::new(crypto));
-    let mut endpoint = Endpoint::client(bind_addr)?;
+    let mut endpoint_config = EndpointConfig::default();
+    endpoint_config.max_udp_payload_size(9200).map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+    let mut endpoint = Endpoint::new(
+        endpoint_config,
+        None,        
+        std::net::UdpSocket::bind(bind_addr)?,
+        TokioRuntime,
+    )?;
     endpoint.set_default_client_config(client_cfg);
     Ok(endpoint)
 }
@@ -130,10 +137,19 @@ impl rustls::client::ServerCertVerifier for SkipServerVerification {
 }
 
 fn make_server_endpoint(
-    server_config: ServerConfig,
+    mut server_config: ServerConfig,
     bind_addr: SocketAddr,
 ) -> io::Result<Endpoint> {
-    let endpoint = Endpoint::server(server_config, bind_addr)?;
+    let mut transport_config = quinn::TransportConfig::default();
+    transport_config.initial_max_udp_payload_size(9200);
+    server_config.transport_config(Arc::new(transport_config));
+    let mut endpoint_config = EndpointConfig::default();
+    endpoint_config.max_udp_payload_size(9200).map_err(|e| io::Error::new(io::ErrorKind::Other,e.to_string()))?;
+    let endpoint = Endpoint::new(
+        endpoint_config,
+        Some(server_config),
+        std::net::UdpSocket::bind(bind_addr)?,
+        TokioRuntime)?;
     Ok(endpoint)
 }
 
