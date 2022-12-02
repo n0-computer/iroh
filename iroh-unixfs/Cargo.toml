@@ -59,12 +59,3 @@ ruzstd = "0.3"
 
 [build-dependencies]
 prost-build = "0.11.1"
-
-[features]
-default = ["rpc-grpc", "rpc-mem"]
-rpc-grpc = ["iroh-rpc-client/grpc", "iroh-metrics/rpc-grpc", "iroh-rpc-types/grpc", "iroh-store/rpc-grpc"]
-rpc-mem = ["iroh-rpc-client/mem", "iroh-rpc-types/mem", "iroh-store/rpc-mem"]
-
-[[bench]]
-name = "unixfs"
-harness = false

@@ -9,11 +9,14 @@ use anyhow::{ensure, Context, Result};
 use cid::Cid;
 use futures::stream::LocalBoxStream;
 use futures::{StreamExt, TryStreamExt};
-use iroh_resolver::content_loader::{FullLoader, FullLoaderConfig};
+use iroh_content::{
+    content::ResponseClip,
+    content_loader::{FullLoader, FullLoaderConfig},
+};
 use iroh_resolver::resolver::Resolver;
-use iroh_resolver::unixfs_builder::{self, ChunkerConfig};
 use iroh_rpc_client::Client;
 use iroh_rpc_client::StatusTable;
+use iroh_unixfs::builder::{self as unixfs_builder, ChunkerConfig, Config as UnixfsConfig};
 use iroh_util::{iroh_config_path, make_config};
 #[cfg(feature = "testing")]
 use mockall::automock;
@@ -128,13 +131,13 @@ impl Api {
                 if out.is_dir() {
                     yield (relative_path, OutType::Dir);
                 } else if out.is_symlink() {
-                    let mut reader = out.pretty(resolver.clone(), Default::default(), iroh_resolver::resolver::ResponseClip::NoClip)?;
+                    let mut reader = out.pretty(resolver.clone(), Default::default(), ResponseClip::NoClip)?;
                     let mut target = String::new();
                     reader.read_to_string(&mut target).await?;
                     let target = PathBuf::from(target);
                     yield (relative_path, OutType::Symlink(target));
                 } else {
-                    let reader = out.pretty(resolver.clone(), Default::default(), iroh_resolver::resolver::ResponseClip::NoClip)?;
+                    let reader = out.pretty(resolver.clone(), Default::default(), ResponseClip::NoClip)?;
                     yield (relative_path, OutType::Reader(Box::new(reader)));
                 }
             }
@@ -149,14 +152,14 @@ impl Api {
         wrap: bool,
         chunker: ChunkerConfig,
     ) -> Result<LocalBoxStream<'static, Result<AddEvent>>> {
-        let providing_client = iroh_resolver::unixfs_builder::StoreAndProvideClient {
+        let providing_client = unixfs_builder::StoreAndProvideClient {
             client: self.client.clone(),
         };
         let path = path.to_path_buf();
         let stream = unixfs_builder::add_file(
             Some(providing_client),
             &path,
-            iroh_resolver::unixfs_builder::Config { wrap, chunker },
+            UnixfsConfig { wrap, chunker },
         )
         .await?;
 
@@ -169,14 +172,14 @@ impl Api {
         wrap: bool,
         chunker: ChunkerConfig,
     ) -> Result<LocalBoxStream<'static, Result<AddEvent>>> {
-        let providing_client = iroh_resolver::unixfs_builder::StoreAndProvideClient {
+        let providing_client = unixfs_builder::StoreAndProvideClient {
             client: self.client.clone(),
         };
         let path = path.to_path_buf();
         let stream = unixfs_builder::add_dir(
             Some(providing_client),
             &path,
-            iroh_resolver::unixfs_builder::Config { wrap, chunker },
+            UnixfsConfig { wrap, chunker },
         )
         .await?;
 
@@ -188,7 +191,7 @@ impl Api {
         path: &Path,
         wrap: bool,
     ) -> Result<LocalBoxStream<'static, Result<AddEvent>>> {
-        let providing_client = iroh_resolver::unixfs_builder::StoreAndProvideClient {
+        let providing_client = unixfs_builder::StoreAndProvideClient {
             client: self.client.clone(),
         };
         let path = path.to_path_buf();

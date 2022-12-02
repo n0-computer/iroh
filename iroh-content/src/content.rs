@@ -1,6 +1,7 @@
 use std::{
     fmt::{self, Display, Formatter},
     str::FromStr,
+    time::Instant,
 };
 
 use anyhow::{anyhow, Context as _, Result};
@@ -14,7 +15,6 @@ use iroh_metrics::{
     observe, record,
 };
 use libipld::error::{InvalidMultihash, UnsupportedMultihash};
-use tokio::time::Instant;
 
 use crate::{codec::Codec, util::parse_links};
 
@@ -89,6 +89,38 @@ impl Block {
     }
 }
 
+/// Holds information if we should clip the response and to what offset
+#[derive(Debug, Clone, Copy)]
+pub enum ResponseClip {
+    NoClip,
+    Clip(usize),
+}
+
+impl From<usize> for ResponseClip {
+    fn from(item: usize) -> Self {
+        if item == 0 {
+            ResponseClip::NoClip
+        } else {
+            ResponseClip::Clip(item)
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CidOrDomain {
+    Cid(Cid),
+    Domain(String),
+}
+
+impl Display for CidOrDomain {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            CidOrDomain::Cid(c) => Display::fmt(&c, f),
+            CidOrDomain::Domain(s) => Display::fmt(&s, f),
+        }
+    }
+}
+
 /// Represents an ipfs path.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Path {
@@ -140,38 +172,6 @@ impl Path {
         match &self.root {
             CidOrDomain::Cid(cid) => Some(cid),
             CidOrDomain::Domain(_) => None,
-        }
-    }
-}
-
-/// Holds information if we should clip the response and to what offset
-#[derive(Debug, Clone, Copy)]
-pub enum ResponseClip {
-    NoClip,
-    Clip(usize),
-}
-
-impl From<usize> for ResponseClip {
-    fn from(item: usize) -> Self {
-        if item == 0 {
-            ResponseClip::NoClip
-        } else {
-            ResponseClip::Clip(item)
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum CidOrDomain {
-    Cid(Cid),
-    Domain(String),
-}
-
-impl Display for CidOrDomain {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        match self {
-            CidOrDomain::Cid(c) => Display::fmt(&c, f),
-            CidOrDomain::Domain(s) => Display::fmt(&s, f),
         }
     }
 }

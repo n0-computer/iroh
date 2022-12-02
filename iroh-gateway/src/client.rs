@@ -8,19 +8,17 @@ use cid::Cid;
 use futures::{StreamExt, TryStream};
 use http::HeaderMap;
 use iroh_car::{CarHeader, CarWriter};
+use iroh_content::{
+    content::{CidOrDomain, OutMetrics, ResponseClip, Source},
+    content_loader::ContentLoader,
+};
 use iroh_metrics::{
     core::{MObserver, MRecorder},
     gateway::{GatewayHistograms, GatewayMetrics},
     observe, record,
 };
 use iroh_resolver::dns_resolver::Config;
-use iroh_resolver::{
-    content_loader::ContentLoader,
-    resolver::{
-        CidOrDomain, Metadata, Out, OutMetrics, OutPrettyReader, OutType, Resolver, ResponseClip,
-        Source,
-    },
-};
+use iroh_resolver::resolver::{Metadata, Out, OutPrettyReader, OutType, Resolver};
 use mime::Mime;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, AsyncWrite};
 use tokio_util::io::ReaderStream;
@@ -102,7 +100,7 @@ impl<T: ContentLoader + std::marker::Unpin> Client<T> {
     #[tracing::instrument(skip(self))]
     pub async fn retrieve_path_metadata(
         &self,
-        path: iroh_resolver::resolver::Path,
+        path: iroh_content::content::Path,
     ) -> Result<Out, String> {
         info!("retrieve path metadata {}", path);
         self.resolver.resolve(path).await.map_err(|e| e.to_string())
@@ -111,7 +109,7 @@ impl<T: ContentLoader + std::marker::Unpin> Client<T> {
     #[tracing::instrument(skip(self))]
     pub async fn get_file(
         &self,
-        path: iroh_resolver::resolver::Path,
+        path: iroh_content::content::Path,
         start_time: std::time::Instant,
         range: Option<Range<u64>>,
     ) -> Result<(FileResult<T>, Metadata), String> {
@@ -160,7 +158,7 @@ impl<T: ContentLoader + std::marker::Unpin> Client<T> {
     #[tracing::instrument(skip(self))]
     pub async fn get_car_recursive(
         self,
-        path: iroh_resolver::resolver::Path,
+        path: iroh_content::content::Path,
         start_time: std::time::Instant,
     ) -> Result<axum::body::StreamBody<ReaderStream<tokio::io::DuplexStream>>, String> {
         info!("get car {}", path);
@@ -180,7 +178,7 @@ impl<T: ContentLoader + std::marker::Unpin> Client<T> {
     #[tracing::instrument(skip(self))]
     pub async fn get_file_recursive(
         self,
-        path: iroh_resolver::resolver::Path,
+        path: iroh_content::content::Path,
         start_time: std::time::Instant,
     ) -> Result<axum::body::Body, String> {
         info!("get file {}", path);
@@ -238,7 +236,7 @@ impl<T: ContentLoader> Client<T> {
 pub struct Request {
     pub format: ResponseFormat,
     pub cid: CidOrDomain,
-    pub resolved_path: iroh_resolver::resolver::Path,
+    pub resolved_path: iroh_content::content::Path,
     pub query_file_name: String,
     pub download: bool,
     pub query_params: GetParams,
@@ -246,7 +244,7 @@ pub struct Request {
 
 async fn fetch_car_recursive<T, W>(
     resolver: &Resolver<T>,
-    path: iroh_resolver::resolver::Path,
+    path: iroh_content::content::Path,
     writer: W,
     start_time: std::time::Instant,
 ) -> Result<(), anyhow::Error>

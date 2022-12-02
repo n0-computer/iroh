@@ -3,11 +3,10 @@ use futures::{
     channel::{oneshot::channel as oneshot, oneshot::Receiver as OneShotReceiver},
     Stream, StreamExt,
 };
+use iroh_content::content::{Path, ResponseClip};
 use iroh_p2p::NetworkEvent;
-use iroh_resolver::{
-    resolver::{Out, OutPrettyReader, OutType, Path, Resolver, ResponseClip, UnixfsType},
-    unixfs::Link,
-};
+use iroh_resolver::resolver::{Out, OutPrettyReader, OutType, Resolver, UnixfsType};
+use iroh_unixfs::unixfs::Link;
 use libp2p::gossipsub::{GossipsubMessage, MessageId, TopicHash};
 use libp2p::PeerId;
 use tokio::sync::mpsc::{channel, Receiver as ChannelReceiver};
@@ -91,8 +90,7 @@ impl Receiver {
                 if from == expected_sender {
                     match bincode::deserialize(&message.data) {
                         Ok(SenderMessage::Start { root, num_parts }) => {
-                            let results = resolver
-                                .resolve_recursive(iroh_resolver::resolver::Path::from_cid(root));
+                            let results = resolver.resolve_recursive(Path::from_cid(root));
                             tokio::pin!(results);
                             // root is the first
                             let mut index = 1;

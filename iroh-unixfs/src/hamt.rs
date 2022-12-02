@@ -71,7 +71,6 @@ impl Hamt {
         padding.len()
     }
 
-    #[allow(clippy::needless_lifetimes)]
     pub fn children<'a, C: ContentLoader>(
         &'a self,
         ctx: LoaderContext,
@@ -108,7 +107,6 @@ impl InnerNode {
         }
     }
 
-    #[allow(clippy::needless_lifetimes)]
     fn children<'a, C: ContentLoader>(
         &'a self,
         ctx: LoaderContext,

@@ -11,7 +11,7 @@ use bytes::Bytes;
 use cid::Cid;
 use futures::{Future, Stream, TryStreamExt};
 use iroh_metrics::inc;
-use iroh_unixfs::unixfs{
+use iroh_unixfs::unixfs::{
     poll_read_buf_at_pos, DataType, Link, UnixfsChildStream, UnixfsContentReader, UnixfsNode,
 };
 use libipld::codec::Encode;
@@ -904,7 +904,7 @@ mod tests {
         sync::Arc,
     };
 
-    use crate::unixfs_builder::read_to_vec;
+    use iroh_unixfs::builder::read_to_vec;
 
     use super::*;
     use cid::multihash::{Code, MultihashDigest};
