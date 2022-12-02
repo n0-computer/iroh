@@ -12,4 +12,4 @@ description = "Iroh specific process management."
 anyhow = "1"
 
 [target.'cfg(unix)'.dependencies]
-nix = { version = "0.25", features = ["signal", "process"]}
+nix = { version = "0.26", features = ["signal", "process"]}
