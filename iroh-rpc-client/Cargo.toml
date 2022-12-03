@@ -27,7 +27,7 @@ serde = { version = "1.0", features = ["derive"] }
 tokio = { version = "1", features = ["sync"] }
 toml = "0.5.9"
 tonic = { version = "0.8", optional = true }
-tonic-health = { version = "0.7", optional = true }
+tonic-health = { version = "0.8", optional = true }
 tower = { version = "0.4.13", optional = true }
 tracing = "0.1.34"
 
