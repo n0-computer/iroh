@@ -11,7 +11,7 @@ rust-version = "1.63"
 [dependencies]
 anyhow = "1"
 async-trait = "0.1.56"
-axum = "0.5.1"
+axum = "0.6.1"
 bytes = "1.1"
 cid = "0.9"
 clap = {version = "4.0.9", features = ["derive"]}
