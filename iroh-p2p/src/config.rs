@@ -21,7 +21,7 @@ pub const ENV_PREFIX: &str = "IROH_P2P";
 
 /// Default bootstrap nodes
 ///
-/// Based on https://github.com/ipfs/go-ipfs-config/blob/master/bootstrap_peers.go#L17.
+/// Based on <https://github.com/ipfs/go-ipfs-config/blob/master/bootstrap_peers.go#L17>.
 pub const DEFAULT_BOOTSTRAP: &[&str] = &[
     "/dnsaddr/bootstrap.libp2p.io/p2p/QmNnooDu7bfjPFoTZYxMNLWUQJyrVwtbZg5gBMjTezGAJN",
     "/dnsaddr/bootstrap.libp2p.io/p2p/QmQCU2EcMqAqQPR2i9bChDtGNJchTbq5TbXJJ16u19uLTa",
