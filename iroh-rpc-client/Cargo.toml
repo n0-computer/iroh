@@ -10,7 +10,7 @@ rust-version = "1.63"
 
 [dependencies]
 
-anyhow = "1"
+anyhow = { version = "1", features = ["backtrace"] }
 async-stream = "0.3.3"
 async-trait = "0.1.56"
 bytes = "1.1.0"

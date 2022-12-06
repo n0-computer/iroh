@@ -9,7 +9,7 @@ description = "RPC type definitions for iroh"
 rust-version = "1.63"
 
 [dependencies]
-anyhow = "1"
+anyhow = { version = "1", features = ["backtrace"] }
 async-trait = "0.1.56"
 futures = "0.3.24"
 iroh-metrics = { version = "0.1.3", path = "../iroh-metrics", default-features = false }
