@@ -1,4 +1,6 @@
-/// A store instance listening on a memory rpc channel.
+//! A store instance listening on a memory rpc channel.
+
+use anyhow::Context;
 use iroh_rpc_types::store::StoreServerAddr;
 use iroh_store::{rpc, Config, Store};
 use tokio::task::JoinHandle;
@@ -13,10 +15,14 @@ pub async fn start(rpc_addr: StoreServerAddr, config: Config) -> anyhow::Result<
 
     let store = if marker.exists() {
         info!("Opening store at {}", config.path.display());
-        Store::open(config).await?
+        Store::open(config)
+            .await
+            .context("failed to open existing store")?
     } else {
         info!("Creating store at {}", config.path.display());
-        Store::create(config).await?
+        Store::create(config)
+            .await
+            .context("failed to create new store")?
     };
 
     let rpc_task = tokio::spawn(async move { rpc::new(rpc_addr, store).await.unwrap() });
