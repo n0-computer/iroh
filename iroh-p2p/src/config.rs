@@ -72,6 +72,12 @@ pub struct Config {
     pub libp2p: Libp2pConfig,
     pub rpc_client: RpcClientConfig,
     pub metrics: MetricsConfig,
+    /// Directory where cryptographic keys are stored.
+    ///
+    /// The p2p node needs to have an identity consisting of a cryptographic key pair.  As
+    /// it is useful to have the same identity across restarts this is stored on disk in a
+    /// format compatible with how ssh stores keys.  This points to a directory where these
+    /// keypairs are stored.
     pub key_store_path: PathBuf,
 }
 

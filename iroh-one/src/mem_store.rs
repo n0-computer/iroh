@@ -6,7 +6,12 @@ use tracing::info;
 
 /// Starts a new store, using the given mem rpc channel.
 pub async fn start(rpc_addr: StoreServerAddr, config: Config) -> anyhow::Result<JoinHandle<()>> {
-    let store = if config.path.exists() {
+    // This is the file RocksDB itself is looking for to determine if the database already
+    // exists or not.  Just knowing the directory exists does not mean the database is
+    // created.
+    let marker = config.path.join("CURRENT");
+
+    let store = if marker.exists() {
         info!("Opening store at {}", config.path.display());
         Store::open(config).await?
     } else {

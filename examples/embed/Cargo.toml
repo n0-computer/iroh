@@ -13,4 +13,5 @@ anyhow = "1"
 futures-util = "0.3.21"
 iroh-api = { path = "../../iroh-api" }
 iroh-embed = { path = "../../iroh-embed" }
+testdir = "0.7.0"
 tokio = { version = "1", features = ["rt-multi-thread"] }

@@ -18,3 +18,7 @@ iroh-rpc-client = { path = "../iroh-rpc-client" }
 iroh-rpc-types = { path = "../iroh-rpc-types" }
 iroh-store = { path = "../iroh-store" }
 tokio = "1"
+
+[dev-dependencies]
+testdir = "0.7.0"
+tokio-test = "0.4.2"
