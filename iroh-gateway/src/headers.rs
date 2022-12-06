@@ -1,8 +1,7 @@
 use crate::{constants::*, response::ResponseFormat};
 use ::time::OffsetDateTime;
 use axum::http::header::*;
-use iroh_content::content::{CidOrDomain, PathType};
-use iroh_resolver::resolver::Metadata;
+use iroh_resolver::resolver::{CidOrDomain, Metadata, PathType};
 use mime::Mime;
 use once_cell::sync::Lazy;
 use sha2::Digest;
@@ -46,7 +45,7 @@ pub fn add_content_type_headers(
 pub fn add_content_disposition_headers(
     headers: &mut HeaderMap,
     filename: &str,
-    content_path: &iroh_content::content::Path,
+    content_path: &iroh_resolver::resolver::Path,
     should_download: bool,
 ) -> String {
     let mut name = get_filename(&content_path.to_string());
@@ -360,7 +359,7 @@ mod tests {
         // inline
         let mut headers = HeaderMap::new();
         let filename = "test.txt";
-        let content_path: iroh_content::content::Path =
+        let content_path: iroh_resolver::resolver::Path =
             "/ipfs/bafkreigh2akiscaildcqabsyg3dfr6chu3fgpregiymsck7e7aqa4s52zy"
                 .parse()
                 .unwrap();
@@ -376,7 +375,7 @@ mod tests {
         // attachment
         let mut headers = HeaderMap::new();
         let filename = "test.txt";
-        let content_path: iroh_content::content::Path =
+        let content_path: iroh_resolver::resolver::Path =
             "/ipfs/bafkreigh2akiscaildcqabsyg3dfr6chu3fgpregiymsck7e7aqa4s52zy"
                 .parse()
                 .unwrap();
@@ -392,7 +391,7 @@ mod tests {
         // no filename & no content path filename
         let mut headers = HeaderMap::new();
         let filename = "";
-        let content_path: iroh_content::content::Path =
+        let content_path: iroh_resolver::resolver::Path =
             "/ipfs/bafkreigh2akiscaildcqabsyg3dfr6chu3fgpregiymsck7e7aqa4s52zy"
                 .parse()
                 .unwrap();
@@ -407,7 +406,7 @@ mod tests {
         // no filename & with content path filename
         let mut headers = HeaderMap::new();
         let filename = "";
-        let content_path: iroh_content::content::Path =
+        let content_path: iroh_resolver::resolver::Path =
             "/ipfs/bafkreigh2akiscaildcqabsyg3dfr6chu3fgpregiymsck7e7aqa4s52zy/folder/test.txt"
                 .parse()
                 .unwrap();

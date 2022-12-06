@@ -10,8 +10,8 @@ use cid::Cid;
 use futures::stream::LocalBoxStream;
 use futures::{StreamExt, TryStreamExt};
 use iroh_content::{
-    content::ResponseClip,
     content_loader::{FullLoader, FullLoaderConfig},
+    ResponseClip,
 };
 use iroh_resolver::resolver::Resolver;
 use iroh_rpc_client::Client;

@@ -4,7 +4,7 @@ use anyhow::{bail, Context as _, Result};
 use cid::Cid;
 use libipld::{prelude::Codec as _, Ipld, IpldCodec};
 
-use crate::codec::Codec;
+use crate::codecs::Codec;
 
 /// Extract links from the given content.
 ///

@@ -1,6 +1,7 @@
 use std::collections::VecDeque;
-use std::fmt::{self, Debug, Formatter};
+use std::fmt::{self, Debug, Display, Formatter};
 use std::pin::Pin;
+use std::str::FromStr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::task::{Context, Poll};
@@ -21,17 +22,163 @@ use tokio::io::{AsyncRead, AsyncSeek};
 use tokio::task::JoinHandle;
 use tracing::{debug, trace, warn};
 
-use iroh_metrics::{core::MRecorder, resolver::ResolverMetrics};
+use iroh_metrics::{
+    core::MRecorder,
+    resolver::{OutMetrics, ResolverMetrics},
+};
 
 use crate::dns_resolver::{Config, DnsResolver};
 use iroh_content::{
-    codec::Codec,
-    content::{CidOrDomain, LoadedCid, OutMetrics, Path, PathType, ResponseClip, Source},
-    content_loader::{ContentLoader, ContextId, LoaderContext},
-    util::parse_links,
+    parse_links, Block, Codec, ContentLoader, ContextId, LoadedCid, LoaderContext, ResponseClip,
+    Source,
 };
 
 pub const IROH_STORE: &str = "iroh-store";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CidOrDomain {
+    Cid(Cid),
+    Domain(String),
+}
+
+impl Display for CidOrDomain {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            CidOrDomain::Cid(c) => Display::fmt(&c, f),
+            CidOrDomain::Domain(s) => Display::fmt(&s, f),
+        }
+    }
+}
+
+/// Represents an ipfs path.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Path {
+    typ: PathType,
+    root: CidOrDomain,
+    tail: Vec<String>,
+}
+
+impl Path {
+    pub fn from_cid(cid: Cid) -> Self {
+        Path {
+            typ: PathType::Ipfs,
+            root: CidOrDomain::Cid(cid),
+            tail: Vec::new(),
+        }
+    }
+
+    pub fn typ(&self) -> PathType {
+        self.typ
+    }
+
+    pub fn root(&self) -> &CidOrDomain {
+        &self.root
+    }
+
+    pub fn tail(&self) -> &[String] {
+        &self.tail
+    }
+
+    // used only for string path manipulation
+    pub fn has_trailing_slash(&self) -> bool {
+        !self.tail.is_empty() && self.tail.last().unwrap().is_empty()
+    }
+
+    pub fn push(&mut self, str: impl AsRef<str>) {
+        self.tail.push(str.as_ref().to_owned());
+    }
+
+    // Empty path segments in the *middle* shouldn't occur,
+    // though they can occur at the end, which `join` handles.
+    // TODO(faassen): it would make sense to return a `RelativePathBuf` here at some
+    // point in the future so we don't deal with bare strings anymore and
+    // we're forced to handle various cases more explicitly.
+    pub fn to_relative_string(&self) -> String {
+        self.tail.join("/")
+    }
+
+    pub fn cid(&self) -> Option<&Cid> {
+        match &self.root {
+            CidOrDomain::Cid(cid) => Some(cid),
+            CidOrDomain::Domain(_) => None,
+        }
+    }
+}
+
+impl Display for Path {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "/{}/{}", self.typ.as_str(), self.root)?;
+
+        for part in &self.tail {
+            if part.is_empty() {
+                continue;
+            }
+            write!(f, "/{}", part)?;
+        }
+
+        if self.has_trailing_slash() {
+            write!(f, "/")?;
+        }
+
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PathType {
+    /// `/ipfs`
+    Ipfs,
+    /// `/ipns`
+    Ipns,
+}
+
+impl PathType {
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            PathType::Ipfs => "ipfs",
+            PathType::Ipns => "ipns",
+        }
+    }
+}
+
+impl FromStr for Path {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let mut parts = s.split(&['/', '\\']).filter(|s| !s.is_empty());
+
+        let first_part = parts.next().ok_or_else(|| anyhow!("path too short"))?;
+        let (typ, root) = if first_part.eq_ignore_ascii_case("ipns") {
+            let root = parts.next().ok_or_else(|| anyhow!("path too short"))?;
+            let root = if let Ok(c) = Cid::from_str(root) {
+                CidOrDomain::Cid(c)
+            } else {
+                // TODO: url validation?
+                CidOrDomain::Domain(root.to_string())
+            };
+
+            (PathType::Ipns, root)
+        } else {
+            let root = if first_part.eq_ignore_ascii_case("ipfs") {
+                parts.next().ok_or_else(|| anyhow!("path too short"))?
+            } else {
+                first_part
+            };
+
+            let root = Cid::from_str(root).context("invalid cid")?;
+
+            (PathType::Ipfs, CidOrDomain::Cid(root))
+        };
+
+        let mut tail: Vec<String> = parts.map(Into::into).collect();
+
+        if s.ends_with('/') {
+            tail.push("".to_owned());
+        }
+
+        Ok(Path { typ, root, tail })
+    }
+}
 
 #[async_trait]
 pub trait LinksContainer: Sync + Send + std::fmt::Debug + Clone + 'static {
@@ -536,8 +683,7 @@ impl<T: ContentLoader> Resolver<T> {
         M: Fn(Cid, LoaderContext) -> F + Clone,
         F: Future<Output = Result<O>> + Send + 'static,
     {
-        let mut ctx =
-            LoaderContext::from_path(self.next_id(), self.session_closer.clone(), root.clone());
+        let mut ctx = LoaderContext::from_path(self.next_id(), self.session_closer.clone());
 
         let mut cids = VecDeque::new();
         let this = self.clone();
@@ -586,8 +732,7 @@ impl<T: ContentLoader> Resolver<T> {
     /// Resolves through a given path, returning the [`Cid`] and raw bytes of the final leaf.
     #[tracing::instrument(skip(self))]
     pub async fn resolve(&self, path: Path) -> Result<Out> {
-        let ctx =
-            LoaderContext::from_path(self.next_id(), self.session_closer.clone(), path.clone());
+        let ctx = LoaderContext::from_path(self.next_id(), self.session_closer.clone());
 
         self.resolve_with_ctx(ctx, path).await
     }
@@ -897,14 +1042,44 @@ impl<T: ContentLoader> Resolver<T> {
     }
 }
 
+/// Read an `AsyncRead` into a `Vec` completely.
+#[doc(hidden)]
+pub async fn read_to_vec<T: AsyncRead + Unpin>(mut reader: T) -> Result<Vec<u8>> {
+    use tokio::io::AsyncReadExt;
+
+    let mut out = Vec::new();
+    reader.read_to_end(&mut out).await?;
+    Ok(out)
+}
+
+/// Read a stream of (cid, block) pairs into an in memory store and return the store and the root cid.
+#[doc(hidden)]
+pub async fn stream_to_resolver(
+    stream: impl Stream<Item = Result<Block>>,
+) -> Result<(Cid, Resolver<Arc<fnv::FnvHashMap<Cid, Bytes>>>)> {
+    tokio::pin!(stream);
+    let blocks: Vec<_> = stream.try_collect().await?;
+    for block in &blocks {
+        block.validate()?;
+    }
+    let root_block = blocks.last().context("no root")?.clone();
+    let store: fnv::FnvHashMap<Cid, Bytes> = blocks
+        .into_iter()
+        .map(|block| {
+            let (cid, bytes, _) = block.into_parts();
+            (cid, bytes)
+        })
+        .collect();
+    let resolver = Resolver::new(Arc::new(store));
+    Ok((*root_block.cid(), resolver))
+}
+
 #[cfg(test)]
 mod tests {
     use std::{
         collections::{BTreeMap, HashMap},
         sync::Arc,
     };
-
-    use iroh_unixfs::builder::read_to_vec;
 
     use super::*;
     use cid::multihash::{Code, MultihashDigest};
@@ -1227,7 +1402,7 @@ mod tests {
                     read_to_string(
                         node.into_content_reader(
                             ipld_hello_txt.context,
-                            resolver.clone(),
+                            resolver.loader().clone(),
                             OutMetrics::default(),
                             ResponseClip::NoClip,
                         )
@@ -1263,7 +1438,7 @@ mod tests {
                     read_to_string(
                         node.into_content_reader(
                             ipld_hello_txt.context,
-                            resolver.clone(),
+                            resolver.loader().clone(),
                             OutMetrics::default(),
                             ResponseClip::NoClip,
                         )
@@ -1326,7 +1501,7 @@ mod tests {
                     read_to_string(
                         node.into_content_reader(
                             ipld_bar_txt.context,
-                            resolver.clone(),
+                            resolver.loader().clone(),
                             OutMetrics::default(),
                             ResponseClip::NoClip,
                         )
@@ -1620,7 +1795,7 @@ mod tests {
                     read_to_string(
                         node.into_content_reader(
                             ipld_hello_txt.context,
-                            resolver.clone(),
+                            resolver.loader().clone(),
                             OutMetrics::default(),
                             ResponseClip::NoClip,
                         )
@@ -1663,7 +1838,7 @@ mod tests {
                     read_to_string(
                         node.into_content_reader(
                             ipld_bar_txt.context,
-                            resolver.clone(),
+                            resolver.loader().clone(),
                             OutMetrics::default(),
                             ResponseClip::NoClip
                         )
@@ -1730,7 +1905,7 @@ mod tests {
                 let content = read_to_string(
                     node.into_content_reader(
                         ipld_readme.context,
-                        resolver.clone(),
+                        resolver.loader().clone(),
                         OutMetrics::default(),
                         ResponseClip::NoClip,
                     )
@@ -1898,7 +2073,7 @@ mod tests {
                     read_to_string(
                         node.into_content_reader(
                             ipld_hello_txt.context,
-                            resolver.clone(),
+                            resolver.loader().clone(),
                             OutMetrics::default(),
                             ResponseClip::NoClip
                         )
@@ -1955,7 +2130,7 @@ mod tests {
                     read_to_string(
                         node.into_content_reader(
                             ipld_bar_txt.context,
-                            resolver.clone(),
+                            resolver.loader().clone(),
                             OutMetrics::default(),
                             ResponseClip::NoClip
                         )
@@ -1993,7 +2168,7 @@ mod tests {
                     read_to_string(
                         node.into_content_reader(
                             ipld_bar_txt.context,
-                            resolver.clone(),
+                            resolver.loader().clone(),
                             OutMetrics::default(),
                             ResponseClip::NoClip
                         )
@@ -2031,7 +2206,7 @@ mod tests {
                     read_to_string(
                         node.into_content_reader(
                             ipld_bar_txt.context,
-                            resolver.clone(),
+                            resolver.loader().clone(),
                             OutMetrics::default(),
                             ResponseClip::NoClip,
                         )
@@ -2069,7 +2244,7 @@ mod tests {
                     read_to_string(
                         node.into_content_reader(
                             ipld_bar_txt.context,
-                            resolver.clone(),
+                            resolver.loader().clone(),
                             OutMetrics::default(),
                             ResponseClip::NoClip
                         )
@@ -2097,7 +2272,7 @@ mod tests {
                     read_to_string(
                         node.into_content_reader(
                             ipld_bar_txt.context,
-                            resolver.clone(),
+                            resolver.loader().clone(),
                             OutMetrics::default(),
                             ResponseClip::NoClip
                         )
@@ -2163,7 +2338,7 @@ mod tests {
                     read_to_string(
                         node.into_content_reader(
                             ipld_txt.context,
-                            resolver.clone(),
+                            resolver.loader().clone(),
                             OutMetrics::default(),
                             ResponseClip::NoClip
                         )
@@ -2234,7 +2409,7 @@ mod tests {
                     read_to_string(
                         node.into_content_reader(
                             ipld_txt.context,
-                            resolver.clone(),
+                            resolver.loader().clone(),
                             OutMetrics::default(),
                             ResponseClip::NoClip
                         )

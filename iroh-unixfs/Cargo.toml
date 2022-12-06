@@ -59,3 +59,7 @@ ruzstd = "0.3"
 
 [build-dependencies]
 prost-build = "0.11.1"
+
+[[bench]]
+name = "unixfs"
+harness = false

@@ -1,5 +1,5 @@
 use axum::Router;
-use iroh_content::content_loader::ContentLoader;
+use iroh_content::ContentLoader;
 use iroh_rpc_types::gateway::GatewayAddr;
 
 use iroh_resolver::dns_resolver::Config as DnsResolverConfig;

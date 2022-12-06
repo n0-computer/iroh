@@ -4,9 +4,8 @@ use anyhow::{ensure, Result};
 use async_trait::async_trait;
 use cid::Cid;
 use iroh_content::{
-    content::{LoadedCid, Source},
     content_loader::{ContentLoader, ContextId, LoaderContext, IROH_STORE},
-    util::parse_links,
+    parse_links, LoadedCid, Source,
 };
 use iroh_p2p::{config, Keychain, MemoryStorage, NetworkEvent, Node};
 use iroh_resolver::resolver::Resolver;

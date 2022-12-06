@@ -1,30 +1,29 @@
 use std::{
-    fmt::{Debug, Display},
+    fmt::Debug,
     path::{Path, PathBuf},
     pin::Pin,
-    str::FromStr,
     sync::Arc,
 };
 
-use anyhow::{anyhow, ensure, Context, Result};
+use anyhow::{ensure, Result};
 use async_recursion::async_recursion;
 use async_trait::async_trait;
 use bytes::Bytes;
 use cid::Cid;
 use futures::stream::TryStreamExt;
 use futures::{future, stream::LocalBoxStream, Stream, StreamExt};
-use iroh_content::{
-    chunker::{self, Chunker, DEFAULT_CHUNKS_SIZE, DEFAULT_CHUNK_SIZE_LIMIT},
-    content::Block,
-};
+use iroh_content::Block;
 use iroh_rpc_client::Client;
 use prost::Message;
 use tokio::io::AsyncRead;
 
 use crate::{
     balanced_tree::{TreeBuilder, DEFAULT_DEGREE},
+    chunker::{self, Chunker, DEFAULT_CHUNK_SIZE_LIMIT},
     unixfs::{dag_pb, unixfs_pb, DataType, Node, UnixfsNode},
 };
+
+pub use crate::chunker::ChunkerConfig;
 
 // The maximum number of links we allow in a directory
 // Any more links than this and we should switch to a hamt
@@ -594,60 +593,6 @@ pub struct Config {
     pub chunker: ChunkerConfig,
 }
 
-/// Chunker configuration.
-#[derive(Debug, Clone, PartialEq, Eq, Copy)]
-pub enum ChunkerConfig {
-    /// Fixed sized chunker.
-    Fixed(usize),
-    /// Rabin chunker.
-    Rabin,
-}
-
-impl Display for ChunkerConfig {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Fixed(chunk_size) => write!(f, "fixed-{}", chunk_size),
-            Self::Rabin => write!(f, "rabin"),
-        }
-    }
-}
-
-impl FromStr for ChunkerConfig {
-    type Err = anyhow::Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if s == "rabin" {
-            return Ok(ChunkerConfig::Rabin);
-        }
-
-        if let Some(rest) = s.strip_prefix("fixed") {
-            if rest.is_empty() {
-                return Ok(ChunkerConfig::Fixed(DEFAULT_CHUNKS_SIZE));
-            }
-
-            if let Some(rest) = rest.strip_prefix('-') {
-                let chunk_size: usize = rest.parse().context("invalid chunk size")?;
-                if chunk_size > DEFAULT_CHUNK_SIZE_LIMIT {
-                    return Err(anyhow!("chunk size too large"));
-                }
-
-                return Ok(ChunkerConfig::Fixed(chunk_size));
-            }
-        }
-
-        Err(anyhow!("unknown chunker: {}", s))
-    }
-}
-
-impl From<ChunkerConfig> for Chunker {
-    fn from(cfg: ChunkerConfig) -> Self {
-        match cfg {
-            ChunkerConfig::Fixed(chunk_size) => Chunker::Fixed(chunker::Fixed::new(chunk_size)),
-            ChunkerConfig::Rabin => Chunker::Rabin(Box::new(chunker::Rabin::default())),
-        }
-    }
-}
-
 /// Adds a single file.
 /// - storing the content using `rpc.store`
 /// - returns a stream of AddEvent
@@ -832,12 +777,338 @@ async fn make_dir_from_path<P: Into<PathBuf>>(path: P, chunker: Chunker) -> Resu
     dir.build()
 }
 
-/// Read an `AsyncRead` into a `Vec` completely.
-#[doc(hidden)]
-pub async fn read_to_vec<T: AsyncRead + Unpin>(mut reader: T) -> Result<Vec<u8>> {
-    use tokio::io::AsyncReadExt;
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::chunker::DEFAULT_CHUNKS_SIZE;
+    use std::io::Write;
 
-    let mut out = Vec::new();
-    reader.read_to_end(&mut out).await?;
-    Ok(out)
+    #[tokio::test]
+    async fn test_builder_basics() -> Result<()> {
+        // Create a directory
+        let mut dir = DirectoryBuilder::new();
+        dir.name("foo");
+
+        // Add a file
+        let bar = FileBuilder::new()
+            .name("bar.txt")
+            .content_bytes(b"bar".to_vec())
+            .build()
+            .await?;
+        let bar_encoded: Vec<_> = {
+            let bar = FileBuilder::new()
+                .name("bar.txt")
+                .content_bytes(b"bar".to_vec())
+                .build()
+                .await?;
+            bar.encode().await?.try_collect().await?
+        };
+        assert_eq!(bar_encoded.len(), 1);
+
+        // Add a symlink
+        let mut baz = SymlinkBuilder::new("baz.txt");
+        baz.target("bat.txt");
+        let baz = baz.build().await?;
+        let baz_encoded: Block = {
+            let mut baz = SymlinkBuilder::new("baz.txt");
+            baz.target("bat.txt");
+            let baz = baz.build().await?;
+            baz.encode()?
+        };
+
+        dir.add_file(bar).add_symlink(baz);
+
+        let dir = dir.build()?;
+
+        let dir_block = dir.encode_root().await?;
+        let decoded_dir = UnixfsNode::decode(dir_block.cid(), dir_block.data().clone())?;
+
+        let links = decoded_dir.links().collect::<Result<Vec<_>>>().unwrap();
+        assert_eq!(links[0].name.unwrap(), "bar.txt");
+        assert_eq!(links[0].cid, *bar_encoded[0].cid());
+        assert_eq!(links[1].name.unwrap(), "baz.txt");
+        assert_eq!(links[1].cid, *baz_encoded.cid());
+
+        // TODO: check content
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_recursive_dir_builder() -> Result<()> {
+        let dir = DirectoryBuilder::new();
+        let dir = dir.build()?;
+
+        let mut recursive_dir_builder = DirectoryBuilder::new();
+        recursive_dir_builder
+            .add_dir(dir)
+            .expect("recursive directories allowed");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_builder_stream_small() -> Result<()> {
+        // Create a directory
+        let mut dir = DirectoryBuilder::new();
+        dir.name("foo");
+
+        // Add a file
+        let bar_reader = std::io::Cursor::new(b"bar");
+        let bar = FileBuilder::new()
+            .name("bar.txt")
+            .content_reader(bar_reader)
+            .build()
+            .await?;
+        let bar_encoded: Vec<_> = {
+            let bar_reader = std::io::Cursor::new(b"bar");
+            let bar = FileBuilder::new()
+                .name("bar.txt")
+                .content_reader(bar_reader)
+                .build()
+                .await?;
+            bar.encode().await?.try_collect().await?
+        };
+        assert_eq!(bar_encoded.len(), 1);
+
+        // Add a symlink
+        let mut baz = SymlinkBuilder::new("baz.txt");
+        baz.target("bat.txt");
+        let baz = baz.build().await?;
+        let baz_encoded: Block = {
+            let mut baz = SymlinkBuilder::new("baz.txt");
+            baz.target("bat.txt");
+            let baz = baz.build().await?;
+            baz.encode()?
+        };
+
+        dir.add_file(bar).add_symlink(baz);
+
+        let dir = dir.build()?;
+
+        let dir_block = dir.encode_root().await?;
+        let decoded_dir = UnixfsNode::decode(dir_block.cid(), dir_block.data().clone())?;
+
+        let links = decoded_dir.links().collect::<Result<Vec<_>>>().unwrap();
+        assert_eq!(links[0].name.unwrap(), "bar.txt");
+        assert_eq!(links[0].cid, *bar_encoded[0].cid());
+        assert_eq!(links[1].name.unwrap(), "baz.txt");
+        assert_eq!(links[1].cid, *baz_encoded.cid());
+
+        // TODO: check content
+        Ok(())
+    }
+    #[cfg(not(windows))]
+    #[tokio::test]
+    async fn symlink_from_disk_test() -> Result<()> {
+        let temp_dir = ::tempfile::tempdir()?;
+        let expect_name = "path_to_symlink";
+        let expect_target = temp_dir.path().join("path_to_target");
+        let expect_path = temp_dir.path().join(expect_name);
+
+        tokio::fs::symlink(expect_target.clone(), expect_path.clone()).await?;
+
+        let got_symlink = SymlinkBuilder::new(expect_path).build().await?;
+        assert_eq!(expect_name, got_symlink.name());
+        assert_eq!(expect_target, got_symlink.target);
+        Ok(())
+    }
+    #[tokio::test]
+    async fn test_builder_stream_large() -> Result<()> {
+        // Create a directory
+        let mut dir = DirectoryBuilder::new();
+        dir.name("foo");
+
+        // Add a file
+        let bar_reader = std::io::Cursor::new(vec![1u8; 1024 * 1024]);
+        let bar = FileBuilder::new()
+            .name("bar.txt")
+            .content_reader(bar_reader)
+            .build()
+            .await?;
+        let bar_encoded: Vec<_> = {
+            let bar_reader = std::io::Cursor::new(vec![1u8; 1024 * 1024]);
+            let bar = FileBuilder::new()
+                .name("bar.txt")
+                .content_reader(bar_reader)
+                .build()
+                .await?;
+            bar.encode().await?.try_collect().await?
+        };
+        assert_eq!(bar_encoded.len(), 5);
+
+        // Add a file
+        let mut baz_content = Vec::with_capacity(1024 * 1024 * 2);
+        for i in 0..2 {
+            for _ in 0..(1024 * 1024) {
+                baz_content.push(i);
+            }
+        }
+
+        let baz_reader = std::io::Cursor::new(baz_content.clone());
+        let baz = FileBuilder::new()
+            .name("baz.txt")
+            .content_reader(baz_reader)
+            .build()
+            .await?;
+        let baz_encoded: Vec<_> = {
+            let baz_reader = std::io::Cursor::new(baz_content);
+            let baz = FileBuilder::new()
+                .name("baz.txt")
+                .content_reader(baz_reader)
+                .build()
+                .await?;
+            baz.encode().await?.try_collect().await?
+        };
+        assert_eq!(baz_encoded.len(), 9);
+
+        dir.add_file(bar).add_file(baz);
+
+        let dir = dir.build()?;
+
+        let dir_block = dir.encode_root().await?;
+        let decoded_dir = UnixfsNode::decode(dir_block.cid(), dir_block.data().clone())?;
+
+        let links = decoded_dir.links().collect::<Result<Vec<_>>>().unwrap();
+        assert_eq!(links[0].name.unwrap(), "bar.txt");
+        assert_eq!(links[0].cid, *bar_encoded[4].cid());
+        assert_eq!(links[1].name.unwrap(), "baz.txt");
+        assert_eq!(links[1].cid, *baz_encoded[8].cid());
+
+        for (i, encoded) in baz_encoded.iter().enumerate() {
+            let node = UnixfsNode::decode(encoded.cid(), encoded.data().clone())?;
+            if i == 8 {
+                assert_eq!(node.typ(), Some(DataType::File));
+                assert_eq!(node.links().count(), 8);
+            } else {
+                assert_eq!(node.typ(), None); // raw leaves
+                assert!(node.size().unwrap() > 0);
+                assert_eq!(node.links().count(), 0);
+            }
+        }
+
+        // TODO: check content
+        // TODO: add nested directory
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_hamt_detection() -> Result<()> {
+        // allow hamt override
+        let mut builder = DirectoryBuilder::new();
+        builder.hamt();
+        assert_eq!(DirectoryType::Hamt, builder.typ);
+
+        let mut builder = DirectoryBuilder::new();
+
+        for _i in 0..DIRECTORY_LINK_LIMIT {
+            let file = FileBuilder::new()
+                .name("foo.txt")
+                .content_bytes(Bytes::from("hello world"))
+                .build()
+                .await?;
+            builder.add_file(file);
+        }
+
+        // under DIRECTORY_LINK_LIMIT should still be a basic directory
+        assert_eq!(DirectoryType::Basic, builder.typ);
+
+        let file = FileBuilder::new()
+            .name("foo.txt")
+            .content_bytes(Bytes::from("hello world"))
+            .build()
+            .await?;
+        builder.add_file(file);
+
+        // at directory link limit should be processed as a hamt
+        assert_eq!(DirectoryType::Hamt, builder.typ);
+        if (builder.build()).is_ok() {
+            panic!("expected builder to error when attempting to build a hamt directory")
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_make_dir_from_path() -> Result<()> {
+        let temp_dir = std::env::temp_dir();
+        let dir = temp_dir.join("test_dir");
+        std::fs::DirBuilder::new()
+            .recursive(true)
+            .create(dir.clone())
+            .unwrap();
+
+        // create directory and nested file
+        let nested_dir_path = dir.join("nested_dir");
+        let nested_file_path = nested_dir_path.join("bar.txt");
+
+        std::fs::DirBuilder::new()
+            .recursive(true)
+            .create(nested_dir_path.clone())
+            .unwrap();
+
+        let mut file = std::fs::File::create(nested_file_path.clone()).unwrap();
+        file.write_all(b"hello world again").unwrap();
+
+        // create another file in the "test_dir" directory
+        let file_path = dir.join("foo.txt");
+        let mut file = std::fs::File::create(file_path.clone()).unwrap();
+        file.write_all(b"hello world").unwrap();
+
+        // create directory manually
+        let nested_file = FileBuilder::new().path(nested_file_path).build().await?;
+        let nested_dir = Directory {
+            name: String::from(
+                nested_dir_path
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .unwrap(),
+            ),
+            entries: vec![Entry::File(nested_file)],
+        };
+
+        let file = FileBuilder::new().path(file_path).build().await?;
+
+        let expected = Directory {
+            name: String::from(dir.clone().file_name().and_then(|s| s.to_str()).unwrap()),
+            entries: vec![Entry::File(file), Entry::Directory(nested_dir)],
+        };
+
+        let mut got = make_dir_from_path(dir, Chunker::Fixed(chunker::Fixed::default())).await?;
+
+        // Before comparison sort entries to make test deterministic.
+        // The readdir_r function is used in the underlying platform which
+        // gives no guarantee to return in a specific order.
+        // https://stackoverflow.com/questions/40021882/how-to-sort-readdir-iterator
+        got.entries.sort_by_key(|entry| match entry {
+            Entry::Directory(dir) => dir.name.clone(),
+            Entry::File(file) => file.name.clone(),
+            Entry::Symlink(sym) => sym.name().to_string(),
+        });
+
+        assert_eq!(expected, got);
+        Ok(())
+    }
+
+    #[test]
+    fn test_chunk_config_from_str() {
+        assert_eq!(
+            "fixed".parse::<ChunkerConfig>().unwrap(),
+            ChunkerConfig::Fixed(DEFAULT_CHUNKS_SIZE)
+        );
+        assert_eq!(
+            "fixed-123".parse::<ChunkerConfig>().unwrap(),
+            ChunkerConfig::Fixed(123)
+        );
+
+        assert!("fixed-".parse::<ChunkerConfig>().is_err());
+        assert!(format!("fixed-{}", DEFAULT_CHUNK_SIZE_LIMIT + 1)
+            .parse::<ChunkerConfig>()
+            .is_err());
+        assert!("foo-123".parse::<ChunkerConfig>().is_err());
+        assert!("foo".parse::<ChunkerConfig>().is_err());
+
+        assert_eq!(
+            "rabin".parse::<ChunkerConfig>().unwrap(),
+            ChunkerConfig::Rabin
+        );
+    }
 }

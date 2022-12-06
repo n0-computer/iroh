@@ -10,16 +10,12 @@ use anyhow::{anyhow, bail, ensure, Result};
 use bytes::{Buf, Bytes};
 use cid::{multihash::MultihashDigest, Cid};
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt, Stream, StreamExt};
-use iroh_content::{
-    chunker::DEFAULT_CHUNK_SIZE_LIMIT,
-    codec::Codec,
-    content::{Block, OutMetrics, ResponseClip},
-    content_loader::{ContentLoader, LoaderContext},
-};
+use iroh_content::{Block, Codec, ContentLoader, LoaderContext, ResponseClip};
+use iroh_metrics::resolver::OutMetrics;
 use prost::Message;
 use tokio::io::{AsyncRead, AsyncSeek};
 
-use crate::hamt::Hamt;
+use crate::{chunker::DEFAULT_CHUNK_SIZE_LIMIT, hamt::Hamt};
 
 pub(crate) mod unixfs_pb {
     #![allow(clippy::all)]

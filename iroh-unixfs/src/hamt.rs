@@ -4,7 +4,7 @@ use once_cell::sync::OnceCell;
 
 use crate::unixfs::{self, HamtHashFunction, Link, Links, PbLinks, UnixfsNode};
 use async_recursion::async_recursion;
-use iroh_content::content_loader::{ContentLoader, LoaderContext};
+use iroh_content::{ContentLoader, LoaderContext};
 
 use self::{bitfield::Bitfield, hash_bits::HashBits};
 
@@ -71,11 +71,11 @@ impl Hamt {
         padding.len()
     }
 
-    pub fn children<'a, C: ContentLoader>(
-        &'a self,
+    pub fn children<C: ContentLoader>(
+        &self,
         ctx: LoaderContext,
         loader: C,
-    ) -> impl Stream<Item = Result<Link>> + 'a {
+    ) -> impl Stream<Item = Result<Link>> + '_ {
         self.root.children(ctx, loader)
     }
 }
@@ -107,11 +107,11 @@ impl InnerNode {
         }
     }
 
-    fn children<'a, C: ContentLoader>(
-        &'a self,
+    fn children<C: ContentLoader>(
+        &self,
         ctx: LoaderContext,
         loader: C,
-    ) -> impl Stream<Item = Result<Link>> + 'a {
+    ) -> impl Stream<Item = Result<Link>> + '_ {
         async_stream::try_stream! {
             match self {
                 InnerNode::Node { node, .. } => {

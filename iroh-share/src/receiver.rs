@@ -3,9 +3,9 @@ use futures::{
     channel::{oneshot::channel as oneshot, oneshot::Receiver as OneShotReceiver},
     Stream, StreamExt,
 };
-use iroh_content::content::{Path, ResponseClip};
+use iroh_content::ResponseClip;
 use iroh_p2p::NetworkEvent;
-use iroh_resolver::resolver::{Out, OutPrettyReader, OutType, Resolver, UnixfsType};
+use iroh_resolver::resolver::{Out, OutPrettyReader, OutType, Path, Resolver, UnixfsType};
 use iroh_unixfs::unixfs::Link;
 use libp2p::gossipsub::{GossipsubMessage, MessageId, TopicHash};
 use libp2p::PeerId;

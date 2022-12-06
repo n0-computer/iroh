@@ -1,12 +1,14 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use futures::TryStreamExt;
-use iroh_content::chunker::DEFAULT_CHUNKS_SIZE;
 use iroh_metrics::config::Config as MetricsConfig;
 use iroh_rpc_client::Client;
 use iroh_rpc_client::Config as RpcClientConfig;
 use iroh_rpc_types::Addr;
 use iroh_store::{Config as StoreConfig, Store};
-use iroh_unixfs::builder::{ChunkerConfig, Config as UnixfsConfig};
+use iroh_unixfs::{
+    builder::{ChunkerConfig, Config as UnixfsConfig},
+    chunker::DEFAULT_CHUNKS_SIZE,
+};
 use tokio::runtime::Runtime;
 
 pub fn add_benchmark(c: &mut Criterion) {
@@ -56,7 +58,7 @@ pub fn add_benchmark(c: &mut Criterion) {
                 b.to_async(&executor).iter(|| {
                     let rpc = rpc.clone();
                     async move {
-                        let stream = iroh_resolver::unixfs_builder::add_file(
+                        let stream = iroh_unixfs::builder::add_file(
                             Some(rpc),
                             path,
                             UnixfsConfig {

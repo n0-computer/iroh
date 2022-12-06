@@ -12,12 +12,9 @@ use axum::{
 use futures::TryStreamExt;
 use handlebars::Handlebars;
 use http::Method;
-use iroh_content::{
-    content::{CidOrDomain, OutMetrics},
-    content_loader::ContentLoader,
-};
-use iroh_metrics::{core::MRecorder, gateway::GatewayMetrics, inc};
-use iroh_resolver::resolver::UnixfsType;
+use iroh_content::ContentLoader;
+use iroh_metrics::{core::MRecorder, gateway::GatewayMetrics, inc, resolver::OutMetrics};
+use iroh_resolver::resolver::{CidOrDomain, UnixfsType};
 use iroh_unixfs::unixfs::Link;
 use iroh_util::human::format_bytes;
 use serde::{Deserialize, Serialize};
@@ -166,7 +163,7 @@ async fn request_preprocessing<T: ContentLoader + std::marker::Unpin>(
     }
 
     let full_content_path = format!("/{}/{}{}", path_params.scheme, path_params.cid, cpath);
-    let resolved_path: iroh_content::content::Path = full_content_path
+    let resolved_path: iroh_resolver::resolver::Path = full_content_path
         .parse()
         .map_err(|e: anyhow::Error| e.to_string())
         .map_err(|e| GatewayError::new(StatusCode::BAD_REQUEST, &e))?;

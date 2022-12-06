@@ -18,8 +18,8 @@ use reqwest::Url;
 use tracing::{debug, info, trace, warn};
 
 use crate::{
-    content::{LoadedCid, Path, Source},
     indexer::Indexer,
+    types::{LoadedCid, Source},
     util::parse_links,
 };
 
@@ -284,11 +284,11 @@ pub struct LoaderContext {
 }
 
 impl LoaderContext {
-    pub fn from_path(id: ContextId, closer: async_channel::Sender<ContextId>, path: Path) -> Self {
+    pub fn from_path(id: ContextId, closer: async_channel::Sender<ContextId>) -> Self {
         trace!("new loader context: {:?}", id);
         LoaderContext {
             id,
-            inner: Arc::new(Mutex::new(InnerLoaderContext { path, closer })),
+            inner: Arc::new(Mutex::new(InnerLoaderContext { closer })),
         }
     }
 
@@ -341,8 +341,6 @@ impl From<ContextId> for u64 {
 
 #[derive(Debug)]
 pub struct InnerLoaderContext {
-    #[allow(dead_code)]
-    path: Path,
     closer: async_channel::Sender<ContextId>,
 }
 
