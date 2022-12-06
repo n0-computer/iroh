@@ -32,7 +32,7 @@ pub struct Config {
     /// URL of gateways to be used by the racing resolver.
     /// Strings can either be urls or subdomain gateway roots
     /// values without https:// prefix are treated as subdomain gateways (eg: dweb.link)
-    /// values with are treated as IPFS path gateways (eg: https://ipfs.io)
+    /// values with are treated as IPFS path gateways (eg: <https://ipfs.io>)
     pub http_resolvers: Option<Vec<String>>,
     /// Separate resolvers for particular TLDs
     #[serde(default = "DnsResolverConfig::default")]

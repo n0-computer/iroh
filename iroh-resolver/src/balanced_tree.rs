@@ -11,7 +11,7 @@ use crate::unixfs::{dag_pb, unixfs_pb, DataType, Node, UnixfsNode};
 use crate::unixfs_builder::encode_unixfs_pb;
 
 /// Default degree number for balanced tree, taken from unixfs specs
-/// https://github.com/ipfs/specs/blob/main/UNIXFS.md#layout
+/// <https://github.com/ipfs/specs/blob/main/UNIXFS.md#layout>
 pub const DEFAULT_DEGREE: usize = 174;
 
 #[derive(Debug, PartialEq, Eq)]
