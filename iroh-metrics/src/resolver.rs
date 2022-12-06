@@ -104,7 +104,6 @@ impl std::fmt::Display for ResolverMetrics {
 const METRICS_CACHE_HIT: &str = "cache_hit";
 const METRICS_CACHE_MISS: &str = "cache_miss";
 
-// TODO(ramfox): can this be combined with `ResolverMetrics` or `resolver::Metrics`?
 pub struct OutMetrics {
     pub start: Instant,
 }

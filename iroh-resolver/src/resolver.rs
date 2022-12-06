@@ -371,9 +371,7 @@ impl OutContent {
                 ipld.references(&mut links);
                 Ok(links)
             }
-            // TODO(ramfox): add back in when we figure out circular dependencies
-            // OutContent::Unixfs(node) => node.links().map(|r| r.map(|r| r.cid)).collect(),
-            OutContent::Unixfs(_node) => todo!(),
+            OutContent::Unixfs(node) => node.links().map(|r| r.map(|r| r.cid)).collect(),
         }
     }
 }
