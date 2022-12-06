@@ -8,15 +8,15 @@ rust-version = "1.63"
 
 [dependencies]
 anyhow = "1"
-iroh-api = { path = "../iroh-api" }
-iroh-gateway = { path = "../iroh-gateway" }
-iroh-metrics = { path = "../iroh-metrics" }
-iroh-one = { path = "../iroh-one" }
-iroh-p2p = { path = "../iroh-p2p" }
-iroh-resolver = { path = "../iroh-resolver" }
-iroh-rpc-client = { path = "../iroh-rpc-client" }
-iroh-rpc-types = { path = "../iroh-rpc-types" }
-iroh-store = { path = "../iroh-store" }
+iroh-api = { version = "0.1.3", path = "../iroh-api" }
+iroh-gateway = { version = "0.1.3", path = "../iroh-gateway" }
+iroh-metrics = { version = "0.1.3", path = "../iroh-metrics" }
+iroh-one = { version = "0.1.3", path = "../iroh-one" }
+iroh-p2p = { version = "0.1.3", path = "../iroh-p2p" }
+iroh-resolver = { version = "0.1.3", path = "../iroh-resolver" }
+iroh-rpc-client = { version = "0.1.3", path = "../iroh-rpc-client" }
+iroh-rpc-types = { version = "0.1.3", path = "../iroh-rpc-types" }
+iroh-store = { version = "0.1.3", path = "../iroh-store" }
 tokio = "1"
 
 [dev-dependencies]
