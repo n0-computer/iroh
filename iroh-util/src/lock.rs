@@ -15,6 +15,7 @@ use crate::exitcodes;
 /// An acquired lock is released either when the object is dropped
 /// or when the program stops, which removes the file
 /// Invalid or corrupt locks are overwritten on acquisition
+#[derive(Debug)]
 pub struct ProgramLock {
     path: PathBuf,
     lock: Option<sysinfo::Pid>,

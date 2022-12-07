@@ -21,6 +21,7 @@ use crate::{
     ReceiverMessage,
 };
 
+#[derive(Debug)]
 pub struct Receiver {
     p2p: P2pNode,
     gossip_messages: ChannelReceiver<(MessageId, PeerId, GossipsubMessage)>,
@@ -167,6 +168,7 @@ pub enum ProgressEvent {
     Piece { index: usize, total: usize },
 }
 
+#[derive(Debug)]
 pub struct Transfer {
     p2p: P2pNode,
     gossip_task: JoinHandle<()>,
@@ -214,6 +216,7 @@ impl Transfer {
     }
 }
 
+#[derive(Debug)]
 pub struct Data {
     resolver: Resolver<Loader>,
     root: Out,

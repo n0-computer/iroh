@@ -73,7 +73,7 @@ impl MetricsRecorder for Metrics {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum ResolverMetrics {
     CacheHit,
     CacheMiss,

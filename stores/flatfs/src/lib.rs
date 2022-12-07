@@ -1,3 +1,5 @@
+#![warn(missing_debug_implementations)]
+
 mod flatfs;
 mod shard;
 

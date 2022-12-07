@@ -1,3 +1,5 @@
+#![warn(missing_debug_implementations)]
+
 pub mod bad_bits;
 pub mod cli;
 pub mod client;

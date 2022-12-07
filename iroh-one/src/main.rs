@@ -1,3 +1,5 @@
+#![warn(missing_debug_implementations)]
+
 use std::sync::Arc;
 
 #[allow(unused_imports)]

@@ -1,3 +1,4 @@
+use std::fmt;
 use std::path::Path;
 
 use anyhow::{anyhow, Result};
@@ -7,6 +8,15 @@ pub struct RocksFs {
     db: DB,
     #[allow(dead_code)]
     cache: Option<Cache>,
+}
+
+impl fmt::Debug for RocksFs {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RocksFs")
+            .field("db", &self.db)
+            .field("cache", &"rocksdb::db_options::Cache")
+            .finish()
+    }
 }
 
 pub use rocksdb::Options;

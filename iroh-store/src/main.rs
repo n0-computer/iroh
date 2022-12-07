@@ -1,3 +1,5 @@
+#![warn(missing_debug_implementations)]
+
 use anyhow::anyhow;
 use clap::Parser;
 use iroh_store::{

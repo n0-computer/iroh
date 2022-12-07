@@ -2,6 +2,8 @@
 //!
 //! Supports the versions `1.0.0`, `1.1.0` and `1.2.0`.
 
+#![warn(missing_debug_implementations)]
+
 use std::collections::HashSet;
 use std::fmt::Debug;
 use std::pin::Pin;

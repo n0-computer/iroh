@@ -139,6 +139,15 @@ macro_rules! proxy_serve_types {
                     $name(Result<$res, String>),
                 )+
             }
+
+            impl ::std::fmt::Debug for [<$label Response>] {
+                fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::result::Result<(), ::std::fmt::Error> {
+                    match self {
+                        $(Self::$name(_) => write!(f, "{}(_)", ::std::stringify!($name)),)+
+                    }
+                }
+            }
+
         }
     }
 }

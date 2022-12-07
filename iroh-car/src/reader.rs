@@ -9,6 +9,7 @@ use crate::{
 };
 
 /// Reads CAR files that are in a BufReader
+#[derive(Debug)]
 pub struct CarReader<R> {
     reader: R,
     header: CarHeader,

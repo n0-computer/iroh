@@ -517,6 +517,7 @@ impl<T: ContentLoader> OutPrettyReader<T> {
     }
 }
 
+#[derive(Debug)]
 pub struct BytesReader {
     pos: usize,
     bytes: Bytes,
@@ -530,6 +531,7 @@ impl BytesReader {
     }
 }
 
+#[derive(Debug)]
 pub struct OutMetrics {
     pub start: Instant,
 }

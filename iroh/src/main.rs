@@ -1,3 +1,5 @@
+#![warn(missing_debug_implementations)]
+
 use anyhow::{anyhow, Result};
 use clap::Parser;
 use crossterm::style::Stylize;

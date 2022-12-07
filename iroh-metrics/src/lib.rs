@@ -1,3 +1,5 @@
+#![warn(missing_debug_implementations)]
+
 #[macro_use]
 mod macros;
 #[cfg(feature = "bitswap")]
@@ -44,6 +46,7 @@ use tracing::log::{debug, warn};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer};
 
+#[derive(Debug)]
 pub struct MetricsHandle {
     metrics_task: Option<JoinHandle<()>>,
 }
@@ -157,7 +160,7 @@ pub fn get_current_trace_id() -> TraceId {
         .trace_id()
 }
 
-#[derive(PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum Collector {
     #[cfg(feature = "gateway")]
     Gateway,
