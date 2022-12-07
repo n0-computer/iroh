@@ -14,8 +14,6 @@ pub enum Addr<T = ()> {
     GrpcHttp2(SocketAddr),
     #[cfg(feature = "grpc")]
     GrpcHttp2Lookup(String),
-    #[cfg(all(feature = "grpc", unix))]
-    GrpcUds(std::path::PathBuf),
     #[cfg(feature = "mem")]
     Mem(T),
 }
@@ -27,8 +25,6 @@ impl<T> PartialEq for Addr<T> {
             (Self::GrpcHttp2(addr1), Self::GrpcHttp2(addr2)) => addr1.eq(addr2),
             #[cfg(feature = "grpc")]
             (Self::GrpcHttp2Lookup(addr1), Self::GrpcHttp2Lookup(addr2)) => addr1.eq(addr2),
-            #[cfg(all(feature = "grpc", unix))]
-            (Self::GrpcUds(path1), Self::GrpcUds(path2)) => path1.eq(path2),
             _ => false,
         }
     }
@@ -59,8 +55,6 @@ impl<T> Display for Addr<T> {
             Addr::GrpcHttp2(addr) => write!(f, "grpc://{}", addr),
             #[cfg(feature = "grpc")]
             Addr::GrpcHttp2Lookup(addr) => write!(f, "grpc://{}", addr),
-            #[cfg(all(feature = "grpc", unix))]
-            Addr::GrpcUds(path) => write!(f, "grpc://{}", path.display()),
             #[cfg(feature = "mem")]
             Addr::Mem(_) => write!(f, "mem"),
             #[allow(unreachable_patterns)]
@@ -101,10 +95,6 @@ impl<T> FromStr for Addr<T> {
                                 return Ok(Addr::GrpcHttp2Lookup(String::from(part)));
                             }
                         }
-                        #[cfg(unix)]
-                        if let Ok(path) = part.parse::<std::path::PathBuf>() {
-                            return Ok(Addr::GrpcUds(path));
-                        }
                     }
                 }
             }
@@ -138,15 +128,5 @@ mod tests {
 
         assert_eq!(addr.to_string().parse::<Addr>().unwrap(), addr);
         assert_eq!(addr.to_string(), "grpc://localhost:1234");
-    }
-
-    #[cfg(all(feature = "grpc", unix))]
-    #[test]
-    fn test_addr_roundtrip_grpc_uds() {
-        let path: std::path::PathBuf = "/foo/bar".parse().unwrap();
-        let addr = Addr::GrpcUds(path);
-
-        assert_eq!(addr.to_string().parse::<Addr>().unwrap(), addr);
-        assert_eq!(addr.to_string(), "grpc:///foo/bar");
     }
 }
