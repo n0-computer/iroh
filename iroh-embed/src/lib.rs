@@ -73,8 +73,8 @@ impl Iroh {
         let api_config = iroh_api::config::Config {
             rpc_client: rpc_config,
             metrics: Default::default(),
-            http_resolvers: http_resolvers,
-            indexer_endpoint: indexer_endpoint,
+            http_resolvers,
+            indexer_endpoint,
         };
         let api = Api::new(api_config).await?;
 
