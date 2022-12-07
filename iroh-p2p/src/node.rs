@@ -1073,23 +1073,6 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(all(feature = "rpc-grpc", unix))]
-    #[tokio::test]
-    async fn test_fetch_providers_uds_dht() -> Result<()> {
-        let dir = tempfile::tempdir()?;
-        let file = dir.path().join("cool.iroh");
-
-        let server_addr = P2pServerAddr::GrpcUds(file.clone());
-        let client_addr = P2pClientAddr::GrpcUds(file);
-        fetch_providers(
-            "/ip4/0.0.0.0/tcp/5002".parse().unwrap(),
-            server_addr,
-            client_addr,
-        )
-        .await?;
-        Ok(())
-    }
-
     #[cfg(feature = "rpc-mem")]
     #[tokio::test]
     async fn test_fetch_providers_mem_dht() -> Result<()> {
