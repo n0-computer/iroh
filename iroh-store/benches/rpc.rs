@@ -19,7 +19,6 @@ const VALUES: [usize; 4] = [32, 256, 1024, 256 * 1024];
 enum Transport {
     GrpcHttp2,
     #[cfg(unix)]
-    GrpcUds,
     Mem,
 }
 
@@ -31,12 +30,6 @@ impl Transport {
                 "grpc://127.0.0.1:4001".parse().unwrap(),
                 None,
             ),
-            #[cfg(unix)]
-            Transport::GrpcUds => {
-                let dir = tempfile::tempdir().unwrap();
-                let file = dir.path().join("iroh-store.uds");
-                (Addr::GrpcUds(file.clone()), Addr::GrpcUds(file), Some(dir))
-            }
             Transport::Mem => {
                 let (a, b) = Addr::new_mem();
                 (a, b, None)
@@ -49,7 +42,7 @@ pub fn put_benchmark(c: &mut Criterion) {
     let mut group = c.benchmark_group("rpc_store_put");
 
     #[cfg(unix)]
-    let addrs = [Transport::GrpcHttp2, Transport::GrpcUds, Transport::Mem];
+    let addrs = [Transport::GrpcHttp2, Transport::Mem];
     #[cfg(not(unix))]
     let addrs = [Transport::GrpcHttp2, Transport::Mem];
     for transport in addrs.into_iter() {
@@ -109,7 +102,7 @@ pub fn put_benchmark(c: &mut Criterion) {
 pub fn get_benchmark(c: &mut Criterion) {
     let mut group = c.benchmark_group("rpc_store_get");
     #[cfg(unix)]
-    let addrs = [Transport::GrpcHttp2, Transport::GrpcUds, Transport::Mem];
+    let addrs = [Transport::GrpcHttp2, Transport::Mem];
     #[cfg(not(unix))]
     let addrs = [Transport::GrpcHttp2, Transport::Mem];
     for transport in addrs.into_iter() {

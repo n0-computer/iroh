@@ -115,6 +115,12 @@ jobs:
       run: |
         cargo clippy --workspace --all-features --all-targets -- -D warnings
 
+    - name: docs
+      env:
+        RUSTDOCFLAGS: -Dwarnings
+      run: |
+        cargo doc --workspace --all-features --no-deps --document-private-items
+
     - name: tests
       timeout-minutes: 30
       run: |

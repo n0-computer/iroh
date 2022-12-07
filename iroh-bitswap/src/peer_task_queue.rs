@@ -1,4 +1,4 @@
-//! Based on https://github.com/ipfs/go-peertaskqueue.
+//! Based on <https://github.com/ipfs/go-peertaskqueue>.
 
 use std::{fmt::Debug, sync::Arc};
 
