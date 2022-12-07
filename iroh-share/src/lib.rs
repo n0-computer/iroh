@@ -1,5 +1,3 @@
-#![warn(missing_debug_implementations)]
-
 mod p2p_node;
 mod receiver;
 mod sender;

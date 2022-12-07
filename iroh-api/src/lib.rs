@@ -1,5 +1,3 @@
-#![warn(missing_debug_implementations)]
-
 mod api;
 mod config;
 mod error;

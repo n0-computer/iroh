@@ -1,5 +1,3 @@
-#![warn(missing_debug_implementations)]
-
 pub mod balanced_tree;
 pub mod chunker;
 pub mod codecs;

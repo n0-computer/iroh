@@ -1,5 +1,3 @@
-#![warn(missing_debug_implementations)]
-
 mod cf;
 pub mod cli;
 pub mod config;

@@ -1,5 +1,3 @@
-#![warn(missing_debug_implementations)]
-
 use std::{
     cell::RefCell,
     collections::HashMap,

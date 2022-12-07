@@ -1,5 +1,3 @@
-#![warn(missing_debug_implementations)]
-
 mod behaviour;
 pub mod cli;
 pub mod config;
