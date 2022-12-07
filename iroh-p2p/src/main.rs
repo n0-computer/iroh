@@ -1,4 +1,3 @@
-
 use anyhow::{anyhow, Context, Result};
 use clap::Parser;
 use iroh_p2p::config::{Config, CONFIG_FILE_NAME, ENV_PREFIX};
