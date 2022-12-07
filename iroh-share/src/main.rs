@@ -1,4 +1,3 @@
-#![warn(missing_debug_implementations)]
 
 use std::path::PathBuf;
 

@@ -1,4 +1,3 @@
-#![warn(missing_debug_implementations)]
 
 use anyhow::{anyhow, Context, Result};
 use clap::Parser;
