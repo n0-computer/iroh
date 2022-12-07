@@ -6,22 +6,23 @@ pub mod status;
 pub mod store;
 
 pub type ChannelTypes = quic_rpc::combined::CombinedChannelTypes<
-    quic_rpc::mem::MemChannelTypes,
+    quic_rpc::http2::Http2ChannelTypes,
     quic_rpc::quinn::QuinnChannelTypes,
 >;
 
-use std::{io, net::SocketAddr, sync::Arc};
+use std::{io, net::SocketAddr, sync::Arc, time::Duration};
 
 pub use self::config::Config;
+use anyhow::Context;
 pub use client::Client;
 use futures::{stream::BoxStream, StreamExt};
 use iroh_rpc_types::Addr;
 pub use network::{Lookup, P2pClient};
 use quic_rpc::{
-    channel_factory::LazyChannelFactory, combined, mem::MemChannelTypes, quinn::QuinnChannelTypes,
-    RpcClient, RpcServer, Service,
+    channel_factory::LazyChannelFactory, combined, http2::Http2ChannelTypes, mem::MemChannelTypes,
+    quinn::QuinnChannelTypes, RpcClient, RpcServer, Service,
 };
-use quinn::{ClientConfig, Endpoint, ServerConfig, EndpointConfig, TokioRuntime};
+use quinn::{ClientConfig, Endpoint, EndpointConfig, ServerConfig, TokioRuntime};
 pub use status::{ServiceStatus, StatusRow, StatusTable};
 pub use store::StoreClient;
 
@@ -42,6 +43,14 @@ pub async fn create_server_stream<S: Service>(
         Addr::Mem(_addr) => {
             todo!()
             // Ok(Some(RpcServer::new(combined::Channel::new(Some(addr), None))))
+        }
+        Addr::Http2(addr) => {
+            let addr: SocketAddr = addr.parse()?;
+            let (channel, hyper) = quic_rpc::http2::Channel::server(&addr)?;
+            tokio::spawn(hyper);
+            let channel = combined::Channel::new(Some(channel), None);
+            let server = RpcServer::new(channel);
+            Ok(futures::stream::once(async move { Ok(server) }).boxed())
         }
         Addr::Qrpc(addr) => {
             println!("Opening server on {}", addr);
@@ -76,28 +85,41 @@ async fn create_quinn_client_channel<S: Service>(
     Ok(channel)
 }
 
+async fn create_http2_client_channel<S: Service>(
+    uri: hyper::Uri,
+) -> Result<quic_rpc::http2::Channel<S::Res, S::Req>, hyper::Error> {
+    let channel = quic_rpc::http2::Channel::client(uri);
+    Ok(channel)
+}
+
 pub async fn open_client<S: Service>(
     addr: Addr<S::Res, S::Req>,
 ) -> anyhow::Result<RpcClient<S, ChannelTypes>> {
-    println!("open_client: {} {:?}", std::any::type_name::<S>(), addr);
     // make a channel matching the channel types for this crate
     match addr {
         Addr::Mem(addr) => {
-            let channel = combined::Channel::new(Some(addr), None);
-            anyhow::Ok(RpcClient::<S, ChannelTypes>::new(channel))
+            todo!()
+            // let channel = combined::Channel::new(Some(addr), None);
+            // anyhow::Ok(RpcClient::<S, ChannelTypes>::new(channel))
         }
         Addr::Qrpc(addr) => {
             let bind_addr = SocketAddr::from(([0, 0, 0, 0], 0));
             let f = move || async move {
-                let channel = create_quinn_client_channel::<S>(bind_addr, addr)
-                    .await
-                    .map_err(|e| dbg!(e))
-                    .map_err(combined::CreateChannelError::B)?;
+                let channel: quic_rpc::quinn::Channel<S::Res, S::Req> =
+                    create_quinn_client_channel::<S>(bind_addr, addr)
+                        .await
+                        .map_err(combined::CreateChannelError::B)?;
                 let channel = combined::Channel::new(None, Some(channel));
                 Ok(channel)
             };
             let factory = Arc::new(LazyChannelFactory::eager(f).await);
             Ok(RpcClient::<S, ChannelTypes>::from_factory(factory))
+        }
+        Addr::Http2(uri) => {
+            let uri = format!("http://{}", uri).parse()?;
+            let channel = create_http2_client_channel::<S>(uri).await?;
+            let channel = combined::Channel::new(Some(channel), None);
+            Ok(RpcClient::<S, ChannelTypes>::new(channel))
         }
     }
 }
@@ -110,10 +132,12 @@ pub fn make_insecure_client_endpoint(bind_addr: SocketAddr) -> io::Result<Endpoi
 
     let client_cfg = ClientConfig::new(Arc::new(crypto));
     let mut endpoint_config = EndpointConfig::default();
-    endpoint_config.max_udp_payload_size(9200).map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+    endpoint_config
+        .max_udp_payload_size(9200)
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
     let mut endpoint = Endpoint::new(
         endpoint_config,
-        None,        
+        None,
         std::net::UdpSocket::bind(bind_addr)?,
         TokioRuntime,
     )?;
@@ -144,12 +168,15 @@ fn make_server_endpoint(
     transport_config.initial_max_udp_payload_size(9200);
     server_config.transport_config(Arc::new(transport_config));
     let mut endpoint_config = EndpointConfig::default();
-    endpoint_config.max_udp_payload_size(9200).map_err(|e| io::Error::new(io::ErrorKind::Other,e.to_string()))?;
+    endpoint_config
+        .max_udp_payload_size(9200)
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
     let endpoint = Endpoint::new(
         endpoint_config,
         Some(server_config),
         std::net::UdpSocket::bind(bind_addr)?,
-        TokioRuntime)?;
+        TokioRuntime,
+    )?;
     Ok(endpoint)
 }
 

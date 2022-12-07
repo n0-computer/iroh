@@ -27,7 +27,7 @@ impl StoreClient {
 
     #[tracing::instrument(skip(self, blob))]
     pub async fn put(&self, cid: Cid, blob: Bytes, links: Vec<Cid>) -> Result<()> {
-        self.client.rpc(PutRequest { cid, blob, links }).await?;
+        self.client.rpc(PutRequest { cid, blob, links }).await??;
         Ok(())
     }
 

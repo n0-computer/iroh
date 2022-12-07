@@ -11,6 +11,7 @@ use std::{
 /// address which will have to be opened.
 #[derive(SerializeDisplay, DeserializeFromStr)]
 pub enum Addr<In: RpcMessage, Out: RpcMessage> {
+    Http2(String),
     Qrpc(SocketAddr),
     Mem(quic_rpc::mem::Channel<In, Out>),
 }
@@ -34,6 +35,7 @@ impl<Req: RpcMessage, Res: RpcMessage> Addr<Req, Res> {
     pub fn flip(&self) -> anyhow::Result<Addr<Res, Req>> {
         match self {
             Self::Qrpc(addr) => Ok(Addr::Qrpc(*addr)),
+            Self::Http2(addr) => Ok(Addr::Http2(addr.clone())),
             Self::Mem(_) => Err(anyhow!("Cannot flip mem channel")),
         }
     }
@@ -53,6 +55,7 @@ impl<Req: RpcMessage, Res: RpcMessage> Display for Addr<Req, Res> {
         match self {
             Addr::Qrpc(addr) => write!(f, "qrpc://{}", addr),
             Addr::Mem(_) => write!(f, "mem"),
+            Addr::Http2(uri) => write!(f, "http://{}", uri),
             #[allow(unreachable_patterns)]
             _ => unreachable!(),
         }
@@ -69,6 +72,7 @@ impl<Req: RpcMessage, Res: RpcMessage> Clone for Addr<Req, Res> {
     fn clone(&self) -> Self {
         match self {
             Addr::Qrpc(addr) => Addr::Qrpc(*addr),
+            Addr::Http2(addr) => Addr::Http2(addr.clone()),
             Addr::Mem(mem) => Addr::Mem(mem.clone()),
         }
     }
@@ -89,6 +93,11 @@ impl<Req: RpcMessage, Res: RpcMessage> FromStr for Addr<Req, Res> {
                     if let Ok(addr) = part.parse::<SocketAddr>() {
                         return Ok(Addr::Qrpc(addr));
                     }
+                }
+            }
+            if prefix == "http" {
+                if let Some(part) = parts.next() {
+                    return Ok(Addr::Http2(part.to_string()));
                 }
             }
         }

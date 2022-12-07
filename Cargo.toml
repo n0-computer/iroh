@@ -26,6 +26,7 @@ resolver = "2"
 
 [patch.crates-io]
 libp2p = { git = "https://github.com/dignifiedquire/rust-libp2p", branch = "iroh-0-50-1" }
+quic-rpc = { path = "../quic-rpc" }
 #libp2p = { path = "../rust-libp2p" }
 
 [profile.optimized-release]

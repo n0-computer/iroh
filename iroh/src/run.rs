@@ -1,5 +1,6 @@
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
@@ -130,7 +131,9 @@ impl Cli {
                 no_wrap,
                 offline,
             } => {
+                let t0 = Instant::now();
                 add(api, path, *no_wrap, *recursive, !*offline).await?;
+                println!("Added in {}", t0.elapsed().as_secs_f64());
             }
             Commands::Get {
                 ipfs_path: path,

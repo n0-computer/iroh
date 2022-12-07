@@ -1,4 +1,4 @@
-use std::fmt::{Debug, self};
+use std::fmt::{self, Debug};
 
 use crate::RpcResult;
 use bytes::Bytes;

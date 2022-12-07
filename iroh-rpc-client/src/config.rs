@@ -47,9 +47,9 @@ impl Source for Config {
 impl Config {
     pub fn default_network() -> Self {
         Self {
-            gateway_addr: Some("qrpc://127.0.0.1:4400".parse().unwrap()),
-            p2p_addr: Some("qrpc://127.0.0.1:4401".parse().unwrap()),
-            store_addr: Some("qrpc://127.0.0.1:4402".parse().unwrap()),
+            gateway_addr: Some("http://127.0.0.1:4400".parse().unwrap()),
+            p2p_addr: Some("http://127.0.0.1:4401".parse().unwrap()),
+            store_addr: Some("http://127.0.0.1:4402".parse().unwrap()),
             channels: Some(16),
         }
     }
