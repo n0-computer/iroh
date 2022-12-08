@@ -21,10 +21,3 @@ serde = { version = "1" }
 serde-error = "0.1.2"
 serde_with = "2.0.0"
 tokio = { version = "1", default-features = false }
-
-[features]
-default = []
-
-# Builds and empty tonic server & client as well as associated protobufs
-# that can be used for testing
-testing = []

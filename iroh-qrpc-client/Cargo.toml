@@ -28,10 +28,4 @@ iroh-qrpc-types = { path = "../iroh-qrpc-types" }
 hyper = "0.14.23"
 
 [dev-dependencies]
-iroh-qrpc-types = { path = "../iroh-qrpc-types", features = ["testing"] }
 tokio-stream = { version = "0.1.9", features = ["net"] }
-
-[features]
-default = []
-grpc = ["iroh-metrics/rpc-grpc"]
-mem = []
