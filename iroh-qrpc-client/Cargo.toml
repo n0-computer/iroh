@@ -1,6 +1,6 @@
 [package]
 name = "iroh-qrpc-client"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 authors = ["Friedel Ziegelmayer <me@dignifiedquire.com>", "ramfox"]
 license = "Apache-2.0/MIT"
@@ -13,7 +13,7 @@ rust-version = "1.63"
 anyhow = "1"
 async-stream = "0.3.3"
 bytes = "1.1.0"
-cid = "0.8.0"
+cid = "0.9.0"
 config = "0.13.1"
 futures = "0.3.21"
 iroh-metrics = { path = "../iroh-metrics", default-features = false }

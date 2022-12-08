@@ -48,7 +48,7 @@ impl Config {
     }
 
     pub fn new_network(path: PathBuf) -> Self {
-        let addr = "grpc://0.0.0.0:4402";
+        let addr = "http://0.0.0.0:4402";
         Self::new_with_rpc(path, addr.parse().unwrap())
     }
 
@@ -57,16 +57,7 @@ impl Config {
         self.rpc_client
             .store_addr
             .as_ref()
-            .map(|addr| {
-                #[allow(unreachable_patterns)]
-                match addr {
-                    #[cfg(feature = "rpc-grpc")]
-                    Addr::GrpcHttp2(addr) => Ok(Addr::GrpcHttp2(*addr)),
-                    #[cfg(feature = "rpc-mem")]
-                    Addr::Mem(_) => bail!("can not derive rpc_addr for mem addr"),
-                    _ => bail!("invalid rpc_addr"),
-                }
-            })
+            .map(|addr| addr.flip())
             .transpose()
     }
 }

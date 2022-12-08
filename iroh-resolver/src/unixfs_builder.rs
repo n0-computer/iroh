@@ -738,7 +738,7 @@ fn add_blocks_to_store_chunked<S: Store>(
 ) -> impl Stream<Item = Result<AddEvent>> {
     let mut chunk = Vec::new();
     let mut chunk_size = 0u64;
-    const MAX_CHUNK_SIZE: u64 = 1024 * 1024 * 16;
+    const MAX_CHUNK_SIZE: u64 = 1024 * 1024;
     stream! {
         while let Some(block) = blocks.next().await {
             let block = block?;

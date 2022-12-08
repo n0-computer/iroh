@@ -1,7 +1,7 @@
 use bytes::Bytes;
-use cid::{multihash::Multihash, Cid};
+use cid::Cid;
 use derive_more::{From, TryInto};
-use multiaddr::Multiaddr;
+use libp2p::{Multiaddr, PeerId};
 use quic_rpc::{
     message::{Msg, RpcMsg, ServerStreaming},
     Service,
@@ -13,19 +13,6 @@ use crate::RpcResult;
 
 pub type P2pClientAddr = super::addr::Addr<P2pResponse, P2pRequest>;
 pub type P2pServerAddr = super::addr::Addr<P2pRequest, P2pResponse>;
-
-/// wrap multihash instead of using peerid from libp2p to avoid the dependency
-#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Hash)]
-pub struct PeerId(pub Multihash);
-
-impl PeerId {
-    pub fn from_libp2p(peer_id: impl Into<Multihash>) -> Self {
-        Self(peer_id.into())
-    }
-    pub fn try_into_libp2p<T: TryFrom<Multihash>>(self) -> anyhow::Result<T> {
-        T::try_from(self.0).map_err(|_| anyhow::anyhow!("invalid peer id"))
-    }
-}
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Key(pub Bytes);
@@ -206,6 +193,10 @@ pub struct LookupRequest {
     pub addr: Option<Multiaddr>,
 }
 
+// rpc LookupLocal(google.protobuf.Empty) returns (PeerInfo) {}
+#[derive(Serialize, Deserialize, Debug)]
+pub struct LookupLocalRequest {}
+
 // message PeerInfo {
 //     // PublicKey
 //     bytes peer_id = 1;
@@ -227,7 +218,7 @@ pub struct LookupResponse {
     pub agent_version: String,
     pub listen_addrs: Vec<Multiaddr>,
     pub protocols: Vec<String>,
-    pub observed_addr: Multiaddr,
+    pub observed_addrs: Vec<Multiaddr>,
 }
 
 // rpc GossipsubAddExplicitPeer(GossipsubPeerIdMsg) returns (google.protobuf.Empty) {}
@@ -334,6 +325,7 @@ pub enum P2pRequest {
     PeerConnectByPeerId(ConnectByPeerIdRequest),
     PeerDisconnect(DisconnectRequest),
     Lookup(LookupRequest),
+    LookupLocal(LookupLocalRequest),
     GossipsubAddExplicitPeer(GossipsubAddExplicitPeerRequest),
     GossipsubAllMeshPeers(GossipsubAllMeshPeersRequest),
     GossipsubAllPeers(GossipsubAllPeersRequest),
@@ -427,6 +419,10 @@ impl RpcMsg<P2pService> for DisconnectRequest {
 }
 
 impl RpcMsg<P2pService> for LookupRequest {
+    type Response = RpcResult<LookupResponse>;
+}
+
+impl RpcMsg<P2pService> for LookupLocalRequest {
     type Response = RpcResult<LookupResponse>;
 }
 

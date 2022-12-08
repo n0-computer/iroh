@@ -33,9 +33,7 @@ impl P2pClient {
     // #[tracing::instrument(skip(self))]
     pub async fn local_peer_id(&self) -> Result<PeerId> {
         let res = self.client.rpc(LocalPeerIdRequest).await??;
-        let peer_id = PeerId::from_multihash(res.peer_id.0)
-            .map_err(|e| anyhow::anyhow!("invalid peer id {:?}", e))?;
-        Ok(peer_id)
+        Ok(res.peer_id)
     }
 
     #[tracing::instrument(skip(self))]
@@ -59,10 +57,7 @@ impl P2pClient {
         providers: HashSet<PeerId>,
     ) -> Result<Bytes> {
         debug!("rpc p2p client fetch_bitswap: {:?}", cid);
-        let providers = providers
-            .into_iter()
-            .map(p2p::PeerId::from_libp2p)
-            .collect();
+        let providers = providers.into_iter().collect();
         let res = self
             .client
             .rpc(BitswapRequest {
@@ -103,12 +98,8 @@ impl P2pClient {
             .client
             .server_streaming(FetchProvidersDhtRequest { key })
             .await?;
-        let providers_stream = res.map(|p| {
-            p?.providers
-                .into_iter()
-                .map(p2p::PeerId::try_into_libp2p)
-                .collect::<Result<HashSet<PeerId>>>()
-        });
+        let providers_stream =
+            res.map(|p| Ok(p?.providers.into_iter().collect::<HashSet<PeerId>>()));
         Ok(providers_stream)
     }
 
@@ -129,21 +120,13 @@ impl P2pClient {
     #[tracing::instrument(skip(self))]
     pub async fn get_listening_addrs(&self) -> Result<(PeerId, Vec<Multiaddr>)> {
         let res = self.client.rpc(GetListeningAddrsRequest).await??;
-        let peer_id = res.peer_id.try_into_libp2p()?;
-        Ok((peer_id, res.addrs))
+        Ok((res.peer_id, res.addrs))
     }
 
     #[tracing::instrument(skip(self))]
     pub async fn get_peers(&self) -> Result<HashMap<PeerId, Vec<Multiaddr>>> {
         let res = self.client.rpc(GetPeersRequest).await??;
-        let peers_map = res
-            .peers
-            .into_iter()
-            .map(|(peer_id, values)| {
-                let peer_id = peer_id.try_into_libp2p()?;
-                Ok((peer_id, values))
-            })
-            .collect::<anyhow::Result<_>>()?;
+        let peers_map = res.peers.into_iter().collect();
         Ok(peers_map)
     }
 
@@ -153,15 +136,10 @@ impl P2pClient {
     /// `Multiaddr`s are present, it will attempt to connect to the peer directly.
     pub async fn connect(&self, peer_id: PeerId, addrs: Vec<Multiaddr>) -> Result<()> {
         if !addrs.is_empty() {
-            let req = ConnectRequest {
-                peer_id: p2p::PeerId::from_libp2p(peer_id),
-                addrs,
-            };
+            let req = ConnectRequest { peer_id, addrs };
             self.client.rpc(req).await??;
         } else {
-            let req = ConnectByPeerIdRequest {
-                peer_id: p2p::PeerId::from_libp2p(peer_id),
-            };
+            let req = ConnectByPeerIdRequest { peer_id };
             self.client.rpc(req).await??;
         }
         Ok(())
@@ -169,15 +147,12 @@ impl P2pClient {
 
     #[tracing::instrument(skip(self))]
     pub async fn lookup(&self, peer_id: PeerId, addr: Option<Multiaddr>) -> Result<Lookup> {
-        let req = LookupRequest {
-            peer_id: p2p::PeerId::from_libp2p(peer_id),
-            addr,
-        };
+        let req = LookupRequest { peer_id, addr };
         let res = self.client.rpc(req).await??;
         Ok(Lookup {
-            peer_id: res.peer_id.try_into_libp2p()?,
+            peer_id: res.peer_id,
             listen_addrs: res.listen_addrs,
-            observed_addrs: vec![res.observed_addr],
+            observed_addrs: res.observed_addrs,
             protocols: res.protocols,
             agent_version: res.agent_version,
             protocol_version: res.protocol_version,
@@ -185,11 +160,14 @@ impl P2pClient {
     }
 
     #[tracing::instrument(skip(self))]
+    pub async fn lookup_local(&self) -> Result<Lookup> {
+        todo!()
+    }
+
+    #[tracing::instrument(skip(self))]
     pub async fn disconnect(&self, peer_id: PeerId) -> Result<()> {
         warn!("NetDisconnect not yet implemented on p2p node");
-        let req = DisconnectRequest {
-            peer_id: p2p::PeerId::from_libp2p(peer_id),
-        };
+        let req = DisconnectRequest { peer_id };
         self.client.rpc(req).await??;
         Ok(())
     }
@@ -203,9 +181,7 @@ impl P2pClient {
     #[tracing::instrument(skip(self))]
     pub async fn gossipsub_add_explicit_peer(&self, peer_id: PeerId) -> Result<()> {
         self.client
-            .rpc(GossipsubAddExplicitPeerRequest {
-                peer_id: p2p::PeerId::from_libp2p(peer_id),
-            })
+            .rpc(GossipsubAddExplicitPeerRequest { peer_id })
             .await??;
         Ok(())
     }
@@ -213,10 +189,7 @@ impl P2pClient {
     #[tracing::instrument(skip(self))]
     pub async fn gossipsub_all_mesh_peers(&self) -> Result<Vec<PeerId>> {
         let res = self.client.rpc(GossipsubAllMeshPeersRequest).await??;
-        res.peers
-            .into_iter()
-            .map(|p| p.try_into_libp2p())
-            .collect::<anyhow::Result<_>>()
+        Ok(res.peers)
     }
 
     #[tracing::instrument(skip(self))]
@@ -226,7 +199,6 @@ impl P2pClient {
             .all
             .into_iter()
             .map(|(peer_id, topics)| {
-                let peer_id = peer_id.try_into_libp2p()?;
                 let topics = topics.into_iter().map(TopicHash::from_raw).collect();
                 Ok((peer_id, topics))
             })
@@ -242,10 +214,7 @@ impl P2pClient {
                 topic_hash: topic.to_string(),
             })
             .await??;
-        res.peers
-            .into_iter()
-            .map(|p| p.try_into_libp2p())
-            .collect::<anyhow::Result<_>>()
+        Ok(res.peers)
     }
 
     #[tracing::instrument(skip(self, data))]
@@ -261,9 +230,7 @@ impl P2pClient {
 
     #[tracing::instrument(skip(self))]
     pub async fn gossipsub_remove_explicit_peer(&self, peer_id: PeerId) -> Result<()> {
-        let req = GossipsubRemoveExplicitPeerRequest {
-            peer_id: p2p::PeerId::from_libp2p(peer_id),
-        };
+        let req = GossipsubRemoveExplicitPeerRequest { peer_id };
         self.client.rpc(req).await??;
         Ok(())
     }

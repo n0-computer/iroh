@@ -35,7 +35,7 @@ use iroh_rpc_client::Lookup;
 
 use crate::keys::{Keychain, Storage};
 use crate::providers::Providers;
-use crate::rpc::ProviderRequestKey;
+use crate::rpc::{P2p, ProviderRequestKey};
 use crate::swarm::build_swarm;
 use crate::{
     behaviour::{Event, NodeBehaviour},
@@ -119,7 +119,9 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
 
         let rpc_task = tokio::task::spawn(async move {
             // TODO: handle error
-            rpc::new(rpc_addr, network_sender_in).await.unwrap()
+            rpc::new(rpc_addr, P2p::new(network_sender_in))
+                .await
+                .unwrap()
         });
 
         let rpc_client = RpcClient::new(rpc_client)

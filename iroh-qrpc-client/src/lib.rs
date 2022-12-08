@@ -6,8 +6,11 @@ pub mod status;
 pub mod store;
 pub use self::config::Config;
 pub use client::Client;
-use futures::{stream::BoxStream, StreamExt};
-use iroh_qrpc_types::Addr;
+use futures::{
+    stream::{self, BoxStream},
+    StreamExt,
+};
+use iroh_qrpc_types::{gateway::GatewayService, p2p::P2pService, store::StoreService, Addr};
 pub use network::{Lookup, P2pClient};
 use quic_rpc::{
     combined::{self, CombinedChannelTypes},
@@ -18,10 +21,11 @@ use quic_rpc::{
 pub use status::{ServiceStatus, StatusRow, StatusTable};
 pub use store::StoreClient;
 
-pub type ChannelTypes = CombinedChannelTypes<
-    Http2ChannelTypes,
-    MemChannelTypes,
->;
+pub type ChannelTypes = CombinedChannelTypes<Http2ChannelTypes, MemChannelTypes>;
+
+pub type StoreServer = RpcServer<StoreService, ChannelTypes>;
+pub type GatewayServer = RpcServer<GatewayService, ChannelTypes>;
+pub type P2pServer = RpcServer<P2pService, ChannelTypes>;
 
 pub async fn create_server_stream<S: Service>(
     addr: Addr<S::Req, S::Res>,
@@ -49,7 +53,7 @@ pub async fn create_server_stream<S: Service>(
             tokio::spawn(hyper);
             let channel = combined::Channel::new(Some(channel), None);
             let server = RpcServer::new(channel);
-            Ok(futures::stream::once(async move { Ok(server) }).boxed())
+            Ok(stream::repeat(server).map(Ok).boxed())
         }
     }
 }

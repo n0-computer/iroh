@@ -30,8 +30,10 @@ hyper = "0.14.19"
 iroh-car = { version = "0.1.3", path = "../iroh-car" }
 iroh-metrics = { version = "0.1.3", path = "../iroh-metrics", default-features = false, features = ["gateway"] }
 iroh-resolver = { version = "0.1.3", path = "../iroh-resolver" }
-iroh-rpc-client = { version = "0.1.3", path = "../iroh-rpc-client", default-features = false }
-iroh-rpc-types = { version = "0.1.3", path = "../iroh-rpc-types", default-features = false }
+# iroh-rpc-client = { version = "0.1.3", path = "../iroh-rpc-client", default-features = false }
+# iroh-rpc-types = { version = "0.1.3", path = "../iroh-rpc-types", default-features = false }
+iroh-rpc-client = { package = "iroh-qrpc-client", version = "0.2.0", path = "../iroh-qrpc-client", default-features = false }
+iroh-rpc-types = { package = "iroh-qrpc-types", version = "0.2.0", path = "../iroh-qrpc-types", default-features = false }
 iroh-util = { version = "0.1.3", path = "../iroh-util" }
 libp2p = { version = "0.50", default-features = false }
 mime = "0.3"
@@ -65,7 +67,7 @@ iroh-store = { version = "0.1.3", path = "../iroh-store" }
 tempfile = "3.3.0"
 
 
-[features]
-default = ["rpc-grpc", "rpc-mem"]
-rpc-grpc = ["iroh-rpc-types/grpc", "iroh-rpc-client/grpc", "iroh-metrics/rpc-grpc"]
-rpc-mem = ["iroh-rpc-types/mem", "iroh-rpc-client/mem"]
+# [features]
+# default = ["rpc-grpc", "rpc-mem"]
+# rpc-grpc = ["iroh-rpc-types/grpc", "iroh-rpc-client/grpc", "iroh-metrics/rpc-grpc"]
+# rpc-mem = ["iroh-rpc-types/mem", "iroh-rpc-client/mem"]

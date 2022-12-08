@@ -1,5 +1,5 @@
 use crate::constants::*;
-use anyhow::{bail, Result};
+use anyhow::Result;
 use axum::http::{header::*, Method};
 use config::{ConfigError, Map, Source, Value};
 use headers::{
@@ -8,7 +8,7 @@ use headers::{
 use iroh_metrics::config::Config as MetricsConfig;
 use iroh_resolver::dns_resolver::Config as DnsResolverConfig;
 use iroh_rpc_client::Config as RpcClientConfig;
-use iroh_rpc_types::{gateway::GatewayServerAddr, Addr};
+use iroh_rpc_types::gateway::GatewayServerAddr;
 use iroh_util::insert_into_config_map;
 use serde::{Deserialize, Serialize};
 
@@ -74,16 +74,7 @@ impl Config {
         self.rpc_client
             .gateway_addr
             .as_ref()
-            .map(|addr| {
-                #[allow(unreachable_patterns)]
-                match addr {
-                    #[cfg(feature = "rpc-grpc")]
-                    Addr::GrpcHttp2(addr) => Ok(Addr::GrpcHttp2(*addr)),
-                    #[cfg(feature = "rpc-mem")]
-                    Addr::Mem(_) => bail!("can not derive rpc_addr for mem addr"),
-                    _ => bail!("invalid rpc_addr"),
-                }
-            })
+            .map(|addr| addr.flip())
             .transpose()
     }
 }

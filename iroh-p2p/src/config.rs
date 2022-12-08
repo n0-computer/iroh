@@ -216,16 +216,7 @@ impl Config {
         self.rpc_client
             .p2p_addr
             .as_ref()
-            .map(|addr| {
-                #[allow(unreachable_patterns)]
-                match addr {
-                    #[cfg(feature = "rpc-grpc")]
-                    Addr::GrpcHttp2(addr) => Ok(Addr::GrpcHttp2(*addr)),
-                    #[cfg(feature = "rpc-mem")]
-                    Addr::Mem(_) => bail!("can not derive rpc_addr for mem addr"),
-                    _ => bail!("invalid rpc_addr"),
-                }
-            })
+            .map(|addr| addr.flip())
             .transpose()
     }
 }
