@@ -124,12 +124,12 @@ jobs:
     - name: tests
       timeout-minutes: 30
       run: |
-        cargo test --workspace --all-features --all-targets
+        cargo test --workspace --all-features --lib --bins --tests --examples
 
     - name: tests w/o default features
       timeout-minutes: 30
       run: |
-        cargo test --workspace --no-default-features --all-targets
+        cargo test --workspace --no-default-features --lib --bins --tests --examples
 
   build_release:
     name: Build release binaries
