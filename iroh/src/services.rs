@@ -320,11 +320,7 @@ mod tests {
         let table = StatusTable::new(
             Some(StatusRow::new("gateway", 1, ServiceStatus::Unknown)),
             Some(StatusRow::new("p2p", 1, ServiceStatus::Serving)),
-            Some(StatusRow::new(
-                "store",
-                1,
-                ServiceStatus::Down,
-            )),
+            Some(StatusRow::new("store", 1, ServiceStatus::Down)),
         );
 
         let mut got = Vec::new();
@@ -359,11 +355,7 @@ mod tests {
                 output: format!("test\t\t\t1/1\t{}\n", "Service Unknown".dark_yellow()),
             },
             TestCase {
-                row: StatusRow::new(
-                    "test",
-                    1,
-                    ServiceStatus::Down,
-                ),
+                row: StatusRow::new("test", 1, ServiceStatus::Down),
                 output: format!(
                     "test\t\t\t1/1\t{}\tThe service is currently unavailable\n",
                     "Down".grey()

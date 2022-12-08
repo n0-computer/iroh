@@ -1,12 +1,11 @@
-use std::collections::{HashMap, HashSet};
 use anyhow::{anyhow, ensure, Context, Result};
 use bytes::Bytes;
 use cid::Cid;
-use futures::{stream::BoxStream, TryFutureExt};
 use futures::StreamExt;
+use futures::{stream::BoxStream, TryFutureExt};
 use iroh_bitswap::Block;
 use iroh_rpc_client::{create_server_stream, Lookup, P2pServer};
-use iroh_rpc_types::{p2p::*, RpcResult, RpcError};
+use iroh_rpc_types::{p2p::*, RpcError, RpcResult};
 use libp2p::gossipsub::{
     error::{PublishError, SubscriptionError},
     MessageId, TopicHash,
@@ -15,6 +14,7 @@ use libp2p::identify::Info as IdentifyInfo;
 use libp2p::kad::record::Key;
 use libp2p::Multiaddr;
 use libp2p::PeerId;
+use std::collections::{HashMap, HashSet};
 use tokio::sync::mpsc::{channel, Sender};
 use tokio::sync::oneshot;
 use tracing::{debug, info, trace};
@@ -169,10 +169,11 @@ impl P2p {
         req: FetchProvidersDhtRequest,
     ) -> BoxStream<'static, RpcResult<FetchProvidersDhtResponse>> {
         async move {
-            let stream = self.fetch_provider_dht0(req)
-                .await?;
+            let stream = self.fetch_provider_dht0(req).await?;
             Ok(stream.map(|x| x.map_err(RpcError::from)))
-        }.try_flatten_stream().boxed()
+        }
+        .try_flatten_stream()
+        .boxed()
     }
 
     #[tracing::instrument(skip(self, req))]
@@ -558,7 +559,7 @@ pub(crate) async fn new(addr: P2pServerAddr, p2p: P2p) -> Result<()> {
     while let Some(server) = stream.next().await {
         match server {
             Ok(server) => {
-                tokio::spawn(handle_session(server, p2p.clone()));
+                handle_session(server, p2p.clone()).await?;
             }
             Err(e) => {
                 tracing::error!("rpc server error: {}", e);

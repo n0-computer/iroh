@@ -30,8 +30,7 @@ impl RpcStore {
     async fn put(self, req: PutRequest) -> Result<()> {
         let cid = req.cid;
         let links = req.links;
-        self
-            .0
+        self.0
             .spawn_blocking(move |x| x.put(cid, req.blob, links))
             .await?;
 

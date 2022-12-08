@@ -74,12 +74,9 @@ pub async fn open_client<S: Service>(
 ) -> anyhow::Result<RpcClient<S, ChannelTypes>> {
     // make a channel matching the channel types for this crate
     match addr {
-        Addr::MemClient(addr) => {
-            Ok(RpcClient::<S, ChannelTypes>::new(combined::ClientChannel::new(
-                None,
-                Some(addr),
-            )))
-        }
+        Addr::MemClient(addr) => Ok(RpcClient::<S, ChannelTypes>::new(
+            combined::ClientChannel::new(None, Some(addr)),
+        )),
         Addr::MemServer(_) => {
             bail!("cannot create client for server address");
         }
