@@ -117,26 +117,4 @@ mod tests {
         assert_eq!(addr.to_string().parse::<GatewayClientAddr>().unwrap(), addr);
         assert_eq!(addr.to_string(), "qrpc://198.168.2.1:1234");
     }
-
-    // // TODO(b5): only running this on unix b/c windows doesn't have localhost
-    // // enabled by default
-    // #[cfg(all(feature = "grpc", unix))]
-    // #[test]
-    // fn test_addr_roundtrip_http2_lookup() {
-    //     let name = "localhost:1234".to_string();
-    //     let addr = Addr::GrpcHttp2Lookup(name);
-
-    //     assert_eq!(addr.to_string().parse::<Addr>().unwrap(), addr);
-    //     assert_eq!(addr.to_string(), "grpc://localhost:1234");
-    // }
-    //
-    // #[cfg(all(feature = "grpc", unix))]
-    // #[test]
-    // fn test_addr_roundtrip_grpc_uds() {
-    //     let path: std::path::PathBuf = "/foo/bar".parse().unwrap();
-    //     let addr = Addr::GrpcUds(path);
-
-    //     assert_eq!(addr.to_string().parse::<Addr>().unwrap(), addr);
-    //     assert_eq!(addr.to_string(), "grpc:///foo/bar");
-    // }
 }
