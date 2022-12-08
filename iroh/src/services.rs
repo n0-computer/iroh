@@ -255,8 +255,8 @@ where
             w.queue(style::PrintStyledContent("Service Unknown".dark_yellow()))?;
         }
         ServiceStatus::Down => {
-            w.queue(style::PrintStyledContent("Down".dark_yellow()))?
-                .queue(style::Print("\tThe service has been interupted"))?;
+            w.queue(style::PrintStyledContent("Down".grey()))?
+                .queue(style::Print("\tThe service is currently unavailable"))?;
         }
     };
     w.queue(style::Print("\n"))?;
@@ -323,7 +323,7 @@ mod tests {
             Some(StatusRow::new(
                 "store",
                 1,
-                ServiceStatus::Down(tonic::Status::new(tonic::Code::Unavailable, "")),
+                ServiceStatus::Down,
             )),
         );
 
@@ -362,21 +362,7 @@ mod tests {
                 row: StatusRow::new(
                     "test",
                     1,
-                    ServiceStatus::Down(tonic::Status::new(tonic::Code::Unknown, "unknown")),
-                ),
-                output: format!(
-                    "test\t\t\t1/1\t{}\tThe service has been interupted\n",
-                    "Down".dark_yellow()
-                ),
-            },
-            TestCase {
-                row: StatusRow::new(
-                    "test",
-                    1,
-                    ServiceStatus::Down(tonic::Status::new(
-                        tonic::Code::Unavailable,
-                        "message text",
-                    )),
+                    ServiceStatus::Down,
                 ),
                 output: format!(
                     "test\t\t\t1/1\t{}\tThe service is currently unavailable\n",

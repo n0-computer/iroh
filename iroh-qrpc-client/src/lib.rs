@@ -5,6 +5,7 @@ pub mod network;
 pub mod status;
 pub mod store;
 pub use self::config::Config;
+use anyhow::bail;
 pub use client::Client;
 use futures::{
     stream::{self, BoxStream},
@@ -40,28 +41,32 @@ pub async fn create_server_stream<S: Service>(
 > {
     // make a channel matching the channel types for this crate
     match addr {
-        Addr::Mem(_addr) => {
-            todo!()
-            // Ok(Some(RpcServer::new(combined::Channel::new(Some(addr), None))))
+        Addr::MemServer(channel) => {
+            let channel = combined::ServerChannel::new(None, Some(channel));
+            let server = RpcServer::new(channel);
+            Ok(stream::repeat(server).map(Ok).boxed())
         }
         Addr::Http2Lookup(_addr) => {
             todo!()
             // Ok(Some(RpcServer::new(combined::Channel::new(Some(addr), None))))
         }
         Addr::Http2(addr) => {
-            let (channel, hyper) = quic_rpc::http2::Channel::server(&addr)?;
+            let (channel, hyper) = quic_rpc::http2::ServerChannel::new(&addr)?;
             tokio::spawn(hyper);
-            let channel = combined::Channel::new(Some(channel), None);
+            let channel = combined::ServerChannel::new(Some(channel), None);
             let server = RpcServer::new(channel);
             Ok(stream::repeat(server).map(Ok).boxed())
+        }
+        Addr::MemClient(_) => {
+            bail!("cannot create server stream for client address")
         }
     }
 }
 
 async fn create_http2_client_channel<S: Service>(
     uri: hyper::Uri,
-) -> Result<http2::Channel<S::Res, S::Req>, hyper::Error> {
-    Ok(quic_rpc::http2::Channel::client(uri))
+) -> Result<http2::ClientChannel<S::Res, S::Req>, hyper::Error> {
+    Ok(quic_rpc::http2::ClientChannel::new(uri))
 }
 
 pub async fn open_client<S: Service>(
@@ -69,13 +74,19 @@ pub async fn open_client<S: Service>(
 ) -> anyhow::Result<RpcClient<S, ChannelTypes>> {
     // make a channel matching the channel types for this crate
     match addr {
-        Addr::Mem(_addr) => {
-            todo!()
+        Addr::MemClient(addr) => {
+            Ok(RpcClient::<S, ChannelTypes>::new(combined::ClientChannel::new(
+                None,
+                Some(addr),
+            )))
+        }
+        Addr::MemServer(_) => {
+            bail!("cannot create client for server address");
         }
         Addr::Http2(uri) => {
             let uri = format!("http://{}", uri).parse()?;
             let channel = create_http2_client_channel::<S>(uri).await?;
-            let channel = combined::Channel::new(Some(channel), None);
+            let channel = combined::ClientChannel::new(Some(channel), None);
             Ok(RpcClient::<S, ChannelTypes>::new(channel))
         }
         Addr::Http2Lookup(_addr) => {

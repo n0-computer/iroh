@@ -13,7 +13,8 @@ use std::{
 pub enum Addr<In: RpcMessage, Out: RpcMessage> {
     Http2(SocketAddr),
     Http2Lookup(String),
-    Mem(quic_rpc::mem::Channel<In, Out>),
+    MemClient(quic_rpc::mem::ClientChannel<In, Out>),
+    MemServer(quic_rpc::mem::ServerChannel<In, Out>),
 }
 
 impl<Req: RpcMessage, Res: RpcMessage> PartialEq for Addr<Req, Res> {
@@ -28,16 +29,17 @@ impl<Req: RpcMessage, Res: RpcMessage> PartialEq for Addr<Req, Res> {
 
 impl<Req: RpcMessage, Res: RpcMessage> Addr<Req, Res> {
     pub fn new_mem() -> (Addr<Req, Res>, Addr<Res, Req>) {
-        let (client, server) = quic_rpc::mem::connection(1);
+        let (server, client) = quic_rpc::mem::connection(1);
 
-        (Addr::Mem(server), Addr::Mem(client))
+        (Addr::MemServer(server), Addr::MemClient(client))
     }
 
     pub fn flip(&self) -> anyhow::Result<Addr<Res, Req>> {
         match self {
             Self::Http2(addr) => Ok(Addr::Http2(*addr)),
             Self::Http2Lookup(addr) => Ok(Addr::Http2Lookup(addr.clone())),
-            Self::Mem(_) => Err(anyhow!("Cannot flip mem channel")),
+            Self::MemServer(_) => bail!("Cannot flip mem channel"),
+            Self::MemClient(_) => bail!("Cannot flip mem channel"),
         }
     }
 }
@@ -55,7 +57,9 @@ impl<Req: RpcMessage, Res: RpcMessage> Display for Addr<Req, Res> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Addr::Http2(addr) => write!(f, "http://{}", addr),
-            Addr::Mem(_) => write!(f, "mem"),
+            Addr::Http2Lookup(addr) => write!(f, "http://{}", addr),
+            Addr::MemClient(_) => write!(f, "mem"),
+            Addr::MemServer(_) => write!(f, "mem"),
             #[allow(unreachable_patterns)]
             _ => unreachable!(),
         }
@@ -73,7 +77,8 @@ impl<Req: RpcMessage, Res: RpcMessage> Clone for Addr<Req, Res> {
         match self {
             Addr::Http2(addr) => Addr::Http2(*addr),
             Addr::Http2Lookup(addr) => Addr::Http2Lookup(addr.clone()),
-            Addr::Mem(mem) => Addr::Mem(mem.clone()),
+            Addr::MemClient(mem) => Addr::MemClient(mem.clone()),
+            Addr::MemServer(mem) => Addr::MemServer(mem.clone()),
         }
     }
 }

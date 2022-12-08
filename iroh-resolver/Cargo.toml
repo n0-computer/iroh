@@ -48,7 +48,8 @@ fnv = "1.0.7"
 [dev-dependencies]
 criterion = { version = "0.4.0", features = ["async_tokio"] }
 iroh-car = { version = "0.1.3", path = "../iroh-car" }
-iroh-rpc-types = { version = "0.1.3", path = "../iroh-rpc-types", default-features = false }
+# iroh-rpc-types = { version = "0.1.3", path = "../iroh-rpc-types", default-features = false }
+iroh-rpc-types = { package = "iroh-qrpc-types", version = "0.2.0", path = "../iroh-qrpc-types", default-features = false }
 iroh-store = { version = "0.1.3", path = "../iroh-store", default-features = false }
 proptest = "1.0.0"
 rand = "0.8.5"

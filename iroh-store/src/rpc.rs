@@ -1,7 +1,7 @@
 use anyhow::Result;
 use bytes::BytesMut;
 use futures::StreamExt;
-use iroh_rpc_client::{create_server_stream, ChannelTypes, StoreServer};
+use iroh_rpc_client::{create_server_stream, StoreServer};
 use iroh_rpc_types::store::{
     GetLinksRequest, GetLinksResponse, GetRequest, GetResponse, GetSizeRequest, GetSizeResponse,
     HasRequest, HasResponse, PutManyRequest, PutRequest, StoreRequest, StoreServerAddr,
@@ -30,13 +30,13 @@ impl RpcStore {
     async fn put(self, req: PutRequest) -> Result<()> {
         let cid = req.cid;
         let links = req.links;
-        let res = self
+        self
             .0
             .spawn_blocking(move |x| x.put(cid, req.blob, links))
             .await?;
 
         info!("store rpc call: put cid {}", cid);
-        Ok(res)
+        Ok(())
     }
 
     #[tracing::instrument(skip(self, req))]

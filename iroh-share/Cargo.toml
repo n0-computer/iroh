@@ -19,8 +19,10 @@ futures = "0.3.21"
 iroh-metrics = { version = "0.1.3", path = "../iroh-metrics", default-features = false }
 iroh-p2p = { version = "0.1.3", path = "../iroh-p2p", default-features = false, features = ["rpc-mem"] }
 iroh-resolver = { version = "0.1.3", path = "../iroh-resolver", default-features = false, features = ["rpc-mem"] }
-iroh-rpc-client = { version = "0.1.3", path = "../iroh-rpc-client", default-features = false, features = ["mem"] }
-iroh-rpc-types = { version = "0.1.3", path = "../iroh-rpc-types", default-features = false, features = ["mem"] }
+# iroh-rpc-client = { version = "0.1.3", path = "../iroh-rpc-client", default-features = false }
+# iroh-rpc-types = { version = "0.1.3", path = "../iroh-rpc-types", default-features = false }
+iroh-rpc-client = { package = "iroh-qrpc-client", version = "0.2.0", path = "../iroh-qrpc-client", default-features = false }
+iroh-rpc-types = { package = "iroh-qrpc-types", version = "0.2.0", path = "../iroh-qrpc-types", default-features = false }
 iroh-store = { version = "0.1.3", path = "../iroh-store", default-features = false, features = ["rpc-mem"] }
 iroh-util = { version = "0.1.3", path = "../iroh-util" }
 libp2p = { version = "0.50", default-features = false, features = ["gossipsub"] }

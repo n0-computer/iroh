@@ -346,7 +346,7 @@ pub enum P2pRequest {
 pub enum P2pResponse {
     Version(VersionResponse),
     FetchBitswap(RpcResult<BitswapResponse>),
-    FetchProviderDht(FetchProvidersDhtResponse),
+    FetchProviderDht(RpcResult<FetchProvidersDhtResponse>),
     GetListeningAddrs(RpcResult<GetListeningAddrsResponse>),
     GetPeers(RpcResult<GetPeersResponse>),
     Lookup(RpcResult<LookupResponse>),
@@ -383,7 +383,7 @@ impl RpcMsg<P2pService> for BitswapRequest {
 }
 
 impl Msg<P2pService> for FetchProvidersDhtRequest {
-    type Response = FetchProvidersDhtResponse;
+    type Response = RpcResult<FetchProvidersDhtResponse>;
 
     type Update = Self;
 

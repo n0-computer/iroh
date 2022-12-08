@@ -99,7 +99,7 @@ impl P2pClient {
             .server_streaming(FetchProvidersDhtRequest { key })
             .await?;
         let providers_stream =
-            res.map(|p| Ok(p?.providers.into_iter().collect::<HashSet<PeerId>>()));
+            res.map(|p| Ok(p??.providers.into_iter().collect::<HashSet<PeerId>>()));
         Ok(providers_stream)
     }
 

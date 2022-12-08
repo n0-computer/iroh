@@ -1,10 +1,9 @@
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, Result};
 use config::{ConfigError, Map, Source, Value};
 use iroh_metrics::config::Config as MetricsConfig;
 use iroh_rpc_client::Config as RpcClientConfig;
 use iroh_rpc_types::{
     store::{StoreClientAddr, StoreServerAddr},
-    Addr,
 };
 use iroh_util::{insert_into_config_map, iroh_data_path};
 use serde::{Deserialize, Serialize};

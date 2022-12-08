@@ -1,13 +1,12 @@
 use std::collections::{HashMap, HashSet};
-use std::pin::Pin;
-
 use anyhow::{anyhow, ensure, Context, Result};
 use bytes::Bytes;
 use cid::Cid;
-use futures::{Stream, StreamExt};
+use futures::{stream::BoxStream, TryFutureExt};
+use futures::StreamExt;
 use iroh_bitswap::Block;
 use iroh_rpc_client::{create_server_stream, Lookup, P2pServer};
-use iroh_rpc_types::p2p::*;
+use iroh_rpc_types::{p2p::*, RpcResult, RpcError};
 use libp2p::gossipsub::{
     error::{PublishError, SubscriptionError},
     MessageId, TopicHash,
@@ -165,10 +164,22 @@ impl P2p {
     }
 
     #[tracing::instrument(skip(self, req))]
-    async fn fetch_provider_dht(
+    fn fetch_provider_dht(
         self,
         req: FetchProvidersDhtRequest,
-    ) -> Result<Pin<Box<dyn Stream<Item = Result<FetchProvidersDhtResponse>> + Send>>> {
+    ) -> BoxStream<'static, RpcResult<FetchProvidersDhtResponse>> {
+        async move {
+            let stream = self.fetch_provider_dht0(req)
+                .await?;
+            Ok(stream.map(|x| x.map_err(RpcError::from)))
+        }.try_flatten_stream().boxed()
+    }
+
+    #[tracing::instrument(skip(self, req))]
+    async fn fetch_provider_dht0(
+        self,
+        req: FetchProvidersDhtRequest,
+    ) -> anyhow::Result<BoxStream<'static, anyhow::Result<FetchProvidersDhtResponse>>> {
         let key_bytes: &[u8] = req.key.0.as_ref();
         let key = libp2p::kad::record::Key::new(&key_bytes);
         let cid: Cid = key_bytes.try_into()?;
@@ -294,9 +305,9 @@ impl P2p {
         let (s, r) = oneshot::channel();
         let msg = RpcMessage::NetDisconnect(s, peer_id);
         self.sender.send(msg).await?;
-        let ack = r.await?;
+        r.await?;
 
-        Ok(ack)
+        Ok(())
     }
 
     #[tracing::instrument(skip(self, req))]
@@ -535,7 +546,7 @@ async fn handle_session(s: P2pServer, target: P2p) -> Result<()> {
             LookupLocal(req) => s.rpc_map_err(req, chan, target, P2p::lookup_local).await,
             ExternalAddrs(req) => s.rpc_map_err(req, chan, target, P2p::external_addrs).await,
             Listeners(req) => s.rpc_map_err(req, chan, target, P2p::listeners).await,
-            FetchProviderDht(req) => todo!(),
+            FetchProviderDht(req) => s.server_streaming(req, chan, target, P2p::fetch_provider_dht).await,
         }});
     }
 }
@@ -577,18 +588,6 @@ fn peer_info_from_lookup(l: Lookup) -> LookupResponse {
         protocols: l.protocols,
         observed_addrs: l.observed_addrs,
     }
-}
-
-fn peer_id_from_bytes(p: Vec<u8>) -> Result<PeerId> {
-    PeerId::from_bytes(&p[..]).context("invalid peer_id")
-}
-
-fn addr_from_bytes(m: Vec<u8>) -> Result<Multiaddr> {
-    Multiaddr::try_from(m).context("invalid multiaddr")
-}
-
-fn addrs_from_bytes(a: Vec<Vec<u8>>) -> Result<Vec<Multiaddr>> {
-    a.into_iter().map(addr_from_bytes).collect()
 }
 
 #[derive(Debug)]
