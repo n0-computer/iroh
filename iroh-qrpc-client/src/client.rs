@@ -21,7 +21,7 @@ pub struct Client {
 /// Provides a load balanced client for the store service
 /// The client will round robin between all available StoreClients
 #[derive(Debug, Clone)]
-pub struct StoreLBClient {
+pub(crate) struct StoreLBClient {
     clients: Vec<StoreClient>,
     pos: Arc<AtomicUsize>,
 }
@@ -54,7 +54,7 @@ impl StoreLBClient {
 /// Provides a load balanced client for the p2p service
 /// The client will round robin between all available P2pClients
 #[derive(Debug, Clone)]
-pub struct P2pLBClient {
+pub(crate) struct P2pLBClient {
     clients: Vec<P2pClient>,
     pos: Arc<AtomicUsize>,
 }
