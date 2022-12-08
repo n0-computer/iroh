@@ -271,9 +271,7 @@ impl Out {
     /// is unixfs
     pub fn named_links(&self) -> Result<Vec<(Option<&str>, Cid)>> {
         match &self.content {
-            // TODO(ramfox): add back in when we figure out circular dependencies
-            // OutContent::Unixfs(node) => node.links().map(|l| l.map(|l| (l.name, l.cid))).collect(),
-            OutContent::Unixfs(_) => todo!(),
+            OutContent::Unixfs(node) => node.links().map(|l| l.map(|l| (l.name, l.cid))).collect(),
             _ => {
                 let links = self.content.links();
                 links.map(|l| l.into_iter().map(|l| (None, l)).collect())

@@ -89,8 +89,7 @@ impl InnerNode {
         let cid = link.cid;
         let loaded_cid = loader.load_cid(&cid, &ctx).await?;
         let node = UnixfsNode::decode(&cid, loaded_cid.data)?;
-        //
-        // TODO(ramfox): should this then attempt to resolve as ipld?
+
         match node {
             UnixfsNode::HamtShard(_, ref hamt) => Ok(InnerNode::Node {
                 node: hamt.root.clone(),

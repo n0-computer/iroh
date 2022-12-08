@@ -5,7 +5,7 @@ edition = "2021"
 authors = ["dignifiedquire <me@dignifiedquire.com>"]
 license = "Apache-2.0/MIT"
 repository = "https://github.com/n0-computer/iroh"
-description = "Implementation of unixfs for iroh"
+description = "Tools for loading content from the network"
 rust-version = "1.63"
 
 [dependencies]
