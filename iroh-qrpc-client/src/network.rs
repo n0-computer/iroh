@@ -161,7 +161,16 @@ impl P2pClient {
 
     #[tracing::instrument(skip(self))]
     pub async fn lookup_local(&self) -> Result<Lookup> {
-        todo!()
+        let req = LookupLocalRequest;
+        let res = self.client.rpc(req).await??;
+        Ok(Lookup {
+            peer_id: res.peer_id,
+            listen_addrs: res.listen_addrs,
+            observed_addrs: res.observed_addrs,
+            protocols: res.protocols,
+            agent_version: res.agent_version,
+            protocol_version: res.protocol_version,
+        })
     }
 
     #[tracing::instrument(skip(self))]

@@ -195,7 +195,7 @@ pub struct LookupRequest {
 
 // rpc LookupLocal(google.protobuf.Empty) returns (PeerInfo) {}
 #[derive(Serialize, Deserialize, Debug)]
-pub struct LookupLocalRequest {}
+pub struct LookupLocalRequest;
 
 // message PeerInfo {
 //     // PublicKey
