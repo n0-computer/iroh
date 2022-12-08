@@ -2,10 +2,8 @@ use derive_more::{From, TryInto};
 use quic_rpc::{message::RpcMsg, Service};
 use serde::{Deserialize, Serialize};
 
-/// Gateway client address
-pub type GatewayClientAddr = crate::addr::Addr<GatewayResponse, GatewayRequest>;
-/// Gateway server address
-pub type GatewayServerAddr = crate::addr::Addr<GatewayRequest, GatewayResponse>;
+/// Gateway address
+pub type GatewayAddr = crate::addr::Addr<GatewayService>;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct VersionRequest;

@@ -7,8 +7,7 @@ use derive_more::{From, TryInto};
 use quic_rpc::{message::RpcMsg, Service};
 use serde::{Deserialize, Serialize};
 
-pub type StoreClientAddr = super::addr::Addr<StoreResponse, StoreRequest>;
-pub type StoreServerAddr = super::addr::Addr<StoreRequest, StoreResponse>;
+pub type StoreAddr = super::addr::Addr<StoreService>;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct VersionRequest;

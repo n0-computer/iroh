@@ -4,7 +4,7 @@ use anyhow::Result;
 use config::{ConfigError, Map, Source, Value};
 use iroh_metrics::config::Config as MetricsConfig;
 use iroh_rpc_client::Config as RpcClientConfig;
-use iroh_rpc_types::p2p::{P2pClientAddr, P2pServerAddr};
+use iroh_rpc_types::p2p::P2pAddr;
 use iroh_util::{insert_into_config_map, iroh_data_root};
 use libp2p::Multiaddr;
 use serde::{Deserialize, Serialize};
@@ -185,7 +185,7 @@ impl Default for Libp2pConfig {
 }
 
 impl Config {
-    pub fn default_with_rpc(client_addr: P2pClientAddr) -> Self {
+    pub fn default_with_rpc(client_addr: P2pAddr) -> Self {
         Self {
             libp2p: Libp2pConfig::default(),
             rpc_client: RpcClientConfig {
@@ -209,12 +209,8 @@ impl Config {
     }
 
     /// Derive server addr for non memory addrs.
-    pub fn server_rpc_addr(&self) -> Result<Option<P2pServerAddr>> {
-        self.rpc_client
-            .p2p_addr
-            .as_ref()
-            .map(|addr| addr.flip())
-            .transpose()
+    pub fn server_rpc_addr(&self) -> Result<Option<P2pAddr>> {
+        Ok(self.rpc_client.p2p_addr.clone())
     }
 }
 

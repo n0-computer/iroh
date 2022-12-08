@@ -1,5 +1,5 @@
 use config::{ConfigError, Map, Source, Value};
-use iroh_qrpc_types::{gateway::GatewayClientAddr, p2p::P2pClientAddr, store::StoreClientAddr};
+use iroh_qrpc_types::{gateway::GatewayAddr, p2p::P2pAddr, store::StoreAddr};
 use iroh_util::insert_into_config_map;
 use serde::{Deserialize, Serialize};
 
@@ -7,11 +7,11 @@ use serde::{Deserialize, Serialize};
 // Config for the rpc Client
 pub struct Config {
     // gateway rpc address
-    pub gateway_addr: Option<GatewayClientAddr>,
+    pub gateway_addr: Option<GatewayAddr>,
     // p2p rpc address
-    pub p2p_addr: Option<P2pClientAddr>,
+    pub p2p_addr: Option<P2pAddr>,
     // store rpc address
-    pub store_addr: Option<StoreClientAddr>,
+    pub store_addr: Option<StoreAddr>,
     // number of concurent channels
     pub channels: Option<usize>,
 }

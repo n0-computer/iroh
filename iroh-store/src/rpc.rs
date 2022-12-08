@@ -4,8 +4,8 @@ use futures::StreamExt;
 use iroh_rpc_client::{create_server_stream, StoreServer};
 use iroh_rpc_types::store::{
     GetLinksRequest, GetLinksResponse, GetRequest, GetResponse, GetSizeRequest, GetSizeResponse,
-    HasRequest, HasResponse, PutManyRequest, PutRequest, StoreRequest, StoreServerAddr,
-    StoreService, VersionRequest, VersionResponse,
+    HasRequest, HasResponse, PutManyRequest, PutRequest, StoreAddr, StoreRequest, StoreService,
+    VersionRequest, VersionResponse,
 };
 use tracing::info;
 
@@ -129,7 +129,7 @@ async fn handle_session(server: StoreServer, store: Store) -> Result<()> {
 }
 
 #[tracing::instrument(skip(store))]
-pub async fn new(addr: StoreServerAddr, store: Store) -> Result<()> {
+pub async fn new(addr: StoreAddr, store: Store) -> Result<()> {
     info!("rpc listening on: {}", addr);
     let mut stream = create_server_stream::<StoreService>(addr).await?;
     while let Some(server) = stream.next().await {

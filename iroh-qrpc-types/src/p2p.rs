@@ -11,8 +11,7 @@ use std::collections::BTreeMap;
 
 use crate::RpcResult;
 
-pub type P2pClientAddr = super::addr::Addr<P2pResponse, P2pRequest>;
-pub type P2pServerAddr = super::addr::Addr<P2pRequest, P2pResponse>;
+pub type P2pAddr = super::addr::Addr<P2pService>;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Key(pub Bytes);

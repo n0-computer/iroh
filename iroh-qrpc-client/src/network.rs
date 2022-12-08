@@ -19,7 +19,7 @@ pub struct P2pClient {
 }
 
 impl P2pClient {
-    pub async fn new(addr: P2pClientAddr) -> anyhow::Result<Self> {
+    pub async fn new(addr: P2pAddr) -> anyhow::Result<Self> {
         let client = crate::open_client(addr).await?;
         Ok(Self { client })
     }

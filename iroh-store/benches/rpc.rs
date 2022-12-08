@@ -5,10 +5,7 @@ use cid::multihash::{Code, MultihashDigest};
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use iroh_metrics::config::Config as MetricsConfig;
 use iroh_rpc_client::{Client, Config as RpcClientConfig};
-use iroh_rpc_types::{
-    store::{StoreClientAddr, StoreServerAddr},
-    Addr,
-};
+use iroh_rpc_types::{store::StoreAddr, Addr};
 use iroh_store::{Config, Store};
 use tokio::runtime::Runtime;
 
@@ -22,7 +19,7 @@ enum Transport {
 }
 
 impl Transport {
-    fn new_addr(self) -> (StoreServerAddr, StoreClientAddr, Option<tempfile::TempDir>) {
+    fn new_addr(self) -> (StoreAddr, StoreAddr, Option<tempfile::TempDir>) {
         match self {
             Transport::Http2 => (
                 "http://127.0.0.1:4001".parse().unwrap(),
@@ -30,8 +27,8 @@ impl Transport {
                 None,
             ),
             Transport::Mem => {
-                let (a, b) = Addr::new_mem();
-                (a, b, None)
+                let a = Addr::new_mem();
+                (a.clone(), a, None)
             }
         }
     }

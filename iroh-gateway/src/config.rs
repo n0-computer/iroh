@@ -8,7 +8,7 @@ use headers::{
 use iroh_metrics::config::Config as MetricsConfig;
 use iroh_resolver::dns_resolver::Config as DnsResolverConfig;
 use iroh_rpc_client::Config as RpcClientConfig;
-use iroh_rpc_types::gateway::GatewayServerAddr;
+use iroh_rpc_types::gateway::GatewayAddr;
 use iroh_util::insert_into_config_map;
 use serde::{Deserialize, Serialize};
 
@@ -70,12 +70,8 @@ impl Config {
     }
 
     /// Derive server addr for non memory addrs.
-    pub fn server_rpc_addr(&self) -> Result<Option<GatewayServerAddr>> {
-        self.rpc_client
-            .gateway_addr
-            .as_ref()
-            .map(|addr| addr.flip())
-            .transpose()
+    pub fn server_rpc_addr(&self) -> Result<Option<GatewayAddr>> {
+        Ok(self.rpc_client.gateway_addr.clone())
     }
 }
 

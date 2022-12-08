@@ -553,7 +553,7 @@ async fn handle_session(s: P2pServer, target: P2p) -> Result<()> {
 }
 
 #[tracing::instrument(skip(p2p))]
-pub(crate) async fn new(addr: P2pServerAddr, p2p: P2p) -> Result<()> {
+pub(crate) async fn new(addr: P2pAddr, p2p: P2p) -> Result<()> {
     info!("rpc listening on: {}", addr);
     let mut stream = create_server_stream::<P2pService>(addr).await?;
     while let Some(server) = stream.next().await {

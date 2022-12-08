@@ -1,6 +1,6 @@
 use axum::Router;
 use iroh_resolver::content_loader::ContentLoader;
-use iroh_rpc_types::gateway::GatewayServerAddr;
+use iroh_rpc_types::gateway::GatewayAddr;
 
 use iroh_resolver::dns_resolver::Config as DnsResolverConfig;
 use std::{collections::HashMap, sync::Arc};
@@ -31,7 +31,7 @@ pub struct State<T: ContentLoader> {
 impl<T: ContentLoader + std::marker::Unpin> Core<T> {
     pub async fn new(
         config: Arc<dyn StateConfig>,
-        rpc_addr: GatewayServerAddr,
+        rpc_addr: GatewayAddr,
         bad_bits: Arc<Option<RwLock<BadBits>>>,
         content_loader: T,
         dns_resolver_config: DnsResolverConfig,
@@ -63,7 +63,7 @@ impl<T: ContentLoader + std::marker::Unpin> Core<T> {
     }
 
     pub async fn new_with_state(
-        rpc_addr: GatewayServerAddr,
+        rpc_addr: GatewayAddr,
         state: Arc<State<T>>,
     ) -> anyhow::Result<Self> {
         tokio::spawn(async move {
@@ -127,7 +127,7 @@ mod tests {
     use iroh_resolver::unixfs_builder::{DirectoryBuilder, FileBuilder};
     use iroh_rpc_client::Client as RpcClient;
     use iroh_rpc_client::Config as RpcClientConfig;
-    use iroh_rpc_types::store::StoreClientAddr;
+    use iroh_rpc_types::store::StoreAddr;
     use iroh_rpc_types::Addr;
     use std::io;
     use tokio_util::io::StreamReader;
@@ -167,8 +167,9 @@ mod tests {
         (addr, rpc_client, core_task)
     }
 
-    async fn spawn_store() -> (StoreClientAddr, tokio::task::JoinHandle<()>) {
-        let (server_addr, client_addr) = Addr::new_mem();
+    async fn spawn_store() -> (StoreAddr, tokio::task::JoinHandle<()>) {
+        let server_addr = Addr::new_mem();
+        let client_addr = server_addr.clone();
         let store_dir = tempfile::tempdir().unwrap();
         let config = iroh_store::Config {
             path: store_dir.path().join("db"),

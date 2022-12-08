@@ -2,7 +2,7 @@ use anyhow::{anyhow, Result};
 use config::{ConfigError, Map, Source, Value};
 use iroh_metrics::config::Config as MetricsConfig;
 use iroh_rpc_client::Config as RpcClientConfig;
-use iroh_rpc_types::store::{StoreClientAddr, StoreServerAddr};
+use iroh_rpc_types::store::StoreAddr;
 use iroh_util::{insert_into_config_map, iroh_data_path};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -33,7 +33,7 @@ pub struct Config {
 }
 
 impl Config {
-    pub fn new_with_rpc(path: PathBuf, client_addr: StoreClientAddr) -> Self {
+    pub fn new_with_rpc(path: PathBuf, client_addr: StoreAddr) -> Self {
         Self {
             path,
             rpc_client: RpcClientConfig {
@@ -50,12 +50,8 @@ impl Config {
     }
 
     /// Derive server addr for non memory addrs.
-    pub fn server_rpc_addr(&self) -> Result<Option<StoreServerAddr>> {
-        self.rpc_client
-            .store_addr
-            .as_ref()
-            .map(|addr| addr.flip())
-            .transpose()
+    pub fn server_rpc_addr(&self) -> Result<Option<StoreAddr>> {
+        Ok(self.rpc_client.store_addr.clone())
     }
 }
 

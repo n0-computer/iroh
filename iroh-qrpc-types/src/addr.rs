@@ -1,5 +1,5 @@
 use anyhow::{anyhow, bail};
-use quic_rpc::RpcMessage;
+use quic_rpc::Service;
 use serde_with::{DeserializeFromStr, SerializeDisplay};
 use std::{
     fmt::{Debug, Display},
@@ -10,14 +10,16 @@ use std::{
 /// An address. This can be either a memory address, already containing the channel, or a network
 /// address which will have to be opened.
 #[derive(SerializeDisplay, DeserializeFromStr)]
-pub enum Addr<In: RpcMessage, Out: RpcMessage> {
+pub enum Addr<S: Service> {
     Http2(SocketAddr),
     Http2Lookup(String),
-    MemClient(quic_rpc::mem::ClientChannel<In, Out>),
-    MemServer(quic_rpc::mem::ServerChannel<In, Out>),
+    Mem(
+        quic_rpc::mem::ServerChannel<S::Req, S::Res>,
+        quic_rpc::mem::ClientChannel<S::Res, S::Req>,
+    ),
 }
 
-impl<Req: RpcMessage, Res: RpcMessage> PartialEq for Addr<Req, Res> {
+impl<S: Service> PartialEq for Addr<S> {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::Http2(addr1), Self::Http2(addr2)) => addr1.eq(addr2),
@@ -27,24 +29,15 @@ impl<Req: RpcMessage, Res: RpcMessage> PartialEq for Addr<Req, Res> {
     }
 }
 
-impl<Req: RpcMessage, Res: RpcMessage> Addr<Req, Res> {
-    pub fn new_mem() -> (Addr<Req, Res>, Addr<Res, Req>) {
+impl<S: Service> Addr<S> {
+    pub fn new_mem() -> Self {
         let (server, client) = quic_rpc::mem::connection(1);
 
-        (Addr::MemServer(server), Addr::MemClient(client))
-    }
-
-    pub fn flip(&self) -> anyhow::Result<Addr<Res, Req>> {
-        match self {
-            Self::Http2(addr) => Ok(Addr::Http2(*addr)),
-            Self::Http2Lookup(addr) => Ok(Addr::Http2Lookup(addr.clone())),
-            Self::MemServer(_) => bail!("Cannot flip mem channel"),
-            Self::MemClient(_) => bail!("Cannot flip mem channel"),
-        }
+        Self::Mem(server, client)
     }
 }
 
-impl<Req: RpcMessage, Res: RpcMessage> Addr<Req, Res> {
+impl<S: Service> Addr<S> {
     pub fn try_as_socket_addr(&self) -> Option<SocketAddr> {
         if let Addr::Http2(addr) = self {
             return Some(*addr);
@@ -53,37 +46,35 @@ impl<Req: RpcMessage, Res: RpcMessage> Addr<Req, Res> {
     }
 }
 
-impl<Req: RpcMessage, Res: RpcMessage> Display for Addr<Req, Res> {
+impl<S: Service> Display for Addr<S> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Addr::Http2(addr) => write!(f, "http://{}", addr),
             Addr::Http2Lookup(addr) => write!(f, "http://{}", addr),
-            Addr::MemClient(_) => write!(f, "mem"),
-            Addr::MemServer(_) => write!(f, "mem"),
+            Addr::Mem(_, _) => write!(f, "mem"),
             #[allow(unreachable_patterns)]
             _ => unreachable!(),
         }
     }
 }
 
-impl<Req: RpcMessage, Res: RpcMessage> Debug for Addr<Req, Res> {
+impl<S: Service> Debug for Addr<S> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         Display::fmt(self, f)
     }
 }
 
-impl<Req: RpcMessage, Res: RpcMessage> Clone for Addr<Req, Res> {
+impl<S: Service> Clone for Addr<S> {
     fn clone(&self) -> Self {
         match self {
             Addr::Http2(addr) => Addr::Http2(*addr),
             Addr::Http2Lookup(addr) => Addr::Http2Lookup(addr.clone()),
-            Addr::MemClient(mem) => Addr::MemClient(mem.clone()),
-            Addr::MemServer(mem) => Addr::MemServer(mem.clone()),
+            Addr::Mem(server, client) => Addr::Mem(server.clone(), client.clone()),
         }
     }
 }
 
-impl<Req: RpcMessage, Res: RpcMessage> FromStr for Addr<Req, Res> {
+impl<S: Service> FromStr for Addr<S> {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
@@ -114,7 +105,7 @@ mod tests {
     #[cfg(feature = "grpc")]
     #[test]
     fn test_addr_roundtrip_grpc_http2() {
-        use crate::gateway::GatewayClientAddr;
+        use crate::gateway::GatewayAddr;
 
         let socket: SocketAddr = "198.168.2.1:1234".parse().unwrap();
         let addr = Addr::Qrpc(socket);

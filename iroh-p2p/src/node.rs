@@ -7,7 +7,7 @@ use cid::Cid;
 use futures_util::stream::StreamExt;
 use iroh_metrics::{core::MRecorder, inc, libp2p_metrics, p2p::P2PMetrics};
 use iroh_rpc_client::Client as RpcClient;
-use iroh_rpc_types::p2p::P2pServerAddr;
+use iroh_rpc_types::p2p::P2pAddr;
 use libp2p::core::Multiaddr;
 use libp2p::gossipsub::{GossipsubMessage, MessageId, TopicHash};
 pub use libp2p::gossipsub::{IdentTopic, Topic};
@@ -106,7 +106,7 @@ impl<KeyStorage: Storage> Drop for Node<KeyStorage> {
 impl<KeyStorage: Storage> Node<KeyStorage> {
     pub async fn new(
         config: Config,
-        rpc_addr: P2pServerAddr,
+        rpc_addr: P2pAddr,
         mut keychain: Keychain<KeyStorage>,
     ) -> Result<Self> {
         let (network_sender_in, network_receiver_in) = channel(1024); // TODO: configurable
@@ -1055,10 +1055,7 @@ mod tests {
     use super::*;
     use anyhow::Result;
     use iroh_rpc_client::P2pClient;
-    use iroh_rpc_types::{
-        p2p::{P2pClientAddr, P2pServerAddr},
-        Addr,
-    };
+    use iroh_rpc_types::{p2p::P2pAddr, Addr};
     use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
     #[cfg(feature = "rpc-grpc")]
@@ -1087,7 +1084,8 @@ mod tests {
             .with(EnvFilter::from_default_env())
             .init();
 
-        let (server_addr, client_addr) = Addr::new_mem();
+        let client_addr = Addr::new_mem();
+        let server_addr = client_addr.clone();
         fetch_providers(
             "/ip4/0.0.0.0/tcp/5003".parse().unwrap(),
             server_addr,
@@ -1104,7 +1102,7 @@ mod tests {
         addrs: Option<Vec<Multiaddr>>,
         /// The listening addresses for the p2p client.
         /// When `None`, the client will communicate over a memory rpc channel
-        rpc_addrs: Option<(P2pServerAddr, P2pClientAddr)>,
+        rpc_addrs: Option<(P2pAddr, P2pAddr)>,
         /// When `true`, allow bootstrapping to the network.
         /// Otherwise, don't provide any addresses from which to bootstrap.
         bootstrap: bool,
@@ -1131,11 +1129,7 @@ mod tests {
             self
         }
 
-        fn with_rpc_addrs(
-            mut self,
-            rpc_server_addr: P2pServerAddr,
-            rpc_client_addr: P2pClientAddr,
-        ) -> Self {
+        fn with_rpc_addrs(mut self, rpc_server_addr: P2pAddr, rpc_client_addr: P2pAddr) -> Self {
             self.rpc_addrs = Some((rpc_server_addr, rpc_client_addr));
             self
         }
@@ -1155,7 +1149,8 @@ mod tests {
                 Some((rpc_server_addr, rpc_client_addr)) => (rpc_server_addr, rpc_client_addr),
                 None => {
                     if cfg!(feature = "rpc-mem") {
-                        Addr::new_mem()
+                        let x = Addr::new_mem();
+                        (x.clone(), x)
                     } else {
                         anyhow::bail!("no rpc addrs given")
                     }
@@ -1267,8 +1262,8 @@ mod tests {
 
     async fn fetch_providers(
         addr: Multiaddr,
-        rpc_server_addr: P2pServerAddr,
-        rpc_client_addr: P2pClientAddr,
+        rpc_server_addr: P2pAddr,
+        rpc_client_addr: P2pAddr,
     ) -> Result<()> {
         let test_runner = TestRunnerBuilder::new()
             .with_addrs(vec![addr])

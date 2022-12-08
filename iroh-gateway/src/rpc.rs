@@ -2,7 +2,7 @@ use anyhow::Result;
 use futures::StreamExt;
 use iroh_rpc_client::create_server_stream;
 use iroh_rpc_types::gateway::{
-    GatewayRequest, GatewayServerAddr, GatewayService, VersionRequest, VersionResponse,
+    GatewayAddr, GatewayRequest, GatewayService, VersionRequest, VersionResponse,
 };
 
 #[derive(Default, Debug, Clone)]
@@ -20,7 +20,7 @@ impl iroh_rpc_types::NamedService for Gateway {
     const NAME: &'static str = "gateway";
 }
 
-pub async fn new(addr: GatewayServerAddr, gw: Gateway) -> Result<()> {
+pub async fn new(addr: GatewayAddr, gw: Gateway) -> Result<()> {
     let mut stream = create_server_stream::<GatewayService>(addr).await?;
     while let Some(server) = stream.next().await {
         let s = server?;

@@ -5,7 +5,6 @@ pub mod network;
 pub mod status;
 pub mod store;
 pub use self::config::Config;
-use anyhow::bail;
 pub use client::Client;
 use futures::{
     stream::{self, BoxStream},
@@ -29,7 +28,7 @@ pub type GatewayServer = RpcServer<GatewayService, ChannelTypes>;
 pub type P2pServer = RpcServer<P2pService, ChannelTypes>;
 
 pub async fn create_server_stream<S: Service>(
-    addr: Addr<S::Req, S::Res>,
+    addr: Addr<S>,
 ) -> anyhow::Result<
     BoxStream<
         'static,
@@ -41,7 +40,7 @@ pub async fn create_server_stream<S: Service>(
 > {
     // make a channel matching the channel types for this crate
     match addr {
-        Addr::MemServer(channel) => {
+        Addr::Mem(channel, _) => {
             let channel = combined::ServerChannel::new(None, Some(channel));
             let server = RpcServer::new(channel);
             Ok(stream::repeat(server).map(Ok).boxed())
@@ -57,9 +56,6 @@ pub async fn create_server_stream<S: Service>(
             let server = RpcServer::new(channel);
             Ok(stream::repeat(server).map(Ok).boxed())
         }
-        Addr::MemClient(_) => {
-            bail!("cannot create server stream for client address")
-        }
     }
 }
 
@@ -69,17 +65,12 @@ async fn create_http2_client_channel<S: Service>(
     Ok(quic_rpc::http2::ClientChannel::new(uri))
 }
 
-pub async fn open_client<S: Service>(
-    addr: Addr<S::Res, S::Req>,
-) -> anyhow::Result<RpcClient<S, ChannelTypes>> {
+pub async fn open_client<S: Service>(addr: Addr<S>) -> anyhow::Result<RpcClient<S, ChannelTypes>> {
     // make a channel matching the channel types for this crate
     match addr {
-        Addr::MemClient(addr) => Ok(RpcClient::<S, ChannelTypes>::new(
-            combined::ClientChannel::new(None, Some(addr)),
+        Addr::Mem(_, client) => Ok(RpcClient::<S, ChannelTypes>::new(
+            combined::ClientChannel::new(None, Some(client)),
         )),
-        Addr::MemServer(_) => {
-            bail!("cannot create client for server address");
-        }
         Addr::Http2(uri) => {
             let uri = format!("http://{}", uri).parse()?;
             let channel = create_http2_client_channel::<S>(uri).await?;
