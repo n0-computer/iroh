@@ -19,8 +19,8 @@ use tracing::{debug, info, trace, warn};
 
 use crate::{
     indexer::Indexer,
+    parse_links,
     types::{LoadedCid, Source},
-    util::parse_links,
 };
 
 pub const IROH_STORE: &str = "iroh-store";

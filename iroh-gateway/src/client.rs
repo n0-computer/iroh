@@ -8,7 +8,7 @@ use cid::Cid;
 use futures::{StreamExt, TryStream};
 use http::HeaderMap;
 use iroh_car::{CarHeader, CarWriter};
-use iroh_content::{ContentLoader, ResponseClip, Source};
+use iroh_content::{content_loader::ContentLoader, ResponseClip, Source};
 use iroh_metrics::{
     core::{MObserver, MRecorder},
     gateway::{GatewayHistograms, GatewayMetrics},

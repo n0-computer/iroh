@@ -5,7 +5,7 @@ use multihash::{Code, MultihashDigest};
 
 use libipld::error::{InvalidMultihash, UnsupportedMultihash};
 
-use crate::{codecs::Codec, util::parse_links};
+use crate::{codecs::Codec, parse_links};
 
 #[derive(Debug)]
 pub struct LoadedCid {

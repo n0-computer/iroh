@@ -2,7 +2,7 @@ use anyhow::Result;
 use async_recursion::async_recursion;
 use bytes::Bytes;
 use futures::{Stream, TryStreamExt};
-use iroh_content::{ContentLoader, ResponseClip};
+use iroh_content::{content_loader::ContentLoader, ResponseClip};
 use iroh_metrics::resolver::OutMetrics;
 use iroh_unixfs::{
     balanced_tree::DEFAULT_DEGREE,

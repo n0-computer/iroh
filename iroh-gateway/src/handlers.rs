@@ -12,7 +12,7 @@ use axum::{
 use futures::TryStreamExt;
 use handlebars::Handlebars;
 use http::Method;
-use iroh_content::ContentLoader;
+use iroh_content::content_loader::ContentLoader;
 use iroh_metrics::{core::MRecorder, gateway::GatewayMetrics, inc, resolver::OutMetrics};
 use iroh_resolver::resolver::{CidOrDomain, UnixfsType};
 use iroh_unixfs::unixfs::Link;

@@ -10,7 +10,10 @@ use anyhow::{anyhow, bail, ensure, Result};
 use bytes::{Buf, Bytes};
 use cid::{multihash::MultihashDigest, Cid};
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt, Stream, StreamExt};
-use iroh_content::{Block, Codec, ContentLoader, LoaderContext, ResponseClip};
+use iroh_content::{
+    content_loader::{ContentLoader, LoaderContext},
+    Block, Codec, ResponseClip,
+};
 use iroh_metrics::resolver::OutMetrics;
 use prost::Message;
 use tokio::io::{AsyncRead, AsyncSeek};

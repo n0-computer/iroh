@@ -29,26 +29,11 @@ use iroh_metrics::{
 
 use crate::dns_resolver::{Config, DnsResolver};
 use iroh_content::{
-    parse_links, Block, Codec, ContentLoader, ContextId, LoadedCid, LoaderContext, ResponseClip,
-    Source,
+    content_loader::{ContentLoader, ContextId, LoaderContext},
+    parse_links, Block, Codec, LoadedCid, ResponseClip, Source,
 };
 
 pub const IROH_STORE: &str = "iroh-store";
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum CidOrDomain {
-    Cid(Cid),
-    Domain(String),
-}
-
-impl Display for CidOrDomain {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        match self {
-            CidOrDomain::Cid(c) => Display::fmt(&c, f),
-            CidOrDomain::Domain(s) => Display::fmt(&s, f),
-        }
-    }
-}
 
 /// Represents an ipfs path.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -121,6 +106,21 @@ impl Display for Path {
         }
 
         Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CidOrDomain {
+    Cid(Cid),
+    Domain(String),
+}
+
+impl Display for CidOrDomain {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            CidOrDomain::Cid(c) => Display::fmt(&c, f),
+            CidOrDomain::Domain(s) => Display::fmt(&s, f),
+        }
     }
 }
 
@@ -281,7 +281,6 @@ impl Out {
         }
     }
 
-    // TODO(ramfox): figure out circular dependencies
     /// Returns a stream over the content of this directory.
     /// Only if this is of type `unixfs` and a directory.
     pub fn unixfs_read_dir<'a, 'b: 'a, C: ContentLoader>(

@@ -4,7 +4,7 @@ use once_cell::sync::OnceCell;
 
 use crate::unixfs::{self, HamtHashFunction, Link, Links, PbLinks, UnixfsNode};
 use async_recursion::async_recursion;
-use iroh_content::{ContentLoader, LoaderContext};
+use iroh_content::content_loader::{ContentLoader, LoaderContext};
 
 use self::{bitfield::Bitfield, hash_bits::HashBits};
 
