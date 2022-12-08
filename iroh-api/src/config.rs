@@ -22,7 +22,7 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            rpc_client: RpcClientConfig::default_grpc(),
+            rpc_client: RpcClientConfig::default_network(),
             metrics: Default::default(),
             http_resolvers: None,
             indexer_endpoint: Some(CID_CONTACT.into()),

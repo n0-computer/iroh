@@ -47,7 +47,7 @@ impl Config {
         }
     }
 
-    pub fn new_grpc(path: PathBuf) -> Self {
+    pub fn new_network(path: PathBuf) -> Self {
         let addr = "grpc://0.0.0.0:4402";
         Self::new_with_rpc(path, addr.parse().unwrap())
     }
@@ -97,7 +97,7 @@ mod tests {
     #[cfg(all(feature = "rpc-grpc", unix))]
     fn test_collect() {
         let path = PathBuf::new().join("test");
-        let default = Config::new_grpc(path);
+        let default = Config::new_network(path);
 
         let mut expect: Map<String, Value> = Map::new();
         expect.insert(
@@ -125,7 +125,7 @@ mod tests {
     #[cfg(all(feature = "rpc-grpc", unix))]
     fn test_build_config_from_struct() {
         let path = PathBuf::new().join("test");
-        let expect = Config::new_grpc(path);
+        let expect = Config::new_network(path);
         let got: Config = config::Config::builder()
             .add_source(expect.clone())
             .build()
