@@ -8,10 +8,6 @@ repository = "https://github.com/n0-computer/iroh"
 description = "Implementation of unixfs for iroh"
 rust-version = "1.63"
 
-exclude = [
-  "benches/**"
-]
-
 [dependencies]
 anyhow = "1"
 async-recursion = "1.0.0"
