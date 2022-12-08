@@ -4,25 +4,24 @@ pub mod gateway;
 pub mod network;
 pub mod status;
 pub mod store;
-
-pub type ChannelTypes = quic_rpc::combined::CombinedChannelTypes<
-    quic_rpc::http2::Http2ChannelTypes,
-    quic_rpc::mem::MemChannelTypes,
->;
-
 pub use self::config::Config;
 pub use client::Client;
 use futures::{stream::BoxStream, StreamExt};
 use iroh_qrpc_types::Addr;
 pub use network::{Lookup, P2pClient};
 use quic_rpc::{
-    combined,
-    http2::{self},
+    combined::{self, CombinedChannelTypes},
+    http2::{self, Http2ChannelTypes},
     mem::MemChannelTypes,
     RpcClient, RpcServer, Service,
 };
 pub use status::{ServiceStatus, StatusRow, StatusTable};
 pub use store::StoreClient;
+
+pub type ChannelTypes = CombinedChannelTypes<
+    Http2ChannelTypes,
+    MemChannelTypes,
+>;
 
 pub async fn create_server_stream<S: Service>(
     addr: Addr<S::Req, S::Res>,
@@ -31,7 +30,7 @@ pub async fn create_server_stream<S: Service>(
         'static,
         Result<
             RpcServer<S, ChannelTypes>,
-            combined::CreateChannelError<MemChannelTypes, MemChannelTypes>,
+            combined::CreateChannelError<Http2ChannelTypes, MemChannelTypes>,
         >,
     >,
 > {

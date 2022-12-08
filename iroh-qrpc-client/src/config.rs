@@ -45,7 +45,7 @@ impl Config {
             gateway_addr: Some("http://127.0.0.1:4400".parse().unwrap()),
             p2p_addr: Some("http://127.0.0.1:4401".parse().unwrap()),
             store_addr: Some("http://127.0.0.1:4402".parse().unwrap()),
-            channels: Some(16),
+            channels: Some(1),
         }
     }
 }
