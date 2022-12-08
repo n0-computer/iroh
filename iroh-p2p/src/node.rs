@@ -1063,6 +1063,7 @@ mod tests {
 
     #[cfg(feature = "rpc-grpc")]
     #[tokio::test]
+    #[ignore]
     async fn test_fetch_providers_grpc_dht() -> Result<()> {
         let server_addr = "http://0.0.0.0:4401".parse().unwrap();
         let client_addr = "http://0.0.0.0:4401".parse().unwrap();

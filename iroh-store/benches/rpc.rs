@@ -17,17 +17,16 @@ const RAW: u64 = 0x55;
 const VALUES: [usize; 4] = [32, 256, 1024, 256 * 1024];
 #[derive(Debug, Copy, Clone)]
 enum Transport {
-    GrpcHttp2,
-    #[cfg(unix)]
+    Http2,
     Mem,
 }
 
 impl Transport {
     fn new_addr(self) -> (StoreServerAddr, StoreClientAddr, Option<tempfile::TempDir>) {
         match self {
-            Transport::GrpcHttp2 => (
-                "grpc://127.0.0.1:4001".parse().unwrap(),
-                "grpc://127.0.0.1:4001".parse().unwrap(),
+            Transport::Http2 => (
+                "http://127.0.0.1:4001".parse().unwrap(),
+                "http://127.0.0.1:4001".parse().unwrap(),
                 None,
             ),
             Transport::Mem => {
@@ -41,10 +40,7 @@ impl Transport {
 pub fn put_benchmark(c: &mut Criterion) {
     let mut group = c.benchmark_group("rpc_store_put");
 
-    #[cfg(unix)]
-    let addrs = [Transport::GrpcHttp2, Transport::Mem];
-    #[cfg(not(unix))]
-    let addrs = [Transport::GrpcHttp2, Transport::Mem];
+    let addrs = [Transport::Http2, Transport::Mem];
     for transport in addrs.into_iter() {
         for value_size in VALUES.iter() {
             let value = Bytes::from(vec![8u8; *value_size]);
@@ -101,10 +97,7 @@ pub fn put_benchmark(c: &mut Criterion) {
 
 pub fn get_benchmark(c: &mut Criterion) {
     let mut group = c.benchmark_group("rpc_store_get");
-    #[cfg(unix)]
-    let addrs = [Transport::GrpcHttp2, Transport::Mem];
-    #[cfg(not(unix))]
-    let addrs = [Transport::GrpcHttp2, Transport::Mem];
+    let addrs = [Transport::Http2, Transport::Mem];
     for transport in addrs.into_iter() {
         for value_size in VALUES.iter() {
             group.throughput(criterion::Throughput::Bytes(*value_size as u64));
