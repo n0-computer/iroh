@@ -45,7 +45,7 @@ impl Config {
     }
 
     pub fn new_network(path: PathBuf) -> Self {
-        let addr = "http://0.0.0.0:4402";
+        let addr = "irpc://0.0.0.0:4402";
         Self::new_with_rpc(path, addr.parse().unwrap())
     }
 

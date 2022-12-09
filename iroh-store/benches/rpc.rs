@@ -22,8 +22,8 @@ impl Transport {
     fn new_addr(self) -> (StoreAddr, StoreAddr, Option<tempfile::TempDir>) {
         match self {
             Transport::Http2 => (
-                "http://127.0.0.1:4001".parse().unwrap(),
-                "http://127.0.0.1:4001".parse().unwrap(),
+                "irpc://127.0.0.1:4001".parse().unwrap(),
+                "irpc://127.0.0.1:4001".parse().unwrap(),
                 None,
             ),
             Transport::Mem => {

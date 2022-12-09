@@ -48,11 +48,11 @@ pub async fn create_server<S: Service>(
             let server = RpcServer::new(channel);
             Ok(server)
         }
-        Addr::Http2Lookup(_addr) => {
+        Addr::IrpcLookup(_addr) => {
             todo!()
             // Ok(Some(RpcServer::new(combined::Channel::new(Some(addr), None))))
         }
-        Addr::Http2(addr) => {
+        Addr::Irpc(addr) => {
             let (channel, hyper) = quic_rpc::transport::http2::ServerChannel::new(&addr)?;
             tokio::spawn(hyper);
             let channel = combined::ServerChannel::new(Some(channel), None);
@@ -68,13 +68,13 @@ pub async fn open_client<S: Service>(addr: Addr<S>) -> anyhow::Result<RpcClient<
         Addr::Mem(_, client) => Ok(RpcClient::<S, ChannelTypes>::new(
             combined::ClientChannel::new(None, Some(client)),
         )),
-        Addr::Http2(uri) => {
-            let uri = format!("http://{}", uri).parse()?;
+        Addr::Irpc(uri) => {
+            let uri = format!("irpc://{}", uri).parse()?;
             let channel = http2::ClientChannel::new(uri);
             let channel = combined::ClientChannel::new(Some(channel), None);
             Ok(RpcClient::<S, ChannelTypes>::new(channel))
         }
-        Addr::Http2Lookup(_addr) => {
+        Addr::IrpcLookup(_addr) => {
             todo!()
         }
     }
