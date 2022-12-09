@@ -12,18 +12,16 @@ use bytes::Bytes;
 use cid::Cid;
 use futures::stream::TryStreamExt;
 use futures::{future, stream::LocalBoxStream, Stream, StreamExt};
-use iroh_content::Block;
 use iroh_rpc_client::Client;
 use prost::Message;
 use tokio::io::AsyncRead;
 
 use crate::{
     balanced_tree::{TreeBuilder, DEFAULT_DEGREE},
-    chunker::{self, Chunker, DEFAULT_CHUNK_SIZE_LIMIT},
+    chunker::{self, Chunker, ChunkerConfig, DEFAULT_CHUNK_SIZE_LIMIT},
+    types::Block,
     unixfs::{dag_pb, unixfs_pb, DataType, Node, UnixfsNode},
 };
-
-pub use crate::chunker::ChunkerConfig;
 
 // The maximum number of links we allow in a directory
 // Any more links than this and we should switch to a hamt

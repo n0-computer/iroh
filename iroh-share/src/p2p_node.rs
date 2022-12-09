@@ -3,14 +3,14 @@ use std::{collections::HashSet, path::Path, sync::Arc};
 use anyhow::{ensure, Result};
 use async_trait::async_trait;
 use cid::Cid;
-use iroh_content::{
-    content_loader::{ContentLoader, ContextId, LoaderContext, IROH_STORE},
-    parse_links, LoadedCid, Source,
-};
 use iroh_p2p::{config, Keychain, MemoryStorage, NetworkEvent, Node};
 use iroh_resolver::resolver::Resolver;
 use iroh_rpc_client::Client;
 use iroh_rpc_types::Addr;
+use iroh_unixfs::{
+    content_loader::{ContentLoader, ContextId, LoaderContext, IROH_STORE},
+    parse_links, LoadedCid, Source,
+};
 use libp2p::{Multiaddr, PeerId};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::Receiver;

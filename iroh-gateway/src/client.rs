@@ -8,7 +8,6 @@ use cid::Cid;
 use futures::{StreamExt, TryStream};
 use http::HeaderMap;
 use iroh_car::{CarHeader, CarWriter};
-use iroh_content::{content_loader::ContentLoader, ResponseClip, Source};
 use iroh_metrics::{
     core::{MObserver, MRecorder},
     gateway::{GatewayHistograms, GatewayMetrics},
@@ -17,6 +16,7 @@ use iroh_metrics::{
 };
 use iroh_resolver::dns_resolver::Config;
 use iroh_resolver::resolver::{CidOrDomain, Metadata, Out, OutPrettyReader, OutType, Resolver};
+use iroh_unixfs::{content_loader::ContentLoader, ResponseClip, Source};
 use mime::Mime;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, AsyncWrite};
 use tokio_util::io::ReaderStream;

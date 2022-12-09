@@ -7,8 +7,8 @@ use cid::Cid;
 use futures::{Stream, StreamExt, TryFutureExt, TryStreamExt};
 
 use crate::builder::encode_unixfs_pb;
+use crate::types::Block;
 use crate::unixfs::{dag_pb, unixfs_pb, DataType, Node, UnixfsNode};
-use iroh_content::Block;
 
 /// Default degree number for balanced tree, taken from unixfs specs
 /// <https://github.com/ipfs/specs/blob/main/UNIXFS.md#layout>

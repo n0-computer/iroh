@@ -24,7 +24,6 @@ futures = "0.3.21"
 iroh-metrics = { version = "0.1.3", path = "../iroh-metrics", default-features = false, features = ["resolver", "gateway"] }
 iroh-rpc-client = { version = "0.1.3", path = "../iroh-rpc-client", default-features = false }
 iroh-util = { version = "0.1.3", path = "../iroh-util", default-features = false }
-iroh-content = { path = "../iroh-content" }
 iroh-unixfs = { version = "0.1.3", path = "../iroh-unixfs" }
 libipld = "0.15.0"
 serde = { version = "1", features = ["derive"] }

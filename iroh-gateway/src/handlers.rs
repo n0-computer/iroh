@@ -12,10 +12,9 @@ use axum::{
 use futures::TryStreamExt;
 use handlebars::Handlebars;
 use http::Method;
-use iroh_content::content_loader::ContentLoader;
 use iroh_metrics::{core::MRecorder, gateway::GatewayMetrics, inc, resolver::OutMetrics};
 use iroh_resolver::resolver::{CidOrDomain, UnixfsType};
-use iroh_unixfs::unixfs::Link;
+use iroh_unixfs::{content_loader::ContentLoader, unixfs::Link};
 use iroh_util::human::format_bytes;
 use serde::{Deserialize, Serialize};
 use serde_json::{

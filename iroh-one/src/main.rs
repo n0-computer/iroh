@@ -3,7 +3,6 @@ use std::sync::Arc;
 #[allow(unused_imports)]
 use anyhow::{anyhow, Result};
 use clap::Parser;
-use iroh_content::content_loader::{FullLoader, FullLoaderConfig};
 use iroh_gateway::{bad_bits::BadBits, core::Core, metrics};
 #[cfg(all(feature = "http-uds-gateway", unix))]
 use iroh_one::uds;
@@ -13,6 +12,7 @@ use iroh_one::{
 };
 use iroh_rpc_client::Client as RpcClient;
 use iroh_rpc_types::Addr;
+use iroh_unixfs::content_loader::{FullLoader, FullLoaderConfig};
 use iroh_util::lock::ProgramLock;
 use iroh_util::{iroh_config_path, make_config};
 use tokio::sync::RwLock;

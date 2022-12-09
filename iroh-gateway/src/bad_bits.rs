@@ -111,9 +111,9 @@ mod tests {
     use super::*;
     use hex_literal::hex;
     use http::StatusCode;
-    use iroh_content::content_loader::{FullLoader, FullLoaderConfig, GatewayUrl};
     use iroh_resolver::dns_resolver::Config as DnsResolverConfig;
     use iroh_rpc_client::{Client as RpcClient, Config as RpcClientConfig};
+    use iroh_unixfs::content_loader::{FullLoader, FullLoaderConfig, GatewayUrl};
 
     #[tokio::test]
     async fn bad_bits_anchor() {

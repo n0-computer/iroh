@@ -1,9 +1,9 @@
-use axum::Router;
-use iroh_content::content_loader::ContentLoader;
-use iroh_rpc_types::gateway::GatewayAddr;
-
-use iroh_resolver::dns_resolver::Config as DnsResolverConfig;
 use std::{collections::HashMap, sync::Arc};
+
+use axum::Router;
+use iroh_resolver::dns_resolver::Config as DnsResolverConfig;
+use iroh_rpc_types::gateway::GatewayAddr;
+use iroh_unixfs::content_loader::ContentLoader;
 use tokio::sync::RwLock;
 
 use crate::{
@@ -122,12 +122,12 @@ mod tests {
     use super::*;
     use cid::Cid;
     use futures::{StreamExt, TryStreamExt};
-    use iroh_content::content_loader::{FullLoader, FullLoaderConfig};
     use iroh_rpc_client::Client as RpcClient;
     use iroh_rpc_client::Config as RpcClientConfig;
     use iroh_rpc_types::store::StoreAddr;
     use iroh_rpc_types::Addr;
     use iroh_unixfs::builder::{DirectoryBuilder, FileBuilder};
+    use iroh_unixfs::content_loader::{FullLoader, FullLoaderConfig};
     use iroh_unixfs::unixfs::UnixfsNode;
     use std::io;
     use tokio_util::io::StreamReader;

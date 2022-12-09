@@ -17,7 +17,6 @@ members = [
   "iroh-unixfs",
   "iroh-store",
   "iroh-util",
-  "iroh-content",
   "stores/*",
   "xtask",
 ]

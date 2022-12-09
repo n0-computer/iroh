@@ -6,8 +6,8 @@ use iroh_rpc_client::Config as RpcClientConfig;
 use iroh_rpc_types::Addr;
 use iroh_store::{Config as StoreConfig, Store};
 use iroh_unixfs::{
-    builder::{ChunkerConfig, Config as UnixfsConfig},
-    chunker::DEFAULT_CHUNKS_SIZE,
+    builder::Config as UnixfsConfig,
+    chunker::{ChunkerConfig, DEFAULT_CHUNKS_SIZE},
 };
 use tokio::runtime::Runtime;
 

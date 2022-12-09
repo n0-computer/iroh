@@ -9,14 +9,15 @@ use anyhow::{ensure, Context, Result};
 use cid::Cid;
 use futures::stream::LocalBoxStream;
 use futures::{StreamExt, TryStreamExt};
-use iroh_content::{
-    content_loader::{FullLoader, FullLoaderConfig},
-    ResponseClip,
-};
 use iroh_resolver::resolver::Resolver;
 use iroh_rpc_client::Client;
 use iroh_rpc_client::StatusTable;
-use iroh_unixfs::builder::{self as unixfs_builder, ChunkerConfig, Config as UnixfsConfig};
+use iroh_unixfs::{
+    builder::{self as unixfs_builder, Config as UnixfsConfig},
+    chunker::ChunkerConfig,
+    content_loader::{FullLoader, FullLoaderConfig},
+    ResponseClip,
+};
 use iroh_util::{iroh_config_path, make_config};
 #[cfg(feature = "testing")]
 use mockall::automock;

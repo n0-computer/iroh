@@ -12,8 +12,14 @@ use bytes::Bytes;
 use cid::Cid;
 use futures::{Future, Stream, TryStreamExt};
 use iroh_metrics::inc;
-use iroh_unixfs::unixfs::{
-    poll_read_buf_at_pos, DataType, Link, UnixfsChildStream, UnixfsContentReader, UnixfsNode,
+use iroh_unixfs::{
+    codecs::Codec,
+    content_loader::{ContentLoader, ContextId, LoaderContext},
+    parse_links,
+    unixfs::{
+        poll_read_buf_at_pos, DataType, Link, UnixfsChildStream, UnixfsContentReader, UnixfsNode,
+    },
+    Block, LoadedCid, ResponseClip, Source,
 };
 use libipld::codec::Encode;
 use libipld::prelude::Codec as _;
@@ -28,10 +34,6 @@ use iroh_metrics::{
 };
 
 use crate::dns_resolver::{Config, DnsResolver};
-use iroh_content::{
-    content_loader::{ContentLoader, ContextId, LoaderContext},
-    parse_links, Block, Codec, LoadedCid, ResponseClip, Source,
-};
 
 pub const IROH_STORE: &str = "iroh-store";
 

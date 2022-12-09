@@ -2,11 +2,14 @@ use std::{io::Read, path::PathBuf, time::Instant};
 
 use anyhow::Result;
 use bytes::Bytes;
-use iroh_content::ResponseClip;
 use iroh_metrics::resolver::OutMetrics;
 use iroh_resolver::resolver::{read_to_vec, stream_to_resolver, Path};
-use iroh_unixfs::builder::FileBuilder;
-use iroh_unixfs::chunker::{self, Chunker};
+use iroh_unixfs::{
+    self,
+    builder::FileBuilder,
+    chunker::{self, Chunker},
+    ResponseClip,
+};
 
 async fn read_fixture(path: impl AsRef<std::path::Path>) -> Result<Vec<u8>> {
     let path = path.as_ref().to_owned();

@@ -4,8 +4,8 @@ use axum::extract::connect_info;
 use axum::{Router, Server};
 use futures::ready;
 use hyper::server::accept::Accept;
-use iroh_content::content_loader::ContentLoader;
 use iroh_gateway::{core::State, handlers::get_app_routes};
+use iroh_unixfs::content_loader::ContentLoader;
 use std::path::PathBuf;
 use std::{
     pin::Pin,
