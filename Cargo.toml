@@ -13,8 +13,6 @@ members = [
   "iroh-resolver",
   "iroh-rpc-client",
   "iroh-rpc-types",
-  "iroh-qrpc-client",
-  "iroh-qrpc-types",
   "iroh-share",
   "iroh-store",
   "iroh-util",

@@ -24,7 +24,7 @@ serde = { version = "1.0", features = ["derive"] }
 tokio = { version = "1", features = ["sync"] }
 toml = "0.5.9"
 tracing = "0.1.34"
-iroh-qrpc-types = { path = "../iroh-qrpc-types" }
+iroh-rpc-types = { path = "../iroh-rpc-types" }
 hyper = "0.14.23"
 
 [dev-dependencies]

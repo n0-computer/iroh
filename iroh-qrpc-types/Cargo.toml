@@ -1,5 +1,5 @@
 [package]
-name = "iroh-qrpc-types"
+name = "iroh-rpc-types"
 version = "0.2.0"
 edition = "2021"
 authors = ["Friedel Ziegelmayer <me@dignifiedquire.com>", "ramfox"]

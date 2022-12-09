@@ -2,7 +2,7 @@
 name = "iroh-rpc-client"
 version = "0.1.3"
 edition = "2021"
-authors = ["dignifiedquire <me@dignifiedquire.com>", "ramfox"]
+authors = ["Friedel Ziegelmayer <me@dignifiedquire.com>", "ramfox"]
 license = "Apache-2.0/MIT"
 repository = "https://github.com/n0-computer/iroh"
 description = "RPC type client for iroh"
@@ -12,31 +12,20 @@ rust-version = "1.65"
 
 anyhow = "1"
 async-stream = "0.3.3"
-async-trait = "0.1.56"
 bytes = "1.1.0"
-cid = "0.9"
+cid = "0.9.0"
 config = "0.13.1"
 futures = "0.3.21"
-iroh-metrics = { version = "0.1.3", path = "../iroh-metrics", default-features = false }
-iroh-rpc-types = { version = "0.1.3", path = "../iroh-rpc-types", default-features = false }
-iroh-util = { version = "0.1.3", path = "../iroh-util" }
+iroh-metrics = { path = "../iroh-metrics", default-features = false }
+iroh-util = { path = "../iroh-util" }
 libp2p = { version = "0.50", default-features = false, features = ["gossipsub"] }
-paste = "1.0.7"
-prost = "0.11"
+quic-rpc = { version = "0.2.1", features = ["http2"], default-features = false }
 serde = { version = "1.0", features = ["derive"] }
 tokio = { version = "1", features = ["sync"] }
 toml = "0.5.9"
-tonic = { version = "0.8", optional = true }
-tonic-health = { version = "0.7", optional = true }
-tower = { version = "0.4.13", optional = true }
 tracing = "0.1.34"
-
+iroh-rpc-types = { path = "../iroh-rpc-types" }
+hyper = "0.14.23"
 
 [dev-dependencies]
-iroh-rpc-types = { version = "0.1.3", path = "../iroh-rpc-types", features = ["testing"] }
-tokio-stream = { version = "0.1.9", features = ["net"]}
-
-[features]
-default = ["mem", "grpc"]
-grpc = ["tonic", "tonic-health", "iroh-rpc-types/grpc", "iroh-metrics/rpc-grpc", "tower"]
-mem = ["iroh-rpc-types/mem"]
+tokio-stream = { version = "0.1.9", features = ["net"] }

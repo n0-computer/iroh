@@ -1,5 +1,5 @@
 use config::{ConfigError, Map, Source, Value};
-use iroh_rpc_types::{gateway::GatewayClientAddr, p2p::P2pClientAddr, store::StoreClientAddr};
+use iroh_rpc_types::{gateway::GatewayAddr, p2p::P2pAddr, store::StoreAddr};
 use iroh_util::insert_into_config_map;
 use serde::{Deserialize, Serialize};
 
@@ -7,11 +7,11 @@ use serde::{Deserialize, Serialize};
 // Config for the rpc Client
 pub struct Config {
     // gateway rpc address
-    pub gateway_addr: Option<GatewayClientAddr>,
+    pub gateway_addr: Option<GatewayAddr>,
     // p2p rpc address
-    pub p2p_addr: Option<P2pClientAddr>,
+    pub p2p_addr: Option<P2pAddr>,
     // store rpc address
-    pub store_addr: Option<StoreClientAddr>,
+    pub store_addr: Option<StoreAddr>,
     // number of concurent channels
     pub channels: Option<usize>,
 }
@@ -42,10 +42,10 @@ impl Source for Config {
 impl Config {
     pub fn default_network() -> Self {
         Self {
-            gateway_addr: Some("grpc://0.0.0.0:4400".parse().unwrap()),
-            p2p_addr: Some("grpc://0.0.0.0:4401".parse().unwrap()),
-            store_addr: Some("grpc://0.0.0.0:4402".parse().unwrap()),
-            channels: Some(16),
+            gateway_addr: Some("irpc://127.0.0.1:4400".parse().unwrap()),
+            p2p_addr: Some("irpc://127.0.0.1:4401".parse().unwrap()),
+            store_addr: Some("irpc://127.0.0.1:4402".parse().unwrap()),
+            channels: Some(1),
         }
     }
 }
