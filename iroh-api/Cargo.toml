@@ -5,7 +5,7 @@ edition = "2021"
 license = "Apache-2.0/MIT"
 readme = "README.md"
 description = "Rust API for Iroh"
-rust-version = "1.63"
+rust-version = "1.65"
 repository = "https://github.com/n0-computer/iroh"
 
 [features]

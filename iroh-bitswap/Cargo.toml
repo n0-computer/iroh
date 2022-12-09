@@ -6,7 +6,7 @@ authors = ["dignifiedquire <me@dignifiedquire.com>"]
 license = "Apache-2.0/MIT"
 repository = "https://github.com/n0-computer/iroh"
 description = "Implementation of the bitswap protocol"
-rust-version = "1.63"
+rust-version = "1.65"
 
 [build-dependencies]
 prost-build = "0.11.1"

@@ -6,7 +6,7 @@ authors = ["dignifiedquire <me@dignifiedquire.com>", "ramfox"]
 license = "Apache-2.0/MIT"
 repository = "https://github.com/n0-computer/iroh"
 description = "RPC type client for iroh"
-rust-version = "1.63"
+rust-version = "1.65"
 
 [dependencies]
 
