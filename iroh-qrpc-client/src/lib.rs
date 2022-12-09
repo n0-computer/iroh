@@ -13,9 +13,7 @@ use futures::{
 use iroh_qrpc_types::{gateway::GatewayService, p2p::P2pService, store::StoreService, Addr};
 pub use network::{Lookup, P2pClient};
 use quic_rpc::{
-    combined::{self, CombinedChannelTypes},
-    http2::{self, Http2ChannelTypes},
-    mem::MemChannelTypes,
+    transport::{combined, http2, CombinedChannelTypes, Http2ChannelTypes, MemChannelTypes},
     RpcClient, RpcServer, Service,
 };
 pub use status::{ServiceStatus, StatusRow, StatusTable};
@@ -34,7 +32,7 @@ pub async fn create_server_stream<S: Service>(
         'static,
         Result<
             RpcServer<S, ChannelTypes>,
-            combined::CreateChannelError<Http2ChannelTypes, MemChannelTypes>,
+            combined::AcceptBiError<Http2ChannelTypes, MemChannelTypes>,
         >,
     >,
 > {
@@ -50,7 +48,7 @@ pub async fn create_server_stream<S: Service>(
             // Ok(Some(RpcServer::new(combined::Channel::new(Some(addr), None))))
         }
         Addr::Http2(addr) => {
-            let (channel, hyper) = quic_rpc::http2::ServerChannel::new(&addr)?;
+            let (channel, hyper) = quic_rpc::transport::http2::ServerChannel::new(&addr)?;
             tokio::spawn(hyper);
             let channel = combined::ServerChannel::new(Some(channel), None);
             let server = RpcServer::new(channel);
@@ -62,7 +60,7 @@ pub async fn create_server_stream<S: Service>(
 async fn create_http2_client_channel<S: Service>(
     uri: hyper::Uri,
 ) -> Result<http2::ClientChannel<S::Res, S::Req>, hyper::Error> {
-    Ok(quic_rpc::http2::ClientChannel::new(uri))
+    Ok(http2::ClientChannel::new(uri))
 }
 
 pub async fn open_client<S: Service>(addr: Addr<S>) -> anyhow::Result<RpcClient<S, ChannelTypes>> {

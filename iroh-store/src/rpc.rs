@@ -16,7 +16,7 @@ impl iroh_rpc_types::NamedService for Store {
     const NAME: &'static str = "store";
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct RpcStore(Store);
 
 impl RpcStore {

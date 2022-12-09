@@ -1,5 +1,5 @@
 use anyhow::{anyhow, bail};
-use quic_rpc::Service;
+use quic_rpc::{transport::mem, Service};
 use serde_with::{DeserializeFromStr, SerializeDisplay};
 use std::{
     fmt::{Debug, Display},
@@ -14,8 +14,8 @@ pub enum Addr<S: Service> {
     Http2(SocketAddr),
     Http2Lookup(String),
     Mem(
-        quic_rpc::mem::ServerChannel<S::Req, S::Res>,
-        quic_rpc::mem::ClientChannel<S::Res, S::Req>,
+        mem::ServerChannel<S::Req, S::Res>,
+        mem::ClientChannel<S::Res, S::Req>,
     ),
 }
 
@@ -31,7 +31,7 @@ impl<S: Service> PartialEq for Addr<S> {
 
 impl<S: Service> Addr<S> {
     pub fn new_mem() -> Self {
-        let (server, client) = quic_rpc::mem::connection(1);
+        let (server, client) = mem::connection(1);
 
         Self::Mem(server, client)
     }
