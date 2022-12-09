@@ -18,5 +18,5 @@ libp2p = { version = "0.50", default-features = false, features = ["serde"] }
 quic-rpc = { version = "0.2.0", default-features = false }
 serde = { version = "1" }
 serde-error = "0.1.2"
-serde_with = "2.0.0"
+serde_with = "2.1.0"
 tokio = { version = "1", default-features = false }
