@@ -194,7 +194,7 @@ impl MetricsRecorder for Metrics {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum StoreMetrics {
     GetRequests,
     StoreHit,
@@ -235,7 +235,7 @@ impl std::fmt::Display for StoreMetrics {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum StoreHistograms {
     GetRequests,
     PutRequests,

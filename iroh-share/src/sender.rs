@@ -18,6 +18,7 @@ use crate::{
 };
 
 /// The sending part of the data transfer.
+#[derive(Debug)]
 pub struct Sender {
     p2p: P2pNode,
     gossip_events: Receiver<GossipsubEvent>,
@@ -172,6 +173,7 @@ impl Sender {
     }
 }
 
+#[derive(Debug)]
 pub struct Transfer {
     p2p: P2pNode,
     ticket: Ticket,
