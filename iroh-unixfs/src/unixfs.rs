@@ -1,6 +1,6 @@
 use std::{
     collections::VecDeque,
-    fmt::{self, Debug},
+    fmt::Debug,
     io::Cursor,
     pin::Pin,
     task::{Context, Poll},
@@ -408,6 +408,20 @@ pub enum UnixfsChildStream<'a> {
         stream: BoxStream<'a, Result<Link>>,
         out_metrics: OutMetrics,
     },
+}
+
+impl<'a> Debug for UnixfsChildStream<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            UnixfsChildStream::Hamt {
+                pos, out_metrics, ..
+            } => 
+                write!(f, "UnixfsChildStream::Hamt {{ stream: BoxStream<Result<Link>>, pos: {}, out_metrics {:?} }}", pos, out_metrics),
+            
+            UnixfsChildStream::Directory { out_metrics, .. } => 
+                write!(f, "UnixfsChildStream::Directory {{ stream: BoxStream<Result<Link>>, out_metrics {:?} }}", out_metrics),
+        }
+    }
 }
 
 #[derive(Debug)]

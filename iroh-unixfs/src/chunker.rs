@@ -1,4 +1,10 @@
-use std::{fmt::Display, io, pin::Pin, str::FromStr, task};
+use std::{
+    fmt::{Debug, Display},
+    io,
+    pin::Pin,
+    str::FromStr,
+    task,
+};
 
 use anyhow::{anyhow, Context};
 use bytes::Bytes;
@@ -90,8 +96,8 @@ pub enum ChunkerStream<'a> {
     Rabin(LocalBoxStream<'a, io::Result<Bytes>>),
 }
 
-impl<'a> fmt::Debug for ChunkerStream<'a> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl<'a> Debug for ChunkerStream<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Fixed(_) => write!(f, "Fixed(impl Stream<Item=Bytes>)"),
             Self::Rabin(_) => write!(f, "Rabin(impl Stream<Item=Bytes>)"),
