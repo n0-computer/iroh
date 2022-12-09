@@ -82,12 +82,7 @@ impl Api {
                     .map(|u| u.parse())
                     .collect::<Result<_>>()
                     .context("invalid gateway url")?,
-                indexer: config
-                    .indexer_endpoint
-                    .as_ref()
-                    .map(|u| u.parse())
-                    .transpose()
-                    .context("invalid indexer endpoint")?,
+                indexer: config.indexer_endpoint,
             },
         )?;
         let resolver = Resolver::new(content_loader);

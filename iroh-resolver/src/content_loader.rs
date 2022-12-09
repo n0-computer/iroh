@@ -11,7 +11,7 @@ use reqwest::Url;
 use tracing::{info, trace, warn};
 
 use crate::{
-    indexer::Indexer,
+    indexer::{Indexer, IndexerUrl},
     parse_links,
     resolver::{ContextId, LoadedCid, LoaderContext, Source, IROH_STORE},
 };
@@ -53,7 +53,7 @@ pub struct FullLoader {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FullLoaderConfig {
-    pub indexer: Option<Url>,
+    pub indexer: Option<IndexerUrl>,
     pub http_gateways: Vec<GatewayUrl>,
 }
 

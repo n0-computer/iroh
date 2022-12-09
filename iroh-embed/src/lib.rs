@@ -2,6 +2,8 @@ use anyhow::{bail, Result};
 use iroh_api::Api;
 use iroh_rpc_client::Config as RpcClientConfig;
 
+pub use iroh_p2p::Libp2pConfig;
+pub use iroh_resolver::indexer::IndexerUrl;
 pub use reqwest::Url;
 
 /// An address allowing internal communication with the iroh store service.
@@ -34,13 +36,17 @@ pub use store::RocksStoreService;
 /// # Examples
 ///
 /// ```
-/// tokio_test::block_on(async {
-/// use iroh_embed::{Iroh, IrohBuilder, P2pService, RocksStoreService};
+/// use iroh_embed::{Iroh, IrohBuilder, Libp2pConfig, P2pService, RocksStoreService};
 /// use testdir::testdir;
-///
+/// # tokio_test::block_on(async {
 /// let dir = testdir!();
 /// let store = RocksStoreService::new(dir.join("store")).await.unwrap();
-/// let p2p = P2pService::new(Default::default(), dir, store.addr()).await.unwrap();
+/// let mut p2p_config = Libp2pConfig::default();
+/// p2p_config.listening_multiaddrs = vec![
+///     "/ip4/0.0.0.0/tcp/0".parse().unwrap(),  // random port
+///     "/ip4/0.0.0.0/udp/0/quic-v1".parse().unwrap(),  // random port
+/// ];
+/// let p2p = P2pService::new(p2p_config, dir, store.addr()).await.unwrap();
 /// let _iroh: Iroh = IrohBuilder::new()
 ///                     .with_store(store)
 ///                     .with_p2p(p2p)
@@ -49,19 +55,23 @@ pub use store::RocksStoreService;
 ///                     .unwrap();
 /// # })
 /// ```
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct IrohBuilder {
     store: Option<RocksStoreService>,
     p2p: Option<P2pService>,
     http_resolvers: Vec<String>,
-    indexer: Option<String>,
+    indexer: Option<IndexerUrl>,
 }
 
 impl IrohBuilder {
     /// Creates a new [`IrohBuilder`].
     pub fn new() -> Self {
-        // TODO: Default for indexer
-        Default::default()
+        Self {
+            store: None,
+            p2p: None,
+            http_resolvers: vec![],
+            indexer: Some(IndexerUrl::default()),
+        }
     }
 
     /// Adds a store service.
@@ -112,10 +122,16 @@ impl IrohBuilder {
     ///
     /// An IPFS indexer keeps an index of CIDs and IPFS nodes which currently provide the
     /// data for the CID.
-    // TODO: Change type to reqwest::Url
-    pub fn with_indexer(mut self, indexer: Url) -> Self {
-        // TODO: figure out the default here.
-        self.indexer = Some(indexer.to_string());
+    ///
+    /// By default this uses the [`iroh_reslolver::indexer::CID_CONTACT`] indexer.
+    pub fn with_indexer(mut self, indexer: IndexerUrl) -> Self {
+        self.indexer = Some(indexer);
+        self
+    }
+
+    /// Do not use any indexer.
+    pub fn clear_indexer(mut self) -> Self {
+        self.indexer = None;
         self
     }
 

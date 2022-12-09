@@ -1,6 +1,6 @@
 use config::{ConfigError, Map, Source, Value};
 use iroh_metrics::config::Config as MetricsConfig;
-use iroh_resolver::indexer::CID_CONTACT;
+use iroh_resolver::indexer::IndexerUrl;
 use iroh_rpc_client::Config as RpcClientConfig;
 use iroh_util::insert_into_config_map;
 use serde::{Deserialize, Serialize};
@@ -17,7 +17,7 @@ pub struct Config {
     pub rpc_client: RpcClientConfig,
     pub metrics: MetricsConfig,
     pub http_resolvers: Option<Vec<String>>,
-    pub indexer_endpoint: Option<String>,
+    pub indexer_endpoint: Option<IndexerUrl>,
 }
 
 impl Default for Config {
@@ -26,7 +26,7 @@ impl Default for Config {
             rpc_client: RpcClientConfig::default_grpc(),
             metrics: Default::default(),
             http_resolvers: None,
-            indexer_endpoint: Some(CID_CONTACT.into()),
+            indexer_endpoint: Some(IndexerUrl::default()),
         }
     }
 }

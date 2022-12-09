@@ -31,6 +31,9 @@ impl P2pService {
     ///
     /// The `key_store_path` is the directory where the cryptographic identity of this p2p
     /// node is stored.  This uses the ssh key files format.
+    ///
+    /// Note that [`Lib2p2Config::default`] binds to the `/ip4/0.0.0.0/tcp/4444` and
+    /// `/ip4/0.0.0.0/udp/4445/quic-v1`.
     // TODO: Provide a way to use an in-memory keystore.
     pub async fn new(
         libp2p_config: Libp2pConfig,

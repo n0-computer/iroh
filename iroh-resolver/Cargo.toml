@@ -22,7 +22,9 @@ async-trait = "0.1.53"
 base64 = "0.13.1"
 bytes = "1.1.0"
 cid = "0.9"
+config = "0.13.1"
 fastmurmur3 = "0.1.2"
+fnv = "1.0.7"
 futures = "0.3.21"
 iroh-metrics = { version = "0.1.3", path = "../iroh-metrics", default-features = false, features = ["resolver", "gateway"] }
 iroh-rpc-client = { version = "0.1.3", path = "../iroh-rpc-client", default-features = false }
@@ -42,7 +44,6 @@ tokio-util = { version = "0.7", features = ["io"] }
 tracing = "0.1.34"
 trust-dns-resolver = { version = "0.22.0", features = ["dns-over-https-rustls", "serde-config", "tokio-runtime"] }
 unsigned-varint = "0.7.1"
-fnv = "1.0.7"
 
 [dev-dependencies]
 criterion = { version = "0.4.0", features = ["async_tokio"] }

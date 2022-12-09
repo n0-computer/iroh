@@ -1,10 +1,49 @@
+use std::fmt::{self, Display};
+use std::str::FromStr;
+
 use anyhow::Result;
 use cid::Cid;
+use config::ValueKind;
 use libp2p::{Multiaddr, PeerId};
 use multihash::Multihash;
 use reqwest::{Client, Url};
 use serde::{Deserialize, Serialize};
 use tracing::trace;
+
+/// Public endpoint of the indexer nodes.
+pub const CID_CONTACT: &str = "https://cid.contact/cid/";
+
+/// URL of an [`Indexer`].
+///
+/// This is newtyped so we can easily provide a default value.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IndexerUrl(Url);
+
+impl Default for IndexerUrl {
+    fn default() -> Self {
+        Self(CID_CONTACT.parse().expect("CID_CONTACT URL is broken"))
+    }
+}
+
+impl FromStr for IndexerUrl {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(Self(Url::from_str(s)?))
+    }
+}
+
+impl Display for IndexerUrl {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl Into<ValueKind> for IndexerUrl {
+    fn into(self) -> ValueKind {
+        ValueKind::String(self.to_string())
+    }
+}
 
 /// API connection to the indexer nodes, as implemented in
 /// https://github.com/filecoin-project/storetheindex.
@@ -13,9 +52,6 @@ pub struct Indexer {
     endpoint: Url,
     client: Client,
 }
-
-/// Public endpoint of the indexer nodes.
-pub const CID_CONTACT: &str = "https://cid.contact/cid/";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
@@ -26,10 +62,13 @@ pub struct Provider {
 }
 
 impl Indexer {
-    pub fn new(endpoint: Url) -> Result<Self> {
+    pub fn new(endpoint: IndexerUrl) -> Result<Self> {
         let client = Client::new();
 
-        Ok(Self { client, endpoint })
+        Ok(Self {
+            client,
+            endpoint: endpoint.0,
+        })
     }
 
     /// Returns all available bitswap providers.
@@ -154,6 +193,13 @@ mod base64_provider {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_indexer_url_default() {
+        let url = IndexerUrl::default();
+        assert_eq!(url.0.domain(), Some("cid.contact"));
+        assert_eq!(url.to_string(), CID_CONTACT);
+    }
 
     #[test]
     fn test_ser_de() {

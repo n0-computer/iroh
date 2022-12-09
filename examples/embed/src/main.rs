@@ -1,7 +1,7 @@
 use anyhow::{bail, Result};
 use futures_util::StreamExt;
 use iroh_api::{IpfsPath, OutType};
-use iroh_embed::{IrohBuilder, P2pService, RocksStoreService};
+use iroh_embed::{IrohBuilder, Libp2pConfig, P2pService, RocksStoreService};
 use testdir::testdir;
 
 #[tokio::main(flavor = "multi_thread")]
@@ -10,7 +10,13 @@ async fn main() -> Result<()> {
     println!("using directory: {}", dir.display());
 
     let store = RocksStoreService::new(dir.join("store")).await?;
-    let p2p = P2pService::new(Default::default(), dir, store.addr()).await?;
+
+    let mut p2p_config = Libp2pConfig::default();
+    p2p_config.listening_multiaddrs = vec![
+        "/ip4/0.0.0.0/tcp/0".parse().unwrap(),
+        "/ip4/0.0.0.0/udp/0/quic-v1".parse().unwrap(),
+    ];
+    let p2p = P2pService::new(p2p_config, dir, store.addr()).await?;
 
     // TODO: make it easy to add default http_resolvers and indexer.
     let iroh = IrohBuilder::new()
