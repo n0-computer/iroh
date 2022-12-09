@@ -1,12 +1,11 @@
 # iroh-rpc-client
 
 [iroh](https://github.com/n0-computer/iroh) services internally communicate via
-RPC, using the [gRPC protocol](https://grpc.io/) and [protocol
-buffers](https://developers.google.com/protocol-buffers). This crate provides
-an RPC client that can be used to talk to an [iroh
-gateway](https://github.com/n0-computer/iroh/tree/main/iroh-gateway), an [iroh
-p2p node](https://github.com/n0-computer/iroh/tree/main/iroh-p2p), and the
-[iroh store](https://github.com/n0-computer/iroh/tree/main/iroh-store). 
+RPC, using the [quic-rpc](https://github.com/n0-computer/quic-rpc) RPC system.
+
+TLDR: bincode encoded messages sent as http2 frames.
+
+These channels are meant for internal communication and are not a stable API.
 
 The types that define the RPC protocol are maintained in
 [iroh-rpc-types](https://github.com/n0-computer/iroh/tree/main/iroh-rpc-types).

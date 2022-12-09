@@ -1,15 +1,12 @@
 use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 
-use anyhow::{Context, Result};
-use futures::{Stream, StreamExt};
-#[cfg(feature = "grpc")]
-use futures::{Stream, StreamExt};
-
 use super::config::Config;
 use super::gateway::GatewayClient;
 use super::network::P2pClient;
 use super::store::StoreClient;
+use anyhow::{Context, Result};
+use futures::{Stream, StreamExt};
 
 #[derive(Debug, Clone)]
 pub struct Client {

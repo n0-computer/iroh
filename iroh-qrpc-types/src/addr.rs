@@ -102,15 +102,16 @@ impl<S: Service> FromStr for Addr<S> {
 #[cfg(test)]
 mod tests {
 
-    #[cfg(feature = "grpc")]
     #[test]
     fn test_addr_roundtrip_grpc_http2() {
         use crate::gateway::GatewayAddr;
+        use crate::Addr;
+        use std::net::SocketAddr;
 
         let socket: SocketAddr = "198.168.2.1:1234".parse().unwrap();
-        let addr = Addr::Qrpc(socket);
+        let addr = Addr::Http2(socket);
 
-        assert_eq!(addr.to_string().parse::<GatewayClientAddr>().unwrap(), addr);
-        assert_eq!(addr.to_string(), "qrpc://198.168.2.1:1234");
+        assert_eq!(addr.to_string().parse::<GatewayAddr>().unwrap(), addr);
+        assert_eq!(addr.to_string(), "http://198.168.2.1:1234");
     }
 }
