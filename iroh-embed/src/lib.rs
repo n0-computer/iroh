@@ -1,6 +1,8 @@
-use anyhow::Result;
+use anyhow::{bail, Result};
 use iroh_api::Api;
 use iroh_rpc_client::Config as RpcClientConfig;
+
+pub use reqwest::Url;
 
 /// An address allowing internal communication with the iroh store service.
 ///
@@ -24,6 +26,134 @@ mod store;
 pub use p2p::P2pService;
 pub use store::RocksStoreService;
 
+/// Builder for an [`Iroh`] system.
+///
+/// At least a store and p2p service must be added using the [`IrohBuilder::with_store`] and
+/// [`IrohBuilder::with_p2p`].
+///
+/// # Examples
+///
+/// ```
+/// tokio_test::block_on(async {
+/// use iroh_embed::{Iroh, IrohBuilder, P2pService, RocksStoreService};
+/// use testdir::testdir;
+///
+/// let dir = testdir!();
+/// let store = RocksStoreService::new(dir.join("store")).await.unwrap();
+/// let p2p = P2pService::new(Default::default(), dir, store.addr()).await.unwrap();
+/// let _iroh: Iroh = IrohBuilder::new()
+///                     .with_store(store)
+///                     .with_p2p(p2p)
+///                     .build()
+///                     .await
+///                     .unwrap();
+/// # })
+/// ```
+#[derive(Debug, Default)]
+pub struct IrohBuilder {
+    store: Option<RocksStoreService>,
+    p2p: Option<P2pService>,
+    http_resolvers: Vec<String>,
+    indexer: Option<String>,
+}
+
+impl IrohBuilder {
+    /// Creates a new [`IrohBuilder`].
+    pub fn new() -> Self {
+        // TODO: Default for indexer
+        Default::default()
+    }
+
+    /// Adds a store service.
+    ///
+    /// Every [`Iroh`] system needs a store so this can not be skipped.
+    pub fn with_store(mut self, store: RocksStoreService) -> Self {
+        self.store = Some(store);
+        self
+    }
+
+    /// Adds a p2p service.
+    ///
+    /// This service **must** have been built using the address from the store service
+    /// passed to [`IrohBuilder::with_store`].
+    ///
+    /// Every [`Iroh`] system currently needs a p2p service so this can not be skipped.
+    pub fn with_p2p(mut self, p2p: P2pService) -> Self {
+        self.p2p = Some(p2p);
+        self
+    }
+
+    /// Adds IPFS HTTP gateways as resolvers to the iroh system.
+    ///
+    /// IPFS HTTP gateways can be used to resolve IPFS content in addition to retrieving the
+    /// content from the IPFS peer-to-peer system.
+    // TODO: Allow using this without a p2p node?
+    pub fn with_http_resolvers(mut self, http_resolvers: impl Iterator<Item = Url>) -> Self {
+        self.http_resolvers = http_resolvers.map(|u| u.to_string()).collect();
+        self
+    }
+
+    /// Adds a single HTTP gateway to the list of HTTP gateways to use.
+    ///
+    /// IPFS HTTP gateways are used to look up providers of CIDs, in addition to looking
+    /// them up in the Distrubuted Hash Table (DHT).
+    pub fn push_http_gateway(mut self, http_gateway: Url) -> Self {
+        self.http_resolvers.push(http_gateway.to_string());
+        self
+    }
+
+    /// Removes all IPFS HTTP gateways.
+    pub fn clear_http_gateways(mut self) -> Self {
+        self.http_resolvers.clear();
+        self
+    }
+
+    /// Use the given IPFS indexer with this iroh system.
+    ///
+    /// An IPFS indexer keeps an index of CIDs and IPFS nodes which currently provide the
+    /// data for the CID.
+    // TODO: Change type to reqwest::Url
+    pub fn with_indexer(mut self, indexer: Url) -> Self {
+        // TODO: figure out the default here.
+        self.indexer = Some(indexer.to_string());
+        self
+    }
+
+    /// Builds the iroh system.
+    pub async fn build(self) -> Result<Iroh> {
+        // TODO: would be good if we can verify the p2p service is correctly hooked up to
+        // the store service.
+        let store = match self.store {
+            Some(store) => store,
+            None => bail!("missing store service"),
+        };
+        let p2p = match self.p2p {
+            Some(p2p) => p2p,
+            None => bail!("missing p2p service"),
+        };
+        let http_resolvers = match self.http_resolvers.is_empty() {
+            true => None,
+            false => Some(self.http_resolvers),
+        };
+
+        let rpc_config = RpcClientConfig {
+            gateway_addr: None,
+            p2p_addr: Some(p2p.addr()),
+            store_addr: Some(store.addr()),
+            channels: Some(1),
+        };
+        let api_config = iroh_api::config::Config {
+            rpc_client: rpc_config,
+            metrics: Default::default(),
+            http_resolvers,
+            indexer_endpoint: self.indexer,
+        };
+        let api = Api::new(api_config).await?;
+
+        Ok(Iroh { store, p2p, api })
+    }
+}
+
 /// The full iroh system.
 ///
 /// Creating this will create an iroh system and start several tokio tasks.  To make the
@@ -36,51 +166,6 @@ pub struct Iroh {
 }
 
 impl Iroh {
-    /// Creates a new running iroh system.
-    ///
-    /// To create an iroh system first a store and p2p service must be created and must be
-    /// wired up to communicate together.  This means the [`P2pService`] must be created
-    /// with the [`StoreClientAddr`] from the store used.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// tokio_test::block_on(async {
-    /// use iroh_embed::{Iroh, P2pService, RocksStoreService};
-    /// use testdir::testdir;
-    ///
-    /// let dir = testdir!();
-    /// let store = RocksStoreService::new(dir.join("store")).await.unwrap();
-    /// let p2p = P2pService::new(Default::default(), dir, store.addr()).await.unwrap();
-    /// let _iroh = Iroh::new(store, p2p, None, None).await.unwrap();
-    /// # })
-    /// ```
-    // TODO: on this level we should use better API than parsing the resolvers and indexers
-    // from strings.
-    // TODO: the store will also want to support an in-memory version.
-    pub async fn new(
-        store: RocksStoreService,
-        p2p: P2pService,
-        http_resolvers: Option<Vec<String>>,
-        indexer_endpoint: Option<String>,
-    ) -> Result<Self> {
-        let rpc_config = RpcClientConfig {
-            gateway_addr: None,
-            p2p_addr: Some(p2p.addr()),
-            store_addr: Some(store.addr()),
-            channels: Some(1),
-        };
-        let api_config = iroh_api::config::Config {
-            rpc_client: rpc_config,
-            metrics: Default::default(),
-            http_resolvers,
-            indexer_endpoint,
-        };
-        let api = Api::new(api_config).await?;
-
-        Ok(Self { store, p2p, api })
-    }
-
     /// Returns a reference to the iroh API.
     ///
     /// This API gives you some high level functionality using the built-in p2p and store
