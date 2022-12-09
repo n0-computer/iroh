@@ -5,7 +5,7 @@ use futures::{
 };
 use iroh_p2p::NetworkEvent;
 use iroh_resolver::resolver::{Out, OutPrettyReader, OutType, Path, Resolver, UnixfsType};
-use iroh_unixfs::{unixfs::Link, ResponseClip};
+use iroh_unixfs::{Link, ResponseClip};
 use libp2p::gossipsub::{GossipsubMessage, MessageId, TopicHash};
 use libp2p::PeerId;
 use tokio::sync::mpsc::{channel, Receiver as ChannelReceiver};

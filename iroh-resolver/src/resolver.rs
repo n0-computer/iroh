@@ -16,10 +16,8 @@ use iroh_unixfs::{
     codecs::Codec,
     content_loader::{ContentLoader, ContextId, LoaderContext},
     parse_links,
-    unixfs::{
-        poll_read_buf_at_pos, DataType, Link, UnixfsChildStream, UnixfsContentReader, UnixfsNode,
-    },
-    Block, LoadedCid, ResponseClip, Source,
+    unixfs::{poll_read_buf_at_pos, DataType, UnixfsChildStream, UnixfsContentReader, UnixfsNode},
+    Block, Link, LoadedCid, ResponseClip, Source,
 };
 use libipld::codec::Encode;
 use libipld::prelude::Codec as _;

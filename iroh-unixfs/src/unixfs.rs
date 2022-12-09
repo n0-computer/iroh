@@ -1,7 +1,6 @@
 use std::{
     collections::VecDeque,
     fmt::Debug,
-    io::Cursor,
     pin::Pin,
     task::{Context, Poll},
 };
@@ -16,10 +15,10 @@ use tokio::io::{AsyncRead, AsyncSeek};
 
 use crate::{
     chunker::DEFAULT_CHUNK_SIZE_LIMIT,
-    hamt::Hamt,
-    content_loader::{ContentLoader, LoaderContext},
     codecs::Codec,
-    types::{Block, ResponseClip},
+    content_loader::{ContentLoader, LoaderContext},
+    hamt::Hamt,
+    types::{Block, Link, LinkRef, Links, PbLinks, ResponseClip},
 };
 
 pub(crate) mod unixfs_pb {
@@ -63,40 +62,6 @@ impl Unixfs {
 
     pub fn data(&self) -> Option<&Bytes> {
         self.inner.data.as_ref()
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Link {
-    pub cid: Cid,
-    pub name: Option<String>,
-    pub tsize: Option<u64>,
-}
-
-impl Link {
-    pub fn as_ref(&self) -> LinkRef<'_> {
-        LinkRef {
-            cid: self.cid,
-            name: self.name.as_deref(),
-            tsize: self.tsize,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LinkRef<'a> {
-    pub cid: Cid,
-    pub name: Option<&'a str>,
-    pub tsize: Option<u64>,
-}
-
-impl LinkRef<'_> {
-    pub fn to_owned(&self) -> Link {
-        Link {
-            cid: self.cid,
-            name: self.name.map(|t| t.to_string()),
-            tsize: self.tsize,
-        }
     }
 }
 
@@ -417,10 +382,9 @@ impl<'a> Debug for UnixfsChildStream<'a> {
         match self {
             UnixfsChildStream::Hamt {
                 pos, out_metrics, ..
-            } => 
+            } =>
                 write!(f, "UnixfsChildStream::Hamt {{ stream: BoxStream<Result<Link>>, pos: {}, out_metrics {:?} }}", pos, out_metrics),
-            
-            UnixfsChildStream::Directory { out_metrics, .. } => 
+            UnixfsChildStream::Directory { out_metrics, .. } =>
                 write!(f, "UnixfsChildStream::Directory {{ stream: BoxStream<Result<Link>>, out_metrics {:?} }}", out_metrics),
         }
     }
@@ -863,84 +827,5 @@ fn poll_read_file_at<C: ContentLoader + 'static>(
                 }
             }
         }
-    }
-}
-
-#[derive(Debug)]
-pub enum Links<'a> {
-    Raw,
-    RawNode(PbLinks<'a>),
-    Directory(PbLinks<'a>),
-    File(PbLinks<'a>),
-    Symlink(PbLinks<'a>),
-    HamtShard(PbLinks<'a>),
-}
-
-#[derive(Debug)]
-pub struct PbLinks<'a> {
-    i: usize,
-    outer: &'a dag_pb::PbNode,
-}
-
-impl<'a> PbLinks<'a> {
-    pub fn new(outer: &'a dag_pb::PbNode) -> Self {
-        PbLinks { i: 0, outer }
-    }
-}
-
-impl<'a> Iterator for Links<'a> {
-    type Item = Result<LinkRef<'a>>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        match self {
-            Links::Raw => None,
-            Links::Directory(links)
-            | Links::RawNode(links)
-            | Links::File(links)
-            | Links::Symlink(links)
-            | Links::HamtShard(links) => links.next(),
-        }
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        match self {
-            Links::Raw => (0, Some(0)),
-            Links::Directory(links)
-            | Links::RawNode(links)
-            | Links::File(links)
-            | Links::Symlink(links)
-            | Links::HamtShard(links) => links.size_hint(),
-        }
-    }
-}
-
-impl<'a> Iterator for PbLinks<'a> {
-    type Item = Result<LinkRef<'a>>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.i == self.outer.links.len() {
-            return None;
-        }
-
-        let l = &self.outer.links[self.i];
-        self.i += 1;
-
-        let res = l
-            .hash
-            .as_ref()
-            .ok_or_else(|| anyhow!("missing link"))
-            .and_then(|c| {
-                Ok(LinkRef {
-                    cid: Cid::read_bytes(Cursor::new(c))?,
-                    name: l.name.as_deref(),
-                    tsize: l.tsize,
-                })
-            });
-
-        Some(res)
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        (self.outer.links.len(), Some(self.outer.links.len()))
     }
 }

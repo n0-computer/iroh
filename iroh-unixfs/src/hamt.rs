@@ -4,7 +4,9 @@ use once_cell::sync::OnceCell;
 
 use crate::{
     content_loader::{ContentLoader, LoaderContext},
-    unixfs::{self, HamtHashFunction, Link, Links, PbLinks, UnixfsNode},
+    types::PbLinks,
+    unixfs::{self, HamtHashFunction, UnixfsNode},
+    Link, Links,
 };
 use async_recursion::async_recursion;
 
