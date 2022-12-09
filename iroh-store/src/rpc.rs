@@ -11,8 +11,6 @@ use iroh_rpc_types::store::{
 use tracing::info;
 
 use crate::store::Store;
-
-#[cfg(feature = "rpc-grpc")]
 impl iroh_rpc_types::NamedService for Store {
     const NAME: &'static str = "store";
 }

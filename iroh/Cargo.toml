@@ -28,13 +28,12 @@ git-version = "0.3.5"
 indicatif = "0.17.1"
 iroh-api = { version = "0.1.3", path = "../iroh-api"}
 iroh-localops = { version = "0.1.3", path = "../iroh-localops" }
-iroh-metrics = { version = "0.1.3", path = "../iroh-metrics", default-features = false, features = ["rpc-grpc"] }
+iroh-metrics = { version = "0.1.3", path = "../iroh-metrics", default-features = false }
 iroh-util = { version = "0.1.3", path = "../iroh-util"}
 relative-path = { version = "1.7.2", optional = true }
 serde = { version = "1.0", features = ["derive"] }
 sysinfo = "0.26.4"
 tokio = { version = "1", features = ["fs", "io-util"] }
-tonic = "0.8"
 tracing = "0.1.34"
 which = "4.3.0"
 

@@ -1079,7 +1079,6 @@ mod tests {
     use iroh_rpc_types::{p2p::P2pAddr, Addr};
     use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
-    #[cfg(feature = "rpc-grpc")]
     #[tokio::test]
     #[ignore]
     async fn test_fetch_providers_grpc_dht() -> Result<()> {
@@ -1097,7 +1096,6 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(feature = "rpc-mem")]
     #[tokio::test]
     async fn test_fetch_providers_mem_dht() -> Result<()> {
         tracing_subscriber::registry()
@@ -1169,12 +1167,8 @@ mod tests {
             let (rpc_server_addr, rpc_client_addr) = match self.rpc_addrs {
                 Some((rpc_server_addr, rpc_client_addr)) => (rpc_server_addr, rpc_client_addr),
                 None => {
-                    if cfg!(feature = "rpc-mem") {
-                        let x = Addr::new_mem();
-                        (x.clone(), x)
-                    } else {
-                        anyhow::bail!("no rpc addrs given")
-                    }
+                    let x = Addr::new_mem();
+                    (x.clone(), x)
                 }
             };
             let mut network_config = Config::default_with_rpc(rpc_client_addr.clone());

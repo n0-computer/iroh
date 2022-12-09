@@ -43,11 +43,6 @@ rayon = "1.5.3"
 tempfile = "3.3.0"
 tokio = { version = "1", features = ["rt", "macros", "rt-multi-thread"] }
 
-[features]
-default = ["rpc-grpc", "rpc-mem"]
-rpc-grpc = ["iroh-metrics/rpc-grpc"]
-rpc-mem = []
-
 [[bench]]
 name = "store"
 harness = false

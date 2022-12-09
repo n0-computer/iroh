@@ -78,7 +78,7 @@ mod tests {
     use super::*;
 
     #[test]
-    #[cfg(all(feature = "rpc-grpc", unix))]
+    #[cfg(unix)]
     fn test_collect() {
         let path = PathBuf::new().join("test");
         let default = Config::new_network(path);
@@ -106,7 +106,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(all(feature = "rpc-grpc", unix))]
+    #[cfg(unix)]
     fn test_build_config_from_struct() {
         let path = PathBuf::new().join("test");
         let expect = Config::new_network(path);
