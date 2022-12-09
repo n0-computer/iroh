@@ -4,7 +4,7 @@ use cid::Cid;
 use futures::StreamExt;
 use futures::{stream::BoxStream, TryFutureExt};
 use iroh_bitswap::Block;
-use iroh_rpc_client::{create_server, Lookup, P2pServer};
+use iroh_rpc_client::{create_server, Lookup, P2pServer, ServerError, ServerSocket};
 use iroh_rpc_types::{p2p::*, RpcError, RpcResult};
 use libp2p::gossipsub::{
     error::{PublishError, SubscriptionError},
@@ -15,6 +15,7 @@ use libp2p::kad::record::Key;
 use libp2p::Multiaddr;
 use libp2p::PeerId;
 use std::collections::{HashMap, HashSet};
+use std::result;
 use tokio::sync::mpsc::{channel, Sender};
 use tokio::sync::oneshot;
 use tracing::{debug, info, trace};
@@ -510,52 +511,50 @@ impl P2p {
     }
 }
 
-/// Dispatch incoming requests to the p2p service.
-async fn dispatch(s: P2pServer, target: P2p) -> Result<()> {
+/// dispatch a single request from the server 
+#[rustfmt::skip]
+async fn dispatch(s: P2pServer, req: P2pRequest, chan: ServerSocket<P2pService>, target: P2p) -> result::Result<(), ServerError> {
     use P2pRequest::*;
-    loop {
-        let s = s.clone();
-        let (req, chan) = s.accept_one().await?;
-        let target = target.clone();
-        #[rustfmt::skip]
-        tokio::spawn(async move {
-        match req {
-            Version(req) => s.rpc(req, chan, target, P2p::version).await,
-            Shutdown(req) => s.rpc_map_err(req, chan, target, P2p::shutdown).await,
-            FetchBitswap(req) => s.rpc_map_err(req, chan, target, P2p::fetch_bitswap).await,
-            GossipsubAddExplicitPeer(req) => s.rpc_map_err(req, chan, target, P2p::gossipsub_add_explicit_peer).await,
-            GossipsubAllPeers(req) => s.rpc_map_err(req, chan, target, P2p::gossipsub_all_peers).await,
-            GossipsubMeshPeers(req) => s.rpc_map_err(req, chan, target, P2p::gossipsub_mesh_peers).await,
-            GossipsubAllMeshPeers(req) => s.rpc_map_err(req, chan, target, P2p::gossipsub_all_mesh_peers).await,
-            GossipsubPublish(req) => s.rpc_map_err(req, chan, target, P2p::gossipsub_publish).await,
-            GossipsubRemoveExplicitPeer(req) => s.rpc_map_err(req, chan, target, P2p::gossipsub_remove_explicit_peer).await,
-            GossipsubSubscribe(req) => s.rpc_map_err(req, chan, target, P2p::gossipsub_subscribe).await,
-            GossipsubTopics(req) => s.rpc_map_err(req, chan, target, P2p::gossipsub_topics).await,
-            GossipsubUnsubscribe(req) => s.rpc_map_err(req, chan, target, P2p::gossipsub_unsubscribe).await,
-            StopSessionBitswap(req) => s.rpc_map_err(req, chan, target, P2p::stop_session_bitswap).await,
-            StartProviding(req) => s.rpc_map_err(req, chan, target, P2p::start_providing).await,
-            StopProviding(req) => s.rpc_map_err(req, chan, target, P2p::stop_providing).await,
-            LocalPeerId(req) => s.rpc_map_err(req, chan, target, P2p::local_peer_id).await,
-            NotifyNewBlocksBitswap(req) => s.rpc_map_err(req, chan, target, P2p::notify_new_blocks_bitswap).await,
-            GetListeningAddrs(req) => s.rpc_map_err(req, chan, target, P2p::get_listening_addrs).await,
-            GetPeers(req) => s.rpc_map_err(req, chan, target, P2p::get_peers).await,
-            PeerConnect(req) => s.rpc_map_err(req, chan, target, P2p::peer_connect).await,
-            PeerDisconnect(req) => s.rpc_map_err(req, chan, target, P2p::peer_disconnect).await,
-            PeerConnectByPeerId(req) => s.rpc_map_err(req, chan, target, P2p::peer_connect_by_peer_id).await,
-            Lookup(req) => s.rpc_map_err(req, chan, target, P2p::lookup).await,
-            LookupLocal(req) => s.rpc_map_err(req, chan, target, P2p::lookup_local).await,
-            ExternalAddrs(req) => s.rpc_map_err(req, chan, target, P2p::external_addrs).await,
-            Listeners(req) => s.rpc_map_err(req, chan, target, P2p::listeners).await,
-            FetchProviderDht(req) => s.server_streaming(req, chan, target, P2p::fetch_provider_dht).await,
-        }});
+    match req {
+        Version(req) => s.rpc(req, chan, target, P2p::version).await,
+        Shutdown(req) => s.rpc_map_err(req, chan, target, P2p::shutdown).await,
+        FetchBitswap(req) => s.rpc_map_err(req, chan, target, P2p::fetch_bitswap).await,
+        GossipsubAddExplicitPeer(req) => s.rpc_map_err(req, chan, target, P2p::gossipsub_add_explicit_peer).await,
+        GossipsubAllPeers(req) => s.rpc_map_err(req, chan, target, P2p::gossipsub_all_peers).await,
+        GossipsubMeshPeers(req) => s.rpc_map_err(req, chan, target, P2p::gossipsub_mesh_peers).await,
+        GossipsubAllMeshPeers(req) => s.rpc_map_err(req, chan, target, P2p::gossipsub_all_mesh_peers).await,
+        GossipsubPublish(req) => s.rpc_map_err(req, chan, target, P2p::gossipsub_publish).await,
+        GossipsubRemoveExplicitPeer(req) => s.rpc_map_err(req, chan, target, P2p::gossipsub_remove_explicit_peer).await,
+        GossipsubSubscribe(req) => s.rpc_map_err(req, chan, target, P2p::gossipsub_subscribe).await,
+        GossipsubTopics(req) => s.rpc_map_err(req, chan, target, P2p::gossipsub_topics).await,
+        GossipsubUnsubscribe(req) => s.rpc_map_err(req, chan, target, P2p::gossipsub_unsubscribe).await,
+        StopSessionBitswap(req) => s.rpc_map_err(req, chan, target, P2p::stop_session_bitswap).await,
+        StartProviding(req) => s.rpc_map_err(req, chan, target, P2p::start_providing).await,
+        StopProviding(req) => s.rpc_map_err(req, chan, target, P2p::stop_providing).await,
+        LocalPeerId(req) => s.rpc_map_err(req, chan, target, P2p::local_peer_id).await,
+        NotifyNewBlocksBitswap(req) => s.rpc_map_err(req, chan, target, P2p::notify_new_blocks_bitswap).await,
+        GetListeningAddrs(req) => s.rpc_map_err(req, chan, target, P2p::get_listening_addrs).await,
+        GetPeers(req) => s.rpc_map_err(req, chan, target, P2p::get_peers).await,
+        PeerConnect(req) => s.rpc_map_err(req, chan, target, P2p::peer_connect).await,
+        PeerDisconnect(req) => s.rpc_map_err(req, chan, target, P2p::peer_disconnect).await,
+        PeerConnectByPeerId(req) => s.rpc_map_err(req, chan, target, P2p::peer_connect_by_peer_id).await,
+        Lookup(req) => s.rpc_map_err(req, chan, target, P2p::lookup).await,
+        LookupLocal(req) => s.rpc_map_err(req, chan, target, P2p::lookup_local).await,
+        ExternalAddrs(req) => s.rpc_map_err(req, chan, target, P2p::external_addrs).await,
+        Listeners(req) => s.rpc_map_err(req, chan, target, P2p::listeners).await,
+        FetchProviderDht(req) => s.server_streaming(req, chan, target, P2p::fetch_provider_dht).await,
     }
 }
 
 #[tracing::instrument(skip(p2p))]
 pub(crate) async fn new(addr: P2pAddr, p2p: P2p) -> Result<()> {
-    info!("rpc listening on: {}", addr);
+    info!("p2p rpc listening on: {}", addr);
     let server = create_server::<P2pService>(addr).await?;
-    dispatch(server, p2p).await
+    loop {
+        let s = server.clone();
+        let (req, chan) = s.accept_one().await?;
+        tokio::spawn(dispatch(s, req, chan, p2p.clone()));
+    }
 }
 
 fn peer_info_from_identify_info(i: IdentifyInfo) -> LookupResponse {

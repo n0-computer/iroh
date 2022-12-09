@@ -15,7 +15,24 @@ use quic_rpc::{
 pub use status::{ServiceStatus, StatusRow, StatusTable};
 pub use store::StoreClient;
 
+/// The types of channels used by the client and server.
 pub type ChannelTypes = CombinedChannelTypes<Http2ChannelTypes, MemChannelTypes>;
+
+/// Error when handling an RPC call on the client side.
+pub type ClientError = quic_rpc::client::RpcClientError<ChannelTypes>;
+
+/// Error when handling an RPC call on the server side.
+pub type ServerError = quic_rpc::server::RpcServerError<ChannelTypes>;
+
+/// A request sink and response stream for a single RPC call on the client side.
+#[allow(type_alias_bounds)]
+pub type ClientSocket<S: Service, C: quic_rpc::ChannelTypes = ChannelTypes> =
+    (C::SendSink<S::Req>, C::RecvStream<S::Res>);
+
+/// A response sink and request stream for a single RPC call on the server side.
+#[allow(type_alias_bounds)]
+pub type ServerSocket<S: Service, C: quic_rpc::ChannelTypes = ChannelTypes> =
+    (C::SendSink<S::Res>, C::RecvStream<S::Req>);
 
 pub type StoreServer = RpcServer<StoreService, ChannelTypes>;
 pub type GatewayServer = RpcServer<GatewayService, ChannelTypes>;

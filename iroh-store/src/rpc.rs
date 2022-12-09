@@ -1,6 +1,8 @@
+use std::result;
+
 use anyhow::Result;
 use bytes::BytesMut;
-use iroh_rpc_client::{create_server, StoreServer};
+use iroh_rpc_client::{create_server, ServerError, ServerSocket, StoreServer};
 use iroh_rpc_types::store::{
     GetLinksRequest, GetLinksResponse, GetRequest, GetResponse, GetSizeRequest, GetSizeResponse,
     HasRequest, HasResponse, PutManyRequest, PutRequest, StoreAddr, StoreRequest, StoreService,
@@ -101,34 +103,29 @@ impl RpcStore {
     }
 }
 
-/// Dispatches incoming requests to the store.
-async fn dispatch(server: StoreServer, store: Store) -> Result<()> {
+/// dispatch a single request from the server 
+#[rustfmt::skip]
+async fn dispatch(s: StoreServer, req: StoreRequest, chan: ServerSocket<StoreService>, target: RpcStore) -> result::Result<(), ServerError> {
     use StoreRequest::*;
-    let s = server.clone();
-    let store = RpcStore(store);
-    loop {
-        let store = store.clone();
-        let s = s.clone();
-        let (req, chan) = s.accept_one().await?;
-        let store = store.clone();
-        #[rustfmt::skip]
-        tokio::spawn(async move {
-            match req {
-                Version(req) => s.rpc(req, chan, store, RpcStore::version).await,
-                Put(req) => s.rpc_map_err(req, chan, store, RpcStore::put).await,
-                PutMany(req) => s.rpc_map_err(req, chan, store, RpcStore::put_many).await,
-                Get(req) => s.rpc_map_err(req, chan, store, RpcStore::get).await,
-                Has(req) => s.rpc_map_err(req, chan, store, RpcStore::has).await,
-                GetLinks(req) => s.rpc_map_err(req, chan, store, RpcStore::get_links).await,
-                GetSize(req) => s.rpc_map_err(req, chan, store, RpcStore::get_size).await,
-            }
-        });
+    match req {
+        Version(req) => s.rpc(req, chan, target, RpcStore::version).await,
+        Put(req) => s.rpc_map_err(req, chan, target, RpcStore::put).await,
+        PutMany(req) => s.rpc_map_err(req, chan, target, RpcStore::put_many).await,
+        Get(req) => s.rpc_map_err(req, chan, target, RpcStore::get).await,
+        Has(req) => s.rpc_map_err(req, chan, target, RpcStore::has).await,
+        GetLinks(req) => s.rpc_map_err(req, chan, target, RpcStore::get_links).await,
+        GetSize(req) => s.rpc_map_err(req, chan, target, RpcStore::get_size).await,
     }
 }
 
 #[tracing::instrument(skip(store))]
 pub async fn new(addr: StoreAddr, store: Store) -> Result<()> {
-    info!("rpc listening on: {}", addr);
-    let server = create_server::<StoreService>(addr).await?;
-    dispatch(server, store).await
+    info!("store rpc listening on: {}", addr);
+    let s = create_server::<StoreService>(addr).await?;
+    let store = RpcStore(store);
+    loop {
+        let s = s.clone();
+        let (req, chan) = s.accept_one().await?;
+        tokio::spawn(dispatch(s, req, chan, store.clone()));
+    }
 }
