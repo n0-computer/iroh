@@ -2,17 +2,12 @@ use std::{
     fmt::Debug,
     path::{Path, PathBuf},
     pin::Pin,
-    sync::Arc,
 };
 
 use anyhow::{ensure, Result};
 use async_recursion::async_recursion;
-use async_trait::async_trait;
 use bytes::Bytes;
-use cid::Cid;
-use futures::stream::TryStreamExt;
-use futures::{future, stream::LocalBoxStream, Stream, StreamExt};
-use iroh_rpc_client::Client;
+use futures::{stream::LocalBoxStream, Stream, StreamExt};
 use prost::Message;
 use tokio::io::AsyncRead;
 
@@ -30,9 +25,6 @@ use crate::{
 // (64 bytes + 256 bytes + 8 bytes) / 2 MB ≈ 6400
 // adding a generous buffer, we are using 6k as our link limit
 const DIRECTORY_LINK_LIMIT: usize = 6000;
-
-/// How many chunks to buffer up when adding content.
-const _ADD_PAR: usize = 24;
 
 #[derive(Debug, PartialEq)]
 enum DirectoryType {
@@ -391,10 +383,57 @@ impl FileBuilder {
 /// Entry is the kind of entry in a directory can be either a file or a
 /// folder (if recursive directories are allowed)
 #[derive(Debug, PartialEq)]
-enum Entry {
+pub enum Entry {
     File(File),
     Directory(Directory),
     Symlink(Symlink),
+}
+
+impl Entry {
+    pub async fn from_path(path: &Path, config: Config) -> Result<Self> {
+        let entry = if path.is_dir() {
+            if let Some(chunker_config) = config.chunker {
+                let chunker = chunker_config.into();
+                let dir = DirectoryBuilder::new()
+                    .chunker(chunker)
+                    .path(path)
+                    .build()
+                    .await?;
+                Entry::Directory(dir)
+            } else {
+                anyhow::bail!("expected a ChunkerConfig in the Config");
+            }
+        } else if path.is_file() {
+            if let Some(chunker_config) = config.chunker {
+                let chunker = chunker_config.into();
+                let file = FileBuilder::new()
+                    .chunker(chunker)
+                    .path(path)
+                    .build()
+                    .await?;
+                Entry::File(file)
+            } else {
+                anyhow::bail!("expected a ChunkerConfig in the Config");
+            }
+        } else if path.is_symlink() {
+            let symlink = SymlinkBuilder::new(path).build().await?;
+            Entry::Symlink(symlink)
+        } else {
+            anyhow::bail!("can only add files, directories, or symlinks");
+        };
+        if config.wrap {
+            return Ok(Entry::Directory(entry.wrap()));
+        }
+        Ok(entry)
+    }
+
+    fn wrap(self) -> Directory {
+        match self {
+            Entry::File(f) => f.wrap(),
+            Entry::Directory(d) => d.wrap(),
+            Entry::Symlink(s) => s.wrap(),
+        }
+    }
 }
 
 /// Construct a UnixFS directory.
@@ -403,6 +442,8 @@ pub struct DirectoryBuilder {
     name: Option<String>,
     entries: Vec<Entry>,
     typ: DirectoryType,
+    chunker: Option<Chunker>,
+    path: Option<PathBuf>,
 }
 
 impl Default for DirectoryBuilder {
@@ -411,6 +452,8 @@ impl Default for DirectoryBuilder {
             name: None,
             entries: Default::default(),
             typ: DirectoryType::Basic,
+            chunker: None,
+            path: None,
         }
     }
 }
@@ -420,29 +463,39 @@ impl DirectoryBuilder {
         Default::default()
     }
 
-    pub fn hamt(&mut self) -> &mut Self {
+    pub fn hamt(mut self) -> Self {
         self.typ = DirectoryType::Hamt;
         self
     }
 
-    pub fn name<N: Into<String>>(&mut self, name: N) -> &mut Self {
+    pub fn name<N: Into<String>>(mut self, name: N) -> Self {
         self.name = Some(name.into());
         self
     }
 
-    pub fn add_dir(&mut self, dir: Directory) -> Result<&mut Self> {
+    pub fn path(mut self, path: &Path) -> Self {
+        self.path = Some(path.into());
+        self
+    }
+
+    pub fn chunker(mut self, chunker: Chunker) -> Self {
+        self.chunker = Some(chunker);
+        self
+    }
+
+    pub fn add_dir(self, dir: Directory) -> Result<Self> {
         Ok(self.entry(Entry::Directory(dir)))
     }
 
-    pub fn add_file(&mut self, file: File) -> &mut Self {
+    pub fn add_file(self, file: File) -> Self {
         self.entry(Entry::File(file))
     }
 
-    pub fn add_symlink(&mut self, symlink: Symlink) -> &mut Self {
+    pub fn add_symlink(self, symlink: Symlink) -> Self {
         self.entry(Entry::Symlink(symlink))
     }
 
-    fn entry(&mut self, entry: Entry) -> &mut Self {
+    fn entry(mut self, entry: Entry) -> Self {
         if self.typ == DirectoryType::Basic && self.entries.len() >= DIRECTORY_LINK_LIMIT {
             self.typ = DirectoryType::Hamt
         }
@@ -450,14 +503,28 @@ impl DirectoryBuilder {
         self
     }
 
-    pub fn build(self) -> Result<Directory> {
+    pub async fn build(self) -> Result<Directory> {
         let DirectoryBuilder {
-            name, entries, typ, ..
+            name,
+            entries,
+            typ,
+            path,
+            chunker,
+            ..
         } = self;
 
         ensure!(typ == DirectoryType::Basic, "too many links to fit into one chunk, must be encoded as a HAMT. However, HAMT creation has not yet been implemented.");
 
         let name = name.unwrap_or_default();
+
+        if let Some(path) = path {
+            if let Some(chunker) = chunker {
+                let mut dir = make_dir_from_path(path, chunker).await?;
+                dir.name = name;
+                return Ok(dir);
+            }
+            anyhow::bail!("expected chunker when building a directory from a path");
+        }
 
         Ok(Directory { name, entries })
     }
@@ -515,238 +582,18 @@ pub(crate) fn encode_unixfs_pb(
     })
 }
 
-#[async_trait]
-pub trait Store: 'static + Send + Sync + Clone {
-    async fn has(&self, &cid: Cid) -> Result<bool>;
-    async fn put(&self, cid: Cid, blob: Bytes, links: Vec<Cid>) -> Result<()>;
-    async fn put_many(&self, blocks: Vec<Block>) -> Result<()>;
-}
-
-#[async_trait]
-impl Store for Client {
-    async fn has(&self, cid: Cid) -> Result<bool> {
-        self.try_store()?.has(cid).await
-    }
-
-    async fn put(&self, cid: Cid, blob: Bytes, links: Vec<Cid>) -> Result<()> {
-        self.try_store()?.put(cid, blob, links).await
-    }
-
-    async fn put_many(&self, blocks: Vec<Block>) -> Result<()> {
-        self.try_store()?
-            .put_many(blocks.into_iter().map(|x| x.into_parts()).collect())
-            .await
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct StoreAndProvideClient {
-    pub client: Client,
-}
-
-#[async_trait]
-impl Store for StoreAndProvideClient {
-    async fn has(&self, cid: Cid) -> Result<bool> {
-        self.client.try_store()?.has(cid).await
-    }
-
-    async fn put(&self, cid: Cid, blob: Bytes, links: Vec<Cid>) -> Result<()> {
-        self.client.try_store()?.put(cid, blob, links).await
-        // we provide after insertion is finished
-        // self.client.try_p2p()?.start_providing(&cid).await
-    }
-
-    async fn put_many(&self, blocks: Vec<Block>) -> Result<()> {
-        self.client
-            .try_store()?
-            .put_many(blocks.into_iter().map(|x| x.into_parts()).collect())
-            .await
-    }
-}
-
-#[async_trait]
-impl Store for Arc<tokio::sync::Mutex<std::collections::HashMap<Cid, Bytes>>> {
-    async fn has(&self, cid: Cid) -> Result<bool> {
-        Ok(self.lock().await.contains_key(&cid))
-    }
-    async fn put(&self, cid: Cid, blob: Bytes, _links: Vec<Cid>) -> Result<()> {
-        self.lock().await.insert(cid, blob);
-        Ok(())
-    }
-
-    async fn put_many(&self, blocks: Vec<Block>) -> Result<()> {
-        let mut this = self.lock().await;
-        for block in blocks {
-            this.insert(*block.cid(), block.data().clone());
-        }
-        Ok(())
-    }
-}
-
 /// Configuration for adding unixfs content
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Config {
     /// Should the outer object be wrapped in a directory?
     pub wrap: bool,
-    pub chunker: ChunkerConfig,
-}
-
-/// Adds a single file.
-/// - storing the content using `rpc.store`
-/// - returns a stream of AddEvent
-/// - optionally wraps into a UnixFs directory to preserve the filename
-pub async fn add_file<S: Store>(
-    store: Option<S>,
-    path: &Path,
-    config: Config,
-) -> Result<impl Stream<Item = Result<AddEvent>>> {
-    ensure!(path.is_file(), "provided path was not a file");
-
-    let chunker = config.chunker.into();
-    let file = FileBuilder::new()
-        .chunker(chunker)
-        .path(path)
-        .build()
-        .await?;
-
-    let blocks = {
-        if config.wrap {
-            // wrap file in dir to preserve file name
-            file.wrap().encode()
-        } else {
-            Box::pin(file.encode().await?)
-        }
-    };
-    Ok(add_blocks_to_store(store, blocks).await)
-}
-
-/// Adds a directory.
-/// - storing the content using `rpc.store`
-/// - returns a stream of AddEvent
-/// - optionally wraps into a UnixFs directory to preserve the directory name
-pub async fn add_dir<S: Store>(
-    store: Option<S>,
-    path: &Path,
-    config: Config,
-) -> Result<impl Stream<Item = Result<AddEvent>>> {
-    ensure!(path.is_dir(), "provided path was not a directory");
-
-    let dir = make_dir_from_path(path, config.chunker.into()).await?;
-
-    // encode and store
-    let blocks = {
-        if config.wrap {
-            // wrap dir in dir to preserve file name
-            dir.wrap().encode()
-        } else {
-            dir.encode()
-        }
-    };
-
-    Ok(add_blocks_to_store(store, blocks).await)
-}
-
-/// Adds a symlink
-pub async fn add_symlink<S: Store>(
-    store: Option<S>,
-    path: &Path,
-    wrap: bool,
-) -> Result<impl Stream<Item = Result<AddEvent>>> {
-    ensure!(path.is_symlink(), "provided path was not a symlink");
-    let symlink = SymlinkBuilder::new(path).build().await?;
-    if wrap {
-        let dir = symlink.wrap();
-        let blocks = dir.encode();
-        return Ok(add_blocks_to_store(store, blocks).await);
-    }
-    let blocks = Box::pin(async_stream::try_stream! {
-        yield symlink.encode()?
-    });
-    Ok(add_blocks_to_store(store, blocks).await)
-}
-
-/// An event on the add stream
-#[derive(Debug)]
-pub enum AddEvent {
-    ProgressDelta {
-        /// The current cid. This is the root on the last event.
-        cid: Cid,
-        /// Delta of progress in bytes
-        size: Option<u64>,
-    },
-}
-
-use async_stream::stream;
-
-fn add_blocks_to_store_chunked<S: Store>(
-    store: S,
-    mut blocks: Pin<Box<dyn Stream<Item = Result<Block>>>>,
-) -> impl Stream<Item = Result<AddEvent>> {
-    let mut chunk = Vec::new();
-    let mut chunk_size = 0u64;
-    const MAX_CHUNK_SIZE: u64 = 1024 * 1024;
-    stream! {
-        while let Some(block) = blocks.next().await {
-            let block = block?;
-            let block_size = block.data().len() as u64;
-            let cid = *block.cid();
-            let raw_data_size = block.raw_data_size();
-            tracing::info!("adding chunk of {} bytes", chunk_size);
-            if chunk_size + block_size > MAX_CHUNK_SIZE {
-                store.put_many(std::mem::take(&mut chunk)).await?;
-                chunk_size = 0;
-            }
-            chunk.push(block);
-            chunk_size += block_size;
-            yield Ok(AddEvent::ProgressDelta {
-                cid,
-                size: raw_data_size,
-            });
-        }
-        // make sure to also send the last chunk!
-        store.put_many(chunk).await?;
-    }
-}
-
-fn _add_blocks_to_store_single<S: Store>(
-    store: Option<S>,
-    blocks: Pin<Box<dyn Stream<Item = Result<Block>>>>,
-) -> impl Stream<Item = Result<AddEvent>> {
-    blocks
-        .and_then(|x| future::ok(vec![x]))
-        .map(move |blocks| {
-            let store = store.clone();
-            async move {
-                let block = blocks?[0].clone();
-                let raw_data_size = block.raw_data_size();
-                let cid = *block.cid();
-                if let Some(store) = store {
-                    if !store.has(cid).await? {
-                        store.put_many(vec![block]).await?;
-                    }
-                }
-
-                Ok(AddEvent::ProgressDelta {
-                    cid,
-                    size: raw_data_size,
-                })
-            }
-        })
-        .buffered(_ADD_PAR)
-}
-
-pub async fn add_blocks_to_store<S: Store>(
-    store: Option<S>,
-    blocks: Pin<Box<dyn Stream<Item = Result<Block>>>>,
-) -> impl Stream<Item = Result<AddEvent>> {
-    add_blocks_to_store_chunked(store.unwrap(), blocks)
+    pub chunker: Option<ChunkerConfig>,
 }
 
 #[async_recursion(?Send)]
 async fn make_dir_from_path<P: Into<PathBuf>>(path: P, chunker: Chunker) -> Result<Directory> {
     let path = path.into();
-    let mut dir = DirectoryBuilder::new();
-    dir.name(
+    let mut dir = DirectoryBuilder::new().name(
         path.file_name()
             .and_then(|s| s.to_str())
             .unwrap_or_default(),
@@ -757,22 +604,22 @@ async fn make_dir_from_path<P: Into<PathBuf>>(path: P, chunker: Chunker) -> Resu
         let path = entry.path();
         if path.is_symlink() {
             let s = SymlinkBuilder::new(path).build().await?;
-            dir.add_symlink(s);
+            dir = dir.add_symlink(s);
         } else if path.is_file() {
             let f = FileBuilder::new()
                 .chunker(chunker.clone())
                 .path(path)
                 .build()
                 .await?;
-            dir.add_file(f);
+            dir = dir.add_file(f);
         } else if path.is_dir() {
             let d = make_dir_from_path(path, chunker.clone()).await?;
-            dir.add_dir(d)?;
+            dir = dir.add_dir(d)?;
         } else {
             anyhow::bail!("directory entry is neither file nor directory")
         }
     }
-    dir.build()
+    dir.build().await
 }
 
 #[cfg(test)]
@@ -784,8 +631,7 @@ mod tests {
     #[tokio::test]
     async fn test_builder_basics() -> Result<()> {
         // Create a directory
-        let mut dir = DirectoryBuilder::new();
-        dir.name("foo");
+        let dir = DirectoryBuilder::new().name("foo");
 
         // Add a file
         let bar = FileBuilder::new()
@@ -814,9 +660,7 @@ mod tests {
             baz.encode()?
         };
 
-        dir.add_file(bar).add_symlink(baz);
-
-        let dir = dir.build()?;
+        let dir = dir.add_file(bar).add_symlink(baz).build().await?;
 
         let dir_block = dir.encode_root().await?;
         let decoded_dir = UnixfsNode::decode(dir_block.cid(), dir_block.data().clone())?;
@@ -833,11 +677,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_recursive_dir_builder() -> Result<()> {
-        let dir = DirectoryBuilder::new();
-        let dir = dir.build()?;
+        let dir = DirectoryBuilder::new().build().await?;
 
-        let mut recursive_dir_builder = DirectoryBuilder::new();
-        recursive_dir_builder
+        DirectoryBuilder::new()
             .add_dir(dir)
             .expect("recursive directories allowed");
         Ok(())
@@ -846,8 +688,7 @@ mod tests {
     #[tokio::test]
     async fn test_builder_stream_small() -> Result<()> {
         // Create a directory
-        let mut dir = DirectoryBuilder::new();
-        dir.name("foo");
+        let dir = DirectoryBuilder::new().name("foo");
 
         // Add a file
         let bar_reader = std::io::Cursor::new(b"bar");
@@ -878,9 +719,7 @@ mod tests {
             baz.encode()?
         };
 
-        dir.add_file(bar).add_symlink(baz);
-
-        let dir = dir.build()?;
+        let dir = dir.add_file(bar).add_symlink(baz).build().await?;
 
         let dir_block = dir.encode_root().await?;
         let decoded_dir = UnixfsNode::decode(dir_block.cid(), dir_block.data().clone())?;
@@ -912,8 +751,7 @@ mod tests {
     #[tokio::test]
     async fn test_builder_stream_large() -> Result<()> {
         // Create a directory
-        let mut dir = DirectoryBuilder::new();
-        dir.name("foo");
+        let dir = DirectoryBuilder::new().name("foo");
 
         // Add a file
         let bar_reader = std::io::Cursor::new(vec![1u8; 1024 * 1024]);
@@ -958,9 +796,7 @@ mod tests {
         };
         assert_eq!(baz_encoded.len(), 9);
 
-        dir.add_file(bar).add_file(baz);
-
-        let dir = dir.build()?;
+        let dir = dir.add_file(bar).add_file(baz).build().await?;
 
         let dir_block = dir.encode_root().await?;
         let decoded_dir = UnixfsNode::decode(dir_block.cid(), dir_block.data().clone())?;
@@ -992,8 +828,7 @@ mod tests {
     #[tokio::test]
     async fn test_hamt_detection() -> Result<()> {
         // allow hamt override
-        let mut builder = DirectoryBuilder::new();
-        builder.hamt();
+        let builder = DirectoryBuilder::new().hamt();
         assert_eq!(DirectoryType::Hamt, builder.typ);
 
         let mut builder = DirectoryBuilder::new();
@@ -1004,7 +839,7 @@ mod tests {
                 .content_bytes(Bytes::from("hello world"))
                 .build()
                 .await?;
-            builder.add_file(file);
+            builder = builder.add_file(file);
         }
 
         // under DIRECTORY_LINK_LIMIT should still be a basic directory
@@ -1015,11 +850,11 @@ mod tests {
             .content_bytes(Bytes::from("hello world"))
             .build()
             .await?;
-        builder.add_file(file);
+        builder = builder.add_file(file);
 
         // at directory link limit should be processed as a hamt
         assert_eq!(DirectoryType::Hamt, builder.typ);
-        if (builder.build()).is_ok() {
+        if (builder.build().await).is_ok() {
             panic!("expected builder to error when attempting to build a hamt directory")
         }
         Ok(())

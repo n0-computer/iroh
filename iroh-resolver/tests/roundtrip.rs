@@ -28,8 +28,7 @@ type TestDir = BTreeMap<String, TestDirEntry>;
 /// builds an unixfs directory out of a TestDir
 #[async_recursion(?Send)]
 async fn build_directory(name: &str, dir: &TestDir) -> Result<Directory> {
-    let mut builder = DirectoryBuilder::new();
-    builder.name(name);
+    let mut builder = DirectoryBuilder::new().name(name);
     for (name, entry) in dir {
         match entry {
             TestDirEntry::File(content) => {
@@ -38,15 +37,15 @@ async fn build_directory(name: &str, dir: &TestDir) -> Result<Directory> {
                     .content_bytes(content.to_vec())
                     .build()
                     .await?;
-                builder.add_file(file);
+                builder = builder.add_file(file);
             }
             TestDirEntry::Directory(dir) => {
                 let dir = build_directory(name, dir).await?;
-                builder.add_dir(dir)?;
+                builder = builder.add_dir(dir)?;
             }
         }
     }
-    builder.build()
+    builder.build().await
 }
 
 /// builds a TestDir out of a stream of blocks and a resolver

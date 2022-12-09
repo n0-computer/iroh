@@ -1,4 +1,5 @@
 mod api;
+mod block_store;
 mod config;
 mod error;
 mod p2p;
@@ -20,7 +21,10 @@ pub use bytes::Bytes;
 pub use cid::Cid;
 pub use iroh_resolver::resolver::Path as IpfsPath;
 pub use iroh_rpc_client::{Lookup, ServiceStatus, StatusRow, StatusTable};
-pub use iroh_unixfs::builder::{AddEvent, Config as UnixfsConfig};
+pub use iroh_unixfs::builder::{
+    Config as UnixfsConfig, DirectoryBuilder, Entry as UnixfsEntry, FileBuilder, SymlinkBuilder,
+};
 pub use iroh_unixfs::chunker::{ChunkerConfig, DEFAULT_CHUNKS_SIZE};
+pub use iroh_unixfs::Block;
 pub use libp2p::gossipsub::MessageId;
 pub use libp2p::{Multiaddr, PeerId};
