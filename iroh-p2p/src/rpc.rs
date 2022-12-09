@@ -4,7 +4,7 @@ use cid::Cid;
 use futures::StreamExt;
 use futures::{stream::BoxStream, TryFutureExt};
 use iroh_bitswap::Block;
-use iroh_rpc_client::{create_server_stream, Lookup, P2pServer};
+use iroh_rpc_client::{create_server, Lookup, P2pServer};
 use iroh_rpc_types::{p2p::*, RpcError, RpcResult};
 use libp2p::gossipsub::{
     error::{PublishError, SubscriptionError},
@@ -510,9 +510,8 @@ impl P2p {
     }
 }
 
-/// Handle a session with a client. This will loop until either the client closes the connection or
-/// one of the requests produces an error.
-async fn handle_session(s: P2pServer, target: P2p) -> Result<()> {
+/// Dispatch incoming requests to the p2p service.
+async fn dispatch(s: P2pServer, target: P2p) -> Result<()> {
     use P2pRequest::*;
     loop {
         let s = s.clone();
@@ -555,18 +554,8 @@ async fn handle_session(s: P2pServer, target: P2p) -> Result<()> {
 #[tracing::instrument(skip(p2p))]
 pub(crate) async fn new(addr: P2pAddr, p2p: P2p) -> Result<()> {
     info!("rpc listening on: {}", addr);
-    let mut stream = create_server_stream::<P2pService>(addr).await?;
-    while let Some(server) = stream.next().await {
-        match server {
-            Ok(server) => {
-                handle_session(server, p2p.clone()).await?;
-            }
-            Err(e) => {
-                tracing::error!("rpc server error: {}", e);
-            }
-        }
-    }
-    Ok(())
+    let server = create_server::<P2pService>(addr).await?;
+    dispatch(server, p2p).await
 }
 
 fn peer_info_from_identify_info(i: IdentifyInfo) -> LookupResponse {

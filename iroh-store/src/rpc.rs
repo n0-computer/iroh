@@ -1,7 +1,6 @@
 use anyhow::Result;
 use bytes::BytesMut;
-use futures::StreamExt;
-use iroh_rpc_client::{create_server_stream, StoreServer};
+use iroh_rpc_client::{create_server, StoreServer};
 use iroh_rpc_types::store::{
     GetLinksRequest, GetLinksResponse, GetRequest, GetResponse, GetSizeRequest, GetSizeResponse,
     HasRequest, HasResponse, PutManyRequest, PutRequest, StoreAddr, StoreRequest, StoreService,
@@ -102,9 +101,8 @@ impl RpcStore {
     }
 }
 
-/// Handle a session with a client. This will loop until either the client closes the connection or
-/// one of the requests produces an error.
-async fn handle_session(server: StoreServer, store: Store) -> Result<()> {
+/// Dispatches incoming requests to the store.
+async fn dispatch(server: StoreServer, store: Store) -> Result<()> {
     use StoreRequest::*;
     let s = server.clone();
     let store = RpcStore(store);
@@ -131,16 +129,6 @@ async fn handle_session(server: StoreServer, store: Store) -> Result<()> {
 #[tracing::instrument(skip(store))]
 pub async fn new(addr: StoreAddr, store: Store) -> Result<()> {
     info!("rpc listening on: {}", addr);
-    let mut stream = create_server_stream::<StoreService>(addr).await?;
-    while let Some(server) = stream.next().await {
-        match server {
-            Ok(server) => {
-                handle_session(server, store.clone()).await?;
-            }
-            Err(e) => {
-                tracing::error!("rpc server error: {}", e);
-            }
-        }
-    }
-    Ok(())
+    let server = create_server::<StoreService>(addr).await?;
+    dispatch(server, store).await
 }
