@@ -9,6 +9,7 @@ use anyhow::{anyhow, Context, Result};
 
 use crate::shard::{self, Shard};
 
+#[derive(Debug)]
 pub struct Flatfs {
     /// Path to the root of the storage on disk.
     path: PathBuf,

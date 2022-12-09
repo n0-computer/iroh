@@ -14,6 +14,7 @@ use std::{
 };
 use tokio::net::{unix::UCred, UnixListener, UnixStream};
 
+#[derive(Debug)]
 pub struct ServerAccept {
     pub uds: UnixListener,
 }

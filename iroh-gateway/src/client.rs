@@ -34,6 +34,7 @@ pub struct Client<T: ContentLoader> {
     pub(crate) resolver: Resolver<T>,
 }
 
+#[derive(Debug)]
 pub struct PrettyStreamBody<T: ContentLoader>(
     ReaderStream<tokio::io::BufReader<OutPrettyReader<T>>>,
     Option<u64>,
@@ -41,6 +42,7 @@ pub struct PrettyStreamBody<T: ContentLoader>(
 );
 
 #[allow(clippy::large_enum_variant)]
+#[derive(Debug)]
 pub enum FileResult<T: ContentLoader> {
     File(PrettyStreamBody<T>),
     Directory(Out),

@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fmt;
 use std::path::{Path, PathBuf};
 
 use crate::config::{Config, CONFIG_FILE_NAME, ENV_PREFIX};
@@ -19,6 +20,7 @@ use mockall::automock;
 use relative_path::RelativePathBuf;
 use tokio::io::{AsyncRead, AsyncReadExt};
 
+#[derive(Debug)]
 pub struct Api {
     client: Client,
     resolver: Resolver<FullLoader>,
@@ -28,6 +30,16 @@ pub enum OutType {
     Dir,
     Reader(Box<dyn AsyncRead + Unpin>),
     Symlink(PathBuf),
+}
+
+impl fmt::Debug for OutType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Dir => write!(f, "Dir"),
+            Self::Reader(_) => write!(f, "Reader(impl AsyncRead + Unpin>)"),
+            Self::Symlink(arg0) => f.debug_tuple("Symlink").field(arg0).finish(),
+        }
+    }
 }
 
 #[cfg_attr(feature = "testing", allow(dead_code), automock)]
