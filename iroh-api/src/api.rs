@@ -25,7 +25,7 @@ use tokio::io::{AsyncRead, AsyncReadExt};
 
 use crate::block_store::add_blocks_to_store;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Api {
     client: Client,
     resolver: Resolver<FullLoader>,
@@ -68,7 +68,10 @@ impl Api {
             overrides_map,
         )
         .unwrap();
+        Api::from_config(config).await
+    }
 
+    pub async fn from_config(config: Config) -> Result<Self> {
         let client = Client::new(config.rpc_client).await?;
         let content_loader = FullLoader::new(
             client.clone(),
@@ -91,6 +94,10 @@ impl Api {
         let resolver = Resolver::new(content_loader);
 
         Ok(Self { client, resolver })
+    }
+
+    pub fn from_client_and_resolver(client: Client, resolver: Resolver<FullLoader>) -> Self {
+        Self { client, resolver }
     }
 
     pub async fn provide(&self, cid: Cid) -> Result<()> {

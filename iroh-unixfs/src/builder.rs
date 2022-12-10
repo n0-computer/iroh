@@ -626,6 +626,7 @@ async fn make_dir_from_path<P: Into<PathBuf>>(path: P, chunker: Chunker) -> Resu
 mod tests {
     use super::*;
     use crate::chunker::DEFAULT_CHUNKS_SIZE;
+    use futures::TryStreamExt;
     use std::io::Write;
 
     #[tokio::test]
