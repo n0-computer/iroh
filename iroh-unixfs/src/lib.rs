@@ -10,8 +10,6 @@ pub mod unixfs;
 
 pub use crate::types::{Block, Link, LinkRef, Links, LoadedCid, PbLinks, Source};
 
-use std::collections::BTreeSet;
-
 use crate::codecs::Codec;
 use anyhow::{bail, Context as _, Result};
 use cid::Cid;
@@ -22,7 +20,7 @@ use libipld::{prelude::Codec as _, Ipld, IpldCodec};
 /// Links will be returned as a sorted vec
 pub fn parse_links(cid: &Cid, bytes: &[u8]) -> Result<Vec<Cid>> {
     let codec = Codec::try_from(cid.codec()).context("unknown codec")?;
-    let mut cids = BTreeSet::new();
+    let mut cids = Vec::new();
     let codec = match codec {
         Codec::DagCbor => IpldCodec::DagCbor,
         Codec::DagPb => IpldCodec::DagPb,

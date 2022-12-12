@@ -1,4 +1,8 @@
-use std::{collections::HashSet, path::Path, sync::Arc};
+use std::{
+    collections::{HashSet, VecDeque},
+    path::Path,
+    sync::Arc,
+};
 
 use anyhow::{ensure, Result};
 use async_trait::async_trait;
@@ -66,7 +70,7 @@ impl Loader {
 
 #[async_trait]
 impl ContentLoader for Loader {
-    async fn load_cid(&self, cid: &Cid, _ctx: &LoaderContext) -> Result<LoadedCid> {
+    async fn load_cid(&self, cid: &Cid, ctx: &LoaderContext) -> Result<LoadedCid> {
         let cid = *cid;
         let providers = self.providers.lock().await.clone();
 
@@ -84,46 +88,53 @@ impl ContentLoader for Loader {
         }
 
         ensure!(!providers.is_empty(), "no providers supplied");
+        println!("fetching remote: {}", cid);
 
-        // TODO: track context id
         let query = iroh_memesync::Query {
             path: iroh_memesync::Path::from(cid),
-            recursion: iroh_memesync::Recursion::None,
-        };
-        /*Some {
-                depth: 32,
+            recursion: iroh_memesync::Recursion::Some {
+                depth: 2,
                 direction: iroh_memesync::RecursionDirection::BreadthFirst,
             },
-        };*/
-        let res = self
+        };
+        let mut res = self
             .client
             .try_p2p()?
-            .fetch_memesync(0, query, providers.clone())
+            .fetch_memesync(ctx.id().into(), query, providers)
             .await?;
 
-        let mut pieces: Vec<iroh_memesync::ResponseOk> = res.try_collect().await?;
-        ensure!(
-            pieces.len() == 1,
-            "received unexpected number of responses: {}",
-            pieces.len()
-        );
+        let mut first_piece = None;
 
-        let bytes = pieces.pop().unwrap().data;
+        let mut cids = VecDeque::new();
+        cids.push_back(cid);
+        while let Some(piece) = res.next().await {
+            let piece = piece?;
+            if first_piece.is_none() {
+                first_piece = Some(piece.data.clone());
+            }
 
-        let cloned = bytes.clone();
-        let rpc = self.clone();
-        {
-            let clone2 = cloned.clone();
+            let bytes = piece.data.clone();
+            let cid = cids.pop_front().expect("too little for too much");
+            // TODO: move verification into iroh-memesync
+            ensure!(
+                iroh_util::verify_hash(&cid, &bytes).unwrap_or_default(),
+                "invalid piece received"
+            );
+
             let links =
-                tokio::task::spawn_blocking(move || parse_links(&cid, &clone2).unwrap_or_default())
+                tokio::task::spawn_blocking(move || parse_links(&cid, &bytes).unwrap_or_default())
                     .await
                     .unwrap_or_default();
-
-            rpc.client.try_store()?.put(cid, cloned, links).await?;
+            for link in &links {
+                cids.push_back(*link);
+            }
+            self.client.try_store()?.put(cid, piece.data, links).await?;
         }
 
+        ensure!(first_piece.is_some(), "failed to fetch {}", cid);
+
         Ok(LoadedCid {
-            data: bytes,
+            data: first_piece.unwrap(),
             source: Source::Bitswap,
         })
     }

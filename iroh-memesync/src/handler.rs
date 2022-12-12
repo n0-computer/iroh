@@ -421,12 +421,15 @@ fn create_response_stream<S: Store>(req: Request, store: S) -> impl Stream<Item 
                             } else {
                                 current_path.tail.push(cid.into());
                             }
-                            let is_last = current_depth == depth - 1 && link_index == num_links - 1;
+                            let mut is_last = current_depth == depth - 1 && link_index == num_links - 1;
                             let response = match store.get(cid).await {
                                 Ok(Some(GetResult { data, links })) => {
                                     let i = index;
                                     index += 1;
                                     next_links.extend(links);
+                                    if link_index == num_links - 1 && next_links.is_empty() {
+                                        is_last = true;
+                                    }
 
                                     Ok(ResponseOk {
                                         index: i,

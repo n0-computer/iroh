@@ -493,11 +493,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                     let id = res.id;
                     let is_last = res.is_last();
                     if let Some(chan) = self.memesync_queries.get_mut(&res.id) {
-                        let chan = chan.clone();
-                        tokio::task::spawn(async move {
-                            println!("sending response {:?}", res);
-                            chan.send(Ok(res)).await.ok();
-                        });
+                        chan.try_send(Ok(res)).expect("overloaded");
                         if is_last {
                             self.memesync_queries.remove(&id);
                         }
@@ -505,9 +501,8 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                 }
                 iroh_memesync::MemesyncEvent::OutboundQueryFailed { id, reason } => {
                     if let Some(chan) = self.memesync_queries.remove(&id) {
-                        tokio::task::spawn(async move {
-                            chan.send(Err(format!("{:?}", reason))).await.ok();
-                        });
+                        chan.try_send(Err(format!("{:?}", reason)))
+                            .expect("overloaded");
                     }
                 }
             },
