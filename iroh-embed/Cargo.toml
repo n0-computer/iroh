@@ -7,7 +7,7 @@ description = "Embedable iroh library"
 rust-version = "1.63"
 
 [dependencies]
-anyhow = "1"
+anyhow = { version = "1", features = ["backtrace"] }
 iroh-api = { version = "0.1.3", path = "../iroh-api" }
 iroh-gateway = { version = "0.1.3", path = "../iroh-gateway" }
 iroh-metrics = { version = "0.1.3", path = "../iroh-metrics" }
