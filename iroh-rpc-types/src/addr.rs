@@ -31,7 +31,7 @@ impl<S: Service> PartialEq for Addr<S> {
 
 impl<S: Service> Addr<S> {
     pub fn new_mem() -> Self {
-        let (server, client) = mem::connection(1);
+        let (server, client) = mem::connection(256);
 
         Self::Mem(server, client)
     }
