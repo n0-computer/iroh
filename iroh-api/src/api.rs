@@ -20,6 +20,13 @@ use mockall::automock;
 use relative_path::RelativePathBuf;
 use tokio::io::{AsyncRead, AsyncReadExt};
 
+/// API to interact with an iroh system.
+///
+/// This provides an API to use the iroh system consisting of several services working
+/// together.  It offers both a higher level API as well as some lower-level APIs.
+///
+/// Unless working on iroh directly this should probably be constructed via the `iroh-embed`
+/// crate rather then directly.
 #[derive(Debug, Clone)]
 pub struct Api {
     client: Client,
@@ -104,6 +111,9 @@ impl Api {
     }
 
     /// High level get, equivalent of CLI `iroh get`.
+    ///
+    /// Returns a stream of items, where items can be either blobs or UnixFs components.
+    /// Each blob will be a full object, a file in case of UnixFs, and not raw chunks.
     pub fn get(
         &self,
         ipfs_path: &IpfsPath,

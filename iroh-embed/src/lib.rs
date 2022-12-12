@@ -1,7 +1,40 @@
+//! Using iroh's peer-to-peer IPFS as a library.
+//!
+//! This crate supports embedding iroh in another application, enables running an IPFS node.
+//! By default the system will not interfere with any other IPFS node, iroh or otherwise, on
+//! the same host.
+//!
+//! An iroh system consists of several services, depending on how the IPFS node should
+//! behave not all of them may be needed:
+//!
+//! - The **store** service.  Iroh needs somewhere to store data, currently only an on-disk
+//!   storage is available as [`RocksStoreService`], in the future an in-memory version will
+//!   be available too.
+//! - The **p2p** service.  This service communicates with the wider IPFS network.
+//! - The **gateway** service.  This provides an HTTP gateway into IPFS.  Currently not yet
+//!   supported in iroh-embed.
+//!
+//! The current work-in-progress version of iroh-embed only allows using both a store and
+//! p2p service.  Future combinations will become available as features are added.
+//!
+//! # Getting started
+//!
+//! To create an iroh system you will need a few things:
+//!
+//! - Create a store service using [`RocksStoreService`].
+//! - Create a p2p service using [`P2pService`] and hooking it up to your earlier created
+//!   store service.
+//! - Create the [`Iroh`] system using [`IrohBuilder`].
+//! - Use the system using [`Iroh::api`].
+//!
+//! An example is available in the repository under `examples/embed`.
+
+use std::default;
+
 use anyhow::{bail, Result};
-use iroh_api::Api;
 use iroh_rpc_client::Config as RpcClientConfig;
 
+pub use iroh_api::Api;
 pub use iroh_p2p::Libp2pConfig;
 pub use iroh_resolver::indexer::IndexerUrl;
 pub use reqwest::Url;
@@ -129,7 +162,7 @@ impl IrohBuilder {
     /// An IPFS indexer keeps an index of CIDs and IPFS nodes which currently provide the
     /// data for the CID.
     ///
-    /// By default this uses the [`iroh_reslolver::indexer::CID_CONTACT`] indexer.
+    /// By default this uses the [`iroh_resolver::indexer::CID_CONTACT`] indexer.
     pub fn with_indexer(mut self, indexer: IndexerUrl) -> Self {
         self.indexer = Some(indexer);
         self
@@ -178,8 +211,9 @@ impl IrohBuilder {
 
 /// The full iroh system.
 ///
-/// Creating this will create an iroh system and start several tokio tasks.  To make the
-/// system do anything use the [`Iroh::api`] function to get an API.
+/// This must be constructed using [`IrohBuilder`].  Creating an iroh system will start
+/// various tokio tasks.  To make the system do anything use the [`Iroh::api`] function to
+/// get an API.
 #[derive(Debug)]
 pub struct Iroh {
     store: RocksStoreService,

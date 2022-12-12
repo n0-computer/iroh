@@ -15,7 +15,16 @@ pub const CID_CONTACT: &str = "https://cid.contact/cid/";
 
 /// URL of an [`Indexer`].
 ///
-/// This is newtyped so we can easily provide a default value.
+/// An indexer is an IPFS node that stores mappings of content multihashes to provider data
+/// records and provides a service to quickly look this up.  Practically this means it can
+/// be faster at finding you peers which can give you certain data than looking them up via
+/// the Distrubuted Hash Table (DHT) directly.
+///
+/// See <https://github.com/filecoin-project/storetheindex> for more information about
+/// indexers.
+///
+/// This is an ordinary URL, newtyped so we can easily provide a default value.  Use
+/// the [`Default`] trait to get iroh's default indexer.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IndexerUrl(Url);
 

@@ -18,7 +18,7 @@ async fn main() -> Result<()> {
     ];
     let p2p = P2pService::new(p2p_config, dir, store.addr()).await?;
 
-    // TODO: make it easy to add default http_resolvers and indexer.
+    // Note by default this is configured with an indexer, but not with http resolvers.
     let iroh = IrohBuilder::new()
         .with_store(store)
         .with_p2p(p2p)
