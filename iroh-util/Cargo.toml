@@ -9,7 +9,7 @@ description = "Utilities for iroh"
 rust-version = "1.63"
 
 [dependencies]
-anyhow = "1"
+anyhow = { version = "1", features = ["backtrace"] }
 cid = "0.9"
 config = "0.13.1"
 ctrlc = "3.2.2"
