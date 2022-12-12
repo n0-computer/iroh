@@ -35,6 +35,7 @@ pub const DEFAULT_BOOTSTRAP: &[&str] = &[
 
 /// Libp2p config for the node.
 #[derive(PartialEq, Eq, Debug, Clone, Deserialize, Serialize)]
+#[non_exhaustive]
 pub struct Libp2pConfig {
     /// Local address.
     pub listening_multiaddrs: Vec<Multiaddr>,
