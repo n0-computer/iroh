@@ -6,7 +6,7 @@ publish = false
 rust-version = "1.65"
 
 [dependencies]
-anyhow = "1"
+anyhow = { version = "1", features = ["backtrace"] }
 clap = { version = "4.0.9", features = ["derive"] }
 clap_mangen = "0.2.2"
 dirs-next = "2.0.0"

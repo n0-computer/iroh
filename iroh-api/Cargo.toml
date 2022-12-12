@@ -12,7 +12,7 @@ repository = "https://github.com/n0-computer/iroh"
 testing = ["dep:mockall"]
 
 [dependencies]
-anyhow = "1"
+anyhow = { version = "1", features = ["backtrace"] }
 async-stream = "0.3.3"
 bytes = "1.1.0"
 cid = "0.9"

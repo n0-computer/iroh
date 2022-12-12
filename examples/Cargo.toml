@@ -10,7 +10,7 @@ rust-version = "1.65"
 publish = false
 
 [dependencies]
-anyhow = "1"
+anyhow = { version = "1", features = ["backtrace"] }
 bytes = "1.1.0"
 bytesize = "1.1.0"
 clap = { version = "4.0.9", features = ["derive"] }

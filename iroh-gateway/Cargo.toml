@@ -9,7 +9,7 @@ repository = "https://github.com/n0-computer/iroh"
 rust-version = "1.65"
 
 [dependencies]
-anyhow = "1"
+anyhow = { version = "1", features = ["backtrace"] }
 async-recursion = "1.0.0"
 async-trait = "0.1.56"
 axum = "0.5.15"
