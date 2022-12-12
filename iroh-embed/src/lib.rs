@@ -218,7 +218,7 @@ impl Iroh {
     /// TODO: Graceful is a lie right now.
     /// TODO: Will probably become async.
     /// TODO: Maybe should consume self.
-    pub fn stop(&self) {
+    pub fn stop(&mut self) {
         self.p2p.stop();
         self.store.stop();
     }

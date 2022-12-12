@@ -16,7 +16,11 @@ use tokio::task::JoinHandle;
 /// uses RocksDB in a directory on disk.
 #[derive(Debug)]
 pub struct RocksStoreService {
-    task: JoinHandle<()>,
+    /// Handle to the task.
+    ///
+    /// Always exists if the task is running.  Once [`RocksStoreService::stop`] has been
+    /// called it will be `None`.
+    task: Option<JoinHandle<()>>,
     addr: StoreAddr,
 }
 
@@ -37,7 +41,10 @@ impl RocksStoreService {
             metrics: Default::default(),
         };
         let task = mem_store::start(addr.clone(), config).await?;
-        Ok(Self { task, addr })
+        Ok(Self {
+            task: Some(task),
+            addr,
+        })
     }
 
     /// Returns the internal RPC address of this store node.
@@ -52,13 +59,45 @@ impl RocksStoreService {
     // TODO: Will eventually become async.
     // TODO: Should this consume self?
     // TODO: This should be graceful termination.
-    pub fn stop(&self) {
-        self.task.abort();
+    pub async fn stop(&mut self) -> Result<()> {
+        if let Some(task) = self.task.take() {
+            task.abort();
+            task.await?;
+        }
+        Ok(())
     }
 }
 
 impl Drop for RocksStoreService {
     fn drop(&mut self) {
-        self.stop()
+        // Abort the task without polling it.  It may or may not ever be polled again and
+        // actually abort.
+        if let Some(ref task) = self.task {
+            task.abort();
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use testdir::testdir;
+    use tokio::time;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn test_create_store_stop() {
+        let dir = testdir!();
+        let marker = dir.join("CURRENT");
+
+        let mut store = RocksStoreService::new(dir).await.unwrap();
+        assert!(marker.exists());
+
+        let fut = store.stop();
+        let ret = time::timeout(Duration::from_millis(500), fut).await;
+
+        assert!(ret.is_ok());
     }
 }
