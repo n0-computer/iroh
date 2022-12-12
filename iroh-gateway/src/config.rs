@@ -3,7 +3,8 @@ use anyhow::Result;
 use axum::http::{header::*, Method};
 use config::{ConfigError, Map, Source, Value};
 use headers::{
-    AccessControlAllowHeaders, AccessControlAllowMethods, AccessControlAllowOrigin, HeaderMapExt,
+    AcceptRanges, AccessControlAllowHeaders, AccessControlAllowMethods, AccessControlAllowOrigin,
+    AccessControlExposeHeaders, HeaderMapExt,
 };
 use iroh_metrics::config::Config as MetricsConfig;
 use iroh_resolver::dns_resolver::Config as DnsResolverConfig;
@@ -82,6 +83,7 @@ impl Config {
 fn default_headers() -> HeaderMap {
     let mut headers = HeaderMap::new();
     headers.typed_insert(AccessControlAllowOrigin::ANY);
+    headers.typed_insert(AcceptRanges::bytes());
     headers.typed_insert(
         [
             Method::GET,
@@ -100,10 +102,25 @@ fn default_headers() -> HeaderMap {
             ACCEPT,
             CACHE_CONTROL,
             RANGE,
+            CONTENT_TYPE,
             HEADER_SERVICE_WORKER.clone(),
+            HEADER_X_REQUESTED_WITH.clone(),
+            USER_AGENT,
         ]
         .into_iter()
         .collect::<AccessControlAllowHeaders>(),
+    );
+    headers.typed_insert(
+        [
+            CONTENT_LENGTH,
+            CONTENT_RANGE,
+            HEADER_X_IPFS_PATH.clone(),
+            HEADER_X_IPFS_ROOTS.clone(),
+            HEADER_X_CHUNKED_OUTPUT.clone(),
+            HEADER_X_STREAM_OUTPUT.clone(),
+        ]
+        .into_iter()
+        .collect::<AccessControlExposeHeaders>(),
     );
     headers
 }
