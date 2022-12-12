@@ -12,15 +12,11 @@ use iroh_metrics::{
     core::{MObserver, MRecorder},
     gateway::{GatewayHistograms, GatewayMetrics},
     observe, record,
+    resolver::OutMetrics,
 };
 use iroh_resolver::dns_resolver::Config;
-use iroh_resolver::{
-    content_loader::ContentLoader,
-    resolver::{
-        CidOrDomain, Metadata, Out, OutMetrics, OutPrettyReader, OutType, Resolver, ResponseClip,
-        Source,
-    },
-};
+use iroh_resolver::resolver::{CidOrDomain, Metadata, Out, OutPrettyReader, OutType, Resolver};
+use iroh_unixfs::{content_loader::ContentLoader, ResponseClip, Source};
 use mime::Mime;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, AsyncWrite};
 use tokio_util::io::ReaderStream;

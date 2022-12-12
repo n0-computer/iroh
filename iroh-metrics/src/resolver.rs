@@ -1,10 +1,11 @@
-use std::fmt;
+use std::{fmt, time::Instant};
 
 use prometheus_client::{metrics::counter::Counter, registry::Registry};
 use tracing::error;
 
 use crate::{
-    core::{HistogramType, MRecorder, MetricType, MetricsRecorder},
+    core::{HistogramType, MObserver, MRecorder, MetricType, MetricsRecorder},
+    gateway::{GatewayHistograms, GatewayMetrics},
     Collector,
 };
 
@@ -102,3 +103,38 @@ impl std::fmt::Display for ResolverMetrics {
 
 const METRICS_CACHE_HIT: &str = "cache_hit";
 const METRICS_CACHE_MISS: &str = "cache_miss";
+
+#[derive(Debug)]
+pub struct OutMetrics {
+    pub start: Instant,
+}
+
+impl OutMetrics {
+    pub fn observe_bytes_read(&self, pos: usize, bytes_read: usize) {
+        if pos == 0 && bytes_read > 0 {
+            record!(
+                GatewayMetrics::TimeToServeFirstBlock,
+                self.start.elapsed().as_millis() as u64
+            );
+        }
+        if bytes_read == 0 {
+            record!(
+                GatewayMetrics::TimeToServeFullFile,
+                self.start.elapsed().as_millis() as u64
+            );
+            observe!(
+                GatewayHistograms::TimeToServeFullFile,
+                self.start.elapsed().as_millis() as f64
+            );
+        }
+        record!(GatewayMetrics::BytesStreamed, bytes_read as u64);
+    }
+}
+
+impl Default for OutMetrics {
+    fn default() -> Self {
+        Self {
+            start: Instant::now(),
+        }
+    }
+}

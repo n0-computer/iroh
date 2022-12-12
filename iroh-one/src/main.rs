@@ -10,9 +10,9 @@ use iroh_one::{
     cli::Args,
     config::{Config, CONFIG_FILE_NAME, ENV_PREFIX},
 };
-use iroh_resolver::content_loader::{FullLoader, FullLoaderConfig};
 use iroh_rpc_client::Client as RpcClient;
 use iroh_rpc_types::Addr;
+use iroh_unixfs::content_loader::{FullLoader, FullLoaderConfig};
 use iroh_util::lock::ProgramLock;
 use iroh_util::{iroh_config_path, make_config};
 use tokio::sync::RwLock;

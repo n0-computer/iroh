@@ -55,7 +55,7 @@ async fn main() -> Result<()> {
                 if iroh_util::verify_hash(&cid, &data) == Some(false) {
                     bail!("invalid hash {:?}", cid);
                 }
-                let links = iroh_resolver::parse_links(&cid, &data).unwrap_or_default();
+                let links = iroh_unixfs::parse_links(&cid, &data).unwrap_or_default();
                 Ok((cid, data, links))
             }
         })

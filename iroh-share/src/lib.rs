@@ -37,7 +37,7 @@ mod tests {
     use anyhow::{Context, Result};
     use bytes::Bytes;
     use futures::TryStreamExt;
-    use iroh_resolver::unixfs_builder::{DirectoryBuilder, FileBuilder};
+    use iroh_unixfs::builder::{DirectoryBuilder, FileBuilder};
     use rand::RngCore;
     use tokio::io::AsyncReadExt;
     use tracing_subscriber::{fmt, prelude::*, EnvFilter};

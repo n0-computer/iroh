@@ -5,7 +5,7 @@ use bytes::Bytes;
 use futures::channel::oneshot::{channel as oneshot, Receiver as OneShotReceiver};
 use futures::StreamExt;
 use iroh_p2p::{GossipsubEvent, NetworkEvent};
-use iroh_resolver::unixfs_builder::DirectoryBuilder;
+use iroh_unixfs::builder::{DirectoryBuilder, FileBuilder};
 use libp2p::gossipsub::Sha256Topic;
 use rand::Rng;
 use tokio::sync::mpsc::{channel, Receiver};
@@ -157,8 +157,8 @@ impl Sender {
     ) -> Result<Transfer> {
         let name = name.into();
         // wrap in directory to preserve the name
-        let mut root_dir = iroh_resolver::unixfs_builder::DirectoryBuilder::new();
-        let file = iroh_resolver::unixfs_builder::FileBuilder::new()
+        let mut root_dir = DirectoryBuilder::new();
+        let file = FileBuilder::new()
             .name(name)
             .content_bytes(data)
             .build()

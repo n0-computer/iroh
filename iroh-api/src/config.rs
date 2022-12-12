@@ -1,7 +1,7 @@
 use config::{ConfigError, Map, Source, Value};
 use iroh_metrics::config::Config as MetricsConfig;
-use iroh_resolver::indexer::CID_CONTACT;
 use iroh_rpc_client::Config as RpcClientConfig;
+use iroh_unixfs::indexer::CID_CONTACT;
 use iroh_util::insert_into_config_map;
 use serde::{Deserialize, Serialize};
 

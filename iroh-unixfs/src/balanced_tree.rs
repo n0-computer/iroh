@@ -6,9 +6,9 @@ use bytes::Bytes;
 use cid::Cid;
 use futures::{Stream, StreamExt, TryFutureExt, TryStreamExt};
 
-use crate::resolver::Block;
+use crate::builder::encode_unixfs_pb;
+use crate::types::Block;
 use crate::unixfs::{dag_pb, unixfs_pb, DataType, Node, UnixfsNode};
-use crate::unixfs_builder::encode_unixfs_pb;
 
 /// Default degree number for balanced tree, taken from unixfs specs
 /// <https://github.com/ipfs/specs/blob/main/UNIXFS.md#layout>

@@ -19,7 +19,6 @@ humansize = "2.0.0"
 rlimit = "0.8.3"
 serde = { version = "1.0", features = ["derive"] }
 sysinfo = "0.26.5"
-temp-env = "0.3.1"
 thiserror = "1.0"
 toml = "0.5.9"
 tracing = "0.1.34"
