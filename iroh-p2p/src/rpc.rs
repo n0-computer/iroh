@@ -145,38 +145,21 @@ impl P2p {
         })
     }
 
-    async fn fetch_memesync(self, req: MemesyncRequest) -> Result<MemesyncResponse> {
-        let ctx = req.ctx;
-        let path = iroh_memesync::Path {
-            root: Cid::read_bytes(io::Cursor::new(req.root))?,
-            tail: req.tail,
-        };
-        let recursion = if req.recursion_depth == 0 {
-            iroh_memesync::Recursion::None
-        } else {
-            iroh_memesync::Recursion::Some {
-                depth: req.recursion_depth as u8,
-                direction: req.recursion_direction.into(),
-            }
-        };
-        let query = iroh_memesync::Query { path, recursion };
-
+    async fn fetch_memesync(
+        self,
+        MemesyncRequest {
+            ctx,
+            query,
+            providers,
+        }: MemesyncRequest,
+    ) -> Result<MemesyncResponse> {
         trace!("context:{}, received fetch_memesync: {:?}", ctx, query);
-        let providers = req
-            .providers
-            .with_context(|| format!("missing providers for: {}", query.path))?;
-
-        let providers: Vec<(PeerId, Vec<Multiaddr>)> = providers
-            .providers
-            .into_iter()
-            .map(|p| Ok((PeerId::from_bytes(&p).context("invalid provider")?, vec![])))
-            .collect::<Result<_>>()?;
 
         let (s, r) = oneshot::channel();
         let msg = RpcMessage::MemesyncRequest {
             ctx,
             query: query.clone(),
-            providers,
+            providers: providers.into_iter().map(|p| (p, Vec::new())).collect(),
             response_channel: s,
         };
 
@@ -599,6 +582,7 @@ async fn dispatch(s: P2pServer, req: P2pRequest, chan: ServerSocket<P2pService>,
         Version(req) => s.rpc(req, chan, target, P2p::version).await,
         Shutdown(req) => s.rpc_map_err(req, chan, target, P2p::shutdown).await,
         FetchBitswap(req) => s.rpc_map_err(req, chan, target, P2p::fetch_bitswap).await,
+        FetchMemesync(req) => s.rpc_map_err(req, chan, target, P2p::fetch_memesync).await,
         GossipsubAddExplicitPeer(req) => s.rpc_map_err(req, chan, target, P2p::gossipsub_add_explicit_peer).await,
         GossipsubAllPeers(req) => s.rpc_map_err(req, chan, target, P2p::gossipsub_all_peers).await,
         GossipsubMeshPeers(req) => s.rpc_map_err(req, chan, target, P2p::gossipsub_mesh_peers).await,

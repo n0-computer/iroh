@@ -34,9 +34,5 @@ tokio-util = { version = "0.7", features = ["compat"] }
 rand = "0.8.5"
 libipld = "0.15.0"
 
-[[bench]]
-name = "message"
-harness = false
-
 [features]
 default = []

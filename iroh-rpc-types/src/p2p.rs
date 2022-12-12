@@ -310,6 +310,10 @@ impl RpcMsg<P2pService> for BitswapRequest {
     type Response = RpcResult<BitswapResponse>;
 }
 
+impl RpcMsg<P2pService> for MemesyncRequest {
+    type Response = RpcResult<MemesyncResponse>;
+}
+
 impl Msg<P2pService> for FetchProvidersDhtRequest {
     type Response = RpcResult<FetchProvidersDhtResponse>;
 

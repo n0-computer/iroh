@@ -75,24 +75,15 @@ impl P2pClient {
         providers: HashSet<PeerId>,
     ) -> Result<Bytes> {
         debug!("rpc p2p client fetch_memesync: {}", query.path);
-        let providers = Providers {
-            providers: providers.into_iter().map(|id| id.to_bytes()).collect(),
-        };
 
-        let (recursion_direction, recursion_depth) = match query.recursion {
-            iroh_memesync::Recursion::None => (false, 0),
-            iroh_memesync::Recursion::Some { depth, direction } => (direction.into(), depth as u32),
-        };
-
-        let req = MemesyncRequest {
-            root: query.path.root.to_bytes(),
-            tail: query.path.tail,
-            recursion_direction,
-            recursion_depth,
-            providers: Some(providers),
-            ctx,
-        };
-        let res = self.backend.fetch_memesync(req).await?;
+        let res = self
+            .client
+            .rpc(MemesyncRequest {
+                providers: providers.into_iter().collect(),
+                query,
+                ctx,
+            })
+            .await??;
         Ok(res.data)
     }
 
