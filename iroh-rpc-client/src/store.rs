@@ -81,6 +81,7 @@ impl StoreClient {
 
     #[tracing::instrument(skip(self))]
     pub async fn watch(&self) -> impl Stream<Item = StatusRow> {
+        // todo
         futures::stream::pending()
     }
 }

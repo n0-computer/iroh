@@ -1,9 +1,6 @@
 use crate::{gateway, network, store};
 use anyhow::Result;
 
-// TODO: make configurable
-const _WAIT: std::time::Duration = std::time::Duration::from_millis(1000);
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ServiceStatus {
     ///  Indicates rpc server is in an unknown state

@@ -30,7 +30,7 @@ impl P2pClient {
         Ok(res.version)
     }
 
-    // #[tracing::instrument(skip(self))]
+    #[tracing::instrument(skip(self))]
     pub async fn local_peer_id(&self) -> Result<PeerId> {
         let res = self.client.rpc(LocalPeerIdRequest).await??;
         Ok(res.peer_id)
@@ -285,6 +285,7 @@ impl P2pClient {
 
     #[tracing::instrument(skip(self))]
     pub async fn watch(&self) -> impl Stream<Item = StatusRow> {
+        // todo
         futures::stream::pending()
     }
 }

@@ -164,6 +164,9 @@ impl P2p {
         Ok(())
     }
 
+    /// Wrap the inner method fetch_provider_dht0 to get the signature expected
+    /// by a server_streaming request. Convert errors into something serializable
+    /// and flatten to get a single stream of responses.
     #[tracing::instrument(skip(self, req))]
     fn fetch_provider_dht(
         self,
@@ -177,7 +180,7 @@ impl P2p {
         .boxed()
     }
 
-    #[tracing::instrument(skip(self, req))]
+    /// Implementation of fetch_provider_dht
     async fn fetch_provider_dht0(
         self,
         req: FetchProvidersDhtRequest,

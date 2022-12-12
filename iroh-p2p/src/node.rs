@@ -1084,15 +1084,13 @@ mod tests {
     async fn test_fetch_providers_grpc_dht() -> Result<()> {
         let server_addr = "irpc://0.0.0.0:4401".parse().unwrap();
         let client_addr = "irpc://0.0.0.0:4401".parse().unwrap();
-        let t = fetch_providers(
+        fetch_providers(
             "/ip4/0.0.0.0/tcp/5001".parse().unwrap(),
             server_addr,
             client_addr,
         )
-        .await;
-        if let Err(e) = t {
-            panic!("error: {:?}", e);
-        }
+        .await
+        .unwrap();
         Ok(())
     }
 

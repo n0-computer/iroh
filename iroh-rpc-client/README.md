@@ -3,7 +3,7 @@
 [iroh](https://github.com/n0-computer/iroh) services internally communicate via
 RPC, using the [quic-rpc](https://github.com/n0-computer/quic-rpc) RPC system.
 
-TLDR: bincode encoded messages sent as http2 frames.
+TLDR: currently bincode encoded messages sent as http2 frames.
 
 These channels are meant for internal communication and are not a stable API.
 

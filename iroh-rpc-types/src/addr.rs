@@ -82,7 +82,7 @@ impl<S: Service> FromStr for Addr<S> {
             bail!("memory addresses can not be serialized or deserialized");
         }
 
-        let mut parts = s.split("://");
+        let mut parts = s.splitn(2, "://");
         if let Some(prefix) = parts.next() {
             if prefix == "irpc" {
                 if let Some(part) = parts.next() {
