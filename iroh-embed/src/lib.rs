@@ -35,7 +35,7 @@ pub use store::RocksStoreService;
 ///
 /// # Examples
 ///
-/// ```
+/// ```no_run
 /// use iroh_embed::{Iroh, IrohBuilder, Libp2pConfig, P2pService, RocksStoreService};
 /// use testdir::testdir;
 /// # tokio_test::block_on(async {
