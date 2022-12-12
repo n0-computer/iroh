@@ -1,17 +1,15 @@
 # iroh-rpc-types
 
-[![crates.io](https://img.shields.io/crates/v/iroh-rpc-types.svg?style=flat-square)](https://crates.io/crates/iroh-rpc-types)
-[![Released API docs](https://img.shields.io/docsrs/iroh-rpc-types?style=flat-square)](https://docs.rs/iroh-rpc-types)
-[![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/iroh-rpc-types?style=flat-square)](../LICENSE-MIT)
-[![CI](https://img.shields.io/github/workflow/status/n0-computer/iroh/Continuous%20integration?style=flat-square)](https://github.com/n0-computer/iroh/actions?query=workflow%3A%22Continuous+integration%22)
-
-This crate defines types for use by the
+This crate defines the protocol for use by the
 [iroh-rpc-client](https://github.com/n0-computer/iroh/tree/main/iroh-rpc-client),
 which is used for [iroh](https://github.com/n0-computer/iroh) services to
-communicate internally via RPC. The protocol used is [gRPC](https://grpc.io/).
-This crate defines the gRPC types in the form of [Protocol
-Buffers](https://developers.google.com/protocol-buffers). It uses the [Tonic
-framework](https://github.com/hyperium/tonic) to expose the gRPC types to Rust.
+communicate internally via RPC.
+
+It defines a set of messages and traits that specify how each message is to be
+processed.
+
+These types can be used with any transport protocol in
+[quic-rpc](https://github.com/n0-computer/quic-rpc).
 
 ## License
 

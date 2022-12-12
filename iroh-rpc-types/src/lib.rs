@@ -1,16 +1,32 @@
-#[macro_use]
-mod macros;
-
+pub mod addr;
 pub mod gateway;
 pub mod p2p;
 pub mod store;
 
-// Reexport for convenience.
-#[cfg(feature = "grpc")]
-pub use tonic::transport::NamedService;
+use std::fmt;
 
-#[cfg(feature = "testing")]
-pub mod test;
+pub use addr::Addr;
+use serde::{Deserialize, Serialize};
 
-mod addr;
-pub use crate::addr::Addr;
+pub trait NamedService {
+    const NAME: &'static str;
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct RpcError(serde_error::Error);
+
+impl std::error::Error for RpcError {}
+
+impl fmt::Display for RpcError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(self, f)
+    }
+}
+
+impl From<anyhow::Error> for RpcError {
+    fn from(e: anyhow::Error) -> Self {
+        RpcError(serde_error::Error::new(&*e))
+    }
+}
+
+pub type RpcResult<T> = std::result::Result<T, RpcError>;

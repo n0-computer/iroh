@@ -131,8 +131,10 @@ impl ContentLoader for Loader {
 
 impl P2pNode {
     pub async fn new(port: u16, db_path: &Path) -> Result<(Self, Receiver<NetworkEvent>)> {
-        let (rpc_p2p_addr_server, rpc_p2p_addr_client) = Addr::new_mem();
-        let (rpc_store_addr_server, rpc_store_addr_client) = Addr::new_mem();
+        let rpc_p2p_addr_server = Addr::new_mem();
+        let rpc_p2p_addr_client = rpc_p2p_addr_server.clone();
+        let rpc_store_addr_server = Addr::new_mem();
+        let rpc_store_addr_client = rpc_store_addr_server.clone();
 
         let rpc_store_client_config = iroh_rpc_client::Config {
             p2p_addr: Some(rpc_p2p_addr_client.clone()),

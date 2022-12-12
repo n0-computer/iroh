@@ -6,7 +6,7 @@ authors = ["dignifiedquire <me@dignifiedquire.com>"]
 license = "Apache-2.0/MIT"
 repository = "https://github.com/n0-computer/iroh"
 description = "Implementation of the p2p part of iroh"
-rust-version = "1.63"
+rust-version = "1.65"
 
 [dependencies]
 ahash = "0.8.0"
@@ -71,11 +71,6 @@ features = [
 [dev-dependencies]
 criterion = "0.4"
 rand_chacha = "0.3.1"
-
-[features]
-default = ["rpc-grpc", "rpc-mem"]
-rpc-grpc = ["iroh-rpc-types/grpc", "iroh-rpc-client/grpc", "iroh-metrics/rpc-grpc"]
-rpc-mem = ["iroh-rpc-types/mem", "iroh-rpc-client/mem"]
 
 [[bench]]
 name = "lru_cache"

@@ -5,10 +5,7 @@ use cid::multihash::{Code, MultihashDigest};
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use iroh_metrics::config::Config as MetricsConfig;
 use iroh_rpc_client::{Client, Config as RpcClientConfig};
-use iroh_rpc_types::{
-    store::{StoreClientAddr, StoreServerAddr},
-    Addr,
-};
+use iroh_rpc_types::{store::StoreAddr, Addr};
 use iroh_store::{Config, Store};
 use tokio::runtime::Runtime;
 
@@ -17,22 +14,21 @@ const RAW: u64 = 0x55;
 const VALUES: [usize; 4] = [32, 256, 1024, 256 * 1024];
 #[derive(Debug, Copy, Clone)]
 enum Transport {
-    GrpcHttp2,
-    #[cfg(unix)]
+    Http2,
     Mem,
 }
 
 impl Transport {
-    fn new_addr(self) -> (StoreServerAddr, StoreClientAddr, Option<tempfile::TempDir>) {
+    fn new_addr(self) -> (StoreAddr, StoreAddr, Option<tempfile::TempDir>) {
         match self {
-            Transport::GrpcHttp2 => (
-                "grpc://127.0.0.1:4001".parse().unwrap(),
-                "grpc://127.0.0.1:4001".parse().unwrap(),
+            Transport::Http2 => (
+                "irpc://127.0.0.1:4001".parse().unwrap(),
+                "irpc://127.0.0.1:4001".parse().unwrap(),
                 None,
             ),
             Transport::Mem => {
-                let (a, b) = Addr::new_mem();
-                (a, b, None)
+                let a = Addr::new_mem();
+                (a.clone(), a, None)
             }
         }
     }
@@ -41,10 +37,7 @@ impl Transport {
 pub fn put_benchmark(c: &mut Criterion) {
     let mut group = c.benchmark_group("rpc_store_put");
 
-    #[cfg(unix)]
-    let addrs = [Transport::GrpcHttp2, Transport::Mem];
-    #[cfg(not(unix))]
-    let addrs = [Transport::GrpcHttp2, Transport::Mem];
+    let addrs = [Transport::Http2, Transport::Mem];
     for transport in addrs.into_iter() {
         for value_size in VALUES.iter() {
             let value = Bytes::from(vec![8u8; *value_size]);
@@ -101,10 +94,7 @@ pub fn put_benchmark(c: &mut Criterion) {
 
 pub fn get_benchmark(c: &mut Criterion) {
     let mut group = c.benchmark_group("rpc_store_get");
-    #[cfg(unix)]
-    let addrs = [Transport::GrpcHttp2, Transport::Mem];
-    #[cfg(not(unix))]
-    let addrs = [Transport::GrpcHttp2, Transport::Mem];
+    let addrs = [Transport::Http2, Transport::Mem];
     for transport in addrs.into_iter() {
         for value_size in VALUES.iter() {
             group.throughput(criterion::Throughput::Bytes(*value_size as u64));

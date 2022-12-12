@@ -6,7 +6,7 @@ authors = ["dignifiedquire <me@dignifiedquire.com>"]
 license = "Apache-2.0/MIT"
 repository = "https://github.com/n0-computer/iroh"
 description = "Implementation of path resolution for iroh"
-rust-version = "1.63"
+rust-version = "1.65"
 
 exclude = [
   "tests/**",
@@ -29,7 +29,7 @@ iroh-rpc-client = { version = "0.1.3", path = "../iroh-rpc-client", default-feat
 iroh-util = { version = "0.1.3", path = "../iroh-util", default-features = false }
 libipld = "0.15.0"
 libp2p = { version = "0.50", default-features = false, features = ["serde"] }
-multihash = "0.16.3"
+multihash = "0.17"
 num_enum = "0.5.7"
 once_cell = "1.13.0"
 prost = "0.11"
@@ -58,11 +58,6 @@ ruzstd = "0.3"
 
 [build-dependencies]
 prost-build = "0.11.1"
-
-[features]
-default = ["rpc-grpc", "rpc-mem"]
-rpc-grpc = ["iroh-rpc-client/grpc", "iroh-metrics/rpc-grpc", "iroh-rpc-types/grpc", "iroh-store/rpc-grpc"]
-rpc-mem = ["iroh-rpc-client/mem", "iroh-rpc-types/mem", "iroh-store/rpc-mem"]
 
 [[bench]]
 name = "unixfs"

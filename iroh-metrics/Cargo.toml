@@ -6,7 +6,7 @@ license = "Apache-2.0/MIT"
 readme = "README.md"
 description = "Iroh metrics"
 repository = "https://github.com/n0-computer/iroh"
-rust-version = "1.63"
+rust-version = "1.65"
 
 [dependencies]
 async-trait = "0.1.57"
@@ -22,7 +22,6 @@ prometheus-client = "0.18.0"
 reqwest = { version = "0.11.10", features = ["rustls-tls"], default-features = false}
 serde = { version = "1.0", features = ["derive"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "process"] }
-tonic = { version = "0.8", optional = true }
 tracing = "0.1.33"
 tracing-opentelemetry = "0.18"
 tracing-subscriber = { version = "0.3.11", features = ["env-filter"] }
@@ -53,8 +52,6 @@ features = [
 optional = true
 
 [features]
-default = ["rpc-grpc"]
-rpc-grpc = ["tonic"]
 gateway = []
 resolver = []
 bitswap = []

@@ -31,7 +31,8 @@ pub fn add_benchmark(c: &mut Criterion) {
             |b, path| {
                 let dir = tempfile::tempdir().unwrap();
                 let executor = Runtime::new().unwrap();
-                let (server_addr, client_addr) = Addr::new_mem();
+                let server_addr = Addr::new_mem();
+                let client_addr = server_addr.clone();
                 let rpc_client = RpcClientConfig {
                     store_addr: Some(client_addr),
                     ..Default::default()

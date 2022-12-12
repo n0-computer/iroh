@@ -1,24 +1,46 @@
-use anyhow::Result;
-use async_trait::async_trait;
-use iroh_rpc_types::gateway::{Gateway as RpcGateway, GatewayServerAddr, VersionResponse};
+use std::result;
 
-#[derive(Default)]
+use anyhow::Result;
+use iroh_rpc_client::{create_server, GatewayServer, ServerError, ServerSocket};
+use iroh_rpc_types::gateway::{
+    GatewayAddr, GatewayRequest, GatewayService, VersionRequest, VersionResponse,
+};
+use tracing::info;
+
+#[derive(Default, Debug, Clone)]
 pub struct Gateway {}
 
-#[async_trait]
-impl RpcGateway for Gateway {
+impl Gateway {
     #[tracing::instrument(skip(self))]
-    async fn version(&self, _: ()) -> Result<VersionResponse> {
+    async fn version(self, _: VersionRequest) -> VersionResponse {
         let version = env!("CARGO_PKG_VERSION").to_string();
-        Ok(VersionResponse { version })
+        VersionResponse { version }
     }
 }
 
-#[cfg(feature = "grpc")]
 impl iroh_rpc_types::NamedService for Gateway {
     const NAME: &'static str = "gateway";
 }
 
-pub async fn new(addr: GatewayServerAddr, gateway: Gateway) -> Result<()> {
-    iroh_rpc_types::gateway::serve(addr, gateway).await
+/// dispatch a single request from the server
+async fn dispatch(
+    s: GatewayServer,
+    req: GatewayRequest,
+    chan: ServerSocket<GatewayService>,
+    target: Gateway,
+) -> result::Result<(), ServerError> {
+    use GatewayRequest::*;
+    match req {
+        Version(req) => s.rpc(req, chan, target, Gateway::version).await,
+    }
+}
+
+pub async fn new(addr: GatewayAddr, gw: Gateway) -> Result<()> {
+    info!("gateway rpc listening on: {}", addr);
+    let server = create_server::<GatewayService>(addr).await?;
+    loop {
+        let s = server.clone();
+        let (req, chan) = s.accept_one().await?;
+        tokio::spawn(dispatch(s, req, chan, gw.clone()));
+    }
 }

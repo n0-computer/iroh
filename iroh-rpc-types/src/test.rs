@@ -1,1 +1,0 @@
-include_proto!("test");

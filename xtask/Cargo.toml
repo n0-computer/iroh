@@ -3,7 +3,7 @@ name = "xtask"
 version = "0.1.3"
 edition = "2021"
 publish = false
-rust-version = "1.63"
+rust-version = "1.65"
 
 [dependencies]
 anyhow = { version = "1", features = ["backtrace"] }

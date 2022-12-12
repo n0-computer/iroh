@@ -6,7 +6,7 @@ authors = ["dignifiedquire <me@dignifiedquire.com>"]
 license = "Apache-2.0/MIT"
 repository = "https://github.com/n0-computer/iroh"
 description = "Implementation of the storage part of iroh"
-rust-version = "1.63"
+rust-version = "1.65"
 
 [dependencies]
 anyhow = { version = "1", features = ["backtrace"] }
@@ -42,11 +42,6 @@ libipld = "0.15.0"
 rayon = "1.5.3"
 tempfile = "3.3.0"
 tokio = { version = "1", features = ["rt", "macros", "rt-multi-thread"] }
-
-[features]
-default = ["rpc-grpc", "rpc-mem"]
-rpc-grpc = ["iroh-rpc-types/grpc", "iroh-rpc-client/grpc", "iroh-metrics/rpc-grpc"]
-rpc-mem = ["iroh-rpc-types/mem", "iroh-rpc-client/mem"]
 
 [[bench]]
 name = "store"

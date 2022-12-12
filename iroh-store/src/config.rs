@@ -1,11 +1,8 @@
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, Result};
 use config::{ConfigError, Map, Source, Value};
 use iroh_metrics::config::Config as MetricsConfig;
 use iroh_rpc_client::Config as RpcClientConfig;
-use iroh_rpc_types::{
-    store::{StoreClientAddr, StoreServerAddr},
-    Addr,
-};
+use iroh_rpc_types::store::StoreAddr;
 use iroh_util::{insert_into_config_map, iroh_data_path};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -36,7 +33,7 @@ pub struct Config {
 }
 
 impl Config {
-    pub fn new_with_rpc(path: PathBuf, client_addr: StoreClientAddr) -> Self {
+    pub fn new_with_rpc(path: PathBuf, client_addr: StoreAddr) -> Self {
         Self {
             path,
             rpc_client: RpcClientConfig {
@@ -47,27 +44,13 @@ impl Config {
         }
     }
 
-    pub fn new_grpc(path: PathBuf) -> Self {
-        let addr = "grpc://0.0.0.0:4402";
+    pub fn new_network(path: PathBuf) -> Self {
+        let addr = "irpc://0.0.0.0:4402";
         Self::new_with_rpc(path, addr.parse().unwrap())
     }
 
-    /// Derive server addr for non memory addrs.
-    pub fn server_rpc_addr(&self) -> Result<Option<StoreServerAddr>> {
-        self.rpc_client
-            .store_addr
-            .as_ref()
-            .map(|addr| {
-                #[allow(unreachable_patterns)]
-                match addr {
-                    #[cfg(feature = "rpc-grpc")]
-                    Addr::GrpcHttp2(addr) => Ok(Addr::GrpcHttp2(*addr)),
-                    #[cfg(feature = "rpc-mem")]
-                    Addr::Mem(_) => bail!("can not derive rpc_addr for mem addr"),
-                    _ => bail!("invalid rpc_addr"),
-                }
-            })
-            .transpose()
+    pub fn rpc_addr(&self) -> Option<StoreAddr> {
+        self.rpc_client.store_addr.clone()
     }
 }
 
@@ -94,10 +77,10 @@ mod tests {
     use super::*;
 
     #[test]
-    #[cfg(all(feature = "rpc-grpc", unix))]
+    #[cfg(unix)]
     fn test_collect() {
         let path = PathBuf::new().join("test");
-        let default = Config::new_grpc(path);
+        let default = Config::new_network(path);
 
         let mut expect: Map<String, Value> = Map::new();
         expect.insert(
@@ -122,10 +105,10 @@ mod tests {
     }
 
     #[test]
-    #[cfg(all(feature = "rpc-grpc", unix))]
+    #[cfg(unix)]
     fn test_build_config_from_struct() {
         let path = PathBuf::new().join("test");
-        let expect = Config::new_grpc(path);
+        let expect = Config::new_network(path);
         let got: Config = config::Config::builder()
             .add_source(expect.clone())
             .build()
