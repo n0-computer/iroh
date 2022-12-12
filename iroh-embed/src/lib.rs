@@ -63,6 +63,12 @@ pub struct IrohBuilder {
     indexer: Option<IndexerUrl>,
 }
 
+impl Default for IrohBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl IrohBuilder {
     /// Creates a new [`IrohBuilder`].
     pub fn new() -> Self {
