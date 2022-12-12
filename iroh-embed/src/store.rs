@@ -16,11 +16,7 @@ use tokio::task::JoinHandle;
 /// uses RocksDB in a directory on disk.
 #[derive(Debug)]
 pub struct RocksStoreService {
-    /// Handle to the task.
-    ///
-    /// Always exists if the task is running.  Once [`RocksStoreService::stop`] has been
-    /// called it will be `None`.
-    task: Option<JoinHandle<()>>,
+    task: JoinHandle<()>,
     addr: StoreAddr,
 }
 
@@ -41,10 +37,7 @@ impl RocksStoreService {
             metrics: Default::default(),
         };
         let task = mem_store::start(addr.clone(), config).await?;
-        Ok(Self {
-            task: Some(task),
-            addr,
-        })
+        Ok(Self { task, addr })
     }
 
     /// Returns the internal RPC address of this store node.
@@ -56,14 +49,16 @@ impl RocksStoreService {
     }
 
     /// Stop this store node.
-    // TODO: Will eventually become async.
     // TODO: Should this consume self?
     // TODO: This should be graceful termination.
-    pub async fn stop(&mut self) -> Result<()> {
-        if let Some(task) = self.task.take() {
-            task.abort();
-            task.await?;
-        }
+    pub async fn stop(mut self) -> Result<()> {
+        // This dummy task will be aborted by Drop.
+        let fut = futures::future::ready(());
+        let dummy_task = tokio::spawn(fut);
+        let task = std::mem::replace(&mut self.task, dummy_task);
+
+        task.abort();
+        task.await?;
         Ok(())
     }
 }
@@ -71,10 +66,9 @@ impl RocksStoreService {
 impl Drop for RocksStoreService {
     fn drop(&mut self) {
         // Abort the task without polling it.  It may or may not ever be polled again and
-        // actually abort.
-        if let Some(ref task) = self.task {
-            task.abort();
-        }
+        // actually abort.  If .stop() has been called though the task is already shut down
+        // gracefully and not polling it anymore has no significance.
+        self.task.abort();
     }
 }
 
@@ -92,7 +86,7 @@ mod tests {
         let dir = testdir!();
         let marker = dir.join("CURRENT");
 
-        let mut store = RocksStoreService::new(dir).await.unwrap();
+        let store = RocksStoreService::new(dir).await.unwrap();
         assert!(marker.exists());
 
         let fut = store.stop();
