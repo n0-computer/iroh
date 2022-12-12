@@ -51,7 +51,7 @@ impl fmt::Debug for OutType {
 
 #[cfg_attr(feature = "testing", allow(dead_code), automock)]
 impl Api {
-    /// Creates a new [`Api`] instance from the iroh configuration.
+    /// Creates a new instance from the iroh configuration.
     ///
     /// This loads configuration from an optional configuration file and environment
     /// variables.
@@ -76,7 +76,7 @@ impl Api {
         Self::new(config).await
     }
 
-    /// Creates a new [`Api`] from the provided configuration.
+    /// Creates a new instance from the provided configuration.
     pub async fn new(config: Config) -> Result<Self> {
         let client = Client::new(config.rpc_client).await?;
         let content_loader = FullLoader::new(
