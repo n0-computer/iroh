@@ -88,7 +88,7 @@ pub struct Node<KeyStorage: Storage> {
     bitswap_sessions: BitswapSessions,
     providers: Providers,
     memesync_queries:
-        AHashMap<iroh_memesync::QueryId, OneShotSender<Result<iroh_memesync::Response, String>>>,
+        AHashMap<iroh_memesync::QueryId, Sender<Result<iroh_memesync::Response, String>>>,
 }
 
 impl<T: Storage> fmt::Debug for Node<T> {
@@ -403,7 +403,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
         ctx: u64,
         query: iroh_memesync::Query,
         providers: Vec<(PeerId, Vec<Multiaddr>)>,
-        chan: OneShotSender<Result<iroh_memesync::Response, String>>,
+        chan: Sender<Result<iroh_memesync::Response, String>>,
     ) -> Result<()> {
         if let Some(ms) = self.swarm.behaviour_mut().memesync.as_mut() {
             let query_id = ms.get(query, providers);
@@ -490,13 +490,24 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
         match event {
             Event::Memesync(e) => match e {
                 iroh_memesync::MemesyncEvent::OutboundQueryProgress(res) => {
-                    if let Some(chan) = self.memesync_queries.remove(&res.id) {
-                        chan.send(Ok(res)).ok();
+                    let id = res.id;
+                    let is_last = res.is_last();
+                    if let Some(chan) = self.memesync_queries.get_mut(&res.id) {
+                        let chan = chan.clone();
+                        tokio::task::spawn(async move {
+                            println!("sending response {:?}", res);
+                            chan.send(Ok(res)).await.ok();
+                        });
+                        if is_last {
+                            self.memesync_queries.remove(&id);
+                        }
                     }
                 }
                 iroh_memesync::MemesyncEvent::OutboundQueryFailed { id, reason } => {
                     if let Some(chan) = self.memesync_queries.remove(&id) {
-                        chan.send(Err(format!("{:?}", reason))).ok();
+                        tokio::task::spawn(async move {
+                            chan.send(Err(format!("{:?}", reason))).await.ok();
+                        });
                     }
                 }
             },

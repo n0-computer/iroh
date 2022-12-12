@@ -61,10 +61,7 @@ pub struct MemesyncRequest {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct MemesyncResponse {
-    pub data: Bytes,
-    pub ctx: u64,
-}
+pub struct MemesyncResponse(pub iroh_memesync::ResponseOk);
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct FetchProvidersDhtRequest {
@@ -310,8 +307,10 @@ impl RpcMsg<P2pService> for BitswapRequest {
     type Response = RpcResult<BitswapResponse>;
 }
 
-impl RpcMsg<P2pService> for MemesyncRequest {
+impl Msg<P2pService> for MemesyncRequest {
     type Response = RpcResult<MemesyncResponse>;
+    type Update = Self;
+    type Pattern = ServerStreaming;
 }
 
 impl Msg<P2pService> for FetchProvidersDhtRequest {

@@ -145,17 +145,30 @@ impl P2p {
         })
     }
 
-    async fn fetch_memesync(
+    #[tracing::instrument(skip(self, req))]
+    fn fetch_memesync(
+        self,
+        req: MemesyncRequest,
+    ) -> BoxStream<'static, RpcResult<MemesyncResponse>> {
+        async move {
+            let stream = self.fetch_memesync0(req).await?;
+            Ok(stream.map(|x| x.map_err(RpcError::from)))
+        }
+        .try_flatten_stream()
+        .boxed()
+    }
+
+    async fn fetch_memesync0(
         self,
         MemesyncRequest {
             ctx,
             query,
             providers,
         }: MemesyncRequest,
-    ) -> Result<MemesyncResponse> {
+    ) -> anyhow::Result<BoxStream<'static, anyhow::Result<MemesyncResponse>>> {
         trace!("context:{}, received fetch_memesync: {:?}", ctx, query);
 
-        let (s, r) = oneshot::channel();
+        let (s, r) = channel(64);
         let msg = RpcMessage::MemesyncRequest {
             ctx,
             query: query.clone(),
@@ -169,20 +182,14 @@ impl P2p {
             query.path
         );
         self.sender.send(msg).await?;
-        let response = r
-            .await
-            .map_err(|_| anyhow!("memesync req shut down"))?
-            .map_err(|e| anyhow!("memesync: {}", e))?;
+        let r = tokio_stream::wrappers::ReceiverStream::new(r);
+        let stream = r.map(move |response| {
+            let response = response.map_err(|e| anyhow!("{}", e))?;
+            let response = response.response?;
+            Ok(MemesyncResponse(response))
+        });
 
-        trace!("context:{} got memesync response for {:?}", ctx, query.path);
-
-        match response.response {
-            Ok(res) => Ok(MemesyncResponse {
-                data: res.data,
-                ctx,
-            }),
-            Err(err) => Err(anyhow!("failed: {:?}", err)),
-        }
+        Ok(Box::pin(stream))
     }
 
     #[tracing::instrument(skip(self, req))]
@@ -582,7 +589,7 @@ async fn dispatch(s: P2pServer, req: P2pRequest, chan: ServerSocket<P2pService>,
         Version(req) => s.rpc(req, chan, target, P2p::version).await,
         Shutdown(req) => s.rpc_map_err(req, chan, target, P2p::shutdown).await,
         FetchBitswap(req) => s.rpc_map_err(req, chan, target, P2p::fetch_bitswap).await,
-        FetchMemesync(req) => s.rpc_map_err(req, chan, target, P2p::fetch_memesync).await,
+        FetchMemesync(req) => s.server_streaming(req, chan, target, P2p::fetch_memesync).await,
         GossipsubAddExplicitPeer(req) => s.rpc_map_err(req, chan, target, P2p::gossipsub_add_explicit_peer).await,
         GossipsubAllPeers(req) => s.rpc_map_err(req, chan, target, P2p::gossipsub_all_peers).await,
         GossipsubMeshPeers(req) => s.rpc_map_err(req, chan, target, P2p::gossipsub_mesh_peers).await,
@@ -670,7 +677,7 @@ pub enum RpcMessage {
     MemesyncRequest {
         ctx: u64,
         query: iroh_memesync::Query,
-        response_channel: oneshot::Sender<Result<iroh_memesync::Response, String>>,
+        response_channel: Sender<Result<iroh_memesync::Response, String>>,
         providers: Vec<(PeerId, Vec<Multiaddr>)>,
     },
     BitswapNotifyNewBlocks {

@@ -3,6 +3,7 @@ use std::{collections::HashSet, path::Path, sync::Arc};
 use anyhow::{ensure, Result};
 use async_trait::async_trait;
 use cid::Cid;
+use futures::TryStreamExt;
 use iroh_p2p::{config, Config, Keychain, MemoryStorage, NetworkEvent, Node};
 use iroh_resolver::resolver::Resolver;
 use iroh_rpc_client::Client;
@@ -98,14 +99,16 @@ impl ContentLoader for Loader {
             .client
             .try_p2p()?
             .fetch_memesync(0, query, providers.clone())
-            .await;
-        let bytes = match res {
-            Ok(bytes) => bytes,
-            Err(err) => {
-                error!("memesync error: {:#?}", err);
-                return Err(err);
-            }
-        };
+            .await?;
+
+        let mut pieces: Vec<iroh_memesync::ResponseOk> = res.try_collect().await?;
+        ensure!(
+            pieces.len() == 1,
+            "received unexpected number of responses: {}",
+            pieces.len()
+        );
+
+        let bytes = pieces.pop().unwrap().data;
 
         let cloned = bytes.clone();
         let rpc = self.clone();

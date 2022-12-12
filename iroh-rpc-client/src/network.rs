@@ -67,24 +67,28 @@ impl P2pClient {
         Ok(res.data)
     }
 
-    #[tracing::instrument(skip(self))]
     pub async fn fetch_memesync(
         &self,
         ctx: u64,
         query: iroh_memesync::Query,
         providers: HashSet<PeerId>,
-    ) -> Result<Bytes> {
+    ) -> Result<impl Stream<Item = Result<iroh_memesync::ResponseOk>>> {
         debug!("rpc p2p client fetch_memesync: {}", query.path);
 
-        let res = self
+        let response_stream = self
             .client
-            .rpc(MemesyncRequest {
+            .server_streaming(MemesyncRequest {
                 providers: providers.into_iter().collect(),
                 query,
                 ctx,
             })
-            .await??;
-        Ok(res.data)
+            .await?;
+        let response_stream = response_stream.map(|res| {
+            let res = res??;
+            Ok(res.0)
+        });
+
+        Ok(response_stream)
     }
 
     #[tracing::instrument(skip(self))]
