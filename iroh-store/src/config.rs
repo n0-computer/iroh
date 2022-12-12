@@ -49,9 +49,8 @@ impl Config {
         Self::new_with_rpc(path, addr.parse().unwrap())
     }
 
-    /// Derive server addr for non memory addrs.
-    pub fn server_rpc_addr(&self) -> Result<Option<StoreAddr>> {
-        Ok(self.rpc_client.store_addr.clone())
+    pub fn rpc_addr(&self) -> Option<StoreAddr> {
+        self.rpc_client.store_addr.clone()
     }
 }
 

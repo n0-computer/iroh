@@ -52,7 +52,6 @@ features = [
 optional = true
 
 [features]
-default = []
 gateway = []
 resolver = []
 bitswap = []

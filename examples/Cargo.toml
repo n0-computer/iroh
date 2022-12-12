@@ -23,9 +23,5 @@ iroh-util = { version = "0.1.3", path = "../iroh-util" }
 par-stream = { version = "0.10.2", default-features = false, features = ["runtime-tokio"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 
-[features]
-default = []
-
-
 [[bin]]
 name = "importer"

@@ -69,9 +69,8 @@ impl Config {
         self.headers = default_headers();
     }
 
-    /// Derive server addr for non memory addrs.
-    pub fn server_rpc_addr(&self) -> Result<Option<GatewayAddr>> {
-        Ok(self.rpc_client.gateway_addr.clone())
+    pub fn rpc_addr(&self) -> Option<GatewayAddr> {
+        self.rpc_client.gateway_addr.clone()
     }
 }
 

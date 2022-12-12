@@ -38,5 +38,4 @@ tracing = "0.1.33"
 http = "0.2"
 
 [features]
-default = []
 http-uds-gateway = ["tempfile"]

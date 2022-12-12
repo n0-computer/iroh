@@ -45,7 +45,7 @@ async fn main() -> Result<()> {
         false => Arc::new(None),
     };
     let rpc_addr = config
-        .server_rpc_addr()?
+        .rpc_addr()
         .ok_or_else(|| anyhow!("missing gateway rpc addr"))?;
 
     let content_loader = FullLoader::new(

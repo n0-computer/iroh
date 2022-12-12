@@ -35,7 +35,3 @@ tracing-subscriber = "0.3.14"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }
-
-[features]
-default = []
-

@@ -68,7 +68,7 @@ async fn main() -> Result<()> {
 
     let gateway_rpc_addr = config
         .gateway
-        .server_rpc_addr()?
+        .rpc_addr()
         .ok_or_else(|| anyhow!("missing gateway rpc addr"))?;
 
     let bad_bits = match config.gateway.use_denylist {

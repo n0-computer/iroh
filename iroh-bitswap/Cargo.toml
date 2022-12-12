@@ -53,6 +53,3 @@ tracing-subscriber = { version = "0.3.11", features = ["env-filter"] }
 [[bench]]
 name = "message"
 harness = false
-
-[features]
-default = []

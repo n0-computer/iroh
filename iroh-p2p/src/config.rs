@@ -208,9 +208,8 @@ impl Config {
         }
     }
 
-    /// Derive server addr for non memory addrs.
-    pub fn server_rpc_addr(&self) -> Result<Option<P2pAddr>> {
-        Ok(self.rpc_client.p2p_addr.clone())
+    pub fn rpc_addr(&self) -> Option<P2pAddr> {
+        self.rpc_client.p2p_addr.clone()
     }
 }
 
