@@ -19,11 +19,7 @@ async fn main() -> Result<()> {
     let p2p = P2pService::new(p2p_config, dir, store.addr()).await?;
 
     // Note by default this is configured with an indexer, but not with http resolvers.
-    let iroh = IrohBuilder::new()
-        .with_store(store)
-        .with_p2p(p2p)
-        .build()
-        .await?;
+    let iroh = IrohBuilder::new().store(store).p2p(p2p).build().await?;
 
     let quick_start: IpfsPath =
         "/ipfs/QmQPeNsJPyVWPFDVHb77w8G42Fvo15z4bG2X8D2GhfbSXc/quick-start".parse()?;

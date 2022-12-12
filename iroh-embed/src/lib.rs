@@ -114,7 +114,7 @@ impl IrohBuilder {
     /// Adds a store service.
     ///
     /// Every [`Iroh`] system needs a store so this can not be skipped.
-    pub fn with_store(mut self, store: RocksStoreService) -> Self {
+    pub fn store(mut self, store: RocksStoreService) -> Self {
         self.store = Some(store);
         self
     }
@@ -125,7 +125,7 @@ impl IrohBuilder {
     /// passed to [`IrohBuilder::with_store`].
     ///
     /// Every [`Iroh`] system currently needs a p2p service so this can not be skipped.
-    pub fn with_p2p(mut self, p2p: P2pService) -> Self {
+    pub fn p2p(mut self, p2p: P2pService) -> Self {
         self.p2p = Some(p2p);
         self
     }
@@ -135,23 +135,8 @@ impl IrohBuilder {
     /// IPFS HTTP gateways can be used to resolve IPFS content in addition to retrieving the
     /// content from the IPFS peer-to-peer system.
     // TODO: Allow using this without a p2p node?
-    pub fn with_http_resolvers(mut self, http_resolvers: impl Iterator<Item = Url>) -> Self {
+    pub fn http_resolvers(mut self, http_resolvers: impl Iterator<Item = Url>) -> Self {
         self.http_resolvers = http_resolvers.map(|u| u.to_string()).collect();
-        self
-    }
-
-    /// Adds a single HTTP gateway to the list of HTTP gateways to use.
-    ///
-    /// IPFS HTTP gateways are used to look up providers of CIDs, in addition to looking
-    /// them up in the Distrubuted Hash Table (DHT).
-    pub fn push_http_gateway(mut self, http_gateway: Url) -> Self {
-        self.http_resolvers.push(http_gateway.to_string());
-        self
-    }
-
-    /// Removes all IPFS HTTP gateways.
-    pub fn clear_http_gateways(mut self) -> Self {
-        self.http_resolvers.clear();
         self
     }
 
@@ -161,7 +146,7 @@ impl IrohBuilder {
     /// data for the CID.
     ///
     /// By default this uses the [`iroh_resolver::indexer::CID_CONTACT`] indexer.
-    pub fn with_indexer(mut self, indexer: IndexerUrl) -> Self {
+    pub fn indexer(mut self, indexer: IndexerUrl) -> Self {
         self.indexer = Some(indexer);
         self
     }
