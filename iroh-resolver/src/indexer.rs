@@ -48,9 +48,9 @@ impl Display for IndexerUrl {
     }
 }
 
-impl Into<ValueKind> for IndexerUrl {
-    fn into(self) -> ValueKind {
-        ValueKind::String(self.to_string())
+impl From<IndexerUrl> for ValueKind {
+    fn from(source: IndexerUrl) -> Self {
+        Self::String(source.to_string())
     }
 }
 
