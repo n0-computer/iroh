@@ -55,7 +55,7 @@ impl Into<ValueKind> for IndexerUrl {
 }
 
 /// API connection to the indexer nodes, as implemented in
-/// https://github.com/filecoin-project/storetheindex.
+/// <https://github.com/filecoin-project/storetheindex>.
 #[derive(Debug, Clone)]
 pub struct Indexer {
     endpoint: Url,

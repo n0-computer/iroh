@@ -7,6 +7,8 @@ use libp2p::{
 use super::peer_manager::PeerManagerEvent;
 
 /// Event type which is emitted from the [`NodeBehaviour`].
+///
+/// [`NodeBehaviour`]: crate::behaviour::NodeBehaviour
 #[derive(Debug)]
 pub enum Event {
     Ping(PingEvent),

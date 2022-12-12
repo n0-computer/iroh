@@ -1,5 +1,5 @@
-use core::fmt;
 use std::collections::HashMap;
+use std::fmt;
 use std::path::{Path, PathBuf};
 
 use crate::config::{Config, CONFIG_FILE_NAME, ENV_PREFIX};
@@ -43,7 +43,7 @@ impl fmt::Debug for OutType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Dir => write!(f, "Dir"),
-            Self::Reader(_) => write!(f, "Reader(Box<dyn AsyncRead + Unpin>)"),
+            Self::Reader(_) => write!(f, "Reader(impl AsyncRead + Unpin>)"),
             Self::Symlink(arg0) => f.debug_tuple("Symlink").field(arg0).finish(),
         }
     }

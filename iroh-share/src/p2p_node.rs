@@ -35,6 +35,7 @@ impl Ticket {
     }
 }
 
+#[derive(Debug)]
 pub struct P2pNode {
     p2p_task: JoinHandle<()>,
     store_task: JoinHandle<()>,

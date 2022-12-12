@@ -21,7 +21,7 @@ pub const ENV_PREFIX: &str = "IROH_P2P";
 
 /// Default bootstrap nodes
 ///
-/// Based on https://github.com/ipfs/go-ipfs-config/blob/master/bootstrap_peers.go#L17.
+/// Based on <https://github.com/ipfs/go-ipfs-config/blob/master/bootstrap_peers.go#L17>.
 pub const DEFAULT_BOOTSTRAP: &[&str] = &[
     "/dnsaddr/bootstrap.libp2p.io/p2p/QmNnooDu7bfjPFoTZYxMNLWUQJyrVwtbZg5gBMjTezGAJN",
     "/dnsaddr/bootstrap.libp2p.io/p2p/QmQCU2EcMqAqQPR2i9bChDtGNJchTbq5TbXJJ16u19uLTa",
@@ -227,8 +227,6 @@ impl Config {
                 match addr {
                     #[cfg(feature = "rpc-grpc")]
                     Addr::GrpcHttp2(addr) => Ok(Addr::GrpcHttp2(*addr)),
-                    #[cfg(all(feature = "rpc-grpc", unix))]
-                    Addr::GrpcUds(path) => Ok(Addr::GrpcUds(path.clone())),
                     #[cfg(feature = "rpc-mem")]
                     Addr::Mem(_) => bail!("can not derive rpc_addr for mem addr"),
                     _ => bail!("invalid rpc_addr"),

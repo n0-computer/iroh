@@ -6,6 +6,7 @@ use libp2p::{multiaddr::Protocol, Multiaddr, PeerId};
 use mockall::automock;
 use std::collections::HashMap;
 
+#[derive(Debug)]
 pub struct P2p {
     client: P2pClient,
 }

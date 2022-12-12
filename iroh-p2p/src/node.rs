@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::fmt;
 use std::time::Duration;
 
 use ahash::AHashMap;
@@ -85,6 +86,26 @@ pub struct Node<KeyStorage: Storage> {
     use_dht: bool,
     bitswap_sessions: BitswapSessions,
     providers: Providers,
+}
+
+impl<T: Storage> fmt::Debug for Node<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Node")
+            .field("swarm", &"Swarm<NodeBehaviour>")
+            .field("net_receiver_in", &self.net_receiver_in)
+            .field("dial_queries", &self.dial_queries)
+            .field("lookup_queries", &self.lookup_queries)
+            .field("find_on_dht_queries", &self.find_on_dht_queries)
+            .field("network_events", &self.network_events)
+            .field("rpc_client", &self.rpc_client)
+            .field("_keychain", &self._keychain)
+            .field("kad_last_range", &self.kad_last_range)
+            .field("rpc_task", &self.rpc_task)
+            .field("use_dht", &self.use_dht)
+            .field("bitswap_sessions", &self.bitswap_sessions)
+            .field("providers", &self.providers)
+            .finish()
+    }
 }
 
 // TODO(ramfox): use new providers queue instead
@@ -1066,23 +1087,6 @@ mod tests {
         let client_addr = "grpc://0.0.0.0:4401".parse().unwrap();
         fetch_providers(
             "/ip4/0.0.0.0/tcp/5001".parse().unwrap(),
-            server_addr,
-            client_addr,
-        )
-        .await?;
-        Ok(())
-    }
-
-    #[cfg(all(feature = "rpc-grpc", unix))]
-    #[tokio::test]
-    async fn test_fetch_providers_uds_dht() -> Result<()> {
-        let dir = tempfile::tempdir()?;
-        let file = dir.path().join("cool.iroh");
-
-        let server_addr = P2pServerAddr::GrpcUds(file.clone());
-        let client_addr = P2pClientAddr::GrpcUds(file);
-        fetch_providers(
-            "/ip4/0.0.0.0/tcp/5002".parse().unwrap(),
             server_addr,
             client_addr,
         )

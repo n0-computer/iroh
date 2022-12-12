@@ -9,7 +9,7 @@ repository = "https://github.com/n0-computer/iroh"
 description = "Iroh specific process management."
 
 [dependencies]
-anyhow = "1"
+anyhow = { version = "1", features = ["backtrace"] }
 
 [target.'cfg(unix)'.dependencies]
-nix = { version = "0.25", features = ["signal", "process"]}
+nix = { version = "0.26", features = ["signal", "process"]}

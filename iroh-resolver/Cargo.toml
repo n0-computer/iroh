@@ -14,7 +14,7 @@ exclude = [
 ]
 
 [dependencies]
-anyhow = "1"
+anyhow = { version = "1", features = ["backtrace"] }
 async-channel = "1.7.1"
 async-recursion = "1.0.0"
 async-stream = "0.3.3"

@@ -100,6 +100,7 @@ type BitswapConnectionHandlerEvent = ConnectionHandlerEvent<
 >;
 
 /// Protocol Handler that manages a single long-lived substream with a peer.
+#[derive(Debug)]
 pub struct BitswapHandler {
     /// Upgrade configuration for the bitswap protocol.
     listen_protocol: SubstreamProtocol<ProtocolConfig, ()>,
@@ -150,6 +151,7 @@ pub struct BitswapHandler {
 }
 
 /// State of the inbound substream, opened either by us or by the remote.
+#[derive(Debug)]
 enum InboundSubstreamState {
     /// Waiting for a message from the remote. The idle state for an inbound substream.
     WaitingInput(Framed<NegotiatedSubstream, BitswapCodec>),
@@ -161,6 +163,7 @@ enum InboundSubstreamState {
 
 /// State of the outbound substream, opened either by us or by the remote.
 #[allow(clippy::large_enum_variant)]
+#[derive(Debug)]
 enum OutboundSubstreamState {
     /// Waiting for the user to send a message. The idle state for an outbound substream.
     WaitingOutput(Framed<NegotiatedSubstream, BitswapCodec>),

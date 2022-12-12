@@ -24,55 +24,6 @@ macro_rules! proxy_serve {
                         anyhow::bail!("cannot serve on lookup address: {}", name);
                     }
 
-                    #[cfg(all(feature = "grpc", unix))]
-                    $crate::Addr::GrpcUds(path) => {
-                        use anyhow::Context;
-                        use tokio::net::UnixListener;
-                        use tokio_stream::wrappers::UnixListenerStream;
-
-                        let (mut health_reporter, health_service) = tonic_health::server::health_reporter();
-                        health_reporter
-                            .set_serving::<[<$label:lower _server>]::[<$label Server>]<T>>()
-                            .await;
-
-                        if path.exists() {
-                            if path.is_dir() {
-                                anyhow::bail!("cannot bind socket to directory: {}", path.display());
-                            } else {
-                                anyhow::bail!("cannot bind socket: already exists: {}", path.display());
-                            }
-                        }
-
-                        // If the parent directory doesn't exist, we'll fail to bind.
-                        // Create a more precise error to recognize that case.
-                        if let Some(parent) = path.parent() {
-                            if !parent.exists() {
-                                anyhow::bail!("socket parent directory doesn't exist: {}", parent.display());
-                            }
-                        }
-
-                        // Delete file on close
-                        struct UdsGuard(std::path::PathBuf);
-                        impl Drop for UdsGuard {
-                            fn drop(&mut self) {
-                                let _ = std::fs::remove_file(&self.0);
-                            }
-                        }
-
-                        let uds = UnixListener::bind(&path)
-                            .with_context(|| format!("failed to bind to {}", path.display()))?;
-                        let _guard = UdsGuard(path.clone().into());
-
-                        let uds_stream = UnixListenerStream::new(uds);
-
-                        tonic::transport::Server::builder()
-                            .add_service(health_service)
-                            .add_service([<$label:lower _server>]::[<$label Server>]::new(source))
-                            .serve_with_incoming(uds_stream)
-                            .await?;
-
-                        Ok(())
-                    }
                     #[cfg(feature = "mem")]
                     $crate::Addr::Mem(mut receiver) => {
                         while let Some((msg, sender)) = receiver.recv().await {
@@ -139,6 +90,15 @@ macro_rules! proxy_serve_types {
                     $name(Result<$res, String>),
                 )+
             }
+
+            impl ::std::fmt::Debug for [<$label Response>] {
+                fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::result::Result<(), ::std::fmt::Error> {
+                    match self {
+                        $(Self::$name(_) => write!(f, "{}(_)", ::std::stringify!($name)),)+
+                    }
+                }
+            }
+
         }
     }
 }

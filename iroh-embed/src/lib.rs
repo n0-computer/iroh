@@ -29,8 +29,6 @@
 //!
 //! An example is available in the repository under `examples/embed`.
 
-use std::default;
-
 use anyhow::{bail, Result};
 use iroh_rpc_client::Config as RpcClientConfig;
 
