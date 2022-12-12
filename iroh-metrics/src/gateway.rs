@@ -170,7 +170,7 @@ impl MetricsRecorder for Metrics {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum GatewayMetrics {
     Requests,
     BytesStreamed,
@@ -207,7 +207,7 @@ impl std::fmt::Display for GatewayMetrics {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum GatewayHistograms {
     TimeToFetchFirstBlock,
     TimeToFetchFirstBlockCached,

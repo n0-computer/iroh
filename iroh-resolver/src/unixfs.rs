@@ -1,6 +1,6 @@
 use std::{
     collections::VecDeque,
-    fmt::Debug,
+    fmt::{self, Debug},
     io::Cursor,
     pin::Pin,
     task::{Context, Poll},
@@ -411,6 +411,32 @@ pub enum UnixfsChildStream<'a> {
     },
 }
 
+impl<'a> fmt::Debug for UnixfsChildStream<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Hamt {
+                stream: _,
+                pos,
+                out_metrics,
+            } => f
+                .debug_struct("Hamt")
+                .field("stream", &"impl Stream<Item=Result<Link>>")
+                .field("pos", pos)
+                .field("out_metrics", out_metrics)
+                .finish(),
+            Self::Directory {
+                stream: _,
+                out_metrics,
+            } => f
+                .debug_struct("Directory")
+                .field("stream", &"impl Stream<Item=Result<Link>")
+                .field("out_metrics", out_metrics)
+                .finish(),
+        }
+    }
+}
+
+#[derive(Debug)]
 pub enum UnixfsContentReader<T: ContentLoader> {
     File {
         root_node: UnixfsNode,

@@ -92,7 +92,7 @@ impl MetricsRecorder for Metrics {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum P2PMetrics {
     BadPeer,
     BadPeerRemoved,

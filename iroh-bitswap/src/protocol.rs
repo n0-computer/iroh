@@ -1,3 +1,4 @@
+use std::fmt;
 use std::future::Future;
 use std::pin::Pin;
 
@@ -134,6 +135,15 @@ pub struct BitswapCodec {
     /// Codec to encode/decode the Unsigned varint length prefix of the frames.
     pub length_codec: codec::UviBytes,
     pub protocol: ProtocolId,
+}
+
+impl fmt::Debug for BitswapCodec {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("BitswapCodec")
+            .field("length_codec", &"unsigned_varint::codec::UviBytes")
+            .field("protocol", &self.protocol)
+            .finish()
+    }
 }
 
 impl BitswapCodec {

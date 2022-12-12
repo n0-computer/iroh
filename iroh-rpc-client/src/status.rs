@@ -203,6 +203,7 @@ impl StatusTable {
     }
 }
 
+#[derive(Debug)]
 pub struct StatusTableIterator<'a> {
     table: &'a StatusTable,
     iter: usize,

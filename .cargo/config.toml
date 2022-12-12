@@ -3,3 +3,6 @@ xtask = "run --package xtask --"
 
 [target.x86_64-pc-windows-gnu]
 linker = "x86_64-w64-mingw32-gcc"
+
+[build]
+rustflags = ["-Wmissing_debug_implementations"]

@@ -721,6 +721,7 @@ pub async fn add_symlink<S: Store>(
 }
 
 /// An event on the add stream
+#[derive(Debug)]
 pub enum AddEvent {
     ProgressDelta {
         /// The current cid. This is the root on the last event.
