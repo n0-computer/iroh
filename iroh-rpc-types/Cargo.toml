@@ -2,43 +2,21 @@
 name = "iroh-rpc-types"
 version = "0.1.3"
 edition = "2021"
-authors = ["dignifiedquire <me@dignifiedquire.com>", "ramfox"]
+authors = ["Friedel Ziegelmayer <me@dignifiedquire.com>", "ramfox"]
 license = "Apache-2.0/MIT"
 repository = "https://github.com/n0-computer/iroh"
 description = "RPC type definitions for iroh"
-rust-version = "1.63"
+rust-version = "1.65"
 
 [dependencies]
 anyhow = { version = "1", features = ["backtrace"] }
-async-trait = "0.1.56"
+bytes = { version = "1.3.0", features = ["serde"] }
+cid = { version = "0.9", features = ["serde-codec"] }
+derive_more = "0.99.17"
 futures = "0.3.24"
-iroh-metrics = { version = "0.1.3", path = "../iroh-metrics", default-features = false }
-paste = "1.0.7"
-prost = "0.11"
-prost-types = "0.11.1"
-serde_with = "2.0.0"
-tokio = { version = "1", features = ["net", "sync"] }
-tokio-stream = { version = "0.1.9", optional = true, features = ["net"] }
-tonic = { version = "0.8", optional = true }
-tonic-health = { version = "0.7", optional = true }
-
-[build-dependencies]
-prost-build = "0.11.1"
-tonic-build = { version = "0.8", features = ["prost"], optional = true }
-
-[features]
-default = ["grpc", "mem"]
-# GRPC based transport
-grpc = [
-  "tonic",
-  "tonic-build",
-  "tonic-health",
-  "iroh-metrics/rpc-grpc",
-  "tokio-stream"
-]
-# Memory based transport
-mem = []
-
-# Builds and empty tonic server & client as well as associated protobufs
-# that can be used for testing
-testing = []
+libp2p = { version = "0.50", default-features = false, features = ["serde"] }
+quic-rpc = { version = "0.2.1", default-features = false }
+serde = { version = "1" }
+serde-error = "0.1.2"
+serde_with = "2.1.0"
+tokio = { version = "1", default-features = false }

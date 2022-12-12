@@ -43,7 +43,7 @@ pub use reqwest::Url;
 /// communicate directly to the service.
 ///
 /// Can be created from [`store::RocksStoreService::addr`].
-pub use iroh_rpc_types::p2p::P2pClientAddr;
+pub use iroh_rpc_types::p2p::P2pAddr;
 
 /// An address allowing internal communication with the iroh p2p service.
 ///
@@ -51,7 +51,7 @@ pub use iroh_rpc_types::p2p::P2pClientAddr;
 /// communicate directly to the service.
 ///
 /// Can be created from [`p2p::P2pService::addr`].
-pub use iroh_rpc_types::store::StoreClientAddr;
+pub use iroh_rpc_types::store::StoreAddr;
 
 mod p2p;
 mod store;

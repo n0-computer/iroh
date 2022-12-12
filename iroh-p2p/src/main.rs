@@ -30,7 +30,7 @@ fn main() -> Result<()> {
         let sources = [Some(cfg_path.as_path()), args.cfg.as_deref()];
         let network_config = make_config(
             // default
-            Config::default_grpc(),
+            Config::default_network(),
             // potential config files
             &sources,
             // env var prefix for this config
@@ -57,7 +57,7 @@ fn main() -> Result<()> {
 
         let kc = Keychain::<DiskStorage>::new(network_config.key_store_path.clone()).await?;
         let rpc_addr = network_config
-            .server_rpc_addr()?
+            .rpc_addr()
             .ok_or_else(|| anyhow!("missing p2p rpc addr"))?;
         let mut p2p = Node::new(network_config, rpc_addr, kc).await?;
 

@@ -47,8 +47,10 @@ async fn main() -> Result<()> {
     }
 
     let (store_rpc, p2p_rpc) = {
-        let (store_recv, store_sender) = Addr::new_mem();
-        let (p2p_recv, p2p_sender) = Addr::new_mem();
+        let store_recv = Addr::new_mem();
+        let store_sender = store_recv.clone();
+        let p2p_recv = Addr::new_mem();
+        let p2p_sender = p2p_recv.clone();
         config.rpc_client.store_addr = Some(store_sender);
         config.rpc_client.p2p_addr = Some(p2p_sender);
         config.synchronize_subconfigs();
@@ -66,7 +68,7 @@ async fn main() -> Result<()> {
 
     let gateway_rpc_addr = config
         .gateway
-        .server_rpc_addr()?
+        .rpc_addr()
         .ok_or_else(|| anyhow!("missing gateway rpc addr"))?;
 
     let bad_bits = match config.gateway.use_denylist {

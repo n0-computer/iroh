@@ -5,8 +5,8 @@ use std::path::PathBuf;
 use anyhow::Result;
 use iroh_one::mem_p2p;
 use iroh_p2p::{Config as P2pConfig, Libp2pConfig};
-use iroh_rpc_types::p2p::P2pClientAddr;
-use iroh_rpc_types::store::StoreClientAddr;
+use iroh_rpc_types::p2p::P2pAddr;
+use iroh_rpc_types::store::StoreAddr;
 use iroh_rpc_types::Addr;
 use tokio::task::JoinHandle;
 
@@ -21,7 +21,7 @@ use tokio::task::JoinHandle;
 #[derive(Debug)]
 pub struct P2pService {
     task: JoinHandle<()>,
-    addr: P2pClientAddr,
+    addr: P2pAddr,
 }
 
 impl P2pService {
@@ -38,26 +38,23 @@ impl P2pService {
     pub async fn new(
         libp2p_config: Libp2pConfig,
         key_store_path: PathBuf,
-        store_service: StoreClientAddr,
+        store_service: StoreAddr,
     ) -> Result<Self> {
-        let (p2p_recv, p2p_sender) = Addr::new_mem();
-        let mut config = P2pConfig::default_with_rpc(p2p_sender.clone());
+        let addr = Addr::new_mem();
+        let mut config = P2pConfig::default_with_rpc(addr.clone());
 
         config.rpc_client.store_addr = Some(store_service);
         config.libp2p = libp2p_config;
         config.key_store_path = key_store_path;
-        let task = mem_p2p::start(p2p_recv, config).await?;
-        Ok(Self {
-            task,
-            addr: p2p_sender,
-        })
+        let task = mem_p2p::start(addr.clone(), config).await?;
+        Ok(Self { task, addr })
     }
 
     /// Returns the internal RPC address of this p2p service.
     ///
     /// This can be used to connect this service to other iroh services, like the gateway
     /// service.
-    pub fn addr(&self) -> P2pClientAddr {
+    pub fn addr(&self) -> P2pAddr {
         self.addr.clone()
     }
 

@@ -64,7 +64,7 @@ impl Config {
     /// as a single entry point for other system services.
     pub fn default_rpc_config() -> RpcClientConfig {
         RpcClientConfig {
-            gateway_addr: RpcClientConfig::default_grpc().gateway_addr,
+            gateway_addr: RpcClientConfig::default_network().gateway_addr,
             p2p_addr: None,
             store_addr: None,
             channels: Some(1),

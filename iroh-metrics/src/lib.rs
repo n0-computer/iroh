@@ -8,8 +8,6 @@ pub mod core;
 pub mod gateway;
 #[cfg(feature = "p2p")]
 pub mod p2p;
-#[cfg(feature = "rpc-grpc")]
-pub mod req;
 #[cfg(feature = "resolver")]
 pub mod resolver;
 #[cfg(feature = "store")]

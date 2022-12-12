@@ -24,7 +24,7 @@ async fn main() -> anyhow::Result<()> {
     let config_data_path = config_data_path(args.path.clone())?;
     let config = make_config(
         // default
-        Config::new_grpc(config_data_path),
+        Config::new_network(config_data_path),
         // potential config files
         sources,
         // env var prefix for this config
@@ -50,7 +50,7 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let rpc_addr = config
-        .server_rpc_addr()?
+        .rpc_addr()
         .ok_or_else(|| anyhow!("missing store rpc addr"))?;
     let store = if config.path.exists() {
         info!("Opening store at {}", config.path.display());

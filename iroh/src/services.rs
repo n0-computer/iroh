@@ -74,7 +74,7 @@ async fn start_services(api: &Api, services: BTreeSet<&str>) -> Result<()> {
                     accum.insert(status_row.name());
                 }
                 iroh_api::ServiceStatus::ServiceUnknown => (),
-                iroh_api::ServiceStatus::Down(_reason) => {
+                iroh_api::ServiceStatus::Down => {
                     accum.insert(status_row.name());
                     // TODO(b5) - warn user that a service is down & exit
                 }
@@ -157,14 +157,8 @@ pub async fn stop_services(api: &Api, services: BTreeSet<&str>) -> Result<()> {
                 print!("stopping {}... ", &daemon_name);
                 match iroh_localops::process::stop(pid.as_u32()) {
                     Ok(_) => {
-                        let is_down = poll_until_status(
-                            api,
-                            service,
-                            iroh_api::ServiceStatus::Down(tonic::Status::unavailable(
-                                "unavailable",
-                            )),
-                        )
-                        .await?;
+                        let is_down =
+                            poll_until_status(api, service, iroh_api::ServiceStatus::Down).await?;
                         if is_down {
                             println!("{}", "stopped".red());
                         } else {
@@ -260,16 +254,10 @@ where
         ServiceStatus::ServiceUnknown => {
             w.queue(style::PrintStyledContent("Service Unknown".dark_yellow()))?;
         }
-        ServiceStatus::Down(status) => match status.code() {
-            tonic::Code::Unknown => {
-                w.queue(style::PrintStyledContent("Down".dark_yellow()))?
-                    .queue(style::Print("\tThe service has been interupted"))?;
-            }
-            code => {
-                w.queue(style::PrintStyledContent("Down".grey()))?
-                    .queue(style::Print(format!("\t{}", code)))?;
-            }
-        },
+        ServiceStatus::Down => {
+            w.queue(style::PrintStyledContent("Down".grey()))?
+                .queue(style::Print("\tThe service is currently unavailable"))?;
+        }
     };
     w.queue(style::Print("\n"))?;
     Ok(())
@@ -332,11 +320,7 @@ mod tests {
         let table = StatusTable::new(
             Some(StatusRow::new("gateway", 1, ServiceStatus::Unknown)),
             Some(StatusRow::new("p2p", 1, ServiceStatus::Serving)),
-            Some(StatusRow::new(
-                "store",
-                1,
-                ServiceStatus::Down(tonic::Status::new(tonic::Code::Unavailable, "")),
-            )),
+            Some(StatusRow::new("store", 1, ServiceStatus::Down)),
         );
 
         let mut got = Vec::new();
@@ -371,25 +355,7 @@ mod tests {
                 output: format!("test\t\t\t1/1\t{}\n", "Service Unknown".dark_yellow()),
             },
             TestCase {
-                row: StatusRow::new(
-                    "test",
-                    1,
-                    ServiceStatus::Down(tonic::Status::new(tonic::Code::Unknown, "unknown")),
-                ),
-                output: format!(
-                    "test\t\t\t1/1\t{}\tThe service has been interupted\n",
-                    "Down".dark_yellow()
-                ),
-            },
-            TestCase {
-                row: StatusRow::new(
-                    "test",
-                    1,
-                    ServiceStatus::Down(tonic::Status::new(
-                        tonic::Code::Unavailable,
-                        "message text",
-                    )),
-                ),
+                row: StatusRow::new("test", 1, ServiceStatus::Down),
                 output: format!(
                     "test\t\t\t1/1\t{}\tThe service is currently unavailable\n",
                     "Down".grey()

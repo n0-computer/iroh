@@ -1,13 +1,12 @@
-//! A store instance listening on a memory rpc channel.
-
+/// A store instance listening on a memory rpc channel.
 use anyhow::Context;
-use iroh_rpc_types::store::StoreServerAddr;
+use iroh_rpc_types::store::StoreAddr;
 use iroh_store::{rpc, Config, Store};
 use tokio::task::JoinHandle;
 use tracing::info;
 
 /// Starts a new store, using the given mem rpc channel.
-pub async fn start(rpc_addr: StoreServerAddr, config: Config) -> anyhow::Result<JoinHandle<()>> {
+pub async fn start(rpc_addr: StoreAddr, config: Config) -> anyhow::Result<JoinHandle<()>> {
     // This is the file RocksDB itself is looking for to determine if the database already
     // exists or not.  Just knowing the directory exists does not mean the database is
     // created.

@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use anyhow::Result;
 use iroh_one::mem_store;
 use iroh_rpc_client::Config as RpcClientConfig;
-use iroh_rpc_types::store::StoreClientAddr;
+use iroh_rpc_types::store::StoreAddr;
 use iroh_rpc_types::Addr;
 use iroh_store::Config as StoreConfig;
 use tokio::task::JoinHandle;
@@ -17,7 +17,7 @@ use tokio::task::JoinHandle;
 #[derive(Debug)]
 pub struct RocksStoreService {
     task: JoinHandle<()>,
-    addr: StoreClientAddr,
+    addr: StoreAddr,
 }
 
 impl RocksStoreService {
@@ -25,29 +25,26 @@ impl RocksStoreService {
     ///
     /// This implicitly starts a task on the tokio runtime to manage the storage node.
     pub async fn new(path: PathBuf) -> Result<Self> {
-        let (store_recv, store_sender) = Addr::new_mem();
+        let addr = Addr::new_mem();
         let config = StoreConfig {
             path,
             rpc_client: RpcClientConfig {
                 gateway_addr: None,
                 p2p_addr: None,
-                store_addr: Some(store_sender.clone()),
+                store_addr: Some(addr.clone()),
                 channels: Some(1),
             },
             metrics: Default::default(),
         };
-        let task = mem_store::start(store_recv, config).await?;
-        Ok(Self {
-            task,
-            addr: store_sender,
-        })
+        let task = mem_store::start(addr.clone(), config).await?;
+        Ok(Self { task, addr })
     }
 
     /// Returns the internal RPC address of this store node.
     ///
     /// This is used by the other iroh services, like the p2p and gateway services, to use
     /// the store.
-    pub fn addr(&self) -> StoreClientAddr {
+    pub fn addr(&self) -> StoreAddr {
         self.addr.clone()
     }
 

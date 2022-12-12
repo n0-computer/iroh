@@ -1,42 +1,33 @@
-use std::io::Cursor;
-
-use anyhow::{Context, Result};
+use crate::status::StatusRow;
+use crate::{open_client, ServiceStatus};
+use anyhow::Result;
 use bytes::Bytes;
 use cid::Cid;
-#[cfg(feature = "grpc")]
 use futures::Stream;
-#[cfg(feature = "grpc")]
-use iroh_rpc_types::store::store_client::StoreClient as GrpcStoreClient;
-use iroh_rpc_types::store::{
-    GetLinksRequest, GetRequest, GetSizeRequest, HasRequest, PutManyRequest, PutRequest, Store,
-    StoreClientAddr, StoreClientBackend,
-};
-use iroh_rpc_types::Addr;
-#[cfg(feature = "grpc")]
-use tonic::transport::Endpoint;
-#[cfg(feature = "grpc")]
-use tonic_health::proto::health_client::HealthClient;
+use iroh_rpc_types::store::*;
 
-#[cfg(feature = "grpc")]
-use crate::status::{self, StatusRow};
+pub(crate) const NAME: &str = "store";
 
-impl_client!(Store);
+#[derive(Debug, Clone)]
+pub struct StoreClient {
+    client: quic_rpc::RpcClient<StoreService, crate::ChannelTypes>,
+}
 
 impl StoreClient {
+    pub async fn new(addr: StoreAddr) -> anyhow::Result<Self> {
+        let client = open_client(addr).await?;
+        Ok(Self { client })
+    }
+
     #[tracing::instrument(skip(self))]
     pub async fn version(&self) -> Result<String> {
-        let res = self.backend.version(()).await?;
+        let res = self.client.rpc(VersionRequest).await?;
         Ok(res.version)
     }
 
     #[tracing::instrument(skip(self, blob))]
     pub async fn put(&self, cid: Cid, blob: Bytes, links: Vec<Cid>) -> Result<()> {
-        let req = PutRequest {
-            cid: cid.to_bytes(),
-            blob,
-            links: links.iter().map(|l| l.to_bytes()).collect(),
-        };
-        self.backend.put(req).await?;
+        self.client.rpc(PutRequest { cid, blob, links }).await??;
         Ok(())
     }
 
@@ -44,57 +35,53 @@ impl StoreClient {
     pub async fn put_many(&self, blocks: Vec<(Cid, Bytes, Vec<Cid>)>) -> Result<()> {
         let blocks = blocks
             .into_iter()
-            .map(|(cid, blob, links)| PutRequest {
-                cid: cid.to_bytes(),
-                blob,
-                links: links.iter().map(|l| l.to_bytes()).collect(),
-            })
+            .map(|(cid, blob, links)| PutRequest { cid, blob, links })
             .collect();
-        self.backend.put_many(PutManyRequest { blocks }).await?;
+        self.client.rpc(PutManyRequest { blocks }).await??;
         Ok(())
     }
 
     #[tracing::instrument(skip(self))]
     pub async fn get(&self, cid: Cid) -> Result<Option<Bytes>> {
-        let req = GetRequest {
-            cid: cid.to_bytes(),
-        };
-        let res = self.backend.get(req).await?;
+        let res = self.client.rpc(GetRequest { cid }).await??;
         Ok(res.data)
     }
 
     #[tracing::instrument(skip(self))]
     pub async fn has(&self, cid: Cid) -> Result<bool> {
-        let req = HasRequest {
-            cid: cid.to_bytes(),
-        };
-        let res = self.backend.has(req).await?;
+        let res = self.client.rpc(HasRequest { cid }).await??;
         Ok(res.has)
     }
 
     #[tracing::instrument(skip(self))]
     pub async fn get_links(&self, cid: Cid) -> Result<Option<Vec<Cid>>> {
-        let req = GetLinksRequest {
-            cid: cid.to_bytes(),
-        };
-        let links = self.backend.get_links(req).await?.links;
-        if links.is_empty() {
-            Ok(None)
-        } else {
-            let links: Result<Vec<Cid>> = links
-                .iter()
-                .map(|l| Cid::read_bytes(Cursor::new(l)).context(format!("invalid cid: {:?}", l)))
-                .collect();
-            Ok(Some(links?))
-        }
+        let res = self.client.rpc(GetLinksRequest { cid }).await??;
+        Ok(res.links)
     }
 
     #[tracing::instrument(skip(self))]
     pub async fn get_size(&self, cid: Cid) -> Result<Option<u64>> {
-        let req = GetSizeRequest {
-            cid: cid.to_bytes(),
-        };
-        let size = self.backend.get_size(req).await?.size;
-        Ok(size)
+        let res = self.client.rpc(GetSizeRequest { cid }).await??;
+        Ok(res.size)
+    }
+
+    #[tracing::instrument(skip(self))]
+    pub async fn check(&self) -> StatusRow {
+        let status: ServiceStatus = self
+            .version()
+            .await
+            .map(|_| ServiceStatus::Serving)
+            .unwrap_or_else(|_e| ServiceStatus::Unknown);
+        StatusRow {
+            name: "store",
+            number: 3,
+            status,
+        }
+    }
+
+    #[tracing::instrument(skip(self))]
+    pub async fn watch(&self) -> impl Stream<Item = StatusRow> {
+        // todo
+        futures::stream::pending()
     }
 }
