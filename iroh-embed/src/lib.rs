@@ -61,8 +61,8 @@ pub use store::RocksStoreService;
 
 /// Builder for an [`Iroh`] system.
 ///
-/// At least a store and p2p service must be added using the [`IrohBuilder::with_store`] and
-/// [`IrohBuilder::with_p2p`].
+/// At least a store and p2p service must be added using the [`IrohBuilder::store`] and
+/// [`IrohBuilder::p2p`].
 ///
 /// # Examples
 ///
@@ -122,7 +122,7 @@ impl IrohBuilder {
     /// Adds a p2p service.
     ///
     /// This service **must** have been built using the address from the store service
-    /// passed to [`IrohBuilder::with_store`].
+    /// passed to [`IrohBuilder::store`].
     ///
     /// Every [`Iroh`] system currently needs a p2p service so this can not be skipped.
     pub fn p2p(mut self, p2p: P2pService) -> Self {
