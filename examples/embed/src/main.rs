@@ -39,5 +39,9 @@ async fn main() -> Result<()> {
             }
         }
     }
+
+    // Stop the system gracefully.
+    iroh.stop().await?;
+
     Ok(())
 }

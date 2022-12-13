@@ -79,8 +79,8 @@ pub use store::RocksStoreService;
 /// ];
 /// let p2p = P2pService::new(p2p_config, dir, store.addr()).await.unwrap();
 /// let _iroh: Iroh = IrohBuilder::new()
-///                     .with_store(store)
-///                     .with_p2p(p2p)
+///                     .store(store)
+///                     .p2p(p2p)
 ///                     .build()
 ///                     .await
 ///                     .unwrap();
@@ -214,12 +214,44 @@ impl Iroh {
     }
 
     /// Gracefully stop the iroh system.
-    ///
-    /// TODO: Graceful is a lie right now.
-    /// TODO: Will probably become async.
-    /// TODO: Maybe should consume self.
     pub async fn stop(self) -> Result<()> {
-        self.p2p.stop();
-        self.store.stop().await
+        self.p2p.stop().await?;
+        self.store.stop().await?;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use testdir::testdir;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn test_start_stop() {
+        let dir = testdir!();
+        let store_dir = dir.join("store");
+        let store = RocksStoreService::new(store_dir).await.unwrap();
+        let mut cfg = Libp2pConfig::default();
+        cfg.listening_multiaddrs = vec![
+            "/ip4/127.0.0.1/tcp/0".parse().unwrap(),
+            "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+        ];
+        let p2p = P2pService::new(cfg, dir.clone(), store.addr())
+            .await
+            .unwrap();
+
+        let iroh = IrohBuilder::new()
+            .store(store)
+            .p2p(p2p)
+            .build()
+            .await
+            .unwrap();
+
+        // TODO: call an API function, e.g. version would be good.
+
+        let res = dbg!(iroh.stop().await);
+
+        assert!(res.is_ok());
     }
 }

@@ -60,8 +60,13 @@ impl RocksStoreService {
         let task = std::mem::replace(&mut self.task, dummy_task);
 
         task.abort();
-        task.await?;
-        Ok(())
+
+        // Because we currently don't do graceful termination we expect a cancelled error.
+        match task.await {
+            Ok(()) => Ok(()),
+            Err(err) if err.is_cancelled() => Ok(()),
+            Err(err) => Err(err.into()),
+        }
     }
 }
 
