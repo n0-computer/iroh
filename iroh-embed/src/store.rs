@@ -48,8 +48,10 @@ impl RocksStoreService {
         self.addr.clone()
     }
 
-    /// Stop this store node.
-    // TODO: Should this consume self?
+    /// Stop this store service.
+    ///
+    /// This function waits for the store to be fully terminated and only returns once it is
+    /// no longer running.
     // TODO: This should be graceful termination.
     pub async fn stop(mut self) -> Result<()> {
         // This dummy task will be aborted by Drop.

@@ -58,17 +58,66 @@ impl P2pService {
         self.addr.clone()
     }
 
-    /// Stop this p2p node.
-    // TODO: Will eventually become async.
-    // TODO: Should this consume self?
+    /// Stop this p2p service.
+    ///
+    /// This function waits for the service to be fully terminated, returning once it is no
+    /// longer running.
     // TODO: This should be graceful termination.
-    pub fn stop(&self) {
-        self.task.abort();
+    pub async fn stop(mut self) -> Result<()> {
+        // This dummy task will be aborted by Drop.
+        let fut = futures::future::ready(());
+        let dummy_task = tokio::spawn(fut);
+        let task = std::mem::replace(&mut self.task, dummy_task);
+
+        task.abort();
+        task.await?;
+        Ok(())
     }
 }
 
 impl Drop for P2pService {
     fn drop(&mut self) {
-        self.stop()
+        // Abort the task without polling it.  It mor or may not ever be polled again and
+        // actually abort.  If .stop() has been called though the task is already shut down
+        // gracefully and not polling it anymore has no significance.
+        self.task.abort();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use testdir::testdir;
+    use tokio::time;
+
+    use crate::RocksStoreService;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn test_create_and_stop() {
+        let dir = testdir!();
+        let store_dir = dir.join("store");
+        let store = RocksStoreService::new(store_dir).await.unwrap();
+        let mut cfg = Libp2pConfig::default();
+        cfg.listening_multiaddrs = vec![
+            "/ip4/127.0.0.1/tcp/0".parse().unwrap(),
+            "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+        ];
+
+        let svc = P2pService::new(cfg, dir.clone(), store.addr())
+            .await
+            .unwrap();
+
+        let self_key = dir.join("id_ed25519_0");
+        assert!(self_key.exists());
+
+        let fut = svc.stop();
+        let ret = time::timeout(Duration::from_millis(500), fut).await;
+
+        assert!(ret.is_ok());
+
+        // Dropping the store here, no need to shut it down nicely.
     }
 }
