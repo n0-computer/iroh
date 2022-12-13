@@ -1,11 +1,11 @@
 [package]
 name = "iroh-resolver"
+authors = ["dignifiedquire <me@dignifiedquire.com>"]
+description = "Implementation of path resolution for iroh"
 version.workspace = true
 edition.workspace = true
-authors = ["dignifiedquire <me@dignifiedquire.com>"]
 license.workspace = true
 repository.workspace = true
-description = "Implementation of path resolution for iroh"
 rust-version.workspace = true
 
 exclude = [
@@ -14,17 +14,17 @@ exclude = [
 ]
 
 [dependencies]
-anyhow = { version = "1", features = ["backtrace"] }
+anyhow.workspace = true
 async-channel = "1.7.1"
 async-stream = "0.3.3"
 async-trait = "0.1.53"
 bytes = "1.1.0"
 cid = "0.9"
 futures = "0.3.21"
-iroh-metrics = { version = "0.1.3", path = "../iroh-metrics", default-features = false, features = ["resolver", "gateway"] }
-iroh-rpc-client = { version = "0.1.3", path = "../iroh-rpc-client", default-features = false }
-iroh-util = { version = "0.1.3", path = "../iroh-util", default-features = false }
-iroh-unixfs = { version = "0.1.3", path = "../iroh-unixfs" }
+iroh-metrics = { workspace = true, features = ["resolver", "gateway"] }
+iroh-rpc-client.workspace = true
+iroh-util.workspace = true
+iroh-unixfs.workspace = true
 libipld = "0.15.0"
 serde = { version = "1", features = ["derive"] }
 tokio = { version = "1", features = ["fs"] }

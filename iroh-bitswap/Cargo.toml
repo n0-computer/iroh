@@ -1,11 +1,11 @@
 [package]
 name = "iroh-bitswap"
+authors = ["dignifiedquire <me@dignifiedquire.com>"]
+description = "Implementation of the bitswap protocol"
 version.workspace = true
 edition.workspace = true
-authors = ["dignifiedquire <me@dignifiedquire.com>"]
 license.workspace = true
 repository.workspace = true
-description = "Implementation of the bitswap protocol"
 rust-version.workspace = true
 
 [build-dependencies]
@@ -13,7 +13,7 @@ prost-build = "0.11.1"
 
 [dependencies]
 ahash = "0.8.0"
-anyhow = { version = "1", features = ["backtrace"] }
+anyhow.workspace = true
 async-broadcast = "0.4.1"
 async-channel = "1.7.1"
 async-trait = "0.1.57"
@@ -23,8 +23,8 @@ cid = "0.9"
 deadqueue = "0.2.3"
 derivative = "2.2.0"
 futures = "0.3.21"
-iroh-metrics = { version = "0.1.3", path = "../iroh-metrics", default-features = false, features = ["bitswap"] }
-iroh-util = { version = "0.1.3", path = "../iroh-util" }
+iroh-metrics = { workspace = true, features = ["bitswap"] }
+iroh-util.workspace = true
 keyed_priority_queue = "0.4.1"
 libp2p = { version = "0.50", default-features = false, features = ["ping"] }
 multihash = "0.17"

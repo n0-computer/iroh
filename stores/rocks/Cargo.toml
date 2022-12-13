@@ -1,16 +1,16 @@
 [package]
 name = "rocks-store"
 version = "0.1.2"
-edition.workspace = true
 authors = ["dignifiedquire <me@dignifiedquire.com>"]
+description = "Implementation of RocksDB based Store"
+publish = false
+edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Implementation of RocksDB based Store"
 rust-version.workspace = true
-publish = false
 
 [dependencies]
-anyhow = { version = "1", features = ["backtrace"] }
+anyhow.workspace = true
 flatfs-store = { path = "../flatfs", optional = true }
 rocksdb = "0.19.0"
 

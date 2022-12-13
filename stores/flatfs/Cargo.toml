@@ -1,16 +1,16 @@
 [package]
 name = "flatfs-store"
-version = "0.1.2"
-edition.workspace = true
 authors = ["dignifiedquire <me@dignifiedquire.com>"]
+description = "Implementation of FlatFS"
+version.workspace = true
+edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Implementation of FlatFS"
 rust-version.workspace = true
 publish = false
 
 [dependencies]
-anyhow = { version = "1", features = ["backtrace"] }
+anyhow.workspace = true
 backoff = "0.4.0"
 ignore = "0.4.18"
 

@@ -1,15 +1,15 @@
 [package]
 name = "iroh-util"
+authors = ["dignifiedquire <me@dignifiedquire.com>"]
+description = "Utilities for iroh"
 version.workspace = true
 edition.workspace = true
-authors = ["dignifiedquire <me@dignifiedquire.com>"]
 license.workspace = true
 repository.workspace = true
-description = "Utilities for iroh"
 rust-version.workspace = true
 
 [dependencies]
-anyhow = { version = "1", features = ["backtrace"] }
+anyhow.workspace = true
 cid = "0.9"
 config = "0.13.1"
 ctrlc = "3.2.2"

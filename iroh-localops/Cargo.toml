@@ -1,15 +1,15 @@
 [package]
 name = "iroh-localops"
+authors = ["dignifiedquire <me@dignifiedquire.com>", "b5 <b5@n0.computer>"]
+description = "Iroh specific process management."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-authors = ["dignifiedquire <me@dignifiedquire.com>", "b5 <b5@n0.computer>"]
 license.workspace = true
 repository.workspace = true
-description = "Iroh specific process management."
 
 [dependencies]
-anyhow = { version = "1", features = ["backtrace"] }
+anyhow.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.26", features = ["signal", "process"]}

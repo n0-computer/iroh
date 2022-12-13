@@ -1,15 +1,15 @@
 [package]
 name = "iroh-rpc-types"
+authors = ["Friedel Ziegelmayer <me@dignifiedquire.com>", "ramfox"]
+description = "RPC type definitions for iroh"
 version.workspace = true
 edition.workspace = true
-authors = ["Friedel Ziegelmayer <me@dignifiedquire.com>", "ramfox"]
 license.workspace = true
 repository.workspace = true
-description = "RPC type definitions for iroh"
 rust-version.workspace = true
 
 [dependencies]
-anyhow = { version = "1", features = ["backtrace"] }
+anyhow.workspace = true
 bytes = { version = "1.3.0", features = ["serde"] }
 cid = { version = "0.9", features = ["serde-codec"] }
 derive_more = "0.99.17"

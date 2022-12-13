@@ -1,11 +1,11 @@
 [package]
 name = "iroh-car"
+authors = ["dignifiedquire <me@dignifiedquire.com>"]
+description = "Implementation the car files for iroh"
 version.workspace = true
 edition.workspace = true
-authors = ["dignifiedquire <me@dignifiedquire.com>"]
 license.workspace = true
 repository.workspace = true
-description = "Implementation the car files for iroh"
 rust-version.workspace = true
 
 [dependencies]

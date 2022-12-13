@@ -1,15 +1,15 @@
 [package]
+name = "iroh-one"
+readme = "README.md"
 description = "all of iroh in a single binary"
 edition.workspace = true
 license.workspace = true
-name = "iroh-one"
-readme = "README.md"
 repository.workspace = true
 version.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-anyhow = { version = "1", features = ["backtrace"] }
+anyhow.workspace = true
 async-trait = "0.1.56"
 axum = "0.5.1"
 bytes = "1.1"
@@ -20,15 +20,15 @@ futures = "0.3.21"
 headers = "0.3.7"
 http-serde = "1.1.0"
 hyper = "0.14.19"
-iroh-gateway = { version = "0.1.3", path = "../iroh-gateway" }
-iroh-metrics = { version = "0.1.3", path = "../iroh-metrics", default-features = false }
-iroh-p2p = { version = "0.1.3", path = "../iroh-p2p", default-features = false }
-iroh-resolver = { version = "0.1.3", path = "../iroh-resolver" }
-iroh-unixfs = { version = "0.1.3", path = "../iroh-unixfs" }
-iroh-rpc-client = { version = "0.1.3", path = "../iroh-rpc-client", default-features = false }
-iroh-rpc-types = { version = "0.1.3", path = "../iroh-rpc-types", default-features = false }
-iroh-store = { version = "0.1.3", path = "../iroh-store", default-features = false }
-iroh-util = { version = "0.1.3", path = "../iroh-util" }
+iroh-gateway.workspace = true
+iroh-metrics.workspace = true
+iroh-p2p.workspace = true
+iroh-resolver.workspace = true
+iroh-unixfs.workspace = true
+iroh-rpc-client.workspace = true
+iroh-rpc-types.workspace = true
+iroh-store.workspace = true
+iroh-util.workspace = true
 reqwest = { version = "0.11", features = ["rustls-tls"], default-features = false }
 serde = { version = "1.0", features = ["derive"] }
 tempfile = { version = "3.3.0", optional = true }

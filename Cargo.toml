@@ -32,6 +32,22 @@ license = "Apache-2.0/MIT"
 rust-version = "1.65"
 repository = "https://github.com/n0-computer/iroh"
 
+[workspace.dependencies]
+anyhow = { version = "1", features = ["backtrace"] }
+iroh-api = { version = "0.1.3", path = "./iroh-api" }
+iroh-bitswap = { version = "0.1.3", path = "./iroh-bitswap" }
+iroh-car = { version = "0.1.3", path = "./iroh-car" }
+iroh-gateway = { version = "0.1.3", path = "./iroh-gateway" }
+iroh-localops = { version = "0.1.3", path = "./iroh-localops" }
+iroh-metrics = { version = "0.1.3", path = "./iroh-metrics" }
+iroh-p2p = { version = "0.1.3", path = "./iroh-p2p" }
+iroh-resolver = { version = "0.1.3", path = "./iroh-resolver" }
+iroh-rpc-client = { version = "0.1.3", path = "./iroh-rpc-client" }
+iroh-rpc-types = { version = "0.1.3", path = "./iroh-rpc-types" }
+iroh-store = { version = "0.1.3", path = "./iroh-store" }
+iroh-unixfs = { version = "0.1.3", path = "./iroh-unixfs" }
+iroh-util = { version = "0.1.3", path = "./iroh-util" }
+
 [profile.optimized-release]
 inherits = 'release'
 lto = true
