@@ -221,39 +221,39 @@ impl Iroh {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use testdir::testdir;
+// The mocks strike again!  Let's enable this again once the API mocks are gone.
+// #[cfg(test)]
+// mod tests {
+//     use testdir::testdir;
 
-    use super::*;
+//     use super::*;
 
-    #[tokio::test]
-    async fn test_start_stop() {
-        // The mocks strike again!  Let's enable this again once the API mocks are gone.
+//     #[tokio::test]
+//     async fn test_start_stop() {
 
-        // let dir = testdir!();
-        // let store_dir = dir.join("store");
-        // let store = RocksStoreService::new(store_dir).await.unwrap();
-        // let mut cfg = Libp2pConfig::default();
-        // cfg.listening_multiaddrs = vec![
-        //     "/ip4/127.0.0.1/tcp/0".parse().unwrap(),
-        //     "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
-        // ];
-        // let p2p = P2pService::new(cfg, dir.clone(), store.addr())
-        //     .await
-        //     .unwrap();
+//         let dir = testdir!();
+//         let store_dir = dir.join("store");
+//         let store = RocksStoreService::new(store_dir).await.unwrap();
+//         let mut cfg = Libp2pConfig::default();
+//         cfg.listening_multiaddrs = vec![
+//             "/ip4/127.0.0.1/tcp/0".parse().unwrap(),
+//             "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+//         ];
+//         let p2p = P2pService::new(cfg, dir.clone(), store.addr())
+//             .await
+//             .unwrap();
 
-        // let iroh = IrohBuilder::new()
-        //     .store(store)
-        //     .p2p(p2p)
-        //     .build()
-        //     .await
-        //     .unwrap();
+//         let iroh = IrohBuilder::new()
+//             .store(store)
+//             .p2p(p2p)
+//             .build()
+//             .await
+//             .unwrap();
 
-        // // TODO: call an API function, e.g. version would be good.
+//         // TODO: call an API function, e.g. version would be good.
 
-        // let res = dbg!(iroh.stop().await);
+//         let res = dbg!(iroh.stop().await);
 
-        // assert!(res.is_ok());
-    }
-}
+//         assert!(res.is_ok());
+//     }
+// }
