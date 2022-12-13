@@ -30,6 +30,7 @@ hyper = "0.14.19"
 iroh-car = { version = "0.1.3", path = "../iroh-car" }
 iroh-metrics = { version = "0.1.3", path = "../iroh-metrics", default-features = false, features = ["gateway"] }
 iroh-resolver = { version = "0.1.3", path = "../iroh-resolver" }
+iroh-unixfs = { version = "0.1.3", path = "../iroh-unixfs" }
 iroh-rpc-client = { version = "0.1.3", path = "../iroh-rpc-client", default-features = false }
 iroh-rpc-types = { version = "0.1.3", path = "../iroh-rpc-types", default-features = false }
 iroh-util = { version = "0.1.3", path = "../iroh-util" }

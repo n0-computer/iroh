@@ -1,6 +1,13 @@
-use std::{collections::HashSet, str::FromStr, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    fmt::{self, Debug, Display, Formatter},
+    hash::BuildHasher,
+    str::FromStr,
+    sync::Arc,
+    sync::Mutex,
+};
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, bail, Result};
 use async_trait::async_trait;
 use bytes::Bytes;
 use cid::{multibase::Base, Cid};
@@ -8,13 +15,15 @@ use futures::future::Either;
 use iroh_rpc_client::Client;
 use rand::seq::SliceRandom;
 use reqwest::Url;
-use tracing::{info, trace, warn};
+use tracing::{debug, info, trace, warn};
 
 use crate::{
     indexer::{Indexer, IndexerUrl},
     parse_links,
-    resolver::{ContextId, LoadedCid, LoaderContext, Source, IROH_STORE},
+    types::{LoadedCid, Source},
 };
+
+pub const IROH_STORE: &str = "iroh-store";
 
 #[async_trait]
 pub trait ContentLoader: Sync + Send + std::fmt::Debug + Clone + 'static {
@@ -265,5 +274,94 @@ impl ContentLoader for FullLoader {
 
     async fn has_cid(&self, cid: &Cid) -> Result<bool> {
         self.client.try_store()?.has(*cid).await
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct LoaderContext {
+    id: ContextId,
+    inner: Arc<Mutex<InnerLoaderContext>>,
+}
+
+impl LoaderContext {
+    pub fn from_path(id: ContextId, closer: async_channel::Sender<ContextId>) -> Self {
+        trace!("new loader context: {:?}", id);
+        LoaderContext {
+            id,
+            inner: Arc::new(Mutex::new(InnerLoaderContext { closer })),
+        }
+    }
+
+    pub fn id(&self) -> ContextId {
+        self.id
+    }
+}
+
+impl Drop for LoaderContext {
+    fn drop(&mut self) {
+        let count = Arc::strong_count(&self.inner);
+        debug!("session {} dropping loader context {}", self.id, count);
+        if count == 1 {
+            if let Err(err) = self
+                .inner
+                .try_lock()
+                .expect("last reference, no lock")
+                .closer
+                .send_blocking(self.id)
+            {
+                warn!(
+                    "failed to send session stop for session {}: {:?}",
+                    self.id, err
+                );
+            }
+        }
+    }
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ContextId(pub u64);
+
+impl Display for ContextId {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "ContextId({})", self.0)
+    }
+}
+
+impl From<u64> for ContextId {
+    fn from(id: u64) -> Self {
+        ContextId(id)
+    }
+}
+
+impl From<ContextId> for u64 {
+    fn from(id: ContextId) -> Self {
+        id.0
+    }
+}
+
+#[derive(Debug)]
+pub struct InnerLoaderContext {
+    closer: async_channel::Sender<ContextId>,
+}
+
+#[async_trait]
+impl<S: BuildHasher + Clone + Send + Sync + 'static> ContentLoader for HashMap<Cid, Bytes, S> {
+    async fn load_cid(&self, cid: &Cid, _ctx: &LoaderContext) -> Result<LoadedCid> {
+        match self.get(cid) {
+            Some(b) => Ok(LoadedCid {
+                data: b.clone(),
+                source: Source::Bitswap,
+            }),
+            None => bail!("not found"),
+        }
+    }
+
+    async fn stop_session(&self, _ctx: ContextId) -> Result<()> {
+        // no session tracking
+        Ok(())
+    }
+
+    async fn has_cid(&self, cid: &Cid) -> Result<bool> {
+        Ok(self.contains_key(cid))
     }
 }

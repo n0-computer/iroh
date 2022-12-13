@@ -22,6 +22,7 @@ iroh-resolver = { version = "0.1.3", path = "../iroh-resolver", default-features
 iroh-rpc-client = { version = "0.1.3", path = "../iroh-rpc-client", default-features = false }
 iroh-rpc-types = { version = "0.1.3", path = "../iroh-rpc-types", default-features = false }
 iroh-store = { version = "0.1.3", path = "../iroh-store", default-features = false }
+iroh-unixfs = { version = "0.1.3", path = "../iroh-unixfs" }
 iroh-util = { version = "0.1.3", path = "../iroh-util" }
 libp2p = { version = "0.50", default-features = false, features = ["gossipsub"] }
 multibase = "0.9.1"

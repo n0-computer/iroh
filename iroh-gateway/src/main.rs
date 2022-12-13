@@ -9,8 +9,8 @@ use iroh_gateway::{
     core::Core,
     metrics,
 };
-use iroh_resolver::content_loader::{FullLoader, FullLoaderConfig};
 use iroh_rpc_client::Client as RpcClient;
+use iroh_unixfs::content_loader::{FullLoader, FullLoaderConfig};
 use iroh_util::lock::ProgramLock;
 use iroh_util::{iroh_config_path, make_config};
 use tokio::sync::RwLock;

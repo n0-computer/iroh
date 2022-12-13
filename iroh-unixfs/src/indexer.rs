@@ -55,7 +55,7 @@ impl From<IndexerUrl> for ValueKind {
 }
 
 /// API connection to the indexer nodes, as implemented in
-/// <https://github.com/filecoin-project/storetheindex>.
+/// <https://github.com/filecoin-project/storetheindex>
 #[derive(Debug, Clone)]
 pub struct Indexer {
     endpoint: Url,
@@ -241,8 +241,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_find_providers() -> Result<()> {
+        // creepy cat goblin image CID
         let test_cid: Cid =
-            "bafybeigvgzoolc3drupxhlevdp2ugqcrbcsqfmcek2zxiw5wctk3xjpjwy".parse()?;
+            "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi".parse()?;
         let indexer = Indexer::new(CID_CONTACT.parse()?)?;
         let providers = indexer.find_providers(test_cid).await?;
         dbg!(&providers);

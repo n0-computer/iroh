@@ -16,6 +16,7 @@ members = [
   "iroh-rpc-client",
   "iroh-rpc-types",
   "iroh-share",
+  "iroh-unixfs",
   "iroh-store",
   "iroh-util",
   "stores/*",

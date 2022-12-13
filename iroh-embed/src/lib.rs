@@ -34,7 +34,7 @@ use iroh_rpc_client::Config as RpcClientConfig;
 
 pub use iroh_api::Api;
 pub use iroh_p2p::Libp2pConfig;
-pub use iroh_resolver::indexer::IndexerUrl;
+pub use iroh_unixfs::indexer::IndexerUrl;
 pub use reqwest::Url;
 
 /// An address allowing internal communication with the iroh store service.

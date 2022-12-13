@@ -8,13 +8,14 @@ license = "Apache-2.0/MIT"
 repository = "https://github.com/n0-computer/iroh"
 
 [dependencies]
-anyhow = "1"
+anyhow = { version = "1", features = ["backtrace"] }
 bytes = "1.1"
 bytesize = "1.1.0"
 clap = { version = "4.0.9", features = ["derive"] }
 futures = "0.3.21"
 indicatif = "0.17.1"
 iroh-car = { path = "../../iroh-car" }
+iroh-unixfs = { path = "../../iroh-unixfs" }
 iroh-resolver = { path = "../../iroh-resolver" }
 iroh-rpc-client = { path = "../../iroh-rpc-client" }
 iroh-util = { path = "../../iroh-util" }

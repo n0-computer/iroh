@@ -15,7 +15,7 @@ cid = { version = "0.9", features = ["serde-codec"] }
 derive_more = "0.99.17"
 futures = "0.3.24"
 libp2p = { version = "0.50", default-features = false, features = ["serde"] }
-quic-rpc = { version = "0.2.1", default-features = false }
+quic-rpc = { version = "0.2.2", default-features = false }
 serde = { version = "1" }
 serde-error = "0.1.2"
 serde_with = "2.1.0"

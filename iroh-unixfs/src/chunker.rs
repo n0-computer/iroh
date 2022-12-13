@@ -1,8 +1,12 @@
-use std::fmt::{self, Display};
-use std::io;
-use std::pin::Pin;
-use std::task;
+use std::{
+    fmt::{Debug, Display},
+    io,
+    pin::Pin,
+    str::FromStr,
+    task,
+};
 
+use anyhow::{anyhow, Context};
 use bytes::Bytes;
 use futures::{stream::LocalBoxStream, Stream};
 use tokio::io::AsyncRead;
@@ -33,13 +37,67 @@ impl Display for Chunker {
     }
 }
 
+/// Chunker configuration.
+#[derive(Debug, Clone, PartialEq, Eq, Copy)]
+pub enum ChunkerConfig {
+    /// Fixed sized chunker.
+    Fixed(usize),
+    /// Rabin chunker.
+    Rabin,
+}
+
+impl Display for ChunkerConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Fixed(chunk_size) => write!(f, "fixed-{}", chunk_size),
+            Self::Rabin => write!(f, "rabin"),
+        }
+    }
+}
+
+impl FromStr for ChunkerConfig {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s == "rabin" {
+            return Ok(ChunkerConfig::Rabin);
+        }
+
+        if let Some(rest) = s.strip_prefix("fixed") {
+            if rest.is_empty() {
+                return Ok(ChunkerConfig::Fixed(DEFAULT_CHUNKS_SIZE));
+            }
+
+            if let Some(rest) = rest.strip_prefix('-') {
+                let chunk_size: usize = rest.parse().context("invalid chunk size")?;
+                if chunk_size > DEFAULT_CHUNK_SIZE_LIMIT {
+                    return Err(anyhow!("chunk size too large"));
+                }
+
+                return Ok(ChunkerConfig::Fixed(chunk_size));
+            }
+        }
+
+        Err(anyhow!("unknown chunker: {}", s))
+    }
+}
+
+impl From<ChunkerConfig> for Chunker {
+    fn from(cfg: ChunkerConfig) -> Self {
+        match cfg {
+            ChunkerConfig::Fixed(chunk_size) => Chunker::Fixed(Fixed::new(chunk_size)),
+            ChunkerConfig::Rabin => Chunker::Rabin(Box::new(Rabin::default())),
+        }
+    }
+}
+
 pub enum ChunkerStream<'a> {
     Fixed(LocalBoxStream<'a, io::Result<Bytes>>),
     Rabin(LocalBoxStream<'a, io::Result<Bytes>>),
 }
 
-impl<'a> fmt::Debug for ChunkerStream<'a> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl<'a> Debug for ChunkerStream<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Fixed(_) => write!(f, "Fixed(impl Stream<Item=Bytes>)"),
             Self::Rabin(_) => write!(f, "Rabin(impl Stream<Item=Bytes>)"),
