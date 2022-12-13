@@ -65,7 +65,6 @@ impl P2pService {
     // TODO: This should be graceful termination.
     pub async fn stop(mut self) -> Result<()> {
         // This dummy task will be aborted by Drop.
-        println!("stopping p2p");
         let fut = futures::future::ready(());
         let dummy_task = tokio::spawn(fut);
         let task = std::mem::replace(&mut self.task, dummy_task);
@@ -86,7 +85,6 @@ impl Drop for P2pService {
         // Abort the task without polling it.  It mor or may not ever be polled again and
         // actually abort.  If .stop() has been called though the task is already shut down
         // gracefully and not polling it anymore has no significance.
-        println!("dropping p2p");
         self.task.abort();
     }
 }
