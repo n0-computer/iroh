@@ -145,7 +145,7 @@ impl IrohBuilder {
     /// An IPFS indexer keeps an index of CIDs and IPFS nodes which currently provide the
     /// data for the CID.
     ///
-    /// By default this uses the [`iroh_resolver::indexer::CID_CONTACT`] indexer.
+    /// By default this uses the [`iroh_unixfs::indexer::CID_CONTACT`] indexer.
     pub fn indexer(mut self, indexer: IndexerUrl) -> Self {
         self.indexer = Some(indexer);
         self
