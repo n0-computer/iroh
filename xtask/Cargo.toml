@@ -1,9 +1,9 @@
 [package]
 name = "xtask"
-version = "0.1.3"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
 publish = false
-rust-version = "1.65"
+rust-version.workspace = true
 
 [dependencies]
 anyhow = { version = "1", features = ["backtrace"] }

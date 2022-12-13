@@ -1,12 +1,12 @@
 [package]
 name = "iroh"
-version = "0.1.3"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
 authors = ["Kasey Huizinga <klhuizinga@gmail.com>", "Martijn Faassen <faassen@startifact.com>"]
-license = "Apache-2.0/MIT"
-repository = "https://github.com/n0-computer/iroh"
+license.workspace = true
+repository.workspace = true
 description = "Command line interface for interacting with iroh."
-rust-version = "1.65"
+rust-version.workspace = true
 
 exclude = [
   "tests/**",

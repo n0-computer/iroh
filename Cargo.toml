@@ -25,6 +25,13 @@ members = [
 # https://github.com/gfx-rs/wgpu/issues/2356#issuecomment-1005134986
 resolver = "2"
 
+[workspace.package]
+version = "0.1.3"
+edition = "2021"
+license = "Apache-2.0/MIT"
+rust-version = "1.65"
+repository = "https://github.com/n0-computer/iroh"
+
 [profile.optimized-release]
 inherits = 'release'
 lto = true

@@ -1,12 +1,12 @@
 [package]
 name = "flatfs-store"
 version = "0.1.2"
-edition = "2021"
+edition.workspace = true
 authors = ["dignifiedquire <me@dignifiedquire.com>"]
-license = "Apache-2.0/MIT"
-repository = "https://github.com/n0-computer/iroh"
+license.workspace = true
+repository.workspace = true
 description = "Implementation of FlatFS"
-rust-version = "1.65"
+rust-version.workspace = true
 publish = false
 
 [dependencies]
