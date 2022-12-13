@@ -84,7 +84,7 @@ impl<S: Store> Client<S> {
         let (notify, mut default_receiver): (
             async_broadcast::Sender<Block>,
             async_broadcast::Receiver<Block>,
-        ) = async_broadcast::broadcast(4098);
+        ) = async_broadcast::broadcast(4096);
         // ensure no blocking is generated
 
         // TODO: track task
