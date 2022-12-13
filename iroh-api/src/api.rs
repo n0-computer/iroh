@@ -23,7 +23,7 @@ use mockall::automock;
 use relative_path::RelativePathBuf;
 use tokio::io::{AsyncRead, AsyncReadExt};
 
-use crate::block_store::add_blocks_to_store;
+use crate::store::add_blocks_to_store;
 
 #[derive(Debug, Clone)]
 pub struct Api {
@@ -163,6 +163,11 @@ impl Api {
         self.client.clone().watch().await.boxed_local()
     }
 
+    /// The `add_stream` method encodes the entry into a DAG and adds
+    /// the resulting blocks to the store. It returns a stream of
+    /// CIDs and the size of the _raw data_ associated with that block.
+    /// If the block does not contain raw data (only link data), the
+    /// size of the block will be 0.
     pub async fn add_stream(
         &self,
         entry: UnixfsEntry,
@@ -180,6 +185,8 @@ impl Api {
         ))
     }
 
+    /// The `add` method encodes the entry into a DAG and adds the resulting
+    /// blocks to the store.
     pub async fn add(&self, entry: UnixfsEntry) -> Result<Cid> {
         let add_events = self.add_stream(entry).await?;
 

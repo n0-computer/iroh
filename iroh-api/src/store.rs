@@ -1,10 +1,11 @@
 use std::{pin::Pin, sync::Arc};
 
 use anyhow::Result;
+use async_stream::stream;
 use async_trait::async_trait;
 use bytes::Bytes;
 use cid::Cid;
-use futures::{future, stream::TryStreamExt, Stream, StreamExt};
+use futures::{Stream, StreamExt};
 use iroh_rpc_client::Client;
 use iroh_unixfs::Block;
 
@@ -54,8 +55,6 @@ impl Store for Arc<tokio::sync::Mutex<std::collections::HashMap<Cid, Bytes>>> {
     }
 }
 
-use async_stream::stream;
-
 fn add_blocks_to_store_chunked<S: Store>(
     store: S,
     mut blocks: Pin<Box<dyn Stream<Item = Result<Block>>>>,
@@ -84,30 +83,6 @@ fn add_blocks_to_store_chunked<S: Store>(
         // make sure to also send the last chunk!
         store.put_many(chunk).await?;
     }
-}
-
-fn _add_blocks_to_store_single<S: Store>(
-    store: Option<S>,
-    blocks: Pin<Box<dyn Stream<Item = Result<Block>>>>,
-) -> impl Stream<Item = Result<(Cid, u64)>> {
-    blocks
-        .and_then(|x| future::ok(vec![x]))
-        .map(move |blocks| {
-            let store = store.clone();
-            async move {
-                let block = blocks?[0].clone();
-                let raw_data_size = block.raw_data_size().unwrap_or_default();
-                let cid = *block.cid();
-                if let Some(store) = store {
-                    if !store.has(cid).await? {
-                        store.put_many(vec![block]).await?;
-                    }
-                }
-
-                Ok((cid, raw_data_size))
-            }
-        })
-        .buffered(_ADD_PAR)
 }
 
 pub async fn add_blocks_to_store<S: Store>(

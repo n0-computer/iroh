@@ -13,7 +13,7 @@ use tokio::runtime::Runtime;
 
 use iroh_api::{Api, UnixfsConfig, UnixfsEntry};
 
-pub fn add_benchmark(c: &mut Criterion) {
+fn add_benchmark(c: &mut Criterion) {
     let mut group = c.benchmark_group("unixfs_add_file");
     for file_size in [
         1024,             //  1 KiB

@@ -442,7 +442,8 @@ pub struct DirectoryBuilder {
     name: Option<String>,
     entries: Vec<Entry>,
     typ: DirectoryType,
-    chunker: Option<Chunker>,
+    chunker: Chunker,
+    degree: usize,
     path: Option<PathBuf>,
 }
 
@@ -452,7 +453,8 @@ impl Default for DirectoryBuilder {
             name: None,
             entries: Default::default(),
             typ: DirectoryType::Basic,
-            chunker: None,
+            chunker: Chunker::Fixed(chunker::Fixed::default()),
+            degree: DEFAULT_DEGREE,
             path: None,
         }
     }
@@ -479,7 +481,12 @@ impl DirectoryBuilder {
     }
 
     pub fn chunker(mut self, chunker: Chunker) -> Self {
-        self.chunker = Some(chunker);
+        self.chunker = chunker;
+        self
+    }
+
+    pub fn degree(mut self, degree: usize) -> Self {
+        self.degree = degree;
         self
     }
 
@@ -510,7 +517,7 @@ impl DirectoryBuilder {
             typ,
             path,
             chunker,
-            ..
+            degree,
         } = self;
 
         ensure!(typ == DirectoryType::Basic, "too many links to fit into one chunk, must be encoded as a HAMT. However, HAMT creation has not yet been implemented.");
@@ -518,12 +525,9 @@ impl DirectoryBuilder {
         let name = name.unwrap_or_default();
 
         if let Some(path) = path {
-            if let Some(chunker) = chunker {
-                let mut dir = make_dir_from_path(path, chunker).await?;
-                dir.name = name;
-                return Ok(dir);
-            }
-            anyhow::bail!("expected chunker when building a directory from a path");
+            let mut dir = make_dir_from_path(path, chunker.clone(), degree).await?;
+            dir.name = name;
+            return Ok(dir);
         }
 
         Ok(Directory { name, entries })
@@ -591,7 +595,11 @@ pub struct Config {
 }
 
 #[async_recursion(?Send)]
-async fn make_dir_from_path<P: Into<PathBuf>>(path: P, chunker: Chunker) -> Result<Directory> {
+async fn make_dir_from_path<P: Into<PathBuf>>(
+    path: P,
+    chunker: Chunker,
+    degree: usize,
+) -> Result<Directory> {
     let path = path.into();
     let mut dir = DirectoryBuilder::new().name(
         path.file_name()
@@ -608,12 +616,13 @@ async fn make_dir_from_path<P: Into<PathBuf>>(path: P, chunker: Chunker) -> Resu
         } else if path.is_file() {
             let f = FileBuilder::new()
                 .chunker(chunker.clone())
+                .degree(degree)
                 .path(path)
                 .build()
                 .await?;
             dir = dir.add_file(f);
         } else if path.is_dir() {
-            let d = make_dir_from_path(path, chunker.clone()).await?;
+            let d = make_dir_from_path(path, chunker.clone(), degree).await?;
             dir = dir.add_dir(d)?;
         } else {
             anyhow::bail!("directory entry is neither file nor directory")
@@ -906,7 +915,12 @@ mod tests {
             entries: vec![Entry::File(file), Entry::Directory(nested_dir)],
         };
 
-        let mut got = make_dir_from_path(dir, Chunker::Fixed(chunker::Fixed::default())).await?;
+        let mut got = make_dir_from_path(
+            dir,
+            Chunker::Fixed(chunker::Fixed::default()),
+            DEFAULT_DEGREE,
+        )
+        .await?;
 
         // Before comparison sort entries to make test deterministic.
         // The readdir_r function is used in the underlying platform which

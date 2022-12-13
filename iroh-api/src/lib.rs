@@ -1,8 +1,8 @@
 mod api;
-mod block_store;
 mod config;
 mod error;
 mod p2p;
+mod store;
 
 pub mod fs;
 
