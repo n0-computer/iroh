@@ -57,7 +57,7 @@ impl Api {
     /// variables.
     // The lifetime is needed for mocking.
     #[allow(clippy::needless_lifetimes)]
-    pub async fn from_iroh_env<'a>(
+    pub async fn from_env<'a>(
         config_path: Option<&'a Path>,
         overrides_map: HashMap<String, String>,
     ) -> Result<Self> {
