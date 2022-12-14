@@ -16,6 +16,8 @@ ctrlc.workspace = true
 dirs-next.workspace = true
 futures.workspace = true
 humansize.workspace = true
+libipld.workspace = true
+num_enum.workspace = true
 rlimit.workspace = true
 serde = { workspace = true, features = ["derive"] }
 sysinfo.workspace = true

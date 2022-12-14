@@ -1,8 +1,4 @@
-use std::{
-    collections::{HashSet, VecDeque},
-    path::Path,
-    sync::Arc,
-};
+use std::{collections::HashSet, path::Path, sync::Arc};
 
 use anyhow::{ensure, Result};
 use async_trait::async_trait;
@@ -11,10 +7,10 @@ use futures::TryStreamExt;
 use iroh_p2p::{config, Config, Keychain, MemoryStorage, NetworkEvent, Node};
 use iroh_resolver::resolver::Resolver;
 use iroh_rpc_client::Client;
-use iroh_rpc_types::Addr;
+use iroh_rpc_types::{p2p::MemesyncResponse, Addr};
 use iroh_unixfs::{
     content_loader::{ContentLoader, ContextId, LoaderContext, IROH_STORE},
-    parse_links, LoadedCid, Source,
+    LoadedCid, Source,
 };
 use libp2p::{Multiaddr, PeerId};
 use serde::{Deserialize, Serialize};
@@ -105,30 +101,17 @@ impl ContentLoader for Loader {
 
         let mut first_piece = None;
 
-        let mut cids = VecDeque::new();
-        cids.push_back(cid);
-        while let Some(piece) = res.next().await {
-            let piece = piece?;
+        while let Some(res) = res.next().await {
+            let MemesyncResponse {
+                data, links, cid, ..
+            } = res?;
             if first_piece.is_none() {
-                first_piece = Some(piece.data.clone());
+                first_piece = Some(data.clone());
             }
-
-            let bytes = piece.data.clone();
-            let cid = cids.pop_front().expect("too little for too much");
-            // TODO: move verification into iroh-memesync
-            ensure!(
-                iroh_util::verify_hash(&cid, &bytes).unwrap_or_default(),
-                "invalid piece received"
-            );
-
-            let links =
-                tokio::task::spawn_blocking(move || parse_links(&cid, &bytes).unwrap_or_default())
-                    .await
-                    .unwrap_or_default();
-            for link in &links {
-                cids.push_back(*link);
-            }
-            self.client.try_store()?.put(cid, piece.data, links).await?;
+            self.client
+                .try_store()?
+                .put(cid, data, links.into_iter().map(|(_, c)| c).collect())
+                .await?;
         }
 
         ensure!(first_piece.is_some(), "failed to fetch {}", cid);

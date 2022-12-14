@@ -10,12 +10,12 @@ use bytes::{Buf, Bytes};
 use cid::{multihash::MultihashDigest, Cid};
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt, Stream, StreamExt};
 use iroh_metrics::resolver::OutMetrics;
+use iroh_util::codecs::Codec;
 use prost::Message;
 use tokio::io::{AsyncRead, AsyncSeek};
 
 use crate::{
     chunker::DEFAULT_CHUNK_SIZE_LIMIT,
-    codecs::Codec,
     content_loader::{ContentLoader, LoaderContext},
     hamt::Hamt,
     types::{Block, Link, LinkRef, Links, PbLinks},

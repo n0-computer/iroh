@@ -61,7 +61,14 @@ pub struct MemesyncRequest {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct MemesyncResponse(pub iroh_memesync::ResponseOk);
+pub struct MemesyncResponse {
+    pub id: iroh_memesync::QueryId,
+    pub index: u32,
+    pub last: bool,
+    pub data: Bytes,
+    pub links: Vec<(Option<String>, Cid)>,
+    pub cid: Cid,
+}
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct FetchProvidersDhtRequest {

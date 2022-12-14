@@ -3,10 +3,11 @@ use std::io::Cursor;
 use anyhow::{anyhow, Result};
 use bytes::Bytes;
 use cid::Cid;
+use iroh_util::{codecs::Codec, parse_links};
 use libipld::error::{InvalidMultihash, UnsupportedMultihash};
 use multihash::{Code, MultihashDigest};
 
-use crate::{codecs::Codec, parse_links, unixfs::dag_pb};
+use crate::unixfs::dag_pb;
 
 #[derive(Debug)]
 pub struct LoadedCid {

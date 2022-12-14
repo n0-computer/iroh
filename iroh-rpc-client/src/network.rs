@@ -72,7 +72,7 @@ impl P2pClient {
         ctx: u64,
         query: iroh_memesync::Query,
         providers: HashSet<PeerId>,
-    ) -> Result<impl Stream<Item = Result<iroh_memesync::ResponseOk>>> {
+    ) -> Result<impl Stream<Item = Result<MemesyncResponse>>> {
         debug!("rpc p2p client fetch_memesync: {}", query.path);
 
         let response_stream = self
@@ -85,7 +85,7 @@ impl P2pClient {
             .await?;
         let response_stream = response_stream.map(|res| {
             let res = res??;
-            Ok(res.0)
+            Ok(res)
         });
 
         Ok(response_stream)

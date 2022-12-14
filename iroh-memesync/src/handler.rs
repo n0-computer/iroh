@@ -1,4 +1,14 @@
+use std::{
+    collections::VecDeque,
+    fmt::Debug,
+    task::Context,
+    task::Poll,
+    time::{Duration, Instant},
+};
+
 use asynchronous_codec::Framed;
+use bytes::Bytes;
+use cid::Cid;
 use futures::stream::{BoxStream, SelectAll};
 use futures::{SinkExt, Stream, StreamExt};
 use libp2p::swarm::handler::{
@@ -7,12 +17,13 @@ use libp2p::swarm::handler::{
     SubstreamProtocol,
 };
 use libp2p::swarm::NegotiatedSubstream;
-use std::time::Instant;
-use std::{fmt::Debug, task::Context, task::Poll, time::Duration};
 use tracing::{trace, warn};
 
-use crate::protocol::{MemesyncCodec, MemesyncProtocol};
 use crate::store::{GetResult, Store};
+use crate::{
+    protocol::{MemesyncCodec, MemesyncProtocol},
+    QueryId,
+};
 use crate::{
     Error, Message, Path, Recursion, RecursionDirection, Request, Response, ResponseError,
     ResponseOk,
@@ -22,14 +33,22 @@ use crate::{
 #[allow(clippy::large_enum_variant)]
 pub enum HandlerEvent {
     Upgrade,
-    Message(Message),
-    RequestFailed { request: Request, err: HandlerError },
-}
-
-impl From<Message> for HandlerEvent {
-    fn from(msg: Message) -> Self {
-        HandlerEvent::Message(msg)
-    }
+    ResponseProgress {
+        id: QueryId,
+        index: u32,
+        last: bool,
+        data: Bytes,
+        links: Vec<(Option<String>, Cid)>,
+        cid: Cid,
+    },
+    /// Received a response, but it was invalid.
+    ResponseError {
+        id: QueryId,
+    },
+    RequestFailed {
+        request: Request,
+        err: HandlerError,
+    },
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -63,7 +82,7 @@ pub struct Handler<S: Store> {
     /// Queue of events to produce in `poll()`.
     events_out: Vec<HandlerEvent>,
     /// Queue of outbound substreams to open.
-    dial_queue: Vec<Message>,
+    dial_queue: Vec<Request>,
     /// Current number of concurrent outbound substreams being opened.
     dial_negotiated: u32,
     /// Value to return from `connection_keep_alive`.
@@ -99,7 +118,7 @@ impl<S: Store> Handler<S> {
     }
 
     /// Opens an outbound substream with `upgrade`.
-    pub fn send_request(&mut self, upgrade: Message) {
+    pub fn send_request(&mut self, upgrade: Request) {
         self.keep_alive = KeepAlive::Yes;
         self.dial_queue.push(upgrade);
     }
@@ -107,18 +126,18 @@ impl<S: Store> Handler<S> {
 
 type ConnHandlerEvent = ConnectionHandlerEvent<
     MemesyncProtocol,
-    Message,
+    Request,
     HandlerEvent,
     ConnectionHandlerUpgrErr<HandlerError>,
 >;
 
 impl<S: Store> ConnectionHandler for Handler<S> {
-    type InEvent = Message;
+    type InEvent = Request;
     type OutEvent = HandlerEvent;
     type Error = ConnectionHandlerUpgrErr<HandlerError>;
     type InboundProtocol = MemesyncProtocol;
     type OutboundProtocol = MemesyncProtocol;
-    type OutboundOpenInfo = Message;
+    type OutboundOpenInfo = Request;
     type InboundOpenInfo = ();
 
     fn listen_protocol(&self) -> SubstreamProtocol<Self::InboundProtocol, Self::InboundOpenInfo> {
@@ -225,18 +244,27 @@ impl<S: Store> ConnectionHandler for Handler<S> {
 }
 
 fn create_outbound_stream(
-    initial_message: Message,
+    req: Request,
     mut stream: Framed<NegotiatedSubstream, MemesyncCodec>,
 ) -> BoxStream<'static, ConnHandlerEvent> {
-    trace!("new outbound stream: {:?}", initial_message);
+    trace!("new outbound stream: {:?}", req);
 
     async_stream::stream! {
-        let id = initial_message.id();
+        let id = req.id;
+        let query = req.query.clone();
+
         // sending message
-        if let Err(err) = stream.send(initial_message).await {
+        if let Err(err) = stream.send(Message::Request(req)).await {
             warn!("failed to send message: {:?}", err);
             return;
         }
+
+        // Track CIDs, to verify the sender is sending the expected data.
+        let mut cids = VecDeque::new();
+        cids.push_back((None, query.path.root));
+
+        // Track the tail of the query that is left to resolve.
+        let mut tail_left: VecDeque <_>  = query.path.tail.iter().cloned().collect();
 
         while let Some(Ok(msg)) = stream.next().await {
             match msg {
@@ -249,23 +277,93 @@ fn create_outbound_stream(
                     trace!("response received: {:?}", resp);
                     if resp.id != id {
                         warn!("invalid query id received: {:?} != {:?}", resp.id, id);
-                        // TODO: send error
+                        yield ConnectionHandlerEvent::Custom(HandlerEvent::ResponseError { id });
                         break;
                     }
-                    let is_last = resp.is_last();
-
-                    yield ConnectionHandlerEvent::Custom(
-                        HandlerEvent::Message(Message::Response(resp))
-                    );
-
-                    if is_last {
+                    // Verify incoming data
+                    if cids.is_empty() {
+                        warn!("received more responses than expected");
+                        yield ConnectionHandlerEvent::Custom(HandlerEvent::ResponseError { id });
                         break;
+                    }
+
+                    // If the response is valid
+                    match resp.response {
+                        Ok(res_ok) => {
+                            let bytes = res_ok.data.clone();
+                            let (name, cid) = cids.pop_front().unwrap();
+
+                            // 1. match data against expected cid
+                            trace!("checking link {:?}", name);
+                            if !iroh_util::verify_hash(&cid, &bytes).unwrap_or_default() {
+                                warn!("received invalid block: {:?} ({})", name, cid);
+                                yield ConnectionHandlerEvent::Custom(HandlerEvent::ResponseError { id });
+                                break;
+                            }
+
+                            // 2. parse links and remember them, to verify the next blocks
+                            let links = tokio::task::spawn_blocking(move || {
+                                iroh_util::parse_links_with_names(&cid, &bytes).unwrap_or_default()
+                            }).await.unwrap_or_default();
+
+                            if tail_left.is_empty() {
+                                match &query.recursion {
+                                    Recursion::Some { direction, .. } => {
+                                        match direction {
+                                            RecursionDirection::BreadthFirst => {
+                                                for (name, link) in &links {
+                                                    cids.push_back((name.clone(), *link));
+                                                }
+                                            }
+                                            RecursionDirection::DepthFirst => {
+                                                // TODO
+                                            }
+                                        }
+                                    }
+                                    Recursion::None => {
+                                        // Nothing to do
+                                    }
+                                }
+                            } else {
+                                // next link should be the tail link
+                                let name = tail_left.pop_front();
+                                if let Some((_, next_link)) = links.iter().find(|(n, _)| {
+                                    name.is_some() && n.as_ref() == name.as_ref()
+                                }) {
+                                    cids.push_back((name.clone(), *next_link));
+                                } else {
+                                    warn!("query invalid");
+                                    yield ConnectionHandlerEvent::Custom(HandlerEvent::ResponseError { id });
+                                    break;
+                                }
+                            }
+                            
+                            // Yield the response.
+                            yield ConnectionHandlerEvent::Custom(HandlerEvent::ResponseProgress {
+                                id: resp.id,
+                                index: res_ok.index,
+                                last: res_ok.last,
+                                data: res_ok.data,
+                                links,
+                                cid,
+                            });
+
+                            if res_ok.last {
+                                break;
+                            }
+                        }
+                        Err(err) => {
+                            warn!("response error: {:?}", err);
+                            // Yield the response.
+                            yield ConnectionHandlerEvent::Custom(HandlerEvent::ResponseError { id: resp.id });
+                            break;
+                        }
                     }
                 }
             }
         }
 
-        // All responses received, close the stream
+        // All responses received, close the stream.
         if let Err(err) = stream.flush().await {
             warn!("failed to flush stream: {:?}", err);
         }
@@ -357,9 +455,11 @@ fn create_response_stream<S: Store>(req: Request, store: S) -> impl Stream<Item 
         };
 
         // resolve the tail
+        trace!("resolving tail: {:?}", tail);
         while let Some(part) = tail.pop() {
             trace!("loading tail piece: {:?}", part);
             let response =  if let Some((_, cid)) = current_links.iter().find(|(name, _)| { name.as_ref() == Some(&part) }) {
+                trace!("part: {} ({})", part, cid);
                 current_path.tail.push(part);
 
                 match store.get(*cid).await {
@@ -402,6 +502,7 @@ fn create_response_stream<S: Store>(req: Request, store: S) -> impl Stream<Item 
 
         // Resolve recursion
         if let Recursion::Some { depth, direction} = query.recursion {
+            trace!("resolving recursion depth: {}: {:?}", depth, direction);
             match direction {
                 RecursionDirection::BreadthFirst => {
                     let mut next_links = current_links;
@@ -415,6 +516,7 @@ fn create_response_stream<S: Store>(req: Request, store: S) -> impl Stream<Item 
                         trace!("resolving {}/{} depth with {} links", current_depth, depth, num_links);
 
                         for (link_index, (name, cid)) in current_links.into_iter().enumerate() {
+                            trace!("resolving link {:?} ({})", name, cid);
                             // TODO: fix current_path
                             if let Some(name) = name {
                                 current_path.tail.push(name);
@@ -456,6 +558,7 @@ fn create_response_stream<S: Store>(req: Request, store: S) -> impl Stream<Item 
                 }
                 RecursionDirection::DepthFirst => {
                     // TODO:
+                    warn!("TODO: depth first");
                     yield Response {
                         id,
                         response: Err(ResponseError::Other),

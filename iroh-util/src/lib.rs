@@ -1,6 +1,6 @@
 use std::{
     cell::RefCell,
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     env,
     path::{Path, PathBuf},
     sync::{
@@ -9,14 +9,18 @@ use std::{
     },
 };
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, bail, Context as _, Result};
 use cid::{
     multihash::{Code, MultihashDigest},
     Cid,
 };
 use config::{Config, ConfigError, Environment, File, Map, Source, Value, ValueKind};
+use libipld::{prelude::Codec as _, Ipld, IpldCodec};
 use tracing::debug;
 
+use crate::codecs::Codec;
+
+pub mod codecs;
 pub mod exitcodes;
 pub mod human;
 pub mod lock;
@@ -238,6 +242,75 @@ pub fn verify_hash(cid: &Cid, bytes: &[u8]) -> Option<bool> {
     })
 }
 
+/// Extract links from the given content.
+///
+/// Links will be returned as a sorted vec
+pub fn parse_links(cid: &Cid, bytes: &[u8]) -> Result<Vec<Cid>> {
+    let codec = Codec::try_from(cid.codec()).context("unknown codec")?;
+    let mut cids = Vec::new();
+    let codec = match codec {
+        Codec::DagCbor => IpldCodec::DagCbor,
+        Codec::DagPb => IpldCodec::DagPb,
+        Codec::DagJson => IpldCodec::DagJson,
+        Codec::Raw => IpldCodec::Raw,
+        _ => bail!("unsupported codec {:?}", codec),
+    };
+    codec.references::<Ipld, _>(bytes, &mut cids)?;
+    let links = cids.into_iter().collect();
+    Ok(links)
+}
+
+/// Extract links from the given content, including their name.
+///
+/// Links will be returned as a sorted `Vec` (including duplicates).
+pub fn parse_links_with_names(cid: &Cid, bytes: &[u8]) -> Result<Vec<(Option<String>, Cid)>> {
+    let codec = Codec::try_from(cid.codec()).context("unknown codec")?;
+    let codec = match codec {
+        Codec::DagCbor => IpldCodec::DagCbor,
+        Codec::DagPb => IpldCodec::DagPb,
+        Codec::DagJson => IpldCodec::DagJson,
+        Codec::Raw => IpldCodec::Raw,
+        _ => bail!("unsupported codec {:?}", codec),
+    };
+    let ipld = codec.decode::<Ipld>(bytes)?;
+    let mut links = Vec::new();
+
+    // TODO: limit
+    let mut stack = VecDeque::new();
+    stack.push_back((None, &ipld));
+
+    while let Some((current_path, ipld)) = stack.pop_front() {
+        match ipld {
+            Ipld::List(list) => {
+                for (i, val) in list.iter().enumerate() {
+                    let path: Option<String> = match current_path {
+                        Some(ref p) => Some(format!("{}/{}", p, i)),
+                        None => Some(i.to_string()),
+                    };
+
+                    stack.push_back((path, val));
+                }
+            }
+            Ipld::Map(map) => {
+                for (el, val) in map {
+                    let path: Option<String> = match current_path {
+                        Some(ref p) => Some(format!("{}/{}", p, el)),
+                        None => Some(el.to_string()),
+                    };
+
+                    stack.push_back((path, val));
+                }
+            }
+            Ipld::Link(link) => {
+                links.push((current_path, *link));
+            }
+            _ => {}
+        }
+    }
+
+    Ok(links)
+}
+
 /// If supported sets a preffered limit for file descriptors.
 #[cfg(unix)]
 pub fn increase_fd_limit() -> std::io::Result<u64> {
@@ -256,6 +329,7 @@ pub fn increase_fd_limit() -> std::io::Result<u64> {
 
 #[cfg(test)]
 mod tests {
+    use libipld::ipld;
     use serde::Deserialize;
     use testdir::testdir;
 
@@ -322,5 +396,82 @@ mod tests {
         )
         .unwrap();
         assert_eq!(cfg.item, "one");
+    }
+
+    #[test]
+    fn test_parse_links_with_names() {
+        struct TestCase {
+            name: &'static str,
+            input: (Cid, Vec<u8>),
+            expected: Vec<(Option<String>, Cid)>,
+        }
+
+        let encode = |ipld| {
+            let encoded = libipld::cbor::DagCborCodec.encode(&ipld).unwrap();
+            let digest = Code::Sha2_256.digest(&encoded);
+            let cid = Cid::new_v1(libipld::cbor::DagCborCodec.into(), digest);
+            (cid, encoded)
+        };
+
+        let (foo_cid, _) = encode(ipld!({
+            "foo": "bar",
+        }));
+
+        let (bar_cid, _) = encode(ipld!({
+            "bar": 3,
+        }));
+
+        let cases = [
+            TestCase {
+                name: "simple, no links",
+                input: encode(ipld!({
+                    "child": "is_cool",
+                    "number": 1,
+                })),
+                expected: vec![],
+            },
+            TestCase {
+                name: "simple, 1 link",
+                input: encode(ipld!({
+                    "cool_link": foo_cid,
+                    "number": 1,
+                })),
+                expected: vec![(Some("cool_link".into()), foo_cid)],
+            },
+            TestCase {
+                name: "1 nested link",
+                input: encode(ipld!({
+                    "cool_link": {
+                        "foo": foo_cid,
+                    },
+                    "number": 1,
+                })),
+                expected: vec![(Some("cool_link/foo".into()), foo_cid)],
+            },
+            TestCase {
+                name: "mixed",
+                input: encode(ipld!({
+                    "first": bar_cid,
+                    "cool_link": {
+                        "foo": foo_cid,
+                        "list": [foo_cid, "hello"],
+                    },
+                    "number": 1,
+                    "other": bar_cid,
+                })),
+                expected: vec![
+                    (Some("first".into()), bar_cid),
+                    (Some("other".into()), bar_cid),
+                    (Some("cool_link/foo".into()), foo_cid),
+                    (Some("cool_link/list/0".into()), foo_cid),
+                ],
+            },
+        ];
+
+        for case in cases {
+            println!("---- {} ----", case.name);
+            let links = parse_links_with_names(&case.input.0, &case.input.1).unwrap();
+            assert_eq!(case.expected, links);
+        }
     }
 }

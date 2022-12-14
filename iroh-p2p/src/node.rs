@@ -8,7 +8,7 @@ use cid::Cid;
 use futures_util::stream::StreamExt;
 use iroh_metrics::{core::MRecorder, inc, libp2p_metrics, p2p::P2PMetrics};
 use iroh_rpc_client::Client as RpcClient;
-use iroh_rpc_types::p2p::P2pAddr;
+use iroh_rpc_types::p2p::{MemesyncResponse, P2pAddr};
 use libp2p::core::Multiaddr;
 use libp2p::gossipsub::{GossipsubMessage, MessageId, TopicHash};
 pub use libp2p::gossipsub::{IdentTopic, Topic};
@@ -87,8 +87,7 @@ pub struct Node<KeyStorage: Storage> {
     use_dht: bool,
     bitswap_sessions: BitswapSessions,
     providers: Providers,
-    memesync_queries:
-        AHashMap<iroh_memesync::QueryId, Sender<Result<iroh_memesync::Response, String>>>,
+    memesync_queries: AHashMap<iroh_memesync::QueryId, Sender<Result<MemesyncResponse, String>>>,
 }
 
 impl<T: Storage> fmt::Debug for Node<T> {
@@ -403,7 +402,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
         ctx: u64,
         query: iroh_memesync::Query,
         providers: Vec<(PeerId, Vec<Multiaddr>)>,
-        chan: Sender<Result<iroh_memesync::Response, String>>,
+        chan: Sender<Result<MemesyncResponse, String>>,
     ) -> Result<()> {
         if let Some(ms) = self.swarm.behaviour_mut().memesync.as_mut() {
             let query_id = ms.get(query, providers);
@@ -489,12 +488,25 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
     fn handle_node_event(&mut self, event: Event) -> Result<()> {
         match event {
             Event::Memesync(e) => match e {
-                iroh_memesync::MemesyncEvent::OutboundQueryProgress(res) => {
-                    let id = res.id;
-                    let is_last = res.is_last();
-                    if let Some(chan) = self.memesync_queries.get_mut(&res.id) {
-                        chan.try_send(Ok(res)).expect("overloaded");
-                        if is_last {
+                iroh_memesync::MemesyncEvent::OutboundQueryProgress {
+                    id,
+                    index,
+                    last,
+                    data,
+                    links,
+                    cid,
+                } => {
+                    if let Some(chan) = self.memesync_queries.get_mut(&id) {
+                        chan.try_send(Ok(MemesyncResponse {
+                            id,
+                            index,
+                            last,
+                            data,
+                            links,
+                            cid,
+                        }))
+                        .expect("overloaded");
+                        if last {
                             self.memesync_queries.remove(&id);
                         }
                     }

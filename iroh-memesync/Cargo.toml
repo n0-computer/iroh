@@ -24,6 +24,7 @@ bincode = "1.3"
 async-trait = "0.1.59"
 async-stream = "0.3.3"
 unsigned-varint = { version = "0.7.0", features = ["asynchronous_codec"] }
+iroh-util = { version = "0.2.0", path = "../iroh-util" }
 
 [dev-dependencies]
 criterion = "0.3.5"

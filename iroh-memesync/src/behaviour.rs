@@ -6,6 +6,8 @@ use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 
 use ahash::{AHashMap, AHashSet};
+use bytes::Bytes;
+use cid::Cid;
 use libp2p::core::connection::ConnectionId;
 use libp2p::core::{ConnectedPoint, Multiaddr, PeerId};
 use libp2p::swarm::dial_opts::DialOpts;
@@ -16,18 +18,29 @@ use tracing::{debug, trace, warn};
 
 use crate::handler::{Handler, HandlerConfig, HandlerEvent};
 use crate::store::Store;
-use crate::{Message, Query, QueryId, Request, Response};
+use crate::{Query, QueryId, Request};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum MemesyncEvent {
-    OutboundQueryProgress(Response),
-    OutboundQueryFailed { id: QueryId, reason: Reason },
+    OutboundQueryProgress {
+        id: QueryId,
+        index: u32,
+        last: bool,
+        data: Bytes,
+        links: Vec<(Option<String>, Cid)>,
+        cid: Cid,
+    },
+    OutboundQueryFailed {
+        id: QueryId,
+        reason: Reason,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Reason {
     NoProvidersLeft,
     Timeout,
+    InvalidResponse,
 }
 
 /// Network behaviour that handles sending and receiving IPFS blocks.
@@ -221,62 +234,78 @@ impl<S: Store> NetworkBehaviour for Memesync<S> {
                 // outbound upgrade
             }
             HandlerEvent::RequestFailed { request, err } => {}
-            HandlerEvent::Message(msg) => match msg {
-                Message::Request(req) => {
-                    trace!("incoming request from {}: {:?}", peer_id, req);
-                }
-                Message::Response(res) => {
-                    trace!("incoming response from {}: {:?}", peer_id, res);
-                    if let Some(query_state) = self.queries.get_mut(&res.id) {
-                        if let Some((query_peer_id, query_peer_state)) =
-                            &mut query_state.active_peer
-                        {
-                            if *query_peer_id == peer_id {
-                                if let QueryPeerState::RequestSent {
-                                    outstanding_queries,
-                                } = query_peer_state
-                                {
-                                    // got the answer matching our request
+            HandlerEvent::ResponseError { id } => {
+                warn!("invalid response received from {}", peer_id);
+                self.events.push_back(NetworkBehaviourAction::GenerateEvent(
+                    MemesyncEvent::OutboundQueryFailed {
+                        id,
+                        reason: Reason::InvalidResponse,
+                    },
+                ));
+            }
+            HandlerEvent::ResponseProgress {
+                id,
+                index,
+                last,
+                data,
+                links,
+                cid,
+            } => {
+                trace!("incoming response from {}", peer_id);
+                if let Some(query_state) = self.queries.get_mut(&id) {
+                    if let Some((query_peer_id, query_peer_state)) = &mut query_state.active_peer {
+                        if *query_peer_id == peer_id {
+                            if let QueryPeerState::RequestSent {
+                                outstanding_queries,
+                            } = query_peer_state
+                            {
+                                // got the answer matching our request
 
-                                    if res.is_last() {
-                                        *outstanding_queries -= 1;
-                                    }
-
-                                    // remove query it is done
-                                    if *outstanding_queries == 0 {
-                                        self.queries.remove(&res.id);
-                                    }
-
-                                    // emit event with the result
-                                    self.events.push_back(NetworkBehaviourAction::GenerateEvent(
-                                        MemesyncEvent::OutboundQueryProgress(res),
-                                    ));
-                                } else {
-                                    warn!(
-                                        "received query response in invalid state: {:?}",
-                                        query_peer_state
-                                    );
+                                if last {
+                                    *outstanding_queries -= 1;
                                 }
+
+                                // remove query it is done
+                                if *outstanding_queries == 0 {
+                                    self.queries.remove(&id);
+                                }
+
+                                // emit event with the result
+                                self.events.push_back(NetworkBehaviourAction::GenerateEvent(
+                                    MemesyncEvent::OutboundQueryProgress {
+                                        id,
+                                        index,
+                                        last,
+                                        data,
+                                        links,
+                                        cid,
+                                    },
+                                ));
                             } else {
                                 warn!(
-                                    "received query ({:?}) response from {} but expected {}",
-                                    res.id, peer_id, query_peer_id
+                                    "received query response in invalid state: {:?}",
+                                    query_peer_state
                                 );
                             }
                         } else {
                             warn!(
-                                "received unknown query response {:?} from {} (no active peer)",
-                                res.id, peer_id,
+                                "received query ({:?}) response from {} but expected {}",
+                                id, peer_id, query_peer_id
                             );
                         }
                     } else {
                         warn!(
-                            "received unknown query response {:?} from {} (unkown query)",
-                            res.id, peer_id
+                            "received unknown query response {:?} from {} (no active peer)",
+                            id, peer_id,
                         );
                     }
+                } else {
+                    warn!(
+                        "received unknown query response {:?} from {} (unkown query)",
+                        id, peer_id
+                    );
                 }
-            },
+            }
         }
     }
 
@@ -340,10 +369,7 @@ impl<S: Store> NetworkBehaviour for Memesync<S> {
                             event = Some(Poll::Ready(NetworkBehaviourAction::NotifyHandler {
                                 peer_id,
                                 handler: libp2p::swarm::NotifyHandler::One(conn_id),
-                                event: Message::Request(Request::from_query(
-                                    *query_id,
-                                    query_state.query.clone(),
-                                )),
+                                event: Request::from_query(*query_id, query_state.query.clone()),
                             }));
                             break;
                         }
@@ -567,8 +593,8 @@ mod tests {
                     (
                         block_two_one_children.clone(),
                         vec![
+                            ("child1".into(), *block_child_1.cid()), // links are sorted through cbor encoding..
                             ("child2_1".into(), *block_child_2_1.cid()),
-                            ("child1".into(), *block_child_1.cid()),
                         ],
                     ),
                     (block_child_1.clone(), vec![]),
@@ -580,8 +606,8 @@ mod tests {
                 ],
                 expected_blocks: vec![
                     block_two_one_children.data().clone(),
-                    block_child_2_1.data().clone(),
                     block_child_1.data().clone(),
+                    block_child_2_1.data().clone(),
                     block_child_2.data().clone(),
                 ],
                 query: Query {
@@ -598,8 +624,8 @@ mod tests {
                     (
                         block_two_one_children.clone(),
                         vec![
-                            ("child2_1".into(), *block_child_2_1.cid()),
                             ("child1".into(), *block_child_1.cid()),
+                            ("child2_1".into(), *block_child_2_1.cid()),
                         ],
                     ),
                     (block_child_1.clone(), vec![]),
@@ -611,102 +637,14 @@ mod tests {
                 ],
                 expected_blocks: vec![
                     block_two_one_children.data().clone(),
-                    block_child_2_1.data().clone(),
                     block_child_1.data().clone(),
+                    block_child_2_1.data().clone(),
                 ],
                 query: Query {
                     path: Path::from(*block_two_one_children.cid()),
                     recursion: crate::Recursion::Some {
                         depth: 1,
                         direction: crate::RecursionDirection::BreadthFirst,
-                    },
-                },
-            },
-            // <root>/** (two direct children)
-            TestCase {
-                name: "<root>/** (two direct children), limit: 1, depth first",
-                blocks: vec![
-                    (
-                        block_two_children.clone(),
-                        vec![
-                            ("child1".into(), *block_child_1.cid()),
-                            ("child2".into(), *block_child_2.cid()),
-                        ],
-                    ),
-                    (block_child_1.clone(), vec![]),
-                    (block_child_2.clone(), vec![]),
-                ],
-                expected_blocks: vec![
-                    block_two_children.data().clone(),
-                    block_child_1.data().clone(),
-                    block_child_2.data().clone(),
-                ],
-                query: Query {
-                    path: Path::from(*block_two_children.cid()),
-                    recursion: crate::Recursion::Some {
-                        depth: 1,
-                        direction: crate::RecursionDirection::DepthFirst,
-                    },
-                },
-            },
-            TestCase {
-                name: "<root>/** (two direct children, one nested child), limit: 2, depth first",
-                blocks: vec![
-                    (
-                        block_two_one_children.clone(),
-                        vec![
-                            ("child2_1".into(), *block_child_2_1.cid()),
-                            ("child1".into(), *block_child_1.cid()),
-                        ],
-                    ),
-                    (block_child_1.clone(), vec![]),
-                    (
-                        block_child_2_1.clone(),
-                        vec![("next".into(), *block_child_2.cid())],
-                    ),
-                    (block_child_2.clone(), vec![]),
-                ],
-                expected_blocks: vec![
-                    block_two_one_children.data().clone(),
-                    block_child_2_1.data().clone(),
-                    block_child_2.data().clone(),
-                    block_child_1.data().clone(),
-                ],
-                query: Query {
-                    path: Path::from(*block_two_one_children.cid()),
-                    recursion: crate::Recursion::Some {
-                        depth: 2,
-                        direction: crate::RecursionDirection::DepthFirst,
-                    },
-                },
-            },
-            TestCase {
-                name: "<root>/** (two direct children, one nested child), limit: 1, depth first",
-                blocks: vec![
-                    (
-                        block_two_one_children.clone(),
-                        vec![
-                            ("child2_1".into(), *block_child_2_1.cid()),
-                            ("child1".into(), *block_child_1.cid()),
-                        ],
-                    ),
-                    (block_child_1.clone(), vec![]),
-                    (
-                        block_child_2_1.clone(),
-                        vec![("next".into(), *block_child_2.cid())],
-                    ),
-                    (block_child_2.clone(), vec![]),
-                ],
-                expected_blocks: vec![
-                    block_two_one_children.data().clone(),
-                    block_child_2_1.data().clone(),
-                    block_child_1.data().clone(),
-                ],
-                query: Query {
-                    path: Path::from(*block_two_one_children.cid()),
-                    recursion: crate::Recursion::Some {
-                        depth: 1,
-                        direction: crate::RecursionDirection::DepthFirst,
                     },
                 },
             },
@@ -777,18 +715,23 @@ mod tests {
                         })) => {
                             panic!("peer2: query failed: {:?}", reason);
                         }
-                        Some(SwarmEvent::Behaviour(MemesyncEvent::OutboundQueryProgress(res))) => {
-                            assert_eq!(orig_id, res.id);
-                            match res.response {
-                                Ok(ok) => {
-                                    let last = ok.last;
-                                    responses.push(ok);
-                                    if last {
-                                        break;
-                                    }
-                                }
-                                Err(err) => panic!("unexpected error: {:?}", err),
+                        Some(SwarmEvent::Behaviour(MemesyncEvent::OutboundQueryProgress {
+                            id,
+                            last,
+                            data,
+                            ..
+                        })) => {
+                            assert_eq!(orig_id, id);
+                            responses.push(data);
+                            if last {
+                                break;
                             }
+                        }
+                        Some(SwarmEvent::Behaviour(MemesyncEvent::OutboundQueryFailed {
+                            id,
+                            reason,
+                        })) => {
+                            panic!("unexpected error {:?}: {:?}", id, reason);
                         }
                         ev => trace!("peer2: {:?}", ev),
                     }
@@ -801,7 +744,7 @@ mod tests {
                 .factor_first();
 
             let expected: Vec<Bytes> = case.expected_blocks;
-            let received: Vec<_> = responses.into_iter().map(|b| b.data).collect();
+            let received: Vec<_> = responses.into_iter().collect();
             assert_eq!(expected, received, "{}", case.name);
         }
     }

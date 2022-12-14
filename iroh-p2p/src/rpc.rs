@@ -185,8 +185,7 @@ impl P2p {
         let r = tokio_stream::wrappers::ReceiverStream::new(r);
         let stream = r.map(move |response| {
             let response = response.map_err(|e| anyhow!("{}", e))?;
-            let response = response.response?;
-            Ok(MemesyncResponse(response))
+            Ok(response)
         });
 
         Ok(Box::pin(stream))
@@ -677,7 +676,7 @@ pub enum RpcMessage {
     MemesyncRequest {
         ctx: u64,
         query: iroh_memesync::Query,
-        response_channel: Sender<Result<iroh_memesync::Response, String>>,
+        response_channel: Sender<Result<MemesyncResponse, String>>,
         providers: Vec<(PeerId, Vec<Multiaddr>)>,
     },
     BitswapNotifyNewBlocks {
