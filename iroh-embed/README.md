@@ -1,5 +1,10 @@
 # iroh embed
 
+[![crates.io](https://img.shields.io/crates/v/iroh-embed.svg?style=flat-square)](https://crates.io/crates/iroh-embed)
+[![Released API docs](https://img.shields.io/docsrs/iroh-embed?style=flat-square)](https://docs.rs/iroh-embed)
+[![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/iroh-embed?style=flat-square)](../LICENSE-MIT)
+[![CI](https://img.shields.io/github/workflow/status/n0-computer/iroh/Continuous%20integration?style=flat-square)](https://github.com/n0-computer/iroh/actions?query=workflow%3A%22Continuous+integration%22)
+
 This provides an API to embed
 [iroh](https://github.com/n0-computer/iroh) into other applications,
 allowing them to interact directly with [IPFS](https://ipfs.tech/).
