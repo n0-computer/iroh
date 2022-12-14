@@ -111,7 +111,7 @@ impl IrohBuilder {
         }
     }
 
-    /// Adds a store service.
+    /// Sets the store service.
     ///
     /// Every [`Iroh`] system needs a store so this can not be skipped.
     pub fn store(mut self, store: RocksStoreService) -> Self {
@@ -119,7 +119,7 @@ impl IrohBuilder {
         self
     }
 
-    /// Adds a p2p service.
+    /// Sets the p2p service.
     ///
     /// This service **must** have been built using the address from the store service
     /// passed to [`IrohBuilder::store`].
@@ -194,9 +194,11 @@ impl IrohBuilder {
 
 /// The full iroh system.
 ///
-/// This must be constructed using [`IrohBuilder`].  Creating an iroh system will start
-/// various tokio tasks.  To make the system do anything use the [`Iroh::api`] function to
-/// get an API.
+/// This is constructed using [`IrohBuilder`].  Creating an iroh system will start various
+/// tokio tasks, which can be gracefully terminated again using [`Iroh::stop`] or they will
+/// be aborted when dropping this struct.
+///
+/// To make the system do anything use the [`Iroh::api`] function to get an API.
 #[derive(Debug)]
 pub struct Iroh {
     store: RocksStoreService,

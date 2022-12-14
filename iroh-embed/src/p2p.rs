@@ -30,7 +30,8 @@ impl P2pService {
     /// This implicitly starts a task on the tokio runtime to manage the storage node.
     ///
     /// The `key_store_path` is the directory where the cryptographic identity of this p2p
-    /// node is stored.  This uses the ssh key files format.
+    /// node is stored using the ssh key files format.  If no usable identity exists yet in
+    /// this directory a new one is generated.
     ///
     /// Note that [`Libp2pConfig::default`] binds to the `/ip4/0.0.0.0/tcp/4444` and
     /// `/ip4/0.0.0.0/udp/4445/quic-v1`.
