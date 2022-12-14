@@ -48,7 +48,3 @@ tokio = { version = "1", features = ["rt", "macros", "rt-multi-thread", "fs"] }
 
 [build-dependencies]
 prost-build = "0.11.1"
-
-[[bench]]
-name = "unixfs"
-harness = false
