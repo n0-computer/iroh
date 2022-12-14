@@ -1,7 +1,7 @@
 use anyhow::Result;
 use async_recursion::async_recursion;
 use bytes::Bytes;
-use futures::{Stream, TryStreamExt};
+use futures::{Stream, StreamExt, TryStreamExt};
 use iroh_metrics::resolver::OutMetrics;
 use iroh_unixfs::{
     balanced_tree::DEFAULT_DEGREE,
@@ -147,6 +147,44 @@ async fn file_roundtrip_test(data: Bytes, chunk_size: usize, degree: usize) -> R
     let t = read_to_vec(out.pretty(resolver, OutMetrics::default(), ResponseClip::NoClip)?).await?;
     println!("{}", data.len());
     Ok(t == data)
+}
+
+async fn large_dir_roundtrip(n: usize) -> Result<()> {
+    let mut builder = DirectoryBuilder::new();
+    for i in 0..n {
+        let file = FileBuilder::new()
+            .name(format!("file_{}", i))
+            .content_bytes(Bytes::from(""))
+            .build()
+            .await?;
+        builder.add_file(file);
+    }
+    let dir = builder.build()?;
+    let blocks = dir.encode();
+    tokio::pin!(blocks);
+    let (root, resolver) = stream_to_resolver(blocks).await?;
+    let stream =
+        resolver.resolve_recursive_with_paths(iroh_resolver::resolver::Path::from_cid(root));
+    tokio::pin!(stream);
+    let mut i = 0;
+    while let Some(item) = stream.next().await {
+        if let Ok((path, out)) = item {
+            if !out.is_dir() {
+                assert_eq!(path.tail(), &[format!("file_{}", i)]);
+                i += 1;
+            }
+        }
+    }
+    assert_eq!(i, n);
+    Ok(())
+}
+
+/// a roundtrip test that converts a symlink to a unixfs DAG and back
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn test_large_dir_roundtrip() {
+    large_dir_roundtrip(2048).await.unwrap();
+    // uncomment once we got hamt support
+    // large_dir_roundtrip(6001).await.unwrap();
 }
 
 /// a roundtrip test that converts a symlink to a unixfs DAG and back
