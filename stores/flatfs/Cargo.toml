@@ -11,8 +11,8 @@ publish = false
 
 [dependencies]
 anyhow.workspace = true
-backoff = "0.4.0"
-ignore = "0.4.18"
+backoff.workspace = true
+ignore.workspace = true
 
 [dev-dependencies]
-tempfile = "3.3.0"
+tempfile.workspace = true

@@ -9,26 +9,25 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-async-trait = "0.1.57"
-config = "0.13.1"
-console-subscriber = { version = "0.1.7", optional = true }
+async-trait.workspace = true
+config.workspace = true
+console-subscriber = { workspace = true, optional = true }
 iroh-util.workspace = true
-lazy_static = "1.4.0"
-names = { version = "0.14.0", default-features = false }
-opentelemetry = { version = "0.18.0", features = ["rt-tokio"] }
-opentelemetry-otlp = { version = "0.11.0", features = ["tonic"] }
-paste = "1.0.9"
-prometheus-client = "0.18.0"
-reqwest = { version = "0.11.10", features = ["rustls-tls"], default-features = false}
-serde = { version = "1.0", features = ["derive"] }
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "process"] }
-tracing = "0.1.33"
-tracing-opentelemetry = "0.18"
-tracing-subscriber = { version = "0.3.11", features = ["env-filter"] }
+lazy_static.workspace = true
+names.workspace = true
+opentelemetry.workspace = true
+opentelemetry-otlp.workspace = true
+paste.workspace = true
+prometheus-client.workspace = true
+reqwest.workspace = true
+serde = { workspace = true, features = ["derive"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "process"] }
+tracing.workspace = true
+tracing-opentelemetry.workspace = true
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
 
 [dependencies.libp2p]
-version = "0.50"
-default-features = false
+workspace = true
 features = [
   "gossipsub",
   "kad",

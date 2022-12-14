@@ -12,4 +12,4 @@ repository.workspace = true
 anyhow.workspace = true
 
 [target.'cfg(unix)'.dependencies]
-nix = { version = "0.26", features = ["signal", "process"]}
+nix = { workspace = true, features = ["signal", "process"] }

@@ -10,12 +10,12 @@ rust-version.workspace = true
 
 [dependencies]
 anyhow.workspace = true
-async-trait = "0.1.56"
-bincode = "1.3.3"
-bytes = "1.1.0"
-cid = { version = "0.9", features = ["serde-codec"] }
-clap = { version = "4.0.9", features = ["derive"] }
-futures = "0.3.21"
+async-trait.workspace = true
+bincode.workspace = true
+bytes.workspace = true
+cid = { workspace = true, features = ["serde-codec"] }
+clap.workspace = true
+futures.workspace = true
 iroh-metrics.workspace = true
 iroh-p2p.workspace = true
 iroh-resolver.workspace = true
@@ -24,15 +24,15 @@ iroh-rpc-types.workspace = true
 iroh-store.workspace = true
 iroh-unixfs.workspace = true
 iroh-util.workspace = true
-libp2p = { version = "0.50", default-features = false, features = ["gossipsub"] }
-multibase = "0.9.1"
-rand = "0.8.5"
-serde = { version = "1", features = ["derive"] }
-tempfile = "3.3.0"
-tokio = { version = "1" }
-tokio-stream = "0.1.9"
-tracing = "0.1.34"
-tracing-subscriber = "0.3.14"
+libp2p = { workspace = true, features = ["gossipsub"] }
+multibase.workspace = true
+rand.workspace = true
+serde = { workspace = true, features = ["derive"] }
+tempfile.workspace = true
+tokio.workspace = true
+tokio-stream.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
 
 [dev-dependencies]
-tokio = { version = "1", features = ["full"] }
+tokio = { workspace = true, features = ["full"] }

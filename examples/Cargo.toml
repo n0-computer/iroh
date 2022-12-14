@@ -11,10 +11,10 @@ publish = false
 
 [dependencies]
 anyhow = { version = "1", features = ["backtrace"] }
-bytes = "1.1.0"
+bytes.workspace = true
 bytesize = "1.1.0"
-clap = { version = "4.0.9", features = ["derive"] }
-futures = "0.3.21"
+clap.workspace = true
+futures.workspace = true
 indicatif = "0.17.0"
 iroh-car = { version = "0.1.3", path = "../iroh-car" }
 iroh-unixfs = { version = "0.1.3", path = "../iroh-unixfs" }

@@ -12,11 +12,11 @@ rust-version.workspace = true
 [dependencies]
 anyhow.workspace = true
 flatfs-store = { path = "../flatfs", optional = true }
-rocksdb = "0.19.0"
+rocksdb.workspace = true
 
 [dev-dependencies]
 flatfs-store = { path = "../flatfs" }
-tempfile = "3.3.0"
+tempfile.workspace = true
 
 [features]
 importer = ["flatfs-store"]
