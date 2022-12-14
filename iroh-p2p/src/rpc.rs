@@ -554,9 +554,14 @@ pub(crate) async fn new(addr: P2pAddr, p2p: P2p) -> Result<()> {
     info!("p2p rpc listening on: {}", addr);
     let server = create_server::<P2pService>(addr).await?;
     loop {
-        let s = server.clone();
-        let (req, chan) = s.accept_one().await?;
-        tokio::spawn(dispatch(s, req, chan, p2p.clone()));
+        match server.accept_one().await {
+            Ok((req, chan)) => {
+                tokio::spawn(dispatch(server.clone(), req, chan, p2p.clone()));
+            }
+            Err(cause) => {
+                tracing::error!("p2p rpc accept error: {}", cause);
+            }
+        }
     }
 }
 

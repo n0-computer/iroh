@@ -119,11 +119,16 @@ async fn dispatch(s: StoreServer, req: StoreRequest, chan: ServerSocket<StoreSer
 #[tracing::instrument(skip(store))]
 pub async fn new(addr: StoreAddr, store: Store) -> Result<()> {
     info!("store rpc listening on: {}", addr);
-    let s = create_server::<StoreService>(addr).await?;
+    let server = create_server::<StoreService>(addr).await?;
     let store = RpcStore(store);
     loop {
-        let s = s.clone();
-        let (req, chan) = s.accept_one().await?;
-        tokio::spawn(dispatch(s, req, chan, store.clone()));
+        match server.accept_one().await {
+            Ok((req, chan)) => {
+                tokio::spawn(dispatch(server.clone(), req, chan, store.clone()));
+            }
+            Err(cause) => {
+                tracing::error!("store rpc accept error: {}", cause);
+            }
+        }
     }
 }
