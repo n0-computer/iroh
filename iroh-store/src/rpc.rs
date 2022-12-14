@@ -1,5 +1,3 @@
-use std::result;
-
 use anyhow::Result;
 use bytes::BytesMut;
 use iroh_rpc_client::{create_server, ServerError, ServerSocket, StoreServer};
@@ -8,6 +6,7 @@ use iroh_rpc_types::store::{
     HasRequest, HasResponse, PutManyRequest, PutRequest, StoreAddr, StoreRequest, StoreService,
     VersionRequest, VersionResponse,
 };
+use std::result;
 use tracing::info;
 
 use crate::store::Store;

@@ -27,9 +27,12 @@ type TestDir = BTreeMap<String, TestDirEntry>;
 
 /// builds an unixfs directory out of a TestDir
 #[async_recursion(?Send)]
-async fn build_directory(name: &str, dir: &TestDir) -> Result<Directory> {
+async fn build_directory(name: &str, dir: &TestDir, hamt: bool) -> Result<Directory> {
     let mut builder = DirectoryBuilder::new();
     builder.name(name);
+    if hamt {
+        builder.hamt();
+    }
     for (name, entry) in dir {
         match entry {
             TestDirEntry::File(content) => {
@@ -41,7 +44,7 @@ async fn build_directory(name: &str, dir: &TestDir) -> Result<Directory> {
                 builder.add_file(file);
             }
             TestDirEntry::Directory(dir) => {
-                let dir = build_directory(name, dir).await?;
+                let dir = build_directory(name, dir, hamt).await?;
                 builder.add_dir(dir)?;
             }
         }
@@ -111,8 +114,8 @@ async fn build_testdir(
 }
 
 /// a roundtrip test that converts a dir to an unixfs DAG and back
-async fn dir_roundtrip_test(dir: TestDir) -> Result<bool> {
-    let directory = build_directory("", &dir).await?;
+async fn dir_roundtrip_test(dir: TestDir, hamt: bool) -> Result<bool> {
+    let directory = build_directory("", &dir, hamt).await?;
     let stream = directory.encode();
     let (root, resolver) = stream_to_resolver(stream).await?;
     let stream =
@@ -122,11 +125,11 @@ async fn dir_roundtrip_test(dir: TestDir) -> Result<bool> {
 }
 
 /// sync version of dir_roundtrip_test for use in proptest
-fn dir_roundtrip_test_sync(dir: TestDir) -> bool {
+fn dir_roundtrip_test_sync(dir: TestDir, hamt: bool) -> bool {
     tokio::runtime::Builder::new_current_thread()
         .build()
         .unwrap()
-        .block_on(dir_roundtrip_test(dir))
+        .block_on(dir_roundtrip_test(dir, hamt))
         .unwrap()
 }
 
@@ -184,13 +187,14 @@ fn file_roundtrip_test_sync(data: Bytes, chunk_size: usize, degree: usize) -> bo
 
 fn arb_test_dir() -> impl Strategy<Value = TestDir> {
     // create an arbitrary nested directory structure
+    // zero size file names are not generated, since they are not allowed and don't work with hamt directories
     fn arb_dir_entry() -> impl Strategy<Value = TestDirEntry> {
         let leaf = any::<Vec<u8>>().prop_map(|x| TestDirEntry::File(Bytes::from(x)));
         leaf.prop_recursive(3, 64, 10, |inner| {
-            prop::collection::btree_map(".*", inner, 0..10).prop_map(TestDirEntry::Directory)
+            prop::collection::btree_map(".+", inner, 0..10).prop_map(TestDirEntry::Directory)
         })
     }
-    prop::collection::btree_map(".*", arb_dir_entry(), 0..10)
+    prop::collection::btree_map(".+", arb_dir_entry(), 0..10)
 }
 
 fn arb_degree() -> impl Strategy<Value = usize> {
@@ -211,8 +215,35 @@ proptest! {
 
     #[test]
     fn test_dir_roundtrip(data in arb_test_dir()) {
-        assert!(dir_roundtrip_test_sync(data));
+        assert!(dir_roundtrip_test_sync(data, false));
     }
+
+    #[test]
+    fn test_dir_roundtrip_hamt(data in arb_test_dir()) {
+        assert!(dir_roundtrip_test_sync(data, true));
+    }
+}
+
+#[test]
+fn test_hamt_roundtrip_1() {
+    let mut dir = TestDir::new();
+    dir.insert("foo".to_string(), TestDirEntry::File(Bytes::from("bar")));
+    dir.insert("fnord".to_string(), TestDirEntry::File(Bytes::from("baz")));
+    assert!(dir_roundtrip_test_sync(dir, true));
+}
+
+#[test]
+fn test_hamt_roundtrip_2() {
+    let mut dir = TestDir::new();
+    dir.insert("foo".to_string(), TestDirEntry::File(Bytes::from("bar")));
+    assert!(dir_roundtrip_test_sync(dir, true));
+}
+
+#[test]
+fn test_hamt_roundtrip_3() {
+    let mut dir = TestDir::new();
+    dir.insert("a".to_string(), TestDirEntry::File(Bytes::from("bar")));
+    assert!(dir_roundtrip_test_sync(dir, true));
 }
 
 #[tokio::test]
