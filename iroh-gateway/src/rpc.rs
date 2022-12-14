@@ -39,8 +39,13 @@ pub async fn new(addr: GatewayAddr, gw: Gateway) -> Result<()> {
     info!("gateway rpc listening on: {}", addr);
     let server = create_server::<GatewayService>(addr).await?;
     loop {
-        let s = server.clone();
-        let (req, chan) = s.accept_one().await?;
-        tokio::spawn(dispatch(s, req, chan, gw.clone()));
+        match server.accept_one().await {
+            Ok((req, chan)) => {
+                tokio::spawn(dispatch(server.clone(), req, chan, gw.clone()));
+            }
+            Err(cause) => {
+                tracing::error!("gateway rpc accept error: {}", cause);
+            }
+        }
     }
 }
