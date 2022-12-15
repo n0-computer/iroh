@@ -189,8 +189,7 @@ mod tests {
     ) -> (Cid, Vec<Cid>) {
         let store = rpc_client.try_store().unwrap();
         let mut cids = vec![];
-        let mut dir_builder = DirectoryBuilder::new();
-        dir_builder.name(dir);
+        let mut dir_builder = DirectoryBuilder::new().name(dir);
         for (name, content) in files {
             let file = FileBuilder::new()
                 .name(*name)
@@ -198,10 +197,10 @@ mod tests {
                 .build()
                 .await
                 .unwrap();
-            dir_builder.add_file(file);
+            dir_builder = dir_builder.add_file(file);
         }
 
-        let root_dir = dir_builder.build().unwrap();
+        let root_dir = dir_builder.build().await.unwrap();
         let mut parts = root_dir.encode();
         while let Some(part) = parts.next().await {
             let (cid, bytes, links) = part.unwrap().into_parts();

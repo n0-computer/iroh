@@ -1,17 +1,19 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use futures::TryStreamExt;
 use iroh_metrics::config::Config as MetricsConfig;
-use iroh_rpc_client::Client;
-use iroh_rpc_client::Config as RpcClientConfig;
+use iroh_resolver::resolver::Resolver;
+use iroh_rpc_client::{Client, Config as RpcClientConfig};
 use iroh_rpc_types::Addr;
 use iroh_store::{Config as StoreConfig, Store};
 use iroh_unixfs::{
-    builder::Config as UnixfsConfig,
     chunker::{ChunkerConfig, DEFAULT_CHUNKS_SIZE},
+    content_loader::{FullLoader, FullLoaderConfig},
 };
 use tokio::runtime::Runtime;
 
-pub fn add_benchmark(c: &mut Criterion) {
+use iroh_api::{Api, UnixfsConfig, UnixfsEntry};
+
+fn add_benchmark(c: &mut Criterion) {
     let mut group = c.benchmark_group("unixfs_add_file");
     for file_size in [
         1024,             //  1 KiB
@@ -44,7 +46,7 @@ pub fn add_benchmark(c: &mut Criterion) {
                     rpc_client: rpc_client.clone(),
                     metrics: MetricsConfig::default(),
                 };
-                let (_task, rpc) = executor.block_on(async {
+                let (_task, client, resolver) = executor.block_on(async {
                     let store = Store::create(config).await.unwrap();
                     let task = executor.spawn(async move {
                         iroh_store::rpc::new(server_addr, store).await.unwrap()
@@ -52,22 +54,32 @@ pub fn add_benchmark(c: &mut Criterion) {
                     // wait for a moment until the transport is setup
                     // TODO: signal this more clearly
                     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                    let rpc = Client::new(rpc_client).await.unwrap();
-                    (task, rpc)
+                    let client = Client::new(rpc_client).await.unwrap();
+                    let content_loader = FullLoader::new(
+                        client.clone(),
+                        FullLoaderConfig {
+                            http_gateways: Vec::new(),
+                            indexer: None,
+                        },
+                    )
+                    .unwrap();
+                    let resolver = Resolver::new(content_loader);
+
+                    (task, client, resolver)
                 });
                 b.to_async(&executor).iter(|| {
-                    let rpc = rpc.clone();
+                    let api = Api::from_client_and_resolver(client.clone(), resolver.clone());
                     async move {
-                        let stream = iroh_unixfs::builder::add_file(
-                            Some(rpc),
+                        let entry = UnixfsEntry::from_path(
                             path,
                             UnixfsConfig {
                                 wrap: false,
-                                chunker: ChunkerConfig::Fixed(DEFAULT_CHUNKS_SIZE),
+                                chunker: Some(ChunkerConfig::Fixed(DEFAULT_CHUNKS_SIZE)),
                             },
                         )
                         .await
                         .unwrap();
+                        let stream = api.add_stream(entry).await.unwrap();
 
                         let res: Vec<_> = stream.try_collect().await.unwrap();
                         black_box(res)
