@@ -109,11 +109,11 @@ impl Cli {
             .expect("failed to initialize metrics");
 
         #[cfg(feature = "testing")]
-        let mut api = get_fixture_api();
+        let api = get_fixture_api();
         #[cfg(not(feature = "testing"))]
         let api = iroh_api::Api::new(self.cfg.as_deref(), self.make_overrides_map()).await?;
 
-        self.cli_command(&config, &mut api).await?;
+        self.cli_command(&config, &api).await?;
 
         metrics_handler.shutdown();
 
@@ -127,7 +127,7 @@ impl Cli {
         map
     }
 
-    async fn cli_command(&self, config: &Config, api: &mut Api) -> Result<()> {
+    async fn cli_command(&self, config: &Config, api: &Api) -> Result<()> {
         match &self.command {
             Commands::Add {
                 path,
