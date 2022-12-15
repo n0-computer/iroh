@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeMap,
     fmt::Debug,
     path::{Path, PathBuf},
     pin::Pin,
@@ -7,15 +8,19 @@ use std::{
 use anyhow::{ensure, Result};
 use async_recursion::async_recursion;
 use bytes::Bytes;
-use futures::{stream::LocalBoxStream, Stream, StreamExt};
+use futures::{
+    stream::{self, LocalBoxStream},
+    Stream, StreamExt, TryFutureExt,
+};
 use prost::Message;
 use tokio::io::AsyncRead;
 
 use crate::{
     balanced_tree::{TreeBuilder, DEFAULT_DEGREE},
     chunker::{self, Chunker, ChunkerConfig, DEFAULT_CHUNK_SIZE_LIMIT},
+    hamt::{bitfield::Bitfield, bits, hash_key},
     types::Block,
-    unixfs::{dag_pb, unixfs_pb, DataType, Node, UnixfsNode},
+    unixfs::{dag_pb, unixfs_pb, DataType, HamtHashFunction, Node, UnixfsNode},
 };
 
 // The maximum number of links we allow in a directory
@@ -35,23 +40,56 @@ enum DirectoryType {
 
 /// Representation of a constructed Directory.
 #[derive(Debug, PartialEq)]
-pub struct Directory {
+pub enum Directory {
+    Basic(BasicDirectory),
+    Hamt(HamtDirectory),
+}
+
+/// A basic / flat directory
+#[derive(Debug, PartialEq)]
+pub struct BasicDirectory {
     name: String,
     entries: Vec<Entry>,
 }
 
+/// A hamt sharded directory
+#[derive(Debug, PartialEq)]
+pub struct HamtDirectory {
+    name: String,
+    hamt: Box<HamtNode>,
+}
+
 impl Directory {
+    fn single(name: String, entry: Entry) -> Self {
+        Directory::basic(name, vec![entry])
+    }
+
+    fn basic(name: String, entries: Vec<Entry>) -> Self {
+        Directory::Basic(BasicDirectory { name, entries })
+    }
+
     pub fn name(&self) -> &str {
-        &self.name
+        match &self {
+            Directory::Basic(BasicDirectory { name, .. }) => name,
+            Directory::Hamt(HamtDirectory { name, .. }) => name,
+        }
+    }
+
+    pub fn set_name(&mut self, value: String) {
+        match self {
+            Directory::Basic(BasicDirectory { name, .. }) => {
+                *name = value;
+            }
+            Directory::Hamt(HamtDirectory { name, .. }) => {
+                *name = value;
+            }
+        }
     }
 
     /// Wrap an entry in an unnamed directory. Used when adding a unixfs file or top level directory to
     /// Iroh in order to preserve the file or directory's name.
     pub fn wrap(self) -> Self {
-        Directory {
-            name: "".into(),
-            entries: vec![Entry::Directory(self)],
-        }
+        Directory::single("".into(), Entry::Directory(self))
     }
 
     pub async fn encode_root(self) -> Result<Block> {
@@ -67,49 +105,33 @@ impl Directory {
     }
 
     pub fn encode<'a>(self) -> LocalBoxStream<'a, Result<Block>> {
+        match self {
+            Directory::Basic(basic) => basic.encode(),
+            Directory::Hamt(hamt) => hamt.encode(),
+        }
+    }
+}
+
+impl BasicDirectory {
+    pub fn encode<'a>(self) -> LocalBoxStream<'a, Result<Block>> {
         async_stream::try_stream! {
             let mut links = Vec::new();
             for entry in self.entries {
-                let (name, root) = match entry {
-                    Entry::File(file) => {
-                        let name = file.name().to_string();
-                        let parts = file.encode().await?;
-                        tokio::pin!(parts);
-                        let mut root = None;
-                        while let Some(part) = parts.next().await {
-                            let block = part?;
-                            root = Some(block.clone());
-                            yield block;
-                        }
-                         (name, root)
-                    }
-                    Entry::Directory(dir) => {
-                        let name = dir.name.clone();
-                        let parts = dir.encode();
-                        tokio::pin!(parts);
-                        let mut root = None;
-                        while let Some(part) = parts.next().await {
-                            let block = part?;
-                            root = Some(block.clone());
-                            yield block;
-                        }
-                         (name, root)
-                    }
-                    Entry::Symlink(sym) => {
-                        let name = sym.name().to_string();
-                        let block = sym.encode()?;
-                        let root = Some(block.clone());
-                        yield block;
-                        (name, root)
-                    }
-                };
+                let name = entry.name().to_string();
+                let parts = entry.encode().await?;
+                tokio::pin!(parts);
+                let mut root = None;
+                while let Some(part) = parts.next().await {
+                    let block = part?;
+                    root = Some(block.clone());
+                    yield block;
+                }
                 let root_block = root.expect("file must not be empty");
                 links.push(dag_pb::PbLink {
                     hash: Some(root_block.cid().to_bytes()),
                     name: Some(name),
                     tsize: Some(root_block.data().len() as u64),
                 });
-
             }
 
             // directory itself comes last
@@ -118,11 +140,16 @@ impl Directory {
                 ..Default::default()
             };
             let outer = encode_unixfs_pb(&inner, links)?;
-
             let node = UnixfsNode::Directory(Node { outer, inner });
             yield node.encode()?;
         }
         .boxed_local()
+    }
+}
+
+impl HamtDirectory {
+    pub fn encode<'a>(self) -> LocalBoxStream<'a, Result<Block>> {
+        self.hamt.encode()
     }
 }
 
@@ -176,10 +203,7 @@ impl File {
     }
 
     pub fn wrap(self) -> Directory {
-        Directory {
-            name: "".into(),
-            entries: vec![Entry::File(self)],
-        }
+        Directory::single("".into(), Entry::File(self))
     }
 
     pub async fn encode_root(self) -> Result<Block> {
@@ -229,10 +253,7 @@ impl Symlink {
     }
 
     pub fn wrap(self) -> Directory {
-        Directory {
-            name: "".into(),
-            entries: vec![Entry::Symlink(self)],
-        }
+        Directory::single("".into(), Entry::Symlink(self))
     }
 
     pub fn name(&self) -> &str {
@@ -390,6 +411,22 @@ pub enum Entry {
 }
 
 impl Entry {
+    pub fn name(&self) -> &str {
+        match self {
+            Entry::File(f) => f.name(),
+            Entry::Directory(d) => d.name(),
+            Entry::Symlink(s) => s.name(),
+        }
+    }
+
+    pub async fn encode(self) -> Result<LocalBoxStream<'static, Result<Block>>> {
+        Ok(match self {
+            Entry::File(f) => f.encode().await?.boxed_local(),
+            Entry::Directory(d) => d.encode(),
+            Entry::Symlink(s) => stream::iter(Some(s.encode())).boxed_local(),
+        })
+    }
+
     pub async fn from_path(path: &Path, config: Config) -> Result<Self> {
         let entry = if path.is_dir() {
             if let Some(chunker_config) = config.chunker {
@@ -520,17 +557,123 @@ impl DirectoryBuilder {
             degree,
         } = self;
 
-        ensure!(typ == DirectoryType::Basic, "too many links to fit into one chunk, must be encoded as a HAMT. However, HAMT creation has not yet been implemented.");
-
         let name = name.unwrap_or_default();
 
         if let Some(path) = path {
             let mut dir = make_dir_from_path(path, chunker.clone(), degree).await?;
-            dir.name = name;
+            dir.set_name(name);
             return Ok(dir);
         }
 
-        Ok(Directory { name, entries })
+        match typ {
+            DirectoryType::Basic => Ok(Directory::Basic(BasicDirectory { name, entries })),
+            DirectoryType::Hamt => {
+                let hamt = Box::new(HamtNode::new(entries));
+                Ok(Directory::Hamt(HamtDirectory { name, hamt }))
+            }
+        }
+    }
+}
+
+/// A leaf when building a hamt directory.
+///
+/// Basically just an entry and the hash of its name.
+#[derive(Debug, PartialEq)]
+pub struct HamtLeaf([u8; 8], Entry);
+
+/// A node when building a hamt directory.
+///
+/// Either a branch or a leaf. Root will always be a branch,
+/// even if it has only one child.
+#[derive(Debug, PartialEq)]
+enum HamtNode {
+    Branch(BTreeMap<u32, HamtNode>),
+    Leaf(HamtLeaf),
+}
+
+impl HamtNode {
+    pub(super) fn new(entries: Vec<Entry>) -> HamtNode {
+        // add the hash
+        let entries = entries
+            .into_iter()
+            .map(|entry| {
+                let name = entry.name().to_string();
+                let hash = hash_key(name.as_bytes());
+                HamtLeaf(hash, entry)
+            })
+            .collect::<Vec<_>>();
+        Self::group(entries, 0, 8)
+    }
+
+    fn group(leafs: Vec<HamtLeaf>, pos: u32, len: u32) -> HamtNode {
+        if leafs.len() == 1 && pos > 0 {
+            HamtNode::Leaf(leafs.into_iter().next().unwrap())
+        } else {
+            let mut res = BTreeMap::<u32, Vec<HamtLeaf>>::new();
+            for leaf in leafs {
+                let value = bits(&leaf.0, pos, len);
+                res.entry(value).or_default().push(leaf);
+            }
+            let res = res
+                .into_iter()
+                .map(|(key, leafs)| {
+                    let node = Self::group(leafs, pos + len, len);
+                    (key, node)
+                })
+                .collect();
+            HamtNode::Branch(res)
+        }
+    }
+
+    fn name(&self) -> &str {
+        match self {
+            HamtNode::Branch(_) => "",
+            HamtNode::Leaf(HamtLeaf(_, entry)) => entry.name(),
+        }
+    }
+
+    pub fn encode<'a>(self) -> LocalBoxStream<'a, Result<Block>> {
+        match self {
+            Self::Branch(tree) => {
+                async_stream::try_stream! {
+                    let mut links = Vec::with_capacity(tree.len());
+                    let mut bitfield = Bitfield::default();
+                    for (prefix, node) in tree {
+                        let name = format!("{:02X}{}", prefix, node.name());
+                        bitfield.set_bit(prefix);
+                        let blocks = node.encode();
+                        let mut root = None;
+                        tokio::pin!(blocks);
+                        while let Some(block) = blocks.next().await {
+                            let block = block?;
+                            root = Some(*block.cid());
+                            yield block;
+                        }
+                        links.push(crate::unixfs::dag_pb::PbLink {
+                            name: Some(name),
+                            hash: root.map(|cid| cid.to_bytes()),
+                            tsize: None,
+                        });
+                    }
+                    let inner = unixfs_pb::Data {
+                        r#type: DataType::HamtShard as i32,
+                        hash_type: Some(HamtHashFunction::Murmur3 as u64),
+                        fanout: Some(256),
+                        data: Some(bitfield.as_bytes().to_vec().into()),
+                        ..Default::default()
+                    };
+                    let outer = encode_unixfs_pb(&inner, links).unwrap();
+                    // it does not really matter what enum variant we choose here as long as
+                    // it is not raw. The type of the node will be HamtShard from above.
+                    let node = UnixfsNode::Directory(crate::unixfs::Node { outer, inner });
+                    yield node.encode()?;
+                }
+                .boxed_local()
+            }
+            Self::Leaf(HamtLeaf(_hash, entry)) => async move { entry.encode().await }
+                .try_flatten_stream()
+                .boxed_local(),
+        }
     }
 }
 
@@ -864,9 +1007,6 @@ mod tests {
 
         // at directory link limit should be processed as a hamt
         assert_eq!(DirectoryType::Hamt, builder.typ);
-        if (builder.build().await).is_ok() {
-            panic!("expected builder to error when attempting to build a hamt directory")
-        }
         Ok(())
     }
 
@@ -898,40 +1038,42 @@ mod tests {
 
         // create directory manually
         let nested_file = FileBuilder::new().path(nested_file_path).build().await?;
-        let nested_dir = Directory {
-            name: String::from(
+        let nested_dir = Directory::single(
+            String::from(
                 nested_dir_path
                     .file_name()
                     .and_then(|s| s.to_str())
                     .unwrap(),
             ),
-            entries: vec![Entry::File(nested_file)],
-        };
+            Entry::File(nested_file),
+        );
 
         let file = FileBuilder::new().path(file_path).build().await?;
 
-        let expected = Directory {
-            name: String::from(dir.clone().file_name().and_then(|s| s.to_str()).unwrap()),
-            entries: vec![Entry::File(file), Entry::Directory(nested_dir)],
-        };
+        let expected = Directory::basic(
+            String::from(dir.clone().file_name().and_then(|s| s.to_str()).unwrap()),
+            vec![Entry::File(file), Entry::Directory(nested_dir)],
+        );
 
-        let mut got = make_dir_from_path(
+        let got = make_dir_from_path(
             dir,
             Chunker::Fixed(chunker::Fixed::default()),
             DEFAULT_DEGREE,
         )
         .await?;
 
+        let basic_entries = |dir: Directory| match dir {
+            Directory::Basic(basic) => basic.entries,
+            _ => panic!("expected directory"),
+        };
+
         // Before comparison sort entries to make test deterministic.
         // The readdir_r function is used in the underlying platform which
         // gives no guarantee to return in a specific order.
         // https://stackoverflow.com/questions/40021882/how-to-sort-readdir-iterator
-        got.entries.sort_by_key(|entry| match entry {
-            Entry::Directory(dir) => dir.name.clone(),
-            Entry::File(file) => file.name.clone(),
-            Entry::Symlink(sym) => sym.name().to_string(),
-        });
-
+        let expected = basic_entries(expected);
+        let mut got = basic_entries(got);
+        got.sort_by_key(|entry| entry.name().to_string());
         assert_eq!(expected, got);
         Ok(())
     }
