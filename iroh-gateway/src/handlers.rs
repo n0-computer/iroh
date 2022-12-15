@@ -54,7 +54,7 @@ use crate::{
 };
 
 enum RequestPreprocessingResult {
-    ResponseImmediately(GatewayResponse),
+    RespondImmediately(GatewayResponse),
     ShouldRequestData(Box<IpfsRequest>),
 }
 
@@ -135,7 +135,7 @@ async fn request_preprocessing<T: ContentLoader + Unpin>(
     query_params: &GetParams,
     request_headers: &HeaderMap,
     response_headers: &mut HeaderMap,
-    is_subdomain_mode: bool,
+    subdomain_mode: bool,
 ) -> Result<RequestPreprocessingResult, GatewayError> {
     if path.typ().as_str() != SCHEME_IPFS && path.typ().as_str() != SCHEME_IPNS {
         return Err(GatewayError::new(
@@ -148,7 +148,7 @@ async fn request_preprocessing<T: ContentLoader + Unpin>(
     let uri_param = query_params.uri.clone().unwrap_or_default();
     if !uri_param.is_empty() {
         return protocol_handler_redirect(uri_param)
-            .map(RequestPreprocessingResult::ResponseImmediately);
+            .map(RequestPreprocessingResult::RespondImmediately);
     }
     service_worker_check(request_headers, &content_path)?;
     unsupported_header_check(request_headers)?;
@@ -166,7 +166,7 @@ async fn request_preprocessing<T: ContentLoader + Unpin>(
     let resolved_cid = path.root();
 
     if handle_only_if_cached(request_headers, state, path.root()).await? {
-        return Ok(RequestPreprocessingResult::ResponseImmediately(
+        return Ok(RequestPreprocessingResult::RespondImmediately(
             GatewayResponse::new(StatusCode::OK, Body::empty(), HeaderMap::new()),
         ));
     }
@@ -176,7 +176,7 @@ async fn request_preprocessing<T: ContentLoader + Unpin>(
         .map_err(|err| GatewayError::new(StatusCode::BAD_REQUEST, &err))?;
 
     if let Some(resp) = etag_check(request_headers, resolved_cid, &format) {
-        return Ok(RequestPreprocessingResult::ResponseImmediately(resp));
+        return Ok(RequestPreprocessingResult::RespondImmediately(resp));
     }
 
     // init headers
@@ -205,7 +205,7 @@ async fn request_preprocessing<T: ContentLoader + Unpin>(
             .to_string(),
         download: query_params.download.unwrap_or_default(),
         query_params: query_params.clone(),
-        is_subdomain_mode,
+        subdomain_mode,
     };
     Ok(RequestPreprocessingResult::ShouldRequestData(Box::new(req)))
 }
@@ -217,7 +217,7 @@ pub async fn handler<T: ContentLoader + Unpin>(
     query_params: &GetParams,
     request_headers: &HeaderMap,
     http_req: HttpRequest<Body>,
-    is_subdomain_mode: bool,
+    subdomain_mode: bool,
 ) -> Result<GatewayResponse, GatewayError> {
     let start_time = time::Instant::now();
     let mut response_headers = HeaderMap::new();
@@ -227,11 +227,11 @@ pub async fn handler<T: ContentLoader + Unpin>(
         query_params,
         request_headers,
         &mut response_headers,
-        is_subdomain_mode,
+        subdomain_mode,
     )
     .await?
     {
-        RequestPreprocessingResult::ResponseImmediately(gateway_response) => Ok(gateway_response),
+        RequestPreprocessingResult::RespondImmediately(gateway_response) => Ok(gateway_response),
         RequestPreprocessingResult::ShouldRequestData(req) => match method {
             Method::HEAD => {
                 let path_metadata = state

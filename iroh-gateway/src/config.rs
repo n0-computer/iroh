@@ -20,10 +20,6 @@ pub const CONFIG_FILE_NAME: &str = "gateway.config.toml";
 pub const ENV_PREFIX: &str = "IROH_GATEWAY";
 pub const DEFAULT_PORT: u16 = 9050;
 
-fn set_true() -> bool {
-    true
-}
-
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct Config {
     /// Pretty URL to redirect to
@@ -53,7 +49,7 @@ pub struct Config {
     #[serde(with = "http_serde::header_map")]
     pub headers: HeaderMap,
     /// Redirects to subdomains for path requests
-    #[serde(default = "set_true")]
+    #[serde(default)]
     pub redirect_to_subdomain: bool,
 }
 
@@ -69,7 +65,7 @@ impl Config {
             indexer_endpoint: None,
             metrics: MetricsConfig::default(),
             use_denylist: false,
-            redirect_to_subdomain: true,
+            redirect_to_subdomain: false,
         }
     }
 

@@ -238,12 +238,12 @@ pub struct IpfsRequest {
     pub query_file_name: String,
     pub download: bool,
     pub query_params: GetParams,
-    pub is_subdomain_mode: bool,
+    pub subdomain_mode: bool,
 }
 
 impl IpfsRequest {
     pub fn request_path_for_redirection(&self) -> String {
-        if self.is_subdomain_mode {
+        if self.subdomain_mode {
             self.resolved_path.to_relative_string()
         } else {
             self.resolved_path.to_string()

@@ -345,7 +345,6 @@ mod tests {
             .map(|(cid, bytes)| (UnixfsNode::decode(&cid, bytes.into()).unwrap(), cid))
             .unzip()
             .await;
-
         // match cids and content
         assert_eq!(cids.len(), test_setup.file_cids.len());
         assert_eq!(
@@ -370,7 +369,6 @@ mod tests {
         for (i, node) in nodes[1..].iter().enumerate() {
             assert_eq!(node, &UnixfsNode::Raw(test_setup.files[i].1.clone().into()));
         }
-
         test_setup.shutdown().await
     }
 
