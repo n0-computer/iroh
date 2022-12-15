@@ -323,7 +323,7 @@ impl FileBuilder {
 
     /// Use the rabin chunker.
     pub fn rabin_chunker(mut self) -> Self {
-        self.chunker = Chunker::Rabin(Box::new(chunker::Rabin::default()));
+        self.chunker = Chunker::Rabin(Box::default());
         self
     }
 

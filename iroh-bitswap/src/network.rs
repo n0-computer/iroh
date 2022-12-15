@@ -344,13 +344,7 @@ impl Default for MessageSenderConfig {
 fn send_timeout(size: usize) -> Duration {
     let mut timeout = SEND_LATENCY;
     timeout += Duration::from_secs(size as u64 / MIN_SEND_RATE);
-    if timeout > MAX_SEND_TIMEOUT {
-        MAX_SEND_TIMEOUT
-    } else if timeout < MIN_SEND_TIMEOUT {
-        MIN_SEND_TIMEOUT
-    } else {
-        timeout
-    }
+    timeout.clamp(MIN_SEND_TIMEOUT, MAX_SEND_TIMEOUT)
 }
 
 #[derive(Debug)]

@@ -28,7 +28,7 @@ pub struct State<T: ContentLoader> {
     pub bad_bits: Arc<Option<RwLock<BadBits>>>,
 }
 
-impl<T: ContentLoader + std::marker::Unpin> Core<T> {
+impl<T: ContentLoader + Unpin> Core<T> {
     pub async fn new(
         config: Arc<dyn StateConfig>,
         rpc_addr: GatewayAddr,
@@ -120,8 +120,10 @@ mod tests {
     use std::net::SocketAddr;
 
     use super::*;
+    use axum::response::Response;
     use cid::Cid;
     use futures::{StreamExt, TryStreamExt};
+    use hyper::Body;
     use iroh_rpc_client::Client as RpcClient;
     use iroh_rpc_client::Config as RpcClientConfig;
     use iroh_rpc_types::store::StoreAddr;
@@ -133,6 +135,23 @@ mod tests {
     use tokio_util::io::StreamReader;
 
     use crate::config::Config;
+
+    struct TestSetup {
+        gateway_addr: SocketAddr,
+        root_cid: Cid,
+        file_cids: Vec<Cid>,
+        core_task: tokio::task::JoinHandle<()>,
+        store_task: tokio::task::JoinHandle<()>,
+        files: Vec<(String, Vec<u8>)>,
+    }
+
+    impl TestSetup {
+        pub async fn shutdown(self) {
+            self.core_task.abort();
+            self.store_task.abort();
+            self.store_task.await.ok();
+        }
+    }
 
     async fn spawn_gateway(
         config: Arc<Config>,
@@ -185,14 +204,14 @@ mod tests {
     async fn put_directory_with_files(
         rpc_client: &RpcClient,
         dir: &str,
-        files: &[(&str, Vec<u8>)],
+        files: &[(String, Vec<u8>)],
     ) -> (Cid, Vec<Cid>) {
         let store = rpc_client.try_store().unwrap();
         let mut cids = vec![];
         let mut dir_builder = DirectoryBuilder::new().name(dir);
         for (name, content) in files {
             let file = FileBuilder::new()
-                .name(*name)
+                .name(name)
                 .content_bytes(content.clone())
                 .build()
                 .await
@@ -208,6 +227,62 @@ mod tests {
             store.put(cid, bytes, links).await.unwrap();
         }
         (*cids.last().unwrap(), cids)
+    }
+
+    async fn do_request(
+        method: &str,
+        authority: &str,
+        path_and_query: &str,
+        headers: Option<&[(&str, &str)]>,
+    ) -> Response<Body> {
+        let client = hyper::Client::new();
+        let uri = hyper::Uri::builder()
+            .scheme("http")
+            .authority(authority)
+            .path_and_query(path_and_query)
+            .build()
+            .unwrap();
+        let mut req = hyper::Request::builder().method(method).uri(uri);
+        if let Some(headers) = headers {
+            for header in headers {
+                req = req.header(header.0, header.1);
+            }
+        }
+        client
+            .request(req.body(hyper::Body::empty()).unwrap())
+            .await
+            .unwrap()
+    }
+
+    async fn setup_test(redirect_to_subdomains: bool) -> TestSetup {
+        let (store_client_addr, store_task) = spawn_store().await;
+        let mut config = Config::new(
+            0,
+            RpcClientConfig {
+                gateway_addr: None,
+                p2p_addr: None,
+                store_addr: Some(store_client_addr),
+                channels: Some(1),
+            },
+        );
+        config.set_default_headers();
+        config.redirect_to_subdomain = redirect_to_subdomains;
+        let (gateway_addr, rpc_client, core_task) = spawn_gateway(Arc::new(config)).await;
+        let dir = "demo";
+        let files = vec![
+            ("hello.txt".to_string(), b"ola".to_vec()),
+            ("world.txt".to_string(), b"mundo".to_vec()),
+        ];
+        let (root_cid, file_cids) = put_directory_with_files(&rpc_client, dir, &files).await;
+
+        TestSetup {
+            gateway_addr,
+            root_cid,
+            file_cids,
+            core_task,
+            store_task,
+            files,
+        }
     }
 
     #[tokio::test]
@@ -243,47 +318,97 @@ mod tests {
 
     // TODO(b5) - refactor to return anyhow::Result<()>
     #[tokio::test]
-    async fn fetch_car_recursive() {
-        let (store_client_addr, store_task) = spawn_store().await;
-        let mut config = Config::new(
-            0,
-            RpcClientConfig {
-                gateway_addr: None,
-                p2p_addr: None,
-                store_addr: Some(store_client_addr),
-                channels: Some(1),
-            },
-        );
-        config.set_default_headers();
-
-        let (addr, rpc_client, core_task) = spawn_gateway(Arc::new(config)).await;
-
-        let dir = "demo";
-        let files = [
-            ("hello.txt", b"ola".to_vec()),
-            ("world.txt", b"mundo".to_vec()),
-        ];
-
-        // add a directory with two files to the store.
-        let (root_cid, all_cids) = put_directory_with_files(&rpc_client, dir, &files).await;
+    async fn test_fetch_car_recursive() {
+        let test_setup = setup_test(false).await;
 
         // request the root cid as a recursive car
-        let res = {
-            let client = hyper::Client::new();
-            let uri = hyper::Uri::builder()
-                .scheme("http")
-                .authority(format!("localhost:{}", addr.port()))
-                .path_and_query(format!("/ipfs/{}?recursive=true", root_cid))
-                .build()
-                .unwrap();
-            let req = hyper::Request::builder()
-                .method("GET")
-                .header("accept", "application/vnd.ipld.car")
-                .uri(uri)
-                .body(hyper::Body::empty())
-                .unwrap();
-            client.request(req).await.unwrap()
-        };
+        let res = do_request(
+            "GET",
+            &format!("localhost:{}", test_setup.gateway_addr.port()),
+            &format!("/ipfs/{}?recursive=true", test_setup.root_cid),
+            Some(&[("accept", "application/vnd.ipld.car")]),
+        )
+        .await;
+        assert_eq!(http::StatusCode::OK, res.status());
+
+        // read the response body into a car reader and map the entries
+        // to UnixFS nodes
+        let body = StreamReader::new(
+            res.into_body()
+                .map_err(|err| io::Error::new(io::ErrorKind::Other, err.to_string())),
+        );
+        let car_reader = iroh_car::CarReader::new(body).await.unwrap();
+        let (nodes, cids): (Vec<UnixfsNode>, Vec<Cid>) = car_reader
+            .stream()
+            .map(|res| res.unwrap())
+            .map(|(cid, bytes)| (UnixfsNode::decode(&cid, bytes.into()).unwrap(), cid))
+            .unzip()
+            .await;
+        // match cids and content
+        assert_eq!(cids.len(), test_setup.file_cids.len());
+        assert_eq!(
+            HashSet::<_>::from_iter(cids.iter()),
+            HashSet::from_iter(test_setup.file_cids.iter())
+        );
+        assert_eq!(cids[0], test_setup.root_cid);
+        assert_eq!(nodes.len(), test_setup.files.len() + 1);
+        assert!(nodes[0].is_dir());
+        assert_eq!(
+            nodes[0]
+                .links()
+                .map(|link| link.unwrap().name.unwrap().to_string())
+                .collect::<Vec<_>>(),
+            test_setup
+                .files
+                .iter()
+                .map(|(name, _content)| name.to_string())
+                .collect::<Vec<_>>()
+        );
+
+        for (i, node) in nodes[1..].iter().enumerate() {
+            assert_eq!(node, &UnixfsNode::Raw(test_setup.files[i].1.clone().into()));
+        }
+        test_setup.shutdown().await
+    }
+
+    #[tokio::test]
+    async fn test_head_request_to_file() {
+        let test_setup = setup_test(false).await;
+
+        // request the root cid as a recursive car
+        let res = do_request(
+            "HEAD",
+            &format!("localhost:{}", test_setup.gateway_addr.port()),
+            &format!("/ipfs/{}/{}", test_setup.root_cid, "world.txt"),
+            None,
+        )
+        .await;
+
+        assert_eq!(http::StatusCode::OK, res.status());
+        assert!(res.headers().get("content-length").is_some());
+        assert_eq!(res.headers().get("content-length").unwrap(), "5");
+
+        let (body, _) = res.into_body().into_future().await;
+        assert!(body.is_none());
+
+        test_setup.shutdown().await
+    }
+
+    #[tokio::test]
+    async fn test_gateway_requests() {
+        let test_setup = setup_test(false).await;
+
+        // request the root cid as a recursive car
+        let res = do_request(
+            "GET",
+            &format!("localhost:{}", test_setup.gateway_addr.port()),
+            "/?recursive=true",
+            Some(&[
+                ("accept", "application/vnd.ipld.car"),
+                ("host", &format!("{}.ipfs.localhost", test_setup.root_cid)),
+            ]),
+        )
+        .await;
 
         assert_eq!(http::StatusCode::OK, res.status());
 
@@ -302,87 +427,200 @@ mod tests {
             .await;
 
         // match cids and content
-        assert_eq!(cids.len(), all_cids.len());
+        assert_eq!(cids.len(), test_setup.file_cids.len());
         assert_eq!(
             HashSet::<_>::from_iter(cids.iter()),
-            HashSet::from_iter(all_cids.iter())
+            HashSet::from_iter(test_setup.file_cids.iter())
         );
-        assert_eq!(cids[0], root_cid);
-        assert_eq!(nodes.len(), files.len() + 1);
+        assert_eq!(cids[0], test_setup.root_cid);
+        assert_eq!(nodes.len(), test_setup.files.len() + 1);
         assert!(nodes[0].is_dir());
         assert_eq!(
             nodes[0]
                 .links()
                 .map(|link| link.unwrap().name.unwrap().to_string())
                 .collect::<Vec<_>>(),
-            files
+            test_setup
+                .files
                 .iter()
                 .map(|(name, _content)| name.to_string())
                 .collect::<Vec<_>>()
         );
 
         for (i, node) in nodes[1..].iter().enumerate() {
-            assert_eq!(node, &UnixfsNode::Raw(files[i].1.clone().into()));
+            assert_eq!(node, &UnixfsNode::Raw(test_setup.files[i].1.clone().into()));
         }
 
-        core_task.abort();
-        core_task.await.unwrap_err();
-        store_task.abort();
-        store_task.await.unwrap_err();
+        test_setup.shutdown().await
     }
 
     #[tokio::test]
-    async fn test_head_request_to_file() {
-        let (store_client_addr, store_task) = spawn_store().await;
-        let mut config = Config::new(
-            0,
-            RpcClientConfig {
-                gateway_addr: None,
-                p2p_addr: None,
-                store_addr: Some(store_client_addr),
-                channels: Some(1),
-            },
+    async fn test_gateway_redirection() {
+        let test_setup = setup_test(true).await;
+
+        // Usual request
+        let res = do_request(
+            "GET",
+            &format!("localhost:{}", test_setup.gateway_addr.port()),
+            &format!("/ipfs/{}/{}", test_setup.root_cid, "world.txt"),
+            None,
+        )
+        .await;
+
+        assert_eq!(http::StatusCode::MOVED_PERMANENTLY, res.status());
+        assert_eq!(
+            format!(
+                "http://{}.ipfs.localhost:{}/world.txt",
+                test_setup.root_cid,
+                test_setup.gateway_addr.port()
+            ),
+            res.headers().get("Location").unwrap().to_str().unwrap(),
         );
-        config.set_default_headers();
 
-        let (addr, rpc_client, core_task) = spawn_gateway(Arc::new(config)).await;
+        // No trailing slash
+        let res = do_request(
+            "GET",
+            &format!("localhost:{}", test_setup.gateway_addr.port()),
+            &format!("/ipfs/{}", test_setup.root_cid),
+            None,
+        )
+        .await;
 
-        let dir = "demo";
-        let files = [
-            ("hello.txt", b"ola".to_vec()),
-            ("world.txt", b"mundo".to_vec()),
-        ];
+        assert_eq!(http::StatusCode::MOVED_PERMANENTLY, res.status());
+        assert_eq!(
+            format!(
+                "http://{}.ipfs.localhost:{}/",
+                test_setup.root_cid,
+                test_setup.gateway_addr.port()
+            ),
+            res.headers().get("Location").unwrap().to_str().unwrap()
+        );
 
-        // add a directory with two files to the store.
-        let (root_cid, _) = put_directory_with_files(&rpc_client, dir, &files).await;
+        // Trailing slash
+        let res = do_request(
+            "GET",
+            &format!("localhost:{}", test_setup.gateway_addr.port()),
+            &format!("/ipfs/{}/", test_setup.root_cid),
+            None,
+        )
+        .await;
 
-        // request the root cid as a recursive car
-        let res = {
-            let client = hyper::Client::new();
-            let uri = hyper::Uri::builder()
-                .scheme("http")
-                .authority(format!("localhost:{}", addr.port()))
-                .path_and_query(format!("/ipfs/{}/{}", root_cid, "world.txt"))
-                .build()
-                .unwrap();
-            let req = hyper::Request::builder()
-                .method("HEAD")
-                .uri(uri)
-                .body(hyper::Body::empty())
-                .unwrap();
-            client.request(req).await.unwrap()
-        };
+        assert_eq!(http::StatusCode::MOVED_PERMANENTLY, res.status());
+        assert_eq!(
+            format!(
+                "http://{}.ipfs.localhost:{}/",
+                test_setup.root_cid,
+                test_setup.gateway_addr.port()
+            ),
+            res.headers().get("Location").unwrap().to_str().unwrap()
+        );
 
-        assert_eq!(http::StatusCode::OK, res.status());
-        assert!(res.headers().get("content-length").is_some());
-        assert_eq!(res.headers().get("content-length").unwrap(), "5");
+        // IPNS
+        let res = do_request(
+            "GET",
+            &format!("localhost:{}", test_setup.gateway_addr.port()),
+            "/ipns/k51qzi5uqu5dlvj2baxnqndepeb86cbk3ng7n3i46uzyxzyqj2xjonzllnv0v8",
+            None,
+        )
+        .await;
 
-        let (body, _) = res.into_body().into_future().await;
-        assert!(body.is_none());
+        assert_eq!(http::StatusCode::MOVED_PERMANENTLY, res.status());
+        assert_eq!(
+            format!(
+                "http://k51qzi5uqu5dlvj2baxnqndepeb86cbk3ng7n3i46uzyxzyqj2xjonzllnv0v8.ipns.localhost:{}/",
+                test_setup.gateway_addr.port()
+            ),
+            res.headers().get("Location").unwrap().to_str().unwrap()
+        );
 
-        core_task.abort();
-        core_task.await.unwrap_err();
-        store_task.abort();
-        store_task.await.unwrap_err();
+        // Test that IPNS records are recoded to base36
+        let res = do_request(
+            "GET",
+            &format!("localhost:{}", test_setup.gateway_addr.port()),
+            "/ipns/bafyreihyrpefhacm6kkp4ql6j6udakdit7g3dmkzfriqfykhjw6cad5lrm",
+            None,
+        )
+        .await;
+
+        assert_eq!(http::StatusCode::MOVED_PERMANENTLY, res.status());
+        assert_eq!(
+            format!(
+                "http://k2jvslbl2n1p4suo7yr973y3v7pfautpxba2jeb9fpmjil0l3lppcgi3.ipns.localhost:{}/",
+                test_setup.gateway_addr.port()
+            ),
+            res.headers().get("Location").unwrap().to_str().unwrap()
+        );
+
+        // IPNS + DNSLink
+        let res = do_request(
+            "GET",
+            &format!("localhost:{}", test_setup.gateway_addr.port()),
+            "/ipns/en.wikipedia-on-ipfs.org",
+            None,
+        )
+        .await;
+
+        assert_eq!(http::StatusCode::MOVED_PERMANENTLY, res.status());
+        assert_eq!(
+            format!(
+                "http://en-wikipedia--on--ipfs-org.ipns.localhost:{}/",
+                test_setup.gateway_addr.port()
+            ),
+            res.headers().get("Location").unwrap().to_str().unwrap()
+        );
+
+        // IPNS + DNSLink
+        let res = do_request(
+            "GET",
+            &format!("localhost:{}", test_setup.gateway_addr.port()),
+            "/ipns/12D3KooWJHxkQKX8C5KAyqEPhn2ssT2in4TExyG9SXxi519tycL9",
+            None,
+        )
+        .await;
+
+        assert_eq!(http::StatusCode::MOVED_PERMANENTLY, res.status());
+        assert_eq!(
+            format!(
+                "http://k51qzi5uqu5djbl2zsl8ooauuh7wb1ycesq93g72iym71shji1pbntl1vuyuk2.ipns.localhost:{}/",
+                test_setup.gateway_addr.port()
+            ),
+            res.headers().get("Location").unwrap().to_str().unwrap()
+        );
+
+        // X-Forwarded-Proto
+        let res = do_request(
+            "GET",
+            &format!("localhost:{}", test_setup.gateway_addr.port()),
+            &format!("/ipfs/{}/{}", test_setup.root_cid, "world.txt"),
+            Some(&[("x-forwarded-proto", "https")]),
+        )
+        .await;
+
+        assert_eq!(http::StatusCode::MOVED_PERMANENTLY, res.status());
+        assert_eq!(
+            format!(
+                "https://{}.ipfs.localhost:{}/world.txt",
+                test_setup.root_cid,
+                test_setup.gateway_addr.port()
+            ),
+            res.headers().get("Location").unwrap().to_str().unwrap(),
+        );
+
+        // X-Forwarded-Host
+        let res = do_request(
+            "GET",
+            &format!("localhost:{}", test_setup.gateway_addr.port()),
+            &format!("/ipfs/{}/{}", test_setup.root_cid, "world.txt"),
+            Some(&[("x-forwarded-host", "ipfs.io")]),
+        )
+        .await;
+
+        assert_eq!(http::StatusCode::MOVED_PERMANENTLY, res.status());
+        assert_eq!(
+            format!("http://{}.ipfs.ipfs.io/world.txt", test_setup.root_cid,),
+            res.headers().get("Location").unwrap().to_str().unwrap(),
+        );
+
+        test_setup.shutdown().await
     }
 }
