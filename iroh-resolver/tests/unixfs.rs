@@ -3,11 +3,12 @@ use std::{io::Read, path::PathBuf, time::Instant};
 use anyhow::Result;
 use bytes::Bytes;
 use iroh_metrics::resolver::OutMetrics;
-use iroh_resolver::resolver::{read_to_vec, stream_to_resolver, Path};
+use iroh_resolver::resolver::{read_to_vec, stream_to_resolver};
 use iroh_unixfs::{
     self,
     builder::FileBuilder,
     chunker::{self, Chunker},
+    path::Path,
 };
 
 async fn read_fixture(path: impl AsRef<std::path::Path>) -> Result<Vec<u8>> {

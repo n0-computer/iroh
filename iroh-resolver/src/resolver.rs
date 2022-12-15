@@ -1,21 +1,21 @@
 use std::collections::VecDeque;
-use std::fmt::{self, Debug, Display, Formatter};
+use std::fmt::{self, Debug, Formatter};
 use std::pin::Pin;
-use std::str::FromStr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::task::{Context, Poll};
 
-use anyhow::{anyhow, bail, Context as _, Result};
+use anyhow::{anyhow, bail, ensure, Context as _, Result};
 use async_trait::async_trait;
 use bytes::Bytes;
 use cid::Cid;
-use futures::{Future, Stream, TryStreamExt};
+use futures::{Future, Stream, StreamExt, TryStreamExt};
 use iroh_metrics::inc;
-use iroh_unixfs::unixfs::read_data_to_buf;
 use iroh_unixfs::{
+    path::{CidOrDomain, Path, PathType},
     content_loader::{ContentLoader, ContextId, LoaderContext},
-    unixfs::{DataType, UnixfsChildStream, UnixfsContentReader, UnixfsNode},
+    unixfs::{
+        read_data_to_buf, DataType, UnixfsChildStream, UnixfsContentReader, UnixfsNode},
     Block, Link, LoadedCid, Source,
 };
 use iroh_util::{codecs::Codec, parse_links};
@@ -34,204 +34,6 @@ use iroh_metrics::{
 use crate::dns_resolver::{Config, DnsResolver};
 
 pub const IROH_STORE: &str = "iroh-store";
-
-// ToDo: Remove this function
-// Related issue: https://github.com/n0-computer/iroh/issues/593
-fn from_peer_id(id: &str) -> Option<libipld::Multihash> {
-    static MAX_INLINE_KEY_LENGTH: usize = 42;
-    let multihash =
-        libp2p::multihash::Multihash::from_bytes(&bs58::decode(id).into_vec().ok()?).ok()?;
-    match libp2p::multihash::Code::try_from(multihash.code()) {
-        Ok(libp2p::multihash::Code::Sha2_256) => {
-            Some(libipld::Multihash::from_bytes(&multihash.to_bytes()).unwrap())
-        }
-        Ok(libp2p::multihash::Code::Identity)
-            if multihash.digest().len() <= MAX_INLINE_KEY_LENGTH =>
-        {
-            Some(libipld::Multihash::from_bytes(&multihash.to_bytes()).unwrap())
-        }
-        _ => None,
-    }
-}
-
-/// Represents an ipfs path.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Path {
-    typ: PathType,
-    root: CidOrDomain,
-    tail: Vec<String>,
-}
-
-impl Path {
-    pub fn from_cid(cid: Cid) -> Self {
-        Path {
-            typ: PathType::Ipfs,
-            root: CidOrDomain::Cid(cid),
-            tail: Vec::new(),
-        }
-    }
-
-    pub fn from_parts(
-        scheme: &str,
-        cid_or_domain: &str,
-        tail_path: &str,
-    ) -> Result<Self, anyhow::Error> {
-        let (typ, root) = if scheme.eq_ignore_ascii_case("ipns") {
-            let root = if let Ok(cid) = Cid::from_str(cid_or_domain) {
-                CidOrDomain::Cid(cid)
-            } else if let Some(multihash) = from_peer_id(cid_or_domain) {
-                CidOrDomain::Cid(Cid::new_v1(Codec::Libp2pKey.into(), multihash))
-            // ToDo: Bring back commented "else if" instead of "else if" above
-            // Related issue: https://github.com/n0-computer/iroh/issues/593
-            // } else if let Ok(peer_id) = PeerId::from_str(cid_or_domain) {
-            //    CidOrDomain::Cid(Cid::new_v1(Codec::Libp2pKey.into(), *peer_id.as_ref()))
-            } else {
-                CidOrDomain::Domain(cid_or_domain.to_string())
-            };
-            (PathType::Ipns, root)
-        } else {
-            let root = Cid::from_str(cid_or_domain).context("invalid cid")?;
-            (PathType::Ipfs, CidOrDomain::Cid(root))
-        };
-        let mut tail = tail_path
-            .split(&['/', '\\'])
-            .filter(|s| !s.is_empty())
-            .map(String::from)
-            .collect::<Vec<_>>();
-        if tail_path.ends_with('/') {
-            tail.push("".to_string())
-        }
-        Ok(Path { typ, root, tail })
-    }
-
-    pub fn typ(&self) -> PathType {
-        self.typ
-    }
-
-    pub fn root(&self) -> &CidOrDomain {
-        &self.root
-    }
-
-    pub fn tail(&self) -> &[String] {
-        &self.tail
-    }
-
-    // used only for string path manipulation
-    pub fn has_trailing_slash(&self) -> bool {
-        !self.tail.is_empty() && self.tail.last().unwrap().is_empty()
-    }
-
-    pub fn push(&mut self, str: impl AsRef<str>) {
-        self.tail.push(str.as_ref().to_owned());
-    }
-
-    // Empty path segments in the *middle* shouldn't occur,
-    // though they can occur at the end, which `join` handles.
-    // TODO(faassen): it would make sense to return a `RelativePathBuf` here at some
-    // point in the future so we don't deal with bare strings anymore and
-    // we're forced to handle various cases more explicitly.
-    pub fn to_relative_string(&self) -> String {
-        self.tail.join("/")
-    }
-
-    pub fn cid(&self) -> Option<&Cid> {
-        match &self.root {
-            CidOrDomain::Cid(cid) => Some(cid),
-            CidOrDomain::Domain(_) => None,
-        }
-    }
-}
-
-impl Display for Path {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "/{}/{}", self.typ.as_str(), self.root)?;
-
-        for part in &self.tail {
-            if part.is_empty() {
-                continue;
-            }
-            write!(f, "/{part}")?;
-        }
-
-        if self.has_trailing_slash() {
-            write!(f, "/")?;
-        }
-
-        Ok(())
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum CidOrDomain {
-    Cid(Cid),
-    Domain(String),
-}
-
-impl Display for CidOrDomain {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        match self {
-            CidOrDomain::Cid(c) => Display::fmt(&c, f),
-            CidOrDomain::Domain(s) => Display::fmt(&s, f),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PathType {
-    /// `/ipfs`
-    Ipfs,
-    /// `/ipns`
-    Ipns,
-}
-
-impl PathType {
-    pub const fn as_str(&self) -> &'static str {
-        match self {
-            PathType::Ipfs => "ipfs",
-            PathType::Ipns => "ipns",
-        }
-    }
-}
-
-impl FromStr for Path {
-    type Err = anyhow::Error;
-
-    // ToDo: Replace it with from_parts (or vice verse)
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let mut parts = s.split(&['/', '\\']).filter(|s| !s.is_empty());
-
-        let first_part = parts.next().ok_or_else(|| anyhow!("path too short"))?;
-        let (typ, root) = if first_part.eq_ignore_ascii_case("ipns") {
-            let root = parts.next().ok_or_else(|| anyhow!("path too short"))?;
-            let root = if let Ok(c) = Cid::from_str(root) {
-                CidOrDomain::Cid(c)
-            } else {
-                // TODO: url validation?
-                CidOrDomain::Domain(root.to_string())
-            };
-
-            (PathType::Ipns, root)
-        } else {
-            let root = if first_part.eq_ignore_ascii_case("ipfs") {
-                parts.next().ok_or_else(|| anyhow!("path too short"))?
-            } else {
-                first_part
-            };
-
-            let root = Cid::from_str(root).context("invalid cid")?;
-
-            (PathType::Ipfs, CidOrDomain::Cid(root))
-        };
-
-        let mut tail: Vec<String> = parts.map(Into::into).collect();
-
-        if s.ends_with('/') {
-            tail.push("".to_owned());
-        }
-
-        Ok(Path { typ, root, tail })
-    }
-}
 
 #[async_trait]
 pub trait LinksContainer: Sync + Send + std::fmt::Debug + Clone + 'static {
@@ -693,9 +495,13 @@ impl<T: ContentLoader> Resolver<T> {
     #[tracing::instrument(skip(self))]
     pub fn resolve_recursive(&self, root: Path) -> impl Stream<Item = Result<Out>> {
         let this = self.clone();
-        self.resolve_recursive_mapped(root, None, move |cid, ctx| {
+        self.resolve_recursive_mapped(root, None, move |path, mut ctx| {
             let this = this.clone();
-            async move { this.resolve_with_ctx(ctx, Path::from_cid(cid), false).await }
+            async move {
+                let cid = this.resolve_path_to_cid(&path, &mut ctx).await?;
+                let data = this.resolve_with_ctx(ctx, Path::from_cid(cid)).await?;
+                Ok(data)
+            }
         })
     }
 
@@ -707,12 +513,15 @@ impl<T: ContentLoader> Resolver<T> {
         recursion_limit: Option<usize>,
     ) -> impl Stream<Item = Result<OutRaw>> {
         let this = self.clone();
-        self.resolve_recursive_mapped(root, recursion_limit, move |cid, mut ctx| {
+        self.resolve_recursive_mapped(root, recursion_limit, move |path, mut ctx| {
             let this = this.clone();
             async move {
-                this.load_cid(&cid, &mut ctx)
+                let cid = this.resolve_path_to_cid(&path, &mut ctx).await?;
+                let data = this
+                    .load_cid(&cid, &mut ctx)
                     .await
-                    .map(|loaded| OutRaw::from_loaded(cid, loaded))
+                    .map(|loaded| OutRaw::from_loaded(cid, loaded))?;
+                Ok(data)
             }
         })
     }
@@ -727,21 +536,20 @@ impl<T: ContentLoader> Resolver<T> {
     ) -> impl Stream<Item = Result<O>>
     where
         O: LinksContainer,
-        M: Fn(Cid, LoaderContext) -> F + Clone,
+        M: Fn(Path, LoaderContext) -> F + Clone,
         F: Future<Output = Result<O>> + Send + 'static,
     {
-        let mut ctx = LoaderContext::from_path(self.next_id(), self.session_closer.clone());
+        let ctx = LoaderContext::from_path(self.next_id(), self.session_closer.clone());
 
-        let mut cids = VecDeque::new();
-        let this = self.clone();
+        let mut stack = VecDeque::new();
         let mut counter = 0;
         let chunk_size = 8;
         async_stream::try_stream! {
-            let root_cid = this.resolve_path_to_cid(&root, &mut ctx).await?;
-            let root_block = resolve(root_cid, ctx.clone()).await?;
-            cids.push_back(root_block);
+            trace!("resolving root {}", root);
+            let root_block = resolve(root.clone(), ctx.clone()).await?;
+            stack.push_back(root_block);
             loop {
-                if let Some(current) = cids.pop_front() {
+                if let Some(current) = stack.pop_front() {
                     let links = current.links()?;
                     counter += links.len();
                     if let Some(limit) = recursion_limit {
@@ -757,13 +565,13 @@ impl<T: ContentLoader> Resolver<T> {
                                 let resolve = resolve.clone();
                                 let ctx = ctx.clone();
                                 async move {
-                                    resolve(*link, ctx).await
+                                    resolve(Path::from_cid(*link), ctx).await
                                 }
                             })
                         ).await;
                         for res in next.into_iter() {
                             let res = res?;
-                            cids.push_back(res);
+                            stack.push_back(res);
                         }
                     }
                     yield current;
@@ -800,24 +608,46 @@ impl<T: ContentLoader> Resolver<T> {
         force_raw: bool,
     ) -> Result<Out> {
         // Resolve the root block.
-        let (root_cid, loaded_cid) = self.resolve_root(&path, &mut ctx).await?;
-        match loaded_cid.source {
-            Source::Store(_) => inc!(ResolverMetrics::CacheHit),
-            _ => inc!(ResolverMetrics::CacheMiss),
+        // let root_cid = self.resolve_path_to_cid(&path, &mut ctx).await?;
+        // TODO: handle IPNS
+        let loaded_cids = self.loader.load_path(path.clone(), &mut ctx).await;
+        tokio::pin!(loaded_cids);
+
+        let mut results: VecDeque<(Cid, LoadedCid)> = loaded_cids
+            .collect::<Vec<_>>()
+            .await
+            .into_iter()
+            .filter_map(|r| r.ok())
+            .collect();
+        for (_, l) in &results {
+            match l.source {
+                Source::Store(_) => inc!(ResolverMetrics::CacheHit),
+                _ => inc!(ResolverMetrics::CacheMiss),
+            }
         }
 
+<<<<<<< HEAD
         let codec = match force_raw {
             true => Codec::Raw,
             false => Codec::try_from(root_cid.codec()).context("unknown codec")?,
         };
+||||||| parent of 09e99b3a (integrate memesync into content loading)
+        let codec = Codec::try_from(root_cid.codec()).context("unknown codec")?;
+=======
+        ensure!(!results.is_empty(), "unable to resolve {}", path);
+        trace!("received {} blocks for {}", results.len(), path);
+>>>>>>> 09e99b3a (integrate memesync into content loading)
 
+        let (root_cid, root_loaded_cid) = results.pop_front().unwrap();
+        let codec = Codec::try_from(root_cid.codec()).context("unknown codec")?;
         match codec {
             Codec::DagPb => {
-                self.resolve_dag_pb_or_unixfs(path, root_cid, loaded_cid, ctx)
+                self.resolve_dag_pb_or_unixfs(path, root_cid, root_loaded_cid, results, ctx)
                     .await
             }
             Codec::DagCbor | Codec::DagJson | Codec::Raw => {
-                self.resolve_ipld(path, root_cid, loaded_cid, ctx).await
+                self.resolve_ipld(path, root_cid, root_loaded_cid, results, ctx)
+                    .await
             }
             _ => bail!("unsupported codec {:?}", codec),
         }
@@ -831,15 +661,32 @@ impl<T: ContentLoader> Resolver<T> {
         current: &mut UnixfsNode,
         resolved_path: &mut Vec<Cid>,
         part: &str,
+        rest: &mut VecDeque<(Cid, LoadedCid)>,
         ctx: &mut LoaderContext,
     ) -> Result<()> {
+        trace!(
+            "inner_resolve with rest blocks: {:?}",
+            rest.iter().map(|(c, _)| c.to_string()).collect::<Vec<_>>()
+        );
         match current {
             UnixfsNode::Directory(_) => {
                 let next_link = current
                     .get_link_by_name(&part)
                     .await?
                     .ok_or_else(|| anyhow!("UnixfsNode::Directory link '{}' not found", part))?;
-                let loaded_cid = self.load_cid(&next_link.cid, ctx).await?;
+
+                // if we already loaded this cid, use it
+                let loaded_cid = if let Some((cid, loaded_cid)) = rest.pop_front() {
+                    if cid == next_link.cid {
+                        trace!("found loaded cid {}", cid);
+                        loaded_cid
+                    } else {
+                        trace!("found missmatch in cids");
+                        self.load_cid(&next_link.cid, ctx).await?
+                    }
+                } else {
+                    self.load_cid(&next_link.cid, ctx).await?
+                };
                 let next_node = UnixfsNode::decode(&next_link.cid, loaded_cid.data)?;
                 resolved_path.push(next_link.cid);
 
@@ -864,22 +711,27 @@ impl<T: ContentLoader> Resolver<T> {
     }
 
     /// Resolves through both DagPb and nested UnixFs DAGs.
-    #[tracing::instrument(skip(self, loaded_cid))]
+    #[tracing::instrument(skip(self, loaded_cid, rest))]
     async fn resolve_dag_pb_or_unixfs(
         &self,
         root_path: Path,
         cid: Cid,
         loaded_cid: LoadedCid,
+        mut rest: VecDeque<(Cid, LoadedCid)>,
         mut ctx: LoaderContext,
     ) -> Result<Out> {
         trace!("{:?} resolving {} for {}", ctx.id(), cid, root_path);
+        trace!(
+            "rest: {:?}",
+            rest.iter().map(|(c, _)| c.to_string()).collect::<Vec<_>>()
+        );
         if let Ok(node) = UnixfsNode::decode(&cid, loaded_cid.data.clone()) {
             let tail = &root_path.tail();
             let mut current = node;
             let mut resolved_path = vec![cid];
 
             for part in tail.iter().filter(|s| !s.is_empty()) {
-                self.inner_resolve(&mut current, &mut resolved_path, part, &mut ctx)
+                self.inner_resolve(&mut current, &mut resolved_path, part, &mut rest, &mut ctx)
                     .await?;
             }
 
@@ -908,19 +760,25 @@ impl<T: ContentLoader> Resolver<T> {
                 content: OutContent::Unixfs(current),
             })
         } else {
-            self.resolve_ipld(root_path, cid, loaded_cid, ctx).await
+            self.resolve_ipld(root_path, cid, loaded_cid, rest, ctx)
+                .await
         }
     }
 
-    #[tracing::instrument(skip(self, loaded_cid))]
+    #[tracing::instrument(skip(self, loaded_cid, rest))]
     async fn resolve_ipld(
         &self,
         root_path: Path,
         cid: Cid,
         loaded_cid: LoadedCid,
+        rest: VecDeque<(Cid, LoadedCid)>,
         mut ctx: LoaderContext,
     ) -> Result<Out> {
         trace!("{:?} resolving {} for {}", ctx.id(), cid, root_path);
+        trace!(
+            "rest: {:?}",
+            rest.iter().map(|(c, _)| c.to_string()).collect::<Vec<_>>()
+        );
         let codec: libipld::IpldCodec = cid.codec().try_into()?;
         let ipld: libipld::Ipld = codec
             .decode(&loaded_cid.data)
@@ -1081,13 +939,6 @@ impl<T: ContentLoader> Resolver<T> {
         }
 
         bail!("cannot resolve {}, too many recursive lookups", root);
-    }
-
-    #[tracing::instrument(skip(self))]
-    async fn resolve_root(&self, root: &Path, ctx: &mut LoaderContext) -> Result<(Cid, LoadedCid)> {
-        let cid = self.resolve_path_to_cid(root, ctx).await?;
-        let loaded_cid = self.load_cid(&cid, ctx).await?;
-        Ok((cid, loaded_cid))
     }
 
     #[tracing::instrument(skip(self))]

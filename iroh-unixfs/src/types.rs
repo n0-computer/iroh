@@ -18,6 +18,7 @@ pub struct LoadedCid {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Source {
     Bitswap,
+    Memesync,
     Http(String),
     Store(&'static str),
 }
@@ -67,11 +68,7 @@ impl Block {
         }
         // check that the links are complete
         let expected_links = parse_links(&self.cid, &self.data)?;
-        let mut actual_links = self.links.clone();
-        actual_links.sort();
-        // TODO: why do the actual links need to be deduplicated?
-        actual_links.dedup();
-        anyhow::ensure!(expected_links == actual_links, "links do not match");
+        anyhow::ensure!(expected_links == self.links, "links do not match");
         Ok(())
     }
 

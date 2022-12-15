@@ -93,6 +93,7 @@ impl Api {
                     .collect::<Result<_>>()
                     .context("invalid gateway url")?,
                 indexer: config.indexer_endpoint,
+                providers: Default::default(),
             },
         )?;
         let resolver = Resolver::new(content_loader);

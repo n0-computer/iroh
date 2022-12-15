@@ -87,6 +87,7 @@ async fn main() -> Result<()> {
                 .map(|u| u.parse())
                 .collect::<Result<_>>()?,
             indexer: None, // TODO
+            providers: Default::default(),
         },
     )?;
     let shared_state = Core::make_state(

@@ -197,6 +197,7 @@ mod tests {
                 .map(|u| GatewayUrl::from_str(u).unwrap())
                 .collect(),
             indexer: config.indexer_endpoint.as_ref().map(|p| p.parse().unwrap()),
+            providers: Default::default(),
         };
         let content_loader =
             FullLoader::new(rpc_client.clone(), loader_config).expect("invalid config");

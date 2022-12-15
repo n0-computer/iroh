@@ -5,7 +5,7 @@ use futures::{
 };
 use iroh_p2p::NetworkEvent;
 use iroh_resolver::resolver::{Out, OutPrettyReader, OutType, Path, Resolver, UnixfsType};
-use iroh_unixfs::Link;
+use iroh_unixfs::{content_loader::FullLoader, Link};
 use libp2p::gossipsub::{GossipsubMessage, MessageId, TopicHash};
 use libp2p::PeerId;
 use tokio::sync::mpsc::{channel, Receiver as ChannelReceiver};
@@ -15,7 +15,7 @@ use tracing::{debug, info, warn};
 
 use crate::SenderMessage;
 use crate::{
-    p2p_node::{Loader, P2pNode, Ticket},
+    p2p_node::{P2pNode, Ticket},
     ReceiverMessage,
 };
 
@@ -73,13 +73,7 @@ impl Receiver {
         let (data_sender, data_receiver) = oneshot();
 
         // add provider
-        resolver
-            .loader()
-            .providers()
-            .lock()
-            .await
-            .insert(expected_sender);
-
+        resolver.loader().add_provider(expected_sender).await;
         let rpc = p2p.rpc().clone();
 
         let gossip_task_source = tokio::task::spawn(async move {
@@ -215,7 +209,7 @@ impl Transfer {
 
 #[derive(Debug)]
 pub struct Data {
-    resolver: Resolver<Loader>,
+    resolver: Resolver<FullLoader>,
     root: Out,
 }
 
@@ -237,7 +231,7 @@ impl Data {
             .unixfs_read_dir(&self.resolver, Default::default())
     }
 
-    pub fn pretty(self) -> Result<OutPrettyReader<Loader>> {
+    pub fn pretty(self) -> Result<OutPrettyReader<FullLoader>> {
         self.root.pretty(self.resolver, Default::default(), None)
     }
 

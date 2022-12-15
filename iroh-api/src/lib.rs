@@ -13,11 +13,11 @@ pub use crate::p2p::PeerIdOrAddr;
 pub use bytes::Bytes;
 pub use cid::Cid;
 pub use iroh_resolver::resolver::Path as IpfsPath;
-pub use iroh_rpc_client::{ClientStatus, Lookup, ServiceStatus, ServiceType, StatusType};
-pub use iroh_unixfs::builder::{
+pub use iroh_rpc_client::{ClientStatus, Lookup, ServiceStatus, ServiceType, Statupub use iroh_unixfs::builder::{
     Config as UnixfsConfig, DirectoryBuilder, Entry as UnixfsEntry, FileBuilder, SymlinkBuilder,
 };
 pub use iroh_unixfs::chunker::{ChunkerConfig, DEFAULT_CHUNKS_SIZE};
+pub use iroh_unixfs::path::Path as IpfsPath;
 pub use iroh_unixfs::Block;
 pub use libp2p::gossipsub::MessageId;
 pub use libp2p::{Multiaddr, PeerId};

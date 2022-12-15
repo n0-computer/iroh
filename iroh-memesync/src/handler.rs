@@ -337,7 +337,7 @@ fn create_outbound_stream(
                                     break;
                                 }
                             }
-                            
+
                             // Yield the response.
                             yield ConnectionHandlerEvent::Custom(HandlerEvent::ResponseProgress {
                                 id: resp.id,
@@ -420,8 +420,8 @@ fn create_response_stream<S: Store>(req: Request, store: S) -> impl Stream<Item 
             Ok(Some(GetResult { data, links })) => {
                 let i = index;
                 index += 1;
+                let is_last = tail.is_empty() && (query.recursion == Recursion::None || links.is_empty());
                 current_links = links;
-                let is_last = tail.is_empty() && query.recursion == Recursion::None;
 
                 Ok(ResponseOk {
                     index: i,

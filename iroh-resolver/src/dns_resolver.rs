@@ -2,11 +2,10 @@ use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr};
 
 use anyhow::Result;
+use iroh_unixfs::path::Path;
 use serde::{Deserialize, Serialize};
 use trust_dns_resolver::config::{NameServerConfigGroup, ResolverConfig, ResolverOpts};
 use trust_dns_resolver::{AsyncResolver, TokioAsyncResolver};
-
-use crate::resolver::Path;
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct Config {
@@ -117,7 +116,7 @@ impl Default for DnsResolver {
 #[cfg(test)]
 mod tests {
     use super::DnsResolver;
-    use crate::resolver::PathType;
+    use iroh_unixfs::path::PathType;
 
     #[tokio::test]
     async fn test_resolve_txt_record() {

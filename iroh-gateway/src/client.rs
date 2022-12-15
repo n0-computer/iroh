@@ -98,7 +98,7 @@ impl<T: ContentLoader + std::marker::Unpin> Client<T> {
     #[tracing::instrument(skip(self))]
     pub async fn retrieve_path_metadata(
         &self,
-        path: iroh_resolver::resolver::Path,
+        path: iroh_unixfs::path::Path,
         format: Option<ResponseFormat>,
     ) -> Result<Out, String> {
         info!("retrieve path metadata {}", path);
@@ -117,7 +117,7 @@ impl<T: ContentLoader + std::marker::Unpin> Client<T> {
     #[tracing::instrument(skip(self))]
     pub async fn get_file(
         &self,
-        path: iroh_resolver::resolver::Path,
+        path: iroh_unixfs::path::Path,
         path_metadata: Option<Out>,
         start_time: std::time::Instant,
         range: Option<Range<u64>>,
@@ -167,7 +167,7 @@ impl<T: ContentLoader + std::marker::Unpin> Client<T> {
     #[tracing::instrument(skip(self))]
     pub async fn get_car_recursive(
         self,
-        path: iroh_resolver::resolver::Path,
+        path: iroh_unixfs::path::Path,
         start_time: std::time::Instant,
     ) -> Result<axum::body::StreamBody<ReaderStream<tokio::io::DuplexStream>>, String> {
         info!("get car {}", path);
@@ -187,7 +187,7 @@ impl<T: ContentLoader + std::marker::Unpin> Client<T> {
     #[tracing::instrument(skip(self))]
     pub async fn get_file_recursive(
         self,
-        path: iroh_resolver::resolver::Path,
+        path: iroh_unixfs::path::Path,
         start_time: std::time::Instant,
     ) -> Result<axum::body::Body, String> {
         info!("get file {}", path);
@@ -245,7 +245,7 @@ impl<T: ContentLoader> Client<T> {
 pub struct IpfsRequest {
     pub format: ResponseFormat,
     pub cid: CidOrDomain,
-    pub resolved_path: iroh_resolver::resolver::Path,
+    pub resolved_path: iroh_unixfs::path::Path,
     pub query_file_name: String,
     pub download: bool,
     pub query_params: GetParams,
@@ -265,7 +265,7 @@ impl IpfsRequest {
 
 async fn fetch_car_recursive<T, W>(
     resolver: &Resolver<T>,
-    path: iroh_resolver::resolver::Path,
+    path: iroh_unixfs::path::Path,
     writer: W,
     start_time: std::time::Instant,
 ) -> Result<(), anyhow::Error>

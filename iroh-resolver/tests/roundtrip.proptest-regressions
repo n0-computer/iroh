@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 135dd604ef3a5d962480df2251a43c4097d65f911205c0e691c9d0de321ff618 # shrinks to data = {"": Directory({"\0": File(b"\0\0\0\0"), "¡": File(b"\x06\x0b)9[n\x01h\x04$\r\x14\x01\x05\xc8O\0\x0b")})}

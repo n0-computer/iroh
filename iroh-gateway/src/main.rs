@@ -65,6 +65,7 @@ async fn main() -> Result<()> {
                 .map(|u| u.parse())
                 .transpose()
                 .context("invalid indexer endpoint")?,
+            providers: Default::default(),
         },
     )?;
     let handler = Core::new(

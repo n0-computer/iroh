@@ -59,11 +59,16 @@ impl iroh_memesync::store::Store for MemesyncStore {
     async fn get(&self, cid: Cid) -> Result<Option<iroh_memesync::store::GetResult>> {
         let store = self.0.try_store()?;
         if let Some(data) = store.get(cid).await? {
-            let links = store.get_links(cid).await?.unwrap_or_default();
-            let links = links.into_iter().map(|l| (None, l)).collect();
+            // TODO: use links from store
+            // let links = store.get_links(cid).await?.unwrap_or_default();
+            let bytes = data.clone();
+            let links = tokio::task::spawn_blocking(move || {
+                iroh_util::parse_links_with_names(&cid, &bytes)
+            })
+            .await??;
 
             return Ok(Some(iroh_memesync::store::GetResult { data, links }));
-        }
+        };
 
         Ok(None)
     }

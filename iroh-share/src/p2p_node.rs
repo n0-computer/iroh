@@ -1,22 +1,18 @@
-use std::{collections::HashSet, path::Path, sync::Arc};
+use std::path::Path;
 
-use anyhow::{ensure, Result};
-use async_trait::async_trait;
-use cid::Cid;
+use anyhow::Result;
 use futures::TryStreamExt;
 use iroh_p2p::{config, Config, Keychain, MemoryStorage, NetworkEvent, Node};
+use iroh_p2p::{config, Keychain, MemoryStorage, NetworkEvent, Node};
 use iroh_resolver::resolver::Resolver;
 use iroh_rpc_client::Client;
-use iroh_rpc_types::{p2p::MemesyncResponse, Addr};
-use iroh_unixfs::{
-    content_loader::{ContentLoader, ContextId, LoaderContext, IROH_STORE},
-    LoadedCid, Source,
-};
+use iroh_rpc_types::Addr;
+use iroh_unixfs::content_loader::{FullLoader, FullLoaderConfig};
 use libp2p::{Multiaddr, PeerId};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::Receiver;
-use tokio::{sync::Mutex, task::JoinHandle};
-use tracing::{error, warn};
+use tokio::task::JoinHandle;
+use tracing::error;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Ticket {
@@ -41,98 +37,7 @@ pub struct P2pNode {
     p2p_task: JoinHandle<()>,
     store_task: JoinHandle<()>,
     rpc: Client,
-    resolver: Resolver<Loader>,
-}
-
-/// Wrapper struct to implement custom content loading
-#[derive(Debug, Clone)]
-pub struct Loader {
-    client: Client,
-    providers: Arc<Mutex<HashSet<PeerId>>>,
-}
-
-impl Loader {
-    pub fn new(client: Client) -> Self {
-        Loader {
-            client,
-            providers: Arc::new(Mutex::new(HashSet::new())),
-        }
-    }
-
-    pub fn providers(&self) -> &Arc<Mutex<HashSet<PeerId>>> {
-        &self.providers
-    }
-}
-
-#[async_trait]
-impl ContentLoader for Loader {
-    async fn load_cid(&self, cid: &Cid, ctx: &LoaderContext) -> Result<LoadedCid> {
-        let cid = *cid;
-        let providers = self.providers.lock().await.clone();
-
-        match self.client.try_store()?.get(cid).await {
-            Ok(Some(data)) => {
-                return Ok(LoadedCid {
-                    data,
-                    source: Source::Store(IROH_STORE),
-                });
-            }
-            Ok(None) => {}
-            Err(err) => {
-                warn!("failed to fetch data from store {}: {:?}", cid, err);
-            }
-        }
-
-        ensure!(!providers.is_empty(), "no providers supplied");
-        println!("fetching remote: {}", cid);
-
-        let query = iroh_memesync::Query {
-            path: iroh_memesync::Path::from(cid),
-            recursion: iroh_memesync::Recursion::Some {
-                depth: 2,
-                direction: iroh_memesync::RecursionDirection::BreadthFirst,
-            },
-        };
-        let mut res = self
-            .client
-            .try_p2p()?
-            .fetch_memesync(ctx.id().into(), query, providers)
-            .await?;
-
-        let mut first_piece = None;
-
-        while let Some(res) = res.next().await {
-            let MemesyncResponse {
-                data, links, cid, ..
-            } = res?;
-            if first_piece.is_none() {
-                first_piece = Some(data.clone());
-            }
-            self.client
-                .try_store()?
-                .put(cid, data, links.into_iter().map(|(_, c)| c).collect())
-                .await?;
-        }
-
-        ensure!(first_piece.is_some(), "failed to fetch {}", cid);
-
-        Ok(LoadedCid {
-            data: first_piece.unwrap(),
-            source: Source::Bitswap,
-        })
-    }
-
-    async fn stop_session(&self, ctx: ContextId) -> Result<()> {
-        self.client
-            .try_p2p()?
-            .stop_session_bitswap(ctx.into())
-            .await?;
-        Ok(())
-    }
-
-    async fn has_cid(&self, cid: &Cid) -> Result<bool> {
-        Ok(self.client.try_store()?.has(*cid).await?)
-    }
+    resolver: Resolver<FullLoader>,
 }
 
 impl P2pNode {
@@ -158,7 +63,7 @@ impl P2pNode {
         libp2p_config.listening_multiaddrs =
             vec![format!("/ip4/0.0.0.0/tcp/{port}").parse().unwrap()];
         libp2p_config.mdns = false;
-        libp2p_config.kademlia = true;
+        libp2p_config.kademlia = false;
         libp2p_config.autonat = true;
         libp2p_config.relay_client = true;
         libp2p_config.bootstrap_peers = Default::default(); // disable bootstrap for now
@@ -175,7 +80,14 @@ impl P2pNode {
         };
 
         let rpc = Client::new(rpc_p2p_client_config).await?;
-        let loader = Loader::new(rpc.clone());
+        let loader = FullLoader::new(
+            rpc.clone(),
+            FullLoaderConfig {
+                indexer: None,
+                http_gateways: Default::default(),
+                providers: Default::default(),
+            },
+        )?;
         let resolver = iroh_resolver::resolver::Resolver::new(loader);
 
         let store_config = iroh_store::Config {
@@ -220,7 +132,7 @@ impl P2pNode {
         &self.rpc
     }
 
-    pub fn resolver(&self) -> &Resolver<Loader> {
+    pub fn resolver(&self) -> &Resolver<FullLoader> {
         &self.resolver
     }
 

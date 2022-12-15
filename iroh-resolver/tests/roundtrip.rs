@@ -52,7 +52,7 @@ async fn build_directory(name: &str, dir: &TestDir, hamt: bool) -> Result<Direct
 
 /// builds a TestDir out of a stream of blocks and a resolver
 async fn build_testdir(
-    stream: impl Stream<Item = Result<(iroh_resolver::resolver::Path, Out)>>,
+    stream: impl Stream<Item = Result<(iroh_unixfs::path::Path, Out)>>,
     resolver: Resolver<impl ContentLoader + Unpin>,
 ) -> Result<TestDir> {
     tokio::pin!(stream);
@@ -112,8 +112,7 @@ async fn dir_roundtrip_test(dir: TestDir, hamt: bool) -> Result<bool> {
     let directory = build_directory("", &dir, hamt).await?;
     let stream = directory.encode();
     let (root, resolver) = stream_to_resolver(stream).await?;
-    let stream =
-        resolver.resolve_recursive_with_paths(iroh_resolver::resolver::Path::from_cid(root));
+    let stream = resolver.resolve_recursive_with_paths(iroh_unixfs::path::Path::from_cid(root));
     let reference = build_testdir(stream, resolver).await?;
     Ok(dir == reference)
 }
@@ -143,7 +142,7 @@ async fn file_roundtrip_test(
     let stream = file.encode().await?;
     let (root, resolver) = stream_to_resolver(stream).await?;
     let out = resolver
-        .resolve(iroh_resolver::resolver::Path::from_cid(root))
+        .resolve(iroh_unixfs::path::Path::from_cid(root))
         .await?;
     let t = read_to_vec(out.pretty(resolver, OutMetrics::default(), None)?).await?;
     Ok((t, data.to_vec()))
@@ -162,7 +161,7 @@ async fn symlink_roundtrip_test() -> Result<()> {
     };
     let (root, resolver) = stream_to_resolver(stream).await?;
     let out = resolver
-        .resolve(iroh_resolver::resolver::Path::from_cid(root))
+        .resolve(iroh_unixfs::path::Path::from_cid(root))
         .await?;
     let mut reader = out.pretty(resolver, OutMetrics::default(), None)?;
     let mut t = String::new();

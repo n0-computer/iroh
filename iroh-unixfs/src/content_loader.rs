@@ -11,15 +11,18 @@ use anyhow::{anyhow, bail, Result};
 use async_trait::async_trait;
 use bytes::Bytes;
 use cid::{multibase::Base, Cid};
-use futures::future::Either;
+use futures::{future::Either, stream::BoxStream, Stream, StreamExt, TryStreamExt};
 use iroh_rpc_client::Client;
+use iroh_rpc_types::p2p::MemesyncResponse;
 use iroh_util::parse_links;
+use libp2p::PeerId;
 use rand::seq::SliceRandom;
 use reqwest::Url;
 use tracing::{debug, info, trace, warn};
 
 use crate::{
     indexer::{Indexer, IndexerUrl},
+    path::{CidOrDomain, Path},
     types::{LoadedCid, Source},
 };
 
@@ -29,6 +32,30 @@ pub const IROH_STORE: &str = "iroh-store";
 pub trait ContentLoader: Sync + Send + std::fmt::Debug + Clone + 'static {
     /// Loads the actual content of a given cid.
     async fn load_cid(&self, cid: &Cid, ctx: &LoaderContext) -> Result<LoadedCid>;
+
+    /// Loads the as many blocks as can be resolved along the given path.
+    async fn load_path<'a>(
+        &'a self,
+        path: Path,
+        ctx: &LoaderContext,
+    ) -> BoxStream<'a, Result<(Cid, LoadedCid)>> {
+        // Default impl is just load the first cid
+        // TODO: ipns
+
+        match path.root() {
+            CidOrDomain::Cid(cid) => {
+                let this = self.clone();
+                let ctx = ctx.clone();
+                let cid = *cid;
+                Box::pin(futures::stream::once(async move {
+                    let res = this.load_cid(&cid, &ctx).await?;
+                    Ok((cid, res))
+                }))
+            }
+            _ => todo!(),
+        }
+    }
+
     /// Signal that the passend in session is not used anymore.
     async fn stop_session(&self, ctx: ContextId) -> Result<()>;
     /// Checks if the given cid is present in the local storage.
@@ -39,6 +66,13 @@ pub trait ContentLoader: Sync + Send + std::fmt::Debug + Clone + 'static {
 impl<T: ContentLoader> ContentLoader for Arc<T> {
     async fn load_cid(&self, cid: &Cid, ctx: &LoaderContext) -> Result<LoadedCid> {
         self.as_ref().load_cid(cid, ctx).await
+    }
+    async fn load_path<'a>(
+        &'a self,
+        path: Path,
+        ctx: &LoaderContext,
+    ) -> BoxStream<'a, Result<(Cid, LoadedCid)>> {
+        self.as_ref().load_path(path, ctx).await
     }
 
     async fn stop_session(&self, ctx: ContextId) -> Result<()> {
@@ -58,12 +92,15 @@ pub struct FullLoader {
     indexer: Option<Indexer>,
     /// Gateway endpoints.
     http_gateways: Vec<GatewayUrl>,
+    /// List of fixed providers to use.
+    providers: Arc<tokio::sync::RwLock<HashSet<PeerId>>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FullLoaderConfig {
     pub indexer: Option<IndexerUrl>,
     pub http_gateways: Vec<GatewayUrl>,
+    pub providers: HashSet<PeerId>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -116,7 +153,12 @@ impl FullLoader {
             client,
             indexer,
             http_gateways: config.http_gateways,
+            providers: Arc::new(tokio::sync::RwLock::new(config.providers)),
         })
+    }
+
+    pub async fn add_provider(&self, provider: PeerId) {
+        self.providers.write().await.insert(provider);
     }
 
     /// Fetch the next gateway url, if configured.
@@ -142,18 +184,41 @@ impl FullLoader {
         }
     }
 
+    async fn fetch_store_with_links(
+        &self,
+        cid: &Cid,
+    ) -> Result<Option<(LoadedCid, Vec<(Option<String>, Cid)>)>> {
+        match self.client.try_store() {
+            Ok(store) => match store.get(*cid).await? {
+                Some(data) => {
+                    let loaded_cid = LoadedCid {
+                        data,
+                        source: Source::Store(IROH_STORE),
+                    };
+                    let links = store.get_links(*cid).await?.unwrap_or_default();
+                    let links = links.into_iter().map(|l| (None, l)).collect();
+                    Ok(Some((loaded_cid, links)))
+                }
+                None => Ok(None),
+            },
+            Err(err) => {
+                info!("No store available: {:?}", err);
+                Ok(None)
+            }
+        }
+    }
+
     async fn fetch_bitswap(&self, ctx: ContextId, cid: &Cid) -> Result<Option<LoadedCid>> {
         match self.client.try_p2p() {
             Ok(p2p) => {
-                let providers: HashSet<_> = if let Some(ref indexer) = self.indexer {
-                    if let Ok(providers) = indexer.find_providers(*cid).await {
-                        providers.into_iter().map(|p| p.id).collect()
-                    } else {
-                        Default::default()
+                let mut providers = self.providers.read().await.clone();
+                if let Some(ref indexer) = self.indexer {
+                    if let Ok(indexer_providers) = indexer.find_providers(*cid).await {
+                        for provider in indexer_providers {
+                            providers.insert(provider.id);
+                        }
                     }
-                } else {
-                    Default::default()
-                };
+                }
 
                 let data = p2p.fetch_bitswap(ctx.into(), *cid, providers).await?;
                 Ok(Some(LoadedCid {
@@ -165,6 +230,63 @@ impl FullLoader {
                 info!("No p2p available: {:?}", err);
                 Ok(None)
             }
+        }
+    }
+
+    async fn fetch_memesync(
+        &self,
+        ctx: ContextId,
+        path: Path,
+    ) -> Result<impl Stream<Item = Result<(Cid, LoadedCid, Vec<(Option<String>, Cid)>)>>> {
+        match self.client.try_p2p() {
+            Ok(p2p) => {
+                let root_cid: Cid = match path.root() {
+                    CidOrDomain::Cid(cid) => *cid,
+                    _ => todo!(),
+                };
+                let mut providers = self.providers.read().await.clone();
+                if let Some(ref indexer) = self.indexer {
+                    if let Ok(indexer_providers) = indexer.find_providers(root_cid).await {
+                        for provider in indexer_providers {
+                            providers.insert(provider.id);
+                        }
+                    }
+                }
+
+                // TODO: providers from the DHT
+                let query = iroh_memesync::Query {
+                    path: path.into(),
+                    recursion: iroh_memesync::Recursion::Some {
+                        depth: 8,
+                        direction: iroh_memesync::RecursionDirection::BreadthFirst,
+                    },
+                };
+
+                let s = p2p
+                    .fetch_memesync(ctx.into(), query, providers)
+                    .await?
+                    .map_ok(
+                        |MemesyncResponse {
+                             id,
+                             index,
+                             last,
+                             data,
+                             links,
+                             cid,
+                         }| {
+                            (
+                                cid,
+                                LoadedCid {
+                                    data,
+                                    source: Source::Memesync,
+                                },
+                                links,
+                            )
+                        },
+                    );
+                Ok(s)
+            }
+            Err(err) => Err(anyhow!("No p2p available: {:?}", err)),
         }
     }
 
@@ -286,6 +408,41 @@ impl ContentLoader for FullLoader {
 
         self.store_data(*cid, loaded.data.clone());
         Ok(loaded)
+    }
+
+    async fn load_path<'a>(
+        &'a self,
+        path: Path,
+        ctx: &LoaderContext,
+    ) -> BoxStream<'a, Result<(Cid, LoadedCid)>> {
+        let id = ctx.id();
+        match path.root().clone() {
+            CidOrDomain::Cid(cid) => {
+                async_stream::try_stream! {
+                    // root
+                    match self.fetch_store_with_links(&cid).await? {
+                        Some((loaded_cid, _links)) => {
+                            trace!("found {} locally", cid);
+                            yield (cid, loaded_cid);
+                            // TODO: recursively load from the store
+                        }
+                        None => {
+                            // fetch as much as possible through memesync
+                            let stream = self.fetch_memesync(id, path).await?;
+                            tokio::pin!(stream);
+                            while let Some(loaded) = stream.next().await {
+                                let (cid, loaded_cid, _links) = loaded?;
+                                self.store_data(cid, loaded_cid.data.clone());
+                                trace!("received {} from memesync", cid);
+                                yield (cid, loaded_cid);
+                            }
+                        }
+                    }
+                }
+                .boxed()
+            }
+            _ => todo!(),
+        }
     }
 
     async fn has_cid(&self, cid: &Cid) -> Result<bool> {
