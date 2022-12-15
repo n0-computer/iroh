@@ -245,6 +245,15 @@ fn test_hamt_roundtrip_3() {
     assert!(dir_roundtrip_test_sync(dir, true));
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn test_hamt_roundtrip_large() {
+    let mut dir = TestDir::new();
+    for i in 0..10000 {
+        dir.insert(format!("file_{}", i), TestDirEntry::File(Bytes::new()));
+    }
+    assert!(dir_roundtrip_test(dir, true).await.unwrap());
+}
+
 #[tokio::test]
 async fn test_builder_roundtrip_complex_tree_1() -> Result<()> {
     // fill with random data so we get distinct cids for all blocks
