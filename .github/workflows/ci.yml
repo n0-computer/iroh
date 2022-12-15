@@ -68,6 +68,13 @@ jobs:
         version: '3.20.1'
         repo-token: ${{ secrets.GITHUB_TOKEN }}
 
+    - name: Print installed versions
+      id: versions
+      run: |
+        rustc --version --verbose
+        cargo --version --verbose
+        rustup --version
+
     - name: Install Protoc
       if: matrix.os != 'windows-latest'
       run: |
