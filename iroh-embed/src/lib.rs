@@ -37,20 +37,20 @@ pub use iroh_p2p::Libp2pConfig;
 pub use iroh_unixfs::indexer::IndexerUrl;
 pub use reqwest::Url;
 
+/// An address allowing internal communication with the iroh peer-to-peer service.
+///
+/// This is only needed to wire up the several services together and should not be used to
+/// communicate directly to the service.
+///
+/// Can be created from [`p2p::P2pService::addr`].
+pub use iroh_rpc_types::p2p::P2pAddr;
+
 /// An address allowing internal communication with the iroh store service.
 ///
 /// This is only needed to wire up the several services together and should not be used to
 /// communicate directly to the service.
 ///
 /// Can be created from [`store::RocksStoreService::addr`].
-pub use iroh_rpc_types::p2p::P2pAddr;
-
-/// An address allowing internal communication with the iroh p2p service.
-///
-/// This is only needed to wire up the several services together and should not be used to
-/// communicate directly to the service.
-///
-/// Can be created from [`p2p::P2pService::addr`].
 pub use iroh_rpc_types::store::StoreAddr;
 
 mod p2p;
