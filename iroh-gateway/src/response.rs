@@ -33,7 +33,7 @@ impl std::convert::TryFrom<&str> for ResponseFormat {
                 if rf.starts_with("application/vnd.ipld.") {
                     Ok(ResponseFormat::Fs(rf.to_string()))
                 } else {
-                    Err(format!("{}: {}", ERR_UNSUPPORTED_FORMAT, rf))
+                    Err(format!("{ERR_UNSUPPORTED_FORMAT}: {rf}"))
                 }
             }
         }

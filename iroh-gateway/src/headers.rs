@@ -68,7 +68,7 @@ pub fn set_content_disposition_headers(headers: &mut HeaderMap, filename: &str, 
     // TODO: handle non-ascii filenames https://github.com/ipfs/specs/blob/main/http-gateways/PATH_GATEWAY.md#content-disposition-response-header
     headers.insert(
         CONTENT_DISPOSITION,
-        HeaderValue::from_str(&format!("{}; filename={}", disposition, filename)).unwrap(),
+        HeaderValue::from_str(&format!("{disposition}; filename={filename}")).unwrap(),
     );
 }
 
@@ -103,11 +103,14 @@ pub fn parse_range_header(range: &HeaderValue) -> Option<Range<u64>> {
     if start >= end || end == 0 {
         return None;
     }
-    Some(Range { start, end })
+    Some(Range {
+        start,
+        end: end + 1,
+    })
 }
 
 #[tracing::instrument()]
-pub fn add_cache_control_headers(headers: &mut HeaderMap, metadata: Metadata) {
+pub fn add_cache_control_headers(headers: &mut HeaderMap, metadata: &Metadata) {
     if metadata.path.typ() == PathType::Ipns {
         let lmdt: OffsetDateTime = time::SystemTime::now().into();
         // TODO: better last modified headers based on actual dns ttls
@@ -121,20 +124,20 @@ pub fn add_cache_control_headers(headers: &mut HeaderMap, metadata: Metadata) {
 }
 
 #[tracing::instrument()]
-pub fn add_content_length_header(headers: &mut HeaderMap, metadata: Metadata) {
-    if let Some(size) = metadata.size {
+pub fn add_content_length_header(headers: &mut HeaderMap, content_length: Option<u64>) {
+    if let Some(content_length) = content_length {
         headers.insert(
             CONTENT_LENGTH,
-            HeaderValue::from_str(&size.to_string()).unwrap(),
+            HeaderValue::from_str(&content_length.to_string()).unwrap(),
         );
     }
 }
 
 #[tracing::instrument()]
-pub fn add_ipfs_roots_headers(headers: &mut HeaderMap, metadata: Metadata) {
+pub fn add_ipfs_roots_headers(headers: &mut HeaderMap, metadata: &Metadata) {
     let mut roots = "".to_string();
-    for rcid in metadata.resolved_path {
-        write!(roots, "{},", rcid).unwrap();
+    for rcid in &metadata.resolved_path {
+        write!(roots, "{rcid},").unwrap();
     }
     roots.pop();
     headers.insert(&HEADER_X_IPFS_ROOTS, HeaderValue::from_str(&roots).unwrap());
@@ -163,10 +166,10 @@ pub fn get_etag(cid: &CidOrDomain, response_format: Option<ResponseFormat>) -> S
             if let Some(fmt) = response_format {
                 let ext = fmt.get_extenstion();
                 if !ext.is_empty() {
-                    suffix = format!(".{}", ext);
+                    suffix = format!(".{ext}");
                 }
             }
-            format!("\"{}{}\"", cid, suffix)
+            format!("\"{cid}{suffix}\"")
         }
         CidOrDomain::Domain(_) => {
             // TODO:
@@ -321,7 +324,7 @@ mod tests {
     fn parse_range_header_test() {
         let range = HeaderValue::from_str("bytes=0-10").unwrap();
         let r = parse_range_header(&range);
-        assert_eq!(r, Some(Range { start: 0, end: 10 }));
+        assert_eq!(r, Some(Range { start: 0, end: 11 }));
 
         let range = HeaderValue::from_str("byts=0-10").unwrap();
         let r = parse_range_header(&range);
@@ -345,7 +348,7 @@ mod tests {
             r,
             Some(Range {
                 start: 100,
-                end: 200
+                end: 201
             })
         );
 

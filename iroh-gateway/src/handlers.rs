@@ -205,7 +205,7 @@ async fn request_preprocessing<T: ContentLoader + Unpin>(
         Err(err) => {
             return Err(GatewayError::new(
                 StatusCode::BAD_REQUEST,
-                &format!("invalid header value: {}", err),
+                &format!("invalid header value: {err}"),
             ));
         }
     };
@@ -257,7 +257,7 @@ pub async fn handler<T: ContentLoader + Unpin>(
                     .retrieve_path_metadata(req.resolved_path)
                     .await
                     .map_err(|e| GatewayError::new(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
-                add_content_length_header(&mut response_headers, path_metadata.metadata().clone());
+                add_content_length_header(&mut response_headers, path_metadata.metadata().size);
                 Ok(GatewayResponse::empty(response_headers))
             }
             Method::GET => {
@@ -397,7 +397,7 @@ fn protocol_handler_redirect(uri_param: String) -> Result<GatewayResponse, Gatew
         Err(e) => {
             return Err(GatewayError::new(
                 StatusCode::BAD_REQUEST,
-                &format!("invalid uri: {}", e),
+                &format!("invalid uri: {e}"),
             ));
         }
     };
@@ -412,11 +412,11 @@ fn protocol_handler_redirect(uri_param: String) -> Result<GatewayResponse, Gatew
     let uri_query = u.query();
     if uri_query.is_some() {
         let encoded_query = encode(uri_query.unwrap());
-        write!(uri_path, "?{}", encoded_query)
+        write!(uri_path, "?{encoded_query}")
             .map_err(|e| GatewayError::new(StatusCode::BAD_REQUEST, &e.to_string()))?;
     }
     let uri_host = u.host().unwrap().to_string();
-    let redirect_uri = format!("{}://{}{}", uri_scheme, uri_host, uri_path);
+    let redirect_uri = format!("{uri_scheme}://{uri_host}{uri_path}");
     Ok(GatewayResponse::redirect_permanently(&redirect_uri))
 }
 
@@ -488,7 +488,7 @@ async fn handle_only_if_cached<T: ContentLoader>(
                     )),
                     Err(e) => Err(GatewayError::new(
                         StatusCode::PRECONDITION_FAILED,
-                        &format!("Error checking cache: {}", e),
+                        &format!("Error checking cache: {e}"),
                     )),
                 },
                 CidOrDomain::Domain(_) => Err(GatewayError::new(
@@ -574,9 +574,9 @@ async fn serve_raw<T: ContentLoader + Unpin>(
             if let Some(res) = etag_check(&headers, &req.cid, &req.format) {
                 return Ok(res);
             }
-            add_cache_control_headers(&mut headers, metadata.clone());
-            add_ipfs_roots_headers(&mut headers, metadata.clone());
-            add_content_length_header(&mut headers, metadata.clone());
+            add_cache_control_headers(&mut headers, &metadata);
+            add_ipfs_roots_headers(&mut headers, &metadata);
+            add_content_length_header(&mut headers, metadata.size);
 
             if let Some(mut capped_range) = range {
                 if let Some(size) = metadata.size {
@@ -624,14 +624,14 @@ async fn serve_car<T: ContentLoader + Unpin>(
 
             set_content_disposition_headers(&mut headers, &file_name, DISPOSITION_ATTACHMENT);
 
-            add_cache_control_headers(&mut headers, metadata.clone());
-            add_content_length_header(&mut headers, metadata.clone());
+            add_cache_control_headers(&mut headers, &metadata);
+            add_content_length_header(&mut headers, metadata.size);
             let etag = format!("W/{}", get_etag(&req.cid, Some(req.format.clone())));
             set_etag_headers(&mut headers, etag);
             if let Some(res) = etag_check(&headers, &req.cid, &req.format) {
                 return Ok(res);
             }
-            add_ipfs_roots_headers(&mut headers, metadata);
+            add_ipfs_roots_headers(&mut headers, &metadata);
             Ok(GatewayResponse::new(StatusCode::OK, body, headers))
         }
         FileResult::Directory(_) => Err(GatewayError::new(
@@ -692,7 +692,7 @@ async fn serve_fs<T: ContentLoader + Unpin>(
         .get_file(req.resolved_path.clone(), start_time, range.clone())
         .await
         .map_err(|e| GatewayError::new(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
-    add_ipfs_roots_headers(&mut headers, metadata.clone());
+    add_ipfs_roots_headers(&mut headers, &metadata);
     match body {
         FileResult::Directory(res) => {
             let dir_list: anyhow::Result<Vec<_>> = res
@@ -719,8 +719,14 @@ async fn serve_fs<T: ContentLoader + Unpin>(
                 Some(_) => {
                     // todo(arqu): error on no size
                     // todo(arqu): add lazy seeking
-                    add_cache_control_headers(&mut headers, metadata.clone());
-                    add_content_length_header(&mut headers, metadata.clone());
+                    add_cache_control_headers(&mut headers, &metadata);
+                    add_content_length_header(
+                        &mut headers,
+                        range
+                            .as_ref()
+                            .map(|range| range.end - range.start)
+                            .or(metadata.size),
+                    );
                     set_etag_headers(&mut headers, get_etag(&req.cid, Some(req.format.clone())));
                     if let Some(res) = etag_check(&headers, &req.cid, &req.format) {
                         return Ok(res);
@@ -740,12 +746,12 @@ async fn serve_fs<T: ContentLoader + Unpin>(
                         let content_sniffed_mime = body.get_mime();
                         add_content_type_headers(&mut headers, &name, content_sniffed_mime);
                     }
-                    if let Some(mut capped_range) = range {
+                    if let Some(mut range) = range {
                         if let Some(size) = metadata.size {
-                            capped_range.end = std::cmp::min(capped_range.end, size);
+                            range.end = std::cmp::min(range.end, size);
                         }
-                        add_etag_range(&mut headers, capped_range.clone());
-                        add_content_range_headers(&mut headers, capped_range, metadata.size);
+                        add_etag_range(&mut headers, range.clone());
+                        add_content_range_headers(&mut headers, range, metadata.size);
                         Ok(GatewayResponse::new(
                             StatusCode::PARTIAL_CONTENT,
                             body,
@@ -764,8 +770,11 @@ async fn serve_fs<T: ContentLoader + Unpin>(
         FileResult::Raw(body) => {
             // todo(arqu): error on no size
             // todo(arqu): add lazy seeking
-            add_cache_control_headers(&mut headers, metadata.clone());
-            add_content_length_header(&mut headers, metadata.clone());
+            add_cache_control_headers(&mut headers, &metadata);
+            add_content_length_header(
+                &mut headers,
+                range.map(|range| range.end - range.start).or(metadata.size),
+            );
             set_etag_headers(&mut headers, get_etag(&req.cid, Some(req.format.clone())));
             if let Some(res) = etag_check(&headers, &req.cid, &req.format) {
                 return Ok(res);
@@ -873,7 +882,7 @@ async fn serve_fs_dir<T: ContentLoader + Unpin>(
             );
             link.insert(
                 "path".to_string(),
-                Json::String(format!("{}{}", root_path, name)),
+                Json::String(format!("{root_path}{name}")),
             );
             link.insert("icon".to_string(), Json::String(icon_class_name(name)));
             link
@@ -928,6 +937,6 @@ pub async fn middleware_error_handler<T: ContentLoader>(
 
     return GatewayError::new(
         StatusCode::INTERNAL_SERVER_ERROR,
-        format!("unhandled internal error: {}", err).as_str(),
+        format!("unhandled internal error: {err}").as_str(),
     );
 }

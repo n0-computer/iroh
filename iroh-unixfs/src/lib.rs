@@ -8,7 +8,7 @@ pub mod indexer;
 mod types;
 pub mod unixfs;
 
-pub use crate::types::{Block, Link, LinkRef, Links, LoadedCid, PbLinks, ResponseClip, Source};
+pub use crate::types::{Block, Link, LinkRef, Links, LoadedCid, PbLinks, Source};
 
 use std::collections::BTreeSet;
 

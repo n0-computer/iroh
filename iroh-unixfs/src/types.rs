@@ -79,23 +79,6 @@ impl Block {
     }
 }
 
-/// Holds information if we should clip the response and to what offset
-#[derive(Debug, Clone, Copy)]
-pub enum ResponseClip {
-    NoClip,
-    Clip(usize),
-}
-
-impl From<usize> for ResponseClip {
-    fn from(item: usize) -> Self {
-        if item == 0 {
-            ResponseClip::NoClip
-        } else {
-            ResponseClip::Clip(item)
-        }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Link {
     pub cid: Cid,

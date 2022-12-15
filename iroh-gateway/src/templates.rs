@@ -25,5 +25,5 @@ pub fn icon_class_name(path: &str) -> String {
     } else {
         "_blank"
     };
-    format!("icon-{}", icon)
+    format!("icon-{icon}")
 }

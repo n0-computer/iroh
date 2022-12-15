@@ -49,7 +49,7 @@ pub enum ChunkerConfig {
 impl Display for ChunkerConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Fixed(chunk_size) => write!(f, "fixed-{}", chunk_size),
+            Self::Fixed(chunk_size) => write!(f, "fixed-{chunk_size}"),
             Self::Rabin => write!(f, "rabin"),
         }
     }

@@ -8,7 +8,6 @@ use iroh_unixfs::{
     builder::{Directory, DirectoryBuilder, FileBuilder, SymlinkBuilder},
     chunker::DEFAULT_CHUNKS_SIZE,
     content_loader::ContentLoader,
-    ResponseClip,
 };
 use proptest::prelude::*;
 use rand::prelude::*;
@@ -97,11 +96,7 @@ async fn build_testdir(
                 if item.is_dir() {
                     mkdir(&mut agg, path.tail())?;
                 } else {
-                    let reader = item.pretty(
-                        resolver.clone(),
-                        OutMetrics::default(),
-                        ResponseClip::NoClip,
-                    )?;
+                    let reader = item.pretty(resolver.clone(), OutMetrics::default(), None)?;
                     let data = read_to_vec(reader).await?;
                     mkfile(&mut agg, path.tail(), data.into())?;
                 }
@@ -133,7 +128,11 @@ fn dir_roundtrip_test_sync(dir: TestDir, hamt: bool) -> bool {
 }
 
 /// a roundtrip test that converts a file to an unixfs DAG and back
-async fn file_roundtrip_test(data: Bytes, chunk_size: usize, degree: usize) -> Result<bool> {
+async fn file_roundtrip_test(
+    data: Bytes,
+    chunk_size: usize,
+    degree: usize,
+) -> Result<(Vec<u8>, Vec<u8>)> {
     let file = FileBuilder::new()
         .name("file.bin")
         .fixed_chunker(chunk_size)
@@ -146,9 +145,8 @@ async fn file_roundtrip_test(data: Bytes, chunk_size: usize, degree: usize) -> R
     let out = resolver
         .resolve(iroh_resolver::resolver::Path::from_cid(root))
         .await?;
-    let t = read_to_vec(out.pretty(resolver, OutMetrics::default(), ResponseClip::NoClip)?).await?;
-    println!("{}", data.len());
-    Ok(t == data)
+    let t = read_to_vec(out.pretty(resolver, OutMetrics::default(), None)?).await?;
+    Ok((t, data.to_vec()))
 }
 
 /// a roundtrip test that converts a symlink to a unixfs DAG and back
@@ -166,7 +164,7 @@ async fn symlink_roundtrip_test() -> Result<()> {
     let out = resolver
         .resolve(iroh_resolver::resolver::Path::from_cid(root))
         .await?;
-    let mut reader = out.pretty(resolver, OutMetrics::default(), ResponseClip::NoClip)?;
+    let mut reader = out.pretty(resolver, OutMetrics::default(), None)?;
     let mut t = String::new();
     reader.read_to_string(&mut t).await?;
     println!("{}", t);
@@ -175,7 +173,7 @@ async fn symlink_roundtrip_test() -> Result<()> {
 }
 
 /// sync version of file_roundtrip_test for use in proptest
-fn file_roundtrip_test_sync(data: Bytes, chunk_size: usize, degree: usize) -> bool {
+fn file_roundtrip_test_sync(data: Bytes, chunk_size: usize, degree: usize) -> (Vec<u8>, Vec<u8>) {
     let f = file_roundtrip_test(data, chunk_size, degree);
     tokio::runtime::Builder::new_current_thread()
         .build()
@@ -209,7 +207,8 @@ fn arb_chunk_size() -> impl Strategy<Value = usize> {
 proptest! {
     #[test]
     fn test_file_roundtrip(data in proptest::collection::vec(any::<u8>(), 0usize..1024), chunk_size in arb_chunk_size(), degree in arb_degree()) {
-        assert!(file_roundtrip_test_sync(data.into(), chunk_size, degree));
+        let (left, right) = file_roundtrip_test_sync(data.into(), chunk_size, degree);
+        assert_eq!(left, right);
     }
 
     #[test]
@@ -260,7 +259,8 @@ async fn test_builder_roundtrip_complex_tree_1() -> Result<()> {
     let mut rng = ChaCha8Rng::from_seed([0; 32]);
     let mut data = vec![0u8; 1024 * 128];
     rng.fill(data.as_mut_slice());
-    assert!(file_roundtrip_test(data.into(), 1024, 4).await?);
+    let (left, right) = file_roundtrip_test(data.into(), 1024, 4).await?;
+    assert_eq!(left, right);
     Ok(())
 }
 
@@ -270,6 +270,8 @@ async fn test_builder_roundtrip_128m() -> Result<()> {
     let mut rng = ChaCha8Rng::from_seed([0; 32]);
     let mut data = vec![0u8; 128 * 1024 * 1024];
     rng.fill(data.as_mut_slice());
-    assert!(file_roundtrip_test(data.into(), DEFAULT_CHUNKS_SIZE, DEFAULT_DEGREE).await?);
+    let (left, right) =
+        file_roundtrip_test(data.into(), DEFAULT_CHUNKS_SIZE, DEFAULT_DEGREE).await?;
+    assert_eq!(left, right);
     Ok(())
 }

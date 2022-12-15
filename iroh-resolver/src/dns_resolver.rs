@@ -80,7 +80,7 @@ impl DnsResolver {
 
     #[tracing::instrument]
     pub async fn resolve_dnslink(&self, url: &str) -> Result<Vec<Path>> {
-        let url = format!("_dnslink.{}.", url);
+        let url = format!("_dnslink.{url}.");
         let records = self.resolve_txt_record(&url).await?;
         let records = records
             .into_iter()
