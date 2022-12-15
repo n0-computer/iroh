@@ -49,6 +49,7 @@ jobs:
     - name: Install ${{ matrix.rust }}
       run: |
         rustup toolchain install --profile default ${{ matrix.rust }}
+        rustup default ${{ matrix.rust }}
 
     - name: Install Rust MSRV
       if: matrix.os != 'windows-latest'
