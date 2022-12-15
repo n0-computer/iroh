@@ -8,7 +8,7 @@ use crossterm::style::Stylize;
 use futures::StreamExt;
 use indicatif::{ProgressBar, ProgressStyle};
 use iroh_api::{
-    Api, ChunkerConfig, IpfsPath, ServiceStatus, UnixfsConfig, UnixfsEntry, DEFAULT_CHUNKS_SIZE,
+    Api, ChunkerConfig, IpfsPath, StatusType, UnixfsConfig, UnixfsEntry, DEFAULT_CHUNKS_SIZE,
 };
 use iroh_metrics::config::Config as MetricsConfig;
 use iroh_util::{human, iroh_config_path, make_config};
@@ -202,19 +202,17 @@ async fn add(
     // path of least confusion
     let svc_status = require_services(api, BTreeSet::from(["store"])).await?;
     match (provide, svc_status.p2p.status()) {
-        (true, ServiceStatus::Down) => {
+        (true, StatusType::Down) => {
             anyhow::bail!("Add provides content to the IPFS network by default, but the p2p service is not running.\n{}",
             "hint: try using the --offline flag, or run 'iroh start p2p'".yellow()
             )
         }
-        (true, ServiceStatus::Unknown)
-        | (true, ServiceStatus::NotServing)
-        | (true, ServiceStatus::ServiceUnknown) => {
+        (true, StatusType::Unknown) => {
             anyhow::bail!("Add provides content to the IPFS network by default, but the p2p service is not running.\n{}",
             "hint: try using the --offline flag, or run 'iroh start p2p'".yellow()
             )
         }
-        (true, ServiceStatus::Serving) => {}
+        (true, StatusType::Serving) => {}
         (false, _) => {
             steps -= 1;
         }

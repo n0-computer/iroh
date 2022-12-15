@@ -1,9 +1,11 @@
 use std::result;
 
 use anyhow::Result;
+use futures::stream::{BoxStream, StreamExt};
 use iroh_rpc_client::{create_server, GatewayServer, ServerError, ServerSocket};
 use iroh_rpc_types::gateway::{
-    GatewayAddr, GatewayRequest, GatewayService, VersionRequest, VersionResponse,
+    GatewayAddr, GatewayRequest, GatewayService, VersionRequest, VersionResponse, WatchRequest,
+    WatchResponse,
 };
 use tracing::info;
 
@@ -11,6 +13,17 @@ use tracing::info;
 pub struct Gateway {}
 
 impl Gateway {
+    #[tracing::instrument(skip(self))]
+    fn watch(self, _: WatchRequest) -> BoxStream<'static, WatchResponse> {
+        async_stream::stream! {
+            loop {
+                yield WatchResponse { version: env!("CARGO_PKG_VERSION").to_string() };
+                tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+            }
+        }
+        .boxed()
+    }
+
     #[tracing::instrument(skip(self))]
     async fn version(self, _: VersionRequest) -> VersionResponse {
         let version = env!("CARGO_PKG_VERSION").to_string();
@@ -31,6 +44,7 @@ async fn dispatch(
 ) -> result::Result<(), ServerError> {
     use GatewayRequest::*;
     match req {
+        Watch(req) => s.server_streaming(req, chan, target, Gateway::watch).await,
         Version(req) => s.rpc(req, chan, target, Gateway::version).await,
     }
 }

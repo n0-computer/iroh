@@ -2,32 +2,37 @@ use crate::{gateway, network, store};
 use anyhow::Result;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ServiceStatus {
-    ///  Indicates rpc server is in an unknown state
+pub enum StatusType {
+    /// Indicates service status is unknown
     Unknown,
     /// Indicates service is serving data
     Serving,
-    /// Indicates service is not serving data, but the rpc server is not down
-    NotServing,
-    /// Indicates that the requested service is unknown
-    ServiceUnknown,
     /// Indicates that the service is down.
     Down,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct StatusRow {
+/// The status of an individual rpc service
+pub struct ServiceStatus {
+    /// name of the service: "gateway", "p2p", or "store"
     pub(crate) name: &'static str,
     pub(crate) number: usize,
-    pub(crate) status: ServiceStatus,
+    pub(crate) status: StatusType,
+    pub(crate) version: String,
 }
 
-impl StatusRow {
-    pub fn new(name: &'static str, number: usize, status: ServiceStatus) -> Self {
+impl ServiceStatus {
+    pub fn new<I: Into<String>>(
+        name: &'static str,
+        number: usize,
+        status: StatusType,
+        version: I,
+    ) -> Self {
         Self {
             name,
             number,
             status,
+            version: version.into(),
         }
     }
 
@@ -39,33 +44,38 @@ impl StatusRow {
         self.number
     }
 
-    pub fn status(&self) -> ServiceStatus {
+    pub fn status(&self) -> StatusType {
         self.status.clone()
+    }
+
+    pub fn version(&self) -> String {
+        self.version.clone()
     }
 }
 
-impl Default for StatusRow {
+impl Default for ServiceStatus {
     fn default() -> Self {
         Self {
             name: "",
             number: 1,
-            status: ServiceStatus::Unknown,
+            status: StatusType::Unknown,
+            version: String::new(),
         }
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct StatusTable {
-    pub gateway: StatusRow,
-    pub p2p: StatusRow,
-    pub store: StatusRow,
+pub struct ClientStatus {
+    pub gateway: ServiceStatus,
+    pub p2p: ServiceStatus,
+    pub store: ServiceStatus,
 }
 
-impl StatusTable {
+impl ClientStatus {
     pub fn new(
-        gateway: Option<StatusRow>,
-        p2p: Option<StatusRow>,
-        store: Option<StatusRow>,
+        gateway: Option<ServiceStatus>,
+        p2p: Option<ServiceStatus>,
+        store: Option<ServiceStatus>,
     ) -> Self {
         Self {
             gateway: gateway.unwrap_or_default(),
@@ -74,14 +84,14 @@ impl StatusTable {
         }
     }
 
-    pub fn iter(&self) -> StatusTableIterator<'_> {
-        StatusTableIterator {
+    pub fn iter(&self) -> ClientStatusIterator<'_> {
+        ClientStatusIterator {
             table: self,
             iter: 0,
         }
     }
 
-    pub fn update(&mut self, s: StatusRow) -> Result<()> {
+    pub fn update(&mut self, s: ServiceStatus) -> Result<()> {
         if self.gateway.name() == s.name() {
             self.gateway = s;
             return Ok(());
@@ -99,13 +109,13 @@ impl StatusTable {
 }
 
 #[derive(Debug)]
-pub struct StatusTableIterator<'a> {
-    table: &'a StatusTable,
+pub struct ClientStatusIterator<'a> {
+    table: &'a ClientStatus,
     iter: usize,
 }
 
-impl Iterator for StatusTableIterator<'_> {
-    type Item = StatusRow;
+impl Iterator for ClientStatusIterator<'_> {
+    type Item = ServiceStatus;
 
     fn next(&mut self) -> Option<Self::Item> {
         let current = match self.iter {
@@ -120,12 +130,12 @@ impl Iterator for StatusTableIterator<'_> {
     }
 }
 
-impl Default for StatusTable {
+impl Default for ClientStatus {
     fn default() -> Self {
         Self {
-            gateway: StatusRow::new(gateway::NAME, 1, ServiceStatus::Unknown),
-            p2p: StatusRow::new(network::NAME, 1, ServiceStatus::Unknown),
-            store: StatusRow::new(store::NAME, 1, ServiceStatus::Unknown),
+            gateway: ServiceStatus::new(gateway::NAME, 1, StatusType::Unknown, ""),
+            p2p: ServiceStatus::new(network::NAME, 1, StatusType::Unknown, ""),
+            store: ServiceStatus::new(store::NAME, 1, StatusType::Unknown, ""),
         }
     }
 }
@@ -135,123 +145,144 @@ mod tests {
     use super::*;
 
     #[test]
-    fn status_row_default() {
-        let expect = StatusRow {
+    fn service_status_default() {
+        let expect = ServiceStatus {
             name: "",
             number: 1,
-            status: ServiceStatus::Unknown,
+            status: StatusType::Unknown,
+            version: String::new(),
         };
         assert_eq!(expect, Default::default());
     }
 
     #[test]
-    fn status_row_new() {
-        let expect = StatusRow {
+    fn service_status_new() {
+        let expect = ServiceStatus {
             name: "test",
             number: 15,
-            status: ServiceStatus::NotServing,
+            status: StatusType::Serving,
+            version: "v0.1.0".to_string(),
         };
         assert_eq!(
             expect,
-            StatusRow::new("test", 15, ServiceStatus::NotServing)
+            ServiceStatus::new("test", 15, StatusType::Serving, "v0.1.0")
         );
     }
 
     #[test]
-    fn status_table_default() {
-        let expect = StatusTable {
-            gateway: StatusRow {
+    fn client_status_default() {
+        let expect = ClientStatus {
+            gateway: ServiceStatus {
                 name: crate::gateway::NAME,
                 number: 1,
-                status: ServiceStatus::Unknown,
+                status: StatusType::Unknown,
+                version: "".to_string(),
             },
-            p2p: StatusRow {
+            p2p: ServiceStatus {
                 name: crate::network::NAME,
                 number: 1,
-                status: ServiceStatus::Unknown,
+                status: StatusType::Unknown,
+                version: "".to_string(),
             },
-            store: StatusRow {
+            store: ServiceStatus {
                 name: crate::store::NAME,
                 number: 1,
-                status: ServiceStatus::Unknown,
+                status: StatusType::Unknown,
+                version: "".to_string(),
             },
         };
 
-        assert_eq!(expect, StatusTable::default());
+        assert_eq!(expect, ClientStatus::default());
     }
 
     #[test]
     fn status_table_new() {
-        let expect = StatusTable {
-            gateway: StatusRow {
+        let expect = ClientStatus {
+            gateway: ServiceStatus {
                 name: "test",
                 number: 1,
-                status: ServiceStatus::Unknown,
+                status: StatusType::Unknown,
+                version: "test".to_string(),
             },
-            p2p: StatusRow {
+            p2p: ServiceStatus {
                 name: "test",
                 number: 1,
-                status: ServiceStatus::Unknown,
+                status: StatusType::Unknown,
+                version: "test".to_string(),
             },
-            store: StatusRow {
+            store: ServiceStatus {
                 name: "test",
                 number: 1,
-                status: ServiceStatus::Unknown,
+                status: StatusType::Unknown,
+                version: "test".to_string(),
             },
         };
         assert_eq!(
             expect,
-            StatusTable::new(
-                Some(StatusRow::new("test", 1, ServiceStatus::Unknown)),
-                Some(StatusRow::new("test", 1, ServiceStatus::Unknown)),
-                Some(StatusRow::new("test", 1, ServiceStatus::Unknown))
+            ClientStatus::new(
+                Some(ServiceStatus::new("test", 1, StatusType::Unknown, "test")),
+                Some(ServiceStatus::new("test", 1, StatusType::Unknown, "test")),
+                Some(ServiceStatus::new("test", 1, StatusType::Unknown, "test"))
             )
         );
     }
 
     #[test]
     fn status_table_update() {
-        let mut gateway = Some(StatusRow::new(gateway::NAME, 1, ServiceStatus::Unknown));
-        let mut p2p = Some(StatusRow::new(network::NAME, 1, ServiceStatus::Unknown));
-        let mut store = Some(StatusRow::new(store::NAME, 1, ServiceStatus::Unknown));
-        let mut got = StatusTable::new(gateway.clone(), p2p.clone(), store.clone());
+        let gateway = Some(ServiceStatus::new(
+            gateway::NAME,
+            1,
+            StatusType::Unknown,
+            "v0.1.0",
+        ));
+        let mut p2p = Some(ServiceStatus::new(
+            network::NAME,
+            1,
+            StatusType::Unknown,
+            "v0.1.0",
+        ));
+        let mut store = Some(ServiceStatus::new(
+            store::NAME,
+            1,
+            StatusType::Unknown,
+            "v0.1.0",
+        ));
+        let mut got = ClientStatus::new(gateway.clone(), p2p.clone(), store.clone());
 
-        store.as_mut().unwrap().status = ServiceStatus::Serving;
-        let expect = StatusTable::new(gateway.clone(), p2p.clone(), store.clone());
+        store.as_mut().unwrap().status = StatusType::Serving;
+        let expect = ClientStatus::new(gateway.clone(), p2p.clone(), store.clone());
         got.update(store.clone().unwrap()).unwrap();
         assert_eq!(expect, got);
 
-        gateway.as_mut().unwrap().status = ServiceStatus::ServiceUnknown;
-        let expect = StatusTable::new(gateway.clone(), p2p.clone(), store.clone());
-        got.update(gateway.clone().unwrap()).unwrap();
-        assert_eq!(expect, got);
-
-        p2p.as_mut().unwrap().status = ServiceStatus::Down;
-        let expect = StatusTable::new(gateway, p2p.clone(), store);
+        p2p.as_mut().unwrap().status = StatusType::Down;
+        let expect = ClientStatus::new(gateway, p2p.clone(), store);
         got.update(p2p.unwrap()).unwrap();
         assert_eq!(expect, got);
     }
 
     #[test]
     fn status_table_iter() {
-        let table = StatusTable::default();
-        let rows: Vec<StatusRow> = table.iter().collect();
+        let table = ClientStatus::default();
+        let rows: Vec<ServiceStatus> = table.iter().collect();
         assert_eq!(
             vec![
-                StatusRow {
+                ServiceStatus {
                     name: crate::store::NAME,
                     number: 1,
-                    status: ServiceStatus::Unknown,
+                    status: StatusType::Unknown,
+                    version: "".to_string(),
                 },
-                StatusRow {
+                ServiceStatus {
                     name: crate::network::NAME,
                     number: 1,
-                    status: ServiceStatus::Unknown,
+                    status: StatusType::Unknown,
+                    version: "".to_string(),
                 },
-                StatusRow {
+                ServiceStatus {
                     name: crate::gateway::NAME,
                     number: 1,
-                    status: ServiceStatus::Unknown,
+                    status: StatusType::Unknown,
+                    version: "".to_string(),
                 },
             ],
             rows

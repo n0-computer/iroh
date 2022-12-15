@@ -1,10 +1,10 @@
 use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 
-use super::config::Config;
-use super::gateway::GatewayClient;
-use super::network::P2pClient;
-use super::store::StoreClient;
+use crate::config::Config;
+use crate::gateway::GatewayClient;
+use crate::network::P2pClient;
+use crate::store::StoreClient;
 use anyhow::{Context, Result};
 use futures::{Stream, StreamExt};
 
@@ -143,7 +143,7 @@ impl Client {
         self.store.get().context("missing rpc store connection")
     }
 
-    pub async fn check(&self) -> super::status::StatusTable {
+    pub async fn check(&self) -> crate::status::ClientStatus {
         let g = if let Some(ref g) = self.gateway {
             Some(g.check().await)
         } else {
@@ -159,12 +159,12 @@ impl Client {
         } else {
             None
         };
-        super::status::StatusTable::new(g, p, s)
+        crate::status::ClientStatus::new(g, p, s)
     }
 
-    pub async fn watch(self) -> impl Stream<Item = super::status::StatusTable> {
+    pub async fn watch(self) -> impl Stream<Item = crate::status::ClientStatus> {
         async_stream::stream! {
-            let mut status_table: super::status::StatusTable = Default::default();
+            let mut status: crate::status::ClientStatus = Default::default();
             let mut streams = Vec::new();
 
             if let Some(ref g) = self.gateway {
@@ -181,9 +181,9 @@ impl Client {
             }
 
             let mut stream = futures::stream::select_all(streams);
-            while let Some(status) = stream.next().await {
-                status_table.update(status).unwrap();
-                yield status_table.clone();
+            while let Some(s) = stream.next().await {
+                status.update(s).unwrap();
+                yield status.clone();
             }
         }
     }

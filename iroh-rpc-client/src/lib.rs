@@ -12,7 +12,7 @@ use quic_rpc::{
     transport::{combined, http2, CombinedChannelTypes, Http2ChannelTypes, MemChannelTypes},
     RpcClient, RpcServer, Service,
 };
-pub use status::{ServiceStatus, StatusRow, StatusTable};
+pub use status::{ClientStatus, ServiceStatus, StatusType};
 pub use store::StoreClient;
 
 /// The types of channels used by the client and server.

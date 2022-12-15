@@ -1,9 +1,11 @@
-use super::status::StatusRow;
-use super::ServiceStatus;
-use anyhow::Result;
-use futures::Stream;
-use iroh_rpc_types::gateway::*;
 use std::fmt;
+
+use anyhow::Result;
+use async_stream::stream;
+use futures::{Stream, StreamExt};
+use iroh_rpc_types::gateway::*;
+
+use crate::{status::StatusType, ServiceStatus};
 
 pub(crate) const NAME: &str = "gateway";
 
@@ -33,22 +35,38 @@ impl GatewayClient {
     }
 
     #[tracing::instrument(skip(self))]
-    pub async fn check(&self) -> StatusRow {
-        let status: ServiceStatus = self
-            .version()
-            .await
-            .map(|_| ServiceStatus::Serving)
-            .unwrap_or_else(|_e| ServiceStatus::Unknown);
-        StatusRow {
+    pub async fn check(&self) -> ServiceStatus {
+        let (status, version) = match self.version().await {
+            Ok(version) => (StatusType::Serving, version),
+            Err(_) => (StatusType::Down, String::new()),
+        };
+        ServiceStatus {
             name: "gateway",
             number: 1,
             status,
+            version,
         }
     }
 
     #[tracing::instrument(skip(self))]
-    pub async fn watch(&self) -> impl Stream<Item = StatusRow> {
-        // todo
-        futures::stream::pending()
+    pub async fn watch(&self) -> impl Stream<Item = ServiceStatus> {
+        let client = self.client.clone();
+        stream! {
+            loop {
+                let res = client.server_streaming(WatchRequest).await;
+                match res {
+                    Ok(mut res) => {
+                        while let Some(v) = res.next().await {
+                            let (status, version) = v.map_or((StatusType::Down, String::new()), |v| (StatusType::Serving, v.version));
+                            yield ServiceStatus::new("gateway", 1, status, version);
+                        }
+                    },
+                    Err(_) => {
+                        yield ServiceStatus::new("gateway", 1, StatusType::Down, "");
+                    }
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+            }
+        }
     }
 }

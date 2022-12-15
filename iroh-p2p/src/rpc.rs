@@ -33,6 +33,17 @@ impl P2p {
     }
 
     #[tracing::instrument(skip(self))]
+    fn watch(self, _: WatchRequest) -> BoxStream<'static, WatchResponse> {
+        async_stream::stream! {
+            loop {
+                yield WatchResponse { version: env!("CARGO_PKG_VERSION").to_string() };
+                tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+            }
+        }
+        .boxed()
+    }
+
+    #[tracing::instrument(skip(self))]
     async fn version(self, _: VersionRequest) -> VersionResponse {
         let version = env!("CARGO_PKG_VERSION").to_string();
         VersionResponse { version }
@@ -519,6 +530,7 @@ impl P2p {
 async fn dispatch(s: P2pServer, req: P2pRequest, chan: ServerSocket<P2pService>, target: P2p) -> result::Result<(), ServerError> {
     use P2pRequest::*;
     match req {
+        Watch(req) => s.server_streaming(req, chan, target, P2p::watch).await,
         Version(req) => s.rpc(req, chan, target, P2p::version).await,
         Shutdown(req) => s.rpc_map_err(req, chan, target, P2p::shutdown).await,
         FetchBitswap(req) => s.rpc_map_err(req, chan, target, P2p::fetch_bitswap).await,

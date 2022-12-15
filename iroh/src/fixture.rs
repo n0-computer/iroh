@@ -4,7 +4,9 @@ use std::path::PathBuf;
 use std::str::FromStr;
 
 use futures::StreamExt;
-use iroh_api::{Api, Cid, Lookup, OutType, P2pApi, PeerId, ServiceStatus, StatusRow, StatusTable};
+use iroh_api::{
+    Api, Cid, ClientStatus, Lookup, OutType, P2pApi, PeerId, ServiceStatus, StatusType,
+};
 use relative_path::RelativePathBuf;
 
 type GetFixture = fn() -> Api;
@@ -59,10 +61,10 @@ fn fixture_get() -> Api {
 fn fixture_add_file() -> Api {
     let mut api = Api::default();
     api.expect_check().returning(|| {
-        StatusTable::new(
-            Some(StatusRow::new("gateway", 1, ServiceStatus::Serving)),
-            Some(StatusRow::new("p2p", 1, ServiceStatus::Serving)),
-            Some(StatusRow::new("store", 1, ServiceStatus::Serving)),
+        ClientStatus::new(
+            Some(ServiceStatus::new("gateway", 1, StatusType::Serving, "")),
+            Some(ServiceStatus::new("p2p", 1, StatusType::Serving, "")),
+            Some(ServiceStatus::new("store", 1, StatusType::Serving, "")),
         )
     });
     api.expect_add_stream().returning(|_| {
@@ -79,10 +81,10 @@ fn fixture_add_file() -> Api {
 fn fixture_add_directory() -> Api {
     let mut api = Api::default();
     api.expect_check().returning(|| {
-        StatusTable::new(
-            Some(StatusRow::new("gateway", 1, ServiceStatus::Serving)),
-            Some(StatusRow::new("p2p", 1, ServiceStatus::Serving)),
-            Some(StatusRow::new("store", 1, ServiceStatus::Serving)),
+        ClientStatus::new(
+            Some(ServiceStatus::new("gateway", 1, StatusType::Serving, "")),
+            Some(ServiceStatus::new("p2p", 1, StatusType::Serving, "")),
+            Some(ServiceStatus::new("store", 1, StatusType::Serving, "")),
         )
     });
     api.expect_add_stream().returning(|_| {
@@ -151,24 +153,24 @@ fn fixture_get_unwrapped_symlink() -> Api {
 fn fixture_start_status_stop() -> Api {
     let mut api = Api::default();
     api.expect_check().returning(|| {
-        StatusTable::new(
-            Some(StatusRow::new("gateway", 1, ServiceStatus::Serving)),
-            Some(StatusRow::new("p2p", 1, ServiceStatus::Serving)),
-            Some(StatusRow::new("store", 1, ServiceStatus::Serving)),
+        ClientStatus::new(
+            Some(ServiceStatus::new("gateway", 1, StatusType::Serving, "")),
+            Some(ServiceStatus::new("p2p", 1, StatusType::Serving, "")),
+            Some(ServiceStatus::new("store", 1, StatusType::Serving, "")),
         )
     });
     api.expect_check().returning(|| {
-        StatusTable::new(
-            Some(StatusRow::new("gateway", 1, ServiceStatus::Serving)),
-            Some(StatusRow::new("p2p", 1, ServiceStatus::Serving)),
-            Some(StatusRow::new("store", 1, ServiceStatus::Serving)),
+        ClientStatus::new(
+            Some(ServiceStatus::new("gateway", 1, StatusType::Serving, "")),
+            Some(ServiceStatus::new("p2p", 1, StatusType::Serving, "")),
+            Some(ServiceStatus::new("store", 1, StatusType::Serving, "")),
         )
     });
     api.expect_check().returning(|| {
-        StatusTable::new(
-            Some(StatusRow::new("gateway", 1, ServiceStatus::Unknown)),
-            Some(StatusRow::new("p2p", 1, ServiceStatus::Unknown)),
-            Some(StatusRow::new("store", 1, ServiceStatus::Unknown)),
+        ClientStatus::new(
+            Some(ServiceStatus::new("gateway", 1, StatusType::Unknown, "")),
+            Some(ServiceStatus::new("p2p", 1, StatusType::Unknown, "")),
+            Some(ServiceStatus::new("store", 1, StatusType::Unknown, "")),
         )
     });
     api

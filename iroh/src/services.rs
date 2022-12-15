@@ -10,7 +10,7 @@ use std::time::SystemTime;
 use sysinfo::PidExt;
 use tracing::info;
 
-use iroh_api::{Api, ApiError, ServiceStatus, StatusRow, StatusTable};
+use iroh_api::{Api, ApiError, ClientStatus, ServiceStatus, StatusType};
 use iroh_util::lock::{LockError, ProgramLock};
 
 const SERVICE_START_TIMEOUT_SECONDS: u64 = 15;
@@ -40,12 +40,7 @@ async fn start_services(api: &Api, services: BTreeSet<&str>) -> Result<()> {
     let expected_services = table
         .iter()
         .fold(&mut expected_services, |accum, status_row| {
-            match status_row.status() {
-                iroh_api::ServiceStatus::ServiceUnknown => (),
-                _ => {
-                    accum.insert(status_row.name());
-                }
-            }
+            accum.insert(status_row.name());
             accum
         });
 
@@ -66,15 +61,11 @@ async fn start_services(api: &Api, services: BTreeSet<&str>) -> Result<()> {
         .iter()
         .fold(&mut missing_services, |accum, status_row| {
             match status_row.status() {
-                iroh_api::ServiceStatus::Serving => (),
-                iroh_api::ServiceStatus::Unknown => {
+                iroh_api::StatusType::Serving => (),
+                iroh_api::StatusType::Unknown => {
                     accum.insert(status_row.name());
                 }
-                iroh_api::ServiceStatus::NotServing => {
-                    accum.insert(status_row.name());
-                }
-                iroh_api::ServiceStatus::ServiceUnknown => (),
-                iroh_api::ServiceStatus::Down => {
+                iroh_api::StatusType::Down => {
                     accum.insert(status_row.name());
                     // TODO(b5) - warn user that a service is down & exit
                 }
@@ -111,7 +102,7 @@ async fn start_services(api: &Api, services: BTreeSet<&str>) -> Result<()> {
 
         iroh_localops::process::daemonize(bin_path, log_path.clone())?;
 
-        let is_up = poll_until_status(api, service, iroh_api::ServiceStatus::Serving).await?;
+        let is_up = poll_until_status(api, service, iroh_api::StatusType::Serving).await?;
         if is_up {
             println!("{}", "success".green());
         } else {
@@ -158,7 +149,7 @@ pub async fn stop_services(api: &Api, services: BTreeSet<&str>) -> Result<()> {
                 match iroh_localops::process::stop(pid.as_u32()) {
                     Ok(_) => {
                         let is_down =
-                            poll_until_status(api, service, iroh_api::ServiceStatus::Down).await?;
+                            poll_until_status(api, service, iroh_api::StatusType::Down).await?;
                         if is_down {
                             println!("{}", "stopped".red());
                         } else {
@@ -198,7 +189,9 @@ pub async fn status(api: &Api, watch: bool) -> Result<()> {
         let status_stream = api.watch().await;
         tokio::pin!(status_stream);
         stdout.queue(Clear(ClearType::All))?;
+        let mut iterations = 0;
         while let Some(table) = status_stream.next().await {
+            iterations += 1;
             stdout
                 .queue(cursor::RestorePosition)?
                 .queue(Clear(ClearType::FromCursorUp))?
@@ -209,6 +202,7 @@ pub async fn status(api: &Api, watch: bool) -> Result<()> {
                 .queue(style::Print("\n"))?
                 .flush()?;
         }
+        println!("iterations {}", iterations);
         Ok(())
     } else {
         let table = api.check().await;
@@ -220,7 +214,7 @@ pub async fn status(api: &Api, watch: bool) -> Result<()> {
 
 /// queues the table for printing
 /// you must call `writer.flush()` to execute the queue
-pub fn queue_table<W>(table: &StatusTable, mut w: W) -> Result<()>
+pub fn queue_table<W>(table: &ClientStatus, mut w: W) -> Result<()>
 where
     W: Write,
 {
@@ -233,28 +227,22 @@ where
     Ok(())
 }
 
-// queue queues this row of the StatusRow to be written
+// queue queues this row of the ServiceStatus to be written
 // You must call `writer.flush()` to actually write the content to the writer
-pub fn queue_row<W>(row: &StatusRow, w: &mut W) -> Result<()>
+pub fn queue_row<W>(row: &ServiceStatus, w: &mut W) -> Result<()>
 where
     W: Write,
 {
     w.queue(style::Print(format!("{}\t\t\t", row.name())))?
         .queue(style::Print(format!("{}/1\t", row.number())))?;
     match row.status() {
-        ServiceStatus::Unknown => {
+        StatusType::Unknown => {
             w.queue(style::PrintStyledContent("Unknown".dark_yellow()))?;
         }
-        ServiceStatus::NotServing => {
-            w.queue(style::PrintStyledContent("Not Serving".dark_yellow()))?;
-        }
-        ServiceStatus::Serving => {
+        StatusType::Serving => {
             w.queue(style::PrintStyledContent("Serving".green()))?;
         }
-        ServiceStatus::ServiceUnknown => {
-            w.queue(style::PrintStyledContent("Service Unknown".dark_yellow()))?;
-        }
-        ServiceStatus::Down => {
+        StatusType::Down => {
             w.queue(style::PrintStyledContent("Down".grey()))?
                 .queue(style::Print("\tThe service is currently unavailable"))?;
         }
@@ -268,11 +256,10 @@ where
 pub async fn require_services(
     api: &Api,
     services: BTreeSet<&str>,
-) -> Result<iroh_api::StatusTable> {
+) -> Result<iroh_api::ClientStatus> {
     let table = api.check().await;
     for service in table.iter() {
-        if services.contains(service.name()) && service.status() != iroh_api::ServiceStatus::Serving
-        {
+        if services.contains(service.name()) && service.status() != iroh_api::StatusType::Serving {
             return Err(anyhow!(ApiError::ConnectionRefused {
                 service: service.name()
             }));
@@ -283,11 +270,7 @@ pub async fn require_services(
 
 /// poll until a service matches the desired status. returns Ok(true) if status was matched,
 /// and Ok(false) if desired status isn't reported before SERVICE_START_TIMEOUT_SECONDS
-async fn poll_until_status(
-    api: &Api,
-    service: &str,
-    status: iroh_api::ServiceStatus,
-) -> Result<bool> {
+async fn poll_until_status(api: &Api, service: &str, status: iroh_api::StatusType) -> Result<bool> {
     let status_stream = api.watch().await;
     tokio::pin!(status_stream);
     let start = SystemTime::now();
@@ -317,10 +300,10 @@ mod tests {
     #[test]
     fn status_table_queue() {
         let expect = format!("{}gateway\t\t\t1/1\t{}\np2p\t\t\t1/1\t{}\nstore\t\t\t1/1\t{}\tThe service is currently unavailable\n", "Service\t\t\tNumber\tStatus\n".bold(), "Unknown".dark_yellow(), "Serving".green(), "Down".grey());
-        let table = StatusTable::new(
-            Some(StatusRow::new("gateway", 1, ServiceStatus::Unknown)),
-            Some(StatusRow::new("p2p", 1, ServiceStatus::Serving)),
-            Some(StatusRow::new("store", 1, ServiceStatus::Down)),
+        let table = ClientStatus::new(
+            Some(ServiceStatus::new("gateway", 1, StatusType::Unknown, "")),
+            Some(ServiceStatus::new("p2p", 1, StatusType::Serving, "")),
+            Some(ServiceStatus::new("store", 1, StatusType::Down, "")),
         );
 
         let mut got = Vec::new();
@@ -333,29 +316,21 @@ mod tests {
     #[test]
     fn status_row_queue() {
         struct TestCase {
-            row: StatusRow,
+            row: ServiceStatus,
             output: String,
         }
 
         let rows = vec![
             TestCase {
-                row: StatusRow::new("test", 1, ServiceStatus::Unknown),
+                row: ServiceStatus::new("test", 1, StatusType::Unknown, ""),
                 output: format!("test\t\t\t1/1\t{}\n", "Unknown".dark_yellow()),
             },
             TestCase {
-                row: StatusRow::new("test", 1, ServiceStatus::NotServing),
-                output: format!("test\t\t\t1/1\t{}\n", "Not Serving".dark_yellow()),
-            },
-            TestCase {
-                row: StatusRow::new("test", 1, ServiceStatus::Serving),
+                row: ServiceStatus::new("test", 1, StatusType::Serving, ""),
                 output: format!("test\t\t\t1/1\t{}\n", "Serving".green()),
             },
             TestCase {
-                row: StatusRow::new("test", 1, ServiceStatus::ServiceUnknown),
-                output: format!("test\t\t\t1/1\t{}\n", "Service Unknown".dark_yellow()),
-            },
-            TestCase {
-                row: StatusRow::new("test", 1, ServiceStatus::Down),
+                row: ServiceStatus::new("test", 1, StatusType::Down, ""),
                 output: format!(
                     "test\t\t\t1/1\t{}\tThe service is currently unavailable\n",
                     "Down".grey()

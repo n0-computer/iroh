@@ -17,6 +17,14 @@ pub type P2pAddr = super::addr::Addr<P2pService>;
 pub struct Key(pub Bytes);
 
 #[derive(Serialize, Deserialize, Debug)]
+pub struct WatchRequest;
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct WatchResponse {
+    pub version: String,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
 pub struct VersionRequest;
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -224,6 +232,7 @@ pub struct GossipsubUnsubscribeResponse {
 
 #[derive(Serialize, Deserialize, Debug, From, TryInto)]
 pub enum P2pRequest {
+    Watch(WatchRequest),
     Version(VersionRequest),
     Shutdown(ShutdownRequest),
     FetchBitswap(BitswapRequest),
@@ -255,6 +264,7 @@ pub enum P2pRequest {
 
 #[derive(Serialize, Deserialize, Debug, From, TryInto)]
 pub enum P2pResponse {
+    Watch(WatchResponse),
     Version(VersionResponse),
     FetchBitswap(RpcResult<BitswapResponse>),
     FetchProviderDht(RpcResult<FetchProvidersDhtResponse>),
@@ -270,7 +280,7 @@ pub enum P2pResponse {
     LocalPeerId(RpcResult<LocalPeerIdResponse>),
     ExternalAddrs(RpcResult<ExternalAddrsResponse>),
     Listeners(RpcResult<ListenersResponse>),
-    ResultVoid(RpcResult<()>),
+    UnitResult(RpcResult<()>),
 }
 
 #[derive(Debug, Clone)]
@@ -279,6 +289,14 @@ pub struct P2pService;
 impl Service for P2pService {
     type Req = P2pRequest;
     type Res = P2pResponse;
+}
+
+impl Msg<P2pService> for WatchRequest {
+    type Response = WatchResponse;
+
+    type Update = Self;
+
+    type Pattern = ServerStreaming;
 }
 
 impl RpcMsg<P2pService> for VersionRequest {
