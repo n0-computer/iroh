@@ -148,7 +148,6 @@ mod tests {
     impl TestSetup {
         pub async fn shutdown(self) {
             self.core_task.abort();
-            self.core_task.await.ok();
             self.store_task.abort();
             self.store_task.await.ok();
         }

@@ -120,7 +120,7 @@ impl Default for Config {
             indexer_endpoint: None,
             metrics: MetricsConfig::default(),
             use_denylist: false,
-            redirect_to_subdomain: true,
+            redirect_to_subdomain: false,
         };
         t.set_default_headers();
         t
