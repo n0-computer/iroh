@@ -18,6 +18,7 @@ anyhow.workspace = true
 async-channel.workspace = true
 async-stream.workspace = true
 async-trait.workspace = true
+bs58.workspace = true
 bytes.workspace = true
 cid.workspace = true
 futures.workspace = true
@@ -26,6 +27,7 @@ iroh-rpc-client.workspace = true
 iroh-util.workspace = true
 iroh-unixfs.workspace = true
 libipld.workspace = true
+libp2p.workspace = true
 serde = { workspace = true, features = ["derive"] }
 tokio = { workspace = true, features = ["fs"] }
 tracing.workspace = true

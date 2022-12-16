@@ -1,7 +1,7 @@
 use cid::Cid;
 use serde::{de, Deserialize, Deserializer, Serialize};
 use sha2::{Digest, Sha256};
-use std::{collections::HashSet, str::FromStr, sync::Arc, time::Duration};
+use std::{collections::HashSet, sync::Arc, time::Duration};
 use tokio::{sync::RwLock, task::JoinHandle};
 use tracing::{debug, log::error};
 
@@ -42,12 +42,8 @@ impl BadBits {
         self.denylist = denylist;
     }
 
-    pub fn is_bad(&self, cid: &str, path: &str) -> bool {
-        let cid = match Cid::from_str(cid) {
-            Ok(cid) => cid,
-            Err(_) => return false,
-        };
-        let hash = BadBits::to_anchor(cid, path);
+    pub fn is_bad(&self, cid: &Cid, path: &str) -> bool {
+        let hash = BadBits::to_anchor(*cid, path);
         self.denylist.contains(&hash)
     }
 
@@ -106,14 +102,16 @@ pub fn spawn_bad_bits_updater(bad_bits: Arc<Option<RwLock<BadBits>>>) -> Option<
 
 #[cfg(test)]
 mod tests {
-    use crate::config::Config;
+    use std::str::FromStr;
 
-    use super::*;
     use hex_literal::hex;
     use http::StatusCode;
     use iroh_resolver::dns_resolver::Config as DnsResolverConfig;
     use iroh_rpc_client::{Client as RpcClient, Config as RpcClientConfig};
     use iroh_unixfs::content_loader::{FullLoader, FullLoaderConfig, GatewayUrl};
+
+    use super::*;
+    use crate::config::Config;
 
     #[tokio::test]
     async fn bad_bits_anchor() {
@@ -186,6 +184,7 @@ mod tests {
                 channels: Some(1),
             },
         );
+        config.redirect_to_subdomain = false;
         config.set_default_headers();
 
         let rpc_addr = "irpc://0.0.0.0:0".parse().unwrap();

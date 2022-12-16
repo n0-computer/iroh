@@ -4,9 +4,7 @@ use std::path::PathBuf;
 use std::str::FromStr;
 
 use futures::StreamExt;
-use iroh_api::{AddEvent, Cid, Lookup, OutType, PeerId};
-use iroh_api::{Api, P2pApi};
-use iroh_api::{ServiceStatus, StatusRow, StatusTable};
+use iroh_api::{Api, Cid, Lookup, OutType, P2pApi, PeerId, ServiceStatus, StatusRow, StatusTable};
 use relative_path::RelativePathBuf;
 
 type GetFixture = fn() -> Api;
@@ -67,11 +65,10 @@ fn fixture_add_file() -> Api {
             Some(StatusRow::new("store", 1, ServiceStatus::Serving)),
         )
     });
-    api.expect_add_stream().returning(|_ipfs_path, _, _| {
+    api.expect_add_stream().returning(|_| {
         let cid = Cid::from_str("QmYbcW4tXLXHWw753boCK8Y7uxLu5abXjyYizhLznq9PUR").unwrap();
-        let add_event = AddEvent::ProgressDelta { cid, size: Some(0) };
 
-        let stream = futures::stream::iter(vec![Ok(add_event)]);
+        let stream = futures::stream::iter(vec![Ok((cid, 0))]);
 
         Ok(Box::pin(stream))
     });
@@ -88,11 +85,10 @@ fn fixture_add_directory() -> Api {
             Some(StatusRow::new("store", 1, ServiceStatus::Serving)),
         )
     });
-    api.expect_add_stream().returning(|_ipfs_path, _, _| {
+    api.expect_add_stream().returning(|_| {
         let cid = Cid::from_str("QmYbcW4tXLXHWw753boCK8Y7uxLu5abXjyYizhLznq9PUR").unwrap();
-        let add_event = AddEvent::ProgressDelta { cid, size: Some(0) };
 
-        Ok(Box::pin(futures::stream::iter(vec![Ok(add_event)])))
+        Ok(Box::pin(futures::stream::iter(vec![Ok((cid, 0))])))
     });
     api.expect_provide().returning(|_| Ok(()));
     api

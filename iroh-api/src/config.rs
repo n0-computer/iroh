@@ -1,7 +1,7 @@
 use config::{ConfigError, Map, Source, Value};
 use iroh_metrics::config::Config as MetricsConfig;
 use iroh_rpc_client::Config as RpcClientConfig;
-use iroh_unixfs::indexer::CID_CONTACT;
+use iroh_unixfs::indexer::IndexerUrl;
 use iroh_util::insert_into_config_map;
 use serde::{Deserialize, Serialize};
 
@@ -11,12 +11,13 @@ pub const CONFIG_FILE_NAME: &str = "ctl.config.toml";
 /// environment variables
 pub const ENV_PREFIX: &str = "IROH_CTL";
 
+/// Configuration for [`iroh-api`].
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Config {
     pub rpc_client: RpcClientConfig,
     pub metrics: MetricsConfig,
     pub http_resolvers: Option<Vec<String>>,
-    pub indexer_endpoint: Option<String>,
+    pub indexer_endpoint: Option<IndexerUrl>,
 }
 
 impl Default for Config {
@@ -25,7 +26,7 @@ impl Default for Config {
             rpc_client: RpcClientConfig::default_network(),
             metrics: Default::default(),
             http_resolvers: None,
-            indexer_endpoint: Some(CID_CONTACT.into()),
+            indexer_endpoint: Some(IndexerUrl::default()),
         }
     }
 }

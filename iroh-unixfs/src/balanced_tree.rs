@@ -167,7 +167,7 @@ fn create_unixfs_node_from_links(links: Vec<(Cid, LinkInfo)>) -> Result<UnixfsNo
             /// In the `go-merkledag` package, the `merkledag.proto` file, states that tsize
             /// is the "cumulative size of the target object"
             /// (https://github.com/ipfs/go-merkledag/blob/8335efd4765ed5a512baa7e522c3552d067cf966/pb/merkledag.proto#L29)
-            tsize: Some(l.encoded_len as u64),
+            tsize: Some(l.encoded_len),
         })
         .collect();
 

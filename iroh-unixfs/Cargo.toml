@@ -17,6 +17,7 @@ async-trait.workspace = true
 base64.workspace = true
 bytes.workspace = true
 cid.workspace = true
+config.workspace = true
 fastmurmur3.workspace = true
 futures.workspace = true
 iroh-metrics = { workspace = true, features = ["resolver", "gateway"] }
@@ -47,7 +48,3 @@ tokio = { workspace = true, features = ["rt", "macros", "rt-multi-thread", "fs"]
 
 [build-dependencies]
 prost-build.workspace = true
-
-[[bench]]
-name = "unixfs"
-harness = false

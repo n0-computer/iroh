@@ -14,6 +14,7 @@ testing = ["dep:mockall"]
 [dependencies]
 anyhow.workspace = true
 async-stream.workspace = true
+async-trait.worksace = true
 bytes.workspace = true
 cid.workspace = true
 config.workspace = true
@@ -33,4 +34,11 @@ tokio.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+criterion = { workspace = true, features = ["async_tokio"] }
+iroh-rpc-types.workspace = true
+iroh-store.workspace = true
 tempfile.workspace = true
+
+[[bench]]
+name = "add"
+harness = false

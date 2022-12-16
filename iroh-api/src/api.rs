@@ -3,8 +3,8 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 
 use crate::config::{Config, CONFIG_FILE_NAME, ENV_PREFIX};
+use crate::IpfsPath;
 use crate::P2pApi;
-use crate::{AddEvent, IpfsPath};
 use anyhow::{ensure, Context, Result};
 use cid::Cid;
 use futures::stream::LocalBoxStream;
@@ -13,8 +13,7 @@ use iroh_resolver::resolver::Resolver;
 use iroh_rpc_client::Client;
 use iroh_rpc_client::StatusTable;
 use iroh_unixfs::{
-    builder::{self as unixfs_builder, Config as UnixfsConfig},
-    chunker::ChunkerConfig,
+    builder::Entry as UnixfsEntry,
     content_loader::{FullLoader, FullLoaderConfig},
     ResponseClip,
 };
@@ -24,7 +23,16 @@ use mockall::automock;
 use relative_path::RelativePathBuf;
 use tokio::io::{AsyncRead, AsyncReadExt};
 
-#[derive(Debug)]
+use crate::store::add_blocks_to_store;
+
+/// API to interact with an iroh system.
+///
+/// This provides an API to use the iroh system consisting of several services working
+/// together.  It offers both a higher level API as well as some lower-level APIs.
+///
+/// Unless working on iroh directly this should probably be constructed via the `iroh-embed`
+/// crate rather then directly.
+#[derive(Debug, Clone)]
 pub struct Api {
     client: Client,
     resolver: Resolver<FullLoader>,
@@ -37,7 +45,7 @@ pub enum OutType {
 }
 
 impl fmt::Debug for OutType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Dir => write!(f, "Dir"),
             Self::Reader(_) => write!(f, "Reader(impl AsyncRead + Unpin>)"),
@@ -48,9 +56,13 @@ impl fmt::Debug for OutType {
 
 #[cfg_attr(feature = "testing", allow(dead_code), automock)]
 impl Api {
+    /// Creates a new instance from the iroh configuration.
+    ///
+    /// This loads configuration from an optional configuration file and environment
+    /// variables.
     // The lifetime is needed for mocking.
     #[allow(clippy::needless_lifetimes)]
-    pub async fn new<'a>(
+    pub async fn from_env<'a>(
         config_path: Option<&'a Path>,
         overrides_map: HashMap<String, String>,
     ) -> Result<Self> {
@@ -65,9 +77,12 @@ impl Api {
             ENV_PREFIX,
             // map of present command line arguments
             overrides_map,
-        )
-        .unwrap();
+        )?;
+        Self::new(config).await
+    }
 
+    /// Creates a new instance from the provided configuration.
+    pub async fn new(config: Config) -> Result<Self> {
         let client = Client::new(config.rpc_client).await?;
         let content_loader = FullLoader::new(
             client.clone(),
@@ -79,12 +94,7 @@ impl Api {
                     .map(|u| u.parse())
                     .collect::<Result<_>>()
                     .context("invalid gateway url")?,
-                indexer: config
-                    .indexer_endpoint
-                    .as_ref()
-                    .map(|u| u.parse())
-                    .transpose()
-                    .context("invalid indexer endpoint")?,
+                indexer: config.indexer_endpoint,
             },
         )?;
         let resolver = Resolver::new(content_loader);
@@ -92,6 +102,14 @@ impl Api {
         Ok(Self { client, resolver })
     }
 
+    pub fn from_client_and_resolver(client: Client, resolver: Resolver<FullLoader>) -> Self {
+        Self { client, resolver }
+    }
+
+    /// Announces to the DHT that this node can offer the given [`Cid`].
+    ///
+    /// This publishes a provider record for the [`Cid`] to the DHT, establishing the local
+    /// node as provider for the [`Cid`].
     pub async fn provide(&self, cid: Cid) -> Result<()> {
         self.client.try_p2p()?.start_providing(&cid).await
     }
@@ -102,6 +120,9 @@ impl Api {
     }
 
     /// High level get, equivalent of CLI `iroh get`.
+    ///
+    /// Returns a stream of items, where items can be either blobs or UnixFs components.
+    /// Each blob will be a full object, a file in case of UnixFs, and not raw chunks.
     pub fn get(
         &self,
         ipfs_path: &IpfsPath,
@@ -147,94 +168,43 @@ impl Api {
         Ok(stream.boxed_local())
     }
 
-    pub async fn add_file(
-        &self,
-        path: &Path,
-        wrap: bool,
-        chunker: ChunkerConfig,
-    ) -> Result<LocalBoxStream<'static, Result<AddEvent>>> {
-        let providing_client = unixfs_builder::StoreAndProvideClient {
-            client: self.client.clone(),
-        };
-        let path = path.to_path_buf();
-        let stream = unixfs_builder::add_file(
-            Some(providing_client),
-            &path,
-            UnixfsConfig { wrap, chunker },
-        )
-        .await?;
-
-        Ok(stream.boxed_local())
-    }
-
-    pub async fn add_dir(
-        &self,
-        path: &Path,
-        wrap: bool,
-        chunker: ChunkerConfig,
-    ) -> Result<LocalBoxStream<'static, Result<AddEvent>>> {
-        let providing_client = unixfs_builder::StoreAndProvideClient {
-            client: self.client.clone(),
-        };
-        let path = path.to_path_buf();
-        let stream = unixfs_builder::add_dir(
-            Some(providing_client),
-            &path,
-            UnixfsConfig { wrap, chunker },
-        )
-        .await?;
-
-        Ok(stream.boxed_local())
-    }
-
-    pub async fn add_symlink(
-        &self,
-        path: &Path,
-        wrap: bool,
-    ) -> Result<LocalBoxStream<'static, Result<AddEvent>>> {
-        let providing_client = unixfs_builder::StoreAndProvideClient {
-            client: self.client.clone(),
-        };
-        let path = path.to_path_buf();
-        let stream = unixfs_builder::add_symlink(Some(providing_client), &path, wrap).await?;
-
-        Ok(stream.boxed_local())
-    }
-
     pub async fn check(&self) -> StatusTable {
         self.client.check().await
     }
 
-    pub async fn watch(&self) -> LocalBoxStream<'static, iroh_rpc_client::StatusTable> {
+    pub async fn watch(&self) -> LocalBoxStream<'static, StatusTable> {
         self.client.clone().watch().await.boxed_local()
     }
 
+    /// The `add_stream` method encodes the entry into a DAG and adds
+    /// the resulting blocks to the store. It returns a stream of
+    /// CIDs and the size of the _raw data_ associated with that block.
+    /// If the block does not contain raw data (only link data), the
+    /// size of the block will be 0.
     pub async fn add_stream(
         &self,
-        path: &Path,
-        wrap: bool,
-        chunker: ChunkerConfig,
-    ) -> Result<LocalBoxStream<'static, Result<AddEvent>>> {
-        if path.is_dir() {
-            self.add_dir(path, wrap, chunker).await
-        } else if path.is_symlink() {
-            self.add_symlink(path, wrap).await
-        } else if path.is_file() {
-            self.add_file(path, wrap, chunker).await
-        } else {
-            anyhow::bail!("can only add files or directories")
-        }
+        entry: UnixfsEntry,
+    ) -> Result<LocalBoxStream<'static, Result<(Cid, u64)>>> {
+        let blocks = match entry {
+            UnixfsEntry::File(f) => f.encode().await?.boxed_local(),
+            UnixfsEntry::Directory(d) => d.encode(),
+            UnixfsEntry::Symlink(s) => Box::pin(async_stream::try_stream! {
+                yield s.encode()?
+            }),
+        };
+
+        Ok(Box::pin(
+            add_blocks_to_store(Some(self.client.clone()), blocks).await,
+        ))
     }
 
-    pub async fn add(&self, path: &Path, wrap: bool, chunker: ChunkerConfig) -> Result<Cid> {
-        let add_events = self.add_stream(path, wrap, chunker).await?;
+    /// The `add` method encodes the entry into a DAG and adds the resulting
+    /// blocks to the store.
+    pub async fn add(&self, entry: UnixfsEntry) -> Result<Cid> {
+        let add_events = self.add_stream(entry).await?;
 
         add_events
-            .try_fold(None, |_acc, add_event| async move {
-                match add_event {
-                    AddEvent::ProgressDelta { cid, .. } => Ok(Some(cid)),
-                }
-            })
+            .try_fold(None, |_acc, (cid, _)| async move { Ok(Some(cid)) })
             .await?
             .context("No cid found")
     }

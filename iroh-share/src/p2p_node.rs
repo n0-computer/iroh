@@ -148,19 +148,19 @@ impl P2pNode {
             gateway_addr: None,
             channels: Some(1),
         };
+        let mut libp2p_config = config::Libp2pConfig::default();
+        libp2p_config.listening_multiaddrs =
+            vec![format!("/ip4/0.0.0.0/tcp/{port}").parse().unwrap()];
+        libp2p_config.mdns = false;
+        libp2p_config.kademlia = true;
+        libp2p_config.autonat = true;
+        libp2p_config.relay_client = true;
+        libp2p_config.bootstrap_peers = Default::default(); // disable bootstrap for now
+        libp2p_config.relay_server = false;
+        libp2p_config.max_conns_in = 8;
+        libp2p_config.max_conns_out = 8;
         let config = config::Config {
-            libp2p: config::Libp2pConfig {
-                listening_multiaddrs: vec![format!("/ip4/0.0.0.0/tcp/{port}").parse().unwrap()],
-                mdns: false,
-                kademlia: true,
-                autonat: true,
-                relay_client: true,
-                bootstrap_peers: Default::default(), // disable bootstrap for now
-                relay_server: false,
-                max_conns_in: 8,
-                max_conns_out: 8,
-                ..Default::default()
-            },
+            libp2p: libp2p_config,
             rpc_client: rpc_p2p_client_config.clone(),
             metrics: Default::default(),
             key_store_path: db_path.parent().unwrap().to_path_buf(),
