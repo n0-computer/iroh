@@ -15,11 +15,11 @@ console-subscriber = { workspace = true, optional = true }
 iroh-util.workspace = true
 lazy_static.workspace = true
 names.workspace = true
-opentelemetry.workspace = true
-opentelemetry-otlp.workspace = true
+opentelemetry = { workspace = true, features = ["rt-tokio"] }
+opentelemetry-otlp = { workspace = true, features = ["tonic"] }
 paste.workspace = true
 prometheus-client.workspace = true
-reqwest.workspace = true
+reqwest = { workspace = true, features = ["rustls-tls"] }
 serde = { workspace = true, features = ["derive"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "process"] }
 tracing.workspace = true

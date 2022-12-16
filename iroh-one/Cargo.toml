@@ -14,7 +14,7 @@ async-trait.workspace = true
 axum.workspace = true
 bytes.workspace = true
 cid.workspace = true
-clap.workspace = true
+clap = { workspace = true, features = ["derive"] }
 config.workspace = true
 futures.workspace = true
 headers.workspace = true
@@ -29,7 +29,7 @@ iroh-rpc-client.workspace = true
 iroh-rpc-types.workspace = true
 iroh-store.workspace = true
 iroh-util.workspace = true
-reqwest.workspace = true
+reqwest = { workspace = true, features = ["rustls-tls"] }
 serde = { workspace = true, features = ["derive"] }
 tempfile = { workspace = true, optional = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "process"] }

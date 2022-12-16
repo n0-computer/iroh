@@ -14,7 +14,7 @@ async-trait.workspace = true
 bincode.workspace = true
 bytes.workspace = true
 cid = { workspace = true, features = ["serde-codec"] }
-clap.workspace = true
+clap = { workspace = true, features = ["derive"] }
 futures.workspace = true
 iroh-metrics.workspace = true
 iroh-p2p.workspace = true

@@ -31,7 +31,7 @@ libp2p.workspace = true
 serde = { workspace = true, features = ["derive"] }
 tokio = { workspace = true, features = ["fs"] }
 tracing.workspace = true
-trust-dns-resolver.workspace = true
+trust-dns-resolver = { workspace = true, features = ["dns-over-https-rustls", "serde-config", "tokio-runtime"] }
 fnv.workspace = true
 
 [dev-dependencies]

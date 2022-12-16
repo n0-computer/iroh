@@ -19,7 +19,7 @@ testing = ["dep:relative-path"]
 [dependencies]
 anyhow.workspace = true
 async-stream.workspace = true
-clap.workspace = true
+clap = { workspace = true, features = ["derive"] }
 config.workspace = true
 console.workspace = true
 crossterm.workspace = true

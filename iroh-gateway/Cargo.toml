@@ -15,7 +15,7 @@ async-trait.workspace = true
 axum.workspace = true
 bytes.workspace = true
 cid.workspace = true
-clap.workspace = true
+clap = { workspace = true, features = ["derive"] }
 config.workspace = true
 futures.workspace = true
 git-version.workspace = true
@@ -40,10 +40,10 @@ mime_classifier.workspace = true
 mime_guess.workspace = true
 names.workspace = true
 once_cell.workspace = true
-opentelemetry.workspace = true
-phf.workspace = true
+opentelemetry = { workspace = true, features = ["rt-tokio"] }
+phf = { workspace = true, features = ["macros"] }
 rand.workspace = true
-reqwest.workspace = true
+reqwest = { workspace = true, features = ["rustls-tls"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 serde_qs.workspace = true
@@ -52,9 +52,9 @@ time.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "process", "fs", "io-util"] }
 tokio-util = { workspace = true, features = ["io"] }
 toml.workspace = true
-tower-http.workspace = true
+tower = { workspace = true, features = ["util", "timeout", "load-shed", "limit"] }
+tower-http = { workspace = true, features = ["trace", "compression-full", "cors"] }
 tower-layer.workspace = true
-tower.workspace = true
 tracing-opentelemetry.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 tracing.workspace = true

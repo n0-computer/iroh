@@ -14,7 +14,7 @@ testing = ["dep:mockall"]
 [dependencies]
 anyhow.workspace = true
 async-stream.workspace = true
-async-trait.worksace = true
+async-trait.workspace = true
 bytes.workspace = true
 cid.workspace = true
 config.workspace = true
