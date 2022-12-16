@@ -78,10 +78,12 @@ pub fn get_app_routes<T: ContentLoader + Unpin>(state: &Arc<State<T>>) -> Router
             "/:scheme/:cid_or_domain/*content_path",
             get(path_handler::<T>),
         )
+        .route("/:scheme/:cid_or_domain/", get(path_handler::<T>))
         .route(
             "/:scheme/:cid_or_domain/*content_path",
             head(path_handler::<T>),
         )
+        .route("/:scheme/:cid_or_domain/", head(path_handler::<T>))
         .route("/health", get(health_check))
         .route("/icons.css", get(stylesheet_icons))
         .route("/style.css", get(stylesheet_main))
@@ -89,7 +91,12 @@ pub fn get_app_routes<T: ContentLoader + Unpin>(state: &Arc<State<T>>) -> Router
 
     let subdomain_router = Router::new()
         .route("/*content_path", get(subdomain_handler::<T>))
-        .route("/*content_path", head(subdomain_handler::<T>));
+        .route("/", get(subdomain_handler::<T>))
+        .route("/*content_path", head(subdomain_handler::<T>))
+        .route("/", head(subdomain_handler::<T>));
+
+    let subdomain_router2 = subdomain_router.clone();
+    let path_router2 = path_router.clone();
 
     Router::new()
         .route(
@@ -99,6 +106,17 @@ pub fn get_app_routes<T: ContentLoader + Unpin>(state: &Arc<State<T>>) -> Router
                     match IpfsSubdomain::try_from_str(&hostname) {
                         Some(_) => subdomain_router.oneshot(request).await,
                         None => path_router.oneshot(request).await,
+                    }
+                },
+            ),
+        )
+        .route(
+            "/",
+            any(
+                |Host(hostname): Host, request: hyper::Request<Body>| async move {
+                    match IpfsSubdomain::try_from_str(&hostname) {
+                        Some(_) => subdomain_router2.oneshot(request).await,
+                        None => path_router2.oneshot(request).await,
                     }
                 },
             ),
