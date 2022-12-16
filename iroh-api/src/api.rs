@@ -159,7 +159,7 @@ impl Api {
         self.client.check().await
     }
 
-    pub async fn watch(&self) -> LocalBoxStream<'static, iroh_rpc_client::StatusTable> {
+    pub async fn watch(&self) -> LocalBoxStream<'static, StatusTable> {
         self.client.clone().watch().await.boxed_local()
     }
 

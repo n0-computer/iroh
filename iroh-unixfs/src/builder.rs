@@ -344,7 +344,7 @@ impl FileBuilder {
 
     /// Use the rabin chunker.
     pub fn rabin_chunker(mut self) -> Self {
-        self.chunker = Chunker::Rabin(Box::new(chunker::Rabin::default()));
+        self.chunker = Chunker::Rabin(Box::default());
         self
     }
 
@@ -557,21 +557,22 @@ impl DirectoryBuilder {
             degree,
         } = self;
 
-        let name = name.unwrap_or_default();
-
-        if let Some(path) = path {
+        Ok(if let Some(path) = path {
             let mut dir = make_dir_from_path(path, chunker.clone(), degree).await?;
-            dir.set_name(name);
-            return Ok(dir);
-        }
-
-        match typ {
-            DirectoryType::Basic => Ok(Directory::Basic(BasicDirectory { name, entries })),
-            DirectoryType::Hamt => {
-                let hamt = Box::new(HamtNode::new(entries));
-                Ok(Directory::Hamt(HamtDirectory { name, hamt }))
+            if let Some(name) = name {
+                dir.set_name(name);
             }
-        }
+            dir
+        } else {
+            let name = name.unwrap_or_default();
+            match typ {
+                DirectoryType::Basic => Directory::Basic(BasicDirectory { name, entries }),
+                DirectoryType::Hamt => {
+                    let hamt = Box::new(HamtNode::new(entries));
+                    Directory::Hamt(HamtDirectory { name, hamt })
+                }
+            }
+        })
     }
 }
 

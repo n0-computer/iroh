@@ -47,21 +47,21 @@ impl Bitfield {
     pub fn clear_bit(&mut self, idx: u32) {
         let ai = idx / 64;
         let bi = idx % 64;
-        self.0[ai as usize] &= u64::MAX - (1 << bi as u32);
+        self.0[ai as usize] &= u64::MAX - (1 << bi);
     }
 
     pub fn test_bit(&self, idx: u32) -> bool {
         let ai = idx / 64;
         let bi = idx % 64;
 
-        self.0[ai as usize] & (1 << bi as u32) != 0
+        self.0[ai as usize] & (1 << bi) != 0
     }
 
     pub fn set_bit(&mut self, idx: u32) {
         let ai = idx / 64;
         let bi = idx % 64;
 
-        self.0[ai as usize] |= 1 << bi as u32;
+        self.0[ai as usize] |= 1 << bi;
     }
 
     pub fn count_ones(&self) -> usize {

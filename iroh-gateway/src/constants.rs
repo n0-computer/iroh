@@ -1,6 +1,8 @@
 use axum::http::{header::HeaderName, HeaderValue};
 
 // Headers
+pub static HEADER_X_FORWARDED_HOST: HeaderName = HeaderName::from_static("x-forwarded-host");
+pub static HEADER_X_FORWARDED_PROTO: HeaderName = HeaderName::from_static("x-forwarded-proto");
 pub static HEADER_X_IPFS_PATH: HeaderName = HeaderName::from_static("x-ipfs-path");
 pub static HEADER_X_CONTENT_TYPE_OPTIONS: HeaderName =
     HeaderName::from_static("x-content-type-options");
