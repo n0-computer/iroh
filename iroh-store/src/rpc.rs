@@ -1,9 +1,9 @@
-use std::{result, time::Duration};
+use std::result;
 
 use anyhow::Result;
 use bytes::BytesMut;
 use futures::stream::Stream;
-use iroh_rpc_client::{create_server, ServerError, ServerSocket, StoreServer};
+use iroh_rpc_client::{create_server, ServerError, ServerSocket, StoreServer, HEALTH_POLL_WAIT};
 use iroh_rpc_types::{
     store::{
         GetLinksRequest, GetLinksResponse, GetRequest, GetResponse, GetSizeRequest,
@@ -14,10 +14,7 @@ use iroh_rpc_types::{
 };
 use tracing::info;
 
-use crate::store::Store;
-
-const VERSION: &str = env!("CARGO_PKG_VERSION");
-const WAIT: Duration = Duration::from_secs(1);
+use crate::{store::Store, VERSION};
 
 impl iroh_rpc_types::NamedService for Store {
     const NAME: &'static str = "store";
@@ -32,7 +29,7 @@ impl RpcStore {
         async_stream::stream! {
             loop {
                 yield WatchResponse { version: VERSION.to_string() };
-                tokio::time::sleep(WAIT).await;
+                tokio::time::sleep(HEALTH_POLL_WAIT).await;
             }
         }
     }

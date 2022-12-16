@@ -9,7 +9,7 @@ use libp2p::{Multiaddr, PeerId};
 use std::collections::{HashMap, HashSet};
 use tracing::{debug, warn};
 
-use crate::{status::WAIT, StatusType};
+use crate::{StatusType, HEALTH_POLL_WAIT};
 
 #[derive(Debug, Clone)]
 pub struct P2pClient {
@@ -292,7 +292,7 @@ impl P2pClient {
                         yield (StatusType::Down, String::new());
                     }
                 }
-                tokio::time::sleep(WAIT).await;
+                tokio::time::sleep(HEALTH_POLL_WAIT).await;
             }
         }
     }

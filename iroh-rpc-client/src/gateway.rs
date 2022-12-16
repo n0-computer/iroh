@@ -5,7 +5,7 @@ use async_stream::stream;
 use futures::{Stream, StreamExt};
 use iroh_rpc_types::{gateway::*, VersionRequest, WatchRequest};
 
-use crate::{status::WAIT, StatusType};
+use crate::{StatusType, HEALTH_POLL_WAIT};
 
 #[derive(Clone)]
 pub struct GatewayClient {
@@ -57,7 +57,7 @@ impl GatewayClient {
                         yield (StatusType::Down, String::new());
                     }
                 }
-                tokio::time::sleep(WAIT).await;
+                tokio::time::sleep(HEALTH_POLL_WAIT).await;
             }
         }
     }

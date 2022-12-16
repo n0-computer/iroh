@@ -1,5 +1,3 @@
-use std::time::Duration;
-
 use anyhow::{anyhow, ensure, Context, Result};
 use bytes::Bytes;
 use cid::Cid;
@@ -9,7 +7,9 @@ use futures::{
     TryFutureExt,
 };
 use iroh_bitswap::Block;
-use iroh_rpc_client::{create_server, Lookup, P2pServer, ServerError, ServerSocket};
+use iroh_rpc_client::{
+    create_server, Lookup, P2pServer, ServerError, ServerSocket, HEALTH_POLL_WAIT,
+};
 use iroh_rpc_types::{
     p2p::*, RpcError, RpcResult, VersionRequest, VersionResponse, WatchRequest, WatchResponse,
 };
@@ -28,9 +28,7 @@ use tokio::sync::oneshot;
 use tracing::{debug, info, trace};
 
 use super::node::DEFAULT_PROVIDER_LIMIT;
-
-const VERSION: &str = env!("CARGO_PKG_VERSION");
-const WAIT: Duration = Duration::from_secs(1);
+use crate::VERSION;
 
 #[derive(Clone)]
 pub(crate) struct P2p {
@@ -47,7 +45,7 @@ impl P2p {
         async_stream::stream! {
             loop {
                 yield WatchResponse { version: VERSION.to_string() };
-                tokio::time::sleep(WAIT).await;
+                tokio::time::sleep(HEALTH_POLL_WAIT).await;
             }
         }
     }

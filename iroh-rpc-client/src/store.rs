@@ -6,7 +6,7 @@ use futures::{Stream, StreamExt};
 use iroh_rpc_types::{store::*, VersionRequest, WatchRequest};
 
 use crate::open_client;
-use crate::{status::WAIT, StatusType};
+use crate::{StatusType, HEALTH_POLL_WAIT};
 
 #[derive(Debug, Clone)]
 pub struct StoreClient {
@@ -90,7 +90,7 @@ impl StoreClient {
                         yield (StatusType::Down, String::new());
                     }
                 }
-                tokio::time::sleep(WAIT).await;
+                tokio::time::sleep(HEALTH_POLL_WAIT).await;
             }
         }
     }

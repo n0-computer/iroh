@@ -1,16 +1,15 @@
-use std::{result, time::Duration};
+use std::result;
 
 use anyhow::Result;
 use futures::stream::Stream;
-use iroh_rpc_client::{create_server, GatewayServer, ServerError, ServerSocket};
+use iroh_rpc_client::{create_server, GatewayServer, ServerError, ServerSocket, HEALTH_POLL_WAIT};
 use iroh_rpc_types::{
     gateway::{GatewayAddr, GatewayRequest, GatewayService},
     VersionRequest, VersionResponse, WatchRequest, WatchResponse,
 };
 use tracing::info;
 
-const VERSION: &str = env!("CARGO_PKG_VERSION");
-const WAIT: Duration = Duration::from_secs(1);
+use crate::VERSION;
 
 #[derive(Default, Debug, Clone)]
 pub struct Gateway {}
@@ -21,7 +20,7 @@ impl Gateway {
         async_stream::stream! {
             loop {
                 yield WatchResponse { version: VERSION.to_string() };
-                tokio::time::sleep(WAIT).await;
+                tokio::time::sleep(HEALTH_POLL_WAIT).await;
             }
         }
     }

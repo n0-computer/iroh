@@ -13,7 +13,7 @@ pub enum StatusType {
     NotServing,
 }
 
-pub(crate) const WAIT: Duration = std::time::Duration::from_secs(1);
+pub const HEALTH_POLL_WAIT: Duration = std::time::Duration::from_secs(1);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 /// The status of an individual rpc service
