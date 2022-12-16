@@ -86,7 +86,7 @@ impl From<ChunkerConfig> for Chunker {
     fn from(cfg: ChunkerConfig) -> Self {
         match cfg {
             ChunkerConfig::Fixed(chunk_size) => Chunker::Fixed(Fixed::new(chunk_size)),
-            ChunkerConfig::Rabin => Chunker::Rabin(Box::new(Rabin::default())),
+            ChunkerConfig::Rabin => Chunker::Rabin(Box::default()),
         }
     }
 }

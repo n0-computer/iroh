@@ -49,8 +49,8 @@ impl<S: Service> Addr<S> {
 impl<S: Service> Display for Addr<S> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Addr::Irpc(addr) => write!(f, "irpc://{}", addr),
-            Addr::IrpcLookup(addr) => write!(f, "irpc://{}", addr),
+            Addr::Irpc(addr) => write!(f, "irpc://{addr}"),
+            Addr::IrpcLookup(addr) => write!(f, "irpc://{addr}"),
             Addr::Mem(_, _) => write!(f, "mem"),
             #[allow(unreachable_patterns)]
             _ => unreachable!(),

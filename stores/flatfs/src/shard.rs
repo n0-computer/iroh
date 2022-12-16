@@ -31,14 +31,13 @@ impl Shard {
     pub fn write_to_file<P: AsRef<Path>>(&self, path: P) -> Result<()> {
         let content = self.to_string();
         let path = path.as_ref().join(FILE_NAME);
-        fs::write(&path, content)
-            .with_context(|| format!("Failed to write shard to {:?}", path))?;
+        fs::write(&path, content).with_context(|| format!("Failed to write shard to {path:?}"))?;
         Ok(())
     }
 
     pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
         let path = path.as_ref().join(FILE_NAME);
-        let file = File::open(&path).with_context(|| format!("Failed to open file {:?}", path))?;
+        let file = File::open(&path).with_context(|| format!("Failed to open file {path:?}"))?;
         let mut content = String::with_capacity(50);
 
         // Protect agains invalid files and unknown formats.

@@ -35,6 +35,25 @@ use crate::dns_resolver::{Config, DnsResolver};
 
 pub const IROH_STORE: &str = "iroh-store";
 
+// ToDo: Remove this function
+// Related issue: https://github.com/n0-computer/iroh/issues/593
+fn from_peer_id(id: &str) -> Option<libipld::Multihash> {
+    static MAX_INLINE_KEY_LENGTH: usize = 42;
+    let multihash =
+        libp2p::multihash::Multihash::from_bytes(&bs58::decode(id).into_vec().ok()?).ok()?;
+    match libp2p::multihash::Code::try_from(multihash.code()) {
+        Ok(libp2p::multihash::Code::Sha2_256) => {
+            Some(libipld::Multihash::from_bytes(&multihash.to_bytes()).unwrap())
+        }
+        Ok(libp2p::multihash::Code::Identity)
+            if multihash.digest().len() <= MAX_INLINE_KEY_LENGTH =>
+        {
+            Some(libipld::Multihash::from_bytes(&multihash.to_bytes()).unwrap())
+        }
+        _ => None,
+    }
+}
+
 /// Represents an ipfs path.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Path {
@@ -50,6 +69,40 @@ impl Path {
             root: CidOrDomain::Cid(cid),
             tail: Vec::new(),
         }
+    }
+
+    pub fn from_parts(
+        scheme: &str,
+        cid_or_domain: &str,
+        tail_path: &str,
+    ) -> Result<Self, anyhow::Error> {
+        let (typ, root) = if scheme.eq_ignore_ascii_case("ipns") {
+            let root = if let Ok(cid) = Cid::from_str(cid_or_domain) {
+                CidOrDomain::Cid(cid)
+            } else if let Some(multihash) = from_peer_id(cid_or_domain) {
+                CidOrDomain::Cid(Cid::new_v1(Codec::Libp2pKey.into(), multihash))
+            // ToDo: Bring back commented "else if" instead of "else if" above
+            // Related issue: https://github.com/n0-computer/iroh/issues/593
+            // } else if let Ok(peer_id) = PeerId::from_str(cid_or_domain) {
+            //    CidOrDomain::Cid(Cid::new_v1(Codec::Libp2pKey.into(), *peer_id.as_ref()))
+            } else {
+                CidOrDomain::Domain(cid_or_domain.to_string())
+            };
+            (PathType::Ipns, root)
+        } else {
+            let root = Cid::from_str(cid_or_domain).context("invalid cid")?;
+            (PathType::Ipfs, CidOrDomain::Cid(root))
+        };
+        let tail = if tail_path != "/" {
+            tail_path
+                .split(&['/', '\\'])
+                .filter(|s| !s.is_empty())
+                .map(String::from)
+                .collect()
+        } else {
+            vec!["".to_string()]
+        };
+        Ok(Path { typ, root, tail })
     }
 
     pub fn typ(&self) -> PathType {
@@ -144,6 +197,7 @@ impl PathType {
 impl FromStr for Path {
     type Err = anyhow::Error;
 
+    // ToDo: Replace it with from_parts (or vice verse)
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let mut parts = s.split(&['/', '\\']).filter(|s| !s.is_empty());
 
@@ -508,7 +562,7 @@ impl<T: ContentLoader + Unpin + 'static> AsyncSeek for OutPrettyReader<T> {
                         bytes_reader.pos = i as usize;
                     }
                     std::io::SeekFrom::Current(pos) => {
-                        let mut i = std::cmp::min(data_len as i64 - 1, pos_current as i64 + pos);
+                        let mut i = std::cmp::min(data_len as i64 - 1, pos_current + pos);
                         i = std::cmp::max(0, i);
                         bytes_reader.pos = i as usize;
                     }
@@ -898,7 +952,7 @@ impl<T: ContentLoader> Resolver<T> {
     async fn resolve_ipld_path(
         &self,
         _cid: Cid,
-        codec: libipld::IpldCodec,
+        codec: IpldCodec,
         root: Ipld,
         path: &[String],
         ctx: &mut LoaderContext,
@@ -907,7 +961,7 @@ impl<T: ContentLoader> Resolver<T> {
         let mut codec = codec;
 
         for part in path.iter().filter(|s| !s.is_empty()) {
-            if let libipld::Ipld::Link(c) = current {
+            if let Ipld::Link(c) = current {
                 (codec, current) = self.load_ipld_link(c, ctx).await?;
             }
             if codec == IpldCodec::DagPb {
@@ -936,7 +990,7 @@ impl<T: ContentLoader> Resolver<T> {
 
     #[tracing::instrument(skip(self))]
     async fn load_ipld_link(&self, cid: Cid, ctx: &mut LoaderContext) -> Result<(IpldCodec, Ipld)> {
-        let codec: libipld::IpldCodec = cid.codec().try_into()?;
+        let codec: IpldCodec = cid.codec().try_into()?;
 
         // resolve link and update if we have encountered a link
         let loaded_cid = self.load_cid(&cid, ctx).await?;
