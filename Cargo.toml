@@ -1,10 +1,12 @@
 [workspace]
 members = [
-  "examples",
+  "examples/embed",
+  "examples/importer",
   "iroh",
   "iroh-api",
   "iroh-bitswap",
   "iroh-car",
+  "iroh-embed",
   "iroh-gateway",
   "iroh-localops",
   "iroh-metrics",

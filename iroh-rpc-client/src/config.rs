@@ -4,15 +4,15 @@ use iroh_util::insert_into_config_map;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Clone, Default)]
-// Config for the rpc Client
+/// Config for the rpc Client.
 pub struct Config {
-    // gateway rpc address
+    /// Gateway rpc address.
     pub gateway_addr: Option<GatewayAddr>,
-    // p2p rpc address
+    /// P2p rpc address.
     pub p2p_addr: Option<P2pAddr>,
-    // store rpc address
+    /// Store rpc address.
     pub store_addr: Option<StoreAddr>,
-    // number of concurent channels
+    /// Number of concurent channels.
     pub channels: Option<usize>,
 }
 
