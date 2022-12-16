@@ -213,7 +213,7 @@ mod tests {
         let store = rpc_client.try_store().unwrap();
         let mut cids = vec![];
         let mut dir_builder = DirectoryBuilder::new().name(dir);
-        for (name, content) in files.into_iter() {
+        for (name, content) in files.iter() {
             let file = FileBuilder::new()
                 .name(name)
                 .content_bytes(content.to_vec())

@@ -683,8 +683,7 @@ impl<'a> ReadStore<'a> {
         let n_id = self.db.iterator_cf(&cf.id, IteratorMode::Start).count();
         if n_meta != n_id {
             res.push(format!(
-                "non bijective mapping between cid and id. Metadata and id cfs have different lengths: {} != {}",
-                n_meta, n_id
+                "non bijective mapping between cid and id. Metadata and id cfs have different lengths: {n_meta} != {n_id}"
             ));
         }
         Ok(res)

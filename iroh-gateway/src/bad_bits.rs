@@ -218,7 +218,7 @@ mod tests {
         let uri = hyper::Uri::builder()
             .scheme("http")
             .authority(format!("localhost:{}", addr.port()))
-            .path_and_query(format!("/ipfs/{}", bad_cid))
+            .path_and_query(format!("/ipfs/{bad_cid}"))
             .build()
             .unwrap();
         let client = hyper::Client::new();
@@ -228,7 +228,7 @@ mod tests {
         let uri = hyper::Uri::builder()
             .scheme("http")
             .authority(format!("localhost:{}", addr.port()))
-            .path_and_query(format!("/ipfs/{}/{}", bad_cid, bad_path))
+            .path_and_query(format!("/ipfs/{bad_cid}/{bad_path}"))
             .build()
             .unwrap();
         let client = hyper::Client::new();
@@ -238,7 +238,7 @@ mod tests {
         let uri = hyper::Uri::builder()
             .scheme("http")
             .authority(format!("localhost:{}", addr.port()))
-            .path_and_query(format!("/ipfs/{}/{}", bad_cid_2, bad_path))
+            .path_and_query(format!("/ipfs/{bad_cid_2}/{bad_path}"))
             .build()
             .unwrap();
         let client = hyper::Client::new();
@@ -249,7 +249,7 @@ mod tests {
         let uri = hyper::Uri::builder()
             .scheme("http")
             .authority(format!("localhost:{}", addr.port()))
-            .path_and_query(format!("/ipfs/{}/{}?format=raw", bad_cid_2, bad_path))
+            .path_and_query(format!("/ipfs/{bad_cid_2}/{bad_path}?format=raw"))
             .build()
             .unwrap();
         let client = hyper::Client::new();
@@ -260,7 +260,7 @@ mod tests {
         let uri = hyper::Uri::builder()
             .scheme("http")
             .authority(format!("localhost:{}", addr.port()))
-            .path_and_query(format!("/ipfs/{}/{}", bad_cid, good_path))
+            .path_and_query(format!("/ipfs/{bad_cid}/{good_path}"))
             .build()
             .unwrap();
         let client = hyper::Client::new();
@@ -270,7 +270,7 @@ mod tests {
         let uri = hyper::Uri::builder()
             .scheme("http")
             .authority(format!("localhost:{}", addr.port()))
-            .path_and_query(format!("/ipfs/{}/{}", bad_cid_2, good_path))
+            .path_and_query(format!("/ipfs/{bad_cid_2}/{good_path}"))
             .build()
             .unwrap();
         let client = hyper::Client::new();
@@ -280,7 +280,7 @@ mod tests {
         let uri = hyper::Uri::builder()
             .scheme("http")
             .authority(format!("localhost:{}", addr.port()))
-            .path_and_query(format!("/ipfs/{}", good_cid))
+            .path_and_query(format!("/ipfs/{good_cid}"))
             .build()
             .unwrap();
         let client = hyper::Client::new();

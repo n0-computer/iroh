@@ -458,7 +458,7 @@ mod tests {
             ),
             Some(ResponseFormat::Raw),
         );
-        let wetag = format!("W/{}", etag);
+        let wetag = format!("W/{etag}");
         let other_etag = get_etag(
             &CidOrDomain::Cid(
                 Cid::try_from("bafkreigh2akiscaildcqabsyg3dfr6chu3fgpregiymsck7e7aqa4aaaaa")
@@ -466,8 +466,8 @@ mod tests {
             ),
             Some(ResponseFormat::Raw),
         );
-        let other_wetag = format!("W/{}", other_etag);
-        let long_etag = format!("{},{}", other_etag, wetag);
+        let other_wetag = format!("W/{other_etag}");
+        let long_etag = format!("{other_etag},{wetag}");
 
         assert!(etag_matches(any_etag, &etag));
         assert!(etag_matches(&etag, &wetag));
