@@ -95,6 +95,7 @@ iroh = { version = "0.1.3", path = "./iroh" }
 iroh-api = { version = "0.1.3", path = "./iroh-api" }
 iroh-bitswap = { version = "0.1.3", path = "./iroh-bitswap" }
 iroh-car = { version = "0.1.3", path = "./iroh-car" }
+iroh-embed = { version = "0.1.3", path = "./iroh-embed" }
 iroh-gateway = { version = "0.1.3", path = "./iroh-gateway" }
 iroh-localops = { version = "0.1.3", path = "./iroh-localops" }
 iroh-metrics = { version = "0.1.3", path = "./iroh-metrics" }
