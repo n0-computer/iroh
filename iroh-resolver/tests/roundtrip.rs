@@ -5,7 +5,7 @@ use futures::{Stream, TryStreamExt};
 use iroh_metrics::resolver::OutMetrics;
 use iroh_unixfs::{
     balanced_tree::DEFAULT_DEGREE,
-    builder::{Directory, DirectoryBuilder, FileBuilder, SymlinkBuilder},
+    builder::{Directory, DirectoryBuilder, FileBuilder, Named, SymlinkBuilder},
     chunker::DEFAULT_CHUNKS_SIZE,
     content_loader::ContentLoader,
     ResponseClip,
@@ -27,7 +27,7 @@ type TestDir = BTreeMap<String, TestDirEntry>;
 
 /// builds an unixfs directory out of a TestDir
 #[async_recursion(?Send)]
-async fn build_directory(name: &str, dir: &TestDir, hamt: bool) -> Result<Directory> {
+async fn build_directory(name: &str, dir: &TestDir, hamt: bool) -> Result<Named<Directory>> {
     let mut builder = DirectoryBuilder::new().name(name);
     if hamt {
         builder = builder.hamt();
@@ -141,7 +141,7 @@ async fn file_roundtrip_test(data: Bytes, chunk_size: usize, degree: usize) -> R
         .content_bytes(data.clone())
         .build()
         .await?;
-    let stream = file.encode().await?;
+    let stream = file.encode();
     let (root, resolver) = stream_to_resolver(stream).await?;
     let out = resolver
         .resolve(iroh_resolver::resolver::Path::from_cid(root))
@@ -158,7 +158,7 @@ async fn symlink_roundtrip_test() -> Result<()> {
     let target = "../../bar.txt";
     builder.target(target);
     let sym = builder.build().await?;
-    let block = sym.encode()?;
+    let block = sym.inner.encode()?;
     let stream = async_stream::try_stream! {
         yield block;
     };

@@ -79,7 +79,7 @@ fn add_benchmark(c: &mut Criterion) {
                         )
                         .await
                         .unwrap();
-                        let stream = api.add_stream(entry).await.unwrap();
+                        let stream = api.add_stream(entry.inner).await.unwrap();
 
                         let res: Vec<_> = stream.try_collect().await.unwrap();
                         black_box(res)

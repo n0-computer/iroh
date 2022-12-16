@@ -48,42 +48,22 @@ pub enum Directory {
 /// A basic / flat directory
 #[derive(Debug, PartialEq)]
 pub struct BasicDirectory {
-    name: String,
-    entries: Vec<Entry>,
+    entries: Vec<Named<Entry>>,
 }
 
 /// A hamt sharded directory
 #[derive(Debug, PartialEq)]
 pub struct HamtDirectory {
-    name: String,
     hamt: Box<HamtNode>,
 }
 
 impl Directory {
-    fn single(name: String, entry: Entry) -> Self {
-        Directory::basic(name, vec![entry])
+    fn single(entry: Named<Entry>) -> Self {
+        Directory::basic(vec![entry])
     }
 
-    fn basic(name: String, entries: Vec<Entry>) -> Self {
-        Directory::Basic(BasicDirectory { name, entries })
-    }
-
-    pub fn name(&self) -> &str {
-        match &self {
-            Directory::Basic(BasicDirectory { name, .. }) => name,
-            Directory::Hamt(HamtDirectory { name, .. }) => name,
-        }
-    }
-
-    pub fn set_name(&mut self, value: String) {
-        match self {
-            Directory::Basic(BasicDirectory { name, .. }) => {
-                *name = value;
-            }
-            Directory::Hamt(HamtDirectory { name, .. }) => {
-                *name = value;
-            }
-        }
+    fn basic(entries: Vec<Named<Entry>>) -> Self {
+        Directory::Basic(BasicDirectory { entries })
     }
 
     pub async fn encode_root(self) -> Result<Block> {
@@ -111,8 +91,8 @@ impl BasicDirectory {
         async_stream::try_stream! {
             let mut links = Vec::new();
             for entry in self.entries {
-                let name = entry.name().to_string();
-                let parts = entry.encode().await?;
+                let name = entry.name;
+                let parts = entry.inner.encode();
                 tokio::pin!(parts);
                 let mut root = None;
                 while let Some(part) = parts.next().await {
@@ -174,7 +154,6 @@ impl PartialEq for Content {
 /// Representation of a constructed File.
 #[derive(PartialEq)]
 pub struct File {
-    name: String,
     content: Content,
     tree_builder: TreeBuilder,
     chunker: Chunker,
@@ -183,7 +162,6 @@ pub struct File {
 impl Debug for File {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("File")
-            .field("name", &self.name)
             .field("content", &self.content)
             .field("tree_builder", &self.tree_builder)
             .field("chunker", &self.chunker)
@@ -192,10 +170,6 @@ impl Debug for File {
 }
 
 impl File {
-    pub fn name(&self) -> &str {
-        &self.name
-    }
-
     pub async fn encode_root(self) -> Result<Block> {
         let mut current = None;
         let parts = self.encode().await?;
@@ -225,25 +199,14 @@ impl File {
 /// Representation of a constructed Symlink.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Symlink {
-    name: String,
     target: PathBuf,
 }
 
 impl Symlink {
-    pub fn new<P: Into<PathBuf>>(path: P, target: P) -> Self {
+    pub fn new<P: Into<PathBuf>>(target: P) -> Self {
         Self {
-            name: path
-                .into()
-                .file_name()
-                .and_then(|s| s.to_str())
-                .unwrap_or_default()
-                .to_string(),
             target: target.into(),
         }
-    }
-
-    pub fn name(&self) -> &str {
-        &self.name
     }
 
     pub fn encode(self) -> Result<Block> {
@@ -350,7 +313,7 @@ impl FileBuilder {
         self
     }
 
-    pub async fn build(self) -> Result<File> {
+    pub async fn build(self) -> Result<Named<File>> {
         let degree = self.degree;
         let chunker = self.chunker;
         let tree_builder = TreeBuilder::balanced_tree_with_degree(degree);
@@ -363,12 +326,14 @@ impl FileBuilder {
                     .unwrap_or_default()
                     .to_string(),
             };
-            return Ok(File {
-                content: Content::Path(path),
+            return Ok(Named::new(
                 name,
-                chunker,
-                tree_builder,
-            });
+                File {
+                    content: Content::Path(path),
+                    chunker,
+                    tree_builder,
+                },
+            ));
         }
 
         if let Some(reader) = self.reader {
@@ -376,12 +341,14 @@ impl FileBuilder {
                 anyhow::anyhow!("must add a name when building a file from a reader or bytes")
             })?;
 
-            return Ok(File {
-                content: Content::Reader(reader),
+            return Ok(Named::new(
                 name,
-                chunker,
-                tree_builder,
-            });
+                File {
+                    content: Content::Reader(reader),
+                    chunker,
+                    tree_builder,
+                },
+            ));
         }
         anyhow::bail!("must have a path to the content or a reader for the content");
     }
@@ -396,24 +363,67 @@ pub enum Entry {
     Symlink(Symlink),
 }
 
+impl From<File> for Entry {
+    fn from(f: File) -> Self {
+        Entry::File(f)
+    }
+}
+
+impl From<Directory> for Entry {
+    fn from(d: Directory) -> Self {
+        Entry::Directory(d)
+    }
+}
+
+impl From<Symlink> for Entry {
+    fn from(s: Symlink) -> Self {
+        Entry::Symlink(s)
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct Named<T> {
+    pub name: String,
+    pub inner: T,
+}
+
+impl<T> Named<T> {
+    fn new(name: String, inner: T) -> Self {
+        Named { name, inner }
+    }
+
+    fn into_entry(self) -> Named<Entry>
+    where
+        T: Into<Entry>,
+    {
+        Named::new(self.name, self.inner.into())
+    }
+}
+
+impl Named<Entry> {
+    fn wrap(self) -> Named<Entry> {
+        Named::new("".into(), Directory::single(self)).into_entry()
+    }
+}
+
+impl<T: Into<Entry>> Named<T> {
+    pub fn encode(self) -> LocalBoxStream<'static, Result<Block>> {
+        self.inner.into().encode()
+    }
+}
+
 impl Entry {
-    pub fn name(&self) -> &str {
+    pub fn encode(self) -> LocalBoxStream<'static, Result<Block>> {
         match self {
-            Entry::File(f) => f.name(),
-            Entry::Directory(d) => d.name(),
-            Entry::Symlink(s) => s.name(),
+            Entry::File(f) => async move { f.encode().await }
+                .try_flatten_stream()
+                .boxed_local(),
+            Entry::Directory(d) => d.encode(),
+            Entry::Symlink(s) => stream::iter(Some(s.encode())).boxed_local(),
         }
     }
 
-    pub async fn encode(self) -> Result<LocalBoxStream<'static, Result<Block>>> {
-        Ok(match self {
-            Entry::File(f) => f.encode().await?.boxed_local(),
-            Entry::Directory(d) => d.encode(),
-            Entry::Symlink(s) => stream::iter(Some(s.encode())).boxed_local(),
-        })
-    }
-
-    pub async fn from_path(path: &Path, config: Config) -> Result<Self> {
+    pub async fn from_path(path: &Path, config: Config) -> Result<Named<Self>> {
         let entry = if path.is_dir() {
             if let Some(chunker_config) = config.chunker {
                 let chunker = chunker_config.into();
@@ -422,7 +432,7 @@ impl Entry {
                     .path(path)
                     .build()
                     .await?;
-                Entry::Directory(dir)
+                dir.into_entry()
             } else {
                 anyhow::bail!("expected a ChunkerConfig in the Config");
             }
@@ -434,24 +444,20 @@ impl Entry {
                     .path(path)
                     .build()
                     .await?;
-                Entry::File(file)
+                file.into_entry()
             } else {
                 anyhow::bail!("expected a ChunkerConfig in the Config");
             }
         } else if path.is_symlink() {
             let symlink = SymlinkBuilder::new(path).build().await?;
-            Entry::Symlink(symlink)
+            symlink.into_entry()
         } else {
             anyhow::bail!("can only add files, directories, or symlinks");
         };
         if config.wrap {
-            return Ok(Entry::Directory(entry.wrap()));
+            return Ok(entry.wrap());
         }
         Ok(entry)
-    }
-
-    fn wrap(self) -> Directory {
-        Directory::single("".into(), self)
     }
 }
 
@@ -459,7 +465,7 @@ impl Entry {
 #[derive(Debug)]
 pub struct DirectoryBuilder {
     name: Option<String>,
-    entries: Vec<Entry>,
+    entries: Vec<Named<Entry>>,
     typ: DirectoryType,
     chunker: Chunker,
     degree: usize,
@@ -509,19 +515,19 @@ impl DirectoryBuilder {
         self
     }
 
-    pub fn add_dir(self, dir: Directory) -> Result<Self> {
-        Ok(self.entry(Entry::Directory(dir)))
+    pub fn add_dir(self, dir: Named<Directory>) -> Result<Self> {
+        Ok(self.entry(dir.into_entry()))
     }
 
-    pub fn add_file(self, file: File) -> Self {
-        self.entry(Entry::File(file))
+    pub fn add_file(self, file: Named<File>) -> Self {
+        self.entry(file.into_entry())
     }
 
-    pub fn add_symlink(self, symlink: Symlink) -> Self {
-        self.entry(Entry::Symlink(symlink))
+    pub fn add_symlink(self, symlink: Named<Symlink>) -> Self {
+        self.entry(symlink.into_entry())
     }
 
-    fn entry(mut self, entry: Entry) -> Self {
+    fn entry(mut self, entry: Named<Entry>) -> Self {
         if self.typ == DirectoryType::Basic && self.entries.len() >= DIRECTORY_LINK_LIMIT {
             self.typ = DirectoryType::Hamt
         }
@@ -529,7 +535,7 @@ impl DirectoryBuilder {
         self
     }
 
-    pub async fn build(self) -> Result<Directory> {
+    pub async fn build(self) -> Result<Named<Directory>> {
         let DirectoryBuilder {
             name,
             entries,
@@ -542,22 +548,22 @@ impl DirectoryBuilder {
         Ok(if let Some(path) = path {
             let mut dir = make_dir_from_path(path, chunker.clone(), degree).await?;
             if let Some(name) = name {
-                dir.set_name(name);
+                dir.name = name;
             }
             dir
         } else {
             let name = name.unwrap_or_default();
-            match typ {
-                DirectoryType::Basic => Directory::Basic(BasicDirectory { name, entries }),
+            let inner = match typ {
+                DirectoryType::Basic => Directory::Basic(BasicDirectory { entries }),
                 DirectoryType::Hamt => {
                     let hamt = HamtNode::new(entries)
                         .context("unable to build hamt. Probably a hash collision.")?;
                     Directory::Hamt(HamtDirectory {
-                        name,
                         hamt: Box::new(hamt),
                     })
                 }
-            }
+            };
+            Named::new(name, inner)
         })
     }
 }
@@ -566,7 +572,7 @@ impl DirectoryBuilder {
 ///
 /// Basically just an entry and the hash of its name.
 #[derive(Debug, PartialEq)]
-pub struct HamtLeaf([u8; 8], Entry);
+pub struct HamtLeaf([u8; 8], String, Entry);
 
 /// A node when building a hamt directory.
 ///
@@ -579,14 +585,14 @@ enum HamtNode {
 }
 
 impl HamtNode {
-    fn new(entries: Vec<Entry>) -> anyhow::Result<HamtNode> {
+    fn new(entries: Vec<Named<Entry>>) -> anyhow::Result<HamtNode> {
         // add the hash
         let entries = entries
             .into_iter()
             .map(|entry| {
-                let name = entry.name().to_string();
+                let name = entry.name;
                 let hash = hash_key(name.as_bytes());
-                HamtLeaf(hash, entry)
+                HamtLeaf(hash, name, entry.inner)
             })
             .collect::<Vec<_>>();
         Self::group(entries, 0, 8)
@@ -615,7 +621,7 @@ impl HamtNode {
     fn name(&self) -> &str {
         match self {
             HamtNode::Branch(_) => "",
-            HamtNode::Leaf(HamtLeaf(_, entry)) => entry.name(),
+            HamtNode::Leaf(HamtLeaf(_, name, _entry)) => name,
         }
     }
 
@@ -657,9 +663,7 @@ impl HamtNode {
                 }
                 .boxed_local()
             }
-            Self::Leaf(HamtLeaf(_hash, entry)) => async move { entry.encode().await }
-                .try_flatten_stream()
-                .boxed_local(),
+            Self::Leaf(HamtLeaf(_hash, _name, entry)) => entry.encode(),
         }
     }
 }
@@ -684,7 +688,7 @@ impl SymlinkBuilder {
         self
     }
 
-    pub async fn build(self) -> Result<Symlink> {
+    pub async fn build(self) -> Result<Named<Symlink>> {
         let name = self
             .path
             .file_name()
@@ -695,7 +699,7 @@ impl SymlinkBuilder {
             Some(target) => target,
             None => tokio::fs::read_link(&self.path).await?,
         };
-        Ok(Symlink { name, target })
+        Ok(Named::new(name, Symlink { target }))
     }
 }
 
@@ -729,7 +733,7 @@ async fn make_dir_from_path<P: Into<PathBuf>>(
     path: P,
     chunker: Chunker,
     degree: usize,
-) -> Result<Directory> {
+) -> Result<Named<Directory>> {
     let path = path.into();
     let mut dir = DirectoryBuilder::new().name(
         path.file_name()
@@ -785,7 +789,7 @@ mod tests {
                 .content_bytes(b"bar".to_vec())
                 .build()
                 .await?;
-            bar.encode().await?.try_collect().await?
+            bar.encode().try_collect().await?
         };
         assert_eq!(bar_encoded.len(), 1);
 
@@ -797,12 +801,12 @@ mod tests {
             let mut baz = SymlinkBuilder::new("baz.txt");
             baz.target("bat.txt");
             let baz = baz.build().await?;
-            baz.encode()?
+            baz.inner.encode()?
         };
 
         let dir = dir.add_file(bar).add_symlink(baz).build().await?;
 
-        let dir_block = dir.encode_root().await?;
+        let dir_block = dir.inner.encode_root().await?;
         let decoded_dir = UnixfsNode::decode(dir_block.cid(), dir_block.data().clone())?;
 
         let links = decoded_dir.links().collect::<Result<Vec<_>>>().unwrap();
@@ -844,7 +848,7 @@ mod tests {
                 .content_reader(bar_reader)
                 .build()
                 .await?;
-            bar.encode().await?.try_collect().await?
+            bar.encode().try_collect().await?
         };
         assert_eq!(bar_encoded.len(), 1);
 
@@ -856,12 +860,12 @@ mod tests {
             let mut baz = SymlinkBuilder::new("baz.txt");
             baz.target("bat.txt");
             let baz = baz.build().await?;
-            baz.encode()?
+            baz.inner.encode()?
         };
 
         let dir = dir.add_file(bar).add_symlink(baz).build().await?;
 
-        let dir_block = dir.encode_root().await?;
+        let dir_block = dir.inner.encode_root().await?;
         let decoded_dir = UnixfsNode::decode(dir_block.cid(), dir_block.data().clone())?;
 
         let links = decoded_dir.links().collect::<Result<Vec<_>>>().unwrap();
@@ -884,8 +888,8 @@ mod tests {
         tokio::fs::symlink(expect_target.clone(), expect_path.clone()).await?;
 
         let got_symlink = SymlinkBuilder::new(expect_path).build().await?;
-        assert_eq!(expect_name, got_symlink.name());
-        assert_eq!(expect_target, got_symlink.target);
+        assert_eq!(expect_name, got_symlink.name);
+        assert_eq!(expect_target, got_symlink.inner.target);
         Ok(())
     }
     #[tokio::test]
@@ -907,7 +911,7 @@ mod tests {
                 .content_reader(bar_reader)
                 .build()
                 .await?;
-            bar.encode().await?.try_collect().await?
+            bar.encode().try_collect().await?
         };
         assert_eq!(bar_encoded.len(), 5);
 
@@ -932,13 +936,13 @@ mod tests {
                 .content_reader(baz_reader)
                 .build()
                 .await?;
-            baz.encode().await?.try_collect().await?
+            baz.encode().try_collect().await?
         };
         assert_eq!(baz_encoded.len(), 9);
 
         let dir = dir.add_file(bar).add_file(baz).build().await?;
 
-        let dir_block = dir.encode_root().await?;
+        let dir_block = dir.inner.encode_root().await?;
         let decoded_dir = UnixfsNode::decode(dir_block.cid(), dir_block.data().clone())?;
 
         let links = decoded_dir.links().collect::<Result<Vec<_>>>().unwrap();
@@ -1041,21 +1045,21 @@ mod tests {
 
         // create directory manually
         let nested_file = FileBuilder::new().path(nested_file_path).build().await?;
-        let nested_dir = Directory::single(
+        let nested_dir = Named::new(
             String::from(
                 nested_dir_path
                     .file_name()
                     .and_then(|s| s.to_str())
                     .unwrap(),
             ),
-            Entry::File(nested_file),
+            Directory::single(nested_file.into_entry()),
         );
 
         let file = FileBuilder::new().path(file_path).build().await?;
 
-        let expected = Directory::basic(
+        let expected = Named::new(
             String::from(dir.clone().file_name().and_then(|s| s.to_str()).unwrap()),
-            vec![Entry::File(file), Entry::Directory(nested_dir)],
+            Directory::basic(vec![file.into_entry(), nested_dir.into_entry()]),
         );
 
         let got = make_dir_from_path(
@@ -1074,9 +1078,9 @@ mod tests {
         // The readdir_r function is used in the underlying platform which
         // gives no guarantee to return in a specific order.
         // https://stackoverflow.com/questions/40021882/how-to-sort-readdir-iterator
-        let expected = basic_entries(expected);
-        let mut got = basic_entries(got);
-        got.sort_by_key(|entry| entry.name().to_string());
+        let expected = basic_entries(expected.inner);
+        let mut got = basic_entries(got.inner);
+        got.sort_by_key(|entry| entry.name.to_string());
         assert_eq!(expected, got);
         Ok(())
     }

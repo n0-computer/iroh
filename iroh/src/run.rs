@@ -265,7 +265,7 @@ async fn add(
         },
     )
     .await?;
-    let mut progress = api.add_stream(entry).await?;
+    let mut progress = api.add_stream(entry.inner).await?;
     let mut cids = Vec::new();
     while let Some(prog) = progress.next().await {
         let (cid, size) = prog?;

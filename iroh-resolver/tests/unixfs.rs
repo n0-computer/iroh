@@ -77,7 +77,7 @@ async fn test_dagger_testdata() -> Result<()> {
                 .content_bytes(data.clone())
                 .build()
                 .await?;
-            let stream = file.encode().await?;
+            let stream = file.encode();
             let (root, resolver) = stream_to_resolver(stream).await?;
             let out = resolver.resolve(Path::from_cid(root)).await?;
             let t =
