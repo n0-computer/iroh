@@ -5,7 +5,7 @@ use std::str::FromStr;
 
 use futures::StreamExt;
 use iroh_api::{
-    Api, Cid, ClientStatus, Lookup, OutType, P2pApi, PeerId, ServiceStatus, StatusType,
+    Api, Cid, ClientStatus, Lookup, OutType, P2pApi, PeerId, ServiceStatus, ServiceType, StatusType,
 };
 use relative_path::RelativePathBuf;
 
@@ -62,9 +62,21 @@ fn fixture_add_file() -> Api {
     let mut api = Api::default();
     api.expect_check().returning(|| {
         ClientStatus::new(
-            Some(ServiceStatus::new("gateway", StatusType::Serving, "")),
-            Some(ServiceStatus::new("p2p", StatusType::Serving, "")),
-            Some(ServiceStatus::new("store", StatusType::Serving, "")),
+            Some(ServiceStatus::new(
+                ServiceType::Gateway,
+                StatusType::Serving,
+                "",
+            )),
+            Some(ServiceStatus::new(
+                ServiceType::P2p,
+                StatusType::Serving,
+                "",
+            )),
+            Some(ServiceStatus::new(
+                ServiceType::Store,
+                StatusType::Serving,
+                "",
+            )),
         )
     });
     api.expect_add_stream().returning(|_| {
@@ -82,9 +94,21 @@ fn fixture_add_directory() -> Api {
     let mut api = Api::default();
     api.expect_check().returning(|| {
         ClientStatus::new(
-            Some(ServiceStatus::new("gateway", StatusType::Serving, "")),
-            Some(ServiceStatus::new("p2p", StatusType::Serving, "")),
-            Some(ServiceStatus::new("store", StatusType::Serving, "")),
+            Some(ServiceStatus::new(
+                ServiceType::Gateway,
+                StatusType::Serving,
+                "",
+            )),
+            Some(ServiceStatus::new(
+                ServiceType::P2p,
+                StatusType::Serving,
+                "",
+            )),
+            Some(ServiceStatus::new(
+                ServiceType::Store,
+                StatusType::Serving,
+                "",
+            )),
         )
     });
     api.expect_add_stream().returning(|_| {
@@ -154,23 +178,59 @@ fn fixture_start_status_stop() -> Api {
     let mut api = Api::default();
     api.expect_check().returning(|| {
         ClientStatus::new(
-            Some(ServiceStatus::new("gateway", StatusType::Serving, "")),
-            Some(ServiceStatus::new("p2p", StatusType::Serving, "")),
-            Some(ServiceStatus::new("store", StatusType::Serving, "")),
+            Some(ServiceStatus::new(
+                ServiceType::Gateway,
+                StatusType::Serving,
+                "",
+            )),
+            Some(ServiceStatus::new(
+                ServiceType::P2p,
+                StatusType::Serving,
+                "",
+            )),
+            Some(ServiceStatus::new(
+                ServiceType::Store,
+                StatusType::Serving,
+                "",
+            )),
         )
     });
     api.expect_check().returning(|| {
         ClientStatus::new(
-            Some(ServiceStatus::new("gateway", StatusType::Serving, "")),
-            Some(ServiceStatus::new("p2p", StatusType::Serving, "")),
-            Some(ServiceStatus::new("store", StatusType::Serving, "")),
+            Some(ServiceStatus::new(
+                ServiceType::Gateway,
+                StatusType::Serving,
+                "",
+            )),
+            Some(ServiceStatus::new(
+                ServiceType::P2p,
+                StatusType::Serving,
+                "",
+            )),
+            Some(ServiceStatus::new(
+                ServiceType::Store,
+                StatusType::Serving,
+                "",
+            )),
         )
     });
     api.expect_check().returning(|| {
         ClientStatus::new(
-            Some(ServiceStatus::new("gateway", StatusType::Unknown, "")),
-            Some(ServiceStatus::new("p2p", StatusType::Unknown, "")),
-            Some(ServiceStatus::new("store", StatusType::Unknown, "")),
+            Some(ServiceStatus::new(
+                ServiceType::Gateway,
+                StatusType::Unknown,
+                "",
+            )),
+            Some(ServiceStatus::new(
+                ServiceType::P2p,
+                StatusType::Unknown,
+                "",
+            )),
+            Some(ServiceStatus::new(
+                ServiceType::Store,
+                StatusType::Unknown,
+                "",
+            )),
         )
     });
     api

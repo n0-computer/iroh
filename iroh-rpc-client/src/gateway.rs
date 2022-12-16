@@ -5,9 +5,7 @@ use async_stream::stream;
 use futures::{Stream, StreamExt};
 use iroh_rpc_types::{gateway::*, VersionRequest, WatchRequest};
 
-use crate::{status::StatusType, ServiceStatus};
-
-pub(crate) const NAME: &str = "gateway";
+use crate::{status::WAIT, StatusType};
 
 #[derive(Clone)]
 pub struct GatewayClient {
@@ -35,20 +33,15 @@ impl GatewayClient {
     }
 
     #[tracing::instrument(skip(self))]
-    pub async fn check(&self) -> ServiceStatus {
-        let (status, version) = match self.version().await {
+    pub async fn check(&self) -> (StatusType, String) {
+        match self.version().await {
             Ok(version) => (StatusType::Serving, version),
             Err(_) => (StatusType::Down, String::new()),
-        };
-        ServiceStatus {
-            name: "gateway",
-            status,
-            version,
         }
     }
 
     #[tracing::instrument(skip(self))]
-    pub async fn watch(&self) -> impl Stream<Item = ServiceStatus> {
+    pub async fn watch(&self) -> impl Stream<Item = (StatusType, String)> {
         let client = self.client.clone();
         stream! {
             loop {
@@ -57,14 +50,14 @@ impl GatewayClient {
                     Ok(mut res) => {
                         while let Some(v) = res.next().await {
                             let (status, version) = v.map_or((StatusType::Down, String::new()), |v| (StatusType::Serving, v.version));
-                            yield ServiceStatus::new("gateway", status, version);
+                            yield (status, version);
                         }
                     },
                     Err(_) => {
-                        yield ServiceStatus::new("gateway", StatusType::Down, "");
+                        yield (StatusType::Down, String::new());
                     }
                 }
-                tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+                tokio::time::sleep(WAIT).await;
             }
         }
     }

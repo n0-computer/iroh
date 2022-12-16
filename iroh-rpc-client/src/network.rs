@@ -9,9 +9,7 @@ use libp2p::{Multiaddr, PeerId};
 use std::collections::{HashMap, HashSet};
 use tracing::{debug, warn};
 
-use crate::{status::StatusType, ServiceStatus};
-
-pub(crate) const NAME: &str = "p2p";
+use crate::{status::WAIT, StatusType};
 
 #[derive(Debug, Clone)]
 pub struct P2pClient {
@@ -270,20 +268,15 @@ impl P2pClient {
     }
 
     #[tracing::instrument(skip(self))]
-    pub async fn check(&self) -> ServiceStatus {
-        let (status, version) = match self.version().await {
+    pub async fn check(&self) -> (StatusType, String) {
+        match self.version().await {
             Ok(version) => (StatusType::Serving, version),
             Err(_) => (StatusType::Down, String::new()),
-        };
-        ServiceStatus {
-            name: "p2p",
-            status,
-            version,
         }
     }
 
     #[tracing::instrument(skip(self))]
-    pub async fn watch(&self) -> impl Stream<Item = ServiceStatus> {
+    pub async fn watch(&self) -> impl Stream<Item = (StatusType, String)> {
         let client = self.client.clone();
         stream! {
             loop {
@@ -292,14 +285,14 @@ impl P2pClient {
                     Ok(mut res) => {
                         while let Some(v) = res.next().await {
                             let (status, version) = v.map_or((StatusType::Down, String::new()), |v| (StatusType::Serving, v.version));
-                            yield ServiceStatus::new("p2p", status, version);
+                            yield (status, version);
                         }
                     },
                     Err(_) => {
-                        yield ServiceStatus::new("p2p", StatusType::Down, "");
+                        yield (StatusType::Down, String::new());
                     }
                 }
-                tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+                tokio::time::sleep(WAIT).await;
             }
         }
     }

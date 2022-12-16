@@ -4,6 +4,7 @@ use std::sync::Arc;
 use crate::config::Config;
 use crate::gateway::GatewayClient;
 use crate::network::P2pClient;
+use crate::status::{ClientStatus, ServiceStatus, ServiceType};
 use crate::store::StoreClient;
 use anyhow::{Context, Result};
 use futures::{Stream, StreamExt};
@@ -145,44 +146,50 @@ impl Client {
 
     pub async fn check(&self) -> crate::status::ClientStatus {
         let g = if let Some(ref g) = self.gateway {
-            Some(g.check().await)
+            let (s, v) = g.check().await;
+            Some(ServiceStatus::new(ServiceType::Gateway, s, v))
         } else {
             None
         };
         let p = if let Some(ref p) = self.p2p.get() {
-            Some(p.check().await)
+            let (s, v) = p.check().await;
+            Some(ServiceStatus::new(ServiceType::P2p, s, v))
         } else {
             None
         };
         let s = if let Some(ref s) = self.store.get() {
-            Some(s.check().await)
+            let (s, v) = s.check().await;
+            Some(ServiceStatus::new(ServiceType::Store, s, v))
         } else {
             None
         };
-        crate::status::ClientStatus::new(g, p, s)
+        ClientStatus::new(g, p, s)
     }
 
-    pub async fn watch(self) -> impl Stream<Item = crate::status::ClientStatus> {
+    pub async fn watch(self) -> impl Stream<Item = ClientStatus> {
         async_stream::stream! {
-            let mut status: crate::status::ClientStatus = Default::default();
+            let mut status: ClientStatus = Default::default();
             let mut streams = Vec::new();
 
             if let Some(ref g) = self.gateway {
                 let g = g.watch().await;
+                let g = g.map(|(status, version)| ServiceStatus::new(ServiceType::Gateway, status, version));
                 streams.push(g.boxed());
             }
             if let Some(ref p) = self.p2p.get() {
                 let p = p.watch().await;
+                let p = p.map(|(status, version)| ServiceStatus::new(ServiceType::P2p, status, version));
                 streams.push(p.boxed());
             }
             if let Some(ref s) = self.store.get() {
                 let s = s.watch().await;
+                let s = s.map(|(status, version)| ServiceStatus::new(ServiceType::Store, status, version));
                 streams.push(s.boxed());
             }
 
             let mut stream = futures::stream::select_all(streams);
             while let Some(s) = stream.next().await {
-                status.update(s).expect("unknown service");
+                status.update(s);
                 yield status.clone();
             }
         }

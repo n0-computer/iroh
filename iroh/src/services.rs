@@ -192,9 +192,7 @@ pub async fn status(api: &Api, watch: bool) -> Result<()> {
         let status_stream = api.watch().await;
         tokio::pin!(status_stream);
         stdout.queue(Clear(ClearType::All))?;
-        let mut iterations = 0;
         while let Some(table) = status_stream.next().await {
-            iterations += 1;
             stdout
                 .queue(cursor::RestorePosition)?
                 .queue(Clear(ClearType::FromCursorUp))?
@@ -205,7 +203,6 @@ pub async fn status(api: &Api, watch: bool) -> Result<()> {
                 .queue(style::Print("\n"))?
                 .flush()?;
         }
-        println!("iterations {}", iterations);
         Ok(())
     } else {
         let table = api.check().await;
@@ -222,7 +219,7 @@ where
     W: Write,
 {
     w.queue(style::PrintStyledContent(
-        "Service\t\t\tNumber\tStatus\t\t\t\t\tVersion\n".bold(),
+        "Service\t\tVersion\t\tStatus\n".bold(),
     ))?;
     queue_row(&table.gateway, &mut w)?;
     queue_row(&table.p2p, &mut w)?;
@@ -237,9 +234,7 @@ where
     W: Write,
 {
     w.queue(style::Print(format!("{}\t\t", row.name())))?
-        // TODO(ramfox): hard-coding that there is only one service running for each type of
-        // service
-        .queue(style::Print("1/1\t".to_string()))?;
+        .queue(style::Print(format!("{}\t\t", row.version())))?;
     match row.status() {
         StatusType::Unknown => {
             w.queue(style::PrintStyledContent("Unknown".dark_yellow()))?;
@@ -255,8 +250,7 @@ where
                 .queue(style::Print("\tThe service is currently unavailable"))?;
         }
     };
-    w.queue(style::Print(format!("{}\t", row.version())))?
-        .queue(style::Print("\n"))?;
+    w.queue(style::Print("\n"))?;
     Ok(())
 }
 
@@ -305,14 +299,23 @@ async fn poll_until_status(api: &Api, service: &str, status: iroh_api::StatusTyp
 #[cfg(test)]
 mod tests {
     use super::*;
+    use iroh_api::ServiceType;
 
     #[test]
     fn status_table_queue() {
-        let expect = format!("{}gateway\t\t\t1/1\t{}\np2p\t\t\t1/1\t{}\nstore\t\t\t1/1\t{}\tThe service is currently unavailable\n", "Service\t\t\tNumber\tStatus\n".bold(), "Unknown".dark_yellow(), "Serving".green(), "Down".grey());
+        let expect = format!("{}gateway\t\tunknown\t\t{}\np2p\t\tunknown\t\t{}\nstore\t\tunknown\t\t{}\tThe service is currently unavailable\n", "Service\t\tVersion\t\tStatus\n".bold(), "Unknown".dark_yellow(), "Serving".green(), "Down".grey());
         let table = ClientStatus::new(
-            Some(ServiceStatus::new("gateway", StatusType::Unknown, "")),
-            Some(ServiceStatus::new("p2p", StatusType::Serving, "")),
-            Some(ServiceStatus::new("store", StatusType::Down, "")),
+            Some(ServiceStatus::new(
+                ServiceType::Gateway,
+                StatusType::Unknown,
+                "",
+            )),
+            Some(ServiceStatus::new(
+                ServiceType::P2p,
+                StatusType::Serving,
+                "",
+            )),
+            Some(ServiceStatus::new(ServiceType::Store, StatusType::Down, "")),
         );
 
         let mut got = Vec::new();
@@ -331,21 +334,21 @@ mod tests {
 
         let rows = vec![
             TestCase {
-                row: ServiceStatus::new("test", StatusType::Unknown, ""),
-                output: format!("test\t\t\t1/1\t{}\n", "Unknown".dark_yellow()),
+                row: ServiceStatus::new(ServiceType::Gateway, StatusType::Unknown, ""),
+                output: format!("gateway\t\tunknown\t\t{}\n", "Unknown".dark_yellow()),
             },
             TestCase {
-                row: ServiceStatus::new("test", StatusType::NotServing, ""),
-                output: format!("test\t\t\t1/1\t{}\n", "Not Serving".dark_yellow()),
+                row: ServiceStatus::new(ServiceType::P2p, StatusType::NotServing, "1.0.0"),
+                output: format!("p2p\t\t1.0.0\t\t{}\n", "Not Serving".dark_yellow()),
             },
             TestCase {
-                row: ServiceStatus::new("test", StatusType::Serving, ""),
-                output: format!("test\t\t\t1/1\t{}\n", "Serving".green()),
+                row: ServiceStatus::new(ServiceType::Store, StatusType::Serving, ""),
+                output: format!("store\t\tunknown\t\t{}\n", "Serving".green()),
             },
             TestCase {
-                row: ServiceStatus::new("test", StatusType::Down, ""),
+                row: ServiceStatus::new(ServiceType::Gateway, StatusType::Down, "1.0.0"),
                 output: format!(
-                    "test\t\t\t1/1\t{}\tThe service is currently unavailable\n",
+                    "gateway\t\t1.0.0\t\t{}\tThe service is currently unavailable\n",
                     "Down".grey()
                 ),
             },

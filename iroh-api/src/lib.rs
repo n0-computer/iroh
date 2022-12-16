@@ -13,7 +13,7 @@ pub use crate::p2p::PeerIdOrAddr;
 pub use bytes::Bytes;
 pub use cid::Cid;
 pub use iroh_resolver::resolver::Path as IpfsPath;
-pub use iroh_rpc_client::{ClientStatus, Lookup, ServiceStatus, StatusType};
+pub use iroh_rpc_client::{ClientStatus, Lookup, ServiceStatus, ServiceType, StatusType};
 pub use iroh_unixfs::builder::{
     Config as UnixfsConfig, DirectoryBuilder, Entry as UnixfsEntry, FileBuilder, SymlinkBuilder,
 };
