@@ -312,7 +312,7 @@ fn hash_key(key: &[u8]) -> [u8; HASH_BIT_LENGTH] {
 
 fn log2(x: u32) -> u32 {
     assert!(x > 0);
-    u32::BITS as u32 - x.leading_zeros() - 1
+    u32::BITS - x.leading_zeros() - 1
 }
 
 #[cfg(test)]

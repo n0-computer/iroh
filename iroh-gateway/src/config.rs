@@ -49,6 +49,9 @@ pub struct Config {
     /// set of user provided headers to attach to all responses
     #[serde(with = "http_serde::header_map")]
     pub headers: HeaderMap,
+    /// Redirects to subdomains for path requests
+    #[serde(default)]
+    pub redirect_to_subdomain: bool,
 }
 
 impl Config {
@@ -63,6 +66,7 @@ impl Config {
             indexer_endpoint: None,
             metrics: MetricsConfig::default(),
             use_denylist: false,
+            redirect_to_subdomain: false,
         }
     }
 
@@ -117,6 +121,7 @@ impl Default for Config {
             indexer_endpoint: None,
             metrics: MetricsConfig::default(),
             use_denylist: false,
+            redirect_to_subdomain: false,
         };
         t.set_default_headers();
         t
@@ -166,6 +171,10 @@ impl crate::handlers::StateConfig for Config {
 
     fn user_headers(&self) -> &HeaderMap<HeaderValue> {
         &self.headers
+    }
+
+    fn redirect_to_subdomain(&self) -> bool {
+        self.redirect_to_subdomain
     }
 }
 

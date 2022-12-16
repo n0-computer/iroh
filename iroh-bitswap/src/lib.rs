@@ -545,9 +545,9 @@ impl<S: Store> NetworkBehaviour for Bitswap<S> {
                             {
                                 // Do not bother trying to dial these for now.
                                 if let Err(err) =
-                                    response.send(Err(format!("dial:{}: undialable peer", id)))
+                                    response.send(Err(format!("dial:{id}: undialable peer")))
                                 {
-                                    debug!("dial:{}: failed to send dial response {:?}", id, err)
+                                    debug!("dial:{id}: failed to send dial response {err:?}")
                                 }
                                 continue;
                             }
@@ -555,12 +555,9 @@ impl<S: Store> NetworkBehaviour for Bitswap<S> {
                                 if self.pause_dialing {
                                     // already connected
                                     if let Err(err) =
-                                        response.send(Err(format!("dial:{}: dialing paused", id)))
+                                        response.send(Err(format!("dial:{id}: dialing paused")))
                                     {
-                                        debug!(
-                                            "dial:{}: failed to send dial response {:?}",
-                                            id, err
-                                        )
+                                        debug!("dial:{id}: failed to send dial response {err:?}",)
                                     }
                                     continue;
                                 }

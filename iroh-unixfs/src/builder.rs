@@ -323,7 +323,7 @@ impl FileBuilder {
 
     /// Use the rabin chunker.
     pub fn rabin_chunker(mut self) -> Self {
-        self.chunker = Chunker::Rabin(Box::new(chunker::Rabin::default()));
+        self.chunker = Chunker::Rabin(Box::default());
         self
     }
 
@@ -522,15 +522,16 @@ impl DirectoryBuilder {
 
         ensure!(typ == DirectoryType::Basic, "too many links to fit into one chunk, must be encoded as a HAMT. However, HAMT creation has not yet been implemented.");
 
-        let name = name.unwrap_or_default();
-
-        if let Some(path) = path {
+        Ok(if let Some(path) = path {
             let mut dir = make_dir_from_path(path, chunker.clone(), degree).await?;
-            dir.name = name;
-            return Ok(dir);
-        }
-
-        Ok(Directory { name, entries })
+            if let Some(name) = name {
+                dir.name = name;
+            }
+            dir
+        } else {
+            let name = name.unwrap_or_default();
+            Directory { name, entries }
+        })
     }
 }
 

@@ -175,4 +175,8 @@ impl iroh_gateway::handlers::StateConfig for Config {
     fn user_headers(&self) -> &HeaderMap<HeaderValue> {
         &self.gateway.headers
     }
+
+    fn redirect_to_subdomain(&self) -> bool {
+        self.gateway.redirect_to_subdomain
+    }
 }

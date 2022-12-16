@@ -65,11 +65,11 @@ impl Flatfs {
         let temp_filepath = filepath.with_extension(".temp");
         let value = value.as_ref();
         retry(|| fs::write(&temp_filepath, value))
-            .with_context(|| format!("Failed to write {:?}", temp_filepath))?;
+            .with_context(|| format!("Failed to write {temp_filepath:?}"))?;
 
         // Rename after successfull write
         retry(|| fs::rename(&temp_filepath, &filepath))
-            .with_context(|| format!("Failed to reaname: {:?} -> {:?}", temp_filepath, filepath))?;
+            .with_context(|| format!("Failed to reaname: {temp_filepath:?} -> {filepath:?}"))?;
 
         self.disk_usage
             .fetch_add(value.len() as u64, Ordering::SeqCst);
@@ -83,7 +83,7 @@ impl Flatfs {
         let filepath = self.as_path(key);
 
         let value = retry(|| fs::read(&filepath))
-            .with_context(|| format!("Failed to read {:?}", filepath))?;
+            .with_context(|| format!("Failed to read {filepath:?}"))?;
 
         Ok(value)
     }
@@ -95,7 +95,7 @@ impl Flatfs {
 
         let metadata = filepath
             .metadata()
-            .with_context(|| format!("Failed to read metadata for {:?}", filepath))?;
+            .with_context(|| format!("Failed to read metadata for {filepath:?}"))?;
 
         Ok(metadata.len())
     }
@@ -107,11 +107,11 @@ impl Flatfs {
 
         let metadata = filepath
             .metadata()
-            .with_context(|| format!("Failed to read metadata for {:?}", filepath))?;
+            .with_context(|| format!("Failed to read metadata for {filepath:?}"))?;
         let filesize = metadata.len();
 
         retry(|| fs::remove_file(&filepath))
-            .with_context(|| format!("Failed to remove {:?}", filepath))?;
+            .with_context(|| format!("Failed to remove {filepath:?}"))?;
 
         self.disk_usage.fetch_sub(filesize, Ordering::SeqCst);
 
@@ -300,7 +300,7 @@ impl Drop for Flatfs {
 fn write_disk_usage<P: AsRef<Path>>(path: P, usage: u64) -> Result<()> {
     let disk_usage_path = path.as_ref().join(DISK_USAGE_CACHE);
     fs::write(&disk_usage_path, &usage.to_string()[..])
-        .with_context(|| format!("Failed to write to {:?}", disk_usage_path))?;
+        .with_context(|| format!("Failed to write to {disk_usage_path:?}"))?;
     Ok(())
 }
 
@@ -309,7 +309,7 @@ fn calculate_disk_usage<P: AsRef<Path>>(path: P) -> Result<u64> {
     let disk_usage_path = path.as_ref().join(DISK_USAGE_CACHE);
     if disk_usage_path.exists() {
         let usage: u64 = fs::read_to_string(&disk_usage_path)
-            .with_context(|| format!("Failed to read {:?}", disk_usage_path))?
+            .with_context(|| format!("Failed to read {disk_usage_path:?}"))?
             .parse()?;
         return Ok(usage);
     }

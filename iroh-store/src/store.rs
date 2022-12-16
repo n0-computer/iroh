@@ -658,7 +658,7 @@ impl<'a> ReadStore<'a> {
                             let meta = rkyv::check_archived_root::<MetadataV0>(&meta)
                                 .map_err(|e| anyhow!("{:?}", e))?;
                             let multihash = cid::multihash::Multihash::from_bytes(&meta.multihash)?;
-                            let c = cid::Cid::new_v1(meta.codec, multihash);
+                            let c = Cid::new_v1(meta.codec, multihash);
                             links.push(c);
                         }
                         None => {

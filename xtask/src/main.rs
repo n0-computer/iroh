@@ -95,8 +95,8 @@ fn coverage() -> Result<()> {
 }
 
 fn dist() -> Result<()> {
-    let _ = fs::remove_dir_all(&dist_dir());
-    fs::create_dir_all(&dist_dir())?;
+    let _ = fs::remove_dir_all(dist_dir());
+    fs::create_dir_all(dist_dir())?;
 
     dist_binaries()?;
     dist_manpage()?;
