@@ -61,11 +61,11 @@ fn add_blocks_to_store_chunked<S: Store>(
 ) -> impl Stream<Item = Result<(Cid, u64)>> {
     let mut chunk = Vec::new();
     let mut chunk_size = 0u64;
-    const MAX_CHUNK_SIZE: u64 = 1024 * 1024 * 16;
+    const MAX_CHUNK_SIZE: u64 = 1024 * 1024;
     stream! {
         while let Some(block) = blocks.next().await {
             let block = block?;
-            let block_size = block.data().len() as u64;
+            let block_size = block.data().len() as u64 + block.links().len() as u64 * 128;
             let cid = *block.cid();
             let raw_data_size = block.raw_data_size().unwrap_or_default();
             tracing::info!("adding chunk of {} bytes", chunk_size);

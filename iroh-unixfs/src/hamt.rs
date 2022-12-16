@@ -13,7 +13,7 @@ use async_recursion::async_recursion;
 use self::{bitfield::Bitfield, hash_bits::HashBits};
 
 #[allow(dead_code)]
-mod bitfield;
+pub(crate) mod bitfield;
 mod hash_bits;
 
 const HASH_BIT_LENGTH: usize = 8;
@@ -300,7 +300,7 @@ impl Node {
 
 /// Hashes with murmur3 x64 and returns the first 64 bits.
 /// This matches what go-unixfs uses.
-fn hash_key(key: &[u8]) -> [u8; HASH_BIT_LENGTH] {
+pub(crate) fn hash_key(key: &[u8]) -> [u8; HASH_BIT_LENGTH] {
     let full = fastmurmur3::hash(key);
     // [h1, h2]
     let bytes = full.to_ne_bytes();
@@ -308,6 +308,11 @@ fn hash_key(key: &[u8]) -> [u8; HASH_BIT_LENGTH] {
     let h1 = u64::from_ne_bytes(bytes[..8].try_into().unwrap());
     // big endian, because go
     h1.to_be_bytes()
+}
+
+pub(crate) fn bits(hash: &[u8; 8], pos: u32, len: u32) -> anyhow::Result<u32> {
+    let mut hash = HashBits::new_at_index(hash, pos);
+    hash.next(len)
 }
 
 fn log2(x: u32) -> u32 {
