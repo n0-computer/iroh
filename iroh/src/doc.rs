@@ -70,7 +70,7 @@ with `iroh stop`.
 Daemons provide 'services'. Services work together to fullfill requests.
 There are three services:
 
-  storage  -  a database of IPFS content
+  store    -  a database of IPFS content
   p2p      -  peer-2-peer networking functionality
   gateway  -  bridge the IPFS network to HTTP
 
@@ -89,7 +89,7 @@ pub const STOP_LONG_DESCRIPTION: &str = "
 stop turns local iroh services off by killing daemon processes. There are three
 iroh services, each backed by a daemon:
 
-   storage  -  a database of IPFS content
+   store    -  a database of IPFS content
    p2p      -  peer-2-peer networking functionality
    gateway  -  bridge the IPFS network to HTTP
 

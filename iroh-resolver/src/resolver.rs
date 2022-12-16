@@ -93,15 +93,14 @@ impl Path {
             let root = Cid::from_str(cid_or_domain).context("invalid cid")?;
             (PathType::Ipfs, CidOrDomain::Cid(root))
         };
-        let tail = if tail_path != "/" {
-            tail_path
-                .split(&['/', '\\'])
-                .filter(|s| !s.is_empty())
-                .map(String::from)
-                .collect()
-        } else {
-            vec!["".to_string()]
-        };
+        let mut tail = tail_path
+            .split(&['/', '\\'])
+            .filter(|s| !s.is_empty())
+            .map(String::from)
+            .collect::<Vec<_>>();
+        if tail_path.ends_with('/') {
+            tail.push("".to_string())
+        }
         Ok(Path { typ, root, tail })
     }
 

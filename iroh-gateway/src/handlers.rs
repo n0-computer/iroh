@@ -301,7 +301,7 @@ pub async fn subdomain_handler<T: ContentLoader + Unpin>(
     let path = Path::from_parts(
         parsed_subdomain_url.scheme,
         &inlined_dns_link_to_dns_link(parsed_subdomain_url.cid_or_domain),
-        path_params.content_path.as_deref().unwrap_or(""),
+        path_params.content_path.as_deref().unwrap_or("/"),
     )
     .map_err(|e| GatewayError::new(StatusCode::BAD_REQUEST, &e.to_string()))?;
     handler(
