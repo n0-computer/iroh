@@ -3,8 +3,7 @@ use async_stream::stream;
 use bytes::Bytes;
 use cid::Cid;
 use futures::{Stream, StreamExt};
-use iroh_rpc_types::p2p;
-use iroh_rpc_types::p2p::*;
+use iroh_rpc_types::{p2p::*, VersionRequest, WatchRequest};
 use libp2p::gossipsub::{MessageId, TopicHash};
 use libp2p::{Multiaddr, PeerId};
 use std::collections::{HashMap, HashSet};
@@ -27,7 +26,7 @@ impl P2pClient {
 
     #[tracing::instrument(skip(self))]
     pub async fn version(&self) -> Result<String> {
-        let res = self.client.rpc(p2p::VersionRequest).await?;
+        let res = self.client.rpc(VersionRequest).await?;
         Ok(res.version)
     }
 
@@ -278,7 +277,6 @@ impl P2pClient {
         };
         ServiceStatus {
             name: "p2p",
-            number: 1,
             status,
             version,
         }
@@ -294,11 +292,11 @@ impl P2pClient {
                     Ok(mut res) => {
                         while let Some(v) = res.next().await {
                             let (status, version) = v.map_or((StatusType::Down, String::new()), |v| (StatusType::Serving, v.version));
-                            yield ServiceStatus::new("p2p", 1, status, version);
+                            yield ServiceStatus::new("p2p", status, version);
                         }
                     },
                     Err(_) => {
-                        yield ServiceStatus::new("p2p", 1, StatusType::Down, "");
+                        yield ServiceStatus::new("p2p", StatusType::Down, "");
                     }
                 }
                 tokio::time::sleep(std::time::Duration::from_millis(1000)).await;

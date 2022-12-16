@@ -1,6 +1,5 @@
 use std::fmt::{self, Debug};
 
-use crate::RpcResult;
 use bytes::Bytes;
 use cid::Cid;
 use derive_more::{From, TryInto};
@@ -10,23 +9,9 @@ use quic_rpc::{
 };
 use serde::{Deserialize, Serialize};
 
+use crate::{RpcResult, VersionRequest, VersionResponse, WatchRequest, WatchResponse};
+
 pub type StoreAddr = super::addr::Addr<StoreService>;
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct WatchRequest;
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct WatchResponse {
-    pub version: String,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct VersionRequest;
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct VersionResponse {
-    pub version: String,
-}
 
 #[derive(Serialize, Deserialize)]
 pub struct PutRequest {

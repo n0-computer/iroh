@@ -5,26 +5,10 @@ use quic_rpc::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::RpcResult;
+use crate::{RpcResult, VersionRequest, VersionResponse, WatchRequest, WatchResponse};
 
 /// Gateway address
 pub type GatewayAddr = crate::addr::Addr<GatewayService>;
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct WatchRequest;
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct WatchResponse {
-    pub version: String,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct VersionRequest;
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct VersionResponse {
-    pub version: String,
-}
 
 #[derive(Serialize, Deserialize, Debug, From, TryInto)]
 pub enum GatewayRequest {

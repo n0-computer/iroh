@@ -3,7 +3,7 @@ use std::fmt;
 use anyhow::Result;
 use async_stream::stream;
 use futures::{Stream, StreamExt};
-use iroh_rpc_types::gateway::*;
+use iroh_rpc_types::{gateway::*, VersionRequest, WatchRequest};
 
 use crate::{status::StatusType, ServiceStatus};
 
@@ -42,7 +42,6 @@ impl GatewayClient {
         };
         ServiceStatus {
             name: "gateway",
-            number: 1,
             status,
             version,
         }
@@ -58,11 +57,11 @@ impl GatewayClient {
                     Ok(mut res) => {
                         while let Some(v) = res.next().await {
                             let (status, version) = v.map_or((StatusType::Down, String::new()), |v| (StatusType::Serving, v.version));
-                            yield ServiceStatus::new("gateway", 1, status, version);
+                            yield ServiceStatus::new("gateway", status, version);
                         }
                     },
                     Err(_) => {
-                        yield ServiceStatus::new("gateway", 1, StatusType::Down, "");
+                        yield ServiceStatus::new("gateway", StatusType::Down, "");
                     }
                 }
                 tokio::time::sleep(std::time::Duration::from_millis(1000)).await;

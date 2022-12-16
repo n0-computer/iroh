@@ -1,17 +1,24 @@
-use std::result;
+use std::{result, time::Duration};
 
 use anyhow::Result;
 use bytes::BytesMut;
-use futures::stream::{BoxStream, StreamExt};
+use futures::stream::Stream;
 use iroh_rpc_client::{create_server, ServerError, ServerSocket, StoreServer};
-use iroh_rpc_types::store::{
-    GetLinksRequest, GetLinksResponse, GetRequest, GetResponse, GetSizeRequest, GetSizeResponse,
-    HasRequest, HasResponse, PutManyRequest, PutRequest, StoreAddr, StoreRequest, StoreService,
+use iroh_rpc_types::{
+    store::{
+        GetLinksRequest, GetLinksResponse, GetRequest, GetResponse, GetSizeRequest,
+        GetSizeResponse, HasRequest, HasResponse, PutManyRequest, PutRequest, StoreAddr,
+        StoreRequest, StoreService,
+    },
     VersionRequest, VersionResponse, WatchRequest, WatchResponse,
 };
 use tracing::info;
 
 use crate::store::Store;
+
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+const WAIT: Duration = Duration::from_secs(1);
+
 impl iroh_rpc_types::NamedService for Store {
     const NAME: &'static str = "store";
 }
@@ -21,20 +28,20 @@ pub struct RpcStore(Store);
 
 impl RpcStore {
     #[tracing::instrument(skip(self))]
-    fn watch(self, _: WatchRequest) -> BoxStream<'static, WatchResponse> {
+    fn watch(self, _: WatchRequest) -> impl Stream<Item = WatchResponse> {
         async_stream::stream! {
             loop {
-                yield WatchResponse { version: env!("CARGO_PKG_VERSION").to_string() };
-                tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+                yield WatchResponse { version: VERSION.to_string() };
+                tokio::time::sleep(WAIT).await;
             }
         }
-        .boxed()
     }
 
     #[tracing::instrument(skip(self))]
     async fn version(self, _: VersionRequest) -> VersionResponse {
-        let version = env!("CARGO_PKG_VERSION").to_string();
-        VersionResponse { version }
+        VersionResponse {
+            version: VERSION.to_string(),
+        }
     }
 
     #[tracing::instrument(skip(self, req))]

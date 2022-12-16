@@ -182,7 +182,7 @@ impl Client {
 
             let mut stream = futures::stream::select_all(streams);
             while let Some(s) = stream.next().await {
-                status.update(s).unwrap();
+                status.update(s).expect("unknown service");
                 yield status.clone();
             }
         }

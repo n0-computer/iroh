@@ -1,11 +1,18 @@
+use std::time::Duration;
+
 use anyhow::{anyhow, ensure, Context, Result};
 use bytes::Bytes;
 use cid::Cid;
 use futures::StreamExt;
-use futures::{stream::BoxStream, TryFutureExt};
+use futures::{
+    stream::{BoxStream, Stream},
+    TryFutureExt,
+};
 use iroh_bitswap::Block;
 use iroh_rpc_client::{create_server, Lookup, P2pServer, ServerError, ServerSocket};
-use iroh_rpc_types::{p2p::*, RpcError, RpcResult};
+use iroh_rpc_types::{
+    p2p::*, RpcError, RpcResult, VersionRequest, VersionResponse, WatchRequest, WatchResponse,
+};
 use libp2p::gossipsub::{
     error::{PublishError, SubscriptionError},
     MessageId, TopicHash,
@@ -22,6 +29,9 @@ use tracing::{debug, info, trace};
 
 use super::node::DEFAULT_PROVIDER_LIMIT;
 
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+const WAIT: Duration = Duration::from_secs(1);
+
 #[derive(Clone)]
 pub(crate) struct P2p {
     sender: Sender<RpcMessage>,
@@ -33,20 +43,20 @@ impl P2p {
     }
 
     #[tracing::instrument(skip(self))]
-    fn watch(self, _: WatchRequest) -> BoxStream<'static, WatchResponse> {
+    fn watch(self, _: WatchRequest) -> impl Stream<Item = WatchResponse> {
         async_stream::stream! {
             loop {
-                yield WatchResponse { version: env!("CARGO_PKG_VERSION").to_string() };
-                tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+                yield WatchResponse { version: VERSION.to_string() };
+                tokio::time::sleep(WAIT).await;
             }
         }
-        .boxed()
     }
 
     #[tracing::instrument(skip(self))]
     async fn version(self, _: VersionRequest) -> VersionResponse {
-        let version = env!("CARGO_PKG_VERSION").to_string();
-        VersionResponse { version }
+        VersionResponse {
+            version: VERSION.to_string(),
+        }
     }
 
     #[tracing::instrument(skip(self))]

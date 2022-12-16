@@ -9,6 +9,9 @@ pub enum StatusType {
     Serving,
     /// Indicates that the service is down.
     Down,
+    /// Indicates that the service not serving data, but the service is not down.
+    // TODO(ramfox): NotServing is currently unused
+    NotServing,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -16,21 +19,14 @@ pub enum StatusType {
 pub struct ServiceStatus {
     /// name of the service: "gateway", "p2p", or "store"
     pub(crate) name: &'static str,
-    pub(crate) number: usize,
     pub(crate) status: StatusType,
     pub(crate) version: String,
 }
 
 impl ServiceStatus {
-    pub fn new<I: Into<String>>(
-        name: &'static str,
-        number: usize,
-        status: StatusType,
-        version: I,
-    ) -> Self {
+    pub fn new<I: Into<String>>(name: &'static str, status: StatusType, version: I) -> Self {
         Self {
             name,
-            number,
             status,
             version: version.into(),
         }
@@ -40,16 +36,12 @@ impl ServiceStatus {
         self.name
     }
 
-    pub fn number(&self) -> usize {
-        self.number
-    }
-
     pub fn status(&self) -> StatusType {
         self.status.clone()
     }
 
-    pub fn version(&self) -> String {
-        self.version.clone()
+    pub fn version(&self) -> &str {
+        &self.version
     }
 }
 
@@ -57,7 +49,6 @@ impl Default for ServiceStatus {
     fn default() -> Self {
         Self {
             name: "",
-            number: 1,
             status: StatusType::Unknown,
             version: String::new(),
         }
@@ -133,9 +124,9 @@ impl Iterator for ClientStatusIterator<'_> {
 impl Default for ClientStatus {
     fn default() -> Self {
         Self {
-            gateway: ServiceStatus::new(gateway::NAME, 1, StatusType::Unknown, ""),
-            p2p: ServiceStatus::new(network::NAME, 1, StatusType::Unknown, ""),
-            store: ServiceStatus::new(store::NAME, 1, StatusType::Unknown, ""),
+            gateway: ServiceStatus::new(gateway::NAME, StatusType::Unknown, ""),
+            p2p: ServiceStatus::new(network::NAME, StatusType::Unknown, ""),
+            store: ServiceStatus::new(store::NAME, StatusType::Unknown, ""),
         }
     }
 }
@@ -148,7 +139,6 @@ mod tests {
     fn service_status_default() {
         let expect = ServiceStatus {
             name: "",
-            number: 1,
             status: StatusType::Unknown,
             version: String::new(),
         };
@@ -159,13 +149,12 @@ mod tests {
     fn service_status_new() {
         let expect = ServiceStatus {
             name: "test",
-            number: 15,
             status: StatusType::Serving,
             version: "v0.1.0".to_string(),
         };
         assert_eq!(
             expect,
-            ServiceStatus::new("test", 15, StatusType::Serving, "v0.1.0")
+            ServiceStatus::new("test", StatusType::Serving, "v0.1.0")
         );
     }
 
@@ -174,19 +163,16 @@ mod tests {
         let expect = ClientStatus {
             gateway: ServiceStatus {
                 name: crate::gateway::NAME,
-                number: 1,
                 status: StatusType::Unknown,
                 version: "".to_string(),
             },
             p2p: ServiceStatus {
                 name: crate::network::NAME,
-                number: 1,
                 status: StatusType::Unknown,
                 version: "".to_string(),
             },
             store: ServiceStatus {
                 name: crate::store::NAME,
-                number: 1,
                 status: StatusType::Unknown,
                 version: "".to_string(),
             },
@@ -200,19 +186,16 @@ mod tests {
         let expect = ClientStatus {
             gateway: ServiceStatus {
                 name: "test",
-                number: 1,
                 status: StatusType::Unknown,
                 version: "test".to_string(),
             },
             p2p: ServiceStatus {
                 name: "test",
-                number: 1,
                 status: StatusType::Unknown,
                 version: "test".to_string(),
             },
             store: ServiceStatus {
                 name: "test",
-                number: 1,
                 status: StatusType::Unknown,
                 version: "test".to_string(),
             },
@@ -220,9 +203,9 @@ mod tests {
         assert_eq!(
             expect,
             ClientStatus::new(
-                Some(ServiceStatus::new("test", 1, StatusType::Unknown, "test")),
-                Some(ServiceStatus::new("test", 1, StatusType::Unknown, "test")),
-                Some(ServiceStatus::new("test", 1, StatusType::Unknown, "test"))
+                Some(ServiceStatus::new("test", StatusType::Unknown, "test")),
+                Some(ServiceStatus::new("test", StatusType::Unknown, "test")),
+                Some(ServiceStatus::new("test", StatusType::Unknown, "test"))
             )
         );
     }
@@ -231,19 +214,16 @@ mod tests {
     fn status_table_update() {
         let gateway = Some(ServiceStatus::new(
             gateway::NAME,
-            1,
             StatusType::Unknown,
             "v0.1.0",
         ));
         let mut p2p = Some(ServiceStatus::new(
             network::NAME,
-            1,
             StatusType::Unknown,
             "v0.1.0",
         ));
         let mut store = Some(ServiceStatus::new(
             store::NAME,
-            1,
             StatusType::Unknown,
             "v0.1.0",
         ));
@@ -268,19 +248,16 @@ mod tests {
             vec![
                 ServiceStatus {
                     name: crate::store::NAME,
-                    number: 1,
                     status: StatusType::Unknown,
                     version: "".to_string(),
                 },
                 ServiceStatus {
                     name: crate::network::NAME,
-                    number: 1,
                     status: StatusType::Unknown,
                     version: "".to_string(),
                 },
                 ServiceStatus {
                     name: crate::gateway::NAME,
-                    number: 1,
                     status: StatusType::Unknown,
                     version: "".to_string(),
                 },

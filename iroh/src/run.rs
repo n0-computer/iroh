@@ -207,7 +207,7 @@ async fn add(
             "hint: try using the --offline flag, or run 'iroh start p2p'".yellow()
             )
         }
-        (true, StatusType::Unknown) => {
+        (true, StatusType::Unknown) | (true, StatusType::NotServing) => {
             anyhow::bail!("Add provides content to the IPFS network by default, but the p2p service is not running.\n{}",
             "hint: try using the --offline flag, or run 'iroh start p2p'".yellow()
             )

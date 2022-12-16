@@ -1,33 +1,36 @@
-use std::result;
+use std::{result, time::Duration};
 
 use anyhow::Result;
-use futures::stream::{BoxStream, StreamExt};
+use futures::stream::Stream;
 use iroh_rpc_client::{create_server, GatewayServer, ServerError, ServerSocket};
-use iroh_rpc_types::gateway::{
-    GatewayAddr, GatewayRequest, GatewayService, VersionRequest, VersionResponse, WatchRequest,
-    WatchResponse,
+use iroh_rpc_types::{
+    gateway::{GatewayAddr, GatewayRequest, GatewayService},
+    VersionRequest, VersionResponse, WatchRequest, WatchResponse,
 };
 use tracing::info;
+
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+const WAIT: Duration = Duration::from_secs(1);
 
 #[derive(Default, Debug, Clone)]
 pub struct Gateway {}
 
 impl Gateway {
     #[tracing::instrument(skip(self))]
-    fn watch(self, _: WatchRequest) -> BoxStream<'static, WatchResponse> {
+    fn watch(self, _: WatchRequest) -> impl Stream<Item = WatchResponse> {
         async_stream::stream! {
             loop {
-                yield WatchResponse { version: env!("CARGO_PKG_VERSION").to_string() };
-                tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+                yield WatchResponse { version: VERSION.to_string() };
+                tokio::time::sleep(WAIT).await;
             }
         }
-        .boxed()
     }
 
     #[tracing::instrument(skip(self))]
     async fn version(self, _: VersionRequest) -> VersionResponse {
-        let version = env!("CARGO_PKG_VERSION").to_string();
-        VersionResponse { version }
+        VersionResponse {
+            version: VERSION.to_string(),
+        }
     }
 }
 

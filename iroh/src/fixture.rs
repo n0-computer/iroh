@@ -62,9 +62,9 @@ fn fixture_add_file() -> Api {
     let mut api = Api::default();
     api.expect_check().returning(|| {
         ClientStatus::new(
-            Some(ServiceStatus::new("gateway", 1, StatusType::Serving, "")),
-            Some(ServiceStatus::new("p2p", 1, StatusType::Serving, "")),
-            Some(ServiceStatus::new("store", 1, StatusType::Serving, "")),
+            Some(ServiceStatus::new("gateway", StatusType::Serving, "")),
+            Some(ServiceStatus::new("p2p", StatusType::Serving, "")),
+            Some(ServiceStatus::new("store", StatusType::Serving, "")),
         )
     });
     api.expect_add_stream().returning(|_| {
@@ -82,9 +82,9 @@ fn fixture_add_directory() -> Api {
     let mut api = Api::default();
     api.expect_check().returning(|| {
         ClientStatus::new(
-            Some(ServiceStatus::new("gateway", 1, StatusType::Serving, "")),
-            Some(ServiceStatus::new("p2p", 1, StatusType::Serving, "")),
-            Some(ServiceStatus::new("store", 1, StatusType::Serving, "")),
+            Some(ServiceStatus::new("gateway", StatusType::Serving, "")),
+            Some(ServiceStatus::new("p2p", StatusType::Serving, "")),
+            Some(ServiceStatus::new("store", StatusType::Serving, "")),
         )
     });
     api.expect_add_stream().returning(|_| {
@@ -154,23 +154,23 @@ fn fixture_start_status_stop() -> Api {
     let mut api = Api::default();
     api.expect_check().returning(|| {
         ClientStatus::new(
-            Some(ServiceStatus::new("gateway", 1, StatusType::Serving, "")),
-            Some(ServiceStatus::new("p2p", 1, StatusType::Serving, "")),
-            Some(ServiceStatus::new("store", 1, StatusType::Serving, "")),
+            Some(ServiceStatus::new("gateway", StatusType::Serving, "")),
+            Some(ServiceStatus::new("p2p", StatusType::Serving, "")),
+            Some(ServiceStatus::new("store", StatusType::Serving, "")),
         )
     });
     api.expect_check().returning(|| {
         ClientStatus::new(
-            Some(ServiceStatus::new("gateway", 1, StatusType::Serving, "")),
-            Some(ServiceStatus::new("p2p", 1, StatusType::Serving, "")),
-            Some(ServiceStatus::new("store", 1, StatusType::Serving, "")),
+            Some(ServiceStatus::new("gateway", StatusType::Serving, "")),
+            Some(ServiceStatus::new("p2p", StatusType::Serving, "")),
+            Some(ServiceStatus::new("store", StatusType::Serving, "")),
         )
     });
     api.expect_check().returning(|| {
         ClientStatus::new(
-            Some(ServiceStatus::new("gateway", 1, StatusType::Unknown, "")),
-            Some(ServiceStatus::new("p2p", 1, StatusType::Unknown, "")),
-            Some(ServiceStatus::new("store", 1, StatusType::Unknown, "")),
+            Some(ServiceStatus::new("gateway", StatusType::Unknown, "")),
+            Some(ServiceStatus::new("p2p", StatusType::Unknown, "")),
+            Some(ServiceStatus::new("store", StatusType::Unknown, "")),
         )
     });
     api

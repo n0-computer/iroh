@@ -9,28 +9,12 @@ use quic_rpc::{
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-use crate::RpcResult;
+use crate::{RpcResult, VersionRequest, VersionResponse, WatchRequest, WatchResponse};
 
 pub type P2pAddr = super::addr::Addr<P2pService>;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Key(pub Bytes);
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct WatchRequest;
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct WatchResponse {
-    pub version: String,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct VersionRequest;
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct VersionResponse {
-    pub version: String,
-}
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct LocalPeerIdRequest;
