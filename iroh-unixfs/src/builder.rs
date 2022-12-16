@@ -86,12 +86,6 @@ impl Directory {
         }
     }
 
-    /// Wrap an entry in an unnamed directory. Used when adding a unixfs file or top level directory to
-    /// Iroh in order to preserve the file or directory's name.
-    pub fn wrap(self) -> Self {
-        Directory::single("".into(), Entry::Directory(self))
-    }
-
     pub async fn encode_root(self) -> Result<Block> {
         let mut current = None;
         let parts = self.encode();
@@ -202,10 +196,6 @@ impl File {
         &self.name
     }
 
-    pub fn wrap(self) -> Directory {
-        Directory::single("".into(), Entry::File(self))
-    }
-
     pub async fn encode_root(self) -> Result<Block> {
         let mut current = None;
         let parts = self.encode().await?;
@@ -250,10 +240,6 @@ impl Symlink {
                 .to_string(),
             target: target.into(),
         }
-    }
-
-    pub fn wrap(self) -> Directory {
-        Directory::single("".into(), Entry::Symlink(self))
     }
 
     pub fn name(&self) -> &str {
@@ -465,11 +451,7 @@ impl Entry {
     }
 
     fn wrap(self) -> Directory {
-        match self {
-            Entry::File(f) => f.wrap(),
-            Entry::Directory(d) => d.wrap(),
-            Entry::Symlink(s) => s.wrap(),
-        }
+        Directory::single("".into(), self)
     }
 }
 
