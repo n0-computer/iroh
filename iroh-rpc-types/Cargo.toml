@@ -1,22 +1,22 @@
 [package]
 name = "iroh-rpc-types"
-version = "0.1.3"
-edition = "2021"
 authors = ["Friedel Ziegelmayer <me@dignifiedquire.com>", "ramfox"]
-license = "Apache-2.0/MIT"
-repository = "https://github.com/n0-computer/iroh"
 description = "RPC type definitions for iroh"
-rust-version = "1.65"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
 
 [dependencies]
-anyhow = { version = "1", features = ["backtrace"] }
-bytes = { version = "1.3.0", features = ["serde"] }
-cid = { version = "0.9", features = ["serde-codec"] }
-derive_more = "0.99.17"
-futures = "0.3.24"
-libp2p = { version = "0.50", default-features = false, features = ["serde"] }
-quic-rpc = { version = "0.2.2", default-features = false }
-serde = { version = "1" }
-serde-error = "0.1.2"
-serde_with = "2.1.0"
-tokio = { version = "1", default-features = false }
+anyhow.workspace = true
+bytes = { workspace = true, features = ["serde"] }
+cid = { workspace = true, features = ["serde-codec"] }
+derive_more.workspace = true
+futures.workspace = true
+libp2p = { workspace = true, features = ["serde"] }
+quic-rpc.workspace = true
+serde.workspace = true
+serde-error.workspace = true
+serde_with.workspace = true
+tokio = { workspace = true, default-features = false }

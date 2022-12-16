@@ -1,15 +1,15 @@
 [package]
 name = "iroh-localops"
-version = "0.1.3"
-edition = "2021"
-rust-version = "1.65"
 authors = ["dignifiedquire <me@dignifiedquire.com>", "b5 <b5@n0.computer>"]
-license = "Apache-2.0/MIT"
-repository = "https://github.com/n0-computer/iroh"
 description = "Iroh specific process management."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
 
 [dependencies]
-anyhow = { version = "1", features = ["backtrace"] }
+anyhow.workspace = true
 
 [target.'cfg(unix)'.dependencies]
-nix = { version = "0.26", features = ["signal", "process"]}
+nix = { workspace = true, features = ["signal", "process"] }

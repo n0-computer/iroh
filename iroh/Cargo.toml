@@ -1,12 +1,12 @@
 [package]
 name = "iroh"
-version = "0.1.3"
-edition = "2021"
 authors = ["Kasey Huizinga <klhuizinga@gmail.com>", "Martijn Faassen <faassen@startifact.com>"]
-license = "Apache-2.0/MIT"
-repository = "https://github.com/n0-computer/iroh"
 description = "Command line interface for interacting with iroh."
-rust-version = "1.65"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
 
 exclude = [
   "tests/**",
@@ -17,26 +17,26 @@ exclude = [
 testing = ["dep:relative-path"]
 
 [dependencies]
-anyhow = { version = "1", features = ["backtrace"] }
-async-stream = "0.3.3"
-clap = { version = "4.0.15", features = ["derive"] }
-config = "0.13.1"
-console = { version = "0.15", default-features = false }
-crossterm = "0.25"
-futures = "0.3.21"
-git-version = "0.3.5"
-indicatif = "0.17.1"
-iroh-api = { version = "0.1.3", path = "../iroh-api"}
-iroh-localops = { version = "0.1.3", path = "../iroh-localops" }
-iroh-metrics = { version = "0.1.3", path = "../iroh-metrics", default-features = false }
-iroh-util = { version = "0.1.3", path = "../iroh-util"}
-iroh-unixfs = { version = "0.1.3", path = "../iroh-unixfs" }
-relative-path = { version = "1.7.2", optional = true }
-serde = { version = "1.0", features = ["derive"] }
-sysinfo = "0.26.4"
-tokio = { version = "1", features = ["fs", "io-util"] }
-tracing = "0.1.34"
-which = "4.3.0"
+anyhow.workspace = true
+async-stream.workspace = true
+clap = { workspace = true, features = ["derive"] }
+config.workspace = true
+console.workspace = true
+crossterm.workspace = true
+futures.workspace = true
+git-version.workspace = true
+indicatif.workspace = true
+iroh-api.workspace = true
+iroh-localops.workspace = true
+iroh-metrics.workspace = true
+iroh-util.workspace = true
+iroh-unixfs.workspace = true
+relative-path = { workspace = true, optional = true }
+serde = { workspace = true, features = ["derive"] }
+sysinfo.workspace = true
+tokio = { workspace = true, features = ["fs", "io-util"] }
+tracing.workspace = true
+which.workspace = true
 
 [dev-dependencies]
 # We want to compile `iroh` in test mode, but we can't specify that yet:
@@ -47,6 +47,6 @@ which = "4.3.0"
 # mode. trycmd needs to have an actual binary to invoke.
 # Unfortunately this also turns on the feature during development, which may be
 # confusing. See the comments in `run.rs` surrounding this.
-iroh = { path = ".", features = ["testing"] }
-iroh-api = { version = "0.1.3", path = "../iroh-api", features = ["testing"] }
-trycmd = "0.14.1"
+iroh = { workspace = true, features = ["testing"] }
+iroh-api = { workspace = true, features = ["testing"] }
+trycmd.workspace = true
