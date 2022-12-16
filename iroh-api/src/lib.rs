@@ -1,11 +1,3 @@
-mod api;
-mod config;
-mod error;
-mod p2p;
-mod store;
-
-pub mod fs;
-
 #[cfg(not(feature = "testing"))]
 pub use crate::api::Api;
 #[cfg(feature = "testing")]
@@ -29,3 +21,11 @@ pub use iroh_unixfs::chunker::{ChunkerConfig, DEFAULT_CHUNKS_SIZE};
 pub use iroh_unixfs::Block;
 pub use libp2p::gossipsub::MessageId;
 pub use libp2p::{Multiaddr, PeerId};
+
+mod api;
+mod error;
+mod p2p;
+mod store;
+
+pub mod config;
+pub mod fs;

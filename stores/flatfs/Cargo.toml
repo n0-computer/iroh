@@ -1,18 +1,18 @@
 [package]
 name = "flatfs-store"
-version = "0.1.2"
-edition = "2021"
 authors = ["dignifiedquire <me@dignifiedquire.com>"]
-license = "Apache-2.0/MIT"
-repository = "https://github.com/n0-computer/iroh"
 description = "Implementation of FlatFS"
-rust-version = "1.65"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
 publish = false
 
 [dependencies]
-anyhow = { version = "1", features = ["backtrace"] }
-backoff = "0.4.0"
-ignore = "0.4.18"
+anyhow.workspace = true
+backoff.workspace = true
+ignore.workspace = true
 
 [dev-dependencies]
-tempfile = "3.3.0"
+tempfile.workspace = true

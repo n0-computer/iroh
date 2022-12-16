@@ -1,22 +1,22 @@
 [package]
 name = "rocks-store"
 version = "0.1.2"
-edition = "2021"
 authors = ["dignifiedquire <me@dignifiedquire.com>"]
-license = "Apache-2.0/MIT"
-repository = "https://github.com/n0-computer/iroh"
 description = "Implementation of RocksDB based Store"
-rust-version = "1.65"
 publish = false
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
 
 [dependencies]
-anyhow = { version = "1", features = ["backtrace"] }
+anyhow.workspace = true
 flatfs-store = { path = "../flatfs", optional = true }
-rocksdb = "0.19.0"
+rocksdb.workspace = true
 
 [dev-dependencies]
 flatfs-store = { path = "../flatfs" }
-tempfile = "3.3.0"
+tempfile.workspace = true
 
 [features]
 importer = ["flatfs-store"]

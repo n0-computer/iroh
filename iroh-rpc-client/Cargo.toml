@@ -1,31 +1,30 @@
 [package]
 name = "iroh-rpc-client"
-version = "0.1.3"
-edition = "2021"
 authors = ["Friedel Ziegelmayer <me@dignifiedquire.com>", "ramfox"]
-license = "Apache-2.0/MIT"
-repository = "https://github.com/n0-computer/iroh"
 description = "RPC type client for iroh"
-rust-version = "1.65"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
 
 [dependencies]
-
-anyhow = { version = "1", features = ["backtrace"] }
-async-stream = "0.3.3"
-bytes = "1.1.0"
-cid = "0.9.0"
-config = "0.13.1"
-futures = "0.3.21"
-iroh-metrics = { version = "0.1.3", path = "../iroh-metrics", default-features = false }
-iroh-util = { version = "0.1.3", path = "../iroh-util" }
-libp2p = { version = "0.50", default-features = false, features = ["gossipsub"] }
-quic-rpc = { version = "0.2.2", features = ["http2"], default-features = false }
-serde = { version = "1.0", features = ["derive"] }
-tokio = { version = "1", features = ["sync"] }
-toml = "0.5.9"
-tracing = "0.1.34"
-iroh-rpc-types = { version = "0.1.3", path = "../iroh-rpc-types" }
-hyper = "0.14.23"
+anyhow.workspace = true
+async-stream.workspace = true
+bytes.workspace = true
+cid.workspace = true
+config.workspace = true
+futures.workspace = true
+hyper.workspace = true
+iroh-metrics.workspace = true
+iroh-rpc-types.workspace = true
+iroh-util.workspace = true
+libp2p = { workspace = true, features = ["gossipsub"] }
+quic-rpc = { workspace = true, features = ["http2"] }
+serde = { workspace = true, features = ["derive"] }
+tokio = { workspace = true, features = ["sync"] }
+toml.workspace = true
+tracing.workspace = true
 
 [dev-dependencies]
-tokio-stream = { version = "0.1.9", features = ["net"] }
+tokio-stream = { workspace = true, features = ["net"] }

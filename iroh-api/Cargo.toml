@@ -1,43 +1,43 @@
 [package]
 name = "iroh-api"
-version = "0.1.3"
-edition = "2021"
-license = "Apache-2.0/MIT"
 readme = "README.md"
 description = "Rust API for Iroh"
-rust-version = "1.65"
-repository = "https://github.com/n0-computer/iroh"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
 
 [features]
 testing = ["dep:mockall"]
 
 [dependencies]
-anyhow = { version = "1", features = ["backtrace"] }
-async-stream = "0.3.3"
-async-trait = "0.1.53"
-bytes = "1.1.0"
-cid = "0.9"
-config = "0.13.1"
-futures = "0.3.21"
-iroh-metrics = { version = "0.1.3", path = "../iroh-metrics", default-features = false }
-iroh-resolver = { version = "0.1.3", path = "../iroh-resolver" }
-iroh-rpc-client = { version = "0.1.3", path = "../iroh-rpc-client", default-features = false }
-iroh-rpc-types = { version = "0.1.3", path = "../iroh-rpc-types", default-features = false }
-iroh-unixfs = { version = "0.1.3", path = "../iroh-unixfs" }
-iroh-util = { version = "0.1.3", path = "../iroh-util" }
-libp2p = "0.50"
-mockall = { version = "0.11.2", optional = true }
-relative-path = "1.7.2"
-serde = { version = "1.0", features = ["derive"] }
-thiserror = "1.0"
-tokio = { version = "1" }
-tracing = "0.1.34"
+anyhow.workspace = true
+async-stream.workspace = true
+async-trait.workspace = true
+bytes.workspace = true
+cid.workspace = true
+config.workspace = true
+futures.workspace = true
+iroh-metrics.workspace = true
+iroh-resolver.workspace = true
+iroh-rpc-client.workspace = true
+iroh-rpc-types.workspace = true
+iroh-unixfs.workspace = true
+iroh-util.workspace = true
+libp2p.workspace = true
+mockall = { workspace = true, optional = true }
+relative-path.workspace = true
+serde = { workspace = true, features = ["derive"] }
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
 
 [dev-dependencies]
-criterion = { version = "0.4.0", features = ["async_tokio"] }
-iroh-rpc-types = { version = "0.1.3", path = "../iroh-rpc-types", default-features = false }
-iroh-store = { version = "0.1.3", path = "../iroh-store", default-features = false }
-tempfile = "3.3.0"
+criterion = { workspace = true, features = ["async_tokio"] }
+iroh-rpc-types.workspace = true
+iroh-store.workspace = true
+tempfile.workspace = true
 
 [[bench]]
 name = "add"

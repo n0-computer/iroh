@@ -1,0 +1,17 @@
+[package]
+name = "iroh-example-embed"
+authors = ["team@n0.computer"]
+description = "Example of using iroh-embed"
+publish = false
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+futures-util.workspace = true
+iroh-api.workspace = true
+iroh-embed.workspace = true
+testdir.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread"] }

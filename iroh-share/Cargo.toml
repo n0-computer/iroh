@@ -1,38 +1,38 @@
 [package]
 name = "iroh-share"
-version = "0.1.3"
-edition = "2021"
 authors = ["dignifiedquire <me@dignifiedquire.com>"]
-license = "Apache-2.0/MIT"
-repository = "https://github.com/n0-computer/iroh"
 description = "Sharing files with iroh"
-rust-version = "1.65"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
 
 [dependencies]
-anyhow = { version = "1", features = ["backtrace"] }
-async-trait = "0.1.56"
-bincode = "1.3.3"
-bytes = "1.1.0"
-cid = { version = "0.9", features = ["serde-codec"] }
-clap = { version = "4.0.9", features = ["derive"] }
-futures = "0.3.21"
-iroh-metrics = { version = "0.1.3", path = "../iroh-metrics", default-features = false }
-iroh-p2p = { version = "0.1.3", path = "../iroh-p2p", default-features = false }
-iroh-resolver = { version = "0.1.3", path = "../iroh-resolver", default-features = false }
-iroh-rpc-client = { version = "0.1.3", path = "../iroh-rpc-client", default-features = false }
-iroh-rpc-types = { version = "0.1.3", path = "../iroh-rpc-types", default-features = false }
-iroh-store = { version = "0.1.3", path = "../iroh-store", default-features = false }
-iroh-unixfs = { version = "0.1.3", path = "../iroh-unixfs" }
-iroh-util = { version = "0.1.3", path = "../iroh-util" }
-libp2p = { version = "0.50", default-features = false, features = ["gossipsub"] }
-multibase = "0.9.1"
-rand = "0.8.5"
-serde = { version = "1", features = ["derive"] }
-tempfile = "3.3.0"
-tokio = { version = "1" }
-tokio-stream = "0.1.9"
-tracing = "0.1.34"
-tracing-subscriber = "0.3.14"
+anyhow.workspace = true
+async-trait.workspace = true
+bincode.workspace = true
+bytes.workspace = true
+cid = { workspace = true, features = ["serde-codec"] }
+clap = { workspace = true, features = ["derive"] }
+futures.workspace = true
+iroh-metrics.workspace = true
+iroh-p2p.workspace = true
+iroh-resolver.workspace = true
+iroh-rpc-client.workspace = true
+iroh-rpc-types.workspace = true
+iroh-store.workspace = true
+iroh-unixfs.workspace = true
+iroh-util.workspace = true
+libp2p = { workspace = true, features = ["gossipsub"] }
+multibase.workspace = true
+rand.workspace = true
+serde = { workspace = true, features = ["derive"] }
+tempfile.workspace = true
+tokio.workspace = true
+tokio-stream.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
 
 [dev-dependencies]
-tokio = { version = "1", features = ["full"] }
+tokio = { workspace = true, features = ["full"] }

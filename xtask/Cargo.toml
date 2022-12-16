@@ -1,14 +1,14 @@
 [package]
 name = "xtask"
-version = "0.1.3"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
 publish = false
-rust-version = "1.65"
+rust-version.workspace = true
 
 [dependencies]
-anyhow = { version = "1", features = ["backtrace"] }
-clap = { version = "4.0.9", features = ["derive"] }
-clap_mangen = "0.2.2"
-dirs-next = "2.0.0"
-xtaskops = "0.3.0"
-iroh = { version = "0.1.3", path = "../iroh" }
+anyhow.workspace = true
+clap = { workspace = true, features = ["derive"] }
+clap_mangen.workspace = true
+dirs-next.workspace = true
+xtaskops.workspace = true
+iroh.workspace = true

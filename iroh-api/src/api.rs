@@ -25,6 +25,13 @@ use tokio::io::{AsyncRead, AsyncReadExt};
 
 use crate::store::add_blocks_to_store;
 
+/// API to interact with an iroh system.
+///
+/// This provides an API to use the iroh system consisting of several services working
+/// together.  It offers both a higher level API as well as some lower-level APIs.
+///
+/// Unless working on iroh directly this should probably be constructed via the `iroh-embed`
+/// crate rather then directly.
 #[derive(Debug, Clone)]
 pub struct Api {
     client: Client,
@@ -38,7 +45,7 @@ pub enum OutType {
 }
 
 impl fmt::Debug for OutType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Dir => write!(f, "Dir"),
             Self::Reader(_) => write!(f, "Reader(impl AsyncRead + Unpin>)"),
@@ -49,9 +56,13 @@ impl fmt::Debug for OutType {
 
 #[cfg_attr(feature = "testing", allow(dead_code), automock)]
 impl Api {
+    /// Creates a new instance from the iroh configuration.
+    ///
+    /// This loads configuration from an optional configuration file and environment
+    /// variables.
     // The lifetime is needed for mocking.
     #[allow(clippy::needless_lifetimes)]
-    pub async fn new<'a>(
+    pub async fn from_env<'a>(
         config_path: Option<&'a Path>,
         overrides_map: HashMap<String, String>,
     ) -> Result<Self> {
@@ -66,12 +77,12 @@ impl Api {
             ENV_PREFIX,
             // map of present command line arguments
             overrides_map,
-        )
-        .unwrap();
-        Api::from_config(config).await
+        )?;
+        Self::new(config).await
     }
 
-    pub async fn from_config(config: Config) -> Result<Self> {
+    /// Creates a new instance from the provided configuration.
+    pub async fn new(config: Config) -> Result<Self> {
         let client = Client::new(config.rpc_client).await?;
         let content_loader = FullLoader::new(
             client.clone(),
@@ -83,12 +94,7 @@ impl Api {
                     .map(|u| u.parse())
                     .collect::<Result<_>>()
                     .context("invalid gateway url")?,
-                indexer: config
-                    .indexer_endpoint
-                    .as_ref()
-                    .map(|u| u.parse())
-                    .transpose()
-                    .context("invalid indexer endpoint")?,
+                indexer: config.indexer_endpoint,
             },
         )?;
         let resolver = Resolver::new(content_loader);
@@ -100,6 +106,10 @@ impl Api {
         Self { client, resolver }
     }
 
+    /// Announces to the DHT that this node can offer the given [`Cid`].
+    ///
+    /// This publishes a provider record for the [`Cid`] to the DHT, establishing the local
+    /// node as provider for the [`Cid`].
     pub async fn provide(&self, cid: Cid) -> Result<()> {
         self.client.try_p2p()?.start_providing(&cid).await
     }
@@ -110,6 +120,9 @@ impl Api {
     }
 
     /// High level get, equivalent of CLI `iroh get`.
+    ///
+    /// Returns a stream of items, where items can be either blobs or UnixFs components.
+    /// Each blob will be a full object, a file in case of UnixFs, and not raw chunks.
     pub fn get(
         &self,
         ipfs_path: &IpfsPath,

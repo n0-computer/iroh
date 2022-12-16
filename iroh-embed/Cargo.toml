@@ -1,0 +1,29 @@
+[package]
+name = "iroh-embed"
+authors = ["Floris Bruynooghe <flub@n0.computer>"]
+description = "Embedable iroh library"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+futures.workspace = true
+iroh-api.workspace = true
+iroh-gateway.workspace = true
+iroh-metrics.workspace = true
+iroh-one.workspace = true
+iroh-p2p.workspace = true
+iroh-resolver.workspace = true
+iroh-rpc-client.workspace = true
+iroh-rpc-types.workspace = true
+iroh-store.workspace = true
+iroh-unixfs.workspace = true
+reqwest = { workspace = true, features = ["rustls-tls", "json"] }
+tokio.workspace = true
+
+[dev-dependencies]
+testdir.workspace = true
+tokio-test.workspace = true
