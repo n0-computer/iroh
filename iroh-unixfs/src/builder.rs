@@ -593,7 +593,7 @@ enum HamtNode {
 }
 
 impl HamtNode {
-    pub(super) fn new(entries: Vec<Entry>) -> HamtNode {
+    fn new(entries: Vec<Entry>) -> HamtNode {
         // add the hash
         let entries = entries
             .into_iter()
