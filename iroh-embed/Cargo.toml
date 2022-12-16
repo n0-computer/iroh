@@ -1,29 +1,29 @@
 [package]
 name = "iroh-embed"
-version = "0.1.3"
-edition = "2021"
 authors = ["Floris Bruynooghe <flub@n0.computer>"]
-license = "Apache-2.0/MIT"
-repository = "https://github.com/n0-computer/iroh"
 description = "Embedable iroh library"
-rust-version = "1.65"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
 
 [dependencies]
-anyhow = { version = "1", features = ["backtrace"] }
-futures = "0.3.21"
-iroh-api = { version = "0.1.3", path = "../iroh-api" }
-iroh-gateway = { version = "0.1.3", path = "../iroh-gateway" }
-iroh-metrics = { version = "0.1.3", path = "../iroh-metrics" }
-iroh-one = { version = "0.1.3", path = "../iroh-one" }
-iroh-p2p = { version = "0.1.3", path = "../iroh-p2p" }
-iroh-resolver = { version = "0.1.3", path = "../iroh-resolver" }
-iroh-rpc-client = { version = "0.1.3", path = "../iroh-rpc-client" }
-iroh-rpc-types = { version = "0.1.3", path = "../iroh-rpc-types" }
-iroh-store = { version = "0.1.3", path = "../iroh-store" }
-iroh-unixfs = { version = "0.1.3", path = "../iroh-unixfs" }
-reqwest = { version = "0.11", features = ["rustls-tls", "json"], default-features = false }
-tokio = "1"
+anyhow.workspace = true
+futures.workspace = true
+iroh-api.workspace = true
+iroh-gateway.workspace = true
+iroh-metrics.workspace = true
+iroh-one.workspace = true
+iroh-p2p.workspace = true
+iroh-resolver.workspace = true
+iroh-rpc-client.workspace = true
+iroh-rpc-types.workspace = true
+iroh-store.workspace = true
+iroh-unixfs.workspace = true
+reqwest = { workspace = true, features = ["rustls-tls", "json"] }
+tokio.workspace = true
 
 [dev-dependencies]
-testdir = "0.7.0"
-tokio-test = "0.4.2"
+testdir.workspace = true
+tokio-test.workspace = true

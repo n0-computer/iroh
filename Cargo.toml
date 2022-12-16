@@ -97,6 +97,7 @@ iroh-car = { version = "0.1.3", path = "./iroh-car" }
 iroh-gateway = { version = "0.1.3", path = "./iroh-gateway" }
 iroh-localops = { version = "0.1.3", path = "./iroh-localops" }
 iroh-metrics = { version = "0.1.3", path = "./iroh-metrics" }
+iroh-one = { version = "0.1.3", path = "./iroh-one" }
 iroh-p2p = { version = "0.1.3", path = "./iroh-p2p" }
 iroh-resolver = { version = "0.1.3", path = "./iroh-resolver" }
 iroh-rpc-client = { version = "0.1.3", path = "./iroh-rpc-client" }
@@ -154,6 +155,7 @@ time = "0.3.9"
 tokio = "1"
 tokio-context = "0.1.3"
 tokio-stream = "0.1.11"
+tokio-test = "0.4.2"
 tokio-util = "0.7"
 toml = "0.5.9"
 tower = "0.4"
