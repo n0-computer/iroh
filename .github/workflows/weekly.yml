@@ -1,0 +1,52 @@
+name: Weekly CI
+
+on:
+  schedule:
+    - cron: "0 0 * * 1" # every monday at 00:00
+  workflow_dispatch:
+
+jobs:
+  weekly-ci:
+    strategy:
+      fail-fast: false
+      matrix:
+        rust: [beta]
+
+    runs-on: ubuntu-latest
+
+    env:
+      RUSTFLAGS: -Dwarnings -Cdebuginfo=0
+      RUST_BACKTRACE: full
+      RUSTV: ${{ matrix.rust }}
+
+    steps:
+      - uses: actions/checkout@master
+  
+      - name: Set build arch
+        run: |
+          echo "PROTOC_ARCH=${{ matrix.protoc-arch }}" >> $GITHUB_ENV
+
+      - name: Install Protoc
+        if: matrix.os != 'windows-latest'
+        run: |
+          PROTOC_VERSION=3.20.1
+          PROTOC_ZIP=protoc-$PROTOC_VERSION-$PROTOC_ARCH.zip
+          curl --retry 3 --retry-max-time 90 -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" -OL https://github.com/protocolbuffers/protobuf/releases/download/v$PROTOC_VERSION/$PROTOC_ZIP
+          sudo unzip -o $PROTOC_ZIP -d /usr/local bin/protoc
+          sudo unzip -o $PROTOC_ZIP -d /usr/local 'include/*'
+          rm -f $PROTOC_ZIP
+          echo "PROTOC=/usr/local/bin/protoc" >> $GITHUB_ENV
+          echo "PROTOC_INCLUDE=/usr/local/include" >> $GITHUB_ENV
+  
+      - name: clippy all features
+        run: |
+          cargo clippy --workspace --all-features --all-targets -- -D warnings
+
+      - name: Create Issue if clippy failed
+        if: ${{ failure() }}
+        uses: dacbd/create-issue-action@v1
+        with:
+          token: ${{ github.token }}
+          title: ${{ matrix.rust }} clippy failed
+          body: |
+            Failed Run: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
