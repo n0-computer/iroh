@@ -310,9 +310,9 @@ pub(crate) fn hash_key(key: &[u8]) -> [u8; HASH_BIT_LENGTH] {
     h1.to_be_bytes()
 }
 
-pub(crate) fn bits(hash: &[u8; 8], pos: u32, len: u32) -> u32 {
+pub(crate) fn bits(hash: &[u8; 8], pos: u32, len: u32) -> anyhow::Result<u32> {
     let mut hash = HashBits::new_at_index(hash, pos);
-    hash.next(len).unwrap()
+    hash.next(len)
 }
 
 fn log2(x: u32) -> u32 {

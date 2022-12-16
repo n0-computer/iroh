@@ -5,7 +5,7 @@ use std::{
     pin::Pin,
 };
 
-use anyhow::{ensure, Result};
+use anyhow::{ensure, Context, Result};
 use async_recursion::async_recursion;
 use bytes::Bytes;
 use futures::{
@@ -568,8 +568,12 @@ impl DirectoryBuilder {
             match typ {
                 DirectoryType::Basic => Directory::Basic(BasicDirectory { name, entries }),
                 DirectoryType::Hamt => {
-                    let hamt = Box::new(HamtNode::new(entries));
-                    Directory::Hamt(HamtDirectory { name, hamt })
+                    let hamt = HamtNode::new(entries)
+                        .context("unable to build hamt. Probably a hash collision.")?;
+                    Directory::Hamt(HamtDirectory {
+                        name,
+                        hamt: Box::new(hamt),
+                    })
                 }
             }
         })
@@ -593,7 +597,7 @@ enum HamtNode {
 }
 
 impl HamtNode {
-    fn new(entries: Vec<Entry>) -> HamtNode {
+    fn new(entries: Vec<Entry>) -> anyhow::Result<HamtNode> {
         // add the hash
         let entries = entries
             .into_iter()
@@ -606,24 +610,24 @@ impl HamtNode {
         Self::group(entries, 0, 8)
     }
 
-    fn group(leafs: Vec<HamtLeaf>, pos: u32, len: u32) -> HamtNode {
-        if leafs.len() == 1 && pos > 0 {
+    fn group(leafs: Vec<HamtLeaf>, pos: u32, len: u32) -> anyhow::Result<HamtNode> {
+        Ok(if leafs.len() == 1 && pos > 0 {
             HamtNode::Leaf(leafs.into_iter().next().unwrap())
         } else {
             let mut res = BTreeMap::<u32, Vec<HamtLeaf>>::new();
             for leaf in leafs {
-                let value = bits(&leaf.0, pos, len);
+                let value = bits(&leaf.0, pos, len)?;
                 res.entry(value).or_default().push(leaf);
             }
             let res = res
                 .into_iter()
                 .map(|(key, leafs)| {
-                    let node = Self::group(leafs, pos + len, len);
-                    (key, node)
+                    let node = Self::group(leafs, pos + len, len)?;
+                    anyhow::Ok((key, node))
                 })
-                .collect();
+                .collect::<anyhow::Result<_>>()?;
             HamtNode::Branch(res)
-        }
+        })
     }
 
     fn name(&self) -> &str {
@@ -1008,6 +1012,22 @@ mod tests {
 
         // at directory link limit should be processed as a hamt
         assert_eq!(DirectoryType::Hamt, builder.typ);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_hamt_hash_collision() -> Result<()> {
+        // allow hamt override
+        let mut builder = DirectoryBuilder::new().hamt();
+        for _i in 0..2 {
+            let file = FileBuilder::new()
+                .name("foo.txt")
+                .content_bytes(Bytes::from("hello world"))
+                .build()
+                .await?;
+            builder = builder.add_file(file);
+        }
+        assert!(builder.build().await.is_err());
         Ok(())
     }
 
