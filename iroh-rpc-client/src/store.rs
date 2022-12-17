@@ -79,17 +79,12 @@ impl StoreClient {
         stream! {
             loop {
                 let res = client.server_streaming(WatchRequest).await;
-                match res {
-                    Ok(mut res) => {
-                        while let Some(v) = res.next().await {
-                            let (status, version) = v.map_or((StatusType::Down, String::new()), |v| (StatusType::Serving, v.version));
-                            yield (status, version);
-                        }
-                    },
-                    Err(_) => {
-                        yield (StatusType::Down, String::new());
+                if let Ok(mut res) = res {
+                    while let Some(Ok(version)) = res.next().await {
+                        yield (StatusType::Serving, version.version);
                     }
                 }
+                yield (StatusType::Down, String::new());
                 tokio::time::sleep(HEALTH_POLL_WAIT).await;
             }
         }
