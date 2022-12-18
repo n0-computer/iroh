@@ -7,7 +7,7 @@ use crate::IpfsPath;
 use crate::P2pApi;
 use anyhow::{ensure, Context, Result};
 use cid::Cid;
-use futures::stream::LocalBoxStream;
+use futures::stream::BoxStream;
 use futures::{StreamExt, TryStreamExt};
 use iroh_resolver::resolver::Resolver;
 use iroh_rpc_client::Client;
@@ -40,7 +40,7 @@ pub struct Api {
 
 pub enum OutType {
     Dir,
-    Reader(Box<dyn AsyncRead + Unpin>),
+    Reader(Box<dyn AsyncRead + Unpin + Send>),
     Symlink(PathBuf),
 }
 
@@ -126,7 +126,7 @@ impl Api {
     pub fn get(
         &self,
         ipfs_path: &IpfsPath,
-    ) -> Result<LocalBoxStream<'static, Result<(RelativePathBuf, OutType)>>> {
+    ) -> Result<BoxStream<'static, Result<(RelativePathBuf, OutType)>>> {
         ensure!(
             ipfs_path.cid().is_some(),
             "IPFS path does not refer to a CID"
@@ -165,15 +165,15 @@ impl Api {
             }
         };
 
-        Ok(stream.boxed_local())
+        Ok(stream.boxed())
     }
 
     pub async fn check(&self) -> StatusTable {
         self.client.check().await
     }
 
-    pub async fn watch(&self) -> LocalBoxStream<'static, StatusTable> {
-        self.client.clone().watch().await.boxed_local()
+    pub async fn watch(&self) -> BoxStream<'static, StatusTable> {
+        self.client.clone().watch().await.boxed()
     }
 
     /// The `add_stream` method encodes the entry into a DAG and adds
@@ -184,9 +184,9 @@ impl Api {
     pub async fn add_stream(
         &self,
         entry: UnixfsEntry,
-    ) -> Result<LocalBoxStream<'static, Result<(Cid, u64)>>> {
+    ) -> Result<BoxStream<'static, Result<(Cid, u64)>>> {
         let blocks = match entry {
-            UnixfsEntry::File(f) => f.encode().await?.boxed_local(),
+            UnixfsEntry::File(f) => f.encode().await?.boxed(),
             UnixfsEntry::Directory(d) => d.encode(),
             UnixfsEntry::Symlink(s) => Box::pin(async_stream::try_stream! {
                 yield s.encode()?

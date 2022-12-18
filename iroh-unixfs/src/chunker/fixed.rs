@@ -1,7 +1,7 @@
 use std::io;
 
 use bytes::{Bytes, BytesMut};
-use futures::{stream::LocalBoxStream, StreamExt};
+use futures::{stream::BoxStream, StreamExt};
 use tokio::io::{AsyncRead, AsyncReadExt};
 
 /// Default size for chunks.
@@ -27,10 +27,10 @@ impl Fixed {
         Self { chunk_size }
     }
 
-    pub fn chunks<'a, R: AsyncRead + Unpin + 'a>(
+    pub fn chunks<'a, R: AsyncRead + Unpin + Send + 'a>(
         self,
         mut source: R,
-    ) -> LocalBoxStream<'a, io::Result<Bytes>> {
+    ) -> BoxStream<'a, io::Result<Bytes>> {
         let chunk_size = self.chunk_size;
         async_stream::stream! {
             let mut buffer = BytesMut::with_capacity(chunk_size);
@@ -70,7 +70,7 @@ impl Fixed {
                 }
             }
         }
-        .boxed_local()
+        .boxed()
     }
 }
 

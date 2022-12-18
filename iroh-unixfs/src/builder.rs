@@ -9,7 +9,7 @@ use anyhow::{ensure, Context, Result};
 use async_recursion::async_recursion;
 use bytes::Bytes;
 use futures::{
-    stream::{self, LocalBoxStream},
+    stream::{self, BoxStream},
     Stream, StreamExt, TryFutureExt,
 };
 use prost::Message;
@@ -104,7 +104,7 @@ impl Directory {
         current.expect("must not be empty")
     }
 
-    pub fn encode<'a>(self) -> LocalBoxStream<'a, Result<Block>> {
+    pub fn encode<'a>(self) -> BoxStream<'a, Result<Block>> {
         match self {
             Directory::Basic(basic) => basic.encode(),
             Directory::Hamt(hamt) => hamt.encode(),
@@ -113,7 +113,7 @@ impl Directory {
 }
 
 impl BasicDirectory {
-    pub fn encode<'a>(self) -> LocalBoxStream<'a, Result<Block>> {
+    pub fn encode<'a>(self) -> BoxStream<'a, Result<Block>> {
         async_stream::try_stream! {
             let mut links = Vec::new();
             for entry in self.entries {
@@ -143,18 +143,18 @@ impl BasicDirectory {
             let node = UnixfsNode::Directory(Node { outer, inner });
             yield node.encode()?;
         }
-        .boxed_local()
+        .boxed()
     }
 }
 
 impl HamtDirectory {
-    pub fn encode<'a>(self) -> LocalBoxStream<'a, Result<Block>> {
+    pub fn encode<'a>(self) -> BoxStream<'a, Result<Block>> {
         self.hamt.encode()
     }
 }
 
 enum Content {
-    Reader(Pin<Box<dyn AsyncRead>>),
+    Reader(Pin<Box<dyn AsyncRead + Send>>),
     Path(PathBuf),
 }
 
@@ -281,7 +281,7 @@ impl Symlink {
 pub struct FileBuilder {
     name: Option<String>,
     path: Option<PathBuf>,
-    reader: Option<Pin<Box<dyn AsyncRead>>>,
+    reader: Option<Pin<Box<dyn AsyncRead + Send>>>,
     chunker: Chunker,
     degree: usize,
 }
@@ -359,7 +359,7 @@ impl FileBuilder {
         self
     }
 
-    pub fn content_reader<T: tokio::io::AsyncRead + 'static>(mut self, content: T) -> Self {
+    pub fn content_reader<T: tokio::io::AsyncRead + Send + 'static>(mut self, content: T) -> Self {
         self.reader = Some(Box::pin(content));
         self
     }
@@ -419,11 +419,11 @@ impl Entry {
         }
     }
 
-    pub async fn encode(self) -> Result<LocalBoxStream<'static, Result<Block>>> {
+    pub async fn encode(self) -> Result<BoxStream<'static, Result<Block>>> {
         Ok(match self {
-            Entry::File(f) => f.encode().await?.boxed_local(),
+            Entry::File(f) => f.encode().await?.boxed(),
             Entry::Directory(d) => d.encode(),
-            Entry::Symlink(s) => stream::iter(Some(s.encode())).boxed_local(),
+            Entry::Symlink(s) => stream::iter(Some(s.encode())).boxed(),
         })
     }
 
@@ -637,7 +637,7 @@ impl HamtNode {
         }
     }
 
-    pub fn encode<'a>(self) -> LocalBoxStream<'a, Result<Block>> {
+    pub fn encode<'a>(self) -> BoxStream<'a, Result<Block>> {
         match self {
             Self::Branch(tree) => {
                 async_stream::try_stream! {
@@ -673,11 +673,11 @@ impl HamtNode {
                     let node = UnixfsNode::Directory(crate::unixfs::Node { outer, inner });
                     yield node.encode()?;
                 }
-                .boxed_local()
+                .boxed()
             }
             Self::Leaf(HamtLeaf(_hash, entry)) => async move { entry.encode().await }
                 .try_flatten_stream()
-                .boxed_local(),
+                .boxed(),
         }
     }
 }
