@@ -44,7 +44,7 @@ jobs:
 
       - name: clippy all features
         run: |
-          cargo +RUSTV clippy --workspace --all-features --all-targets -- -D warnings
+          cargo +$RUSTV clippy --workspace --all-features --all-targets -- -D warnings
 
       - name: Create Issue if clippy failed
         if: ${{ failure() }}
