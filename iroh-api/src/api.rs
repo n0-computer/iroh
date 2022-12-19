@@ -10,8 +10,7 @@ use cid::Cid;
 use futures::stream::BoxStream;
 use futures::{StreamExt, TryStreamExt};
 use iroh_resolver::resolver::Resolver;
-use iroh_rpc_client::Client;
-use iroh_rpc_client::StatusTable;
+use iroh_rpc_client::{Client, ClientStatus};
 use iroh_unixfs::{
     builder::Entry as UnixfsEntry,
     content_loader::{FullLoader, FullLoaderConfig},
@@ -168,11 +167,11 @@ impl Api {
         Ok(stream.boxed())
     }
 
-    pub async fn check(&self) -> StatusTable {
+    pub async fn check(&self) -> ClientStatus {
         self.client.check().await
     }
 
-    pub async fn watch(&self) -> BoxStream<'static, StatusTable> {
+    pub async fn watch(&self) -> BoxStream<'static, ClientStatus> {
         self.client.clone().watch().await.boxed()
     }
 

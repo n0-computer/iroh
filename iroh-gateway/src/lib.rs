@@ -14,3 +14,5 @@ pub mod response;
 mod rpc;
 pub mod templates;
 mod text;
+
+pub(crate) const VERSION: &str = env!("CARGO_PKG_VERSION");

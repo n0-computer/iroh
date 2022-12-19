@@ -2,15 +2,20 @@ use std::result;
 
 use anyhow::Result;
 use bytes::BytesMut;
-use iroh_rpc_client::{create_server, ServerError, ServerSocket, StoreServer};
-use iroh_rpc_types::store::{
-    GetLinksRequest, GetLinksResponse, GetRequest, GetResponse, GetSizeRequest, GetSizeResponse,
-    HasRequest, HasResponse, PutManyRequest, PutRequest, StoreAddr, StoreRequest, StoreService,
-    VersionRequest, VersionResponse,
+use futures::stream::Stream;
+use iroh_rpc_client::{create_server, ServerError, ServerSocket, StoreServer, HEALTH_POLL_WAIT};
+use iroh_rpc_types::{
+    store::{
+        GetLinksRequest, GetLinksResponse, GetRequest, GetResponse, GetSizeRequest,
+        GetSizeResponse, HasRequest, HasResponse, PutManyRequest, PutRequest, StoreAddr,
+        StoreRequest, StoreService,
+    },
+    VersionRequest, VersionResponse, WatchRequest, WatchResponse,
 };
 use tracing::info;
 
-use crate::store::Store;
+use crate::{store::Store, VERSION};
+
 impl iroh_rpc_types::NamedService for Store {
     const NAME: &'static str = "store";
 }
@@ -20,9 +25,20 @@ pub struct RpcStore(Store);
 
 impl RpcStore {
     #[tracing::instrument(skip(self))]
+    fn watch(self, _: WatchRequest) -> impl Stream<Item = WatchResponse> {
+        async_stream::stream! {
+            loop {
+                yield WatchResponse { version: VERSION.to_string() };
+                tokio::time::sleep(HEALTH_POLL_WAIT).await;
+            }
+        }
+    }
+
+    #[tracing::instrument(skip(self))]
     async fn version(self, _: VersionRequest) -> VersionResponse {
-        let version = env!("CARGO_PKG_VERSION").to_string();
-        VersionResponse { version }
+        VersionResponse {
+            version: VERSION.to_string(),
+        }
     }
 
     #[tracing::instrument(skip(self, req))]
@@ -106,6 +122,7 @@ impl RpcStore {
 async fn dispatch(s: StoreServer, req: StoreRequest, chan: ServerSocket<StoreService>, target: RpcStore) -> result::Result<(), ServerError> {
     use StoreRequest::*;
     match req {
+        Watch(req) => s.server_streaming(req, chan, target, RpcStore::watch).await,
         Version(req) => s.rpc(req, chan, target, RpcStore::version).await,
         Put(req) => s.rpc_map_err(req, chan, target, RpcStore::put).await,
         PutMany(req) => s.rpc_map_err(req, chan, target, RpcStore::put_many).await,

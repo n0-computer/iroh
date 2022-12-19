@@ -6,6 +6,7 @@ pub mod store;
 use std::fmt;
 
 pub use addr::Addr;
+
 use serde::{Deserialize, Serialize};
 
 pub trait NamedService {
@@ -30,3 +31,19 @@ impl From<anyhow::Error> for RpcError {
 }
 
 pub type RpcResult<T> = std::result::Result<T, RpcError>;
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct WatchRequest;
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct WatchResponse {
+    pub version: String,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct VersionRequest;
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct VersionResponse {
+    pub version: String,
+}
