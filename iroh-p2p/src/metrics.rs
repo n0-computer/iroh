@@ -1,3 +1,4 @@
+use crate::VERSION;
 use iroh_metrics::config::Config as MetricsConfig;
 
 pub fn metrics_config_with_compile_time_info(cfg: MetricsConfig) -> MetricsConfig {
@@ -11,5 +12,5 @@ pub fn metrics_config_with_compile_time_info(cfg: MetricsConfig) -> MetricsConfi
             )
             .to_string(),
         )
-        .with_version(env!("CARGO_PKG_VERSION").to_string())
+        .with_version(VERSION.to_string())
 }

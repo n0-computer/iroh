@@ -37,10 +37,14 @@ jobs:
           rm -f $PROTOC_ZIP
           echo "PROTOC=/usr/local/bin/protoc" >> $GITHUB_ENV
           echo "PROTOC_INCLUDE=/usr/local/include" >> $GITHUB_ENV
-  
+
+      - name: Install ${{ matrix.rust }}
+        run: |
+          rustup toolchain install --profile default ${{ matrix.rust }}
+
       - name: clippy all features
         run: |
-          cargo clippy --workspace --all-features --all-targets -- -D warnings
+          cargo +RUSTV clippy --workspace --all-features --all-targets -- -D warnings
 
       - name: Create Issue if clippy failed
         if: ${{ failure() }}

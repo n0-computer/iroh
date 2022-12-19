@@ -1,11 +1,11 @@
-use super::status::StatusRow;
-use super::ServiceStatus;
-use anyhow::Result;
-use futures::Stream;
-use iroh_rpc_types::gateway::*;
 use std::fmt;
 
-pub(crate) const NAME: &str = "gateway";
+use anyhow::Result;
+use async_stream::stream;
+use futures::{Stream, StreamExt};
+use iroh_rpc_types::{gateway::*, VersionRequest, WatchRequest};
+
+use crate::{StatusType, HEALTH_POLL_WAIT};
 
 #[derive(Clone)]
 pub struct GatewayClient {
@@ -33,22 +33,27 @@ impl GatewayClient {
     }
 
     #[tracing::instrument(skip(self))]
-    pub async fn check(&self) -> StatusRow {
-        let status: ServiceStatus = self
-            .version()
-            .await
-            .map(|_| ServiceStatus::Serving)
-            .unwrap_or_else(|_e| ServiceStatus::Unknown);
-        StatusRow {
-            name: "gateway",
-            number: 1,
-            status,
+    pub async fn check(&self) -> (StatusType, String) {
+        match self.version().await {
+            Ok(version) => (StatusType::Serving, version),
+            Err(_) => (StatusType::Down, String::new()),
         }
     }
 
     #[tracing::instrument(skip(self))]
-    pub async fn watch(&self) -> impl Stream<Item = StatusRow> {
-        // todo
-        futures::stream::pending()
+    pub async fn watch(&self) -> impl Stream<Item = (StatusType, String)> {
+        let client = self.client.clone();
+        stream! {
+            loop {
+                let res = client.server_streaming(WatchRequest).await;
+                if let Ok(mut res) = res {
+                    while let Some(Ok(version)) = res.next().await {
+                        yield (StatusType::Serving, version.version);
+                    }
+                }
+                yield (StatusType::Down, String::new());
+                tokio::time::sleep(HEALTH_POLL_WAIT).await;
+            }
+        }
     }
 }

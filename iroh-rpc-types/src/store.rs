@@ -1,21 +1,17 @@
 use std::fmt::{self, Debug};
 
-use crate::RpcResult;
 use bytes::Bytes;
 use cid::Cid;
 use derive_more::{From, TryInto};
-use quic_rpc::{message::RpcMsg, Service};
+use quic_rpc::{
+    message::{Msg, RpcMsg, ServerStreaming},
+    Service,
+};
 use serde::{Deserialize, Serialize};
 
+use crate::{RpcResult, VersionRequest, VersionResponse, WatchRequest, WatchResponse};
+
 pub type StoreAddr = super::addr::Addr<StoreService>;
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct VersionRequest;
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct VersionResponse {
-    pub version: String,
-}
 
 #[derive(Serialize, Deserialize)]
 pub struct PutRequest {
@@ -81,6 +77,7 @@ pub struct GetSizeResponse {
 
 #[derive(Serialize, Deserialize, Debug, From, TryInto)]
 pub enum StoreRequest {
+    Watch(WatchRequest),
     Version(VersionRequest),
     Put(PutRequest),
     PutMany(PutManyRequest),
@@ -92,6 +89,7 @@ pub enum StoreRequest {
 
 #[derive(Serialize, Deserialize, Debug, From, TryInto)]
 pub enum StoreResponse {
+    Watch(WatchResponse),
     Version(VersionResponse),
     Get(RpcResult<GetResponse>),
     Has(RpcResult<HasResponse>),
@@ -108,6 +106,14 @@ impl Service for StoreService {
     type Req = StoreRequest;
 
     type Res = StoreResponse;
+}
+
+impl Msg<StoreService> for WatchRequest {
+    type Response = WatchResponse;
+
+    type Update = Self;
+
+    type Pattern = ServerStreaming;
 }
 
 impl RpcMsg<StoreService> for VersionRequest {

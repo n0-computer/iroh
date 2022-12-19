@@ -2,10 +2,17 @@ use anyhow::{anyhow, ensure, Context, Result};
 use bytes::Bytes;
 use cid::Cid;
 use futures::StreamExt;
-use futures::{stream::BoxStream, TryFutureExt};
+use futures::{
+    stream::{BoxStream, Stream},
+    TryFutureExt,
+};
 use iroh_bitswap::Block;
-use iroh_rpc_client::{create_server, Lookup, P2pServer, ServerError, ServerSocket};
-use iroh_rpc_types::{p2p::*, RpcError, RpcResult};
+use iroh_rpc_client::{
+    create_server, Lookup, P2pServer, ServerError, ServerSocket, HEALTH_POLL_WAIT,
+};
+use iroh_rpc_types::{
+    p2p::*, RpcError, RpcResult, VersionRequest, VersionResponse, WatchRequest, WatchResponse,
+};
 use libp2p::gossipsub::{
     error::{PublishError, SubscriptionError},
     MessageId, TopicHash,
@@ -21,6 +28,7 @@ use tokio::sync::oneshot;
 use tracing::{debug, info, trace};
 
 use super::node::DEFAULT_PROVIDER_LIMIT;
+use crate::VERSION;
 
 #[derive(Clone)]
 pub(crate) struct P2p {
@@ -33,9 +41,20 @@ impl P2p {
     }
 
     #[tracing::instrument(skip(self))]
+    fn watch(self, _: WatchRequest) -> impl Stream<Item = WatchResponse> {
+        async_stream::stream! {
+            loop {
+                yield WatchResponse { version: VERSION.to_string() };
+                tokio::time::sleep(HEALTH_POLL_WAIT).await;
+            }
+        }
+    }
+
+    #[tracing::instrument(skip(self))]
     async fn version(self, _: VersionRequest) -> VersionResponse {
-        let version = env!("CARGO_PKG_VERSION").to_string();
-        VersionResponse { version }
+        VersionResponse {
+            version: VERSION.to_string(),
+        }
     }
 
     #[tracing::instrument(skip(self))]
@@ -519,6 +538,7 @@ impl P2p {
 async fn dispatch(s: P2pServer, req: P2pRequest, chan: ServerSocket<P2pService>, target: P2p) -> result::Result<(), ServerError> {
     use P2pRequest::*;
     match req {
+        Watch(req) => s.server_streaming(req, chan, target, P2p::watch).await,
         Version(req) => s.rpc(req, chan, target, P2p::version).await,
         Shutdown(req) => s.rpc_map_err(req, chan, target, P2p::shutdown).await,
         FetchBitswap(req) => s.rpc_map_err(req, chan, target, P2p::fetch_bitswap).await,
