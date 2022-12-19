@@ -51,7 +51,7 @@ fn fixture_get() -> Api {
                 OutType::Reader(Box::new(std::io::Cursor::new("hello"))),
             )),
         ])
-        .boxed_local())
+        .boxed())
     });
     api
 }
@@ -104,7 +104,7 @@ fn fixture_get_wrapped_file() -> Api {
                 OutType::Reader(Box::new(std::io::Cursor::new("hello"))),
             )),
         ])
-        .boxed_local())
+        .boxed())
     });
     api
 }
@@ -116,7 +116,7 @@ fn fixture_get_unwrapped_file() -> Api {
             RelativePathBuf::from_path("").unwrap(),
             OutType::Reader(Box::new(std::io::Cursor::new("hello"))),
         ))])
-        .boxed_local())
+        .boxed())
     });
     api
 }
@@ -131,7 +131,7 @@ fn fixture_get_wrapped_symlink() -> Api {
                 OutType::Symlink(PathBuf::from("target/path/foo.txt")),
             )),
         ])
-        .boxed_local())
+        .boxed())
     });
     api
 }
@@ -143,7 +143,7 @@ fn fixture_get_unwrapped_symlink() -> Api {
             RelativePathBuf::from_path("").unwrap(),
             OutType::Symlink(PathBuf::from("target/path/foo.txt")),
         ))])
-        .boxed_local())
+        .boxed())
     });
     api
 }

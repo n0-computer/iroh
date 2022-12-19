@@ -33,7 +33,7 @@ impl TreeBuilder {
 
     pub fn stream_tree(
         &self,
-        chunks: impl Stream<Item = std::io::Result<Bytes>>,
+        chunks: impl Stream<Item = std::io::Result<Bytes>> + Send,
     ) -> impl Stream<Item = Result<Block>> {
         match self {
             TreeBuilder::Balanced { degree } => stream_balanced_tree(chunks, *degree),
@@ -48,7 +48,7 @@ struct LinkInfo {
 }
 
 fn stream_balanced_tree(
-    in_stream: impl Stream<Item = std::io::Result<Bytes>>,
+    in_stream: impl Stream<Item = std::io::Result<Bytes>> + Send,
     degree: usize,
 ) -> impl Stream<Item = Result<Block>> {
     try_stream! {
