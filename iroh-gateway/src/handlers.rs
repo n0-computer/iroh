@@ -180,8 +180,30 @@ async fn request_preprocessing<T: ContentLoader + Unpin>(
         }
     }
 
+    let path_metadata = state
+        .client
+        .retrieve_path_metadata(path.clone())
+        .await
+        .map_err(|e| GatewayError::new(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
     // TODO: handle 404 or error
-    let resolved_cid = path.root();
+
+    let resolved_cid = path_metadata.metadata().resolved_path.last();
+    let resolved_cid = match resolved_cid {
+        Some(cid) => cid,
+        None => {
+            return Err(GatewayError::new(
+                StatusCode::NOT_FOUND,
+                "failed to resolve path",
+            ))
+        }
+    };
+
+    if check_bad_bits(state, resolved_cid, &content_path).await {
+        return Err(GatewayError::new(
+            StatusCode::GONE,
+            "CID is in the denylist",
+        ));
+    }
 
     if handle_only_if_cached(request_headers, state, path.root()).await? {
         return Ok(RequestPreprocessingResult::RespondImmediately(
@@ -193,7 +215,7 @@ async fn request_preprocessing<T: ContentLoader + Unpin>(
     let format = get_response_format(request_headers, &query_params.format)
         .map_err(|err| GatewayError::new(StatusCode::BAD_REQUEST, &err))?;
 
-    if let Some(resp) = etag_check(request_headers, resolved_cid, &format) {
+    if let Some(resp) = etag_check(request_headers, &CidOrDomain::Cid(*resolved_cid), &format) {
         return Ok(RequestPreprocessingResult::RespondImmediately(resp));
     }
 
@@ -224,6 +246,7 @@ async fn request_preprocessing<T: ContentLoader + Unpin>(
         download: query_params.download.unwrap_or_default(),
         query_params: query_params.clone(),
         subdomain_mode,
+        path_metadata,
     };
     Ok(RequestPreprocessingResult::ShouldRequestData(Box::new(req)))
 }
@@ -252,12 +275,7 @@ pub async fn handler<T: ContentLoader + Unpin>(
         RequestPreprocessingResult::RespondImmediately(gateway_response) => Ok(gateway_response),
         RequestPreprocessingResult::ShouldRequestData(req) => match method {
             Method::HEAD => {
-                let path_metadata = state
-                    .client
-                    .retrieve_path_metadata(req.resolved_path)
-                    .await
-                    .map_err(|e| GatewayError::new(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
-                add_content_length_header(&mut response_headers, path_metadata.metadata().size);
+                add_content_length_header(&mut response_headers, req.path_metadata.metadata().size);
                 Ok(GatewayResponse::empty(response_headers))
             }
             Method::GET => {
@@ -558,7 +576,12 @@ async fn serve_raw<T: ContentLoader + Unpin>(
     // FIXME: we currently only retrieve full cids
     let (body, metadata) = state
         .client
-        .get_file(req.resolved_path.clone(), start_time, range.clone())
+        .get_file(
+            req.resolved_path.clone(),
+            Some(req.path_metadata.clone()),
+            start_time,
+            range.clone(),
+        )
         .await
         .map_err(|e| GatewayError::new(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
 
@@ -611,7 +634,12 @@ async fn serve_car<T: ContentLoader + Unpin>(
     // FIXME: we currently only retrieve full cids
     let (body, metadata) = state
         .client
-        .get_file(req.resolved_path.clone(), start_time, None)
+        .get_file(
+            req.resolved_path.clone(),
+            Some(req.path_metadata.clone()),
+            start_time,
+            None,
+        )
         .await
         .map_err(|e| GatewayError::new(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
 
@@ -689,7 +717,12 @@ async fn serve_fs<T: ContentLoader + Unpin>(
     // FIXME: we currently only retrieve full cids
     let (body, metadata) = state
         .client
-        .get_file(req.resolved_path.clone(), start_time, range.clone())
+        .get_file(
+            req.resolved_path.clone(),
+            Some(req.path_metadata.clone()),
+            start_time,
+            range.clone(),
+        )
         .await
         .map_err(|e| GatewayError::new(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
     add_ipfs_roots_headers(&mut headers, &metadata);
