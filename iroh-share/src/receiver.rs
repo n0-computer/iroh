@@ -4,8 +4,8 @@ use futures::{
     Stream, StreamExt,
 };
 use iroh_p2p::NetworkEvent;
-use iroh_resolver::resolver::{Out, OutPrettyReader, OutType, Path, Resolver, UnixfsType};
-use iroh_unixfs::{content_loader::FullLoader, Link};
+use iroh_resolver::resolver::{Out, OutPrettyReader, OutType, Resolver, UnixfsType};
+use iroh_unixfs::{content_loader::FullLoader, path::Path, Link};
 use libp2p::gossipsub::{GossipsubMessage, MessageId, TopicHash};
 use libp2p::PeerId;
 use tokio::sync::mpsc::{channel, Receiver as ChannelReceiver};

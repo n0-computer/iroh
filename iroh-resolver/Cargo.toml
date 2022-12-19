@@ -18,7 +18,6 @@ anyhow.workspace = true
 async-channel.workspace = true
 async-stream.workspace = true
 async-trait.workspace = true
-bs58.workspace = true
 bytes.workspace = true
 cid.workspace = true
 futures.workspace = true

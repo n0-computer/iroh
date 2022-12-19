@@ -12,10 +12,9 @@ use cid::Cid;
 use futures::{Future, Stream, StreamExt, TryStreamExt};
 use iroh_metrics::inc;
 use iroh_unixfs::{
-    path::{CidOrDomain, Path, PathType},
     content_loader::{ContentLoader, ContextId, LoaderContext},
-    unixfs::{
-        read_data_to_buf, DataType, UnixfsChildStream, UnixfsContentReader, UnixfsNode},
+    path::{CidOrDomain, Path, PathType},
+    unixfs::{read_data_to_buf, DataType, UnixfsChildStream, UnixfsContentReader, UnixfsNode},
     Block, Link, LoadedCid, Source,
 };
 use iroh_util::{codecs::Codec, parse_links};

@@ -15,8 +15,8 @@ use iroh_metrics::{
     resolver::OutMetrics,
 };
 use iroh_resolver::dns_resolver::Config;
-use iroh_resolver::resolver::{CidOrDomain, Metadata, Out, OutPrettyReader, OutType, Resolver};
-use iroh_unixfs::{content_loader::ContentLoader, Source};
+use iroh_resolver::resolver::{Metadata, Out, OutPrettyReader, OutType, Resolver};
+use iroh_unixfs::{content_loader::ContentLoader, path::CidOrDomain, Source};
 use mime::Mime;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, AsyncWrite};
 use tokio_util::io::ReaderStream;

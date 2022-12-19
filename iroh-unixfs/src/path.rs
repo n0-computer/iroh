@@ -205,3 +205,14 @@ impl FromStr for Path {
         Ok(Path { typ, root, tail })
     }
 }
+
+impl From<Path> for iroh_memesync::Path {
+    fn from(p: Path) -> Self {
+        let root = match p.root {
+            CidOrDomain::Cid(root) => root,
+            _ => todo!(),
+        };
+
+        iroh_memesync::Path { root, tail: p.tail }
+    }
+}

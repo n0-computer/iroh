@@ -1,6 +1,6 @@
 use cid::multibase;
 use cid::multibase::Base;
-use iroh_resolver::resolver::{CidOrDomain, Path, PathType};
+use iroh_unixfs::path::{CidOrDomain, Path, PathType};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -78,7 +78,7 @@ pub fn inlined_dns_link_to_dns_link(dns_link: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use iroh_resolver::resolver::Path;
+    use iroh_unixfs::path::Path;
 
     use crate::handler_params::inlined_dns_link_to_dns_link;
     use crate::handler_params::recode_path_to_inlined_dns_link;
