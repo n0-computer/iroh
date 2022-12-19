@@ -500,9 +500,9 @@ impl<C: ContentLoader + Unpin + 'static> AsyncSeek for UnixfsContentReader<C> {
                 current_links,
                 ..
             } => {
+                let data_len = root_node.size();
                 *current_node = CurrentNodeState::Outer;
                 *current_links = vec![root_node.links_owned().unwrap()];
-                let data_len = root_node.size();
                 match position {
                     std::io::SeekFrom::Start(offset) => {
                         let mut i = offset as usize;
@@ -573,6 +573,31 @@ pub fn read_data_to_buf(
     buf.put_slice(&data[..amt]);
     *pos += amt;
     amt
+}
+
+pub fn find_block(node: &UnixfsNode, pos: u64, node_offset: u64) -> (u64, Option<usize>) {
+    let pivots = node
+        .blocksizes()
+        .iter()
+        .scan(node_offset, |state, &x| {
+            *state += x;
+            Some(*state)
+        })
+        .collect::<Vec<_>>();
+    let block_index = match pivots.binary_search(&pos) {
+        Ok(b) => b + 1,
+        Err(b) => b,
+    };
+    if block_index < pivots.len() {
+        let next_node_offset = if block_index > 0 {
+            pivots[block_index - 1]
+        } else {
+            node_offset
+        };
+        (next_node_offset, Some(block_index))
+    } else {
+        (pivots[pivots.len() - 1], None)
+    }
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -716,12 +741,24 @@ fn poll_read_file_at<C: ContentLoader + 'static>(
                     Poll::Ready(Ok(node)) => {
                         match node.links_owned() {
                             Ok(links) => {
-                                current_links.push(links);
-                                *current_node = CurrentNodeState::Loaded {
-                                    node_offset: *node_offset,
-                                    node_pos: *pos - *node_offset,
-                                    node,
-                                };
+                                if !links.is_empty() {
+                                    let (next_node_offset, block_index) =
+                                        find_block(&node, *pos as u64, *node_offset as u64);
+                                    if let Some(block_index) = block_index {
+                                        let new_links =
+                                            links.into_iter().skip(block_index).collect();
+                                        current_links.push(new_links);
+                                    }
+                                    *current_node = CurrentNodeState::NextNodeRequested {
+                                        next_node_offset: next_node_offset as usize,
+                                    }
+                                } else {
+                                    *current_node = CurrentNodeState::Loaded {
+                                        node_offset: *node_offset,
+                                        node_pos: *pos - *node_offset,
+                                        node,
+                                    }
+                                }
                             }
                             Err(e) => {
                                 return Poll::Ready(Err(std::io::Error::new(
