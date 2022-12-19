@@ -108,11 +108,16 @@ impl<T: ContentLoader + std::marker::Unpin> Client<T> {
     pub async fn get_file(
         &self,
         path: iroh_resolver::resolver::Path,
+        path_metadata: Option<Out>,
         start_time: std::time::Instant,
         range: Option<Range<u64>>,
     ) -> Result<(FileResult<T>, Metadata), String> {
         info!("get file {}", path);
-        let path_metadata = self.retrieve_path_metadata(path).await?;
+        let path_metadata = if let Some(path_metadata) = path_metadata {
+            path_metadata
+        } else {
+            self.retrieve_path_metadata(path.clone()).await?
+        };
         let metadata = path_metadata.metadata().clone();
         record_ttfb_metrics(start_time, &metadata.source);
 
@@ -235,6 +240,7 @@ pub struct IpfsRequest {
     pub download: bool,
     pub query_params: GetParams,
     pub subdomain_mode: bool,
+    pub path_metadata: Out,
 }
 
 impl IpfsRequest {
