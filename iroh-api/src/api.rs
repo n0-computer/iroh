@@ -7,7 +7,7 @@ use crate::IpfsPath;
 use crate::P2pApi;
 use anyhow::{ensure, Context, Result};
 use cid::Cid;
-use futures::stream::{BoxStream, LocalBoxStream};
+use futures::stream::BoxStream;
 use futures::{StreamExt, TryStreamExt};
 use iroh_resolver::resolver::Resolver;
 use iroh_rpc_client::{Client, ClientStatus};
@@ -171,8 +171,8 @@ impl Api {
         self.client.check().await
     }
 
-    pub async fn watch(&self) -> LocalBoxStream<'static, ClientStatus> {
-        self.client.clone().watch().await.boxed_local()
+    pub async fn watch(&self) -> BoxStream<'static, ClientStatus> {
+        self.client.clone().watch().await.boxed()
     }
 
     /// The `add_stream` method encodes the entry into a DAG and adds
