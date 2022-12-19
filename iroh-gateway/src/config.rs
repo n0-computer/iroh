@@ -215,7 +215,7 @@ mod tests {
     #[test]
     fn test_default_headers() {
         let headers = default_headers();
-        assert_eq!(headers.len(), 3);
+        assert_eq!(headers.len(), 5);
         let h = headers.get(&ACCESS_CONTROL_ALLOW_ORIGIN).unwrap();
         assert_eq!(h, "*");
     }
@@ -267,6 +267,7 @@ mod tests {
             "access-control-allow-origin".to_string(),
             Value::new(None, "*"),
         );
+        expect.insert("accept-ranges".to_string(), Value::new(None, "bytes"));
         expect.insert(
             "access-control-allow-methods".to_string(),
             Value::new(None, "GET, PUT, POST, DELETE, HEAD, OPTIONS"),
@@ -275,8 +276,12 @@ mod tests {
             "access-control-allow-headers".to_string(),
             Value::new(
                 None,
-                "if-none-match, accept, cache-control, range, service-worker",
+                "if-none-match, accept, cache-control, range, content-type, service-worker, x-requested-with, user-agent",
             ),
+        );
+        expect.insert(
+            "access-control-expose-headers".to_string(),
+            Value::new(None, "content-length, content-range, x-ipfs-path, x-ipfs-roots, x-chunked-output, x-stream-output"),
         );
         let got = collect_headers(&default_headers()).unwrap();
         assert_eq!(expect, got);
