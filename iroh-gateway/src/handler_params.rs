@@ -36,7 +36,7 @@ impl GetParams {
         if q.is_empty() {
             q
         } else {
-            format!("?{}", q)
+            format!("?{q}")
         }
     }
 }

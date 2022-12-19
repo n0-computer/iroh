@@ -69,7 +69,7 @@ pub async fn open_client<S: Service>(addr: Addr<S>) -> anyhow::Result<RpcClient<
             combined::ClientChannel::new(None, Some(client)),
         )),
         Addr::Irpc(uri) => {
-            let uri = format!("http://{}", uri).parse()?;
+            let uri = format!("http://{uri}").parse()?;
             let channel = http2::ClientChannel::new(uri);
             let channel = combined::ClientChannel::new(Some(channel), None);
             Ok(RpcClient::<S, ChannelTypes>::new(channel))

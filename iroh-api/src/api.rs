@@ -14,7 +14,6 @@ use iroh_rpc_client::{Client, ClientStatus};
 use iroh_unixfs::{
     builder::Entry as UnixfsEntry,
     content_loader::{FullLoader, FullLoaderConfig},
-    ResponseClip,
 };
 use iroh_util::{iroh_config_path, make_config};
 #[cfg(feature = "testing")]
@@ -152,13 +151,13 @@ impl Api {
                 if out.is_dir() {
                     yield (relative_path, OutType::Dir);
                 } else if out.is_symlink() {
-                    let mut reader = out.pretty(resolver.clone(), Default::default(), ResponseClip::NoClip)?;
+                    let mut reader = out.pretty(resolver.clone(), Default::default(), None)?;
                     let mut target = String::new();
                     reader.read_to_string(&mut target).await?;
                     let target = PathBuf::from(target);
                     yield (relative_path, OutType::Symlink(target));
                 } else {
-                    let reader = out.pretty(resolver.clone(), Default::default(), ResponseClip::NoClip)?;
+                    let reader = out.pretty(resolver.clone(), Default::default(), None)?;
                     yield (relative_path, OutType::Reader(Box::new(reader)));
                 }
             }

@@ -101,7 +101,7 @@ impl GatewayUrl {
                 url
             }
             GatewayUrl::Subdomain(raw) => {
-                format!("https://{}.ipfs.{}?format=raw", cid_str, raw).parse()?
+                format!("https://{cid_str}.ipfs.{raw}?format=raw").parse()?
             }
         };
         Ok(url)

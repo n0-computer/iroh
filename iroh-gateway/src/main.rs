@@ -36,7 +36,7 @@ async fn main() -> Result<()> {
     )
     .unwrap();
     config.metrics = metrics::metrics_config_with_compile_time_info(config.metrics);
-    println!("{:#?}", config);
+    println!("{config:#?}");
 
     let metrics_config = config.metrics.clone();
     let dns_resolver_config = config.dns_resolver.clone();
