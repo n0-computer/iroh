@@ -3,7 +3,7 @@
 use std::io;
 
 use bytes::{Bytes, BytesMut};
-use futures::{stream::LocalBoxStream, StreamExt};
+use futures::{stream::BoxStream, StreamExt};
 use tokio::io::{AsyncRead, AsyncReadExt};
 
 /// Rabin fingerprinting based chunker.
@@ -46,10 +46,10 @@ impl Rabin {
         }
     }
 
-    pub fn chunks<'a, R: AsyncRead + Unpin + 'a>(
+    pub fn chunks<'a, R: AsyncRead + Unpin + Send + 'a>(
         self,
         mut source: R,
-    ) -> LocalBoxStream<'a, io::Result<Bytes>> {
+    ) -> BoxStream<'a, io::Result<Bytes>> {
         async_stream::stream! {
             let target_size = 3 * self.config.max_size;
             let mut buf = BytesMut::with_capacity(target_size);
@@ -142,7 +142,7 @@ impl Rabin {
                 let _ = buf.split_to(cur_idx);
             }
         }
-        .boxed_local()
+        .boxed()
     }
 }
 

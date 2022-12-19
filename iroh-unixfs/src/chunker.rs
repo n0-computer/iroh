@@ -8,7 +8,7 @@ use std::{
 
 use anyhow::{anyhow, Context};
 use bytes::Bytes;
-use futures::{stream::LocalBoxStream, Stream};
+use futures::{stream::BoxStream, Stream};
 use tokio::io::AsyncRead;
 
 mod fixed;
@@ -92,8 +92,8 @@ impl From<ChunkerConfig> for Chunker {
 }
 
 pub enum ChunkerStream<'a> {
-    Fixed(LocalBoxStream<'a, io::Result<Bytes>>),
-    Rabin(LocalBoxStream<'a, io::Result<Bytes>>),
+    Fixed(BoxStream<'a, io::Result<Bytes>>),
+    Rabin(BoxStream<'a, io::Result<Bytes>>),
 }
 
 impl<'a> Debug for ChunkerStream<'a> {
@@ -127,7 +127,7 @@ impl<'a> Stream for ChunkerStream<'a> {
 }
 
 impl Chunker {
-    pub fn chunks<'a, R: AsyncRead + Unpin + 'a>(self, source: R) -> ChunkerStream<'a> {
+    pub fn chunks<'a, R: AsyncRead + Unpin + Send + 'a>(self, source: R) -> ChunkerStream<'a> {
         match self {
             Self::Fixed(chunker) => ChunkerStream::Fixed(chunker.chunks(source)),
             Self::Rabin(chunker) => ChunkerStream::Rabin(chunker.chunks(source)),
