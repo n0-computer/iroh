@@ -50,6 +50,7 @@ pub enum NetworkEvent {
     PeerConnected(PeerId),
     PeerDisconnected(PeerId),
     Gossipsub(GossipsubEvent),
+    CancelLookupQuery(PeerId),
 }
 
 #[derive(Debug, Clone)]
@@ -543,7 +544,16 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                                         );
                                     }
                                 }
-                                GetProvidersOk::FinishedWithNoAdditionalRecord { .. } => {}
+                                GetProvidersOk::FinishedWithNoAdditionalRecord { .. } => {
+                                    let swarm = self.swarm.behaviour_mut();
+                                    if let Some(kad) = swarm.kad.as_mut() {
+                                        debug!(
+                                            "FinishedWithNoAdditionalRecord for query {:#?}",
+                                            id
+                                        );
+                                        self.providers.handle_no_additional_records(id, kad);
+                                    }
+                                }
                             }
                         }
                         QueryResult::GetProviders(Err(error)) => {
@@ -1012,6 +1022,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
             }
             RpcMessage::CancelListenForIdentify(response_channel, peer_id) => {
                 self.lookup_queries.remove(&peer_id);
+                self.emit_network_event(NetworkEvent::CancelLookupQuery(peer_id));
                 response_channel.send(()).ok();
             }
             RpcMessage::FindPeerOnDHT(response_channel, peer_id) => {
@@ -1411,6 +1422,29 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_cancel_listen_for_identify() -> Result<()> {
+        let mut test_runner_a = TestRunnerBuilder::new().no_bootstrap().build().await?;
+        let peer_id: PeerId = "12D3KooWFma2D63TG9ToSiRsjFkoNm2tTihScTBAEdXxinYk5rwE"
+            .parse()
+            .unwrap();
+        test_runner_a
+            .client
+            .lookup(peer_id, None)
+            .await
+            .unwrap_err();
+        // when lookup ends in error, we must ensure we
+        // have canceled the lookup
+        let event = test_runner_a.network_events.recv().await.unwrap();
+        if let NetworkEvent::CancelLookupQuery(got_peer_id) = event {
+            assert_eq!(peer_id, got_peer_id);
+        } else {
+            anyhow::bail!("unexpected NetworkEvent {:#?}", event);
+        }
+
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn test_gossipsub() -> Result<()> {
         let mut test_runner_a = TestRunnerBuilder::new().no_bootstrap().build().await?;
         // peer_id 12D3KooWLo6JTNKXfjkZtKf8ooLQoXVXUEeuu4YDY3CYqK6rxHXt
@@ -1532,7 +1566,6 @@ mod tests {
         Ok(())
     }
 
-    #[ignore = "flakey"]
     #[tokio::test]
     async fn test_dht() -> Result<()> {
         // set up three nodes
@@ -1568,10 +1601,6 @@ mod tests {
             .client
             .connect(test_runner_b.peer_id, addrs.clone())
             .await?;
-        test_runner_c
-            .client
-            .connect(test_runner_b.peer_id, addrs.clone())
-            .await?;
 
         // expect a network event showing a & b have connected
         match test_runner_b.network_events.recv().await {
@@ -1585,6 +1614,11 @@ mod tests {
                 anyhow::bail!("expected NetworkEvent::PeerConnected, received no event");
             }
         };
+
+        test_runner_c
+            .client
+            .connect(test_runner_b.peer_id, addrs.clone())
+            .await?;
 
         // expect a network event showing b & c have connected
         match test_runner_b.network_events.recv().await {
@@ -1605,7 +1639,7 @@ mod tests {
         // when `start_providing` waits for the record to make it to the dht
         // we can remove this polling
         let providers = tokio::time::timeout(
-            Duration::from_millis(5000),
+            Duration::from_secs(6),
             poll_for_providers(test_runner_a.client.clone(), &cid),
         )
         .await
@@ -1628,7 +1662,6 @@ mod tests {
             .client
             .connect(test_runner_c.peer_id, vec![])
             .await?;
-
         Ok(())
     }
 

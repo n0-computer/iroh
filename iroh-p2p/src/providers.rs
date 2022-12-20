@@ -163,6 +163,21 @@ impl Providers {
         }
     }
 
+    pub fn handle_no_additional_records(&mut self, id: QueryId, kad: &mut Kademlia<MemoryStore>) {
+        let mut key = None;
+        for (k, q) in self.current_queries.iter() {
+            if q.query_id == id {
+                key = Some(k.clone());
+                break;
+            }
+        }
+        if let Some(key) = key {
+            self.current_queries.remove(&key);
+            // we freed a spot, poll for advancing queries
+            self.poll(kad);
+        }
+    }
+
     pub fn handle_get_providers_error(
         &mut self,
         id: QueryId,
