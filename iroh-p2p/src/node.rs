@@ -50,6 +50,8 @@ pub enum NetworkEvent {
     PeerConnected(PeerId),
     PeerDisconnected(PeerId),
     Gossipsub(GossipsubEvent),
+    CancelLookupQuery(PeerId),
+    RoutingTableUpdate(PeerId),
 }
 
 #[derive(Debug, Clone)]
@@ -510,105 +512,129 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
             Event::Kademlia(e) => {
                 libp2p_metrics().record(&e);
 
-                if let KademliaEvent::OutboundQueryProgressed {
-                    id, result, step, ..
-                } = e
-                {
-                    match result {
-                        QueryResult::GetProviders(Ok(p)) => {
-                            match p {
-                                GetProvidersOk::FoundProviders { key, providers } => {
-                                    let swarm = self.swarm.behaviour_mut();
-                                    if let Some(kad) = swarm.kad.as_mut() {
-                                        debug!(
-                                            "provider results for {:?} last: {}",
-                                            key, step.last
-                                        );
+                // TODO(ramfox): potentially refactor back to one type of kad event
+                match e {
+                    KademliaEvent::OutboundQueryProgressed {
+                        id, result, step, ..
+                    } => {
+                        match result {
+                            QueryResult::GetProviders(Ok(p)) => {
+                                match p {
+                                    GetProvidersOk::FoundProviders { key, providers } => {
+                                        let swarm = self.swarm.behaviour_mut();
+                                        if let Some(kad) = swarm.kad.as_mut() {
+                                            debug!(
+                                                "provider results for {:?} last: {}",
+                                                key, step.last
+                                            );
 
-                                        // Filter out bad providers.
-                                        let providers: HashSet<_> = providers
-                                            .into_iter()
-                                            .filter(|provider| {
-                                                let is_bad =
-                                                    swarm.peer_manager.is_bad_peer(provider);
-                                                if is_bad {
-                                                    inc!(P2PMetrics::SkippedPeerKad);
-                                                }
-                                                !is_bad
-                                            })
-                                            .collect();
+                                            // Filter out bad providers.
+                                            let providers: HashSet<_> = providers
+                                                .into_iter()
+                                                .filter(|provider| {
+                                                    let is_bad =
+                                                        swarm.peer_manager.is_bad_peer(provider);
+                                                    if is_bad {
+                                                        inc!(P2PMetrics::SkippedPeerKad);
+                                                    }
+                                                    !is_bad
+                                                })
+                                                .collect();
 
-                                        self.providers.handle_get_providers_ok(
-                                            id, step.last, key, providers, kad,
-                                        );
+                                            self.providers.handle_get_providers_ok(
+                                                id, step.last, key, providers, kad,
+                                            );
+                                        }
+                                    }
+                                    GetProvidersOk::FinishedWithNoAdditionalRecord { .. } => {
+                                        let swarm = self.swarm.behaviour_mut();
+                                        if let Some(kad) = swarm.kad.as_mut() {
+                                            debug!(
+                                                "FinishedWithNoAdditionalRecord for query {:#?}",
+                                                id
+                                            );
+                                            self.providers.handle_no_additional_records(id, kad);
+                                        }
                                     }
                                 }
-                                GetProvidersOk::FinishedWithNoAdditionalRecord { .. } => {}
                             }
-                        }
-                        QueryResult::GetProviders(Err(error)) => {
-                            if let Some(kad) = self.swarm.behaviour_mut().kad.as_mut() {
-                                self.providers.handle_get_providers_error(id, error, kad);
-                            }
-                        }
-                        QueryResult::Bootstrap(Ok(BootstrapOk {
-                            peer,
-                            num_remaining,
-                        })) => {
-                            debug!(
-                                "kad bootstrap done {:?}, remaining: {}",
-                                peer, num_remaining
-                            );
-                        }
-                        QueryResult::Bootstrap(Err(e)) => {
-                            warn!("kad bootstrap error: {:?}", e);
-                        }
-                        QueryResult::GetClosestPeers(Ok(GetClosestPeersOk { key, peers })) => {
-                            debug!("GetClosestPeers ok {:?}", key);
-                            if let Some((peer_id, channels)) = self.find_on_dht_queries.remove(&key)
-                            {
-                                let have_peer = peers.contains(&peer_id);
-                                // if this is not the last step we will have more chances to find
-                                // the peer
-                                if !have_peer && !step.last {
-                                    return Ok(());
+                            QueryResult::GetProviders(Err(error)) => {
+                                if let Some(kad) = self.swarm.behaviour_mut().kad.as_mut() {
+                                    self.providers.handle_get_providers_error(id, error, kad);
                                 }
-                                let res = move || {
-                                    if have_peer {
-                                        Ok(())
-                                    } else {
-                                        Err(anyhow!("Failed to find peer {:?} on the DHT", peer_id))
-                                    }
-                                };
-                                tokio::task::spawn(async move {
-                                    for chan in channels.into_iter() {
-                                        chan.send(res()).ok();
-                                    }
-                                });
                             }
-                        }
-                        QueryResult::GetClosestPeers(Err(GetClosestPeersError::Timeout {
-                            key,
-                            ..
-                        })) => {
-                            debug!("GetClosestPeers Timeout: {:?}", key);
-                            if let Some((peer_id, channels)) = self.find_on_dht_queries.remove(&key)
-                            {
-                                tokio::task::spawn(async move {
-                                    for chan in channels.into_iter() {
-                                        chan.send(Err(anyhow!(
-                                            "Failed to find peer {:?} on the DHT: Timeout",
-                                            peer_id
-                                        )))
-                                        .ok();
-                                    }
-                                });
+                            QueryResult::Bootstrap(Ok(BootstrapOk {
+                                peer,
+                                num_remaining,
+                            })) => {
+                                debug!(
+                                    "kad bootstrap done {:?}, remaining: {}",
+                                    peer, num_remaining
+                                );
                             }
-                        }
-                        other => {
-                            debug!("Libp2p => Unhandled Kademlia query result: {:?}", other)
+                            QueryResult::Bootstrap(Err(e)) => {
+                                warn!("kad bootstrap error: {:?}", e);
+                            }
+                            QueryResult::GetClosestPeers(Ok(GetClosestPeersOk { key, peers })) => {
+                                debug!("GetClosestPeers ok {:?}", key);
+                                if let Some((peer_id, channels)) =
+                                    self.find_on_dht_queries.remove(&key)
+                                {
+                                    let have_peer = peers.contains(&peer_id);
+                                    // if this is not the last step we will have more chances to find
+                                    // the peer
+                                    if !have_peer && !step.last {
+                                        return Ok(());
+                                    }
+                                    let res = move || {
+                                        if have_peer {
+                                            Ok(())
+                                        } else {
+                                            Err(anyhow!(
+                                                "Failed to find peer {:?} on the DHT",
+                                                peer_id
+                                            ))
+                                        }
+                                    };
+                                    tokio::task::spawn(async move {
+                                        for chan in channels.into_iter() {
+                                            chan.send(res()).ok();
+                                        }
+                                    });
+                                }
+                            }
+                            QueryResult::GetClosestPeers(Err(GetClosestPeersError::Timeout {
+                                key,
+                                ..
+                            })) => {
+                                debug!("GetClosestPeers Timeout: {:?}", key);
+                                if let Some((peer_id, channels)) =
+                                    self.find_on_dht_queries.remove(&key)
+                                {
+                                    tokio::task::spawn(async move {
+                                        for chan in channels.into_iter() {
+                                            chan.send(Err(anyhow!(
+                                                "Failed to find peer {:?} on the DHT: Timeout",
+                                                peer_id
+                                            )))
+                                            .ok();
+                                        }
+                                    });
+                                }
+                            }
+                            other => {
+                                debug!("Libp2p => Unhandled Kademlia query result: {:?}", other)
+                            }
                         }
                     }
+                    KademliaEvent::RoutingUpdated {
+                        peer, is_new_peer, ..
+                    } => {
+                        if is_new_peer {
+                            self.emit_network_event(NetworkEvent::RoutingTableUpdate(peer));
+                        }
+                    }
+                    _ => {}
                 }
             }
             Event::Identify(e) => {
@@ -1012,6 +1038,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
             }
             RpcMessage::CancelListenForIdentify(response_channel, peer_id) => {
                 self.lookup_queries.remove(&peer_id);
+                self.emit_network_event(NetworkEvent::CancelLookupQuery(peer_id));
                 response_channel.send(()).ok();
             }
             RpcMessage::FindPeerOnDHT(response_channel, peer_id) => {
@@ -1330,7 +1357,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_two_nodes() -> Result<()> {
-        let test_runner_a = TestRunnerBuilder::new().no_bootstrap().build().await?;
+        let mut test_runner_a = TestRunnerBuilder::new().no_bootstrap().build().await?;
         // peer_id 12D3KooWLo6JTNKXfjkZtKf8ooLQoXVXUEeuu4YDY3CYqK6rxHXt
         let test_runner_b = TestRunnerBuilder::new()
             .no_bootstrap()
@@ -1349,6 +1376,26 @@ mod tests {
         // have any information about our observed addresses
         assert!(lookup_a.observed_addrs.is_empty());
         assert_lookup(lookup_a, test_runner_a.peer_id, &test_runner_a.addr)?;
+
+        // ensure we remove the lookup query if we error while attempting to
+        // identify a peer id
+        let res = test_runner_a.client.lookup(peer_id_b, None).await;
+        assert!(res.is_err());
+
+        let mut found_cancel = false;
+        while let Some(event) = test_runner_a.network_events.recv().await {
+            if let NetworkEvent::CancelLookupQuery(p) = event {
+                assert_eq!(peer_id_b, p);
+                found_cancel = true;
+                break;
+            }
+        }
+
+        if !found_cancel {
+            panic!(
+                "expected to find a `NetworkEvent::CancelLookupQuery` on a failing `lookup` call"
+            );
+        }
 
         // connect
         test_runner_a.client.connect(peer_id_b, addrs_b).await?;
@@ -1407,6 +1454,29 @@ mod tests {
         assert_eq!(expected_protocols, got.protocols);
         assert_eq!(expected_protocol_version, got.protocol_version);
         assert_eq!(expected_agent_version, got.agent_version);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_cancel_listen_for_identify() -> Result<()> {
+        let mut test_runner_a = TestRunnerBuilder::new().no_bootstrap().build().await?;
+        let peer_id: PeerId = "12D3KooWFma2D63TG9ToSiRsjFkoNm2tTihScTBAEdXxinYk5rwE"
+            .parse()
+            .unwrap();
+        test_runner_a
+            .client
+            .lookup(peer_id, None)
+            .await
+            .unwrap_err();
+        // when lookup ends in error, we must ensure we
+        // have canceled the lookup
+        let event = test_runner_a.network_events.recv().await.unwrap();
+        if let NetworkEvent::CancelLookupQuery(got_peer_id) = event {
+            assert_eq!(peer_id, got_peer_id);
+        } else {
+            anyhow::bail!("unexpected NetworkEvent {:#?}", event);
+        }
+
         Ok(())
     }
 
@@ -1532,103 +1602,104 @@ mod tests {
         Ok(())
     }
 
-    #[ignore = "flakey"]
     #[tokio::test]
     async fn test_dht() -> Result<()> {
-        // set up three nodes
-        // two connect to one
-        // try to connect via id
-        let cid: Cid = "bafkreieq5jui4j25lacwomsqgjeswwl3y5zcdrresptwgmfylxo2depppq"
-            .parse()
-            .unwrap();
+        for _ in 0..10 {
+            // set up three nodes
+            // two connect to one
+            // try to connect via id
+            let cid: Cid = "bafkreieq5jui4j25lacwomsqgjeswwl3y5zcdrresptwgmfylxo2depppq"
+                .parse()
+                .unwrap();
 
-        let test_runner_a = TestRunnerBuilder::new().no_bootstrap().build().await?;
-        println!("peer_a: {:?}", test_runner_a.peer_id);
+            let test_runner_a = TestRunnerBuilder::new().no_bootstrap().build().await?;
+            println!("peer_a: {:?}", test_runner_a.peer_id);
 
-        // peer_id 12D3KooWLo6JTNKXfjkZtKf8ooLQoXVXUEeuu4YDY3CYqK6rxHXt
-        let mut test_runner_b = TestRunnerBuilder::new()
-            .no_bootstrap()
-            .with_seed(ChaCha8Rng::from_seed([0; 32]))
-            .build()
-            .await?;
-        let addrs = vec![test_runner_b.addr.clone()];
+            // peer_id 12D3KooWLo6JTNKXfjkZtKf8ooLQoXVXUEeuu4YDY3CYqK6rxHXt
+            let mut test_runner_b = TestRunnerBuilder::new()
+                .no_bootstrap()
+                .with_seed(ChaCha8Rng::from_seed([0; 32]))
+                .build()
+                .await?;
+            let addrs = vec![test_runner_b.addr.clone()];
 
-        println!("peer_b: {:?}", test_runner_b.peer_id);
+            println!("peer_b: {:?}", test_runner_b.peer_id);
 
-        let test_runner_c = TestRunnerBuilder::new()
-            .no_bootstrap()
-            .with_seed(ChaCha8Rng::from_seed([1; 32]))
-            .build()
-            .await?;
+            let test_runner_c = TestRunnerBuilder::new()
+                .no_bootstrap()
+                .with_seed(ChaCha8Rng::from_seed([1; 32]))
+                .build()
+                .await?;
 
-        println!("peer_c: {:?}", test_runner_c.peer_id);
+            println!("peer_c: {:?}", test_runner_c.peer_id);
 
-        // connect a and c to b
-        test_runner_a
-            .client
-            .connect(test_runner_b.peer_id, addrs.clone())
-            .await?;
-        test_runner_c
-            .client
-            .connect(test_runner_b.peer_id, addrs.clone())
-            .await?;
+            // connect a and c to b
+            test_runner_a
+                .client
+                .connect(test_runner_b.peer_id, addrs.clone())
+                .await?;
 
-        // expect a network event showing a & b have connected
-        match test_runner_b.network_events.recv().await {
-            Some(NetworkEvent::PeerConnected(peer_id)) => {
-                assert_eq!(test_runner_a.peer_id, peer_id);
-            }
-            Some(n) => {
-                anyhow::bail!("unexpected network event: {:?}", n);
-            }
-            None => {
-                anyhow::bail!("expected NetworkEvent::PeerConnected, received no event");
-            }
-        };
+            // expect a network event showing a & b have connected
+            match test_runner_b.network_events.recv().await {
+                Some(NetworkEvent::PeerConnected(peer_id)) => {
+                    assert_eq!(test_runner_a.peer_id, peer_id);
+                }
+                Some(n) => {
+                    anyhow::bail!("unexpected network event: {:?}", n);
+                }
+                None => {
+                    anyhow::bail!("expected NetworkEvent::PeerConnected, received no event");
+                }
+            };
 
-        // expect a network event showing b & c have connected
-        match test_runner_b.network_events.recv().await {
-            Some(NetworkEvent::PeerConnected(peer_id)) => {
-                assert_eq!(test_runner_c.peer_id, peer_id);
-            }
-            Some(n) => {
-                anyhow::bail!("unexpected network event: {:?}", n);
-            }
-            None => {
-                anyhow::bail!("expected NetworkEvent::PeerConnected, received no event");
-            }
-        };
+            test_runner_c
+                .client
+                .connect(test_runner_b.peer_id, addrs.clone())
+                .await?;
 
-        // c start providing
-        test_runner_c.client.start_providing(&cid).await?;
+            // expect a network event showing b & c have connected
+            match test_runner_b.network_events.recv().await {
+                Some(NetworkEvent::PeerConnected(peer_id)) => {
+                    assert_eq!(test_runner_c.peer_id, peer_id);
+                }
+                Some(n) => {
+                    anyhow::bail!("unexpected network event: {:?}", n);
+                }
+                None => {
+                    anyhow::bail!("expected NetworkEvent::PeerConnected, received no event");
+                }
+            };
 
-        // when `start_providing` waits for the record to make it to the dht
-        // we can remove this polling
-        let providers = tokio::time::timeout(
-            Duration::from_millis(5000),
-            poll_for_providers(test_runner_a.client.clone(), &cid),
-        )
-        .await
-        .context("timed out before finding providers for the given cid")??;
+            // c start providing
+            test_runner_c.client.start_providing(&cid).await?;
 
-        assert!(providers.len() == 1);
-        assert!(providers.get(0).unwrap().contains(&test_runner_c.peer_id));
+            // when `start_providing` waits for the record to make it to the dht
+            // we can remove this polling
+            let providers = tokio::time::timeout(
+                Duration::from_millis(5000),
+                poll_for_providers(test_runner_a.client.clone(), &cid),
+            )
+            .await
+            .context("timed out before finding providers for the given cid")??;
 
-        // c stop providing
-        test_runner_c.client.stop_providing(&cid).await?;
+            assert!(providers.len() == 1);
+            assert!(providers.get(0).unwrap().contains(&test_runner_c.peer_id));
 
-        // a fetch providers dht should not get any providers
-        let stream = test_runner_a.client.fetch_providers_dht(&cid).await?;
-        let providers: Vec<_> = stream.try_collect().await.unwrap();
+            // c stop providing
+            test_runner_c.client.stop_providing(&cid).await?;
 
-        assert!(providers.is_empty());
+            // a fetch providers dht should not get any providers
+            let stream = test_runner_a.client.fetch_providers_dht(&cid).await?;
+            let providers: Vec<_> = stream.try_collect().await.unwrap();
 
-        // try to connect a to c using only peer_id
-        test_runner_a
-            .client
-            .connect(test_runner_c.peer_id, vec![])
-            .await?;
+            assert!(providers.is_empty());
 
+            // try to connect a to c using only peer_id
+            test_runner_a
+                .client
+                .connect(test_runner_c.peer_id, vec![])
+                .await?;
+        }
         Ok(())
     }
 
