@@ -12,6 +12,9 @@ pub static HEADER_X_IPFS_GATEWAY_PREFIX: HeaderName =
 pub static HEADER_X_IPFS_ROOTS: HeaderName = HeaderName::from_static("x-ipfs-roots");
 pub static HEADER_SERVICE_WORKER: HeaderName = HeaderName::from_static("service-worker");
 pub static HEADER_CACHE_CONTROL: HeaderName = HeaderName::from_static("cache-control");
+pub static HEADER_X_CHUNKED_OUTPUT: HeaderName = HeaderName::from_static("x-chunked-output");
+pub static HEADER_X_STREAM_OUTPUT: HeaderName = HeaderName::from_static("x-stream-output");
+pub static HEADER_X_REQUESTED_WITH: HeaderName = HeaderName::from_static("x-requested-with");
 
 // Common Header Values
 pub static VALUE_XCTO_NOSNIFF: HeaderValue = HeaderValue::from_static("nosniff");
