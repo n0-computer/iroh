@@ -5,7 +5,7 @@ use futures::{
 };
 use iroh_p2p::NetworkEvent;
 use iroh_resolver::resolver::{Out, OutPrettyReader, OutType, Path, Resolver, UnixfsType};
-use iroh_unixfs::{Link, ResponseClip};
+use iroh_unixfs::Link;
 use libp2p::gossipsub::{GossipsubMessage, MessageId, TopicHash};
 use libp2p::PeerId;
 use tokio::sync::mpsc::{channel, Receiver as ChannelReceiver};
@@ -238,8 +238,7 @@ impl Data {
     }
 
     pub fn pretty(self) -> Result<OutPrettyReader<Loader>> {
-        self.root
-            .pretty(self.resolver, Default::default(), ResponseClip::NoClip)
+        self.root.pretty(self.resolver, Default::default(), None)
     }
 
     pub async fn read_file(&self, link: &Link) -> Result<Data> {
