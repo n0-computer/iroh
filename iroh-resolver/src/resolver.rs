@@ -16,8 +16,8 @@ use iroh_unixfs::{
     codecs::Codec,
     content_loader::{ContentLoader, ContextId, LoaderContext},
     parse_links,
-    unixfs::{poll_read_buf_at_pos, DataType, UnixfsChildStream, UnixfsContentReader, UnixfsNode},
-    Block, Link, LoadedCid, ResponseClip, Source,
+    unixfs::{read_data_to_buf, DataType, UnixfsChildStream, UnixfsContentReader, UnixfsNode},
+    Block, Link, LoadedCid, Source,
 };
 use libipld::codec::Encode;
 use libipld::prelude::Codec as _;
@@ -93,15 +93,14 @@ impl Path {
             let root = Cid::from_str(cid_or_domain).context("invalid cid")?;
             (PathType::Ipfs, CidOrDomain::Cid(root))
         };
-        let tail = if tail_path != "/" {
-            tail_path
-                .split(&['/', '\\'])
-                .filter(|s| !s.is_empty())
-                .map(String::from)
-                .collect()
-        } else {
-            vec!["".to_string()]
-        };
+        let mut tail = tail_path
+            .split(&['/', '\\'])
+            .filter(|s| !s.is_empty())
+            .map(String::from)
+            .collect::<Vec<_>>();
+        if tail_path.ends_with('/') {
+            tail.push("".to_string())
+        }
         Ok(Path { typ, root, tail })
     }
 
@@ -151,7 +150,7 @@ impl Display for Path {
             if part.is_empty() {
                 continue;
             }
-            write!(f, "/{}", part)?;
+            write!(f, "/{part}")?;
         }
 
         if self.has_trailing_slash() {
@@ -352,38 +351,38 @@ impl Out {
         self,
         loader: Resolver<T>,
         om: OutMetrics,
-        clip: ResponseClip,
+        pos_max: Option<usize>,
     ) -> Result<OutPrettyReader<T>> {
         let pos = 0;
         match self.content {
             OutContent::DagPb(_, mut bytes) => {
-                if let ResponseClip::Clip(n) = clip {
-                    bytes.truncate(n);
+                if let Some(pos_max) = pos_max {
+                    bytes.truncate(pos_max);
                 }
                 Ok(OutPrettyReader::DagPb(BytesReader { pos, bytes, om }))
             }
             OutContent::DagCbor(_, mut bytes) => {
-                if let ResponseClip::Clip(n) = clip {
-                    bytes.truncate(n);
+                if let Some(pos_max) = pos_max {
+                    bytes.truncate(pos_max);
                 }
                 Ok(OutPrettyReader::DagCbor(BytesReader { pos, bytes, om }))
             }
             OutContent::DagJson(_, mut bytes) => {
-                if let ResponseClip::Clip(n) = clip {
-                    bytes.truncate(n);
+                if let Some(pos_max) = pos_max {
+                    bytes.truncate(pos_max);
                 }
                 Ok(OutPrettyReader::DagJson(BytesReader { pos, bytes, om }))
             }
             OutContent::Raw(_, mut bytes) => {
-                if let ResponseClip::Clip(n) = clip {
-                    bytes.truncate(n);
+                if let Some(pos_max) = pos_max {
+                    bytes.truncate(pos_max);
                 }
                 Ok(OutPrettyReader::Raw(BytesReader { pos, bytes, om }))
             }
             OutContent::Unixfs(node) => {
                 let ctx = self.context;
                 let reader = node
-                    .into_content_reader(ctx, loader.loader().clone(), om, clip)?
+                    .into_content_reader(ctx, loader.loader().clone(), om, pos_max)?
                     .ok_or_else(|| anyhow!("cannot read the contents of a directory"))?;
 
                 Ok(OutPrettyReader::Unixfs(reader))
@@ -519,15 +518,14 @@ impl<T: ContentLoader + Unpin + 'static> AsyncRead for OutPrettyReader<T> {
             | OutPrettyReader::DagJson(bytes_reader)
             | OutPrettyReader::Raw(bytes_reader) => {
                 let pos_current = bytes_reader.pos;
-                let res = poll_read_buf_at_pos(
+                let bytes_read = read_data_to_buf(
                     &mut bytes_reader.pos,
-                    ResponseClip::Clip(bytes_reader.bytes.len()),
-                    &bytes_reader.bytes,
+                    Some(bytes_reader.bytes.len()),
+                    &bytes_reader.bytes[pos_current..],
                     buf,
                 );
-                let bytes_read = bytes_reader.pos - pos_current;
                 bytes_reader.om.observe_bytes_read(pos_current, bytes_read);
-                Poll::Ready(res)
+                Poll::Ready(Ok(()))
             }
             OutPrettyReader::Unixfs(r) => Pin::new(&mut *r).poll_read(cx, buf),
         }
@@ -1156,7 +1154,7 @@ mod tests {
                 ctx,
                 resolver.loader().clone(),
                 OutMetrics::default(),
-                ResponseClip::Clip(range.end as usize),
+                Some(range.end as usize),
             )
             .unwrap()
             .unwrap();
@@ -1214,11 +1212,11 @@ mod tests {
         let non_dir_path: Path = non_dir_test.parse().unwrap();
         let dir_path: Path = dir_test.parse().unwrap();
         assert!(non_dir_path.tail().is_empty());
-        assert!(dir_path.tail().len() == 1);
+        assert_eq!(dir_path.tail().len(), 1);
         assert!(dir_path.tail()[0].is_empty());
 
-        assert!(non_dir_path.to_string() == non_dir_test);
-        assert!(dir_path.to_string() == dir_test);
+        assert_eq!(non_dir_path.to_string(), non_dir_test);
+        assert_eq!(dir_path.to_string(), dir_test);
         assert!(dir_path.has_trailing_slash());
         assert!(!non_dir_path.has_trailing_slash());
     }
@@ -1293,11 +1291,7 @@ mod tests {
 
                 let out_bytes = read_to_vec(
                     new_ipld
-                        .pretty(
-                            resolver.clone(),
-                            OutMetrics::default(),
-                            ResponseClip::NoClip,
-                        )
+                        .pretty(resolver.clone(), OutMetrics::default(), None)
                         .unwrap(),
                 )
                 .await
@@ -1326,11 +1320,7 @@ mod tests {
 
                 let out_bytes = read_to_vec(
                     new_ipld
-                        .pretty(
-                            resolver.clone(),
-                            OutMetrics::default(),
-                            ResponseClip::NoClip,
-                        )
+                        .pretty(resolver.clone(), OutMetrics::default(), None)
                         .unwrap(),
                 )
                 .await
@@ -1453,7 +1443,7 @@ mod tests {
                             ipld_hello_txt.context,
                             resolver.loader().clone(),
                             OutMetrics::default(),
-                            ResponseClip::NoClip,
+                            None,
                         )
                         .unwrap()
                         .unwrap()
@@ -1489,7 +1479,7 @@ mod tests {
                             ipld_hello_txt.context,
                             resolver.loader().clone(),
                             OutMetrics::default(),
-                            ResponseClip::NoClip,
+                            None,
                         )
                         .unwrap()
                         .unwrap()
@@ -1552,7 +1542,7 @@ mod tests {
                             ipld_bar_txt.context,
                             resolver.loader().clone(),
                             OutMetrics::default(),
-                            ResponseClip::NoClip,
+                            None,
                         )
                         .unwrap()
                         .unwrap()
@@ -1846,7 +1836,7 @@ mod tests {
                             ipld_hello_txt.context,
                             resolver.loader().clone(),
                             OutMetrics::default(),
-                            ResponseClip::NoClip,
+                            None,
                         )
                         .unwrap()
                         .unwrap()
@@ -1889,7 +1879,7 @@ mod tests {
                             ipld_bar_txt.context,
                             resolver.loader().clone(),
                             OutMetrics::default(),
-                            ResponseClip::NoClip
+                            None
                         )
                         .unwrap()
                         .unwrap()
@@ -1956,7 +1946,7 @@ mod tests {
                         ipld_readme.context,
                         resolver.loader().clone(),
                         OutMetrics::default(),
-                        ResponseClip::NoClip,
+                        None,
                     )
                     .unwrap()
                     .unwrap(),
@@ -2124,7 +2114,7 @@ mod tests {
                             ipld_hello_txt.context,
                             resolver.loader().clone(),
                             OutMetrics::default(),
-                            ResponseClip::NoClip
+                            None
                         )
                         .unwrap()
                         .unwrap()
@@ -2181,7 +2171,7 @@ mod tests {
                             ipld_bar_txt.context,
                             resolver.loader().clone(),
                             OutMetrics::default(),
-                            ResponseClip::NoClip
+                            None
                         )
                         .unwrap()
                         .unwrap()
@@ -2219,7 +2209,7 @@ mod tests {
                             ipld_bar_txt.context,
                             resolver.loader().clone(),
                             OutMetrics::default(),
-                            ResponseClip::NoClip
+                            None
                         )
                         .unwrap()
                         .unwrap()
@@ -2257,7 +2247,7 @@ mod tests {
                             ipld_bar_txt.context,
                             resolver.loader().clone(),
                             OutMetrics::default(),
-                            ResponseClip::NoClip,
+                            None,
                         )
                         .unwrap()
                         .unwrap()
@@ -2295,7 +2285,7 @@ mod tests {
                             ipld_bar_txt.context,
                             resolver.loader().clone(),
                             OutMetrics::default(),
-                            ResponseClip::NoClip
+                            None
                         )
                         .unwrap()
                         .unwrap()
@@ -2323,7 +2313,7 @@ mod tests {
                             ipld_bar_txt.context,
                             resolver.loader().clone(),
                             OutMetrics::default(),
-                            ResponseClip::NoClip
+                            None
                         )
                         .unwrap()
                         .unwrap()
@@ -2389,7 +2379,7 @@ mod tests {
                             ipld_txt.context,
                             resolver.loader().clone(),
                             OutMetrics::default(),
-                            ResponseClip::NoClip
+                            None
                         )
                         .unwrap()
                         .unwrap()
@@ -2460,7 +2450,7 @@ mod tests {
                             ipld_txt.context,
                             resolver.loader().clone(),
                             OutMetrics::default(),
-                            ResponseClip::NoClip
+                            None
                         )
                         .unwrap()
                         .unwrap()

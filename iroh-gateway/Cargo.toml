@@ -12,6 +12,7 @@ rust-version.workspace = true
 anyhow.workspace = true
 async-recursion.workspace = true
 async-trait.workspace = true
+async-stream.workspace = true
 axum.workspace = true
 bytes.workspace = true
 cid.workspace = true

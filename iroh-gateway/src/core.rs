@@ -38,7 +38,7 @@ impl<T: ContentLoader + Unpin> Core<T> {
     ) -> anyhow::Result<Self> {
         tokio::spawn(async move {
             if let Err(err) = rpc::new(rpc_addr, Gateway::default()).await {
-                tracing::error!("Failed to run gateway rpc handler: {}", err);
+                tracing::error!("Failed to run gateway rpc handler: {err}");
             }
         });
         let mut templates = HashMap::new();
@@ -123,6 +123,8 @@ mod tests {
     use axum::response::Response;
     use cid::Cid;
     use futures::{StreamExt, TryStreamExt};
+    use http::header::CONTENT_RANGE;
+    use http::HeaderValue;
     use hyper::Body;
     use iroh_rpc_client::Client as RpcClient;
     use iroh_rpc_client::Config as RpcClientConfig;
@@ -131,6 +133,9 @@ mod tests {
     use iroh_unixfs::builder::{DirectoryBuilder, FileBuilder};
     use iroh_unixfs::content_loader::{FullLoader, FullLoaderConfig};
     use iroh_unixfs::unixfs::UnixfsNode;
+    use rand::distributions::{Alphanumeric, DistString};
+    use rand::rngs::SmallRng;
+    use rand::SeedableRng;
     use std::io;
     use tokio_util::io::StreamReader;
 
@@ -142,7 +147,6 @@ mod tests {
         file_cids: Vec<Cid>,
         core_task: tokio::task::JoinHandle<()>,
         store_task: tokio::task::JoinHandle<()>,
-        files: Vec<(String, Vec<u8>)>,
     }
 
     impl TestSetup {
@@ -209,10 +213,10 @@ mod tests {
         let store = rpc_client.try_store().unwrap();
         let mut cids = vec![];
         let mut dir_builder = DirectoryBuilder::new().name(dir);
-        for (name, content) in files {
+        for (name, content) in files.iter() {
             let file = FileBuilder::new()
                 .name(name)
-                .content_bytes(content.clone())
+                .content_bytes(content.to_vec())
                 .build()
                 .await
                 .unwrap();
@@ -226,7 +230,8 @@ mod tests {
             cids.push(cid);
             store.put(cid, bytes, links).await.unwrap();
         }
-        (*cids.last().unwrap(), cids)
+        let root = *cids.last().unwrap();
+        (root, cids)
     }
 
     async fn do_request(
@@ -254,7 +259,7 @@ mod tests {
             .unwrap()
     }
 
-    async fn setup_test(redirect_to_subdomains: bool) -> TestSetup {
+    async fn setup_test(redirect_to_subdomains: bool, files: &[(String, Vec<u8>)]) -> TestSetup {
         let (store_client_addr, store_task) = spawn_store().await;
         let mut config = Config::new(
             0,
@@ -269,11 +274,7 @@ mod tests {
         config.redirect_to_subdomain = redirect_to_subdomains;
         let (gateway_addr, rpc_client, core_task) = spawn_gateway(Arc::new(config)).await;
         let dir = "demo";
-        let files = vec![
-            ("hello.txt".to_string(), b"ola".to_vec()),
-            ("world.txt".to_string(), b"mundo".to_vec()),
-        ];
-        let (root_cid, file_cids) = put_directory_with_files(&rpc_client, dir, &files).await;
+        let (root_cid, file_cids) = put_directory_with_files(&rpc_client, dir, files).await;
 
         TestSetup {
             gateway_addr,
@@ -281,7 +282,6 @@ mod tests {
             file_cids,
             core_task,
             store_task,
-            files,
         }
     }
 
@@ -319,7 +319,11 @@ mod tests {
     // TODO(b5) - refactor to return anyhow::Result<()>
     #[tokio::test]
     async fn test_fetch_car_recursive() {
-        let test_setup = setup_test(false).await;
+        let files = &[
+            ("hello.txt".to_string(), b"ola".to_vec()),
+            ("world.txt".to_string(), b"mundo".to_vec()),
+        ];
+        let test_setup = setup_test(false, files).await;
 
         // request the root cid as a recursive car
         let res = do_request(
@@ -351,29 +355,32 @@ mod tests {
             HashSet::from_iter(test_setup.file_cids.iter())
         );
         assert_eq!(cids[0], test_setup.root_cid);
-        assert_eq!(nodes.len(), test_setup.files.len() + 1);
+        assert_eq!(nodes.len(), files.len() + 1);
         assert!(nodes[0].is_dir());
         assert_eq!(
             nodes[0]
                 .links()
                 .map(|link| link.unwrap().name.unwrap().to_string())
                 .collect::<Vec<_>>(),
-            test_setup
-                .files
+            files
                 .iter()
                 .map(|(name, _content)| name.to_string())
                 .collect::<Vec<_>>()
         );
 
         for (i, node) in nodes[1..].iter().enumerate() {
-            assert_eq!(node, &UnixfsNode::Raw(test_setup.files[i].1.clone().into()));
+            assert_eq!(node, &UnixfsNode::Raw(files[i].1.clone().into()));
         }
         test_setup.shutdown().await
     }
 
     #[tokio::test]
     async fn test_head_request_to_file() {
-        let test_setup = setup_test(false).await;
+        let files = &[
+            ("hello.txt".to_string(), b"ola".to_vec()),
+            ("world.txt".to_string(), b"mundo".to_vec()),
+        ];
+        let test_setup = setup_test(false, files).await;
 
         // request the root cid as a recursive car
         let res = do_request(
@@ -396,7 +403,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_gateway_requests() {
-        let test_setup = setup_test(false).await;
+        let files = &[
+            ("hello.txt".to_string(), b"ola".to_vec()),
+            ("world.txt".to_string(), b"mundo".to_vec()),
+        ];
+        let test_setup = setup_test(false, files).await;
 
         // request the root cid as a recursive car
         let res = do_request(
@@ -433,30 +444,117 @@ mod tests {
             HashSet::from_iter(test_setup.file_cids.iter())
         );
         assert_eq!(cids[0], test_setup.root_cid);
-        assert_eq!(nodes.len(), test_setup.files.len() + 1);
+        assert_eq!(nodes.len(), files.len() + 1);
         assert!(nodes[0].is_dir());
         assert_eq!(
             nodes[0]
                 .links()
                 .map(|link| link.unwrap().name.unwrap().to_string())
                 .collect::<Vec<_>>(),
-            test_setup
-                .files
+            files
                 .iter()
                 .map(|(name, _content)| name.to_string())
                 .collect::<Vec<_>>()
         );
 
         for (i, node) in nodes[1..].iter().enumerate() {
-            assert_eq!(node, &UnixfsNode::Raw(test_setup.files[i].1.clone().into()));
+            assert_eq!(node, &UnixfsNode::Raw(files[i].1.clone().into()));
         }
 
         test_setup.shutdown().await
     }
 
     #[tokio::test]
+    async fn test_range_requests() {
+        let files = [(
+            "large.txt".to_string(),
+            Alphanumeric
+                .sample_string(&mut SmallRng::seed_from_u64(42), 8 * 1024 * 1024)
+                .bytes()
+                .collect(),
+        )];
+        let large_file = &files[0].1;
+        let test_setup = setup_test(false, &files).await;
+
+        // -----------------------------
+
+        let res = do_request(
+            "GET",
+            &format!("localhost:{}", test_setup.gateway_addr.port()),
+            "/large.txt",
+            Some(&[
+                ("host", &format!("{}.ipfs.localhost", test_setup.root_cid)),
+                ("range", "bytes=0-1"),
+            ]),
+        )
+        .await;
+
+        assert_eq!(http::StatusCode::PARTIAL_CONTENT, res.status());
+        assert_eq!(
+            HeaderValue::from_str("bytes 0-1/8388608").unwrap(),
+            res.headers().get(CONTENT_RANGE).unwrap()
+        );
+
+        let (body, _) = res.into_body().into_future().await;
+        assert_eq!(body.unwrap().unwrap(), large_file[0..2]);
+
+        // -----------------------------
+
+        let res = do_request(
+            "GET",
+            &format!("localhost:{}", test_setup.gateway_addr.port()),
+            "/large.txt",
+            Some(&[
+                ("host", &format!("{}.ipfs.localhost", test_setup.root_cid)),
+                ("range", "bytes=4000-1000000"),
+            ]),
+        )
+        .await;
+
+        assert_eq!(http::StatusCode::PARTIAL_CONTENT, res.status());
+        assert_eq!(
+            HeaderValue::from_str("bytes 4000-1000000/8388608").unwrap(),
+            res.headers().get(CONTENT_RANGE).unwrap()
+        );
+
+        let content = hyper::body::to_bytes(res.into_body()).await.unwrap();
+        assert_eq!(content.len(), 1000001 - 4000);
+        assert_eq!(content, large_file[4000..1000001]);
+
+        let res = do_request(
+            "GET",
+            &format!("localhost:{}", test_setup.gateway_addr.port()),
+            "/large.txt",
+            Some(&[
+                ("host", &format!("{}.ipfs.localhost", test_setup.root_cid)),
+                ("range", "bytes=0-8388607"),
+            ]),
+        )
+        .await;
+
+        assert_eq!(http::StatusCode::PARTIAL_CONTENT, res.status());
+        assert_eq!(
+            HeaderValue::from_str("bytes 0-8388607/8388608").unwrap(),
+            res.headers().get(CONTENT_RANGE).unwrap()
+        );
+
+        let content = hyper::body::to_bytes(res.into_body()).await.unwrap();
+        assert_eq!(content.len(), large_file.len());
+        assert_eq!(content, large_file);
+
+        test_setup.shutdown().await
+    }
+
+    #[tokio::test]
     async fn test_gateway_redirection() {
-        let test_setup = setup_test(true).await;
+        let test_setup = setup_test(
+            true,
+            &[
+                ("hello.txt".to_string(), b"ola".to_vec()),
+                ("world.txt".to_string(), b"mundo".to_vec()),
+            ],
+        )
+        .await;
 
         // Usual request
         let res = do_request(
@@ -617,7 +715,7 @@ mod tests {
 
         assert_eq!(http::StatusCode::MOVED_PERMANENTLY, res.status());
         assert_eq!(
-            format!("http://{}.ipfs.ipfs.io/world.txt", test_setup.root_cid,),
+            format!("http://{}.ipfs.ipfs.io/world.txt", test_setup.root_cid),
             res.headers().get("Location").unwrap().to_str().unwrap(),
         );
 

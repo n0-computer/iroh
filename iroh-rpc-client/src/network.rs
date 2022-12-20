@@ -1,17 +1,15 @@
-use crate::status::StatusRow;
-use crate::ServiceStatus;
 use anyhow::Result;
+use async_stream::stream;
 use bytes::Bytes;
 use cid::Cid;
 use futures::{Stream, StreamExt};
-use iroh_rpc_types::p2p;
-use iroh_rpc_types::p2p::*;
+use iroh_rpc_types::{p2p::*, VersionRequest, WatchRequest};
 use libp2p::gossipsub::{MessageId, TopicHash};
 use libp2p::{Multiaddr, PeerId};
 use std::collections::{HashMap, HashSet};
 use tracing::{debug, warn};
 
-pub(crate) const NAME: &str = "p2p";
+use crate::{StatusType, HEALTH_POLL_WAIT};
 
 #[derive(Debug, Clone)]
 pub struct P2pClient {
@@ -26,7 +24,7 @@ impl P2pClient {
 
     #[tracing::instrument(skip(self))]
     pub async fn version(&self) -> Result<String> {
-        let res = self.client.rpc(p2p::VersionRequest).await?;
+        let res = self.client.rpc(VersionRequest).await?;
         Ok(res.version)
     }
 
@@ -270,23 +268,28 @@ impl P2pClient {
     }
 
     #[tracing::instrument(skip(self))]
-    pub async fn check(&self) -> StatusRow {
-        let status: ServiceStatus = self
-            .version()
-            .await
-            .map(|_| ServiceStatus::Serving)
-            .unwrap_or_else(|_e| ServiceStatus::Unknown);
-        StatusRow {
-            name: "p2p",
-            number: 2,
-            status,
+    pub async fn check(&self) -> (StatusType, String) {
+        match self.version().await {
+            Ok(version) => (StatusType::Serving, version),
+            Err(_) => (StatusType::Down, String::new()),
         }
     }
 
     #[tracing::instrument(skip(self))]
-    pub async fn watch(&self) -> impl Stream<Item = StatusRow> {
-        // todo
-        futures::stream::pending()
+    pub async fn watch(&self) -> impl Stream<Item = (StatusType, String)> {
+        let client = self.client.clone();
+        stream! {
+            loop {
+                let res = client.server_streaming(WatchRequest).await;
+                if let Ok(mut res) = res {
+                    while let Some(Ok(version)) = res.next().await {
+                        yield (StatusType::Serving, version.version);
+                    }
+                }
+                yield (StatusType::Down, String::new());
+                tokio::time::sleep(HEALTH_POLL_WAIT).await;
+            }
+        }
     }
 }
 

@@ -1,12 +1,12 @@
-use crate::status::StatusRow;
-use crate::{open_client, ServiceStatus};
 use anyhow::Result;
+use async_stream::stream;
 use bytes::Bytes;
 use cid::Cid;
-use futures::Stream;
-use iroh_rpc_types::store::*;
+use futures::{Stream, StreamExt};
+use iroh_rpc_types::{store::*, VersionRequest, WatchRequest};
 
-pub(crate) const NAME: &str = "store";
+use crate::open_client;
+use crate::{StatusType, HEALTH_POLL_WAIT};
 
 #[derive(Debug, Clone)]
 pub struct StoreClient {
@@ -66,22 +66,27 @@ impl StoreClient {
     }
 
     #[tracing::instrument(skip(self))]
-    pub async fn check(&self) -> StatusRow {
-        let status: ServiceStatus = self
-            .version()
-            .await
-            .map(|_| ServiceStatus::Serving)
-            .unwrap_or_else(|_e| ServiceStatus::Unknown);
-        StatusRow {
-            name: "store",
-            number: 3,
-            status,
+    pub async fn check(&self) -> (StatusType, String) {
+        match self.version().await {
+            Ok(version) => (StatusType::Serving, version),
+            Err(_) => (StatusType::Down, String::new()),
         }
     }
 
     #[tracing::instrument(skip(self))]
-    pub async fn watch(&self) -> impl Stream<Item = StatusRow> {
-        // todo
-        futures::stream::pending()
+    pub async fn watch(&self) -> impl Stream<Item = (StatusType, String)> {
+        let client = self.client.clone();
+        stream! {
+            loop {
+                let res = client.server_streaming(WatchRequest).await;
+                if let Ok(mut res) = res {
+                    while let Some(Ok(version)) = res.next().await {
+                        yield (StatusType::Serving, version.version);
+                    }
+                }
+                yield (StatusType::Down, String::new());
+                tokio::time::sleep(HEALTH_POLL_WAIT).await;
+            }
+        }
     }
 }

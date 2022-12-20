@@ -8,7 +8,6 @@ use iroh_unixfs::{
     self,
     builder::FileBuilder,
     chunker::{self, Chunker},
-    ResponseClip,
 };
 
 async fn read_fixture(path: impl AsRef<std::path::Path>) -> Result<Vec<u8>> {
@@ -80,9 +79,7 @@ async fn test_dagger_testdata() -> Result<()> {
             let stream = file.encode().await?;
             let (root, resolver) = stream_to_resolver(stream).await?;
             let out = resolver.resolve(Path::from_cid(root)).await?;
-            let t =
-                read_to_vec(out.pretty(resolver, OutMetrics::default(), ResponseClip::NoClip)?)
-                    .await?;
+            let t = read_to_vec(out.pretty(resolver, OutMetrics::default(), None)?).await?;
 
             println!("Root: {}", root);
             println!("Len: {}", data.len());

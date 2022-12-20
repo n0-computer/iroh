@@ -16,7 +16,7 @@ use iroh_metrics::{
 };
 use iroh_resolver::dns_resolver::Config;
 use iroh_resolver::resolver::{CidOrDomain, Metadata, Out, OutPrettyReader, OutType, Resolver};
-use iroh_unixfs::{content_loader::ContentLoader, ResponseClip, Source};
+use iroh_unixfs::{content_loader::ContentLoader, Source};
 use mime::Mime;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, AsyncWrite};
 use tokio_util::io::ReaderStream;
@@ -108,11 +108,16 @@ impl<T: ContentLoader + std::marker::Unpin> Client<T> {
     pub async fn get_file(
         &self,
         path: iroh_resolver::resolver::Path,
+        path_metadata: Option<Out>,
         start_time: std::time::Instant,
         range: Option<Range<u64>>,
     ) -> Result<(FileResult<T>, Metadata), String> {
         info!("get file {}", path);
-        let path_metadata = self.retrieve_path_metadata(path).await?;
+        let path_metadata = if let Some(path_metadata) = path_metadata {
+            path_metadata
+        } else {
+            self.retrieve_path_metadata(path.clone()).await?
+        };
         let metadata = path_metadata.metadata().clone();
         record_ttfb_metrics(start_time, &metadata.source);
 
@@ -120,15 +125,11 @@ impl<T: ContentLoader + std::marker::Unpin> Client<T> {
             let body = FileResult::Directory(path_metadata);
             Ok((body, metadata))
         } else {
-            let mut clip = 0;
-            if let Some(range) = &range {
-                clip = range.end as usize;
-            }
             let reader = path_metadata
                 .pretty(
                     self.resolver.clone(),
                     OutMetrics { start: start_time },
-                    ResponseClip::from(clip),
+                    range.as_ref().map(|range| range.end as usize),
                 )
                 .map_err(|e| e.to_string())?;
 
@@ -194,7 +195,7 @@ impl<T: ContentLoader + std::marker::Unpin> Client<T> {
                         let reader = res.pretty(
                             self.resolver.clone(),
                             OutMetrics { start: start_time },
-                            ResponseClip::NoClip,
+                            None,
                         );
                         match reader {
                             Ok(mut reader) => {
@@ -239,6 +240,7 @@ pub struct IpfsRequest {
     pub download: bool,
     pub query_params: GetParams,
     pub subdomain_mode: bool,
+    pub path_metadata: Out,
 }
 
 impl IpfsRequest {

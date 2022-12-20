@@ -12,7 +12,7 @@ use quic_rpc::{
     transport::{combined, http2, CombinedChannelTypes, Http2ChannelTypes, MemChannelTypes},
     RpcClient, RpcServer, Service,
 };
-pub use status::{ServiceStatus, StatusRow, StatusTable};
+pub use status::{ClientStatus, ServiceStatus, ServiceType, StatusType, HEALTH_POLL_WAIT};
 pub use store::StoreClient;
 
 /// The types of channels used by the client and server.
@@ -69,7 +69,7 @@ pub async fn open_client<S: Service>(addr: Addr<S>) -> anyhow::Result<RpcClient<
             combined::ClientChannel::new(None, Some(client)),
         )),
         Addr::Irpc(uri) => {
-            let uri = format!("http://{}", uri).parse()?;
+            let uri = format!("http://{uri}").parse()?;
             let channel = http2::ClientChannel::new(uri);
             let channel = combined::ClientChannel::new(Some(channel), None);
             Ok(RpcClient::<S, ChannelTypes>::new(channel))
