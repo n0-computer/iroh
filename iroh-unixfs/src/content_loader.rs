@@ -252,18 +252,34 @@ impl ContentLoader for FullLoader {
                 if let Ok(Some(loaded)) = bitswap {
                     loaded
                 } else {
-                    gateway_fut
-                        .await?
-                        .ok_or_else(|| anyhow!("failed to find {}", cid))?
+                    let gateway = gateway_fut.await;
+                    if let Ok(Some(loaded)) = gateway {
+                        loaded
+                    } else {
+                        let bitswap_offline = matches!(bitswap, Ok(None));
+                        let gateway_offline = matches!(gateway, Ok(None));
+                        if bitswap_offline && gateway_offline {
+                            return Err(anyhow!("offline"));
+                        }
+                        return Err(anyhow!("failed to find {}", cid));
+                    }
                 }
             }
             Either::Right((gateway, bitswap_future)) => {
                 if let Ok(Some(loaded)) = gateway {
                     loaded
                 } else {
-                    bitswap_future
-                        .await?
-                        .ok_or_else(|| anyhow!("failed to find {}", cid))?
+                    let bitswap = bitswap_future.await;
+                    if let Ok(Some(loaded)) = bitswap {
+                        loaded
+                    } else {
+                        let bitswap_offline = matches!(bitswap, Ok(None));
+                        let gateway_offline = matches!(gateway, Ok(None));
+                        if bitswap_offline && gateway_offline {
+                            return Err(anyhow!("offline"));
+                        }
+                        return Err(anyhow!("failed to find {}", cid));
+                    }
                 }
             }
         };
