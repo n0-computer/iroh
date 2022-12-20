@@ -1676,7 +1676,7 @@ mod tests {
             // when `start_providing` waits for the record to make it to the dht
             // we can remove this polling
             let providers = tokio::time::timeout(
-                Duration::from_millis(5000),
+                Duration::from_secs(7),
                 poll_for_providers(test_runner_a.client.clone(), &cid),
             )
             .await
