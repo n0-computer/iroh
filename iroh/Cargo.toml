@@ -48,6 +48,6 @@ which.workspace = true
 # mode. trycmd needs to have an actual binary to invoke.
 # Unfortunately this also turns on the feature during development, which may be
 # confusing. See the comments in `run.rs` surrounding this.
-iroh = { workspace = true, features = ["testing"] }
+iroh = { path = "./", features = ["testing"] } # THIS MUST NOT BE workspace
 iroh-api = { workspace = true, features = ["testing"] }
 trycmd.workspace = true
