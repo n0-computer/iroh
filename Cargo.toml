@@ -28,7 +28,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.1.3"
+version = "0.2.0"
 edition = "2021"
 license = "Apache-2.0/MIT"
 rust-version = "1.65"
@@ -91,22 +91,22 @@ hyper = "0.14.23"
 ignore = "0.4.18"
 indicatif = "0.17.1"
 integer-encoding = "3.0"
-iroh = { version = "0.1.3", path = "./iroh" }
-iroh-api = { version = "0.1.3", path = "./iroh-api" }
-iroh-bitswap = { version = "0.1.3", path = "./iroh-bitswap" }
-iroh-car = { version = "0.1.3", path = "./iroh-car" }
-iroh-embed = { version = "0.1.3", path = "./iroh-embed" }
-iroh-gateway = { version = "0.1.3", path = "./iroh-gateway" }
-iroh-localops = { version = "0.1.3", path = "./iroh-localops" }
-iroh-metrics = { version = "0.1.3", path = "./iroh-metrics" }
-iroh-one = { version = "0.1.3", path = "./iroh-one" }
-iroh-p2p = { version = "0.1.3", path = "./iroh-p2p" }
-iroh-resolver = { version = "0.1.3", path = "./iroh-resolver" }
-iroh-rpc-client = { version = "0.1.3", path = "./iroh-rpc-client" }
-iroh-rpc-types = { version = "0.1.3", path = "./iroh-rpc-types" }
-iroh-store = { version = "0.1.3", path = "./iroh-store" }
-iroh-unixfs = { version = "0.1.3", path = "./iroh-unixfs" }
-iroh-util = { version = "0.1.3", path = "./iroh-util" }
+iroh = { version = "0.2.0", path = "./iroh" }
+iroh-api = { version = "0.2.0", path = "./iroh-api" }
+iroh-bitswap = { version = "0.2.0", path = "./iroh-bitswap" }
+iroh-car = { version = "0.2.0", path = "./iroh-car" }
+iroh-embed = { version = "0.2.0", path = "./iroh-embed" }
+iroh-gateway = { version = "0.2.0", path = "./iroh-gateway" }
+iroh-localops = { version = "0.2.0", path = "./iroh-localops" }
+iroh-metrics = { version = "0.2.0", path = "./iroh-metrics" }
+iroh-one = { version = "0.2.0", path = "./iroh-one" }
+iroh-p2p = { version = "0.2.0", path = "./iroh-p2p" }
+iroh-resolver = { version = "0.2.0", path = "./iroh-resolver" }
+iroh-rpc-client = { version = "0.2.0", path = "./iroh-rpc-client" }
+iroh-rpc-types = { version = "0.2.0", path = "./iroh-rpc-types" }
+iroh-store = { version = "0.2.0", path = "./iroh-store" }
+iroh-unixfs = { version = "0.2.0", path = "./iroh-unixfs" }
+iroh-util = { version = "0.2.0", path = "./iroh-util" }
 keyed_priority_queue = "0.4.1"
 lazy_static = "1.4"
 libipld = "0.15"
