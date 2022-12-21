@@ -64,9 +64,23 @@ pub struct Libp2pConfig {
     pub dial_concurrency_factor: u8,
 }
 
+/// Configuration specific to an iroh server processes.
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
+pub struct ServerConfig {
+    /// Whether to print the listening address to stdout.
+    ///
+    /// If you configure the server to use a listening address with e.g. a random port
+    /// number (`0`), you can use this to find out what local address the server has bound
+    /// to.  It will be printed as a string in `LISTENING_ADDR=xxx' where `xxx` is the
+    /// native representation of the address bound to, e.g. for an IPv4 address that could
+    /// be `127.0.0.1:1234` etc.
+    pub print_address: bool,
+}
+
 /// Configuration for the [`iroh-p2p`] node.
 #[derive(PartialEq, Debug, Clone, Deserialize, Serialize)]
 pub struct Config {
+    pub server: ServerConfig,
     pub libp2p: Libp2pConfig,
     pub rpc_client: RpcClientConfig,
     pub metrics: MetricsConfig,
@@ -142,6 +156,19 @@ impl Source for Libp2pConfig {
     }
 }
 
+impl Source for ServerConfig {
+    fn clone_into_box(&self) -> Box<dyn Source + Send + Sync> {
+        Box::new(self.clone())
+    }
+
+    fn collect(&self) -> Result<Map<String, Value>, ConfigError> {
+        let mut map: Map<String, Value> = Map::new();
+
+        insert_into_config_map(&mut map, "print_address", self.print_address);
+        Ok(map)
+    }
+}
+
 impl Source for Config {
     fn clone_into_box(&self) -> Box<dyn Source + Send + Sync> {
         Box::new(self.clone())
@@ -150,6 +177,7 @@ impl Source for Config {
     fn collect(&self) -> Result<Map<String, Value>, ConfigError> {
         let mut map: Map<String, Value> = Map::new();
 
+        insert_into_config_map(&mut map, "server", self.server.collect()?);
         insert_into_config_map(&mut map, "libp2p", self.libp2p.collect()?);
         insert_into_config_map(&mut map, "rpc_client", self.rpc_client.collect()?);
         insert_into_config_map(&mut map, "metrics", self.metrics.collect()?);
@@ -194,6 +222,7 @@ impl Default for Libp2pConfig {
 impl Config {
     pub fn default_with_rpc(client_addr: P2pAddr) -> Self {
         Self {
+            server: Default::default(),
             libp2p: Libp2pConfig::default(),
             rpc_client: RpcClientConfig {
                 p2p_addr: Some(client_addr),
@@ -208,6 +237,7 @@ impl Config {
         let rpc_client = RpcClientConfig::default_network();
 
         Self {
+            server: Default::default(),
             libp2p: Libp2pConfig::default(),
             rpc_client,
             metrics: MetricsConfig::default(),

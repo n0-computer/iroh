@@ -5,10 +5,15 @@ use clap::Parser;
 #[derive(Parser, Debug, Clone)]
 #[clap(author, version, about, long_about = None)]
 pub struct Args {
+    /// Enable metrics
     #[clap(long = "metrics")]
     metrics: bool,
+    /// Enable tracing
     #[clap(long = "tracing")]
     tracing: bool,
+    /// Print the listening address to stdout as LISTENING_ADDR=xxx
+    #[clap(short, long)]
+    print_address: bool,
     #[clap(long)]
     pub cfg: Option<PathBuf>,
 }
@@ -18,6 +23,10 @@ impl Args {
         let mut map = HashMap::new();
         map.insert("metrics.collect".to_string(), self.metrics.to_string());
         map.insert("metrics.tracing".to_string(), self.tracing.to_string());
+        map.insert(
+            "server.print_address".to_string(),
+            self.print_address.to_string(),
+        );
         map
     }
 }

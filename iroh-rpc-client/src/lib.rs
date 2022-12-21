@@ -4,14 +4,16 @@ pub mod gateway;
 pub mod network;
 pub mod status;
 pub mod store;
-pub use self::config::Config;
-pub use client::Client;
 use iroh_rpc_types::{gateway::GatewayService, p2p::P2pService, store::StoreService, Addr};
-pub use network::{Lookup, P2pClient};
 use quic_rpc::{
     transport::{combined, http2, CombinedChannelTypes, Http2ChannelTypes, MemChannelTypes},
     RpcClient, RpcServer, Service,
 };
+
+pub use crate::config::Config;
+pub use client::Client;
+pub use network::{Lookup, P2pClient};
+pub use quic_rpc::LocalAddr;
 pub use status::{ClientStatus, ServiceStatus, ServiceType, StatusType, HEALTH_POLL_WAIT};
 pub use store::StoreClient;
 

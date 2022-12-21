@@ -127,6 +127,7 @@ fn default_p2p_config(
     key_store_path: PathBuf,
 ) -> iroh_p2p::config::Config {
     iroh_p2p::config::Config {
+        server: Default::default(),
         libp2p: Libp2pConfig::default(),
         rpc_client: ipfsd,
         metrics,

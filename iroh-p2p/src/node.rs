@@ -139,12 +139,14 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
             ..
         } = config;
 
-        let rpc_task = tokio::task::spawn(async move {
-            // TODO: handle error
-            rpc::new(rpc_addr, P2p::new(network_sender_in))
-                .await
-                .unwrap()
-        });
+        // TODO: handle error
+        let rpc_task = rpc::spawn_server(
+            rpc_addr,
+            P2p::new(network_sender_in),
+            config.server.print_address,
+        )
+        .await
+        .unwrap();
 
         let rpc_client = RpcClient::new(rpc_client)
             .await

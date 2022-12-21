@@ -160,6 +160,7 @@ impl P2pNode {
         libp2p_config.max_conns_in = 8;
         libp2p_config.max_conns_out = 8;
         let config = config::Config {
+            server: Default::default(),
             libp2p: libp2p_config,
             rpc_client: rpc_p2p_client_config.clone(),
             metrics: Default::default(),

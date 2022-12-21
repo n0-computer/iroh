@@ -8,7 +8,7 @@ use futures::{
 };
 use iroh_bitswap::Block;
 use iroh_rpc_client::{
-    create_server, Lookup, P2pServer, ServerError, ServerSocket, HEALTH_POLL_WAIT,
+    create_server, LocalAddr, Lookup, P2pServer, ServerError, ServerSocket, HEALTH_POLL_WAIT,
 };
 use iroh_rpc_types::{
     p2p::*, RpcError, RpcResult, VersionRequest, VersionResponse, WatchRequest, WatchResponse,
@@ -25,6 +25,7 @@ use std::collections::{HashMap, HashSet};
 use std::result;
 use tokio::sync::mpsc::{channel, Sender};
 use tokio::sync::oneshot;
+use tokio::task::JoinHandle;
 use tracing::{debug, info, trace};
 
 use super::node::DEFAULT_PROVIDER_LIMIT;
@@ -533,7 +534,12 @@ impl P2p {
     }
 }
 
-/// dispatch a single request from the server 
+/// Dispatches a single request received by the server.
+///
+/// The server itself is passed via *s* while *req* is the first request already read from
+/// the channel.  *chan* is the tuple of sender and receiver channels to send responses and
+/// read more requests chunks from this stream.  Finally *target* is the struct on which we
+/// want to call methods to handle the requests.
 #[rustfmt::skip]
 async fn dispatch(s: P2pServer, req: P2pRequest, chan: ServerSocket<P2pService>, target: P2p) -> result::Result<(), ServerError> {
     use P2pRequest::*;
@@ -570,19 +576,40 @@ async fn dispatch(s: P2pServer, req: P2pRequest, chan: ServerSocket<P2pService>,
 }
 
 #[tracing::instrument(skip(p2p))]
-pub(crate) async fn new(addr: P2pAddr, p2p: P2p) -> Result<()> {
-    info!("p2p rpc listening on: {}", addr);
+pub(crate) async fn spawn_server(
+    addr: P2pAddr,
+    p2p: P2p,
+    print_address: bool,
+) -> Result<JoinHandle<()>> {
     let server = create_server::<P2pService>(addr).await?;
-    loop {
-        match server.accept_one().await {
-            Ok((req, chan)) => {
-                tokio::spawn(dispatch(server.clone(), req, chan, p2p.clone()));
-            }
-            Err(cause) => {
-                tracing::debug!("p2p rpc accept error: {}", cause);
-            }
+
+    // We know there is currently only one real listening address.
+    let all_local_addrs: &[LocalAddr] = server.local_addr();
+    let local_addr: Option<&LocalAddr> = all_local_addrs
+        .iter()
+        .find(|a| matches!(a, LocalAddr::Socket(_)))
+        .or_else(|| all_local_addrs.get(0));
+    if print_address {
+        if let Some(local_addr) = local_addr {
+            println!("LISTENING_ADDR={local_addr}");
         }
     }
+    for local_addr in all_local_addrs {
+        info!("p2p rpc listening on: {local_addr}");
+    }
+
+    Ok(tokio::spawn(async move {
+        loop {
+            match server.accept_one().await {
+                Ok((req, chan)) => {
+                    tokio::spawn(dispatch(server.clone(), req, chan, p2p.clone()));
+                }
+                Err(cause) => {
+                    tracing::error!("p2p rpc accept error: {}", cause);
+                }
+            }
+        }
+    }))
 }
 
 fn peer_info_from_identify_info(i: IdentifyInfo) -> LookupResponse {
