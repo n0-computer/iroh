@@ -579,7 +579,7 @@ pub(crate) async fn new(addr: P2pAddr, p2p: P2p) -> Result<()> {
                 tokio::spawn(dispatch(server.clone(), req, chan, p2p.clone()));
             }
             Err(cause) => {
-                tracing::error!("p2p rpc accept error: {}", cause);
+                tracing::debug!("p2p rpc accept error: {}", cause);
             }
         }
     }
