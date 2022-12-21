@@ -2,7 +2,6 @@ use anyhow::{anyhow, Result};
 use clap::Parser;
 use crossterm::style::Stylize;
 use iroh_api::ApiError;
-use std::io;
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<()> {
@@ -28,29 +27,23 @@ fn transform_error(r: Result<()>) -> Result<()> {
     match r {
         Ok(_) => Ok(()),
         Err(e) => {
-            let io_error = e.root_cause().downcast_ref::<io::Error>();
-            if let Some(io_error) = io_error {
-                if io_error.kind() == io::ErrorKind::ConnectionRefused {
-                    return Err(anyhow!(
-                        "Connection refused. Are services running?\n{}",
-                        "hint: see 'iroh start' for more on starting services".yellow(),
-                    ));
-                }
+            let rpc_error = e
+                .root_cause()
+                .downcast_ref::<iroh_rpc_client::ClientError>();
+            if let Some(iroh_rpc_client::ClientError::Open(_)) = rpc_error {
+                return Err(anyhow!(
+                    "Connection refused. Are services running?\n{}",
+                    "hint: see 'iroh start' for more on starting services".yellow(),
+                ));
             }
+
             let api_error = e.root_cause().downcast_ref::<ApiError>();
-            if let Some(api_error) = api_error {
-                match api_error {
-                    ApiError::ConnectionRefused { service } => {
-                        return Err(anyhow!(
-                            "Connection refused. This command requires a running {} service.\n{}",
-                            service,
-                            format!("hint: try 'iroh start {}'", service).yellow(),
-                        ));
-                    }
-                    _ => {
-                        return Err(e);
-                    }
-                }
+            if let Some(ApiError::ConnectionRefused { service }) = api_error {
+                return Err(anyhow!(
+                    "Connection refused. This command requires a running {} service.\n{}",
+                    service,
+                    format!("hint: try 'iroh start {}'", service).yellow(),
+                ));
             }
             Err(e)
         }
