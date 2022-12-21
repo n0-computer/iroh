@@ -60,7 +60,7 @@ pub async fn new(addr: GatewayAddr, gw: Gateway) -> Result<()> {
                 tokio::spawn(dispatch(server.clone(), req, chan, gw.clone()));
             }
             Err(cause) => {
-                tracing::error!("gateway rpc accept error: {}", cause);
+                tracing::debug!("gateway rpc accept error: {}", cause);
             }
         }
     }
