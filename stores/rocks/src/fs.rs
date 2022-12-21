@@ -235,7 +235,7 @@ mod tests {
         }
 
         for i in 0..5 {
-            rocksfs.del(format!("foo{}", i)).unwrap();
+            rocksfs.del(format!("foo{i}")).unwrap();
         }
 
         assert_eq!(rocksfs.number_of_keys().unwrap(), 5);

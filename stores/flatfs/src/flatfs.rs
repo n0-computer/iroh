@@ -445,7 +445,7 @@ mod tests {
         }
 
         for i in 0..5 {
-            flatfs.del(&format!("foo{}", i)).unwrap();
+            flatfs.del(&format!("foo{i}")).unwrap();
         }
 
         assert_eq!(flatfs.disk_usage(), 5 * 128);

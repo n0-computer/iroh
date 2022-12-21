@@ -307,7 +307,7 @@ mod test {
                         );
                     }
                 }
-                Err(err) => panic!("Failed to fork: {}", err),
+                Err(err) => panic!("Failed to fork: {err}"),
             }
         }
     }
