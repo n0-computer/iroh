@@ -316,6 +316,86 @@ mod tests {
         core_task.await.unwrap_err();
     }
 
+    #[tokio::test]
+    async fn gateway_503() {
+        let mut config = Config::new(
+            0,
+            RpcClientConfig {
+                gateway_addr: None,
+                p2p_addr: None,
+                store_addr: None,
+                channels: Some(1),
+            },
+        );
+        config.set_default_headers();
+
+        let (addr, _rpc_client, core_task) = spawn_gateway(Arc::new(config)).await;
+
+        let uri = hyper::Uri::builder()
+            .scheme("http")
+            .authority(format!("localhost:{}", addr.port()))
+            .path_and_query("/ipfs/QmPZ9gcCEpqKTo6aq61g2nXGUhM4iCL3ewB6LDXZCtioEB")
+            .build()
+            .unwrap();
+        let client = hyper::Client::new();
+        let res = client.get(uri).await.unwrap();
+
+        assert_eq!(http::StatusCode::SERVICE_UNAVAILABLE, res.status());
+        core_task.abort();
+        core_task.await.unwrap_err();
+    }
+
+    #[tokio::test]
+    async fn gateway_404() {
+        let files = &[];
+        let (store_client_addr, store_task) = spawn_store().await;
+        let mut config = Config::new(
+            0,
+            RpcClientConfig {
+                gateway_addr: None,
+                p2p_addr: None,
+                store_addr: Some(store_client_addr),
+                channels: Some(1),
+            },
+        );
+        config.set_default_headers();
+        // force any resolvers so we dont just report 503
+        config.http_resolvers = Some(vec!["http://no-real-gw.testz".parse().unwrap()]);
+        let (gateway_addr, rpc_client, core_task) = spawn_gateway(Arc::new(config)).await;
+        let dir = "demo";
+        let (root_cid, file_cids) = put_directory_with_files(&rpc_client, dir, files).await;
+
+        let test_setup = TestSetup {
+            gateway_addr,
+            root_cid,
+            file_cids,
+            core_task,
+            store_task,
+        };
+
+        let res = do_request(
+            "GET",
+            &format!("localhost:{}", test_setup.gateway_addr.port()),
+            "/ipfs/QmPZ9gcCEpqKTo6aq61g2nXGUhM4iCL3ewB6LDXZCtioEB",
+            None,
+        )
+        .await;
+        assert_eq!(http::StatusCode::NOT_FOUND, res.status());
+        let body = hyper::body::to_bytes(res.into_body()).await.unwrap();
+        assert!(body.starts_with(b"{\"code\":404,\"message\":\"failed to find"));
+
+        let res = do_request(
+            "GET",
+            &format!("localhost:{}", test_setup.gateway_addr.port()),
+            "/ipfs/QmPZ9gcCEpqKTo6aq61g2nXGUhM4iCL3ewB6LDXZCtioEB",
+            Some(&[("accept", "text/html")]),
+        )
+        .await;
+        assert_eq!(http::StatusCode::NOT_FOUND, res.status());
+        let body = hyper::body::to_bytes(res.into_body()).await.unwrap();
+        assert!(body.starts_with(b"<!DOCTYPE html>"));
+    }
+
     // TODO(b5) - refactor to return anyhow::Result<()>
     #[tokio::test]
     async fn test_fetch_car_recursive() {
