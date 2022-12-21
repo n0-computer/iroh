@@ -12,7 +12,7 @@ fn main() -> Result<()> {
     let path = args.next().unwrap().trim().to_string();
     let n: usize = args.next().unwrap().parse()?;
 
-    println!("Opening {:?}", path);
+    println!("Opening {path:?}");
 
     let flatfs = Flatfs::new(&path)?;
     println!("Size on disk: {} bytes", flatfs.disk_usage());
@@ -21,20 +21,20 @@ fn main() -> Result<()> {
         "all" => {
             for r in flatfs.iter().take(n) {
                 let (key, value) = r?;
-                println!("{}", key);
-                println!("{:?}", value);
+                println!("{key}");
+                println!("{value:?}");
             }
         }
         "stats" => {
             for r in flatfs.stats().take(n) {
                 let stats = r?;
-                println!("{:?}", stats);
+                println!("{stats:?}");
             }
         }
         "keys" => {
             for r in flatfs.keys().take(n) {
                 let key = r?;
-                println!("{}", key);
+                println!("{key}");
             }
         }
         "values" => {
