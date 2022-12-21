@@ -129,7 +129,7 @@ pub fn get_app_routes<T: ContentLoader + Unpin>(state: &Arc<State<T>>) -> Router
                 .layer(Extension(Arc::clone(state)))
                 .layer(middleware::from_fn(request_middleware))
                 .layer(CompressionLayer::new())
-                .layer(HandleErrorLayer::new(middleware_error_handler::<T>))
+                .layer(HandleErrorLayer::new(middleware_error_handler))
                 .load_shed()
                 .concurrency_limit(2048 * 1024)
                 .timeout(Duration::from_secs(120))
@@ -180,12 +180,18 @@ async fn request_preprocessing<T: ContentLoader + Unpin>(
         }
     }
 
-    let path_metadata = state
-        .client
-        .retrieve_path_metadata(path.clone())
-        .await
-        .map_err(|e| GatewayError::new(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
-    // TODO: handle 404 or error
+    let path_metadata = match state.client.retrieve_path_metadata(path.clone()).await {
+        Ok(metadata) => metadata,
+        Err(e) => {
+            if e == "offline" {
+                return Err(GatewayError::new(StatusCode::SERVICE_UNAVAILABLE, &e));
+            } else if e.starts_with("failed to find") {
+                return Err(GatewayError::new(StatusCode::NOT_FOUND, &e));
+            } else {
+                return Err(GatewayError::new(StatusCode::INTERNAL_SERVER_ERROR, &e));
+            }
+        }
+    };
 
     let resolved_cid = path_metadata.metadata().resolved_path.last();
     let resolved_cid = match resolved_cid {
@@ -322,7 +328,9 @@ pub async fn subdomain_handler<T: ContentLoader + Unpin>(
         path_params.content_path.as_deref().unwrap_or("/"),
     )
     .map_err(|e| GatewayError::new(StatusCode::BAD_REQUEST, &e.to_string()))?;
-    handler(
+
+    let m = method.clone();
+    let res = handler(
         state,
         method,
         &path,
@@ -332,6 +340,8 @@ pub async fn subdomain_handler<T: ContentLoader + Unpin>(
         true,
     )
     .await
+    .map_err(|e| maybe_html_error(e, m, request_headers))?;
+    Ok(res)
 }
 
 #[tracing::instrument(skip(state))]
@@ -354,16 +364,19 @@ pub async fn path_handler<T: ContentLoader + Unpin>(
     if state.config.redirect_to_subdomain() {
         Ok(redirect_path_handlers(&host, &path, &request_headers))
     } else {
-        handler(
+        let m = method.clone();
+        let res = handler(
             state,
             method,
             &path,
             &query_params,
             &request_headers,
             http_req,
-            false,
+            true,
         )
         .await
+        .map_err(|e| maybe_html_error(e, m, request_headers))?;
+        Ok(res)
     }
 }
 
@@ -946,15 +959,26 @@ pub async fn request_middleware<B>(
     r
 }
 
+pub fn maybe_html_error(err: GatewayError, method: Method, headers: HeaderMap) -> GatewayError {
+    if headers.contains_key("accept") {
+        let accept = headers.get("accept").unwrap().to_str().unwrap();
+        if accept.contains("text/html") {
+            return err.with_method(method).with_html();
+        }
+    }
+    err.with_method(method)
+}
+
 #[tracing::instrument()]
-pub async fn middleware_error_handler<T: ContentLoader>(
+pub async fn middleware_error_handler(
+    request_headers: HeaderMap,
     method: Method,
     err: BoxError,
 ) -> impl IntoResponse {
     inc!(GatewayMetrics::FailCount);
     if err.is::<GatewayError>() {
         let err = err.downcast::<GatewayError>().unwrap();
-        return err.with_method(method);
+        return maybe_html_error(*err, method, request_headers);
     }
 
     if err.is::<tower::timeout::error::Elapsed>() {
