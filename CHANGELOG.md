@@ -1,3 +1,47 @@
+# [v0.2.0](https://github.com/n0-computer/iroh/compare/v0.1.1...v0.2.0) (2022-12-21)
+
+### First steps for iroh as a library
+Many folks have asked for iroh as a library embeddable in other rust projects, and with this release we land the the first version of `iroh-embed`. Check the [example](https://github.com/n0-computer/iroh/blob/e73a731769269c58b5d32e4a207e6577b3c50838/examples/embed/src/main.rs) for an initial guide.
+
+We still have a _lot_ of work to do on `iroh-api` to expose a clean API to consume as a library, but if you're the kind of project that's intersted in embedded IPFS, and willing to roll up your sleeves on a moving API, Iroh is ready for you to use today.
+
+
+### Gateway Subdomain & ETH domain support
+Our gateway [spec compatibility](https://github.com/ipfs/specs/tree/main/http-gateways) continues to grow. Both of these features were outside contributions by [@ppodolsky](https://github.com/ppodolsky), for which we're super grateful. Be sure to check out their work on [summa](https://github.com/izihawa/summa)!
+
+### QUIC Support
+The majority of traffic on public IPFS networks runs over QUIC, which we now support within iroh thanks to a [massive push by the rust-libp2p team](https://github.com/libp2p/rust-libp2p/pull/2289). Huge thanks to the libp2p team!
+
+
+### Bug Fixes
+
+* actually resolve and check paths ([#623](https://github.com/n0-computer/iroh/issues/623)) ([8b6844f](https://github.com/n0-computer/iroh/commit/8b6844fc8dab620f0477b5e1d6b1341ef11f86b9))
+* **ci:** Call cargo with beta toolchain from env var ([#622](https://github.com/n0-computer/iroh/issues/622)) ([b62030d](https://github.com/n0-computer/iroh/commit/b62030d3beb943f46b300a596a64c1c27a59ea21))
+* **ci:** Set the protoc-arch matrix for weekly job ([#619](https://github.com/n0-computer/iroh/issues/619)) ([22d68df](https://github.com/n0-computer/iroh/commit/22d68df1f60fff5eb9b677bbc7a5862fdcd3588d)), closes [#618](https://github.com/n0-computer/iroh/issues/618)
+* **ci:** Use beta toolchain for the clippy run ([#620](https://github.com/n0-computer/iroh/issues/620)) ([03624b5](https://github.com/n0-computer/iroh/commit/03624b55812b16c473e902a265cf7f6f1100f640))
+* **iroh-one:** Wire up mem addresses to each other ([#555](https://github.com/n0-computer/iroh/issues/555)) ([ee9677d](https://github.com/n0-computer/iroh/commit/ee9677d4001f15516068bf0f376e01199a1824aa))
+* **iroh:** do not use self version dep ([6f6fee0](https://github.com/n0-computer/iroh/commit/6f6fee0aed2f0d6d2381ac2b731d05cadfcfff52))
+* **iroh:** exclude tests and fixtures from publishing ([6ebee5f](https://github.com/n0-computer/iroh/commit/6ebee5f3082f08d19662b8ee84b257df27d60d15))
+* only use name if name is set ([#605](https://github.com/n0-computer/iroh/issues/605)) ([4dda2d0](https://github.com/n0-computer/iroh/commit/4dda2d05e4a0d230bcbf1ede35adbaa0cf5a8a00))
+* unixfs seeking ([#606](https://github.com/n0-computer/iroh/issues/606)) ([51e3ddf](https://github.com/n0-computer/iroh/commit/51e3ddf4bad2f815b138c3276bb49b7e1603c94a))
+* update quic-rpc to get rid of debug output ([bf4128b](https://github.com/n0-computer/iroh/commit/bf4128be1f742679dc35f061129b440c325a8c4e))
+* use http when creating hyper URL ([#591](https://github.com/n0-computer/iroh/issues/591)) ([e9e932d](https://github.com/n0-computer/iroh/commit/e9e932d9df54c1d3b8468b387be9ae642ed46347))
+* version handling in tests & git_version ([59c5dc7](https://github.com/n0-computer/iroh/commit/59c5dc78cf8067a3be3a19329d1998b69f9414a9))
+
+
+### Features
+
+* **ci:** improve protoc install & add code coverage checks ([#538](https://github.com/n0-computer/iroh/issues/538)) ([bcc20ce](https://github.com/n0-computer/iroh/commit/bcc20ce00fb19abc5ebbe03e9d315a01a7088881))
+* enable quic transport ([18e2f40](https://github.com/n0-computer/iroh/commit/18e2f400ed79c3522e290fe1c77b289879af6154))
+* **gateway:** add info page ([35955d6](https://github.com/n0-computer/iroh/commit/35955d6b9b505d2c35f99e4c618293c70bcca1a7))
+* minimal iroh-embed ([#565](https://github.com/n0-computer/iroh/issues/565)) ([c216440](https://github.com/n0-computer/iroh/commit/c216440ffcf528f406064d9cd4b1e56e7181dedf))
+* Send all the things ([#617](https://github.com/n0-computer/iroh/issues/617)) ([214d9ce](https://github.com/n0-computer/iroh/commit/214d9cecbc3dbb7fb425fb6ce50ca96474d38d98))
+* Support `eth` domains  ([1d6b825](https://github.com/n0-computer/iroh/commit/1d6b825fe357a9fa958fdf426967516d3f689259))
+* support of Gateway Subdomain spec ([#546](https://github.com/n0-computer/iroh/issues/546)) ([dfe3134](https://github.com/n0-computer/iroh/commit/dfe3134212d52811aa1ea33fdb19c2769f07be93))
+* switch to released libp2p@0.50 ([ae30f9e](https://github.com/n0-computer/iroh/commit/ae30f9ebadb2e3cf7e8bb53ce955dc043d5a8cfe))
+* **unixfs:** add rabin based chunking  ([b0a5783](https://github.com/n0-computer/iroh/commit/b0a57831ed4d5c2fcaeb535e6281216f81f7b108))
+
+
 # [v0.1.3](https://github.com/n0-computer/iroh/compare/iroh-v0.1.2...iroh-v0.1.3) (2022-11-28)
 
 Bug fix release, for issues discovered while publishing to crates.io.
