@@ -6,9 +6,10 @@ use cid::Cid;
 use config::ValueKind;
 use libp2p::{Multiaddr, PeerId};
 use multihash::Multihash;
-use reqwest::{Client, Url};
+use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use tracing::trace;
+use url::Url;
 
 /// Public endpoint of the indexer nodes.
 pub const CID_CONTACT: &str = "https://cid.contact/cid/";
