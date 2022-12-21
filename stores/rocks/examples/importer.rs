@@ -10,10 +10,7 @@ fn main() -> Result<()> {
     let new_path = args.next().unwrap();
     let limit: Option<usize> = args.next().and_then(|v| v.parse().ok());
 
-    println!(
-        "Importing from {:?} into {:?} (limit: {:?})",
-        old_path, new_path, limit
-    );
+    println!("Importing from {old_path:?} into {new_path:?} (limit: {limit:?})");
 
     let (mut opts, cache) = rocks_store::default_options();
     opts.set_use_direct_io_for_flush_and_compaction(true);
@@ -53,16 +50,16 @@ fn main() -> Result<()> {
 
     println!("Imported {count} values, of size {size} bytes");
     let sst_size = rocksfs.sst_files_size()?;
-    println!("sst files size: {}", sst_size);
+    println!("sst files size: {sst_size}");
 
     rocksfs.compact();
     println!("Compacted DB");
 
     let sst_size = rocksfs.sst_files_size()?;
-    println!("sst files size: {}", sst_size);
+    println!("sst files size: {sst_size}");
 
     let stats = rocksfs.stats()?;
-    println!("{}", stats);
+    println!("{stats}");
 
     Ok(())
 }
