@@ -144,7 +144,7 @@ pub async fn new(addr: StoreAddr, store: Store) -> Result<()> {
                 tokio::spawn(dispatch(server.clone(), req, chan, store.clone()));
             }
             Err(cause) => {
-                tracing::error!("store rpc accept error: {}", cause);
+                tracing::debug!("store rpc accept error: {}", cause);
             }
         }
     }
