@@ -1,5 +1,5 @@
 use std::sync::atomic::AtomicUsize;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use crate::config::Config;
 use crate::gateway::GatewayClient;
@@ -9,11 +9,24 @@ use crate::store::StoreClient;
 use anyhow::{Context, Result};
 use futures::{Stream, StreamExt};
 
+/// High level client to use other iroh services.
+///
+/// These clients use the irpc mechanism from the quic-rpc crate to communicate to the
+/// services.  Depending on the configuration the clients can connect to remote iroh
+/// services or to in-process services using an in-memory communication channel.
+///
+/// The client configuration can also be changed at any point and new clients will be
+/// instantiated under the hood.  Furthermore there can be multiple channels resulting in
+/// load-balancing clients to remote services.
+///
+/// To benefit from these you must always retrieve the client using the [`Client::try_p2p`],
+/// [`Client::try_gateway`] and [`Client::try_store`] methods and not store the returned
+/// clients long-term.
 #[derive(Debug, Clone)]
 pub struct Client {
-    pub gateway: Option<GatewayClient>,
-    p2p: P2pLBClient,
-    store: StoreLBClient,
+    gateway: Arc<RwLock<Option<GatewayClient>>>,
+    p2p: Arc<RwLock<P2pLBClient>>,
+    store: Arc<RwLock<StoreLBClient>>,
 }
 
 /// Provides a load balanced client for the store service
@@ -124,40 +137,68 @@ impl Client {
         }
 
         Ok(Client {
-            gateway,
-            p2p,
-            store,
+            gateway: Arc::new(RwLock::new(gateway)),
+            p2p: Arc::new(RwLock::new(p2p)),
+            store: Arc::new(RwLock::new(store)),
         })
     }
 
-    pub fn try_p2p(&self) -> Result<P2pClient> {
-        self.p2p.get().context("missing rpc p2p connnection")
+    /// Reconfigures the RPC client.
+    ///
+    /// This essentially creates new clients with the given configuration and swaps out the
+    /// underlying clients so that new uses via [`Client::try_p2p`], [`Client::try_store`]
+    /// and [`Client::try_gateway`] will return the new clients.
+    pub async fn reconfigure(&self, config: Config) -> Result<()> {
+        let Client {
+            gateway,
+            p2p,
+            store,
+        } = Client::new(config).await?;
+        *self.gateway.write().unwrap() = gateway.read().unwrap().as_ref().cloned();
+        *self.p2p.write().unwrap() = p2p.read().unwrap().clone();
+        *self.store.write().unwrap() = store.read().unwrap().clone();
+        Ok(())
     }
 
-    pub fn try_gateway(&self) -> Result<&GatewayClient> {
+    pub fn try_p2p(&self) -> Result<P2pClient> {
+        self.p2p
+            .read()
+            .unwrap()
+            .get()
+            .context("missing rpc p2p connnection")
+    }
+
+    pub fn try_gateway(&self) -> Result<GatewayClient> {
         self.gateway
+            .read()
+            .unwrap()
             .as_ref()
+            .cloned()
             .context("missing rpc gateway connnection")
     }
 
     pub fn try_store(&self) -> Result<StoreClient> {
-        self.store.get().context("missing rpc store connection")
+        self.store
+            .read()
+            .unwrap()
+            .get()
+            .context("missing rpc store connection")
     }
 
     pub async fn check(&self) -> crate::status::ClientStatus {
-        let g = if let Some(ref g) = self.gateway {
+        let g = if let Some(ref g) = *self.gateway.read().unwrap() {
             let (s, v) = g.check().await;
             Some(ServiceStatus::new(ServiceType::Gateway, s, v))
         } else {
             None
         };
-        let p = if let Some(ref p) = self.p2p.get() {
+        let p = if let Some(ref p) = self.p2p.read().unwrap().get() {
             let (s, v) = p.check().await;
             Some(ServiceStatus::new(ServiceType::P2p, s, v))
         } else {
             None
         };
-        let s = if let Some(ref s) = self.store.get() {
+        let s = if let Some(ref s) = self.store.read().unwrap().get() {
             let (s, v) = s.check().await;
             Some(ServiceStatus::new(ServiceType::Store, s, v))
         } else {
@@ -166,24 +207,29 @@ impl Client {
         ClientStatus::new(g, p, s)
     }
 
-    pub async fn watch(self) -> impl Stream<Item = ClientStatus> {
+    pub async fn watch(self) -> impl Stream<Item = ClientStatus> + Send {
+        let opt_gateway = self.gateway.read().unwrap().as_ref().cloned();
+        let opt_p2p = self.p2p.read().unwrap().get();
+        let opt_store = self.store.read().unwrap().get();
         async_stream::stream! {
             let mut status: ClientStatus = Default::default();
             let mut streams = Vec::new();
-
-            if let Some(ref g) = self.gateway {
+            if let Some(ref g) = opt_gateway {
                 let g = g.watch().await;
-                let g = g.map(|(status, version)| ServiceStatus::new(ServiceType::Gateway, status, version));
+                let g = g.map(|(status, version)|
+                              ServiceStatus::new(ServiceType::Gateway, status, version));
                 streams.push(g.boxed());
             }
-            if let Some(ref p) = self.p2p.get() {
+            if let Some(ref p) = opt_p2p {
                 let p = p.watch().await;
-                let p = p.map(|(status, version)| ServiceStatus::new(ServiceType::P2p, status, version));
+                let p = p.map(|(status, version)|
+                              ServiceStatus::new(ServiceType::P2p, status, version));
                 streams.push(p.boxed());
             }
-            if let Some(ref s) = self.store.get() {
+            if let Some(ref s) = opt_store {
                 let s = s.watch().await;
-                let s = s.map(|(status, version)| ServiceStatus::new(ServiceType::Store, status, version));
+                let s = s.map(|(status, version)|
+                              ServiceStatus::new(ServiceType::Store, status, version));
                 streams.push(s.boxed());
             }
 

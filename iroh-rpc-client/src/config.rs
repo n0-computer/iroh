@@ -6,13 +6,18 @@ use serde::{Deserialize, Serialize};
 #[derive(Serialize, Deserialize, Debug, PartialEq, Clone, Default)]
 /// Config for the rpc Client.
 pub struct Config {
-    /// Gateway rpc address.
+    /// Address of where to reach the gateway service via irpc.
     pub gateway_addr: Option<GatewayAddr>,
-    /// P2p rpc address.
+    /// Address of where to reach the p2p service via irpc.
     pub p2p_addr: Option<P2pAddr>,
-    /// Store rpc address.
+    /// Address of where to reach the store service via irpc.
     pub store_addr: Option<StoreAddr>,
-    /// Number of concurent channels.
+    /// The number of connections that should be made to the remote services.
+    ///
+    /// This must be one or more.  When using network connections it may be desirable to
+    /// configure more channels which a network load-balancer could then send to different
+    /// instances of the client service.  When using the in-process memory channels this
+    /// should be 1 as multiple channels make no sense in this scenario.
     pub channels: Option<usize>,
 }
 

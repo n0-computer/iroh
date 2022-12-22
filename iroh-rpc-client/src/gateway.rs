@@ -41,7 +41,7 @@ impl GatewayClient {
     }
 
     #[tracing::instrument(skip(self))]
-    pub async fn watch(&self) -> impl Stream<Item = (StatusType, String)> {
+    pub async fn watch(&self) -> impl Stream<Item = (StatusType, String)> + Send {
         let client = self.client.clone();
         stream! {
             loop {
