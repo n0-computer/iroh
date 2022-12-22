@@ -8,7 +8,7 @@ use headers::{
 };
 use iroh_metrics::config::Config as MetricsConfig;
 use iroh_resolver::dns_resolver::Config as DnsResolverConfig;
-use iroh_rpc_client::Config as RpcClientConfig;
+use iroh_rpc_client::RpcConfig as RpcClientConfig;
 use iroh_rpc_types::gateway::GatewayAddr;
 use iroh_util::insert_into_config_map;
 use serde::{Deserialize, Serialize};
@@ -174,7 +174,7 @@ impl Source for Config {
 }
 
 impl crate::handlers::StateConfig for Config {
-    fn rpc_client(&self) -> &iroh_rpc_client::Config {
+    fn rpc_client(&self) -> &iroh_rpc_client::RpcConfig {
         &self.rpc_client
     }
 

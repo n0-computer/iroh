@@ -1,13 +1,14 @@
 use std::sync::atomic::AtomicUsize;
 use std::sync::{Arc, RwLock};
 
-use crate::config::Config;
+use anyhow::{Context, Result};
+use futures::{Stream, StreamExt};
+use iroh_rpc_types::config::RpcConfig;
+
 use crate::gateway::GatewayClient;
 use crate::network::P2pClient;
 use crate::status::{ClientStatus, ServiceStatus, ServiceType};
 use crate::store::StoreClient;
-use anyhow::{Context, Result};
-use futures::{Stream, StreamExt};
 
 /// High level client to use other iroh services.
 ///
@@ -96,8 +97,8 @@ impl P2pLBClient {
 }
 
 impl Client {
-    pub async fn new(cfg: Config) -> Result<Self> {
-        let Config {
+    pub fn new(cfg: RpcConfig) -> Result<Self> {
+        let RpcConfig {
             gateway_addr,
             p2p_addr,
             store_addr,
@@ -105,11 +106,7 @@ impl Client {
         } = cfg;
 
         let gateway = if let Some(addr) = gateway_addr {
-            Some(
-                GatewayClient::new(addr)
-                    .await
-                    .context("Could not create gateway rpc client")?,
-            )
+            Some(GatewayClient::new(addr).context("Could not create gateway rpc client")?)
         } else {
             None
         };
@@ -119,9 +116,8 @@ impl Client {
         let mut p2p = P2pLBClient::new();
         if let Some(addr) = p2p_addr {
             for _i in 0..n_channels {
-                let sc = P2pClient::new(addr.clone())
-                    .await
-                    .context("Could not create store rpc client")?;
+                let sc =
+                    P2pClient::new(addr.clone()).context("Could not create store rpc client")?;
                 p2p.clients.push(sc);
             }
         }
@@ -129,9 +125,8 @@ impl Client {
         let mut store = StoreLBClient::new();
         if let Some(addr) = store_addr {
             for _i in 0..n_channels {
-                let sc = StoreClient::new(addr.clone())
-                    .await
-                    .context("Could not create store rpc client")?;
+                let sc =
+                    StoreClient::new(addr.clone()).context("Could not create store rpc client")?;
                 store.clients.push(sc);
             }
         }
@@ -148,12 +143,12 @@ impl Client {
     /// This essentially creates new clients with the given configuration and swaps out the
     /// underlying clients so that new uses via [`Client::try_p2p`], [`Client::try_store`]
     /// and [`Client::try_gateway`] will return the new clients.
-    pub async fn reconfigure(&self, config: Config) -> Result<()> {
+    pub fn reconfigure(&self, config: RpcConfig) -> Result<()> {
         let Client {
             gateway,
             p2p,
             store,
-        } = Client::new(config).await?;
+        } = Client::new(config)?;
         *self.gateway.write().unwrap() = gateway.read().unwrap().as_ref().cloned();
         *self.p2p.write().unwrap() = p2p.read().unwrap().clone();
         *self.store.write().unwrap() = store.read().unwrap().clone();

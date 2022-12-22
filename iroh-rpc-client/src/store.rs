@@ -14,8 +14,8 @@ pub struct StoreClient {
 }
 
 impl StoreClient {
-    pub async fn new(addr: StoreAddr) -> anyhow::Result<Self> {
-        let client = open_client(addr).await?;
+    pub fn new(addr: StoreAddr) -> anyhow::Result<Self> {
+        let client = open_client(addr)?;
         Ok(Self { client })
     }
 

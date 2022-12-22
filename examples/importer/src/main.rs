@@ -6,7 +6,7 @@ use clap::Parser;
 use futures::{stream::TryStreamExt, StreamExt};
 use indicatif::{ProgressBar, ProgressStyle};
 use iroh_car::CarReader;
-use iroh_rpc_client::{Client, Config as RpcClientConfig};
+use iroh_rpc_client::{Client, RpcConfig as RpcClientConfig};
 use par_stream::prelude::*;
 
 #[derive(Parser, Debug, Clone)]
@@ -25,7 +25,7 @@ async fn main() -> Result<()> {
     println!("Importing from {:?} (limit: {:?})", args.path, args.limit);
 
     let rpc_config = RpcClientConfig::default();
-    let rpc = Client::new(rpc_config).await?;
+    let rpc = Client::new(rpc_config)?;
 
     let car_file = tokio::fs::File::open(&args.path).await?;
     let total_size = car_file.metadata().await?.len();

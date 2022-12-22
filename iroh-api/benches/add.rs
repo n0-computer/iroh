@@ -2,7 +2,7 @@ use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criteri
 use futures::TryStreamExt;
 use iroh_metrics::config::Config as MetricsConfig;
 use iroh_resolver::resolver::Resolver;
-use iroh_rpc_client::{Client, Config as RpcClientConfig};
+use iroh_rpc_client::{Client, RpcConfig as RpcClientConfig};
 use iroh_rpc_types::Addr;
 use iroh_store::{Config as StoreConfig, Store};
 use iroh_unixfs::{
@@ -54,7 +54,7 @@ fn add_benchmark(c: &mut Criterion) {
                     // wait for a moment until the transport is setup
                     // TODO: signal this more clearly
                     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                    let client = Client::new(rpc_client).await.unwrap();
+                    let client = Client::new(rpc_client).unwrap();
                     let content_loader = FullLoader::new(
                         client.clone(),
                         FullLoaderConfig {

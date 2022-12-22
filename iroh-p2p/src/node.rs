@@ -36,7 +36,7 @@ use iroh_rpc_client::Lookup;
 
 use crate::keys::{Keychain, Storage};
 use crate::providers::Providers;
-use crate::rpc::{P2p, ProviderRequestKey};
+use crate::rpc::{P2pIrpcProxy, ProviderRequestKey};
 use crate::swarm::build_swarm;
 use crate::{
     behaviour::{Event, NodeBehaviour},
@@ -139,18 +139,16 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
             ..
         } = config;
 
+        let rpc_client = RpcClient::new(rpc_client).context("failed to create rpc client")?;
+
         // TODO: handle error
         let rpc_task = rpc::spawn_server(
             rpc_addr,
-            P2p::new(network_sender_in),
+            P2pIrpcProxy::new(network_sender_in),
             config.server.print_address,
         )
         .await
         .unwrap();
-
-        let rpc_client = RpcClient::new(rpc_client)
-            .await
-            .context("failed to create rpc client")?;
 
         let keypair = load_identity(&mut keychain).await?;
         let mut swarm = build_swarm(&libp2p_config, &keypair, rpc_client.clone()).await?;
@@ -1051,6 +1049,12 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
             RpcMessage::Shutdown => {
                 return Ok(true);
             }
+            RpcMessage::RpcConfig(response_channel, config) => {
+                match self.rpc_client.reconfigure(config) {
+                    Ok(_) => response_channel.send(true).ok(),
+                    Err(_) => response_channel.send(false).ok(),
+                };
+            }
         }
 
         Ok(false)
@@ -1214,7 +1218,7 @@ mod tests {
             let kc = Keychain::from_storage(storage);
 
             let mut p2p = Node::new(network_config, rpc_server_addr, kc).await?;
-            let cfg = iroh_rpc_client::Config {
+            let cfg = iroh_rpc_client::RpcConfig {
                 p2p_addr: Some(rpc_client_addr),
                 channels: Some(1),
                 ..Default::default()
@@ -1230,7 +1234,7 @@ mod tests {
                 }
             }
 
-            let client = RpcClient::new(cfg).await?;
+            let client = RpcClient::new(cfg)?;
 
             let network_events = p2p.network_events();
             let task = tokio::task::spawn(async move { p2p.run().await.unwrap() });

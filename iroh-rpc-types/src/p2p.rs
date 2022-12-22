@@ -9,6 +9,7 @@ use quic_rpc::{
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+use crate::config::RpcConfig;
 use crate::{RpcResult, VersionRequest, VersionResponse, WatchRequest, WatchResponse};
 
 pub type P2pAddr = super::addr::Addr<P2pService>;
@@ -214,11 +215,17 @@ pub struct GossipsubUnsubscribeResponse {
     pub was_subscribed: bool,
 }
 
+#[derive(Serialize, Deserialize, Debug)]
+pub struct RpcConfigResponse {
+    pub ok: bool,
+}
+
 #[derive(Serialize, Deserialize, Debug, From, TryInto)]
 pub enum P2pRequest {
     Watch(WatchRequest),
     Version(VersionRequest),
     Shutdown(ShutdownRequest),
+    RpcConfig(RpcConfig),
     FetchBitswap(BitswapRequest),
     FetchProviderDht(FetchProvidersDhtRequest),
     StopSessionBitswap(StopSessionBitswapRequest),
@@ -250,6 +257,7 @@ pub enum P2pRequest {
 pub enum P2pResponse {
     Watch(WatchResponse),
     Version(VersionResponse),
+    RpcConfig(RpcResult<RpcConfigResponse>),
     FetchBitswap(RpcResult<BitswapResponse>),
     FetchProviderDht(RpcResult<FetchProvidersDhtResponse>),
     GetListeningAddrs(RpcResult<GetListeningAddrsResponse>),
@@ -285,6 +293,10 @@ impl Msg<P2pService> for WatchRequest {
 
 impl RpcMsg<P2pService> for VersionRequest {
     type Response = VersionResponse;
+}
+
+impl RpcMsg<P2pService> for RpcConfig {
+    type Response = RpcResult<RpcConfigResponse>;
 }
 
 impl RpcMsg<P2pService> for ShutdownRequest {

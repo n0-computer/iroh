@@ -4,7 +4,7 @@ use bytes::Bytes;
 use cid::multihash::{Code, MultihashDigest};
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use iroh_metrics::config::Config as MetricsConfig;
-use iroh_rpc_client::{Client, Config as RpcClientConfig};
+use iroh_rpc_client::{Client, RpcConfig as RpcClientConfig};
 use iroh_rpc_types::{store::StoreAddr, Addr};
 use iroh_store::{Config, Store};
 use tokio::runtime::Runtime;
@@ -73,7 +73,7 @@ pub fn put_benchmark(c: &mut Criterion) {
                         // wait for a moment until the transport is setup
                         // TODO: signal this more clearly
                         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                        let rpc = Client::new(rpc_client).await.unwrap();
+                        let rpc = Client::new(rpc_client).unwrap();
                         (task, rpc)
                     });
                     let rpc_ref = &rpc;
@@ -126,7 +126,7 @@ pub fn get_benchmark(c: &mut Criterion) {
                         // wait for a moment until the transport is setup
                         // TODO: signal this more clearly
                         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                        let rpc = Client::new(rpc_client).await.unwrap();
+                        let rpc = Client::new(rpc_client).unwrap();
                         (task, rpc)
                     });
                     let rpc_ref = &rpc;

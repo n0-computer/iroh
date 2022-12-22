@@ -107,7 +107,7 @@ mod tests {
     use hex_literal::hex;
     use http::StatusCode;
     use iroh_resolver::dns_resolver::Config as DnsResolverConfig;
-    use iroh_rpc_client::{Client as RpcClient, Config as RpcClientConfig};
+    use iroh_rpc_client::{Client as RpcClient, RpcConfig as RpcClientConfig};
     use iroh_unixfs::content_loader::{FullLoader, FullLoaderConfig, GatewayUrl};
 
     use super::*;
@@ -188,7 +188,7 @@ mod tests {
         config.set_default_headers();
 
         let rpc_addr = "irpc://0.0.0.0:0".parse().unwrap();
-        let rpc_client = RpcClient::new(config.rpc_client.clone()).await.unwrap();
+        let rpc_client = RpcClient::new(config.rpc_client.clone()).unwrap();
         let loader_config = FullLoaderConfig {
             http_gateways: config
                 .http_resolvers

@@ -136,13 +136,13 @@ impl P2pNode {
         let rpc_store_addr_server = Addr::new_mem();
         let rpc_store_addr_client = rpc_store_addr_server.clone();
 
-        let rpc_store_client_config = iroh_rpc_client::Config {
+        let rpc_store_client_config = iroh_rpc_client::RpcConfig {
             p2p_addr: Some(rpc_p2p_addr_client.clone()),
             store_addr: Some(rpc_store_addr_client.clone()),
             gateway_addr: None,
             channels: Some(1),
         };
-        let rpc_p2p_client_config = iroh_rpc_client::Config {
+        let rpc_p2p_client_config = iroh_rpc_client::RpcConfig {
             p2p_addr: Some(rpc_p2p_addr_client.clone()),
             store_addr: Some(rpc_store_addr_client.clone()),
             gateway_addr: None,
@@ -167,7 +167,7 @@ impl P2pNode {
             key_store_path: db_path.parent().unwrap().to_path_buf(),
         };
 
-        let rpc = Client::new(rpc_p2p_client_config).await?;
+        let rpc = Client::new(rpc_p2p_client_config)?;
         let loader = Loader::new(rpc.clone());
         let resolver = iroh_resolver::resolver::Resolver::new(loader);
 

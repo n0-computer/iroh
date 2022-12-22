@@ -1,5 +1,4 @@
 pub mod client;
-pub mod config;
 pub mod gateway;
 pub mod network;
 pub mod status;
@@ -10,8 +9,8 @@ use quic_rpc::{
     RpcClient, RpcServer, Service,
 };
 
-pub use crate::config::Config;
 pub use client::Client;
+pub use iroh_rpc_types::config::RpcConfig;
 pub use network::{Lookup, P2pClient};
 pub use quic_rpc::LocalAddr;
 pub use status::{ClientStatus, ServiceStatus, ServiceType, StatusType, HEALTH_POLL_WAIT};
@@ -63,7 +62,7 @@ pub async fn create_server<S: Service>(
     }
 }
 
-pub async fn open_client<S: Service>(addr: Addr<S>) -> anyhow::Result<RpcClient<S, ChannelTypes>> {
+pub fn open_client<S: Service>(addr: Addr<S>) -> anyhow::Result<RpcClient<S, ChannelTypes>> {
     // make a channel matching the channel types for this crate
     match addr {
         Addr::Mem(_, client) => Ok(RpcClient::<S, ChannelTypes>::new(

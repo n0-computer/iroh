@@ -4,7 +4,7 @@ use config::{ConfigError, Map, Source, Value};
 
 use iroh_metrics::config::Config as MetricsConfig;
 use iroh_p2p::Libp2pConfig;
-use iroh_rpc_client::Config as RpcClientConfig;
+use iroh_rpc_client::RpcConfig as RpcClientConfig;
 use iroh_store::config::config_data_path;
 use iroh_util::insert_into_config_map;
 use serde::{Deserialize, Serialize};
@@ -161,7 +161,7 @@ impl Source for Config {
 }
 
 impl iroh_gateway::handlers::StateConfig for Config {
-    fn rpc_client(&self) -> &iroh_rpc_client::Config {
+    fn rpc_client(&self) -> &iroh_rpc_client::RpcConfig {
         &self.rpc_client
     }
 

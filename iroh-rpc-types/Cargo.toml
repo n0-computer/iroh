@@ -12,11 +12,13 @@ rust-version.workspace = true
 anyhow.workspace = true
 bytes = { workspace = true, features = ["serde"] }
 cid = { workspace = true, features = ["serde-codec"] }
+config.workspace = true
 derive_more.workspace = true
 futures.workspace = true
+iroh-util.workspace = true
 libp2p = { workspace = true, features = ["serde"] }
 quic-rpc.workspace = true
-serde.workspace = true
 serde-error.workspace = true
+serde.workspace = true
 serde_with.workspace = true
 tokio = { workspace = true, default-features = false }

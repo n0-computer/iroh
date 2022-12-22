@@ -30,7 +30,7 @@
 //! An example is available in the repository under `examples/embed`.
 
 use anyhow::{bail, Result};
-use iroh_rpc_client::Config as RpcClientConfig;
+use iroh_rpc_client::RpcConfig as RpcClientConfig;
 
 pub use iroh_api::Api;
 pub use iroh_p2p::Libp2pConfig;

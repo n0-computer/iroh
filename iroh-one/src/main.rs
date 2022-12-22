@@ -77,7 +77,7 @@ async fn main() -> Result<()> {
     };
 
     let content_loader = FullLoader::new(
-        RpcClient::new(config.rpc_client.clone()).await?,
+        RpcClient::new(config.rpc_client.clone())?,
         FullLoaderConfig {
             http_gateways: config
                 .gateway

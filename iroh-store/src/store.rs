@@ -131,9 +131,8 @@ impl Store {
         })
         .await??;
 
-        let _rpc_client = RpcClient::new(config.rpc_client)
-            .await
-            .context("Error creating rpc client for store")?;
+        let _rpc_client =
+            RpcClient::new(config.rpc_client).context("Error creating rpc client for store")?;
 
         Ok(Store {
             inner: Arc::new(InnerStore {
@@ -182,7 +181,6 @@ impl Store {
         .await??;
 
         let _rpc_client = RpcClient::new(config.rpc_client)
-            .await
             // TODO: first conflict between `anyhow` & `anyhow`
             // .map_err(|e| e.context("Error creating rpc client for store"))?;
             .map_err(|e| anyhow!("Error creating rpc client for store: {:?}", e))?;
@@ -697,7 +695,7 @@ mod tests {
     use super::*;
 
     use iroh_metrics::config::Config as MetricsConfig;
-    use iroh_rpc_client::Config as RpcClientConfig;
+    use iroh_rpc_client::RpcConfig as RpcClientConfig;
 
     use cid::multihash::{Code, MultihashDigest};
     use libipld::{

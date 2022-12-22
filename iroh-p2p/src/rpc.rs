@@ -8,7 +8,8 @@ use futures::{
 };
 use iroh_bitswap::Block;
 use iroh_rpc_client::{
-    create_server, LocalAddr, Lookup, P2pServer, ServerError, ServerSocket, HEALTH_POLL_WAIT,
+    create_server, LocalAddr, Lookup, P2pServer, RpcConfig, ServerError, ServerSocket,
+    HEALTH_POLL_WAIT,
 };
 use iroh_rpc_types::{
     p2p::*, RpcError, RpcResult, VersionRequest, VersionResponse, WatchRequest, WatchResponse,
@@ -31,12 +32,16 @@ use tracing::{debug, info, trace};
 use super::node::DEFAULT_PROVIDER_LIMIT;
 use crate::VERSION;
 
+/// Proxy from the p2p irpc server to a channel of messages.
+///
+/// This proxies requests from the irpc server into a channel which the p2p node's main loop
+/// can select from together with all the other events it handles.
 #[derive(Clone)]
-pub(crate) struct P2p {
+pub(crate) struct P2pIrpcProxy {
     sender: Sender<RpcMessage>,
 }
 
-impl P2p {
+impl P2pIrpcProxy {
     pub fn new(sender: Sender<RpcMessage>) -> Self {
         Self { sender }
     }
@@ -56,6 +61,15 @@ impl P2p {
         VersionResponse {
             version: VERSION.to_string(),
         }
+    }
+
+    #[tracing::instrument(skip(self))]
+    async fn rpc_config(self, config: RpcConfig) -> Result<RpcConfigResponse> {
+        let (tx, rx) = oneshot::channel();
+        let msg = RpcMessage::RpcConfig(tx, config);
+        self.sender.send(msg).await?;
+        let ok = rx.await?;
+        Ok(RpcConfigResponse { ok })
     }
 
     #[tracing::instrument(skip(self))]
@@ -541,44 +555,45 @@ impl P2p {
 /// read more requests chunks from this stream.  Finally *target* is the struct on which we
 /// want to call methods to handle the requests.
 #[rustfmt::skip]
-async fn dispatch(s: P2pServer, req: P2pRequest, chan: ServerSocket<P2pService>, target: P2p) -> result::Result<(), ServerError> {
+async fn dispatch(s: P2pServer, req: P2pRequest, chan: ServerSocket<P2pService>, target: P2pIrpcProxy) -> result::Result<(), ServerError> {
     use P2pRequest::*;
     match req {
-        Watch(req) => s.server_streaming(req, chan, target, P2p::watch).await,
-        Version(req) => s.rpc(req, chan, target, P2p::version).await,
-        Shutdown(req) => s.rpc_map_err(req, chan, target, P2p::shutdown).await,
-        FetchBitswap(req) => s.rpc_map_err(req, chan, target, P2p::fetch_bitswap).await,
-        GossipsubAddExplicitPeer(req) => s.rpc_map_err(req, chan, target, P2p::gossipsub_add_explicit_peer).await,
-        GossipsubAllPeers(req) => s.rpc_map_err(req, chan, target, P2p::gossipsub_all_peers).await,
-        GossipsubMeshPeers(req) => s.rpc_map_err(req, chan, target, P2p::gossipsub_mesh_peers).await,
-        GossipsubAllMeshPeers(req) => s.rpc_map_err(req, chan, target, P2p::gossipsub_all_mesh_peers).await,
-        GossipsubPublish(req) => s.rpc_map_err(req, chan, target, P2p::gossipsub_publish).await,
-        GossipsubRemoveExplicitPeer(req) => s.rpc_map_err(req, chan, target, P2p::gossipsub_remove_explicit_peer).await,
-        GossipsubSubscribe(req) => s.rpc_map_err(req, chan, target, P2p::gossipsub_subscribe).await,
-        GossipsubTopics(req) => s.rpc_map_err(req, chan, target, P2p::gossipsub_topics).await,
-        GossipsubUnsubscribe(req) => s.rpc_map_err(req, chan, target, P2p::gossipsub_unsubscribe).await,
-        StopSessionBitswap(req) => s.rpc_map_err(req, chan, target, P2p::stop_session_bitswap).await,
-        StartProviding(req) => s.rpc_map_err(req, chan, target, P2p::start_providing).await,
-        StopProviding(req) => s.rpc_map_err(req, chan, target, P2p::stop_providing).await,
-        LocalPeerId(req) => s.rpc_map_err(req, chan, target, P2p::local_peer_id).await,
-        NotifyNewBlocksBitswap(req) => s.rpc_map_err(req, chan, target, P2p::notify_new_blocks_bitswap).await,
-        GetListeningAddrs(req) => s.rpc_map_err(req, chan, target, P2p::get_listening_addrs).await,
-        GetPeers(req) => s.rpc_map_err(req, chan, target, P2p::get_peers).await,
-        PeerConnect(req) => s.rpc_map_err(req, chan, target, P2p::peer_connect).await,
-        PeerDisconnect(req) => s.rpc_map_err(req, chan, target, P2p::peer_disconnect).await,
-        PeerConnectByPeerId(req) => s.rpc_map_err(req, chan, target, P2p::peer_connect_by_peer_id).await,
-        Lookup(req) => s.rpc_map_err(req, chan, target, P2p::lookup).await,
-        LookupLocal(req) => s.rpc_map_err(req, chan, target, P2p::lookup_local).await,
-        ExternalAddrs(req) => s.rpc_map_err(req, chan, target, P2p::external_addrs).await,
-        Listeners(req) => s.rpc_map_err(req, chan, target, P2p::listeners).await,
-        FetchProviderDht(req) => s.server_streaming(req, chan, target, P2p::fetch_provider_dht).await,
+        Watch(req) => s.server_streaming(req, chan, target, P2pIrpcProxy::watch).await,
+        Version(req) => s.rpc(req, chan, target, P2pIrpcProxy::version).await,
+        Shutdown(req) => s.rpc_map_err(req, chan, target, P2pIrpcProxy::shutdown).await,
+        RpcConfig(req) => s.rpc_map_err(req, chan, target, P2pIrpcProxy::rpc_config).await,
+        FetchBitswap(req) => s.rpc_map_err(req, chan, target, P2pIrpcProxy::fetch_bitswap).await,
+        GossipsubAddExplicitPeer(req) => s.rpc_map_err(req, chan, target, P2pIrpcProxy::gossipsub_add_explicit_peer).await,
+        GossipsubAllPeers(req) => s.rpc_map_err(req, chan, target, P2pIrpcProxy::gossipsub_all_peers).await,
+        GossipsubMeshPeers(req) => s.rpc_map_err(req, chan, target, P2pIrpcProxy::gossipsub_mesh_peers).await,
+        GossipsubAllMeshPeers(req) => s.rpc_map_err(req, chan, target, P2pIrpcProxy::gossipsub_all_mesh_peers).await,
+        GossipsubPublish(req) => s.rpc_map_err(req, chan, target, P2pIrpcProxy::gossipsub_publish).await,
+        GossipsubRemoveExplicitPeer(req) => s.rpc_map_err(req, chan, target, P2pIrpcProxy::gossipsub_remove_explicit_peer).await,
+        GossipsubSubscribe(req) => s.rpc_map_err(req, chan, target, P2pIrpcProxy::gossipsub_subscribe).await,
+        GossipsubTopics(req) => s.rpc_map_err(req, chan, target, P2pIrpcProxy::gossipsub_topics).await,
+        GossipsubUnsubscribe(req) => s.rpc_map_err(req, chan, target, P2pIrpcProxy::gossipsub_unsubscribe).await,
+        StopSessionBitswap(req) => s.rpc_map_err(req, chan, target, P2pIrpcProxy::stop_session_bitswap).await,
+        StartProviding(req) => s.rpc_map_err(req, chan, target, P2pIrpcProxy::start_providing).await,
+        StopProviding(req) => s.rpc_map_err(req, chan, target, P2pIrpcProxy::stop_providing).await,
+        LocalPeerId(req) => s.rpc_map_err(req, chan, target, P2pIrpcProxy::local_peer_id).await,
+        NotifyNewBlocksBitswap(req) => s.rpc_map_err(req, chan, target, P2pIrpcProxy::notify_new_blocks_bitswap).await,
+        GetListeningAddrs(req) => s.rpc_map_err(req, chan, target, P2pIrpcProxy::get_listening_addrs).await,
+        GetPeers(req) => s.rpc_map_err(req, chan, target, P2pIrpcProxy::get_peers).await,
+        PeerConnect(req) => s.rpc_map_err(req, chan, target, P2pIrpcProxy::peer_connect).await,
+        PeerDisconnect(req) => s.rpc_map_err(req, chan, target, P2pIrpcProxy::peer_disconnect).await,
+        PeerConnectByPeerId(req) => s.rpc_map_err(req, chan, target, P2pIrpcProxy::peer_connect_by_peer_id).await,
+        Lookup(req) => s.rpc_map_err(req, chan, target, P2pIrpcProxy::lookup).await,
+        LookupLocal(req) => s.rpc_map_err(req, chan, target, P2pIrpcProxy::lookup_local).await,
+        ExternalAddrs(req) => s.rpc_map_err(req, chan, target, P2pIrpcProxy::external_addrs).await,
+        Listeners(req) => s.rpc_map_err(req, chan, target, P2pIrpcProxy::listeners).await,
+        FetchProviderDht(req) => s.server_streaming(req, chan, target, P2pIrpcProxy::fetch_provider_dht).await,
     }
 }
 
 #[tracing::instrument(skip(p2p))]
 pub(crate) async fn spawn_server(
     addr: P2pAddr,
-    p2p: P2p,
+    p2p: P2pIrpcProxy,
     print_address: bool,
 ) -> Result<JoinHandle<()>> {
     let server = create_server::<P2pService>(addr).await?;
@@ -681,6 +696,7 @@ pub enum RpcMessage {
     AddressesOfPeer(oneshot::Sender<Vec<Multiaddr>>, PeerId),
     LookupLocalPeerInfo(oneshot::Sender<Lookup>),
     Shutdown,
+    RpcConfig(oneshot::Sender<bool>, RpcConfig),
 }
 
 #[derive(Debug)]

@@ -127,7 +127,7 @@ mod tests {
     use http::HeaderValue;
     use hyper::Body;
     use iroh_rpc_client::Client as RpcClient;
-    use iroh_rpc_client::Config as RpcClientConfig;
+    use iroh_rpc_client::RpcConfig as RpcClientConfig;
     use iroh_rpc_types::store::StoreAddr;
     use iroh_rpc_types::Addr;
     use iroh_unixfs::builder::{DirectoryBuilder, FileBuilder};
@@ -161,7 +161,7 @@ mod tests {
         config: Arc<Config>,
     ) -> (SocketAddr, RpcClient, tokio::task::JoinHandle<()>) {
         let rpc_addr = "irpc://0.0.0.0:0".parse().unwrap();
-        let rpc_client = RpcClient::new(config.rpc_client().clone()).await.unwrap();
+        let rpc_client = RpcClient::new(config.rpc_client().clone()).unwrap();
         let loader_config = FullLoaderConfig {
             http_gateways: config
                 .http_resolvers

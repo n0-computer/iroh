@@ -61,7 +61,7 @@ enum RequestPreprocessingResult {
 /// Trait describing what needs to be accessed on the configuration
 /// from the shared state.
 pub trait StateConfig: std::fmt::Debug + Sync + Send {
-    fn rpc_client(&self) -> &iroh_rpc_client::Config;
+    fn rpc_client(&self) -> &iroh_rpc_client::RpcConfig;
     fn public_url_base(&self) -> &str;
     fn port(&self) -> u16;
     fn user_headers(&self) -> &HeaderMap<HeaderValue>;

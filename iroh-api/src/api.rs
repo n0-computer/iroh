@@ -81,7 +81,7 @@ impl Api {
 
     /// Creates a new instance from the provided configuration.
     pub async fn new(config: Config) -> Result<Self> {
-        let client = Client::new(config.rpc_client).await?;
+        let client = Client::new(config.rpc_client)?;
         let content_loader = FullLoader::new(
             client.clone(),
             FullLoaderConfig {

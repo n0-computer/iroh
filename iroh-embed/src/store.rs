@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use iroh_one::mem_store;
-use iroh_rpc_client::Config as RpcClientConfig;
+use iroh_rpc_client::RpcConfig as RpcClientConfig;
 use iroh_rpc_types::store::StoreAddr;
 use iroh_rpc_types::Addr;
 use iroh_store::Config as StoreConfig;

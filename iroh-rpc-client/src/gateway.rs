@@ -21,8 +21,8 @@ impl fmt::Debug for GatewayClient {
 }
 
 impl GatewayClient {
-    pub async fn new(addr: GatewayAddr) -> anyhow::Result<Self> {
-        let client = crate::open_client::<GatewayService>(addr).await?;
+    pub fn new(addr: GatewayAddr) -> anyhow::Result<Self> {
+        let client = crate::open_client::<GatewayService>(addr)?;
         Ok(Self { client })
     }
 
