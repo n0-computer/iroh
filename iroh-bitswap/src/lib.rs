@@ -500,6 +500,9 @@ impl<S: Store> NetworkBehaviour for Bitswap<S> {
                 message.verify_blocks();
                 self.receive_message(peer_id, message);
             }
+            HandlerEvent::FailedToSendMessage { .. } => {
+                // Handle
+            }
         }
     }
 

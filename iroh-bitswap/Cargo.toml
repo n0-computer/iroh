@@ -17,6 +17,7 @@ anyhow.workspace = true
 async-broadcast.workspace = true
 async-channel.workspace = true
 async-trait.workspace = true
+async-stream.workspace = true
 asynchronous-codec.workspace = true
 bytes.workspace = true
 cid.workspace = true
