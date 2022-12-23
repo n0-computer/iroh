@@ -38,12 +38,6 @@ const INITIAL_KEEP_ALIVE: u64 = 30;
 
 #[derive(thiserror::Error, Debug)]
 pub enum BitswapHandlerError {
-    /// The maximum number of inbound substreams created has been exceeded.
-    #[error("max inbound substreams")]
-    MaxInboundSubstreams,
-    /// The maximum number of outbound substreams created has been exceeded.
-    #[error("max outbound substreams")]
-    MaxOutboundSubstreams,
     /// The message exceeds the maximum transmission size.
     #[error("max transmission size")]
     MaxTransmissionSize,
