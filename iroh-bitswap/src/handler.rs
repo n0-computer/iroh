@@ -34,12 +34,6 @@ const INITIAL_KEEP_ALIVE: u64 = 30;
 
 #[derive(thiserror::Error, Debug)]
 pub enum BitswapHandlerError {
-    /// The maximum number of inbound substreams created has been exceeded.
-    #[error("max inbound substreams")]
-    MaxInboundSubstreams,
-    /// The maximum number of outbound substreams created has been exceeded.
-    #[error("max outbound substreams")]
-    MaxOutboundSubstreams,
     /// The message exceeds the maximum transmission size.
     #[error("max transmission size")]
     MaxTransmissionSize,
@@ -84,13 +78,6 @@ pub enum BitswapHandlerIn {
     Protect,
     Unprotect,
 }
-
-/// The maximum number of substreams we accept or create before disconnecting from the peer.
-///
-/// Bitswap is supposed to have a single long-lived inbound and outbound substream. On failure we
-/// attempt to recreate these. This imposes an upper bound of new substreams before we consider the
-/// connection faulty and disconnect. This also prevents against potential substream creation loops.
-const MAX_SUBSTREAM_CREATION: usize = 5;
 
 type BitswapConnectionHandlerEvent = ConnectionHandlerEvent<
     ProtocolConfig,
@@ -369,26 +356,12 @@ impl ConnectionHandler for BitswapHandler {
             }
         }
 
-        if self.inbound_substreams_created > MAX_SUBSTREAM_CREATION {
-            inc!(BitswapMetrics::InboundSubstreamsCreatedLimit);
-            // Too many inbound substreams have been created, end the connection.
-            return Poll::Ready(ConnectionHandlerEvent::Close(
-                BitswapHandlerError::MaxInboundSubstreams,
-            ));
-        }
-
         // determine if we need to create the stream
         if !self.send_queue.is_empty()
             && self.outbound_substream.is_none()
             && !self.outbound_substream_establishing
         {
             inc!(BitswapMetrics::OutboundSubstreamsEvent);
-            if self.outbound_substreams_created >= MAX_SUBSTREAM_CREATION {
-                inc!(BitswapMetrics::OutboundSubstreamsCreatedLimit);
-                return Poll::Ready(ConnectionHandlerEvent::Close(
-                    BitswapHandlerError::MaxOutboundSubstreams,
-                ));
-            }
             let message = self.send_queue.remove(0);
             self.send_queue.shrink_to_fit();
             self.outbound_substream_establishing = true;
