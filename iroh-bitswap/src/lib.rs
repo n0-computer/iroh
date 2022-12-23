@@ -302,7 +302,7 @@ impl<S: Store> Bitswap<S> {
         record!(BitswapMetrics::MessageBytesIn, message.encoded_len() as u64);
         // TODO: Handle backpressure properly
         if let Err(err) = self.incoming_messages.try_send((peer, message)) {
-            info!(
+            debug!(
                 "failed to receive message from {}: {:?}, dropping",
                 peer, err
             );
@@ -326,7 +326,7 @@ impl<S: Store> Bitswap<S> {
                 if let PeerState::Connected(old_id) = old_state {
                     if let PeerState::Connected(new_id) = new_state {
                         // TODO: better understand what this means and how to handle it.
-                        info!(
+                        debug!(
                             "Peer {}: detected connection id change: {:?} => {:?}",
                             peer, old_id, new_id
                         );
