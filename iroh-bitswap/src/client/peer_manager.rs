@@ -28,7 +28,12 @@ enum Message {
     GetCurrentWantHaves(oneshot::Sender<AHashSet<Cid>>),
     Connected(PeerId),
     Disconnected(PeerId),
-    ResponseReceived(PeerId, Vec<Cid>),
+    ResponseReceived {
+        peer_id: PeerId,
+        keys: Vec<Cid>,
+        haves: Vec<Cid>,
+        dont_haves: Vec<Cid>,
+    },
     BroadcastWantHaves(AHashSet<Cid>),
     SendWants {
         peer: PeerId,
@@ -137,9 +142,20 @@ impl PeerManager {
     /// Called when a message is received from the network.
     /// The set of blocks, HAVEs and DONT_HAVEs, is `cids`.
     /// Currently only used to calculate latency.
-    pub async fn response_received(&self, peer: &PeerId, cids: &[Cid]) {
-        self.send(Message::ResponseReceived(*peer, cids.to_vec()))
-            .await;
+    pub async fn response_received(
+        &self,
+        peer_id: &PeerId,
+        keys: &[Cid],
+        haves: &[Cid],
+        dont_haves: &[Cid],
+    ) {
+        self.send(Message::ResponseReceived {
+            peer_id: *peer_id,
+            keys: keys.to_vec(),
+            haves: haves.to_vec(),
+            dont_haves: dont_haves.to_vec(),
+        })
+        .await;
     }
 
     /// Broadcasts want-haves to all peers
@@ -326,8 +342,8 @@ async fn run(mut actor: PeerManagerActor) {
                     Some(Message::Disconnected(peer)) => {
                         actor.disconnected(peer).await;
                     },
-                    Some(Message::ResponseReceived(peer, responses)) => {
-                        actor.response_received(peer, responses).await;
+                    Some(Message::ResponseReceived { peer_id, keys, haves, dont_haves }) => {
+                        actor.response_received(peer_id, keys, haves, dont_haves).await;
                     },
                     Some(Message::BroadcastWantHaves(list)) => {
                         actor.broadcast_want_haves(list).await;
@@ -425,6 +441,7 @@ struct PeerManagerActor {
 
 #[derive(Debug)]
 pub(super) struct PeerState {
+    pub(super) responded_blocks_counter: u64,
     pub(super) message_queue: MessageQueue,
     pub(super) sessions: AHashSet<u64>,
 }
@@ -508,9 +525,19 @@ impl PeerManagerActor {
         }
     }
 
-    async fn response_received(&self, peer: PeerId, cids: Vec<Cid>) {
-        if let Some(peer_state) = self.peers.get(&peer) {
-            peer_state.message_queue.response_received(cids).await;
+    async fn response_received(
+        &mut self,
+        peer_id: PeerId,
+        keys: Vec<Cid>,
+        haves: Vec<Cid>,
+        dont_haves: Vec<Cid>,
+    ) {
+        if let Some(peer_state) = self.peers.get_mut(&peer_id) {
+            peer_state.responded_blocks_counter += keys.len() as u64;
+            peer_state
+                .message_queue
+                .response_received(keys, haves, dont_haves)
+                .await;
         }
     }
 
@@ -596,6 +623,7 @@ impl PeerManagerActor {
                 entry.insert(PeerState {
                     message_queue,
                     sessions,
+                    responded_blocks_counter: 0,
                 });
             }
         }

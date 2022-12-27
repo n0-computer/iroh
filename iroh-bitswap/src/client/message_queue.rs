@@ -189,14 +189,21 @@ impl MessageQueue {
     /// Called when a message is received from the network.
     /// `cids` is the set of blocks, HAVEs and DONT_HAVEs in the message.
     /// Note: this is only use to calculate latency currently.
-    pub async fn response_received(&self, cids: Vec<Cid>) {
-        if cids.is_empty() || !self.is_running() {
+    pub async fn response_received(
+        &self,
+        mut keys: Vec<Cid>,
+        haves: Vec<Cid>,
+        dont_haves: Vec<Cid>,
+    ) {
+        keys.extend(haves.into_iter());
+        keys.extend(dont_haves.into_iter());
+        if keys.is_empty() || !self.is_running() {
             return;
         }
 
         // Best effort only
         if let Some(ref sender) = self.sender_responses {
-            let _ = sender.try_send(cids);
+            let _ = sender.try_send(keys);
         }
     }
 

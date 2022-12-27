@@ -208,13 +208,10 @@ impl<S: Store> Client<S> {
             debug!("recv block not in wantlist: {} from {}", block.cid(), from);
         }
 
-        // Inform the PeerManager so that we can calculate per-peer latency.
-        let mut combined = all_keys.clone();
-        combined.extend_from_slice(haves);
-        combined.extend_from_slice(dont_haves);
-
         info!("recv_msg peer_manager");
-        self.peer_manager().response_received(from, &combined).await;
+        self.peer_manager()
+            .response_received(from, &all_keys, &haves, &dont_haves)
+            .await;
 
         info!("recv_msg session_manager");
         // Send all block keys (including duplicates to any sessions that want them for accounting purposes).

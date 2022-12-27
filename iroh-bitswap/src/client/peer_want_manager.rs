@@ -1,6 +1,7 @@
 use ahash::{AHashMap, AHashSet};
 use cid::Cid;
 use libp2p::PeerId;
+use rand::seq::SliceRandom;
 use tracing::{debug, error};
 
 use super::message_queue::MessageQueue;
@@ -15,8 +16,6 @@ pub struct PeerWantManager {
     peer_wants: AHashMap<PeerId, PeerWant>,
     /// Reverse index of all wants in the `peer_wants`.
     want_peers: AHashMap<Cid, AHashSet<PeerId>>,
-    /// Current broadcast wants.
-    broadcast_wants: AHashSet<Cid>,
 }
 
 #[derive(Debug)]
@@ -40,12 +39,6 @@ impl PeerWantManager {
                 want_haves: Default::default(),
             },
         );
-
-        // Broadcast any live want-haves to the newly connected peer.
-        if !self.broadcast_wants.is_empty() {
-            let wants = &self.broadcast_wants;
-            peer_queue.add_broadcast_want_haves(wants).await;
-        }
     }
 
     /// Removes a peer and its associated wants from tracking.
@@ -81,16 +74,12 @@ impl PeerWantManager {
         peer_queues: &AHashMap<PeerId, PeerState>,
     ) {
         debug!("pwm: broadcast_want_haves: {:?}", want_haves);
-        // want_haves - self.broadcast_wants
-        let unsent: AHashSet<_> = want_haves
-            .difference(&self.broadcast_wants)
-            .copied()
-            .collect();
-        self.broadcast_wants.extend(unsent.clone());
 
-        let mut peer_unsent = AHashSet::new();
-        for (peer, peer_wants) in self.peer_wants.iter() {
-            for cid in &unsent {
+        let mut peer_broadcast = vec![];
+
+        for (peer, peer_wants) in self.peer_wants.iter_mut() {
+            let mut peer_unsent = AHashSet::new();
+            for cid in want_haves {
                 // Skip if already sent to this peer
                 if !peer_wants.want_blocks.contains(cid) && !peer_wants.want_haves.contains(cid) {
                     peer_unsent.insert(*cid);
@@ -99,15 +88,40 @@ impl PeerWantManager {
 
             if !peer_unsent.is_empty() {
                 if let Some(peer_state) = peer_queues.get(peer) {
-                    peer_state
-                        .message_queue
-                        .add_broadcast_want_haves(&peer_unsent)
-                        .await;
+                    peer_broadcast.push((peer, peer_state, peer_unsent, peer_wants));
                 }
             }
+        }
 
-            // clear for reuse
-            peer_unsent.clear();
+        let (mut reliable_peers, mut unknown_peers): (Vec<_>, Vec<_>) = peer_broadcast
+            .into_iter()
+            .partition(|p| p.1.responded_blocks_counter > 0);
+        reliable_peers.sort_by(|a, b| {
+            b.1.responded_blocks_counter
+                .cmp(&a.1.responded_blocks_counter)
+        });
+        unknown_peers.shuffle(&mut rand::thread_rng());
+        let total_peers = reliable_peers.into_iter().chain(unknown_peers.into_iter());
+
+        let step = want_haves
+            .iter()
+            .filter_map(|wp| self.want_peers.get(wp).map(|e| e.len()))
+            .max()
+            .unwrap_or_default()
+            .clamp(3, 32);
+
+        for (peer, peer_state, peer_unsent, peer_wants) in total_peers.take(step) {
+            peer_wants.want_haves.extend(peer_unsent.iter().cloned());
+            for cid in peer_unsent.iter() {
+                self.want_peers.entry(*cid).or_default().insert(*peer);
+            }
+            peer_state
+                .message_queue
+                .add_broadcast_want_haves(&peer_unsent)
+                .await;
+            if peer_state.responded_blocks_counter > 0 {
+                break;
+            }
         }
     }
 
@@ -143,12 +157,7 @@ impl PeerWantManager {
 
             // iterate over the requested want-haves
             for cid in want_haves {
-                //  if already broadcasted, ignore
-                if self.broadcast_wants.contains(cid) {
-                    continue;
-                }
-
-                // Onliy if the cid has not been sent as want-block or want-have
+                // Only if the cid has not been sent as want-block or want-have
                 if !peer_wants.want_blocks.contains(cid) && !peer_wants.want_haves.contains(cid) {
                     // record that the cid was sent as a want-have
                     peer_wants.want_haves.insert(*cid);
@@ -188,16 +197,10 @@ impl PeerWantManager {
             .map(|cid| (*cid, self.want_peer_counts(cid)))
             .collect();
 
-        let broadcast_cancels: AHashSet<Cid> = cancels
-            .iter()
-            .filter(|cid| self.broadcast_wants.contains(cid))
-            .copied()
-            .collect();
-
         macro_rules! send {
             ($peer:expr, $peer_wants:expr) => {
                 // start from the broadcast cancels
-                let mut to_cancel = broadcast_cancels.clone();
+                let mut to_cancel = AHashSet::new();
                 // for each key to cancel
                 for cid in cancels {
                     // check if a want was sent for the eky
@@ -211,10 +214,7 @@ impl PeerWantManager {
                     $peer_wants.want_blocks.remove(cid);
                     $peer_wants.want_haves.remove(cid);
 
-                    // If it's a broadcast want, we've already added it
-                    if !self.broadcast_wants.contains(cid) {
-                        to_cancel.insert(*cid);
-                    }
+                    to_cancel.insert(*cid);
                 }
 
                 if !to_cancel.is_empty() {
@@ -225,31 +225,20 @@ impl PeerWantManager {
             };
         }
 
-        if broadcast_cancels.is_empty() {
-            // Only send cancels ot peers that received a corresponding want
-            let cancel_peers: AHashSet<PeerId> = cancels
-                .iter()
-                .filter_map(|cid| self.want_peers.get(cid))
-                .flatten()
-                .copied()
-                .collect();
-            for peer in cancel_peers {
-                if let Some(peer_wants) = self.peer_wants.get_mut(&peer) {
-                    send!(&peer, peer_wants);
-                } else {
-                    error!("index missing for peer {}", peer);
-                    continue;
-                }
-            }
-        } else {
-            // if a broadcast want is being cancelled, send the cancel to all peers
-            for (peer, peer_wants) in &mut self.peer_wants {
-                send!(peer, peer_wants);
+        let cancel_peers: AHashSet<PeerId> = cancels
+            .iter()
+            .filter_map(|cid| self.want_peers.get(cid))
+            .flatten()
+            .copied()
+            .collect();
+        for peer in cancel_peers {
+            if let Some(peer_wants) = self.peer_wants.get_mut(&peer) {
+                send!(&peer, peer_wants);
+            } else {
+                error!("index missing for peer {}", peer);
+                continue;
             }
         }
-
-        // remove cancelled broadcast wants
-        self.broadcast_wants = &self.broadcast_wants - &broadcast_cancels;
 
         // batch remove the reverse-index
         for cancel in cancels {
@@ -268,7 +257,7 @@ impl PeerWantManager {
     /// Counts how many peers have a pendinng want-block and want-have for the given cid.
     fn want_peer_counts(&self, cid: &Cid) -> WantPeerCounts {
         let mut counts = WantPeerCounts {
-            is_broadcast: self.broadcast_wants.contains(cid),
+            is_broadcast: false,
             ..Default::default()
         };
 
@@ -316,18 +305,13 @@ impl PeerWantManager {
         self.peer_wants
             .values()
             .flat_map(|peer_wants| peer_wants.want_haves.iter())
-            .chain(self.broadcast_wants.iter())
             .copied()
             .collect()
     }
 
     /// Returns the set of all wants (both want-blocks and want-haves).
     pub fn get_wants(&self) -> AHashSet<Cid> {
-        self.broadcast_wants
-            .iter()
-            .chain(self.want_peers.keys())
-            .copied()
-            .collect()
+        self.want_peers.keys().cloned().collect()
     }
 }
 
