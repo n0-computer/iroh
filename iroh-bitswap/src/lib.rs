@@ -26,7 +26,7 @@ use libp2p::swarm::{
 use libp2p::{Multiaddr, PeerId};
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
-use tracing::{debug, info, trace, warn};
+use tracing::{debug, trace, warn};
 
 use self::client::{Client, Config as ClientConfig};
 use self::message::BitswapMessage;
