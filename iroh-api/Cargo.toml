@@ -42,3 +42,7 @@ tempfile.workspace = true
 [[bench]]
 name = "add"
 harness = false
+
+[[bench]]
+name = "get"
+harness = false
