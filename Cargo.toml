@@ -135,6 +135,7 @@ quic-rpc = { version = "0.3.1", default-features = false }
 rand = "0.8.5"
 rand_chacha = "0.3.1"
 rayon = "1.5.3"
+redb = "0.11.0"
 relative-path = "1.7.2"
 reqwest = { version = "0.11.10", default-features = false}
 rkyv = "0.7.37"

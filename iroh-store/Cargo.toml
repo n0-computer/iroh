@@ -29,13 +29,13 @@ multihash.workspace = true
 names.workspace = true
 opentelemetry = { workspace = true, features = ["rt-tokio"] }
 rkyv = { workspace = true, features = ["validation"] }
-rocksdb.workspace = true
 serde = { workspace = true, features = ["derive"] }
 smallvec = { workspace = true, features = ["write"] }
 tokio = { workspace = true, features = ["rt"] }
 tracing.workspace = true
 tracing-opentelemetry.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
+redb.workspace = true
 
 [dev-dependencies]
 criterion = { workspace = true, features = ["async_tokio"] }

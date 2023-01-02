@@ -74,7 +74,7 @@ impl RpcStore {
             .spawn_blocking(move |x| {
                 if let Some(res) = x.get(&cid)? {
                     Ok(GetResponse {
-                        data: Some(BytesMut::from(&res[..]).freeze()),
+                        data: Some(res.into()),
                     })
                 } else {
                     Ok(GetResponse { data: None })
