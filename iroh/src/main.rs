@@ -17,7 +17,7 @@ async fn main() -> Result<()> {
     match r {
         Ok(_) => Ok(()),
         Err(e) => {
-            eprintln!("Error: {:?}", e);
+            eprintln!("Error: {e:?}");
             std::process::exit(1);
         }
     }
@@ -42,7 +42,7 @@ fn transform_error(r: Result<()>) -> Result<()> {
                 return Err(anyhow!(
                     "Connection refused. This command requires a running {} service.\n{}",
                     service,
-                    format!("hint: try 'iroh start {}'", service).yellow(),
+                    format!("hint: try 'iroh start {service}'").yellow(),
                 ));
             }
             Err(e)

@@ -62,7 +62,7 @@ async fn main() -> Result<()> {
     };
 
     config.metrics = metrics::metrics_config_with_compile_time_info(config.metrics);
-    println!("{:#?}", config);
+    println!("{config:#?}");
 
     let metrics_config = config.metrics.clone();
 
