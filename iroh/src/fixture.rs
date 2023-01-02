@@ -275,6 +275,6 @@ pub fn get_fixture_api() -> Api {
     let fixture_name = env::var("IROH_CTL_FIXTURE").expect("IROH_CTL_FIXTURE must be set");
     let fixture = registry
         .get(&fixture_name)
-        .unwrap_or_else(|| panic!("unknown fixture: {}", fixture_name));
+        .unwrap_or_else(|| panic!("unknown fixture: {fixture_name}"));
     fixture()
 }
