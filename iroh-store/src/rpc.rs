@@ -1,7 +1,6 @@
 use std::result;
 
 use anyhow::Result;
-use bytes::BytesMut;
 use futures::stream::Stream;
 use iroh_rpc_client::{create_server, ServerError, ServerSocket, StoreServer, HEALTH_POLL_WAIT};
 use iroh_rpc_types::{

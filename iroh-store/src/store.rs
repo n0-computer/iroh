@@ -202,7 +202,7 @@ impl Store {
                 id_table.insert(&id_key, &id)?;
                 blobs_table.insert(&id, &blob)?;
                 metadata_table.insert(&id, &metadata_bytes)?;
-                graph_table.insert(&id, &graph_bytes);
+                graph_table.insert(&id, &graph_bytes)?;
             }
         }
         txn.commit()?;

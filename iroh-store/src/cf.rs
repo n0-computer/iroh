@@ -1,6 +1,6 @@
 use bytecheck::CheckBytes;
 use redb::TableDefinition;
-use rkyv::{with::AsBox, AlignedVec, Archive, Deserialize, Serialize};
+use rkyv::{with::AsBox, Archive, Deserialize, Serialize};
 
 /// Column family to store actual data.
 /// - Maps id (u64) to bytes
@@ -29,6 +29,7 @@ pub struct Versioned<T>(#[with(AsBox)] pub T);
 pub struct MetadataV0 {
     /// The codec of the original CID.
     pub codec: u64,
+    #[with(rkyv::with::CopyOptimize)]
     pub multihash: Vec<u8>,
 }
 
