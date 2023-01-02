@@ -11,7 +11,7 @@ use iroh_metrics::{
 };
 use iroh_rpc_client::Client as RpcClient;
 use multihash::Multihash;
-use redb::{Database, ReadableTable};
+use redb::{Database, ReadableTable, Table};
 use smallvec::SmallVec;
 use std::sync::RwLock;
 use tokio::task;
@@ -132,23 +132,28 @@ impl Store {
 
         let metadata = MetadataV0 {
             codec: cid.codec(),
-            multihash: cid.hash().to_bytes(),
+            multihash: cid.hash().to_bytes().into_boxed_slice(),
         };
         let metadata_bytes = rkyv::to_bytes::<_, 1024>(&metadata)?; // TODO: is this the right amount of scratch space?
         let id_key = id_key(&cid);
-
-        let children = self.ensure_id_many(links.into_iter())?;
-
-        let graph = GraphV0 { children };
-        let graph_bytes = rkyv::to_bytes::<_, 1024>(&graph)?; // TODO: is this the right amount of scratch space?
         let blob_size = blob.as_ref().len();
 
         let txn = self.inner.content.begin_write()?;
         {
-            txn.open_table(CF_ID_V0)?.insert(&id_key, &id)?;
+            let mut id_table = txn.open_table(CF_ID_V0)?;
+            let mut metadata_table = txn.open_table(CF_METADATA_V0)?;
+
+            let children =
+                self.ensure_id_many(links.into_iter(), &mut id_table, &mut metadata_table)?;
+
+            let graph = GraphV0 {
+                children: children.into_boxed_slice(),
+            };
+            let graph_bytes = rkyv::to_bytes::<_, 1024>(&graph)?; // TODO: is this the right amount of scratch space?
+
+            id_table.insert(&id_key, &id)?;
             txn.open_table(CF_BLOBS_V0)?.insert(&id, blob.as_ref())?;
-            txn.open_table(CF_METADATA_V0)?
-                .insert(&id, &metadata_bytes)?;
+            metadata_table.insert(&id, &metadata_bytes)?;
             txn.open_table(CF_GRAPH_V0)?.insert(&id, &graph_bytes)?;
         }
         txn.commit()?;
@@ -174,6 +179,7 @@ impl Store {
 
             let mut cid_tracker: AHashSet<Cid> = AHashSet::default();
             for (cid, blob, links) in blocks.into_iter() {
+                println!("putting {}", cid);
                 if cid_tracker.contains(&cid) || self.has(&cid)? {
                     continue;
                 }
@@ -186,14 +192,17 @@ impl Store {
 
                 let metadata = MetadataV0 {
                     codec: cid.codec(),
-                    multihash: cid.hash().to_bytes(),
+                    multihash: cid.hash().to_bytes().into_boxed_slice(),
                 };
                 let metadata_bytes = rkyv::to_bytes::<_, 1024>(&metadata)?; // TODO: is this the right amount of scratch space?
                 let id_key = id_key(&cid);
 
-                let children = self.ensure_id_many(links.into_iter())?;
+                let children =
+                    self.ensure_id_many(links.into_iter(), &mut id_table, &mut metadata_table)?;
 
-                let graph = GraphV0 { children };
+                let graph = GraphV0 {
+                    children: children.into_boxed_slice(),
+                };
                 let graph_bytes = rkyv::to_bytes::<_, 1024>(&graph)?; // TODO: is this the right amount of scratch space?
 
                 let blob_size = blob.as_ref().len();
@@ -214,40 +223,39 @@ impl Store {
     }
 
     /// Takes a list of cids and gives them ids, which are both stored and then returned.
-    #[tracing::instrument(skip(self, cids))]
-    fn ensure_id_many<I>(&self, cids: I) -> Result<Vec<u64>>
+    #[tracing::instrument(skip(self, cids, id_table, metadata_table))]
+    fn ensure_id_many<I>(
+        &self,
+        cids: I,
+        id_table: &mut Table<&[u8], u64>,
+        metadata_table: &mut Table<u64, &[u8]>,
+    ) -> Result<Vec<u64>>
     where
         I: IntoIterator<Item = Cid>,
     {
         let mut ids = Vec::new();
-        let txn = self.inner.content.begin_write()?;
-        {
-            let mut id_table = txn.open_table(CF_ID_V0)?;
-            let mut metadata_table = txn.open_table(CF_METADATA_V0)?;
 
-            for cid in cids {
-                let id_key = id_key(&cid);
-                let maybe_id = id_table.get(&id_key)?;
+        for cid in cids {
+            let id_key = id_key(&cid);
+            let maybe_id = id_table.get(&id_key)?;
 
-                let id = if let Some(id) = maybe_id {
-                    id.value()
-                } else {
-                    drop(maybe_id);
-                    let id = self.next_id();
+            let id = if let Some(id) = maybe_id {
+                id.value()
+            } else {
+                drop(maybe_id);
+                let id = self.next_id();
 
-                    let metadata = MetadataV0 {
-                        codec: cid.codec(),
-                        multihash: cid.hash().to_bytes(),
-                    };
-                    let metadata_bytes = rkyv::to_bytes::<_, 1024>(&metadata)?; // TODO: is this the right amount of scratch space?
-                    id_table.insert(&id_key, &id)?;
-                    metadata_table.insert(&id, &metadata_bytes)?;
-                    id
+                let metadata = MetadataV0 {
+                    codec: cid.codec(),
+                    multihash: cid.hash().to_bytes().into_boxed_slice(),
                 };
-                ids.push(id);
-            }
+                let metadata_bytes = rkyv::to_bytes::<_, 1024>(&metadata)?; // TODO: is this the right amount of scratch space?
+                id_table.insert(&id_key, &id)?;
+                metadata_table.insert(&id, &metadata_bytes)?;
+                id
+            };
+            ids.push(id);
         }
-        txn.commit()?;
 
         Ok(ids)
     }

@@ -30,7 +30,7 @@ pub struct MetadataV0 {
     /// The codec of the original CID.
     pub codec: u64,
     #[with(rkyv::with::CopyOptimize)]
-    pub multihash: Vec<u8>,
+    pub multihash: Box<[u8]>,
 }
 
 #[derive(Debug, Archive, Deserialize, Serialize)]
@@ -38,5 +38,5 @@ pub struct MetadataV0 {
 #[archive_attr(repr(C), derive(CheckBytes))]
 pub struct GraphV0 {
     #[with(rkyv::with::CopyOptimize)]
-    pub children: Vec<u64>,
+    pub children: Box<[u64]>,
 }
