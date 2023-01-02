@@ -127,7 +127,7 @@ opentelemetry-otlp = "0.11"
 par-stream = { version = "0.10.2", default-features = false }
 paste = "1.0.9"
 phf = "0.11"
-prometheus-client = "0.18"
+prometheus-client = "0.19"
 proptest = "1"
 prost = "0.11"
 prost-build = "0.11.1"
