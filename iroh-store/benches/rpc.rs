@@ -48,7 +48,7 @@ pub fn put_benchmark(c: &mut Criterion) {
             group.bench_with_input(
                 BenchmarkId::new(
                     "(transport, value_size)",
-                    format!("({:?}, {})", transport, value_size),
+                    format!("({transport:?}, {value_size})"),
                 ),
                 &(key, value),
                 |b, (key, value)| {
@@ -101,7 +101,7 @@ pub fn get_benchmark(c: &mut Criterion) {
             group.bench_with_input(
                 BenchmarkId::new(
                     "(transport, value_size)",
-                    format!("({:?}, {})", transport, value_size),
+                    format!("({transport:?}, {value_size})"),
                 ),
                 &(),
                 |b, _| {

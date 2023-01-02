@@ -63,7 +63,7 @@ enum Commands {
 fn main() {
     let args = Cli::parse();
     if let Err(e) = run_subcommand(args) {
-        eprintln!("{}", e);
+        eprintln!("{e}");
         std::process::exit(-1);
     }
 }
@@ -111,14 +111,14 @@ fn dev_install(build: bool) -> Result<()> {
     let bins = ["iroh", "iroh-one", "iroh-gateway", "iroh-p2p", "iroh-store"];
     let home = dirs_next::home_dir().unwrap();
     for bin in bins {
-        let from = project_root().join(format!("target/release/{}", bin));
+        let from = project_root().join(format!("target/release/{bin}"));
         if !from.try_exists()? {
             bail!(
                 "{} not found, did you run `cargo build --release`?",
                 from.display()
             );
         }
-        let to = home.join(format!(".cargo/bin/{}", bin));
+        let to = home.join(format!(".cargo/bin/{bin}"));
         println!("copying {} to {}", bin, to.display());
         fs::copy(from, to)?;
     }
@@ -197,18 +197,18 @@ fn build_docker(all: bool, build_images: Vec<String>, progress: String) -> Resul
     let commit = current_git_commit()?;
 
     for image in images {
-        println!("building {}:{}", image, commit);
+        println!("building {image}:{commit}");
         let status = Command::new("docker")
             .current_dir(project_root())
             .args([
                 "build",
                 "-t",
-                format!("n0computer/{}:{}", image, commit).as_str(),
+                format!("n0computer/{image}:{commit}").as_str(),
                 "-t",
-                format!("n0computer/{}:latest", image).as_str(),
+                format!("n0computer/{image}:latest").as_str(),
                 "-f",
-                format!("docker/Dockerfile.{}", image).as_str(),
-                format!("--progress={}", progress).as_str(),
+                format!("docker/Dockerfile.{image}").as_str(),
+                format!("--progress={progress}").as_str(),
                 ".",
             ])
             .status()?;
@@ -241,20 +241,20 @@ fn buildx_docker(all: bool, build_images: Vec<String>, platforms: String) -> Res
     // println!("created buildx instance: {}", buildx_instance);
 
     for image in images {
-        println!("building {}:{}", image, commit);
+        println!("building {image}:{commit}");
         let status = Command::new("docker")
             .current_dir(project_root())
             .args([
                 "buildx",
                 "build",
                 "--push",
-                format!("--platform={}", platforms).as_str(),
+                format!("--platform={platforms}").as_str(),
                 "--tag",
-                format!("n0computer/{}:{}", image, commit).as_str(),
+                format!("n0computer/{image}:{commit}").as_str(),
                 "--tag",
-                format!("n0computer/{}:latest", image).as_str(),
+                format!("n0computer/{image}:latest").as_str(),
                 "-f",
-                format!("docker/Dockerfile.{}", image).as_str(),
+                format!("docker/Dockerfile.{image}").as_str(),
                 ".",
             ])
             .status()?;
@@ -287,20 +287,20 @@ fn push_docker(all: bool, images: Vec<String>) -> Result<()> {
     let count = images.len() * 2;
 
     for image in images {
-        println!("pushing {}:{}", image, commit);
+        println!("pushing {image}:{commit}");
         Command::new("docker")
             .current_dir(project_root())
-            .args(["push", format!("n0computer/{}:{}", image, commit).as_str()])
+            .args(["push", format!("n0computer/{image}:{commit}").as_str()])
             .status()?
             .success()
             .then(|| {
                 success_count += 1;
             });
 
-        println!("pushing {}:{}", image, commit);
+        println!("pushing {image}:{commit}");
         Command::new("docker")
             .current_dir(project_root())
-            .args(["push", format!("n0computer/{}:latest", image).as_str()])
+            .args(["push", format!("n0computer/{image}:latest").as_str()])
             .status()?
             .success()
             .then(|| {
@@ -310,7 +310,7 @@ fn push_docker(all: bool, images: Vec<String>) -> Result<()> {
         println!();
     }
 
-    println!("{}/{} tags pushed.", success_count, count);
+    println!("{success_count}/{count} tags pushed.");
     Ok(())
 }
 

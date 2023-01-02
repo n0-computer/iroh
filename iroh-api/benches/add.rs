@@ -24,7 +24,7 @@ fn add_benchmark(c: &mut Criterion) {
     {
         let value = vec![8u8; *file_size];
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join(format!("{}.raw", file_size));
+        let path = dir.path().join(format!("{file_size}.raw"));
         std::fs::write(&path, value).unwrap();
 
         group.throughput(criterion::Throughput::Bytes(*file_size as u64));

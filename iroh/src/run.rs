@@ -220,7 +220,7 @@ async fn add(
 
     println!(
         "{} Calculating size...",
-        style(format!("[1/{}]", steps)).bold().dim()
+        style(format!("[1/{steps}]")).bold().dim()
     );
 
     let pb = ProgressBar::new_spinner();
@@ -243,7 +243,7 @@ async fn add(
 
     println!(
         "{} Importing content {}...",
-        style(format!("[2/{}]", steps)).bold().dim(),
+        style(format!("[2/{steps}]")).bold().dim(),
         human::format_bytes(total_size)
     );
 
@@ -281,7 +281,7 @@ async fn add(
         let rec_str = if cids.len() == 1 { "record" } else { "records" };
         println!(
             "{} Providing {} {} to the distributed hash table ...",
-            style(format!("[3/{}]", steps)).bold().dim(),
+            style(format!("[3/{steps}]")).bold().dim(),
             cids.len(),
             rec_str,
         );
@@ -299,7 +299,7 @@ async fn add(
         pb.finish_and_clear();
     }
 
-    println!("/ipfs/{}", root);
+    println!("/ipfs/{root}");
 
     Ok(())
 }
