@@ -6,7 +6,7 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use cid::Cid;
 use futures::Stream;
 use iroh_metrics::{bitswap::BitswapMetrics, inc};
@@ -312,6 +312,8 @@ impl Network {
         self.network_out_sender
             .send(OutEvent::UnprotectPeer { peer, response: s })
             .await
+            .context("Failed to unprotect peer")
+            .map_err(|err| error!("{err:#}"))
             .ok();
 
         r.await.unwrap_or_default()
