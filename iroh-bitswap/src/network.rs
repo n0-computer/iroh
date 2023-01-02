@@ -6,14 +6,14 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, bail, Context as _, Result};
 use cid::Cid;
 use futures::Stream;
 use iroh_metrics::{bitswap::BitswapMetrics, inc};
 use iroh_metrics::{core::MRecorder, record};
 use libp2p::{core::connection::ConnectionId, PeerId};
 use tokio::sync::{mpsc, oneshot};
-use tracing::{debug, info, trace};
+use tracing::{debug, error, info, trace};
 
 use crate::{message::BitswapMessage, protocol::ProtocolId, BitswapEvent};
 
@@ -297,18 +297,24 @@ impl Network {
         trace!("untag {}: {}", peer, tag);
     }
 
-    pub async fn protect_peer(&self, peer: PeerId) {
+    pub async fn protect_peer(&self, peer: PeerId) -> Result<()> {
         trace!("protect {}", peer);
-        let _ = self.network_out_sender.send(OutEvent::ProtectPeer { peer });
+        self.network_out_sender
+            .send(OutEvent::ProtectPeer { peer })
+            .await?;
+        Ok(())
     }
 
     pub async fn unprotect_peer(&self, peer: PeerId) -> bool {
         trace!("unprotect {}", peer);
 
         let (s, r) = oneshot::channel();
-        let _ = self
-            .network_out_sender
-            .send(OutEvent::UnprotectPeer { peer, response: s });
+        self.network_out_sender
+            .send(OutEvent::UnprotectPeer { peer, response: s })
+            .await
+            .context("Failed to unprotect peer")
+            .map_err(|err| error!("{err:#}"))
+            .ok();
 
         r.await.unwrap_or_default()
     }
