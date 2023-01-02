@@ -1,7 +1,7 @@
 use std::{fmt::Debug, sync::Arc};
 
 use ahash::{AHashMap, AHashSet};
-use anyhow::Result;
+use anyhow::{Context, Result};
 use cid::Cid;
 use derivative::Derivative;
 use futures::{future::BoxFuture, FutureExt};
@@ -658,10 +658,15 @@ impl PeerManagerActor {
     ) {
         if let Some(session) = self.sessions.get(&session) {
             if session.peers.contains(&peer) {
-                self.network.protect_peer(peer).await;
+                self.network
+                    .protect_peer(peer)
+                    .await
+                    .context("Failed to protect connection")
+                    .map_err(|err| error!("{err:#}"))
+                    .ok();
             }
         }
-        let _ = response.send(());
+        response.send(()).ok();
     }
 
     async fn remove_peer_from_session(
