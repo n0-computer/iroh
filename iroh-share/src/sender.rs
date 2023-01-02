@@ -57,7 +57,7 @@ impl Sender {
             gossip_task,
         } = self;
 
-        let t = Sha256Topic::new(format!("iroh-share-{}", id));
+        let t = Sha256Topic::new(format!("iroh-share-{id}"));
         let root_dir = dir_builder.build().await?;
 
         let (done_sender, done_receiver) = oneshot();

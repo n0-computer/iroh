@@ -57,7 +57,7 @@ impl Display for PeerIdOrAddrArg {
             PeerIdOrAddr::PeerId(p) => p.to_string(),
             PeerIdOrAddr::Multiaddr(a) => a.to_string(),
         };
-        write!(f, "{}", peer_id_or_addr)
+        write!(f, "{peer_id_or_addr}")
     }
 }
 
@@ -65,7 +65,7 @@ pub async fn run_command(p2p: &P2pApi, cmd: &P2p) -> Result<()> {
     match &cmd.command {
         P2pCommands::Connect { addr } => match p2p.connect(&addr.0).await {
             Ok(_) => {
-                println!("Connected to {}!", addr);
+                println!("Connected to {addr}!");
             }
             Err(e) => return Err(e),
         },
@@ -99,7 +99,7 @@ fn display_lookup(l: &Lookup) {
     );
     l.observed_addrs
         .iter()
-        .for_each(|addr| println!("  {}", addr));
+        .for_each(|addr| println!("  {addr}"));
     println!(
         "{} {}",
         "Listening Addresses".bold().dim(),
@@ -107,7 +107,7 @@ fn display_lookup(l: &Lookup) {
     );
     l.listen_addrs
         .iter()
-        .for_each(|addr| println!("  {}", addr));
+        .for_each(|addr| println!("  {addr}"));
     println!(
         "{} {}\n  {}",
         "Protocols".bold().dim(),
@@ -120,7 +120,7 @@ fn display_peers(peers: HashMap<PeerId, Vec<Multiaddr>>) {
     // let mut pid_str: String;
     for (peer_id, addrs) in peers {
         if let Some(addr) = addrs.first() {
-            println!("{}/p2p/{}", addr, peer_id);
+            println!("{addr}/p2p/{peer_id}");
         }
     }
 }

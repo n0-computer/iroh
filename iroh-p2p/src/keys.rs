@@ -299,7 +299,7 @@ fn path_is_private_key<P: AsRef<Path>>(path: P) -> bool {
 fn print_algorithm(alg: ssh_key::Algorithm) -> &'static str {
     match alg {
         ssh_key::Algorithm::Ed25519 => "ed25519",
-        _ => panic!("unusupported algorithm {}", alg),
+        _ => panic!("unusupported algorithm {alg}"),
     }
 }
 
