@@ -90,8 +90,8 @@ async fn start_services(api: &Api, services: BTreeSet<&str>) -> Result<()> {
     }
 
     for service in missing_services.iter() {
-        let daemon_name = format!("iroh-{}", service);
-        let log_path = iroh_cache_path(format!("iroh-{}.log", service).as_str())?;
+        let daemon_name = format!("iroh-{service}");
+        let log_path = iroh_cache_path(format!("iroh-{service}.log").as_str())?;
 
         // check if a binary by this name exists
         let bin_path = which::which(&daemon_name).map_err(|_| {
@@ -142,7 +142,7 @@ pub async fn stop(api: &Api, services: &Vec<String>) -> Result<()> {
 
 pub async fn stop_services(api: &Api, services: BTreeSet<&str>) -> Result<()> {
     for service in services {
-        let daemon_name = format!("iroh-{}", service);
+        let daemon_name = format!("iroh-{service}");
         info!("checking daemon {} lock", daemon_name);
         let mut lock = ProgramLock::new(&daemon_name)?;
         match lock.active_pid() {
@@ -156,7 +156,7 @@ pub async fn stop_services(api: &Api, services: BTreeSet<&str>) -> Result<()> {
                         if is_down {
                             println!("{}", "stopped".red());
                         } else {
-                            eprintln!("{}", format!("{} API is still running, but the lock is removed.\nYou may need to manually stop iroh via your operating system", service).red());
+                            eprintln!("{}", format!("{service} API is still running, but the lock is removed.\nYou may need to manually stop iroh via your operating system").red());
                         }
                     }
                     Err(error) => {
@@ -166,7 +166,7 @@ pub async fn stop_services(api: &Api, services: BTreeSet<&str>) -> Result<()> {
             }
             Err(e) => match e {
                 LockError::NoLock(_) => {
-                    eprintln!("{}", format!("{} is already stopped", daemon_name).white());
+                    eprintln!("{}", format!("{daemon_name} is already stopped").white());
                 }
                 LockError::NoSuchProcess(_, _) => {
                     lock.destroy_without_checking().unwrap();
@@ -177,7 +177,7 @@ pub async fn stop_services(api: &Api, services: BTreeSet<&str>) -> Result<()> {
                     );
                 }
                 e => {
-                    eprintln!("{} lock error: {}", daemon_name, e);
+                    eprintln!("{daemon_name} lock error: {e}");
                     continue;
                 }
             },

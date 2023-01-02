@@ -155,7 +155,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
 
         for addr in &libp2p_config.listening_multiaddrs {
             Swarm::listen_on(&mut swarm, addr.clone())?;
-            println!("{}", addr);
+            println!("{addr}");
         }
 
         Ok(Node {
@@ -1310,12 +1310,12 @@ mod tests {
                 assert!(!new_providers.is_empty());
 
                 for p in &new_providers {
-                    println!("{}", p);
+                    println!("{p}");
                     providers.push(*p);
                 }
             }
 
-            println!("{:?}", providers);
+            println!("{providers:?}");
             assert!(!providers.is_empty());
             assert!(
                 providers.len() >= DEFAULT_PROVIDER_LIMIT,
