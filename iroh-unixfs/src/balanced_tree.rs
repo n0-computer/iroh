@@ -331,7 +331,7 @@ mod tests {
 
     async fn build_expect(num_chunks: usize, degree: usize) -> Vec<Block> {
         let tree = build_expect_tree(num_chunks, degree).await;
-        println!("{:?}", tree);
+        println!("{tree:?}");
         build_expect_vec_from_tree(tree, num_chunks, degree).await
     }
 
@@ -414,7 +414,7 @@ mod tests {
             let node = node.expect("unexpected error in balanced tree stream");
             let (got_cid, got_bytes, _) = node.into_parts();
             let len = got_bytes.len() as u64;
-            println!("node index {}", i);
+            println!("node index {i}");
             assert_eq!(expect_cid, got_cid);
             assert_eq!(expect_bytes, got_bytes);
             i += 1;
