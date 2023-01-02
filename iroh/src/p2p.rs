@@ -105,9 +105,7 @@ fn display_lookup(l: &Lookup) {
         "Listening Addresses".bold().dim(),
         format!("({}):", l.listen_addrs.len()).bold().dim()
     );
-    l.listen_addrs
-        .iter()
-        .for_each(|addr| println!("  {addr}"));
+    l.listen_addrs.iter().for_each(|addr| println!("  {addr}"));
     println!(
         "{} {}\n  {}",
         "Protocols".bold().dim(),
