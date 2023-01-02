@@ -149,7 +149,7 @@ serde_with = "2.1"
 sha2 = { version = "0.10", default-features = false }
 smallvec = "1.10"
 ssh-key = { version = "0.5.1", default-features = false }
-sysinfo = "0.26.5"
+sysinfo = "0.27.2"
 temp-env = "0.3.1"
 tempfile = "3.3"
 testdir = "0.7.0"
