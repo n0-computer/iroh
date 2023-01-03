@@ -145,6 +145,69 @@ pub struct LookupResponse {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
+pub struct NetworkEventsRequest;
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct NetworkEventsResponse {
+    pub event: NetworkEvent,
+}
+
+use libp2p::gossipsub::{GossipsubMessage, MessageId, TopicHash};
+// TODO(ramfox): figure out better place for this or way to handle
+#[allow(clippy::large_enum_variant)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum NetworkEvent {
+    PeerConnected(PeerId),
+    PeerDisconnected(PeerId),
+    Gossipsub(GossipsubEvent),
+    CancelLookupQuery(PeerId),
+}
+
+// TODO(ramfox): figure out better place for this or way to handle
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum GossipsubEvent {
+    Subscribed {
+        peer_id: PeerId,
+        #[serde(with = "TopicHashDef")]
+        topic: TopicHash,
+    },
+    Unsubscribed {
+        peer_id: PeerId,
+        #[serde(with = "TopicHashDef")]
+        topic: TopicHash,
+    },
+    Message {
+        from: PeerId,
+        id: MessageId,
+        #[serde(with = "GossipsubMessageDef")]
+        message: GossipsubMessage,
+    },
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(remote = "TopicHash")]
+struct TopicHashDef {
+    #[serde(getter = "TopicHash::to_string")]
+    hash: String,
+}
+
+impl From<TopicHashDef> for TopicHash {
+    fn from(t: TopicHashDef) -> Self {
+        TopicHash::from_raw(t.hash)
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(remote = "GossipsubMessage")]
+struct GossipsubMessageDef {
+    source: Option<PeerId>,
+    data: Vec<u8>,
+    sequence_number: Option<u64>,
+    #[serde(with = "TopicHashDef")]
+    topic: TopicHash,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
 pub struct GossipsubAddExplicitPeerRequest {
     pub peer_id: PeerId,
 }
@@ -230,6 +293,7 @@ pub enum P2pRequest {
     PeerDisconnect(DisconnectRequest),
     Lookup(LookupRequest),
     LookupLocal(LookupLocalRequest),
+    NetworkEvents(NetworkEventsRequest),
     GossipsubAddExplicitPeer(GossipsubAddExplicitPeerRequest),
     GossipsubAllMeshPeers(GossipsubAllMeshPeersRequest),
     GossipsubAllPeers(GossipsubAllPeersRequest),
@@ -255,6 +319,7 @@ pub enum P2pResponse {
     GetListeningAddrs(RpcResult<GetListeningAddrsResponse>),
     GetPeers(RpcResult<GetPeersResponse>),
     Lookup(RpcResult<LookupResponse>),
+    NetworkEvents(Box<NetworkEventsResponse>),
     GossipsubPeers(RpcResult<GossipsubPeersResponse>),
     GossipsubAllPeers(RpcResult<GossipsubAllPeersResponse>),
     GossipsubPublish(RpcResult<GossipsubPublishResponse>),
@@ -337,6 +402,14 @@ impl RpcMsg<P2pService> for LookupRequest {
 
 impl RpcMsg<P2pService> for LookupLocalRequest {
     type Response = RpcResult<LookupResponse>;
+}
+
+impl Msg<P2pService> for NetworkEventsRequest {
+    type Response = Box<NetworkEventsResponse>;
+
+    type Update = Self;
+
+    type Pattern = ServerStreaming;
 }
 
 impl RpcMsg<P2pService> for GossipsubAddExplicitPeerRequest {

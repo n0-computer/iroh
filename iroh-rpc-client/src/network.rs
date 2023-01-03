@@ -172,6 +172,16 @@ impl P2pClient {
     }
 
     #[tracing::instrument(skip(self))]
+    pub async fn network_events(&self) -> Result<impl Stream<Item = Result<NetworkEvent>>> {
+        let res = self.client.server_streaming(NetworkEventsRequest).await?;
+        let events = res.map(|e| {
+            let e = e?.event;
+            Ok(e)
+        });
+        Ok(events)
+    }
+
+    #[tracing::instrument(skip(self))]
     pub async fn disconnect(&self, peer_id: PeerId) -> Result<()> {
         warn!("NetDisconnect not yet implemented on p2p node");
         let req = DisconnectRequest { peer_id };

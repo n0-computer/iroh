@@ -4,7 +4,7 @@ use cid::Cid;
 use futures::StreamExt;
 use futures::{
     stream::{BoxStream, Stream},
-    TryFutureExt,
+    FutureExt, TryFutureExt,
 };
 use iroh_bitswap::Block;
 use iroh_rpc_client::{
@@ -23,12 +23,13 @@ use libp2p::Multiaddr;
 use libp2p::PeerId;
 use std::collections::{HashMap, HashSet};
 use std::result;
-use tokio::sync::mpsc::{channel, Sender};
+use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio::sync::oneshot;
+use tokio_stream::wrappers::ReceiverStream;
 use tracing::{debug, info, trace};
 
 use super::node::DEFAULT_PROVIDER_LIMIT;
-use crate::VERSION;
+use crate::{NetworkEvent, VERSION};
 
 #[derive(Clone)]
 pub(crate) struct P2p {
@@ -217,7 +218,7 @@ impl P2p {
         };
 
         self.sender.send(msg).await?;
-        let r = tokio_stream::wrappers::ReceiverStream::new(r);
+        let r = ReceiverStream::new(r);
 
         let stream = r
             .map(|providers| {
@@ -394,6 +395,33 @@ impl P2p {
         Ok(peer_info_from_lookup(lookup))
     }
 
+    #[tracing::instrument(skip(self))]
+    fn network_events(
+        self,
+        _: NetworkEventsRequest,
+    ) -> BoxStream<'static, Box<NetworkEventsResponse>> {
+        async move { self.network_events_0().await }
+            .flatten_stream()
+            .boxed()
+    }
+
+    #[tracing::instrument(skip(self))]
+    async fn network_events_0(self) -> impl Stream<Item = Box<NetworkEventsResponse>> {
+        let (s, r) = oneshot::channel();
+        self.sender
+            .send(RpcMessage::NetworkEvents(s))
+            .await
+            // TODO(ramfox): refactor to return result
+            .expect("expect sender to exist");
+
+        let mut r = r.await.expect("expect sender and receiver to still exist");
+        async_stream::stream! {
+            while let Some(event) = r.recv().await {
+                yield Box::new(NetworkEventsResponse { event });
+            }
+        }
+    }
+
     #[tracing::instrument(skip(self, req))]
     async fn gossipsub_add_explicit_peer(self, req: GossipsubAddExplicitPeerRequest) -> Result<()> {
         let (s, r) = oneshot::channel();
@@ -563,6 +591,7 @@ async fn dispatch(s: P2pServer, req: P2pRequest, chan: ServerSocket<P2pService>,
         PeerConnectByPeerId(req) => s.rpc_map_err(req, chan, target, P2p::peer_connect_by_peer_id).await,
         Lookup(req) => s.rpc_map_err(req, chan, target, P2p::lookup).await,
         LookupLocal(req) => s.rpc_map_err(req, chan, target, P2p::lookup_local).await,
+        NetworkEvents(req) => s.server_streaming(req, chan, target, P2p::network_events).await,
         ExternalAddrs(req) => s.rpc_map_err(req, chan, target, P2p::external_addrs).await,
         Listeners(req) => s.rpc_map_err(req, chan, target, P2p::listeners).await,
         FetchProviderDht(req) => s.server_streaming(req, chan, target, P2p::fetch_provider_dht).await,
@@ -653,6 +682,7 @@ pub enum RpcMessage {
     CancelListenForIdentify(oneshot::Sender<()>, PeerId),
     AddressesOfPeer(oneshot::Sender<Vec<Multiaddr>>, PeerId),
     LookupLocalPeerInfo(oneshot::Sender<Lookup>),
+    NetworkEvents(oneshot::Sender<Receiver<NetworkEvent>>),
     Shutdown,
 }
 
