@@ -8,10 +8,14 @@ pub struct Args {
     /// Path to the store
     #[clap(long, short)]
     pub path: Option<PathBuf>,
+    /// Enable metrics export
     #[clap(long = "metrics")]
     metrics: bool,
     #[clap(long = "tracing")]
     tracing: bool,
+    /// Print the listening address to stdout as LISTENING_ADDR=xxx
+    #[clap(short, long)]
+    print_address: bool,
     /// Path to the config file
     #[clap(long)]
     pub cfg: Option<PathBuf>,
@@ -25,6 +29,10 @@ impl Args {
         }
         map.insert("metrics.collect".to_string(), self.metrics.to_string());
         map.insert("metrics.tracing".to_string(), self.tracing.to_string());
+        map.insert(
+            "server.print_address".to_string(),
+            self.print_address.to_string(),
+        );
         map
     }
 }

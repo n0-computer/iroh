@@ -3,7 +3,7 @@ use config::{ConfigError, Map, Source, Value};
 use iroh_metrics::config::Config as MetricsConfig;
 use iroh_rpc_client::Config as RpcClientConfig;
 use iroh_rpc_types::store::StoreAddr;
-use iroh_util::{insert_into_config_map, iroh_data_path};
+use iroh_util::config::{insert_into_config_map, iroh_data_path};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 

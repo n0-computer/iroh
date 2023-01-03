@@ -10,7 +10,7 @@ use iroh_metrics::config::Config as MetricsConfig;
 use iroh_resolver::dns_resolver::Config as DnsResolverConfig;
 use iroh_rpc_client::Config as RpcClientConfig;
 use iroh_rpc_types::gateway::GatewayAddr;
-use iroh_util::insert_into_config_map;
+use iroh_util::config::insert_into_config_map;
 use serde::{Deserialize, Serialize};
 
 /// CONFIG_FILE_NAME is the name of the optional config file located in the iroh home directory

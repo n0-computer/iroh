@@ -11,7 +11,8 @@ use iroh_api::{
     Api, ChunkerConfig, IpfsPath, StatusType, UnixfsConfig, UnixfsEntry, DEFAULT_CHUNKS_SIZE,
 };
 use iroh_metrics::config::Config as MetricsConfig;
-use iroh_util::{human, iroh_config_path, make_config};
+use iroh_util::config::{iroh_config_path, make_config};
+use iroh_util::human;
 
 use crate::config::{Config, CONFIG_FILE_NAME, ENV_PREFIX};
 use crate::doc;

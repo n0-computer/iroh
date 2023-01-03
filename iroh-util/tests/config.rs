@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use config::{ConfigError, Map, Source, Value};
 use serde::{Deserialize, Serialize};
 
-use iroh_util::{insert_into_config_map, make_config};
+use iroh_util::config::{insert_into_config_map, make_config};
 
 const CONFIG_A: &str = "tests/config.a.toml";
 const CONFIG_B: &str = "tests/config.b.toml";

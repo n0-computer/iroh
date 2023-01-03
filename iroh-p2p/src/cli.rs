@@ -5,7 +5,7 @@ use clap::Parser;
 #[derive(Parser, Debug, Clone)]
 #[clap(author, version, about, long_about = None)]
 pub struct Args {
-    /// Enable metrics
+    /// Enable metrics export
     #[clap(long = "metrics")]
     metrics: bool,
     /// Enable tracing
@@ -14,6 +14,7 @@ pub struct Args {
     /// Print the listening address to stdout as LISTENING_ADDR=xxx
     #[clap(short, long)]
     print_address: bool,
+    /// Path to the config file
     #[clap(long)]
     pub cfg: Option<PathBuf>,
 }

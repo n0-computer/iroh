@@ -15,7 +15,7 @@ use iroh_unixfs::{
     builder::Entry as UnixfsEntry,
     content_loader::{FullLoader, FullLoaderConfig},
 };
-use iroh_util::{iroh_config_path, make_config};
+use iroh_util::config::{iroh_config_path, make_config};
 #[cfg(feature = "testing")]
 use mockall::automock;
 use relative_path::RelativePathBuf;

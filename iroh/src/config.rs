@@ -1,6 +1,6 @@
 use anyhow::Result;
 use config::{ConfigError, Map, Source, Value};
-use iroh_util::insert_into_config_map;
+use iroh_util::config::insert_into_config_map;
 use serde::{Deserialize, Serialize};
 
 /// CONFIG_FILE_NAME is the name of the optional config file located in the iroh home directory

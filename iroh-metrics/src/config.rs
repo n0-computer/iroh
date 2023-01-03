@@ -1,5 +1,5 @@
 use config::{ConfigError, Map, Source, Value};
-use iroh_util::insert_into_config_map;
+use iroh_util::config::insert_into_config_map;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -2,8 +2,8 @@ use anyhow::{anyhow, Context, Result};
 use clap::Parser;
 use iroh_p2p::config::{Config, CONFIG_FILE_NAME, ENV_PREFIX};
 use iroh_p2p::{cli::Args, metrics, DiskStorage, Keychain, Node};
+use iroh_util::config::{iroh_config_path, make_config};
 use iroh_util::lock::ProgramLock;
-use iroh_util::{iroh_config_path, make_config};
 use tokio::task;
 use tracing::error;
 

@@ -13,8 +13,8 @@ use iroh_one::{
 use iroh_rpc_client::Client as RpcClient;
 use iroh_rpc_types::Addr;
 use iroh_unixfs::content_loader::{FullLoader, FullLoaderConfig};
+use iroh_util::config::{iroh_config_path, make_config};
 use iroh_util::lock::ProgramLock;
-use iroh_util::{iroh_config_path, make_config};
 use tokio::sync::RwLock;
 
 #[tokio::main(flavor = "multi_thread")]

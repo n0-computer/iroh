@@ -6,7 +6,7 @@ use iroh_metrics::config::Config as MetricsConfig;
 use iroh_p2p::Libp2pConfig;
 use iroh_rpc_client::Config as RpcClientConfig;
 use iroh_store::config::config_data_path;
-use iroh_util::insert_into_config_map;
+use iroh_util::config::insert_into_config_map;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -95,7 +95,7 @@ impl Default for Config {
         let metrics_config = MetricsConfig::default();
         let store_config =
             default_store_config(None, rpc_client.clone(), metrics_config.clone()).unwrap();
-        let key_store_path = iroh_util::iroh_data_root().unwrap();
+        let key_store_path = iroh_util::config::iroh_data_root().unwrap();
         Self {
             rpc_client: rpc_client.clone(),
             metrics: metrics_config.clone(),

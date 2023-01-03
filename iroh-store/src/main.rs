@@ -5,8 +5,9 @@ use iroh_store::{
     config::{config_data_path, CONFIG_FILE_NAME, ENV_PREFIX},
     metrics, rpc, Config, Store,
 };
+use iroh_util::block_until_sigint;
+use iroh_util::config::{iroh_config_path, make_config};
 use iroh_util::lock::ProgramLock;
-use iroh_util::{block_until_sigint, iroh_config_path, make_config};
 use tracing::info;
 
 #[tokio::main(flavor = "multi_thread")]

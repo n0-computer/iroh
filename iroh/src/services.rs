@@ -2,7 +2,7 @@ use anyhow::{anyhow, Result};
 use crossterm::terminal::{Clear, ClearType};
 use crossterm::{cursor, style, style::Stylize, QueueableCommand};
 use futures::StreamExt;
-use iroh_util::iroh_cache_path;
+use iroh_util::config::iroh_cache_path;
 use std::collections::BTreeSet;
 use std::io::{stdout, Write};
 use std::ops::Deref;
