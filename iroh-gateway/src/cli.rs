@@ -22,6 +22,9 @@ pub struct Args {
     pub cfg: Option<PathBuf>,
     #[clap(long)]
     use_denylist: bool,
+    /// Print the listening iRPC address to stdout as LISTENING_ADDR=xxx
+    #[clap(long)]
+    print_address: bool,
 }
 
 impl Args {
@@ -42,6 +45,7 @@ impl Args {
         map.insert("use_denylist", self.use_denylist.to_string());
         map.insert("metrics.collect", self.metrics.to_string());
         map.insert("metrics.tracing", self.tracing.to_string());
+        map.insert("server.print_address", self.print_address.to_string());
         map
     }
 }

@@ -200,12 +200,14 @@ mod tests {
         };
         let content_loader =
             FullLoader::new(rpc_client.clone(), loader_config).expect("invalid config");
+        let print_address = config.server.print_address;
         let handler = crate::core::Core::new(
             Arc::new(config),
             rpc_addr,
             Arc::new(Some(RwLock::new(bbits))),
             content_loader,
             DnsResolverConfig::default(),
+            print_address,
         )
         .await
         .unwrap();

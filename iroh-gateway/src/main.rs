@@ -66,12 +66,14 @@ async fn main() -> Result<()> {
                 .context("invalid indexer endpoint")?,
         },
     )?;
+    let print_address = config.server.print_address;
     let handler = Core::new(
         Arc::new(config),
         rpc_addr,
         Arc::clone(&bad_bits),
         content_loader,
         dns_resolver_config,
+        print_address,
     )
     .await?;
 

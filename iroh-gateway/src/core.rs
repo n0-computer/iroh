@@ -35,9 +35,10 @@ impl<T: ContentLoader + Unpin> Core<T> {
         bad_bits: Arc<Option<RwLock<BadBits>>>,
         content_loader: T,
         dns_resolver_config: DnsResolverConfig,
+        print_address: bool,
     ) -> anyhow::Result<Self> {
         tokio::spawn(async move {
-            if let Err(err) = rpc::new(rpc_addr, Gateway::default()).await {
+            if let Err(err) = rpc::new(rpc_addr, Gateway::default(), print_address).await {
                 tracing::error!("Failed to run gateway rpc handler: {err}");
             }
         });
@@ -67,7 +68,7 @@ impl<T: ContentLoader + Unpin> Core<T> {
         state: Arc<State<T>>,
     ) -> anyhow::Result<Self> {
         tokio::spawn(async move {
-            if let Err(err) = rpc::new(rpc_addr, Gateway::default()).await {
+            if let Err(err) = rpc::new(rpc_addr, Gateway::default(), false).await {
                 tracing::error!("Failed to run gateway rpc handler: {}", err);
             }
         });
@@ -173,12 +174,14 @@ mod tests {
         };
         let content_loader =
             FullLoader::new(rpc_client.clone(), loader_config).expect("invalid config");
+        let print_address = config.server.print_address;
         let core = Core::new(
             config,
             rpc_addr,
             Arc::new(None),
             content_loader,
             DnsResolverConfig::default(),
+            print_address,
         )
         .await
         .unwrap();

@@ -51,10 +51,9 @@ async fn dispatch(
     }
 }
 
-pub async fn new(addr: GatewayAddr, gw: Gateway) -> Result<()> {
+pub async fn new(addr: GatewayAddr, gw: Gateway, print_address: bool) -> Result<()> {
     info!("gateway rpc listening on: {}", addr);
-    // TODO: plug print_address in.
-    let server = create_server::<GatewayService>(addr, false).await?;
+    let server = create_server::<GatewayService>(addr, print_address).await?;
     loop {
         match server.accept_one().await {
             Ok((req, chan)) => {
