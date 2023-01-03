@@ -197,7 +197,6 @@ mod tests {
         let config = iroh_store::Config {
             path: store_dir.path().join("db"),
             rpc_client: RpcClientConfig::default(),
-            metrics: iroh_metrics::config::Config::default(),
         };
         let store = iroh_store::Store::create(config).await.unwrap();
         let task =

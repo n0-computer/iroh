@@ -696,7 +696,6 @@ mod tests {
 
     use super::*;
 
-    use iroh_metrics::config::Config as MetricsConfig;
     use iroh_rpc_client::Config as RpcClientConfig;
 
     use cid::multihash::{Code, MultihashDigest};
@@ -716,7 +715,6 @@ mod tests {
         let config = Config {
             path: dir.path().into(),
             rpc_client,
-            metrics: MetricsConfig::default(),
         };
 
         let store = Store::create(config).await.unwrap();
@@ -755,7 +753,6 @@ mod tests {
         let config = Config {
             path: dir.path().into(),
             rpc_client,
-            metrics: MetricsConfig::default(),
         };
 
         let store = Store::create(config.clone()).await.unwrap();
@@ -824,7 +821,6 @@ mod tests {
         let config = Config {
             path: dir.path().into(),
             rpc_client,
-            metrics: MetricsConfig::default(),
         };
 
         let store = Store::create(config).await?;

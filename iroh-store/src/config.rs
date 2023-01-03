@@ -23,13 +23,75 @@ pub fn config_data_path(arg_path: Option<PathBuf>) -> Result<PathBuf> {
     }
 }
 
-/// The configuration for the store.
+/// The configuration for the store server.
+///
+/// This is the configuration which the store server binary needs to run.  This is a
+/// superset from the configuration needed by the store service, which can also run
+/// integrated into another binary like in iroh-one, iroh-share and iroh-embed.
+///
+/// This config can be deserialised from a config file.
+// TODO: I'd prefer to include [`Config`] under the `store` field like iroh-one does.  But
+// that's a backwards incompatible change.
+#[derive(PartialEq, Debug, Deserialize, Serialize, Clone)]
+pub struct ServerConfig {
+    /// The location of the content database.
+    pub path: PathBuf,
+    pub rpc_client: RpcClientConfig,
+    /// Configuration for metrics export.
+    pub metrics: MetricsConfig,
+}
+
+impl ServerConfig {
+    pub fn new(path: PathBuf) -> Self {
+        let addr = "irpc://0.0.0.0:4402".parse().unwrap();
+        Self {
+            path,
+            rpc_client: RpcClientConfig {
+                store_addr: Some(addr),
+                ..Default::default()
+            },
+            metrics: Default::default(),
+        }
+    }
+}
+
+impl Source for ServerConfig {
+    fn clone_into_box(&self) -> Box<dyn Source + Send + Sync> {
+        Box::new(self.clone())
+    }
+    fn collect(&self) -> Result<Map<String, Value>, ConfigError> {
+        let mut map: Map<String, Value> = Map::new();
+        let path = self
+            .path
+            .to_str()
+            .ok_or_else(|| ConfigError::Foreign("No `path` set. Path is required.".into()))?;
+        insert_into_config_map(&mut map, "path", path);
+        insert_into_config_map(&mut map, "rpc_client", self.rpc_client.collect()?);
+        insert_into_config_map(&mut map, "metrics", self.metrics.collect()?);
+
+        Ok(map)
+    }
+}
+
+/// The configuration for the store service.
+///
+/// As opposed to the [`ServerConfig`] this is only the configuration needed to run the
+/// store service.  It can still be deserialised from a file, which is e.g. used by
+/// iroh-one.
 #[derive(PartialEq, Debug, Deserialize, Serialize, Clone)]
 pub struct Config {
     /// The location of the content database.
     pub path: PathBuf,
     pub rpc_client: RpcClientConfig,
-    pub metrics: MetricsConfig,
+}
+
+impl From<ServerConfig> for Config {
+    fn from(source: ServerConfig) -> Self {
+        Self {
+            path: source.path,
+            rpc_client: source.rpc_client,
+        }
+    }
 }
 
 impl Config {
@@ -40,13 +102,7 @@ impl Config {
                 store_addr: Some(client_addr),
                 ..Default::default()
             },
-            metrics: MetricsConfig::default(),
         }
-    }
-
-    pub fn new_network(path: PathBuf) -> Self {
-        let addr = "irpc://0.0.0.0:4402";
-        Self::new_with_rpc(path, addr.parse().unwrap())
     }
 
     pub fn rpc_addr(&self) -> Option<StoreAddr> {
@@ -66,7 +122,6 @@ impl Source for Config {
             .ok_or_else(|| ConfigError::Foreign("No `path` set. Path is required.".into()))?;
         insert_into_config_map(&mut map, "path", path);
         insert_into_config_map(&mut map, "rpc_client", self.rpc_client.collect()?);
-        insert_into_config_map(&mut map, "metrics", self.metrics.collect()?);
 
         Ok(map)
     }
@@ -80,7 +135,7 @@ mod tests {
     #[cfg(unix)]
     fn test_collect() {
         let path = PathBuf::new().join("test");
-        let default = Config::new_network(path);
+        let default = ServerConfig::new(path);
 
         let mut expect: Map<String, Value> = Map::new();
         expect.insert(
@@ -108,8 +163,8 @@ mod tests {
     #[cfg(unix)]
     fn test_build_config_from_struct() {
         let path = PathBuf::new().join("test");
-        let expect = Config::new_network(path);
-        let got: Config = config::Config::builder()
+        let expect = ServerConfig::new(path);
+        let got: ServerConfig = config::Config::builder()
             .add_source(expect.clone())
             .build()
             .unwrap()

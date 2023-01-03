@@ -1,6 +1,5 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use futures::TryStreamExt;
-use iroh_metrics::config::Config as MetricsConfig;
 use iroh_resolver::resolver::Resolver;
 use iroh_rpc_client::{Client, Config as RpcClientConfig};
 use iroh_rpc_types::Addr;
@@ -44,7 +43,6 @@ fn add_benchmark(c: &mut Criterion) {
                 let config = StoreConfig {
                     path: dir.path().join("db"),
                     rpc_client: rpc_client.clone(),
-                    metrics: MetricsConfig::default(),
                 };
                 let (_task, client, resolver) = executor.block_on(async {
                     let store = Store::create(config).await.unwrap();

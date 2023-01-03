@@ -34,7 +34,6 @@ impl RocksStoreService {
                 store_addr: Some(addr.clone()),
                 channels: Some(1),
             },
-            metrics: Default::default(),
         };
         let task = mem_store::start(addr.clone(), config).await?;
         Ok(Self { task, addr })

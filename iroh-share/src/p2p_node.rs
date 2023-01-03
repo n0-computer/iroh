@@ -173,10 +173,6 @@ impl P2pNode {
         let store_config = iroh_store::Config {
             path: db_path.to_path_buf(),
             rpc_client: rpc_store_client_config,
-            metrics: iroh_metrics::config::Config {
-                tracing: false, // disable tracing by default
-                ..Default::default()
-            },
         };
 
         let store = if store_config.path.exists() {

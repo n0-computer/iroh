@@ -78,7 +78,6 @@ impl Config {
         self.store.rpc_client = self.rpc_client.clone();
         self.gateway.metrics = self.metrics.clone();
         self.p2p.metrics = self.metrics.clone();
-        self.store.metrics = self.metrics.clone();
     }
 }
 
@@ -93,8 +92,7 @@ impl Default for Config {
             .join("ipfsd.http");
         let rpc_client = Self::default_rpc_config();
         let metrics_config = MetricsConfig::default();
-        let store_config =
-            default_store_config(None, rpc_client.clone(), metrics_config.clone()).unwrap();
+        let store_config = default_store_config(None, rpc_client.clone()).unwrap();
         let key_store_path = iroh_util::iroh_data_root().unwrap();
         Self {
             rpc_client: rpc_client.clone(),
@@ -111,13 +109,11 @@ impl Default for Config {
 fn default_store_config(
     store_path: Option<PathBuf>,
     ipfsd: RpcClientConfig,
-    metrics: iroh_metrics::config::Config,
 ) -> Result<iroh_store::config::Config> {
     let path = config_data_path(store_path)?;
     Ok(iroh_store::config::Config {
         path,
         rpc_client: ipfsd,
-        metrics,
     })
 }
 
