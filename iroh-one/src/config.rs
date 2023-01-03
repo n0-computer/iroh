@@ -77,7 +77,6 @@ impl Config {
         self.p2p.rpc_client = self.rpc_client.clone();
         self.store.rpc_client = self.rpc_client.clone();
         self.gateway.metrics = self.metrics.clone();
-        self.p2p.metrics = self.metrics.clone();
     }
 }
 
@@ -96,10 +95,10 @@ impl Default for Config {
         let key_store_path = iroh_util::iroh_data_root().unwrap();
         Self {
             rpc_client: rpc_client.clone(),
-            metrics: metrics_config.clone(),
+            metrics: metrics_config,
             gateway: iroh_gateway::config::Config::default(),
             store: store_config,
-            p2p: default_p2p_config(rpc_client, metrics_config, key_store_path),
+            p2p: default_p2p_config(rpc_client, key_store_path),
             #[cfg(all(feature = "http-uds-gateway", unix))]
             gateway_uds_path: Some(gateway_uds_path),
         }
@@ -117,15 +116,10 @@ fn default_store_config(
     })
 }
 
-fn default_p2p_config(
-    ipfsd: RpcClientConfig,
-    metrics: iroh_metrics::config::Config,
-    key_store_path: PathBuf,
-) -> iroh_p2p::config::Config {
+fn default_p2p_config(ipfsd: RpcClientConfig, key_store_path: PathBuf) -> iroh_p2p::config::Config {
     iroh_p2p::config::Config {
         libp2p: Libp2pConfig::default(),
         rpc_client: ipfsd,
-        metrics,
         key_store_path,
     }
 }

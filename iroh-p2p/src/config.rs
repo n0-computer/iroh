@@ -30,6 +30,60 @@ pub const DEFAULT_BOOTSTRAP: &[&str] = &[
 
 // "/ip4/104.131.131.82/udp/4001/quic/p2p/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ", // mars.i.ipfs.io
 
+/// The configuration for the p2p server.
+///
+/// This is the configuration which the p2p server binary needs to run.  It is a superset
+/// from the configuration needed by the p2p service, which can also run integrated into
+/// another binary like in iroh-one, iroh-share or iroh-embed.
+// TODO: I'd prefer to include [`Config`] under a `p2p` field like iroh-one does.  But
+// that's a backwards incompatible change for the config file.
+#[derive(PartialEq, Debug, Deserialize, Serialize, Clone)]
+pub struct ServerConfig {
+    pub libp2p: Libp2pConfig,
+    pub rpc_client: RpcClientConfig,
+    pub metrics: MetricsConfig,
+    /// Directory where cryptographic keys are stored.
+    ///
+    /// The p2p node needs to have an identity consisting of a cryptographic key pair.  As
+    /// it is useful to have the same identity across restarts this is stored on disk in a
+    /// format compatible with how ssh stores keys.  This points to a directory where these
+    /// keypairs are stored.
+    pub key_store_path: PathBuf,
+}
+
+impl ServerConfig {
+    pub fn new() -> Self {
+        Default::default()
+    }
+}
+
+impl Default for ServerConfig {
+    fn default() -> Self {
+        Self {
+            libp2p: Default::default(),
+            rpc_client: RpcClientConfig::default_network(),
+            metrics: Default::default(),
+            key_store_path: iroh_data_root().unwrap(),
+        }
+    }
+}
+
+impl Source for ServerConfig {
+    fn clone_into_box(&self) -> Box<dyn Source + Send + Sync> {
+        Box::new(self.clone())
+    }
+
+    fn collect(&self) -> Result<Map<String, Value>, ConfigError> {
+        let mut map: Map<String, Value> = Map::new();
+
+        insert_into_config_map(&mut map, "libp2p", self.libp2p.collect()?);
+        insert_into_config_map(&mut map, "rpc_client", self.rpc_client.collect()?);
+        insert_into_config_map(&mut map, "metrics", self.metrics.collect()?);
+        insert_into_config_map(&mut map, "key_store_path", self.key_store_path.to_str());
+        Ok(map)
+    }
+}
+
 /// Libp2p config for the node.
 #[derive(PartialEq, Eq, Debug, Clone, Deserialize, Serialize)]
 #[non_exhaustive]
@@ -69,7 +123,6 @@ pub struct Libp2pConfig {
 pub struct Config {
     pub libp2p: Libp2pConfig,
     pub rpc_client: RpcClientConfig,
-    pub metrics: MetricsConfig,
     /// Directory where cryptographic keys are stored.
     ///
     /// The p2p node needs to have an identity consisting of a cryptographic key pair.  As
@@ -77,6 +130,16 @@ pub struct Config {
     /// format compatible with how ssh stores keys.  This points to a directory where these
     /// keypairs are stored.
     pub key_store_path: PathBuf,
+}
+
+impl From<ServerConfig> for Config {
+    fn from(source: ServerConfig) -> Self {
+        Self {
+            libp2p: source.libp2p,
+            rpc_client: source.rpc_client,
+            key_store_path: source.key_store_path,
+        }
+    }
 }
 
 impl Source for Libp2pConfig {
@@ -152,7 +215,6 @@ impl Source for Config {
 
         insert_into_config_map(&mut map, "libp2p", self.libp2p.collect()?);
         insert_into_config_map(&mut map, "rpc_client", self.rpc_client.collect()?);
-        insert_into_config_map(&mut map, "metrics", self.metrics.collect()?);
         insert_into_config_map(&mut map, "key_store_path", self.key_store_path.to_str());
         Ok(map)
     }
@@ -199,7 +261,6 @@ impl Config {
                 p2p_addr: Some(client_addr),
                 ..Default::default()
             },
-            metrics: MetricsConfig::default(),
             key_store_path: iroh_data_root().unwrap(),
         }
     }
@@ -210,7 +271,6 @@ impl Config {
         Self {
             libp2p: Libp2pConfig::default(),
             rpc_client,
-            metrics: MetricsConfig::default(),
             key_store_path: iroh_data_root().unwrap(),
         }
     }
@@ -227,7 +287,7 @@ mod tests {
 
     #[test]
     fn test_collect() {
-        let default = Config::default_network();
+        let default = ServerConfig::default();
         let bootstrap_peers: Vec<String> = default
             .libp2p
             .bootstrap_peers
