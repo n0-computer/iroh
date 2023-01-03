@@ -22,7 +22,7 @@ pub struct Args {
     pub cfg: Option<PathBuf>,
     #[clap(long)]
     use_denylist: bool,
-    /// Print the listening iRPC address to stdout as LISTENING_ADDR=xxx
+    /// Print the iRPC listening address to stdout as IRPC_LISTENING_ADDR=xxx
     #[clap(long)]
     print_address: bool,
 }

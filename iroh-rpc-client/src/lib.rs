@@ -71,7 +71,7 @@ pub async fn create_server<S: Service>(
         .or_else(|| all_local_addrs.get(0));
     if print_address {
         if let Some(local_addr) = local_addr {
-            println!("LISTENING_ADDR={local_addr}");
+            println!("IRPC_LISTENING_ADDR={local_addr}");
         }
     }
     for local_addr in all_local_addrs {

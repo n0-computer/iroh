@@ -13,7 +13,7 @@ pub struct Args {
     metrics: bool,
     #[clap(long = "tracing")]
     tracing: bool,
-    /// Print the listening address to stdout as LISTENING_ADDR=xxx
+    /// Print the iRPC listening address to stdout as IRPC_LISTENING_ADDR=xxx
     #[clap(long)]
     print_address: bool,
     /// Path to the config file
