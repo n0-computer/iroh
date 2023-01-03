@@ -5,7 +5,7 @@ use clap::Parser;
 use iroh_gateway::{
     bad_bits::{self, BadBits},
     cli::Args,
-    config::{Config, CONFIG_FILE_NAME, ENV_PREFIX},
+    config::{Config, ServerConfig, CONFIG_FILE_NAME, ENV_PREFIX},
     core::Core,
     metrics,
 };
@@ -26,7 +26,7 @@ async fn main() -> Result<()> {
     let sources = [Some(cfg_path.as_path()), args.cfg.as_deref()];
     let mut config = make_config(
         // default
-        Config::default(),
+        ServerConfig::default(),
         // potential config files
         &sources,
         // env var prefix for this config
@@ -44,6 +44,7 @@ async fn main() -> Result<()> {
         true => Arc::new(Some(RwLock::new(BadBits::new()))),
         false => Arc::new(None),
     };
+    let config = Config::from(config);
     let rpc_addr = config
         .rpc_addr()
         .ok_or_else(|| anyhow!("missing gateway rpc addr"))?;

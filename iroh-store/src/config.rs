@@ -27,7 +27,7 @@ pub fn config_data_path(arg_path: Option<PathBuf>) -> Result<PathBuf> {
 ///
 /// This is the configuration which the store server binary needs to run.  This is a
 /// superset from the configuration needed by the store service, which can also run
-/// integrated into another binary like in iroh-one, iroh-share and iroh-embed.
+/// integrated into another binary like in iroh-one, iroh-share or iroh-embed.
 // TODO: I'd prefer to include [`Config`] under the `store` field like iroh-one does.  But
 // that's a backwards incompatible change.
 #[derive(PartialEq, Debug, Deserialize, Serialize, Clone)]

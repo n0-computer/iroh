@@ -76,7 +76,6 @@ impl Config {
         self.gateway.rpc_client = self.rpc_client.clone();
         self.p2p.rpc_client = self.rpc_client.clone();
         self.store.rpc_client = self.rpc_client.clone();
-        self.gateway.metrics = self.metrics.clone();
     }
 }
 
