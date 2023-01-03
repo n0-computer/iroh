@@ -53,6 +53,7 @@ async fn main() -> anyhow::Result<()> {
     let rpc_addr = config
         .rpc_addr()
         .ok_or_else(|| anyhow!("missing store rpc addr"))?;
+    let print_address = config.server.print_address;
     let store = if config.path.exists() {
         info!("Opening store at {}", config.path.display());
         Store::open(config).await?
@@ -61,7 +62,8 @@ async fn main() -> anyhow::Result<()> {
         Store::create(config).await?
     };
 
-    let rpc_task = tokio::spawn(async move { rpc::new(rpc_addr, store).await.unwrap() });
+    let rpc_task =
+        tokio::spawn(async move { rpc::new(rpc_addr, store, print_address).await.unwrap() });
 
     block_until_sigint().await;
     rpc_task.abort();

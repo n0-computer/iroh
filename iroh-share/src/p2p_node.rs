@@ -172,6 +172,7 @@ impl P2pNode {
         let resolver = iroh_resolver::resolver::Resolver::new(loader);
 
         let store_config = iroh_store::Config {
+            server: Default::default(),
             path: db_path.to_path_buf(),
             rpc_client: rpc_store_client_config,
             metrics: iroh_metrics::config::Config {
@@ -197,7 +198,7 @@ impl P2pNode {
         });
 
         let store_task = tokio::spawn(async move {
-            iroh_store::rpc::new(rpc_store_addr_server, store)
+            iroh_store::rpc::new(rpc_store_addr_server, store, false)
                 .await
                 .unwrap()
         });

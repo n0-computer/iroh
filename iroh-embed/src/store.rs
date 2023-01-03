@@ -27,6 +27,7 @@ impl RocksStoreService {
     pub async fn new(path: PathBuf) -> Result<Self> {
         let addr = Addr::new_mem();
         let config = StoreConfig {
+            server: Default::default(),
             path,
             rpc_client: RpcClientConfig {
                 gateway_addr: None,

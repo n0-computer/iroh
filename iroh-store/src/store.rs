@@ -714,6 +714,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let rpc_client = RpcClientConfig::default();
         let config = Config {
+            server: Default::default(),
             path: dir.path().into(),
             rpc_client,
             metrics: MetricsConfig::default(),
@@ -753,6 +754,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let rpc_client = RpcClientConfig::default();
         let config = Config {
+            server: Default::default(),
             path: dir.path().into(),
             rpc_client,
             metrics: MetricsConfig::default(),
@@ -822,6 +824,7 @@ mod tests {
         let dir = tempfile::tempdir()?;
         let rpc_client = RpcClientConfig::default();
         let config = Config {
+            server: Default::default(),
             path: dir.path().into(),
             rpc_client,
             metrics: MetricsConfig::default(),

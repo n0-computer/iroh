@@ -195,13 +195,17 @@ mod tests {
         let client_addr = server_addr.clone();
         let store_dir = tempfile::tempdir().unwrap();
         let config = iroh_store::Config {
+            server: Default::default(),
             path: store_dir.path().join("db"),
             rpc_client: RpcClientConfig::default(),
             metrics: iroh_metrics::config::Config::default(),
         };
         let store = iroh_store::Store::create(config).await.unwrap();
-        let task =
-            tokio::spawn(async move { iroh_store::rpc::new(server_addr, store).await.unwrap() });
+        let task = tokio::spawn(async move {
+            iroh_store::rpc::new(server_addr, store, false)
+                .await
+                .unwrap()
+        });
         (client_addr, task)
     }
 

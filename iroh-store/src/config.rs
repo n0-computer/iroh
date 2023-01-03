@@ -26,6 +26,7 @@ pub fn config_data_path(arg_path: Option<PathBuf>) -> Result<PathBuf> {
 /// The configuration for the store.
 #[derive(PartialEq, Debug, Deserialize, Serialize, Clone)]
 pub struct Config {
+    pub server: iroh_util::config::ServerConfig,
     /// The location of the content database.
     pub path: PathBuf,
     pub rpc_client: RpcClientConfig,
@@ -35,6 +36,7 @@ pub struct Config {
 impl Config {
     pub fn new_with_rpc(path: PathBuf, client_addr: StoreAddr) -> Self {
         Self {
+            server: Default::default(),
             path,
             rpc_client: RpcClientConfig {
                 store_addr: Some(client_addr),
@@ -64,6 +66,7 @@ impl Source for Config {
             .path
             .to_str()
             .ok_or_else(|| ConfigError::Foreign("No `path` set. Path is required.".into()))?;
+        insert_into_config_map(&mut map, "server", self.server.collect()?);
         insert_into_config_map(&mut map, "path", path);
         insert_into_config_map(&mut map, "rpc_client", self.rpc_client.collect()?);
         insert_into_config_map(&mut map, "metrics", self.metrics.collect()?);
@@ -83,6 +86,10 @@ mod tests {
         let default = Config::new_network(path);
 
         let mut expect: Map<String, Value> = Map::new();
+        expect.insert(
+            "server".to_string(),
+            Value::new(None, default.server.collect().unwrap()),
+        );
         expect.insert(
             "rpc_client".to_string(),
             Value::new(None, default.rpc_client.collect().unwrap()),
@@ -107,7 +114,7 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn test_build_config_from_struct() {
-        let path = PathBuf::new().join("test");
+        let path = PathBuf::from("test");
         let expect = Config::new_network(path);
         let got: Config = config::Config::builder()
             .add_source(expect.clone())

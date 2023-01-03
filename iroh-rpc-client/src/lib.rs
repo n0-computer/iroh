@@ -1,14 +1,9 @@
-pub mod client;
-pub mod config;
-pub mod gateway;
-pub mod network;
-pub mod status;
-pub mod store;
 use iroh_rpc_types::{gateway::GatewayService, p2p::P2pService, store::StoreService, Addr};
 use quic_rpc::{
     transport::{combined, http2, CombinedChannelTypes, Http2ChannelTypes, MemChannelTypes},
     RpcClient, RpcServer, Service,
 };
+use tracing::info;
 
 pub use crate::config::Config;
 pub use client::Client;
@@ -16,6 +11,13 @@ pub use network::{Lookup, P2pClient};
 pub use quic_rpc::LocalAddr;
 pub use status::{ClientStatus, ServiceStatus, ServiceType, StatusType, HEALTH_POLL_WAIT};
 pub use store::StoreClient;
+
+pub mod client;
+pub mod config;
+pub mod gateway;
+pub mod network;
+pub mod status;
+pub mod store;
 
 /// The types of channels used by the client and server.
 pub type ChannelTypes = CombinedChannelTypes<Http2ChannelTypes, MemChannelTypes>;
@@ -42,13 +44,13 @@ pub type P2pServer = RpcServer<P2pService, ChannelTypes>;
 
 pub async fn create_server<S: Service>(
     addr: Addr<S>,
+    print_address: bool,
 ) -> anyhow::Result<RpcServer<S, ChannelTypes>> {
     // make a channel matching the channel types for this crate
-    match addr {
+    let server = match addr {
         Addr::Mem(channel, _) => {
             let channel = combined::ServerChannel::new(None, Some(channel));
-            let server = RpcServer::new(channel);
-            Ok(server)
+            RpcServer::new(channel)
         }
         Addr::IrpcLookup(_addr) => {
             todo!()
@@ -57,10 +59,26 @@ pub async fn create_server<S: Service>(
         Addr::Irpc(addr) => {
             let channel = quic_rpc::transport::http2::ServerChannel::serve(&addr)?;
             let channel = combined::ServerChannel::new(Some(channel), None);
-            let server = RpcServer::new(channel);
-            Ok(server)
+            RpcServer::new(channel)
+        }
+    };
+
+    // We know there is currently only one real listening address.
+    let all_local_addrs: &[LocalAddr] = server.local_addr();
+    let local_addr: Option<&LocalAddr> = all_local_addrs
+        .iter()
+        .find(|a| matches!(a, LocalAddr::Socket(_)))
+        .or_else(|| all_local_addrs.get(0));
+    if print_address {
+        if let Some(local_addr) = local_addr {
+            println!("LISTENING_ADDR={local_addr}");
         }
     }
+    for local_addr in all_local_addrs {
+        info!("p2p rpc listening on: {local_addr}");
+    }
+
+    Ok(server)
 }
 
 pub async fn open_client<S: Service>(addr: Addr<S>) -> anyhow::Result<RpcClient<S, ChannelTypes>> {

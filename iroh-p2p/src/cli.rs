@@ -12,7 +12,7 @@ pub struct Args {
     #[clap(long = "tracing")]
     tracing: bool,
     /// Print the listening address to stdout as LISTENING_ADDR=xxx
-    #[clap(short, long)]
+    #[clap(long)]
     print_address: bool,
     /// Path to the config file
     #[clap(long)]

@@ -24,7 +24,7 @@ pub async fn start(rpc_addr: StoreAddr, config: Config) -> anyhow::Result<JoinHa
             .context("failed to create new store")?
     };
 
-    let rpc_task = tokio::spawn(async move { rpc::new(rpc_addr, store).await.unwrap() });
+    let rpc_task = tokio::spawn(async move { rpc::new(rpc_addr, store, false).await.unwrap() });
 
     Ok(rpc_task)
 }

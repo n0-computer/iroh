@@ -25,6 +25,7 @@ pub fn put_benchmark(c: &mut Criterion) {
                 let dir = tempfile::tempdir().unwrap();
                 let rpc_client = RpcClientConfig::default();
                 let config = Config {
+                    server: Default::default(),
                     path: dir.path().into(),
                     rpc_client,
                     metrics: MetricsConfig::default(),
@@ -51,6 +52,7 @@ pub fn get_benchmark(c: &mut Criterion) {
                 let dir = tempfile::tempdir().unwrap();
                 let rpc_client = RpcClientConfig::default();
                 let config = Config {
+                    server: Default::default(),
                     path: dir.path().into(),
                     rpc_client,
                     metrics: MetricsConfig::default(),

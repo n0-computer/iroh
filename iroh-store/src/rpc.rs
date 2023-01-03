@@ -134,9 +134,9 @@ async fn dispatch(s: StoreServer, req: StoreRequest, chan: ServerSocket<StoreSer
 }
 
 #[tracing::instrument(skip(store))]
-pub async fn new(addr: StoreAddr, store: Store) -> Result<()> {
+pub async fn new(addr: StoreAddr, store: Store, print_address: bool) -> Result<()> {
     info!("store rpc listening on: {}", addr);
-    let server = create_server::<StoreService>(addr).await?;
+    let server = create_server::<StoreService>(addr, print_address).await?;
     let store = RpcStore(store);
     loop {
         match server.accept_one().await {

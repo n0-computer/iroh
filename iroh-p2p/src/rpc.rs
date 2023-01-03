@@ -8,7 +8,7 @@ use futures::{
 };
 use iroh_bitswap::Block;
 use iroh_rpc_client::{
-    create_server, LocalAddr, Lookup, P2pServer, ServerError, ServerSocket, HEALTH_POLL_WAIT,
+    create_server, Lookup, P2pServer, ServerError, ServerSocket, HEALTH_POLL_WAIT,
 };
 use iroh_rpc_types::{
     p2p::*, RpcError, RpcResult, VersionRequest, VersionResponse, WatchRequest, WatchResponse,
@@ -26,7 +26,7 @@ use std::result;
 use tokio::sync::mpsc::{channel, Sender};
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
-use tracing::{debug, info, trace};
+use tracing::{debug, trace};
 
 use super::node::DEFAULT_PROVIDER_LIMIT;
 use crate::VERSION;
@@ -581,22 +581,7 @@ pub(crate) async fn spawn_server(
     p2p: P2p,
     print_address: bool,
 ) -> Result<JoinHandle<()>> {
-    let server = create_server::<P2pService>(addr).await?;
-
-    // We know there is currently only one real listening address.
-    let all_local_addrs: &[LocalAddr] = server.local_addr();
-    let local_addr: Option<&LocalAddr> = all_local_addrs
-        .iter()
-        .find(|a| matches!(a, LocalAddr::Socket(_)))
-        .or_else(|| all_local_addrs.get(0));
-    if print_address {
-        if let Some(local_addr) = local_addr {
-            println!("LISTENING_ADDR={local_addr}");
-        }
-    }
-    for local_addr in all_local_addrs {
-        info!("p2p rpc listening on: {local_addr}");
-    }
+    let server = create_server::<P2pService>(addr, print_address).await?;
 
     Ok(tokio::spawn(async move {
         loop {
