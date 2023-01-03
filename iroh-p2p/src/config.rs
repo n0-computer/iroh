@@ -64,23 +64,10 @@ pub struct Libp2pConfig {
     pub dial_concurrency_factor: u8,
 }
 
-/// Configuration specific to an iroh server processes.
-#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
-pub struct ServerConfig {
-    /// Whether to print the listening address to stdout.
-    ///
-    /// If you configure the server to use a listening address with e.g. a random port
-    /// number (`0`), you can use this to find out what local address the server has bound
-    /// to.  It will be printed as a string in `LISTENING_ADDR=xxx' where `xxx` is the
-    /// native representation of the address bound to, e.g. for an IPv4 address that could
-    /// be `127.0.0.1:1234` etc.
-    pub print_address: bool,
-}
-
 /// Configuration for the [`iroh-p2p`] node.
 #[derive(PartialEq, Debug, Clone, Deserialize, Serialize)]
 pub struct Config {
-    pub server: ServerConfig,
+    pub server: iroh_util::config::ServerConfig,
     pub libp2p: Libp2pConfig,
     pub rpc_client: RpcClientConfig,
     pub metrics: MetricsConfig,
@@ -152,19 +139,6 @@ impl Source for Libp2pConfig {
             .map(|b| b.to_string())
             .collect();
         insert_into_config_map(&mut map, "listening_multiaddrs", addrs);
-        Ok(map)
-    }
-}
-
-impl Source for ServerConfig {
-    fn clone_into_box(&self) -> Box<dyn Source + Send + Sync> {
-        Box::new(self.clone())
-    }
-
-    fn collect(&self) -> Result<Map<String, Value>, ConfigError> {
-        let mut map: Map<String, Value> = Map::new();
-
-        insert_into_config_map(&mut map, "print_address", self.print_address);
         Ok(map)
     }
 }
@@ -273,6 +247,10 @@ mod tests {
             .collect();
 
         let mut expect: Map<String, Value> = Map::new();
+        expect.insert(
+            "server".to_string(),
+            Value::new(None, default.server.collect().unwrap()),
+        );
         expect.insert(
             "libp2p".to_string(),
             Value::new(None, default.libp2p.collect().unwrap()),
