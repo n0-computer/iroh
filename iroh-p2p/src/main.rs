@@ -56,8 +56,8 @@ fn main() -> Result<()> {
             }
         }
 
-        let kc = Keychain::<DiskStorage>::new(network_config.p2p.key_store_path.clone()).await?;
         let network_config = Config::from(network_config);
+        let kc = Keychain::<DiskStorage>::new(network_config.key_store_path.clone()).await?;
         let rpc_addr = network_config
             .rpc_addr()
             .ok_or_else(|| anyhow!("missing p2p rpc addr"))?;

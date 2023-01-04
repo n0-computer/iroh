@@ -106,6 +106,10 @@ pub struct Libp2pConfig {
 /// Configuration for the [`iroh-p2p`] node.
 #[derive(PartialEq, Debug, Clone, Deserialize, Serialize)]
 pub struct Config {
+    /// Configuration for libp2p.
+    pub libp2p: Libp2pConfig,
+    /// Configuration of RPC to other iroh services.
+    pub rpc_client: RpcClientConfig,
     /// Directory where cryptographic keys are stored.
     ///
     /// The p2p node needs to have an identity consisting of a cryptographic key pair.  As
@@ -113,10 +117,6 @@ pub struct Config {
     /// format compatible with how ssh stores keys.  This points to a directory where these
     /// keypairs are stored.
     pub key_store_path: PathBuf,
-    /// Configuration for libp2p.
-    pub libp2p: Libp2pConfig,
-    /// Configuration of RPC to other iroh services.
-    pub rpc_client: RpcClientConfig,
 }
 
 impl From<ServerConfig> for Config {
@@ -195,9 +195,9 @@ impl Source for Config {
 
     fn collect(&self) -> Result<Map<String, Value>, ConfigError> {
         let mut map: Map<String, Value> = Map::new();
-        insert_into_config_map(&mut map, "key_store_path", self.key_store_path.to_str());
         insert_into_config_map(&mut map, "libp2p", self.libp2p.collect()?);
         insert_into_config_map(&mut map, "rpc_client", self.rpc_client.collect()?);
+        insert_into_config_map(&mut map, "key_store_path", self.key_store_path.to_str());
         Ok(map)
     }
 }
@@ -238,20 +238,22 @@ impl Default for Libp2pConfig {
 impl Config {
     pub fn default_with_rpc(client_addr: P2pAddr) -> Self {
         Self {
-            key_store_path: iroh_data_root().unwrap(),
-            libp2p: Default::default(),
+            libp2p: Libp2pConfig::default(),
             rpc_client: RpcClientConfig {
                 p2p_addr: Some(client_addr),
                 ..Default::default()
             },
+            key_store_path: iroh_data_root().unwrap(),
         }
     }
 
     pub fn default_network() -> Self {
+        let rpc_client = RpcClientConfig::default_network();
+
         Self {
-            key_store_path: iroh_data_root().unwrap(),
             libp2p: Libp2pConfig::default(),
-            rpc_client: RpcClientConfig::default_network(),
+            rpc_client,
+            key_store_path: iroh_data_root().unwrap(),
         }
     }
 

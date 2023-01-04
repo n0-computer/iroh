@@ -160,9 +160,9 @@ impl P2pNode {
         libp2p_config.max_conns_in = 8;
         libp2p_config.max_conns_out = 8;
         let config = Config {
-            key_store_path: db_path.parent().unwrap().to_path_buf(),
             libp2p: libp2p_config,
             rpc_client: rpc_p2p_client_config.clone(),
+            key_store_path: db_path.parent().unwrap().to_path_buf(),
         };
 
         let rpc = Client::new(rpc_p2p_client_config).await?;
