@@ -11,7 +11,7 @@ use iroh_metrics::{
 };
 use iroh_rpc_client::Client as RpcClient;
 use multihash::Multihash;
-use redb::{Database, DatabaseStats, ReadableTable, Table, TableDefinition};
+use redb::{Database, DatabaseStats, ReadableTable, Table};
 use rkyv::AlignedVec;
 use smallvec::SmallVec;
 use std::sync::RwLock;
@@ -481,7 +481,7 @@ impl Store {
             Some(links_id) => {
                 // Need to copy to align
                 let mut buf = AlignedVec::with_capacity(links_id.value().len());
-                buf.extend_from_slice(&links_id.value());
+                buf.extend_from_slice(links_id.value());
                 let graph = rkyv::check_archived_root::<GraphV0>(&buf)
                     .map_err(|e| anyhow!("invalid graph {:?}", e))?;
 
@@ -494,7 +494,7 @@ impl Store {
                         Some(meta) => {
                             // Need to copy to align
                             buf.clear();
-                            buf.extend_from_slice(&meta.value());
+                            buf.extend_from_slice(meta.value());
                             let meta = rkyv::check_archived_root::<MetadataV0>(&buf)
                                 .map_err(|e| anyhow!("invalid metadata {:?}", e))?;
                             let multihash = cid::multihash::Multihash::from_bytes(&meta.multihash)?;
@@ -545,7 +545,7 @@ impl Store {
 
 #[cfg(test)]
 mod tests {
-    use std::{str::FromStr, sync::Mutex};
+    use std::str::FromStr;
 
     use super::*;
 
@@ -553,14 +553,10 @@ mod tests {
     use iroh_rpc_client::Config as RpcClientConfig;
 
     use cid::multihash::{Code, MultihashDigest};
-    use libipld::{
-        cbor::DagCborCodec,
-        prelude::{Codec, Encode},
-        Ipld, IpldCodec,
-    };
+    use libipld::{/*cbor::DagCborCodec,*/ prelude::Encode, /*Ipld,*/ IpldCodec};
     use tempfile::TempDir;
     const RAW: u64 = 0x55;
-    const DAG_CBOR: u64 = 0x71;
+    // const DAG_CBOR: u64 = 0x71;
 
     #[tokio::test]
     async fn test_basics() {
