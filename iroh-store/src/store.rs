@@ -107,7 +107,7 @@ impl Store {
         let (mut options, cache) = default_options();
         options.create_if_missing(true);
 
-        let path = config.store.path.clone();
+        let path = config.path.clone();
         let db = task::spawn_blocking(move || -> Result<_> {
             let mut db = RocksDb::open(&options, path)?;
             {
@@ -152,7 +152,7 @@ impl Store {
         options.create_if_missing(false);
         // TODO: find a way to read existing options
 
-        let path = config.store.path.clone();
+        let path = config.path.clone();
         let (db, next_id) = task::spawn_blocking(move || -> Result<_> {
             let db = RocksDb::open_cf(
                 &options,

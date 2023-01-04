@@ -30,8 +30,8 @@ pub fn config_data_path(arg_path: Option<PathBuf>) -> Result<PathBuf> {
 /// integrated into another binary like in iroh-one, iroh-share or iroh-embed.
 #[derive(PartialEq, Debug, Deserialize, Serialize, Clone)]
 pub struct ServerConfig {
-    pub store: StoreConfig,
-    pub rpc_client: RpcClientConfig,
+    /// Configuration of the store service.
+    pub store: Config,
     /// Configuration for metrics export.
     pub metrics: MetricsConfig,
 }
@@ -40,11 +40,7 @@ impl ServerConfig {
     pub fn new(path: PathBuf) -> Self {
         let addr = "irpc://0.0.0.0:4402".parse().unwrap();
         Self {
-            store: StoreConfig { path },
-            rpc_client: RpcClientConfig {
-                store_addr: Some(addr),
-                ..Default::default()
-            },
+            store: Config::with_rpc_addr(path, addr),
             metrics: Default::default(),
         }
     }
@@ -58,31 +54,7 @@ impl Source for ServerConfig {
     fn collect(&self) -> Result<Map<String, Value>, ConfigError> {
         let mut map: Map<String, Value> = Map::new();
         insert_into_config_map(&mut map, "store", self.store.collect()?);
-        insert_into_config_map(&mut map, "rpc_client", self.rpc_client.collect()?);
         insert_into_config_map(&mut map, "metrics", self.metrics.collect()?);
-        Ok(map)
-    }
-}
-
-/// Store-specific configuration.
-#[derive(PartialEq, Debug, Deserialize, Serialize, Clone)]
-pub struct StoreConfig {
-    /// The location of the content database.
-    pub path: PathBuf,
-}
-
-impl Source for StoreConfig {
-    fn clone_into_box(&self) -> Box<dyn Source + Send + Sync> {
-        Box::new(self.clone())
-    }
-
-    fn collect(&self) -> Result<Map<String, Value>, ConfigError> {
-        let mut map: Map<String, Value> = Map::new();
-        let path = self
-            .path
-            .to_str()
-            .ok_or_else(|| ConfigError::Foreign("No `path` set. Path is required.".into()))?;
-        insert_into_config_map(&mut map, "path", path);
         Ok(map)
     }
 }
@@ -95,16 +67,13 @@ impl Source for StoreConfig {
 #[derive(PartialEq, Debug, Deserialize, Serialize, Clone)]
 pub struct Config {
     /// The location of the content database.
-    pub store: StoreConfig,
+    pub path: PathBuf,
     pub rpc_client: RpcClientConfig,
 }
 
 impl From<ServerConfig> for Config {
     fn from(source: ServerConfig) -> Self {
-        Self {
-            store: source.store,
-            rpc_client: source.rpc_client,
-        }
+        source.store
     }
 }
 
@@ -116,7 +85,7 @@ impl Config {
     /// argument.  Once #672 is merged we can probably remove the `rpc_client` field.
     pub fn new(path: PathBuf) -> Self {
         Self {
-            store: StoreConfig { path },
+            path,
             rpc_client: Default::default(),
         }
     }
@@ -124,7 +93,7 @@ impl Config {
     /// Creates a new store config with the given RPC listen address.
     pub fn with_rpc_addr(path: PathBuf, addr: StoreAddr) -> Self {
         Self {
-            store: StoreConfig { path },
+            path,
             rpc_client: RpcClientConfig {
                 store_addr: Some(addr),
                 ..Default::default()
@@ -144,7 +113,11 @@ impl Source for Config {
 
     fn collect(&self) -> Result<Map<String, Value>, ConfigError> {
         let mut map: Map<String, Value> = Map::new();
-        insert_into_config_map(&mut map, "store", self.store.collect()?);
+        let path = self
+            .path
+            .to_str()
+            .ok_or_else(|| ConfigError::Foreign("No `path` set. Path is required.".into()))?;
+        insert_into_config_map(&mut map, "path", path);
         insert_into_config_map(&mut map, "rpc_client", self.rpc_client.collect()?);
         Ok(map)
     }
@@ -164,10 +137,6 @@ mod tests {
         expect.insert(
             "store".to_string(),
             Value::new(None, default.store.collect().unwrap()),
-        );
-        expect.insert(
-            "rpc_client".to_string(),
-            Value::new(None, default.rpc_client.collect().unwrap()),
         );
         expect.insert(
             "metrics".to_string(),

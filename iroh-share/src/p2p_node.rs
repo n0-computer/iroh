@@ -7,7 +7,6 @@ use iroh_p2p::{config, Config, Keychain, MemoryStorage, NetworkEvent, Node};
 use iroh_resolver::resolver::Resolver;
 use iroh_rpc_client::Client;
 use iroh_rpc_types::Addr;
-use iroh_store::config::StoreConfig;
 use iroh_unixfs::{
     content_loader::{ContentLoader, ContextId, LoaderContext, IROH_STORE},
     parse_links, LoadedCid, Source,
@@ -171,13 +170,11 @@ impl P2pNode {
         let resolver = iroh_resolver::resolver::Resolver::new(loader);
 
         let store_config = iroh_store::Config {
-            store: StoreConfig {
-                path: db_path.to_path_buf(),
-            },
+            path: db_path.to_path_buf(),
             rpc_client: rpc_store_client_config,
         };
 
-        let store = if store_config.store.path.exists() {
+        let store = if store_config.path.exists() {
             iroh_store::Store::open(store_config).await?
         } else {
             iroh_store::Store::create(store_config).await?
