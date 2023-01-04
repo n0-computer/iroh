@@ -1,8 +1,17 @@
-use crate::error::map_service_error;
-use anyhow::Result;
-use iroh_rpc_client::{Lookup, P2pClient};
-use libp2p::{multiaddr::Protocol, Multiaddr, PeerId};
 use std::collections::HashMap;
+
+use anyhow::Result;
+use bytes::Bytes;
+use futures::stream::{BoxStream, StreamExt};
+use iroh_p2p::NetworkEvent;
+use iroh_rpc_client::{Lookup, P2pClient};
+use libp2p::{
+    gossipsub::{MessageId, TopicHash},
+    multiaddr::Protocol,
+    Multiaddr, PeerId,
+};
+
+use crate::error::map_service_error;
 
 #[derive(Debug)]
 pub struct P2p {
@@ -51,6 +60,25 @@ impl P2p {
             .get_peers()
             .await
             .map_err(|e| map_service_error("p2p", e))
+    }
+
+    pub async fn network_events(&self) -> Result<BoxStream<'static, Result<NetworkEvent>>> {
+        let stream = self
+            .client
+            .network_events()
+            .await
+            .map_err(|e| map_service_error("p2p", e))?;
+        Ok(stream.boxed())
+    }
+
+    pub async fn subscribe(&self, topic: String) -> Result<bool> {
+        let topic = TopicHash::from_raw(topic);
+        self.client.gossipsub_subscribe(topic).await
+    }
+
+    pub async fn publish(&self, topic: String, data: Bytes) -> Result<MessageId> {
+        let topic = TopicHash::from_raw(topic);
+        self.client.gossipsub_publish(topic, data).await
     }
 }
 
