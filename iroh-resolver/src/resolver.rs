@@ -498,7 +498,9 @@ impl<T: ContentLoader> Resolver<T> {
             let this = this.clone();
             async move {
                 let cid = this.resolve_path_to_cid(&path, &mut ctx).await?;
-                let data = this.resolve_with_ctx(ctx, Path::from_cid(cid)).await?;
+                let data = this
+                    .resolve_with_ctx(ctx, Path::from_cid(cid), false)
+                    .await?;
                 Ok(data)
             }
         })
@@ -625,20 +627,15 @@ impl<T: ContentLoader> Resolver<T> {
             }
         }
 
-<<<<<<< HEAD
+        ensure!(!results.is_empty(), "unable to resolve {}", path);
+        trace!("received {} blocks for {}", results.len(), path);
+
+        let (root_cid, root_loaded_cid) = results.pop_front().unwrap();
         let codec = match force_raw {
             true => Codec::Raw,
             false => Codec::try_from(root_cid.codec()).context("unknown codec")?,
         };
-||||||| parent of 09e99b3a (integrate memesync into content loading)
-        let codec = Codec::try_from(root_cid.codec()).context("unknown codec")?;
-=======
-        ensure!(!results.is_empty(), "unable to resolve {}", path);
-        trace!("received {} blocks for {}", results.len(), path);
->>>>>>> 09e99b3a (integrate memesync into content loading)
 
-        let (root_cid, root_loaded_cid) = results.pop_front().unwrap();
-        let codec = Codec::try_from(root_cid.codec()).context("unknown codec")?;
         match codec {
             Codec::DagPb => {
                 self.resolve_dag_pb_or_unixfs(path, root_cid, root_loaded_cid, results, ctx)

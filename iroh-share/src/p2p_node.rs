@@ -1,9 +1,7 @@
 use std::path::Path;
 
 use anyhow::Result;
-use futures::TryStreamExt;
 use iroh_p2p::{config, Config, Keychain, MemoryStorage, NetworkEvent, Node};
-use iroh_p2p::{config, Keychain, MemoryStorage, NetworkEvent, Node};
 use iroh_resolver::resolver::Resolver;
 use iroh_rpc_client::Client;
 use iroh_rpc_types::Addr;

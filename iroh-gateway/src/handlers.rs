@@ -230,7 +230,7 @@ async fn request_preprocessing<T: ContentLoader + Unpin>(
         ));
     }
 
-    if let Some(resp) = etag_check(request_headers, &CidOrDomain::Cid(*resolved_cid), &format) {
+    if let Some(resp) = etag_check(request_headers, resolved_cid, &format) {
         return Ok(RequestPreprocessingResult::RespondImmediately(resp));
     }
 
