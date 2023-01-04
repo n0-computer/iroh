@@ -59,7 +59,7 @@ async fn test_dagger_testdata() -> Result<()> {
 
     for source in sources {
         for param in &params {
-            println!("== {:?} ==", source);
+            println!("== {source:?} ==");
             println!("Degree: {}", param.degree);
             println!("Chunker: {}", param.chunker);
 
@@ -81,7 +81,7 @@ async fn test_dagger_testdata() -> Result<()> {
             let out = resolver.resolve(Path::from_cid(root)).await?;
             let t = read_to_vec(out.pretty(resolver, OutMetrics::default(), None)?).await?;
 
-            println!("Root: {}", root);
+            println!("Root: {root}");
             println!("Len: {}", data.len());
             println!("Elapsed: {}s", start.elapsed().as_secs_f32());
 

@@ -167,7 +167,7 @@ async fn symlink_roundtrip_test() -> Result<()> {
     let mut reader = out.pretty(resolver, OutMetrics::default(), None)?;
     let mut t = String::new();
     reader.read_to_string(&mut t).await?;
-    println!("{}", t);
+    println!("{t}");
     assert_eq!(target, t);
     Ok(())
 }
@@ -248,7 +248,7 @@ fn test_hamt_roundtrip_3() {
 async fn test_hamt_roundtrip_large() {
     let mut dir = TestDir::new();
     for i in 0..10000 {
-        dir.insert(format!("file_{}", i), TestDirEntry::File(Bytes::new()));
+        dir.insert(format!("file_{i}"), TestDirEntry::File(Bytes::new()));
     }
     assert!(dir_roundtrip_test(dir, true).await.unwrap());
 }

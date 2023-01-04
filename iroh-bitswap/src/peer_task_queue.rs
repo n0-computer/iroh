@@ -289,7 +289,7 @@ mod tests {
         // add blocks for all letters
         for letter in shuffled_alphabet {
             let i = alphabet.iter().position(|c| *c == letter).unwrap();
-            println!("{} - {}", letter, i);
+            println!("{letter} - {i}");
             ptq.push_task(
                 partner,
                 Task {
@@ -633,7 +633,7 @@ mod tests {
         let mut targets = Vec::new();
         for i in 0..n {
             let (peer, tasks, _) = ptq.pop_tasks(1).await.unwrap();
-            assert_eq!(tasks.len(), 1, "task {} did not match: {:?}", i, tasks);
+            assert_eq!(tasks.len(), 1, "task {i} did not match: {tasks:?}");
             targets.push(peer);
         }
         assert_eq_unordered(expected, targets);
