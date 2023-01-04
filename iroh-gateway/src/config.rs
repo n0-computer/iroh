@@ -361,7 +361,5 @@ mod tests {
             cfg.gateway.rpc_client.gateway_addr.unwrap(),
             "irpc://127.0.0.42:1234".parse().unwrap(),
         );
-
-        panic!("boom");
     }
 }
