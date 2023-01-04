@@ -59,11 +59,11 @@ impl P2pNode {
         };
         let mut libp2p_config = config::Libp2pConfig::default();
         libp2p_config.listening_multiaddrs =
-            vec![format!("/ip4/0.0.0.0/tcp/{port}").parse().unwrap()];
+            vec![format!("/ip4/0.0.0.0/udp/{port}/quic-v1").parse().unwrap()];
         libp2p_config.mdns = false;
         libp2p_config.kademlia = false;
-        libp2p_config.autonat = true;
-        libp2p_config.relay_client = true;
+        libp2p_config.autonat = false;
+        libp2p_config.relay_client = false;
         libp2p_config.bootstrap_peers = Default::default(); // disable bootstrap for now
         libp2p_config.relay_server = false;
         libp2p_config.bitswap_client = false;

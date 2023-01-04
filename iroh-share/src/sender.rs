@@ -160,6 +160,7 @@ impl Sender {
         let file = FileBuilder::new()
             .name(name)
             .content_bytes(data)
+            .fixed_chunker(1024 * 1024)
             .build()
             .await?;
         let root_dir = DirectoryBuilder::new().add_file(file);
