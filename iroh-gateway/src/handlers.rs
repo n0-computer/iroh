@@ -180,7 +180,15 @@ async fn request_preprocessing<T: ContentLoader + Unpin>(
         }
     }
 
-    let path_metadata = match state.client.retrieve_path_metadata(path.clone()).await {
+    // parse query params
+    let format = get_response_format(request_headers, &query_params.format)
+        .map_err(|err| GatewayError::new(StatusCode::BAD_REQUEST, &err))?;
+
+    let path_metadata = match state
+        .client
+        .retrieve_path_metadata(path.clone(), Some(format.clone()))
+        .await
+    {
         Ok(metadata) => metadata,
         Err(e) => {
             if e == "offline" {
@@ -216,10 +224,6 @@ async fn request_preprocessing<T: ContentLoader + Unpin>(
             GatewayResponse::new(StatusCode::OK, Body::empty(), HeaderMap::new()),
         ));
     }
-
-    // parse query params
-    let format = get_response_format(request_headers, &query_params.format)
-        .map_err(|err| GatewayError::new(StatusCode::BAD_REQUEST, &err))?;
 
     if let Some(resp) = etag_check(request_headers, &CidOrDomain::Cid(*resolved_cid), &format) {
         return Ok(RequestPreprocessingResult::RespondImmediately(resp));
