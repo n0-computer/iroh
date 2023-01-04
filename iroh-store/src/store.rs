@@ -79,6 +79,15 @@ impl Store {
     /// Creates a new database.
     #[tracing::instrument]
     pub async fn create(config: Config) -> Result<Self> {
+        if config.path.is_dir() {
+            tokio::fs::create_dir_all(&config.path)
+                .await
+                .context("unable to create directory")?;
+        } else if let Some(parent) = config.path.parent() {
+            tokio::fs::create_dir_all(parent)
+                .await
+                .context("unable to create parent directory")?;
+        }
         Self::open(config).await
     }
 
