@@ -6,6 +6,6 @@ pub mod rpc;
 mod store;
 
 pub use crate::config::Config;
-pub use crate::store::Store;
+pub use crate::store::{Stats, Store, TableStats};
 
 pub(crate) const VERSION: &str = env!("CARGO_PKG_VERSION");

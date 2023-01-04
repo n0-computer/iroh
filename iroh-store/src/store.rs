@@ -11,7 +11,8 @@ use iroh_metrics::{
 };
 use iroh_rpc_client::Client as RpcClient;
 use multihash::Multihash;
-use redb::{Database, ReadableTable, Table};
+use redb::{Database, DatabaseStats, ReadableTable, Table, TableDefinition};
+use rkyv::AlignedVec;
 use smallvec::SmallVec;
 use std::sync::RwLock;
 use tokio::task;
@@ -61,6 +62,19 @@ struct CodeAndId {
     id: u64,
 }
 
+/// Describes stats about the database.
+#[derive(Debug)]
+pub struct Stats {
+    pub tables: [TableStats; 4],
+    pub database_stats: DatabaseStats,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TableStats {
+    pub name: &'static str,
+    pub num_entries: usize,
+}
+
 impl Store {
     /// Creates a new database.
     #[tracing::instrument]
@@ -90,7 +104,7 @@ impl Store {
                     // read last inserted id
 
                     let iter = id_table.iter()?;
-                    let last_id: u64 = iter.last().map(|(_, g)| g.value()).unwrap_or_default();
+                    let last_id: u64 = iter.map(|(_, g)| g.value()).max().unwrap_or_default();
                     last_id + 1
                 };
                 txn.commit()?;
@@ -110,6 +124,44 @@ impl Store {
                 next_id: next_id.into(),
                 _rpc_client,
             }),
+        })
+    }
+
+    pub fn stats(&self) -> Result<Stats> {
+        let txn = self.inner.content.begin_write()?;
+
+        let database_stats = txn.stats()?;
+        let tables = {
+            let blobs_table = txn.open_table(CF_BLOBS_V0)?;
+            let metadata_table = txn.open_table(CF_METADATA_V0)?;
+            let graph_table = txn.open_table(CF_GRAPH_V0)?;
+            let id_table = txn.open_table(CF_ID_V0)?;
+
+            [
+                TableStats {
+                    name: CF_BLOBS_V0.name(),
+                    num_entries: blobs_table.len()?,
+                },
+                TableStats {
+                    name: CF_METADATA_V0.name(),
+                    num_entries: metadata_table.len()?,
+                },
+                TableStats {
+                    name: CF_GRAPH_V0.name(),
+                    num_entries: graph_table.len()?,
+                },
+                TableStats {
+                    name: CF_ID_V0.name(),
+                    num_entries: id_table.len()?,
+                },
+            ]
+        };
+
+        txn.commit()?;
+
+        Ok(Stats {
+            tables,
+            database_stats,
         })
     }
 
@@ -179,7 +231,6 @@ impl Store {
 
             let mut cid_tracker: AHashSet<Cid> = AHashSet::default();
             for (cid, blob, links) in blocks.into_iter() {
-                println!("putting {}", cid);
                 if cid_tracker.contains(&cid) || self.has(&cid)? {
                     continue;
                 }
@@ -263,12 +314,9 @@ impl Store {
     #[tracing::instrument(skip(self))]
     fn next_id(&self) -> u64 {
         let mut id = self.inner.next_id.write().unwrap();
-        if let Some(next_id) = id.checked_add(1) {
-            *id = next_id;
-            next_id
-        } else {
-            panic!("this store is full");
-        }
+        let next_id = *id;
+        *id = id.checked_add(1).expect("store is full");
+        next_id
     }
 
     #[tracing::instrument(skip(self))]
@@ -303,7 +351,8 @@ impl Store {
         let id_table = txn.open_table(CF_ID_V0)?;
 
         for elem in self.get_ids_for_hash(hash, &id_table)? {
-            let id = elem?.id;
+            let elem = elem?;
+            let id = elem.id;
             if let Some(blob) = blobs_table.get(&id)? {
                 return Ok(Some(blob.value().to_vec()));
             }
@@ -318,7 +367,8 @@ impl Store {
         let id_table = txn.open_table(CF_ID_V0)?;
 
         for elem in self.get_ids_for_hash(hash, &id_table)? {
-            let id = elem?.id;
+            let elem = elem?;
+            let id = elem.id;
             if let Some(_blob) = blobs_table.get(&id)? {
                 return Ok(true);
             }
@@ -429,15 +479,23 @@ impl Store {
 
         let res = match graph_table.get(&id)? {
             Some(links_id) => {
-                let graph = rkyv::check_archived_root::<GraphV0>(&links_id.value())
+                // Need to copy to align
+                let mut buf = AlignedVec::with_capacity(links_id.value().len());
+                buf.extend_from_slice(&links_id.value());
+                let graph = rkyv::check_archived_root::<GraphV0>(&buf)
                     .map_err(|e| anyhow!("invalid graph {:?}", e))?;
 
                 let meta = graph.children.iter().map(|id| meta_table.get(id));
                 let mut links = Vec::with_capacity(graph.children.len());
+                let mut buf = AlignedVec::new();
+
                 for (i, meta) in meta.into_iter().enumerate() {
                     match meta? {
                         Some(meta) => {
-                            let meta = rkyv::check_archived_root::<MetadataV0>(&meta.value())
+                            // Need to copy to align
+                            buf.clear();
+                            buf.extend_from_slice(&meta.value());
+                            let meta = rkyv::check_archived_root::<MetadataV0>(&buf)
                                 .map_err(|e| anyhow!("invalid metadata {:?}", e))?;
                             let multihash = cid::multihash::Multihash::from_bytes(&meta.multihash)?;
                             let c = Cid::new_v1(meta.codec, multihash);
@@ -462,17 +520,18 @@ impl Store {
         id_table: &'a R,
     ) -> Result<impl Iterator<Item = Result<CodeAndId>> + 'a> {
         let hash = hash.to_bytes();
-        let iter = id_table.iter()?;
         let hash_len = hash.len();
-        Ok(iter
-            .take_while(move |(k, _)| {
-                k.value().len() == hash_len + 8 && k.value().starts_with(&hash)
-            })
+
+        let iter = id_table
+            .iter()?
+            .filter(move |(k, _)| k.value().len() == hash_len + 8 && k.value().starts_with(&hash))
             .map(move |(k, v)| {
                 let code = u64::from_be_bytes(k.value()[hash_len..].try_into()?);
                 let id = v.value();
                 Ok(CodeAndId { code, id })
-            }))
+            });
+
+        Ok(iter)
     }
 
     pub(crate) async fn spawn_blocking<T: Send + Sync + 'static>(
@@ -561,7 +620,8 @@ mod tests {
             let hash = Code::Sha2_256.digest(&data);
             let c = cid::Cid::new_v1(RAW, hash);
 
-            let link_hash = Code::Sha2_256.digest(&[(i + 1) as u8; 64]);
+            let link_data = [(i + 1) as u8; 64];
+            let link_hash = Code::Sha2_256.digest(&link_data);
             let link = cid::Cid::new_v1(RAW, link_hash);
 
             let links = [link];
@@ -569,24 +629,28 @@ mod tests {
             store.put(c, &data, links).unwrap();
             values.push((c, data, links));
         }
+        assert_eq!(values.len(), 100);
 
-        for (c, expected_data, expected_links) in values.iter() {
+        for (i, (c, expected_data, expected_links)) in values.iter().enumerate() {
             let data = store.get(c).unwrap().unwrap();
-            assert_eq!(expected_data, &data[..]);
+            assert_eq!(expected_data, &data[..], "{i}");
 
             let links = store.get_links(c).unwrap().unwrap();
-            assert_eq!(expected_links, &links[..]);
+            assert_eq!(expected_links, &links[..], "{i}");
         }
 
+        println!("stats before: {:#?}", store.stats().unwrap());
         drop(store);
 
         let store = Store::open(config).await.unwrap();
-        for (c, expected_data, expected_links) in values.iter() {
+        println!("stats after: {:#?}", store.stats().unwrap());
+
+        for (i, (c, expected_data, expected_links)) in values.iter().enumerate() {
             let data = store.get(c).unwrap().unwrap();
-            assert_eq!(expected_data, &data[..]);
+            assert_eq!(expected_data, &data[..], "{i}");
 
             let links = store.get_links(c).unwrap().unwrap();
-            assert_eq!(expected_links, &links[..]);
+            assert_eq!(expected_links, &links[..], "{i}");
         }
 
         for i in 100..200 {
@@ -603,12 +667,14 @@ mod tests {
             values.push((c, data, links));
         }
 
-        for (c, expected_data, expected_links) in values.iter() {
+        assert_eq!(values.len(), 200);
+
+        for (i, (c, expected_data, expected_links)) in values.iter().enumerate() {
             let data = store.get(c).unwrap().unwrap();
-            assert_eq!(expected_data, &data[..]);
+            assert_eq!(expected_data, &data[..], "{i}");
 
             let links = store.get_links(c).unwrap().unwrap();
-            assert_eq!(expected_links, &links[..]);
+            assert_eq!(expected_links, &links[..], "{i}");
         }
     }
 
@@ -646,10 +712,12 @@ mod tests {
         assert_eq!(store.get_links(&raw_cid)?.unwrap().len(), 0);
         assert_eq!(store.get_links(&cbor_cid)?.unwrap().len(), 2);
 
-        let txn = store.inner.content.begin_read()?;
-        let id_table = txn.open_table(CF_ID_V0)?;
-        let ids = store.get_ids_for_hash(&hash, &id_table)?;
-        assert_eq!(ids.count(), 2);
+        {
+            let txn = store.inner.content.begin_read()?;
+            let id_table = txn.open_table(CF_ID_V0)?;
+            let ids = store.get_ids_for_hash(&hash, &id_table)?;
+            assert_eq!(ids.count(), 2);
+        }
         Ok(())
     }
 
@@ -680,7 +748,7 @@ mod tests {
         assert_eq!(actual, Some(expected.clone()));
 
         store.put(cbor_cid, &expected, vec![link1, link2])?;
-        assert!(store.has_blob_for_hash(&hash)?);
+        assert!(store.has_blob_for_hash(&hash)?, "blob not found");
         let actual = store.get_blob_by_hash(&hash)?;
         assert_eq!(actual, Some(expected));
         Ok(())
