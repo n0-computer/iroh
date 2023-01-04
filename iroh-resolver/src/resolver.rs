@@ -695,7 +695,7 @@ impl<T: ContentLoader> Resolver<T> {
         let this = self.clone();
         self.resolve_recursive_mapped(root, None, move |cid, ctx| {
             let this = this.clone();
-            async move { this.resolve_with_ctx(ctx, Path::from_cid(cid)).await }
+            async move { this.resolve_with_ctx(ctx, Path::from_cid(cid), false).await }
         })
     }
 
@@ -781,10 +781,24 @@ impl<T: ContentLoader> Resolver<T> {
     pub async fn resolve(&self, path: Path) -> Result<Out> {
         let ctx = LoaderContext::from_path(self.next_id(), self.session_closer.clone());
 
-        self.resolve_with_ctx(ctx, path).await
+        self.resolve_with_ctx(ctx, path, false).await
     }
 
-    pub async fn resolve_with_ctx(&self, mut ctx: LoaderContext, path: Path) -> Result<Out> {
+    /// Resolves through a given path, returning the [`Cid`] and raw bytes of the final leaf.
+    /// Forces the RAW codec.
+    #[tracing::instrument(skip(self))]
+    pub async fn resolve_raw(&self, path: Path) -> Result<Out> {
+        let ctx = LoaderContext::from_path(self.next_id(), self.session_closer.clone());
+
+        self.resolve_with_ctx(ctx, path, true).await
+    }
+
+    pub async fn resolve_with_ctx(
+        &self,
+        mut ctx: LoaderContext,
+        path: Path,
+        force_raw: bool,
+    ) -> Result<Out> {
         // Resolve the root block.
         let (root_cid, loaded_cid) = self.resolve_root(&path, &mut ctx).await?;
         match loaded_cid.source {
@@ -792,7 +806,10 @@ impl<T: ContentLoader> Resolver<T> {
             _ => inc!(ResolverMetrics::CacheMiss),
         }
 
-        let codec = Codec::try_from(root_cid.codec()).context("unknown codec")?;
+        let codec = match force_raw {
+            true => Codec::Raw,
+            false => Codec::try_from(root_cid.codec()).context("unknown codec")?,
+        };
 
         match codec {
             Codec::DagPb => {
