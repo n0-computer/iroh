@@ -4,7 +4,6 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use iroh_one::mem_store;
-use iroh_rpc_client::Config as RpcClientConfig;
 use iroh_rpc_types::store::StoreAddr;
 use iroh_rpc_types::Addr;
 use iroh_store::Config as StoreConfig;
@@ -26,15 +25,7 @@ impl RocksStoreService {
     /// This implicitly starts a task on the tokio runtime to manage the storage node.
     pub async fn new(path: PathBuf) -> Result<Self> {
         let addr = Addr::new_mem();
-        let config = StoreConfig {
-            path,
-            rpc_client: RpcClientConfig {
-                gateway_addr: None,
-                p2p_addr: None,
-                store_addr: Some(addr.clone()),
-                channels: Some(1),
-            },
-        };
+        let config = StoreConfig::with_rpc_addr(path, addr.clone());
         let task = mem_store::start(addr.clone(), config).await?;
         Ok(Self { task, addr })
     }

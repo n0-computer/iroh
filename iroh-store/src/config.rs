@@ -32,8 +32,7 @@ pub fn config_data_path(arg_path: Option<PathBuf>) -> Result<PathBuf> {
 // that's a backwards incompatible change.
 #[derive(PartialEq, Debug, Deserialize, Serialize, Clone)]
 pub struct ServerConfig {
-    /// The location of the content database.
-    pub path: PathBuf,
+    pub store: StoreConfig,
     pub rpc_client: RpcClientConfig,
     /// Configuration for metrics export.
     pub metrics: MetricsConfig,
@@ -43,7 +42,7 @@ impl ServerConfig {
     pub fn new(path: PathBuf) -> Self {
         let addr = "irpc://0.0.0.0:4402".parse().unwrap();
         Self {
-            path,
+            store: StoreConfig { path },
             rpc_client: RpcClientConfig {
                 store_addr: Some(addr),
                 ..Default::default()
@@ -57,6 +56,28 @@ impl Source for ServerConfig {
     fn clone_into_box(&self) -> Box<dyn Source + Send + Sync> {
         Box::new(self.clone())
     }
+
+    fn collect(&self) -> Result<Map<String, Value>, ConfigError> {
+        let mut map: Map<String, Value> = Map::new();
+        insert_into_config_map(&mut map, "store", self.store.collect()?);
+        insert_into_config_map(&mut map, "rpc_client", self.rpc_client.collect()?);
+        insert_into_config_map(&mut map, "metrics", self.metrics.collect()?);
+        Ok(map)
+    }
+}
+
+/// Store-specific configuration.
+#[derive(PartialEq, Debug, Deserialize, Serialize, Clone)]
+pub struct StoreConfig {
+    /// The location of the content database.
+    pub path: PathBuf,
+}
+
+impl Source for StoreConfig {
+    fn clone_into_box(&self) -> Box<dyn Source + Send + Sync> {
+        Box::new(self.clone())
+    }
+
     fn collect(&self) -> Result<Map<String, Value>, ConfigError> {
         let mut map: Map<String, Value> = Map::new();
         let path = self
@@ -64,9 +85,6 @@ impl Source for ServerConfig {
             .to_str()
             .ok_or_else(|| ConfigError::Foreign("No `path` set. Path is required.".into()))?;
         insert_into_config_map(&mut map, "path", path);
-        insert_into_config_map(&mut map, "rpc_client", self.rpc_client.collect()?);
-        insert_into_config_map(&mut map, "metrics", self.metrics.collect()?);
-
         Ok(map)
     }
 }
@@ -79,25 +97,38 @@ impl Source for ServerConfig {
 #[derive(PartialEq, Debug, Deserialize, Serialize, Clone)]
 pub struct Config {
     /// The location of the content database.
-    pub path: PathBuf,
+    pub store: StoreConfig,
     pub rpc_client: RpcClientConfig,
 }
 
 impl From<ServerConfig> for Config {
     fn from(source: ServerConfig) -> Self {
         Self {
-            path: source.path,
+            store: source.store,
             rpc_client: source.rpc_client,
         }
     }
 }
 
 impl Config {
-    pub fn new_with_rpc(path: PathBuf, client_addr: StoreAddr) -> Self {
+    /// Creates a new store config.
+    ///
+    /// This config will not have any RpcClientConfig, but that is fine because it is mostly
+    /// unused: `iroh_rpc::rpc::new` which is used takes the RPC address as a separate
+    /// argument.  Once #672 is merged we can probably remove the `rpc_client` field.
+    pub fn new(path: PathBuf) -> Self {
         Self {
-            path,
+            store: StoreConfig { path },
+            rpc_client: Default::default(),
+        }
+    }
+
+    /// Creates a new store config with the given RPC listen address.
+    pub fn with_rpc_addr(path: PathBuf, addr: StoreAddr) -> Self {
+        Self {
+            store: StoreConfig { path },
             rpc_client: RpcClientConfig {
-                store_addr: Some(client_addr),
+                store_addr: Some(addr),
                 ..Default::default()
             },
         }
@@ -112,15 +143,11 @@ impl Source for Config {
     fn clone_into_box(&self) -> Box<dyn Source + Send + Sync> {
         Box::new(self.clone())
     }
+
     fn collect(&self) -> Result<Map<String, Value>, ConfigError> {
         let mut map: Map<String, Value> = Map::new();
-        let path = self
-            .path
-            .to_str()
-            .ok_or_else(|| ConfigError::Foreign("No `path` set. Path is required.".into()))?;
-        insert_into_config_map(&mut map, "path", path);
+        insert_into_config_map(&mut map, "store", self.store.collect()?);
         insert_into_config_map(&mut map, "rpc_client", self.rpc_client.collect()?);
-
         Ok(map)
     }
 }
@@ -137,12 +164,12 @@ mod tests {
 
         let mut expect: Map<String, Value> = Map::new();
         expect.insert(
-            "rpc_client".to_string(),
-            Value::new(None, default.rpc_client.collect().unwrap()),
+            "store".to_string(),
+            Value::new(None, default.store.collect().unwrap()),
         );
         expect.insert(
-            "path".to_string(),
-            Value::new(None, default.path.to_str().unwrap()),
+            "rpc_client".to_string(),
+            Value::new(None, default.rpc_client.collect().unwrap()),
         );
         expect.insert(
             "metrics".to_string(),

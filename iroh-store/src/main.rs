@@ -53,11 +53,11 @@ async fn main() -> anyhow::Result<()> {
     let rpc_addr = config
         .rpc_addr()
         .ok_or_else(|| anyhow!("missing store rpc addr"))?;
-    let store = if config.path.exists() {
-        info!("Opening store at {}", config.path.display());
+    let store = if config.store.path.exists() {
+        info!("Opening store at {}", config.store.path.display());
         Store::open(config).await?
     } else {
-        info!("Creating store at {}", config.path.display());
+        info!("Creating store at {}", config.store.path.display());
         Store::create(config).await?
     };
 

@@ -107,7 +107,7 @@ impl Store {
         let (mut options, cache) = default_options();
         options.create_if_missing(true);
 
-        let path = config.path.clone();
+        let path = config.store.path.clone();
         let db = task::spawn_blocking(move || -> Result<_> {
             let mut db = RocksDb::open(&options, path)?;
             {
@@ -152,7 +152,7 @@ impl Store {
         options.create_if_missing(false);
         // TODO: find a way to read existing options
 
-        let path = config.path.clone();
+        let path = config.store.path.clone();
         let (db, next_id) = task::spawn_blocking(move || -> Result<_> {
             let db = RocksDb::open_cf(
                 &options,
@@ -694,10 +694,6 @@ impl<'a> ReadStore<'a> {
 mod tests {
     use std::{str::FromStr, sync::Mutex};
 
-    use super::*;
-
-    use iroh_rpc_client::Config as RpcClientConfig;
-
     use cid::multihash::{Code, MultihashDigest};
     use libipld::{
         cbor::DagCborCodec,
@@ -705,18 +701,16 @@ mod tests {
         Ipld, IpldCodec,
     };
     use tempfile::TempDir;
+
+    use super::*;
+
     const RAW: u64 = 0x55;
     const DAG_CBOR: u64 = 0x71;
 
     #[tokio::test]
     async fn test_basics() {
         let dir = tempfile::tempdir().unwrap();
-        let rpc_client = RpcClientConfig::default();
-        let config = Config {
-            path: dir.path().into(),
-            rpc_client,
-        };
-
+        let config = Config::new(dir.path().into());
         let store = Store::create(config).await.unwrap();
 
         let mut values = Vec::new();
@@ -749,11 +743,7 @@ mod tests {
     #[tokio::test]
     async fn test_reopen() {
         let dir = tempfile::tempdir().unwrap();
-        let rpc_client = RpcClientConfig::default();
-        let config = Config {
-            path: dir.path().into(),
-            rpc_client,
-        };
+        let config = Config::new(dir.path().into());
 
         let store = Store::create(config.clone()).await.unwrap();
 
@@ -817,12 +807,7 @@ mod tests {
 
     async fn test_store() -> anyhow::Result<(Store, TempDir)> {
         let dir = tempfile::tempdir()?;
-        let rpc_client = RpcClientConfig::default();
-        let config = Config {
-            path: dir.path().into(),
-            rpc_client,
-        };
-
+        let config = Config::new(dir.path().into());
         let store = Store::create(config).await?;
         Ok((store, dir))
     }

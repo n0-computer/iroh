@@ -110,7 +110,7 @@ fn default_store_config(
 ) -> Result<iroh_store::config::Config> {
     let path = config_data_path(store_path)?;
     Ok(iroh_store::config::Config {
-        path,
+        store: iroh_store::config::StoreConfig { path },
         rpc_client: ipfsd,
     })
 }
