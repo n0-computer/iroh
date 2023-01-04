@@ -26,74 +26,21 @@ pub const DEFAULT_PORT: u16 = 9050;
 /// This is the configuration which the gateway server binary needs to run.  This is a
 /// superset from the configuration needed by the gateway service, which can also run
 /// integrated into another binary like iroh-one, iroh-share or iroh-embed.
-// TODO: I'd prefer to include [`Config`] under the `gateway` field liek iroh-one does.  But
-// that's a backwards incompatible change.
-// TODO: If this was moved into main.rs it would not need to be public.  Our binary is build
+// NOTE: If this was moved into main.rs it would not need to be public.  Our binary is build
 // as being outside of the lib crate, hence here it needs to be public.
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[derive(Debug, Default, Clone, PartialEq, Deserialize, Serialize)]
 pub struct ServerConfig {
-    /// Pretty URL to redirect to
-    #[serde(default = "String::new")]
-    pub public_url_base: String,
-    /// default port to listen on
-    pub port: u16,
-    /// flag to toggle whether the gateway should use denylist on requests
-    pub use_denylist: bool,
-    /// URL of gateways to be used by the racing resolver.
-    /// Strings can either be urls or subdomain gateway roots
-    /// values without https:// prefix are treated as subdomain gateways (eg: dweb.link)
-    /// values with are treated as IPFS path gateways (eg: <https://ipfs.io>)
-    pub http_resolvers: Option<Vec<String>>,
-    /// Separate resolvers for particular TLDs
-    #[serde(default = "DnsResolverConfig::default")]
-    pub dns_resolver: DnsResolverConfig,
-    /// Indexer node to use.
-    pub indexer_endpoint: Option<String>,
-    /// rpc addresses for the gateway & addresses for the rpc client to dial
-    pub rpc_client: RpcClientConfig,
-    /// metrics configuration
+    /// Configuration of the gateway service.
+    pub gateway: Config,
+    /// Metrics configuration.
     pub metrics: MetricsConfig,
-    // NOTE: for toml to serialize properly, the "table" values must be serialized at the end, and
-    // so much come at the end of the `Config` struct
-    /// set of user provided headers to attach to all responses
-    #[serde(with = "http_serde::header_map")]
-    pub headers: HeaderMap,
-    /// Redirects to subdomains for path requests
-    #[serde(default)]
-    pub redirect_to_subdomain: bool,
 }
 
 impl ServerConfig {
     pub fn new(port: u16, rpc_client: RpcClientConfig) -> Self {
         Self {
-            public_url_base: String::new(),
-            headers: HeaderMap::new(),
-            port,
-            rpc_client,
-            http_resolvers: None,
-            dns_resolver: DnsResolverConfig::default(),
-            indexer_endpoint: None,
+            gateway: Config::new(port, rpc_client),
             metrics: MetricsConfig::default(),
-            use_denylist: false,
-            redirect_to_subdomain: false,
-        }
-    }
-}
-
-impl Default for ServerConfig {
-    fn default() -> Self {
-        let inner = Config::default();
-        Self {
-            public_url_base: inner.public_url_base,
-            port: inner.port,
-            use_denylist: inner.use_denylist,
-            http_resolvers: inner.http_resolvers,
-            dns_resolver: inner.dns_resolver,
-            indexer_endpoint: inner.indexer_endpoint,
-            rpc_client: inner.rpc_client,
-            metrics: Default::default(),
-            headers: inner.headers,
-            redirect_to_subdomain: inner.redirect_to_subdomain,
         }
     }
 }
@@ -104,24 +51,9 @@ impl Source for ServerConfig {
     }
 
     fn collect(&self) -> Result<Map<String, Value>, ConfigError> {
-        let rpc_client = self.rpc_client.collect()?;
         let mut map: Map<String, Value> = Map::new();
-        insert_into_config_map(&mut map, "public_url_base", self.public_url_base.clone());
-        insert_into_config_map(&mut map, "use_denylist", self.use_denylist);
-        // Some issue between deserializing u64 & u16, converting this to
-        // an signed int fixes the issue
-        insert_into_config_map(&mut map, "port", self.port as i32);
-        insert_into_config_map(&mut map, "headers", collect_headers(&self.headers)?);
-        insert_into_config_map(&mut map, "rpc_client", rpc_client);
-        let metrics = self.metrics.collect()?;
-        insert_into_config_map(&mut map, "metrics", metrics);
-
-        if let Some(http_resolvers) = &self.http_resolvers {
-            insert_into_config_map(&mut map, "http_resolvers", http_resolvers.clone());
-        }
-        if let Some(indexer_endpoint) = &self.indexer_endpoint {
-            insert_into_config_map(&mut map, "indexer_endpoint", indexer_endpoint.clone());
-        }
+        insert_into_config_map(&mut map, "gateway", self.gateway.collect()?);
+        insert_into_config_map(&mut map, "metrics", self.metrics.collect()?);
         Ok(map)
     }
 }
@@ -184,17 +116,7 @@ impl Config {
 
 impl From<ServerConfig> for Config {
     fn from(source: ServerConfig) -> Self {
-        Self {
-            public_url_base: source.public_url_base,
-            port: source.port,
-            use_denylist: source.use_denylist,
-            http_resolvers: source.http_resolvers,
-            dns_resolver: source.dns_resolver,
-            indexer_endpoint: source.indexer_endpoint,
-            rpc_client: source.rpc_client,
-            headers: source.headers,
-            redirect_to_subdomain: source.redirect_to_subdomain,
-        }
+        source.gateway
     }
 }
 
@@ -324,6 +246,10 @@ fn collect_headers(headers: &HeaderMap) -> Result<Map<String, Value>, ConfigErro
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
+    use testdir::testdir;
+
     use super::*;
     use config::Config as ConfigBuilder;
 
@@ -346,21 +272,8 @@ mod tests {
         let default = ServerConfig::default();
         let mut expect: Map<String, Value> = Map::new();
         expect.insert(
-            "public_url_base".to_string(),
-            Value::new(None, default.public_url_base.clone()),
-        );
-        expect.insert("port".to_string(), Value::new(None, default.port as i64));
-        expect.insert(
-            "use_denylist".to_string(),
-            Value::new(None, default.use_denylist),
-        );
-        expect.insert(
-            "headers".to_string(),
-            Value::new(None, collect_headers(&default.headers).unwrap()),
-        );
-        expect.insert(
             "rpc_client".to_string(),
-            Value::new(None, default.rpc_client.collect().unwrap()),
+            Value::new(None, default.gateway.collect().unwrap()),
         );
         expect.insert(
             "metrics".to_string(),
@@ -415,5 +328,40 @@ mod tests {
             .unwrap();
 
         assert_eq!(expect, got);
+    }
+
+    #[test]
+    fn test_toml_file() {
+        let dir = testdir!();
+        let cfg_file = dir.join("config.toml");
+        std::fs::write(
+            &cfg_file,
+            r#"
+            [gateway]
+            public_url_base = "http://example.com/base/"
+            port = 2001
+            [gateway.rpc_client]
+            gateway_addr = "irpc://127.0.0.42:1234"
+            "#,
+        )
+        .unwrap();
+        let sources = [Some(cfg_file.as_path())];
+        let cfg = iroh_util::make_config(
+            ServerConfig::default(),
+            &sources,
+            ENV_PREFIX,
+            HashMap::<&str, String>::new(),
+        )
+        .unwrap();
+        dbg!(&cfg);
+
+        assert_eq!(cfg.gateway.public_url_base, "http://example.com/base/");
+        assert_eq!(cfg.gateway.port, 2001);
+        assert_eq!(
+            cfg.gateway.rpc_client.gateway_addr.unwrap(),
+            "irpc://127.0.0.42:1234".parse().unwrap(),
+        );
+
+        panic!("boom");
     }
 }
