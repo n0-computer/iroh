@@ -679,11 +679,6 @@ impl<'a> ReadStore<'a> {
 mod tests {
     use std::{str::FromStr, sync::Mutex};
 
-    use super::*;
-
-    use iroh_metrics::config::Config as MetricsConfig;
-    use iroh_rpc_client::Config as RpcClientConfig;
-
     use cid::multihash::{Code, MultihashDigest};
     use libipld::{
         cbor::DagCborCodec,
@@ -691,19 +686,16 @@ mod tests {
         Ipld, IpldCodec,
     };
     use tempfile::TempDir;
+
+    use super::*;
+
     const RAW: u64 = 0x55;
     const DAG_CBOR: u64 = 0x71;
 
     #[tokio::test]
     async fn test_basics() {
         let dir = tempfile::tempdir().unwrap();
-        let rpc_client = RpcClientConfig::default();
-        let config = Config {
-            path: dir.path().into(),
-            rpc_client,
-            metrics: MetricsConfig::default(),
-        };
-
+        let config = Config::new(dir.path().into());
         let store = Store::create(config).await.unwrap();
 
         let mut values = Vec::new();
@@ -736,12 +728,7 @@ mod tests {
     #[tokio::test]
     async fn test_reopen() {
         let dir = tempfile::tempdir().unwrap();
-        let rpc_client = RpcClientConfig::default();
-        let config = Config {
-            path: dir.path().into(),
-            rpc_client,
-            metrics: MetricsConfig::default(),
-        };
+        let config = Config::new(dir.path().into());
 
         let store = Store::create(config.clone()).await.unwrap();
 
@@ -805,13 +792,7 @@ mod tests {
 
     async fn test_store() -> anyhow::Result<(Store, TempDir)> {
         let dir = tempfile::tempdir()?;
-        let rpc_client = RpcClientConfig::default();
-        let config = Config {
-            path: dir.path().into(),
-            rpc_client,
-            metrics: MetricsConfig::default(),
-        };
-
+        let config = Config::new(dir.path().into());
         let store = Store::create(config).await?;
         Ok((store, dir))
     }

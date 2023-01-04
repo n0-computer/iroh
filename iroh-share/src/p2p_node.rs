@@ -3,7 +3,7 @@ use std::{collections::HashSet, path::Path, sync::Arc};
 use anyhow::{ensure, Result};
 use async_trait::async_trait;
 use cid::Cid;
-use iroh_p2p::{config, Keychain, MemoryStorage, NetworkEvent, Node};
+use iroh_p2p::{config, Config, Keychain, MemoryStorage, NetworkEvent, Node};
 use iroh_resolver::resolver::Resolver;
 use iroh_rpc_client::Client;
 use iroh_rpc_types::Addr;
@@ -159,10 +159,9 @@ impl P2pNode {
         libp2p_config.relay_server = false;
         libp2p_config.max_conns_in = 8;
         libp2p_config.max_conns_out = 8;
-        let config = config::Config {
+        let config = Config {
             libp2p: libp2p_config,
             rpc_client: rpc_p2p_client_config.clone(),
-            metrics: Default::default(),
             key_store_path: db_path.parent().unwrap().to_path_buf(),
         };
 
@@ -173,10 +172,6 @@ impl P2pNode {
         let store_config = iroh_store::Config {
             path: db_path.to_path_buf(),
             rpc_client: rpc_store_client_config,
-            metrics: iroh_metrics::config::Config {
-                tracing: false, // disable tracing by default
-                ..Default::default()
-            },
         };
 
         let store = if store_config.path.exists() {

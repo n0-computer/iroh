@@ -1,6 +1,7 @@
 use anyhow::{anyhow, Context, Result};
 use clap::Parser;
 use iroh_p2p::config::{Config, CONFIG_FILE_NAME, ENV_PREFIX};
+use iroh_p2p::ServerConfig;
 use iroh_p2p::{cli::Args, metrics, DiskStorage, Keychain, Node};
 use iroh_util::lock::ProgramLock;
 use iroh_util::{iroh_config_path, make_config};
@@ -30,7 +31,7 @@ fn main() -> Result<()> {
         let sources = [Some(cfg_path.as_path()), args.cfg.as_deref()];
         let network_config = make_config(
             // default
-            Config::default_network(),
+            ServerConfig::default(),
             // potential config files
             &sources,
             // env var prefix for this config
@@ -55,6 +56,7 @@ fn main() -> Result<()> {
             }
         }
 
+        let network_config = Config::from(network_config);
         let kc = Keychain::<DiskStorage>::new(network_config.key_store_path.clone()).await?;
         let rpc_addr = network_config
             .rpc_addr()

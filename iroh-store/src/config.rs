@@ -23,7 +23,47 @@ pub fn config_data_path(arg_path: Option<PathBuf>) -> Result<PathBuf> {
     }
 }
 
-/// The configuration for the store.
+/// The configuration for the store server.
+///
+/// This is the configuration which the store server binary needs to run.  This is a
+/// superset from the configuration needed by the store service, which can also run
+/// integrated into another binary like in iroh-one, iroh-share or iroh-embed.
+#[derive(PartialEq, Debug, Deserialize, Serialize, Clone)]
+pub struct ServerConfig {
+    /// Configuration of the store service.
+    pub store: Config,
+    /// Configuration for metrics export.
+    pub metrics: MetricsConfig,
+}
+
+impl ServerConfig {
+    pub fn new(path: PathBuf) -> Self {
+        let addr = "irpc://0.0.0.0:4402".parse().unwrap();
+        Self {
+            store: Config::with_rpc_addr(path, addr),
+            metrics: Default::default(),
+        }
+    }
+}
+
+impl Source for ServerConfig {
+    fn clone_into_box(&self) -> Box<dyn Source + Send + Sync> {
+        Box::new(self.clone())
+    }
+
+    fn collect(&self) -> Result<Map<String, Value>, ConfigError> {
+        let mut map: Map<String, Value> = Map::new();
+        insert_into_config_map(&mut map, "store", self.store.collect()?);
+        insert_into_config_map(&mut map, "metrics", self.metrics.collect()?);
+        Ok(map)
+    }
+}
+
+/// The configuration for the store service.
+///
+/// As opposed to the [`ServerConfig`] this is only the configuration needed to run the
+/// store service.  It can still be deserialised from a file, which is e.g. used by
+/// iroh-one.
 #[derive(PartialEq, Debug, Deserialize, Serialize, Clone)]
 pub struct Config {
     /// The location of the content database.
@@ -33,24 +73,36 @@ pub struct Config {
     /// Only used to extract the listening address from the `store_addr` field.
     // TODO: split off listening address from RpcClientConfig.
     pub rpc_client: RpcClientConfig,
-    pub metrics: MetricsConfig,
+}
+
+impl From<ServerConfig> for Config {
+    fn from(source: ServerConfig) -> Self {
+        source.store
+    }
 }
 
 impl Config {
-    pub fn new_with_rpc(path: PathBuf, client_addr: StoreAddr) -> Self {
+    /// Creates a new store config.
+    ///
+    /// This config will not have any RpcClientConfig, but that is fine because it is mostly
+    /// unused: `iroh_rpc::rpc::new` which is used takes the RPC address as a separate
+    /// argument.  Once #672 is merged we can probably remove the `rpc_client` field.
+    pub fn new(path: PathBuf) -> Self {
         Self {
             path,
-            rpc_client: RpcClientConfig {
-                store_addr: Some(client_addr),
-                ..Default::default()
-            },
-            metrics: MetricsConfig::default(),
+            rpc_client: Default::default(),
         }
     }
 
-    pub fn new_network(path: PathBuf) -> Self {
-        let addr = "irpc://0.0.0.0:4402";
-        Self::new_with_rpc(path, addr.parse().unwrap())
+    /// Creates a new store config with the given RPC listen address.
+    pub fn with_rpc_addr(path: PathBuf, addr: StoreAddr) -> Self {
+        Self {
+            path,
+            rpc_client: RpcClientConfig {
+                store_addr: Some(addr),
+                ..Default::default()
+            },
+        }
     }
 
     pub fn rpc_addr(&self) -> Option<StoreAddr> {
@@ -62,6 +114,7 @@ impl Source for Config {
     fn clone_into_box(&self) -> Box<dyn Source + Send + Sync> {
         Box::new(self.clone())
     }
+
     fn collect(&self) -> Result<Map<String, Value>, ConfigError> {
         let mut map: Map<String, Value> = Map::new();
         let path = self
@@ -70,8 +123,6 @@ impl Source for Config {
             .ok_or_else(|| ConfigError::Foreign("No `path` set. Path is required.".into()))?;
         insert_into_config_map(&mut map, "path", path);
         insert_into_config_map(&mut map, "rpc_client", self.rpc_client.collect()?);
-        insert_into_config_map(&mut map, "metrics", self.metrics.collect()?);
-
         Ok(map)
     }
 }
@@ -84,16 +135,12 @@ mod tests {
     #[cfg(unix)]
     fn test_collect() {
         let path = PathBuf::new().join("test");
-        let default = Config::new_network(path);
+        let default = ServerConfig::new(path);
 
         let mut expect: Map<String, Value> = Map::new();
         expect.insert(
-            "rpc_client".to_string(),
-            Value::new(None, default.rpc_client.collect().unwrap()),
-        );
-        expect.insert(
-            "path".to_string(),
-            Value::new(None, default.path.to_str().unwrap()),
+            "store".to_string(),
+            Value::new(None, default.store.collect().unwrap()),
         );
         expect.insert(
             "metrics".to_string(),
@@ -112,8 +159,8 @@ mod tests {
     #[cfg(unix)]
     fn test_build_config_from_struct() {
         let path = PathBuf::new().join("test");
-        let expect = Config::new_network(path);
-        let got: Config = config::Config::builder()
+        let expect = ServerConfig::new(path);
+        let got: ServerConfig = config::Config::builder()
             .add_source(expect.clone())
             .build()
             .unwrap()
