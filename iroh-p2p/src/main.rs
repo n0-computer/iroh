@@ -56,7 +56,7 @@ fn main() -> Result<()> {
             }
         }
 
-        let kc = Keychain::<DiskStorage>::new(network_config.key_store_path.clone()).await?;
+        let kc = Keychain::<DiskStorage>::new(network_config.p2p.key_store_path.clone()).await?;
         let network_config = Config::from(network_config);
         let rpc_addr = network_config
             .rpc_addr()

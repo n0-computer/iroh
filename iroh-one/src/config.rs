@@ -3,7 +3,7 @@ use axum::http::header::*;
 use config::{ConfigError, Map, Source, Value};
 
 use iroh_metrics::config::Config as MetricsConfig;
-use iroh_p2p::Libp2pConfig;
+use iroh_p2p::{Libp2pConfig, P2pConfig};
 use iroh_rpc_client::Config as RpcClientConfig;
 use iroh_store::config::config_data_path;
 use iroh_util::insert_into_config_map;
@@ -117,9 +117,9 @@ fn default_store_config(
 
 fn default_p2p_config(ipfsd: RpcClientConfig, key_store_path: PathBuf) -> iroh_p2p::config::Config {
     iroh_p2p::config::Config {
+        p2p: P2pConfig { key_store_path },
         libp2p: Libp2pConfig::default(),
         rpc_client: ipfsd,
-        key_store_path,
     }
 }
 
