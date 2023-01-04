@@ -46,7 +46,7 @@ impl P2pService {
 
         config.rpc_client.store_addr = Some(store_service);
         config.libp2p = libp2p_config;
-        config.p2p.key_store_path = key_store_path;
+        config.key_store_path = key_store_path;
         let task = mem_p2p::start(addr.clone(), config).await?;
         Ok(Self { task, addr })
     }

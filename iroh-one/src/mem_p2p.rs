@@ -8,7 +8,7 @@ use tracing::error;
 
 /// Starts a new p2p node, using the given mem rpc channel.
 pub async fn start(rpc_addr: P2pAddr, config: Config) -> anyhow::Result<JoinHandle<()>> {
-    let kc = Keychain::<DiskStorage>::new(config.p2p.key_store_path.clone()).await?;
+    let kc = Keychain::<DiskStorage>::new(config.key_store_path.clone()).await?;
 
     let mut p2p = Node::new(config, rpc_addr, kc).await?;
 
