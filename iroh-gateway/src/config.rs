@@ -272,7 +272,7 @@ mod tests {
         let default = ServerConfig::default();
         let mut expect: Map<String, Value> = Map::new();
         expect.insert(
-            "rpc_client".to_string(),
+            "gateway".to_string(),
             Value::new(None, default.gateway.collect().unwrap()),
         );
         expect.insert(
