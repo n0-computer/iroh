@@ -192,7 +192,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
             tokio::select! {
                 swarm_event = self.swarm.next() => {
                     let swarm_event = swarm_event.expect("the swarm will never die");
-                    if let Err(err) = self.handle_swarm_event(swarm_event) {
+                    if let Err(err) = self.handle_swarm_event(swarm_event).await {
                         error!("swarm error: {:?}", err);
                     }
 
@@ -203,7 +203,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                 rpc_message = self.net_receiver_in.recv() => {
                     match rpc_message {
                         Some(rpc_message) => {
-                            match self.handle_rpc_message(rpc_message) {
+                            match self.handle_rpc_message(rpc_message).await {
                                 Ok(true) => {
                                     // shutdown
                                     return Ok(());
@@ -414,7 +414,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
     }
 
     #[tracing::instrument(skip(self))]
-    fn handle_swarm_event(
+    async fn handle_swarm_event(
         &mut self,
         event: SwarmEvent<
             <NodeBehaviour as NetworkBehaviour>::OutEvent,
@@ -423,7 +423,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
         libp2p_metrics().record(&event);
         match event {
             // outbound events
-            SwarmEvent::Behaviour(event) => self.handle_node_event(event),
+            SwarmEvent::Behaviour(event) => self.handle_node_event(event).await,
             SwarmEvent::ConnectionEstablished {
                 peer_id,
                 num_established,
@@ -485,7 +485,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
     }
 
     #[tracing::instrument(skip(self))]
-    fn handle_node_event(&mut self, event: Event) -> Result<()> {
+    async fn handle_node_event(&mut self, event: Event) -> Result<()> {
         match event {
             Event::Memesync(e) => match e {
                 iroh_memesync::MemesyncEvent::OutboundQueryProgress {
@@ -496,8 +496,8 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                     links,
                     cid,
                 } => {
-                    if let Some(chan) = self.memesync_queries.get_mut(&id) {
-                        chan.try_send(Ok(MemesyncResponse {
+                    if let Some(chan) = self.memesync_queries.get(&id) {
+                        chan.send(Ok(MemesyncResponse {
                             id,
                             index,
                             last,
@@ -505,7 +505,8 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                             links,
                             cid,
                         }))
-                        .expect("overloaded");
+                        .await
+                        .ok();
                         if last {
                             self.memesync_queries.remove(&id);
                         }
@@ -513,8 +514,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                 }
                 iroh_memesync::MemesyncEvent::OutboundQueryFailed { id, reason } => {
                     if let Some(chan) = self.memesync_queries.remove(&id) {
-                        chan.try_send(Err(format!("{:?}", reason)))
-                            .expect("overloaded");
+                        chan.send(Err(format!("{:?}", reason))).await.ok();
                     }
                 }
             },
@@ -543,7 +543,8 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                             key: ProviderRequestKey::Dht(key.hash().to_bytes().into()),
                             response_channel: response,
                             limit,
-                        })?;
+                        })
+                        .await?;
                     }
                     BitswapEvent::Ping { peer, response } => {
                         match self.swarm.behaviour().peer_manager.info_for_peer(&peer) {
@@ -639,11 +640,9 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                                         Err(anyhow!("Failed to find peer {:?} on the DHT", peer_id))
                                     }
                                 };
-                                tokio::task::spawn(async move {
-                                    for chan in channels.into_iter() {
-                                        chan.send(res()).ok();
-                                    }
-                                });
+                                for chan in channels.into_iter() {
+                                    chan.send(res()).ok();
+                                }
                             }
                         }
                         QueryResult::GetClosestPeers(Err(GetClosestPeersError::Timeout {
@@ -653,15 +652,13 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                             debug!("GetClosestPeers Timeout: {:?}", key);
                             if let Some((peer_id, channels)) = self.find_on_dht_queries.remove(&key)
                             {
-                                tokio::task::spawn(async move {
-                                    for chan in channels.into_iter() {
-                                        chan.send(Err(anyhow!(
-                                            "Failed to find peer {:?} on the DHT: Timeout",
-                                            peer_id
-                                        )))
-                                        .ok();
-                                    }
-                                });
+                                for chan in channels.into_iter() {
+                                    chan.send(Err(anyhow!(
+                                        "Failed to find peer {:?} on the DHT: Timeout",
+                                        peer_id
+                                    )))
+                                    .ok();
+                                }
                             }
                         }
                         other => {
@@ -788,7 +785,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
     }
 
     #[tracing::instrument(skip(self))]
-    fn handle_rpc_message(&mut self, message: RpcMessage) -> Result<bool> {
+    async fn handle_rpc_message(&mut self, message: RpcMessage) -> Result<bool> {
         // Inbound messages
         match message {
             RpcMessage::ExternalAddrs(response_channel) => {
@@ -854,12 +851,10 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                     if self.swarm.behaviour().kad.is_enabled() {
                         self.providers.push(key, limit, response_channel);
                     } else {
-                        tokio::task::spawn(async move {
-                            response_channel
-                                .send(Err("kademlia is not available".into()))
-                                .await
-                                .ok();
-                        });
+                        response_channel
+                            .send(Err("kademlia is not available".into()))
+                            .await
+                            .ok();
                     }
                 }
                 ProviderRequestKey::Bitswap(_, _) => {
@@ -1098,11 +1093,9 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                         }
                     }
                 } else {
-                    tokio::task::spawn(async move {
-                        response_channel
-                            .send(Err(anyhow!("kademlia is not available")))
-                            .ok();
-                    });
+                    response_channel
+                        .send(Err(anyhow!("kademlia is not available")))
+                        .ok();
                 }
             }
             RpcMessage::Shutdown => {
