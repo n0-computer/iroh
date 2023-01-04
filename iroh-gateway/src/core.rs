@@ -392,6 +392,42 @@ mod tests {
         assert!(body.starts_with(b"<!DOCTYPE html>"));
     }
 
+    #[tokio::test]
+    async fn test_raw_fetch() {
+        let files = &[(
+            "hello.txt".to_string(),
+            Alphanumeric
+                .sample_string(&mut SmallRng::seed_from_u64(42), 8 * 1024 * 1024)
+                .bytes()
+                .collect(),
+        )];
+        let large_file = &files[0].1;
+        let test_setup = setup_test(false, files).await;
+
+        let res = do_request(
+            "GET",
+            &format!("localhost:{}", test_setup.gateway_addr.port()),
+            &format!("/ipfs/{}/hello.txt", test_setup.root_cid),
+            None,
+        )
+        .await;
+        assert_eq!(http::StatusCode::OK, res.status());
+        let body = hyper::body::to_bytes(res.into_body()).await.unwrap();
+        assert_eq!(&body[..], large_file);
+
+        let res = do_request(
+            "GET",
+            &format!("localhost:{}", test_setup.gateway_addr.port()),
+            &format!("/ipfs/{}/hello.txt?format=raw", test_setup.root_cid),
+            None,
+        )
+        .await;
+        assert_eq!(http::StatusCode::OK, res.status());
+        let body = hyper::body::to_bytes(res.into_body()).await.unwrap();
+        let ufs = iroh_unixfs::unixfs::UnixfsNode::decode(&test_setup.root_cid, body).unwrap();
+        assert_eq!(ufs.typ().unwrap(), iroh_unixfs::unixfs::DataType::File);
+    }
+
     // TODO(b5) - refactor to return anyhow::Result<()>
     #[tokio::test]
     async fn test_fetch_car_recursive() {

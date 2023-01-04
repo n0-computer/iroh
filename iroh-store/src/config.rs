@@ -68,6 +68,10 @@ impl Source for ServerConfig {
 pub struct Config {
     /// The location of the content database.
     pub path: PathBuf,
+    /// The iRPC configuration.
+    ///
+    /// Only used to extract the listening address from the `store_addr` field.
+    // TODO: split off listening address from RpcClientConfig.
     pub rpc_client: RpcClientConfig,
 }
 

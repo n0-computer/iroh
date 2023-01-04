@@ -9,7 +9,6 @@ use iroh_metrics::{
     inc, observe, record,
     store::{StoreHistograms, StoreMetrics},
 };
-use iroh_rpc_client::Client as RpcClient;
 use multihash::Multihash;
 use rocksdb::{
     BlockBasedOptions, Cache, ColumnFamily, DBPinnableSlice, Direction, IteratorMode, Options,
@@ -31,7 +30,6 @@ struct InnerStore {
     content: RocksDb,
     next_id: RwLock<u64>,
     _cache: Cache,
-    _rpc_client: RpcClient,
 }
 
 impl fmt::Debug for InnerStore {
@@ -40,7 +38,6 @@ impl fmt::Debug for InnerStore {
             .field("content", &self.content)
             .field("next_id", &self.next_id)
             .field("_cache", &"rocksdb::db_options::Cache")
-            .field("_rpc_client", &self._rpc_client)
             .finish()
     }
 }
@@ -131,16 +128,11 @@ impl Store {
         })
         .await??;
 
-        let _rpc_client = RpcClient::new(config.rpc_client)
-            .await
-            .context("Error creating rpc client for store")?;
-
         Ok(Store {
             inner: Arc::new(InnerStore {
                 content: db,
                 next_id: 1.into(),
                 _cache: cache,
-                _rpc_client,
             }),
         })
     }
@@ -181,18 +173,11 @@ impl Store {
         })
         .await??;
 
-        let _rpc_client = RpcClient::new(config.rpc_client)
-            .await
-            // TODO: first conflict between `anyhow` & `anyhow`
-            // .map_err(|e| e.context("Error creating rpc client for store"))?;
-            .map_err(|e| anyhow!("Error creating rpc client for store: {:?}", e))?;
-
         Ok(Store {
             inner: Arc::new(InnerStore {
                 content: db,
                 next_id: next_id.into(),
                 _cache: cache,
-                _rpc_client,
             }),
         })
     }
