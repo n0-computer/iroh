@@ -302,7 +302,7 @@ impl<S: Store> Bitswap<S> {
         record!(BitswapMetrics::MessageBytesIn, message.encoded_len() as u64);
         // TODO: Handle backpressure properly
         if let Err(err) = self.incoming_messages.try_send((peer, message)) {
-            debug!(
+            warn!(
                 "failed to receive message from {}: {:?}, dropping",
                 peer, err
             );
