@@ -1,86 +1,58 @@
-use std::{pin::Pin, sync::Arc};
+use std::pin::Pin;
 
 use anyhow::Result;
 use async_stream::stream;
-use async_trait::async_trait;
-use bytes::Bytes;
 use cid::Cid;
 use futures::{Stream, StreamExt};
 use iroh_rpc_client::StoreClient;
 use iroh_unixfs::Block;
-#[cfg(feature = "testing")]
 
 /// How many chunks to buffer up when adding content.
 const _ADD_PAR: usize = 24;
 
-#[async_trait]
-pub trait Store: 'static + Send + Sync + Clone {
-    async fn has(&self, &cid: Cid) -> Result<bool>;
-    async fn put(&self, cid: Cid, blob: Bytes, links: Vec<Cid>) -> Result<()>;
-    async fn put_many(&self, blocks: Vec<Block>) -> Result<()>;
-}
-
+/// The StoreApi allows you to communicate with the Iroh store.
+///
+/// This is trivially clone-able.
 #[derive(Debug, Clone)]
 pub struct StoreApi {
     client: StoreClient,
 }
 
 impl StoreApi {
+    /// Create a new StoreApi from a [`StoreClient`]
     pub fn new(client: StoreClient) -> Self {
         Self { client }
     }
 
+    /// Check if the store has the give [`Cid`]
     pub async fn has(&self, cid: Cid) -> Result<bool> {
         self.client.has(cid).await
     }
 
-    pub async fn put(&self, cid: Cid, blob: Bytes, links: Vec<Cid>) -> Result<()> {
+    /// Add a [`Block`] to the store.
+    pub async fn put(&self, block: Block) -> Result<()> {
+        let (cid, blob, links) = block.into_parts();
         self.client.put(cid, blob, links).await
     }
 
-    pub async fn put_many(&self, blocks: Vec<Block>) -> Result<()> {
+    /// Add a list of [`Block`] to the store.
+    async fn put_many(&self, blocks: Vec<Block>) -> Result<()> {
         self.client
             .put_many(blocks.into_iter().map(|x| x.into_parts()).collect())
             .await
     }
-}
 
-#[async_trait]
-impl Store for StoreApi {
-    async fn has(&self, cid: Cid) -> Result<bool> {
-        self.has(cid).await
-    }
-
-    async fn put(&self, cid: Cid, blob: Bytes, links: Vec<Cid>) -> Result<()> {
-        self.put(cid, blob, links).await
-    }
-
-    async fn put_many(&self, blocks: Vec<Block>) -> Result<()> {
-        self.put_many(blocks).await
+    /// Add a stream of [`Block`] to the store
+    pub async fn put_blocks(
+        &self,
+        blocks: Pin<Box<dyn Stream<Item = Result<Block>> + Send>>,
+    ) -> impl Stream<Item = Result<(Cid, u64)>> {
+        add_blocks_to_store_chunked(self.clone(), blocks)
     }
 }
 
-#[async_trait]
-impl Store for Arc<tokio::sync::Mutex<std::collections::HashMap<Cid, Bytes>>> {
-    async fn has(&self, cid: Cid) -> Result<bool> {
-        Ok(self.lock().await.contains_key(&cid))
-    }
-    async fn put(&self, cid: Cid, blob: Bytes, _links: Vec<Cid>) -> Result<()> {
-        self.lock().await.insert(cid, blob);
-        Ok(())
-    }
-
-    async fn put_many(&self, blocks: Vec<Block>) -> Result<()> {
-        let mut this = self.lock().await;
-        for block in blocks {
-            this.insert(*block.cid(), block.data().clone());
-        }
-        Ok(())
-    }
-}
-
-fn add_blocks_to_store_chunked<S: Store>(
-    store: S,
+fn add_blocks_to_store_chunked(
+    store: StoreApi,
     mut blocks: Pin<Box<dyn Stream<Item = Result<Block>> + Send>>,
 ) -> impl Stream<Item = Result<(Cid, u64)>> {
     let mut chunk = Vec::new();
@@ -107,11 +79,4 @@ fn add_blocks_to_store_chunked<S: Store>(
         // make sure to also send the last chunk!
         store.put_many(chunk).await?;
     }
-}
-
-pub async fn add_blocks_to_store<S: Store>(
-    store: Option<S>,
-    blocks: Pin<Box<dyn Stream<Item = Result<Block>> + Send>>,
-) -> impl Stream<Item = Result<(Cid, u64)>> {
-    add_blocks_to_store_chunked(store.unwrap(), blocks)
 }

@@ -1,11 +1,17 @@
 use std::path::PathBuf;
 
-use anyhow::{ensure, Context, Result};
+use anyhow::{anyhow, ensure, Result};
 use clap::{Parser, Subcommand};
 use futures::stream::StreamExt;
-use iroh_share::{ProgressEvent, Receiver, Sender, Ticket};
-use tokio::io::AsyncWriteExt;
+use iroh_p2p::{GossipsubEvent, NetworkEvent};
+use iroh_share::{ReceiverMessage, SenderMessage, Ticket};
+use iroh_unixfs::chunker::ChunkerConfig;
+use rand::Rng;
+use tracing::{debug, info, warn};
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
+
+use iroh_api::{IpfsPath, UnixfsConfig, UnixfsEntry, DEFAULT_CHUNKS_SIZE};
+use libp2p::gossipsub::Sha256Topic;
 
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
@@ -46,37 +52,112 @@ async fn main() -> Result<()> {
         Commands::Send { path } => {
             println!("Sending: {}", path.display());
 
+            ensure!(path.exists(), "provided file or directory does not exist");
+            ensure!(
+                path.is_file() || path.is_dir(),
+                "currently only supports files or directories"
+            );
+
             // TODO: allow db specification
             let sender_dir = tempfile::tempdir().unwrap();
             let sender_db = sender_dir.path().join("db");
 
-            let port = 9990;
-            let sender = Sender::new(port, &sender_db)
-                .await
-                .context("failed to create sender")?;
+            println!("Starting up Iroh services...");
+            let iroh = iroh_share::build_iroh(9990, &sender_db).await?;
+            let entry = UnixfsEntry::from_path(
+                &path,
+                UnixfsConfig {
+                    wrap: true,
+                    chunker: Some(ChunkerConfig::Fixed(DEFAULT_CHUNKS_SIZE)),
+                },
+            )
+            .await?;
 
-            ensure!(path.exists(), "provided file does not exist");
-            ensure!(path.is_file(), "currently only supports files");
+            let mut progress = iroh.api().add_stream(entry).await?;
+            let mut root = None;
+            let mut num_parts = 0;
+            while let Some(ev) = progress.next().await {
+                let (cid, _) = ev?;
+                root = Some(cid);
+                num_parts += 1;
+            }
 
-            // TODO: streaming read
-            let name = path
-                .file_name()
-                .ok_or_else(|| anyhow::anyhow!("missing file name"))?;
-            let name = name
-                .to_str()
-                .ok_or_else(|| anyhow::anyhow!("file name must be valid utf8"))?;
+            let root = root.unwrap();
 
-            let data = tokio::fs::read(&path).await?;
-            let sender_transfer = sender
-                .transfer_from_data(name, data.into())
-                .await
-                .context("transfer")?;
+            let id: u64 = rand::thread_rng().gen();
+            let t = Sha256Topic::new(format!("iroh-share-{id}"));
+            let topic_hash = t.hash();
+            let th = topic_hash.clone();
 
-            let ticket = sender_transfer.ticket();
+            let (done_sender, done_receiver) = futures::channel::oneshot::channel();
+
+            iroh.api().p2p()?.gossipsub_subscribe(t.to_string()).await?;
+            let mut network_events = iroh.api().p2p()?.network_events().await?;
+            let p2p = iroh.api().p2p()?;
+            let gossip_task_source = tokio::task::spawn(async move {
+                let mut current_peer = None;
+                while let Some(Ok(ev)) = network_events.next().await {
+                    if let NetworkEvent::Gossipsub(e) = ev {
+                        match e {
+                            GossipsubEvent::Subscribed { peer_id, topic } => {
+                                if topic == th && current_peer.is_none() {
+                                    info!("connected to {}", peer_id);
+                                    current_peer = Some(peer_id);
+
+                                    let start = bincode::serialize(&SenderMessage::Start {
+                                        root,
+                                        num_parts,
+                                    })
+                                    .expect("serialize failure");
+                                    p2p.gossipsub_publish(topic.to_string(), start.into())
+                                        .await
+                                        .unwrap();
+                                }
+                            }
+                            GossipsubEvent::Message { from, message, .. } => {
+                                debug!("received message from {}", from);
+                                if let Some(current_peer) = current_peer {
+                                    if from == current_peer {
+                                        match bincode::deserialize(&message.data) {
+                                            Ok(ReceiverMessage::FinishOk) => {
+                                                info!("finished transfer");
+                                                done_sender.send(Ok(())).ok();
+                                                break;
+                                            }
+                                            Ok(ReceiverMessage::FinishError(err)) => {
+                                                info!("transfer failed: {}", err);
+                                                done_sender.send(Err(anyhow!("{}", err))).ok();
+                                                break;
+                                            }
+                                            Err(err) => {
+                                                warn!("unexpected message: {:?}", err);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            });
+
+            let peer_id = iroh.api().p2p()?.peer_id().await?;
+            let addrs = iroh.api().p2p()?.addrs().await?;
+            info!("Available addrs: {:?}", addrs);
+
+            let ticket = Ticket {
+                peer_id,
+                addrs,
+                topic: topic_hash.to_string(),
+            };
+
             let ticket_bytes = ticket.as_bytes();
             let ticket_str = multibase::encode(multibase::Base::Base64, &ticket_bytes);
             println!("Ticket:\n{ticket_str}\n");
-            sender_transfer.done().await?;
+            done_receiver.await??;
+            iroh.stop().await?;
+            gossip_task_source.await?;
         }
         Commands::Receive { ticket, out } => {
             println!("Receiving");
@@ -88,57 +169,131 @@ async fn main() -> Result<()> {
             let sender_db = sender_dir.path().join("db");
 
             let port = 9991;
-            let receiver = Receiver::new(port, &sender_db)
-                .await
-                .context("failed to create sender")?;
-            let mut receiver_transfer = receiver
-                .transfer_from_ticket(&ticket)
-                .await
-                .context("failed to read transfer")?;
-            let data = receiver_transfer.recv().await?;
-            let mut progress = receiver_transfer.progress()?;
+            // set up iroh
+            // connect to other
+            // subscribe to topic
+            // get root from gossipsub
+            // run get_from_peers
+            // when done publish message?
+            // save to filesystem
+            let iroh = iroh_share::build_iroh(port, &sender_db).await?;
+            let addrs = ticket.addrs.clone();
+            iroh.api().p2p()?.connect(ticket.peer_id, addrs).await?;
+            iroh.api().p2p()?.gossipsub_add_peer(ticket.peer_id).await?;
+            let mut network_events = iroh.api().p2p()?.network_events().await?;
+            iroh.api()
+                .p2p()?
+                .gossipsub_subscribe(ticket.topic.clone())
+                .await?;
 
-            tokio::spawn(async move {
-                while let Some(ev) = progress.next().await {
-                    match ev {
-                        Ok(ProgressEvent::Piece { index, total }) => {
-                            println!("transferred: {index}/{total}");
-                        }
-                        Err(e) => {
-                            eprintln!("transfer failed: {e}");
+            let (root_sender, root_receiver) = futures::channel::oneshot::channel();
+            let expected_sender = ticket.peer_id;
+
+            // TODO(ramfox): one shot to send over root
+            // `get` using root and peer id
+            // to fs, using return stream
+            // publish FinishOk if finished
+            // publish FinishError if any errors
+            // ignore progress for now
+            let gossipsub_task_source = tokio::task::spawn(async move {
+                let mut root_sender = Some(root_sender);
+
+                while let Some(Ok(ev)) = network_events.next().await {
+                    if let NetworkEvent::Gossipsub(GossipsubEvent::Message {
+                        from, message, ..
+                    }) = ev
+                    {
+                        if from == expected_sender {
+                            match bincode::deserialize(&message.data) {
+                                Ok(SenderMessage::Start { root, .. }) => {
+                                    if let Some(root_sender) = root_sender.take() {
+                                        root_sender.send(root).ok();
+                                    }
+                                }
+                                Err(err) => {
+                                    warn!("got unexpected message from {}: {:?}", from, err);
+                                }
+                            }
+                        } else {
+                            warn!("got message from unexpected sender: {:?}", from);
                         }
                     }
                 }
             });
-
-            let mut out_dir = std::env::current_dir()?;
-            if let Some(out) = out {
-                out_dir = out_dir.join(out);
+            let root = root_receiver.await?;
+            let mut peers = std::collections::HashSet::new();
+            peers.insert(expected_sender);
+            let ipfs_path = IpfsPath::from_cid(root);
+            match iroh.api().get_from(&ipfs_path, peers) {
+                Ok(blocks) => {
+                    // while let Some(block) = blocks.next().await {
+                    //     match block {
+                    //         Ok((path, _)) => {
+                    //             println!("received block {}", path);
+                    //         }
+                    //         Err(e) => {
+                    //             let msg = ReceiverMessage::FinishError(e.to_string());
+                    //             iroh.api()
+                    //                 .p2p()?
+                    //                 .gossipsub_publish(
+                    //                     ticket.topic.clone(),
+                    //                     bincode::serialize(&msg)
+                    //                         .expect("failed to serialize message")
+                    //                         .into(),
+                    //                 )
+                    //                 .await
+                    //                 .ok();
+                    //             return Err(e);
+                    //         }
+                    //     }
+                    // }
+                    let mut out_dir = std::env::current_dir()?;
+                    if let Some(out) = out {
+                        out_dir = out_dir.join(out);
+                    }
+                    println!("want to save to {:#?}", out_dir);
+                    let msg =
+                        match iroh_api::fs::write_get_stream(&ipfs_path, blocks, Some(&out_dir))
+                            .await
+                        {
+                            Ok(p) => {
+                                println!("Received all data, written to: {}", p.to_str().unwrap());
+                                ReceiverMessage::FinishOk
+                            }
+                            Err(err) => {
+                                println!("Error saving file(s): {err}");
+                                ReceiverMessage::FinishError(err.to_string())
+                            }
+                        };
+                    iroh.api()
+                        .p2p()?
+                        .gossipsub_publish(
+                            ticket.topic.clone(),
+                            bincode::serialize(&msg)
+                                .expect("failed to serialize message")
+                                .into(),
+                        )
+                        .await
+                        .ok();
+                }
+                Err(e) => {
+                    let msg = ReceiverMessage::FinishError(e.to_string());
+                    iroh.api()
+                        .p2p()?
+                        .gossipsub_publish(
+                            ticket.topic.clone(),
+                            bincode::serialize(&msg)
+                                .expect("failed to serialize message")
+                                .into(),
+                        )
+                        .await
+                        .ok();
+                    println!("error with transfer {}", e);
+                }
             }
-            tokio::fs::create_dir_all(&out_dir)
-                .await
-                .with_context(|| format!("failed to create {}", out_dir.display()))?;
 
-            let out = tokio::fs::canonicalize(out_dir).await?;
-
-            let mut reader = data.read_dir()?.unwrap();
-            while let Some(link) = reader.next().await {
-                let link = link?;
-                let file_content = data.read_file(&link).await?;
-                let path = out.join(link.name.unwrap_or_default());
-                println!("Writing {}", path.display());
-                let mut file = tokio::fs::File::create(&path)
-                    .await
-                    .with_context(|| format!("create file: {}", path.display()))?;
-                let mut content = file_content.pretty()?;
-                tokio::io::copy(&mut content, &mut file)
-                    .await
-                    .context("copy")?;
-                file.flush().await?;
-            }
-
-            receiver_transfer.finish().await?;
-            println!("Received all data, written to: {}", out.display());
+            iroh.stop().await?;
+            gossipsub_task_source.await?;
         }
     }
 

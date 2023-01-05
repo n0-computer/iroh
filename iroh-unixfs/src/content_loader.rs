@@ -4,18 +4,19 @@ use std::{
     hash::BuildHasher,
     str::FromStr,
     sync::Arc,
-    sync::Mutex,
 };
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, bail, ensure, Result};
 use async_trait::async_trait;
 use bytes::Bytes;
 use cid::{multibase::Base, Cid};
 use futures::future::Either;
 use iroh_rpc_client::Client;
+use libp2p::PeerId;
 use rand::seq::SliceRandom;
 use reqwest::Url;
-use tracing::{debug, info, trace, warn};
+use tokio::sync::Mutex;
+use tracing::{debug, error, info, trace, warn};
 
 use crate::{
     indexer::{Indexer, IndexerUrl},
@@ -290,6 +291,91 @@ impl ContentLoader for FullLoader {
 
     async fn has_cid(&self, cid: &Cid) -> Result<bool> {
         self.client.try_store()?.has(*cid).await
+    }
+}
+/// Load content using only the specified providers
+#[derive(Debug, Clone)]
+pub struct LoaderFromProviders {
+    client: Client,
+    providers: Arc<Mutex<HashSet<PeerId>>>,
+}
+
+impl LoaderFromProviders {
+    pub fn new(client: Client, providers: HashSet<PeerId>) -> Self {
+        Self {
+            client,
+            providers: Arc::new(Mutex::new(providers)),
+        }
+    }
+
+    pub fn providers(&self) -> &Arc<Mutex<HashSet<PeerId>>> {
+        &self.providers
+    }
+}
+
+#[async_trait]
+impl ContentLoader for LoaderFromProviders {
+    async fn load_cid(&self, cid: &Cid, _ctx: &LoaderContext) -> Result<LoadedCid> {
+        let cid = *cid;
+        let providers = self.providers.lock().await.clone();
+
+        match self.client.try_store()?.get(cid).await {
+            Ok(Some(data)) => {
+                return Ok(LoadedCid {
+                    data,
+                    source: Source::Store(IROH_STORE),
+                });
+            }
+            Ok(None) => {}
+            Err(err) => {
+                warn!("failed to fetch data from store {}: {:?}", cid, err);
+            }
+        }
+
+        ensure!(!providers.is_empty(), "no providers supplied");
+
+        // TODO: track context id
+        let res = self
+            .client
+            .try_p2p()?
+            .fetch_bitswap(0, cid, providers.clone())
+            .await;
+        let bytes = match res {
+            Ok(bytes) => bytes,
+            Err(err) => {
+                error!("Bitswap error: {:#?}", err);
+                return Err(err);
+            }
+        };
+
+        let cloned = bytes.clone();
+        let rpc = self.clone();
+        {
+            let clone2 = cloned.clone();
+            let links =
+                tokio::task::spawn_blocking(move || parse_links(&cid, &clone2).unwrap_or_default())
+                    .await
+                    .unwrap_or_default();
+
+            rpc.client.try_store()?.put(cid, cloned, links).await?;
+        }
+
+        Ok(LoadedCid {
+            data: bytes,
+            source: Source::Bitswap,
+        })
+    }
+
+    async fn stop_session(&self, ctx: ContextId) -> Result<()> {
+        self.client
+            .try_p2p()?
+            .stop_session_bitswap(ctx.into())
+            .await?;
+        Ok(())
+    }
+
+    async fn has_cid(&self, cid: &Cid) -> Result<bool> {
+        Ok(self.client.try_store()?.has(*cid).await?)
     }
 }
 

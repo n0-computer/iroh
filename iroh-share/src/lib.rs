@@ -1,3 +1,4 @@
+mod iroh;
 mod p2p_node;
 mod receiver;
 mod sender;
@@ -5,13 +6,14 @@ mod sender;
 use cid::Cid;
 use serde::{Deserialize, Serialize};
 
+pub use crate::iroh::build as build_iroh;
 pub use crate::p2p_node::Ticket;
 pub use crate::receiver::{ProgressEvent, Receiver, Transfer as ReceiverTransfer};
 pub use crate::sender::{Sender, Transfer as SenderTransfer};
 
 /// Messages sent from the sender.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-enum SenderMessage {
+pub enum SenderMessage {
     Start {
         /// The root Cid of the content.
         root: Cid,
@@ -22,7 +24,7 @@ enum SenderMessage {
 
 /// Messages sent from the receiver.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-enum ReceiverMessage {
+pub enum ReceiverMessage {
     /// Transfer was completed successfully.
     FinishOk,
     /// Transfer failed.

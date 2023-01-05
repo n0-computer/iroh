@@ -3,7 +3,7 @@ use async_stream::stream;
 use bytes::Bytes;
 use cid::Cid;
 use futures::{Stream, StreamExt};
-use iroh_rpc_types::{p2p::*, NetworkEvent, VersionRequest, WatchRequest};
+use iroh_rpc_types::{network_event::NetworkEvent, p2p::*, VersionRequest, WatchRequest};
 use libp2p::gossipsub::{MessageId, TopicHash};
 use libp2p::{Multiaddr, PeerId};
 use std::collections::{HashMap, HashSet};

@@ -32,6 +32,7 @@ async fn save_get_stream(
     while let Some(block) = blocks.next().await {
         let (path, out) = block?;
         let full_path = path.to_path(root_path);
+        println!("full path: {:?}", full_path);
         match out {
             OutType::Dir => {
                 tokio::fs::create_dir_all(full_path).await?;

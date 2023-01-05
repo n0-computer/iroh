@@ -9,9 +9,8 @@ use quic_rpc::{
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-use crate::{
-    NetworkEvent, RpcResult, VersionRequest, VersionResponse, WatchRequest, WatchResponse,
-};
+use crate::network_event::NetworkEvent;
+use crate::{RpcResult, VersionRequest, VersionResponse, WatchRequest, WatchResponse};
 
 pub type P2pAddr = super::addr::Addr<P2pService>;
 

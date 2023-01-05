@@ -13,7 +13,7 @@ use libp2p::{
 
 use crate::error::map_service_error;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct P2p {
     client: P2pClient,
 }
@@ -121,7 +121,7 @@ impl P2p {
     /// This allows you to publish a message on a given topic to anyone in your network that is
     /// subscribed to that topic.
     ///
-    /// Read the [`gossipsub_subscribe`][`crate::p2p::P2p::gossipsub_subscribe`] documentation for how to subscribe and receive
+    /// Read the [`P2p::gossipsub_subscribe`] documentation for how to subscribe and receive
     /// Gossipsub messages.
     pub async fn gossipsub_publish(&self, topic: String, data: Bytes) -> Result<MessageId> {
         let topic = TopicHash::from_raw(topic);
