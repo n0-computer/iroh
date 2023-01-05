@@ -8,9 +8,6 @@ license.workspace = true
 rust-version.workspace = true
 repository.workspace = true
 
-[features]
-testing = ["dep:mockall"]
-
 [dependencies]
 anyhow.workspace = true
 async-stream.workspace = true
@@ -26,7 +23,6 @@ iroh-rpc-types.workspace = true
 iroh-unixfs.workspace = true
 iroh-util.workspace = true
 libp2p.workspace = true
-mockall = { workspace = true, optional = true }
 relative-path.workspace = true
 serde = { workspace = true, features = ["derive"] }
 thiserror.workspace = true
