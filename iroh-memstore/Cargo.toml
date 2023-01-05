@@ -1,0 +1,22 @@
+[package]
+name = "iroh-memstore"
+authors = ["Floris Bruynooghe <flub@n0.computer>"]
+description = "In-memory store for iroh"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+ahash.workspace = true
+anyhow.workspace = true
+async-stream.workspace = true
+bytes.workspace = true
+cid.workspace = true
+futures.workspace = true
+iroh-rpc-client.workspace = true
+iroh-rpc-types.workspace = true
+quic-rpc.workspace = true
+tokio.workspace = true
+tracing.workspace = true
