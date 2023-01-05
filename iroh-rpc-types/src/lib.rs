@@ -1,10 +1,12 @@
 pub mod addr;
 pub mod gateway;
+mod network_event;
 pub mod p2p;
 pub mod store;
 
 use std::fmt;
 
+pub use crate::network_event::{GossipsubEvent, NetworkEvent};
 pub use addr::Addr;
 
 use serde::{Deserialize, Serialize};

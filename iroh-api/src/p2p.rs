@@ -62,6 +62,7 @@ impl P2p {
             .map_err(|e| map_service_error("p2p", e))
     }
 
+    /// Get a stream of [`NetworkEvent`].
     pub async fn network_events(&self) -> Result<BoxStream<'static, Result<NetworkEvent>>> {
         let stream = self
             .client
@@ -71,12 +72,35 @@ impl P2p {
         Ok(stream.boxed())
     }
 
-    pub async fn subscribe(&self, topic: String) -> Result<bool> {
+    /// Subscribe to a Gossipsub Topic
+    ///
+    /// Gossipsub is a pub/sub protocol. This will subscribe you to a Gossipsub
+    /// topic. All Gossipsub messages for topics that you are subscribed to can
+    /// be read off the the `NetworkEvent` stream, as
+    /// `NetworkEvent::Gossipsub(GossipsubEvent::Message)`. You can access this
+    /// stream using `P2p::network_events`.
+    ///
+    /// There is currently no `gossipsub_unsubscribe` exposed to `iroh-api` crate
+    /// yet.
+    ///
+    /// Learn more about the Gossipsub protocol in the `libp2p-gossipsub`
+    /// [documentation](https://docs.rs/libp2p-gossipsub/latest/libp2p_gossipsub/).
+    //
+    // TODO(ramfox): write `gossipsub_messages(topic: String)` method that returns
+    // a stream of only the gossipsub messages on that topic
+    pub async fn gossipsub_subscribe(&self, topic: String) -> Result<bool> {
         let topic = TopicHash::from_raw(topic);
         self.client.gossipsub_subscribe(topic).await
     }
 
-    pub async fn publish(&self, topic: String, data: Bytes) -> Result<MessageId> {
+    /// Publish a message on a Gossipsub Topic.
+    ///
+    /// This allows you to publish a message on a given topic to anyone in your
+    /// network that is subscribed to that topic.
+    ///
+    /// Read the [`P2p::gossipsub_subscribe`] documentation for how to subscribe
+    /// and receive Gossipsub messages.
+    pub async fn gossipsub_publish(&self, topic: String, data: Bytes) -> Result<MessageId> {
         let topic = TopicHash::from_raw(topic);
         self.client.gossipsub_publish(topic, data).await
     }

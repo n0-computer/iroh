@@ -9,7 +9,9 @@ use quic_rpc::{
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-use crate::{RpcResult, VersionRequest, VersionResponse, WatchRequest, WatchResponse};
+use crate::{
+    NetworkEvent, RpcResult, VersionRequest, VersionResponse, WatchRequest, WatchResponse,
+};
 
 pub type P2pAddr = super::addr::Addr<P2pService>;
 
@@ -150,61 +152,6 @@ pub struct NetworkEventsRequest;
 #[derive(Serialize, Deserialize, Debug)]
 pub struct NetworkEventsResponse {
     pub event: NetworkEvent,
-}
-
-use libp2p::gossipsub::{GossipsubMessage, MessageId, TopicHash};
-// TODO(ramfox): figure out better place for this or way to handle
-#[allow(clippy::large_enum_variant)]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum NetworkEvent {
-    PeerConnected(PeerId),
-    PeerDisconnected(PeerId),
-    Gossipsub(GossipsubEvent),
-    CancelLookupQuery(PeerId),
-}
-
-// TODO(ramfox): figure out better place for this or way to handle
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum GossipsubEvent {
-    Subscribed {
-        peer_id: PeerId,
-        #[serde(with = "TopicHashDef")]
-        topic: TopicHash,
-    },
-    Unsubscribed {
-        peer_id: PeerId,
-        #[serde(with = "TopicHashDef")]
-        topic: TopicHash,
-    },
-    Message {
-        from: PeerId,
-        id: MessageId,
-        #[serde(with = "GossipsubMessageDef")]
-        message: GossipsubMessage,
-    },
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(remote = "TopicHash")]
-struct TopicHashDef {
-    #[serde(getter = "TopicHash::to_string")]
-    hash: String,
-}
-
-impl From<TopicHashDef> for TopicHash {
-    fn from(t: TopicHashDef) -> Self {
-        TopicHash::from_raw(t.hash)
-    }
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(remote = "GossipsubMessage")]
-struct GossipsubMessageDef {
-    source: Option<PeerId>,
-    data: Vec<u8>,
-    sequence_number: Option<u64>,
-    #[serde(with = "TopicHashDef")]
-    topic: TopicHash,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
