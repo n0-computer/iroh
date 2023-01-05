@@ -19,7 +19,7 @@ use iroh_util::{iroh_config_path, make_config};
 use relative_path::RelativePathBuf;
 use tokio::io::{AsyncRead, AsyncReadExt};
 
-use crate::store::add_blocks_to_store;
+use crate::store::{add_blocks_to_store, StoreApi};
 
 /// API to interact with an iroh system.
 ///
@@ -101,6 +101,11 @@ impl Api {
         Self { client, resolver }
     }
 
+    /// Returns a [`Resolver`] you can use to resolve data from the Iroh store or the network.
+    pub async fn resolver(&self) -> Resolver<FullLoader> {
+        self.resolver.clone()
+    }
+
     /// Announces to the DHT that this node can offer the given [`Cid`].
     ///
     /// This publishes a provider record for the [`Cid`] to the DHT, establishing the local
@@ -112,6 +117,11 @@ impl Api {
     pub fn p2p(&self) -> Result<P2pApi> {
         let p2p_client = self.client.try_p2p()?;
         Ok(P2pApi::new(p2p_client))
+    }
+
+    pub fn store(&self) -> Result<StoreApi> {
+        let store_client = self.client.try_store()?;
+        Ok(StoreApi::new(store_client))
     }
 
     /// High level get, equivalent of CLI `iroh get`.
@@ -189,7 +199,7 @@ impl Api {
         };
 
         Ok(Box::pin(
-            add_blocks_to_store(Some(self.client.clone()), blocks).await,
+            add_blocks_to_store(Some(self.store()?), blocks).await,
         ))
     }
 

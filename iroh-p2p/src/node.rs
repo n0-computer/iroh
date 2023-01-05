@@ -10,7 +10,6 @@ use iroh_metrics::{core::MRecorder, inc, libp2p_metrics, p2p::P2PMetrics};
 use iroh_rpc_client::Client as RpcClient;
 use iroh_rpc_types::p2p::P2pAddr;
 use libp2p::core::Multiaddr;
-// use libp2p::gossipsub::{GossipsubMessage, MessageId, TopicHash};
 pub use libp2p::gossipsub::{IdentTopic, Topic};
 use libp2p::identify::{Event as IdentifyEvent, Info as IdentifyInfo};
 use libp2p::identity::Keypair;
@@ -44,32 +43,6 @@ use crate::{
     Config,
 };
 use crate::{GossipsubEvent, NetworkEvent};
-
-// #[allow(clippy::large_enum_variant)]
-// #[derive(Debug, Clone)]
-// pub enum NetworkEvent {
-//     PeerConnected(PeerId),
-//     PeerDisconnected(PeerId),
-//     Gossipsub(GossipsubEvent),
-//     CancelLookupQuery(PeerId),
-// }
-
-// #[derive(Debug, Clone)]
-// pub enum GossipsubEvent {
-//     Subscribed {
-//         peer_id: PeerId,
-//         topic: TopicHash,
-//     },
-//     Unsubscribed {
-//         peer_id: PeerId,
-//         topic: TopicHash,
-//     },
-//     Message {
-//         from: PeerId,
-//         id: MessageId,
-//         message: GossipsubMessage,
-//     },
-// }
 
 pub struct Node<KeyStorage: Storage> {
     swarm: Swarm<NodeBehaviour>,

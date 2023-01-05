@@ -3,7 +3,7 @@ pub use crate::api::OutType;
 pub use crate::config::Config;
 pub use crate::error::ApiError;
 pub use crate::p2p::P2p as P2pApi;
-pub use crate::p2p::PeerIdOrAddr;
+pub use crate::p2p::{peer_id_from_multiaddr, PeerIdOrAddr};
 pub use bytes::Bytes;
 pub use cid::Cid;
 pub use iroh_resolver::resolver::Path as IpfsPath;

@@ -2,7 +2,7 @@ use crate::doc;
 use anyhow::{Error, Result};
 use clap::{Args, Subcommand};
 use crossterm::style::Stylize;
-use iroh_api::{Lookup, Multiaddr, P2pApi, PeerId, PeerIdOrAddr};
+use iroh_api::{peer_id_from_multiaddr, Lookup, Multiaddr, P2pApi, PeerId, PeerIdOrAddr};
 use std::{collections::HashMap, fmt::Display, str::FromStr};
 
 #[derive(Args, Debug, Clone)]
@@ -63,12 +63,21 @@ impl Display for PeerIdOrAddrArg {
 
 pub async fn run_command(p2p: &P2pApi, cmd: &P2p) -> Result<()> {
     match &cmd.command {
-        P2pCommands::Connect { addr } => match p2p.connect(&addr.0).await {
-            Ok(_) => {
-                println!("Connected to {addr}!");
+        P2pCommands::Connect { addr } => {
+            let res = match &addr.0 {
+                PeerIdOrAddr::PeerId(peer_id) => p2p.connect(*peer_id, vec![]).await,
+                PeerIdOrAddr::Multiaddr(addr) => {
+                    let peer_id = peer_id_from_multiaddr(addr)?;
+                    p2p.connect(peer_id, vec![addr.clone()]).await
+                }
+            };
+            match res {
+                Ok(_) => {
+                    println!("Connected to {addr}!");
+                }
+                Err(e) => return Err(e),
             }
-            Err(e) => return Err(e),
-        },
+        }
         P2pCommands::Lookup { addr } => {
             let lookup = match addr {
                 Some(addr) => p2p.lookup(&addr.0).await?,

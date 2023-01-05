@@ -30,7 +30,27 @@ impl P2p {
     }
 
     pub async fn lookup_local(&self) -> Result<Lookup> {
-        self.client.lookup_local().await
+        self.client
+            .lookup_local()
+            .await
+            .map_err(|e| map_service_error("p2p", e))
+    }
+
+    /// The [`PeerId`] for this Iroh p2p nod
+    pub async fn peer_id(&self) -> Result<PeerId> {
+        self.client
+            .local_peer_id()
+            .await
+            .map_err(|e| map_service_error("p2p", e))
+    }
+
+    /// The list of [`Multiaddr`] that the Iroh p2p node is listening on
+    pub async fn addrs(&self) -> Result<Vec<Multiaddr>> {
+        self.client
+            .get_listening_addrs()
+            .await
+            .map(|(_, addrs)| addrs)
+            .map_err(|e| map_service_error("p2p", e))
     }
 
     pub async fn lookup(&self, addr: &PeerIdOrAddr) -> Result<Lookup> {
@@ -44,15 +64,15 @@ impl P2p {
         .map_err(|e| map_service_error("p2p", e))
     }
 
-    pub async fn connect(&self, addr: &PeerIdOrAddr) -> Result<()> {
-        match addr {
-            PeerIdOrAddr::PeerId(peer_id) => self.client.connect(*peer_id, vec![]).await,
-            PeerIdOrAddr::Multiaddr(addr) => {
-                let peer_id = peer_id_from_multiaddr(addr)?;
-                self.client.connect(peer_id, vec![addr.clone()]).await
-            }
-        }
-        .map_err(|e| map_service_error("p2p", e))
+    /// Connect to a peer using a [`PeerId`] and `Vec` of [`Multiaddr`]
+    ///
+    /// If there is an empty `Vec` of `Multiaddr`s, Iroh will attempt to find
+    /// the peer on the DHT using the `PeerId`.
+    pub async fn connect(&self, peer_id: PeerId, addrs: Vec<Multiaddr>) -> Result<()> {
+        self.client
+            .connect(peer_id, addrs)
+            .await
+            .map_err(|e| map_service_error("p2p", e))
     }
 
     pub async fn peers(&self) -> Result<HashMap<PeerId, Vec<Multiaddr>>> {
@@ -90,23 +110,40 @@ impl P2p {
     // a stream of only the gossipsub messages on that topic
     pub async fn gossipsub_subscribe(&self, topic: String) -> Result<bool> {
         let topic = TopicHash::from_raw(topic);
-        self.client.gossipsub_subscribe(topic).await
+        self.client
+            .gossipsub_subscribe(topic)
+            .await
+            .map_err(|e| map_service_error("p2p", e))
     }
 
     /// Publish a message on a Gossipsub Topic.
     ///
-    /// This allows you to publish a message on a given topic to anyone in your
-    /// network that is subscribed to that topic.
+    /// This allows you to publish a message on a given topic to anyone in your network that is
+    /// subscribed to that topic.
     ///
-    /// Read the [`P2p::gossipsub_subscribe`] documentation for how to subscribe
-    /// and receive Gossipsub messages.
+    /// Read the [`gossipsub_subscribe`][`crate::p2p::P2p::gossipsub_subscribe`] documentation for how to subscribe and receive
+    /// Gossipsub messages.
     pub async fn gossipsub_publish(&self, topic: String, data: Bytes) -> Result<MessageId> {
         let topic = TopicHash::from_raw(topic);
-        self.client.gossipsub_publish(topic, data).await
+        self.client
+            .gossipsub_publish(topic, data)
+            .await
+            .map_err(|e| map_service_error("p2p", e))
+    }
+
+    /// Add a peer to the list of Gossipsub peers we are explicitly connected to.
+    ///
+    /// We will attempt to stay connected and forward all relevant Gossipsub messages
+    /// to this peer.
+    pub async fn gossipsub_add_peer(&self, peer_id: PeerId) -> Result<()> {
+        self.client
+            .gossipsub_add_explicit_peer(peer_id)
+            .await
+            .map_err(|e| map_service_error("p2p", e))
     }
 }
 
-fn peer_id_from_multiaddr(addr: &Multiaddr) -> Result<PeerId> {
+pub fn peer_id_from_multiaddr(addr: &Multiaddr) -> Result<PeerId> {
     match addr.iter().find(|p| matches!(*p, Protocol::P2p(_))) {
         Some(Protocol::P2p(peer_id)) => {
             PeerId::from_multihash(peer_id).map_err(|m| anyhow::anyhow!("Multiaddress contains invalid p2p multihash {:?}. Cannot derive a PeerId from this address.", m ))

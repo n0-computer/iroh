@@ -6,8 +6,9 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use cid::Cid;
 use futures::{Stream, StreamExt};
-use iroh_rpc_client::Client;
+use iroh_rpc_client::StoreClient;
 use iroh_unixfs::Block;
+#[cfg(feature = "testing")]
 
 /// How many chunks to buffer up when adding content.
 const _ADD_PAR: usize = 24;
@@ -19,20 +20,43 @@ pub trait Store: 'static + Send + Sync + Clone {
     async fn put_many(&self, blocks: Vec<Block>) -> Result<()>;
 }
 
+#[derive(Debug, Clone)]
+pub struct StoreApi {
+    client: StoreClient,
+}
+
+impl StoreApi {
+    pub fn new(client: StoreClient) -> Self {
+        Self { client }
+    }
+
+    pub async fn has(&self, cid: Cid) -> Result<bool> {
+        self.client.has(cid).await
+    }
+
+    pub async fn put(&self, cid: Cid, blob: Bytes, links: Vec<Cid>) -> Result<()> {
+        self.client.put(cid, blob, links).await
+    }
+
+    pub async fn put_many(&self, blocks: Vec<Block>) -> Result<()> {
+        self.client
+            .put_many(blocks.into_iter().map(|x| x.into_parts()).collect())
+            .await
+    }
+}
+
 #[async_trait]
-impl Store for Client {
+impl Store for StoreApi {
     async fn has(&self, cid: Cid) -> Result<bool> {
-        self.try_store()?.has(cid).await
+        self.has(cid).await
     }
 
     async fn put(&self, cid: Cid, blob: Bytes, links: Vec<Cid>) -> Result<()> {
-        self.try_store()?.put(cid, blob, links).await
+        self.put(cid, blob, links).await
     }
 
     async fn put_many(&self, blocks: Vec<Block>) -> Result<()> {
-        self.try_store()?
-            .put_many(blocks.into_iter().map(|x| x.into_parts()).collect())
-            .await
+        self.put_many(blocks).await
     }
 }
 
