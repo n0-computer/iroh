@@ -20,11 +20,12 @@ ahash.workspace = true
 tracing.workspace = true
 num_enum.workspace = true
 serde = { workspace = true, features = ["derive"] }
-bincode.workspace = true
 async-trait.workspace = true
 async-stream.workspace = true
 unsigned-varint = { workspace = true, features = ["asynchronous_codec"] }
 iroh-util.workspace = true
+cbor4ii = { workspace = true, features = ["serde1"] }
+serde_bytes = { version = "0.11" }
 
 [dev-dependencies]
 criterion.workspace = true

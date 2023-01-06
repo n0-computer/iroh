@@ -1,3 +1,5 @@
+use std::convert::Infallible;
+
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -11,5 +13,5 @@ pub enum Error {
     #[error("Invalid block presence type {0}")]
     ReponseError(#[from] crate::message::ResponseError),
     #[error("invalid message {0}")]
-    DecodeError(#[from] bincode::Error),
+    DecodeError(#[from] cbor4ii::DecodeError<Infallible>),
 }

@@ -13,16 +13,40 @@ pub enum Message {
     Request(Request),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+enum MessageRef<'a> {
+    #[serde(borrow)]
+    Response(ResponseRef<'a>),
+    Request(Request),
+}
+
 impl Message {
     /// Decoding from a given `BytesMut`.
     pub fn from_bytes(bytes: BytesMut) -> Result<Self, Error> {
-        let msg = bincode::deserialize(&bytes)?;
-        Ok(msg)
+        let bytes = bytes.freeze();
+        let msg: MessageRef<'_> = cbor4ii::serde::from_slice(&bytes)?;
+        match msg {
+            MessageRef::Request(req) => Ok(Message::Request(req)),
+            MessageRef::Response(resp) => match resp.response {
+                Ok(res_ok) => Ok(Message::Response(Response {
+                    id: resp.id,
+                    response: Ok(ResponseOk {
+                        index: res_ok.index,
+                        last: res_ok.last,
+                        data: bytes.slice_ref(res_ok.data),
+                    }),
+                })),
+                Err(err) => Ok(Message::Response(Response {
+                    id: resp.id,
+                    response: Err(err),
+                })),
+            },
+        }
     }
 
     /// Decode into a `BytesMut` buffer.
     pub fn into_bytes(self) -> Vec<u8> {
-        let out = bincode::serialize(&self).expect("should always succeed");
+        let out = cbor4ii::serde::to_vec(Vec::new(), &self).expect("should always succeed");
         out
     }
 
@@ -160,6 +184,13 @@ pub struct Response {
     pub response: Result<ResponseOk, ResponseError>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct ResponseRef<'a> {
+    pub id: QueryId,
+    #[serde(borrow)]
+    pub response: Result<ResponseOkRef<'a>, ResponseError>,
+}
+
 impl Response {
     /// Is this the last response?
     pub fn is_last(&self) -> bool {
@@ -178,6 +209,14 @@ pub struct ResponseOk {
     pub last: bool,
     /// The actual data
     pub data: Bytes,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct ResponseOkRef<'a> {
+    index: u32,
+    last: bool,
+    #[serde(with = "serde_bytes")]
+    data: &'a [u8],
 }
 
 impl Debug for ResponseOk {
