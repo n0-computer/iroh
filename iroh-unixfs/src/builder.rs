@@ -559,6 +559,12 @@ impl DirectoryBuilder {
 
         Ok(if let Some(path) = path {
             let mut dir = make_dir_from_path(path, chunker.clone(), degree).await?;
+            match &mut dir {
+                Directory::Basic(basic) => {
+                    basic.entries.extend(entries)
+                }
+                Directory::Hamt(_) => unimplemented!()
+            }
             if let Some(name) = name {
                 dir.set_name(name);
             }
