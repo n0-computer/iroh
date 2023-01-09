@@ -861,7 +861,7 @@ async fn serve_fs_dir<T: ContentLoader + Unpin>(
     if !force_dir && has_index {
         if !req.resolved_path.has_trailing_slash() {
             let redirect_path = format!(
-                "{}/{}",
+                "{}{}",
                 req.request_path_for_redirection(),
                 req.query_params.to_query_string()
             );
