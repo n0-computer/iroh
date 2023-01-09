@@ -1,11 +1,13 @@
-use std::{collections::HashMap, env, net::SocketAddr, sync::Arc, time::Instant};
+use std::{collections::HashMap, env, io::Read, net::SocketAddr, sync::Arc, time::Instant};
 
 use anyhow::{anyhow, bail, Result};
-use bytes::BytesMut;
+use bytes::{Bytes, BytesMut};
 use libp2p_core::identity::ed25519::Keypair;
 use s2n_quic::{client::Connect, Client, Server};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+const MAX_DATA_SIZE: usize = 1024 * 1024 * 1024;
 
 #[derive(Deserialize, Serialize, Debug, PartialEq, Clone)]
 struct Request {
@@ -14,28 +16,22 @@ struct Request {
 }
 
 #[derive(Deserialize, Serialize, Debug, PartialEq, Clone)]
-struct Response<'a> {
+struct Response {
     id: u64,
-    #[serde(borrow)]
-    data: Res<'a>,
+    data: Res,
 }
 
 #[derive(Deserialize, Serialize, Debug, PartialEq, Clone)]
-enum Res<'a> {
+enum Res {
     NotFound,
-    Found { data: &'a [u8] },
+    // If found, a stream of bao data is sent as next message.
+    Found {
+        /// The size of the coming data in bytes, raw content size.
+        size: usize,
+    },
 }
 
-impl Res<'_> {
-    pub fn len(&self) -> usize {
-        match self {
-            Res::NotFound => 0,
-            Res::Found { data } => data.len(),
-        }
-    }
-}
-
-async fn main_client(name: &str) -> Result<()> {
+async fn main_client(hash: bao::Hash) -> Result<()> {
     let keypair = libp2p_core::identity::Keypair::Ed25519(Keypair::generate());
     let client_config = libp2p_tls::make_client_config(&keypair, None)?;
     let tls = s2n_quic::provider::tls::rustls::Client::from(client_config);
@@ -58,9 +54,9 @@ async fn main_client(name: &str) -> Result<()> {
 
     let req = Request {
         id: 1,
-        name: name.to_string(),
+        name: hash.to_hex().to_string(),
     };
-    let mut bytes = BytesMut::zeroed(15 + name.len());
+    let mut bytes = BytesMut::zeroed(15 + req.name.len());
     let used = postcard::to_slice(&req, &mut bytes)?;
 
     // send length prefix
@@ -86,21 +82,46 @@ async fn main_client(name: &str) -> Result<()> {
         let size = usize::try_from(size).unwrap();
         let response: Response = postcard::from_bytes(&in_buffer[..size])?;
         match response.data {
-            Res::Found { data } => {
-                let data_len = data.len();
-                let elapsed = now.elapsed().as_millis();
-                let elapsed_s = elapsed as f64 / 1000.;
-                let data_len_bit = data_len * 8;
-                let mbits = data_len_bit as f64 / (1000. * 1000.) / elapsed_s;
-                println!("Data size: {}MiB\nTime Elapsed: {:.4}s\n{:.2}MBit/s", data_len / 1024 / 1024, elapsed_s, mbits);
+            Res::Found { size } => {
+                // Need to read the message now
+                if size > MAX_DATA_SIZE {
+                    bail!("size too large: {} > {}", size, MAX_DATA_SIZE);
+                }
 
+                let limit_reader = reader; // .take(size as u64);
+                let bridge = tokio_util::io::SyncIoBridge::new(limit_reader);
+                let (send, recv) = tokio::sync::oneshot::channel();
+                std::thread::spawn(move || {
+                    let mut decoder = bao::decode::Decoder::new(bridge, &hash);
+                    let mut data = Vec::with_capacity(size); // TODO: do not overallocate;
+                    if let Err(err) = decoder.read_to_end(&mut data) {
+                        eprintln!("failed to read all data: {:?}", err);
+                    } else {
+                        // print stats
+
+                        let data_len = size;
+                        let elapsed = now.elapsed().as_millis();
+                        let elapsed_s = elapsed as f64 / 1000.;
+                        let data_len_bit = data_len * 8;
+                        let mbits = data_len_bit as f64 / (1000. * 1000.) / elapsed_s;
+                        println!(
+                            "Data size: {}MiB\nTime Elapsed: {:.4}s\n{:.2}MBit/s",
+                            data_len / 1024 / 1024,
+                            elapsed_s,
+                            mbits
+                        );
+                    }
+
+                    send.send(()).ok();
+                });
+
+                recv.await?;
             }
             Res::NotFound => {
                 bail!("data not found");
             }
         }
     }
-
 
     Ok(())
 }
@@ -117,15 +138,7 @@ async fn main_server() -> Result<()> {
         .start()
         .map_err(|e| anyhow!("{:?}", e))?;
 
-    let db: Arc<HashMap<String, Vec<u8>>> = Arc::new(
-        [
-            ("1MB".to_string(), vec![1u8; 1024 * 1024 * 1]),
-            ("10MB".to_string(), vec![1u8; 1024 * 1024 * 10]),
-            ("100MB".to_string(), vec![1u8; 1024 * 1024 * 100]),
-        ]
-        .into_iter()
-        .collect(),
-    );
+    let db = create_db();
 
     while let Some(mut connection) = server.accept().await {
         let db = db.clone();
@@ -152,10 +165,10 @@ async fn main_server() -> Result<()> {
 
                         // decode next message
                         let request: Request = postcard::from_bytes(&in_buffer[..size]).unwrap();
-                        let data = if let Some(data) = db.get(&request.name) {
-                            Res::Found { data: &data[..] }
+                        let (data, piece) = if let Some(data) = db.get(&request.name) {
+                            (Res::Found { size: data.len() }, Some(data.clone()))
                         } else {
-                            Res::NotFound
+                            (Res::NotFound, None)
                         };
 
                         let response = Response {
@@ -163,10 +176,6 @@ async fn main_server() -> Result<()> {
                             data,
                         };
 
-                        out_buffer.clear();
-                        if out_buffer.len() < 20 + response.data.len() {
-                            out_buffer.resize(20 + response.data.len(), 0u8);
-                        }
                         let used = postcard::to_slice(&response, &mut out_buffer).unwrap();
 
                         let lp = unsigned_varint::encode::u64(used.len() as u64, &mut lp_buffer);
@@ -174,6 +183,19 @@ async fn main_server() -> Result<()> {
 
                         if let Err(e) = writer.write_all(used).await {
                             eprintln!("failed to write response: {:?}", e);
+                        }
+                        if let Some(piece) = piece {
+                            // if we found the data, write it out now
+
+                            // TODO: avoid buffering
+                            let (encoded, _hash) =
+                                tokio::task::spawn_blocking(move || bao::encode::encode(piece))
+                                    .await
+                                    .unwrap();
+
+                            if let Err(e) = writer.write_all(&encoded).await {
+                                eprintln!("failed to write data: {:?}", e);
+                            }
                         }
                     }
 
@@ -186,6 +208,22 @@ async fn main_server() -> Result<()> {
     Ok(())
 }
 
+fn create_db() -> Arc<HashMap<String, Bytes>> {
+    println!("Available Data:");
+
+    let mut db = HashMap::new();
+    for num in [1, 10, 100] {
+        let data = vec![1u8; 1024 * 1024 * num];
+        let hash = blake3::hash(&data);
+        let name = format!("{}", hash.to_hex());
+
+        println!("- {name}: {num}MiB");
+        db.insert(name, Bytes::from(data));
+    }
+
+    Arc::new(db)
+}
+
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<()> {
     let args: Vec<String> = env::args().collect();
@@ -195,9 +233,10 @@ async fn main() -> Result<()> {
 
     match args[1].as_str() {
         "client" => {
-            let name = &args[2];
-            println!("Sending: {}", name);
-            main_client(name).await?
+            let hash = &args[2];
+            let hash = bao::Hash::from_hex(hash)?;
+            println!("Requesting: {}", hash.to_hex());
+            main_client(hash).await?
         }
         "server" => main_server().await?,
         _ => bail!("unknown argument: {}", &args[0]),
