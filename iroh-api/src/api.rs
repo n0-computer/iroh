@@ -186,6 +186,9 @@ impl Api {
             UnixfsEntry::Symlink(s) => Box::pin(async_stream::try_stream! {
                 yield s.encode()?
             }),
+            UnixfsEntry::RawBlock(r) => Box::pin(async_stream::try_stream! {
+                yield r.encode()?
+            }),
         };
 
         Ok(Box::pin(

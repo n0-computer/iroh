@@ -277,6 +277,37 @@ impl Symlink {
     }
 }
 
+/// Representation of a raw block
+#[derive(Debug, PartialEq, Eq)]
+pub struct RawBlock {
+    name: String,
+    block: Block,
+}
+
+impl RawBlock {
+    pub fn new(name: &str, block: Block) -> Self {
+        RawBlock {
+            name: name.to_string(),
+            block,
+        }
+    }
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn into_block(self) -> Block {
+        self.block
+    }
+
+    pub fn wrap(self) -> Directory {
+        Directory::single("".into(), Entry::RawBlock(self))
+    }
+
+    pub fn encode(self) -> Result<Block> {
+        Ok(self.into_block())
+    }
+}
+
 /// Constructs a UnixFS file.
 pub struct FileBuilder {
     name: Option<String>,
@@ -408,6 +439,7 @@ pub enum Entry {
     File(File),
     Directory(Directory),
     Symlink(Symlink),
+    RawBlock(RawBlock),
 }
 
 impl Entry {
@@ -416,6 +448,7 @@ impl Entry {
             Entry::File(f) => f.name(),
             Entry::Directory(d) => d.name(),
             Entry::Symlink(s) => s.name(),
+            Entry::RawBlock(r) => r.name(),
         }
     }
 
@@ -424,6 +457,7 @@ impl Entry {
             Entry::File(f) => f.encode().await?.boxed(),
             Entry::Directory(d) => d.encode(),
             Entry::Symlink(s) => stream::iter(Some(s.encode())).boxed(),
+            Entry::RawBlock(r) => stream::iter(Some(r.encode())).boxed(),
         })
     }
 
@@ -469,6 +503,7 @@ impl Entry {
             Entry::File(f) => f.wrap(),
             Entry::Directory(d) => d.wrap(),
             Entry::Symlink(s) => s.wrap(),
+            Entry::RawBlock(r) => r.wrap(),
         }
     }
 }
@@ -535,6 +570,10 @@ impl DirectoryBuilder {
         self.entry(Entry::File(file))
     }
 
+    pub fn add_raw_block(self, raw_block: RawBlock) -> Self {
+        self.entry(Entry::RawBlock(raw_block))
+    }
+
     pub fn add_symlink(self, symlink: Symlink) -> Self {
         self.entry(Entry::Symlink(symlink))
     }
@@ -560,10 +599,8 @@ impl DirectoryBuilder {
         Ok(if let Some(path) = path {
             let mut dir = make_dir_from_path(path, chunker.clone(), degree).await?;
             match &mut dir {
-                Directory::Basic(basic) => {
-                    basic.entries.extend(entries)
-                }
-                Directory::Hamt(_) => unimplemented!()
+                Directory::Basic(basic) => basic.entries.extend(entries),
+                Directory::Hamt(_) => unimplemented!(),
             }
             if let Some(name) = name {
                 dir.set_name(name);
