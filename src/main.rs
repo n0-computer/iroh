@@ -87,7 +87,13 @@ async fn main_client(name: &str) -> Result<()> {
         let response: Response = postcard::from_bytes(&in_buffer[..size])?;
         match response.data {
             Res::Found { data } => {
-                println!("response size: {}", data.len());
+                let data_len = data.len();
+                let elapsed = now.elapsed().as_millis();
+                let elapsed_s = elapsed as f64 / 1000.;
+                let data_len_bit = data_len * 8;
+                let mbits = data_len_bit as f64 / (1000. * 1000.) / elapsed_s;
+                println!("Data size: {}MiB\nTime Elapsed: {:.4}s\n{:.2}MBit/s", data_len / 1024 / 1024, elapsed_s, mbits);
+
             }
             Res::NotFound => {
                 bail!("data not found");
@@ -95,7 +101,6 @@ async fn main_client(name: &str) -> Result<()> {
         }
     }
 
-    println!("elapsed: {}ms", now.elapsed().as_millis());
 
     Ok(())
 }
