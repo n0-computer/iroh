@@ -1,0 +1,11 @@
+[package]
+name = "sendme"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0.68"
+libp2p-core = { version = "0.38.0", features = [] }
+libp2p-tls = "0.1.0-alpha"
+s2n-quic = { version = "1.14.0", default-features = false, features = [ "provider-tls-rustls", "provider-address-token-default" ] }
+tokio = { version = "1.24.1", features = ["full"] }
