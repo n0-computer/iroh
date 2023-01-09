@@ -1,10 +1,41 @@
-use std::{env, net::SocketAddr, path::PathBuf, time::Instant};
+use std::{collections::HashMap, env, net::SocketAddr, sync::Arc, time::Instant};
 
 use anyhow::{anyhow, bail, Result};
+use bytes::BytesMut;
 use libp2p_core::identity::ed25519::Keypair;
 use s2n_quic::{client::Connect, Client, Server};
+use serde::{Deserialize, Serialize};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-async fn main_client(source: PathBuf) -> Result<()> {
+#[derive(Deserialize, Serialize, Debug, PartialEq, Clone)]
+struct Request {
+    id: u64,
+    name: String,
+}
+
+#[derive(Deserialize, Serialize, Debug, PartialEq, Clone)]
+struct Response<'a> {
+    id: u64,
+    #[serde(borrow)]
+    data: Res<'a>,
+}
+
+#[derive(Deserialize, Serialize, Debug, PartialEq, Clone)]
+enum Res<'a> {
+    NotFound,
+    Found { data: &'a [u8] },
+}
+
+impl Res<'_> {
+    pub fn len(&self) -> usize {
+        match self {
+            Res::NotFound => 0,
+            Res::Found { data } => data.len(),
+        }
+    }
+}
+
+async fn main_client(name: &str) -> Result<()> {
     let keypair = libp2p_core::identity::Keypair::Ed25519(Keypair::generate());
     let client_config = libp2p_tls::make_client_config(&keypair, None)?;
     let tls = s2n_quic::provider::tls::rustls::Client::from(client_config);
@@ -19,32 +50,52 @@ async fn main_client(source: PathBuf) -> Result<()> {
     let connect = Connect::new(addr).with_server_name("localhost");
     let mut connection = client.connect(connect).await?;
 
-    // ensure the connection doesn't time out with inactivity
     connection.keep_alive(true)?;
 
-    // open a new stream and split the receiving and sending sides
-    let stream = connection.open_bidirectional_stream().await?;
-    let (mut receive_stream, mut send_stream) = stream.split();
-
     let now = Instant::now();
-    // spawn a task that copies responses from the server to stdout
-    tokio::spawn(async move {
-        let do_it = || async move {
-            let data = tokio::fs::File::open(source).await?;
-            let mut data = tokio::io::BufReader::new(data);
-            // let mut stdin = tokio::io::stdin();
-            tokio::io::copy(&mut data, &mut send_stream).await?;
-            Ok::<_, anyhow::Error>(())
-        };
-        if let Err(e) = do_it().await {
-            eprintln!("transfer failed: {:?}", e);
+    let stream = connection.open_bidirectional_stream().await?;
+    let (mut reader, mut writer) = stream.split();
+
+    let req = Request {
+        id: 1,
+        name: name.to_string(),
+    };
+    let mut bytes = BytesMut::zeroed(15 + name.len());
+    let used = postcard::to_slice(&req, &mut bytes)?;
+
+    // send length prefix
+    let mut buffer = [0u8; 10];
+    let lp = unsigned_varint::encode::u64(used.len() as u64, &mut buffer);
+    writer.write_all(lp).await?;
+
+    // write message
+    writer.write_all(used).await?;
+
+    // read response
+    {
+        let mut in_buffer = BytesMut::zeroed(1024);
+
+        // read length prefix
+        let size = unsigned_varint::aio::read_u64(&mut reader).await.unwrap();
+
+        // read next message
+        in_buffer.clear();
+        while (in_buffer.len() as u64) < size {
+            reader.read_buf(&mut in_buffer).await.unwrap();
         }
-    });
+        let size = usize::try_from(size).unwrap();
+        let response: Response = postcard::from_bytes(&in_buffer[..size])?;
+        match response.data {
+            Res::Found { data } => {
+                println!("response size: {}", data.len());
+            }
+            Res::NotFound => {
+                bail!("data not found");
+            }
+        }
+    }
 
-    let mut stdout = tokio::io::sink();
-    let _ = tokio::io::copy(&mut receive_stream, &mut stdout).await;
-
-    println!("echo roundtrip: {}ms", now.elapsed().as_millis());
+    println!("elapsed: {}ms", now.elapsed().as_millis());
 
     Ok(())
 }
@@ -53,27 +104,75 @@ async fn main_server() -> Result<()> {
     let keypair = libp2p_core::identity::Keypair::Ed25519(Keypair::generate());
     let server_config = libp2p_tls::make_server_config(&keypair)?;
     let tls = s2n_quic::provider::tls::rustls::Server::from(server_config);
-
+    let limits = s2n_quic::provider::limits::Default::default();
     let mut server = Server::builder()
         .with_tls(tls)?
         .with_io("127.0.0.1:4433")?
+        .with_limits(limits)?
         .start()
         .map_err(|e| anyhow!("{:?}", e))?;
 
+    let db: Arc<HashMap<String, Vec<u8>>> = Arc::new(
+        [
+            ("1MB".to_string(), vec![1u8; 1024 * 1024 * 1]),
+            ("10MB".to_string(), vec![1u8; 1024 * 1024 * 10]),
+            ("100MB".to_string(), vec![1u8; 1024 * 1024 * 100]),
+        ]
+        .into_iter()
+        .collect(),
+    );
+
     while let Some(mut connection) = server.accept().await {
-        // spawn a new task for the connection
+        let db = db.clone();
         tokio::spawn(async move {
-            eprintln!("Connection accepted from {:?}", connection.remote_addr());
+            println!("Connection accepted from {:?}", connection.remote_addr());
 
-            while let Ok(Some(mut stream)) = connection.accept_bidirectional_stream().await {
-                // spawn a new task for the stream
+            while let Ok(Some(stream)) = connection.accept_bidirectional_stream().await {
+                let db = db.clone();
                 tokio::spawn(async move {
-                    eprintln!("Stream opened from {:?}", stream.connection().remote_addr());
+                    println!("Stream opened from {:?}", stream.connection().remote_addr());
+                    let (mut reader, mut writer) = stream.split();
+                    let mut out_buffer = BytesMut::zeroed(1024);
+                    let mut in_buffer = BytesMut::zeroed(1024);
+                    let mut lp_buffer = [0u8; 10];
 
-                    // echo any data back to the stream
-                    while let Ok(Some(data)) = stream.receive().await {
-                        stream.send(data).await.expect("stream should be open");
+                    // read length prefix
+                    while let Ok(size) = unsigned_varint::aio::read_u64(&mut reader).await {
+                        // read next message
+                        in_buffer.clear();
+                        while (in_buffer.len() as u64) < size {
+                            reader.read_buf(&mut in_buffer).await.unwrap();
+                        }
+                        let size = usize::try_from(size).unwrap();
+
+                        // decode next message
+                        let request: Request = postcard::from_bytes(&in_buffer[..size]).unwrap();
+                        let data = if let Some(data) = db.get(&request.name) {
+                            Res::Found { data: &data[..] }
+                        } else {
+                            Res::NotFound
+                        };
+
+                        let response = Response {
+                            id: request.id,
+                            data,
+                        };
+
+                        out_buffer.clear();
+                        if out_buffer.len() < 20 + response.data.len() {
+                            out_buffer.resize(20 + response.data.len(), 0u8);
+                        }
+                        let used = postcard::to_slice(&response, &mut out_buffer).unwrap();
+
+                        let lp = unsigned_varint::encode::u64(used.len() as u64, &mut lp_buffer);
+                        writer.write_all(lp).await.unwrap();
+
+                        if let Err(e) = writer.write_all(used).await {
+                            eprintln!("failed to write response: {:?}", e);
+                        }
                     }
+
+                    println!("Disconnected");
                 });
             }
         });
@@ -82,7 +181,7 @@ async fn main_server() -> Result<()> {
     Ok(())
 }
 
-#[tokio::main]
+#[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<()> {
     let args: Vec<String> = env::args().collect();
     if args.len() < 2 {
@@ -91,9 +190,9 @@ async fn main() -> Result<()> {
 
     match args[1].as_str() {
         "client" => {
-            let source = PathBuf::from(&args[2]);
-            println!("Sending: {}", source.display());
-            main_client(source).await?
+            let name = &args[2];
+            println!("Sending: {}", name);
+            main_client(name).await?
         }
         "server" => main_server().await?,
         _ => bail!("unknown argument: {}", &args[0]),

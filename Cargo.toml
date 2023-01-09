@@ -5,7 +5,12 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0.68"
+bytes = "1.3.0"
+futures = "0.3.25"
 libp2p-core = { version = "0.38.0", features = [] }
 libp2p-tls = "0.1.0-alpha"
+postcard = { version = "1.0.2", default-features = false, features = ["alloc", "use-std"] }
 s2n-quic = { version = "1.14.0", default-features = false, features = [ "provider-tls-rustls", "provider-address-token-default" ] }
+serde = { version = "1.0.152", features = ["derive"] }
 tokio = { version = "1.24.1", features = ["full"] }
+unsigned-varint = { version = "0.7.1", features = ["futures"] }
