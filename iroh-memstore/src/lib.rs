@@ -138,7 +138,7 @@ impl MemStore {
                     }
                     _ = interval.tick() => {
                         let msg = WatchResponse { version: VERSION.to_string() };
-                        if let Err(_) = sink.send(msg.into()).await {
+                        if sink.send(msg.into()).await.is_err() {
                             trace!("WatchRequest response stream closed");
                         }
                     }

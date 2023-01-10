@@ -101,7 +101,7 @@ pub async fn create_server_channel<S: Service>(
                 let mut addr_iter = name.to_socket_addrs()?;
                 addr_iter
                     .next()
-                    .ok_or(anyhow!("No addrs resolved for IrpcLookup"))
+                    .ok_or_else(|| anyhow!("No addrs resolved for IrpcLookup"))
             })
             .await??;
             let channel = http2::ServerChannel::serve(&addr)?;
