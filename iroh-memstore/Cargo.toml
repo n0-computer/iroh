@@ -17,6 +17,7 @@ cid.workspace = true
 futures.workspace = true
 iroh-rpc-client.workspace = true
 iroh-rpc-types.workspace = true
+libipld.workspace = true
 quic-rpc.workspace = true
 tokio.workspace = true
 tracing.workspace = true
