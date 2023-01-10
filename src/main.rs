@@ -88,28 +88,39 @@ async fn main_client(hash: bao::Hash) -> Result<()> {
                     bail!("size too large: {} > {}", size, MAX_DATA_SIZE);
                 }
 
-                let limit_reader = reader; // .take(size as u64);
+                let limit_reader = reader;
                 let bridge = tokio_util::io::SyncIoBridge::new(limit_reader);
                 let (send, recv) = tokio::sync::oneshot::channel();
                 std::thread::spawn(move || {
-                    let mut decoder = bao::decode::Decoder::new(bridge, &hash);
-                    let mut data = Vec::with_capacity(size); // TODO: do not overallocate;
+                    let pb = indicatif::ProgressBar::new(size as u64);
+
+                    let decoder = bao::decode::Decoder::new(bridge, &hash);
+                    let mut data = Vec::with_capacity(size);
+                    let mut decoder = pb.wrap_read(decoder);
+
                     if let Err(err) = decoder.read_to_end(&mut data) {
                         eprintln!("failed to read all data: {:?}", err);
                     } else {
                         // print stats
-
+                        assert_eq!(
+                            size,
+                            data.len(),
+                            "expected {} bytes, got {} bytes",
+                            size,
+                            data.len()
+                        );
+                        pb.set_position(data.len() as u64);
                         let data_len = size;
                         let elapsed = now.elapsed().as_millis();
                         let elapsed_s = elapsed as f64 / 1000.;
                         let data_len_bit = data_len * 8;
                         let mbits = data_len_bit as f64 / (1000. * 1000.) / elapsed_s;
-                        println!(
+                        pb.println(format!(
                             "Data size: {}MiB\nTime Elapsed: {:.4}s\n{:.2}MBit/s",
                             data_len / 1024 / 1024,
                             elapsed_s,
                             mbits
-                        );
+                        ));
                     }
 
                     send.send(()).ok();
