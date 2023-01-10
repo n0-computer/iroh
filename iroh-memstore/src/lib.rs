@@ -245,3 +245,41 @@ impl MemStore {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use cid::multihash::Multihash;
+    use iroh_rpc_client::StoreClient;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn test_in_mem() {
+        let addr = StoreAddr::new_mem();
+        let handle = MemStore::spawn(addr.clone()).await.unwrap();
+
+        let client = StoreClient::new(addr).await.unwrap();
+
+        let version = client.version().await.unwrap();
+        assert_eq!(version, VERSION);
+
+        let blob0 = Bytes::from(&b"hello"[..]);
+        let hash0 = Multihash::from_bytes(&blob0).unwrap();
+        let cid0 = Cid::new_v0(hash0).unwrap();
+        let blob1 = Bytes::from(&b"world"[..]);
+        let hash1 = Multihash::from_bytes(&blob1).unwrap();
+        let cid1 = Cid::new_v0(hash1).unwrap();
+        let links0 = vec![cid1];
+
+        client.put(cid0, blob0.clone(), links0).await.unwrap();
+        client.put(cid1, blob1, vec![]).await.unwrap();
+
+        let blob = client.get(cid0).await.unwrap();
+        assert_eq!(blob.unwrap(), blob0);
+
+        let has = client.has(cid1).await.unwrap();
+        assert!(has);
+
+        handle.shutdown().await.unwrap();
+    }
+}
