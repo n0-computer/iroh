@@ -44,6 +44,8 @@ pub struct MemStoreHandle {
 
 impl MemStoreHandle {
     /// Shuts the the [`MemStore`] task gracefully.
+    ///
+    /// The returned [`JoinHandle`] can be awaited to wait for completion of the server.
     pub fn shutdown(self) -> JoinHandle<()> {
         // Failing to send the shutdown signal means the task already died somehow.  We can
         // still return the JoinHandle which should complete when awaited.
