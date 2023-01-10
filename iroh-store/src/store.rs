@@ -548,7 +548,7 @@ impl Store {
 
 #[cfg(test)]
 mod tests {
-    use std::str::FromStr;
+    use std::{str::FromStr, sync::Mutex};
 
     use super::*;
 
@@ -556,10 +556,10 @@ mod tests {
     use iroh_rpc_client::Config as RpcClientConfig;
 
     use cid::multihash::{Code, MultihashDigest};
-    use libipld::{/*cbor::DagCborCodec,*/ prelude::Encode, /*Ipld,*/ IpldCodec};
+    use libipld::{/*cbor::DagCborCodec,*/ prelude::{Encode, Codec}, /*Ipld,*/ IpldCodec, Ipld, cbor::DagCborCodec};
     use tempfile::TempDir;
     const RAW: u64 = 0x55;
-    // const DAG_CBOR: u64 = 0x71;
+    const DAG_CBOR: u64 = 0x71;
 
     #[tokio::test]
     async fn test_basics() {
@@ -753,7 +753,6 @@ mod tests {
         Ok(())
     }
 
-    /*
     #[tokio::test]
     async fn test_add_consistency() -> anyhow::Result<()> {
         use rayon::prelude::*;
@@ -777,10 +776,9 @@ mod tests {
             workers
                 .par_iter()
                 .map(|_| {
-                    let txn = store.inner.content.begin_write()?;
                     let (cid, data, links) = branch.clone();
                     let t = mutex.lock().unwrap();
-                    store.put(cid, &data, links)?;
+                    store.put(cid, data, links)?;
                     drop(t);
                     anyhow::Ok(())
                 })
@@ -788,7 +786,7 @@ mod tests {
         }
         assert_eq!(Vec::<String>::new(), store.consistency_check()?);
         Ok(())
-    }*/
+    }
 
     #[tokio::test]
     async fn test_put_many_repeat_ids() -> anyhow::Result<()> {
