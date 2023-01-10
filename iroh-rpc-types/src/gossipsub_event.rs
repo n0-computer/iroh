@@ -4,15 +4,6 @@ use libp2p::{
 };
 use serde::{Deserialize, Serialize};
 
-#[allow(clippy::large_enum_variant)]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum NetworkEvent {
-    PeerConnected(PeerId),
-    PeerDisconnected(PeerId),
-    Gossipsub(GossipsubEvent),
-    CancelLookupQuery(PeerId),
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum GossipsubEvent {
     Subscribed {
@@ -30,6 +21,8 @@ pub enum GossipsubEvent {
         id: MessageId,
         #[serde(with = "GossipsubMessageDef")]
         message: GossipsubMessage,
+        #[serde(with = "TopicHashDef")]
+        topic: TopicHash,
     },
 }
 

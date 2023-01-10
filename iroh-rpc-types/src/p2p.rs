@@ -9,7 +9,7 @@ use quic_rpc::{
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-use crate::network_event::NetworkEvent;
+use crate::GossipsubEvent;
 use crate::{RpcResult, VersionRequest, VersionResponse, WatchRequest, WatchResponse};
 
 pub type P2pAddr = super::addr::Addr<P2pService>;
@@ -146,14 +146,6 @@ pub struct LookupResponse {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct NetworkEventsRequest;
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct NetworkEventsResponse {
-    pub event: NetworkEvent,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
 pub struct GossipsubAddExplicitPeerRequest {
     pub peer_id: PeerId,
 }
@@ -202,7 +194,7 @@ pub struct GossipsubSubscribeRequest {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct GossipsubSubscribeResponse {
-    pub was_subscribed: bool,
+    pub event: GossipsubEvent,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -239,7 +231,6 @@ pub enum P2pRequest {
     PeerDisconnect(DisconnectRequest),
     Lookup(LookupRequest),
     LookupLocal(LookupLocalRequest),
-    NetworkEvents(NetworkEventsRequest),
     GossipsubAddExplicitPeer(GossipsubAddExplicitPeerRequest),
     GossipsubAllMeshPeers(GossipsubAllMeshPeersRequest),
     GossipsubAllPeers(GossipsubAllPeersRequest),
@@ -265,11 +256,10 @@ pub enum P2pResponse {
     GetListeningAddrs(RpcResult<GetListeningAddrsResponse>),
     GetPeers(RpcResult<GetPeersResponse>),
     Lookup(RpcResult<LookupResponse>),
-    NetworkEvents(Box<NetworkEventsResponse>),
     GossipsubPeers(RpcResult<GossipsubPeersResponse>),
     GossipsubAllPeers(RpcResult<GossipsubAllPeersResponse>),
     GossipsubPublish(RpcResult<GossipsubPublishResponse>),
-    GossipsubSubscribe(RpcResult<GossipsubSubscribeResponse>),
+    GossipsubSubscribe(Box<GossipsubSubscribeResponse>),
     GossipsubTopics(RpcResult<GossipsubTopicsResponse>),
     GossipsubUnsubscribe(RpcResult<GossipsubUnsubscribeResponse>),
     LocalPeerId(RpcResult<LocalPeerIdResponse>),
@@ -350,14 +340,6 @@ impl RpcMsg<P2pService> for LookupLocalRequest {
     type Response = RpcResult<LookupResponse>;
 }
 
-impl Msg<P2pService> for NetworkEventsRequest {
-    type Response = Box<NetworkEventsResponse>;
-
-    type Update = Self;
-
-    type Pattern = ServerStreaming;
-}
-
 impl RpcMsg<P2pService> for GossipsubAddExplicitPeerRequest {
     type Response = RpcResult<()>;
 }
@@ -382,8 +364,12 @@ impl RpcMsg<P2pService> for GossipsubTopicsRequest {
     type Response = RpcResult<GossipsubTopicsResponse>;
 }
 
-impl RpcMsg<P2pService> for GossipsubSubscribeRequest {
-    type Response = RpcResult<GossipsubSubscribeResponse>;
+impl Msg<P2pService> for GossipsubSubscribeRequest {
+    type Response = Box<GossipsubSubscribeResponse>;
+
+    type Update = Self;
+
+    type Pattern = ServerStreaming;
 }
 
 impl RpcMsg<P2pService> for GossipsubUnsubscribeRequest {

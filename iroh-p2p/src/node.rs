@@ -25,6 +25,7 @@ use libp2p::ping::Result as PingResult;
 use libp2p::swarm::dial_opts::{DialOpts, PeerCondition};
 use libp2p::swarm::{ConnectionHandler, IntoConnectionHandler, NetworkBehaviour, SwarmEvent};
 use libp2p::{PeerId, Swarm};
+use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio::sync::oneshot::{self, Sender as OneShotSender};
 use tokio::task::JoinHandle;
@@ -37,12 +38,21 @@ use crate::keys::{Keychain, Storage};
 use crate::providers::Providers;
 use crate::rpc::{P2p, ProviderRequestKey};
 use crate::swarm::build_swarm;
+use crate::GossipsubEvent;
 use crate::{
     behaviour::{Event, NodeBehaviour},
     rpc::{self, RpcMessage},
     Config,
 };
-use crate::{GossipsubEvent, NetworkEvent};
+
+#[allow(clippy::large_enum_variant)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum NetworkEvent {
+    PeerConnected(PeerId),
+    PeerDisconnected(PeerId),
+    Gossipsub(GossipsubEvent),
+    CancelLookupQuery(PeerId),
+}
 
 pub struct Node<KeyStorage: Storage> {
     swarm: Swarm<NodeBehaviour>,
@@ -668,10 +678,12 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                     message,
                 } = e
                 {
+                    let topic = message.topic.clone();
                     self.emit_network_event(NetworkEvent::Gossipsub(GossipsubEvent::Message {
                         from: propagation_source,
                         id: message_id,
                         message,
+                        topic,
                     }));
                 } else if let libp2p::gossipsub::GossipsubEvent::Subscribed { peer_id, topic } = e {
                     self.emit_network_event(NetworkEvent::Gossipsub(GossipsubEvent::Subscribed {
@@ -940,7 +952,11 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                             .map_err(|_| anyhow!("sender dropped"))?;
                     }
                     rpc::GossipsubMessage::Subscribe(response_channel, topic_hash) => {
-                        let res = gossipsub.subscribe(&IdentTopic::new(topic_hash.into_string()));
+                        let t = IdentTopic::new(topic_hash.into_string());
+                        let res = gossipsub
+                            .subscribe(&t)
+                            .map(|_| self.network_events())
+                            .map_err(|e| anyhow::Error::new(e));
                         response_channel
                             .send(res)
                             .map_err(|_| anyhow!("sender dropped"))?;
@@ -1019,10 +1035,6 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
                             .ok();
                     });
                 }
-            }
-            RpcMessage::NetworkEvents(response_channel) => {
-                let r = self.network_events();
-                response_channel.send(r).ok();
             }
             RpcMessage::Shutdown => {
                 return Ok(true);

@@ -1,15 +1,35 @@
+mod data;
 mod iroh;
-mod p2p_node;
 mod receiver;
 mod sender;
 
 use cid::Cid;
+use libp2p::{Multiaddr, PeerId};
 use serde::{Deserialize, Serialize};
 
 pub use crate::iroh::build as build_iroh;
-pub use crate::p2p_node::Ticket;
-pub use crate::receiver::{ProgressEvent, Receiver, Transfer as ReceiverTransfer};
-pub use crate::sender::{Sender, Transfer as SenderTransfer};
+pub use crate::receiver::{ProgressEvent, Receiver};
+pub use crate::sender::Sender;
+
+/// Ticket describing the peer, their addresses, and the topic
+/// on which to discuss the data transfer
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Ticket {
+    pub peer_id: PeerId,
+    pub addrs: Vec<Multiaddr>,
+    pub topic: String,
+}
+
+impl Ticket {
+    pub fn as_bytes(&self) -> Vec<u8> {
+        bincode::serialize(self).expect("failed to serialize")
+    }
+
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
+        let ticket = bincode::deserialize(bytes)?;
+        Ok(ticket)
+    }
+}
 
 /// Messages sent from the sender.
 #[derive(Debug, Clone, Serialize, Deserialize)]

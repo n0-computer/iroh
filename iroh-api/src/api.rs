@@ -18,7 +18,7 @@ use iroh_util::{iroh_config_path, make_config};
 use relative_path::RelativePathBuf;
 use tokio::io::{AsyncRead, AsyncReadExt};
 
-use crate::store::StoreApi;
+use crate::store::add_blocks_to_store;
 use crate::PeerId;
 
 /// API to interact with an iroh system.
@@ -117,15 +117,6 @@ impl Api {
     pub fn p2p(&self) -> Result<P2pApi> {
         let p2p_client = self.client.try_p2p()?;
         Ok(P2pApi::new(p2p_client))
-    }
-
-    /// Gives access to the StoreApi, so you can manually put data into the store or check if the
-    /// store has a given block via its [`Cid`]
-    ///
-    /// The store is the iroh database, where we store files
-    pub fn store(&self) -> Result<StoreApi> {
-        let store_client = self.client.try_store()?;
-        Ok(StoreApi::new(store_client))
     }
 
     /// High level get, equivalent of CLI `iroh get`.
@@ -231,8 +222,9 @@ impl Api {
             }),
         };
 
-        let store = self.store()?;
-        Ok(Box::pin(store.put_blocks(blocks).await))
+        Ok(Box::pin(
+            add_blocks_to_store(Some(self.client.clone()), blocks).await,
+        ))
     }
 
     /// The `add` method encodes the entry into a DAG and adds the resulting
