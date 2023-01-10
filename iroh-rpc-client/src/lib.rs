@@ -1,19 +1,24 @@
+use std::net::ToSocketAddrs;
+
+use anyhow::{anyhow, Result};
+use iroh_rpc_types::{gateway::GatewayService, p2p::P2pService, store::StoreService, Addr};
+use quic_rpc::{
+    transport::{combined, http2, CombinedChannelTypes, Http2ChannelTypes, MemChannelTypes},
+    RpcClient, RpcServer, Service,
+};
+
+pub use self::config::Config;
+pub use client::Client;
+pub use network::{Lookup, P2pClient};
+pub use status::{ClientStatus, ServiceStatus, ServiceType, StatusType, HEALTH_POLL_WAIT};
+pub use store::StoreClient;
+
 pub mod client;
 pub mod config;
 pub mod gateway;
 pub mod network;
 pub mod status;
 pub mod store;
-pub use self::config::Config;
-pub use client::Client;
-use iroh_rpc_types::{gateway::GatewayService, p2p::P2pService, store::StoreService, Addr};
-pub use network::{Lookup, P2pClient};
-use quic_rpc::{
-    transport::{combined, http2, CombinedChannelTypes, Http2ChannelTypes, MemChannelTypes},
-    RpcClient, RpcServer, Service,
-};
-pub use status::{ClientStatus, ServiceStatus, ServiceType, StatusType, HEALTH_POLL_WAIT};
-pub use store::StoreClient;
 
 /// The types of channels used by the client and server.
 pub type ChannelTypes = CombinedChannelTypes<Http2ChannelTypes, MemChannelTypes>;
@@ -77,4 +82,34 @@ pub async fn open_client<S: Service>(addr: Addr<S>) -> anyhow::Result<RpcClient<
             todo!()
         }
     }
+}
+
+/// Creates a new [`ServerChannel`] for the [`StoreService`].
+///
+/// [`ServerChannel`]: quic_rpc::ServerChannel
+pub async fn create_server_channel<S: Service>(
+    addr: Addr<S>,
+) -> Result<combined::ServerChannel<Http2ChannelTypes, MemChannelTypes, S::Req, S::Res>> {
+    let channel = match addr {
+        Addr::Irpc(addr) => {
+            let channel = http2::ServerChannel::serve(&addr)?;
+            combined::ServerChannel::new(Some(channel), None)
+        }
+        Addr::IrpcLookup(name) => {
+            // Only tries the first result, regardless of whether is succeeds or fails.
+            let addr = tokio::task::spawn_blocking(move || {
+                let mut addr_iter = name.to_socket_addrs()?;
+                addr_iter
+                    .next()
+                    .ok_or(anyhow!("No addrs resolved for IrpcLookup"))
+            })
+            .await??;
+            let channel = http2::ServerChannel::serve(&addr)?;
+            combined::ServerChannel::new(Some(channel), None)
+        }
+        Addr::Mem(server_channel, _client_channel) => {
+            combined::ServerChannel::new(None, Some(server_channel))
+        }
+    };
+    Ok(channel)
 }

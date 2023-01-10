@@ -11,6 +11,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::{RpcResult, VersionRequest, VersionResponse, WatchRequest, WatchResponse};
 
+/// An iRPC address for the [`StoreService`].
+///
+/// This allows communication with the iroh store service.  It can be either an in-memory
+/// address or a socket address for communication with other processes.
 pub type StoreAddr = super::addr::Addr<StoreService>;
 
 #[derive(Serialize, Deserialize)]

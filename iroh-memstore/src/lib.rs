@@ -6,26 +6,36 @@
 //!
 //! This store has no concurrency at all, all RPC requests are handled sequentially.
 
-use std::sync::{Arc, Mutex};
-
 use ahash::AHashMap;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use bytes::Bytes;
 use cid::Cid;
-use futures::stream::Stream;
-use iroh_rpc_client::{ChannelTypes, ServerSocket, StoreServer, HEALTH_POLL_WAIT};
+use futures::{SinkExt, StreamExt};
+use iroh_rpc_client::{create_server_channel, HEALTH_POLL_WAIT};
 use iroh_rpc_types::store::{
     GetLinksRequest, GetLinksResponse, GetRequest, GetResponse, GetSizeRequest, GetSizeResponse,
-    HasRequest, HasResponse, PutManyRequest, PutRequest, StoreAddr, StoreRequest, StoreService,
+    HasRequest, HasResponse, PutManyRequest, PutRequest, StoreAddr, StoreRequest, StoreResponse,
+    StoreService,
 };
-use iroh_rpc_types::{VersionRequest, VersionResponse, WatchRequest, WatchResponse};
-use quic_rpc::server::RpcServerError;
+use iroh_rpc_types::{VersionResponse, WatchResponse};
+use quic_rpc::transport::{combined, Http2ChannelTypes, MemChannelTypes};
+use quic_rpc::ServerChannel;
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, trace};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// The [`futures::Sink`] to send store RPC responses.
+type StoreSink = combined::SendSink<Http2ChannelTypes, MemChannelTypes, StoreResponse>;
+
+/// The [`futures::Stream`] to receive store RPC requests.
+type StoreSource = combined::RecvStream<Http2ChannelTypes, MemChannelTypes, StoreRequest>;
+
+/// Handle to the store task.
+///
+/// The [`MemStore`] is run as a tokio task running an iRPC server.  This handle allows you
+/// to gracefully shut this task down.
 #[derive(Debug)]
 pub struct MemStoreHandle {
     shutdown_tx: oneshot::Sender<()>,
@@ -33,6 +43,7 @@ pub struct MemStoreHandle {
 }
 
 impl MemStoreHandle {
+    /// Shuts the the [`MemStore`] task gracefully.
     pub fn shutdown(self) -> JoinHandle<()> {
         // Failing to send the shutdown signal means the task already died somehow.  We can
         // still return the JoinHandle which should complete when awaited.
@@ -41,170 +52,194 @@ impl MemStoreHandle {
     }
 }
 
-pub async fn spawn(addr: StoreAddr) -> Result<MemStoreHandle> {
-    let server = iroh_rpc_client::create_server::<StoreService>(addr).await?;
-    let (shutdown_tx, mut shutdown_rx) = oneshot::channel();
-    let mut store = MemStore::new();
-    let handle = tokio::spawn(async move {
-        loop {
-            tokio::select! {
-                biased;
-                _ = &mut shutdown_rx => {
-                    info!("Shutting down MemStore");
-                    break
-                },
-                req = server.accept_one() => store.dispatch_request(&server, req).await,
-            };
-        }
-        // TODO: The quick-rpc RpcServer needs to be improved so it can be shut down without
-        // dropping and we can await the completion.
-    });
-    Ok(MemStoreHandle {
-        shutdown_tx,
-        handle,
-    })
-}
-
+/// A single block to be stored.
 #[derive(Debug, Default, Clone)]
-struct MemStore {
-    inner: Arc<Mutex<InnerMemStore>>,
+struct StoreBlock {
+    blob: Bytes,
+    links: Vec<Cid>,
 }
 
-#[derive(Debug, Default)]
-struct InnerMemStore {
-    data: AHashMap<Cid, Bytes>,
-    links: AHashMap<Cid, Vec<Cid>>,
+/// An in-memory store for iroh.
+///
+/// To use this store use [`MemStore::spawn`] which will spawn a tokio task running the
+/// [`StoreService`] iRPC server.
+#[derive(Debug, Default, Clone)]
+pub struct MemStore {
+    blocks: AHashMap<Cid, StoreBlock>,
 }
 
 impl MemStore {
-    fn new() -> Self {
-        Self::default()
-    }
-
-    async fn dispatch_request(
-        &mut self,
-        server: &StoreServer,
-        request: Result<(StoreRequest, ServerSocket<StoreService>), RpcServerError<ChannelTypes>>,
-    ) {
-        let res = match request {
-            Ok((req, chan)) => match req {
-                StoreRequest::Watch(req) => {
-                    server
-                        .server_streaming(req, chan, self.clone(), MemStore::watch)
-                        .await
-                }
-                StoreRequest::Version(req) => {
-                    server.rpc(req, chan, self.clone(), MemStore::version).await
-                }
-                StoreRequest::Put(req) => {
-                    server
-                        .rpc_map_err(req, chan, self.clone(), MemStore::put)
-                        .await
-                }
-                StoreRequest::PutMany(req) => {
-                    server
-                        .rpc_map_err(req, chan, self.clone(), MemStore::put_many)
-                        .await
-                }
-                StoreRequest::Get(req) => {
-                    server
-                        .rpc_map_err(req, chan, self.clone(), MemStore::get)
-                        .await
-                }
-                StoreRequest::Has(req) => {
-                    server
-                        .rpc_map_err(req, chan, self.clone(), MemStore::has)
-                        .await
-                }
-                StoreRequest::GetLinks(req) => {
-                    server
-                        .rpc_map_err(req, chan, self.clone(), MemStore::get_links)
-                        .await
-                }
-                StoreRequest::GetSize(req) => {
-                    server
-                        .rpc_map_err(req, chan, self.clone(), MemStore::get_size)
-                        .await
-                }
-            },
-            Err(err) => {
-                // Errors happen, e.g. when the client drops the request.
-                debug!("Store rpc accept error: {err}");
-                Err(RpcServerError::EarlyClose)
-            }
-        };
-        if let Err(err) = res {
-            // TODO: what should we do here?
-            error!("Failed processing MemStore request: {err}");
-        }
-    }
-
-    #[tracing::instrument(skip(self))]
-    fn watch(self, _: WatchRequest) -> impl Stream<Item = WatchResponse> {
-        async_stream::stream! {
+    /// Spawns a new tokio task running the iRPC server for the [`StoreService`].
+    pub async fn spawn(addr: StoreAddr) -> Result<MemStoreHandle> {
+        let accept_channel = create_server_channel::<StoreService>(addr).await?;
+        let (shutdown_tx, mut shutdown_rx) = oneshot::channel();
+        let mut store = MemStore::default();
+        let handle = tokio::spawn(async move {
             loop {
-                yield WatchResponse { version: VERSION.to_string() };
-                tokio::time::sleep(HEALTH_POLL_WAIT).await;
+                tokio::select! {
+                    biased;
+                    _ = &mut shutdown_rx => {
+                        info!("Shutting down MemStore");
+                        break;
+                    }
+                    res = accept_channel.accept_bi() => {
+                        match res {
+                            Ok((sink, stream)) => {
+                                if let Err(err) = store.dispatch(sink, stream).await {
+                                    error!("Error handling request: {err:#}");
+                                }
+                            }
+                            Err(_) => debug!("Remote closed connection during accept"),
+                        }
+                    }
+                }
             }
-        }
+            // TODO: Make this return a Result.
+            // Ok(())
+        });
+        Ok(MemStoreHandle {
+            shutdown_tx,
+            handle,
+        })
     }
 
-    #[tracing::instrument(skip(self))]
-    async fn version(self, _: VersionRequest) -> VersionResponse {
-        VersionResponse {
+    async fn dispatch(&mut self, sink: StoreSink, mut source: StoreSource) -> Result<()> {
+        let Some(request) = source.next().await else {
+            debug!("Remote closed connection before first request");
+            return Ok(());
+    };
+        let request = request.context("Failed to read request")?;
+        match request {
+            StoreRequest::Watch(_) => self.handle_watch(sink, source)?,
+            StoreRequest::Version(_) => self.handle_version(sink, source).await?,
+            StoreRequest::Put(req) => self.handle_put(req, sink, source).await?,
+            StoreRequest::PutMany(req) => self.handle_put_many(req, sink, source).await?,
+            StoreRequest::Get(req) => self.handle_get(req, sink, source).await?,
+            StoreRequest::Has(req) => self.handle_has(req, sink, source).await?,
+            StoreRequest::GetLinks(req) => self.handle_get_links(req, sink, source).await?,
+            StoreRequest::GetSize(req) => self.handle_get_size(req, sink, source).await?,
+        }
+        Ok(())
+    }
+
+    /// Spawns a task regularly sending [`WatchResponse`] messages to the sink.
+    fn handle_watch(&self, mut sink: StoreSink, mut source: StoreSource) -> Result<()> {
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(HEALTH_POLL_WAIT);
+            loop {
+                // TODO: I really want to close the source half here instead of this select.
+                tokio::select! {
+                    biased;
+                    _ = source.next() => {
+                        error!("WatchRequest request received second message");
+                        break;
+                    }
+                    _ = interval.tick() => {
+                        let msg = WatchResponse { version: VERSION.to_string() };
+                        if let Err(_) = sink.send(msg.into()).await {
+                            trace!("WatchRequest response stream closed");
+                        }
+                    }
+                };
+            }
+        });
+        Ok(())
+    }
+
+    async fn handle_version(&self, mut sink: StoreSink, _source: StoreSource) -> Result<()> {
+        // TODO: Generally it would be nice to close the source half before responding.
+        let response = VersionResponse {
             version: VERSION.to_string(),
-        }
-    }
-
-    #[tracing::instrument(skip(self, req))]
-    async fn put(self, req: PutRequest) -> Result<()> {
-        let mut inner = self.inner.lock().unwrap();
-        inner.data.insert(req.cid, req.blob);
-        inner.links.insert(req.cid, req.links);
+        };
+        sink.send(response.into()).await?;
         Ok(())
     }
 
-    #[tracing::instrument(skip(self, req))]
-    async fn put_many(self, req: PutManyRequest) -> Result<()> {
-        let mut inner = self.inner.lock().unwrap();
-        for single_req in req.blocks {
-            inner.data.insert(single_req.cid, single_req.blob);
-            inner.links.insert(single_req.cid, single_req.links);
-        }
+    async fn handle_put(
+        &mut self,
+        request: PutRequest,
+        mut sink: StoreSink,
+        _source: StoreSource,
+    ) -> Result<()> {
+        let PutRequest { cid, blob, links } = request;
+        let block = StoreBlock { blob, links };
+        self.blocks.insert(cid, block);
+
+        let response = Ok(());
+        sink.send(response.into()).await?;
         Ok(())
     }
 
-    #[tracing::instrument(skip(self))]
-    async fn get(self, req: GetRequest) -> Result<GetResponse> {
-        let inner = self.inner.lock().unwrap();
-        let data = inner.data.get(&req.cid);
-        Ok(GetResponse {
-            data: data.cloned(),
-        })
+    async fn handle_put_many(
+        &mut self,
+        request: PutManyRequest,
+        mut sink: StoreSink,
+        _source: StoreSource,
+    ) -> Result<()> {
+        for req in request.blocks {
+            let PutRequest { cid, blob, links } = req;
+            let block = StoreBlock { blob, links };
+            self.blocks.insert(cid, block);
+        }
+
+        let response = Ok(());
+        sink.send(response.into()).await?;
+        Ok(())
     }
 
-    #[tracing::instrument(skip(self))]
-    async fn has(self, req: HasRequest) -> Result<HasResponse> {
-        let inner = self.inner.lock().unwrap();
-        let has = inner.data.get(&req.cid).is_some();
-        Ok(HasResponse { has })
+    async fn handle_get(
+        &mut self,
+        request: GetRequest,
+        mut sink: StoreSink,
+        _source: StoreSource,
+    ) -> Result<()> {
+        let block = self.blocks.get(&request.cid);
+
+        let response = Ok(GetResponse {
+            data: block.map(|b| b.blob.clone()),
+        });
+        sink.send(response.into()).await?;
+        Ok(())
     }
 
-    #[tracing::instrument(skip(self))]
-    async fn get_links(self, req: GetLinksRequest) -> Result<GetLinksResponse> {
-        let inner = self.inner.lock().unwrap();
-        let links = inner.links.get(&req.cid);
-        Ok(GetLinksResponse {
-            links: links.cloned(),
-        })
+    async fn handle_has(
+        &mut self,
+        request: HasRequest,
+        mut sink: StoreSink,
+        _source: StoreSource,
+    ) -> Result<()> {
+        let has = self.blocks.get(&request.cid).is_some();
+
+        let response = Ok(HasResponse { has });
+        sink.send(response.into()).await?;
+        Ok(())
     }
 
-    #[tracing::instrument(skip(self))]
-    async fn get_size(self, req: GetSizeRequest) -> Result<GetSizeResponse> {
-        let inner = self.inner.lock().unwrap();
-        let size = inner.data.get(&req.cid).map(|b| b.len());
-        Ok(GetSizeResponse {
-            size: size.map(|s| s.try_into().unwrap()),
-        })
+    async fn handle_get_links(
+        &mut self,
+        request: GetLinksRequest,
+        mut sink: StoreSink,
+        _source: StoreSource,
+    ) -> Result<()> {
+        let block = self.blocks.get(&request.cid);
+        let links = block.map(|b| b.links.clone());
+
+        let response = Ok(GetLinksResponse { links });
+        sink.send(response.into()).await?;
+        Ok(())
+    }
+
+    async fn handle_get_size(
+        &mut self,
+        request: GetSizeRequest,
+        mut sink: StoreSink,
+        _source: StoreSource,
+    ) -> Result<()> {
+        let block = self.blocks.get(&request.cid);
+        let size: Option<u64> = block.map(|b| b.blob.len().try_into().unwrap());
+
+        let response = Ok(GetSizeResponse { size });
+        sink.send(response.into()).await?;
+        Ok(())
     }
 }

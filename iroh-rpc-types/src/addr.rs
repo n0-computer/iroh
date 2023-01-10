@@ -7,12 +7,24 @@ use std::{
     str::FromStr,
 };
 
-/// An address. This can be either a memory address, already containing the channel, or a network
+/// An iRPC address for an iroh service.
+///
+/// This can be either a memory address, already containing the channel, or a network
 /// address which will have to be opened.
 #[derive(SerializeDisplay, DeserializeFromStr)]
 pub enum Addr<S: Service> {
+    /// A socket address to listen on.
+    ///
+    /// Note that this can still contain OS-level wildcards like `0.0.0.0` or port `0` and
+    /// thus may not correspond directly to the address the service will be listening on.
     Irpc(SocketAddr),
+    /// A socket address using DNS resolution.
+    ///
+    /// The first address returned by DNS resolution will be used.
     IrpcLookup(String),
+    /// An in-memory address for the service.
+    ///
+    /// This is a pair of channels for fast in-memory communication between services.
     Mem(
         mem::ServerChannel<S::Req, S::Res>,
         mem::ClientChannel<S::Res, S::Req>,
