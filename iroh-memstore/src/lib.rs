@@ -157,8 +157,6 @@ impl MemStore {
         Ok(())
     }
 
-    // async fn handle_rpc<S, M>(request: M, sink: )
-
     async fn handle_put(
         &mut self,
         request: PutRequest,
