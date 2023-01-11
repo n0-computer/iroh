@@ -71,6 +71,7 @@ impl Sender {
             let mut root_cid = None;
             while let Some(part) = parts.next().await {
                 let (cid, bytes, links) = part?.into_parts();
+                let bytes = bytes.load();
                 num_parts += 1;
                 root_cid = Some(cid);
                 store.put(cid, bytes, links).await?;

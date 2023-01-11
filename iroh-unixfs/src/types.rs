@@ -129,14 +129,15 @@ impl From<BytesWithProvenance> for Data {
 }
 
 impl Data {
-    fn len(&self) -> usize {
+    pub fn size(&self) -> usize {
         match self {
             Data::Blob(b) => b.len(),
             Data::Reference(r) => r.len,
         }
     }
 
-    fn bytes(&self) -> Bytes {
+    /// load the data from disk, in case the block is a reference
+    pub fn load(&self) -> Bytes {
         match self {
             Data::Blob(b) => b.clone(),
             Data::Reference(r) => {
@@ -167,7 +168,11 @@ impl Block {
     }
 
     pub fn data(&self) -> Bytes {
-        self.data.bytes()
+        self.data.load()
+    }
+
+    pub fn size(&self) -> usize {
+        self.data.size()
     }
 
     pub fn links(&self) -> &[Cid] {
@@ -177,7 +182,7 @@ impl Block {
     pub fn raw_data_size(&self) -> Option<u64> {
         let codec = Codec::try_from(self.cid.codec()).unwrap();
         match codec {
-            Codec::Raw => Some(self.data.len() as u64),
+            Codec::Raw => Some(self.data.size() as u64),
             _ => None,
         }
     }
@@ -204,8 +209,8 @@ impl Block {
         Ok(())
     }
 
-    pub fn into_parts(self) -> (Cid, Bytes, Vec<Cid>) {
-        (self.cid, self.data(), self.links)
+    pub fn into_parts(self) -> (Cid, Data, Vec<Cid>) {
+        (self.cid, self.data, self.links)
     }
 }
 

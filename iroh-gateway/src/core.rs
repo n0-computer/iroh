@@ -224,6 +224,7 @@ mod tests {
         let mut parts = root_dir.encode();
         while let Some(part) = parts.next().await {
             let (cid, bytes, links) = part.unwrap().into_parts();
+            let bytes = bytes.load();
             cids.push(cid);
             store.put(cid, bytes, links).await.unwrap();
         }

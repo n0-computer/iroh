@@ -417,8 +417,10 @@ mod tests {
                 .expect("too many nodes in balanced tree stream")
                 .clone()
                 .into_parts();
+            let expect_bytes = expect_bytes.load();
             let node = node.expect("unexpected error in balanced tree stream");
             let (got_cid, got_bytes, _) = node.into_parts();
+            let got_bytes = got_bytes.load();
             let len = got_bytes.len() as u64;
             println!("node index {i}");
             assert_eq!(expect_cid, got_cid);

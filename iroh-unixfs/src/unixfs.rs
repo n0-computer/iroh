@@ -188,7 +188,7 @@ impl UnixfsNode {
                     cid::multihash::Code::Sha2_256.digest(&data.data),
                 );
                 let out = data.clone();
-                Block::new(cid, Data::Blob(out.data), links)
+                Block::new(cid, out.into(), links)
             }
             UnixfsNode::RawNode(node)
             | UnixfsNode::Directory(node)

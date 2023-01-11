@@ -31,7 +31,10 @@ impl Store for Client {
 
     async fn put_many(&self, blocks: Vec<Block>) -> Result<()> {
         self.try_store()?
-            .put_many(blocks.into_iter().map(|x| x.into_parts()).collect())
+            .put_many(blocks.into_iter().map(|x| {
+                let (cid, data, links) = x.into_parts();
+                (cid, data.load(), links)
+            }).collect())
             .await
     }
 }
@@ -65,7 +68,7 @@ fn add_blocks_to_store_chunked<S: Store>(
     stream! {
         while let Some(block) = blocks.next().await {
             let block = block?;
-            let block_size = block.data().len() as u64 + block.links().len() as u64 * 128;
+            let block_size = block.size() as u64 + block.links().len() as u64 * 128;
             let cid = *block.cid();
             let raw_data_size = block.raw_data_size().unwrap_or_default();
             tracing::info!("adding chunk of {} bytes", chunk_size);
