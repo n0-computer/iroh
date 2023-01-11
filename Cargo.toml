@@ -19,7 +19,6 @@ members = [
   "iroh-unixfs",
   "iroh-store",
   "iroh-util",
-  "stores/*",
   "xtask",
 ]
 # even if all crates are set to edition 2021, we still need to force the
