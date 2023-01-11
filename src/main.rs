@@ -5,30 +5,42 @@ use bytes::{Bytes, BytesMut};
 use libp2p_core::identity::ed25519::Keypair;
 use s2n_quic::{client::Connect, Client, Server};
 use serde::{Deserialize, Serialize};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 const MAX_DATA_SIZE: usize = 1024 * 1024 * 1024;
 
 #[derive(Deserialize, Serialize, Debug, PartialEq, Clone)]
 struct Request {
     id: u64,
-    name: String,
+    /// blake3 hash
+    name: [u8; 32],
 }
 
 #[derive(Deserialize, Serialize, Debug, PartialEq, Clone)]
-struct Response {
+struct Response<'a> {
     id: u64,
-    data: Res,
+    #[serde(borrow)]
+    data: Res<'a>,
 }
 
 #[derive(Deserialize, Serialize, Debug, PartialEq, Clone)]
-enum Res {
+enum Res<'a> {
     NotFound,
     // If found, a stream of bao data is sent as next message.
     Found {
         /// The size of the coming data in bytes, raw content size.
         size: usize,
+        outboard: &'a [u8],
     },
+}
+
+impl Res<'_> {
+    fn len(&self) -> usize {
+        match self {
+            Self::Found { outboard, .. } => outboard.len(),
+            _ => 0,
+        }
+    }
 }
 
 async fn main_client(hash: bao::Hash) -> Result<()> {
@@ -54,18 +66,13 @@ async fn main_client(hash: bao::Hash) -> Result<()> {
 
     let req = Request {
         id: 1,
-        name: hash.to_hex().to_string(),
+        name: hash.into(),
     };
-    let mut bytes = BytesMut::zeroed(15 + req.name.len());
-    let used = postcard::to_slice(&req, &mut bytes)?;
 
-    // send length prefix
-    let mut buffer = [0u8; 10];
-    let lp = unsigned_varint::encode::u64(used.len() as u64, &mut buffer);
-    writer.write_all(lp).await?;
+    let mut out_buffer = BytesMut::zeroed(15 + req.name.len());
+    let used = postcard::to_slice(&req, &mut out_buffer)?;
 
-    // write message
-    writer.write_all(used).await?;
+    write_lp(&mut writer, used).await?;
 
     // read response
     {
@@ -77,56 +84,64 @@ async fn main_client(hash: bao::Hash) -> Result<()> {
         // read next message
         in_buffer.clear();
         while (in_buffer.len() as u64) < size {
-            reader.read_buf(&mut in_buffer).await.unwrap();
+            reader.read_buf(&mut in_buffer).await?;
         }
-        let size = usize::try_from(size).unwrap();
-        let response: Response = postcard::from_bytes(&in_buffer[..size])?;
+        let response_size = usize::try_from(size).unwrap();
+        let response: Response = postcard::from_bytes(&in_buffer[..response_size])?;
+        println!("read response of size {}", response_size);
         match response.data {
-            Res::Found { size } => {
+            Res::Found { size, outboard } => {
                 // Need to read the message now
                 if size > MAX_DATA_SIZE {
                     bail!("size too large: {} > {}", size, MAX_DATA_SIZE);
                 }
 
-                let limit_reader = reader;
-                let bridge = tokio_util::io::SyncIoBridge::new(limit_reader);
-                let (send, recv) = tokio::sync::oneshot::channel();
-                std::thread::spawn(move || {
-                    let pb = indicatif::ProgressBar::new(size as u64);
+                let outboard = outboard.to_vec();
 
-                    let decoder = bao::decode::Decoder::new(bridge, &hash);
-                    let mut data = Vec::with_capacity(size);
-                    let mut decoder = pb.wrap_read(decoder);
+                let pb = indicatif::ProgressBar::new(size as u64);
+                let mut wrapped_reader = pb.wrap_async_read(reader);
 
-                    if let Err(err) = decoder.read_to_end(&mut data) {
-                        eprintln!("failed to read all data: {:?}", err);
-                    } else {
-                        // print stats
-                        assert_eq!(
-                            size,
-                            data.len(),
-                            "expected {} bytes, got {} bytes",
-                            size,
-                            data.len()
-                        );
-                        pb.set_position(data.len() as u64);
-                        let data_len = size;
-                        let elapsed = now.elapsed().as_millis();
-                        let elapsed_s = elapsed as f64 / 1000.;
-                        let data_len_bit = data_len * 8;
-                        let mbits = data_len_bit as f64 / (1000. * 1000.) / elapsed_s;
-                        pb.println(format!(
-                            "Data size: {}MiB\nTime Elapsed: {:.4}s\n{:.2}MBit/s",
-                            data_len / 1024 / 1024,
-                            elapsed_s,
-                            mbits
-                        ));
-                    }
+                // TODO: avoid buffering
 
-                    send.send(()).ok();
-                });
+                // remove response buffered data
+                let _ = in_buffer.split_to(response_size);
+                while in_buffer.len() < size {
+                    wrapped_reader.read_buf(&mut in_buffer).await?;
+                }
 
-                recv.await?;
+                println!("received data {} bytes", in_buffer.len());
+                assert_eq!(
+                    size,
+                    in_buffer.len(),
+                    "expected {} bytes, got {} bytes",
+                    size,
+                    in_buffer.len()
+                );
+
+                let mut decoder = bao::decode::Decoder::new_outboard(
+                    std::io::Cursor::new(&in_buffer[..]),
+                    &*outboard,
+                    &hash,
+                );
+
+                {
+                    // Ignore the output, not needed
+                    let mut buf = [0u8; 1024];
+                    while decoder.read(&mut buf)? > 0 {}
+                }
+
+                // print stats
+                let data_len = size;
+                let elapsed = now.elapsed().as_millis();
+                let elapsed_s = elapsed as f64 / 1000.;
+                let data_len_bit = data_len * 8;
+                let mbits = data_len_bit as f64 / (1000. * 1000.) / elapsed_s;
+                pb.println(format!(
+                    "Data size: {}MiB\nTime Elapsed: {:.4}s\n{:.2}MBit/s",
+                    data_len / 1024 / 1024,
+                    elapsed_s,
+                    mbits
+                ));
             }
             Res::NotFound => {
                 bail!("data not found");
@@ -137,7 +152,18 @@ async fn main_client(hash: bao::Hash) -> Result<()> {
     Ok(())
 }
 
-async fn main_server() -> Result<()> {
+async fn write_lp<W: AsyncWrite + Unpin>(writer: &mut W, data: &[u8]) -> Result<()> {
+    // send length prefix
+    let mut buffer = [0u8; 10];
+    let lp = unsigned_varint::encode::u64(data.len() as u64, &mut buffer);
+    writer.write_all(lp).await?;
+
+    // write message
+    writer.write_all(data).await?;
+    Ok(())
+}
+
+async fn main_server(db: Arc<HashMap<bao::Hash, Data>>) -> Result<()> {
     let keypair = libp2p_core::identity::Keypair::Ed25519(Keypair::generate());
     let server_config = libp2p_tls::make_server_config(&keypair)?;
     let tls = s2n_quic::provider::tls::rustls::Server::from(server_config);
@@ -148,8 +174,6 @@ async fn main_server() -> Result<()> {
         .with_limits(limits)?
         .start()
         .map_err(|e| anyhow!("{:?}", e))?;
-
-    let db = create_db();
 
     while let Some(mut connection) = server.accept().await {
         let db = db.clone();
@@ -163,7 +187,6 @@ async fn main_server() -> Result<()> {
                     let (mut reader, mut writer) = stream.split();
                     let mut out_buffer = BytesMut::zeroed(1024);
                     let mut in_buffer = BytesMut::zeroed(1024);
-                    let mut lp_buffer = [0u8; 10];
 
                     // read length prefix
                     while let Ok(size) = unsigned_varint::aio::read_u64(&mut reader).await {
@@ -176,8 +199,15 @@ async fn main_server() -> Result<()> {
 
                         // decode next message
                         let request: Request = postcard::from_bytes(&in_buffer[..size]).unwrap();
-                        let (data, piece) = if let Some(data) = db.get(&request.name) {
-                            (Res::Found { size: data.len() }, Some(data.clone()))
+                        let name = bao::Hash::from(request.name);
+                        let (data, piece) = if let Some(data) = db.get(&name) {
+                            (
+                                Res::Found {
+                                    size: data.data.len(),
+                                    outboard: &data.outboard,
+                                },
+                                Some(data.clone()),
+                            )
                         } else {
                             (Res::NotFound, None)
                         };
@@ -187,26 +217,24 @@ async fn main_server() -> Result<()> {
                             data,
                         };
 
+                        if out_buffer.len() < 20 + response.data.len() {
+                            out_buffer.resize(20 + response.data.len(), 0u8);
+                        }
                         let used = postcard::to_slice(&response, &mut out_buffer).unwrap();
 
-                        let lp = unsigned_varint::encode::u64(used.len() as u64, &mut lp_buffer);
-                        writer.write_all(lp).await.unwrap();
-
-                        if let Err(e) = writer.write_all(used).await {
+                        if let Err(e) = write_lp(&mut writer, used).await {
                             eprintln!("failed to write response: {:?}", e);
                         }
+
+                        println!("written response of length {}", used.len());
+
                         if let Some(piece) = piece {
+                            println!("writing data {}", piece.data.len());
                             // if we found the data, write it out now
-
-                            // TODO: avoid buffering
-                            let (encoded, _hash) =
-                                tokio::task::spawn_blocking(move || bao::encode::encode(piece))
-                                    .await
-                                    .unwrap();
-
-                            if let Err(e) = writer.write_all(&encoded).await {
-                                eprintln!("failed to write data: {:?}", e);
+                            if let Err(err) = writer.write_all(&piece.data).await {
+                                eprintln!("failed to write data: {:?}", err);
                             }
+                            println!("done writing data");
                         }
                     }
 
@@ -219,17 +247,30 @@ async fn main_server() -> Result<()> {
     Ok(())
 }
 
-fn create_db() -> Arc<HashMap<String, Bytes>> {
+#[derive(Clone)]
+struct Data {
+    /// outboard data from bo
+    outboard: Bytes,
+    /// actual data
+    data: Bytes,
+}
+
+fn create_db(range: Vec<usize>) -> Arc<HashMap<bao::Hash, Data>> {
     println!("Available Data:");
 
     let mut db = HashMap::new();
-    for num in [1, 10, 100] {
+    for num in range {
         let data = vec![1u8; 1024 * 1024 * num];
-        let hash = blake3::hash(&data);
-        let name = format!("{}", hash.to_hex());
+        let (outboard, hash) = bao::encode::outboard(&data);
 
-        println!("- {name}: {num}MiB");
-        db.insert(name, Bytes::from(data));
+        println!("- {}: {}MiB", hash.to_hex(), num);
+        db.insert(
+            hash,
+            Data {
+                outboard: Bytes::from(outboard),
+                data: Bytes::from(data),
+            },
+        );
     }
 
     Arc::new(db)
@@ -249,9 +290,28 @@ async fn main() -> Result<()> {
             println!("Requesting: {}", hash.to_hex());
             main_client(hash).await?
         }
-        "server" => main_server().await?,
+        "server" => {
+            let db = create_db(vec![1, 10, 100]);
+            main_server(db).await?
+        }
         _ => bail!("unknown argument: {}", &args[0]),
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn basics() {
+        let db = create_db(vec![1]);
+        let hash = *db.iter().next().unwrap().0;
+        tokio::task::spawn(async move {
+            main_server(db).await.unwrap();
+        });
+
+        main_client(hash).await.unwrap();
+    }
 }
