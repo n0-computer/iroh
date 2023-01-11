@@ -130,7 +130,7 @@ impl BasicDirectory {
                 links.push(dag_pb::PbLink {
                     hash: Some(root_block.cid().to_bytes()),
                     name: Some(name),
-                    tsize: Some(root_block.data().len() as u64),
+                    tsize: Some(root_block.size() as u64),
                 });
             }
 
@@ -823,7 +823,7 @@ mod tests {
         let dir = dir.add_file(bar).add_symlink(baz).build().await?;
 
         let dir_block = dir.encode_root().await?;
-        let decoded_dir = UnixfsNode::decode(dir_block.cid(), dir_block.data())?;
+        let decoded_dir = UnixfsNode::decode(dir_block.cid(), dir_block.load()?)?;
 
         let links = decoded_dir.links().collect::<Result<Vec<_>>>().unwrap();
         assert_eq!(links[0].name.unwrap(), "bar.txt");
@@ -882,7 +882,7 @@ mod tests {
         let dir = dir.add_file(bar).add_symlink(baz).build().await?;
 
         let dir_block = dir.encode_root().await?;
-        let decoded_dir = UnixfsNode::decode(dir_block.cid(), dir_block.data())?;
+        let decoded_dir = UnixfsNode::decode(dir_block.cid(), dir_block.load()?)?;
 
         let links = decoded_dir.links().collect::<Result<Vec<_>>>().unwrap();
         assert_eq!(links[0].name.unwrap(), "bar.txt");
@@ -959,7 +959,7 @@ mod tests {
         let dir = dir.add_file(bar).add_file(baz).build().await?;
 
         let dir_block = dir.encode_root().await?;
-        let decoded_dir = UnixfsNode::decode(dir_block.cid(), dir_block.data())?;
+        let decoded_dir = UnixfsNode::decode(dir_block.cid(), dir_block.load()?)?;
 
         let links = decoded_dir.links().collect::<Result<Vec<_>>>().unwrap();
         assert_eq!(links[0].name.unwrap(), "bar.txt");
@@ -968,7 +968,7 @@ mod tests {
         assert_eq!(links[1].cid, *baz_encoded[8].cid());
 
         for (i, encoded) in baz_encoded.iter().enumerate() {
-            let node = UnixfsNode::decode(encoded.cid(), encoded.data().clone())?;
+            let node = UnixfsNode::decode(encoded.cid(), encoded.load()?)?;
             if i == 8 {
                 assert_eq!(node.typ(), Some(DataType::File));
                 assert_eq!(node.links().count(), 8);

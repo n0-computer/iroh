@@ -214,7 +214,7 @@ impl TreeNode {
                 let mut encoded_len: u64 = links.iter().map(|(_, l)| l.encoded_len).sum();
                 let node = create_unixfs_node_from_links(links)?;
                 let block = node.encode()?;
-                encoded_len += block.data().len() as u64;
+                encoded_len += block.size() as u64;
                 let raw_data_len = node
                     .filesize()
                     .expect("UnixfsNode::File will have a filesize");
@@ -417,10 +417,10 @@ mod tests {
                 .expect("too many nodes in balanced tree stream")
                 .clone()
                 .into_parts();
-            let expect_bytes = expect_bytes.load();
+            let expect_bytes = expect_bytes.load().unwrap();
             let node = node.expect("unexpected error in balanced tree stream");
             let (got_cid, got_bytes, _) = node.into_parts();
-            let got_bytes = got_bytes.load();
+            let got_bytes = got_bytes.load().unwrap();
             let len = got_bytes.len() as u64;
             println!("node index {i}");
             assert_eq!(expect_cid, got_cid);

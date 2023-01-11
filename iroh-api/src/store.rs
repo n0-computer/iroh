@@ -33,7 +33,7 @@ impl Store for Client {
         self.try_store()?
             .put_many(blocks.into_iter().map(|x| {
                 let (cid, data, links) = x.into_parts();
-                (cid, data.load(), links)
+                (cid, data.load().unwrap(), links)
             }).collect())
             .await
     }
@@ -52,7 +52,7 @@ impl Store for Arc<tokio::sync::Mutex<std::collections::HashMap<Cid, Bytes>>> {
     async fn put_many(&self, blocks: Vec<Block>) -> Result<()> {
         let mut this = self.lock().await;
         for block in blocks {
-            this.insert(*block.cid(), block.data().clone());
+            this.insert(*block.cid(), block.load()?);
         }
         Ok(())
     }

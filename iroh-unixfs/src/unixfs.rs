@@ -18,7 +18,7 @@ use crate::{
     codecs::Codec,
     content_loader::{ContentLoader, LoaderContext},
     hamt::Hamt,
-    types::{Block, BytesWithProvenance, Data, Link, LinkRef, Links, PbLinks},
+    types::{Block, BytesWithProvenance, BytesOrReference, Link, LinkRef, Links, PbLinks},
 };
 
 pub(crate) mod unixfs_pb {
@@ -204,14 +204,15 @@ impl UnixfsNode {
                     Codec::DagPb as _,
                     cid::multihash::Code::Sha2_256.digest(&out),
                 );
-                Block::new(cid, Data::Blob(out), links)
+                Block::new(cid, BytesOrReference::Bytes(out), links)
             }
         };
 
+        let data = res.load()?;
         ensure!(
-            res.data().len() <= DEFAULT_CHUNK_SIZE_LIMIT,
+            data.len() <= DEFAULT_CHUNK_SIZE_LIMIT,
             "node is too large: {} bytes",
-            res.data().len()
+            data.len()
         );
 
         Ok(res)

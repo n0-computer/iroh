@@ -1131,7 +1131,7 @@ pub async fn stream_to_resolver(
         .into_iter()
         .map(|block| {
             let (cid, bytes, _) = block.into_parts();
-            (cid, bytes.load())
+            (cid, bytes.load().unwrap())
         })
         .collect();
     let resolver = Resolver::new(Arc::new(store));
