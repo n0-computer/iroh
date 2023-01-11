@@ -35,11 +35,11 @@ use anyhow::{bail, Result};
 use async_trait::async_trait;
 use iroh_rpc_client::Config as RpcClientConfig;
 use iroh_rpc_types::store::StoreService;
+use iroh_rpc_types::Addr;
 use quic_rpc::Service;
 
 pub use iroh_api::Api;
 pub use iroh_p2p::Libp2pConfig;
-use iroh_rpc_types::Addr;
 pub use iroh_unixfs::indexer::IndexerUrl;
 pub use reqwest::Url;
 
