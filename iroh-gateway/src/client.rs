@@ -99,8 +99,18 @@ impl<T: ContentLoader + std::marker::Unpin> Client<T> {
     pub async fn retrieve_path_metadata(
         &self,
         path: iroh_resolver::resolver::Path,
+        format: Option<ResponseFormat>,
     ) -> Result<Out, String> {
         info!("retrieve path metadata {}", path);
+        if let Some(f) = format {
+            if f == ResponseFormat::Raw {
+                return self
+                    .resolver
+                    .resolve_raw(path)
+                    .await
+                    .map_err(|e| e.to_string());
+            }
+        }
         self.resolver.resolve(path).await.map_err(|e| e.to_string())
     }
 
@@ -116,7 +126,7 @@ impl<T: ContentLoader + std::marker::Unpin> Client<T> {
         let path_metadata = if let Some(path_metadata) = path_metadata {
             path_metadata
         } else {
-            self.retrieve_path_metadata(path.clone()).await?
+            self.retrieve_path_metadata(path.clone(), None).await?
         };
         let metadata = path_metadata.metadata().clone();
         record_ttfb_metrics(start_time, &metadata.source);

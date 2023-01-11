@@ -197,12 +197,7 @@ mod tests {
         let server_addr = Addr::new_mem();
         let client_addr = server_addr.clone();
         let store_dir = tempfile::tempdir().unwrap();
-        let config = iroh_store::Config {
-            server: Default::default(),
-            path: store_dir.path().join("db"),
-            rpc_client: RpcClientConfig::default(),
-            metrics: iroh_metrics::config::Config::default(),
-        };
+        let config = iroh_store::Config::new(store_dir.path().join("db"));
         let store = iroh_store::Store::create(config).await.unwrap();
         let task = tokio::spawn(async move {
             iroh_store::rpc::new(server_addr, store, false)
@@ -401,6 +396,42 @@ mod tests {
         assert_eq!(http::StatusCode::NOT_FOUND, res.status());
         let body = hyper::body::to_bytes(res.into_body()).await.unwrap();
         assert!(body.starts_with(b"<!DOCTYPE html>"));
+    }
+
+    #[tokio::test]
+    async fn test_raw_fetch() {
+        let files = &[(
+            "hello.txt".to_string(),
+            Alphanumeric
+                .sample_string(&mut SmallRng::seed_from_u64(42), 8 * 1024 * 1024)
+                .bytes()
+                .collect(),
+        )];
+        let large_file = &files[0].1;
+        let test_setup = setup_test(false, files).await;
+
+        let res = do_request(
+            "GET",
+            &format!("localhost:{}", test_setup.gateway_addr.port()),
+            &format!("/ipfs/{}/hello.txt", test_setup.root_cid),
+            None,
+        )
+        .await;
+        assert_eq!(http::StatusCode::OK, res.status());
+        let body = hyper::body::to_bytes(res.into_body()).await.unwrap();
+        assert_eq!(&body[..], large_file);
+
+        let res = do_request(
+            "GET",
+            &format!("localhost:{}", test_setup.gateway_addr.port()),
+            &format!("/ipfs/{}/hello.txt?format=raw", test_setup.root_cid),
+            None,
+        )
+        .await;
+        assert_eq!(http::StatusCode::OK, res.status());
+        let body = hyper::body::to_bytes(res.into_body()).await.unwrap();
+        let ufs = iroh_unixfs::unixfs::UnixfsNode::decode(&test_setup.root_cid, body).unwrap();
+        assert_eq!(ufs.typ().unwrap(), iroh_unixfs::unixfs::DataType::File);
     }
 
     // TODO(b5) - refactor to return anyhow::Result<()>

@@ -30,6 +30,45 @@ pub const DEFAULT_BOOTSTRAP: &[&str] = &[
 
 // "/ip4/104.131.131.82/udp/4001/quic/p2p/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ", // mars.i.ipfs.io
 
+/// The configuration for the p2p server.
+///
+/// This is the configuration which the p2p server binary needs to run.  It is a superset
+/// from the configuration needed by the p2p service, which can also run integrated into
+/// another binary like in iroh-one, iroh-share or iroh-embed.
+#[derive(PartialEq, Debug, Deserialize, Serialize, Clone)]
+pub struct ServerConfig {
+    pub p2p: Config,
+    pub metrics: MetricsConfig,
+}
+
+impl ServerConfig {
+    pub fn new() -> Self {
+        Default::default()
+    }
+}
+
+impl Default for ServerConfig {
+    fn default() -> Self {
+        Self {
+            p2p: Config::default_network(),
+            metrics: Default::default(),
+        }
+    }
+}
+
+impl Source for ServerConfig {
+    fn clone_into_box(&self) -> Box<dyn Source + Send + Sync> {
+        Box::new(self.clone())
+    }
+
+    fn collect(&self) -> Result<Map<String, Value>, ConfigError> {
+        let mut map: Map<String, Value> = Map::new();
+        insert_into_config_map(&mut map, "p2p", self.p2p.collect()?);
+        insert_into_config_map(&mut map, "metrics", self.metrics.collect()?);
+        Ok(map)
+    }
+}
+
 /// Libp2p config for the node.
 #[derive(PartialEq, Eq, Debug, Clone, Deserialize, Serialize)]
 #[non_exhaustive]
@@ -68,9 +107,10 @@ pub struct Libp2pConfig {
 #[derive(PartialEq, Debug, Clone, Deserialize, Serialize)]
 pub struct Config {
     pub server: iroh_util::config::ServerConfig,
+    /// Configuration for libp2p.
     pub libp2p: Libp2pConfig,
+    /// Configuration of RPC to other iroh services.
     pub rpc_client: RpcClientConfig,
-    pub metrics: MetricsConfig,
     /// Directory where cryptographic keys are stored.
     ///
     /// The p2p node needs to have an identity consisting of a cryptographic key pair.  As
@@ -78,6 +118,12 @@ pub struct Config {
     /// format compatible with how ssh stores keys.  This points to a directory where these
     /// keypairs are stored.
     pub key_store_path: PathBuf,
+}
+
+impl From<ServerConfig> for Config {
+    fn from(source: ServerConfig) -> Self {
+        source.p2p
+    }
 }
 
 impl Source for Libp2pConfig {
@@ -150,11 +196,8 @@ impl Source for Config {
 
     fn collect(&self) -> Result<Map<String, Value>, ConfigError> {
         let mut map: Map<String, Value> = Map::new();
-
-        insert_into_config_map(&mut map, "server", self.server.collect()?);
         insert_into_config_map(&mut map, "libp2p", self.libp2p.collect()?);
         insert_into_config_map(&mut map, "rpc_client", self.rpc_client.collect()?);
-        insert_into_config_map(&mut map, "metrics", self.metrics.collect()?);
         insert_into_config_map(&mut map, "key_store_path", self.key_store_path.to_str());
         Ok(map)
     }
@@ -202,7 +245,6 @@ impl Config {
                 p2p_addr: Some(client_addr),
                 ..Default::default()
             },
-            metrics: MetricsConfig::default(),
             key_store_path: iroh_data_root().unwrap(),
         }
     }
@@ -214,7 +256,6 @@ impl Config {
             server: Default::default(),
             libp2p: Libp2pConfig::default(),
             rpc_client,
-            metrics: MetricsConfig::default(),
             key_store_path: iroh_data_root().unwrap(),
         }
     }
@@ -231,8 +272,9 @@ mod tests {
 
     #[test]
     fn test_collect() {
-        let default = Config::default_network();
+        let default = ServerConfig::default();
         let bootstrap_peers: Vec<String> = default
+            .p2p
             .libp2p
             .bootstrap_peers
             .iter()
@@ -240,6 +282,7 @@ mod tests {
             .collect();
 
         let addrs: Vec<String> = default
+            .p2p
             .libp2p
             .listening_multiaddrs
             .iter()
@@ -248,24 +291,12 @@ mod tests {
 
         let mut expect: Map<String, Value> = Map::new();
         expect.insert(
-            "server".to_string(),
-            Value::new(None, default.server.collect().unwrap()),
-        );
-        expect.insert(
-            "libp2p".to_string(),
-            Value::new(None, default.libp2p.collect().unwrap()),
-        );
-        expect.insert(
-            "rpc_client".to_string(),
-            Value::new(None, default.rpc_client.collect().unwrap()),
+            "p2p".to_string(),
+            Value::new(None, default.p2p.collect().unwrap()),
         );
         expect.insert(
             "metrics".to_string(),
             Value::new(None, default.metrics.collect().unwrap()),
-        );
-        expect.insert(
-            "key_store_path".to_string(),
-            Value::new(None, iroh_data_root().unwrap().to_str()),
         );
 
         let got = default.collect().unwrap();
@@ -277,7 +308,7 @@ mod tests {
 
         // libp2p
         let mut expect: Map<String, Value> = Map::new();
-        let default = &default.libp2p;
+        let default = &default.p2p.libp2p;
 
         // see `Source` implementation for  why we need to cast this as a signed int
         expect.insert(

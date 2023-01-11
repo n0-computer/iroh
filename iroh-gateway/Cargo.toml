@@ -61,6 +61,7 @@ tracing-subscriber = { workspace = true, features = ["env-filter"] }
 tracing.workspace = true
 url.workspace = true
 urlencoding.workspace = true
+testdir.workspace = true
 
 [dev-dependencies]
 iroh-store.workspace = true

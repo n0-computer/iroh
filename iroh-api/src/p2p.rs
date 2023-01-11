@@ -2,8 +2,6 @@ use crate::error::map_service_error;
 use anyhow::Result;
 use iroh_rpc_client::{Lookup, P2pClient};
 use libp2p::{multiaddr::Protocol, Multiaddr, PeerId};
-#[cfg(feature = "testing")]
-use mockall::automock;
 use std::collections::HashMap;
 
 #[derive(Debug)]
@@ -17,8 +15,6 @@ pub enum PeerIdOrAddr {
     Multiaddr(Multiaddr),
 }
 
-#[cfg_attr(feature = "testing", automock)]
-#[cfg_attr(feature = "testing", allow(dead_code))]
 impl P2p {
     pub fn new(client: P2pClient) -> Self {
         Self { client }

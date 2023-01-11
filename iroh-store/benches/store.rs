@@ -2,8 +2,6 @@ use std::time::Instant;
 
 use cid::multihash::{Code, MultihashDigest};
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
-use iroh_metrics::config::Config as MetricsConfig;
-use iroh_rpc_client::Config as RpcClientConfig;
 use iroh_store::{Config, Store};
 use tokio::runtime::Runtime;
 
@@ -23,13 +21,7 @@ pub fn put_benchmark(c: &mut Criterion) {
             |b, (key, value)| {
                 let executor = Runtime::new().unwrap();
                 let dir = tempfile::tempdir().unwrap();
-                let rpc_client = RpcClientConfig::default();
-                let config = Config {
-                    server: Default::default(),
-                    path: dir.path().into(),
-                    rpc_client,
-                    metrics: MetricsConfig::default(),
-                };
+                let config = Config::new(dir.path().into());
                 let store = executor.block_on(async { Store::create(config).await.unwrap() });
                 let store_ref = &store;
                 b.to_async(&executor)
@@ -50,13 +42,7 @@ pub fn get_benchmark(c: &mut Criterion) {
             |b, _| {
                 let executor = Runtime::new().unwrap();
                 let dir = tempfile::tempdir().unwrap();
-                let rpc_client = RpcClientConfig::default();
-                let config = Config {
-                    server: Default::default(),
-                    path: dir.path().into(),
-                    rpc_client,
-                    metrics: MetricsConfig::default(),
-                };
+                let config = Config::new(dir.path().into());
                 let store = executor.block_on(async { Store::create(config).await.unwrap() });
                 let store_ref = &store;
                 let keys = executor.block_on(async {

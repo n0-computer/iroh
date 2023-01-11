@@ -13,9 +13,6 @@ exclude = [
   "fixtures/**",
 ]
 
-[features]
-testing = ["dep:relative-path"]
-
 [dependencies]
 anyhow.workspace = true
 async-stream.workspace = true
@@ -38,16 +35,3 @@ sysinfo.workspace = true
 tokio = { workspace = true, features = ["fs", "io-util"] }
 tracing.workspace = true
 which.workspace = true
-
-[dev-dependencies]
-# We want to compile `iroh` in test mode, but we can't specify that yet:
-# https://github.com/rust-lang/cargo/issues/1982
-# This is a workaround for enabling features only during testing: 
-# https://github.com/DesmondWillowbrook/cargo-optional-features-for-testing-and-examples
-# It is needed to have trycmd invoke a version of the iroh CLI in testing
-# mode. trycmd needs to have an actual binary to invoke.
-# Unfortunately this also turns on the feature during development, which may be
-# confusing. See the comments in `run.rs` surrounding this.
-iroh = { path = "./", features = ["testing"] } # THIS MUST NOT BE workspace
-iroh-api = { workspace = true, features = ["testing"] }
-trycmd.workspace = true
