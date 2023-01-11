@@ -10,9 +10,11 @@ rust-version.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+async-trait.workspace = true
 futures.workspace = true
 iroh-api.workspace = true
 iroh-gateway.workspace = true
+iroh-memstore.workspace = true
 iroh-metrics.workspace = true
 iroh-one.workspace = true
 iroh-p2p.workspace = true
@@ -21,6 +23,7 @@ iroh-rpc-client.workspace = true
 iroh-rpc-types.workspace = true
 iroh-store.workspace = true
 iroh-unixfs.workspace = true
+quic-rpc.workspace = true
 reqwest = { workspace = true, features = ["rustls-tls", "json"] }
 tokio.workspace = true
 

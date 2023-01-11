@@ -2,12 +2,16 @@
 
 use std::path::PathBuf;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
+use async_trait::async_trait;
+use iroh_memstore::{MemStore, MemStoreHandle};
 use iroh_one::mem_store;
-use iroh_rpc_types::store::StoreAddr;
+use iroh_rpc_types::store::{StoreAddr, StoreService};
 use iroh_rpc_types::Addr;
 use iroh_store::Config as StoreConfig;
 use tokio::task::JoinHandle;
+
+use crate::IrohService;
 
 /// A iroh store backed by an on-disk RocksDB.
 ///
@@ -29,21 +33,16 @@ impl RocksStoreService {
         let task = mem_store::start(addr.clone(), config).await?;
         Ok(Self { task, addr })
     }
+}
 
-    /// Returns the internal RPC address of this store node.
-    ///
-    /// This is used by the other iroh services, like the p2p and gateway services, to use
-    /// the store.
-    pub fn addr(&self) -> StoreAddr {
+#[async_trait]
+impl IrohService<StoreService> for RocksStoreService {
+    fn addr(&self) -> Addr<StoreService> {
         self.addr.clone()
     }
 
-    /// Stop this store service.
-    ///
-    /// This function waits for the store to be fully terminated and only returns once it is
-    /// no longer running.
     // TODO: This should be graceful termination.
-    pub async fn stop(mut self) -> Result<()> {
+    async fn stop(mut self: Box<Self>) -> Result<()> {
         // This dummy task will be aborted by Drop.
         let fut = futures::future::ready(());
         let dummy_task = tokio::spawn(fut);
@@ -69,10 +68,42 @@ impl Drop for RocksStoreService {
     }
 }
 
+#[derive(Debug)]
+pub struct MemStoreService {
+    handle: MemStoreHandle,
+    addr: StoreAddr,
+}
+
+impl MemStoreService {
+    /// Starts a new iroh store service with in-memory storage.
+    ///
+    /// This implicitly starts a task on the current tokio runtime to manage the storage
+    /// node.
+    pub async fn new() -> Result<Self> {
+        let addr = Addr::new_mem();
+        let handle = MemStore::spawn(addr.clone()).await?;
+        Ok(Self { handle, addr })
+    }
+}
+
+#[async_trait]
+impl IrohService<StoreService> for MemStoreService {
+    fn addr(&self) -> StoreAddr {
+        self.addr.clone()
+    }
+
+    async fn stop(self: Box<Self>) -> Result<()> {
+        let join = self.handle.shutdown();
+        join.await.context("Waiting for MemStore task to finish")?;
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
 
+    use iroh_rpc_client::StoreClient;
     use testdir::testdir;
     use tokio::time;
 
@@ -86,9 +117,26 @@ mod tests {
         let store = RocksStoreService::new(dir).await.unwrap();
         assert!(marker.exists());
 
+        let store = Box::new(store);
         let fut = store.stop();
         let ret = time::timeout(Duration::from_millis(500), fut).await;
 
         assert!(ret.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_create_mem_store_stop() {
+        let store = MemStoreService::new().await.unwrap();
+
+        let client = StoreClient::new(store.addr()).await.unwrap();
+        let version = client.version().await.unwrap();
+
+        assert!(!version.is_empty());
+
+        let store = Box::new(store);
+        store.stop().await.unwrap();
+        let res = client.version().await;
+
+        assert!(res.is_err());
     }
 }

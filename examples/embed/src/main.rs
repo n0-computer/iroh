@@ -1,7 +1,7 @@
 use anyhow::{bail, Result};
 use futures_util::StreamExt;
 use iroh_api::{IpfsPath, OutType};
-use iroh_embed::{IrohBuilder, Libp2pConfig, P2pService, RocksStoreService};
+use iroh_embed::{IrohBuilder, IrohService, Libp2pConfig, P2pService, RocksStoreService};
 use testdir::testdir;
 
 #[tokio::main(flavor = "multi_thread")]

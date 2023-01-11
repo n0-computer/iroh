@@ -99,6 +99,7 @@ iroh-car = { version = "0.2.0", path = "./iroh-car" }
 iroh-embed = { version = "0.2.0", path = "./iroh-embed" }
 iroh-gateway = { version = "0.2.0", path = "./iroh-gateway" }
 iroh-localops = { version = "0.2.0", path = "./iroh-localops" }
+iroh-memstore = { version = "0.2.0", path = "./iroh-memstore" }
 iroh-metrics = { version = "0.2.0", path = "./iroh-metrics" }
 iroh-one = { version = "0.2.0", path = "./iroh-one" }
 iroh-p2p = { version = "0.2.0", path = "./iroh-p2p" }
@@ -183,6 +184,7 @@ debug = false
 debug-assertions = false
 opt-level = 3
 panic = 'abort'
+
 incremental = false
 
 [profile.docker]

@@ -97,7 +97,7 @@ mod tests {
     use testdir::testdir;
     use tokio::time;
 
-    use crate::RocksStoreService;
+    use crate::{IrohService, RocksStoreService};
 
     use super::*;
 

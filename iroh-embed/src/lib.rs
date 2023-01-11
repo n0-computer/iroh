@@ -29,11 +29,17 @@
 //!
 //! An example is available in the repository under `examples/embed`.
 
+use std::fmt::{self, Debug};
+
 use anyhow::{bail, Result};
+use async_trait::async_trait;
 use iroh_rpc_client::Config as RpcClientConfig;
+use iroh_rpc_types::store::StoreService;
+use quic_rpc::Service;
 
 pub use iroh_api::Api;
 pub use iroh_p2p::Libp2pConfig;
+use iroh_rpc_types::Addr;
 pub use iroh_unixfs::indexer::IndexerUrl;
 pub use reqwest::Url;
 
@@ -57,7 +63,7 @@ mod p2p;
 mod store;
 
 pub use p2p::P2pService;
-pub use store::RocksStoreService;
+pub use store::{MemStoreService, RocksStoreService};
 
 /// Builder for an [`Iroh`] system.
 ///
@@ -67,7 +73,7 @@ pub use store::RocksStoreService;
 /// # Examples
 ///
 /// ```no_run
-/// use iroh_embed::{Iroh, IrohBuilder, Libp2pConfig, P2pService, RocksStoreService};
+/// use iroh_embed::{Iroh, IrohBuilder, IrohService, Libp2pConfig, P2pService, RocksStoreService};
 /// use testdir::testdir;
 /// # tokio_test::block_on(async {
 /// let dir = testdir!();
@@ -86,12 +92,48 @@ pub use store::RocksStoreService;
 ///                     .unwrap();
 /// # })
 /// ```
-#[derive(Debug)]
+///
+/// Using an in-memory store:
+/// ```no_run
+/// use iroh_embed::{Iroh, IrohBuilder, IrohService, Libp2pConfig, P2pService, MemStoreService};
+/// use testdir::testdir;
+/// # tokio_test::block_on(async {
+/// let store = MemStoreService::new().await.unwrap();
+/// let mut p2p_config = Libp2pConfig::default();
+/// p2p_config.listening_multiaddrs = vec![
+///     "/ip4/0.0.0.0/tcp/0".parse().unwrap(),  // random port
+///     "/ip4/0.0.0.0/udp/0/quic-v1".parse().unwrap(),  // random port
+/// ];
+/// let dir = testdir!();
+/// let p2p = P2pService::new(p2p_config, dir, store.addr()).await.unwrap();
+/// let _iroh: Iroh = IrohBuilder::new()
+///                     .store(store)
+///                     .p2p(p2p)
+///                     .build()
+///                     .await
+///                     .unwrap();
+/// # })
+/// ```
+// Note: The doc tests above are disabled because they run extremely slow.  However the same
+// tests run just fine as normal tests.  We should really figure out what is going on
+// sometime.
+
 pub struct IrohBuilder {
-    store: Option<RocksStoreService>,
+    store: Option<Box<dyn IrohService<StoreService>>>,
     p2p: Option<P2pService>,
     http_resolvers: Vec<String>,
     indexer: Option<IndexerUrl>,
+}
+
+impl Debug for IrohBuilder {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("IrohBuilder")
+            .field("store", &"Option<<dyn StoreService>>")
+            .field("p2p", &self.p2p)
+            .field("http_resolvers", &self.http_resolvers)
+            .field("indexer", &self.indexer)
+            .finish()
+    }
 }
 
 impl Default for IrohBuilder {
@@ -114,8 +156,11 @@ impl IrohBuilder {
     /// Sets the store service.
     ///
     /// Every [`Iroh`] system needs a store so this can not be skipped.
-    pub fn store(mut self, store: RocksStoreService) -> Self {
-        self.store = Some(store);
+    pub fn store<S>(mut self, store: S) -> Self
+    where
+        S: IrohService<StoreService> + 'static,
+    {
+        self.store = Some(Box::new(store));
         self
     }
 
@@ -199,11 +244,20 @@ impl IrohBuilder {
 /// be aborted when dropping this struct.
 ///
 /// To make the system do anything use the [`Iroh::api`] function to get an API.
-#[derive(Debug)]
 pub struct Iroh {
-    store: RocksStoreService,
+    store: Box<dyn IrohService<StoreService>>,
     p2p: P2pService,
     api: Api,
+}
+
+impl Debug for Iroh {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Iroh")
+            .field("store", &"<dyn StoreService>")
+            .field("p2p", &self.p2p)
+            .field("api", &self.api)
+            .finish()
+    }
 }
 
 impl Iroh {
@@ -223,39 +277,84 @@ impl Iroh {
     }
 }
 
-// The mocks strike again!  Let's enable this again once the API mocks are gone.
-// #[cfg(test)]
-// mod tests {
-//     use testdir::testdir;
+/// Basic interface each iroh service implements.
+///
+/// Each iroh service is essentially a server implementing a specific iRPC interface.
+#[async_trait]
+pub trait IrohService<S: Service> {
+    /// Returns the internal RPC address of the service.
+    ///
+    /// Normally this would be an in-memory address for iroh-embed.  It is used by the other
+    /// iroh services to use this service.
+    fn addr(&self) -> Addr<S>;
+    /// Stops the service.
+    ///
+    /// This function waits for the service to be fully terminated and only returns once it
+    /// is no longer running.
+    async fn stop(self: Box<Self>) -> Result<()>;
+}
 
-//     use super::*;
+#[cfg(test)]
+mod tests {
+    use iroh_api::StatusType;
+    use testdir::testdir;
 
-//     #[tokio::test]
-//     async fn test_start_stop() {
+    use super::*;
 
-//         let dir = testdir!();
-//         let store_dir = dir.join("store");
-//         let store = RocksStoreService::new(store_dir).await.unwrap();
-//         let mut cfg = Libp2pConfig::default();
-//         cfg.listening_multiaddrs = vec![
-//             "/ip4/127.0.0.1/tcp/0".parse().unwrap(),
-//             "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
-//         ];
-//         let p2p = P2pService::new(cfg, dir.clone(), store.addr())
-//             .await
-//             .unwrap();
+    #[tokio::test]
+    async fn test_start_stop() {
+        let dir = testdir!();
+        let store_dir = dir.join("store");
+        let store = RocksStoreService::new(store_dir).await.unwrap();
+        let mut cfg = Libp2pConfig::default();
+        cfg.listening_multiaddrs = vec![
+            "/ip4/127.0.0.1/tcp/0".parse().unwrap(),
+            "/ip4/127.0.0.1/udp/0/quic-v1".parse().unwrap(),
+        ];
+        let p2p = P2pService::new(cfg, dir.clone(), store.addr())
+            .await
+            .unwrap();
 
-//         let iroh = IrohBuilder::new()
-//             .store(store)
-//             .p2p(p2p)
-//             .build()
-//             .await
-//             .unwrap();
+        let iroh = IrohBuilder::new()
+            .store(store)
+            .p2p(p2p)
+            .build()
+            .await
+            .unwrap();
+        let check = iroh.api().check().await;
+        assert_eq!(check.p2p.status(), StatusType::Serving);
+        assert_eq!(check.store.status(), StatusType::Serving);
 
-//         // TODO: call an API function, e.g. version would be good.
+        let res = iroh.stop().await;
 
-//         let res = dbg!(iroh.stop().await);
+        assert!(res.is_ok());
+    }
 
-//         assert!(res.is_ok());
-//     }
-// }
+    #[tokio::test]
+    async fn test_mem_store() {
+        let store = MemStoreService::new().await.unwrap();
+        let mut p2p_config = Libp2pConfig::default();
+        p2p_config.listening_multiaddrs = vec![
+            "/ip4/0.0.0.0/tcp/0".parse().unwrap(),         // random port
+            "/ip4/0.0.0.0/udp/0/quic-v1".parse().unwrap(), // random port
+        ];
+        let dir = testdir!();
+        let p2p = P2pService::new(p2p_config, dir, store.addr())
+            .await
+            .unwrap();
+        let iroh: Iroh = IrohBuilder::new()
+            .store(store)
+            .p2p(p2p)
+            .build()
+            .await
+            .unwrap();
+
+        let check = iroh.api().check().await;
+        assert_eq!(check.p2p.status(), StatusType::Serving);
+        assert_eq!(check.store.status(), StatusType::Serving);
+
+        let res = iroh.stop().await;
+
+        assert!(res.is_ok());
+    }
+}
