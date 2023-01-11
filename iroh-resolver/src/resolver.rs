@@ -125,6 +125,12 @@ impl Path {
         self.tail.push(str.as_ref().to_owned());
     }
 
+    pub fn with_suffix(&self, suffix: impl AsRef<str>) -> Self {
+        let mut suffixed = self.clone();
+        suffixed.push(suffix);
+        suffixed
+    }
+
     // Empty path segments in the *middle* shouldn't occur,
     // though they can occur at the end, which `join` handles.
     // TODO(faassen): it would make sense to return a `RelativePathBuf` here at some

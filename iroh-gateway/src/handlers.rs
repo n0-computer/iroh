@@ -42,9 +42,10 @@ use crate::handler_params::{
     inlined_dns_link_to_dns_link, recode_path_to_inlined_dns_link, DefaultHandlerPathParams,
     GetParams, SubdomainHandlerPathParams,
 };
+use crate::ipfs_request::IpfsRequest;
 use crate::text::IpfsSubdomain;
 use crate::{
-    client::{FileResult, IpfsRequest},
+    client::FileResult,
     constants::*,
     core::State,
     error::GatewayError,
@@ -183,25 +184,12 @@ async fn request_preprocessing<T: ContentLoader + Unpin>(
     // parse query params
     let format = get_response_format(request_headers, &query_params.format)
         .map_err(|err| GatewayError::new(StatusCode::BAD_REQUEST, &err))?;
-
-    let path_metadata = match state
+    let ipfs_request = state
         .client
-        .retrieve_path_metadata(path.clone(), Some(format.clone()))
-        .await
-    {
-        Ok(metadata) => metadata,
-        Err(e) => {
-            if e == "offline" {
-                return Err(GatewayError::new(StatusCode::SERVICE_UNAVAILABLE, &e));
-            } else if e.starts_with("failed to find") {
-                return Err(GatewayError::new(StatusCode::NOT_FOUND, &e));
-            } else {
-                return Err(GatewayError::new(StatusCode::INTERNAL_SERVER_ERROR, &e));
-            }
-        }
-    };
+        .build_ipfs_request(path, query_params, format.clone(), subdomain_mode)
+        .await?;
 
-    let resolved_cid = path_metadata.metadata().resolved_path.last();
+    let resolved_cid = ipfs_request.path_metadata.metadata().resolved_path.last();
     let resolved_cid = match resolved_cid {
         Some(cid) => cid,
         None => {
@@ -243,22 +231,9 @@ async fn request_preprocessing<T: ContentLoader + Unpin>(
     };
     response_headers.insert(&HEADER_X_IPFS_PATH, hv);
 
-    // handle request and fetch data
-    let req = IpfsRequest {
-        format,
-        cid: path.root().clone(),
-        resolved_path: path.clone(),
-        query_file_name: query_params
-            .filename
-            .as_deref()
-            .unwrap_or_default()
-            .to_string(),
-        download: query_params.download.unwrap_or_default(),
-        query_params: query_params.clone(),
-        subdomain_mode,
-        path_metadata,
-    };
-    Ok(RequestPreprocessingResult::ShouldRequestData(Box::new(req)))
+    Ok(RequestPreprocessingResult::ShouldRequestData(Box::new(
+        ipfs_request,
+    )))
 }
 
 pub async fn handler<T: ContentLoader + Unpin>(
@@ -604,9 +579,9 @@ async fn serve_raw<T: ContentLoader + Unpin>(
 
     match body {
         FileResult::File(body) | FileResult::Raw(body) => {
-            let file_name = match req.query_file_name.is_empty() {
+            let file_name = match req.query_file_name().is_empty() {
                 true => format!("{}.bin", req.cid),
-                false => req.query_file_name.clone(),
+                false => req.query_file_name().to_string(),
             };
 
             set_content_disposition_headers(&mut headers, &file_name, DISPOSITION_ATTACHMENT);
@@ -662,9 +637,9 @@ async fn serve_car<T: ContentLoader + Unpin>(
 
     match body {
         FileResult::File(body) | FileResult::Raw(body) => {
-            let file_name = match req.query_file_name.is_empty() {
+            let file_name = match req.query_file_name().is_empty() {
                 true => format!("{}.car", req.cid),
-                false => req.query_file_name.clone(),
+                false => req.query_file_name().to_string(),
             };
 
             set_content_disposition_headers(&mut headers, &file_name, DISPOSITION_ATTACHMENT);
@@ -700,9 +675,9 @@ async fn serve_car_recursive<T: ContentLoader + Unpin>(
         .await
         .map_err(|e| GatewayError::new(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
 
-    let file_name = match req.query_file_name.is_empty() {
+    let file_name = match req.query_file_name().is_empty() {
         true => format!("{}.car", req.cid),
-        false => req.query_file_name.clone(),
+        false => req.query_file_name().to_string(),
     };
 
     set_content_disposition_headers(&mut headers, &file_name, DISPOSITION_ATTACHMENT);
@@ -783,9 +758,9 @@ async fn serve_fs<T: ContentLoader + Unpin>(
                     }
                     let name = add_content_disposition_headers(
                         &mut headers,
-                        &req.query_file_name,
+                        req.query_file_name(),
                         &req.resolved_path,
-                        req.download,
+                        req.query_download(),
                     );
                     if metadata.unixfs_type == Some(UnixfsType::Symlink) {
                         headers.insert(
@@ -831,9 +806,9 @@ async fn serve_fs<T: ContentLoader + Unpin>(
             }
             let name = add_content_disposition_headers(
                 &mut headers,
-                &req.query_file_name,
+                req.query_file_name(),
                 &req.resolved_path,
-                req.download,
+                req.query_params.download.unwrap_or_default(),
             );
             let content_sniffed_mime = body.get_mime();
             add_content_type_headers(&mut headers, &name, content_sniffed_mime);
@@ -867,8 +842,16 @@ async fn serve_fs_dir<T: ContentLoader + Unpin>(
             );
             return Ok(GatewayResponse::redirect_permanently(&redirect_path));
         }
-        let mut new_req = req.clone();
-        new_req.resolved_path.push("index.html");
+        let modified_path = req.resolved_path.with_suffix("index.html");
+        let new_req = state
+            .client
+            .build_ipfs_request(
+                &modified_path,
+                &req.query_params,
+                req.format.clone(),
+                req.subdomain_mode,
+            )
+            .await?;
         return serve_fs(&new_req, state, headers, http_req, start_time).await;
     }
 

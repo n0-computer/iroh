@@ -9,6 +9,7 @@ mod error;
 pub mod handler_params;
 pub mod handlers;
 pub mod headers;
+mod ipfs_request;
 pub mod metrics;
 pub mod response;
 mod rpc;

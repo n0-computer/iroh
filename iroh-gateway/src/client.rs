@@ -6,7 +6,7 @@ use anyhow::Result;
 use bytes::Bytes;
 use cid::Cid;
 use futures::{StreamExt, TryStream};
-use http::HeaderMap;
+use http::{HeaderMap, StatusCode};
 use iroh_car::{CarHeader, CarWriter};
 use iroh_metrics::{
     core::{MObserver, MRecorder},
@@ -15,15 +15,18 @@ use iroh_metrics::{
     resolver::OutMetrics,
 };
 use iroh_resolver::dns_resolver::Config;
-use iroh_resolver::resolver::{CidOrDomain, Metadata, Out, OutPrettyReader, OutType, Resolver};
+use iroh_resolver::resolver::{Metadata, Out, OutPrettyReader, OutType, Resolver};
 use iroh_unixfs::{content_loader::ContentLoader, Source};
 use mime::Mime;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, AsyncWrite};
 use tokio_util::io::ReaderStream;
 use tracing::{info, warn};
 
+use crate::constants::RECURSION_LIMIT;
+use crate::error::GatewayError;
+use crate::handler_params::GetParams;
+use crate::ipfs_request::IpfsRequest;
 use crate::response::ResponseFormat;
-use crate::{constants::RECURSION_LIMIT, handler_params::GetParams};
 
 #[derive(Debug, Clone)]
 pub struct Client<T: ContentLoader> {
@@ -96,22 +99,55 @@ impl<T: ContentLoader + std::marker::Unpin> Client<T> {
     }
 
     #[tracing::instrument(skip(self))]
+    pub async fn build_ipfs_request(
+        &self,
+        path: &iroh_resolver::resolver::Path,
+        query_params: &GetParams,
+        format: ResponseFormat,
+        subdomain_mode: bool,
+    ) -> Result<IpfsRequest, GatewayError> {
+        info!("build ipfs request {}", path);
+        let path_metadata = match self
+            .retrieve_path_metadata(path.clone(), format == ResponseFormat::Raw)
+            .await
+        {
+            Ok(metadata) => metadata,
+            Err(e) => {
+                if e == "offline" {
+                    return Err(GatewayError::new(StatusCode::SERVICE_UNAVAILABLE, &e));
+                } else if e.starts_with("failed to find") {
+                    return Err(GatewayError::new(StatusCode::NOT_FOUND, &e));
+                } else {
+                    return Err(GatewayError::new(StatusCode::INTERNAL_SERVER_ERROR, &e));
+                }
+            }
+        };
+        Ok(IpfsRequest {
+            format,
+            cid: path.root().clone(),
+            resolved_path: path.clone(),
+            query_params: query_params.clone(),
+            subdomain_mode,
+            path_metadata,
+        })
+    }
+
+    #[tracing::instrument(skip(self))]
     pub async fn retrieve_path_metadata(
         &self,
         path: iroh_resolver::resolver::Path,
-        format: Option<ResponseFormat>,
+        raw_format: bool,
     ) -> Result<Out, String> {
         info!("retrieve path metadata {}", path);
-        if let Some(f) = format {
-            if f == ResponseFormat::Raw {
-                return self
-                    .resolver
-                    .resolve_raw(path)
-                    .await
-                    .map_err(|e| e.to_string());
-            }
+        if raw_format {
+            return self
+                .resolver
+                .resolve_raw(path)
+                .await
+                .map_err(|e| e.to_string());
+        } else {
+            self.resolver.resolve(path).await.map_err(|e| e.to_string())
         }
-        self.resolver.resolve(path).await.map_err(|e| e.to_string())
     }
 
     #[tracing::instrument(skip(self))]
@@ -126,7 +162,7 @@ impl<T: ContentLoader + std::marker::Unpin> Client<T> {
         let path_metadata = if let Some(path_metadata) = path_metadata {
             path_metadata
         } else {
-            self.retrieve_path_metadata(path.clone(), None).await?
+            self.retrieve_path_metadata(path.clone(), false).await?
         };
         let metadata = path_metadata.metadata().clone();
         record_ttfb_metrics(start_time, &metadata.source);
@@ -238,28 +274,6 @@ impl<T: ContentLoader> Client<T> {
     pub async fn has_file_locally(&self, cid: &Cid) -> Result<bool> {
         info!("has cid {}", cid);
         self.resolver.has_cid(cid).await
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct IpfsRequest {
-    pub format: ResponseFormat,
-    pub cid: CidOrDomain,
-    pub resolved_path: iroh_resolver::resolver::Path,
-    pub query_file_name: String,
-    pub download: bool,
-    pub query_params: GetParams,
-    pub subdomain_mode: bool,
-    pub path_metadata: Out,
-}
-
-impl IpfsRequest {
-    pub fn request_path_for_redirection(&self) -> String {
-        if self.subdomain_mode {
-            self.resolved_path.to_relative_string()
-        } else {
-            self.resolved_path.to_string()
-        }
     }
 }
 
