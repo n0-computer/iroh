@@ -467,7 +467,8 @@ impl Entry {
                 let chunker = chunker_config.into();
                 let dir = DirectoryBuilder::new()
                     .chunker(chunker)
-                    .path(path)
+                    .add_path(path)
+                    .await?
                     .build()
                     .await?;
                 Entry::Directory(dir)
@@ -516,7 +517,6 @@ pub struct DirectoryBuilder {
     typ: DirectoryType,
     chunker: Chunker,
     degree: usize,
-    path: Option<PathBuf>,
 }
 
 impl Default for DirectoryBuilder {
@@ -527,7 +527,6 @@ impl Default for DirectoryBuilder {
             typ: DirectoryType::Basic,
             chunker: Chunker::Fixed(chunker::Fixed::default()),
             degree: DEFAULT_DEGREE,
-            path: None,
         }
     }
 }
@@ -547,11 +546,6 @@ impl DirectoryBuilder {
         self
     }
 
-    pub fn path(mut self, path: &Path) -> Self {
-        self.path = Some(path.into());
-        self
-    }
-
     pub fn chunker(mut self, chunker: Chunker) -> Self {
         self.chunker = chunker;
         self
@@ -563,22 +557,22 @@ impl DirectoryBuilder {
     }
 
     pub fn add_dir(self, dir: Directory) -> Result<Self> {
-        Ok(self.entry(Entry::Directory(dir)))
+        Ok(self.add_entry(Entry::Directory(dir)))
     }
 
     pub fn add_file(self, file: File) -> Self {
-        self.entry(Entry::File(file))
+        self.add_entry(Entry::File(file))
     }
 
     pub fn add_raw_block(self, raw_block: RawBlock) -> Self {
-        self.entry(Entry::RawBlock(raw_block))
+        self.add_entry(Entry::RawBlock(raw_block))
     }
 
     pub fn add_symlink(self, symlink: Symlink) -> Self {
-        self.entry(Entry::Symlink(symlink))
+        self.add_entry(Entry::Symlink(symlink))
     }
 
-    fn entry(mut self, entry: Entry) -> Self {
+    pub fn add_entry(mut self, entry: Entry) -> Self {
         if self.typ == DirectoryType::Basic && self.entries.len() >= DIRECTORY_LINK_LIMIT {
             self.typ = DirectoryType::Hamt
         }
@@ -586,38 +580,38 @@ impl DirectoryBuilder {
         self
     }
 
+    pub fn add_entries(mut self, entries: impl Iterator<Item = Entry>) -> Self {
+        for entry in entries {
+            self = self.add_entry(entry);
+        }
+        self
+    }
+
+    pub async fn add_path(self, path: impl Into<PathBuf>) -> Result<Self> {
+        let chunker = self.chunker.clone();
+        let degree = self.degree.clone();
+        Ok(self.add_entries(
+            make_entries_from_path(path, chunker, degree)
+                .await?
+                .into_iter(),
+        ))
+    }
+
     pub async fn build(self) -> Result<Directory> {
         let DirectoryBuilder {
-            name,
-            entries,
-            typ,
-            path,
-            chunker,
-            degree,
+            name, entries, typ, ..
         } = self;
 
-        Ok(if let Some(path) = path {
-            let mut dir = make_dir_from_path(path, chunker.clone(), degree).await?;
-            match &mut dir {
-                Directory::Basic(basic) => basic.entries.extend(entries),
-                Directory::Hamt(_) => unimplemented!(),
-            }
-            if let Some(name) = name {
-                dir.set_name(name);
-            }
-            dir
-        } else {
-            let name = name.unwrap_or_default();
-            match typ {
-                DirectoryType::Basic => Directory::Basic(BasicDirectory { name, entries }),
-                DirectoryType::Hamt => {
-                    let hamt = HamtNode::new(entries)
-                        .context("unable to build hamt. Probably a hash collision.")?;
-                    Directory::Hamt(HamtDirectory {
-                        name,
-                        hamt: Box::new(hamt),
-                    })
-                }
+        let name = name.unwrap_or_default();
+        Ok(match typ {
+            DirectoryType::Basic => Directory::Basic(BasicDirectory { name, entries }),
+            DirectoryType::Hamt => {
+                let hamt = HamtNode::new(entries)
+                    .context("unable to build hamt. Probably a hash collision.")?;
+                Directory::Hamt(HamtDirectory {
+                    name,
+                    hamt: Box::new(hamt),
+                })
             }
         })
     }
@@ -786,40 +780,47 @@ pub struct Config {
 }
 
 #[async_recursion(?Send)]
-async fn make_dir_from_path<P: Into<PathBuf>>(
+async fn make_entries_from_path<P: Into<PathBuf>>(
     path: P,
     chunker: Chunker,
     degree: usize,
-) -> Result<Directory> {
-    let path = path.into();
-    let mut dir = DirectoryBuilder::new().name(
-        path.file_name()
-            .and_then(|s| s.to_str())
-            .unwrap_or_default(),
-    );
-
-    let mut directory_reader = tokio::fs::read_dir(path.clone()).await?;
+) -> Result<Vec<Entry>> {
+    let mut directory_reader = tokio::fs::read_dir(path.into()).await?;
+    let mut entries = vec![];
     while let Some(entry) = directory_reader.next_entry().await? {
         let path = entry.path();
         if path.is_symlink() {
-            let s = SymlinkBuilder::new(path).build().await?;
-            dir = dir.add_symlink(s);
+            entries.push(Entry::Symlink(SymlinkBuilder::new(path).build().await?))
         } else if path.is_file() {
-            let f = FileBuilder::new()
-                .chunker(chunker.clone())
-                .degree(degree)
-                .path(path)
-                .build()
-                .await?;
-            dir = dir.add_file(f);
+            entries.push(Entry::File(
+                FileBuilder::new()
+                    .chunker(chunker.clone())
+                    .degree(degree)
+                    .path(path)
+                    .build()
+                    .await?,
+            ));
         } else if path.is_dir() {
-            let d = make_dir_from_path(path, chunker.clone(), degree).await?;
-            dir = dir.add_dir(d)?;
+            entries.push(Entry::Directory(
+                DirectoryBuilder::new()
+                    .name(
+                        path.file_name()
+                            .and_then(|s| s.to_str())
+                            .unwrap_or_default(),
+                    )
+                    .add_entries(
+                        make_entries_from_path(path, chunker.clone(), degree)
+                            .await?
+                            .into_iter(),
+                    )
+                    .build()
+                    .await?,
+            ))
         } else {
-            anyhow::bail!("directory entry is neither file nor directory")
+            anyhow::bail!("directory entry is neither file nor directory nor symlink")
         }
     }
-    dir.build().await
+    Ok(entries)
 }
 
 #[cfg(test)]
@@ -1119,12 +1120,18 @@ mod tests {
             vec![Entry::File(file), Entry::Directory(nested_dir)],
         );
 
-        let got = make_dir_from_path(
-            dir,
-            Chunker::Fixed(chunker::Fixed::default()),
-            DEFAULT_DEGREE,
-        )
-        .await?;
+        let got = DirectoryBuilder::new()
+            .add_entries(
+                make_entries_from_path(
+                    dir,
+                    Chunker::Fixed(chunker::Fixed::default()),
+                    DEFAULT_DEGREE,
+                )
+                .await?
+                .into_iter(),
+            )
+            .build()
+            .await?;
 
         let basic_entries = |dir: Directory| match dir {
             Directory::Basic(basic) => basic.entries,
