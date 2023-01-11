@@ -14,7 +14,6 @@ use multihash::Multihash;
 use redb::{Database, DatabaseStats, ReadableTable, Table};
 use rkyv::AlignedVec;
 use smallvec::SmallVec;
-use std::sync::RwLock;
 use tokio::task;
 
 use crate::cf::{GraphV0, MetadataV0, CF_BLOBS_V0, CF_GRAPH_V0, CF_ID_V0, CF_METADATA_V0};
@@ -27,7 +26,6 @@ pub struct Store {
 
 struct InnerStore {
     content: Database,
-    next_id: RwLock<u64>,
     _rpc_client: RpcClient,
 }
 
@@ -35,7 +33,6 @@ impl fmt::Debug for InnerStore {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("InnerStore")
             .field("content", &self.content)
-            .field("next_id", &self.next_id)
             .field("_rpc_client", &self._rpc_client)
             .finish()
     }
@@ -89,31 +86,23 @@ impl Store {
     #[tracing::instrument]
     pub async fn open(config: Config) -> Result<Self> {
         let path = config.path;
-        let (db, next_id) = task::spawn_blocking(move || -> Result<_> {
+        let db = task::spawn_blocking(move || -> Result<_> {
             let db = Database::create(path.join("iroh.db"))?;
-            let next_id = {
-                let txn = db.begin_write()?;
-                {
-                    txn.open_table(CF_BLOBS_V0)?;
-                }
-                {
-                    txn.open_table(CF_METADATA_V0)?;
-                }
-                {
-                    txn.open_table(CF_GRAPH_V0)?;
-                }
-                let next_id = {
-                    let id_table = txn.open_table(CF_ID_V0)?;
-                    // read last inserted id
-
-                    let iter = id_table.iter()?;
-                    let last_id: u64 = iter.map(|(_, g)| g.value()).max().unwrap_or_default();
-                    last_id + 1
-                };
-                txn.commit()?;
-                next_id
-            };
-            Ok((db, next_id))
+            let txn = db.begin_write()?;
+            {
+                txn.open_table(CF_BLOBS_V0)?;
+            }
+            {
+                txn.open_table(CF_METADATA_V0)?;
+            }
+            {
+                txn.open_table(CF_GRAPH_V0)?;
+            }
+            {
+                txn.open_table(CF_ID_V0)?;
+            }
+            txn.commit()?;
+            Ok(db)
         })
         .await??;
 
@@ -124,7 +113,6 @@ impl Store {
         Ok(Store {
             inner: Arc::new(InnerStore {
                 content: db,
-                next_id: next_id.into(),
                 _rpc_client,
             }),
         })
@@ -175,29 +163,32 @@ impl Store {
     {
         inc!(StoreMetrics::PutRequests);
 
-        if self.has(&cid)? {
-            return Ok(());
-        }
-
-        let id = self.next_id();
-
         let start = std::time::Instant::now();
-
-        // guranteed that the key does not exists, so we want to store it
-
-        let metadata = MetadataV0 {
-            codec: cid.codec(),
-            multihash: cid.hash().to_bytes().into_boxed_slice(),
-        };
-        let metadata_bytes = rkyv::to_bytes::<_, 1024>(&metadata)?; // TODO: is this the right amount of scratch space?
-        let id_key = id_key(&cid);
         let blob_size = blob.as_ref().len();
 
         let txn = self.inner.content.begin_write()?;
         {
+
+            if self.has(&cid)? {
+                return Ok(());
+            }
+
+
+            // guranteed that the key does not exists, so we want to store it
+
+            let metadata = MetadataV0 {
+                codec: cid.codec(),
+                multihash: cid.hash().to_bytes().into_boxed_slice(),
+            };
+            let metadata_bytes = rkyv::to_bytes::<_, 1024>(&metadata)?; // TODO: is this the right amount of scratch space?
+            let id_key = id_key(&cid);
+
             let mut id_table = txn.open_table(CF_ID_V0)?;
             let mut metadata_table = txn.open_table(CF_METADATA_V0)?;
 
+            let id = self.next_id(&metadata_table);
+            id_table.insert(&id_key, &id)?;
+            metadata_table.insert(&id, &metadata_bytes)?;
             let children =
                 self.ensure_id_many(links.into_iter(), &mut id_table, &mut metadata_table)?;
 
@@ -206,9 +197,7 @@ impl Store {
             };
             let graph_bytes = rkyv::to_bytes::<_, 1024>(&graph)?; // TODO: is this the right amount of scratch space?
 
-            id_table.insert(&id_key, &id)?;
             txn.open_table(CF_BLOBS_V0)?.insert(&id, blob.as_ref())?;
-            metadata_table.insert(&id, &metadata_bytes)?;
             txn.open_table(CF_GRAPH_V0)?.insert(&id, &graph_bytes)?;
         }
         txn.commit()?;
@@ -240,7 +229,7 @@ impl Store {
 
                 cid_tracker.insert(cid);
 
-                let id = self.next_id();
+                let id = self.next_id(&metadata_table);
 
                 // guranteed that the key does not exists, so we want to store it
 
@@ -250,6 +239,8 @@ impl Store {
                 };
                 let metadata_bytes = rkyv::to_bytes::<_, 1024>(&metadata)?; // TODO: is this the right amount of scratch space?
                 let id_key = id_key(&cid);
+                id_table.insert(&id_key, &id)?;
+                metadata_table.insert(&id, &metadata_bytes)?;
 
                 let children =
                     self.ensure_id_many(links.into_iter(), &mut id_table, &mut metadata_table)?;
@@ -262,9 +253,7 @@ impl Store {
                 let blob_size = blob.as_ref().len();
                 total_blob_size += blob_size as u64;
 
-                id_table.insert(&id_key, &id)?;
                 blobs_table.insert(&id, &blob)?;
-                metadata_table.insert(&id, &metadata_bytes)?;
                 graph_table.insert(&id, &graph_bytes)?;
             }
         }
@@ -297,7 +286,7 @@ impl Store {
                 id.value()
             } else {
                 drop(maybe_id);
-                let id = self.next_id();
+                let id = self.next_id(metadata_table);
 
                 let metadata = MetadataV0 {
                     codec: cid.codec(),
@@ -314,11 +303,9 @@ impl Store {
         Ok(ids)
     }
 
-    #[tracing::instrument(skip(self))]
-    fn next_id(&self) -> u64 {
-        let mut id = self.inner.next_id.write().unwrap();
-        let next_id = *id;
-        *id = id.checked_add(1).expect("store is full");
+    #[tracing::instrument(skip(self, metadata_table))]
+    fn next_id(&self, metadata_table: &Table<u64, &[u8]>) -> u64 {
+        let next_id = metadata_table.iter().unwrap().next_back().map(|(id, _)| id.value()).unwrap_or_default() + 1;
         next_id
     }
 
@@ -548,7 +535,7 @@ impl Store {
 
 #[cfg(test)]
 mod tests {
-    use std::{str::FromStr, sync::Mutex};
+    use std::str::FromStr;
 
     use super::*;
 
@@ -770,16 +757,13 @@ mod tests {
             .collect::<Vec<_>>();
         let (store, _dir) = futures::executor::block_on(test_store())?;
         let workers = (0..std::thread::available_parallelism()?.get()).collect::<Vec<_>>();
-        let mutex = Arc::new(Mutex::new(()));
         for branch in branches {
             // for each batch, do a concurrent insert from as many parallel threads as possible
             workers
                 .par_iter()
                 .map(|_| {
                     let (cid, data, links) = branch.clone();
-                    let t = mutex.lock().unwrap();
                     store.put(cid, data, links)?;
-                    drop(t);
                     anyhow::Ok(())
                 })
                 .collect::<anyhow::Result<Vec<_>>>()?;
