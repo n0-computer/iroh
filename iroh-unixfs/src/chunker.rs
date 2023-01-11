@@ -7,7 +7,6 @@ use std::{
 };
 
 use anyhow::{anyhow, Context};
-use bytes::Bytes;
 use futures::{stream::BoxStream, Stream};
 use tokio::io::AsyncRead;
 

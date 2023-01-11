@@ -1,8 +1,8 @@
-use std::{io, path::Path};
+use std::io;
 
-use bytes::{Bytes, BytesMut};
+use bytes::BytesMut;
 use futures::{stream::BoxStream, StreamExt};
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeek};
+use tokio::io::{AsyncRead, AsyncReadExt};
 
 use crate::types::{BytesWithProvenance, ReaderWithProvenance};
 
@@ -33,7 +33,6 @@ impl Fixed {
         self,
         mut source: ReaderWithProvenance<R>,
     ) -> BoxStream<'a, io::Result<BytesWithProvenance>> {
-        let mut offset: u64 = 0;
         let chunk_size = self.chunk_size;
         async_stream::stream! {
             let mut buffer = BytesMut::with_capacity(chunk_size);
@@ -45,7 +44,6 @@ impl Fixed {
                 }
                 match source.read_buf(&mut buffer).await {
                     Ok(len) => {
-                        offset += len as u64;
                         current_len += len;
                         if current_len == chunk_size {
                             // read a full chunk

@@ -2,7 +2,7 @@
 
 use std::io;
 
-use bytes::{Bytes, BytesMut};
+use bytes::BytesMut;
 use futures::{stream::BoxStream, StreamExt};
 use tokio::io::{AsyncRead, AsyncReadExt};
 

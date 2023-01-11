@@ -75,6 +75,8 @@ impl<R> ReaderWithProvenance<R> {
         }
     }
 
+    /// Given a buffer that is assumed to be ending at the current stream position, enhance it with
+    /// the provenance information (path and offset/len)
     pub fn enhance(&self, buffer: Bytes) -> BytesWithProvenance {
         let provenance = self.provenance.as_ref().map(|p| FileReference {
             path: p.clone(),
@@ -114,28 +116,33 @@ impl<R: AsyncRead + Unpin> AsyncRead for ReaderWithProvenance<R> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Data {
     Blob(Bytes),
-    Reference {
-        path: String,
-        offset: u64,
-        len: usize,
-    },
+    Reference(FileReference),
+}
+
+impl From<BytesWithProvenance> for Data {
+    fn from(value: BytesWithProvenance) -> Self {
+        match value.provenance {
+            Some(reference) => Self::Reference(reference),
+            None => Self::Blob(value.data),
+        }
+    }
 }
 
 impl Data {
     fn len(&self) -> usize {
         match self {
             Data::Blob(b) => b.len(),
-            Data::Reference { len, .. } => *len,
+            Data::Reference(r) => r.len,
         }
     }
 
     fn bytes(&self) -> Bytes {
         match self {
             Data::Blob(b) => b.clone(),
-            Data::Reference { path, offset, len } => {
-                let mut file = std::fs::File::open(path).unwrap();
-                file.seek(std::io::SeekFrom::Start(*offset)).unwrap();
-                let mut buf = vec![0; *len];
+            Data::Reference(r) => {
+                let mut file = std::fs::File::open(&r.path).unwrap();
+                file.seek(std::io::SeekFrom::Start(r.offset)).unwrap();
+                let mut buf = vec![0; r.len];
                 file.read_exact(&mut buf).unwrap();
                 Bytes::from(buf)
             }

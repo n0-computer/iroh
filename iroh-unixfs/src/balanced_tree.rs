@@ -2,7 +2,6 @@ use std::collections::VecDeque;
 
 use anyhow::Result;
 use async_stream::try_stream;
-use bytes::Bytes;
 use cid::Cid;
 use futures::{Stream, StreamExt, TryFutureExt, TryStreamExt};
 
@@ -81,7 +80,7 @@ fn stream_balanced_tree(
 
         let in_stream = in_stream.err_into::<anyhow::Error>().map(|chunk| {
             tokio::task::spawn_blocking(|| {
-                chunk.and_then(|chunk| TreeNode::Leaf(chunk.data).encode())
+                chunk.and_then(|chunk| TreeNode::Leaf(chunk).encode())
             }).err_into::<anyhow::Error>()
         }).buffered(hash_par).map(|x| x.and_then(|x| x));
 
@@ -192,7 +191,7 @@ fn create_unixfs_node_from_links(links: Vec<(Cid, LinkInfo)>) -> Result<UnixfsNo
 // Leaf nodes encode to `UnixfsNode::Raw`
 // Stem nodes encode to `UnixfsNode::File`
 enum TreeNode {
-    Leaf(Bytes),
+    Leaf(BytesWithProvenance),
     Stem(Vec<(Cid, LinkInfo)>),
 }
 
@@ -200,7 +199,7 @@ impl TreeNode {
     fn encode(self) -> Result<(Block, LinkInfo)> {
         match self {
             TreeNode::Leaf(bytes) => {
-                let len = bytes.len();
+                let len = bytes.data.len();
                 let node = UnixfsNode::Raw(bytes);
                 let block = node.encode()?;
                 let link_info = LinkInfo {
@@ -234,6 +233,7 @@ impl TreeNode {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bytes::Bytes;
     use bytes::BytesMut;
     use futures::StreamExt;
 
@@ -258,7 +258,7 @@ mod tests {
 
         if num_chunks / degree == 0 {
             let chunk = chunks.next().await.unwrap().unwrap();
-            let leaf = TreeNode::Leaf(chunk.data);
+            let leaf = TreeNode::Leaf(chunk);
             let (block, _) = leaf.encode().unwrap();
             tree[0].push(block);
             return tree;
@@ -266,7 +266,7 @@ mod tests {
 
         while let Some(chunk) = chunks.next().await {
             let chunk = chunk.unwrap();
-            let leaf = TreeNode::Leaf(chunk.data);
+            let leaf = TreeNode::Leaf(chunk);
             let (block, link_info) = leaf.encode().unwrap();
             links[0].push((*block.cid(), link_info));
             tree[0].push(block);
@@ -342,7 +342,7 @@ mod tests {
     }
 
     fn make_leaf(data: usize) -> (Block, LinkInfo) {
-        TreeNode::Leaf(BytesMut::from(&data.to_be_bytes()[..]).freeze())
+        TreeNode::Leaf(BytesMut::from(&data.to_be_bytes()[..]).freeze().into())
             .encode()
             .unwrap()
     }

@@ -121,6 +121,7 @@ mod tests {
 
     use super::*;
     use axum::response::Response;
+    use bytes::Bytes;
     use cid::Cid;
     use futures::{StreamExt, TryStreamExt};
     use http::header::CONTENT_RANGE;
@@ -481,7 +482,10 @@ mod tests {
         );
 
         for (i, node) in nodes[1..].iter().enumerate() {
-            assert_eq!(node, &UnixfsNode::Raw(files[i].1.clone().into()));
+            assert_eq!(
+                node,
+                &UnixfsNode::Raw(Bytes::from(files[i].1.clone()).into())
+            );
         }
         test_setup.shutdown().await
     }
@@ -570,7 +574,10 @@ mod tests {
         );
 
         for (i, node) in nodes[1..].iter().enumerate() {
-            assert_eq!(node, &UnixfsNode::Raw(files[i].1.clone().into()));
+            assert_eq!(
+                node,
+                &UnixfsNode::Raw(Bytes::from(files[i].1.clone()).into())
+            );
         }
 
         test_setup.shutdown().await

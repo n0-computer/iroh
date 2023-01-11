@@ -18,7 +18,7 @@ use crate::{
     codecs::Codec,
     content_loader::{ContentLoader, LoaderContext},
     hamt::Hamt,
-    types::{Block, Data, Link, LinkRef, Links, PbLinks},
+    types::{Block, BytesWithProvenance, Data, Link, LinkRef, Links, PbLinks},
 };
 
 pub(crate) mod unixfs_pb {
@@ -67,7 +67,7 @@ impl Unixfs {
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum UnixfsNode {
-    Raw(Bytes),
+    Raw(BytesWithProvenance),
     RawNode(Node),
     Directory(Node),
     File(Node),
@@ -151,7 +151,7 @@ impl Node {
 impl UnixfsNode {
     pub fn decode(cid: &Cid, buf: Bytes) -> Result<Self> {
         match cid.codec() {
-            c if c == Codec::Raw as u64 => Ok(UnixfsNode::Raw(buf)),
+            c if c == Codec::Raw as u64 => Ok(UnixfsNode::Raw(buf.into())),
             _ => {
                 let outer = dag_pb::PbNode::decode(buf)?;
                 let inner_data = outer
@@ -182,10 +182,13 @@ impl UnixfsNode {
     pub fn encode(&self) -> Result<Block> {
         let res = match self {
             UnixfsNode::Raw(data) => {
-                let out = data.clone();
                 let links = vec![];
-                let cid = Cid::new_v1(Codec::Raw as _, cid::multihash::Code::Sha2_256.digest(&out));
-                Block::new(cid, Data::Blob(out), links)
+                let cid = Cid::new_v1(
+                    Codec::Raw as _,
+                    cid::multihash::Code::Sha2_256.digest(&data.data),
+                );
+                let out = data.clone();
+                Block::new(cid, Data::Blob(out.data), links)
             }
             UnixfsNode::RawNode(node)
             | UnixfsNode::Directory(node)
@@ -229,7 +232,7 @@ impl UnixfsNode {
     /// Available only for `Raw` and `File` which are a single block with no links.
     pub fn size(&self) -> Option<usize> {
         match self {
-            UnixfsNode::Raw(data) => Some(data.len()),
+            UnixfsNode::Raw(data) => Some(data.data.len()),
             UnixfsNode::Directory(node)
             | UnixfsNode::RawNode(node)
             | UnixfsNode::File(node)
@@ -242,7 +245,7 @@ impl UnixfsNode {
     /// Should only be set for `Raw` and `File`.
     pub fn filesize(&self) -> Option<u64> {
         match self {
-            UnixfsNode::Raw(data) => Some(data.len() as u64),
+            UnixfsNode::Raw(data) => Some(data.data.len() as u64),
             UnixfsNode::Directory(node)
             | UnixfsNode::RawNode(node)
             | UnixfsNode::File(node)
@@ -458,7 +461,7 @@ impl<C: ContentLoader + Unpin + 'static> AsyncRead for UnixfsContentReader<C> {
                 let pos_old = *pos;
                 let poll_res = match root_node {
                     UnixfsNode::Raw(data) => {
-                        read_data_to_buf(pos, *pos_max, &data[*pos..], buf);
+                        read_data_to_buf(pos, *pos_max, &data.data[*pos..], buf);
                         Poll::Ready(Ok(()))
                     }
                     UnixfsNode::File(node) => poll_read_file_at(
@@ -786,13 +789,13 @@ fn poll_read_file_at<C: ContentLoader + 'static>(
                 node: ref mut current_node_inner,
             } => match current_node_inner {
                 UnixfsNode::Raw(data) => {
-                    if *node_offset + data.len() <= *pos {
+                    if *node_offset + data.data.len() <= *pos {
                         *current_node = CurrentNodeState::NextNodeRequested {
-                            next_node_offset: node_offset + data.len(),
+                            next_node_offset: node_offset + data.data.len(),
                         };
                         continue;
                     }
-                    let bytes_read = read_data_to_buf(pos, pos_max, &data[*node_pos..], buf);
+                    let bytes_read = read_data_to_buf(pos, pos_max, &data.data[*node_pos..], buf);
                     *node_pos += bytes_read;
                     return Poll::Ready(Ok(()));
                 }
