@@ -6,6 +6,8 @@ use bytes::{Bytes, BytesMut};
 use futures::{stream::BoxStream, StreamExt};
 use tokio::io::{AsyncRead, AsyncReadExt};
 
+use crate::types::{BytesWithProvenance, ReaderWithProvenance};
+
 /// Rabin fingerprinting based chunker.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Rabin {
@@ -48,8 +50,8 @@ impl Rabin {
 
     pub fn chunks<'a, R: AsyncRead + Unpin + Send + 'a>(
         self,
-        mut source: R,
-    ) -> BoxStream<'a, io::Result<Bytes>> {
+        mut source: ReaderWithProvenance<R>,
+    ) -> BoxStream<'a, io::Result<BytesWithProvenance>> {
         async_stream::stream! {
             let target_size = 3 * self.config.max_size;
             let mut buf = BytesMut::with_capacity(target_size);
@@ -70,7 +72,8 @@ impl Rabin {
                 // abort early if we have not received enough data
                 if buf.len() < self.config.min_size {
                     if !buf.is_empty() {
-                        yield Ok(buf.freeze());
+                        let value = source.enhance(buf.freeze());
+                        yield Ok(value);
                     }
                     break;
                 }
@@ -100,7 +103,8 @@ impl Rabin {
                     if cur_idx + self.config.min_size >= post_buf_idx {
                         if use_entire_buffer && post_buf_idx != cur_idx {
                             let chunk = buf.clone().freeze().slice(cur_idx..post_buf_idx);
-                            yield Ok(chunk);
+                            let value = source.enhance(chunk);
+                            yield Ok(value);
                         }
                         break;
                     }
@@ -135,7 +139,8 @@ impl Rabin {
 
                     // always a find at this point, we bailed on short buffers earlier
                     let chunk = buf.clone().freeze().slice(last_idx..cur_idx);
-                    yield Ok(chunk);
+                    let value = source.enhance(chunk);
+                    yield Ok(value);
                 }
 
                 // remove processed data
@@ -793,11 +798,11 @@ mod tests {
 
         println!("1 chunk");
         let data: Vec<u8> = (0..1024u32).flat_map(|i| i.to_le_bytes()).collect();
-        let bytes = std::io::Cursor::new(&data);
+        let bytes = ReaderWithProvenance::from(std::io::Cursor::new(&data));
         let split = chunker.clone().chunks(bytes);
         let result: Vec<_> = split.try_collect().await.unwrap();
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0], &data);
+        assert_eq!(result[0].data, &data);
 
         println!(">= 4 chunks");
         let data: Vec<u8> = (0..393_216u32).flat_map(|i| i.to_le_bytes()).collect();
@@ -846,7 +851,7 @@ mod tests {
             chunks.iter().map(|c| c.len()).collect::<Vec<_>>()
         );
         let stream = futures::stream::iter(chunks.iter().map(|s| io::Result::Ok(&s[..])));
-        let reader = tokio_util::io::StreamReader::new(stream);
+        let reader = ReaderWithProvenance::from(tokio_util::io::StreamReader::new(stream));
         let split = chunker.chunks(reader);
         let chunks = split.try_collect::<Vec<_>>().await.unwrap();
 
@@ -856,14 +861,17 @@ mod tests {
             assert_eq!(chunks.len(), 1);
         }
 
-        assert_eq!(chunks.iter().map(|v| v.len()).sum::<usize>(), data.len());
+        assert_eq!(
+            chunks.iter().map(|v| v.data.len()).sum::<usize>(),
+            data.len()
+        );
         let mut together = Vec::with_capacity(data.len());
         for (i, chunk) in chunks.iter().enumerate() {
-            assert!(chunk.len() <= config.max_size);
+            assert!(chunk.data.len() <= config.max_size);
             if data.len() >= config.min_size && i < chunks.len() - 1 {
-                assert!(chunk.len() >= config.min_size)
+                assert!(chunk.data.len() >= config.min_size)
             }
-            together.extend_from_slice(chunk);
+            together.extend_from_slice(&chunk.data);
         }
 
         assert_eq!(data, together);

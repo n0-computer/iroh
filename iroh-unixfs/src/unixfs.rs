@@ -18,7 +18,7 @@ use crate::{
     codecs::Codec,
     content_loader::{ContentLoader, LoaderContext},
     hamt::Hamt,
-    types::{Block, Link, LinkRef, Links, PbLinks},
+    types::{Block, Data, Link, LinkRef, Links, PbLinks},
 };
 
 pub(crate) mod unixfs_pb {
@@ -185,7 +185,7 @@ impl UnixfsNode {
                 let out = data.clone();
                 let links = vec![];
                 let cid = Cid::new_v1(Codec::Raw as _, cid::multihash::Code::Sha2_256.digest(&out));
-                Block::new(cid, out, links)
+                Block::new(cid, Data::Blob(out), links)
             }
             UnixfsNode::RawNode(node)
             | UnixfsNode::Directory(node)
@@ -201,7 +201,7 @@ impl UnixfsNode {
                     Codec::DagPb as _,
                     cid::multihash::Code::Sha2_256.digest(&out),
                 );
-                Block::new(cid, out, links)
+                Block::new(cid, Data::Blob(out), links)
             }
         };
 

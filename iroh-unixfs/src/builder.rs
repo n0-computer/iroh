@@ -19,7 +19,7 @@ use crate::{
     balanced_tree::{TreeBuilder, DEFAULT_DEGREE},
     chunker::{self, Chunker, ChunkerConfig, DEFAULT_CHUNK_SIZE_LIMIT},
     hamt::{bitfield::Bitfield, bits, hash_key},
-    types::Block,
+    types::{Block, ReaderWithProvenance},
     unixfs::{dag_pb, unixfs_pb, DataType, HamtHashFunction, Node, UnixfsNode},
 };
 
@@ -221,11 +221,13 @@ impl File {
     pub async fn encode(self) -> Result<impl Stream<Item = Result<Block>>> {
         let reader = match self.content {
             Content::Path(path) => {
-                let f = tokio::fs::File::open(path).await?;
+                let f = tokio::fs::File::open(&path).await?;
                 let buf = tokio::io::BufReader::new(f);
-                Box::pin(buf)
+                let reader: Pin<Box<dyn AsyncRead + Send>> = Box::pin(buf);
+                let path = path.to_str().unwrap().to_owned();
+                ReaderWithProvenance::new(reader, Some(path))
             }
-            Content::Reader(reader) => reader,
+            Content::Reader(reader) => ReaderWithProvenance::from(reader),
         };
         let chunks = self.chunker.chunks(reader);
         Ok(self.tree_builder.stream_tree(chunks))
@@ -821,7 +823,7 @@ mod tests {
         let dir = dir.add_file(bar).add_symlink(baz).build().await?;
 
         let dir_block = dir.encode_root().await?;
-        let decoded_dir = UnixfsNode::decode(dir_block.cid(), dir_block.data().clone())?;
+        let decoded_dir = UnixfsNode::decode(dir_block.cid(), dir_block.data())?;
 
         let links = decoded_dir.links().collect::<Result<Vec<_>>>().unwrap();
         assert_eq!(links[0].name.unwrap(), "bar.txt");
@@ -880,7 +882,7 @@ mod tests {
         let dir = dir.add_file(bar).add_symlink(baz).build().await?;
 
         let dir_block = dir.encode_root().await?;
-        let decoded_dir = UnixfsNode::decode(dir_block.cid(), dir_block.data().clone())?;
+        let decoded_dir = UnixfsNode::decode(dir_block.cid(), dir_block.data())?;
 
         let links = decoded_dir.links().collect::<Result<Vec<_>>>().unwrap();
         assert_eq!(links[0].name.unwrap(), "bar.txt");
@@ -957,7 +959,7 @@ mod tests {
         let dir = dir.add_file(bar).add_file(baz).build().await?;
 
         let dir_block = dir.encode_root().await?;
-        let decoded_dir = UnixfsNode::decode(dir_block.cid(), dir_block.data().clone())?;
+        let decoded_dir = UnixfsNode::decode(dir_block.cid(), dir_block.data())?;
 
         let links = decoded_dir.links().collect::<Result<Vec<_>>>().unwrap();
         assert_eq!(links[0].name.unwrap(), "bar.txt");

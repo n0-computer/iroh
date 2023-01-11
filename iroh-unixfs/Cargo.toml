@@ -38,6 +38,7 @@ tokio = { workspace = true, features = ["fs"] }
 tokio-util = { workspace = true, features = ["io"] }
 tracing.workspace = true
 unsigned-varint.workspace = true
+pin-project = "1.0.12"
 
 [dev-dependencies]
 criterion = { workspace = true, features = ["async_tokio"] }

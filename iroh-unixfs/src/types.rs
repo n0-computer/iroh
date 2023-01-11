@@ -1,10 +1,12 @@
-use std::io::Cursor;
+use std::io::{Cursor, Read, Seek};
 
 use anyhow::{anyhow, Result};
 use bytes::Bytes;
 use cid::Cid;
 use libipld::error::{InvalidMultihash, UnsupportedMultihash};
 use multihash::{Code, MultihashDigest};
+use pin_project::pin_project;
+use tokio::io::AsyncRead;
 
 use crate::{codecs::Codec, parse_links, unixfs::dag_pb};
 
@@ -22,23 +24,143 @@ pub enum Source {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileReference {
+    path: String,
+    offset: u64,
+    len: usize,
+}
+
+/// Data with optional provenance
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BytesWithProvenance {
+    pub data: Bytes,
+    pub provenance: Option<FileReference>,
+}
+
+impl BytesWithProvenance {
+    pub fn new(data: Bytes, provenance: Option<FileReference>) -> Self {
+        Self { data, provenance }
+    }
+}
+
+impl From<Bytes> for BytesWithProvenance {
+    fn from(data: Bytes) -> Self {
+        Self {
+            data,
+            provenance: None,
+        }
+    }
+}
+
+/// Wrap a reader with optional provenance
+#[pin_project]
+#[derive(Debug)]
+pub struct ReaderWithProvenance<R> {
+    #[pin]
+    inner: R,
+    provenance: Option<String>,
+    offset: u64,
+}
+
+impl<R> ReaderWithProvenance<R> {
+    pub fn offset(&self) -> u64 {
+        self.offset
+    }
+
+    pub fn new(reader: R, provenance: Option<String>) -> Self {
+        Self {
+            inner: reader,
+            offset: 0,
+            provenance,
+        }
+    }
+
+    pub fn enhance(&self, buffer: Bytes) -> BytesWithProvenance {
+        let provenance = self.provenance.as_ref().map(|p| FileReference {
+            path: p.clone(),
+            offset: self.offset - buffer.len() as u64,
+            len: buffer.len(),
+        });
+        BytesWithProvenance::new(buffer, provenance)
+    }
+}
+
+impl<R> From<R> for ReaderWithProvenance<R> {
+    fn from(reader: R) -> Self {
+        Self::new(reader, None)
+    }
+}
+
+impl<R: AsyncRead + Unpin> AsyncRead for ReaderWithProvenance<R> {
+    fn poll_read(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        let this = self.project();
+        let o0 = buf.filled().len() as u64;
+        match this.inner.poll_read(cx, buf) {
+            std::task::Poll::Ready(Ok(())) => {
+                let o1 = buf.filled().len() as u64;
+                *this.offset += o1 - o0;
+                std::task::Poll::Ready(Ok(()))
+            }
+            std::task::Poll::Ready(Err(e)) => std::task::Poll::Ready(Err(e)),
+            std::task::Poll::Pending => std::task::Poll::Pending,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Data {
+    Blob(Bytes),
+    Reference {
+        path: String,
+        offset: u64,
+        len: usize,
+    },
+}
+
+impl Data {
+    fn len(&self) -> usize {
+        match self {
+            Data::Blob(b) => b.len(),
+            Data::Reference { len, .. } => *len,
+        }
+    }
+
+    fn bytes(&self) -> Bytes {
+        match self {
+            Data::Blob(b) => b.clone(),
+            Data::Reference { path, offset, len } => {
+                let mut file = std::fs::File::open(path).unwrap();
+                file.seek(std::io::SeekFrom::Start(*offset)).unwrap();
+                let mut buf = vec![0; *len];
+                file.read_exact(&mut buf).unwrap();
+                Bytes::from(buf)
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Block {
     cid: Cid,
-    data: Bytes,
     links: Vec<Cid>,
+    data: Data,
 }
 
 impl Block {
-    pub fn new(cid: Cid, data: Bytes, links: Vec<Cid>) -> Self {
-        Self { cid, data, links }
+    pub fn new(cid: Cid, data: Data, links: Vec<Cid>) -> Self {
+        Self { cid, links, data }
     }
 
     pub fn cid(&self) -> &Cid {
         &self.cid
     }
 
-    pub fn data(&self) -> &Bytes {
-        &self.data
+    pub fn data(&self) -> Bytes {
+        self.data.bytes()
     }
 
     pub fn links(&self) -> &[Cid] {
@@ -57,15 +179,16 @@ impl Block {
     pub fn validate(&self) -> Result<()> {
         // check that the cid is supported
         let code = self.cid.hash().code();
+        let data = self.data();
         let mh = Code::try_from(code)
             .map_err(|_| UnsupportedMultihash(code))?
-            .digest(&self.data);
+            .digest(&data);
         // check that the hash matches the data
         if mh.digest() != self.cid.hash().digest() {
             return Err(InvalidMultihash(mh.to_bytes()).into());
         }
         // check that the links are complete
-        let expected_links = parse_links(&self.cid, &self.data)?;
+        let expected_links = parse_links(&self.cid, &data)?;
         let mut actual_links = self.links.clone();
         actual_links.sort();
         // TODO: why do the actual links need to be deduplicated?
@@ -75,7 +198,7 @@ impl Block {
     }
 
     pub fn into_parts(self) -> (Cid, Bytes, Vec<Cid>) {
-        (self.cid, self.data, self.links)
+        (self.cid, self.data(), self.links)
     }
 }
 

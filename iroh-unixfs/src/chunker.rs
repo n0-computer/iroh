@@ -17,6 +17,8 @@ mod rabin;
 /// Chunks are limited to 1MiB by default
 pub const DEFAULT_CHUNK_SIZE_LIMIT: usize = 1024 * 1024;
 
+use crate::types::{BytesWithProvenance, ReaderWithProvenance};
+
 pub use self::{
     fixed::{Fixed, DEFAULT_CHUNKS_SIZE},
     rabin::Rabin,
@@ -92,8 +94,8 @@ impl From<ChunkerConfig> for Chunker {
 }
 
 pub enum ChunkerStream<'a> {
-    Fixed(BoxStream<'a, io::Result<Bytes>>),
-    Rabin(BoxStream<'a, io::Result<Bytes>>),
+    Fixed(BoxStream<'a, io::Result<BytesWithProvenance>>),
+    Rabin(BoxStream<'a, io::Result<BytesWithProvenance>>),
 }
 
 impl<'a> Debug for ChunkerStream<'a> {
@@ -106,7 +108,7 @@ impl<'a> Debug for ChunkerStream<'a> {
 }
 
 impl<'a> Stream for ChunkerStream<'a> {
-    type Item = io::Result<Bytes>;
+    type Item = io::Result<BytesWithProvenance>;
 
     fn poll_next(
         mut self: Pin<&mut Self>,
@@ -127,7 +129,10 @@ impl<'a> Stream for ChunkerStream<'a> {
 }
 
 impl Chunker {
-    pub fn chunks<'a, R: AsyncRead + Unpin + Send + 'a>(self, source: R) -> ChunkerStream<'a> {
+    pub fn chunks<'a, R: AsyncRead + Unpin + Send + 'a>(
+        self,
+        source: ReaderWithProvenance<R>,
+    ) -> ChunkerStream<'a> {
         match self {
             Self::Fixed(chunker) => ChunkerStream::Fixed(chunker.chunks(source)),
             Self::Rabin(chunker) => ChunkerStream::Rabin(chunker.chunks(source)),
