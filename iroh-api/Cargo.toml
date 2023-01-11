@@ -20,7 +20,6 @@ iroh-metrics.workspace = true
 iroh-resolver.workspace = true
 iroh-rpc-client.workspace = true
 iroh-rpc-types.workspace = true
-iroh-p2p.workspace = true
 iroh-unixfs.workspace = true
 iroh-util.workspace = true
 libp2p.workspace = true

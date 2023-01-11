@@ -25,7 +25,7 @@ use tokio::sync::oneshot;
 use tokio_stream::wrappers::ReceiverStream;
 use tracing::{debug, info, trace};
 
-use crate::{GossipsubEvent, NetworkEvent, DEFAULT_PROVIDER_LIMIT, VERSION};
+use crate::{GossipsubEvent, GossipsubEventStream, NetworkEvent, DEFAULT_PROVIDER_LIMIT, VERSION};
 
 #[derive(Clone)]
 pub(crate) struct P2p {
@@ -392,10 +392,7 @@ impl P2p {
     }
 
     #[tracing::instrument(skip(self))]
-    fn gossipsub_subscribe(
-        self,
-        req: GossipsubSubscribeRequest,
-    ) -> BoxStream<'static, Box<GossipsubSubscribeResponse>> {
+    fn gossipsub_subscribe(self, req: GossipsubSubscribeRequest) -> GossipsubEventStream {
         async move {
             self.gossipsub_subscribe_0(req)
                 .await

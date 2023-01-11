@@ -7,7 +7,9 @@ pub use crate::p2p::{peer_id_from_multiaddr, PeerIdOrAddr};
 pub use bytes::Bytes;
 pub use cid::Cid;
 pub use iroh_resolver::resolver::Path as IpfsPath;
-pub use iroh_rpc_client::{ClientStatus, Lookup, ServiceStatus, ServiceType, StatusType};
+pub use iroh_rpc_client::{
+    ClientStatus, GossipsubEvent, Lookup, ServiceStatus, ServiceType, StatusType,
+};
 pub use iroh_unixfs::builder::{
     Config as UnixfsConfig, DirectoryBuilder, Entry as UnixfsEntry, FileBuilder, SymlinkBuilder,
 };

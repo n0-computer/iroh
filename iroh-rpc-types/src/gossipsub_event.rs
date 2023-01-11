@@ -1,8 +1,13 @@
+use futures::stream::BoxStream;
 use libp2p::{
     gossipsub::{GossipsubMessage, MessageId, TopicHash},
     PeerId,
 };
 use serde::{Deserialize, Serialize};
+
+use crate::p2p::GossipsubSubscribeResponse;
+
+pub type GossipsubEventStream = BoxStream<'static, Box<GossipsubSubscribeResponse>>;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum GossipsubEvent {

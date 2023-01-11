@@ -7,9 +7,16 @@ use cid::Cid;
 use libp2p::{Multiaddr, PeerId};
 use serde::{Deserialize, Serialize};
 
+// pub use crate::receiver::{ProgressEvent, Receiver};
+// pub use crate::sender::Sender;
+pub use crate::receiver::ProgressEvent;
+
+// TODO(ramfox): remove re export
 pub use crate::iroh::build as build_iroh;
-pub use crate::receiver::{ProgressEvent, Receiver};
-pub use crate::sender::Sender;
+
+use anyhow::Result;
+use libp2p::gossipsub::{Sha256Topic, TopicHash};
+use rand::Rng;
 
 /// Ticket describing the peer, their addresses, and the topic
 /// on which to discuss the data transfer
@@ -21,6 +28,22 @@ pub struct Ticket {
 }
 
 impl Ticket {
+    pub fn new(peer_id: PeerId, addrs: Vec<Multiaddr>) -> Self {
+        let id: u64 = rand::thread_rng().gen();
+        let topic = Sha256Topic::new(format!("iroh-share-{id}"))
+            .hash()
+            .to_string();
+        Self {
+            peer_id,
+            addrs,
+            topic,
+        }
+    }
+
+    pub fn topic_hash(&self) -> TopicHash {
+        TopicHash::from_raw(self.topic.clone())
+    }
+
     pub fn as_bytes(&self) -> Vec<u8> {
         bincode::serialize(self).expect("failed to serialize")
     }

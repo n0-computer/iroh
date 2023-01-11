@@ -7,7 +7,7 @@ pub mod store;
 use std::fmt;
 
 pub use addr::Addr;
-pub use gossipsub_event::GossipsubEvent;
+pub use gossipsub_event::{GossipsubEvent, GossipsubEventStream};
 
 use serde::{Deserialize, Serialize};
 

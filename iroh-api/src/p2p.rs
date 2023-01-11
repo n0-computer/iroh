@@ -2,9 +2,8 @@ use std::collections::HashMap;
 
 use anyhow::Result;
 use bytes::Bytes;
-use futures::stream::{BoxStream, StreamExt};
-use iroh_p2p::GossipsubEvent;
-use iroh_rpc_client::{Lookup, P2pClient};
+use futures::stream::Stream;
+use iroh_rpc_client::{GossipsubEvent, Lookup, P2pClient};
 use libp2p::{
     gossipsub::{MessageId, TopicHash},
     multiaddr::Protocol,
@@ -93,14 +92,12 @@ impl P2p {
     pub async fn subscribe(
         &self,
         topic: String,
-    ) -> Result<BoxStream<'static, Result<GossipsubEvent>>> {
+    ) -> Result<impl Stream<Item = Result<GossipsubEvent>>> {
         let topic = TopicHash::from_raw(topic);
-        Ok(self
-            .client
+        self.client
             .gossipsub_subscribe(topic)
             .await
-            .map_err(|e| map_service_error("p2p", e))?
-            .boxed())
+            .map_err(|e| map_service_error("p2p", e))
     }
 
     /// Publish a message on a pub/sub Topic.

@@ -6,6 +6,7 @@ pub mod status;
 pub mod store;
 pub use self::config::Config;
 pub use client::Client;
+pub use iroh_rpc_types::GossipsubEvent;
 use iroh_rpc_types::{gateway::GatewayService, p2p::P2pService, store::StoreService, Addr};
 pub use network::{Lookup, P2pClient};
 use quic_rpc::{

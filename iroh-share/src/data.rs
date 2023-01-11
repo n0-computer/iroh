@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use futures::Stream;
 use iroh_resolver::{
     resolver::{Out, OutPrettyReader, Resolver, UnixfsType},
@@ -37,7 +37,7 @@ where
         self.root.pretty(self.resolver, Default::default(), None)
     }
 
-    pub async fn read_file(&self, link: &Link) -> Result<Data> {
+    pub async fn read_file(&self, link: &Link) -> Result<Data<C>> {
         let root = self
             .resolver
             .resolve(Path::from_cid(link.cid))

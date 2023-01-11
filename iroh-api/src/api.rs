@@ -101,11 +101,6 @@ impl Api {
         Self { client, resolver }
     }
 
-    /// Returns a [`Resolver`] you can use to resolve data from the Iroh store or the network.
-    pub async fn resolver(&self) -> Resolver<FullLoader> {
-        self.resolver.clone()
-    }
-
     /// Announces to the DHT that this node can offer the given [`Cid`].
     ///
     /// This publishes a provider record for the [`Cid`] to the DHT, establishing the local
