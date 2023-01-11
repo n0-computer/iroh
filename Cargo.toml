@@ -19,7 +19,6 @@ members = [
   "iroh-unixfs",
   "iroh-store",
   "iroh-util",
-  "stores/*",
   "xtask",
 ]
 # even if all crates are set to edition 2021, we still need to force the
@@ -130,7 +129,7 @@ prometheus-client = "0.18"
 proptest = "1"
 prost = "0.11"
 prost-build = "0.11.1"
-quic-rpc = { version = "0.3.1", default-features = false }
+quic-rpc = { version = "0.3.2", default-features = false }
 rand = "0.8.5"
 rand_chacha = "0.3.1"
 rayon = "1.5.3"
