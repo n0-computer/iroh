@@ -64,7 +64,7 @@ impl Directory {
         Directory::basic(name, vec![entry])
     }
 
-    fn basic(name: String, entries: Vec<Entry>) -> Self {
+    pub fn basic(name: String, entries: Vec<Entry>) -> Self {
         Directory::Basic(BasicDirectory { name, entries })
     }
 
@@ -161,7 +161,7 @@ enum Content {
 impl Debug for Content {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Content::Reader(_) => write!(f, "Content::Reader(Pin<Box<dyn AsyncRead>>)"),
+            Content::Reader(_) => write!(f, "Content::Reader(Pin<Box<dyn AsyncRead + Send>>)"),
             Content::Path(p) => write!(f, "Content::Path({})", p.display()),
         }
     }
@@ -359,7 +359,7 @@ impl FileBuilder {
         self
     }
 
-    pub fn content_reader<T: tokio::io::AsyncRead + Send + 'static>(mut self, content: T) -> Self {
+    pub fn content_reader<T: AsyncRead + Send + 'static>(mut self, content: T) -> Self {
         self.reader = Some(Box::pin(content));
         self
     }
