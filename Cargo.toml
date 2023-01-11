@@ -184,7 +184,6 @@ debug = false
 debug-assertions = false
 opt-level = 3
 panic = 'abort'
-
 incremental = false
 
 [profile.docker]
