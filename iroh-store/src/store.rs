@@ -16,7 +16,7 @@ use iroh_metrics::{
 use multihash::Multihash;
 use rocksdb::{
     BlockBasedOptions, Cache, ColumnFamily, DBPinnableSlice, Direction, IteratorMode, Options,
-    SingleThreaded, Transaction, TransactionDB,
+    SingleThreaded, Transaction, TransactionDB, TransactionOptions, WriteOptions,
 };
 use smallvec::SmallVec;
 use tokio::task;
@@ -167,20 +167,31 @@ impl Store {
     }
 
     #[tracing::instrument(skip(self, links, blob))]
-    pub fn put<T: AsRef<[u8]>, L>(&self, cid: Cid, blob: T, links: L) -> Result<()>
-    where
-        L: IntoIterator<Item = Cid>,
-    {
+    pub fn put(&self, cid: Cid, blob: impl AsRef<[u8]>, links: impl AsRef<[Cid]>) -> Result<()> {
+        while self.put0(cid, blob.as_ref(), links.as_ref()).is_err() {
+            tracing::warn!("failed to put, retrying");
+        }
+        Ok(())
+    }
+
+    fn put0(&self, cid: Cid, blob: impl AsRef<[u8]>, links: impl AsRef<[Cid]>) -> Result<()> {
         let mut store = self.write_store()?;
-        store.put(cid, blob, links)?;
+        store.put(cid, blob.as_ref(), links.as_ref())?;
         store.commit()?;
         Ok(())
     }
 
     #[tracing::instrument(skip(self, blocks))]
-    pub fn put_many(&self, blocks: impl IntoIterator<Item = (Cid, Bytes, Vec<Cid>)>) -> Result<()> {
+    pub fn put_many(&self, blocks: impl AsRef<[(Cid, Bytes, Vec<Cid>)]>) -> Result<()> {
+        while self.put_many0(blocks.as_ref()).is_err() {
+            tracing::warn!("failed to put, retrying");
+        }
+        Ok(())
+    }
+
+    fn put_many0(&self, blocks: impl AsRef<[(Cid, Bytes, Vec<Cid>)]>) -> Result<()> {
         let mut store = self.write_store()?;
-        store.put_many(blocks)?;
+        store.put_many(blocks.as_ref())?;
         store.commit()?;
         Ok(())
     }
@@ -229,7 +240,10 @@ impl Store {
     }
 
     fn write_store(&self) -> Result<WriteStore> {
-        let db = self.inner.content.transaction();
+        let mut to = TransactionOptions::default();
+        let wo = WriteOptions::default();
+        to.set_snapshot(true);
+        let db = self.inner.content.transaction_opt(&wo, &to);
         Ok(WriteStore {
             db,
             cf: ColumnFamilies::new(&self.inner.content)?,
@@ -300,10 +314,7 @@ impl<'a> ColumnFamilies<'a> {
 }
 
 impl<'a> WriteStore<'a> {
-    fn put<T: AsRef<[u8]>, L>(&mut self, cid: Cid, blob: T, links: L) -> Result<()>
-    where
-        L: IntoIterator<Item = Cid>,
-    {
+    fn put<T: AsRef<[u8]>>(&mut self, cid: Cid, blob: T, links: impl AsRef<[Cid]>) -> Result<()> {
         inc!(StoreMetrics::PutRequests);
 
         if self.has(&cid)? {
@@ -313,7 +324,7 @@ impl<'a> WriteStore<'a> {
         let start = std::time::Instant::now();
         let id_bytes = self.assign_id(&cid)?;
 
-        let children = self.ensure_id_many(links.into_iter())?;
+        let children = self.ensure_id_many(links)?;
 
         let blob_size = blob.as_ref().len();
         let graph = GraphV0 { children };
@@ -326,21 +337,21 @@ impl<'a> WriteStore<'a> {
         Ok(())
     }
 
-    fn put_many(&mut self, blocks: impl IntoIterator<Item = (Cid, Bytes, Vec<Cid>)>) -> Result<()> {
+    fn put_many(&mut self, blocks: impl AsRef<[(Cid, Bytes, Vec<Cid>)]>) -> Result<()> {
         inc!(StoreMetrics::PutRequests);
         let start = std::time::Instant::now();
         let mut total_blob_size = 0;
 
         let mut cid_tracker: AHashSet<Cid> = AHashSet::default();
-        for (cid, blob, links) in blocks.into_iter() {
-            if cid_tracker.contains(&cid) || self.has(&cid)? {
+        for (cid, blob, links) in blocks.as_ref() {
+            if cid_tracker.contains(cid) || self.has(cid)? {
                 continue;
             }
 
-            cid_tracker.insert(cid);
+            cid_tracker.insert(*cid);
 
-            let id_bytes = self.assign_id(&cid)?;
-            let children = self.ensure_id_many(links.into_iter())?;
+            let id_bytes = self.assign_id(cid)?;
+            let children = self.ensure_id_many(links)?;
 
             let graph = GraphV0 { children };
             let graph_bytes = rkyv::to_bytes::<_, 1024>(&graph)?; // TODO: is this the right amount of scratch space?
@@ -360,17 +371,14 @@ impl<'a> WriteStore<'a> {
 
     /// Takes a list of cids and gives them ids, which are both stored and then returned.
     #[tracing::instrument(skip(self, cids))]
-    fn ensure_id_many<I>(&mut self, cids: I) -> Result<Vec<u64>>
-    where
-        I: IntoIterator<Item = Cid>,
-    {
+    fn ensure_id_many(&mut self, cids: impl AsRef<[Cid]>) -> Result<Vec<u64>> {
         let mut ids = Vec::new();
-        for cid in cids {
-            let id_key = id_key(&cid);
+        for cid in cids.as_ref() {
+            let id_key = id_key(cid);
             let id = if let Some(id) = self.db.get_pinned_cf(self.cf.id, &id_key)? {
                 u64::from_be_bytes(id.as_ref().try_into()?)
             } else {
-                u64::from_be_bytes(self.assign_id(&cid)?)
+                u64::from_be_bytes(self.assign_id(cid)?)
             };
             ids.push(id);
         }
@@ -395,7 +403,7 @@ impl<'a> WriteStore<'a> {
 
     fn assign_id(&self, cid: &Cid) -> Result<[u8; 8]> {
         let id = self.next_id();
-        println!("{} {}", id, cid);
+        println!("assign_id {} {}", id, cid);
 
         let id_bytes = id.to_be_bytes();
 
@@ -409,6 +417,11 @@ impl<'a> WriteStore<'a> {
         let id_key = id_key(cid);
         self.db.put_cf(self.cf.metadata, id_bytes, metadata_bytes)?;
         self.db.put_cf(self.cf.id, id_key, id_bytes)?;
+        println!(
+            "next id would be {} {:?}",
+            self.next_id(),
+            std::thread::current().id()
+        );
         Ok(id_bytes)
     }
 

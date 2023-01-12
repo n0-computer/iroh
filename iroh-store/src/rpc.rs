@@ -46,7 +46,7 @@ impl RpcStore {
         let cid = req.cid;
         let links = req.links;
         self.0
-            .spawn_blocking(move |x| x.put(cid, req.blob, links))
+            .spawn_blocking(move |x| x.put(cid, req.blob, &links))
             .await?;
 
         info!("store rpc call: put cid {}", cid);
