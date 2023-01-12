@@ -205,7 +205,7 @@ impl FullLoader {
             .unwrap_or_default();
 
             if let Ok(store_rpc) = store {
-                match store_rpc.put(cid, data.clone(), links).await {
+                match store_rpc.put(cid, data.clone().into(), links).await {
                     Ok(_) => {
                         // Notify bitswap about new blocks
                         if let Ok(p2p) = p2p {

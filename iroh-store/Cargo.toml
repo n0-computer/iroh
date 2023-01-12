@@ -36,6 +36,8 @@ tokio = { workspace = true, features = ["rt"] }
 tracing.workspace = true
 tracing-opentelemetry.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
+bincode.workspace = true
+hex.workspace = true
 
 [dev-dependencies]
 criterion = { workspace = true, features = ["async_tokio"] }

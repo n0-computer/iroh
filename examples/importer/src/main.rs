@@ -64,7 +64,7 @@ async fn main() -> Result<()> {
             let pb = pb_clone.clone();
             async move {
                 let l = data.len();
-                rpc.try_store()?.put(cid, data, links).await?;
+                rpc.try_store()?.put(cid, data.into(), links).await?;
                 pb.inc(l as _);
                 Ok(l)
             }

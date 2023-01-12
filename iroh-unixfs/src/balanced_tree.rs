@@ -4,9 +4,10 @@ use anyhow::Result;
 use async_stream::try_stream;
 use cid::Cid;
 use futures::{Stream, StreamExt, TryFutureExt, TryStreamExt};
+use iroh_util::provenance::BytesWithProvenance;
 
 use crate::builder::encode_unixfs_pb;
-use crate::types::{Block, BytesWithProvenance};
+use crate::types::Block;
 use crate::unixfs::{dag_pb, unixfs_pb, DataType, Node, UnixfsNode};
 
 /// Default degree number for balanced tree, taken from unixfs specs

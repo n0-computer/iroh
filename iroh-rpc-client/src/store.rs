@@ -4,6 +4,7 @@ use bytes::Bytes;
 use cid::Cid;
 use futures::{Stream, StreamExt};
 use iroh_rpc_types::{store::*, VersionRequest, WatchRequest};
+use iroh_util::provenance::BytesOrReference;
 
 use crate::open_client;
 use crate::{StatusType, HEALTH_POLL_WAIT};
@@ -25,17 +26,17 @@ impl StoreClient {
         Ok(res.version)
     }
 
-    #[tracing::instrument(skip(self, blob))]
-    pub async fn put(&self, cid: Cid, blob: Bytes, links: Vec<Cid>) -> Result<()> {
-        self.client.rpc(PutRequest { cid, blob, links }).await??;
+    #[tracing::instrument(skip(self, data))]
+    pub async fn put(&self, cid: Cid, data: BytesOrReference, links: Vec<Cid>) -> Result<()> {
+        self.client.rpc(PutRequest { cid, data, links }).await??;
         Ok(())
     }
 
     #[tracing::instrument(skip(self, blocks))]
-    pub async fn put_many(&self, blocks: Vec<(Cid, Bytes, Vec<Cid>)>) -> Result<()> {
+    pub async fn put_many(&self, blocks: Vec<(Cid, BytesOrReference, Vec<Cid>)>) -> Result<()> {
         let blocks = blocks
             .into_iter()
-            .map(|(cid, blob, links)| PutRequest { cid, blob, links })
+            .map(|(cid, data, links)| PutRequest { cid, data, links })
             .collect();
         self.client.rpc(PutManyRequest { blocks }).await??;
         Ok(())

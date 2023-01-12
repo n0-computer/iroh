@@ -75,7 +75,7 @@ pub fn put_benchmark(c: &mut Criterion) {
                         rpc_ref
                             .try_store()
                             .unwrap()
-                            .put(*key, black_box(value.clone()), vec![])
+                            .put(*key, black_box(value.clone().into()), vec![])
                             .await
                             .unwrap()
                     });
@@ -129,7 +129,7 @@ pub fn get_benchmark(c: &mut Criterion) {
                             rpc_ref
                                 .try_store()
                                 .unwrap()
-                                .put(key, value.clone(), vec![])
+                                .put(key, value.clone().into(), vec![])
                                 .await
                                 .unwrap();
                         }

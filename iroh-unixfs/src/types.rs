@@ -1,12 +1,12 @@
-use std::io::{Cursor, Read, Seek, self};
+use std::io::{self, Cursor};
 
 use anyhow::{anyhow, Result};
 use bytes::Bytes;
 use cid::Cid;
+use iroh_util::provenance::{BytesOrReference, BytesWithProvenance, FileReference};
 use libipld::error::{InvalidMultihash, UnsupportedMultihash};
 use multihash::{Code, MultihashDigest};
 use pin_project::pin_project;
-use serde::{Serialize, Deserialize};
 use tokio::io::AsyncRead;
 
 use crate::{codecs::Codec, parse_links, unixfs::dag_pb};
@@ -23,74 +23,6 @@ pub enum Source {
     Http(String),
     Store(&'static str),
 }
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct FileReference {
-    path: String,
-    offset: u64,
-    len: usize,
-}
-
-/// Data with optional provenance
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BytesWithProvenance {
-    pub data: Bytes,
-    pub provenance: Option<FileReference>,
-}
-
-impl BytesWithProvenance {
-    pub fn new(data: Bytes, provenance: Option<FileReference>) -> Self {
-        Self { data, provenance }
-    }
-}
-
-impl From<Bytes> for BytesWithProvenance {
-    fn from(data: Bytes) -> Self {
-        Self {
-            data,
-            provenance: None,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum BytesOrReference {
-    Bytes(Bytes),
-    Reference(FileReference),
-}
-
-impl From<BytesWithProvenance> for BytesOrReference {
-    fn from(value: BytesWithProvenance) -> Self {
-        match value.provenance {
-            Some(reference) => Self::Reference(reference),
-            None => Self::Bytes(value.data),
-        }
-    }
-}
-
-impl BytesOrReference {
-    pub fn size(&self) -> usize {
-        match self {
-            BytesOrReference::Bytes(b) => b.len(),
-            BytesOrReference::Reference(r) => r.len,
-        }
-    }
-
-    /// load the data from disk, in case the block is a reference
-    pub fn load(&self) -> io::Result<Bytes> {
-        match self {
-            BytesOrReference::Bytes(b) => Ok(b.clone()),
-            BytesOrReference::Reference(r) => {
-                let mut file = std::fs::File::open(&r.path)?;
-                file.seek(std::io::SeekFrom::Start(r.offset))?;
-                let mut buf = vec![0; r.len];
-                file.read_exact(&mut buf)?;
-                Ok(Bytes::from(buf))
-            }
-        }
-    }
-}
-
 
 /// Wrap a reader with optional provenance
 #[pin_project]

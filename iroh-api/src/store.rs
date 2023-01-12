@@ -8,6 +8,7 @@ use cid::Cid;
 use futures::{Stream, StreamExt};
 use iroh_rpc_client::Client;
 use iroh_unixfs::Block;
+use iroh_util::provenance::BytesOrReference;
 
 /// How many chunks to buffer up when adding content.
 const _ADD_PAR: usize = 24;
@@ -15,7 +16,7 @@ const _ADD_PAR: usize = 24;
 #[async_trait]
 pub trait Store: 'static + Send + Sync + Clone {
     async fn has(&self, &cid: Cid) -> Result<bool>;
-    async fn put(&self, cid: Cid, blob: Bytes, links: Vec<Cid>) -> Result<()>;
+    async fn put(&self, cid: Cid, blob: BytesOrReference, links: Vec<Cid>) -> Result<()>;
     async fn put_many(&self, blocks: Vec<Block>) -> Result<()>;
 }
 
@@ -25,16 +26,22 @@ impl Store for Client {
         self.try_store()?.has(cid).await
     }
 
-    async fn put(&self, cid: Cid, blob: Bytes, links: Vec<Cid>) -> Result<()> {
+    async fn put(&self, cid: Cid, blob: BytesOrReference, links: Vec<Cid>) -> Result<()> {
         self.try_store()?.put(cid, blob, links).await
     }
 
     async fn put_many(&self, blocks: Vec<Block>) -> Result<()> {
         self.try_store()?
-            .put_many(blocks.into_iter().map(|x| {
-                let (cid, data, links) = x.into_parts();
-                (cid, data.load().unwrap(), links)
-            }).collect())
+            .put_many(
+                blocks
+                    .into_iter()
+                    .map(|x| {
+                        let (cid, data, links) = x.into_parts();
+                        println!("in put_many {:?}", data);
+                        (cid, data, links)
+                    })
+                    .collect(),
+            )
             .await
     }
 }
@@ -44,8 +51,8 @@ impl Store for Arc<tokio::sync::Mutex<std::collections::HashMap<Cid, Bytes>>> {
     async fn has(&self, cid: Cid) -> Result<bool> {
         Ok(self.lock().await.contains_key(&cid))
     }
-    async fn put(&self, cid: Cid, blob: Bytes, _links: Vec<Cid>) -> Result<()> {
-        self.lock().await.insert(cid, blob);
+    async fn put(&self, cid: Cid, blob: BytesOrReference, _links: Vec<Cid>) -> Result<()> {
+        self.lock().await.insert(cid, blob.load()?);
         Ok(())
     }
 

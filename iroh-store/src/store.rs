@@ -9,6 +9,7 @@ use iroh_metrics::{
     inc, observe, record,
     store::{StoreHistograms, StoreMetrics},
 };
+use iroh_util::{provenance::BytesOrReference, verify_hash};
 use multihash::Multihash;
 use rocksdb::{
     BlockBasedOptions, Cache, ColumnFamily, DBPinnableSlice, Direction, IteratorMode, Options,
@@ -18,7 +19,7 @@ use smallvec::SmallVec;
 use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use tokio::task;
 
-use crate::cf::{GraphV0, MetadataV0, CF_BLOBS_V0, CF_GRAPH_V0, CF_ID_V0, CF_METADATA_V0};
+use crate::cf::{GraphV0, MetadataV0, CF_BLOBS_V1, CF_GRAPH_V0, CF_ID_V0, CF_METADATA_V0};
 use crate::Config;
 
 #[derive(Clone, Debug)]
@@ -30,6 +31,7 @@ struct InnerStore {
     content: RocksDb,
     next_id: RwLock<u64>,
     _cache: Cache,
+    verify_on_read: bool,
 }
 
 impl fmt::Debug for InnerStore {
@@ -109,7 +111,7 @@ impl Store {
             let mut db = RocksDb::open(&options, path)?;
             {
                 let opts = default_blob_opts();
-                db.create_cf(CF_BLOBS_V0, &opts)?;
+                db.create_cf(CF_BLOBS_V1, &opts)?;
             }
             {
                 let opts = Options::default();
@@ -133,6 +135,7 @@ impl Store {
                 content: db,
                 next_id: 1.into(),
                 _cache: cache,
+                verify_on_read: config.verify_on_read,
             }),
         })
     }
@@ -149,7 +152,7 @@ impl Store {
             let db = RocksDb::open_cf(
                 &options,
                 path,
-                [CF_BLOBS_V0, CF_METADATA_V0, CF_GRAPH_V0, CF_ID_V0],
+                [CF_BLOBS_V1, CF_METADATA_V0, CF_GRAPH_V0, CF_ID_V0],
             )?;
 
             // read last inserted id
@@ -178,12 +181,13 @@ impl Store {
                 content: db,
                 next_id: next_id.into(),
                 _cache: cache,
+                verify_on_read: config.verify_on_read,
             }),
         })
     }
 
     #[tracing::instrument(skip(self, links, blob))]
-    pub fn put<T: AsRef<[u8]>, L>(&self, cid: Cid, blob: T, links: L) -> Result<()>
+    pub fn put<L>(&self, cid: Cid, blob: BytesOrReference, links: L) -> Result<()>
     where
         L: IntoIterator<Item = Cid>,
     {
@@ -191,12 +195,15 @@ impl Store {
     }
 
     #[tracing::instrument(skip(self, blocks))]
-    pub fn put_many(&self, blocks: impl IntoIterator<Item = (Cid, Bytes, Vec<Cid>)>) -> Result<()> {
+    pub fn put_many(
+        &self,
+        blocks: impl IntoIterator<Item = (Cid, BytesOrReference, Vec<Cid>)>,
+    ) -> Result<()> {
         self.write_store()?.put_many(blocks)
     }
 
     #[tracing::instrument(skip(self))]
-    pub fn get_blob_by_hash(&self, hash: &Multihash) -> Result<Option<DBPinnableSlice<'_>>> {
+    pub fn get_blob_by_hash(&self, hash: &Multihash) -> Result<Option<Bytes>> {
         self.read_store()?.get_blob_by_hash(hash)
     }
 
@@ -206,8 +213,16 @@ impl Store {
     }
 
     #[tracing::instrument(skip(self))]
-    pub fn get(&self, cid: &Cid) -> Result<Option<DBPinnableSlice<'_>>> {
-        self.read_store()?.get(cid)
+    pub fn get(&self, cid: &Cid) -> Result<Option<Bytes>> {
+        Ok(match self.read_store()?.get(cid)? {
+            Some(bytes) => {
+                if self.inner.verify_on_read {
+                    anyhow::ensure!(verify_hash(cid, &bytes) == Some(true));
+                }
+                Some(bytes)
+            }
+            None => None,
+        })
     }
 
     #[tracing::instrument(skip(self))]
@@ -307,14 +322,14 @@ impl<'a> ColumnFamilies<'a> {
                 .cf_handle(CF_GRAPH_V0)
                 .context("missing column family: graph")?,
             blobs: db
-                .cf_handle(CF_BLOBS_V0)
+                .cf_handle(CF_BLOBS_V1)
                 .context("missing column family: blobs")?,
         })
     }
 }
 
 impl<'a> WriteStore<'a> {
-    fn put<T: AsRef<[u8]>, L>(&mut self, cid: Cid, blob: T, links: L) -> Result<()>
+    fn put<L>(&mut self, cid: Cid, blob: BytesOrReference, links: L) -> Result<()>
     where
         L: IntoIterator<Item = Cid>,
     {
@@ -325,6 +340,8 @@ impl<'a> WriteStore<'a> {
         }
 
         let id = self.next_id();
+        let blob = bincode::serialize(&blob)?;
+        println!("put {} {}", id, hex::encode(&blob));
 
         let start = std::time::Instant::now();
 
@@ -343,7 +360,7 @@ impl<'a> WriteStore<'a> {
 
         let graph = GraphV0 { children };
         let graph_bytes = rkyv::to_bytes::<_, 1024>(&graph)?; // TODO: is this the right amount of scratch space?
-        let blob_size = blob.as_ref().len();
+        let blob_size = blob.len();
 
         let mut batch = WriteBatch::default();
         batch.put_cf(self.cf.id, id_key, id_bytes);
@@ -357,7 +374,10 @@ impl<'a> WriteStore<'a> {
         Ok(())
     }
 
-    fn put_many(&mut self, blocks: impl IntoIterator<Item = (Cid, Bytes, Vec<Cid>)>) -> Result<()> {
+    fn put_many(
+        &mut self,
+        blocks: impl IntoIterator<Item = (Cid, BytesOrReference, Vec<Cid>)>,
+    ) -> Result<()> {
         inc!(StoreMetrics::PutRequests);
         let start = std::time::Instant::now();
         let mut total_blob_size = 0;
@@ -372,6 +392,8 @@ impl<'a> WriteStore<'a> {
             cid_tracker.insert(cid);
 
             let id = self.next_id();
+            let blob = bincode::serialize(&blob)?;
+            println!("put_many {} {}", id, hex::encode(&blob));
 
             let id_bytes = id.to_be_bytes();
 
@@ -389,7 +411,7 @@ impl<'a> WriteStore<'a> {
             let graph = GraphV0 { children };
             let graph_bytes = rkyv::to_bytes::<_, 1024>(&graph)?; // TODO: is this the right amount of scratch space?
 
-            let blob_size = blob.as_ref().len();
+            let blob_size = blob.len();
             total_blob_size += blob_size as u64;
 
             batch.put_cf(self.cf.id, id_key, id_bytes);
@@ -476,18 +498,21 @@ impl<'a> WriteStore<'a> {
 }
 
 impl<'a> ReadStore<'a> {
-    fn get(&self, cid: &Cid) -> Result<Option<DBPinnableSlice<'a>>> {
+    fn get(&self, cid: &Cid) -> Result<Option<Bytes>> {
         inc!(StoreMetrics::GetRequests);
         let start = std::time::Instant::now();
         let res = match self.get_id(cid)? {
             Some(id) => {
                 let maybe_blob = self.get_by_id(id)?;
                 inc!(StoreMetrics::StoreHit);
-                record!(
-                    StoreMetrics::GetBytes,
-                    maybe_blob.as_ref().map(|b| b.len()).unwrap_or(0) as u64
-                );
-                Ok(maybe_blob)
+                if let Some(blob) = maybe_blob {
+                    record!(StoreMetrics::GetBytes, blob.len() as u64);
+                    let blob: BytesOrReference = bincode::deserialize(blob.as_ref()).unwrap();
+                    Ok(Some(blob.load()?))
+                } else {
+                    record!(StoreMetrics::GetBytes, 0);
+                    Ok(None)
+                }
             }
             None => {
                 inc!(StoreMetrics::StoreMiss);
@@ -585,11 +610,13 @@ impl<'a> ReadStore<'a> {
             }))
     }
 
-    fn get_blob_by_hash(&self, hash: &Multihash) -> Result<Option<DBPinnableSlice<'a>>> {
+    fn get_blob_by_hash(&self, hash: &Multihash) -> Result<Option<Bytes>> {
         for elem in self.get_ids_for_hash(hash)? {
             let id = elem?.id;
             let id_bytes = id.to_be_bytes();
             if let Some(blob) = self.db.get_pinned_cf(self.cf.blobs, id_bytes)? {
+                let blob: BytesOrReference = bincode::deserialize(&blob).unwrap();
+                let blob = blob.load()?;
                 return Ok(Some(blob));
             }
         }
@@ -679,6 +706,7 @@ impl<'a> ReadStore<'a> {
 mod tests {
     use std::{str::FromStr, sync::Mutex};
 
+    use bytes::Bytes;
     use cid::multihash::{Code, MultihashDigest};
     use libipld::{
         cbor::DagCborCodec,
@@ -704,13 +732,14 @@ mod tests {
             let data = vec![i as u8; i * 16];
             let hash = Code::Sha2_256.digest(&data);
             let c = cid::Cid::new_v1(RAW, hash);
+            let data = Bytes::from(data);
 
             let link_hash = Code::Sha2_256.digest(&[(i + 1) as u8; 64]);
             let link = cid::Cid::new_v1(RAW, link_hash);
 
             let links = [link];
 
-            store.put(c, &data, links).unwrap();
+            store.put(c, data.clone().into(), links).unwrap();
             values.push((c, data, links));
         }
 
@@ -738,13 +767,14 @@ mod tests {
             let data = vec![i as u8; i * 16];
             let hash = Code::Sha2_256.digest(&data);
             let c = cid::Cid::new_v1(RAW, hash);
+            let data = Bytes::from(data);
 
             let link_hash = Code::Sha2_256.digest(&[(i + 1) as u8; 64]);
             let link = cid::Cid::new_v1(RAW, link_hash);
 
             let links = [link];
 
-            store.put(c, &data, links).unwrap();
+            store.put(c, data.clone().into(), links).unwrap();
             values.push((c, data, links));
         }
 
@@ -771,13 +801,14 @@ mod tests {
             let data = vec![i as u8; i * 16];
             let hash = Code::Sha2_256.digest(&data);
             let c = cid::Cid::new_v1(RAW, hash);
+            let data = Bytes::from(data);
 
             let link_hash = Code::Sha2_256.digest(&[(i + 1) as u8; 64]);
             let link = cid::Cid::new_v1(RAW, link_hash);
 
             let links = [link];
 
-            store.put(c, &data, links).unwrap();
+            store.put(c, data.clone().into(), links).unwrap();
             values.push((c, data, links));
         }
 
@@ -809,12 +840,13 @@ mod tests {
         let mut blob = Vec::new();
         data.encode(IpldCodec::DagCbor, &mut blob)?;
         let hash = Code::Sha2_256.digest(&blob);
+        let blob = Bytes::from(blob);
         let raw_cid = Cid::new_v1(IpldCodec::Raw.into(), hash);
         let cbor_cid = Cid::new_v1(IpldCodec::DagCbor.into(), hash);
 
         let (store, _dir) = test_store().await?;
-        store.put(raw_cid, &blob, vec![])?;
-        store.put(cbor_cid, &blob, vec![link1, link2])?;
+        store.put(raw_cid, blob.clone().into(), vec![])?;
+        store.put(cbor_cid, blob.into(), vec![link1, link2])?;
         assert_eq!(store.get_links(&raw_cid)?.unwrap().len(), 0);
         assert_eq!(store.get_links(&cbor_cid)?.unwrap().len(), 2);
 
@@ -837,6 +869,7 @@ mod tests {
         let hash = Code::Sha2_256.digest(&expected);
         let raw_cid = Cid::new_v1(IpldCodec::Raw.into(), hash);
         let cbor_cid = Cid::new_v1(IpldCodec::DagCbor.into(), hash);
+        let expected = Bytes::from(expected);
 
         let (store, _dir) = test_store().await?;
         // we don't have it yet
@@ -844,15 +877,15 @@ mod tests {
         let actual = store.get_blob_by_hash(&hash)?.map(|x| x.to_vec());
         assert_eq!(actual, None);
 
-        store.put(raw_cid, &expected, vec![])?;
+        store.put(raw_cid, expected.clone().into(), vec![])?;
         assert!(store.has_blob_for_hash(&hash)?);
         let actual = store.get_blob_by_hash(&hash)?.map(|x| x.to_vec());
-        assert_eq!(actual, Some(expected.clone()));
+        assert_eq!(actual, Some(expected.to_vec()));
 
-        store.put(cbor_cid, &expected, vec![link1, link2])?;
+        store.put(cbor_cid, expected.clone().into(), vec![link1, link2])?;
         assert!(store.has_blob_for_hash(&hash)?);
         let actual = store.get_blob_by_hash(&hash)?.map(|x| x.to_vec());
-        assert_eq!(actual, Some(expected));
+        assert_eq!(actual, Some(expected.to_vec()));
         Ok(())
     }
 
@@ -882,7 +915,8 @@ mod tests {
                     let mut store = store.write_store()?;
                     let (cid, data, links) = branch.clone();
                     let t = mutex.lock().unwrap();
-                    store.put(cid, &data, links)?;
+                    let data = Bytes::from(data);
+                    store.put(cid, data.into(), links)?;
                     drop(t);
                     anyhow::Ok(())
                 })
@@ -901,15 +935,18 @@ mod tests {
         let blob = Bytes::from(vec![0u8]);
 
         let (store, _dir) = test_store().await?;
-        let blocks = vec![(cid1, blob.clone(), vec![]), (cid2, blob.clone(), vec![])];
+        let blocks = vec![
+            (cid1, blob.clone().into(), vec![]),
+            (cid2, blob.clone().into(), vec![]),
+        ];
         store.put_many(blocks)?;
         assert!(store.has(&cid1)?);
         assert!(store.has(&cid2)?);
 
         let blocks = vec![
-            (cid1, blob.clone(), vec![]),
-            (cid2, blob.clone(), vec![]),
-            (cid3, blob.clone(), vec![]),
+            (cid1, blob.clone().into(), vec![]),
+            (cid2, blob.clone().into(), vec![]),
+            (cid3, blob.clone().into(), vec![]),
         ];
 
         store.put_many(blocks)?;

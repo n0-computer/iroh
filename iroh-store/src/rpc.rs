@@ -45,8 +45,9 @@ impl RpcStore {
     async fn put(self, req: PutRequest) -> Result<()> {
         let cid = req.cid;
         let links = req.links;
+        let data = req.data;
         self.0
-            .spawn_blocking(move |x| x.put(cid, req.blob, links))
+            .spawn_blocking(move |x| x.put(cid, data, links))
             .await?;
 
         info!("store rpc call: put cid {}", cid);
@@ -61,7 +62,7 @@ impl RpcStore {
             .map(|req| {
                 let cid = req.cid;
                 let links = req.links;
-                (cid, req.blob, links)
+                (cid, req.data, links)
             })
             .collect::<Vec<_>>();
         self.0.spawn_blocking(move |x| x.put_many(req)).await

@@ -3,6 +3,7 @@ use std::fmt::{self, Debug};
 use bytes::Bytes;
 use cid::Cid;
 use derive_more::{From, TryInto};
+use iroh_util::provenance::BytesOrReference;
 use quic_rpc::{
     message::{Msg, RpcMsg, ServerStreaming},
     Service,
@@ -16,7 +17,7 @@ pub type StoreAddr = super::addr::Addr<StoreService>;
 #[derive(Serialize, Deserialize)]
 pub struct PutRequest {
     pub cid: Cid,
-    pub blob: Bytes,
+    pub data: BytesOrReference,
     pub links: Vec<Cid>,
 }
 
@@ -24,7 +25,7 @@ impl fmt::Debug for PutRequest {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("PutRequest")
             .field("cid", &self.cid)
-            .field("blob", &self.blob.len())
+            .field("data", &self.data.size())
             .field("links", &self.links)
             .finish()
     }

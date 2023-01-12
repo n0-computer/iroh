@@ -1,9 +1,9 @@
 use bytecheck::CheckBytes;
 use rkyv::{with::AsBox, Archive, Deserialize, Serialize};
 
-/// Column family to store actual data.
+/// Column family to store actual data or references.
 /// - Maps id (u64) to bytes
-pub const CF_BLOBS_V0: &str = "blobs-v0";
+pub const CF_BLOBS_V1: &str = "blobs-v0";
 /// Column family that stores metdata about a given blob.
 /// - indexed by id (u64)
 pub const CF_METADATA_V0: &str = "metadata-v0";
@@ -29,6 +29,15 @@ pub struct MetadataV0 {
     /// The codec of the original CID.
     pub codec: u64,
     pub multihash: Vec<u8>,
+}
+
+#[derive(Debug, Archive, Deserialize, Serialize)]
+#[repr(C)]
+#[archive_attr(repr(C), derive(CheckBytes))]
+pub struct ReferenceV0 {
+    pub path: String,
+    pub offset: u64,
+    pub len: u64,
 }
 
 #[derive(Debug, Archive, Deserialize, Serialize)]

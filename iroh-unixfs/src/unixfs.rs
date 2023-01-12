@@ -10,6 +10,7 @@ use bytes::{Buf, Bytes};
 use cid::{multihash::MultihashDigest, Cid};
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt, Stream, StreamExt};
 use iroh_metrics::resolver::OutMetrics;
+use iroh_util::provenance::{BytesOrReference, BytesWithProvenance};
 use prost::Message;
 use tokio::io::{AsyncRead, AsyncSeek};
 
@@ -18,7 +19,7 @@ use crate::{
     codecs::Codec,
     content_loader::{ContentLoader, LoaderContext},
     hamt::Hamt,
-    types::{Block, BytesWithProvenance, BytesOrReference, Link, LinkRef, Links, PbLinks},
+    types::{Block, Link, LinkRef, Links, PbLinks},
 };
 
 pub(crate) mod unixfs_pb {
@@ -208,11 +209,10 @@ impl UnixfsNode {
             }
         };
 
-        let data = res.load()?;
         ensure!(
-            data.len() <= DEFAULT_CHUNK_SIZE_LIMIT,
+            res.size() <= DEFAULT_CHUNK_SIZE_LIMIT,
             "node is too large: {} bytes",
-            data.len()
+            res.size()
         );
 
         Ok(res)

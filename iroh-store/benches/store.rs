@@ -1,5 +1,6 @@
 use std::time::Instant;
 
+use bytes::Bytes;
 use cid::multihash::{Code, MultihashDigest};
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use iroh_store::{Config, Store};
@@ -11,6 +12,7 @@ pub fn put_benchmark(c: &mut Criterion) {
     let mut group = c.benchmark_group("store_put");
     for value_size in [32, 128, 512, 1024].iter() {
         let value = vec![8u8; *value_size];
+        let value = Bytes::from(value);
         let hash = Code::Sha2_256.digest(&value);
         let key = cid::Cid::new_v1(RAW, hash);
 
@@ -24,8 +26,11 @@ pub fn put_benchmark(c: &mut Criterion) {
                 let config = Config::new(dir.path().into());
                 let store = executor.block_on(async { Store::create(config).await.unwrap() });
                 let store_ref = &store;
-                b.to_async(&executor)
-                    .iter(|| async move { store_ref.put(*key, black_box(value), []).unwrap() });
+                b.to_async(&executor).iter(|| async move {
+                    store_ref
+                        .put(*key, black_box(value.clone().into()), [])
+                        .unwrap()
+                });
             },
         );
     }
@@ -51,8 +56,9 @@ pub fn get_benchmark(c: &mut Criterion) {
                         let value = vec![i as u8; *value_size];
                         let hash = Code::Sha2_256.digest(&value);
                         let key = cid::Cid::new_v1(RAW, hash);
+                        let value = Bytes::from(value);
                         keys.push(key);
-                        store_ref.put(key, &value, []).unwrap();
+                        store_ref.put(key, value.clone().into(), []).unwrap();
                     }
                     keys
                 });

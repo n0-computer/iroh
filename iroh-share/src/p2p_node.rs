@@ -107,7 +107,10 @@ impl ContentLoader for Loader {
                     .await
                     .unwrap_or_default();
 
-            rpc.client.try_store()?.put(cid, cloned, links).await?;
+            rpc.client
+                .try_store()?
+                .put(cid, cloned.into(), links)
+                .await?;
         }
 
         Ok(LoadedCid {
@@ -172,6 +175,7 @@ impl P2pNode {
         let store_config = iroh_store::Config {
             path: db_path.to_path_buf(),
             rpc_client: rpc_store_client_config,
+            verify_on_read: true,
         };
 
         let store = if store_config.path.exists() {

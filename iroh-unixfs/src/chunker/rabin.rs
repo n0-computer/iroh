@@ -4,9 +4,10 @@ use std::io;
 
 use bytes::BytesMut;
 use futures::{stream::BoxStream, StreamExt};
+use iroh_util::provenance::BytesWithProvenance;
 use tokio::io::{AsyncRead, AsyncReadExt};
 
-use crate::types::{BytesWithProvenance, ReaderWithProvenance};
+use crate::types::ReaderWithProvenance;
 
 /// Rabin fingerprinting based chunker.
 #[derive(Debug, Clone, PartialEq, Eq)]

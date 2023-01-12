@@ -2,9 +2,10 @@ use std::io;
 
 use bytes::BytesMut;
 use futures::{stream::BoxStream, StreamExt};
+use iroh_util::provenance::BytesWithProvenance;
 use tokio::io::{AsyncRead, AsyncReadExt};
 
-use crate::types::{BytesWithProvenance, ReaderWithProvenance};
+use crate::types::ReaderWithProvenance;
 
 /// Default size for chunks.
 pub const DEFAULT_CHUNKS_SIZE: usize = 1024 * 256;

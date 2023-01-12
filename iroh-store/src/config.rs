@@ -73,6 +73,8 @@ pub struct Config {
     /// Only used to extract the listening address from the `store_addr` field.
     // TODO: split off listening address from RpcClientConfig.
     pub rpc_client: RpcClientConfig,
+    /// Verify on read
+    pub verify_on_read: bool,
 }
 
 impl From<ServerConfig> for Config {
@@ -91,6 +93,7 @@ impl Config {
         Self {
             path,
             rpc_client: Default::default(),
+            verify_on_read: true,
         }
     }
 
@@ -102,6 +105,7 @@ impl Config {
                 store_addr: Some(addr),
                 ..Default::default()
             },
+            verify_on_read: true,
         }
     }
 
@@ -123,6 +127,7 @@ impl Source for Config {
             .ok_or_else(|| ConfigError::Foreign("No `path` set. Path is required.".into()))?;
         insert_into_config_map(&mut map, "path", path);
         insert_into_config_map(&mut map, "rpc_client", self.rpc_client.collect()?);
+        insert_into_config_map(&mut map, "verify_on_read", self.verify_on_read);
         Ok(map)
     }
 }

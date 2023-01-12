@@ -52,6 +52,9 @@ enum Commands {
         /// Don't provide added content to the network
         #[clap(long)]
         offline: bool,
+        /// Keep the file
+        #[clap(long)]
+        nocopy: bool,
         /// Select the chunker to use, when chunking data. Available chunkers are currently "fixed" and "rabin".
         #[clap(long, default_value_t = ChunkerConfig::Fixed(DEFAULT_CHUNKS_SIZE))]
         chunker: ChunkerConfig,
@@ -134,6 +137,7 @@ impl Cli {
                 recursive,
                 no_wrap,
                 offline,
+                nocopy,
                 chunker,
             } => {
                 add(api, path, *no_wrap, *recursive, *chunker, !*offline).await?;

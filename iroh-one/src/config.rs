@@ -112,6 +112,7 @@ fn default_store_config(
     Ok(iroh_store::config::Config {
         path,
         rpc_client: ipfsd,
+        verify_on_read: true,
     })
 }
 

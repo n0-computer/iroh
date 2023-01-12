@@ -8,6 +8,7 @@ use std::{
 
 use anyhow::{anyhow, Context};
 use futures::{stream::BoxStream, Stream};
+use iroh_util::provenance::BytesWithProvenance;
 use tokio::io::AsyncRead;
 
 mod fixed;
@@ -16,7 +17,7 @@ mod rabin;
 /// Chunks are limited to 1MiB by default
 pub const DEFAULT_CHUNK_SIZE_LIMIT: usize = 1024 * 1024;
 
-use crate::types::{BytesWithProvenance, ReaderWithProvenance};
+use crate::types::ReaderWithProvenance;
 
 pub use self::{
     fixed::{Fixed, DEFAULT_CHUNKS_SIZE},

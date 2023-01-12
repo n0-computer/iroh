@@ -16,6 +16,7 @@ derive_more.workspace = true
 futures.workspace = true
 libp2p = { workspace = true, features = ["serde"] }
 quic-rpc.workspace = true
+iroh-util.workspace = true
 serde.workspace = true
 serde-error.workspace = true
 serde_with.workspace = true
