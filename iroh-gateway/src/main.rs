@@ -5,7 +5,7 @@ use clap::Parser;
 use iroh_gateway::{
     bad_bits::{self, BadBits},
     cli::Args,
-    config::{Config, ServerConfig, CONFIG_FILE_NAME, ENV_PREFIX},
+    config::{ServerConfig, CONFIG_FILE_NAME, ENV_PREFIX},
     core::Core,
     metrics,
 };
@@ -44,15 +44,16 @@ async fn main() -> Result<()> {
         true => Arc::new(Some(RwLock::new(BadBits::new()))),
         false => Arc::new(None),
     };
-    let config = Config::from(config);
     let rpc_addr = config
+        .gateway
         .rpc_addr()
         .ok_or_else(|| anyhow!("missing gateway rpc addr"))?;
 
     let content_loader = FullLoader::new(
-        RpcClient::new(config.rpc_client.clone()).await?,
+        RpcClient::new(config.gateway.rpc_client.clone()).await?,
         FullLoaderConfig {
             http_gateways: config
+                .gateway
                 .http_resolvers
                 .iter()
                 .flatten()
@@ -60,6 +61,7 @@ async fn main() -> Result<()> {
                 .collect::<Result<_>>()
                 .context("invalid gateway url")?,
             indexer: config
+                .gateway
                 .indexer_endpoint
                 .as_ref()
                 .map(|u| u.parse())
@@ -67,14 +69,13 @@ async fn main() -> Result<()> {
                 .context("invalid indexer endpoint")?,
         },
     )?;
-    let print_address = config.server.print_address;
     let handler = Core::new(
-        Arc::new(config),
+        Arc::new(config.gateway),
         rpc_addr,
         Arc::clone(&bad_bits),
         content_loader,
         dns_resolver_config,
-        print_address,
+        config.server.print_address,
     )
     .await?;
 

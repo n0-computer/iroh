@@ -160,7 +160,6 @@ impl P2pNode {
         libp2p_config.max_conns_in = 8;
         libp2p_config.max_conns_out = 8;
         let config = Config {
-            server: Default::default(),
             libp2p: libp2p_config,
             rpc_client: rpc_p2p_client_config.clone(),
             key_store_path: db_path.parent().unwrap().to_path_buf(),
@@ -171,7 +170,6 @@ impl P2pNode {
         let resolver = iroh_resolver::resolver::Resolver::new(loader);
 
         let store_config = iroh_store::Config {
-            server: Default::default(),
             path: db_path.to_path_buf(),
             rpc_client: rpc_store_client_config,
         };
@@ -183,7 +181,7 @@ impl P2pNode {
         };
 
         let kc = Keychain::<MemoryStorage>::new();
-        let mut p2p = Node::new(config, rpc_p2p_addr_server, kc).await?;
+        let mut p2p = Node::new(config, rpc_p2p_addr_server, kc, false).await?;
         let events = p2p.network_events();
 
         let p2p_task = tokio::task::spawn(async move {

@@ -10,7 +10,7 @@ use tracing::error;
 pub async fn start(rpc_addr: P2pAddr, config: Config) -> anyhow::Result<JoinHandle<()>> {
     let kc = Keychain::<DiskStorage>::new(config.key_store_path.clone()).await?;
 
-    let mut p2p = Node::new(config, rpc_addr, kc).await?;
+    let mut p2p = Node::new(config, rpc_addr, kc, false).await?;
 
     // Start services
     let p2p_task = task::spawn(async move {

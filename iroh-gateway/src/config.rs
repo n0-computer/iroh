@@ -30,6 +30,8 @@ pub const DEFAULT_PORT: u16 = 9050;
 // as being outside of the lib crate, hence here it needs to be public.
 #[derive(Debug, Default, Clone, PartialEq, Deserialize, Serialize)]
 pub struct ServerConfig {
+    /// Configuration for the server process.
+    pub server: iroh_util::config::ServerConfig,
     /// Configuration of the gateway service.
     pub gateway: Config,
     /// Metrics configuration.
@@ -39,6 +41,7 @@ pub struct ServerConfig {
 impl ServerConfig {
     pub fn new(port: u16, rpc_client: RpcClientConfig) -> Self {
         Self {
+            server: Default::default(),
             gateway: Config::new(port, rpc_client),
             metrics: MetricsConfig::default(),
         }
@@ -61,7 +64,6 @@ impl Source for ServerConfig {
 /// Configuration for [`iroh-gateway`].
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct Config {
-    pub server: iroh_util::config::ServerConfig,
     /// Pretty URL to redirect to
     #[serde(default = "String::new")]
     pub public_url_base: String,
@@ -94,7 +96,6 @@ pub struct Config {
 impl Config {
     pub fn new(port: u16, rpc_client: RpcClientConfig) -> Self {
         Self {
-            server: Default::default(),
             public_url_base: String::new(),
             headers: HeaderMap::new(),
             port,
@@ -171,7 +172,6 @@ impl Default for Config {
     fn default() -> Self {
         let rpc_client = RpcClientConfig::default_network();
         let mut t = Self {
-            server: Default::default(),
             public_url_base: String::new(),
             headers: HeaderMap::new(),
             port: DEFAULT_PORT,
@@ -195,7 +195,6 @@ impl Source for Config {
     fn collect(&self) -> Result<Map<String, Value>, ConfigError> {
         let rpc_client = self.rpc_client.collect()?;
         let mut map: Map<String, Value> = Map::new();
-        insert_into_config_map(&mut map, "server", self.server.collect()?);
         insert_into_config_map(&mut map, "public_url_base", self.public_url_base.clone());
         insert_into_config_map(&mut map, "use_denylist", self.use_denylist);
         // Some issue between deserializing u64 & u16, converting this to
@@ -350,7 +349,7 @@ mod tests {
         )
         .unwrap();
         let sources = [Some(cfg_file.as_path())];
-        let cfg = iroh_util::make_config(
+        let cfg = iroh_util::config::make_config(
             ServerConfig::default(),
             &sources,
             ENV_PREFIX,

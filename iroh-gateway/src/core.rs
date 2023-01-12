@@ -174,14 +174,13 @@ mod tests {
         };
         let content_loader =
             FullLoader::new(rpc_client.clone(), loader_config).expect("invalid config");
-        let print_address = config.server.print_address;
         let core = Core::new(
             config,
             rpc_addr,
             Arc::new(None),
             content_loader,
             DnsResolverConfig::default(),
-            print_address,
+            false,
         )
         .await
         .unwrap();

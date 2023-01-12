@@ -130,6 +130,7 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
         config: Config,
         rpc_addr: P2pAddr,
         mut keychain: Keychain<KeyStorage>,
+        print_address: bool,
     ) -> Result<Self> {
         let (network_sender_in, network_receiver_in) = channel(1024); // TODO: configurable
 
@@ -140,13 +141,9 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
         } = config;
 
         // TODO: handle error
-        let rpc_task = rpc::spawn_server(
-            rpc_addr,
-            P2p::new(network_sender_in),
-            config.server.print_address,
-        )
-        .await
-        .unwrap();
+        let rpc_task = rpc::spawn_server(rpc_addr, P2p::new(network_sender_in), print_address)
+            .await
+            .unwrap();
 
         let rpc_client = RpcClient::new(rpc_client)
             .await
@@ -1213,7 +1210,7 @@ mod tests {
             storage.put(keypair).await?;
             let kc = Keychain::from_storage(storage);
 
-            let mut p2p = Node::new(network_config, rpc_server_addr, kc).await?;
+            let mut p2p = Node::new(network_config, rpc_server_addr, kc, false).await?;
             let cfg = iroh_rpc_client::Config {
                 p2p_addr: Some(rpc_client_addr),
                 channels: Some(1),

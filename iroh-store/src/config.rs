@@ -30,6 +30,8 @@ pub fn config_data_path(arg_path: Option<PathBuf>) -> Result<PathBuf> {
 /// integrated into another binary like in iroh-one, iroh-share or iroh-embed.
 #[derive(PartialEq, Debug, Deserialize, Serialize, Clone)]
 pub struct ServerConfig {
+    /// Configuration for the server process.
+    pub server: iroh_util::config::ServerConfig,
     /// Configuration of the store service.
     pub store: Config,
     /// Configuration for metrics export.
@@ -40,6 +42,7 @@ impl ServerConfig {
     pub fn new(path: PathBuf) -> Self {
         let addr = "irpc://0.0.0.0:4402".parse().unwrap();
         Self {
+            server: Default::default(),
             store: Config::with_rpc_addr(path, addr),
             metrics: Default::default(),
         }
@@ -53,6 +56,7 @@ impl Source for ServerConfig {
 
     fn collect(&self) -> Result<Map<String, Value>, ConfigError> {
         let mut map: Map<String, Value> = Map::new();
+        insert_into_config_map(&mut map, "server", self.server.collect()?);
         insert_into_config_map(&mut map, "store", self.store.collect()?);
         insert_into_config_map(&mut map, "metrics", self.metrics.collect()?);
         Ok(map)
@@ -66,7 +70,6 @@ impl Source for ServerConfig {
 /// iroh-one.
 #[derive(PartialEq, Debug, Deserialize, Serialize, Clone)]
 pub struct Config {
-    pub server: iroh_util::config::ServerConfig,
     /// The location of the content database.
     pub path: PathBuf,
     /// The iRPC configuration.
@@ -90,7 +93,6 @@ impl Config {
     /// argument.  Once #672 is merged we can probably remove the `rpc_client` field.
     pub fn new(path: PathBuf) -> Self {
         Self {
-            server: Default::default(),
             path,
             rpc_client: Default::default(),
         }
@@ -123,7 +125,6 @@ impl Source for Config {
             .path
             .to_str()
             .ok_or_else(|| ConfigError::Foreign("No `path` set. Path is required.".into()))?;
-        insert_into_config_map(&mut map, "server", self.server.collect()?);
         insert_into_config_map(&mut map, "path", path);
         insert_into_config_map(&mut map, "rpc_client", self.rpc_client.collect()?);
         Ok(map)

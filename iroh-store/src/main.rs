@@ -50,11 +50,11 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
+    let print_address = config.server.print_address;
     let config = Config::from(config);
     let rpc_addr = config
         .rpc_addr()
         .ok_or_else(|| anyhow!("missing store rpc addr"))?;
-    let print_address = config.server.print_address;
     let store = if config.path.exists() {
         info!("Opening store at {}", config.path.display());
         Store::open(config).await?

@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Context, Result};
 use clap::Parser;
-use iroh_p2p::config::{Config, CONFIG_FILE_NAME, ENV_PREFIX};
+use iroh_p2p::config::{CONFIG_FILE_NAME, ENV_PREFIX};
 use iroh_p2p::ServerConfig;
 use iroh_p2p::{cli::Args, metrics, DiskStorage, Keychain, Node};
 use iroh_util::config::{iroh_config_path, make_config};
@@ -29,7 +29,7 @@ fn main() -> Result<()> {
         // TODO: configurable network
         let cfg_path = iroh_config_path(CONFIG_FILE_NAME)?;
         let sources = [Some(cfg_path.as_path()), args.cfg.as_deref()];
-        let network_config = make_config(
+        let config = make_config(
             // default
             ServerConfig::default(),
             // potential config files
@@ -41,8 +41,7 @@ fn main() -> Result<()> {
         )
         .context("invalid config")?;
 
-        let metrics_config =
-            metrics::metrics_config_with_compile_time_info(network_config.metrics.clone());
+        let metrics_config = metrics::metrics_config_with_compile_time_info(config.metrics.clone());
 
         let metrics_handle = iroh_metrics::MetricsHandle::new(metrics_config)
             .await
@@ -56,12 +55,12 @@ fn main() -> Result<()> {
             }
         }
 
-        let network_config = Config::from(network_config);
-        let kc = Keychain::<DiskStorage>::new(network_config.key_store_path.clone()).await?;
-        let rpc_addr = network_config
+        let kc = Keychain::<DiskStorage>::new(config.p2p.key_store_path.clone()).await?;
+        let rpc_addr = config
+            .p2p
             .rpc_addr()
             .ok_or_else(|| anyhow!("missing p2p rpc addr"))?;
-        let mut p2p = Node::new(network_config, rpc_addr, kc).await?;
+        let mut p2p = Node::new(config.p2p, rpc_addr, kc, config.server.print_address).await?;
 
         // Start services
         let p2p_task = task::spawn(async move {

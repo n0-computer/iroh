@@ -91,7 +91,7 @@ impl Default for Config {
         let rpc_client = Self::default_rpc_config();
         let metrics_config = MetricsConfig::default();
         let store_config = default_store_config(None, rpc_client.clone()).unwrap();
-        let key_store_path = iroh_util::iroh_data_root().unwrap();
+        let key_store_path = iroh_util::config::iroh_data_root().unwrap();
         Self {
             rpc_client: rpc_client.clone(),
             metrics: metrics_config,
@@ -110,7 +110,6 @@ fn default_store_config(
 ) -> Result<iroh_store::config::Config> {
     let path = config_data_path(store_path)?;
     Ok(iroh_store::config::Config {
-        server: Default::default(),
         path,
         rpc_client: ipfsd,
     })
