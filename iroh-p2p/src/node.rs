@@ -87,6 +87,7 @@ pub struct Node<KeyStorage: Storage> {
     use_dht: bool,
     bitswap_sessions: BitswapSessions,
     providers: Providers,
+    listen_addrs: Vec<Multiaddr>,
 }
 
 impl<T: Storage> fmt::Debug for Node<T> {
@@ -152,9 +153,10 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
         let keypair = load_identity(&mut keychain).await?;
         let mut swarm = build_swarm(&libp2p_config, &keypair, rpc_client.clone()).await?;
 
+        let mut listen_addrs = vec![];
         for addr in &libp2p_config.listening_multiaddrs {
             Swarm::listen_on(&mut swarm, addr.clone())?;
-            println!("{addr}");
+            listen_addrs.push(addr.clone());
         }
 
         Ok(Node {
@@ -172,12 +174,22 @@ impl<KeyStorage: Storage> Node<KeyStorage> {
             use_dht: libp2p_config.kademlia,
             bitswap_sessions: Default::default(),
             providers: Providers::new(4),
+            listen_addrs,
         })
     }
 
+    pub fn listen_addrs(&self) -> &Vec<Multiaddr> {
+        &self.listen_addrs
+    }
+
+    pub fn local_peer_id(&self) -> &PeerId {
+        self.swarm.local_peer_id()
+    }
+
     /// Starts the libp2p service networking stack. This Future resolves when shutdown occurs.
-    pub async fn run(&mut self) -> anyhow::Result<()> {
-        info!("Local Peer ID: {}", self.swarm.local_peer_id());
+    pub async fn run(&mut self) -> Result<()> {
+        info!("Listen addrs: {:?}", self.listen_addrs());
+        info!("Local Peer ID: {}", self.local_peer_id());
 
         let mut nice_interval = self.use_dht.then(|| tokio::time::interval(NICE_INTERVAL));
         let mut bootstrap_interval = tokio::time::interval(BOOTSTRAP_INTERVAL);
