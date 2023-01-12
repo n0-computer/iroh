@@ -29,8 +29,6 @@
 //!
 //! An example is available in the repository under `examples/embed`.
 
-use std::fmt::{self, Debug};
-
 use anyhow::{bail, Result};
 use async_trait::async_trait;
 use iroh_rpc_client::Config as RpcClientConfig;
@@ -84,7 +82,7 @@ pub use store::{MemStoreService, RocksStoreService};
 ///     "/ip4/0.0.0.0/udp/0/quic-v1".parse().unwrap(),  // random port
 /// ];
 /// let p2p = P2pService::new(p2p_config, dir, store.addr()).await.unwrap();
-/// let _iroh: Iroh = IrohBuilder::new()
+/// let _iroh: Iroh<_> = IrohBuilder::new()
 ///                     .store(store)
 ///                     .p2p(p2p)
 ///                     .build()
@@ -106,7 +104,7 @@ pub use store::{MemStoreService, RocksStoreService};
 /// ];
 /// let dir = testdir!();
 /// let p2p = P2pService::new(p2p_config, dir, store.addr()).await.unwrap();
-/// let _iroh: Iroh = IrohBuilder::new()
+/// let _iroh: Iroh<_> = IrohBuilder::new()
 ///                     .store(store)
 ///                     .p2p(p2p)
 ///                     .build()
@@ -118,31 +116,33 @@ pub use store::{MemStoreService, RocksStoreService};
 // tests run just fine as normal tests.  We should really figure out what is going on
 // sometime.
 
-pub struct IrohBuilder {
-    store: Option<Box<dyn IrohService<StoreService>>>,
+/// Builder to create an [`Iroh`] instance.
+///
+/// Complete the builder using [`IrohBuilder::build`].
+#[derive(Debug)]
+pub struct IrohBuilder<S>
+where
+    S: IrohService<StoreService>,
+{
+    store: Option<S>,
     p2p: Option<P2pService>,
     http_resolvers: Vec<String>,
     indexer: Option<IndexerUrl>,
 }
 
-impl Debug for IrohBuilder {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("IrohBuilder")
-            .field("store", &"Option<<dyn StoreService>>")
-            .field("p2p", &self.p2p)
-            .field("http_resolvers", &self.http_resolvers)
-            .field("indexer", &self.indexer)
-            .finish()
-    }
-}
-
-impl Default for IrohBuilder {
+impl<S> Default for IrohBuilder<S>
+where
+    S: IrohService<StoreService>,
+{
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl IrohBuilder {
+impl<S> IrohBuilder<S>
+where
+    S: IrohService<StoreService>,
+{
     /// Creates a new [`IrohBuilder`].
     pub fn new() -> Self {
         Self {
@@ -156,11 +156,8 @@ impl IrohBuilder {
     /// Sets the store service.
     ///
     /// Every [`Iroh`] system needs a store so this can not be skipped.
-    pub fn store<S>(mut self, store: S) -> Self
-    where
-        S: IrohService<StoreService> + 'static,
-    {
-        self.store = Some(Box::new(store));
+    pub fn store(mut self, store: S) -> Self {
+        self.store = Some(store);
         self
     }
 
@@ -203,7 +200,7 @@ impl IrohBuilder {
     }
 
     /// Builds the iroh system.
-    pub async fn build(self) -> Result<Iroh> {
+    pub async fn build(self) -> Result<Iroh<S>> {
         // TODO: would be good if we can verify the p2p service is correctly hooked up to
         // the store service.
         let store = match self.store {
@@ -244,23 +241,20 @@ impl IrohBuilder {
 /// be aborted when dropping this struct.
 ///
 /// To make the system do anything use the [`Iroh::api`] function to get an API.
-pub struct Iroh {
-    store: Box<dyn IrohService<StoreService>>,
+#[derive(Debug)]
+pub struct Iroh<S>
+where
+    S: IrohService<StoreService>,
+{
+    store: S,
     p2p: P2pService,
     api: Api,
 }
 
-impl Debug for Iroh {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Iroh")
-            .field("store", &"<dyn StoreService>")
-            .field("p2p", &self.p2p)
-            .field("api", &self.api)
-            .finish()
-    }
-}
-
-impl Iroh {
+impl<S> Iroh<S>
+where
+    S: IrohService<StoreService>,
+{
     /// Returns a reference to the iroh API.
     ///
     /// This API gives you some high level functionality using the built-in p2p and store
@@ -291,7 +285,7 @@ pub trait IrohService<S: Service> {
     ///
     /// This function waits for the service to be fully terminated and only returns once it
     /// is no longer running.
-    async fn stop(self: Box<Self>) -> Result<()>;
+    async fn stop(self) -> Result<()>;
 }
 
 #[cfg(test)]
@@ -342,7 +336,7 @@ mod tests {
         let p2p = P2pService::new(p2p_config, dir, store.addr())
             .await
             .unwrap();
-        let iroh: Iroh = IrohBuilder::new()
+        let iroh = IrohBuilder::new()
             .store(store)
             .p2p(p2p)
             .build()

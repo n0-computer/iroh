@@ -42,7 +42,7 @@ impl IrohService<StoreService> for RocksStoreService {
     }
 
     // TODO: This should be graceful termination.
-    async fn stop(mut self: Box<Self>) -> Result<()> {
+    async fn stop(mut self) -> Result<()> {
         // This dummy task will be aborted by Drop.
         let fut = futures::future::ready(());
         let dummy_task = tokio::spawn(fut);
@@ -92,7 +92,7 @@ impl IrohService<StoreService> for MemStoreService {
         self.addr.clone()
     }
 
-    async fn stop(self: Box<Self>) -> Result<()> {
+    async fn stop(self) -> Result<()> {
         let join = self.handle.shutdown();
         join.await.context("Waiting for MemStore task to finish")?;
         Ok(())
@@ -117,7 +117,6 @@ mod tests {
         let store = RocksStoreService::new(dir).await.unwrap();
         assert!(marker.exists());
 
-        let store = Box::new(store);
         let fut = store.stop();
         let ret = time::timeout(Duration::from_millis(500), fut).await;
 
@@ -133,7 +132,6 @@ mod tests {
 
         assert!(!version.is_empty());
 
-        let store = Box::new(store);
         store.stop().await.unwrap();
         let res = client.version().await;
 
