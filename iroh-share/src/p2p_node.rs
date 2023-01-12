@@ -130,6 +130,20 @@ impl ContentLoader for Loader {
 }
 
 impl P2pNode {
+    pub fn custom_bootstrap() -> Vec<Multiaddr> {
+        let bootstrap_list = &[
+            // "/dnsaddr/bootstrap.libp2p.io/p2p/QmNnooDu7bfjPFoTZYxMNLWUQJyrVwtbZg5gBMjTezGAJN",
+            // "/dnsaddr/bootstrap.libp2p.io/p2p/QmQCU2EcMqAqQPR2i9bChDtGNJchTbq5TbXJJ16u19uLTa",
+            // "/dnsaddr/bootstrap.libp2p.io/p2p/QmbLHAnMoJPWSCR5Zhtx6BHJX9KiKNN6tpvbUcqanj75Nb",
+            // "/dnsaddr/bootstrap.libp2p.io/p2p/QmcZf59bWwK5XFi76CZX8cbJ4BhTzzA3gU1ZjYZcYW3dwt",
+            // "/ip4/104.131.131.82/tcp/4001/p2p/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ", // mars.i.ipfs.io
+            "/ip4/10.0.0.6/tcp/4001/p2p/12D3KooWDWRNoUoZn3h9TkEWnTW3sd4hvixyofH5NkjwLEzbWf7V"
+        ];
+        bootstrap_list
+            .iter()
+            .map(|node| node.parse().unwrap())
+            .collect()
+    }
     pub async fn new(port: u16, db_path: &Path) -> Result<(Self, Receiver<NetworkEvent>)> {
         let rpc_p2p_addr_server = Addr::new_mem();
         let rpc_p2p_addr_client = rpc_p2p_addr_server.clone();
@@ -155,7 +169,7 @@ impl P2pNode {
         libp2p_config.kademlia = true;
         libp2p_config.autonat = true;
         libp2p_config.relay_client = true;
-        libp2p_config.bootstrap_peers = Default::default(); // disable bootstrap for now
+        libp2p_config.bootstrap_peers = P2pNode::custom_bootstrap();
         libp2p_config.relay_server = false;
         libp2p_config.max_conns_in = 8;
         libp2p_config.max_conns_out = 8;
