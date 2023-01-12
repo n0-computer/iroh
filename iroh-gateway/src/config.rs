@@ -55,6 +55,7 @@ impl Source for ServerConfig {
 
     fn collect(&self) -> Result<Map<String, Value>, ConfigError> {
         let mut map: Map<String, Value> = Map::new();
+        insert_into_config_map(&mut map, "server", self.server.collect()?);
         insert_into_config_map(&mut map, "gateway", self.gateway.collect()?);
         insert_into_config_map(&mut map, "metrics", self.metrics.collect()?);
         Ok(map)
@@ -274,6 +275,10 @@ mod tests {
     fn test_collect() {
         let default = ServerConfig::default();
         let mut expect: Map<String, Value> = Map::new();
+        expect.insert(
+            "server".to_string(),
+            Value::new(None, default.server.collect().unwrap()),
+        );
         expect.insert(
             "gateway".to_string(),
             Value::new(None, default.gateway.collect().unwrap()),

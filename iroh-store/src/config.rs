@@ -143,6 +143,10 @@ mod tests {
 
         let mut expect: Map<String, Value> = Map::new();
         expect.insert(
+            "server".to_string(),
+            Value::new(None, default.server.collect().unwrap()),
+        );
+        expect.insert(
             "store".to_string(),
             Value::new(None, default.store.collect().unwrap()),
         );

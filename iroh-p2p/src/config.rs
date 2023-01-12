@@ -299,6 +299,10 @@ mod tests {
 
         let mut expect: Map<String, Value> = Map::new();
         expect.insert(
+            "server".to_string(),
+            Value::new(None, default.server.collect().unwrap()),
+        );
+        expect.insert(
             "p2p".to_string(),
             Value::new(None, default.p2p.collect().unwrap()),
         );
