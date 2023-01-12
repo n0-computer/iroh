@@ -140,7 +140,10 @@ impl Cli {
                 nocopy,
                 chunker,
             } => {
-                add(api, path, *no_wrap, *recursive, *chunker, !*offline).await?;
+                add(
+                    api, path, *no_wrap, *recursive, *chunker, !*offline, *nocopy,
+                )
+                .await?;
             }
             Commands::Get {
                 ipfs_path: path,
@@ -185,6 +188,7 @@ async fn add(
     recursive: bool,
     chunker: ChunkerConfig,
     provide: bool,
+    nocopy: bool,
 ) -> Result<()> {
     if !path.exists() {
         anyhow::bail!("Path does not exist");
@@ -267,7 +271,7 @@ async fn add(
         },
     )
     .await?;
-    let mut progress = api.add_stream(entry).await?;
+    let mut progress = api.add_stream(entry, nocopy).await?;
     let mut cids = Vec::new();
     while let Some(prog) = progress.next().await {
         let (cid, size) = prog?;

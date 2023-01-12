@@ -68,13 +68,17 @@ impl Store for Arc<tokio::sync::Mutex<std::collections::HashMap<Cid, Bytes>>> {
 fn add_blocks_to_store_chunked<S: Store>(
     store: S,
     mut blocks: Pin<Box<dyn Stream<Item = Result<Block>> + Send>>,
+    nocopy: bool,
 ) -> impl Stream<Item = Result<(Cid, u64)>> {
     let mut chunk = Vec::new();
     let mut chunk_size = 0u64;
     const MAX_CHUNK_SIZE: u64 = 1024 * 1024;
     stream! {
         while let Some(block) = blocks.next().await {
-            let block = block?;
+            let mut block = block?;
+            if !nocopy {
+                block.materialize()?;
+            }
             let block_size = block.size() as u64 + block.links().len() as u64 * 128;
             let cid = *block.cid();
             let raw_data_size = block.raw_data_size().unwrap_or_default();
@@ -98,6 +102,7 @@ fn add_blocks_to_store_chunked<S: Store>(
 pub async fn add_blocks_to_store<S: Store>(
     store: Option<S>,
     blocks: Pin<Box<dyn Stream<Item = Result<Block>> + Send>>,
+    nocopy: bool,
 ) -> impl Stream<Item = Result<(Cid, u64)>> {
-    add_blocks_to_store_chunked(store.unwrap(), blocks)
+    add_blocks_to_store_chunked(store.unwrap(), blocks, nocopy)
 }

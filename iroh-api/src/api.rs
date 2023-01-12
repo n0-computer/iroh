@@ -179,6 +179,7 @@ impl Api {
     pub async fn add_stream(
         &self,
         entry: UnixfsEntry,
+        nocopy: bool,
     ) -> Result<BoxStream<'static, Result<(Cid, u64)>>> {
         let blocks = match entry {
             UnixfsEntry::File(f) => f.encode().await?.boxed(),
@@ -189,14 +190,14 @@ impl Api {
         };
 
         Ok(Box::pin(
-            add_blocks_to_store(Some(self.client.clone()), blocks).await,
+            add_blocks_to_store(Some(self.client.clone()), blocks, nocopy).await,
         ))
     }
 
     /// The `add` method encodes the entry into a DAG and adds the resulting
     /// blocks to the store.
-    pub async fn add(&self, entry: UnixfsEntry) -> Result<Cid> {
-        let add_events = self.add_stream(entry).await?;
+    pub async fn add(&self, entry: UnixfsEntry, nocopy: bool) -> Result<Cid> {
+        let add_events = self.add_stream(entry, nocopy).await?;
 
         add_events
             .try_fold(None, |_acc, (cid, _)| async move { Ok(Some(cid)) })

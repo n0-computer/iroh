@@ -1,4 +1,7 @@
-use std::io::{self, Read, Seek};
+use std::{
+    fmt,
+    io::{self, Read, Seek},
+};
 
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
@@ -34,10 +37,19 @@ impl From<Bytes> for BytesWithProvenance {
 }
 
 /// A blob or a reference to a file
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum BytesOrReference {
     Bytes(Bytes),
     Reference(FileReference),
+}
+
+impl fmt::Debug for BytesOrReference {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Bytes(arg0) => f.debug_tuple("Bytes").field(&arg0.len()).finish(),
+            Self::Reference(arg0) => f.debug_tuple("Reference").field(arg0).finish(),
+        }
+    }
 }
 
 impl From<Bytes> for BytesOrReference {

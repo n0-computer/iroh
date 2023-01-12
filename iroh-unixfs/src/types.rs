@@ -121,6 +121,11 @@ impl Block {
         }
     }
 
+    pub fn materialize(&mut self) -> Result<()> {
+        self.data = self.data.load()?.into();
+        Ok(())
+    }
+
     /// Validate the block. Will return an error if the hash or the links are wrong.
     pub fn validate(&self) -> Result<()> {
         // check that the cid is supported
