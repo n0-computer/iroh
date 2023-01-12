@@ -97,6 +97,7 @@ mod tests {
         let mut content = Vec::new();
         let file = data.read_file(&files[0]).await?;
         file.pretty()?.read_to_end(&mut content).await?;
+        assert_eq!(&content.len(), &bytes.len());
         assert_eq!(&content, &bytes);
 
         // Check progress

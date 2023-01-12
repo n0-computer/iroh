@@ -1,4 +1,8 @@
-use std::{fmt, sync::Arc, thread::available_parallelism};
+use std::{
+    fmt::{self},
+    sync::Arc,
+    thread::available_parallelism,
+};
 
 use ahash::AHashSet;
 use anyhow::{anyhow, bail, Context, Result};
@@ -12,10 +16,9 @@ use iroh_metrics::{
 use multihash::Multihash;
 use rocksdb::{
     BlockBasedOptions, Cache, ColumnFamily, DBPinnableSlice, Direction, IteratorMode, Options,
-    WriteBatch, DB as RocksDb,
+    SingleThreaded, Transaction, TransactionDB,
 };
 use smallvec::SmallVec;
-use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use tokio::task;
 
 use crate::cf::{GraphV0, MetadataV0, CF_BLOBS_V0, CF_GRAPH_V0, CF_ID_V0, CF_METADATA_V0};
@@ -27,16 +30,14 @@ pub struct Store {
 }
 
 struct InnerStore {
-    content: RocksDb,
-    next_id: RwLock<u64>,
+    content: TransactionDB,
     _cache: Cache,
 }
 
 impl fmt::Debug for InnerStore {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("InnerStore")
-            .field("content", &self.content)
-            .field("next_id", &self.next_id)
+            // .field("content", &self.content)
             .field("_cache", &"rocksdb::db_options::Cache")
             .finish()
     }
@@ -106,7 +107,8 @@ impl Store {
 
         let path = config.path.clone();
         let db = task::spawn_blocking(move || -> Result<_> {
-            let mut db = RocksDb::open(&options, path)?;
+            let mut db =
+                TransactionDB::<SingleThreaded>::open(&options, &Default::default(), path)?;
             {
                 let opts = default_blob_opts();
                 db.create_cf(CF_BLOBS_V0, &opts)?;
@@ -131,7 +133,6 @@ impl Store {
         Ok(Store {
             inner: Arc::new(InnerStore {
                 content: db,
-                next_id: 1.into(),
                 _cache: cache,
             }),
         })
@@ -145,38 +146,21 @@ impl Store {
         // TODO: find a way to read existing options
 
         let path = config.path.clone();
-        let (db, next_id) = task::spawn_blocking(move || -> Result<_> {
-            let db = RocksDb::open_cf(
+        let db = task::spawn_blocking(move || -> Result<_> {
+            let db = TransactionDB::<SingleThreaded>::open_cf(
                 &options,
+                &Default::default(),
                 path,
                 [CF_BLOBS_V0, CF_METADATA_V0, CF_GRAPH_V0, CF_ID_V0],
             )?;
 
-            // read last inserted id
-            let next_id = {
-                let cf_meta = db
-                    .cf_handle(CF_METADATA_V0)
-                    .ok_or_else(|| anyhow!("missing column family: metadata"))?;
-
-                let mut iter = db.full_iterator_cf(&cf_meta, IteratorMode::End);
-                let last_id = iter
-                    .next()
-                    .and_then(|r| r.ok())
-                    .and_then(|(key, _)| key[..8].try_into().ok())
-                    .map(u64::from_be_bytes)
-                    .unwrap_or_default();
-
-                last_id + 1
-            };
-
-            Ok((db, next_id))
+            Ok(db)
         })
         .await??;
 
         Ok(Store {
             inner: Arc::new(InnerStore {
                 content: db,
-                next_id: next_id.into(),
                 _cache: cache,
             }),
         })
@@ -187,12 +171,18 @@ impl Store {
     where
         L: IntoIterator<Item = Cid>,
     {
-        self.write_store()?.put(cid, blob, links)
+        let mut store = self.write_store()?;
+        store.put(cid, blob, links)?;
+        store.commit()?;
+        Ok(())
     }
 
     #[tracing::instrument(skip(self, blocks))]
     pub fn put_many(&self, blocks: impl IntoIterator<Item = (Cid, Bytes, Vec<Cid>)>) -> Result<()> {
-        self.write_store()?.put_many(blocks)
+        let mut store = self.write_store()?;
+        store.put_many(blocks)?;
+        store.commit()?;
+        Ok(())
     }
 
     #[tracing::instrument(skip(self))]
@@ -239,11 +229,10 @@ impl Store {
     }
 
     fn write_store(&self) -> Result<WriteStore> {
-        let db = &self.inner.content;
+        let db = self.inner.content.transaction();
         Ok(WriteStore {
             db,
-            cf: ColumnFamilies::new(db)?,
-            next_id: self.inner.next_id.write().unwrap(),
+            cf: ColumnFamilies::new(&self.inner.content)?,
         })
     }
 
@@ -252,7 +241,6 @@ impl Store {
         Ok(ReadStore {
             db,
             cf: ColumnFamilies::new(db)?,
-            _next_id: self.inner.next_id.read().unwrap(),
         })
     }
 
@@ -271,9 +259,8 @@ impl Store {
 ///
 /// All write interacion with the database is done through this struct.
 struct WriteStore<'a> {
-    db: &'a RocksDb,
+    db: Transaction<'a, TransactionDB>,
     cf: ColumnFamilies<'a>,
-    next_id: RwLockWriteGuard<'a, u64>,
 }
 
 /// Groups all read operations.
@@ -282,9 +269,8 @@ struct WriteStore<'a> {
 ///
 /// All read interacion with the database is done through this struct.
 struct ReadStore<'a> {
-    db: &'a RocksDb,
+    db: &'a TransactionDB,
     cf: ColumnFamilies<'a>,
-    _next_id: RwLockReadGuard<'a, u64>,
 }
 
 struct ColumnFamilies<'a> {
@@ -295,7 +281,7 @@ struct ColumnFamilies<'a> {
 }
 
 impl<'a> ColumnFamilies<'a> {
-    fn new(db: &'a RocksDb) -> anyhow::Result<Self> {
+    fn new(db: &'a TransactionDB) -> anyhow::Result<Self> {
         Ok(Self {
             id: db
                 .cf_handle(CF_ID_V0)
@@ -324,33 +310,16 @@ impl<'a> WriteStore<'a> {
             return Ok(());
         }
 
-        let id = self.next_id();
-
         let start = std::time::Instant::now();
-
-        let id_bytes = id.to_be_bytes();
-
-        // guranteed that the key does not exists, so we want to store it
-
-        let metadata = MetadataV0 {
-            codec: cid.codec(),
-            multihash: cid.hash().to_bytes(),
-        };
-        let metadata_bytes = rkyv::to_bytes::<_, 1024>(&metadata)?; // TODO: is this the right amount of scratch space?
-        let id_key = id_key(&cid);
+        let id_bytes = self.assign_id(&cid)?;
 
         let children = self.ensure_id_many(links.into_iter())?;
 
+        let blob_size = blob.as_ref().len();
         let graph = GraphV0 { children };
         let graph_bytes = rkyv::to_bytes::<_, 1024>(&graph)?; // TODO: is this the right amount of scratch space?
-        let blob_size = blob.as_ref().len();
-
-        let mut batch = WriteBatch::default();
-        batch.put_cf(self.cf.id, id_key, id_bytes);
-        batch.put_cf(self.cf.blobs, id_bytes, blob);
-        batch.put_cf(self.cf.metadata, id_bytes, metadata_bytes);
-        batch.put_cf(self.cf.graph, id_bytes, graph_bytes);
-        self.db.write(batch)?;
+        self.db.put_cf(self.cf.blobs, id_bytes, blob)?;
+        self.db.put_cf(self.cf.graph, id_bytes, graph_bytes)?;
         observe!(StoreHistograms::PutRequests, start.elapsed().as_secs_f64());
         record!(StoreMetrics::PutBytes, blob_size as u64);
 
@@ -362,7 +331,6 @@ impl<'a> WriteStore<'a> {
         let start = std::time::Instant::now();
         let mut total_blob_size = 0;
 
-        let mut batch = WriteBatch::default();
         let mut cid_tracker: AHashSet<Cid> = AHashSet::default();
         for (cid, blob, links) in blocks.into_iter() {
             if cid_tracker.contains(&cid) || self.has(&cid)? {
@@ -371,19 +339,7 @@ impl<'a> WriteStore<'a> {
 
             cid_tracker.insert(cid);
 
-            let id = self.next_id();
-
-            let id_bytes = id.to_be_bytes();
-
-            // guranteed that the key does not exists, so we want to store it
-
-            let metadata = MetadataV0 {
-                codec: cid.codec(),
-                multihash: cid.hash().to_bytes(),
-            };
-            let metadata_bytes = rkyv::to_bytes::<_, 1024>(&metadata)?; // TODO: is this the right amount of scratch space?
-            let id_key = id_key(&cid);
-
+            let id_bytes = self.assign_id(&cid)?;
             let children = self.ensure_id_many(links.into_iter())?;
 
             let graph = GraphV0 { children };
@@ -392,13 +348,10 @@ impl<'a> WriteStore<'a> {
             let blob_size = blob.as_ref().len();
             total_blob_size += blob_size as u64;
 
-            batch.put_cf(self.cf.id, id_key, id_bytes);
-            batch.put_cf(self.cf.blobs, id_bytes, blob);
-            batch.put_cf(self.cf.metadata, id_bytes, metadata_bytes);
-            batch.put_cf(self.cf.graph, id_bytes, graph_bytes);
+            self.db.put_cf(self.cf.blobs, id_bytes, blob)?;
+            self.db.put_cf(self.cf.graph, id_bytes, graph_bytes)?;
         }
 
-        self.db.write(batch)?;
         observe!(StoreHistograms::PutRequests, start.elapsed().as_secs_f64());
         record!(StoreMetrics::PutBytes, total_blob_size);
 
@@ -412,40 +365,51 @@ impl<'a> WriteStore<'a> {
         I: IntoIterator<Item = Cid>,
     {
         let mut ids = Vec::new();
-        let mut batch = WriteBatch::default();
         for cid in cids {
             let id_key = id_key(&cid);
             let id = if let Some(id) = self.db.get_pinned_cf(self.cf.id, &id_key)? {
                 u64::from_be_bytes(id.as_ref().try_into()?)
             } else {
-                let id = self.next_id();
-                let id_bytes = id.to_be_bytes();
-
-                let metadata = MetadataV0 {
-                    codec: cid.codec(),
-                    multihash: cid.hash().to_bytes(),
-                };
-                let metadata_bytes = rkyv::to_bytes::<_, 1024>(&metadata)?; // TODO: is this the right amount of scratch space?
-                batch.put_cf(&self.cf.id, id_key, id_bytes);
-                batch.put_cf(&self.cf.metadata, id_bytes, metadata_bytes);
-                id
+                u64::from_be_bytes(self.assign_id(&cid)?)
             };
             ids.push(id);
         }
-        self.db.write(batch)?;
 
         Ok(ids)
     }
 
     #[tracing::instrument(skip(self))]
-    fn next_id(&mut self) -> u64 {
-        let id = *self.next_id;
-        if let Some(next_id) = self.next_id.checked_add(1) {
-            *self.next_id = next_id;
-        } else {
-            panic!("this store is full");
-        }
-        id
+    fn next_id(&self) -> u64 {
+        let mut iter = self
+            .db
+            .full_iterator_cf(self.cf.metadata, IteratorMode::End);
+        let last_id = iter
+            .next()
+            .and_then(|r| r.ok())
+            .and_then(|(key, _)| key[..8].try_into().ok())
+            .map(u64::from_be_bytes)
+            .unwrap_or_default();
+
+        last_id + 1
+    }
+
+    fn assign_id(&self, cid: &Cid) -> Result<[u8; 8]> {
+        let id = self.next_id();
+        println!("{} {}", id, cid);
+
+        let id_bytes = id.to_be_bytes();
+
+        // guranteed that the key does not exists, so we want to store it
+
+        let metadata = MetadataV0 {
+            codec: cid.codec(),
+            multihash: cid.hash().to_bytes(),
+        };
+        let metadata_bytes = rkyv::to_bytes::<_, 1024>(&metadata)?; // TODO: is this the right amount of scratch space?
+        let id_key = id_key(cid);
+        self.db.put_cf(self.cf.metadata, id_bytes, metadata_bytes)?;
+        self.db.put_cf(self.cf.id, id_key, id_bytes)?;
+        Ok(id_bytes)
     }
 
     #[tracing::instrument(skip(self))]
@@ -472,6 +436,10 @@ impl<'a> WriteStore<'a> {
             }
             None => Ok(false),
         }
+    }
+
+    fn commit(self) -> std::result::Result<(), rocksdb::Error> {
+        self.db.commit()
     }
 }
 
@@ -883,6 +851,7 @@ mod tests {
                     let (cid, data, links) = branch.clone();
                     let t = mutex.lock().unwrap();
                     store.put(cid, &data, links)?;
+                    store.commit()?;
                     drop(t);
                     anyhow::Ok(())
                 })
