@@ -208,7 +208,7 @@ impl Transfer {
         self.gossip_task.await?;
         self.gossip_task_source.await?;
         self.p2p.close().await?;
-        
+
         Ok(())
     }
 }
