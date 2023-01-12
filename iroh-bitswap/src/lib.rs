@@ -326,7 +326,7 @@ impl<S: Store> Bitswap<S> {
                 if let PeerState::Connected(old_id) = old_state {
                     if let PeerState::Connected(new_id) = new_state {
                         // TODO: better understand what this means and how to handle it.
-                        warn!(
+                        debug!(
                             "Peer {}: detected connection id change: {:?} => {:?}",
                             peer, old_id, new_id
                         );
