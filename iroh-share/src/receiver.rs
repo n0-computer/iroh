@@ -205,7 +205,7 @@ impl Transfer {
 
     /// Finish and finalize the transfer.
     pub async fn finish(self) -> Result<()> {
-        self.gossip_task.await?;
+        self.gossip_task.abort();
         self.gossip_task_source.await?;
         self.p2p.close().await?;
 
