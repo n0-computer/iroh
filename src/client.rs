@@ -2,11 +2,11 @@ use std::{io::Read, net::SocketAddr, path::PathBuf, time::Instant};
 
 use anyhow::{anyhow, bail, ensure, Result};
 use bytes::BytesMut;
-use libp2p_core::identity::ed25519::Keypair;
 use s2n_quic::{client::Connect, Client};
 use tokio::io::AsyncReadExt;
 
 use crate::protocol::{write_lp, Request, Res, Response};
+use crate::tls::{self, Keypair};
 
 const MAX_DATA_SIZE: usize = 1024 * 1024 * 1024;
 
@@ -17,9 +17,9 @@ pub struct Options {
 }
 
 pub async fn run(hash: bao::Hash, opts: Options) -> Result<()> {
-    let keypair = libp2p_core::identity::Keypair::Ed25519(Keypair::generate());
+    let keypair = Keypair::generate();
 
-    let client_config = libp2p_tls::make_client_config(&keypair, None)?;
+    let client_config = tls::make_client_config(&keypair, None)?;
     let tls = s2n_quic::provider::tls::rustls::Client::from(client_config);
 
     let client = Client::builder()

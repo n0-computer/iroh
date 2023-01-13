@@ -2,11 +2,11 @@ use std::{collections::HashMap, path::Path, sync::Arc};
 
 use anyhow::{anyhow, ensure, Result};
 use bytes::{Bytes, BytesMut};
-use libp2p_core::identity::ed25519::Keypair;
 use s2n_quic::Server;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use crate::protocol::{write_lp, Request, Res, Response};
+use crate::tls::{self, Keypair};
 
 #[derive(Clone, Debug, Default)]
 pub struct Options {
@@ -14,8 +14,8 @@ pub struct Options {
 }
 
 pub async fn run(db: Arc<HashMap<bao::Hash, Data>>, opts: Options) -> Result<()> {
-    let keypair = libp2p_core::identity::Keypair::Ed25519(Keypair::generate());
-    let server_config = libp2p_tls::make_server_config(&keypair)?;
+    let keypair = Keypair::generate();
+    let server_config = tls::make_server_config(&keypair)?;
     let tls = s2n_quic::provider::tls::rustls::Server::from(server_config);
     let limits = s2n_quic::provider::limits::Default::default();
     let port = if let Some(port) = opts.port {
