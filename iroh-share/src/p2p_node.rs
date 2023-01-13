@@ -137,7 +137,7 @@ impl P2pNode {
             // "/dnsaddr/bootstrap.libp2p.io/p2p/QmbLHAnMoJPWSCR5Zhtx6BHJX9KiKNN6tpvbUcqanj75Nb",
             // "/dnsaddr/bootstrap.libp2p.io/p2p/QmcZf59bWwK5XFi76CZX8cbJ4BhTzzA3gU1ZjYZcYW3dwt",
             // "/ip4/104.131.131.82/tcp/4001/p2p/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ", // mars.i.ipfs.io
-            "/ip4/10.0.0.6/tcp/4001/p2p/12D3KooWDWRNoUoZn3h9TkEWnTW3sd4hvixyofH5NkjwLEzbWf7V"
+            "/ip4/10.0.0.6/tcp/4001/p2p/12D3KooWDWRNoUoZn3h9TkEWnTW3sd4hvixyofH5NkjwLEzbWf7V",
         ];
         bootstrap_list
             .iter()

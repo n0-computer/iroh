@@ -1,14 +1,22 @@
+use std::{collections::HashMap, sync::Arc};
+
 use anyhow::{anyhow, ensure, Context, Result};
 use futures::{
-    channel::{oneshot::channel as oneshot, oneshot::Receiver as OneShotReceiver},
+    channel::{
+        oneshot::channel as oneshot, oneshot::Receiver as OneShotReceiver,
+        oneshot::Sender as OneShotSender,
+    },
     Stream, StreamExt,
 };
 use iroh_p2p::NetworkEvent;
 use iroh_resolver::resolver::{Out, OutPrettyReader, OutType, Path, Resolver, UnixfsType};
 use iroh_unixfs::Link;
-use libp2p::gossipsub::{GossipsubMessage, MessageId, TopicHash};
+use libp2p::gossipsub::TopicHash;
 use libp2p::PeerId;
-use tokio::sync::mpsc::{channel, Receiver as ChannelReceiver};
+use tokio::sync::{
+    mpsc::{channel, Receiver as ChannelReceiver, Sender as ChannelSender},
+    RwLock,
+};
 use tokio::task::JoinHandle;
 use tokio_stream::wrappers::ReceiverStream;
 use tracing::{debug, info, warn};
@@ -22,14 +30,15 @@ use crate::{
 #[derive(Debug)]
 pub struct Receiver {
     p2p: P2pNode,
-    gossip_messages: ChannelReceiver<(MessageId, PeerId, GossipsubMessage)>,
     gossip_task: JoinHandle<()>,
+    gossip_task_source: JoinHandle<()>,
+    senders: Arc<RwLock<HashMap<PeerId, Option<DataReceiver>>>>,
 }
 
 impl Receiver {
     pub async fn new(port: u16, db_path: &std::path::Path) -> Result<Self> {
         let (p2p, mut events) = P2pNode::new(port, db_path).await?;
-        let (s, r) = channel(1024);
+        let (s, mut r) = channel(1024);
 
         let gossip_task = tokio::task::spawn(async move {
             while let Some(event) = events.recv().await {
@@ -44,52 +53,29 @@ impl Receiver {
             }
         });
 
-        Ok(Receiver {
-            p2p,
-            gossip_messages: r,
-            gossip_task,
-        })
-    }
-
-    pub async fn transfer_from_ticket(self, ticket: &Ticket) -> Result<Transfer> {
-        // Connect to the sender
-        info!("connecting");
-        let Receiver {
-            p2p,
-            mut gossip_messages,
-            gossip_task,
-        } = self;
-        let p2p_rpc = p2p.rpc().try_p2p()?;
-        p2p_rpc
-            .connect(ticket.peer_id, ticket.addrs.clone())
-            .await?;
-        p2p_rpc.gossipsub_add_explicit_peer(ticket.peer_id).await?;
-        let topic = TopicHash::from_raw(&ticket.topic);
-        p2p_rpc.gossipsub_subscribe(topic.clone()).await?;
-
-        let expected_sender = ticket.peer_id;
-        let resolver = p2p.resolver().clone();
-        let (progress_sender, progress_receiver) = channel(1024);
-        let (data_sender, data_receiver) = oneshot();
-
-        // add provider
-        resolver
-            .loader()
-            .providers()
-            .lock()
-            .await
-            .insert(expected_sender);
+        let senders_map = Arc::new(RwLock::new(HashMap::<PeerId, Option<DataReceiver>>::new()));
+        let senders = senders_map.clone();
 
         let rpc = p2p.rpc().clone();
 
         let gossip_task_source = tokio::task::spawn(async move {
-            let mut data_sender = Some(data_sender);
+            while let Some((_id, from, message)) = r.recv().await {
+                let mut senders_w = senders.write().await;
+                let receiver_root = match senders_w.get_mut(&from) {
+                    Some(receiver) => receiver,
+                    None => {
+                        warn!("received message from unknown sender: {}", from);
+                        continue;
+                    }
+                };
 
-            while let Some((_id, from, message)) = gossip_messages.recv().await {
-                if from == expected_sender {
+                if let Some(receiver) = receiver_root {
+                    // let data_sender = &;
+                    // let mut data_sender = Some(data_sender);
+                    let topic = receiver.topic.clone();
                     match bincode::deserialize(&message.data) {
                         Ok(SenderMessage::Start { root, num_parts }) => {
-                            let results = resolver.resolve_recursive(Path::from_cid(root));
+                            let results = receiver.resolver.resolve_recursive(Path::from_cid(root));
                             tokio::pin!(results);
                             // root is the first
                             let mut index = 1;
@@ -106,9 +92,9 @@ impl Receiver {
                                     }
                                 };
                                 debug!("progress {}/{}", index, num_parts);
-                                progress_sender.send(msg).await.unwrap();
+                                receiver.progress_sender.send(msg).await.unwrap();
 
-                                if let Some(data_sender) = data_sender.take() {
+                                if let Some(data_sender) = receiver.data_sender.take() {
                                     data_sender.send(res).ok();
                                 }
 
@@ -119,7 +105,7 @@ impl Receiver {
                                 index += 1;
                             }
                             info!("transfer completed");
-                            drop(progress_sender);
+                            // drop(progress_sender);
 
                             // TODO: send finish message or error
                             let msg = if let Some(error) = has_err.take() {
@@ -142,21 +128,74 @@ impl Receiver {
                             warn!("got unexpected message from {}: {:?}", from, err);
                         }
                     }
+                    info!("removing sender: {:?}", from);
+                    senders_w.remove(&from);
                     // we only receive a single iteration
-                    break;
+                    // break;
                 } else {
                     warn!("got message from unexpected sender: {:?}", from);
                 }
             }
         });
 
-        Ok(Transfer {
-            gossip_task,
-            gossip_task_source,
+        Ok(Receiver {
             p2p,
+            gossip_task_source,
+            gossip_task,
+            senders: senders_map.clone(),
+        })
+    }
+
+    pub async fn transfer_from_ticket(&self, ticket: &Ticket) -> Result<Transfer> {
+        // Connect to the sender
+        info!("connecting");
+        let p2p_rpc = self.p2p.rpc().try_p2p()?;
+        p2p_rpc
+            .connect(ticket.peer_id, ticket.addrs.clone())
+            .await?;
+        p2p_rpc.gossipsub_add_explicit_peer(ticket.peer_id).await?;
+        let topic = TopicHash::from_raw(&ticket.topic);
+        p2p_rpc.gossipsub_subscribe(topic.clone()).await?;
+
+        let expected_sender = ticket.peer_id;
+        let resolver = self.p2p.resolver().clone();
+        let (progress_sender, progress_receiver) = channel(1024);
+        let (data_sender, data_receiver) = oneshot();
+
+        // add provider
+        resolver
+            .loader()
+            .providers()
+            .lock()
+            .await
+            .insert(expected_sender);
+
+        let sender = DataReceiver {
+            topic,
+            resolver,
+            progress_sender: progress_sender,
+            data_sender: Some(data_sender),
+        };
+
+        self.senders
+            .write()
+            .await
+            .insert(expected_sender, Some(sender));
+
+        Ok(Transfer {
+            resolver: self.p2p.resolver().clone(),
             data_receiver: Some(data_receiver),
             progress_receiver: Some(progress_receiver),
         })
+    }
+
+    /// Finish and finalize the transfer.
+    pub async fn finish(self) -> Result<()> {
+        self.gossip_task_source.await?;
+        self.gossip_task.abort();
+        self.p2p.close().await?;
+
+        Ok(())
     }
 }
 
@@ -167,9 +206,7 @@ pub enum ProgressEvent {
 
 #[derive(Debug)]
 pub struct Transfer {
-    p2p: P2pNode,
-    gossip_task: JoinHandle<()>,
-    gossip_task_source: JoinHandle<()>,
+    resolver: Resolver<Loader>,
     data_receiver: Option<OneShotReceiver<Result<Out>>>,
     progress_receiver: Option<ChannelReceiver<std::result::Result<ProgressEvent, String>>>,
 }
@@ -188,7 +225,7 @@ impl Transfer {
         );
 
         Ok(Data {
-            resolver: self.p2p.resolver().clone(),
+            resolver: self.resolver.clone(),
             root,
         })
     }
@@ -205,9 +242,9 @@ impl Transfer {
 
     /// Finish and finalize the transfer.
     pub async fn finish(self) -> Result<()> {
-        self.gossip_task_source.await?;
-        self.gossip_task.abort();
-        self.p2p.close().await?;
+        // self.gossip_task_source.await?;
+        // self.gossip_task.abort();
+        // self.p2p.close().await?;
 
         Ok(())
     }
@@ -253,4 +290,12 @@ impl Data {
             root,
         })
     }
+}
+
+#[derive(Debug)]
+pub struct DataReceiver {
+    pub resolver: Resolver<Loader>,
+    pub topic: TopicHash,
+    pub data_sender: Option<OneShotSender<Result<Out>>>,
+    pub progress_sender: ChannelSender<std::result::Result<ProgressEvent, String>>,
 }

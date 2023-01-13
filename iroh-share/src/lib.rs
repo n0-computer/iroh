@@ -92,13 +92,13 @@ mod tests {
         assert_eq!(files.len(), 1);
 
         let file = &files[0];
-        assert_eq!(file.name.as_ref().unwrap(), "foo.jpg");
+        let file_name = file.name.as_ref().unwrap();
+        assert_eq!(file_name, "foo.jpg");
 
         let mut content = Vec::new();
         let file = data.read_file(&files[0]).await?;
         file.pretty()?.read_to_end(&mut content).await?;
         assert_eq!(&content, &bytes);
-
         // Check progress
         {
             println!("waiting for progress");
@@ -125,7 +125,8 @@ mod tests {
         println!("waiting for done");
         sender_transfer.done().await?;
         receiver_transfer.finish().await?;
-
+        receiver.finish().await?;
+        assert_eq!(file_name, "foox.jpg");
         Ok(())
     }
 
