@@ -3,9 +3,9 @@ use std::{collections::HashMap, path::Path, sync::Arc};
 use anyhow::{anyhow, ensure, Result};
 use bytes::{Bytes, BytesMut};
 use s2n_quic::Server;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::AsyncWriteExt;
 
-use crate::protocol::{write_lp, Request, Res, Response};
+use crate::protocol::{read_lp, write_lp, Request, Res, Response};
 use crate::tls::{self, Keypair};
 
 #[derive(Clone, Debug, Default)]
@@ -44,55 +44,57 @@ pub async fn run(db: Arc<HashMap<bao::Hash, Data>>, opts: Options) -> Result<()>
                     println!("Stream opened from {:?}", stream.connection().remote_addr());
                     let (mut reader, mut writer) = stream.split();
                     let mut out_buffer = BytesMut::zeroed(1024);
-                    let mut in_buffer = BytesMut::zeroed(1024);
+                    let mut in_buffer = BytesMut::with_capacity(1024);
 
-                    // read length prefix
-                    while let Ok(size) = unsigned_varint::aio::read_u64(&mut reader).await {
-                        // read next message
+                    // decode next message
+                    loop {
                         in_buffer.clear();
-                        while (in_buffer.len() as u64) < size {
-                            reader.read_buf(&mut in_buffer).await.unwrap();
-                        }
-                        let size = usize::try_from(size).unwrap();
+                        match read_lp::<_, Request>(&mut reader, &mut in_buffer).await {
+                            Ok((request, _size)) => {
+                                let name = bao::Hash::from(request.name);
+                                let (data, piece) = if let Some(data) = db.get(&name) {
+                                    println!("found {}", name.to_hex());
+                                    (
+                                        Res::Found {
+                                            size: data.data.len(),
+                                            outboard: &data.outboard,
+                                        },
+                                        Some(data.clone()),
+                                    )
+                                } else {
+                                    println!("not found {}", name.to_hex());
+                                    (Res::NotFound, None)
+                                };
 
-                        // decode next message
-                        let request: Request = postcard::from_bytes(&in_buffer[..size]).unwrap();
-                        let name = bao::Hash::from(request.name);
-                        let (data, piece) = if let Some(data) = db.get(&name) {
-                            (
-                                Res::Found {
-                                    size: data.data.len(),
-                                    outboard: &data.outboard,
-                                },
-                                Some(data.clone()),
-                            )
-                        } else {
-                            (Res::NotFound, None)
-                        };
+                                let response = Response {
+                                    id: request.id,
+                                    data,
+                                };
 
-                        let response = Response {
-                            id: request.id,
-                            data,
-                        };
+                                if out_buffer.len() < 20 + response.data.len() {
+                                    out_buffer.resize(20 + response.data.len(), 0u8);
+                                }
+                                let used = postcard::to_slice(&response, &mut out_buffer).unwrap();
 
-                        if out_buffer.len() < 20 + response.data.len() {
-                            out_buffer.resize(20 + response.data.len(), 0u8);
-                        }
-                        let used = postcard::to_slice(&response, &mut out_buffer).unwrap();
+                                if let Err(e) = write_lp(&mut writer, used).await {
+                                    eprintln!("failed to write response: {:?}", e);
+                                }
 
-                        if let Err(e) = write_lp(&mut writer, used).await {
-                            eprintln!("failed to write response: {:?}", e);
-                        }
+                                println!("written response of length {}", used.len());
 
-                        println!("written response of length {}", used.len());
-
-                        if let Some(piece) = piece {
-                            println!("writing data {}", piece.data.len());
-                            // if we found the data, write it out now
-                            if let Err(err) = writer.write_all(&piece.data).await {
-                                eprintln!("failed to write data: {:?}", err);
+                                if let Some(piece) = piece {
+                                    println!("writing data {}", piece.data.len());
+                                    // if we found the data, write it out now
+                                    if let Err(err) = writer.write_all(&piece.data).await {
+                                        eprintln!("failed to write data: {:?}", err);
+                                    }
+                                    println!("done writing data");
+                                }
                             }
-                            println!("done writing data");
+                            Err(err) => {
+                                eprintln!("read error: {:?}", err);
+                                break;
+                            }
                         }
                     }
 
@@ -123,7 +125,7 @@ pub async fn create_db(paths: Vec<&Path>) -> Result<Arc<HashMap<bao::Hash, Data>
         let num = data.len();
         let (outboard, hash) = bao::encode::outboard(&data);
 
-        println!("- {}: {}MiB", hash.to_hex(), num);
+        println!("- {}: {}bytes", hash.to_hex(), num);
         db.insert(
             hash,
             Data {
