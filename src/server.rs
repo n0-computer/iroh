@@ -2,6 +2,7 @@ use std::{collections::HashMap, path::Path, sync::Arc};
 
 use anyhow::{anyhow, ensure, Result};
 use bytes::{Bytes, BytesMut};
+use s2n_quic::stream::BidirectionalStream;
 use s2n_quic::Server;
 use tokio::io::AsyncWriteExt;
 
@@ -41,63 +42,9 @@ pub async fn run(db: Arc<HashMap<bao::Hash, Data>>, opts: Options) -> Result<()>
             while let Ok(Some(stream)) = connection.accept_bidirectional_stream().await {
                 let db = db.clone();
                 tokio::spawn(async move {
-                    println!("Stream opened from {:?}", stream.connection().remote_addr());
-                    let (mut reader, mut writer) = stream.split();
-                    let mut out_buffer = BytesMut::zeroed(1024);
-                    let mut in_buffer = BytesMut::with_capacity(1024);
-
-                    // decode next message
-                    loop {
-                        in_buffer.clear();
-                        match read_lp::<_, Request>(&mut reader, &mut in_buffer).await {
-                            Ok((request, _size)) => {
-                                let name = bao::Hash::from(request.name);
-                                let (data, piece) = if let Some(data) = db.get(&name) {
-                                    println!("found {}", name.to_hex());
-                                    (
-                                        Res::Found {
-                                            size: data.data.len(),
-                                            outboard: &data.outboard,
-                                        },
-                                        Some(data.clone()),
-                                    )
-                                } else {
-                                    println!("not found {}", name.to_hex());
-                                    (Res::NotFound, None)
-                                };
-
-                                let response = Response {
-                                    id: request.id,
-                                    data,
-                                };
-
-                                if out_buffer.len() < 20 + response.data.len() {
-                                    out_buffer.resize(20 + response.data.len(), 0u8);
-                                }
-                                let used = postcard::to_slice(&response, &mut out_buffer).unwrap();
-
-                                if let Err(e) = write_lp(&mut writer, used).await {
-                                    eprintln!("failed to write response: {:?}", e);
-                                }
-
-                                println!("written response of length {}", used.len());
-
-                                if let Some(piece) = piece {
-                                    println!("writing data {}", piece.data.len());
-                                    // if we found the data, write it out now
-                                    if let Err(err) = writer.write_all(&piece.data).await {
-                                        eprintln!("failed to write data: {:?}", err);
-                                    }
-                                    println!("done writing data");
-                                }
-                            }
-                            Err(err) => {
-                                eprintln!("read error: {:?}", err);
-                                break;
-                            }
-                        }
+                    if let Err(err) = handle_stream(db, stream).await {
+                        eprintln!("error: {:#?}", err);
                     }
-
                     println!("Disconnected");
                 });
             }
@@ -105,6 +52,57 @@ pub async fn run(db: Arc<HashMap<bao::Hash, Data>>, opts: Options) -> Result<()>
     }
 
     Ok(())
+}
+
+async fn handle_stream(
+    db: Arc<HashMap<bao::Hash, Data>>,
+    stream: BidirectionalStream,
+) -> Result<()> {
+    println!("Stream opened from {:?}", stream.connection().remote_addr());
+    let (mut reader, mut writer) = stream.split();
+    let mut out_buffer = BytesMut::with_capacity(1024);
+    let mut in_buffer = BytesMut::with_capacity(1024);
+
+    // decode next message
+    loop {
+        in_buffer.clear();
+        let (request, _size) = read_lp::<_, Request>(&mut reader, &mut in_buffer).await?;
+        let name = bao::Hash::from(request.name);
+        let (data, piece) = if let Some(data) = db.get(&name) {
+            println!("found {}", name.to_hex());
+            (
+                Res::Found {
+                    size: data.data.len(),
+                    outboard: &data.outboard,
+                },
+                Some(data.clone()),
+            )
+        } else {
+            println!("not found {}", name.to_hex());
+            (Res::NotFound, None)
+        };
+
+        let response = Response {
+            id: request.id,
+            data,
+        };
+
+        if out_buffer.len() < 20 + response.data.len() {
+            out_buffer.resize(20 + response.data.len(), 0u8);
+        }
+        let used = postcard::to_slice(&response, &mut out_buffer)?;
+
+        write_lp(&mut writer, used).await?;
+
+        println!("written response of length {}", used.len());
+
+        if let Some(piece) = piece {
+            println!("writing data {}", piece.data.len());
+            // if we found the data, write it out now
+            writer.write_all(&piece.data).await?;
+            println!("done writing data");
+        }
+    }
 }
 
 #[derive(Clone)]
