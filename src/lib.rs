@@ -24,8 +24,10 @@ mod tests {
         });
 
         let out = dir.join("out");
-        let mut opts = client::Options::default();
-        opts.out = Some(out.clone());
+        let opts = client::Options {
+            out: Some(out.clone()),
+            ..Default::default()
+        };
         client::run(hash, opts).await?;
         let got = tokio::fs::read(out).await?;
         let expect = tokio::fs::read(path).await?;

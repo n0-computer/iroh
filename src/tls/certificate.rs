@@ -128,7 +128,7 @@ fn parse_unverified(der_input: &[u8]) -> Result<P2pCertificate, webpki::Error> {
         if oid == &p2p_ext_oid {
             let signed_key =
                 SignedKey::from_der(ext.value).map_err(|_| webpki::Error::ExtensionValueInvalid)?;
-            let public_key = PublicKey::from_bytes(&signed_key.public_key.as_bytes())
+            let public_key = PublicKey::from_bytes(signed_key.public_key.as_bytes())
                 .map_err(|_| webpki::Error::UnknownIssuer)?;
             let signature = Signature::from_bytes(signed_key.signature.as_bytes())
                 .map_err(|_| webpki::Error::UnknownIssuer)?;
