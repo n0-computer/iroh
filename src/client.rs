@@ -5,7 +5,7 @@ use bytes::BytesMut;
 use s2n_quic::{client::Connect, Client};
 use tokio::io::AsyncReadExt;
 
-use crate::protocol::{write_lp, Request, Res, Response};
+use crate::protocol::{read_lp, write_lp, Request, Res, Response};
 use crate::tls::{self, Keypair};
 
 const MAX_DATA_SIZE: usize = 1024 * 1024 * 1024;
@@ -54,19 +54,10 @@ pub async fn run(hash: bao::Hash, opts: Options) -> Result<()> {
 
     // read response
     {
-        let mut in_buffer = BytesMut::zeroed(1024);
-
-        // read length prefix
-        let size = unsigned_varint::aio::read_u64(&mut reader).await.unwrap();
+        let mut in_buffer = BytesMut::with_capacity(1024);
 
         // read next message
-        in_buffer.clear();
-        while (in_buffer.len() as u64) < size {
-            reader.read_buf(&mut in_buffer).await?;
-        }
-        let response_size = usize::try_from(size).unwrap();
-        let response: Response = postcard::from_bytes(&in_buffer[..response_size])?;
-        println!("read response of size {}", response_size);
+        let (response, response_size): (Response, _) = read_lp(&mut reader, &mut in_buffer).await?;
         match response.data {
             Res::Found { size, outboard } => {
                 // Need to read the message now

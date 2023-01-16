@@ -1,6 +1,10 @@
-use anyhow::Result;
+use anyhow::{ensure, Result};
+use bytes::BytesMut;
 use serde::{Deserialize, Serialize};
-use tokio::io::{AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+
+/// Maximum message size is limited to 100MiB for now.
+const MAX_MESSAGE_SIZE: usize = 1024 * 1024 * 100;
 
 #[derive(Deserialize, Serialize, Debug, PartialEq, Clone)]
 pub struct Request {
@@ -37,7 +41,13 @@ impl Res<'_> {
     }
 }
 
+/// Write the given data to the provider sink, with a unsigned varint length prefix.
 pub async fn write_lp<W: AsyncWrite + Unpin>(writer: &mut W, data: &[u8]) -> Result<()> {
+    ensure!(
+        data.len() < MAX_MESSAGE_SIZE,
+        "sending message is too large"
+    );
+
     // send length prefix
     let mut buffer = [0u8; 10];
     let lp = unsigned_varint::encode::u64(data.len() as u64, &mut buffer);
@@ -46,4 +56,23 @@ pub async fn write_lp<W: AsyncWrite + Unpin>(writer: &mut W, data: &[u8]) -> Res
     // write message
     writer.write_all(data).await?;
     Ok(())
+}
+
+/// Read and deserialize into the given type from the provided source, based on the length prefix.
+pub async fn read_lp<'a, R: AsyncRead + futures::io::AsyncRead + Unpin, T: Deserialize<'a>>(
+    mut reader: R,
+    buffer: &'a mut BytesMut,
+) -> Result<(T, usize)> {
+    // read length prefix
+    let size = unsigned_varint::aio::read_u64(&mut reader).await?;
+    let size = usize::try_from(size)?;
+    ensure!(size < MAX_MESSAGE_SIZE, "received message is too large");
+
+    while buffer.len() < size {
+        reader.read_buf(buffer).await?;
+    }
+    let response: T = postcard::from_bytes(&buffer[..size])?;
+    println!("read message of size {}", size);
+
+    Ok((response, size))
 }
