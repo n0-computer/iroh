@@ -189,9 +189,9 @@ impl Transfer {
     /// Waits until the transfer is done.
     pub async fn done(self) -> Result<()> {
         self.done_receiver.await??;
-        self.p2p.close().await?;
-        self.gossip_task.await?;
+        self.gossip_task.abort();
         self.gossip_task_source.await?;
+        self.p2p.close().await?;
 
         Ok(())
     }
