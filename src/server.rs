@@ -5,6 +5,7 @@ use bytes::{Bytes, BytesMut};
 use s2n_quic::stream::BidirectionalStream;
 use s2n_quic::Server;
 use tokio::io::AsyncWriteExt;
+use tracing::{debug, error};
 
 use crate::protocol::{read_lp, write_lp, Request, Res, Response};
 use crate::tls::{self, Keypair};
@@ -32,20 +33,20 @@ pub async fn run(db: Arc<HashMap<bao::Hash, Data>>, opts: Options) -> Result<()>
         .start()
         .map_err(|e| anyhow!("{:?}", e))?;
 
-    println!("\nlistening at: {:#?}", server.local_addr().unwrap());
+    debug!("\nlistening at: {:#?}", server.local_addr().unwrap());
 
     while let Some(mut connection) = server.accept().await {
         let db = db.clone();
         tokio::spawn(async move {
-            println!("Connection accepted from {:?}", connection.remote_addr());
+            debug!("connection accepted from {:?}", connection.remote_addr());
 
             while let Ok(Some(stream)) = connection.accept_bidirectional_stream().await {
                 let db = db.clone();
                 tokio::spawn(async move {
                     if let Err(err) = handle_stream(db, stream).await {
-                        eprintln!("error: {:#?}", err);
+                        error!("error: {:#?}", err);
                     }
-                    println!("Disconnected");
+                    debug!("disconnected");
                 });
             }
         });
@@ -58,7 +59,7 @@ async fn handle_stream(
     db: Arc<HashMap<bao::Hash, Data>>,
     stream: BidirectionalStream,
 ) -> Result<()> {
-    println!("Stream opened from {:?}", stream.connection().remote_addr());
+    debug!("stream opened from {:?}", stream.connection().remote_addr());
     let (mut reader, mut writer) = stream.split();
     let mut out_buffer = BytesMut::with_capacity(1024);
     let mut in_buffer = BytesMut::with_capacity(1024);
@@ -66,43 +67,51 @@ async fn handle_stream(
     // decode next message
     loop {
         in_buffer.clear();
-        let (request, _size) = read_lp::<_, Request>(&mut reader, &mut in_buffer).await?;
-        let name = bao::Hash::from(request.name);
-        let (data, piece) = if let Some(data) = db.get(&name) {
-            println!("found {}", name.to_hex());
-            (
-                Res::Found {
-                    size: data.data.len(),
-                    outboard: &data.outboard,
-                },
-                Some(data.clone()),
-            )
-        } else {
-            println!("not found {}", name.to_hex());
-            (Res::NotFound, None)
-        };
+        match read_lp::<_, Request>(&mut reader, &mut in_buffer).await? {
+            Some((request, _size)) => {
+                let name = bao::Hash::from(request.name);
+                let (data, piece) = if let Some(data) = db.get(&name) {
+                    debug!("found {}", name.to_hex());
+                    (
+                        Res::Found {
+                            size: data.data.len(),
+                            outboard: &data.outboard,
+                        },
+                        Some(data.clone()),
+                    )
+                } else {
+                    debug!("not found {}", name.to_hex());
+                    (Res::NotFound, None)
+                };
 
-        let response = Response {
-            id: request.id,
-            data,
-        };
+                let response = Response {
+                    id: request.id,
+                    data,
+                };
 
-        if out_buffer.len() < 20 + response.data.len() {
-            out_buffer.resize(20 + response.data.len(), 0u8);
-        }
-        let used = postcard::to_slice(&response, &mut out_buffer)?;
+                if out_buffer.len() < 20 + response.data.len() {
+                    out_buffer.resize(20 + response.data.len(), 0u8);
+                }
+                let used = postcard::to_slice(&response, &mut out_buffer)?;
 
-        write_lp(&mut writer, used).await?;
+                write_lp(&mut writer, used).await?;
 
-        println!("written response of length {}", used.len());
+                debug!("written response of length {}", used.len());
 
-        if let Some(piece) = piece {
-            println!("writing data {}", piece.data.len());
-            // if we found the data, write it out now
-            writer.write_all(&piece.data).await?;
-            println!("done writing data");
+                if let Some(piece) = piece {
+                    debug!("writing data {}", piece.data.len());
+                    // if we found the data, write it out now
+                    writer.write_all(&piece.data).await?;
+                    debug!("done writing data");
+                }
+            }
+            None => {
+                break;
+            }
         }
     }
+
+    Ok(())
 }
 
 #[derive(Clone)]

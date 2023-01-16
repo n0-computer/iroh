@@ -2,6 +2,7 @@ use std::{net::SocketAddr, path::PathBuf};
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
+use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
 use sendme::{client, server};
 
@@ -38,13 +39,35 @@ enum Commands {
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<()> {
+    tracing_subscriber::registry()
+        .with(fmt::layer())
+        .with(EnvFilter::from_default_env())
+        .init();
+
     let cli = Cli::parse();
 
     match cli.command {
         Commands::Client { hash, addr, out } => {
-            println!("Requesting: {}", hash.to_hex());
-            let opts = client::Options { addr, out };
-            client::run(hash, opts).await?
+            println!("Fetching: {}", hash.to_hex());
+            let opts = client::Options { addr };
+
+            let pb = indicatif::ProgressBar::new_spinner();
+
+            // Write file out
+            let outpath = out.unwrap_or_else(|| hash.to_string().into());
+            let file = tokio::fs::File::create(outpath).await?;
+            let out = tokio::io::BufWriter::new(file);
+            // wrap for progress bar
+            let mut wrapped_out = pb.wrap_async_write(out);
+
+            let stats = client::run(hash, opts, &mut wrapped_out).await?;
+
+            pb.finish_with_message(format!(
+                "Data size: {}MiB\nTime Elapsed: {:.4}s\n{:.2}MBit/s",
+                stats.data_len / 1024 / 1024,
+                stats.elapsed.as_secs_f64(),
+                stats.mbits
+            ));
         }
         Commands::Server { paths, port } => {
             let db = server::create_db(paths.iter().map(|p| p.as_path()).collect()).await?;

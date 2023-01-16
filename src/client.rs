@@ -1,9 +1,12 @@
-use std::{io::Read, net::SocketAddr, path::PathBuf, time::Instant};
+use std::time::Duration;
+use std::{io::Read, net::SocketAddr, time::Instant};
 
 use anyhow::{anyhow, bail, ensure, Result};
 use bytes::BytesMut;
+use s2n_quic::Connection;
 use s2n_quic::{client::Connect, Client};
-use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tracing::debug;
 
 use crate::protocol::{read_lp, write_lp, Request, Res, Response};
 use crate::tls::{self, Keypair};
@@ -13,10 +16,10 @@ const MAX_DATA_SIZE: usize = 1024 * 1024 * 1024;
 #[derive(Clone, Default, Debug)]
 pub struct Options {
     pub addr: Option<SocketAddr>,
-    pub out: Option<PathBuf>,
 }
 
-pub async fn run(hash: bao::Hash, opts: Options) -> Result<()> {
+/// Setup a QUIC connection to the provided server address
+async fn setup(server_addr: SocketAddr) -> Result<(Client, Connection)> {
     let keypair = Keypair::generate();
 
     let client_config = tls::make_client_config(&keypair, None)?;
@@ -28,17 +31,33 @@ pub async fn run(hash: bao::Hash, opts: Options) -> Result<()> {
         .start()
         .map_err(|e| anyhow!("{:?}", e))?;
 
-    let addr = if let Some(addr) = opts.addr {
-        addr
-    } else {
-        "127.0.0.1:4433".parse().unwrap()
-    };
-    let connect = Connect::new(addr).with_server_name("localhost");
+    debug!("client: connecting to {}", server_addr);
+    let connect = Connect::new(server_addr).with_server_name("localhost");
     let mut connection = client.connect(connect).await?;
 
     connection.keep_alive(true)?;
+    Ok((client, connection))
+}
+
+/// Stats about the transfer.
+pub struct Stats {
+    pub data_len: usize,
+    pub elapsed: Duration,
+    pub mbits: f64,
+}
+
+pub async fn run<D: AsyncWrite + Unpin>(
+    hash: bao::Hash,
+    opts: Options,
+    mut dest: D,
+) -> Result<Stats> {
+    let server_addr = opts
+        .addr
+        .unwrap_or_else(|| "127.0.0.1:4433".parse().unwrap());
+    let (_client, mut connection) = setup(server_addr).await?;
 
     let now = Instant::now();
+
     let stream = connection.open_bidirectional_stream().await?;
     let (mut reader, mut writer) = stream.split();
 
@@ -57,77 +76,76 @@ pub async fn run(hash: bao::Hash, opts: Options) -> Result<()> {
         let mut in_buffer = BytesMut::with_capacity(1024);
 
         // read next message
-        let (response, response_size): (Response, _) = read_lp(&mut reader, &mut in_buffer).await?;
-        match response.data {
-            Res::Found { size, outboard } => {
-                // Need to read the message now
-                println!("size is {}", size);
-                ensure!(
-                    size <= MAX_DATA_SIZE,
-                    "size too large: {} > {}",
-                    size,
-                    MAX_DATA_SIZE
-                );
+        match read_lp::<_, Response>(&mut reader, &mut in_buffer).await? {
+            Some((response, response_size)) => match response.data {
+                Res::Found { size, outboard } => {
+                    // Need to read the message now
+                    ensure!(
+                        size <= MAX_DATA_SIZE,
+                        "size too large: {} > {}",
+                        size,
+                        MAX_DATA_SIZE
+                    );
 
-                let outboard = outboard.to_vec();
+                    let outboard = outboard.to_vec();
+                    // TODO: avoid buffering
 
-                let pb = indicatif::ProgressBar::new(size as u64);
-                let mut wrapped_reader = pb.wrap_async_read(reader);
+                    // remove response buffered data
+                    let _ = in_buffer.split_to(response_size);
+                    while in_buffer.len() < size {
+                        reader.read_buf(&mut in_buffer).await?;
+                    }
 
-                // TODO: avoid buffering
+                    debug!("client: received data: {}bytes", in_buffer.len());
+                    ensure!(
+                        size == in_buffer.len(),
+                        "expected {} bytes, got {} bytes",
+                        size,
+                        in_buffer.len()
+                    );
 
-                // remove response buffered data
-                let _ = in_buffer.split_to(response_size);
-                while in_buffer.len() < size {
-                    wrapped_reader.read_buf(&mut in_buffer).await?;
+                    let mut decoder = bao::decode::Decoder::new_outboard(
+                        std::io::Cursor::new(&in_buffer[..]),
+                        &*outboard,
+                        &hash,
+                    );
+
+                    {
+                        let mut buf = [0u8; 1024];
+                        loop {
+                            // TODO: avoid blocking
+                            let read = decoder.read(&mut buf)?;
+                            if read == 0 {
+                                break;
+                            }
+                            dest.write_all(&buf[..read]).await?;
+                        }
+                    }
+
+                    // Shut down the stream
+                    writer.close().await?;
+
+                    let data_len = size;
+                    let elapsed = now.elapsed();
+                    let elapsed_s = elapsed.as_secs_f64();
+                    let data_len_bit = data_len * 8;
+                    let mbits = data_len_bit as f64 / (1000. * 1000.) / elapsed_s;
+
+                    let stats = Stats {
+                        data_len,
+                        elapsed,
+                        mbits,
+                    };
+
+                    Ok(stats)
                 }
-
-                println!("received data {} bytes", in_buffer.len());
-                assert_eq!(
-                    size,
-                    in_buffer.len(),
-                    "expected {} bytes, got {} bytes",
-                    size,
-                    in_buffer.len()
-                );
-
-                let mut decoder = bao::decode::Decoder::new_outboard(
-                    std::io::Cursor::new(&in_buffer[..]),
-                    &*outboard,
-                    &hash,
-                );
-
-                {
-                    // Ignore the output, not needed
-                    let mut buf = [0u8; 1024];
-                    while decoder.read(&mut buf)? > 0 {}
+                Res::NotFound => {
+                    bail!("data not found");
                 }
-
-                let outpath = if let Some(out) = opts.out {
-                    out
-                } else {
-                    // default to name as hash
-                    std::path::PathBuf::from(hash.to_string())
-                };
-                tokio::fs::write(outpath, in_buffer).await?;
-                // print stats
-                let data_len = size;
-                let elapsed = now.elapsed().as_millis();
-                let elapsed_s = elapsed as f64 / 1000.;
-                let data_len_bit = data_len * 8;
-                let mbits = data_len_bit as f64 / (1000. * 1000.) / elapsed_s;
-                pb.println(format!(
-                    "Data size: {}MiB\nTime Elapsed: {:.4}s\n{:.2}MBit/s",
-                    data_len / 1024 / 1024,
-                    elapsed_s,
-                    mbits
-                ));
-            }
-            Res::NotFound => {
-                bail!("data not found");
+            },
+            None => {
+                bail!("server disconnected");
             }
         }
     }
-
-    Ok(())
 }

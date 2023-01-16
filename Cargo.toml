@@ -24,6 +24,8 @@ serde = { version = "1.0.152", features = ["derive"] }
 thiserror = "1.0.38"
 tokio = { version = "1.24.1", features = ["full"] }
 tokio-util = { version = "0.7", features = ["io-util", "io"] }
+tracing = "0.1.37"
+tracing-subscriber = { version = "0.3.16", features = ["env-filter"] }
 unsigned-varint = { version = "0.7.1", features = ["futures"] }
 webpki = "0.22.0"
 x509-parser = "0.14.0"

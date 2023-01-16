@@ -11,6 +11,7 @@ mod tests {
     use super::*;
     use anyhow::Result;
     use testdir::testdir;
+    use tokio::io::AsyncReadExt;
 
     #[tokio::test]
     async fn basics() -> Result<()> {
@@ -23,14 +24,13 @@ mod tests {
             server::run(db, Default::default()).await.unwrap();
         });
 
-        let out = dir.join("out");
-        let opts = client::Options {
-            out: Some(out.clone()),
-            ..Default::default()
-        };
-        client::run(hash, opts).await?;
-        let got = tokio::fs::read(out).await?;
+        let opts = client::Options::default();
+        let (mut source, sink) = tokio::io::duplex(1024);
+        client::run(hash, opts, sink).await?;
         let expect = tokio::fs::read(path).await?;
+        let mut got = Vec::new();
+        source.read_to_end(&mut got).await?;
+
         assert_eq!(expect, got);
 
         Ok(())
