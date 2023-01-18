@@ -45,7 +45,7 @@ mod tests {
         let dir: PathBuf = testdir!();
         let path = dir.join("hello_world");
         let content = b"hello world!";
-        let addr = "127.0.0.1:4443".parse().unwrap();
+        let addr = "127.0.0.1:4444".parse().unwrap();
 
         tokio::fs::write(&path, content).await?;
         let db = server::create_db(vec![&path]).await?;
