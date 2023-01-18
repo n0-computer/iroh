@@ -38,7 +38,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn multiple_clients() -> Result<()> {
         let dir: PathBuf = testdir!();
         let path = dir.join("hello_world");
