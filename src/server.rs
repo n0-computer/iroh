@@ -1,13 +1,13 @@
 use std::{collections::HashMap, path::Path, sync::Arc};
 
-use anyhow::{anyhow, ensure, Result};
+use anyhow::{anyhow, bail, ensure, Result};
 use bytes::{Bytes, BytesMut};
 use s2n_quic::stream::BidirectionalStream;
 use s2n_quic::Server;
 use tokio::io::AsyncWriteExt;
 use tracing::{debug, error};
 
-use crate::protocol::{read_lp, write_lp, Request, Res, Response};
+use crate::protocol::{read_lp, write_lp, Handshake, Request, Res, Response, VERSION};
 use crate::tls::{self, Keypair};
 
 #[derive(Clone, Debug, Default)]
@@ -64,12 +64,28 @@ async fn handle_stream(
     let mut out_buffer = BytesMut::with_capacity(1024);
     let mut in_buffer = BytesMut::with_capacity(1024);
 
-    // decode next message
+    // 1. Read Handshake
+    debug!("reading handshake");
+    if let Some((handshake, size)) = read_lp::<_, Handshake>(&mut reader, &mut in_buffer).await? {
+        ensure!(
+            handshake.version == VERSION,
+            "expected version {} but got {}",
+            VERSION,
+            handshake.version
+        );
+        let _ = in_buffer.split_to(size);
+    } else {
+        bail!("no valid handshake received");
+    }
+
+    // 2. Decode protocol messages.
     loop {
-        in_buffer.clear();
+        debug!("reading request");
         match read_lp::<_, Request>(&mut reader, &mut in_buffer).await? {
             Some((request, _size)) => {
                 let name = bao::Hash::from(request.name);
+                debug!("got request({}): {}", request.id, name.to_hex());
+
                 let (data, piece) = if let Some(data) = db.get(&name) {
                     debug!("found {}", name.to_hex());
                     (
@@ -109,6 +125,7 @@ async fn handle_stream(
                 break;
             }
         }
+        in_buffer.clear();
     }
 
     Ok(())
