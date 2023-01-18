@@ -64,11 +64,7 @@ mod tests {
 
         let mut tasks = Vec::new();
         for _i in 0..3 {
-            tasks.push(tokio::task::spawn(run_client(
-                hash,
-                addr.clone(),
-                content.to_vec(),
-            )));
+            tasks.push(tokio::task::spawn(run_client(hash, addr, content.to_vec())));
         }
 
         for task in tasks {
