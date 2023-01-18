@@ -14,9 +14,17 @@ use crate::tls::{self, Keypair};
 
 const MAX_DATA_SIZE: usize = 1024 * 1024 * 1024;
 
-#[derive(Clone, Default, Debug)]
+#[derive(Clone, Debug)]
 pub struct Options {
-    pub addr: Option<SocketAddr>,
+    pub addr: SocketAddr,
+}
+
+impl Default for Options {
+    fn default() -> Self {
+        Options {
+            addr: "127.0.0.1:4433".parse().unwrap(),
+        }
+    }
 }
 
 /// Setup a QUIC connection to the provided server address
@@ -52,10 +60,7 @@ pub async fn run<D: AsyncWrite + Unpin>(
     opts: Options,
     mut dest: D,
 ) -> Result<Stats> {
-    let server_addr = opts
-        .addr
-        .unwrap_or_else(|| "127.0.0.1:4433".parse().unwrap());
-    let (_client, mut connection) = setup(server_addr).await?;
+    let (_client, mut connection) = setup(opts.addr).await?;
 
     let now = Instant::now();
 

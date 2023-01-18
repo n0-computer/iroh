@@ -6,7 +6,7 @@ mod tls;
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
+    use std::{net::SocketAddr, path::PathBuf};
 
     use super::*;
     use anyhow::Result;
@@ -20,17 +20,13 @@ mod tests {
         tokio::fs::write(&path, "hello world!").await?;
         let db = server::create_db(vec![&path]).await?;
         let hash = *db.iter().next().unwrap().0;
-        let port = 4443;
+        let addr = "127.0.0.1:4443".parse().unwrap();
 
         tokio::task::spawn(async move {
-            server::run(db, server::Options { port: Some(port) })
-                .await
-                .unwrap();
+            server::run(db, server::Options { addr }).await.unwrap();
         });
 
-        let opts = client::Options {
-            addr: Some(format!("127.0.0.1:{port}").parse().unwrap()),
-        };
+        let opts = client::Options { addr };
         let (mut source, sink) = tokio::io::duplex(1024);
         client::run(hash, opts, sink).await?;
         let expect = tokio::fs::read(path).await?;
@@ -47,21 +43,17 @@ mod tests {
         let dir: PathBuf = testdir!();
         let path = dir.join("hello_world");
         let content = b"hello world!";
-        let port = 4444;
+        let addr = "127.0.0.1:4443".parse().unwrap();
 
         tokio::fs::write(&path, content).await?;
         let db = server::create_db(vec![&path]).await?;
         let hash = *db.iter().next().unwrap().0;
         tokio::task::spawn(async move {
-            server::run(db, server::Options { port: Some(port) })
-                .await
-                .unwrap();
+            server::run(db, server::Options { addr }).await.unwrap();
         });
 
-        async fn run_client(hash: bao::Hash, port: u16, content: Vec<u8>) -> Result<()> {
-            let opts = client::Options {
-                addr: Some(format!("127.0.0.1:{port}").parse().unwrap()),
-            };
+        async fn run_client(hash: bao::Hash, addr: SocketAddr, content: Vec<u8>) -> Result<()> {
+            let opts = client::Options { addr };
             let (mut source, sink) = tokio::io::duplex(1024);
             client::run(hash, opts, sink).await?;
             let mut got = Vec::new();
@@ -72,7 +64,11 @@ mod tests {
 
         let mut tasks = Vec::new();
         for _i in 0..3 {
-            tasks.push(tokio::task::spawn(run_client(hash, port, content.to_vec())));
+            tasks.push(tokio::task::spawn(run_client(
+                hash,
+                addr.clone(),
+                content.to_vec(),
+            )));
         }
 
         for task in tasks {

@@ -21,8 +21,8 @@ enum Commands {
     Server {
         paths: Vec<PathBuf>,
         #[clap(long, short)]
-        /// Optional port, efaults to 4433.
-        port: Option<u16>,
+        /// Optional port, defaults to 127.0.01:4433.
+        addr: Option<SocketAddr>,
     },
     /// Fetch some data
     #[clap(about = "Fetch the data from the hash")]
@@ -49,7 +49,10 @@ async fn main() -> Result<()> {
     match cli.command {
         Commands::Client { hash, addr, out } => {
             println!("Fetching: {}", hash.to_hex());
-            let opts = client::Options { addr };
+            let mut opts = client::Options::default();
+            if let Some(addr) = addr {
+                opts.addr = addr;
+            }
 
             let pb = indicatif::ProgressBar::new_spinner();
 
@@ -69,9 +72,12 @@ async fn main() -> Result<()> {
                 stats.mbits
             ));
         }
-        Commands::Server { paths, port } => {
+        Commands::Server { paths, addr } => {
             let db = server::create_db(paths.iter().map(|p| p.as_path()).collect()).await?;
-            let opts = server::Options { port };
+            let mut opts = server::Options::default();
+            if let Some(addr) = addr {
+                opts.addr = addr;
+            }
             server::run(db, opts).await?
         }
     }
