@@ -2,6 +2,7 @@ use std::{net::SocketAddr, path::PathBuf};
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
+use tokio::io::AsyncWriteExt;
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
 use sendme::{client, server};
@@ -64,6 +65,7 @@ async fn main() -> Result<()> {
             let mut wrapped_out = pb.wrap_async_write(out);
 
             let stats = client::run(hash, opts, &mut wrapped_out).await?;
+            wrapped_out.flush().await?;
 
             pb.finish_with_message(format!(
                 "Data size: {}MiB\nTime Elapsed: {:.4}s\n{:.2}MBit/s",
