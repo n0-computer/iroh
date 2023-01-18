@@ -35,4 +35,38 @@ mod tests {
 
         Ok(())
     }
+
+    #[tokio::test]
+    async fn multiple_clients() -> Result<()> {
+        let dir: PathBuf = testdir!();
+        let path = dir.join("hello_world");
+        tokio::fs::write(&path, "hello world!").await?;
+        let db = server::create_db(vec![&path]).await?;
+        let hash = *db.iter().next().unwrap().0;
+        tokio::task::spawn(async move {
+            server::run(db, Default::default()).await.unwrap();
+        });
+
+        async fn run_client(hash: bao::Hash, path: PathBuf) -> Result<()> {
+            let opts = client::Options::default();
+            let (mut source, sink) = tokio::io::duplex(1024);
+            client::run(hash, opts, sink).await?;
+            let expect = tokio::fs::read(path).await?;
+            let mut got = Vec::new();
+            source.read_to_end(&mut got).await?;
+            assert_eq!(expect, got);
+            Ok(())
+        }
+
+        let mut tasks = Vec::new();
+        for _i in 0..3 {
+            tasks.push(tokio::task::spawn(run_client(hash, path.clone())));
+        }
+
+        for task in tasks {
+            task.await??;
+        }
+
+        Ok(())
+    }
 }

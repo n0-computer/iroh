@@ -15,11 +15,18 @@ pub struct Options {
     pub port: Option<u16>,
 }
 
+const MAX_CLIENTS: u64 = 1024;
+const MAX_STREAMS: u64 = 10;
+
 pub async fn run(db: Arc<HashMap<bao::Hash, Data>>, opts: Options) -> Result<()> {
     let keypair = Keypair::generate();
     let server_config = tls::make_server_config(&keypair)?;
     let tls = s2n_quic::provider::tls::rustls::Server::from(server_config);
-    let limits = s2n_quic::provider::limits::Default::default();
+    let limits = s2n_quic::provider::limits::Limits::default()
+        .with_max_active_connection_ids(MAX_CLIENTS)?
+        .with_max_open_local_bidirectional_streams(MAX_STREAMS)?
+        .with_max_open_remote_bidirectional_streams(MAX_STREAMS)?;
+
     let port = if let Some(port) = opts.port {
         port
     } else {
