@@ -10,6 +10,7 @@ mod tests {
 
     use super::*;
     use anyhow::Result;
+    use futures::TryStreamExt;
     use testdir::testdir;
     use tokio::io::AsyncReadExt;
 
@@ -28,7 +29,8 @@ mod tests {
 
         let opts = client::Options { addr };
         let (mut source, sink) = tokio::io::duplex(1024);
-        client::run(hash, opts, sink).await?;
+        let events: Vec<_> = client::run(hash, opts, sink).try_collect().await?;
+        assert_eq!(events.len(), 3);
         let expect = tokio::fs::read(path).await?;
         let mut got = Vec::new();
         source.read_to_end(&mut got).await?;
@@ -55,7 +57,8 @@ mod tests {
         async fn run_client(hash: bao::Hash, addr: SocketAddr, content: Vec<u8>) -> Result<()> {
             let opts = client::Options { addr };
             let (mut source, sink) = tokio::io::duplex(1024);
-            client::run(hash, opts, sink).await?;
+            let events: Vec<_> = client::run(hash, opts, sink).try_collect().await?;
+            assert_eq!(events.len(), 3);
             let mut got = Vec::new();
             source.read_to_end(&mut got).await?;
             assert_eq!(content, got);
