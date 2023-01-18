@@ -1,5 +1,6 @@
-use anyhow::{ensure, Result};
+use anyhow::{bail, ensure, Result};
 use bytes::BytesMut;
+use postcard::experimental::max_size::MaxSize;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tracing::debug;
@@ -7,7 +8,20 @@ use tracing::debug;
 /// Maximum message size is limited to 100MiB for now.
 const MAX_MESSAGE_SIZE: usize = 1024 * 1024 * 100;
 
-#[derive(Deserialize, Serialize, Debug, PartialEq, Clone)]
+pub const VERSION: u64 = 1;
+
+#[derive(Deserialize, Serialize, Debug, PartialEq, Clone, MaxSize)]
+pub struct Handshake {
+    pub version: u64,
+}
+
+impl Default for Handshake {
+    fn default() -> Self {
+        Handshake { version: VERSION }
+    }
+}
+
+#[derive(Deserialize, Serialize, Debug, PartialEq, Clone, MaxSize)]
 pub struct Request {
     pub id: u64,
     /// blake3 hash
@@ -65,18 +79,52 @@ pub async fn read_lp<'a, R: AsyncRead + futures::io::AsyncRead + Unpin, T: Deser
     buffer: &'a mut BytesMut,
 ) -> Result<Option<(T, usize)>> {
     // read length prefix
-    if let Ok(size) = unsigned_varint::aio::read_u64(&mut reader).await {
-        let size = usize::try_from(size)?;
-        ensure!(size < MAX_MESSAGE_SIZE, "received message is too large");
+    let size = read_prefix(&mut reader, buffer).await?;
 
-        while buffer.len() < size {
-            reader.read_buf(buffer).await?;
-        }
-        let response: T = postcard::from_bytes(&buffer[..size])?;
-        debug!("read message of size {}", size);
-
-        Ok(Some((response, size)))
-    } else {
-        Ok(None)
+    while buffer.len() < size {
+        debug!("reading message {} {}", buffer.len(), size);
+        reader.read_buf(buffer).await?;
     }
+
+    let response: T = postcard::from_bytes(&buffer[..size])?;
+    debug!("read message of size {}", size);
+
+    Ok(Some((response, size)))
+}
+
+/// Read and deserialize into the given type from the provided source, based on the length prefix.
+pub async fn read_lp_data<R: AsyncRead + futures::io::AsyncRead + Unpin>(
+    mut reader: R,
+    buffer: &mut BytesMut,
+) -> Result<Option<BytesMut>> {
+    // read length prefix
+    let size = read_prefix(&mut reader, buffer).await?;
+
+    while buffer.len() < size {
+        reader.read_buf(buffer).await?;
+    }
+    let response = buffer.split_to(size);
+    Ok(Some(response))
+}
+
+async fn read_prefix<R: AsyncRead + futures::io::AsyncRead + Unpin>(
+    mut reader: R,
+    buffer: &mut BytesMut,
+) -> Result<usize> {
+    // read length prefix
+    let size = loop {
+        if let Ok((size, rest)) = unsigned_varint::decode::u64(&buffer[..]) {
+            let size = usize::try_from(size)?;
+            ensure!(size < MAX_MESSAGE_SIZE, "received message is too large");
+
+            let _ = buffer.split_to(buffer.len() - rest.len());
+            break size;
+        }
+
+        if reader.read_buf(buffer).await? == 0 {
+            bail!("no more data available");
+        }
+    };
+
+    Ok(size)
 }
