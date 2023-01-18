@@ -1,8 +1,9 @@
 use std::time::Duration;
 use std::{io::Read, net::SocketAddr, time::Instant};
 
-use anyhow::{anyhow, bail, ensure, Result};
+use anyhow::{anyhow, Result};
 use bytes::BytesMut;
+use futures::Stream;
 use postcard::experimental::max_size::MaxSize;
 use s2n_quic::Connection;
 use s2n_quic::{client::Connect, Client};
@@ -14,9 +15,17 @@ use crate::tls::{self, Keypair};
 
 const MAX_DATA_SIZE: usize = 1024 * 1024 * 1024;
 
-#[derive(Clone, Default, Debug)]
+#[derive(Clone, Debug)]
 pub struct Options {
-    pub addr: Option<SocketAddr>,
+    pub addr: SocketAddr,
+}
+
+impl Default for Options {
+    fn default() -> Self {
+        Options {
+            addr: "127.0.0.1:4433".parse().unwrap(),
+        }
+    }
 }
 
 /// Setup a QUIC connection to the provided server address
@@ -47,123 +56,126 @@ pub struct Stats {
     pub mbits: f64,
 }
 
-pub async fn run<D: AsyncWrite + Unpin>(
+pub enum Event {
+    Connected,
+    Requested { size: usize },
+    Done(Stats),
+}
+
+pub fn run<D: AsyncWrite + Unpin>(
     hash: bao::Hash,
     opts: Options,
     mut dest: D,
-) -> Result<Stats> {
-    let server_addr = opts
-        .addr
-        .unwrap_or_else(|| "127.0.0.1:4433".parse().unwrap());
-    let (_client, mut connection) = setup(server_addr).await?;
+) -> impl Stream<Item = Result<Event>> {
+    async_stream::try_stream! {
+        let now = Instant::now();
+        let (_client, mut connection) = setup(opts.addr).await?;
 
-    let now = Instant::now();
+        let stream = connection.open_bidirectional_stream().await?;
+        let (mut reader, mut writer) = stream.split();
 
-    let stream = connection.open_bidirectional_stream().await?;
-    let (mut reader, mut writer) = stream.split();
+        yield Event::Connected;
 
-    let mut out_buffer = BytesMut::zeroed(std::cmp::max(
-        Request::POSTCARD_MAX_SIZE,
-        Handshake::POSTCARD_MAX_SIZE,
-    ));
 
-    // 1. Send Handshake
-    {
-        debug!("sending handshake");
-        let handshake = Handshake::default();
-        let used = postcard::to_slice(&handshake, &mut out_buffer)?;
-        write_lp(&mut writer, used).await?;
-    }
+        let mut out_buffer = BytesMut::zeroed(std::cmp::max(
+            Request::POSTCARD_MAX_SIZE,
+            Handshake::POSTCARD_MAX_SIZE,
+        ));
 
-    // 2. Send Request
-    {
-        debug!("sending request");
-        let req = Request {
-            id: 1,
-            name: hash.into(),
-        };
+        // 1. Send Handshake
+        {
+            debug!("sending handshake");
+            let handshake = Handshake::default();
+            let used = postcard::to_slice(&handshake, &mut out_buffer)?;
+            write_lp(&mut writer, used).await?;
+        }
 
-        let used = postcard::to_slice(&req, &mut out_buffer)?;
-        write_lp(&mut writer, used).await?;
-    }
+        // 2. Send Request
+        {
+            debug!("sending request");
+            let req = Request {
+                id: 1,
+                name: hash.into(),
+            };
 
-    // 3. Read response
-    {
-        debug!("reading response");
-        let mut in_buffer = BytesMut::with_capacity(1024);
+            let used = postcard::to_slice(&req, &mut out_buffer)?;
+            write_lp(&mut writer, used).await?;
+        }
 
-        // read next message
-        match read_lp_data(&mut reader, &mut in_buffer).await? {
-            Some(response_buffer) => {
-                let response: Response = postcard::from_bytes(&response_buffer)?;
-                match response.data {
-                    Res::Found { size, outboard } => {
-                        // Need to read the message now
-                        ensure!(
-                            size <= MAX_DATA_SIZE,
-                            "size too large: {} > {}",
-                            size,
-                            MAX_DATA_SIZE
-                        );
+        // 3. Read response
+        {
+            debug!("reading response");
+            let mut in_buffer = BytesMut::with_capacity(1024);
 
-                        // TODO: avoid buffering
+            // read next message
+            match read_lp_data(&mut reader, &mut in_buffer).await? {
+                Some(response_buffer) => {
+                    let response: Response = postcard::from_bytes(&response_buffer)?;
+                    match response.data {
+                        Res::Found { size, outboard } => {
+                            yield Event::Requested { size };
 
-                        // remove response buffered data
-                        while in_buffer.len() < size {
-                            reader.read_buf(&mut in_buffer).await?;
-                        }
-
-                        debug!("client: received data: {}bytes", in_buffer.len());
-                        ensure!(
-                            size == in_buffer.len(),
-                            "expected {} bytes, got {} bytes",
-                            size,
-                            in_buffer.len()
-                        );
-
-                        let mut decoder = bao::decode::Decoder::new_outboard(
-                            std::io::Cursor::new(&in_buffer[..]),
-                            outboard,
-                            &hash,
-                        );
-
-                        {
-                            let mut buf = [0u8; 1024];
-                            loop {
-                                // TODO: avoid blocking
-                                let read = decoder.read(&mut buf)?;
-                                if read == 0 {
-                                    break;
-                                }
-                                dest.write_all(&buf[..read]).await?;
+                            // Need to read the message now
+                            if size > MAX_DATA_SIZE {
+                                Err(anyhow!("size too large: {} > {}", size, MAX_DATA_SIZE))?;
                             }
+
+                            // TODO: avoid buffering
+
+                            // remove response buffered data
+                            while in_buffer.len() < size {
+                                reader.read_buf(&mut in_buffer).await?;
+                            }
+
+                            debug!("client: received data: {}bytes", in_buffer.len());
+                            if size != in_buffer.len() {
+                                Err(anyhow!("expected {} bytes, got {} bytes", size, in_buffer.len()))?;
+                            }
+                            let mut decoder = bao::decode::Decoder::new_outboard(
+                                std::io::Cursor::new(&in_buffer[..]),
+                                outboard,
+                                &hash,
+                            );
+
+                            {
+                                let mut buf = [0u8; 1024];
+                                loop {
+                                    // TODO: avoid blocking
+                                    let read = decoder.read(&mut buf)?;
+                                    if read == 0 {
+                                        break;
+                                    }
+                                    dest.write_all(&buf[..read]).await?;
+                                }
+                                dest.flush().await?;
+                            }
+
+                            // Shut down the stream
+                            debug!("shutting down stream");
+                            writer.close().await?;
+
+                            let data_len = size;
+                            let elapsed = now.elapsed();
+                            let elapsed_s = elapsed.as_secs_f64();
+                            let data_len_bit = data_len * 8;
+                            let mbits = data_len_bit as f64 / (1000. * 1000.) / elapsed_s;
+
+                            let stats = Stats {
+                                data_len,
+                                elapsed,
+                                mbits,
+                            };
+
+                            yield Event::Done(stats);
                         }
-
-                        // Shut down the stream
-                        debug!("shutting down stream");
-                        writer.close().await?;
-
-                        let data_len = size;
-                        let elapsed = now.elapsed();
-                        let elapsed_s = elapsed.as_secs_f64();
-                        let data_len_bit = data_len * 8;
-                        let mbits = data_len_bit as f64 / (1000. * 1000.) / elapsed_s;
-
-                        let stats = Stats {
-                            data_len,
-                            elapsed,
-                            mbits,
-                        };
-
-                        Ok(stats)
-                    }
-                    Res::NotFound => {
-                        bail!("data not found");
+                        Res::NotFound => {
+                            Err(anyhow!("data not found"))?;
+                        }
                     }
                 }
-            }
-            None => {
-                bail!("server disconnected");
+                None => {
+                    Err(anyhow!("server disconnected"))?;
+                }
             }
         }
     }

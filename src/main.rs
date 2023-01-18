@@ -2,6 +2,9 @@ use std::{net::SocketAddr, path::PathBuf};
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
+use console::style;
+use futures::StreamExt;
+use indicatif::{HumanDuration, ProgressBar, ProgressDrawTarget, ProgressState, ProgressStyle};
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
 use sendme::{client, server};
@@ -21,8 +24,8 @@ enum Commands {
     Server {
         paths: Vec<PathBuf>,
         #[clap(long, short)]
-        /// Optional port, efaults to 4433.
-        port: Option<u16>,
+        /// Optional port, defaults to 127.0.01:4433.
+        addr: Option<SocketAddr>,
     },
     /// Fetch some data
     #[clap(about = "Fetch the data from the hash")]
@@ -49,29 +52,52 @@ async fn main() -> Result<()> {
     match cli.command {
         Commands::Client { hash, addr, out } => {
             println!("Fetching: {}", hash.to_hex());
-            let opts = client::Options { addr };
-
-            let pb = indicatif::ProgressBar::new_spinner();
+            let mut opts = client::Options::default();
+            if let Some(addr) = addr {
+                opts.addr = addr;
+            }
 
             // Write file out
             let outpath = out.unwrap_or_else(|| hash.to_string().into());
             let file = tokio::fs::File::create(outpath).await?;
             let out = tokio::io::BufWriter::new(file);
+
+            println!("{} Connecting ...", style("[1/3]").bold().dim());
+            let pb = ProgressBar::hidden();
             // wrap for progress bar
             let mut wrapped_out = pb.wrap_async_write(out);
+            let stream = client::run(hash, opts, &mut wrapped_out);
+            tokio::pin!(stream);
+            while let Some(event) = stream.next().await {
+                match event? {
+                    client::Event::Connected => {
+                        println!("{} Requesting ...", style("[2/3]").bold().dim());
+                    }
+                    client::Event::Requested { size } => {
+                        println!("{} Downloading ...", style("[3/3]").bold().dim());
+                        pb.set_style(
+                            ProgressStyle::with_template("{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {bytes}/{total_bytes} ({eta})")
+                                .unwrap()
+                                .with_key("eta", |state: &ProgressState, w: &mut dyn std::fmt::Write| write!(w, "{:.1}s", state.eta().as_secs_f64()).unwrap())
+                                .progress_chars("#>-")
+                        );
+                        pb.set_length(size as u64);
+                        pb.set_draw_target(ProgressDrawTarget::stderr());
+                    }
+                    client::Event::Done(stats) => {
+                        pb.finish_and_clear();
 
-            let stats = client::run(hash, opts, &mut wrapped_out).await?;
-
-            pb.finish_with_message(format!(
-                "Data size: {}MiB\nTime Elapsed: {:.4}s\n{:.2}MBit/s",
-                stats.data_len / 1024 / 1024,
-                stats.elapsed.as_secs_f64(),
-                stats.mbits
-            ));
+                        println!("Done in {}", HumanDuration(stats.elapsed));
+                    }
+                }
+            }
         }
-        Commands::Server { paths, port } => {
+        Commands::Server { paths, addr } => {
             let db = server::create_db(paths.iter().map(|p| p.as_path()).collect()).await?;
-            let opts = server::Options { port };
+            let mut opts = server::Options::default();
+            if let Some(addr) = addr {
+                opts.addr = addr;
+            }
             server::run(db, opts).await?
         }
     }

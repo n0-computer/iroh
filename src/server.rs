@@ -1,3 +1,4 @@
+use std::net::SocketAddr;
 use std::{collections::HashMap, path::Path, sync::Arc};
 
 use anyhow::{anyhow, bail, ensure, Result};
@@ -10,25 +11,35 @@ use tracing::{debug, error};
 use crate::protocol::{read_lp, write_lp, Handshake, Request, Res, Response, VERSION};
 use crate::tls::{self, Keypair};
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct Options {
-    pub port: Option<u16>,
+    /// Address to listen on.
+    pub addr: SocketAddr,
 }
+
+impl Default for Options {
+    fn default() -> Self {
+        Options {
+            addr: "127.0.0.1:4433".parse().unwrap(),
+        }
+    }
+}
+
+const MAX_CLIENTS: u64 = 1024;
+const MAX_STREAMS: u64 = 10;
 
 pub async fn run(db: Arc<HashMap<bao::Hash, Data>>, opts: Options) -> Result<()> {
     let keypair = Keypair::generate();
     let server_config = tls::make_server_config(&keypair)?;
     let tls = s2n_quic::provider::tls::rustls::Server::from(server_config);
-    let limits = s2n_quic::provider::limits::Default::default();
-    let port = if let Some(port) = opts.port {
-        port
-    } else {
-        4433
-    };
-    let addr = format!("127.0.0.1:{port}");
+    let limits = s2n_quic::provider::limits::Limits::default()
+        .with_max_active_connection_ids(MAX_CLIENTS)?
+        .with_max_open_local_bidirectional_streams(MAX_STREAMS)?
+        .with_max_open_remote_bidirectional_streams(MAX_STREAMS)?;
+
     let mut server = Server::builder()
         .with_tls(tls)?
-        .with_io(addr.as_str())?
+        .with_io(opts.addr)?
         .with_limits(limits)?
         .start()
         .map_err(|e| anyhow!("{:?}", e))?;
