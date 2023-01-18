@@ -127,7 +127,7 @@ pub fn run<D: AsyncWrite + Unpin>(
                                 reader.read_buf(&mut in_buffer).await?;
                             }
 
-                            debug!("client: received data: {}bytes", in_buffer.len());
+                            debug!("received data: {}bytes", in_buffer.len());
                             if size != in_buffer.len() {
                                 Err(anyhow!("expected {} bytes, got {} bytes", size, in_buffer.len()))?;
                             }

@@ -11,6 +11,7 @@ mod tests {
     use super::*;
     use anyhow::Result;
     use futures::TryStreamExt;
+    use rand::RngCore;
     use testdir::testdir;
     use tokio::io::AsyncReadExt;
 
@@ -36,6 +37,53 @@ mod tests {
         source.read_to_end(&mut got).await?;
 
         assert_eq!(expect, got);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn sizes() -> Result<()> {
+        let addr = "127.0.0.1:4445".parse().unwrap();
+
+        let sizes = [
+            10,
+            100,
+            1024,
+            1024 * 100,
+            1024 * 500,
+            1024 * 1024,
+            1024 * 1024 + 10,
+        ];
+
+        for size in sizes {
+            println!("testing {size} bytes");
+
+            let dir: PathBuf = testdir!();
+            let path = dir.join("hello_world");
+
+            let mut content = vec![0u8; size];
+            rand::thread_rng().fill_bytes(&mut content);
+
+            tokio::fs::write(&path, &content).await?;
+
+            let db = server::create_db(vec![&path]).await?;
+            let hash = *db.iter().next().unwrap().0;
+
+            let server_task = tokio::task::spawn(async move {
+                server::run(db, server::Options { addr }).await.unwrap();
+            });
+
+            let opts = client::Options { addr };
+            let (mut source, sink) = tokio::io::duplex(size);
+            let events: Vec<_> = client::run(hash, opts, sink).try_collect().await?;
+            assert_eq!(events.len(), 3);
+            let mut got = Vec::new();
+            source.read_to_end(&mut got).await?;
+
+            assert_eq!(content, got);
+            server_task.abort();
+            let _ = server_task.await;
+        }
 
         Ok(())
     }
