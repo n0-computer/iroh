@@ -4,9 +4,13 @@ pub mod server;
 
 mod tls;
 
+pub use tls::{PeerId, PeerIdError};
+
 #[cfg(test)]
 mod tests {
     use std::{net::SocketAddr, path::PathBuf};
+
+    use crate::tls::PeerId;
 
     use super::*;
     use anyhow::Result;
@@ -23,12 +27,17 @@ mod tests {
         let db = server::create_db(vec![&path]).await?;
         let hash = *db.iter().next().unwrap().0;
         let addr = "127.0.0.1:4443".parse().unwrap();
+        let mut server = server::Server::new(db);
+        let peer_id = server.peer_id();
 
         tokio::task::spawn(async move {
-            server::run(db, server::Options { addr }).await.unwrap();
+            server.run(server::Options { addr }).await.unwrap();
         });
 
-        let opts = client::Options { addr };
+        let opts = client::Options {
+            addr,
+            peer_id: Some(peer_id),
+        };
         let (mut source, sink) = tokio::io::duplex(1024);
         let events: Vec<_> = client::run(hash, opts, sink).try_collect().await?;
         assert_eq!(events.len(), 3);
@@ -68,12 +77,17 @@ mod tests {
 
             let db = server::create_db(vec![&path]).await?;
             let hash = *db.iter().next().unwrap().0;
+            let mut server = server::Server::new(db);
+            let peer_id = server.peer_id();
 
             let server_task = tokio::task::spawn(async move {
-                server::run(db, server::Options { addr }).await.unwrap();
+                server.run(server::Options { addr }).await.unwrap();
             });
 
-            let opts = client::Options { addr };
+            let opts = client::Options {
+                addr,
+                peer_id: Some(peer_id),
+            };
             let (mut source, sink) = tokio::io::duplex(size);
             let events: Vec<_> = client::run(hash, opts, sink).try_collect().await?;
             assert_eq!(events.len(), 3);
@@ -98,12 +112,23 @@ mod tests {
         tokio::fs::write(&path, content).await?;
         let db = server::create_db(vec![&path]).await?;
         let hash = *db.iter().next().unwrap().0;
+        let mut server = server::Server::new(db);
+        let peer_id = server.peer_id();
+
         tokio::task::spawn(async move {
-            server::run(db, server::Options { addr }).await.unwrap();
+            server.run(server::Options { addr }).await.unwrap();
         });
 
-        async fn run_client(hash: bao::Hash, addr: SocketAddr, content: Vec<u8>) -> Result<()> {
-            let opts = client::Options { addr };
+        async fn run_client(
+            hash: bao::Hash,
+            addr: SocketAddr,
+            peer_id: PeerId,
+            content: Vec<u8>,
+        ) -> Result<()> {
+            let opts = client::Options {
+                addr,
+                peer_id: Some(peer_id),
+            };
             let (mut source, sink) = tokio::io::duplex(1024);
             let events: Vec<_> = client::run(hash, opts, sink).try_collect().await?;
             assert_eq!(events.len(), 3);
@@ -115,7 +140,12 @@ mod tests {
 
         let mut tasks = Vec::new();
         for _i in 0..3 {
-            tasks.push(tokio::task::spawn(run_client(hash, addr, content.to_vec())));
+            tasks.push(tokio::task::spawn(run_client(
+                hash,
+                addr,
+                peer_id,
+                content.to_vec(),
+            )));
         }
 
         for task in tasks {

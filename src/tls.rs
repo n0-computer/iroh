@@ -39,7 +39,7 @@ impl Keypair {
 }
 
 // TODO: probably needs a version field
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Copy)]
 pub struct PeerId(PublicKey);
 
 impl From<PublicKey> for PeerId {

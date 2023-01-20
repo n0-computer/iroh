@@ -7,7 +7,7 @@ use futures::StreamExt;
 use indicatif::{HumanDuration, ProgressBar, ProgressDrawTarget, ProgressState, ProgressStyle};
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
-use sendme::{client, server};
+use sendme::{client, server, PeerId};
 
 #[derive(Parser, Debug, Clone)]
 #[clap(version, about, long_about = None)]
@@ -18,6 +18,7 @@ struct Cli {
 }
 
 #[derive(Subcommand, Debug, Clone)]
+#[allow(clippy::large_enum_variant)]
 enum Commands {
     /// Serve the data from the given path
     #[clap(about = "Serve the data from the given path")]
@@ -31,6 +32,9 @@ enum Commands {
     #[clap(about = "Fetch the data from the hash")]
     Client {
         hash: bao::Hash,
+        #[clap(long)]
+        /// PeerId of the server.
+        peer_id: PeerId,
         #[clap(long, short)]
         /// Option address of the server, defaults to 127.0.0.1:4433.
         addr: Option<SocketAddr>,
@@ -50,9 +54,17 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Client { hash, addr, out } => {
+        Commands::Client {
+            hash,
+            peer_id,
+            addr,
+            out,
+        } => {
             println!("Fetching: {}", hash.to_hex());
-            let mut opts = client::Options::default();
+            let mut opts = client::Options {
+                peer_id: Some(peer_id),
+                ..Default::default()
+            };
             if let Some(addr) = addr {
                 opts.addr = addr;
             }
@@ -98,7 +110,10 @@ async fn main() -> Result<()> {
             if let Some(addr) = addr {
                 opts.addr = addr;
             }
-            server::run(db, opts).await?
+            let mut server = server::Server::new(db);
+
+            println!("Serving from {}", server.peer_id());
+            server.run(opts).await?
         }
     }
 

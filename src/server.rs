@@ -4,12 +4,12 @@ use std::{collections::HashMap, path::Path, sync::Arc};
 use anyhow::{anyhow, bail, ensure, Result};
 use bytes::{Bytes, BytesMut};
 use s2n_quic::stream::BidirectionalStream;
-use s2n_quic::Server;
+use s2n_quic::Server as QuicServer;
 use tokio::io::AsyncWriteExt;
 use tracing::{debug, error};
 
 use crate::protocol::{read_lp, write_lp, Handshake, Request, Res, Response, VERSION};
-use crate::tls::{self, Keypair};
+use crate::tls::{self, Keypair, PeerId};
 
 #[derive(Clone, Debug)]
 pub struct Options {
@@ -28,42 +28,59 @@ impl Default for Options {
 const MAX_CLIENTS: u64 = 1024;
 const MAX_STREAMS: u64 = 10;
 
-pub async fn run(db: Arc<HashMap<bao::Hash, Data>>, opts: Options) -> Result<()> {
-    let keypair = Keypair::generate();
-    let server_config = tls::make_server_config(&keypair)?;
-    let tls = s2n_quic::provider::tls::rustls::Server::from(server_config);
-    let limits = s2n_quic::provider::limits::Limits::default()
-        .with_max_active_connection_ids(MAX_CLIENTS)?
-        .with_max_open_local_bidirectional_streams(MAX_STREAMS)?
-        .with_max_open_remote_bidirectional_streams(MAX_STREAMS)?;
+pub type Database = Arc<HashMap<bao::Hash, Data>>;
 
-    let mut server = Server::builder()
-        .with_tls(tls)?
-        .with_io(opts.addr)?
-        .with_limits(limits)?
-        .start()
-        .map_err(|e| anyhow!("{:?}", e))?;
+pub struct Server {
+    keypair: Keypair,
+    db: Database,
+}
 
-    debug!("\nlistening at: {:#?}", server.local_addr().unwrap());
-
-    while let Some(mut connection) = server.accept().await {
-        let db = db.clone();
-        tokio::spawn(async move {
-            debug!("connection accepted from {:?}", connection.remote_addr());
-
-            while let Ok(Some(stream)) = connection.accept_bidirectional_stream().await {
-                let db = db.clone();
-                tokio::spawn(async move {
-                    if let Err(err) = handle_stream(db, stream).await {
-                        error!("error: {:#?}", err);
-                    }
-                    debug!("disconnected");
-                });
-            }
-        });
+impl Server {
+    pub fn new(db: Database) -> Self {
+        let keypair = Keypair::generate();
+        Server { keypair, db }
     }
 
-    Ok(())
+    pub fn peer_id(&self) -> PeerId {
+        self.keypair.public().into()
+    }
+
+    pub async fn run(&mut self, opts: Options) -> Result<()> {
+        let server_config = tls::make_server_config(&self.keypair)?;
+        let tls = s2n_quic::provider::tls::rustls::Server::from(server_config);
+        let limits = s2n_quic::provider::limits::Limits::default()
+            .with_max_active_connection_ids(MAX_CLIENTS)?
+            .with_max_open_local_bidirectional_streams(MAX_STREAMS)?
+            .with_max_open_remote_bidirectional_streams(MAX_STREAMS)?;
+
+        let mut server = QuicServer::builder()
+            .with_tls(tls)?
+            .with_io(opts.addr)?
+            .with_limits(limits)?
+            .start()
+            .map_err(|e| anyhow!("{:?}", e))?;
+
+        debug!("\nlistening at: {:#?}", server.local_addr().unwrap());
+
+        while let Some(mut connection) = server.accept().await {
+            let db = self.db.clone();
+            tokio::spawn(async move {
+                debug!("connection accepted from {:?}", connection.remote_addr());
+
+                while let Ok(Some(stream)) = connection.accept_bidirectional_stream().await {
+                    let db = db.clone();
+                    tokio::spawn(async move {
+                        if let Err(err) = handle_stream(db, stream).await {
+                            error!("error: {:#?}", err);
+                        }
+                        debug!("disconnected");
+                    });
+                }
+            });
+        }
+
+        Ok(())
+    }
 }
 
 async fn handle_stream(
