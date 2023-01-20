@@ -7,7 +7,7 @@ use futures::Stream;
 use postcard::experimental::max_size::MaxSize;
 use s2n_quic::Connection;
 use s2n_quic::{client::Connect, Client};
-use tokio::io::{AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tracing::debug;
 
 use crate::protocol::{read_lp_data, write_lp, Handshake, Request, Res, Response};
@@ -58,17 +58,27 @@ pub struct Stats {
     pub mbits: f64,
 }
 
+/// The events that are emitted while running a transfer.
 pub enum Event {
+    /// The connection to the server was established.
     Connected,
-    Requested { size: usize },
+    /// The server has the content.
+    Requested {
+        /// The size of the requested content.
+        size: usize,
+    },
+    /// Content is being received.
+    Receiving {
+        /// The hash of the content we received.
+        hash: bao::Hash,
+        /// The actual data we are receiving.
+        reader: Box<dyn AsyncRead + Unpin + Sync + Send + 'static>,
+    },
+    /// The transfer is done.
     Done(Stats),
 }
 
-pub fn run<D: AsyncWrite + Unpin>(
-    hash: bao::Hash,
-    opts: Options,
-    mut dest: D,
-) -> impl Stream<Item = Result<Event>> {
+pub fn run(hash: bao::Hash, opts: Options) -> impl Stream<Item = Result<Event>> {
     async_stream::try_stream! {
         let now = Instant::now();
         let (_client, mut connection) = setup(opts).await?;
@@ -133,13 +143,17 @@ pub fn run<D: AsyncWrite + Unpin>(
                             if size != in_buffer.len() {
                                 Err(anyhow!("expected {} bytes, got {} bytes", size, in_buffer.len()))?;
                             }
-                            let mut decoder = bao::decode::Decoder::new_outboard(
-                                std::io::Cursor::new(&in_buffer[..]),
-                                outboard,
-                                &hash,
-                            );
+                            let (a, mut b) = tokio::io::duplex(1024);
 
-                            {
+                            let outboard = outboard.to_vec();
+                            let t = tokio::task::spawn(async move {
+                                let mut decoder = bao::decode::Decoder::new_outboard(
+                                    std::io::Cursor::new(&in_buffer[..]),
+                                    &*outboard,
+                                    &hash,
+                                );
+
+
                                 let mut buf = [0u8; 1024];
                                 loop {
                                     // TODO: avoid blocking
@@ -147,10 +161,15 @@ pub fn run<D: AsyncWrite + Unpin>(
                                     if read == 0 {
                                         break;
                                     }
-                                    dest.write_all(&buf[..read]).await?;
+                                    b.write_all(&buf[..read]).await?;
                                 }
-                                dest.flush().await?;
-                            }
+                                b.flush().await?;
+                                Ok::<(), anyhow::Error>(())
+                            });
+
+                            yield Event::Receiving { hash, reader: Box::new(a) };
+
+                            t.await??;
 
                             // Shut down the stream
                             debug!("shutting down stream");

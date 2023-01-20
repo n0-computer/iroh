@@ -10,11 +10,12 @@ pub use tls::{PeerId, PeerIdError};
 mod tests {
     use std::{net::SocketAddr, path::PathBuf};
 
+    use crate::client::Event;
     use crate::tls::PeerId;
 
     use super::*;
     use anyhow::Result;
-    use futures::TryStreamExt;
+    use futures::StreamExt;
     use rand::RngCore;
     use testdir::testdir;
     use tokio::io::AsyncReadExt;
@@ -38,14 +39,22 @@ mod tests {
             addr,
             peer_id: Some(peer_id),
         };
-        let (mut source, sink) = tokio::io::duplex(1024);
-        let events: Vec<_> = client::run(hash, opts, sink).try_collect().await?;
-        assert_eq!(events.len(), 3);
-        let expect = tokio::fs::read(path).await?;
-        let mut got = Vec::new();
-        source.read_to_end(&mut got).await?;
-
-        assert_eq!(expect, got);
+        let stream = client::run(hash, opts);
+        tokio::pin!(stream);
+        while let Some(event) = stream.next().await {
+            let event = event?;
+            if let Event::Receiving {
+                hash: new_hash,
+                mut reader,
+            } = event
+            {
+                assert_eq!(hash, new_hash);
+                let expect = tokio::fs::read(&path).await?;
+                let mut got = Vec::new();
+                reader.read_to_end(&mut got).await?;
+                assert_eq!(expect, got);
+            }
+        }
 
         Ok(())
     }
@@ -88,13 +97,22 @@ mod tests {
                 addr,
                 peer_id: Some(peer_id),
             };
-            let (mut source, sink) = tokio::io::duplex(size);
-            let events: Vec<_> = client::run(hash, opts, sink).try_collect().await?;
-            assert_eq!(events.len(), 3);
-            let mut got = Vec::new();
-            source.read_to_end(&mut got).await?;
+            let stream = client::run(hash, opts);
+            tokio::pin!(stream);
+            while let Some(event) = stream.next().await {
+                let event = event?;
+                if let Event::Receiving {
+                    hash: new_hash,
+                    mut reader,
+                } = event
+                {
+                    assert_eq!(hash, new_hash);
+                    let mut got = Vec::new();
+                    reader.read_to_end(&mut got).await?;
+                    assert_eq!(content, got);
+                }
+            }
 
-            assert_eq!(content, got);
             server_task.abort();
             let _ = server_task.await;
         }
@@ -129,12 +147,21 @@ mod tests {
                 addr,
                 peer_id: Some(peer_id),
             };
-            let (mut source, sink) = tokio::io::duplex(1024);
-            let events: Vec<_> = client::run(hash, opts, sink).try_collect().await?;
-            assert_eq!(events.len(), 3);
-            let mut got = Vec::new();
-            source.read_to_end(&mut got).await?;
-            assert_eq!(content, got);
+            let stream = client::run(hash, opts);
+            tokio::pin!(stream);
+            while let Some(event) = stream.next().await {
+                let event = event?;
+                if let Event::Receiving {
+                    hash: new_hash,
+                    mut reader,
+                } = event
+                {
+                    assert_eq!(hash, new_hash);
+                    let mut got = Vec::new();
+                    reader.read_to_end(&mut got).await?;
+                    assert_eq!(content, got);
+                }
+            }
             Ok(())
         }
 

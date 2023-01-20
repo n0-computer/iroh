@@ -1,6 +1,6 @@
 use std::{net::SocketAddr, path::PathBuf};
 
-use anyhow::Result;
+use anyhow::{ensure, Result};
 use clap::{Parser, Subcommand};
 use console::style;
 use futures::StreamExt;
@@ -71,14 +71,10 @@ async fn main() -> Result<()> {
 
             // Write file out
             let outpath = out.unwrap_or_else(|| hash.to_string().into());
-            let file = tokio::fs::File::create(outpath).await?;
-            let out = tokio::io::BufWriter::new(file);
 
             println!("{} Connecting ...", style("[1/3]").bold().dim());
             let pb = ProgressBar::hidden();
-            // wrap for progress bar
-            let mut wrapped_out = pb.wrap_async_write(out);
-            let stream = client::run(hash, opts, &mut wrapped_out);
+            let stream = client::run(hash, opts);
             tokio::pin!(stream);
             while let Some(event) = stream.next().await {
                 match event? {
@@ -95,6 +91,17 @@ async fn main() -> Result<()> {
                         );
                         pb.set_length(size as u64);
                         pb.set_draw_target(ProgressDrawTarget::stderr());
+                    }
+                    client::Event::Receiving {
+                        hash: new_hash,
+                        mut reader,
+                    } => {
+                        ensure!(hash == new_hash, "invalid hash received");
+                        let file = tokio::fs::File::create(&outpath).await?;
+                        let out = tokio::io::BufWriter::new(file);
+                        // wrap for progress bar
+                        let mut wrapped_out = pb.wrap_async_write(out);
+                        tokio::io::copy(&mut reader, &mut wrapped_out).await?;
                     }
                     client::Event::Done(stats) => {
                         pb.finish_and_clear();
