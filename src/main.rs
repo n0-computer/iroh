@@ -5,6 +5,8 @@ use clap::{Parser, Subcommand};
 use console::style;
 use futures::StreamExt;
 use indicatif::{HumanDuration, ProgressBar, ProgressDrawTarget, ProgressState, ProgressStyle};
+use sendme::protocol::AuthToken;
+use tracing::trace;
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
 use sendme::{client, server, PeerId};
@@ -31,6 +33,9 @@ enum Commands {
     /// Fetch some data
     #[clap(about = "Fetch the data from the hash")]
     Client {
+        /// The authentication token to present to the server.
+        token: String,
+        /// The root hash to retrieve.
         hash: bao::Hash,
         #[clap(long)]
         /// PeerId of the server.
@@ -55,6 +60,7 @@ async fn main() -> Result<()> {
     match cli.command {
         Commands::Client {
             hash,
+            token,
             peer_id,
             addr,
             out,
@@ -67,12 +73,15 @@ async fn main() -> Result<()> {
             if let Some(addr) = addr {
                 opts.addr = addr;
             }
+            let token =
+                AuthToken::from_hex(&token).context("Wrong format for authentication token")?;
 
             println!("{} Connecting ...", style("[1/3]").bold().dim());
             let pb = ProgressBar::hidden();
-            let stream = client::run(hash, opts);
+            let stream = client::run(hash, token, opts);
             tokio::pin!(stream);
             while let Some(event) = stream.next().await {
+                trace!("I HAZ EVENT from client: {:?}", event);
                 match event? {
                     client::Event::Connected => {
                         println!("{} Requesting ...", style("[2/3]").bold().dim());
@@ -129,6 +138,7 @@ async fn main() -> Result<()> {
                     }
                 }
             }
+            println!("client connection closed");
         }
         Commands::Server { path, addr } => {
             let mut tmp_path = None;
@@ -153,6 +163,7 @@ async fn main() -> Result<()> {
             let mut server = server::Server::new(db);
 
             println!("Serving from {}", server.peer_id());
+            println!("Authentication token: {}", server.auth_token().to_hex());
             server.run(opts).await?;
 
             // Drop tempath to signal it can be destroyed

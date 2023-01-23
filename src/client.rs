@@ -1,3 +1,4 @@
+use std::fmt::Debug;
 use std::time::Duration;
 use std::{io::Read, net::SocketAddr, time::Instant};
 
@@ -10,7 +11,7 @@ use s2n_quic::{client::Connect, Client};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tracing::debug;
 
-use crate::protocol::{read_lp_data, write_lp, Handshake, Request, Res, Response};
+use crate::protocol::{read_lp_data, write_lp, AuthToken, Handshake, Request, Res, Response};
 use crate::tls::{self, Keypair, PeerId};
 
 const MAX_DATA_SIZE: usize = 1024 * 1024 * 1024;
@@ -52,6 +53,7 @@ async fn setup(opts: Options) -> Result<(Client, Connection)> {
 }
 
 /// Stats about the transfer.
+#[derive(Debug)]
 pub struct Stats {
     pub data_len: usize,
     pub elapsed: Duration,
@@ -78,7 +80,25 @@ pub enum Event {
     Done(Stats),
 }
 
-pub fn run(hash: bao::Hash, opts: Options) -> impl Stream<Item = Result<Event>> {
+impl Debug for Event {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Connected => write!(f, "Connected"),
+            Self::Requested { size } => f.debug_struct("Requested").field("size", size).finish(),
+            Self::Receiving { hash, reader: _ } => f
+                .debug_struct("Receiving")
+                .field("hash", hash)
+                .field(
+                    "reader",
+                    &"Box<dyn AsyncRead + Unpin + Sync + Send + 'static>",
+                )
+                .finish(),
+            Self::Done(arg0) => f.debug_tuple("Done").field(arg0).finish(),
+        }
+    }
+}
+
+pub fn run(hash: bao::Hash, token: AuthToken, opts: Options) -> impl Stream<Item = Result<Event>> {
     async_stream::try_stream! {
         let now = Instant::now();
         let (_client, mut connection) = setup(opts).await?;
@@ -97,7 +117,7 @@ pub fn run(hash: bao::Hash, opts: Options) -> impl Stream<Item = Result<Event>> 
         // 1. Send Handshake
         {
             debug!("sending handshake");
-            let handshake = Handshake::default();
+            let handshake = Handshake::new(token);
             let used = postcard::to_slice(&handshake, &mut out_buffer)?;
             write_lp(&mut writer, used).await?;
         }

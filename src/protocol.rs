@@ -1,5 +1,5 @@
 use anyhow::{bail, ensure, Result};
-use bytes::BytesMut;
+use bytes::{Buf, BytesMut};
 use postcard::experimental::max_size::MaxSize;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -13,11 +13,15 @@ pub const VERSION: u64 = 1;
 #[derive(Deserialize, Serialize, Debug, PartialEq, Clone, MaxSize)]
 pub struct Handshake {
     pub version: u64,
+    pub token: AuthToken,
 }
 
-impl Default for Handshake {
-    fn default() -> Self {
-        Handshake { version: VERSION }
+impl Handshake {
+    pub fn new(token: AuthToken) -> Self {
+        Self {
+            version: VERSION,
+            token,
+        }
     }
 }
 
@@ -83,9 +87,11 @@ pub async fn read_lp<'a, R: AsyncRead + futures::io::AsyncRead + Unpin, T: Deser
 
     while buffer.len() < size {
         debug!("reading message {} {}", buffer.len(), size);
-        reader.read_buf(buffer).await?;
+        // TODO: this change probably doesn't belong in this PR
+        if reader.read_buf(buffer).await? == 0 {
+            bail!("no more data, incomplete frame");
+        }
     }
-
     let response: T = postcard::from_bytes(&buffer[..size])?;
     debug!("read message of size {}", size);
 
@@ -117,7 +123,8 @@ async fn read_prefix<R: AsyncRead + futures::io::AsyncRead + Unpin>(
             let size = usize::try_from(size)?;
             ensure!(size < MAX_MESSAGE_SIZE, "received message is too large");
 
-            let _ = buffer.split_to(buffer.len() - rest.len());
+            // TODO: This change probably doesn't belong in this PR
+            buffer.advance(buffer.len() - rest.len());
             break size;
         }
 
@@ -127,4 +134,75 @@ async fn read_prefix<R: AsyncRead + futures::io::AsyncRead + Unpin>(
     };
 
     Ok(size)
+}
+
+/// A token used to authenticate a handshake.
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Deserialize, Serialize, MaxSize)]
+pub struct AuthToken {
+    bytes: [u8; 32],
+}
+
+impl AuthToken {
+    /// Generates a new random token.
+    pub fn generate() -> Self {
+        Self {
+            bytes: rand::random(),
+        }
+    }
+
+    /// Creates a token from a hex string.
+    ///
+    /// If the string is not long enough or not hex an error is returned.
+    pub fn from_hex(hex: &str) -> Result<Self> {
+        ensure!(hex.len() >= 64);
+        let decoded = hex::decode(&hex[..64])?;
+        let bytes = decoded.try_into().expect("slice is right length");
+        Ok(Self { bytes })
+    }
+
+    /// Returns a hex representation of the token.
+    ///
+    /// this representation can be used with [`AuthToke::from_hex`] to reconstruct this
+    /// token.
+    pub fn to_hex(&self) -> String {
+        hex::encode(self.bytes)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_auth_token_hex() {
+        let token = AuthToken::generate();
+
+        let hex = token.to_hex();
+        println!("token: {hex}");
+
+        let decoded = AuthToken::from_hex(&hex).unwrap();
+
+        assert_eq!(decoded, token);
+    }
+
+    #[test]
+    fn test_handshake_ser_deser() {
+        let handshake = Handshake::new(AuthToken::generate());
+        let mut buf = BytesMut::zeroed(Handshake::POSTCARD_MAX_SIZE);
+        let slice = postcard::to_slice(&handshake, &mut buf).unwrap();
+        let handshake2: Handshake = postcard::from_bytes(slice).unwrap();
+        assert_eq!(handshake, handshake2);
+    }
+
+    #[test]
+    fn test_bytesmut() {
+        let mut b = BytesMut::new();
+        b.extend_from_slice(&b"hello world"[..]);
+        assert_eq!(&b, &"hello world");
+        assert_eq!(b.len(), 11);
+
+        b.advance(6);
+        assert_eq!(b.len(), 5);
+        assert_eq!(&b, &"world");
+    }
 }

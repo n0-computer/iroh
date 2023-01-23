@@ -11,6 +11,7 @@ mod tests {
     use std::{net::SocketAddr, path::PathBuf};
 
     use crate::client::Event;
+    use crate::protocol::AuthToken;
     use crate::tls::PeerId;
 
     use super::*;
@@ -30,16 +31,21 @@ mod tests {
         let addr = "127.0.0.1:4443".parse().unwrap();
         let mut server = server::Server::new(db);
         let peer_id = server.peer_id();
+        let token = server.auth_token();
 
         tokio::task::spawn(async move {
-            server.run(server::Options { addr }).await.unwrap();
+            let opts = server::Options {
+                addr,
+                // token: Some(token),
+            };
+            server.run(opts).await.unwrap();
         });
 
         let opts = client::Options {
             addr,
             peer_id: Some(peer_id),
         };
-        let stream = client::run(hash, opts);
+        let stream = client::run(hash, token, opts);
         tokio::pin!(stream);
         while let Some(event) = stream.next().await {
             let event = event?;
@@ -88,16 +94,21 @@ mod tests {
             let hash = *db.iter().next().unwrap().0;
             let mut server = server::Server::new(db);
             let peer_id = server.peer_id();
+            let token = server.auth_token();
 
             let server_task = tokio::task::spawn(async move {
-                server.run(server::Options { addr }).await.unwrap();
+                let opts = server::Options {
+                    addr,
+                    // token: Some(token),
+                };
+                server.run(opts).await.unwrap();
             });
 
             let opts = client::Options {
                 addr,
                 peer_id: Some(peer_id),
             };
-            let stream = client::run(hash, opts);
+            let stream = client::run(hash, token, opts);
             tokio::pin!(stream);
             while let Some(event) = stream.next().await {
                 let event = event?;
@@ -132,13 +143,19 @@ mod tests {
         let hash = *db.iter().next().unwrap().0;
         let mut server = server::Server::new(db);
         let peer_id = server.peer_id();
+        let token = server.auth_token();
 
         tokio::task::spawn(async move {
-            server.run(server::Options { addr }).await.unwrap();
+            let opts = server::Options {
+                addr,
+                // token: Some(token),
+            };
+            server.run(opts).await.unwrap();
         });
 
         async fn run_client(
             hash: bao::Hash,
+            token: AuthToken,
             addr: SocketAddr,
             peer_id: PeerId,
             content: Vec<u8>,
@@ -147,7 +164,7 @@ mod tests {
                 addr,
                 peer_id: Some(peer_id),
             };
-            let stream = client::run(hash, opts);
+            let stream = client::run(hash, token, opts);
             tokio::pin!(stream);
             while let Some(event) = stream.next().await {
                 let event = event?;
@@ -169,6 +186,7 @@ mod tests {
         for _i in 0..3 {
             tasks.push(tokio::task::spawn(run_client(
                 hash,
+                token,
                 addr,
                 peer_id,
                 content.to_vec(),
