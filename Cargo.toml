@@ -8,7 +8,7 @@ authors = ["dignifiedquire <me@dignifiedquire.com>"]
 repository = "https://github.com/n0-computer/sendme"
 
 [dependencies]
-anyhow = "1.0.68"
+anyhow = { version = "1.0.68", features = ["backtrace"] }
 async-stream = "0.3.3"
 bao = "0.12.1"
 blake3 = "1.3.3"
