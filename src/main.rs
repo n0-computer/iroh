@@ -1,6 +1,6 @@
 use std::{net::SocketAddr, path::PathBuf};
 
-use anyhow::{ensure, Result};
+use anyhow::{anyhow, ensure, Context, Result};
 use clap::{Parser, Subcommand};
 use console::style;
 use futures::StreamExt;
@@ -97,11 +97,28 @@ async fn main() -> Result<()> {
                         mut reader,
                     } => {
                         ensure!(hash == new_hash, "invalid hash received");
-                        let file = tokio::fs::File::create(&outpath).await?;
+                        let parent = outpath
+                            .parent()
+                            .map(ToOwned::to_owned)
+                            .ok_or_else(|| anyhow!("No valid parent directory for output file"))?;
+                        let (temp_file, dup) = tokio::task::spawn_blocking(|| {
+                            let temp_file = tempfile::Builder::new()
+                                .prefix("sendme-tmp-")
+                                .tempfile_in(parent)
+                                .context("Failed to create temporary output file")?;
+                            let dup = temp_file.as_file().try_clone()?;
+                            Ok::<_, anyhow::Error>((temp_file, dup))
+                        })
+                        .await??;
+                        let file = tokio::fs::File::from_std(dup);
                         let out = tokio::io::BufWriter::new(file);
                         // wrap for progress bar
                         let mut wrapped_out = pb.wrap_async_write(out);
                         tokio::io::copy(&mut reader, &mut wrapped_out).await?;
+                        let outpath2 = outpath.clone();
+                        tokio::task::spawn_blocking(|| temp_file.persist(outpath2))
+                            .await?
+                            .context("Failed to write output file")?;
                     }
                     client::Event::Done(stats) => {
                         pb.finish_and_clear();
