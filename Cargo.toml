@@ -27,6 +27,7 @@ ring = "0.16.20"
 rustls = { version = "0.20.8", default-features = false, features = ["dangerous_configuration"] }
 s2n-quic = { version = "1.14.0", default-features = false, features = [ "provider-tls-rustls", "provider-address-token-default" ] }
 serde = { version = "1.0.152", features = ["derive"] }
+tempfile = "3.3.0"
 thiserror = "1.0.38"
 tokio = { version = "1.24.1", features = ["full"] }
 tokio-util = { version = "0.7", features = ["io-util", "io"] }
