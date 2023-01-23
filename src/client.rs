@@ -145,6 +145,7 @@ pub fn run(hash: bao::Hash, opts: Options) -> impl Stream<Item = Result<Event>> 
                             }
                             let (a, mut b) = tokio::io::duplex(1024);
 
+                            // TODO: avoid copy
                             let outboard = outboard.to_vec();
                             let t = tokio::task::spawn(async move {
                                 let mut decoder = bao::decode::Decoder::new_outboard(
@@ -164,6 +165,7 @@ pub fn run(hash: bao::Hash, opts: Options) -> impl Stream<Item = Result<Event>> 
                                     b.write_all(&buf[..read]).await?;
                                 }
                                 b.flush().await?;
+                                debug!("finished writing");
                                 Ok::<(), anyhow::Error>(())
                             });
 

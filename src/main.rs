@@ -20,10 +20,10 @@ struct Cli {
 #[derive(Subcommand, Debug, Clone)]
 #[allow(clippy::large_enum_variant)]
 enum Commands {
-    /// Serve the data from the given path
+    /// Serve the data from the given path. If none is specified reads from STDIN.
     #[clap(about = "Serve the data from the given path")]
     Server {
-        paths: Vec<PathBuf>,
+        path: Option<PathBuf>,
         #[clap(long, short)]
         /// Optional port, defaults to 127.0.01:4433.
         addr: Option<SocketAddr>,
@@ -36,10 +36,9 @@ enum Commands {
         /// PeerId of the server.
         peer_id: PeerId,
         #[clap(long, short)]
-        /// Option address of the server, defaults to 127.0.0.1:4433.
+        /// Optional address of the server, defaults to 127.0.0.1:4433.
         addr: Option<SocketAddr>,
-        #[clap(long, short)]
-        /// Option path to save the file, defaults to using the hash as the name.
+        /// Optional path to save the file. If none is specified writes the data to STDOUT.
         out: Option<PathBuf>,
     },
 }
@@ -69,9 +68,6 @@ async fn main() -> Result<()> {
                 opts.addr = addr;
             }
 
-            // Write file out
-            let outpath = out.unwrap_or_else(|| hash.to_string().into());
-
             println!("{} Connecting ...", style("[1/3]").bold().dim());
             let pb = ProgressBar::hidden();
             let stream = client::run(hash, opts);
@@ -97,28 +93,34 @@ async fn main() -> Result<()> {
                         mut reader,
                     } => {
                         ensure!(hash == new_hash, "invalid hash received");
-                        let parent = outpath
-                            .parent()
-                            .map(ToOwned::to_owned)
-                            .ok_or_else(|| anyhow!("No valid parent directory for output file"))?;
-                        let (temp_file, dup) = tokio::task::spawn_blocking(|| {
-                            let temp_file = tempfile::Builder::new()
-                                .prefix("sendme-tmp-")
-                                .tempfile_in(parent)
-                                .context("Failed to create temporary output file")?;
-                            let dup = temp_file.as_file().try_clone()?;
-                            Ok::<_, anyhow::Error>((temp_file, dup))
-                        })
-                        .await??;
-                        let file = tokio::fs::File::from_std(dup);
-                        let out = tokio::io::BufWriter::new(file);
-                        // wrap for progress bar
-                        let mut wrapped_out = pb.wrap_async_write(out);
-                        tokio::io::copy(&mut reader, &mut wrapped_out).await?;
-                        let outpath2 = outpath.clone();
-                        tokio::task::spawn_blocking(|| temp_file.persist(outpath2))
-                            .await?
-                            .context("Failed to write output file")?;
+                        if let Some(ref outpath) = out {
+                            let parent =
+                                outpath.parent().map(ToOwned::to_owned).ok_or_else(|| {
+                                    anyhow!("No valid parent directory for output file")
+                                })?;
+                            let (temp_file, dup) = tokio::task::spawn_blocking(|| {
+                                let temp_file = tempfile::Builder::new()
+                                    .prefix("sendme-tmp-")
+                                    .tempfile_in(parent)
+                                    .context("Failed to create temporary output file")?;
+                                let dup = temp_file.as_file().try_clone()?;
+                                Ok::<_, anyhow::Error>((temp_file, dup))
+                            })
+                            .await??;
+                            let file = tokio::fs::File::from_std(dup);
+                            let out = tokio::io::BufWriter::new(file);
+                            // wrap for progress bar
+                            let mut wrapped_out = pb.wrap_async_write(out);
+                            tokio::io::copy(&mut reader, &mut wrapped_out).await?;
+                            let outpath2 = outpath.clone();
+                            tokio::task::spawn_blocking(|| temp_file.persist(outpath2))
+                                .await?
+                                .context("Failed to write output file")?;
+                        } else {
+                            // Write to STDOUT
+                            let mut stdout = tokio::io::stdout();
+                            tokio::io::copy(&mut reader, &mut stdout).await?;
+                        }
                     }
                     client::Event::Done(stats) => {
                         pb.finish_and_clear();
@@ -128,8 +130,22 @@ async fn main() -> Result<()> {
                 }
             }
         }
-        Commands::Server { paths, addr } => {
-            let db = server::create_db(paths.iter().map(|p| p.as_path()).collect()).await?;
+        Commands::Server { path, addr } => {
+            let mut tmp_path = None;
+
+            let sources = if let Some(path) = path {
+                vec![server::DataSource::File(path)]
+            } else {
+                // Store STDIN content into a temporary file
+                let (file, path) = tempfile::NamedTempFile::new()?.into_parts();
+                let mut file = tokio::fs::File::from_std(file);
+                let path_buf = path.to_path_buf();
+                tmp_path = Some(path);
+                tokio::io::copy(&mut tokio::io::stdin(), &mut file).await?;
+                vec![server::DataSource::File(path_buf)]
+            };
+
+            let db = server::create_db(sources).await?;
             let mut opts = server::Options::default();
             if let Some(addr) = addr {
                 opts.addr = addr;
@@ -137,7 +153,10 @@ async fn main() -> Result<()> {
             let mut server = server::Server::new(db);
 
             println!("Serving from {}", server.peer_id());
-            server.run(opts).await?
+            server.run(opts).await?;
+
+            // Drop tempath to signal it can be destroyed
+            drop(tmp_path);
         }
     }
 
