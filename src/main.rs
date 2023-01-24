@@ -9,7 +9,7 @@ use sendme::protocol::AuthToken;
 use tracing::trace;
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
-use sendme::{client, server, PeerId};
+use sendme::{get, provider, PeerId};
 
 #[derive(Parser, Debug, Clone)]
 #[clap(version, about, long_about = None)]
@@ -24,7 +24,7 @@ struct Cli {
 enum Commands {
     /// Serve the data from the given path. If none is specified reads from STDIN.
     #[clap(about = "Serve the data from the given path")]
-    Server {
+    Provide {
         path: Option<PathBuf>,
         #[clap(long, short)]
         /// Optional port, defaults to 127.0.01:4433.
@@ -32,16 +32,16 @@ enum Commands {
     },
     /// Fetch some data
     #[clap(about = "Fetch the data from the hash")]
-    Client {
+    Get {
         /// The authentication token to present to the server.
         token: String,
         /// The root hash to retrieve.
         hash: bao::Hash,
         #[clap(long)]
-        /// PeerId of the server.
+        /// PeerId of the provider.
         peer_id: PeerId,
         #[clap(long, short)]
-        /// Optional address of the server, defaults to 127.0.0.1:4433.
+        /// Optional address of the provider, defaults to 127.0.0.1:4433.
         addr: Option<SocketAddr>,
         /// Optional path to save the file. If none is specified writes the data to STDOUT.
         out: Option<PathBuf>,
@@ -58,7 +58,7 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Client {
+        Commands::Get {
             hash,
             token,
             peer_id,
@@ -66,7 +66,7 @@ async fn main() -> Result<()> {
             out,
         } => {
             println!("Fetching: {}", hash.to_hex());
-            let mut opts = client::Options {
+            let mut opts = get::Options {
                 peer_id: Some(peer_id),
                 ..Default::default()
             };
@@ -78,15 +78,15 @@ async fn main() -> Result<()> {
 
             println!("{} Connecting ...", style("[1/3]").bold().dim());
             let pb = ProgressBar::hidden();
-            let stream = client::run(hash, token, opts);
+            let stream = get::run(hash, token, opts);
             tokio::pin!(stream);
             while let Some(event) = stream.next().await {
                 trace!("client event: {:?}", event);
                 match event? {
-                    client::Event::Connected => {
+                    get::Event::Connected => {
                         println!("{} Requesting ...", style("[2/3]").bold().dim());
                     }
-                    client::Event::Requested { size } => {
+                    get::Event::Requested { size } => {
                         println!("{} Downloading ...", style("[3/3]").bold().dim());
                         pb.set_style(
                             ProgressStyle::with_template("{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {bytes}/{total_bytes} ({eta})")
@@ -97,7 +97,7 @@ async fn main() -> Result<()> {
                         pb.set_length(size as u64);
                         pb.set_draw_target(ProgressDrawTarget::stderr());
                     }
-                    client::Event::Receiving {
+                    get::Event::Receiving {
                         hash: new_hash,
                         mut reader,
                     } => {
@@ -131,7 +131,7 @@ async fn main() -> Result<()> {
                             tokio::io::copy(&mut reader, &mut stdout).await?;
                         }
                     }
-                    client::Event::Done(stats) => {
+                    get::Event::Done(stats) => {
                         pb.finish_and_clear();
 
                         println!("Done in {}", HumanDuration(stats.elapsed));
@@ -139,11 +139,11 @@ async fn main() -> Result<()> {
                 }
             }
         }
-        Commands::Server { path, addr } => {
+        Commands::Provide { path, addr } => {
             let mut tmp_path = None;
 
             let sources = if let Some(path) = path {
-                vec![server::DataSource::File(path)]
+                vec![provider::DataSource::File(path)]
             } else {
                 // Store STDIN content into a temporary file
                 let (file, path) = tempfile::NamedTempFile::new()?.into_parts();
@@ -151,19 +151,19 @@ async fn main() -> Result<()> {
                 let path_buf = path.to_path_buf();
                 tmp_path = Some(path);
                 tokio::io::copy(&mut tokio::io::stdin(), &mut file).await?;
-                vec![server::DataSource::File(path_buf)]
+                vec![provider::DataSource::File(path_buf)]
             };
 
-            let db = server::create_db(sources).await?;
-            let mut opts = server::Options::default();
+            let db = provider::create_db(sources).await?;
+            let mut opts = provider::Options::default();
             if let Some(addr) = addr {
                 opts.addr = addr;
             }
-            let mut server = server::Server::new(db);
+            let mut provider = provider::Provider::new(db);
 
-            println!("Serving from {}", server.peer_id());
-            println!("Authentication token: {}", server.auth_token().to_hex());
-            server.run(opts).await?;
+            println!("PeerID: {}", provider.peer_id());
+            println!("Auth token: {}", provider.auth_token().to_hex());
+            provider.run(opts).await?;
 
             // Drop tempath to signal it can be destroyed
             drop(tmp_path);

@@ -31,7 +31,7 @@ impl Default for Options {
     }
 }
 
-/// Setup a QUIC connection to the provided server address
+/// Setup a QUIC connection to the provided address.
 async fn setup(opts: Options) -> Result<(Client, Connection)> {
     let keypair = Keypair::generate();
 
@@ -44,7 +44,7 @@ async fn setup(opts: Options) -> Result<(Client, Connection)> {
         .start()
         .map_err(|e| anyhow!("{:?}", e))?;
 
-    debug!("client: connecting to {}", opts.addr);
+    debug!("connecting to {}", opts.addr);
     let connect = Connect::new(opts.addr).with_server_name("localhost");
     let mut connection = client.connect(connect).await?;
 
@@ -62,9 +62,9 @@ pub struct Stats {
 
 /// The events that are emitted while running a transfer.
 pub enum Event {
-    /// The connection to the server was established.
+    /// The connection to the provider was established.
     Connected,
-    /// The server has the content.
+    /// The provider has the content.
     Requested {
         /// The size of the requested content.
         size: usize,
@@ -217,7 +217,7 @@ pub fn run(hash: bao::Hash, token: AuthToken, opts: Options) -> impl Stream<Item
                     }
                 }
                 None => {
-                    Err(anyhow!("server disconnected"))?;
+                    Err(anyhow!("provider disconnected"))?;
                 }
             }
         }

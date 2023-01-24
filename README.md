@@ -42,12 +42,12 @@
 
 Sending data
 ```sh
-$ ./senmde server <file>
+$ ./senmde provide <file>
 ```
 
 Receiving data
 ```sh
-$ ./sendme client <hash>
+$ ./sendme get <hash>
 ```
 
 # License

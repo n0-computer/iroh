@@ -1,5 +1,5 @@
 use anyhow::{bail, ensure, Result};
-use bytes::{Buf, BytesMut};
+use bytes::BytesMut;
 use postcard::experimental::max_size::MaxSize;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
