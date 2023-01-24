@@ -87,10 +87,6 @@ pub async fn read_lp<'a, R: AsyncRead + futures::io::AsyncRead + Unpin, T: Deser
 
     while buffer.len() < size {
         debug!("reading message {} {}", buffer.len(), size);
-        // TODO: this change probably doesn't belong in this PR
-        if reader.read_buf(buffer).await? == 0 {
-            bail!("no more data, incomplete frame");
-        }
     }
     let response: T = postcard::from_bytes(&buffer[..size])?;
     debug!("read message of size {}", size);
@@ -123,8 +119,7 @@ async fn read_prefix<R: AsyncRead + futures::io::AsyncRead + Unpin>(
             let size = usize::try_from(size)?;
             ensure!(size < MAX_MESSAGE_SIZE, "received message is too large");
 
-            // TODO: This change probably doesn't belong in this PR
-            buffer.advance(buffer.len() - rest.len());
+            let _ = buffer.split_to(buffer.len() - rest.len());
             break size;
         }
 
@@ -183,26 +178,5 @@ mod tests {
         let decoded = AuthToken::from_hex(&hex).unwrap();
 
         assert_eq!(decoded, token);
-    }
-
-    #[test]
-    fn test_handshake_ser_deser() {
-        let handshake = Handshake::new(AuthToken::generate());
-        let mut buf = BytesMut::zeroed(Handshake::POSTCARD_MAX_SIZE);
-        let slice = postcard::to_slice(&handshake, &mut buf).unwrap();
-        let handshake2: Handshake = postcard::from_bytes(slice).unwrap();
-        assert_eq!(handshake, handshake2);
-    }
-
-    #[test]
-    fn test_bytesmut() {
-        let mut b = BytesMut::new();
-        b.extend_from_slice(&b"hello world"[..]);
-        assert_eq!(&b, &"hello world");
-        assert_eq!(b.len(), 11);
-
-        b.advance(6);
-        assert_eq!(b.len(), 5);
-        assert_eq!(&b, &"world");
     }
 }

@@ -34,10 +34,7 @@ mod tests {
         let token = server.auth_token();
 
         tokio::task::spawn(async move {
-            let opts = server::Options {
-                addr,
-                // token: Some(token),
-            };
+            let opts = server::Options { addr };
             server.run(opts).await.unwrap();
         });
 
@@ -97,10 +94,7 @@ mod tests {
             let token = server.auth_token();
 
             let server_task = tokio::task::spawn(async move {
-                let opts = server::Options {
-                    addr,
-                    // token: Some(token),
-                };
+                let opts = server::Options { addr };
                 server.run(opts).await.unwrap();
             });
 
@@ -146,10 +140,7 @@ mod tests {
         let token = server.auth_token();
 
         tokio::task::spawn(async move {
-            let opts = server::Options {
-                addr,
-                // token: Some(token),
-            };
+            let opts = server::Options { addr };
             server.run(opts).await.unwrap();
         });
 

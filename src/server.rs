@@ -70,7 +70,6 @@ impl Server {
             .with_limits(limits)?
             .start()
             .map_err(|e| anyhow!("{:?}", e))?;
-        // let token = opts.token.unwrap_or_else(AuthToken::generate);
         let token = self.auth_token;
         debug!("\nlistening at: {:#?}", server.local_addr().unwrap());
 

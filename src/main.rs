@@ -81,7 +81,7 @@ async fn main() -> Result<()> {
             let stream = client::run(hash, token, opts);
             tokio::pin!(stream);
             while let Some(event) = stream.next().await {
-                trace!("I HAZ EVENT from client: {:?}", event);
+                trace!("client event: {:?}", event);
                 match event? {
                     client::Event::Connected => {
                         println!("{} Requesting ...", style("[2/3]").bold().dim());
@@ -138,7 +138,6 @@ async fn main() -> Result<()> {
                     }
                 }
             }
-            println!("client connection closed");
         }
         Commands::Server { path, addr } => {
             let mut tmp_path = None;
