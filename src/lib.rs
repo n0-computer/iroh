@@ -1,6 +1,6 @@
-pub mod client;
+pub mod get;
 pub mod protocol;
-pub mod server;
+pub mod provider;
 
 mod tls;
 
@@ -10,7 +10,7 @@ pub use tls::{PeerId, PeerIdError};
 mod tests {
     use std::{net::SocketAddr, path::PathBuf};
 
-    use crate::client::Event;
+    use crate::get::Event;
     use crate::tls::PeerId;
 
     use super::*;
@@ -25,21 +25,21 @@ mod tests {
         let dir: PathBuf = testdir!();
         let path = dir.join("hello_world");
         tokio::fs::write(&path, "hello world!").await?;
-        let db = server::create_db(vec![server::DataSource::File(path.clone())]).await?;
+        let db = provider::create_db(vec![provider::DataSource::File(path.clone())]).await?;
         let hash = *db.iter().next().unwrap().0;
         let addr = "127.0.0.1:4443".parse().unwrap();
-        let mut server = server::Server::new(db);
-        let peer_id = server.peer_id();
+        let mut provider = provider::Provider::new(db);
+        let peer_id = provider.peer_id();
 
         tokio::task::spawn(async move {
-            server.run(server::Options { addr }).await.unwrap();
+            provider.run(provider::Options { addr }).await.unwrap();
         });
 
-        let opts = client::Options {
+        let opts = get::Options {
             addr,
             peer_id: Some(peer_id),
         };
-        let stream = client::run(hash, opts);
+        let stream = get::run(hash, opts);
         tokio::pin!(stream);
         while let Some(event) = stream.next().await {
             let event = event?;
@@ -84,20 +84,20 @@ mod tests {
 
             tokio::fs::write(&path, &content).await?;
 
-            let db = server::create_db(vec![server::DataSource::File(path)]).await?;
+            let db = provider::create_db(vec![provider::DataSource::File(path)]).await?;
             let hash = *db.iter().next().unwrap().0;
-            let mut server = server::Server::new(db);
-            let peer_id = server.peer_id();
+            let mut provider = provider::Provider::new(db);
+            let peer_id = provider.peer_id();
 
-            let server_task = tokio::task::spawn(async move {
-                server.run(server::Options { addr }).await.unwrap();
+            let provider_task = tokio::task::spawn(async move {
+                provider.run(provider::Options { addr }).await.unwrap();
             });
 
-            let opts = client::Options {
+            let opts = get::Options {
                 addr,
                 peer_id: Some(peer_id),
             };
-            let stream = client::run(hash, opts);
+            let stream = get::run(hash, opts);
             tokio::pin!(stream);
             while let Some(event) = stream.next().await {
                 let event = event?;
@@ -113,8 +113,8 @@ mod tests {
                 }
             }
 
-            server_task.abort();
-            let _ = server_task.await;
+            provider_task.abort();
+            let _ = provider_task.await;
         }
 
         Ok(())
@@ -128,13 +128,13 @@ mod tests {
         let addr = "127.0.0.1:4444".parse().unwrap();
 
         tokio::fs::write(&path, content).await?;
-        let db = server::create_db(vec![server::DataSource::File(path)]).await?;
+        let db = provider::create_db(vec![provider::DataSource::File(path)]).await?;
         let hash = *db.iter().next().unwrap().0;
-        let mut server = server::Server::new(db);
-        let peer_id = server.peer_id();
+        let mut provider = provider::Provider::new(db);
+        let peer_id = provider.peer_id();
 
         tokio::task::spawn(async move {
-            server.run(server::Options { addr }).await.unwrap();
+            provider.run(provider::Options { addr }).await.unwrap();
         });
 
         async fn run_client(
@@ -143,11 +143,11 @@ mod tests {
             peer_id: PeerId,
             content: Vec<u8>,
         ) -> Result<()> {
-            let opts = client::Options {
+            let opts = get::Options {
                 addr,
                 peer_id: Some(peer_id),
             };
-            let stream = client::run(hash, opts);
+            let stream = get::run(hash, opts);
             tokio::pin!(stream);
             while let Some(event) = stream.next().await {
                 let event = event?;

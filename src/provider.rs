@@ -26,20 +26,20 @@ impl Default for Options {
     }
 }
 
-const MAX_CLIENTS: u64 = 1024;
+const MAX_CONNECTIONS: u64 = 1024;
 const MAX_STREAMS: u64 = 10;
 
 pub type Database = Arc<HashMap<bao::Hash, Data>>;
 
-pub struct Server {
+pub struct Provider {
     keypair: Keypair,
     db: Database,
 }
 
-impl Server {
+impl Provider {
     pub fn new(db: Database) -> Self {
         let keypair = Keypair::generate();
-        Server { keypair, db }
+        Provider { keypair, db }
     }
 
     pub fn peer_id(&self) -> PeerId {
@@ -50,7 +50,7 @@ impl Server {
         let server_config = tls::make_server_config(&self.keypair)?;
         let tls = s2n_quic::provider::tls::rustls::Server::from(server_config);
         let limits = s2n_quic::provider::limits::Limits::default()
-            .with_max_active_connection_ids(MAX_CLIENTS)?
+            .with_max_active_connection_ids(MAX_CONNECTIONS)?
             .with_max_open_local_bidirectional_streams(MAX_STREAMS)?
             .with_max_open_remote_bidirectional_streams(MAX_STREAMS)?;
 
