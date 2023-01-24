@@ -1,4 +1,4 @@
-use std::{net::SocketAddr, path::PathBuf};
+use std::{net::SocketAddr, path::PathBuf, str::FromStr};
 
 use anyhow::{anyhow, ensure, Context, Result};
 use clap::{Parser, Subcommand};
@@ -77,7 +77,7 @@ async fn main() -> Result<()> {
                 opts.addr = addr;
             }
             let token =
-                AuthToken::from_hex(&token).context("Wrong format for authentication token")?;
+                AuthToken::from_str(&token).context("Wrong format for authentication token")?;
 
             println!("{} Connecting ...", style("[1/3]").bold().dim());
             let pb = ProgressBar::hidden();
@@ -168,12 +168,12 @@ async fn main() -> Result<()> {
             }
             let mut provider = provider::Provider::new(db);
             if let Some(ref hex) = auth_token {
-                let auth_token = AuthToken::from_hex(hex)?;
+                let auth_token = AuthToken::from_str(hex)?;
                 provider.set_auth_token(auth_token);
             }
 
             println!("PeerID: {}", provider.peer_id());
-            println!("Auth token: {}", provider.auth_token().to_hex());
+            println!("Auth token: {}", provider.auth_token());
             provider.run(opts).await?;
 
             // Drop tempath to signal it can be destroyed
