@@ -1,4 +1,4 @@
-use anyhow::{bail, ensure, Result};
+use anyhow::{bail, ensure, Context, Result};
 use bytes::BytesMut;
 use postcard::experimental::max_size::MaxSize;
 use serde::{Deserialize, Serialize};
@@ -149,8 +149,8 @@ impl AuthToken {
     ///
     /// If the string is not long enough or not hex an error is returned.
     pub fn from_hex(hex: &str) -> Result<Self> {
-        ensure!(hex.len() >= 64);
-        let decoded = hex::decode(&hex[..64])?;
+        ensure!(hex.len() >= 64, "invalid length for hex AuthToken");
+        let decoded = hex::decode(&hex[..64]).context("invalid hex for AuthToken")?;
         let bytes = decoded.try_into().expect("slice is right length");
         Ok(Self { bytes })
     }
@@ -171,12 +171,12 @@ mod tests {
     #[test]
     fn test_auth_token_hex() {
         let token = AuthToken::generate();
-
         let hex = token.to_hex();
         println!("token: {hex}");
-
         let decoded = AuthToken::from_hex(&hex).unwrap();
-
         assert_eq!(decoded, token);
+
+        let token = AuthToken::from_hex("not-hex");
+        assert!(token.is_err());
     }
 }

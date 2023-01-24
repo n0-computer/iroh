@@ -56,6 +56,10 @@ impl Provider {
         self.auth_token
     }
 
+    pub fn set_auth_token(&mut self, auth_token: AuthToken) {
+        self.auth_token = auth_token;
+    }
+
     pub async fn run(&mut self, opts: Options) -> Result<()> {
         let server_config = tls::make_server_config(&self.keypair)?;
         let tls = s2n_quic::provider::tls::rustls::Server::from(server_config);
