@@ -31,21 +31,56 @@ const MAX_STREAMS: u64 = 10;
 
 pub type Database = Arc<HashMap<bao::Hash, Data>>;
 
+#[derive(Debug)]
 pub struct Provider {
     keypair: Keypair,
     auth_token: AuthToken,
     db: Database,
 }
 
+/// Builder to configure a `Provider`.
+#[derive(Debug, Default)]
+pub struct ProviderBuilder {
+    auth_token: Option<AuthToken>,
+    keypair: Option<Keypair>,
+    db: Option<Database>,
+}
+
+impl ProviderBuilder {
+    /// Set the authentication token, if none is provided a new one is generated.
+    pub fn auth_token(mut self, auth_token: AuthToken) -> Self {
+        self.auth_token = Some(auth_token);
+        self
+    }
+
+    /// Set the keypair, if none is provided a new one is generated.
+    pub fn keypair(mut self, keypair: Keypair) -> Self {
+        self.keypair = Some(keypair);
+        self
+    }
+
+    /// Set the database.
+    pub fn database(mut self, db: Database) -> Self {
+        self.db = Some(db);
+        self
+    }
+
+    /// Consumes the builder and constructs a `Provider`.
+    pub fn build(self) -> Result<Provider> {
+        ensure!(self.db.is_some(), "missing database");
+
+        Ok(Provider {
+            auth_token: self.auth_token.unwrap_or_else(AuthToken::generate),
+            keypair: self.keypair.unwrap_or_else(Keypair::generate),
+            db: self.db.unwrap(),
+        })
+    }
+}
+
 impl Provider {
-    pub fn new(db: Database) -> Self {
-        let keypair = Keypair::generate();
-        let auth_token = AuthToken::generate();
-        Provider {
-            keypair,
-            db,
-            auth_token,
-        }
+    /// Returns a new `ProviderBuilder`.
+    pub fn builder() -> ProviderBuilder {
+        ProviderBuilder::default()
     }
 
     pub fn peer_id(&self) -> PeerId {
@@ -54,10 +89,6 @@ impl Provider {
 
     pub fn auth_token(&self) -> AuthToken {
         self.auth_token
-    }
-
-    pub fn set_auth_token(&mut self, auth_token: AuthToken) {
-        self.auth_token = auth_token;
     }
 
     pub async fn run(&mut self, opts: Options) -> Result<()> {

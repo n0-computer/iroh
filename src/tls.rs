@@ -8,11 +8,13 @@ mod verifier;
 
 use std::{
     fmt::{Debug, Display},
+    ops::Deref,
     str::FromStr,
     sync::Arc,
 };
 
 pub use ed25519_dalek::{PublicKey, SecretKey, Signature};
+use ssh_key::LineEnding;
 
 // TODO: change?
 const P2P_ALPN: [u8; 6] = *b"libp2p";
@@ -20,9 +22,21 @@ const P2P_ALPN: [u8; 6] = *b"libp2p";
 #[derive(Debug)]
 pub struct Keypair(ed25519_dalek::Keypair);
 
+impl Deref for Keypair {
+    type Target = ed25519_dalek::Keypair;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
 impl Keypair {
     pub fn public(&self) -> PublicKey {
         self.0.public
+    }
+
+    pub fn secret(&self) -> &SecretKey {
+        &self.0.secret
     }
 
     pub fn generate() -> Self {
@@ -31,10 +45,32 @@ impl Keypair {
         Self(key)
     }
 
+    pub fn to_openssh(&self) -> ssh_key::Result<zeroize::Zeroizing<String>> {
+        let ckey = ssh_key::private::Ed25519Keypair::from(&self.0);
+        ssh_key::private::PrivateKey::from(ckey).to_openssh(LineEnding::default())
+    }
+
+    pub fn try_from_openssh<T: AsRef<[u8]>>(data: T) -> anyhow::Result<Self> {
+        let ser_key = ssh_key::private::PrivateKey::from_openssh(data)?;
+        match ser_key.key_data() {
+            ssh_key::private::KeypairData::Ed25519(kp) => {
+                let dalek_keypair: ed25519_dalek::Keypair = kp.try_into()?;
+                Ok(Keypair::from(dalek_keypair))
+            }
+            _ => anyhow::bail!("invalid key format"),
+        }
+    }
+
     fn sign(&self, msg: &[u8]) -> Signature {
         use ed25519_dalek::Signer;
 
         self.0.sign(msg)
+    }
+}
+
+impl From<ed25519_dalek::Keypair> for Keypair {
+    fn from(value: ed25519_dalek::Keypair) -> Self {
+        Keypair(value)
     }
 }
 
@@ -132,4 +168,17 @@ pub fn make_server_config(
     crypto.alpn_protocols = vec![P2P_ALPN.to_vec()];
 
     Ok(crypto)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_keypair_openssh_roundtrip() {
+        let kp = Keypair::generate();
+        let ser = kp.to_openssh().unwrap();
+        let de = Keypair::try_from_openssh(&ser).unwrap();
+        assert_eq!(kp.to_bytes(), de.to_bytes());
+    }
 }
