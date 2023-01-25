@@ -29,19 +29,13 @@ mod tests {
         let db = provider::create_db(vec![provider::DataSource::File(path.clone())]).await?;
         let hash = *db.iter().next().unwrap().0;
         let addr = "127.0.0.1:4443".parse().unwrap();
-        let mut provider = provider::Provider::new(db);
-        let peer_id = provider.peer_id();
-        let token = provider.auth_token();
-
-        tokio::task::spawn(async move {
-            provider.run(provider::Options { addr }).await.unwrap();
-        });
+        let provider = provider::Provider::builder(db).bind_addr(addr).spawn()?;
 
         let opts = get::Options {
-            addr,
-            peer_id: Some(peer_id),
+            addr: provider.listen_addr(),
+            peer_id: Some(provider.peer_id()),
         };
-        let stream = get::run(hash, token, opts);
+        let stream = get::run(hash, provider.auth_token(), opts);
         tokio::pin!(stream);
         while let Some(event) = stream.next().await {
             let event = event?;
@@ -88,19 +82,13 @@ mod tests {
 
             let db = provider::create_db(vec![provider::DataSource::File(path)]).await?;
             let hash = *db.iter().next().unwrap().0;
-            let mut provider = provider::Provider::new(db);
-            let peer_id = provider.peer_id();
-            let token = provider.auth_token();
-
-            let provider_task = tokio::task::spawn(async move {
-                provider.run(provider::Options { addr }).await.unwrap();
-            });
+            let provider = provider::Provider::builder(db).bind_addr(addr).spawn()?;
 
             let opts = get::Options {
-                addr,
-                peer_id: Some(peer_id),
+                addr: provider.listen_addr(),
+                peer_id: Some(provider.peer_id()),
             };
-            let stream = get::run(hash, token, opts);
+            let stream = get::run(hash, provider.auth_token(), opts);
             tokio::pin!(stream);
             while let Some(event) = stream.next().await {
                 let event = event?;
@@ -116,8 +104,8 @@ mod tests {
                 }
             }
 
-            provider_task.abort();
-            let _ = provider_task.await;
+            provider.abort();
+            provider.join().await.ok();
         }
 
         Ok(())
@@ -133,13 +121,7 @@ mod tests {
         tokio::fs::write(&path, content).await?;
         let db = provider::create_db(vec![provider::DataSource::File(path)]).await?;
         let hash = *db.iter().next().unwrap().0;
-        let mut provider = provider::Provider::new(db);
-        let peer_id = provider.peer_id();
-        let token = provider.auth_token();
-
-        tokio::task::spawn(async move {
-            provider.run(provider::Options { addr }).await.unwrap();
-        });
+        let provider = provider::Provider::builder(db).bind_addr(addr).spawn()?;
 
         async fn run_client(
             hash: bao::Hash,
@@ -174,9 +156,9 @@ mod tests {
         for _i in 0..3 {
             tasks.push(tokio::task::spawn(run_client(
                 hash,
-                token,
-                addr,
-                peer_id,
+                provider.auth_token(),
+                provider.listen_addr(),
+                provider.peer_id(),
                 content.to_vec(),
             )));
         }
