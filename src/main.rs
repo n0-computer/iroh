@@ -166,11 +166,12 @@ async fn main() -> Result<()> {
             if let Some(addr) = addr {
                 opts.addr = addr;
             }
-            let mut provider = provider::Provider::new(db);
+            let mut provider_builder = provider::Provider::builder().database(db);
             if let Some(ref hex) = auth_token {
                 let auth_token = AuthToken::from_str(hex)?;
-                provider.set_auth_token(auth_token);
+                provider_builder = provider_builder.auth_token(auth_token);
             }
+            let mut provider = provider_builder.build()?;
 
             println!("PeerID: {}", provider.peer_id());
             println!("Auth token: {}", provider.auth_token());

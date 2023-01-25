@@ -29,7 +29,7 @@ mod tests {
         let db = provider::create_db(vec![provider::DataSource::File(path.clone())]).await?;
         let hash = *db.iter().next().unwrap().0;
         let addr = "127.0.0.1:4443".parse().unwrap();
-        let mut provider = provider::Provider::new(db);
+        let mut provider = provider::Provider::builder().database(db).build()?;
         let peer_id = provider.peer_id();
         let token = provider.auth_token();
 
@@ -88,7 +88,7 @@ mod tests {
 
             let db = provider::create_db(vec![provider::DataSource::File(path)]).await?;
             let hash = *db.iter().next().unwrap().0;
-            let mut provider = provider::Provider::new(db);
+            let mut provider = provider::Provider::builder().database(db).build()?;
             let peer_id = provider.peer_id();
             let token = provider.auth_token();
 
@@ -133,7 +133,7 @@ mod tests {
         tokio::fs::write(&path, content).await?;
         let db = provider::create_db(vec![provider::DataSource::File(path)]).await?;
         let hash = *db.iter().next().unwrap().0;
-        let mut provider = provider::Provider::new(db);
+        let mut provider = provider::Provider::builder().database(db).build()?;
         let peer_id = provider.peer_id();
         let token = provider.auth_token();
 
