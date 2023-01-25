@@ -1,10 +1,12 @@
-use std::{net::SocketAddr, path::PathBuf};
+use std::{net::SocketAddr, path::PathBuf, str::FromStr};
 
 use anyhow::{anyhow, ensure, Context, Result};
 use clap::{Parser, Subcommand};
 use console::style;
 use futures::StreamExt;
 use indicatif::{HumanDuration, ProgressBar, ProgressDrawTarget, ProgressState, ProgressStyle};
+use sendme::protocol::AuthToken;
+use tracing::trace;
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
 use sendme::{get, provider, PeerId};
@@ -24,13 +26,19 @@ enum Commands {
     #[clap(about = "Serve the data from the given path")]
     Provide {
         path: Option<PathBuf>,
-        #[clap(long, short)]
         /// Optional port, defaults to 127.0.01:4433.
+        #[clap(long, short)]
         addr: Option<SocketAddr>,
+        /// Auth token, defaults to random generated.
+        #[clap(long)]
+        auth_token: Option<String>,
     },
     /// Fetch some data
     #[clap(about = "Fetch the data from the hash")]
     Get {
+        /// The authentication token to present to the server.
+        token: String,
+        /// The root hash to retrieve.
         hash: bao::Hash,
         #[clap(long)]
         /// PeerId of the provider.
@@ -55,6 +63,7 @@ async fn main() -> Result<()> {
     match cli.command {
         Commands::Get {
             hash,
+            token,
             peer_id,
             addr,
             out,
@@ -67,12 +76,15 @@ async fn main() -> Result<()> {
             if let Some(addr) = addr {
                 opts.addr = addr;
             }
+            let token =
+                AuthToken::from_str(&token).context("Wrong format for authentication token")?;
 
             println!("{} Connecting ...", style("[1/3]").bold().dim());
             let pb = ProgressBar::hidden();
-            let stream = get::run(hash, opts);
+            let stream = get::run(hash, token, opts);
             tokio::pin!(stream);
             while let Some(event) = stream.next().await {
+                trace!("client event: {:?}", event);
                 match event? {
                     get::Event::Connected => {
                         println!("{} Requesting ...", style("[2/3]").bold().dim());
@@ -130,7 +142,11 @@ async fn main() -> Result<()> {
                 }
             }
         }
-        Commands::Provide { path, addr } => {
+        Commands::Provide {
+            path,
+            addr,
+            auth_token,
+        } => {
             let mut tmp_path = None;
 
             let sources = if let Some(path) = path {
@@ -151,8 +167,13 @@ async fn main() -> Result<()> {
                 opts.addr = addr;
             }
             let mut provider = provider::Provider::new(db);
+            if let Some(ref hex) = auth_token {
+                let auth_token = AuthToken::from_str(hex)?;
+                provider.set_auth_token(auth_token);
+            }
 
             println!("PeerID: {}", provider.peer_id());
+            println!("Auth token: {}", provider.auth_token());
             provider.run(opts).await?;
 
             // Drop tempath to signal it can be destroyed

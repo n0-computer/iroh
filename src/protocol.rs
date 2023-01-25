@@ -1,3 +1,6 @@
+use std::fmt::Display;
+use std::str::FromStr;
+
 use anyhow::{bail, ensure, Result};
 use bytes::BytesMut;
 use postcard::experimental::max_size::MaxSize;
@@ -13,11 +16,15 @@ pub const VERSION: u64 = 1;
 #[derive(Deserialize, Serialize, Debug, PartialEq, Clone, MaxSize)]
 pub struct Handshake {
     pub version: u64,
+    pub token: AuthToken,
 }
 
-impl Default for Handshake {
-    fn default() -> Self {
-        Handshake { version: VERSION }
+impl Handshake {
+    pub fn new(token: AuthToken) -> Self {
+        Self {
+            version: VERSION,
+            token,
+        }
     }
 }
 
@@ -83,9 +90,7 @@ pub async fn read_lp<'a, R: AsyncRead + futures::io::AsyncRead + Unpin, T: Deser
 
     while buffer.len() < size {
         debug!("reading message {} {}", buffer.len(), size);
-        reader.read_buf(buffer).await?;
     }
-
     let response: T = postcard::from_bytes(&buffer[..size])?;
     debug!("read message of size {}", size);
 
@@ -127,4 +132,74 @@ async fn read_prefix<R: AsyncRead + futures::io::AsyncRead + Unpin>(
     };
 
     Ok(size)
+}
+
+/// A token used to authenticate a handshake.
+///
+/// The token has a printable representation which can be serialised using [`Display`] and
+/// deserialised using [`FromStr`].
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Deserialize, Serialize, MaxSize)]
+pub struct AuthToken {
+    bytes: [u8; 32],
+}
+
+impl AuthToken {
+    /// Generates a new random token.
+    pub fn generate() -> Self {
+        Self {
+            bytes: rand::random(),
+        }
+    }
+}
+
+/// Serialises the [`AuthToken`] to hex.
+impl Display for AuthToken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", hex::encode(self.bytes))
+    }
+}
+
+/// Error for parsing [`AuthToken`] using [`FromStr`].
+#[derive(thiserror::Error, Debug)]
+pub enum AuthTokenPraseError {
+    #[error("invalid encoding: {0}")]
+    Hex(#[from] hex::FromHexError),
+    #[error("invalid length: {0}")]
+    Length(usize),
+}
+
+/// Deserialises the [`AuthToken`] from hex.
+impl FromStr for AuthToken {
+    type Err = AuthTokenPraseError;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        let decoded = hex::decode(s)?;
+        let bytes = decoded
+            .try_into()
+            .map_err(|v: Vec<u8>| AuthTokenPraseError::Length(v.len()))?;
+        Ok(AuthToken { bytes })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_auth_token_hex() {
+        let token = AuthToken::generate();
+        println!("token: {token}");
+        let hex = token.to_string();
+        println!("token: {hex}");
+        let decoded = AuthToken::from_str(&hex).unwrap();
+        assert_eq!(decoded, token);
+
+        let err = AuthToken::from_str("not-hex").err().unwrap();
+        println!("err {err:#}");
+        assert!(matches!(err, AuthTokenPraseError::Hex(_)));
+
+        let err = AuthToken::from_str("abcd").err().unwrap();
+        println!("err {err:#}");
+        assert!(matches!(err, AuthTokenPraseError::Length(2)));
+    }
 }

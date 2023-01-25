@@ -39,6 +39,15 @@ impl Keypair {
 }
 
 // TODO: probably needs a version field
+/// An identifier for networked peers.
+///
+/// Each network node has a cryptographic identifier which can be used to make sure you are
+/// connecting to the right peer.
+///
+/// # `Display` and `FromStr`
+///
+/// The [`PeerId`] implements both `Display` and `FromStr` which can be used to
+/// (de)serialise to human-readable and relatively safely transferrable strings.
 #[derive(Clone, PartialEq, Copy)]
 pub struct PeerId(PublicKey);
 
@@ -54,6 +63,9 @@ impl Debug for PeerId {
     }
 }
 
+/// Serialises the [`PeerId`] to hex.
+///
+/// [`FromStr`] is capable of deserialising this format.
 impl Display for PeerId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", hex::encode(self.0.as_bytes()))
@@ -68,6 +80,9 @@ pub enum PeerIdError {
     Key(#[from] ed25519_dalek::SignatureError),
 }
 
+/// Deserialises the [`PeerId`] from it's hex encoding.
+///
+/// [`Display`] is capable of serialising this format.
 impl FromStr for PeerId {
     type Err = PeerIdError;
 

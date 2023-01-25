@@ -9,7 +9,7 @@ use s2n_quic::Server as QuicServer;
 use tokio::io::AsyncWrite;
 use tracing::{debug, warn};
 
-use crate::protocol::{read_lp, write_lp, Handshake, Request, Res, Response, VERSION};
+use crate::protocol::{read_lp, write_lp, AuthToken, Handshake, Request, Res, Response, VERSION};
 use crate::tls::{self, Keypair, PeerId};
 
 #[derive(Clone, Debug)]
@@ -33,17 +33,31 @@ pub type Database = Arc<HashMap<bao::Hash, Data>>;
 
 pub struct Provider {
     keypair: Keypair,
+    auth_token: AuthToken,
     db: Database,
 }
 
 impl Provider {
     pub fn new(db: Database) -> Self {
         let keypair = Keypair::generate();
-        Provider { keypair, db }
+        let auth_token = AuthToken::generate();
+        Provider {
+            keypair,
+            db,
+            auth_token,
+        }
     }
 
     pub fn peer_id(&self) -> PeerId {
         self.keypair.public().into()
+    }
+
+    pub fn auth_token(&self) -> AuthToken {
+        self.auth_token
+    }
+
+    pub fn set_auth_token(&mut self, auth_token: AuthToken) {
+        self.auth_token = auth_token;
     }
 
     pub async fn run(&mut self, opts: Options) -> Result<()> {
@@ -60,7 +74,7 @@ impl Provider {
             .with_limits(limits)?
             .start()
             .map_err(|e| anyhow!("{:?}", e))?;
-
+        let token = self.auth_token;
         debug!("\nlistening at: {:#?}", server.local_addr().unwrap());
 
         while let Some(mut connection) = server.accept().await {
@@ -71,7 +85,7 @@ impl Provider {
                 while let Ok(Some(stream)) = connection.accept_bidirectional_stream().await {
                     let db = db.clone();
                     tokio::spawn(async move {
-                        if let Err(err) = handle_stream(db, stream).await {
+                        if let Err(err) = handle_stream(db, token, stream).await {
                             warn!("error: {:#?}", err);
                         }
                         debug!("disconnected");
@@ -86,6 +100,7 @@ impl Provider {
 
 async fn handle_stream(
     db: Arc<HashMap<bao::Hash, Data>>,
+    token: AuthToken,
     stream: BidirectionalStream,
 ) -> Result<()> {
     debug!("stream opened from {:?}", stream.connection().remote_addr());
@@ -102,6 +117,7 @@ async fn handle_stream(
             VERSION,
             handshake.version
         );
+        ensure!(handshake.token == token, "AuthToken mismatch");
         let _ = in_buffer.split_to(size);
     } else {
         bail!("no valid handshake received");
