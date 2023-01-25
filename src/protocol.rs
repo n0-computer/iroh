@@ -89,7 +89,10 @@ pub async fn read_lp<'a, R: AsyncRead + futures::io::AsyncRead + Unpin, T: Deser
     let size = read_prefix(&mut reader, buffer).await?;
 
     while buffer.len() < size {
-        debug!("reading message {} {}", buffer.len(), size);
+        debug!("reading message, buffered {} of {size}", buffer.len());
+        if reader.read_buf(buffer).await? == 0 {
+            bail!("no more data available");
+        }
     }
     let response: T = postcard::from_bytes(&buffer[..size])?;
     debug!("read message of size {}", size);
@@ -106,7 +109,10 @@ pub async fn read_lp_data<R: AsyncRead + futures::io::AsyncRead + Unpin>(
     let size = read_prefix(&mut reader, buffer).await?;
 
     while buffer.len() < size {
-        reader.read_buf(buffer).await?;
+        debug!("reading data, buffered {} of {size}", buffer.len());
+        if reader.read_buf(buffer).await? == 0 {
+            bail!("no more data available");
+        }
     }
     let response = buffer.split_to(size);
     Ok(Some(response))
