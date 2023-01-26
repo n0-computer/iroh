@@ -168,8 +168,7 @@ async fn main() -> Result<()> {
             };
 
             let db = provider::create_db(sources).await?;
-            let mut builder = provider::Provider::builder(db);
-            // TODO: add keypair
+            let mut builder = provider::Provider::builder(db).keypair(keypair);
             if let Some(addr) = addr {
                 builder = builder.bind_addr(addr);
             }
