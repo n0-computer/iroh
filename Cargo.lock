@@ -1696,6 +1696,7 @@ dependencies = [
  "futures",
  "hex",
  "indicatif",
+ "is-terminal",
  "postcard",
  "rand 0.7.3",
  "rcgen",
