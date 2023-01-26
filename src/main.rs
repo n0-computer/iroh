@@ -1,11 +1,12 @@
 use std::{net::SocketAddr, path::PathBuf, str::FromStr};
 
-use anyhow::{anyhow, ensure, Context, Result};
+use anyhow::{anyhow, bail, ensure, Context, Result};
 use clap::{Parser, Subcommand};
 use console::style;
 use futures::StreamExt;
 use indicatif::{HumanDuration, ProgressBar, ProgressDrawTarget, ProgressState, ProgressStyle};
 use sendme::protocol::AuthToken;
+use sendme::provider::Ticket;
 use tracing::trace;
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
@@ -36,20 +37,28 @@ enum Commands {
         #[clap(long)]
         key: Option<PathBuf>,
     },
-    /// Fetch some data
+    /// Fetch some data by hash.
+    ///
+    /// The hash must be provided by either the positional argument or can be provided by
+    /// the ticket.  When using a ticket the hash, peer ID, authentication token and provider address are all ignored and provided by the ticket.
     #[clap(about = "Fetch the data from the hash")]
     Get {
-        /// The authentication token to present to the server.
-        token: String,
         /// The root hash to retrieve.
-        hash: bao::Hash,
-        #[clap(long)]
-        /// PeerId of the provider.
-        peer_id: PeerId,
+        hash: Option<bao::Hash>,
+        /// Ticket containing everything to retrieve a hash from provider.
         #[clap(long, short)]
+        ticket: Option<Ticket>,
+        #[clap(long, short)]
+        /// PeerId of the provider.
+        peer: Option<PeerId>,
+        /// The authentication token to present to the server.
+        #[clap(long)]
+        token: Option<String>,
         /// Optional address of the provider, defaults to 127.0.0.1:4433.
+        #[clap(long, short)]
         addr: Option<SocketAddr>,
         /// Optional path to save the file. If none is specified writes the data to STDOUT.
+        #[clap(long, short)]
         out: Option<PathBuf>,
     },
 }
@@ -66,21 +75,33 @@ async fn main() -> Result<()> {
     match cli.command {
         Commands::Get {
             hash,
+            ticket,
+            peer,
             token,
-            peer_id,
             addr,
             out,
         } => {
-            println!("Fetching: {}", hash.to_hex());
-            let mut opts = get::Options {
-                peer_id: Some(peer_id),
-                ..Default::default()
+            let (hash, token, opts) = if let Some(ticket) = ticket {
+                let opts = get::Options {
+                    addr: ticket.addr,
+                    peer_id: Some(ticket.peer),
+                };
+                (ticket.hash, ticket.token, opts)
+            } else if let (Some(hash), Some(peer), Some(token)) = (hash, peer, token) {
+                let token =
+                    AuthToken::from_str(&token).context("Wrong format for authentication token")?;
+                let mut opts = get::Options {
+                    peer_id: Some(peer),
+                    ..Default::default()
+                };
+                if let Some(addr) = addr {
+                    opts.addr = addr;
+                }
+                (hash, token, opts)
+            } else {
+                bail!("Need either a ticket or a hash");
             };
-            if let Some(addr) = addr {
-                opts.addr = addr;
-            }
-            let token =
-                AuthToken::from_str(&token).context("Wrong format for authentication token")?;
+            println!("Fetching: {}", hash.to_hex());
 
             println!("{} Connecting ...", style("[1/3]").bold().dim());
             let pb = ProgressBar::hidden();
@@ -168,6 +189,7 @@ async fn main() -> Result<()> {
             };
 
             let db = provider::create_db(sources).await?;
+            let hash = db.iter().next().map(|(h, _)| h).copied();
             let mut builder = provider::Provider::builder(db).keypair(keypair);
             if let Some(addr) = addr {
                 builder = builder.bind_addr(addr);
@@ -180,6 +202,9 @@ async fn main() -> Result<()> {
 
             println!("PeerID: {}", provider.peer_id());
             println!("Auth token: {}", provider.auth_token());
+            if let Some(hash) = hash {
+                println!("All-in-one ticket: {}", provider.ticket(hash));
+            }
             provider.join().await?;
 
             // Drop tempath to signal it can be destroyed
