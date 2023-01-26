@@ -27,6 +27,7 @@ ring = "0.16.20"
 rustls = { version = "0.20.8", default-features = false, features = ["dangerous_configuration"] }
 s2n-quic = { version = "1.14.0", default-features = false, features = [ "provider-tls-rustls", "provider-address-token-default" ] }
 serde = { version = "1.0.152", features = ["derive"] }
+ssh-key = { version = "0.5.1", features = ["ed25519", "std", "rand_core"] }
 tempfile = "3.3.0"
 thiserror = "1.0.38"
 tokio = { version = "1.24.1", features = ["full"] }
@@ -36,6 +37,7 @@ tracing-subscriber = { version = "0.3.16", features = ["env-filter"] }
 unsigned-varint = { version = "0.7.1", features = ["futures"] }
 webpki = "0.22.0"
 x509-parser = "0.14.0"
+zeroize = "1.5.7"
 
 
 [dev-dependencies]

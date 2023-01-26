@@ -4,7 +4,7 @@ pub mod provider;
 
 mod tls;
 
-pub use tls::{PeerId, PeerIdError};
+pub use tls::{Keypair, PeerId, PeerIdError, PublicKey, SecretKey, Signature};
 
 #[cfg(test)]
 mod tests {

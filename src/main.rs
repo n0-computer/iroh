@@ -9,7 +9,7 @@ use sendme::protocol::AuthToken;
 use tracing::trace;
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
-use sendme::{get, provider, PeerId};
+use sendme::{get, provider, Keypair, PeerId};
 
 #[derive(Parser, Debug, Clone)]
 #[clap(version, about, long_about = None)]
@@ -32,6 +32,9 @@ enum Commands {
         /// Auth token, defaults to random generated.
         #[clap(long)]
         auth_token: Option<String>,
+        /// If this path is provided and it exists, the private key ist read from this file and used, if it does not exist the private key will be persisted to this location.
+        #[clap(long)]
+        key: Option<PathBuf>,
     },
     /// Fetch some data
     #[clap(about = "Fetch the data from the hash")]
@@ -146,7 +149,10 @@ async fn main() -> Result<()> {
             path,
             addr,
             auth_token,
+            key,
         } => {
+            let keypair = get_keypair(key).await?;
+
             let mut tmp_path = None;
 
             let sources = if let Some(path) = path {
@@ -163,6 +169,7 @@ async fn main() -> Result<()> {
 
             let db = provider::create_db(sources).await?;
             let mut builder = provider::Provider::builder(db);
+            // TODO: add keypair
             if let Some(addr) = addr {
                 builder = builder.bind_addr(addr);
             }
@@ -182,4 +189,25 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+async fn get_keypair(key: Option<PathBuf>) -> Result<Keypair> {
+    match key {
+        Some(key_path) => {
+            if key_path.exists() {
+                let keystr = tokio::fs::read(key_path).await?;
+                let keypair = Keypair::try_from_openssh(keystr)?;
+                Ok(keypair)
+            } else {
+                let keypair = Keypair::generate();
+                let ser_key = keypair.to_openssh()?;
+                tokio::fs::write(key_path, ser_key).await?;
+                Ok(keypair)
+            }
+        }
+        None => {
+            // No path provided, just generate one
+            Ok(Keypair::generate())
+        }
+    }
 }
