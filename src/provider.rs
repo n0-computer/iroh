@@ -35,7 +35,7 @@ pub struct Builder {
 
 impl Builder {
     /// Creates a new builder for [`Provider`] using the given [`Database`].
-    pub fn new(db: Database) -> Self {
+    pub fn with_db(db: Database) -> Self {
         Self {
             bind_addr: "127.0.0.1:4433".parse().unwrap(),
             keypair: Keypair::generate(),
@@ -91,7 +91,6 @@ impl Builder {
             listen_addr,
             keypair: self.keypair,
             auth_token: self.auth_token,
-            // db: self.db,
             task,
         })
     }
@@ -129,7 +128,6 @@ pub struct Provider {
     listen_addr: SocketAddr,
     keypair: Keypair,
     auth_token: AuthToken,
-    // db: Database,
     task: JoinHandle<()>,
 }
 
@@ -138,7 +136,7 @@ impl Provider {
     ///
     /// Once the done with the builder call [`Builder::spawn`] to create the provider.
     pub fn builder(db: Database) -> Builder {
-        Builder::new(db)
+        Builder::with_db(db)
     }
 
     /// Returns the address on which the server is listening for connections.
