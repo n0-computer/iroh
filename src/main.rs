@@ -7,6 +7,7 @@ use futures::StreamExt;
 use indicatif::{HumanDuration, ProgressBar, ProgressDrawTarget, ProgressState, ProgressStyle};
 use is_terminal::IsTerminal;
 use sendme::protocol::AuthToken;
+use sendme::provider::{BlobOrCollection, Ticket};
 use tracing::trace;
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
@@ -38,22 +39,38 @@ enum Commands {
         #[clap(long)]
         key: Option<PathBuf>,
     },
-    /// Fetch some data
+    /// Fetch some data by hash.
     #[clap(about = "Fetch the data from the hash")]
     Get {
-        /// The authentication token to present to the server.
-        #[clap(long, short)]
-        token: String,
         /// The root hash to retrieve.
         hash: bao::Hash,
-        #[clap(long, short)]
         /// PeerId of the provider.
-        peer_id: PeerId,
         #[clap(long, short)]
+        peer: PeerId,
+        /// The authentication token to present to the server.
+        #[clap(long)]
+        token: String,
         /// Optional address of the provider, defaults to 127.0.0.1:4433.
+        #[clap(long, short)]
         addr: Option<SocketAddr>,
-        /// Optional path to a new directory in which save the file(s). If none is specified writes the data to STDOUT.
+        /// Optional path to a new directory in which to save the file(s). If none is specified writes the data to STDOUT.
+        #[clap(long, short)]
         out: Option<PathBuf>,
+    },
+    /// Fetches some data from a ticket,
+    ///
+    /// The ticket contains all hash, authentication and connection information to connect
+    /// to the provider.  It is a simpler, but slightly less flexible alternative to the
+    /// `get` subcommand.
+    #[clap(
+        about = "Fetch the data using a ticket for all provider information and authentication."
+    )]
+    GetTicket {
+        /// Optional path to a new directory in which to save the file(s). If none is specified writes the data to STDOUT.
+        #[clap(long, short)]
+        out: Option<PathBuf>,
+        /// Ticket containing everything to retrieve a hash from provider.
+        ticket: Ticket,
     },
 }
 
@@ -96,20 +113,16 @@ async fn main() -> Result<()> {
 
     let cli = Cli::parse();
 
-    let mut out_writer = OutWriter::new();
-
     match cli.command {
         Commands::Get {
             hash,
+            peer,
             token,
-            peer_id,
             addr,
             out,
         } => {
-            out_writer.println(format!("Fetching: {}", hash.to_hex()));
-
             let mut opts = get::Options {
-                peer_id: Some(peer_id),
+                peer_id: Some(peer),
                 ..Default::default()
             };
             if let Some(addr) = addr {
@@ -117,88 +130,20 @@ async fn main() -> Result<()> {
             }
             let token =
                 AuthToken::from_str(&token).context("Wrong format for authentication token")?;
-
-            out_writer.println(format!("{} Connecting ...", style("[1/3]").bold().dim()));
-
-            let pb = ProgressBar::hidden();
-            let stream = get::run(hash, token, opts);
-            tokio::pin!(stream);
-            while let Some(event) = stream.next().await {
-                trace!("client event: {:?}", event);
-                match event? {
-                    get::Event::Connected => {
-                        out_writer
-                            .println(format!("{} Requesting ...", style("[2/3]").bold().dim()));
-                    }
-                    get::Event::ReceivedCollection(collection) => {
-                        let name = collection.name();
-                        let total_entries = collection.total_entries();
-                        let size = collection.total_blobs_size();
-                        out_writer.println(format!(
-                            "{} Downloading {name}...",
-                            style("[3/3]").bold().dim()
-                        ));
-                        out_writer.println(format!(
-                            "  {total_entries} file(s) with total transfer size {size}"
-                        ));
-                        pb.set_style(
-                            ProgressStyle::with_template(PROGRESS_STYLE)
-                                .unwrap()
-                                .with_key(
-                                    "eta",
-                                    |state: &ProgressState, w: &mut dyn std::fmt::Write| {
-                                        write!(w, "{:.1}s", state.eta().as_secs_f64()).unwrap()
-                                    },
-                                )
-                                .progress_chars("#>-"),
-                        );
-                        pb.set_length(size);
-                        pb.set_draw_target(ProgressDrawTarget::stderr());
-                    }
-                    get::Event::Receiving {
-                        hash,
-                        mut reader,
-                        name,
-                    } => {
-                        let name = name.map_or_else(|| hash.to_string(), |n| n);
-                        pb.set_message(format!("Receiving {name}..."));
-
-                        if let Some(ref outpath) = out {
-                            tokio::fs::create_dir_all(outpath)
-                                .await
-                                .context("Unable to create directory {outpath}")?;
-                            let dirpath = std::path::PathBuf::from(outpath);
-                            let filepath = dirpath.join(name);
-                            let (temp_file, dup) = tokio::task::spawn_blocking(|| {
-                                let temp_file = tempfile::Builder::new()
-                                    .prefix("sendme-tmp-")
-                                    .tempfile_in(dirpath)
-                                    .context("Failed to create temporary output file")?;
-                                let dup = temp_file.as_file().try_clone()?;
-                                Ok::<_, anyhow::Error>((temp_file, dup))
-                            })
-                            .await??;
-                            let file = tokio::fs::File::from_std(dup);
-                            let out = tokio::io::BufWriter::new(file);
-                            // wrap for progress bar
-                            let mut wrapped_out = pb.wrap_async_write(out);
-                            tokio::io::copy(&mut reader, &mut wrapped_out).await?;
-                            let filepath2 = filepath.clone();
-                            tokio::task::spawn_blocking(|| temp_file.persist(filepath2))
-                                .await?
-                                .context("Failed to write output file")?;
-                        } else {
-                            // Write to OUT_WRITER
-                            let mut stdout = tokio::io::stdout();
-                            tokio::io::copy(&mut reader, &mut stdout).await?;
-                        }
-                    }
-                    get::Event::Done(stats) => {
-                        pb.finish_and_clear();
-                        out_writer.println(format!("Done in {}", HumanDuration(stats.elapsed)));
-                    }
-                }
-            }
+            get_interactive(hash, opts, token, out).await?;
+        }
+        Commands::GetTicket { out, ticket } => {
+            let Ticket {
+                hash,
+                peer,
+                addr,
+                token,
+            } = ticket;
+            let opts = get::Options {
+                addr,
+                peer_id: Some(peer),
+            };
+            get_interactive(hash, opts, token, out).await?;
         }
         Commands::Provide {
             path,
@@ -206,6 +151,7 @@ async fn main() -> Result<()> {
             auth_token,
             key,
         } => {
+            let mut out_writer = OutWriter::new();
             let keypair = get_keypair(key).await?;
 
             let mut tmp_path = None;
@@ -237,6 +183,14 @@ async fn main() -> Result<()> {
             };
 
             let (db, _) = provider::create_db(sources).await?;
+            let hash = db
+                .iter()
+                .filter_map(|(hash, item)| match item {
+                    BlobOrCollection::Collection(_) => Some(hash),
+                    _ => None,
+                })
+                .next()
+                .copied();
             let mut builder = provider::Provider::builder(db).keypair(keypair);
             if let Some(addr) = addr {
                 builder = builder.bind_addr(addr);
@@ -249,6 +203,9 @@ async fn main() -> Result<()> {
 
             out_writer.println(format!("PeerID: {}", provider.peer_id()));
             out_writer.println(format!("Auth token: {}", provider.auth_token()));
+            if let Some(hash) = hash {
+                out_writer.println(format!("All-in-one ticket: {}", provider.ticket(hash)));
+            }
             provider.join().await?;
 
             // Drop tempath to signal it can be destroyed
@@ -278,4 +235,96 @@ async fn get_keypair(key: Option<PathBuf>) -> Result<Keypair> {
             Ok(Keypair::generate())
         }
     }
+}
+
+async fn get_interactive(
+    hash: bao::Hash,
+    opts: get::Options,
+    token: AuthToken,
+    out: Option<PathBuf>,
+) -> Result<()> {
+    let mut out_writer = OutWriter::new();
+    out_writer.println(format!("Fetching: {}", hash.to_hex()));
+
+    out_writer.println(format!("{} Connecting ...", style("[1/3]").bold().dim()));
+
+    let pb = ProgressBar::hidden();
+    let stream = get::run(hash, token, opts);
+    tokio::pin!(stream);
+    while let Some(event) = stream.next().await {
+        trace!("client event: {:?}", event);
+        match event? {
+            get::Event::Connected => {
+                out_writer.println(format!("{} Requesting ...", style("[2/3]").bold().dim()));
+            }
+            get::Event::ReceivedCollection(collection) => {
+                let name = collection.name();
+                let total_entries = collection.total_entries();
+                let size = collection.total_blobs_size();
+                out_writer.println(format!(
+                    "{} Downloading {name}...",
+                    style("[3/3]").bold().dim()
+                ));
+                out_writer.println(format!(
+                    "  {total_entries} file(s) with total transfer size {size}"
+                ));
+                pb.set_style(
+                    ProgressStyle::with_template(PROGRESS_STYLE)
+                        .unwrap()
+                        .with_key(
+                            "eta",
+                            |state: &ProgressState, w: &mut dyn std::fmt::Write| {
+                                write!(w, "{:.1}s", state.eta().as_secs_f64()).unwrap()
+                            },
+                        )
+                        .progress_chars("#>-"),
+                );
+                pb.set_length(size);
+                pb.set_draw_target(ProgressDrawTarget::stderr());
+            }
+            get::Event::Receiving {
+                hash,
+                mut reader,
+                name,
+            } => {
+                let name = name.map_or_else(|| hash.to_string(), |n| n);
+                pb.set_message(format!("Receiving {name}..."));
+
+                if let Some(ref outpath) = out {
+                    tokio::fs::create_dir_all(outpath)
+                        .await
+                        .context("Unable to create directory {outpath}")?;
+                    let dirpath = std::path::PathBuf::from(outpath);
+                    let filepath = dirpath.join(name);
+                    let (temp_file, dup) = tokio::task::spawn_blocking(|| {
+                        let temp_file = tempfile::Builder::new()
+                            .prefix("sendme-tmp-")
+                            .tempfile_in(dirpath)
+                            .context("Failed to create temporary output file")?;
+                        let dup = temp_file.as_file().try_clone()?;
+                        Ok::<_, anyhow::Error>((temp_file, dup))
+                    })
+                    .await??;
+                    let file = tokio::fs::File::from_std(dup);
+                    let out = tokio::io::BufWriter::new(file);
+                    // wrap for progress bar
+                    let mut wrapped_out = pb.wrap_async_write(out);
+                    tokio::io::copy(&mut reader, &mut wrapped_out).await?;
+                    let filepath2 = filepath.clone();
+                    tokio::task::spawn_blocking(|| temp_file.persist(filepath2))
+                        .await?
+                        .context("Failed to write output file")?;
+                } else {
+                    // Write to OUT_WRITER
+                    let mut stdout = tokio::io::stdout();
+                    tokio::io::copy(&mut reader, &mut stdout).await?;
+                }
+            }
+            get::Event::Done(stats) => {
+                pb.finish_and_clear();
+                out_writer.println(format!("Done in {}", HumanDuration(stats.elapsed)));
+            }
+        }
+    }
+    Ok(())
 }

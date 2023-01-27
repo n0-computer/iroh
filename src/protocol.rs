@@ -209,6 +209,48 @@ impl FromStr for AuthToken {
     }
 }
 
+/// Serde support for [`bao::Hash`].
+///
+/// Decorate the `bao::Hash` field with `#[serde(with = "crate::protocol::serde_hash")]` to
+/// use this.
+pub mod serde_hash {
+    use std::fmt;
+
+    use serde::{de, Deserializer, Serializer};
+
+    pub fn serialize<S>(hash: &bao::Hash, s: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        s.serialize_bytes(hash.as_bytes())
+    }
+
+    pub fn deserialize<'de, D>(d: D) -> Result<bao::Hash, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        d.deserialize_bytes(HashVisitor)
+    }
+
+    struct HashVisitor;
+
+    impl<'de> de::Visitor<'de> for HashVisitor {
+        type Value = bao::Hash;
+
+        fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            write!(f, "an array of 32 bytes containing hash data")
+        }
+
+        fn visit_bytes<E>(self, v: &[u8]) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            let bytes: [u8; 32] = v.try_into().map_err(E::custom)?;
+            Ok(bao::Hash::from(bytes))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

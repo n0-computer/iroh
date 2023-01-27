@@ -1,12 +1,15 @@
+use std::fmt::{self, Display};
 use std::io::BufReader;
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::str::FromStr;
 use std::{collections::HashMap, sync::Arc};
 
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use bytes::{Bytes, BytesMut};
 use s2n_quic::stream::BidirectionalStream;
 use s2n_quic::Server as QuicServer;
+use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncWrite, AsyncWriteExt};
 use tokio::task::{JoinError, JoinHandle};
 use tracing::{debug, warn};
@@ -160,6 +163,19 @@ impl Provider {
     /// Returns the [`AuthToken`] needed to connect to the provider.
     pub fn auth_token(&self) -> AuthToken {
         self.auth_token
+    }
+
+    /// Return a single token containing everything needed to get a hash.
+    ///
+    /// See [`Ticket`] for more details of how it can be used.
+    pub fn ticket(&self, hash: bao::Hash) -> Ticket {
+        // TODO: Verify that the hash exists in the db?
+        Ticket {
+            hash,
+            peer: self.peer_id(),
+            addr: self.listen_addr,
+            token: self.auth_token,
+        }
     }
 
     /// Blocks until the provider task completes.
@@ -450,4 +466,67 @@ async fn write_response<W: AsyncWrite + Unpin>(
 
     debug!("written response of length {}", used.len());
     Ok(())
+}
+
+/// A token containing everything to get a file from the provider.
+///
+/// It is a single item which can be easily serialised and deserialised.  The [`Display`]
+/// and [`FromStr`] implementations serialise to hex.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Ticket {
+    /// The hash to retrieve.
+    #[serde(with = "crate::protocol::serde_hash")]
+    pub hash: bao::Hash,
+    /// The peer ID identifying the provider.
+    pub peer: PeerId,
+    /// The socket address the provider is listening on.
+    pub addr: SocketAddr,
+    /// The authentication token with permission to retrieve the hash.
+    pub token: AuthToken,
+}
+
+/// Serialises to hex.
+impl Display for Ticket {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let encoded = postcard::to_stdvec(self).map_err(|_| fmt::Error)?;
+        write!(f, "{}", hex::encode(encoded))
+    }
+}
+
+/// Deserialises from hex.
+impl FromStr for Ticket {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let bytes = hex::decode(s)?;
+        let slf = postcard::from_bytes(&bytes)?;
+        Ok(slf)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::str::FromStr;
+
+    use super::*;
+
+    #[test]
+    fn test_ticket_hex_roundtrip() {
+        let (_encoded, hash) = bao::encode::encode(b"hi there");
+        let peer = PeerId::from(Keypair::generate().public());
+        let addr = SocketAddr::from_str("127.0.0.1:1234").unwrap();
+        let token = AuthToken::generate();
+        let ticket = Ticket {
+            hash,
+            peer,
+            addr,
+            token,
+        };
+        let hex = ticket.to_string();
+        println!("Ticket: {hex}");
+        println!("{} bytes", hex.len());
+
+        let ticket2: Ticket = hex.parse().unwrap();
+        assert_eq!(ticket2, ticket);
+    }
 }
