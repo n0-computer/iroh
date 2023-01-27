@@ -40,15 +40,12 @@ enum Commands {
         key: Option<PathBuf>,
     },
     /// Fetch some data by hash.
-    ///
-    /// The hash must be provided by either the positional argument or can be provided by
-    /// the ticket.  When using a ticket the hash, peer ID, authentication token and provider address are all ignored and provided by the ticket.
     #[clap(about = "Fetch the data from the hash")]
     Get {
         /// The root hash to retrieve.
         hash: bao::Hash,
-        #[clap(long, short)]
         /// PeerId of the provider.
+        #[clap(long, short)]
         peer: PeerId,
         /// The authentication token to present to the server.
         #[clap(long)]
