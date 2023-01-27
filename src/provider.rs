@@ -13,6 +13,7 @@ use s2n_quic::Server as QuicServer;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncWrite, AsyncWriteExt};
 use tokio::task::{JoinError, JoinHandle};
+use tokio_util::io::SyncIoBridge;
 use tracing::{debug, warn};
 
 use crate::blobs::{Blob, Collection};
@@ -255,16 +256,16 @@ async fn handle_stream(db: Database, token: AuthToken, stream: BidirectionalStre
                         let mut data = BytesMut::from(&encoded[..]);
                         writer.write_buf(&mut data).await?;
                         for blob in c.blobs {
-                            if SentStatus::NotFound
-                                == send_blob(
-                                    db.clone(),
-                                    blob.hash,
-                                    &mut writer,
-                                    &mut out_buffer,
-                                    request.id,
-                                )
-                                .await?
-                            {
+                            let (status, writer1) = send_blob(
+                                db.clone(),
+                                blob.hash,
+                                writer,
+                                &mut out_buffer,
+                                request.id,
+                            )
+                            .await?;
+                            writer = writer1;
+                            if SentStatus::NotFound == status {
                                 break;
                             }
                         }
@@ -294,13 +295,13 @@ enum SentStatus {
     NotFound,
 }
 
-async fn send_blob<W: AsyncWrite + Unpin>(
+async fn send_blob<W: AsyncWrite + Unpin + Send + 'static>(
     db: Database,
     name: bao::Hash,
     mut writer: W,
     buffer: &mut BytesMut,
     id: u64,
-) -> Result<SentStatus> {
+) -> Result<(SentStatus, W)> {
     match db.get(&name) {
         Some(BlobOrCollection::Blob(Data {
             outboard,
@@ -311,22 +312,32 @@ async fn send_blob<W: AsyncWrite + Unpin>(
             write_response(&mut writer, buffer, id, Res::Found { size: *size }).await?;
 
             debug!("writing data");
-            let file = std::fs::File::open(path)?;
-            let mut extractor = SliceExtractor::new_outboard(
-                std::io::BufReader::new(file),
-                std::io::Cursor::new(&outboard[..]),
-                0,
-                *size,
-            );
-            let mut encoded = vec![];
-            extractor.read_to_end(&mut encoded)?;
-            tokio::io::copy(&mut std::io::Cursor::new(encoded), &mut writer).await?;
-            Ok(SentStatus::Sent)
+            let path = path.clone();
+            let outboard = outboard.clone();
+            let size = *size;
+            // need to thread the writer though the spawn_blocking, since
+            // taking a reference does not work. spawn_blocking requires
+            // 'static lifetime.
+            writer = tokio::task::spawn_blocking(move || {
+                let file_reader = std::fs::File::open(&path)?;
+                let outboard_reader = std::io::Cursor::new(outboard);
+                let mut wrapper = SyncIoBridge::new(&mut writer);
+                let mut slice_extractor = bao::encode::SliceExtractor::new_outboard(
+                    file_reader,
+                    outboard_reader,
+                    0,
+                    size,
+                );
+                let _copied = std::io::copy(&mut slice_extractor, &mut wrapper)?;
+                std::io::Result::Ok(writer)
+            })
+            .await??;
+            Ok((SentStatus::Sent, writer))
         }
         _ => {
             debug!("not found {}", name.to_hex());
             write_response(&mut writer, buffer, id, Res::NotFound).await?;
-            Ok(SentStatus::NotFound)
+            Ok((SentStatus::NotFound, writer))
         }
     }
 }
