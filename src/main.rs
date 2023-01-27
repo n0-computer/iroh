@@ -1,6 +1,6 @@
 use std::{io::Write, net::SocketAddr, path::PathBuf, str::FromStr};
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 use console::style;
 use futures::StreamExt;
@@ -24,10 +24,10 @@ struct Cli {
 #[derive(Subcommand, Debug, Clone)]
 #[allow(clippy::large_enum_variant)]
 enum Commands {
-    /// Serve the data from the given path(s). If none is specified reads from STDIN.
+    /// Serve the data from the given path. If it is a folder, all files in that folder will be served. If none is specified reads from STDIN.
     #[clap(about = "Serve the data from the given path")]
     Provide {
-        paths: Vec<PathBuf>,
+        path: Option<PathBuf>,
         #[clap(long, short)]
         /// Optional port, defaults to 127.0.01:4433.
         #[clap(long, short)]
@@ -105,7 +105,7 @@ impl OutWriter {
 }
 
 const PROGRESS_STYLE: &str =
-    "{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {bytes}/{total_bytes} ({eta})";
+    "{msg}\n{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {bytes}/{total_bytes} ({eta})";
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<()> {
@@ -149,7 +149,7 @@ async fn main() -> Result<()> {
             get_interactive(hash, opts, token, out).await?;
         }
         Commands::Provide {
-            paths,
+            path,
             addr,
             auth_token,
             key,
@@ -159,8 +159,22 @@ async fn main() -> Result<()> {
 
             let mut tmp_path = None;
 
-            let sources = if !paths.is_empty() {
-                paths.into_iter().map(provider::DataSource::File).collect()
+            let sources = if let Some(path) = path {
+                out_writer.println(format!("Reading {}", path.display()));
+                if path.is_dir() {
+                    let mut paths = Vec::new();
+                    let mut iter = tokio::fs::read_dir(&path).await?;
+                    while let Some(el) = iter.next_entry().await? {
+                        if el.path().is_file() {
+                            paths.push(provider::DataSource::File(el.path()));
+                        }
+                    }
+                    paths
+                } else if path.is_file() {
+                    vec![provider::DataSource::File(path)]
+                } else {
+                    bail!("path must be either a Directory or a File");
+                }
             } else {
                 // Store STDIN content into a temporary file
                 let (file, path) = tempfile::NamedTempFile::new()?.into_parts();

@@ -2,9 +2,10 @@ use std::fmt::Debug;
 use std::time::{Duration, Instant};
 use std::{io::Read, net::SocketAddr};
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, bail, ensure, Context, Result};
 use bytes::{Bytes, BytesMut};
 use futures::Stream;
+use genawaiter::sync::{Co, Gen};
 use postcard::experimental::max_size::MaxSize;
 use s2n_quic::Connection;
 use s2n_quic::{client::Connect, Client};
@@ -101,117 +102,141 @@ impl Debug for Event {
 }
 
 pub fn run(hash: bao::Hash, token: AuthToken, opts: Options) -> impl Stream<Item = Result<Event>> {
-    async_stream::try_stream! {
-        let now = Instant::now();
-        let (_client, mut connection) = setup(opts).await?;
+    Gen::new(|co| producer(hash, token, opts, co))
+}
 
-        let stream = connection.open_bidirectional_stream().await?;
-        let (mut reader, mut writer) = stream.split();
-
-        yield Event::Connected;
-
-
-        let mut out_buffer = BytesMut::zeroed(std::cmp::max(
-            Request::POSTCARD_MAX_SIZE,
-            Handshake::POSTCARD_MAX_SIZE,
-        ));
-
-        // 1. Send Handshake
-        {
-            debug!("sending handshake");
-            let handshake = Handshake::new(token);
-            let used = postcard::to_slice(&handshake, &mut out_buffer)?;
-            write_lp(&mut writer, used).await?;
+async fn producer(hash: bao::Hash, token: AuthToken, opts: Options, mut co: Co<Result<Event>>) {
+    match inner_producer(hash, token, opts, &mut co).await {
+        Ok(()) => {}
+        Err(err) => {
+            co.yield_(Err(err)).await;
         }
+    }
+}
+async fn inner_producer(
+    hash: bao::Hash,
+    token: AuthToken,
+    opts: Options,
+    co: &mut Co<Result<Event>>,
+) -> Result<()> {
+    let now = Instant::now();
+    let (_client, mut connection) = setup(opts).await?;
 
-        // 2. Send Request
-        {
-            debug!("sending request");
-            let req = Request {
-                id: 1,
-                name: hash.into(),
-            };
+    let stream = connection.open_bidirectional_stream().await?;
+    let (mut reader, mut writer) = stream.split();
 
-            let used = postcard::to_slice(&req, &mut out_buffer)?;
-            write_lp(&mut writer, used).await?;
-        }
+    co.yield_(Ok(Event::Connected)).await;
 
-        // 3. Read response
-        {
-            debug!("reading response");
-            let mut in_buffer = BytesMut::with_capacity(1024);
+    let mut out_buffer = BytesMut::zeroed(std::cmp::max(
+        Request::POSTCARD_MAX_SIZE,
+        Handshake::POSTCARD_MAX_SIZE,
+    ));
 
-            // track total amount of blob data transfered
-            let mut data_len = 0;
-            // read next message
-            match read_lp_data(&mut reader, &mut in_buffer).await? {
-                Some(response_buffer) => {
-                    let response: Response = postcard::from_bytes(&response_buffer)?;
-                    match response.data {
+    // 1. Send Handshake
+    {
+        debug!("sending handshake");
+        let handshake = Handshake::new(token);
+        let used = postcard::to_slice(&handshake, &mut out_buffer)?;
+        write_lp(&mut writer, used).await?;
+    }
 
-                        // server is sending over a collection of blobs
-                        Res::FoundCollection { size, outboard, total_blobs_size } => {
-                            if total_blobs_size > MAX_DATA_SIZE {
+    // 2. Send Request
+    {
+        debug!("sending request");
+        let req = Request {
+            id: 1,
+            name: hash.into(),
+        };
 
-                                Err(anyhow!("size too large: {} > {}", total_blobs_size, MAX_DATA_SIZE))?;
-                            }
-                            data_len = total_blobs_size;
+        let used = postcard::to_slice(&req, &mut out_buffer)?;
+        write_lp(&mut writer, used).await?;
+    }
 
+    // 3. Read response
+    {
+        debug!("reading response");
+        let mut in_buffer = BytesMut::with_capacity(1024);
 
-                            // read entire collection data into buffer :(
-                            let data = read_size_data(size, &mut reader, &mut in_buffer).await?;
+        // track total amount of blob data transfered
+        let mut data_len = 0;
+        // read next message
+        match read_lp_data(&mut reader, &mut in_buffer).await? {
+            Some(response_buffer) => {
+                let response: Response = postcard::from_bytes(&response_buffer)?;
+                match response.data {
+                    // server is sending over a collection of blobs
+                    Res::FoundCollection {
+                        size,
+                        outboard,
+                        total_blobs_size,
+                    } => {
+                        ensure!(
+                            total_blobs_size <= MAX_DATA_SIZE,
+                            "size too large: {} > {}",
+                            total_blobs_size,
+                            MAX_DATA_SIZE
+                        );
 
-                            // decode the collection
-                            let collection = Collection::decode_from(data, outboard, hash).await?;
+                        data_len = total_blobs_size;
 
-                            yield Event::ReceivedCollection(collection.clone());
+                        // read entire collection data into buffer :(
+                        let data = read_size_data(size, &mut reader, &mut in_buffer).await?;
 
-                            // expect to get blob data in the order they appear in the collection
-                            for blob in collection.blobs {
-                                let (blob_reader, task) = handle_blob_response(blob.hash, &mut reader, &mut in_buffer).await?;
-                                yield Event::Receiving {
-                                    hash: blob.hash,
-                                    reader: blob_reader,
-                                    name: Some(blob.name),
-                                };
+                        // decode the collection
+                        let collection = Collection::decode_from(data, outboard, hash).await?;
 
-                                task.await??;
-                            }
-                        }
+                        co.yield_(Ok(Event::ReceivedCollection(collection.clone())))
+                            .await;
 
-                        // unexpected message
-                        Res::Found { .. } => {
-                            // we should only receive `Res::FoundCollection` or `Res::NotFound` from the
-                            // provider at this point in the exchange
-                            Err(anyhow!("Unexpected message from provider. Ending transfer early."))?;
-                        }
+                        // expect to get blob data in the order they appear in the collection
+                        for blob in collection.blobs {
+                            let (blob_reader, task) =
+                                handle_blob_response(blob.hash, &mut reader, &mut in_buffer)
+                                    .await?;
+                            co.yield_(Ok(Event::Receiving {
+                                hash: blob.hash,
+                                reader: blob_reader,
+                                name: Some(blob.name),
+                            }))
+                            .await;
 
-                        // data associated with the hash is not found
-                        Res::NotFound => {
-                            Err(anyhow!("data not found"))?;
+                            task.await??;
                         }
                     }
 
-                    // Shut down the stream
-                    debug!("shutting down stream");
-                    writer.close().await?;
+                    // unexpected message
+                    Res::Found { .. } => {
+                        // we should only receive `Res::FoundCollection` or `Res::NotFound` from the
+                        // provider at this point in the exchange
+                        bail!("Unexpected message from provider. Ending transfer early.");
+                    }
 
-                    let elapsed = now.elapsed();
-                    let elapsed_s = elapsed.as_secs_f64();
-                    let data_len_bit = data_len * 8;
-                    let mbits = data_len_bit as f64 / (1000. * 1000.) / elapsed_s;
-
-                    let stats = Stats {
-                        data_len,
-                        elapsed,
-                        mbits,
-                    };
-
-                    yield Event::Done(stats);
+                    // data associated with the hash is not found
+                    Res::NotFound => {
+                        Err(anyhow!("data not found"))?;
+                    }
                 }
-                None => {
-                    Err(anyhow!("provider disconnected"))?;
-                }
+
+                // Shut down the stream
+                debug!("shutting down stream");
+                writer.close().await?;
+
+                let elapsed = now.elapsed();
+                let elapsed_s = elapsed.as_secs_f64();
+                let data_len_bit = data_len * 8;
+                let mbits = data_len_bit as f64 / (1000. * 1000.) / elapsed_s;
+
+                let stats = Stats {
+                    data_len,
+                    elapsed,
+                    mbits,
+                };
+
+                co.yield_(Ok(Event::Done(stats))).await;
+                Ok(())
+            }
+            None => {
+                bail!("provider disconnected");
             }
         }
     }

@@ -1,10 +1,11 @@
 use std::fmt::{self, Display};
+use std::io::BufReader;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::{collections::HashMap, sync::Arc};
 
-use anyhow::{anyhow, bail, ensure, Result};
+use anyhow::{anyhow, bail, ensure, Context, Result};
 use bytes::{Bytes, BytesMut};
 use s2n_quic::stream::BidirectionalStream;
 use s2n_quic::Server as QuicServer;
@@ -337,6 +338,43 @@ pub enum DataSource {
     File(PathBuf),
 }
 
+/// Synchronously compute the outboard of a file, and return hash and outboard.
+///
+/// It is assumed that the file is not modified while this is running.
+///
+/// If it is modified while or after this is running, the outboard will be
+/// invalid, so any attempt to compute a slice from it will fail.
+///
+/// If the size of the file is changed while this is running, an error will be
+/// returned.
+fn compute_outboard(path: PathBuf) -> anyhow::Result<(blake3::Hash, Vec<u8>)> {
+    let file = std::fs::File::open(path)?;
+    let len = file.metadata()?.len();
+    // compute outboard size so we can pre-allocate the buffer.
+    //
+    // outboard is ~1/16 of data size, so this will fail for really large files
+    // on really small devices. E.g. you want to transfer a 1TB file from a pi4 with 1gb ram.
+    //
+    // The way to solve this would be to have larger blocks than the blake3 chunk size of 1024.
+    // I think we really want to keep the outboard in memory for simplicity.
+    let outboard_size = usize::try_from(bao::encode::outboard_size(len))
+        .context("outboard too large to fit in memory")?;
+    let mut outboard = Vec::with_capacity(outboard_size);
+
+    // copy the file into the encoder. Data will be skipped by the encoder in outboard mode.
+    let outboard_cursor = std::io::Cursor::new(&mut outboard);
+    let mut encoder = bao::encode::Encoder::new_outboard(outboard_cursor);
+
+    let mut reader = BufReader::new(file);
+    // the length we have actually written, should be the same as the length of the file.
+    let len2 = std::io::copy(&mut reader, &mut encoder)?;
+    // this can fail if the file was appended to during encoding.
+    ensure!(len == len2, "file changed during encoding");
+    // this flips the outboard encoding from post-order to pre-order
+    let hash = encoder.finalize()?;
+    anyhow::Ok((hash, outboard))
+}
+
 /// Creates a database of blobs (stored in outboard storage) and Collections, stored in memory.
 /// Returns a the hash of the collection created by the given list of DataSources
 pub async fn create_db(data_sources: Vec<DataSource>) -> Result<(Database, bao::Hash)> {
@@ -356,19 +394,24 @@ pub async fn create_db(data_sources: Vec<DataSource>) -> Result<(Database, bao::
                     "can only transfer blob data: {}",
                     path.display()
                 );
-                let data = tokio::fs::read(&path).await?;
-                let (outboard, hash) = bao::encode::outboard(&data);
+                // spawn a blocking task for computing the hash and outboard.
+                // pretty sure this is best to remain sync even once bao is async.
+                let path2 = path.clone();
+                let (hash, outboard) =
+                    tokio::task::spawn_blocking(move || compute_outboard(path2)).await??;
 
-                println!("- {}: {} bytes", hash.to_hex(), data.len());
+                debug_assert!(outboard.len() >= 8, "outboard must at least contain size");
+                let size = u64::from_le_bytes(outboard[..8].try_into().unwrap());
+                println!("- {}: {} bytes", hash.to_hex(), size);
                 db.insert(
                     hash,
                     BlobOrCollection::Blob(Data {
                         outboard: Bytes::from(outboard),
                         path: path.clone(),
-                        size: data.len() as u64,
+                        size,
                     }),
                 );
-                total_blobs_size += data.len() as u64;
+                total_blobs_size += size;
                 let name = path
                     .file_name()
                     .and_then(|s| s.to_str())
