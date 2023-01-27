@@ -766,7 +766,7 @@ mod tests {
                 } => {
                     let data = &slice[offset..offset + 64];
                     let used = |b| if b { "*" } else { " " };
-                    println!("hashes root={}", is_root);
+                    println!("hashes root={is_root}");
                     println!("{} {}", hex::encode(&data[..32]), used(left));
                     println!("{} {}", hex::encode(&data[32..]), used(right));
                 }

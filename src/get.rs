@@ -1,17 +1,18 @@
 use std::fmt::Debug;
+use std::net::SocketAddr;
 use std::time::{Duration, Instant};
-use std::{io::Read, net::SocketAddr};
 
 use anyhow::{anyhow, bail, ensure, Result};
-use bytes::{Bytes, BytesMut};
+use bytes::BytesMut;
 use futures::Stream;
 use genawaiter::sync::{Co, Gen};
 use postcard::experimental::max_size::MaxSize;
 use s2n_quic::Connection;
 use s2n_quic::{client::Connect, Client};
-use tokio::io::{AsyncRead, AsyncWriteExt};
+use tokio::io::AsyncRead;
 use tracing::debug;
 
+use crate::bao_slice_decoder::AsyncSliceDecoder;
 use crate::blobs::Collection;
 use crate::protocol::{
     read_lp_data, read_size_data, write_lp, AuthToken, Handshake, Request, Res, Response,
@@ -178,7 +179,7 @@ async fn inner_producer(
 
                         data_len = total_blobs_size;
 
-                        // read entire collection data into buffer :(
+                        // read entire collection data into buffer
                         let encoded_size = bao::encode::encoded_size(size) as u64;
                         let encoded =
                             read_size_data(encoded_size, &mut reader, &mut in_buffer).await?;
@@ -191,17 +192,16 @@ async fn inner_producer(
 
                         // expect to get blob data in the order they appear in the collection
                         for blob in collection.blobs {
-                            let (blob_reader, task) =
-                                handle_blob_response(blob.hash, &mut reader, &mut in_buffer)
-                                    .await?;
+                            let (blob_reader, reader1) =
+                                handle_blob_response(blob.hash, reader, &mut in_buffer).await?;
                             co.yield_(Ok(Event::Receiving {
                                 hash: blob.hash,
                                 reader: blob_reader,
                                 name: Some(blob.name),
                             }))
                             .await;
-
-                            task.await??;
+                            // await the completion of the copying. Only then can we get back the reader.
+                            reader = reader1.await??;
                         }
                     }
 
@@ -244,16 +244,22 @@ async fn inner_producer(
 }
 
 /// Read next response, and if `Res::Found`, reads the next blob of data off the reader.
+///
 /// Returns an `AsyncReader` and a `JoinHandle`.
-/// The `JoinHandle` task must be `await`-ed to begin decoding the blob data and writing the
-/// verified data to the `AsyncReader`.
-async fn handle_blob_response<'a, R: AsyncRead + futures::io::AsyncRead + Unpin>(
+///
+/// The `AsyncReader` can be used to read the content.
+///
+/// The `JoinHandle` task must be `await`-ed to get back the reader to read the next message.
+async fn handle_blob_response<
+    'a,
+    R: AsyncRead + futures::io::AsyncRead + Send + Sync + Unpin + 'static,
+>(
     hash: bao::Hash,
     mut reader: R,
     buffer: &mut BytesMut,
 ) -> Result<(
     Box<dyn AsyncRead + Unpin + Sync + Send + 'static>,
-    tokio::task::JoinHandle<Result<()>>,
+    tokio::task::JoinHandle<Result<R>>,
 )> {
     match read_lp_data(&mut reader, buffer).await? {
         Some(response_buffer) => {
@@ -267,39 +273,17 @@ async fn handle_blob_response<'a, R: AsyncRead + futures::io::AsyncRead + Unpin>
                 Res::NotFound => Err(anyhow!("data for {} not found", hash.to_hex()))?,
                 // next blob in collection will be sent over
                 Res::Found { size } => {
-                    // reads entire blob into buffer :(
-                    let encoded_size = bao::encode::encoded_size(size) as u64;
-                    let encoded = read_size_data(encoded_size, &mut reader, buffer).await?;
-                    decode_data_to_reader(encoded, hash).await
+                    assert!(buffer.is_empty());
+                    let (recv, mut send) = tokio::io::duplex(8192);
+                    let task = tokio::task::spawn(async move {
+                        let mut decoder = AsyncSliceDecoder::new(reader, hash, 0, size);
+                        tokio::io::copy(&mut decoder, &mut send).await?;
+                        anyhow::Ok(decoder.into_inner())
+                    });
+                    Ok((Box::new(recv), task))
                 }
             }
         }
         None => Err(anyhow!("server disconnected"))?,
     }
-}
-
-/// Returns an `AsyncRead` and a `JoinHandle`.
-/// The `JoinHandle` task must be `await`-ed to begin decoding the given data and writing the
-/// verified data to the `AsyncRead`er.
-async fn decode_data_to_reader(
-    encoded: Bytes,
-    hash: bao::Hash,
-) -> Result<(
-    Box<dyn AsyncRead + Unpin + Sync + Send + 'static>,
-    tokio::task::JoinHandle<Result<()>>,
-)> {
-    let (a, mut b) = tokio::io::duplex(1024);
-
-    let t = tokio::task::spawn(async move {
-        // verify content of data matches the expected hash
-        let mut decoder = bao::decode::Decoder::new(std::io::Cursor::new(&encoded[..]), &hash);
-        let mut data = vec![];
-        decoder.read_to_end(&mut data)?;
-        debug!("finished decoding");
-        b.write_all(&data).await?;
-        debug!("finished writing");
-        Ok::<(), anyhow::Error>(())
-    });
-
-    Ok((Box::new(a), t))
 }
