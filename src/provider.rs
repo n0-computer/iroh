@@ -467,21 +467,18 @@ async fn write_response<W: AsyncWrite + Unpin>(
 
 /// A token containing everything to get a file from the provider.
 ///
-/// This token contains various things needed for getting a file from a provider:
-///
-/// - The *hash* to retrieve.
-/// - The *peer ID* identifying the provider.
-/// - The *socket address* the provider is listening on.
-/// - The *authentication token* with permission for the root hash.
-///
 /// It is a single item which can be easily serialised and deserialised.  The [`Display`]
 /// and [`FromStr`] implementations serialise to hex.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Ticket {
+    /// The hash to retrieve.
     #[serde(with = "crate::protocol::serde_hash")]
     pub hash: bao::Hash,
+    /// The peer ID identifying the provider.
     pub peer: PeerId,
+    /// The socket address the provider is listening on.
     pub addr: SocketAddr,
+    /// The authentication token with permission to retrieve the hash.
     pub token: AuthToken,
 }
 
