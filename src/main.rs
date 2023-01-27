@@ -1,6 +1,6 @@
 use std::{io::Write, net::SocketAddr, path::PathBuf, str::FromStr};
 
-use anyhow::{anyhow, ensure, Context, Result};
+use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use console::style;
 use futures::StreamExt;
@@ -23,10 +23,11 @@ struct Cli {
 #[derive(Subcommand, Debug, Clone)]
 #[allow(clippy::large_enum_variant)]
 enum Commands {
-    /// Serve the data from the given path. If none is specified reads from STDIN.
+    /// Serve the data from the given path(s). If none is specified reads from STDIN.
     #[clap(about = "Serve the data from the given path")]
     Provide {
-        path: Option<PathBuf>,
+        paths: Vec<PathBuf>,
+        #[clap(long, short)]
         /// Optional port, defaults to 127.0.01:4433.
         #[clap(long, short)]
         addr: Option<SocketAddr>,
@@ -51,7 +52,7 @@ enum Commands {
         #[clap(long, short)]
         /// Optional address of the provider, defaults to 127.0.0.1:4433.
         addr: Option<SocketAddr>,
-        /// Optional path to save the file. If none is specified writes the data to STDOUT.
+        /// Optional path to a new directory in which save the file(s). If none is specified writes the data to STDOUT.
         out: Option<PathBuf>,
     },
 }
@@ -129,9 +130,17 @@ async fn main() -> Result<()> {
                         out_writer
                             .println(format!("{} Requesting ...", style("[2/3]").bold().dim()));
                     }
-                    get::Event::Requested { size } => {
-                        out_writer
-                            .println(format!("{} Downloading ...", style("[3/3]").bold().dim()));
+                    get::Event::ReceivedCollection(collection) => {
+                        let name = collection.name();
+                        let total_entries = collection.total_entries();
+                        let size = collection.total_blobs_size();
+                        out_writer.println(format!(
+                            "{} Downloading {name}...",
+                            style("[3/3]").bold().dim()
+                        ));
+                        out_writer.println(format!(
+                            "  {total_entries} file(s) with total transfer size {size}"
+                        ));
                         pb.set_style(
                             ProgressStyle::with_template(PROGRESS_STYLE)
                                 .unwrap()
@@ -143,23 +152,27 @@ async fn main() -> Result<()> {
                                 )
                                 .progress_chars("#>-"),
                         );
-                        pb.set_length(size as u64);
+                        pb.set_length(size);
                         pb.set_draw_target(ProgressDrawTarget::stderr());
                     }
                     get::Event::Receiving {
-                        hash: new_hash,
+                        hash,
                         mut reader,
+                        name,
                     } => {
-                        ensure!(hash == new_hash, "invalid hash received");
+                        println!("  {}", style(format!("Receiving {hash}...")).bold().dim());
+
                         if let Some(ref outpath) = out {
-                            let parent =
-                                outpath.parent().map(ToOwned::to_owned).ok_or_else(|| {
-                                    anyhow!("No valid parent directory for output file")
-                                })?;
+                            let name = name.map_or_else(|| hash.to_string(), |n| n);
+                            tokio::fs::create_dir_all(outpath)
+                                .await
+                                .context("Unable to create directory {outpath}")?;
+                            let dirpath = std::path::PathBuf::from(outpath);
+                            let filepath = dirpath.join(name);
                             let (temp_file, dup) = tokio::task::spawn_blocking(|| {
                                 let temp_file = tempfile::Builder::new()
                                     .prefix("sendme-tmp-")
-                                    .tempfile_in(parent)
+                                    .tempfile_in(dirpath)
                                     .context("Failed to create temporary output file")?;
                                 let dup = temp_file.as_file().try_clone()?;
                                 Ok::<_, anyhow::Error>((temp_file, dup))
@@ -170,8 +183,8 @@ async fn main() -> Result<()> {
                             // wrap for progress bar
                             let mut wrapped_out = pb.wrap_async_write(out);
                             tokio::io::copy(&mut reader, &mut wrapped_out).await?;
-                            let outpath2 = outpath.clone();
-                            tokio::task::spawn_blocking(|| temp_file.persist(outpath2))
+                            let filepath2 = filepath.clone();
+                            tokio::task::spawn_blocking(|| temp_file.persist(filepath2))
                                 .await?
                                 .context("Failed to write output file")?;
                         } else {
@@ -188,7 +201,7 @@ async fn main() -> Result<()> {
             }
         }
         Commands::Provide {
-            path,
+            paths,
             addr,
             auth_token,
             key,
@@ -197,8 +210,8 @@ async fn main() -> Result<()> {
 
             let mut tmp_path = None;
 
-            let sources = if let Some(path) = path {
-                vec![provider::DataSource::File(path)]
+            let sources = if !paths.is_empty() {
+                paths.into_iter().map(provider::DataSource::File).collect()
             } else {
                 // Store STDIN content into a temporary file
                 let (file, path) = tempfile::NamedTempFile::new()?.into_parts();
@@ -209,7 +222,7 @@ async fn main() -> Result<()> {
                 vec![provider::DataSource::File(path_buf)]
             };
 
-            let db = provider::create_db(sources).await?;
+            let (db, _) = provider::create_db(sources).await?;
             let mut opts = provider::Options::default();
             if let Some(addr) = addr {
                 opts.addr = addr;
