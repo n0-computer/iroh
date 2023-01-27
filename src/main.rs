@@ -290,10 +290,10 @@ async fn get_interactive(
                 mut reader,
                 name,
             } => {
-                println!("  {}", style(format!("Receiving {hash}...")).bold().dim());
+                let name = name.map_or_else(|| hash.to_string(), |n| n);
+                pb.set_message(format!("Receiving {name}..."));
 
                 if let Some(ref outpath) = out {
-                    let name = name.map_or_else(|| hash.to_string(), |n| n);
                     tokio::fs::create_dir_all(outpath)
                         .await
                         .context("Unable to create directory {outpath}")?;
