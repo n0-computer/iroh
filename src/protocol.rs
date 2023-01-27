@@ -1,7 +1,7 @@
 use std::fmt::Display;
 use std::str::FromStr;
 
-use anyhow::{bail, ensure, Result};
+use anyhow::{ensure, Result};
 use bytes::{Bytes, BytesMut};
 use postcard::experimental::max_size::MaxSize;
 use serde::{Deserialize, Serialize};
@@ -81,9 +81,8 @@ pub async fn write_lp<W: AsyncWrite + Unpin>(writer: &mut W, data: &[u8]) -> Res
     );
 
     // send length prefix
-    let mut buffer = [0u8; 10];
-    let lp = unsigned_varint::encode::u64(data.len() as u64, &mut buffer);
-    writer.write_all(lp).await?;
+    let data_len = data.len() as u64;
+    writer.write_u64_le(data_len).await?;
 
     // write message
     writer.write_all(data).await?;
@@ -91,17 +90,21 @@ pub async fn write_lp<W: AsyncWrite + Unpin>(writer: &mut W, data: &[u8]) -> Res
 }
 
 /// Read and deserialize into the given type from the provided source, based on the length prefix.
-pub async fn read_lp<'a, R: AsyncRead + futures::io::AsyncRead + Unpin, T: Deserialize<'a>>(
+pub async fn read_lp<'a, R: AsyncRead + Unpin, T: Deserialize<'a>>(
     mut reader: R,
     buffer: &'a mut BytesMut,
 ) -> Result<Option<(T, usize)>> {
     // read length prefix
-    let size = read_prefix(&mut reader, buffer).await?;
+    let size = read_prefix(&mut reader).await?;
+    let mut reader = reader.take(size);
 
-    while buffer.len() < size {
-        debug!("reading message, buffered {} of {size}", buffer.len());
-        if reader.read_buf(buffer).await? == 0 {
-            bail!("no more data available");
+    let size = usize::try_from(size)?;
+    let mut read = 0;
+    while read != size {
+        let r = reader.read_buf(buffer).await?;
+        read += r;
+        if r == 0 {
+            break;
         }
     }
     let response: T = postcard::from_bytes(&buffer[..size])?;
@@ -112,53 +115,42 @@ pub async fn read_lp<'a, R: AsyncRead + futures::io::AsyncRead + Unpin, T: Deser
 
 /// Return a buffer for the data, based on a given size, from the given source.
 /// The new buffer is split off from the buffer that is passed into the function.
-pub async fn read_size_data<R: AsyncRead + futures::io::AsyncRead + Unpin>(
+pub async fn read_size_data<R: AsyncRead + Unpin>(
     size: u64,
-    mut reader: R,
+    reader: R,
     buffer: &mut BytesMut,
 ) -> Result<Bytes> {
-    while (buffer.len() as u64) < size {
-        debug!("reading data, buffered {} of {size}", buffer.len());
-        if reader.read_buf(buffer).await? == 0 {
-            bail!("no more data available");
+    debug!("reading {}", size);
+    let mut reader = reader.take(size);
+    let size = usize::try_from(size)?;
+    let mut read = 0;
+    while read != size {
+        let r = reader.read_buf(buffer).await?;
+        read += r;
+        if r == 0 {
+            break;
         }
     }
-    // potential truncation from u64 to usize
-    Ok(buffer.split_to(size as usize).freeze())
+    debug!("finished reading");
+    Ok(buffer.split_to(size).freeze())
 }
 
 /// Return a buffer of the data, based on the length prefix, from the given source.
 /// The new buffer is split off from the buffer that is passed in the function.
-pub async fn read_lp_data<R: AsyncRead + futures::io::AsyncRead + Unpin>(
+pub async fn read_lp_data<R: AsyncRead + Unpin>(
     mut reader: R,
     buffer: &mut BytesMut,
 ) -> Result<Option<Bytes>> {
     // read length prefix
-    let size = read_prefix(&mut reader, buffer).await?;
+    let size = read_prefix(&mut reader).await?;
 
-    let response = read_size_data(size as u64, reader, buffer).await?;
+    let response = read_size_data(size, reader, buffer).await?;
     Ok(Some(response))
 }
 
-async fn read_prefix<R: AsyncRead + futures::io::AsyncRead + Unpin>(
-    mut reader: R,
-    buffer: &mut BytesMut,
-) -> Result<usize> {
+async fn read_prefix<R: AsyncRead + Unpin>(mut reader: R) -> Result<u64> {
     // read length prefix
-    let size = loop {
-        if let Ok((size, rest)) = unsigned_varint::decode::u64(&buffer[..]) {
-            let size = usize::try_from(size)?;
-            ensure!(size < MAX_MESSAGE_SIZE, "received message is too large");
-
-            let _ = buffer.split_to(buffer.len() - rest.len());
-            break size;
-        }
-
-        if reader.read_buf(buffer).await? == 0 {
-            bail!("no more data available");
-        }
-    };
-
+    let size = reader.read_u64_le().await?;
     Ok(size)
 }
 

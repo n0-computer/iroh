@@ -242,8 +242,7 @@ async fn handle_stream(db: Database, token: AuthToken, stream: BidirectionalStre
                         )
                         .await?;
 
-                        let mut data = BytesMut::from(&data[..]);
-                        writer.write_buf(&mut data).await?;
+                        writer.write_all(data).await?;
                         for blob in c.blobs {
                             if SentStatus::NotFound
                                 == send_blob(
@@ -312,7 +311,8 @@ async fn send_blob<W: AsyncWrite + Unpin>(
             debug!("writing data");
             let file = tokio::fs::File::open(&path).await?;
             let mut reader = tokio::io::BufReader::new(file);
-            tokio::io::copy(&mut reader, &mut writer).await?;
+            tokio::io::copy_buf(&mut reader, &mut writer).await?;
+            debug!("data written");
             Ok(SentStatus::Sent)
         }
         _ => {
