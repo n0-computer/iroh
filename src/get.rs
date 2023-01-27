@@ -1,20 +1,23 @@
 use std::fmt::Debug;
-use std::time::Duration;
-use std::{io::Read, net::SocketAddr, time::Instant};
+use std::time::{Duration, Instant};
+use std::{io::Read, net::SocketAddr};
 
-use anyhow::{anyhow, Result};
-use bytes::BytesMut;
+use anyhow::{anyhow, Context, Result};
+use bytes::{Bytes, BytesMut};
 use futures::Stream;
 use postcard::experimental::max_size::MaxSize;
 use s2n_quic::Connection;
 use s2n_quic::{client::Connect, Client};
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncWriteExt};
 use tracing::debug;
 
-use crate::protocol::{read_lp_data, write_lp, AuthToken, Handshake, Request, Res, Response};
+use crate::blobs::Collection;
+use crate::protocol::{
+    read_lp_data, read_size_data, write_lp, AuthToken, Handshake, Request, Res, Response,
+};
 use crate::tls::{self, Keypair, PeerId};
 
-const MAX_DATA_SIZE: usize = 1024 * 1024 * 1024;
+const MAX_DATA_SIZE: u64 = 1024 * 1024 * 1024;
 
 #[derive(Clone, Debug)]
 pub struct Options {
@@ -53,9 +56,9 @@ async fn setup(opts: Options) -> Result<(Client, Connection)> {
 }
 
 /// Stats about the transfer.
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Stats {
-    pub data_len: usize,
+    pub data_len: u64,
     pub elapsed: Duration,
     pub mbits: f64,
 }
@@ -64,17 +67,16 @@ pub struct Stats {
 pub enum Event {
     /// The connection to the provider was established.
     Connected,
-    /// The provider has the content.
-    Requested {
-        /// The size of the requested content.
-        size: usize,
-    },
+    /// The provider has the Collection.
+    ReceivedCollection(Collection),
     /// Content is being received.
     Receiving {
         /// The hash of the content we received.
         hash: bao::Hash,
         /// The actual data we are receiving.
         reader: Box<dyn AsyncRead + Unpin + Sync + Send + 'static>,
+        /// An optional name associated with the data
+        name: Option<String>,
     },
     /// The transfer is done.
     Done(Stats),
@@ -83,17 +85,17 @@ pub enum Event {
 impl Debug for Event {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Connected => write!(f, "Connected"),
-            Self::Requested { size } => f.debug_struct("Requested").field("size", size).finish(),
-            Self::Receiving { hash, reader: _ } => f
-                .debug_struct("Receiving")
-                .field("hash", hash)
-                .field(
-                    "reader",
-                    &"Box<dyn AsyncRead + Unpin + Sync + Send + 'static>",
+            Self::Connected => write!(f, "Event::Connected"),
+            Self::ReceivedCollection(c) => {
+                write!(f, "Event::ReceivedCollection({c:#?})")
+            }
+            Self::Receiving { hash, name, .. } => {
+                write!(
+                    f,
+                    "Event::Receiving {{ hash: {hash}, reader: Box<AsyncReader>, name: {name:#?} }}"
                 )
-                .finish(),
-            Self::Done(arg0) => f.debug_tuple("Done").field(arg0).finish(),
+            }
+            Self::Done(s) => write!(f, "Event::Done({s:#?})"),
         }
     }
 }
@@ -139,82 +141,73 @@ pub fn run(hash: bao::Hash, token: AuthToken, opts: Options) -> impl Stream<Item
             debug!("reading response");
             let mut in_buffer = BytesMut::with_capacity(1024);
 
+            // track total amount of blob data transfered
+            let mut data_len = 0;
             // read next message
             match read_lp_data(&mut reader, &mut in_buffer).await? {
                 Some(response_buffer) => {
                     let response: Response = postcard::from_bytes(&response_buffer)?;
                     match response.data {
-                        Res::Found { size, outboard } => {
-                            yield Event::Requested { size };
 
-                            // Need to read the message now
-                            if size > MAX_DATA_SIZE {
-                                Err(anyhow!("size too large: {} > {}", size, MAX_DATA_SIZE))?;
+                        // server is sending over a collection of blobs
+                        Res::FoundCollection { size, outboard, total_blobs_size } => {
+                            if total_blobs_size > MAX_DATA_SIZE {
+
+                                Err(anyhow!("size too large: {} > {}", total_blobs_size, MAX_DATA_SIZE))?;
                             }
+                            data_len = total_blobs_size;
 
-                            // TODO: avoid buffering
 
-                            // remove response buffered data
-                            while in_buffer.len() < size {
-                                reader.read_buf(&mut in_buffer).await?;
+                            // read entire collection data into buffer :(
+                            let data = read_size_data(size, &mut reader, &mut in_buffer).await?;
+
+                            // decode the collection
+                            let collection = Collection::decode_from(data, outboard, hash).await?;
+
+                            yield Event::ReceivedCollection(collection.clone());
+
+                            // expect to get blob data in the order they appear in the collection
+                            for blob in collection.blobs {
+                                let (blob_reader, task) = handle_blob_response(blob.hash, &mut reader, &mut in_buffer).await?;
+                                yield Event::Receiving {
+                                    hash: blob.hash,
+                                    reader: blob_reader,
+                                    name: Some(blob.name),
+                                };
+
+                                task.await??;
                             }
-
-                            debug!("received data: {}bytes", in_buffer.len());
-                            if size != in_buffer.len() {
-                                Err(anyhow!("expected {} bytes, got {} bytes", size, in_buffer.len()))?;
-                            }
-                            let (a, mut b) = tokio::io::duplex(1024);
-
-                            // TODO: avoid copy
-                            let outboard = outboard.to_vec();
-                            let t = tokio::task::spawn(async move {
-                                let mut decoder = bao::decode::Decoder::new_outboard(
-                                    std::io::Cursor::new(&in_buffer[..]),
-                                    &*outboard,
-                                    &hash,
-                                );
-
-
-                                let mut buf = [0u8; 1024];
-                                loop {
-                                    // TODO: avoid blocking
-                                    let read = decoder.read(&mut buf)?;
-                                    if read == 0 {
-                                        break;
-                                    }
-                                    b.write_all(&buf[..read]).await?;
-                                }
-                                b.flush().await?;
-                                debug!("finished writing");
-                                Ok::<(), anyhow::Error>(())
-                            });
-
-                            yield Event::Receiving { hash, reader: Box::new(a) };
-
-                            t.await??;
-
-                            // Shut down the stream
-                            debug!("shutting down stream");
-                            writer.close().await?;
-
-                            let data_len = size;
-                            let elapsed = now.elapsed();
-                            let elapsed_s = elapsed.as_secs_f64();
-                            let data_len_bit = data_len * 8;
-                            let mbits = data_len_bit as f64 / (1000. * 1000.) / elapsed_s;
-
-                            let stats = Stats {
-                                data_len,
-                                elapsed,
-                                mbits,
-                            };
-
-                            yield Event::Done(stats);
                         }
+
+                        // unexpected message
+                        Res::Found { .. } => {
+                            // we should only receive `Res::FoundCollection` or `Res::NotFound` from the
+                            // provider at this point in the exchange
+                            Err(anyhow!("Unexpected message from provider. Ending transfer early."))?;
+                        }
+
+                        // data associated with the hash is not found
                         Res::NotFound => {
                             Err(anyhow!("data not found"))?;
                         }
                     }
+
+                    // Shut down the stream
+                    debug!("shutting down stream");
+                    writer.close().await?;
+
+                    let elapsed = now.elapsed();
+                    let elapsed_s = elapsed.as_secs_f64();
+                    let data_len_bit = data_len * 8;
+                    let mbits = data_len_bit as f64 / (1000. * 1000.) / elapsed_s;
+
+                    let stats = Stats {
+                        data_len,
+                        elapsed,
+                        mbits,
+                    };
+
+                    yield Event::Done(stats);
                 }
                 None => {
                     Err(anyhow!("provider disconnected"))?;
@@ -222,4 +215,77 @@ pub fn run(hash: bao::Hash, token: AuthToken, opts: Options) -> impl Stream<Item
             }
         }
     }
+}
+
+/// Read next response, and if `Res::Found`, reads the next blob of data off the reader.
+/// Returns an `AsyncReader` and a `JoinHandle`.
+/// The `JoinHandle` task must be `await`-ed to begin decoding the blob data and writing the
+/// verified data to the `AsyncReader`.
+async fn handle_blob_response<'a, R: AsyncRead + futures::io::AsyncRead + Unpin>(
+    hash: bao::Hash,
+    mut reader: R,
+    buffer: &mut BytesMut,
+) -> Result<(
+    Box<dyn AsyncRead + Unpin + Sync + Send + 'static>,
+    tokio::task::JoinHandle<Result<()>>,
+)> {
+    match read_lp_data(&mut reader, buffer).await? {
+        Some(response_buffer) => {
+            let response: Response = postcard::from_bytes(&response_buffer)?;
+            match response.data {
+                // unexpected message
+                Res::FoundCollection { .. } => Err(anyhow!(
+                    "Unexpected message from provider. Ending transfer early."
+                ))?,
+                // blob data not found
+                Res::NotFound => Err(anyhow!("data for {} not found", hash.to_hex()))?,
+                // next blob in collection will be sent over
+                Res::Found { size, outboard } => {
+                    // reads entire blob into buffer :(
+                    let data = read_size_data(size, &mut reader, buffer).await?;
+                    decode_data_to_reader(data, outboard, hash).await
+                }
+            }
+        }
+        None => Err(anyhow!("server disconnected"))?,
+    }
+}
+
+/// Returns an `AsyncRead` and a `JoinHandle`.
+/// The `JoinHandle` task must be `await`-ed to begin decoding the given data and writing the
+/// verified data to the `AsyncRead`er.
+async fn decode_data_to_reader(
+    data: Bytes,
+    outboard: &[u8],
+    hash: bao::Hash,
+) -> Result<(
+    Box<dyn AsyncRead + Unpin + Sync + Send + 'static>,
+    tokio::task::JoinHandle<Result<()>>,
+)> {
+    let (a, mut b) = tokio::io::duplex(1024);
+
+    // TODO: avoid copy
+    let outboard = outboard.to_vec();
+    let t = tokio::task::spawn(async move {
+        // verify content of data matches the expected hash
+        let mut decoder =
+            bao::decode::Decoder::new_outboard(std::io::Cursor::new(&data[..]), &*outboard, &hash);
+
+        let mut buf = [0u8; 1024];
+        loop {
+            // TODO: write & use an `async decoder`
+            let read = decoder
+                .read(&mut buf)
+                .context("hash of Collection data does not match")?;
+            if read == 0 {
+                break;
+            }
+            b.write_all(&buf[..read]).await?;
+        }
+        b.flush().await?;
+        debug!("finished writing");
+        Ok::<(), anyhow::Error>(())
+    });
+
+    Ok((Box::new(a), t))
 }
