@@ -84,7 +84,7 @@ impl From<ed25519_dalek::Keypair> for Keypair {
 ///
 /// The [`PeerId`] implements both `Display` and `FromStr` which can be used to
 /// (de)serialise to human-readable and relatively safely transferrable strings.
-#[derive(Clone, PartialEq, Copy)]
+#[derive(Clone, PartialEq, Eq, Copy)]
 pub struct PeerId(PublicKey);
 
 impl From<PublicKey> for PeerId {
