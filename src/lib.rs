@@ -146,9 +146,7 @@ mod tests {
             )));
         }
 
-        for task in tasks {
-            task.await??;
-        }
+        futures::future::join_all(tasks).await;
 
         Ok(())
     }
