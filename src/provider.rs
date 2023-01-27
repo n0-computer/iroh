@@ -362,8 +362,6 @@ fn compute_outboard(path: PathBuf) -> anyhow::Result<(blake3::Hash, Vec<u8>)> {
 /// Creates a database of blobs (stored in outboard storage) and Collections, stored in memory.
 /// Returns a the hash of the collection created by the given list of DataSources
 pub async fn create_db(data_sources: Vec<DataSource>) -> Result<(Database, bao::Hash)> {
-    println!("Available Data:");
-
     // +1 is for the collection itself
     let mut db = HashMap::with_capacity(data_sources.len() + 1);
     let mut blobs = Vec::with_capacity(data_sources.len());
@@ -386,7 +384,6 @@ pub async fn create_db(data_sources: Vec<DataSource>) -> Result<(Database, bao::
 
                 debug_assert!(outboard.len() >= 8, "outboard must at least contain size");
                 let size = u64::from_le_bytes(outboard[..8].try_into().unwrap());
-                println!("- {}: {} bytes", hash.to_hex(), size);
                 db.insert(
                     hash,
                     BlobOrCollection::Blob(Data {
@@ -420,11 +417,17 @@ pub async fn create_db(data_sources: Vec<DataSource>) -> Result<(Database, bao::
     let mut buffer = BytesMut::zeroed(blobs_encoded_size_estimate + 1024);
     let data = postcard::to_slice(&c, &mut buffer)?;
     let (outboard, hash) = bao::encode::outboard(&data);
+    println!("Collection: {}\n", hash.to_hex());
+    for el in db.values() {
+        if let BlobOrCollection::Blob(blob) = el {
+            println!("- {}: {} bytes", blob.path.display(), blob.size);
+        }
+    }
+    println!();
     db.insert(
         hash,
         BlobOrCollection::Collection((Bytes::from(outboard), Bytes::from(data.to_vec()))),
     );
-    println!("\ncollection:\n- {}", hash.to_hex());
 
     Ok((Arc::new(db), hash))
 }
