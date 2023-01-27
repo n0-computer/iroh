@@ -92,13 +92,7 @@ mod tests {
         let expect_name = Some(filename.to_string());
 
         let (db, hash) = provider::create_db(vec![provider::DataSource::File(path)]).await?;
-        let mut provider = provider::Provider::builder().database(db).build()?;
-        let peer_id = provider.peer_id();
-        let token = provider.auth_token();
-
-        tokio::task::spawn(async move {
-            provider.run(provider::Options { addr }).await.unwrap();
-        });
+        let provider = provider::Provider::builder(db).bind_addr(addr).spawn()?;
 
         async fn run_client(
             hash: bao::Hash,
@@ -137,11 +131,11 @@ mod tests {
         for _i in 0..3 {
             tasks.push(tokio::task::spawn(run_client(
                 hash,
-                token,
+                provider.auth_token(),
                 expect_hash,
                 expect_name.clone(),
                 addr,
-                peer_id,
+                provider.peer_id(),
                 content.to_vec(),
             )));
         }
@@ -199,19 +193,13 @@ mod tests {
         let (db, collection_hash) = provider::create_db(files).await?;
 
         let addr = format!("127.0.0.1:{port}").parse().unwrap();
-        let mut provider = provider::Provider::builder().database(db).build()?;
-        let peer_id = provider.peer_id();
-        let token = provider.auth_token();
-
-        let provider_task = tokio::task::spawn(async move {
-            provider.run(provider::Options { addr }).await.unwrap();
-        });
+        let provider = provider::Provider::builder(db).bind_addr(addr).spawn()?;
 
         let opts = get::Options {
             addr,
-            peer_id: Some(peer_id),
+            peer_id: Some(provider.peer_id()),
         };
-        let stream = get::run(collection_hash, token, opts);
+        let stream = get::run(collection_hash, provider.auth_token(), opts);
         tokio::pin!(stream);
 
         let mut i = 0;
@@ -234,8 +222,8 @@ mod tests {
             }
         }
 
-        provider_task.abort();
-        let _ = provider_task.await;
+        provider.abort();
+        let _ = provider.join().await;
         Ok(())
     }
 }

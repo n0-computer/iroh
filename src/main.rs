@@ -237,20 +237,19 @@ async fn main() -> Result<()> {
             };
 
             let (db, _) = provider::create_db(sources).await?;
-            let mut opts = provider::Options::default();
+            let mut builder = provider::Provider::builder(db).keypair(keypair);
             if let Some(addr) = addr {
-                opts.addr = addr;
+                builder = builder.bind_addr(addr);
             }
-            let mut provider_builder = provider::Provider::builder().database(db).keypair(keypair);
             if let Some(ref hex) = auth_token {
                 let auth_token = AuthToken::from_str(hex)?;
-                provider_builder = provider_builder.auth_token(auth_token);
+                builder = builder.auth_token(auth_token);
             }
-            let mut provider = provider_builder.build()?;
+            let provider = builder.spawn()?;
 
             out_writer.println(format!("PeerID: {}", provider.peer_id()));
             out_writer.println(format!("Auth token: {}", provider.auth_token()));
-            provider.run(opts).await?;
+            provider.join().await?;
 
             // Drop tempath to signal it can be destroyed
             drop(tmp_path);
