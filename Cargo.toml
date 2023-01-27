@@ -44,5 +44,6 @@ zeroize = "1.5"
 
 
 [dev-dependencies]
+proptest = "1.0.0"
 rand = "0.7"
 testdir = "0.7.1"
