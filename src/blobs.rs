@@ -16,23 +16,13 @@ pub struct Collection {
 }
 
 impl Collection {
-    pub async fn decode_from(data: Bytes, outboard: &[u8], hash: bao::Hash) -> Result<Self> {
-        // TODO: avoid copy
-        let outboard = outboard.to_vec();
+    pub async fn decode_from(encoded: Bytes, hash: bao::Hash) -> Result<Self> {
         // verify that the content of data matches the expected hash
-        let mut decoder =
-            bao::decode::Decoder::new_outboard(std::io::Cursor::new(&data[..]), &*outboard, &hash);
-
-        let mut buf = [0u8; 1024];
-        loop {
-            // TODO: write & use an `async decoder`
-            let read = decoder
-                .read(&mut buf)
-                .context("hash of Collection data does not match")?;
-            if read == 0 {
-                break;
-            }
-        }
+        let mut decoder = bao::decode::Decoder::new(std::io::Cursor::new(&encoded[..]), &hash);
+        let mut data = Vec::new();
+        decoder
+            .read_to_end(&mut data)
+            .context("hash of Collection data does not match")?;
         let c: Collection =
             postcard::from_bytes(&data).context("failed to serialize Collection data")?;
         Ok(c)

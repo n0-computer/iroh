@@ -1,11 +1,12 @@
 use std::fmt::{self, Display};
-use std::io::BufReader;
+use std::io::{BufReader, Read};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::{collections::HashMap, sync::Arc};
 
 use anyhow::{anyhow, bail, ensure, Context, Result};
+use bao::encode::SliceExtractor;
 use bytes::{Bytes, BytesMut};
 use s2n_quic::stream::BidirectionalStream;
 use s2n_quic::Server as QuicServer;
@@ -227,6 +228,15 @@ async fn handle_stream(db: Database, token: AuthToken, stream: BidirectionalStre
                     Some(BlobOrCollection::Collection((outboard, data))) => {
                         debug!("found collection {}", name.to_hex());
 
+                        let mut extractor = SliceExtractor::new_outboard(
+                            std::io::Cursor::new(&data[..]),
+                            std::io::Cursor::new(&outboard[..]),
+                            0,
+                            data.len() as u64,
+                        );
+                        let mut encoded = Vec::new();
+                        extractor.read_to_end(&mut encoded)?;
+
                         let c: Collection = postcard::from_bytes(data)?;
 
                         // TODO: we should check if the blobs referenced in this container
@@ -238,12 +248,12 @@ async fn handle_stream(db: Database, token: AuthToken, stream: BidirectionalStre
                             Res::FoundCollection {
                                 size: data.len() as u64,
                                 total_blobs_size: c.total_blobs_size,
-                                outboard,
                             },
                         )
                         .await?;
 
-                        writer.write_all(data).await?;
+                        let mut data = BytesMut::from(&encoded[..]);
+                        writer.write_buf(&mut data).await?;
                         for blob in c.blobs {
                             if SentStatus::NotFound
                                 == send_blob(
@@ -298,22 +308,19 @@ async fn send_blob<W: AsyncWrite + Unpin>(
             size,
         })) => {
             debug!("found {}", name.to_hex());
-            write_response(
-                &mut writer,
-                buffer,
-                id,
-                Res::Found {
-                    size: *size,
-                    outboard,
-                },
-            )
-            .await?;
+            write_response(&mut writer, buffer, id, Res::Found { size: *size }).await?;
 
             debug!("writing data");
-            let file = tokio::fs::File::open(&path).await?;
-            let mut reader = tokio::io::BufReader::new(file);
-            tokio::io::copy_buf(&mut reader, &mut writer).await?;
-            debug!("data written");
+            let file = std::fs::File::open(path)?;
+            let mut extractor = SliceExtractor::new_outboard(
+                std::io::BufReader::new(file),
+                std::io::Cursor::new(&outboard[..]),
+                0,
+                *size,
+            );
+            let mut encoded = vec![];
+            extractor.read_to_end(&mut encoded)?;
+            tokio::io::copy(&mut std::io::Cursor::new(encoded), &mut writer).await?;
             Ok(SentStatus::Sent)
         }
         _ => {
@@ -453,13 +460,13 @@ async fn write_response<W: AsyncWrite + Unpin>(
     mut writer: W,
     buffer: &mut BytesMut,
     id: u64,
-    res: Res<'_>,
+    res: Res,
 ) -> Result<()> {
     let response = Response { id, data: res };
 
     // TODO: do not transfer blob data as part of the responses
-    if buffer.len() < 1024 + response.data.len() {
-        buffer.resize(1024 + response.data.len(), 0u8);
+    if buffer.len() < 1024 {
+        buffer.resize(1024, 0u8);
     }
     let used = postcard::to_slice(&response, buffer)?;
 

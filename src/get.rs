@@ -2,7 +2,7 @@ use std::fmt::Debug;
 use std::time::{Duration, Instant};
 use std::{io::Read, net::SocketAddr};
 
-use anyhow::{anyhow, bail, ensure, Context, Result};
+use anyhow::{anyhow, bail, ensure, Result};
 use bytes::{Bytes, BytesMut};
 use futures::Stream;
 use genawaiter::sync::{Co, Gen};
@@ -167,7 +167,6 @@ async fn inner_producer(
                     // server is sending over a collection of blobs
                     Res::FoundCollection {
                         size,
-                        outboard,
                         total_blobs_size,
                     } => {
                         ensure!(
@@ -180,10 +179,12 @@ async fn inner_producer(
                         data_len = total_blobs_size;
 
                         // read entire collection data into buffer :(
-                        let data = read_size_data(size, &mut reader, &mut in_buffer).await?;
+                        let encoded_size = bao::encode::encoded_size(size) as u64;
+                        let encoded =
+                            read_size_data(encoded_size, &mut reader, &mut in_buffer).await?;
 
                         // decode the collection
-                        let collection = Collection::decode_from(data, outboard, hash).await?;
+                        let collection = Collection::decode_from(encoded, hash).await?;
 
                         co.yield_(Ok(Event::ReceivedCollection(collection.clone())))
                             .await;
@@ -265,10 +266,11 @@ async fn handle_blob_response<'a, R: AsyncRead + futures::io::AsyncRead + Unpin>
                 // blob data not found
                 Res::NotFound => Err(anyhow!("data for {} not found", hash.to_hex()))?,
                 // next blob in collection will be sent over
-                Res::Found { size, outboard } => {
+                Res::Found { size } => {
                     // reads entire blob into buffer :(
-                    let data = read_size_data(size, &mut reader, buffer).await?;
-                    decode_data_to_reader(data, outboard, hash).await
+                    let encoded_size = bao::encode::encoded_size(size) as u64;
+                    let encoded = read_size_data(encoded_size, &mut reader, buffer).await?;
+                    decode_data_to_reader(encoded, hash).await
                 }
             }
         }
@@ -280,8 +282,7 @@ async fn handle_blob_response<'a, R: AsyncRead + futures::io::AsyncRead + Unpin>
 /// The `JoinHandle` task must be `await`-ed to begin decoding the given data and writing the
 /// verified data to the `AsyncRead`er.
 async fn decode_data_to_reader(
-    data: Bytes,
-    outboard: &[u8],
+    encoded: Bytes,
     hash: bao::Hash,
 ) -> Result<(
     Box<dyn AsyncRead + Unpin + Sync + Send + 'static>,
@@ -289,25 +290,13 @@ async fn decode_data_to_reader(
 )> {
     let (a, mut b) = tokio::io::duplex(1024);
 
-    // TODO: avoid copy
-    let outboard = outboard.to_vec();
     let t = tokio::task::spawn(async move {
         // verify content of data matches the expected hash
-        let mut decoder =
-            bao::decode::Decoder::new_outboard(std::io::Cursor::new(&data[..]), &*outboard, &hash);
-
-        let mut buf = [0u8; 1024];
-        loop {
-            // TODO: write & use an `async decoder`
-            let read = decoder
-                .read(&mut buf)
-                .context("hash of Collection data does not match")?;
-            if read == 0 {
-                break;
-            }
-            b.write_all(&buf[..read]).await?;
-        }
-        b.flush().await?;
+        let mut decoder = bao::decode::Decoder::new(std::io::Cursor::new(&encoded[..]), &hash);
+        let mut data = vec![];
+        decoder.read_to_end(&mut data)?;
+        debug!("finished decoding");
+        b.write_all(&data).await?;
         debug!("finished writing");
         Ok::<(), anyhow::Error>(())
     });

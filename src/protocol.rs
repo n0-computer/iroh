@@ -36,20 +36,18 @@ pub struct Request {
 }
 
 #[derive(Deserialize, Serialize, Debug, PartialEq, Eq, Clone)]
-pub struct Response<'a> {
+pub struct Response {
     pub id: u64,
-    #[serde(borrow)]
-    pub data: Res<'a>,
+    pub data: Res,
 }
 
 #[derive(Deserialize, Serialize, Debug, PartialEq, Eq, Clone)]
-pub enum Res<'a> {
+pub enum Res {
     NotFound,
     // If found, a stream of bao data is sent as next message.
     Found {
         /// The size of the coming data in bytes, raw content size.
         size: u64,
-        outboard: &'a [u8],
     },
     /// Indicates that the given hash referred to a collection of multiple blobs
     /// A stream of boa data that decodes to a `Collection` is sent as the next message,
@@ -57,20 +55,9 @@ pub enum Res<'a> {
     FoundCollection {
         /// The size of the coming data in bytes, raw content size.
         size: u64,
-        outboard: &'a [u8],
         /// The size of the raw data we are planning to transfer
         total_blobs_size: u64,
     },
-}
-
-impl Res<'_> {
-    #[allow(clippy::len_without_is_empty)]
-    pub fn len(&self) -> usize {
-        match self {
-            Self::Found { outboard, .. } => outboard.len(),
-            _ => 0,
-        }
-    }
 }
 
 /// Write the given data to the provider sink, with a unsigned varint length prefix.
