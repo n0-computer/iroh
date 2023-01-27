@@ -4,6 +4,7 @@ pub mod protocol;
 pub mod provider;
 
 mod tls;
+mod bao_slice_decoder;
 
 pub use tls::{Keypair, PeerId, PeerIdError, PublicKey, SecretKey, Signature};
 
