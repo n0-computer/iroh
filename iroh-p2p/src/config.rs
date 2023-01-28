@@ -101,6 +101,8 @@ pub struct Libp2pConfig {
     pub notify_handler_buffer_size: usize,
     pub connection_event_buffer_size: usize,
     pub dial_concurrency_factor: u8,
+    /// Don't dial RFC 1918 addresses if enabled.
+    pub global_only: bool,
 }
 
 /// Configuration for the [`iroh-p2p`] node.
@@ -184,6 +186,7 @@ impl Source for Libp2pConfig {
             .map(|b| b.to_string())
             .collect();
         insert_into_config_map(&mut map, "listening_multiaddrs", addrs);
+        insert_into_config_map(&mut map, "global_only", self.global_only);
         Ok(map)
     }
 }
@@ -231,6 +234,7 @@ impl Default for Libp2pConfig {
             notify_handler_buffer_size: 256,
             connection_event_buffer_size: 256,
             dial_concurrency_factor: 8,
+            global_only: false,
         }
     }
 }
@@ -368,6 +372,10 @@ mod tests {
             Value::new(None, bootstrap_peers),
         );
         expect.insert("listening_multiaddrs".to_string(), Value::new(None, addrs));
+        expect.insert(
+            "global_only".to_string(),
+            Value::new(None, default.global_only),
+        );
 
         let got = default.collect().unwrap();
         for key in got.keys() {

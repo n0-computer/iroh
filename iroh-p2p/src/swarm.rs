@@ -17,6 +17,7 @@ use libp2p::{
     PeerId, Swarm, Transport,
 };
 
+use crate::global_only::GlobalIpOnly;
 use crate::{behaviour::NodeBehaviour, Libp2pConfig};
 
 /// Builds the transport stack that LibP2P will communicate over.
@@ -107,6 +108,11 @@ async fn build_transport(
         .unwrap()
         .boxed();
 
+    let transport = if config.global_only {
+        GlobalIpOnly::new(transport).boxed()
+    } else {
+        transport
+    };
     (transport, relay_client)
 }
 
