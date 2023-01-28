@@ -29,7 +29,8 @@ pub type Database = Arc<HashMap<bao::Hash, BlobOrCollection>>;
 /// optional.  Finally you can create and run the provider by calling [`Builder::spawn`].
 ///
 /// The returned [`Provider`] provides [`Provider::join`] to wait for the spawned task.
-/// Currently it needs to be aborted using [`Provider::abort`], graceful shutdown will come.
+/// Currently it needs to be aborted using [`Provider::abort`], graceful shutdown will be
+/// implemented in the immediate future.
 #[derive(Debug)]
 pub struct Builder {
     bind_addr: SocketAddr,
@@ -470,8 +471,8 @@ async fn write_response<W: AsyncWrite + Unpin>(
 
 /// A token containing everything to get a file from the provider.
 ///
-/// It is a single item which can be easily serialised and deserialised.  The [`Display`]
-/// and [`FromStr`] implementations serialise to hex.
+/// It is a single item which can be easily serialized and deserialized.  The [`Display`]
+/// and [`FromStr`] implementations serialize to hex.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Ticket {
     /// The hash to retrieve.
@@ -485,7 +486,7 @@ pub struct Ticket {
     pub token: AuthToken,
 }
 
-/// Serialises to hex.
+/// Serializes to hex.
 impl Display for Ticket {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let encoded = postcard::to_stdvec(self).map_err(|_| fmt::Error)?;
@@ -493,7 +494,7 @@ impl Display for Ticket {
     }
 }
 
-/// Deserialises from hex.
+/// Deserializes from hex.
 impl FromStr for Ticket {
     type Err = anyhow::Error;
 

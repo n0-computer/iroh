@@ -157,7 +157,7 @@ async fn inner_producer(
         debug!("reading response");
         let mut in_buffer = BytesMut::with_capacity(1024);
 
-        // track total amount of blob data transfered
+        // track total amount of blob data transferred
         let mut data_len = 0;
         // read next message
         match read_lp_data(&mut reader, &mut in_buffer).await? {

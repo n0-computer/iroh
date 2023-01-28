@@ -56,44 +56,8 @@ pub(crate) struct Blob {
     /// The name of this blob of data
     pub(crate) name: String,
     /// The hash of the blob of data
-    #[serde(with = "hash_serde")]
+    #[serde(with = "crate::protocol::serde_hash")]
     pub(crate) hash: bao::Hash,
-}
-
-mod hash_serde {
-    use serde::{de, Deserializer, Serializer};
-
-    pub fn serialize<S>(h: &bao::Hash, s: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        s.serialize_bytes(h.as_bytes())
-    }
-
-    pub fn deserialize<'de, D>(d: D) -> Result<bao::Hash, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        struct HashVisitor;
-
-        impl<'de> de::Visitor<'de> for HashVisitor {
-            type Value = bao::Hash;
-
-            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-                formatter.write_str("an array of 32 bytes containing hash data")
-            }
-
-            fn visit_bytes<E>(self, v: &[u8]) -> Result<Self::Value, E>
-            where
-                E: de::Error,
-            {
-                let b: [u8; 32] = v.try_into().map_err(E::custom)?;
-                Ok(bao::Hash::from(b))
-            }
-        }
-
-        d.deserialize_bytes(HashVisitor)
-    }
 }
 
 #[cfg(test)]

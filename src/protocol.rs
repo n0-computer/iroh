@@ -181,7 +181,7 @@ impl Display for AuthToken {
 
 /// Error for parsing [`AuthToken`] using [`FromStr`].
 #[derive(thiserror::Error, Debug)]
-pub enum AuthTokenPraseError {
+pub enum AuthTokenParseError {
     #[error("invalid encoding: {0}")]
     Hex(#[from] hex::FromHexError),
     #[error("invalid length: {0}")]
@@ -190,13 +190,13 @@ pub enum AuthTokenPraseError {
 
 /// Deserialises the [`AuthToken`] from hex.
 impl FromStr for AuthToken {
-    type Err = AuthTokenPraseError;
+    type Err = AuthTokenParseError;
 
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
         let decoded = hex::decode(s)?;
         let bytes = decoded
             .try_into()
-            .map_err(|v: Vec<u8>| AuthTokenPraseError::Length(v.len()))?;
+            .map_err(|v: Vec<u8>| AuthTokenParseError::Length(v.len()))?;
         Ok(AuthToken { bytes })
     }
 }
@@ -258,10 +258,10 @@ mod tests {
 
         let err = AuthToken::from_str("not-hex").err().unwrap();
         println!("err {err:#}");
-        assert!(matches!(err, AuthTokenPraseError::Hex(_)));
+        assert!(matches!(err, AuthTokenParseError::Hex(_)));
 
         let err = AuthToken::from_str("abcd").err().unwrap();
         println!("err {err:#}");
-        assert!(matches!(err, AuthTokenPraseError::Length(2)));
+        assert!(matches!(err, AuthTokenParseError::Length(2)));
     }
 }

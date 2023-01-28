@@ -35,7 +35,7 @@ enum Commands {
         /// Auth token, defaults to random generated.
         #[clap(long)]
         auth_token: Option<String>,
-        /// If this path is provided and it exists, the private key ist read from this file and used, if it does not exist the private key will be persisted to this location.
+        /// If this path is provided and it exists, the private key is read from this file and used, if it does not exist the private key will be persisted to this location.
         #[clap(long)]
         key: Option<PathBuf>,
     },
