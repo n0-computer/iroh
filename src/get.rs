@@ -200,13 +200,9 @@ where
 
 /// Read next response, and if `Res::Found`, reads the next blob of data off the reader.
 ///
-/// Returns an `AsyncReader` and a `JoinHandle`.
-///
+/// Returns an `AsyncReader`
 /// The `AsyncReader` can be used to read the content.
-///
-/// The `JoinHandle` task must be `await`-ed to get back the reader to read the next message.
 async fn handle_blob_response<
-    'a,
     R: AsyncRead + futures::io::AsyncRead + Send + Sync + Unpin + 'static,
 >(
     hash: bao::Hash,
@@ -228,13 +224,6 @@ async fn handle_blob_response<
                     assert!(buffer.is_empty());
                     let decoder = AsyncSliceDecoder::new(reader, hash, 0, size);
                     Ok(decoder)
-                    // let (recv, mut send) = tokio::io::duplex(8192);
-                    // let task = tokio::task::spawn(async move {
-                    //     let mut decoder = AsyncSliceDecoder::new(reader, hash, 0, size);
-                    //     tokio::io::copy(&mut decoder, &mut send).await?;
-                    //     anyhow::Ok(decoder.into_inner())
-                    // });
-                    // Ok((Box::new(recv), task))
                 }
             }
         }
