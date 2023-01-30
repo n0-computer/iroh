@@ -4,9 +4,9 @@ use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail, ensure, Result};
 use bytes::BytesMut;
-use futures::Stream;
-use genawaiter::sync::{Co, Gen};
+use futures::Future;
 use postcard::experimental::max_size::MaxSize;
+use s2n_quic::stream::ReceiveStream;
 use s2n_quic::Connection;
 use s2n_quic::{client::Connect, Client};
 use tokio::io::AsyncRead;
@@ -65,68 +65,29 @@ pub struct Stats {
     pub mbits: f64,
 }
 
-/// The events that are emitted while running a transfer.
-pub enum Event {
-    /// The connection to the provider was established.
-    Connected,
-    /// The provider has the Collection.
-    ReceivedCollection(Collection),
-    /// Content is being received.
-    Receiving {
-        /// The hash of the content we received.
-        hash: bao::Hash,
-        /// The actual data we are receiving.
-        reader: Box<dyn AsyncRead + Unpin + Sync + Send + 'static>,
-        /// An optional name associated with the data
-        name: Option<String>,
-    },
-    /// The transfer is done.
-    Done(Stats),
-}
-
-impl Debug for Event {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Connected => write!(f, "Event::Connected"),
-            Self::ReceivedCollection(c) => {
-                write!(f, "Event::ReceivedCollection({c:#?})")
-            }
-            Self::Receiving { hash, name, .. } => {
-                write!(
-                    f,
-                    "Event::Receiving {{ hash: {hash}, reader: Box<AsyncReader>, name: {name:#?} }}"
-                )
-            }
-            Self::Done(s) => write!(f, "Event::Done({s:#?})"),
-        }
-    }
-}
-
-pub fn run(hash: bao::Hash, token: AuthToken, opts: Options) -> impl Stream<Item = Result<Event>> {
-    Gen::new(|co| producer(hash, token, opts, co))
-}
-
-async fn producer(hash: bao::Hash, token: AuthToken, opts: Options, mut co: Co<Result<Event>>) {
-    match inner_producer(hash, token, opts, &mut co).await {
-        Ok(()) => {}
-        Err(err) => {
-            co.yield_(Err(err)).await;
-        }
-    }
-}
-async fn inner_producer(
+pub async fn run<A, B, C, FutA, FutB, FutC>(
     hash: bao::Hash,
     token: AuthToken,
     opts: Options,
-    co: &mut Co<Result<Event>>,
-) -> Result<()> {
+    on_connected: A,
+    mut on_collection: B,
+    mut on_blob: C,
+) -> Result<Stats>
+where
+    A: FnOnce() -> FutA,
+    FutA: Future<Output = Result<()>>,
+    B: FnMut(Collection) -> FutB,
+    FutB: Future<Output = Result<()>>,
+    C: FnMut(bao::Hash, AsyncSliceDecoder<ReceiveStream>, Option<String>) -> FutC,
+    FutC: Future<Output = Result<AsyncSliceDecoder<ReceiveStream>>>,
+{
     let now = Instant::now();
     let (_client, mut connection) = setup(opts).await?;
 
     let stream = connection.open_bidirectional_stream().await?;
     let (mut reader, mut writer) = stream.split();
 
-    co.yield_(Ok(Event::Connected)).await;
+    on_connected().await?;
 
     let mut out_buffer = BytesMut::zeroed(std::cmp::max(
         Request::POSTCARD_MAX_SIZE,
@@ -186,22 +147,17 @@ async fn inner_producer(
 
                         // decode the collection
                         let collection = Collection::decode_from(encoded, hash).await?;
-
-                        co.yield_(Ok(Event::ReceivedCollection(collection.clone())))
-                            .await;
+                        on_collection(collection.clone()).await?;
 
                         // expect to get blob data in the order they appear in the collection
                         for blob in collection.blobs {
-                            let (blob_reader, reader1) =
+                            let blob_reader =
                                 handle_blob_response(blob.hash, reader, &mut in_buffer).await?;
-                            co.yield_(Ok(Event::Receiving {
-                                hash: blob.hash,
-                                reader: blob_reader,
-                                name: Some(blob.name),
-                            }))
-                            .await;
+                            let blob_reader =
+                                on_blob(blob.hash, blob_reader, Some(blob.name)).await?;
+                            reader = blob_reader.into_inner();
                             // await the completion of the copying. Only then can we get back the reader.
-                            reader = reader1.await??;
+                            // reader = reader1.await??;
                         }
                     }
 
@@ -233,8 +189,7 @@ async fn inner_producer(
                     mbits,
                 };
 
-                co.yield_(Ok(Event::Done(stats))).await;
-                Ok(())
+                Ok(stats)
             }
             None => {
                 bail!("provider disconnected");
@@ -257,10 +212,7 @@ async fn handle_blob_response<
     hash: bao::Hash,
     mut reader: R,
     buffer: &mut BytesMut,
-) -> Result<(
-    Box<dyn AsyncRead + Unpin + Sync + Send + 'static>,
-    tokio::task::JoinHandle<Result<R>>,
-)> {
+) -> Result<AsyncSliceDecoder<R>> {
     match read_lp_data(&mut reader, buffer).await? {
         Some(response_buffer) => {
             let response: Response = postcard::from_bytes(&response_buffer)?;
@@ -274,13 +226,15 @@ async fn handle_blob_response<
                 // next blob in collection will be sent over
                 Res::Found { size } => {
                     assert!(buffer.is_empty());
-                    let (recv, mut send) = tokio::io::duplex(8192);
-                    let task = tokio::task::spawn(async move {
-                        let mut decoder = AsyncSliceDecoder::new(reader, hash, 0, size);
-                        tokio::io::copy(&mut decoder, &mut send).await?;
-                        anyhow::Ok(decoder.into_inner())
-                    });
-                    Ok((Box::new(recv), task))
+                    let decoder = AsyncSliceDecoder::new(reader, hash, 0, size);
+                    Ok(decoder)
+                    // let (recv, mut send) = tokio::io::duplex(8192);
+                    // let task = tokio::task::spawn(async move {
+                    //     let mut decoder = AsyncSliceDecoder::new(reader, hash, 0, size);
+                    //     tokio::io::copy(&mut decoder, &mut send).await?;
+                    //     anyhow::Ok(decoder.into_inner())
+                    // });
+                    // Ok((Box::new(recv), task))
                 }
             }
         }

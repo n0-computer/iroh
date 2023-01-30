@@ -10,15 +10,17 @@ pub use tls::{Keypair, PeerId, PeerIdError, PublicKey, SecretKey, Signature};
 
 #[cfg(test)]
 mod tests {
-    use std::{net::SocketAddr, path::PathBuf};
+    use std::{
+        net::SocketAddr,
+        path::PathBuf,
+        sync::{atomic::AtomicUsize, Arc},
+    };
 
-    use crate::get::Event;
     use crate::protocol::AuthToken;
     use crate::tls::PeerId;
 
     use super::*;
     use anyhow::Result;
-    use futures::StreamExt;
     use rand::RngCore;
     use testdir::testdir;
     use tokio::io::AsyncReadExt;
@@ -108,23 +110,26 @@ mod tests {
                 addr,
                 peer_id: Some(peer_id),
             };
-            let stream = get::run(hash, token, opts);
-            tokio::pin!(stream);
-            while let Some(event) = stream.next().await {
-                let event = event?;
-                if let Event::Receiving {
-                    hash: got_hash,
-                    mut reader,
-                    name: got_name,
-                } = event
-                {
+            let name = name.as_ref();
+            let content = &content;
+            get::run(
+                hash,
+                token,
+                opts,
+                || async move { Ok(()) },
+                |_collection| async move { Ok(()) },
+                |got_hash, mut reader, got_name| async move {
                     assert_eq!(file_hash, got_hash);
                     let mut got = Vec::new();
                     reader.read_to_end(&mut got).await?;
-                    assert_eq!(content, got);
-                    assert_eq!(name, got_name);
-                }
-            }
+                    assert_eq!(content, &got);
+                    assert_eq!(name, got_name.as_ref());
+
+                    Ok(reader)
+                },
+            )
+            .await?;
+
             Ok(())
         }
 
@@ -175,6 +180,7 @@ mod tests {
         // create and save files
         let mut files = Vec::new();
         let mut expects = Vec::new();
+        let num_blobs = file_opts.len();
 
         for opt in file_opts.into_iter() {
             let (name, data) = opt;
@@ -200,28 +206,37 @@ mod tests {
             addr,
             peer_id: Some(provider.peer_id()),
         };
-        let stream = get::run(collection_hash, provider.auth_token(), opts);
-        tokio::pin!(stream);
 
-        let mut i = 0;
-        while let Some(event) = stream.next().await {
-            let event = event?;
-            if let Event::Receiving {
-                hash: got_hash,
-                mut reader,
-                name: got_name,
-            } = event
-            {
-                let (expect_name, path, expect_hash) = expects.get(i).unwrap();
-                assert_eq!(*expect_hash, got_hash);
-                let expect = tokio::fs::read(&path).await?;
-                let mut got = Vec::new();
-                reader.read_to_end(&mut got).await?;
-                assert_eq!(expect, got);
-                assert_eq!(*expect_name, got_name);
-                i += 1;
-            }
-        }
+        let i = AtomicUsize::new(0);
+        let expects = Arc::new(expects);
+
+        get::run(
+            collection_hash,
+            provider.auth_token(),
+            opts,
+            || async move { Ok(()) },
+            |collection| async move {
+                assert_eq!(collection.blobs.len(), num_blobs);
+                Ok(())
+            },
+            |got_hash, mut reader, got_name| {
+                let i = &i;
+                let expects = expects.clone();
+                async move {
+                    let iv = i.load(std::sync::atomic::Ordering::SeqCst);
+                    let (expect_name, path, expect_hash) = expects.get(iv).unwrap();
+                    assert_eq!(*expect_hash, got_hash);
+                    let expect = tokio::fs::read(&path).await?;
+                    let mut got = Vec::new();
+                    reader.read_to_end(&mut got).await?;
+                    assert_eq!(expect, got);
+                    assert_eq!(*expect_name, got_name);
+                    i.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    Ok(reader)
+                }
+            },
+        )
+        .await?;
 
         provider.abort();
         let _ = provider.join().await;
