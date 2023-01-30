@@ -164,7 +164,7 @@ jobs:
     env:
       MSRV: "1.63"
     steps:
-      - uses: actions/checkout@master
+    - uses: actions/checkout@master
     - uses: actions-rs/toolchain@v1
       with:
           profile: minimal
