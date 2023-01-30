@@ -226,10 +226,9 @@ impl FullLoader {
 #[async_trait]
 impl ContentLoader for FullLoader {
     async fn stop_session(&self, ctx: ContextId) -> Result<()> {
-        self.client
-            .try_p2p()?
-            .stop_session_bitswap(ctx.into())
-            .await?;
+        if let Ok(p2p) = self.client.try_p2p() {
+            p2p.stop_session_bitswap(ctx.into()).await?;
+        }
         Ok(())
     }
 
