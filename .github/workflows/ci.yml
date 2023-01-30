@@ -157,3 +157,19 @@ jobs:
       with:
         token: ${{ secrets.GITHUB_TOKEN }}
         args: --all-features --all-targets
+
+  msrv:
+    name: Minimal Supported Rust Version
+    runs-on: ubuntu-latest
+    env:
+      MSRV: "1.63"
+    steps:
+      - uses: actions/checkout@master
+    - uses: actions-rs/toolchain@v1
+      with:
+          profile: minimal
+          toolchain: "${{ MSRV }}"
+          override: true
+    - name: Check MSRV all features
+      run: |
+        cargo +$MSRV check --workspace --all-targets --all-features
