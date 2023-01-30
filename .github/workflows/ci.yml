@@ -9,6 +9,7 @@ on:
 env:
   RUST_BACKTRACE: 1
   RUSTFLAGS: -Dwarnings
+  MSRV: "1.63"
 
 
 jobs:
@@ -157,3 +158,17 @@ jobs:
       with:
         token: ${{ secrets.GITHUB_TOKEN }}
         args: --all-features --all-targets
+
+  msrv:
+    name: Minimal Supported Rust Version
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@master
+    - uses: actions-rs/toolchain@v1
+      with:
+          profile: minimal
+          toolchain: "${{ env.MSRV }}"
+          override: true
+    - name: Check MSRV all features
+      run: |
+        cargo +$MSRV check --workspace --all-targets --all-features
