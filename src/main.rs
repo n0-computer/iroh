@@ -1,14 +1,14 @@
-use std::{io::Write, net::SocketAddr, path::PathBuf, str::FromStr};
+use std::{net::SocketAddr, path::PathBuf, str::FromStr};
 
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 use console::style;
-use futures::StreamExt;
 use indicatif::{HumanDuration, ProgressBar, ProgressDrawTarget, ProgressState, ProgressStyle};
 use is_terminal::IsTerminal;
 use sendme::protocol::AuthToken;
 use sendme::provider::{BlobOrCollection, Ticket};
-use tracing::trace;
+use tokio::io::AsyncWriteExt;
+use tokio::sync::Mutex;
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
 use sendme::{get, provider, Keypair, PeerId};
@@ -81,22 +81,27 @@ enum Commands {
 
 struct OutWriter {
     is_atty: bool,
-    stderr: std::io::Stderr,
+    stderr: Mutex<tokio::io::Stderr>,
 }
 
 impl OutWriter {
     pub fn new() -> Self {
         let stderr = std::io::stderr();
         let is_atty = stderr.is_terminal();
-        Self { is_atty, stderr }
+        let stderr = tokio::io::stderr();
+        Self {
+            is_atty,
+            stderr: Mutex::new(stderr),
+        }
     }
 }
 
 impl OutWriter {
-    pub fn println(&mut self, content: impl AsRef<[u8]>) {
+    pub async fn println(&self, content: impl AsRef<[u8]>) {
         if self.is_atty {
-            self.stderr.write_all(content.as_ref()).unwrap();
-            self.stderr.write_all(b"\n").unwrap();
+            let stderr = &mut *self.stderr.lock().await;
+            stderr.write_all(content.as_ref()).await.unwrap();
+            stderr.write_all(b"\n").await.unwrap();
         }
     }
 }
@@ -151,13 +156,15 @@ async fn main() -> Result<()> {
             auth_token,
             key,
         } => {
-            let mut out_writer = OutWriter::new();
+            let out_writer = OutWriter::new();
             let keypair = get_keypair(key).await?;
 
             let mut tmp_path = None;
 
             let sources = if let Some(path) = path {
-                out_writer.println(format!("Reading {}", path.display()));
+                out_writer
+                    .println(format!("Reading {}", path.display()))
+                    .await;
                 if path.is_dir() {
                     let mut paths = Vec::new();
                     let mut iter = tokio::fs::read_dir(&path).await?;
@@ -201,10 +208,16 @@ async fn main() -> Result<()> {
             }
             let provider = builder.spawn()?;
 
-            out_writer.println(format!("PeerID: {}", provider.peer_id()));
-            out_writer.println(format!("Auth token: {}", provider.auth_token()));
+            out_writer
+                .println(format!("PeerID: {}", provider.peer_id()))
+                .await;
+            out_writer
+                .println(format!("Auth token: {}", provider.auth_token()))
+                .await;
             if let Some(hash) = hash {
-                out_writer.println(format!("All-in-one ticket: {}", provider.ticket(hash)));
+                out_writer
+                    .println(format!("All-in-one ticket: {}", provider.ticket(hash)))
+                    .await;
             }
             provider.join().await?;
 
@@ -243,88 +256,106 @@ async fn get_interactive(
     token: AuthToken,
     out: Option<PathBuf>,
 ) -> Result<()> {
-    let mut out_writer = OutWriter::new();
-    out_writer.println(format!("Fetching: {}", hash.to_hex()));
+    let out_writer = OutWriter::new();
+    out_writer
+        .println(format!("Fetching: {}", hash.to_hex()))
+        .await;
 
-    out_writer.println(format!("{} Connecting ...", style("[1/3]").bold().dim()));
+    out_writer
+        .println(format!("{} Connecting ...", style("[1/3]").bold().dim()))
+        .await;
 
     let pb = ProgressBar::hidden();
-    let stream = get::run(hash, token, opts);
-    tokio::pin!(stream);
-    while let Some(event) = stream.next().await {
-        trace!("client event: {:?}", event);
-        match event? {
-            get::Event::Connected => {
-                out_writer.println(format!("{} Requesting ...", style("[2/3]").bold().dim()));
-            }
-            get::Event::ReceivedCollection(collection) => {
-                let name = collection.name();
-                let total_entries = collection.total_entries();
-                let size = collection.total_blobs_size();
-                out_writer.println(format!(
+    let on_connected = || {
+        let out_writer = &out_writer;
+        async move {
+            out_writer
+                .println(format!("{} Requesting ...", style("[2/3]").bold().dim()))
+                .await;
+            Ok(())
+        }
+    };
+    let on_collection = |collection: sendme::blobs::Collection| {
+        let pb = &pb;
+        let out_writer = &out_writer;
+        async move {
+            let name = collection.name();
+            let total_entries = collection.total_entries();
+            let size = collection.total_blobs_size();
+            out_writer
+                .println(format!(
                     "{} Downloading {name}...",
                     style("[3/3]").bold().dim()
-                ));
-                out_writer.println(format!(
+                ))
+                .await;
+            out_writer
+                .println(format!(
                     "  {total_entries} file(s) with total transfer size {size}"
-                ));
-                pb.set_style(
-                    ProgressStyle::with_template(PROGRESS_STYLE)
-                        .unwrap()
-                        .with_key(
-                            "eta",
-                            |state: &ProgressState, w: &mut dyn std::fmt::Write| {
-                                write!(w, "{:.1}s", state.eta().as_secs_f64()).unwrap()
-                            },
-                        )
-                        .progress_chars("#>-"),
-                );
-                pb.set_length(size);
-                pb.set_draw_target(ProgressDrawTarget::stderr());
-            }
-            get::Event::Receiving {
-                hash,
-                mut reader,
-                name,
-            } => {
-                let name = name.map_or_else(|| hash.to_string(), |n| n);
-                pb.set_message(format!("Receiving {name}..."));
+                ))
+                .await;
+            pb.set_style(
+                ProgressStyle::with_template(PROGRESS_STYLE)
+                    .unwrap()
+                    .with_key(
+                        "eta",
+                        |state: &ProgressState, w: &mut dyn std::fmt::Write| {
+                            write!(w, "{:.1}s", state.eta().as_secs_f64()).unwrap()
+                        },
+                    )
+                    .progress_chars("#>-"),
+            );
+            pb.set_length(size);
+            pb.set_draw_target(ProgressDrawTarget::stderr());
 
-                if let Some(ref outpath) = out {
-                    tokio::fs::create_dir_all(outpath)
-                        .await
-                        .context("Unable to create directory {outpath}")?;
-                    let dirpath = std::path::PathBuf::from(outpath);
-                    let filepath = dirpath.join(name);
-                    let (temp_file, dup) = tokio::task::spawn_blocking(|| {
-                        let temp_file = tempfile::Builder::new()
-                            .prefix("sendme-tmp-")
-                            .tempfile_in(dirpath)
-                            .context("Failed to create temporary output file")?;
-                        let dup = temp_file.as_file().try_clone()?;
-                        Ok::<_, anyhow::Error>((temp_file, dup))
-                    })
-                    .await??;
-                    let file = tokio::fs::File::from_std(dup);
-                    let out = tokio::io::BufWriter::new(file);
-                    // wrap for progress bar
-                    let mut wrapped_out = pb.wrap_async_write(out);
-                    tokio::io::copy(&mut reader, &mut wrapped_out).await?;
-                    let filepath2 = filepath.clone();
-                    tokio::task::spawn_blocking(|| temp_file.persist(filepath2))
-                        .await?
-                        .context("Failed to write output file")?;
-                } else {
-                    // Write to OUT_WRITER
-                    let mut stdout = tokio::io::stdout();
-                    tokio::io::copy(&mut reader, &mut stdout).await?;
-                }
-            }
-            get::Event::Done(stats) => {
-                pb.finish_and_clear();
-                out_writer.println(format!("Done in {}", HumanDuration(stats.elapsed)));
-            }
+            Ok(())
         }
-    }
+    };
+    let on_blob = |hash: blake3::Hash, mut reader, name: Option<String>| {
+        let out = &out;
+        let pb = &pb;
+        async move {
+            let name = name.map_or_else(|| hash.to_string(), |n| n);
+            pb.set_message(format!("Receiving {name}..."));
+
+            if let Some(ref outpath) = out {
+                tokio::fs::create_dir_all(outpath)
+                    .await
+                    .context("Unable to create directory {outpath}")?;
+                let dirpath = std::path::PathBuf::from(outpath);
+                let filepath = dirpath.join(name);
+                let (temp_file, dup) = tokio::task::spawn_blocking(|| {
+                    let temp_file = tempfile::Builder::new()
+                        .prefix("sendme-tmp-")
+                        .tempfile_in(dirpath)
+                        .context("Failed to create temporary output file")?;
+                    let dup = temp_file.as_file().try_clone()?;
+                    Ok::<_, anyhow::Error>((temp_file, dup))
+                })
+                .await??;
+                let file = tokio::fs::File::from_std(dup);
+                let out = tokio::io::BufWriter::new(file);
+                // wrap for progress bar
+                let mut wrapped_out = pb.wrap_async_write(out);
+                tokio::io::copy(&mut reader, &mut wrapped_out).await?;
+                let filepath2 = filepath.clone();
+                tokio::task::spawn_blocking(|| temp_file.persist(filepath2))
+                    .await?
+                    .context("Failed to write output file")?;
+            } else {
+                // Write to OUT_WRITER
+                let mut stdout = tokio::io::stdout();
+                tokio::io::copy(&mut reader, &mut stdout).await?;
+            }
+
+            Ok(reader)
+        }
+    };
+    let stats = get::run(hash, token, opts, on_connected, on_collection, on_blob).await?;
+
+    pb.finish_and_clear();
+    out_writer
+        .println(format!("Done in {}", HumanDuration(stats.elapsed)))
+        .await;
+
     Ok(())
 }

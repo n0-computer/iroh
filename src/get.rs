@@ -1,17 +1,18 @@
 use std::fmt::Debug;
+use std::net::SocketAddr;
 use std::time::{Duration, Instant};
-use std::{io::Read, net::SocketAddr};
 
-use anyhow::{anyhow, bail, ensure, Context, Result};
-use bytes::{Bytes, BytesMut};
-use futures::Stream;
-use genawaiter::sync::{Co, Gen};
+use anyhow::{anyhow, bail, ensure, Result};
+use bytes::BytesMut;
+use futures::Future;
 use postcard::experimental::max_size::MaxSize;
+use s2n_quic::stream::ReceiveStream;
 use s2n_quic::Connection;
 use s2n_quic::{client::Connect, Client};
-use tokio::io::{AsyncRead, AsyncWriteExt};
+use tokio::io::AsyncRead;
 use tracing::debug;
 
+use crate::bao_slice_decoder::AsyncSliceDecoder;
 use crate::blobs::Collection;
 use crate::protocol::{
     read_lp_data, read_size_data, write_lp, AuthToken, Handshake, Request, Res, Response,
@@ -64,68 +65,29 @@ pub struct Stats {
     pub mbits: f64,
 }
 
-/// The events that are emitted while running a transfer.
-pub enum Event {
-    /// The connection to the provider was established.
-    Connected,
-    /// The provider has the Collection.
-    ReceivedCollection(Collection),
-    /// Content is being received.
-    Receiving {
-        /// The hash of the content we received.
-        hash: bao::Hash,
-        /// The actual data we are receiving.
-        reader: Box<dyn AsyncRead + Unpin + Sync + Send + 'static>,
-        /// An optional name associated with the data
-        name: Option<String>,
-    },
-    /// The transfer is done.
-    Done(Stats),
-}
-
-impl Debug for Event {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Connected => write!(f, "Event::Connected"),
-            Self::ReceivedCollection(c) => {
-                write!(f, "Event::ReceivedCollection({c:#?})")
-            }
-            Self::Receiving { hash, name, .. } => {
-                write!(
-                    f,
-                    "Event::Receiving {{ hash: {hash}, reader: Box<AsyncReader>, name: {name:#?} }}"
-                )
-            }
-            Self::Done(s) => write!(f, "Event::Done({s:#?})"),
-        }
-    }
-}
-
-pub fn run(hash: bao::Hash, token: AuthToken, opts: Options) -> impl Stream<Item = Result<Event>> {
-    Gen::new(|co| producer(hash, token, opts, co))
-}
-
-async fn producer(hash: bao::Hash, token: AuthToken, opts: Options, mut co: Co<Result<Event>>) {
-    match inner_producer(hash, token, opts, &mut co).await {
-        Ok(()) => {}
-        Err(err) => {
-            co.yield_(Err(err)).await;
-        }
-    }
-}
-async fn inner_producer(
+pub async fn run<A, B, C, FutA, FutB, FutC>(
     hash: bao::Hash,
     token: AuthToken,
     opts: Options,
-    co: &mut Co<Result<Event>>,
-) -> Result<()> {
+    on_connected: A,
+    mut on_collection: B,
+    mut on_blob: C,
+) -> Result<Stats>
+where
+    A: FnOnce() -> FutA,
+    FutA: Future<Output = Result<()>>,
+    B: FnMut(Collection) -> FutB,
+    FutB: Future<Output = Result<()>>,
+    C: FnMut(bao::Hash, AsyncSliceDecoder<ReceiveStream>, Option<String>) -> FutC,
+    FutC: Future<Output = Result<AsyncSliceDecoder<ReceiveStream>>>,
+{
     let now = Instant::now();
     let (_client, mut connection) = setup(opts).await?;
 
     let stream = connection.open_bidirectional_stream().await?;
     let (mut reader, mut writer) = stream.split();
 
-    co.yield_(Ok(Event::Connected)).await;
+    on_connected().await?;
 
     let mut out_buffer = BytesMut::zeroed(std::cmp::max(
         Request::POSTCARD_MAX_SIZE,
@@ -167,7 +129,6 @@ async fn inner_producer(
                     // server is sending over a collection of blobs
                     Res::FoundCollection {
                         size,
-                        outboard,
                         total_blobs_size,
                     } => {
                         ensure!(
@@ -179,28 +140,22 @@ async fn inner_producer(
 
                         data_len = total_blobs_size;
 
-                        // read entire collection data into buffer :(
-                        let data = read_size_data(size, &mut reader, &mut in_buffer).await?;
+                        // read entire collection data into buffer
+                        let encoded_size = bao::encode::encoded_size(size) as u64;
+                        let encoded =
+                            read_size_data(encoded_size, &mut reader, &mut in_buffer).await?;
 
                         // decode the collection
-                        let collection = Collection::decode_from(data, outboard, hash).await?;
-
-                        co.yield_(Ok(Event::ReceivedCollection(collection.clone())))
-                            .await;
+                        let collection = Collection::decode_from(encoded, hash)?;
+                        on_collection(collection.clone()).await?;
 
                         // expect to get blob data in the order they appear in the collection
                         for blob in collection.blobs {
-                            let (blob_reader, task) =
-                                handle_blob_response(blob.hash, &mut reader, &mut in_buffer)
-                                    .await?;
-                            co.yield_(Ok(Event::Receiving {
-                                hash: blob.hash,
-                                reader: blob_reader,
-                                name: Some(blob.name),
-                            }))
-                            .await;
-
-                            task.await??;
+                            let blob_reader =
+                                handle_blob_response(blob.hash, reader, &mut in_buffer).await?;
+                            let blob_reader =
+                                on_blob(blob.hash, blob_reader, Some(blob.name)).await?;
+                            reader = blob_reader.into_inner();
                         }
                     }
 
@@ -232,8 +187,7 @@ async fn inner_producer(
                     mbits,
                 };
 
-                co.yield_(Ok(Event::Done(stats))).await;
-                Ok(())
+                Ok(stats)
             }
             None => {
                 bail!("provider disconnected");
@@ -243,17 +197,16 @@ async fn inner_producer(
 }
 
 /// Read next response, and if `Res::Found`, reads the next blob of data off the reader.
-/// Returns an `AsyncReader` and a `JoinHandle`.
-/// The `JoinHandle` task must be `await`-ed to begin decoding the blob data and writing the
-/// verified data to the `AsyncReader`.
-async fn handle_blob_response<'a, R: AsyncRead + futures::io::AsyncRead + Unpin>(
+///
+/// Returns an `AsyncReader`
+/// The `AsyncReader` can be used to read the content.
+async fn handle_blob_response<
+    R: AsyncRead + futures::io::AsyncRead + Send + Sync + Unpin + 'static,
+>(
     hash: bao::Hash,
     mut reader: R,
     buffer: &mut BytesMut,
-) -> Result<(
-    Box<dyn AsyncRead + Unpin + Sync + Send + 'static>,
-    tokio::task::JoinHandle<Result<()>>,
-)> {
+) -> Result<AsyncSliceDecoder<R>> {
     match read_lp_data(&mut reader, buffer).await? {
         Some(response_buffer) => {
             let response: Response = postcard::from_bytes(&response_buffer)?;
@@ -265,52 +218,13 @@ async fn handle_blob_response<'a, R: AsyncRead + futures::io::AsyncRead + Unpin>
                 // blob data not found
                 Res::NotFound => Err(anyhow!("data for {} not found", hash.to_hex()))?,
                 // next blob in collection will be sent over
-                Res::Found { size, outboard } => {
-                    // reads entire blob into buffer :(
-                    let data = read_size_data(size, &mut reader, buffer).await?;
-                    decode_data_to_reader(data, outboard, hash).await
+                Res::Found { size } => {
+                    assert!(buffer.is_empty());
+                    let decoder = AsyncSliceDecoder::new(reader, hash, 0, size);
+                    Ok(decoder)
                 }
             }
         }
         None => Err(anyhow!("server disconnected"))?,
     }
-}
-
-/// Returns an `AsyncRead` and a `JoinHandle`.
-/// The `JoinHandle` task must be `await`-ed to begin decoding the given data and writing the
-/// verified data to the `AsyncRead`er.
-async fn decode_data_to_reader(
-    data: Bytes,
-    outboard: &[u8],
-    hash: bao::Hash,
-) -> Result<(
-    Box<dyn AsyncRead + Unpin + Sync + Send + 'static>,
-    tokio::task::JoinHandle<Result<()>>,
-)> {
-    let (a, mut b) = tokio::io::duplex(1024);
-
-    // TODO: avoid copy
-    let outboard = outboard.to_vec();
-    let t = tokio::task::spawn(async move {
-        // verify content of data matches the expected hash
-        let mut decoder =
-            bao::decode::Decoder::new_outboard(std::io::Cursor::new(&data[..]), &*outboard, &hash);
-
-        let mut buf = [0u8; 1024];
-        loop {
-            // TODO: write & use an `async decoder`
-            let read = decoder
-                .read(&mut buf)
-                .context("hash of Collection data does not match")?;
-            if read == 0 {
-                break;
-            }
-            b.write_all(&buf[..read]).await?;
-        }
-        b.flush().await?;
-        debug!("finished writing");
-        Ok::<(), anyhow::Error>(())
-    });
-
-    Ok((Box::new(a), t))
 }
