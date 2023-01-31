@@ -16,10 +16,11 @@ pub struct Collection {
 }
 
 impl Collection {
-    pub async fn decode_from(encoded: Bytes, hash: bao::Hash) -> Result<Self> {
+    pub fn decode_from(encoded: Bytes, hash: bao::Hash) -> Result<Self> {
         // verify that the content of data matches the expected hash
         let mut decoder = bao::decode::Decoder::new(std::io::Cursor::new(&encoded[..]), &hash);
-        let mut data = Vec::new();
+        // decoded size can be at most encoded size
+        let mut data = Vec::with_capacity(encoded.len());
         decoder
             .read_to_end(&mut data)
             .context("hash of Collection data does not match")?;

@@ -146,7 +146,7 @@ where
                             read_size_data(encoded_size, &mut reader, &mut in_buffer).await?;
 
                         // decode the collection
-                        let collection = Collection::decode_from(encoded, hash).await?;
+                        let collection = Collection::decode_from(encoded, hash)?;
                         on_collection(collection.clone()).await?;
 
                         // expect to get blob data in the order they appear in the collection

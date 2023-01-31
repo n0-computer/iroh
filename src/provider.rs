@@ -235,7 +235,10 @@ async fn handle_stream(db: Database, token: AuthToken, stream: BidirectionalStre
                             0,
                             data.len() as u64,
                         );
-                        let mut encoded = Vec::new();
+                        let encoded_size: usize = bao::encode::encoded_size(data.len() as u64)
+                            .try_into()
+                            .unwrap();
+                        let mut encoded = Vec::with_capacity(encoded_size);
                         extractor.read_to_end(&mut encoded)?;
 
                         let c: Collection = postcard::from_bytes(data)?;
