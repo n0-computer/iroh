@@ -156,8 +156,6 @@ where
                             let blob_reader =
                                 on_blob(blob.hash, blob_reader, Some(blob.name)).await?;
                             reader = blob_reader.into_inner();
-                            // await the completion of the copying. Only then can we get back the reader.
-                            // reader = reader1.await??;
                         }
                     }
 
