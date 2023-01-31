@@ -3,7 +3,9 @@ use std::{net::SocketAddr, path::PathBuf, str::FromStr};
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 use console::style;
-use indicatif::{HumanDuration, ProgressBar, ProgressDrawTarget, ProgressState, ProgressStyle};
+use indicatif::{
+    HumanBytes, HumanDuration, ProgressBar, ProgressDrawTarget, ProgressState, ProgressStyle,
+};
 use is_terminal::IsTerminal;
 use sendme::protocol::AuthToken;
 use sendme::provider::{BlobOrCollection, Ticket};
@@ -112,7 +114,7 @@ const PROGRESS_STYLE: &str =
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<()> {
     tracing_subscriber::registry()
-        .with(fmt::layer())
+        .with(fmt::layer().with_writer(std::io::stderr))
         .with(EnvFilter::from_default_env())
         .init();
 
@@ -266,6 +268,19 @@ async fn get_interactive(
         .await;
 
     let pb = ProgressBar::hidden();
+    pb.enable_steady_tick(std::time::Duration::from_millis(50));
+    pb.set_style(
+        ProgressStyle::with_template(PROGRESS_STYLE)
+            .unwrap()
+            .with_key(
+                "eta",
+                |state: &ProgressState, w: &mut dyn std::fmt::Write| {
+                    write!(w, "{:.1}s", state.eta().as_secs_f64()).unwrap()
+                },
+            )
+            .progress_chars("#>-"),
+    );
+
     let on_connected = || {
         let out_writer = &out_writer;
         async move {
@@ -290,21 +305,12 @@ async fn get_interactive(
                 .await;
             out_writer
                 .println(format!(
-                    "  {total_entries} file(s) with total transfer size {size}"
+                    "  {total_entries} file(s) with total transfer size {}",
+                    HumanBytes(size)
                 ))
                 .await;
-            pb.set_style(
-                ProgressStyle::with_template(PROGRESS_STYLE)
-                    .unwrap()
-                    .with_key(
-                        "eta",
-                        |state: &ProgressState, w: &mut dyn std::fmt::Write| {
-                            write!(w, "{:.1}s", state.eta().as_secs_f64()).unwrap()
-                        },
-                    )
-                    .progress_chars("#>-"),
-            );
             pb.set_length(size);
+            pb.reset();
             pb.set_draw_target(ProgressDrawTarget::stderr());
 
             Ok(())
@@ -315,7 +321,10 @@ async fn get_interactive(
         let pb = &pb;
         async move {
             let name = name.map_or_else(|| hash.to_string(), |n| n);
-            pb.set_message(format!("Receiving {name}..."));
+            pb.set_message(format!("Receiving '{name}'..."));
+
+            // Wrap the reader to show progress.
+            let mut wrapped_reader = pb.wrap_async_read(&mut reader);
 
             if let Some(ref outpath) = out {
                 tokio::fs::create_dir_all(outpath)
@@ -323,6 +332,8 @@ async fn get_interactive(
                     .context("Unable to create directory {outpath}")?;
                 let dirpath = std::path::PathBuf::from(outpath);
                 let filepath = dirpath.join(name);
+
+                // Create temp file
                 let (temp_file, dup) = tokio::task::spawn_blocking(|| {
                     let temp_file = tempfile::Builder::new()
                         .prefix("sendme-tmp-")
@@ -333,10 +344,10 @@ async fn get_interactive(
                 })
                 .await??;
                 let file = tokio::fs::File::from_std(dup);
-                let out = tokio::io::BufWriter::new(file);
-                // wrap for progress bar
-                let mut wrapped_out = pb.wrap_async_write(out);
-                tokio::io::copy(&mut reader, &mut wrapped_out).await?;
+                let mut file_buf = tokio::io::BufWriter::new(file);
+                tokio::io::copy(&mut wrapped_reader, &mut file_buf).await?;
+
+                // Rename temp file, to target name
                 let filepath2 = filepath.clone();
                 tokio::task::spawn_blocking(|| temp_file.persist(filepath2))
                     .await?
@@ -344,7 +355,7 @@ async fn get_interactive(
             } else {
                 // Write to OUT_WRITER
                 let mut stdout = tokio::io::stdout();
-                tokio::io::copy(&mut reader, &mut stdout).await?;
+                tokio::io::copy(&mut wrapped_reader, &mut stdout).await?;
             }
 
             Ok(reader)
