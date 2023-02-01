@@ -171,7 +171,7 @@ url = "2.2.2"
 urlencoding = "2.1"
 wasm-timer = "0.2.5"
 which = "4.3.0"
-xtaskops = "0.3"
+xtaskops = "0.4"
 zeroize = "1.4"
 
 [profile.optimized-release]
