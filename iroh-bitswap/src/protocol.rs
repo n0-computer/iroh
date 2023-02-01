@@ -10,10 +10,7 @@ use libp2p::core::{InboundUpgrade, OutboundUpgrade, ProtocolName, UpgradeInfo};
 use prost::Message;
 use unsigned_varint::codec;
 
-use crate::{
-    handler::{BitswapHandlerError, HandlerEvent},
-    message::BitswapMessage,
-};
+use crate::{handler::BitswapHandlerError, message::BitswapMessage};
 
 const MAX_BUF_SIZE: usize = 1024 * 1024 * 2;
 
@@ -177,7 +174,7 @@ impl Encoder for BitswapCodec {
 }
 
 impl Decoder for BitswapCodec {
-    type Item = HandlerEvent;
+    type Item = (BitswapMessage, ProtocolId);
     type Error = BitswapHandlerError;
 
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
@@ -194,10 +191,7 @@ impl Decoder for BitswapCodec {
 
         let message = BitswapMessage::try_from(packet.freeze())?;
 
-        Ok(Some(HandlerEvent::Message {
-            message,
-            protocol: self.protocol,
-        }))
+        Ok(Some((message, self.protocol)))
     }
 }
 
