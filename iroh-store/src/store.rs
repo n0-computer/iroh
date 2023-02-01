@@ -9,7 +9,6 @@ use iroh_metrics::{
     inc, observe, record,
     store::{StoreHistograms, StoreMetrics},
 };
-use iroh_rpc_client::Client as RpcClient;
 use multihash::Multihash;
 use rocksdb::{
     BlockBasedOptions, Cache, ColumnFamily, DBPinnableSlice, Direction, IteratorMode, Options,
@@ -31,7 +30,6 @@ struct InnerStore {
     content: RocksDb,
     next_id: RwLock<u64>,
     _cache: Cache,
-    _rpc_client: RpcClient,
 }
 
 impl fmt::Debug for InnerStore {
@@ -40,7 +38,6 @@ impl fmt::Debug for InnerStore {
             .field("content", &self.content)
             .field("next_id", &self.next_id)
             .field("_cache", &"rocksdb::db_options::Cache")
-            .field("_rpc_client", &self._rpc_client)
             .finish()
     }
 }
@@ -131,16 +128,11 @@ impl Store {
         })
         .await??;
 
-        let _rpc_client = RpcClient::new(config.rpc_client)
-            .await
-            .context("Error creating rpc client for store")?;
-
         Ok(Store {
             inner: Arc::new(InnerStore {
                 content: db,
                 next_id: 1.into(),
                 _cache: cache,
-                _rpc_client,
             }),
         })
     }
@@ -181,18 +173,11 @@ impl Store {
         })
         .await??;
 
-        let _rpc_client = RpcClient::new(config.rpc_client)
-            .await
-            // TODO: first conflict between `anyhow` & `anyhow`
-            // .map_err(|e| e.context("Error creating rpc client for store"))?;
-            .map_err(|e| anyhow!("Error creating rpc client for store: {:?}", e))?;
-
         Ok(Store {
             inner: Arc::new(InnerStore {
                 content: db,
                 next_id: next_id.into(),
                 _cache: cache,
-                _rpc_client,
             }),
         })
     }
@@ -694,11 +679,6 @@ impl<'a> ReadStore<'a> {
 mod tests {
     use std::{str::FromStr, sync::Mutex};
 
-    use super::*;
-
-    use iroh_metrics::config::Config as MetricsConfig;
-    use iroh_rpc_client::Config as RpcClientConfig;
-
     use cid::multihash::{Code, MultihashDigest};
     use libipld::{
         cbor::DagCborCodec,
@@ -706,19 +686,16 @@ mod tests {
         Ipld, IpldCodec,
     };
     use tempfile::TempDir;
+
+    use super::*;
+
     const RAW: u64 = 0x55;
     const DAG_CBOR: u64 = 0x71;
 
     #[tokio::test]
     async fn test_basics() {
         let dir = tempfile::tempdir().unwrap();
-        let rpc_client = RpcClientConfig::default();
-        let config = Config {
-            path: dir.path().into(),
-            rpc_client,
-            metrics: MetricsConfig::default(),
-        };
-
+        let config = Config::new(dir.path().into());
         let store = Store::create(config).await.unwrap();
 
         let mut values = Vec::new();
@@ -751,12 +728,7 @@ mod tests {
     #[tokio::test]
     async fn test_reopen() {
         let dir = tempfile::tempdir().unwrap();
-        let rpc_client = RpcClientConfig::default();
-        let config = Config {
-            path: dir.path().into(),
-            rpc_client,
-            metrics: MetricsConfig::default(),
-        };
+        let config = Config::new(dir.path().into());
 
         let store = Store::create(config.clone()).await.unwrap();
 
@@ -820,13 +792,7 @@ mod tests {
 
     async fn test_store() -> anyhow::Result<(Store, TempDir)> {
         let dir = tempfile::tempdir()?;
-        let rpc_client = RpcClientConfig::default();
-        let config = Config {
-            path: dir.path().into(),
-            rpc_client,
-            metrics: MetricsConfig::default(),
-        };
-
+        let config = Config::new(dir.path().into());
         let store = Store::create(config).await?;
         Ok((store, dir))
     }

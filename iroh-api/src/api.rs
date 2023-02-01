@@ -16,8 +16,6 @@ use iroh_unixfs::{
     content_loader::{FullLoader, FullLoaderConfig},
 };
 use iroh_util::{iroh_config_path, make_config};
-#[cfg(feature = "testing")]
-use mockall::automock;
 use relative_path::RelativePathBuf;
 use tokio::io::{AsyncRead, AsyncReadExt};
 
@@ -52,7 +50,6 @@ impl fmt::Debug for OutType {
     }
 }
 
-#[cfg_attr(feature = "testing", allow(dead_code), automock)]
 impl Api {
     /// Creates a new instance from the iroh configuration.
     ///

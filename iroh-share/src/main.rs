@@ -75,7 +75,7 @@ async fn main() -> Result<()> {
             let ticket = sender_transfer.ticket();
             let ticket_bytes = ticket.as_bytes();
             let ticket_str = multibase::encode(multibase::Base::Base64, &ticket_bytes);
-            println!("Ticket:\n{}\n", ticket_str);
+            println!("Ticket:\n{ticket_str}\n");
             sender_transfer.done().await?;
         }
         Commands::Receive { ticket, out } => {
@@ -102,10 +102,10 @@ async fn main() -> Result<()> {
                 while let Some(ev) = progress.next().await {
                     match ev {
                         Ok(ProgressEvent::Piece { index, total }) => {
-                            println!("transferred: {}/{}", index, total);
+                            println!("transferred: {index}/{total}");
                         }
                         Err(e) => {
-                            eprintln!("transfer failed: {}", e);
+                            eprintln!("transfer failed: {e}");
                         }
                     }
                 }

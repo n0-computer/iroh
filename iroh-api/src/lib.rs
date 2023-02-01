@@ -1,13 +1,7 @@
-#[cfg(not(feature = "testing"))]
 pub use crate::api::Api;
-#[cfg(feature = "testing")]
-pub use crate::api::MockApi as Api;
 pub use crate::api::OutType;
 pub use crate::config::Config;
 pub use crate::error::ApiError;
-#[cfg(feature = "testing")]
-pub use crate::p2p::MockP2p as P2pApi;
-#[cfg(not(feature = "testing"))]
 pub use crate::p2p::P2p as P2pApi;
 pub use crate::p2p::PeerIdOrAddr;
 pub use bytes::Bytes;

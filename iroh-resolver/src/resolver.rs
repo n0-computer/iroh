@@ -695,7 +695,7 @@ impl<T: ContentLoader> Resolver<T> {
         let this = self.clone();
         self.resolve_recursive_mapped(root, None, move |cid, ctx| {
             let this = this.clone();
-            async move { this.resolve_with_ctx(ctx, Path::from_cid(cid)).await }
+            async move { this.resolve_with_ctx(ctx, Path::from_cid(cid), false).await }
         })
     }
 
@@ -781,10 +781,24 @@ impl<T: ContentLoader> Resolver<T> {
     pub async fn resolve(&self, path: Path) -> Result<Out> {
         let ctx = LoaderContext::from_path(self.next_id(), self.session_closer.clone());
 
-        self.resolve_with_ctx(ctx, path).await
+        self.resolve_with_ctx(ctx, path, false).await
     }
 
-    pub async fn resolve_with_ctx(&self, mut ctx: LoaderContext, path: Path) -> Result<Out> {
+    /// Resolves through a given path, returning the [`Cid`] and raw bytes of the final leaf.
+    /// Forces the RAW codec.
+    #[tracing::instrument(skip(self))]
+    pub async fn resolve_raw(&self, path: Path) -> Result<Out> {
+        let ctx = LoaderContext::from_path(self.next_id(), self.session_closer.clone());
+
+        self.resolve_with_ctx(ctx, path, true).await
+    }
+
+    pub async fn resolve_with_ctx(
+        &self,
+        mut ctx: LoaderContext,
+        path: Path,
+        force_raw: bool,
+    ) -> Result<Out> {
         // Resolve the root block.
         let (root_cid, loaded_cid) = self.resolve_root(&path, &mut ctx).await?;
         match loaded_cid.source {
@@ -792,7 +806,10 @@ impl<T: ContentLoader> Resolver<T> {
             _ => inc!(ResolverMetrics::CacheMiss),
         }
 
-        let codec = Codec::try_from(root_cid.codec()).context("unknown codec")?;
+        let codec = match force_raw {
+            true => Codec::Raw,
+            false => Codec::try_from(root_cid.codec()).context("unknown codec")?,
+        };
 
         match codec {
             Codec::DagPb => {
@@ -1178,7 +1195,7 @@ mod tests {
         ];
 
         for test in roundtrip_tests {
-            println!("{}", test);
+            println!("{test}");
             let p: Path = test.parse().unwrap();
             assert_eq!(p.to_string(), test);
         }
@@ -1188,7 +1205,7 @@ mod tests {
             "/ipfs/bafkreigh2akiscaildcqabsyg3dfr6chu3fgpregiymsck7e7aqa4s52zy",
         )];
         for (test_in, test_out) in valid_tests {
-            println!("{}", test_in);
+            println!("{test_in}");
             let p: Path = test_in.parse().unwrap();
             assert_eq!(p.to_string(), test_out);
         }
@@ -1200,7 +1217,7 @@ mod tests {
             "/ipfs/ipfs.io",
         ];
         for test in invalid_tests {
-            println!("{}", test);
+            println!("{test}");
             assert!(test.parse::<Path>().is_err());
         }
     }
@@ -1452,7 +1469,7 @@ mod tests {
                     "hello\n"
                 );
             } else {
-                panic!("invalid result: {:?}", ipld_hello_txt);
+                panic!("invalid result: {ipld_hello_txt:?}");
             }
         }
 
@@ -1488,7 +1505,7 @@ mod tests {
                     "hello\n"
                 );
             } else {
-                panic!("invalid result: {:?}", ipld_hello_txt);
+                panic!("invalid result: {ipld_hello_txt:?}");
             }
         }
 
@@ -1551,7 +1568,7 @@ mod tests {
                     "world\n"
                 );
             } else {
-                panic!("invalid result: {:?}", ipld_bar_txt);
+                panic!("invalid result: {ipld_bar_txt:?}");
             }
         }
     }
@@ -1609,7 +1626,7 @@ mod tests {
             let cr = seek_and_clip(ctx.clone(), &node, resolver.clone(), 1..3).await;
             assert_eq!(read_to_string(cr).await, "el");
         } else {
-            panic!("invalid result: {:?}", ipld_hello_txt);
+            panic!("invalid result: {ipld_hello_txt:?}");
         }
     }
 
@@ -1676,7 +1693,7 @@ mod tests {
                 assert!(content.starts_with("2.0</a>"));
                 assert!(content.ends_with("the Apac"));
             } else {
-                panic!("invalid result: {:?}", ipld_readme);
+                panic!("invalid result: {ipld_readme:?}");
             }
         }
     }
@@ -1845,7 +1862,7 @@ mod tests {
                     "hello\n"
                 );
             } else {
-                panic!("invalid result: {:?}", ipld_hello_txt);
+                panic!("invalid result: {ipld_hello_txt:?}");
             }
         }
 
@@ -1888,7 +1905,7 @@ mod tests {
                     "world\n"
                 );
             } else {
-                panic!("invalid result: {:?}", ipld_bar_txt);
+                panic!("invalid result: {ipld_bar_txt:?}");
             }
         }
     }
@@ -1952,12 +1969,12 @@ mod tests {
                     .unwrap(),
                 )
                 .await;
-                print!("{}", content);
+                print!("{content}");
                 assert_eq!(content.len(), 426);
                 assert!(content.starts_with("# iroh"));
                 assert!(content.ends_with("</sub>\n\n"));
             } else {
-                panic!("invalid result: {:?}", ipld_readme);
+                panic!("invalid result: {ipld_readme:?}");
             }
         }
     }
@@ -2123,7 +2140,7 @@ mod tests {
                     "hello\n"
                 );
             } else {
-                panic!("invalid result: {:?}", ipld_hello_txt);
+                panic!("invalid result: {ipld_hello_txt:?}");
             }
         }
 
@@ -2180,7 +2197,7 @@ mod tests {
                     "world\n"
                 );
             } else {
-                panic!("invalid result: {:?}", ipld_bar_txt);
+                panic!("invalid result: {ipld_bar_txt:?}");
             }
         }
 
@@ -2218,7 +2235,7 @@ mod tests {
                     "./bar.txt"
                 );
             } else {
-                panic!("invalid result: {:?}", ipld_bar_txt);
+                panic!("invalid result: {ipld_bar_txt:?}");
             }
         }
 
@@ -2256,7 +2273,7 @@ mod tests {
                     "../../hello.txt"
                 );
             } else {
-                panic!("invalid result: {:?}", ipld_bar_txt);
+                panic!("invalid result: {ipld_bar_txt:?}");
             }
         }
 
@@ -2294,7 +2311,7 @@ mod tests {
                     "../hello.txt"
                 );
             } else {
-                panic!("invalid result: {:?}", ipld_bar_txt);
+                panic!("invalid result: {ipld_bar_txt:?}");
             }
 
             let path = format!("/ipfs/{my_symlink_cid_str}");
@@ -2322,7 +2339,7 @@ mod tests {
                     "../hello.txt"
                 );
             } else {
-                panic!("invalid result: {:?}", ipld_bar_txt);
+                panic!("invalid result: {ipld_bar_txt:?}");
             }
         }
     }
@@ -2388,7 +2405,7 @@ mod tests {
                     "world\n",
                 );
             } else {
-                panic!("invalid result: {:?}", ipld_txt);
+                panic!("invalid result: {ipld_txt:?}");
             }
         }
         // read the directory listing
@@ -2429,7 +2446,7 @@ mod tests {
 
         for i in 1..=10000 {
             tokio::task::yield_now().await; // yield so sessions can be closed
-            let path = format!("/ipfs/{root_cid_str}/{}.txt", i);
+            let path = format!("/ipfs/{root_cid_str}/{i}.txt");
             let ipld_txt = resolver.resolve(path.parse().unwrap()).await.unwrap();
 
             assert!(ipld_txt
@@ -2456,10 +2473,10 @@ mod tests {
                         .unwrap()
                     )
                     .await,
-                    format!("{}\n", i),
+                    format!("{i}\n"),
                 );
             } else {
-                panic!("invalid result: {:?}", ipld_txt);
+                panic!("invalid result: {ipld_txt:?}");
             }
         }
     }

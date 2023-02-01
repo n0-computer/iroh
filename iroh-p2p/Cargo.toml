@@ -40,7 +40,7 @@ toml.workspace = true
 tracing.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 zeroize.workspace = true
- 
+
 [dependencies.libp2p]
 workspace = true
 features = [

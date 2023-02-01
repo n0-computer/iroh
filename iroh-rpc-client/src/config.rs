@@ -13,6 +13,9 @@ pub struct Config {
     /// Store rpc address.
     pub store_addr: Option<StoreAddr>,
     /// Number of concurent channels.
+    ///
+    /// If `None` defaults to `1`, not used for in-memory addresses.
+    // TODO: Consider changing this to NonZeroUsize instead of Option<usize>.
     pub channels: Option<usize>,
 }
 

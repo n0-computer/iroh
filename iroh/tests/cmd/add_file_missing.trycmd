@@ -1,6 +1,0 @@
-```
-$ iroh add missing.txt
-? failed
-Error: Path does not exist
-
-```

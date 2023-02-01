@@ -57,7 +57,7 @@ impl Sender {
             gossip_task,
         } = self;
 
-        let t = Sha256Topic::new(format!("iroh-share-{}", id));
+        let t = Sha256Topic::new(format!("iroh-share-{id}"));
         let root_dir = dir_builder.build().await?;
 
         let (done_sender, done_receiver) = oneshot();
@@ -189,9 +189,9 @@ impl Transfer {
     /// Waits until the transfer is done.
     pub async fn done(self) -> Result<()> {
         self.done_receiver.await??;
-        self.p2p.close().await?;
-        self.gossip_task.await?;
+        self.gossip_task.abort();
         self.gossip_task_source.await?;
+        self.p2p.close().await?;
 
         Ok(())
     }

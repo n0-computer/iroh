@@ -2,8 +2,8 @@ use anyhow::anyhow;
 use clap::Parser;
 use iroh_store::{
     cli::Args,
-    config::{config_data_path, CONFIG_FILE_NAME, ENV_PREFIX},
-    metrics, rpc, Config, Store,
+    config::{config_data_path, Config, ServerConfig, CONFIG_FILE_NAME, ENV_PREFIX},
+    metrics, rpc, Store,
 };
 use iroh_util::lock::ProgramLock;
 use iroh_util::{block_until_sigint, iroh_config_path, make_config};
@@ -24,7 +24,7 @@ async fn main() -> anyhow::Result<()> {
     let config_data_path = config_data_path(args.path.clone())?;
     let config = make_config(
         // default
-        Config::new_network(config_data_path),
+        ServerConfig::new(config_data_path),
         // potential config files
         sources,
         // env var prefix for this config
@@ -49,6 +49,7 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
+    let config = Config::from(config);
     let rpc_addr = config
         .rpc_addr()
         .ok_or_else(|| anyhow!("missing store rpc addr"))?;

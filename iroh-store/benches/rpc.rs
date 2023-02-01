@@ -3,7 +3,6 @@ use std::time::Instant;
 use bytes::Bytes;
 use cid::multihash::{Code, MultihashDigest};
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
-use iroh_metrics::config::Config as MetricsConfig;
 use iroh_rpc_client::{Client, Config as RpcClientConfig};
 use iroh_rpc_types::{store::StoreAddr, Addr};
 use iroh_store::{Config, Store};
@@ -48,7 +47,7 @@ pub fn put_benchmark(c: &mut Criterion) {
             group.bench_with_input(
                 BenchmarkId::new(
                     "(transport, value_size)",
-                    format!("({:?}, {})", transport, value_size),
+                    format!("({transport:?}, {value_size})"),
                 ),
                 &(key, value),
                 |b, (key, value)| {
@@ -56,15 +55,10 @@ pub fn put_benchmark(c: &mut Criterion) {
                     let executor = Runtime::new().unwrap();
                     let (server_addr, client_addr, _dir) = transport.new_addr();
                     let rpc_client = RpcClientConfig {
-                        store_addr: Some(client_addr),
+                        store_addr: Some(client_addr.clone()),
                         ..Default::default()
                     };
-
-                    let config = Config {
-                        path: dir.path().join("db"),
-                        rpc_client: rpc_client.clone(),
-                        metrics: MetricsConfig::default(),
-                    };
+                    let config = Config::with_rpc_addr(dir.path().join("db"), client_addr);
                     let (_task, rpc) = executor.block_on(async {
                         let store = Store::create(config).await.unwrap();
                         let task = executor.spawn(async move {
@@ -101,7 +95,7 @@ pub fn get_benchmark(c: &mut Criterion) {
             group.bench_with_input(
                 BenchmarkId::new(
                     "(transport, value_size)",
-                    format!("({:?}, {})", transport, value_size),
+                    format!("({transport:?}, {value_size})"),
                 ),
                 &(),
                 |b, _| {
@@ -109,15 +103,10 @@ pub fn get_benchmark(c: &mut Criterion) {
                     let dir = tempfile::tempdir().unwrap();
                     let (server_addr, client_addr, _dir) = transport.new_addr();
                     let rpc_client = RpcClientConfig {
-                        store_addr: Some(client_addr),
+                        store_addr: Some(client_addr.clone()),
                         ..Default::default()
                     };
-
-                    let config = Config {
-                        path: dir.path().join("db"),
-                        rpc_client: rpc_client.clone(),
-                        metrics: MetricsConfig::default(),
-                    };
+                    let config = Config::with_rpc_addr(dir.path().join("db"), client_addr);
                     let (_task, rpc) = executor.block_on(async {
                         let store = Store::create(config).await.unwrap();
                         let task = executor.spawn(async move {
