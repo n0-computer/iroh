@@ -45,10 +45,7 @@ pub struct Response {
 pub enum Res {
     NotFound,
     // If found, a stream of bao data is sent as next message.
-    Found {
-        /// The size of the coming data in bytes, raw content size.
-        size: u64,
-    },
+    Found,
     /// Indicates that the given hash referred to a collection of multiple blobs
     /// A stream of boa data that decodes to a `Collection` is sent as the next message,
     /// followed by `Res::Found` responses, send in the order indicated in the `Collection`.

@@ -218,9 +218,9 @@ async fn handle_blob_response<
                 // blob data not found
                 Res::NotFound => Err(anyhow!("data for {} not found", hash.to_hex()))?,
                 // next blob in collection will be sent over
-                Res::Found { size } => {
+                Res::Found => {
                     assert!(buffer.is_empty());
-                    let decoder = AsyncSliceDecoder::new(reader, hash, 0, size);
+                    let decoder = AsyncSliceDecoder::new(reader, hash, 0, u64::MAX);
                     Ok(decoder)
                 }
             }

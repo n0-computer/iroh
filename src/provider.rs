@@ -312,7 +312,7 @@ async fn send_blob<W: AsyncWrite + Unpin + Send + 'static>(
             size,
         })) => {
             debug!("found {}", name.to_hex());
-            write_response(&mut writer, buffer, id, Res::Found { size: *size }).await?;
+            write_response(&mut writer, buffer, id, Res::Found).await?;
 
             debug!("writing data");
             let path = path.clone();
