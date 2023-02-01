@@ -499,6 +499,12 @@ pub struct AsyncSliceDecoder<R: tokio::io::AsyncRead + Unpin> {
 }
 
 impl<R: tokio::io::AsyncRead + Unpin> AsyncSliceDecoder<R> {
+    /// Create a new slice decoder for the given hash and range
+    ///
+    /// The hash is the hash of the entire stream, and the range is the range being sent.
+    /// If you want to decode an entire file and do not know the length, it is OK to pass
+    /// 0 as the start and u64::MAX as the length. The length will then be truncated to
+    /// the actual length of the stream, which is the first 8 bytes of the stream.
     pub fn new(inner: R, hash: blake3::Hash, start: u64, len: u64) -> Self {
         Self {
             inner: SliceValidator::new(inner, hash, start, len),

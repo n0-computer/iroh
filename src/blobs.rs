@@ -13,7 +13,7 @@ pub struct Collection {
 }
 
 impl Collection {
-    pub fn deserialize_from(data: &[u8]) -> Result<Self> {
+    pub fn from_bytes(data: &[u8]) -> Result<Self> {
         let c: Collection =
             postcard::from_bytes(data).context("failed to serialize Collection data")?;
         Ok(c)

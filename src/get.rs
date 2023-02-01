@@ -141,7 +141,7 @@ where
                         let data = read_bao_encoded(&mut reader, hash).await?;
 
                         // decode the collection
-                        let collection = Collection::deserialize_from(&data)?;
+                        let collection = Collection::from_bytes(&data)?;
                         on_collection(collection.clone()).await?;
 
                         // expect to get blob data in the order they appear in the collection
