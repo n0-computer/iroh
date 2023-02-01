@@ -250,7 +250,6 @@ async fn handle_stream(db: Database, token: AuthToken, stream: BidirectionalStre
                             &mut out_buffer,
                             request.id,
                             Res::FoundCollection {
-                                size: data.len() as u64,
                                 total_blobs_size: c.total_blobs_size,
                             },
                         )
