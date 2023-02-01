@@ -398,7 +398,7 @@ fn compute_outboard(path: PathBuf) -> anyhow::Result<(blake3::Hash, Vec<u8>)> {
 
 /// Creates a database of blobs (stored in outboard storage) and Collections, stored in memory.
 /// Returns a the hash of the collection created by the given list of DataSources
-pub async fn create_db(data_sources: Vec<DataSource>) -> Result<(Database, bao::Hash)> {
+pub async fn create_collection(data_sources: Vec<DataSource>) -> Result<(Database, bao::Hash)> {
     // +1 is for the collection itself
     let mut db = HashMap::with_capacity(data_sources.len() + 1);
     let mut blobs = Vec::with_capacity(data_sources.len());

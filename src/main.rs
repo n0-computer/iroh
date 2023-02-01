@@ -8,7 +8,7 @@ use indicatif::{
 };
 use is_terminal::IsTerminal;
 use sendme::protocol::AuthToken;
-use sendme::provider::{BlobOrCollection, Ticket};
+use sendme::provider::Ticket;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
@@ -191,15 +191,7 @@ async fn main() -> Result<()> {
                 vec![provider::DataSource::File(path_buf)]
             };
 
-            let (db, _) = provider::create_db(sources).await?;
-            let hash = db
-                .iter()
-                .filter_map(|(hash, item)| match item {
-                    BlobOrCollection::Collection(_) => Some(hash),
-                    _ => None,
-                })
-                .next()
-                .copied();
+            let (db, hash) = provider::create_collection(sources).await?;
             let mut builder = provider::Provider::builder(db).keypair(keypair);
             if let Some(addr) = addr {
                 builder = builder.bind_addr(addr);
@@ -216,11 +208,9 @@ async fn main() -> Result<()> {
             out_writer
                 .println(format!("Auth token: {}", provider.auth_token()))
                 .await;
-            if let Some(hash) = hash {
-                out_writer
-                    .println(format!("All-in-one ticket: {}", provider.ticket(hash)))
-                    .await;
-            }
+            out_writer
+                .println(format!("All-in-one ticket: {}", provider.ticket(hash)))
+                .await;
             provider.join().await?;
 
             // Drop tempath to signal it can be destroyed

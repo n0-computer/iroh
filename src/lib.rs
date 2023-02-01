@@ -94,7 +94,8 @@ mod tests {
         let (_, expect_hash) = bao::encode::outboard(&data);
         let expect_name = Some(filename.to_string());
 
-        let (db, hash) = provider::create_db(vec![provider::DataSource::File(path)]).await?;
+        let (db, hash) =
+            provider::create_collection(vec![provider::DataSource::File(path)]).await?;
         let provider = provider::Provider::builder(db).bind_addr(addr).spawn()?;
 
         async fn run_client(
@@ -197,7 +198,7 @@ mod tests {
             expects.push((Some(name), path, hash));
         }
 
-        let (db, collection_hash) = provider::create_db(files).await?;
+        let (db, collection_hash) = provider::create_collection(files).await?;
 
         let addr = format!("127.0.0.1:{port}").parse().unwrap();
         let provider = provider::Provider::builder(db).bind_addr(addr).spawn()?;
