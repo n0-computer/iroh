@@ -1,7 +1,4 @@
-use std::io::Read;
-
 use anyhow::{Context, Result};
-use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
@@ -16,16 +13,9 @@ pub struct Collection {
 }
 
 impl Collection {
-    pub fn decode_from(encoded: Bytes, hash: bao::Hash) -> Result<Self> {
-        // verify that the content of data matches the expected hash
-        let mut decoder = bao::decode::Decoder::new(std::io::Cursor::new(&encoded[..]), &hash);
-        // decoded size can be at most encoded size
-        let mut data = Vec::with_capacity(encoded.len());
-        decoder
-            .read_to_end(&mut data)
-            .context("hash of Collection data does not match")?;
+    pub fn from_bytes(data: &[u8]) -> Result<Self> {
         let c: Collection =
-            postcard::from_bytes(&data).context("failed to serialize Collection data")?;
+            postcard::from_bytes(data).context("failed to serialize Collection data")?;
         Ok(c)
     }
 

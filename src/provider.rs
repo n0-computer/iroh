@@ -250,7 +250,6 @@ async fn handle_stream(db: Database, token: AuthToken, stream: BidirectionalStre
                             &mut out_buffer,
                             request.id,
                             Res::FoundCollection {
-                                size: data.len() as u64,
                                 total_blobs_size: c.total_blobs_size,
                             },
                         )
@@ -312,7 +311,7 @@ async fn send_blob<W: AsyncWrite + Unpin + Send + 'static>(
             size,
         })) => {
             debug!("found {}", name.to_hex());
-            write_response(&mut writer, buffer, id, Res::Found { size: *size }).await?;
+            write_response(&mut writer, buffer, id, Res::Found).await?;
 
             debug!("writing data");
             let path = path.clone();

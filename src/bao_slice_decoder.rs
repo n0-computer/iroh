@@ -499,6 +499,12 @@ pub struct AsyncSliceDecoder<R: tokio::io::AsyncRead + Unpin> {
 }
 
 impl<R: tokio::io::AsyncRead + Unpin> AsyncSliceDecoder<R> {
+    /// Create a new slice decoder for the given hash and range
+    ///
+    /// The hash is the hash of the entire stream, and the range is the range being sent.
+    /// If you want to decode an entire file and do not know the length, it is OK to pass
+    /// 0 as the start and u64::MAX as the length. The length will then be truncated to
+    /// the actual length of the stream, which is the first 8 bytes of the stream.
     pub fn new(inner: R, hash: blake3::Hash, start: u64, len: u64) -> Self {
         Self {
             inner: SliceValidator::new(inner, hash, start, len),
@@ -579,52 +585,82 @@ mod tests {
     fn test_decode_all_sync_impl(len: u64) {
         // create a slice encoding the entire data - equivalent to the bao inline encoding
         let test_data = create_test_data(len as usize);
-        let (hash, slice) = encode_slice(&test_data, 0, len);
+        let (hash, encoded) = encode_slice(&test_data, 0, len);
 
         // test just validation without reading
-        let mut cursor = Cursor::new(&slice);
+        let mut cursor = Cursor::new(&encoded);
         let validator = SliceValidator::new(&mut cursor, hash, 0, len);
         for item in validator {
             assert!(item.is_ok());
         }
         // check that we have read the entire slice
-        assert_eq!(cursor.position(), slice.len() as u64);
+        assert_eq!(cursor.position(), encoded.len() as u64);
 
         // test validation and reading
-        let mut cursor = std::io::Cursor::new(&slice);
+        let mut cursor = std::io::Cursor::new(&encoded);
         let mut reader = SliceDecoder::new(&mut cursor, &hash, 0, len);
         let mut data = vec![];
         reader.read_to_end(&mut data).unwrap();
         assert_eq!(data, test_data);
 
         // check that we have read the entire slice
-        assert_eq!(cursor.position(), slice.len() as u64);
+        assert_eq!(cursor.position(), encoded.len() as u64);
+
+        // add some garbage
+        let mut encoded_with_garbage = encoded.clone();
+        encoded_with_garbage.extend_from_slice(vec![0u8; 1234].as_slice());
+        let mut cursor = std::io::Cursor::new(&encoded_with_garbage);
+
+        // check that reading with a size > end works
+        let mut reader = SliceDecoder::new(&mut cursor, &hash, 0, u64::MAX);
+        let mut data = vec![];
+        reader.read_to_end(&mut data).unwrap();
+        assert_eq!(data, test_data);
+
+        // check that we have read just the encoded data, and not some extra bytes
+        let inner = reader.into_inner();
+        assert_eq!(inner.position(), encoded.len() as u64);
     }
 
     /// Test implementation for the test_decode_all test, to be called by both proptest and hardcoded tests
     async fn test_decode_all_async_impl(len: u64) {
         // create a slice encoding the entire data - equivalent to the bao inline encoding
         let test_data = create_test_data(len as usize);
-        let (hash, slice) = encode_slice(&test_data, 0, len);
+        let (hash, encoded) = encode_slice(&test_data, 0, len);
 
         // test just validation without reading
-        let mut cursor = std::io::Cursor::new(&slice);
+        let mut cursor = std::io::Cursor::new(&encoded);
         let mut validator = AsyncSliceValidator::new(&mut cursor, hash, 0, len);
         while let Some(item) = validator.next().await {
             assert!(item.is_ok());
         }
         // check that we have read the entire slice
-        assert_eq!(cursor.position(), slice.len() as u64);
+        assert_eq!(cursor.position(), encoded.len() as u64);
 
         // test validation and reading
-        let mut cursor = std::io::Cursor::new(&slice);
+        let mut cursor = std::io::Cursor::new(&encoded);
         let mut reader = AsyncSliceDecoder::new(&mut cursor, hash, 0, len);
         let mut data = vec![];
         reader.read_to_end(&mut data).await.unwrap();
         assert_eq!(data, test_data);
 
         // check that we have read the entire slice
-        assert_eq!(cursor.position(), slice.len() as u64);
+        assert_eq!(cursor.position(), encoded.len() as u64);
+
+        // add some garbage
+        let mut encoded_with_garbage = encoded.clone();
+        encoded_with_garbage.extend_from_slice(vec![0u8; 1234].as_slice());
+        let mut cursor = std::io::Cursor::new(&encoded_with_garbage);
+
+        // check that reading with a size > end works
+        let mut reader = AsyncSliceDecoder::new(&mut cursor, hash, 0, u64::MAX);
+        let mut data = vec![];
+        reader.read_to_end(&mut data).await.unwrap();
+        assert_eq!(data, test_data);
+
+        // check that we have read just the encoded data, and not some extra bytes
+        let inner = reader.into_inner();
+        assert_eq!(inner.position(), encoded.len() as u64);
     }
 
     /// Test implementation for the test_decode_part test, to be called by both proptest and hardcoded tests

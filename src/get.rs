@@ -15,7 +15,7 @@ use tracing::debug;
 use crate::bao_slice_decoder::AsyncSliceDecoder;
 use crate::blobs::Collection;
 use crate::protocol::{
-    read_lp_data, read_size_data, write_lp, AuthToken, Handshake, Request, Res, Response,
+    read_bao_encoded, read_lp_data, write_lp, AuthToken, Handshake, Request, Res, Response,
 };
 use crate::tls::{self, Keypair, PeerId};
 
@@ -127,10 +127,7 @@ where
                 let response: Response = postcard::from_bytes(&response_buffer)?;
                 match response.data {
                     // server is sending over a collection of blobs
-                    Res::FoundCollection {
-                        size,
-                        total_blobs_size,
-                    } => {
+                    Res::FoundCollection { total_blobs_size } => {
                         ensure!(
                             total_blobs_size <= MAX_DATA_SIZE,
                             "size too large: {} > {}",
@@ -141,12 +138,10 @@ where
                         data_len = total_blobs_size;
 
                         // read entire collection data into buffer
-                        let encoded_size = bao::encode::encoded_size(size) as u64;
-                        let encoded =
-                            read_size_data(encoded_size, &mut reader, &mut in_buffer).await?;
+                        let data = read_bao_encoded(&mut reader, hash).await?;
 
                         // decode the collection
-                        let collection = Collection::decode_from(encoded, hash)?;
+                        let collection = Collection::from_bytes(&data)?;
                         on_collection(collection.clone()).await?;
 
                         // expect to get blob data in the order they appear in the collection
@@ -218,9 +213,9 @@ async fn handle_blob_response<
                 // blob data not found
                 Res::NotFound => Err(anyhow!("data for {} not found", hash.to_hex()))?,
                 // next blob in collection will be sent over
-                Res::Found { size } => {
+                Res::Found => {
                     assert!(buffer.is_empty());
-                    let decoder = AsyncSliceDecoder::new(reader, hash, 0, size);
+                    let decoder = AsyncSliceDecoder::new(reader, hash, 0, u64::MAX);
                     Ok(decoder)
                 }
             }

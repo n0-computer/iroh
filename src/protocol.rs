@@ -8,6 +8,8 @@ use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tracing::debug;
 
+use crate::bao_slice_decoder::AsyncSliceDecoder;
+
 /// Maximum message size is limited to 100MiB for now.
 const MAX_MESSAGE_SIZE: usize = 1024 * 1024 * 100;
 
@@ -45,16 +47,11 @@ pub struct Response {
 pub enum Res {
     NotFound,
     // If found, a stream of bao data is sent as next message.
-    Found {
-        /// The size of the coming data in bytes, raw content size.
-        size: u64,
-    },
+    Found,
     /// Indicates that the given hash referred to a collection of multiple blobs
     /// A stream of boa data that decodes to a `Collection` is sent as the next message,
     /// followed by `Res::Found` responses, send in the order indicated in the `Collection`.
     FoundCollection {
-        /// The size of the coming data in bytes, raw content size.
-        size: u64,
         /// The size of the raw data we are planning to transfer
         total_blobs_size: u64,
     },
@@ -120,6 +117,18 @@ pub async fn read_size_data<R: AsyncRead + Unpin>(
     }
     debug!("finished reading");
     Ok(buffer.split_to(size).freeze())
+}
+
+/// Read and decode the given bao encoded data from the provided source.
+///
+/// After the data is read successfully, the reader will be at the end of the data.
+/// If there is an error, the reader can be anywhere, so it is recommended to discard it.
+pub async fn read_bao_encoded<R: AsyncRead + Unpin>(reader: R, hash: bao::Hash) -> Result<Vec<u8>> {
+    let mut decoder = AsyncSliceDecoder::new(reader, hash, 0, u64::MAX);
+    // we don't know the size yet, so we just allocate a reasonable amount
+    let mut decoded = Vec::with_capacity(4096);
+    decoder.read_to_end(&mut decoded).await?;
+    Ok(decoded)
 }
 
 /// Return a buffer of the data, based on the length prefix, from the given source.
