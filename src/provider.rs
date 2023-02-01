@@ -12,6 +12,7 @@ use s2n_quic::stream::BidirectionalStream;
 use s2n_quic::Server as QuicServer;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncWrite, AsyncWriteExt};
+use tokio::sync::broadcast;
 use tokio::task::{JoinError, JoinHandle};
 use tokio_util::io::SyncIoBridge;
 use tracing::{debug, warn};
@@ -99,27 +100,43 @@ impl Builder {
             .map_err(|e| anyhow!("{:?}", e))?;
         let listen_addr = server.local_addr().unwrap();
         let db2 = self.db.clone();
-        let task = tokio::spawn(async move { Self::run(server, db2, self.auth_token).await });
+        let (events_sender, _events_receiver) = broadcast::channel(8);
+        let events = events_sender.clone();
+        let task =
+            tokio::spawn(
+                async move { Self::run(server, db2, self.auth_token, events_sender).await },
+            );
 
         Ok(Provider {
             listen_addr,
             keypair: self.keypair,
             auth_token: self.auth_token,
             task,
+            events,
         })
     }
 
-    async fn run(mut server: s2n_quic::server::Server, db: Database, token: AuthToken) {
+    async fn run(
+        mut server: s2n_quic::server::Server,
+        db: Database,
+        token: AuthToken,
+        events: broadcast::Sender<Event>,
+    ) {
         debug!("\nlistening at: {:#?}", server.local_addr().unwrap());
+
         while let Some(mut connection) = server.accept().await {
             let db = db.clone();
+            let events = events.clone();
             tokio::spawn(async move {
                 debug!("connection accepted from {:?}", connection.remote_addr());
-
                 while let Ok(Some(stream)) = connection.accept_bidirectional_stream().await {
+                    let _ = events.send(Event::ClientConnected {
+                        connection_id: connection.id(),
+                    });
                     let db = db.clone();
+                    let events = events.clone();
                     tokio::spawn(async move {
-                        if let Err(err) = handle_stream(db, token, stream).await {
+                        if let Err(err) = handle_stream(db, token, stream, events).await {
                             warn!("error: {:#?}", err);
                         }
                         debug!("disconnected");
@@ -143,6 +160,28 @@ pub struct Provider {
     keypair: Keypair,
     auth_token: AuthToken,
     task: JoinHandle<()>,
+    events: broadcast::Sender<Event>,
+}
+
+/// Events emitted by the [`Provider`] informing about the current status.
+#[derive(Debug, Clone)]
+pub enum Event {
+    ClientConnected {
+        connection_id: u64,
+    },
+    RequestReceived {
+        connection_id: u64,
+        request_id: u64,
+        hash: bao::Hash,
+    },
+    TransferCompleted {
+        connection_id: u64,
+        request_id: u64,
+    },
+    TransferAborted {
+        connection_id: u64,
+        request_id: u64,
+    },
 }
 
 impl Provider {
@@ -166,6 +205,12 @@ impl Provider {
     /// Returns the [`AuthToken`] needed to connect to the provider.
     pub fn auth_token(&self) -> AuthToken {
         self.auth_token
+    }
+
+    /// Subscribe to [`Event`]s emitted from the provider, informing about connections and
+    /// progress.
+    pub fn subscribe(&self) -> broadcast::Receiver<Event> {
+        self.events.subscribe()
     }
 
     /// Return a single token containing everything needed to get a hash.
@@ -195,8 +240,14 @@ impl Provider {
     }
 }
 
-async fn handle_stream(db: Database, token: AuthToken, stream: BidirectionalStream) -> Result<()> {
+async fn handle_stream(
+    db: Database,
+    token: AuthToken,
+    stream: BidirectionalStream,
+    events: broadcast::Sender<Event>,
+) -> Result<()> {
     debug!("stream opened from {:?}", stream.connection().remote_addr());
+    let connection_id = stream.connection().id();
     let (mut reader, mut writer) = stream.split();
     let mut out_buffer = BytesMut::with_capacity(1024);
     let mut in_buffer = BytesMut::with_capacity(1024);
@@ -221,13 +272,18 @@ async fn handle_stream(db: Database, token: AuthToken, stream: BidirectionalStre
         debug!("reading request");
         match read_lp::<_, Request>(&mut reader, &mut in_buffer).await? {
             Some((request, _size)) => {
-                let name = bao::Hash::from(request.name);
-                debug!("got request({}): {}", request.id, name.to_hex());
+                let hash = bao::Hash::from(request.name);
+                debug!("got request({}): {}", request.id, hash.to_hex());
+                let _ = events.send(Event::RequestReceived {
+                    connection_id,
+                    request_id: request.id,
+                    hash,
+                });
 
-                match db.get(&name) {
+                match db.get(&hash) {
                     // We only respond to requests for collections, not individual blobs
                     Some(BlobOrCollection::Collection((outboard, data))) => {
-                        debug!("found collection {}", name.to_hex());
+                        debug!("found collection {}", hash.to_hex());
 
                         let mut extractor = SliceExtractor::new_outboard(
                             std::io::Cursor::new(&data[..]),
@@ -271,11 +327,20 @@ async fn handle_stream(db: Database, token: AuthToken, stream: BidirectionalStre
                                 break;
                             }
                         }
+                        let _ = events.send(Event::TransferCompleted {
+                            connection_id,
+                            request_id: request.id,
+                        });
                     }
                     _ => {
-                        debug!("not found {}", name.to_hex());
+                        debug!("not found {}", hash.to_hex());
                         write_response(&mut writer, &mut out_buffer, request.id, Res::NotFound)
                             .await?;
+
+                        let _ = events.send(Event::TransferAborted {
+                            connection_id,
+                            request_id: request.id,
+                        });
                     }
                 }
 

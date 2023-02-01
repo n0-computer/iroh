@@ -202,6 +202,14 @@ mod tests {
 
         let addr = format!("127.0.0.1:{port}").parse().unwrap();
         let provider = provider::Provider::builder(db).bind_addr(addr).spawn()?;
+        let mut provider_events = provider.subscribe();
+        let events_task = tokio::task::spawn(async move {
+            let mut events = Vec::new();
+            while let Ok(event) = provider_events.recv().await {
+                events.push(event);
+            }
+            events
+        });
 
         let opts = get::Options {
             addr,
@@ -241,6 +249,10 @@ mod tests {
 
         provider.abort();
         let _ = provider.join().await;
+
+        let events = events_task.await.unwrap();
+        assert_eq!(events.len(), 3);
+
         Ok(())
     }
 }
