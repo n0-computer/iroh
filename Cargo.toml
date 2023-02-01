@@ -67,7 +67,7 @@ config = "0.13.1"
 console = { version = "0.15", default-features = false }
 console-subscriber = "0.1.7"
 criterion = "0.4"
-crossterm = "0.25"
+crossterm = "0.26"
 ctrlc = "3.2.2"
 deadqueue = "0.2.3"
 derivative = "2.2"
