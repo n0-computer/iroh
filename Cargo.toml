@@ -115,7 +115,7 @@ mime = "0.3"
 mime_classifier = "0.0.1"
 mime_guess = "2.0.4"
 multibase = "0.9.1"
-multihash = "0.17"
+multihash = "0.18"
 names = { version = "0.14.0", default-features = false }
 nix = "0.26"
 num_enum = "0.5.7"
