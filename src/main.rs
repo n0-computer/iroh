@@ -6,7 +6,6 @@ use console::style;
 use indicatif::{
     HumanBytes, HumanDuration, ProgressBar, ProgressDrawTarget, ProgressState, ProgressStyle,
 };
-use is_terminal::IsTerminal;
 use sendme::protocol::AuthToken;
 use sendme::provider::Ticket;
 use tokio::io::AsyncWriteExt;
@@ -82,17 +81,13 @@ enum Commands {
 // The current setup is to write all progress information to STDERR and all data to STDOUT.
 
 struct OutWriter {
-    is_atty: bool,
     stderr: Mutex<tokio::io::Stderr>,
 }
 
 impl OutWriter {
     pub fn new() -> Self {
-        let stderr = std::io::stderr();
-        let is_atty = stderr.is_terminal();
         let stderr = tokio::io::stderr();
         Self {
-            is_atty,
             stderr: Mutex::new(stderr),
         }
     }
@@ -100,11 +95,9 @@ impl OutWriter {
 
 impl OutWriter {
     pub async fn println(&self, content: impl AsRef<[u8]>) {
-        if self.is_atty {
-            let stderr = &mut *self.stderr.lock().await;
-            stderr.write_all(content.as_ref()).await.unwrap();
-            stderr.write_all(b"\n").await.unwrap();
-        }
+        let stderr = &mut *self.stderr.lock().await;
+        stderr.write_all(content.as_ref()).await.unwrap();
+        stderr.write_all(b"\n").await.unwrap();
     }
 }
 
