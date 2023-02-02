@@ -12,7 +12,7 @@ use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
-use sendme::{get, provider, Keypair, PeerId};
+use sendme::{get, provider, util, Keypair, PeerId};
 
 #[derive(Parser, Debug, Clone)]
 #[clap(version, about, long_about = None)]
@@ -189,8 +189,8 @@ async fn main() -> Result<()> {
             if let Some(addr) = addr {
                 builder = builder.bind_addr(addr);
             }
-            if let Some(ref hex) = auth_token {
-                let auth_token = AuthToken::from_str(hex)?;
+            if let Some(ref encoded) = auth_token {
+                let auth_token = AuthToken::from_str(encoded)?;
                 builder = builder.auth_token(auth_token);
             }
             let provider = builder.spawn()?;
@@ -243,7 +243,7 @@ async fn get_interactive(
 ) -> Result<()> {
     let out_writer = OutWriter::new();
     out_writer
-        .println(format!("Fetching: {}", hash.to_hex()))
+        .println(format!("Fetching: {}", util::encode(hash.as_bytes())))
         .await;
 
     out_writer

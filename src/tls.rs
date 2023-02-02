@@ -17,6 +17,8 @@ pub use ed25519_dalek::{PublicKey, SecretKey, Signature};
 use serde::{Deserialize, Serialize};
 use ssh_key::LineEnding;
 
+use crate::util;
+
 // TODO: change?
 const P2P_ALPN: [u8; 6] = *b"libp2p";
 
@@ -96,35 +98,35 @@ impl From<PublicKey> for PeerId {
 
 impl Debug for PeerId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "PeerId({})", hex::encode(self.0.as_bytes()))
+        write!(f, "PeerId({})", util::encode(self.0.as_bytes()))
     }
 }
 
-/// Serialises the [`PeerId`] to hex.
+/// Serialises the [`PeerId`] to base64.
 ///
 /// [`FromStr`] is capable of deserialising this format.
 impl Display for PeerId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", hex::encode(self.0.as_bytes()))
+        write!(f, "{}", util::encode(self.0.as_bytes()))
     }
 }
 
 #[derive(thiserror::Error, Debug)]
 pub enum PeerIdError {
     #[error("encoding: {0}")]
-    Hex(#[from] hex::FromHexError),
+    Base64(#[from] base64::DecodeError),
     #[error("key: {0}")]
     Key(#[from] ed25519_dalek::SignatureError),
 }
 
-/// Deserialises the [`PeerId`] from it's hex encoding.
+/// Deserialises the [`PeerId`] from it's base64 encoding.
 ///
 /// [`Display`] is capable of serialising this format.
 impl FromStr for PeerId {
     type Err = PeerIdError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let bytes = hex::decode(s)?;
+        let bytes = util::decode(s)?;
         let key = PublicKey::from_bytes(&bytes)?;
         Ok(PeerId(key))
     }

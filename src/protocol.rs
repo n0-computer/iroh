@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tracing::debug;
 
-use crate::bao_slice_decoder::AsyncSliceDecoder;
+use crate::{bao_slice_decoder::AsyncSliceDecoder, util};
 
 /// Maximum message size is limited to 100MiB for now.
 const MAX_MESSAGE_SIZE: usize = 1024 * 1024 * 100;
@@ -168,10 +168,10 @@ impl AuthToken {
     }
 }
 
-/// Serialises the [`AuthToken`] to hex.
+/// Serialises the [`AuthToken`] to base64.
 impl Display for AuthToken {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", hex::encode(self.bytes))
+        write!(f, "{}", util::encode(self.bytes))
     }
 }
 
@@ -179,17 +179,17 @@ impl Display for AuthToken {
 #[derive(thiserror::Error, Debug)]
 pub enum AuthTokenParseError {
     #[error("invalid encoding: {0}")]
-    Hex(#[from] hex::FromHexError),
+    Base64(#[from] base64::DecodeError),
     #[error("invalid length: {0}")]
     Length(usize),
 }
 
-/// Deserialises the [`AuthToken`] from hex.
+/// Deserialises the [`AuthToken`] from base64.
 impl FromStr for AuthToken {
     type Err = AuthTokenParseError;
 
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        let decoded = hex::decode(s)?;
+        let decoded = util::decode(s)?;
         let bytes = decoded
             .try_into()
             .map_err(|v: Vec<u8>| AuthTokenParseError::Length(v.len()))?;
@@ -244,20 +244,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_auth_token_hex() {
+    fn test_auth_token_base64() {
         let token = AuthToken::generate();
         println!("token: {token}");
-        let hex = token.to_string();
-        println!("token: {hex}");
-        let decoded = AuthToken::from_str(&hex).unwrap();
+        let base64 = token.to_string();
+        println!("token: {base64}");
+        let decoded = AuthToken::from_str(&base64).unwrap();
         assert_eq!(decoded, token);
 
-        let err = AuthToken::from_str("not-hex").err().unwrap();
+        let err = AuthToken::from_str("not-base64").err().unwrap();
         println!("err {err:#}");
-        assert!(matches!(err, AuthTokenParseError::Hex(_)));
+        assert!(matches!(err, AuthTokenParseError::Base64(_)));
 
         let err = AuthToken::from_str("abcd").err().unwrap();
         println!("err {err:#}");
-        assert!(matches!(err, AuthTokenParseError::Length(2)));
+        assert!(matches!(err, AuthTokenParseError::Length(3)));
     }
 }

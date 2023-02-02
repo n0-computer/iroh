@@ -2,6 +2,7 @@ pub mod blobs;
 pub mod get;
 pub mod protocol;
 pub mod provider;
+pub mod util;
 
 mod bao_slice_decoder;
 mod tls;
