@@ -155,6 +155,7 @@ impl Builder {
 /// is a shorthand to create a suitable [`Builder`].
 ///
 /// This runs a tokio task which can be aborted and joined if desired.
+#[derive(Debug)]
 pub struct Provider {
     listen_addr: SocketAddr,
     keypair: Keypair,

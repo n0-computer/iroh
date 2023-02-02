@@ -77,6 +77,7 @@ fn right_descendant(offset: NodeNum, len: NodeNum) -> Option<NodeNum> {
     Some(offset)
 }
 
+#[derive(Debug)]
 pub struct SliceIter {
     len: u64,
     range: Range<u64>,
@@ -229,6 +230,7 @@ impl StreamItem {
     }
 }
 
+#[derive(Debug)]
 pub struct SliceValidator<R> {
     /// the inner reader
     inner: R,
@@ -493,6 +495,7 @@ impl<R: Read> Read for SliceDecoder<R> {
     }
 }
 
+#[derive(Debug)]
 pub struct AsyncSliceDecoder<R: tokio::io::AsyncRead + Unpin> {
     inner: SliceValidator<R>,
     current_item: Option<StreamItem>,
