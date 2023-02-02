@@ -172,12 +172,12 @@ async fn main() -> Result<()> {
                     let mut iter = tokio::fs::read_dir(&path).await?;
                     while let Some(el) = iter.next_entry().await? {
                         if el.path().is_file() {
-                            paths.push(provider::DataSource::File(el.path()));
+                            paths.push(el.path().into());
                         }
                     }
                     paths
                 } else if path.is_file() {
-                    vec![provider::DataSource::File(path)]
+                    vec![path.into()]
                 } else {
                     bail!("path must be either a Directory or a File");
                 }
@@ -188,7 +188,7 @@ async fn main() -> Result<()> {
                 let path_buf = path.to_path_buf();
                 tmp_path = Some(path);
                 tokio::io::copy(&mut tokio::io::stdin(), &mut file).await?;
-                vec![provider::DataSource::File(path_buf)]
+                vec![path_buf.into()]
             };
 
             let (db, hash) = provider::create_collection(sources).await?;

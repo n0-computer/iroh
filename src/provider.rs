@@ -28,7 +28,7 @@ pub type Database = Arc<HashMap<bao::Hash, BlobOrCollection>>;
 
 /// Builder for the [`Provider`].
 ///
-/// You must supply a database which can be created using [`create_db`], everything else is
+/// You must supply a database which can be created using [`create_collection`], everything else is
 /// optional.  Finally you can create and run the provider by calling [`Builder::spawn`].
 ///
 /// The returned [`Provider`] provides [`Provider::join`] to wait for the spawned task.
@@ -422,7 +422,33 @@ pub struct Data {
 
 #[derive(Debug)]
 pub enum DataSource {
+    /// A blob of data originating from the filesystem. The name of the blob is derived from
+    /// the filename.
     File(PathBuf),
+    /// NamedFile is treated the same as [`DataSource::File`], except you can pass in a custom
+    /// name. Passing in the empty string will explicitly _not_ persist the filename.
+    NamedFile { path: PathBuf, name: String },
+}
+
+impl DataSource {
+    pub fn new(path: PathBuf) -> Self {
+        DataSource::File(path)
+    }
+    pub fn with_name(path: PathBuf, name: String) -> Self {
+        DataSource::NamedFile { path, name }
+    }
+}
+
+impl From<PathBuf> for DataSource {
+    fn from(value: PathBuf) -> Self {
+        DataSource::new(value)
+    }
+}
+
+impl From<&std::path::Path> for DataSource {
+    fn from(value: &std::path::Path) -> Self {
+        DataSource::new(value.to_path_buf())
+    }
 }
 
 /// Synchronously compute the outboard of a file, and return hash and outboard.
@@ -472,39 +498,42 @@ pub async fn create_collection(data_sources: Vec<DataSource>) -> Result<(Databas
 
     let mut blobs_encoded_size_estimate = 0;
     for data in data_sources {
-        match data {
-            DataSource::File(path) => {
-                ensure!(
-                    path.is_file(),
-                    "can only transfer blob data: {}",
-                    path.display()
-                );
-                // spawn a blocking task for computing the hash and outboard.
-                // pretty sure this is best to remain sync even once bao is async.
-                let path2 = path.clone();
-                let (hash, outboard) =
-                    tokio::task::spawn_blocking(move || compute_outboard(path2)).await??;
+        let (path, name) = match data {
+            DataSource::File(path) => (path, None),
+            DataSource::NamedFile { path, name } => (path, Some(name)),
+        };
 
-                debug_assert!(outboard.len() >= 8, "outboard must at least contain size");
-                let size = u64::from_le_bytes(outboard[..8].try_into().unwrap());
-                db.insert(
-                    hash,
-                    BlobOrCollection::Blob(Data {
-                        outboard: Bytes::from(outboard),
-                        path: path.clone(),
-                        size,
-                    }),
-                );
-                total_blobs_size += size;
-                let name = path
-                    .file_name()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or_default()
-                    .to_string();
-                blobs_encoded_size_estimate += name.len() + 32;
-                blobs.push(Blob { name, hash });
-            }
-        }
+        ensure!(
+            path.is_file(),
+            "can only transfer blob data: {}",
+            path.display()
+        );
+        // spawn a blocking task for computing the hash and outboard.
+        // pretty sure this is best to remain sync even once bao is async.
+        let path2 = path.clone();
+        let (hash, outboard) =
+            tokio::task::spawn_blocking(move || compute_outboard(path2)).await??;
+
+        debug_assert!(outboard.len() >= 8, "outboard must at least contain size");
+        let size = u64::from_le_bytes(outboard[..8].try_into().unwrap());
+        db.insert(
+            hash,
+            BlobOrCollection::Blob(Data {
+                outboard: Bytes::from(outboard),
+                path: path.clone(),
+                size,
+            }),
+        );
+        total_blobs_size += size;
+        // if the given name is `None`, use the filename from the given path as the name
+        let name = name.unwrap_or_else(|| {
+            path.file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or_default()
+                .to_string()
+        });
+        blobs_encoded_size_estimate += name.len() + 32;
+        blobs.push(Blob { name, hash });
     }
     let c = Collection {
         name: "collection".to_string(),
@@ -594,6 +623,7 @@ impl FromStr for Ticket {
 #[cfg(test)]
 mod tests {
     use std::str::FromStr;
+    use testdir::testdir;
 
     use super::*;
 
@@ -615,5 +645,60 @@ mod tests {
 
         let ticket2: Ticket = hex.parse().unwrap();
         assert_eq!(ticket2, ticket);
+    }
+
+    #[tokio::test]
+    async fn test_create_collection() -> Result<()> {
+        let dir: PathBuf = testdir!();
+        let mut expect_blobs = vec![];
+        let (_, hash) = bao::encode::outboard(vec![]);
+
+        // DataSource::File
+        let foo = dir.join("foo");
+        tokio::fs::write(&foo, vec![]).await?;
+        let foo = DataSource::new(foo);
+        expect_blobs.push(Blob {
+            name: "foo".to_string(),
+            hash,
+        });
+
+        // DataSource::NamedFile
+        let bar = dir.join("bar");
+        tokio::fs::write(&bar, vec![]).await?;
+        let bar = DataSource::with_name(bar, "bat".to_string());
+        expect_blobs.push(Blob {
+            name: "bat".to_string(),
+            hash,
+        });
+
+        // DataSource::NamedFile, empty string name
+        let baz = dir.join("baz");
+        tokio::fs::write(&baz, vec![]).await?;
+        let baz = DataSource::with_name(baz, "".to_string());
+        expect_blobs.push(Blob {
+            name: "".to_string(),
+            hash,
+        });
+
+        let expect_collection = Collection {
+            name: "collection".to_string(),
+            blobs: expect_blobs,
+            total_blobs_size: 0,
+        };
+
+        let (db, hash) = create_collection(vec![foo, bar, baz]).await?;
+
+        let collection = {
+            let c = db.get(&hash).unwrap();
+            if let BlobOrCollection::Collection((_, data)) = c {
+                Collection::from_bytes(data)?
+            } else {
+                panic!("expected hash to correspond with a `Collection`, found `Blob` instead");
+            }
+        };
+
+        assert_eq!(expect_collection, collection);
+
+        Ok(())
     }
 }
