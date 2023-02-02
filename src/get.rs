@@ -215,7 +215,12 @@ async fn handle_blob_response<
                 // next blob in collection will be sent over
                 Res::Found => {
                     assert!(buffer.is_empty());
-                    let decoder = AsyncSliceDecoder::new(reader, hash, 0, u64::MAX);
+                    let mut decoder = AsyncSliceDecoder::new(reader, hash, 0, u64::MAX);
+                    let size = decoder.read_size().await?;
+                    anyhow::ensure!(
+                        size <= MAX_DATA_SIZE,
+                        "size too large: {size} > {MAX_DATA_SIZE}"
+                    );
                     Ok(decoder)
                 }
             }

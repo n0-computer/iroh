@@ -101,6 +101,15 @@ impl SliceIter {
         self.len = len;
     }
 
+    /// get the length of the slice
+    pub fn len(&self) -> Option<u64> {
+        if self.res.is_some() {
+            Some(self.len)
+        } else {
+            None
+        }
+    }
+
     // todo: it is easy to make this a proper iterator, and even possible
     // to make it an iterator without any state, but let's just keep it simple
     // for now.
@@ -515,13 +524,24 @@ impl<R: tokio::io::AsyncRead + Unpin> AsyncSliceDecoder<R> {
         }
     }
 
+    /// Read the size. This only does something if we are before the header,
+    /// otherwise it just returns the already known size.
+    pub async fn read_size(&mut self) -> io::Result<u64> {
+        if self.inner.iter.len().is_none() {
+            let mut tgt = ReadBuf::new(&mut []);
+            futures::future::poll_fn(|cx| Self::poll_read_inner(Pin::new(self), cx, &mut tgt))
+                .await?;
+        }
+        Ok(self.inner.iter.len().unwrap())
+    }
+
     pub fn into_inner(self) -> R {
         self.inner.into_inner()
     }
-}
 
-impl<R: tokio::io::AsyncRead + Unpin> tokio::io::AsyncRead for AsyncSliceDecoder<R> {
-    fn poll_read(
+    /// This is the poll_read implementation, except that it will make progress
+    /// even when passed an empty buffer.
+    fn poll_read_inner(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         tgt: &mut ReadBuf<'_>,
@@ -555,10 +575,22 @@ impl<R: tokio::io::AsyncRead + Unpin> tokio::io::AsyncRead for AsyncSliceDecoder
                 self.current_item = None;
                 self.inner.buf_start = 0;
             }
-            debug_assert!(n > 0, "we should have read something");
             break Ok(());
         });
         res
+    }
+}
+
+impl<R: tokio::io::AsyncRead + Unpin> tokio::io::AsyncRead for AsyncSliceDecoder<R> {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        tgt: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        if tgt.remaining() == 0 {
+            return Poll::Ready(Ok(()));
+        }
+        self.poll_read_inner(cx, tgt)
     }
 }
 
@@ -640,9 +672,20 @@ mod tests {
         // check that we have read the entire slice
         assert_eq!(cursor.position(), encoded.len() as u64);
 
-        // test validation and reading
+        // test once with and once without reading size, to make sure that calling size is not required to drive
+        // the internal state machine
+
+        // test validation and reading - without reading size
         let mut cursor = std::io::Cursor::new(&encoded);
         let mut reader = AsyncSliceDecoder::new(&mut cursor, hash, 0, len);
+        let mut data = vec![];
+        reader.read_to_end(&mut data).await.unwrap();
+        assert_eq!(data, test_data);
+
+        // test validation and reading - with reading size
+        let mut cursor = std::io::Cursor::new(&encoded);
+        let mut reader = AsyncSliceDecoder::new(&mut cursor, hash, 0, len);
+        assert_eq!(reader.read_size().await.unwrap(), test_data.len() as u64);
         let mut data = vec![];
         reader.read_to_end(&mut data).await.unwrap();
         assert_eq!(data, test_data);
@@ -657,6 +700,7 @@ mod tests {
 
         // check that reading with a size > end works
         let mut reader = AsyncSliceDecoder::new(&mut cursor, hash, 0, u64::MAX);
+        assert_eq!(reader.read_size().await.unwrap(), test_data.len() as u64);
         let mut data = vec![];
         reader.read_to_end(&mut data).await.unwrap();
         assert_eq!(data, test_data);
@@ -712,6 +756,7 @@ mod tests {
 
         let mut cursor = std::io::Cursor::new(&slice);
         let mut reader = AsyncSliceDecoder::new(&mut cursor, hash, slice_start, slice_len);
+        assert_eq!(reader.read_size().await.unwrap(), test_data.len() as u64);
         let mut data = vec![];
         reader.read_to_end(&mut data).await.unwrap();
         // check that we have read the entire slice
