@@ -1808,7 +1808,6 @@ dependencies = [
  "genawaiter",
  "hex",
  "indicatif",
- "is-terminal",
  "postcard",
  "proptest",
  "rand 0.7.3",
