@@ -505,7 +505,7 @@ impl<R: Read> Read for SliceDecoder<R> {
 }
 
 #[derive(Debug)]
-pub struct AsyncSliceDecoder<R: tokio::io::AsyncRead + Unpin> {
+pub(crate) struct AsyncSliceDecoder<R: tokio::io::AsyncRead + Unpin> {
     inner: SliceValidator<R>,
     current_item: Option<StreamItem>,
 }
