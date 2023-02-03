@@ -20,6 +20,7 @@ use tracing::{debug, warn};
 use crate::blobs::{Blob, Collection};
 use crate::protocol::{read_lp, write_lp, AuthToken, Handshake, Request, Res, Response, VERSION};
 use crate::tls::{self, Keypair, PeerId};
+use crate::util;
 
 const MAX_CONNECTIONS: u64 = 1024;
 const MAX_STREAMS: u64 = 10;
@@ -274,7 +275,7 @@ async fn handle_stream(
         match read_lp::<_, Request>(&mut reader, &mut in_buffer).await? {
             Some((request, _size)) => {
                 let hash = bao::Hash::from(request.name);
-                debug!("got request({}): {}", request.id, hash.to_hex());
+                debug!("got request({})", request.id);
                 let _ = events.send(Event::RequestReceived {
                     connection_id,
                     request_id: request.id,
@@ -284,7 +285,7 @@ async fn handle_stream(
                 match db.get(&hash) {
                     // We only respond to requests for collections, not individual blobs
                     Some(BlobOrCollection::Collection((outboard, data))) => {
-                        debug!("found collection {}", hash.to_hex());
+                        debug!("found collection {}", util::encode(hash.as_bytes()));
 
                         let mut extractor = SliceExtractor::new_outboard(
                             std::io::Cursor::new(&data[..]),
@@ -334,7 +335,7 @@ async fn handle_stream(
                         });
                     }
                     _ => {
-                        debug!("not found {}", hash.to_hex());
+                        debug!("not found {}", util::encode(hash.as_bytes()));
                         write_response(&mut writer, &mut out_buffer, request.id, Res::NotFound)
                             .await?;
 
@@ -376,10 +377,7 @@ async fn send_blob<W: AsyncWrite + Unpin + Send + 'static>(
             path,
             size,
         })) => {
-            debug!("found {}", name.to_hex());
             write_response(&mut writer, buffer, id, Res::Found).await?;
-
-            debug!("writing data");
             let path = path.clone();
             let outboard = outboard.clone();
             let size = *size;
@@ -403,7 +401,6 @@ async fn send_blob<W: AsyncWrite + Unpin + Send + 'static>(
             Ok((SentStatus::Sent, writer))
         }
         _ => {
-            debug!("not found {}", name.to_hex());
             write_response(&mut writer, buffer, id, Res::NotFound).await?;
             Ok((SentStatus::NotFound, writer))
         }
@@ -549,7 +546,7 @@ pub async fn create_collection(data_sources: Vec<DataSource>) -> Result<(Databas
     let mut buffer = BytesMut::zeroed(blobs_encoded_size_estimate + 1024);
     let data = postcard::to_slice(&c, &mut buffer)?;
     let (outboard, hash) = bao::encode::outboard(&data);
-    println!("Collection: {}\n", hash.to_hex());
+    println!("Collection: {}\n", util::encode(hash.as_bytes()));
     for el in db.values() {
         if let BlobOrCollection::Blob(blob) = el {
             println!("- {}: {} bytes", blob.path.display(), blob.size);
@@ -587,7 +584,7 @@ async fn write_response<W: AsyncWrite + Unpin>(
 /// A token containing everything to get a file from the provider.
 ///
 /// It is a single item which can be easily serialized and deserialized.  The [`Display`]
-/// and [`FromStr`] implementations serialize to hex.
+/// and [`FromStr`] implementations serialize to base64.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Ticket {
     /// The hash to retrieve.
@@ -601,20 +598,20 @@ pub struct Ticket {
     pub token: AuthToken,
 }
 
-/// Serializes to hex.
+/// Serializes to base64.
 impl Display for Ticket {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let encoded = postcard::to_stdvec(self).map_err(|_| fmt::Error)?;
-        write!(f, "{}", hex::encode(encoded))
+        write!(f, "{}", util::encode(encoded))
     }
 }
 
-/// Deserializes from hex.
+/// Deserializes from base64.
 impl FromStr for Ticket {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let bytes = hex::decode(s)?;
+        let bytes = util::decode(s)?;
         let slf = postcard::from_bytes(&bytes)?;
         Ok(slf)
     }
@@ -628,7 +625,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_ticket_hex_roundtrip() {
+    fn test_ticket_base64_roundtrip() {
         let (_encoded, hash) = bao::encode::encode(b"hi there");
         let peer = PeerId::from(Keypair::generate().public());
         let addr = SocketAddr::from_str("127.0.0.1:1234").unwrap();
@@ -639,11 +636,11 @@ mod tests {
             addr,
             token,
         };
-        let hex = ticket.to_string();
-        println!("Ticket: {hex}");
-        println!("{} bytes", hex.len());
+        let base64 = ticket.to_string();
+        println!("Ticket: {base64}");
+        println!("{} bytes", base64.len());
 
-        let ticket2: Ticket = hex.parse().unwrap();
+        let ticket2: Ticket = base64.parse().unwrap();
         assert_eq!(ticket2, ticket);
     }
 

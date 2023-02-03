@@ -18,6 +18,7 @@ use crate::protocol::{
     read_bao_encoded, read_lp_data, write_lp, AuthToken, Handshake, Request, Res, Response,
 };
 use crate::tls::{self, Keypair, PeerId};
+use crate::util;
 
 const MAX_DATA_SIZE: u64 = 1024 * 1024 * 1024;
 
@@ -223,7 +224,10 @@ async fn handle_blob_response<
                     "Unexpected message from provider. Ending transfer early."
                 ))?,
                 // blob data not found
-                Res::NotFound => Err(anyhow!("data for {} not found", hash.to_hex()))?,
+                Res::NotFound => Err(anyhow!(
+                    "data for {} not found",
+                    util::encode(hash.as_bytes())
+                ))?,
                 // next blob in collection will be sent over
                 Res::Found => {
                     assert!(buffer.is_empty());
