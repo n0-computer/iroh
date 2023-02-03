@@ -27,12 +27,7 @@ mod tests {
 
     #[tokio::test]
     async fn basics() -> Result<()> {
-        let port: u16 = 4443;
-        transfer_data(
-            vec![("hello_world", "hello world!".as_bytes().to_vec())],
-            port,
-        )
-        .await
+        transfer_data(vec![("hello_world", "hello world!".as_bytes().to_vec())]).await
     }
 
     #[tokio::test]
@@ -44,7 +39,7 @@ mod tests {
             // overkill, but it works! Just annoying to wait for
             // ("4", 1024 * 1024 * 90),
         ];
-        transfer_random_data(file_opts, 4446).await
+        transfer_random_data(file_opts).await
     }
 
     #[tokio::test]
@@ -59,10 +54,9 @@ mod tests {
             1024 * 1024,
             1024 * 1024 + 10,
         ];
-        let port: u16 = 4445;
 
         for size in sizes {
-            transfer_random_data(vec![("hello_world", size)], port).await?;
+            transfer_random_data(vec![("hello_world", size)]).await?;
         }
 
         Ok(())
@@ -77,7 +71,7 @@ mod tests {
         for i in 0..num_files {
             file_opts.push((i.to_string(), 0));
         }
-        transfer_random_data(file_opts, 4447).await
+        transfer_random_data(file_opts).await
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -86,7 +80,7 @@ mod tests {
         let filename = "hello_world";
         let path = dir.join(filename);
         let content = b"hello world!";
-        let addr = "127.0.0.1:4444".parse().unwrap();
+        let addr = "127.0.0.1:0".parse().unwrap();
 
         tokio::fs::write(&path, content).await?;
         // hash of the transfer file
@@ -141,7 +135,7 @@ mod tests {
                 provider.auth_token(),
                 expect_hash,
                 expect_name.clone(),
-                addr,
+                provider.listen_addr(),
                 provider.peer_id(),
                 content.to_vec(),
             )));
@@ -154,8 +148,7 @@ mod tests {
 
     // Run the test creating random data for each blob, using the size specified by the file
     // options
-    // TODO: use random ports
-    async fn transfer_random_data<S>(file_opts: Vec<(S, usize)>, port: u16) -> Result<()>
+    async fn transfer_random_data<S>(file_opts: Vec<(S, usize)>) -> Result<()>
     where
         S: Into<String> + std::fmt::Debug + std::cmp::PartialEq,
     {
@@ -167,12 +160,11 @@ mod tests {
                 (name, content)
             })
             .collect();
-        transfer_data(file_opts, port).await
+        transfer_data(file_opts).await
     }
 
     // Run the test for a vec of filenames and blob data
-    // TODO: use random ports
-    async fn transfer_data<S>(file_opts: Vec<(S, Vec<u8>)>, port: u16) -> Result<()>
+    async fn transfer_data<S>(file_opts: Vec<(S, Vec<u8>)>) -> Result<()>
     where
         S: Into<String> + std::fmt::Debug + std::cmp::PartialEq,
     {
@@ -200,7 +192,7 @@ mod tests {
 
         let (db, collection_hash) = provider::create_collection(files).await?;
 
-        let addr = format!("127.0.0.1:{port}").parse().unwrap();
+        let addr = "127.0.0.1:0".parse().unwrap();
         let provider = provider::Provider::builder(db).bind_addr(addr).spawn()?;
         let mut provider_events = provider.subscribe();
         let events_task = tokio::task::spawn(async move {
@@ -212,7 +204,7 @@ mod tests {
         });
 
         let opts = get::Options {
-            addr,
+            addr: provider.listen_addr(),
             peer_id: Some(provider.peer_id()),
         };
 
