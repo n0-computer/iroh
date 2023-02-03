@@ -67,13 +67,16 @@ pub struct Stats {
     pub mbits: f64,
 }
 
+/// A verified stream of data coming from the provider
+///
+/// We guarantee that the data is correct by incrementally verifying a hash
 #[repr(transparent)]
 #[derive(Debug)]
-pub struct BaoDecoder(AsyncSliceDecoder<ReceiveStream>);
+pub struct DataStream(AsyncSliceDecoder<ReceiveStream>);
 
-impl BaoDecoder {
+impl DataStream {
     fn new(inner: ReceiveStream, hash: bao::Hash) -> Self {
-        BaoDecoder(AsyncSliceDecoder::new(inner, hash, 0, u64::MAX))
+        DataStream(AsyncSliceDecoder::new(inner, hash, 0, u64::MAX))
     }
 
     async fn read_size(&mut self) -> io::Result<u64> {
@@ -85,7 +88,7 @@ impl BaoDecoder {
     }
 }
 
-impl AsyncRead for BaoDecoder {
+impl AsyncRead for DataStream {
     fn poll_read(
         mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
@@ -108,8 +111,8 @@ where
     FutA: Future<Output = Result<()>>,
     B: FnMut(Collection) -> FutB,
     FutB: Future<Output = Result<()>>,
-    C: FnMut(bao::Hash, BaoDecoder, Option<String>) -> FutC,
-    FutC: Future<Output = Result<BaoDecoder>>,
+    C: FnMut(bao::Hash, DataStream, Option<String>) -> FutC,
+    FutC: Future<Output = Result<DataStream>>,
 {
     let now = Instant::now();
     let (_client, mut connection) = setup(opts).await?;
@@ -241,7 +244,7 @@ async fn handle_blob_response(
     hash: bao::Hash,
     mut reader: ReceiveStream,
     buffer: &mut BytesMut,
-) -> Result<BaoDecoder> {
+) -> Result<DataStream> {
     match read_lp_data(&mut reader, buffer).await? {
         Some(response_buffer) => {
             let response: Response = postcard::from_bytes(&response_buffer)?;
@@ -258,7 +261,7 @@ async fn handle_blob_response(
                 // next blob in collection will be sent over
                 Res::Found => {
                     assert!(buffer.is_empty());
-                    let decoder = BaoDecoder::new(reader, hash);
+                    let decoder = DataStream::new(reader, hash);
                     Ok(decoder)
                 }
             }
