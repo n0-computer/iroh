@@ -40,15 +40,23 @@
 
 ## Usage
 
+### Cli
 Sending data
 ```sh
-$ ./senmde provide <file>
+$ ./sendme provide <file>
 ```
 
 Receiving data
 ```sh
 $ ./sendme get <hash>
 ```
+
+### As a library
+Disable default features when using `sendme` as a library:
+`sendme = { version: "...", default-features = false }`
+
+This removes dependencies that are only relevant when using `sendme` as
+a library.
 
 # License
 
