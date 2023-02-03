@@ -145,9 +145,21 @@ where
                         on_collection(collection.clone()).await?;
 
                         // expect to get blob data in the order they appear in the collection
+                        let mut remaining_size = total_blobs_size;
                         for blob in collection.blobs {
-                            let blob_reader =
+                            let mut blob_reader =
                                 handle_blob_response(blob.hash, reader, &mut in_buffer).await?;
+
+                            let size = blob_reader.read_size().await?;
+                            anyhow::ensure!(
+                                size <= MAX_DATA_SIZE,
+                                "size too large: {size} > {MAX_DATA_SIZE}"
+                            );
+                            anyhow::ensure!(
+                                size <= remaining_size,
+                                "downloaded more than {total_blobs_size}"
+                            );
+                            remaining_size -= size;
                             let blob_reader =
                                 on_blob(blob.hash, blob_reader, Some(blob.name)).await?;
                             reader = blob_reader.into_inner();
@@ -215,12 +227,7 @@ async fn handle_blob_response<
                 // next blob in collection will be sent over
                 Res::Found => {
                     assert!(buffer.is_empty());
-                    let mut decoder = AsyncSliceDecoder::new(reader, hash, 0, u64::MAX);
-                    let size = decoder.read_size().await?;
-                    anyhow::ensure!(
-                        size <= MAX_DATA_SIZE,
-                        "size too large: {size} > {MAX_DATA_SIZE}"
-                    );
+                    let decoder = AsyncSliceDecoder::new(reader, hash, 0, u64::MAX);
                     Ok(decoder)
                 }
             }
