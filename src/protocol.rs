@@ -8,7 +8,10 @@ use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tracing::debug;
 
-use crate::{bao_slice_decoder::AsyncSliceDecoder, util};
+use crate::{
+    bao_slice_decoder::AsyncSliceDecoder,
+    util::{self, Hash},
+};
 
 /// Maximum message size is limited to 100MiB for now.
 const MAX_MESSAGE_SIZE: usize = 1024 * 1024 * 100;
@@ -34,7 +37,7 @@ impl Handshake {
 pub struct Request {
     pub id: u64,
     /// blake3 hash
-    pub name: [u8; 32],
+    pub name: Hash,
 }
 
 #[derive(Deserialize, Serialize, Debug, PartialEq, Eq, Clone)]
@@ -123,8 +126,8 @@ pub async fn read_size_data<R: AsyncRead + Unpin>(
 ///
 /// After the data is read successfully, the reader will be at the end of the data.
 /// If there is an error, the reader can be anywhere, so it is recommended to discard it.
-pub async fn read_bao_encoded<R: AsyncRead + Unpin>(reader: R, hash: bao::Hash) -> Result<Vec<u8>> {
-    let mut decoder = AsyncSliceDecoder::new(reader, hash, 0, u64::MAX);
+pub async fn read_bao_encoded<R: AsyncRead + Unpin>(reader: R, hash: Hash) -> Result<Vec<u8>> {
+    let mut decoder = AsyncSliceDecoder::new(reader, hash.into(), 0, u64::MAX);
     // we don't know the size yet, so we just allocate a reasonable amount
     let mut decoded = Vec::with_capacity(4096);
     decoder.read_to_end(&mut decoded).await?;
@@ -194,48 +197,6 @@ impl FromStr for AuthToken {
             .try_into()
             .map_err(|v: Vec<u8>| AuthTokenParseError::Length(v.len()))?;
         Ok(AuthToken { bytes })
-    }
-}
-
-/// Serde support for [`bao::Hash`].
-///
-/// Decorate the `bao::Hash` field with `#[serde(with = "crate::protocol::serde_hash")]` to
-/// use this.
-pub mod serde_hash {
-    use std::fmt;
-
-    use serde::{de, Deserializer, Serializer};
-
-    pub fn serialize<S>(hash: &bao::Hash, s: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        s.serialize_bytes(hash.as_bytes())
-    }
-
-    pub fn deserialize<'de, D>(d: D) -> Result<bao::Hash, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        d.deserialize_bytes(HashVisitor)
-    }
-
-    struct HashVisitor;
-
-    impl<'de> de::Visitor<'de> for HashVisitor {
-        type Value = bao::Hash;
-
-        fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
-            write!(f, "an array of 32 bytes containing hash data")
-        }
-
-        fn visit_bytes<E>(self, v: &[u8]) -> Result<Self::Value, E>
-        where
-            E: de::Error,
-        {
-            let bytes: [u8; 32] = v.try_into().map_err(E::custom)?;
-            Ok(bao::Hash::from(bytes))
-        }
     }
 }
 

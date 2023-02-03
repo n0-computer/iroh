@@ -20,12 +20,12 @@ use tracing::{debug, warn};
 use crate::blobs::{Blob, Collection};
 use crate::protocol::{read_lp, write_lp, AuthToken, Handshake, Request, Res, Response, VERSION};
 use crate::tls::{self, Keypair, PeerId};
-use crate::util;
+use crate::util::{self, Hash};
 
 const MAX_CONNECTIONS: u64 = 1024;
 const MAX_STREAMS: u64 = 10;
 
-pub type Database = Arc<HashMap<bao::Hash, BlobOrCollection>>;
+pub type Database = Arc<HashMap<Hash, BlobOrCollection>>;
 
 /// Builder for the [`Provider`].
 ///
@@ -174,7 +174,7 @@ pub enum Event {
     RequestReceived {
         connection_id: u64,
         request_id: u64,
-        hash: bao::Hash,
+        hash: Hash,
     },
     TransferCompleted {
         connection_id: u64,
@@ -218,7 +218,7 @@ impl Provider {
     /// Return a single token containing everything needed to get a hash.
     ///
     /// See [`Ticket`] for more details of how it can be used.
-    pub fn ticket(&self, hash: bao::Hash) -> Ticket {
+    pub fn ticket(&self, hash: Hash) -> Ticket {
         // TODO: Verify that the hash exists in the db?
         Ticket {
             hash,
@@ -274,7 +274,7 @@ async fn handle_stream(
         debug!("reading request");
         match read_lp::<_, Request>(&mut reader, &mut in_buffer).await? {
             Some((request, _size)) => {
-                let hash = bao::Hash::from(request.name);
+                let hash = request.name;
                 debug!("got request({})", request.id);
                 let _ = events.send(Event::RequestReceived {
                     connection_id,
@@ -285,7 +285,7 @@ async fn handle_stream(
                 match db.get(&hash) {
                     // We only respond to requests for collections, not individual blobs
                     Some(BlobOrCollection::Collection((outboard, data))) => {
-                        debug!("found collection {}", util::encode(hash.as_bytes()));
+                        debug!("found collection {}", hash);
 
                         let mut extractor = SliceExtractor::new_outboard(
                             std::io::Cursor::new(&data[..]),
@@ -335,7 +335,7 @@ async fn handle_stream(
                         });
                     }
                     _ => {
-                        debug!("not found {}", util::encode(hash.as_bytes()));
+                        debug!("not found {}", hash);
                         write_response(&mut writer, &mut out_buffer, request.id, Res::NotFound)
                             .await?;
 
@@ -366,7 +366,7 @@ enum SentStatus {
 
 async fn send_blob<W: AsyncWrite + Unpin + Send + 'static>(
     db: Database,
-    name: bao::Hash,
+    name: Hash,
     mut writer: W,
     buffer: &mut BytesMut,
     id: u64,
@@ -457,7 +457,7 @@ impl From<&std::path::Path> for DataSource {
 ///
 /// If the size of the file is changed while this is running, an error will be
 /// returned.
-fn compute_outboard(path: PathBuf) -> anyhow::Result<(blake3::Hash, Vec<u8>)> {
+fn compute_outboard(path: PathBuf) -> anyhow::Result<(Hash, Vec<u8>)> {
     let file = std::fs::File::open(path)?;
     let len = file.metadata()?.len();
     // compute outboard size so we can pre-allocate the buffer.
@@ -482,12 +482,13 @@ fn compute_outboard(path: PathBuf) -> anyhow::Result<(blake3::Hash, Vec<u8>)> {
     ensure!(len == len2, "file changed during encoding");
     // this flips the outboard encoding from post-order to pre-order
     let hash = encoder.finalize()?;
-    anyhow::Ok((hash, outboard))
+
+    Ok((hash.into(), outboard))
 }
 
 /// Creates a database of blobs (stored in outboard storage) and Collections, stored in memory.
 /// Returns a the hash of the collection created by the given list of DataSources
-pub async fn create_collection(data_sources: Vec<DataSource>) -> Result<(Database, bao::Hash)> {
+pub async fn create_collection(data_sources: Vec<DataSource>) -> Result<(Database, Hash)> {
     // +1 is for the collection itself
     let mut db = HashMap::with_capacity(data_sources.len() + 1);
     let mut blobs = Vec::with_capacity(data_sources.len());
@@ -546,7 +547,8 @@ pub async fn create_collection(data_sources: Vec<DataSource>) -> Result<(Databas
     let mut buffer = BytesMut::zeroed(blobs_encoded_size_estimate + 1024);
     let data = postcard::to_slice(&c, &mut buffer)?;
     let (outboard, hash) = bao::encode::outboard(&data);
-    println!("Collection: {}\n", util::encode(hash.as_bytes()));
+    let hash = Hash::from(hash);
+    println!("Collection: {hash}\n");
     for el in db.values() {
         if let BlobOrCollection::Blob(blob) = el {
             println!("- {}: {} bytes", blob.path.display(), blob.size);
@@ -588,8 +590,7 @@ async fn write_response<W: AsyncWrite + Unpin>(
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Ticket {
     /// The hash to retrieve.
-    #[serde(with = "crate::protocol::serde_hash")]
-    pub hash: bao::Hash,
+    pub hash: Hash,
     /// The peer ID identifying the provider.
     pub peer: PeerId,
     /// The socket address the provider is listening on.
@@ -627,6 +628,7 @@ mod tests {
     #[test]
     fn test_ticket_base64_roundtrip() {
         let (_encoded, hash) = bao::encode::encode(b"hi there");
+        let hash = Hash::from(hash);
         let peer = PeerId::from(Keypair::generate().public());
         let addr = SocketAddr::from_str("127.0.0.1:1234").unwrap();
         let token = AuthToken::generate();
@@ -649,6 +651,7 @@ mod tests {
         let dir: PathBuf = testdir!();
         let mut expect_blobs = vec![];
         let (_, hash) = bao::encode::outboard(vec![]);
+        let hash = Hash::from(hash);
 
         // DataSource::File
         let foo = dir.join("foo");

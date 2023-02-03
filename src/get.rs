@@ -19,7 +19,7 @@ use crate::protocol::{
     read_bao_encoded, read_lp_data, write_lp, AuthToken, Handshake, Request, Res, Response,
 };
 use crate::tls::{self, Keypair, PeerId};
-use crate::util;
+use crate::util::Hash;
 
 const MAX_DATA_SIZE: u64 = 1024 * 1024 * 1024;
 
@@ -75,8 +75,8 @@ pub struct Stats {
 pub struct DataStream(AsyncSliceDecoder<ReceiveStream>);
 
 impl DataStream {
-    fn new(inner: ReceiveStream, hash: bao::Hash) -> Self {
-        DataStream(AsyncSliceDecoder::new(inner, hash, 0, u64::MAX))
+    fn new(inner: ReceiveStream, hash: Hash) -> Self {
+        DataStream(AsyncSliceDecoder::new(inner, hash.into(), 0, u64::MAX))
     }
 
     async fn read_size(&mut self) -> io::Result<u64> {
@@ -99,7 +99,7 @@ impl AsyncRead for DataStream {
 }
 
 pub async fn run<A, B, C, FutA, FutB, FutC>(
-    hash: bao::Hash,
+    hash: Hash,
     token: AuthToken,
     opts: Options,
     on_connected: A,
@@ -111,7 +111,7 @@ where
     FutA: Future<Output = Result<()>>,
     B: FnMut(Collection) -> FutB,
     FutB: Future<Output = Result<()>>,
-    C: FnMut(bao::Hash, DataStream, Option<String>) -> FutC,
+    C: FnMut(Hash, DataStream, Option<String>) -> FutC,
     FutC: Future<Output = Result<DataStream>>,
 {
     let now = Instant::now();
@@ -138,10 +138,7 @@ where
     // 2. Send Request
     {
         debug!("sending request");
-        let req = Request {
-            id: 1,
-            name: hash.into(),
-        };
+        let req = Request { id: 1, name: hash };
 
         let used = postcard::to_slice(&req, &mut out_buffer)?;
         write_lp(&mut writer, used).await?;
@@ -241,7 +238,7 @@ where
 /// Returns an `AsyncReader`
 /// The `AsyncReader` can be used to read the content.
 async fn handle_blob_response(
-    hash: bao::Hash,
+    hash: Hash,
     mut reader: ReceiveStream,
     buffer: &mut BytesMut,
 ) -> Result<DataStream> {
@@ -254,10 +251,7 @@ async fn handle_blob_response(
                     "Unexpected message from provider. Ending transfer early."
                 ))?,
                 // blob data not found
-                Res::NotFound => Err(anyhow!(
-                    "data for {} not found",
-                    util::encode(hash.as_bytes())
-                ))?,
+                Res::NotFound => Err(anyhow!("data for {} not found", hash))?,
                 // next blob in collection will be sent over
                 Res::Found => {
                     assert!(buffer.is_empty());

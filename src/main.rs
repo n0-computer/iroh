@@ -12,7 +12,7 @@ use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
-use sendme::{get, provider, util, Keypair, PeerId};
+use sendme::{get, provider, Hash, Keypair, PeerId};
 
 #[derive(Parser, Debug, Clone)]
 #[clap(version, about, long_about = None)]
@@ -44,7 +44,7 @@ enum Commands {
     #[clap(about = "Fetch the data from the hash")]
     Get {
         /// The root hash to retrieve.
-        hash: bao::Hash,
+        hash: Hash,
         /// PeerId of the provider.
         #[clap(long, short)]
         peer: PeerId,
@@ -236,15 +236,13 @@ async fn get_keypair(key: Option<PathBuf>) -> Result<Keypair> {
 }
 
 async fn get_interactive(
-    hash: bao::Hash,
+    hash: Hash,
     opts: get::Options,
     token: AuthToken,
     out: Option<PathBuf>,
 ) -> Result<()> {
     let out_writer = OutWriter::new();
-    out_writer
-        .println(format!("Fetching: {}", util::encode(hash.as_bytes())))
-        .await;
+    out_writer.println(format!("Fetching: {hash}")).await;
 
     out_writer
         .println(format!("{} Connecting ...", style("[1/3]").bold().dim()))
@@ -299,7 +297,7 @@ async fn get_interactive(
             Ok(())
         }
     };
-    let on_blob = |hash: blake3::Hash, mut reader, name: Option<String>| {
+    let on_blob = |hash: Hash, mut reader, name: Option<String>| {
         let out = &out;
         let pb = &pb;
         async move {

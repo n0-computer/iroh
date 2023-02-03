@@ -2,12 +2,13 @@ pub mod blobs;
 pub mod get;
 pub mod protocol;
 pub mod provider;
-pub mod util;
 
 mod bao_slice_decoder;
 mod tls;
+mod util;
 
 pub use tls::{Keypair, PeerId, PeerIdError, PublicKey, SecretKey, Signature};
+pub use util::Hash;
 
 #[cfg(test)]
 mod tests {
@@ -17,8 +18,8 @@ mod tests {
         sync::{atomic::AtomicUsize, Arc},
     };
 
-    use crate::protocol::AuthToken;
     use crate::tls::PeerId;
+    use crate::{protocol::AuthToken, util::Hash};
 
     use super::*;
     use anyhow::Result;
@@ -94,9 +95,9 @@ mod tests {
         let provider = provider::Provider::builder(db).bind_addr(addr).spawn()?;
 
         async fn run_client(
-            hash: bao::Hash,
+            hash: Hash,
             token: AuthToken,
-            file_hash: bao::Hash,
+            file_hash: Hash,
             name: Option<String>,
             addr: SocketAddr,
             peer_id: PeerId,
@@ -134,7 +135,7 @@ mod tests {
             tasks.push(tokio::task::spawn(run_client(
                 hash,
                 provider.auth_token(),
-                expect_hash,
+                expect_hash.into(),
                 expect_name.clone(),
                 provider.listen_addr(),
                 provider.peer_id(),
@@ -183,6 +184,7 @@ mod tests {
             let path = dir.join(name.clone());
             // get expected hash of file
             let (_, hash) = bao::encode::outboard(&data);
+            let hash = Hash::from(hash);
 
             tokio::fs::write(&path, data).await?;
             files.push(provider::DataSource::File(path.clone()));

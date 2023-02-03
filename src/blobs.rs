@@ -1,6 +1,8 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
+use crate::util::Hash;
+
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct Collection {
     ///
@@ -37,8 +39,7 @@ pub(crate) struct Blob {
     /// The name of this blob of data
     pub(crate) name: String,
     /// The hash of the blob of data
-    #[serde(with = "crate::protocol::serde_hash")]
-    pub(crate) hash: bao::Hash,
+    pub(crate) hash: Hash,
 }
 
 #[cfg(test)]
@@ -52,7 +53,8 @@ mod tests {
             hash: bao::Hash::from_hex(
                 "3aa61c409fd7717c9d9c639202af2fae470c0ef669be7ba2caea5779cb534e9d",
             )
-            .unwrap(),
+            .unwrap()
+            .into(),
         };
 
         let mut buf = bytes::BytesMut::zeroed(1024);
