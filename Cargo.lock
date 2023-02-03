@@ -1751,6 +1751,7 @@ dependencies = [
  "futures",
  "hex",
  "indicatif",
+ "is-terminal",
  "postcard",
  "proptest",
  "rand 0.7.3",
