@@ -204,7 +204,7 @@ async fn main() -> Result<()> {
             out_writer
                 .println(format!("All-in-one ticket: {}", provider.ticket(hash)))
                 .await;
-            provider.join().await?;
+            provider.await?;
 
             // Drop tempath to signal it can be destroyed
             drop(tmp_path);

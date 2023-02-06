@@ -246,7 +246,7 @@ mod tests {
         .await?;
 
         provider.abort();
-        let _ = provider.join().await;
+        provider.await.ok(); // .abort() makes this a Result::Err
 
         let events = events_task.await.unwrap();
         assert_eq!(events.len(), 3);

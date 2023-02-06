@@ -8,10 +8,13 @@
 //!
 //! To shut down the provider, call [Provider::abort].
 use std::fmt::{self, Display};
+use std::future::Future;
 use std::io::{BufReader, Read};
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::pin::Pin;
 use std::str::FromStr;
+use std::task::Poll;
 use std::{collections::HashMap, sync::Arc};
 
 use anyhow::{anyhow, bail, ensure, Context, Result};
@@ -49,9 +52,9 @@ impl Database {
 /// You must supply a database which can be created using [`create_collection`], everything else is
 /// optional.  Finally you can create and run the provider by calling [`Builder::spawn`].
 ///
-/// The returned [`Provider`] provides [`Provider::join`] to wait for the spawned task.
-/// Currently it needs to be aborted using [`Provider::abort`], graceful shutdown will be
-/// implemented in the immediate future.
+/// The returned [`Provider`] is awaitable to know when it finishes.  Currently it needs to
+/// be aborted using [`Provider::abort`], graceful shutdown will be implemented in the
+/// future.
 #[derive(Debug)]
 pub struct Builder {
     bind_addr: SocketAddr,
@@ -172,7 +175,8 @@ impl Builder {
 /// The only way to create this is by using the [`Builder::spawn`].  [`Provider::builder`]
 /// is a shorthand to create a suitable [`Builder`].
 ///
-/// This runs a tokio task which can be aborted and joined if desired.
+/// This runs a tokio task which can be aborted and joined if desired.  To join the task
+/// await the [`Provider`] struct directly, it will complete when the task completes.
 #[derive(Debug)]
 pub struct Provider {
     listen_addr: SocketAddr,
@@ -257,17 +261,20 @@ impl Provider {
         }
     }
 
-    /// Blocks until the provider task completes.
-    // TODO: Maybe implement Future directly?
-    pub async fn join(self) -> Result<(), JoinError> {
-        self.task.await
-    }
-
     /// Aborts the provider.
     ///
     /// TODO: temporary, do graceful shutdown instead.
     pub fn abort(&self) {
         self.task.abort();
+    }
+}
+
+/// The future completes when the spawned tokio task finishes.
+impl Future for Provider {
+    type Output = Result<(), JoinError>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
+        Pin::new(&mut self.task).poll(cx)
     }
 }
 
