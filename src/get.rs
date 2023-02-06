@@ -1,3 +1,4 @@
+//! The client side api
 use std::fmt::Debug;
 use std::io;
 use std::net::SocketAddr;
@@ -24,9 +25,12 @@ pub use crate::util::Hash;
 
 const MAX_DATA_SIZE: u64 = 1024 * 1024 * 1024;
 
+/// Options for the client
 #[derive(Clone, Debug)]
 pub struct Options {
+    /// The address to connect to
     pub addr: SocketAddr,
+    /// The peer id to expect
     pub peer_id: Option<PeerId>,
 }
 
@@ -63,8 +67,11 @@ async fn setup(opts: Options) -> Result<(Client, Connection)> {
 /// Stats about the transfer.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Stats {
+    /// The number of bytes transferred
     pub data_len: u64,
+    /// The time it took to transfer the data
     pub elapsed: Duration,
+    /// Transfer rate in megabits per second
     pub mbits: f64,
 }
 
@@ -99,6 +106,7 @@ impl AsyncRead for DataStream {
     }
 }
 
+/// Get a collection and all its blobs from a provider
 pub async fn run<A, B, C, FutA, FutB, FutC>(
     hash: Hash,
     token: AuthToken,

@@ -1,8 +1,10 @@
+//! Types for blobs and collections of blobs
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::util::Hash;
 
+/// A collection of blobs
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct Collection {
     ///
@@ -15,20 +17,24 @@ pub struct Collection {
 }
 
 impl Collection {
+    /// Deserialize a collection from a byte slice
     pub fn from_bytes(data: &[u8]) -> Result<Self> {
         let c: Collection =
             postcard::from_bytes(data).context("failed to serialize Collection data")?;
         Ok(c)
     }
 
+    /// Total size of the raw data referred to by all blobs in this collection
     pub fn total_blobs_size(&self) -> u64 {
         self.total_blobs_size
     }
 
+    /// The name of this collection
     pub fn name(&self) -> &str {
         &self.name
     }
 
+    /// The number of blobs in this collection
     pub fn total_entries(&self) -> u64 {
         self.blobs.len() as u64
     }

@@ -1,3 +1,4 @@
+//! Provider api
 use std::fmt::{self, Display};
 use std::io::{BufReader, Read};
 use std::net::SocketAddr;
@@ -25,6 +26,7 @@ use crate::util::{self, Hash};
 const MAX_CONNECTIONS: u64 = 1024;
 const MAX_STREAMS: u64 = 10;
 
+/// Database containing content-addressed data (blobs or collections).
 #[derive(Debug, Clone)]
 pub struct Database(Arc<HashMap<Hash, BlobOrCollection>>);
 
@@ -175,20 +177,32 @@ pub struct Provider {
 /// Events emitted by the [`Provider`] informing about the current status.
 #[derive(Debug, Clone)]
 pub enum Event {
+    /// A new client connected to the provider.
     ClientConnected {
+        /// The quic connection id.
         connection_id: u64,
     },
+    /// A request was received from a client.
     RequestReceived {
+        /// The quic connection id.
         connection_id: u64,
+        /// The request id.
         request_id: u64,
+        /// The hash for which the client wants to receive data.
         hash: Hash,
     },
+    /// A request was completed and the data was sent to the client.
     TransferCompleted {
+        /// The quic connection id.
         connection_id: u64,
+        /// The request id.
         request_id: u64,
     },
+    /// A request was aborted because the client disconnected.
     TransferAborted {
+        /// The quic connection id.
         connection_id: u64,
+        /// The request id.
         request_id: u64,
     },
 }
@@ -424,6 +438,7 @@ pub(crate) struct Data {
     size: u64,
 }
 
+/// A data source
 #[derive(Debug)]
 pub enum DataSource {
     /// A blob of data originating from the filesystem. The name of the blob is derived from
@@ -431,13 +446,20 @@ pub enum DataSource {
     File(PathBuf),
     /// NamedFile is treated the same as [`DataSource::File`], except you can pass in a custom
     /// name. Passing in the empty string will explicitly _not_ persist the filename.
-    NamedFile { path: PathBuf, name: String },
+    NamedFile {
+        /// Path to the file
+        path: PathBuf,
+        /// Custom name
+        name: String,
+    },
 }
 
 impl DataSource {
+    /// Create a new [`DataSource`] from a [`PathBuf`].
     pub fn new(path: PathBuf) -> Self {
         DataSource::File(path)
     }
+    /// Create a new [`DataSource`] from a [`PathBuf`] and a custom name.
     pub fn with_name(path: PathBuf, name: String) -> Self {
         DataSource::NamedFile { path, name }
     }
@@ -607,11 +629,13 @@ pub struct Ticket {
 }
 
 impl Ticket {
+    /// Deserializes from bytes.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
         let slf = postcard::from_bytes(bytes)?;
         Ok(slf)
     }
 
+    /// Serializes to bytes.
     pub fn to_bytes(&self) -> Vec<u8> {
         postcard::to_stdvec(self).expect("postcard::to_stdvec is infallible")
     }

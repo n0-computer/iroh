@@ -1,3 +1,4 @@
+//! Protocol for communication between provider and client.
 use std::fmt::Display;
 use std::str::FromStr;
 
@@ -16,6 +17,7 @@ use crate::{
 /// Maximum message size is limited to 100MiB for now.
 const MAX_MESSAGE_SIZE: usize = 1024 * 1024 * 100;
 
+/// Protocol version
 pub const VERSION: u64 = 1;
 
 #[derive(Deserialize, Serialize, Debug, PartialEq, Eq, Clone, MaxSize)]
@@ -184,8 +186,10 @@ impl Display for AuthToken {
 /// Error for parsing [`AuthToken`] using [`FromStr`].
 #[derive(thiserror::Error, Debug)]
 pub enum AuthTokenParseError {
+    /// Invalid base64 encoding.
     #[error("invalid encoding: {0}")]
     Base64(#[from] base64::DecodeError),
+    /// Invalid length.
     #[error("invalid length: {0}")]
     Length(usize),
 }
