@@ -19,7 +19,7 @@ const MAX_MESSAGE_SIZE: usize = 1024 * 1024 * 100;
 pub const VERSION: u64 = 1;
 
 #[derive(Deserialize, Serialize, Debug, PartialEq, Eq, Clone, MaxSize)]
-pub struct Handshake {
+pub(crate) struct Handshake {
     pub version: u64,
     pub token: AuthToken,
 }
@@ -34,20 +34,20 @@ impl Handshake {
 }
 
 #[derive(Deserialize, Serialize, Debug, PartialEq, Eq, Clone, MaxSize)]
-pub struct Request {
+pub(crate) struct Request {
     pub id: u64,
     /// blake3 hash
     pub name: Hash,
 }
 
 #[derive(Deserialize, Serialize, Debug, PartialEq, Eq, Clone)]
-pub struct Response {
+pub(crate) struct Response {
     pub id: u64,
     pub data: Res,
 }
 
 #[derive(Deserialize, Serialize, Debug, PartialEq, Eq, Clone)]
-pub enum Res {
+pub(crate) enum Res {
     NotFound,
     // If found, a stream of bao data is sent as next message.
     Found,
@@ -61,7 +61,7 @@ pub enum Res {
 }
 
 /// Write the given data to the provider sink, with a unsigned varint length prefix.
-pub async fn write_lp<W: AsyncWrite + Unpin>(writer: &mut W, data: &[u8]) -> Result<()> {
+pub(crate) async fn write_lp<W: AsyncWrite + Unpin>(writer: &mut W, data: &[u8]) -> Result<()> {
     ensure!(
         data.len() < MAX_MESSAGE_SIZE,
         "sending message is too large"
@@ -77,7 +77,7 @@ pub async fn write_lp<W: AsyncWrite + Unpin>(writer: &mut W, data: &[u8]) -> Res
 }
 
 /// Read and deserialize into the given type from the provided source, based on the length prefix.
-pub async fn read_lp<'a, R: AsyncRead + Unpin, T: Deserialize<'a>>(
+pub(crate) async fn read_lp<'a, R: AsyncRead + Unpin, T: Deserialize<'a>>(
     mut reader: R,
     buffer: &'a mut BytesMut,
 ) -> Result<Option<(T, usize)>> {
@@ -102,7 +102,7 @@ pub async fn read_lp<'a, R: AsyncRead + Unpin, T: Deserialize<'a>>(
 
 /// Return a buffer for the data, based on a given size, from the given source.
 /// The new buffer is split off from the buffer that is passed into the function.
-pub async fn read_size_data<R: AsyncRead + Unpin>(
+pub(crate) async fn read_size_data<R: AsyncRead + Unpin>(
     size: u64,
     reader: R,
     buffer: &mut BytesMut,
@@ -126,7 +126,10 @@ pub async fn read_size_data<R: AsyncRead + Unpin>(
 ///
 /// After the data is read successfully, the reader will be at the end of the data.
 /// If there is an error, the reader can be anywhere, so it is recommended to discard it.
-pub async fn read_bao_encoded<R: AsyncRead + Unpin>(reader: R, hash: Hash) -> Result<Vec<u8>> {
+pub(crate) async fn read_bao_encoded<R: AsyncRead + Unpin>(
+    reader: R,
+    hash: Hash,
+) -> Result<Vec<u8>> {
     let mut decoder = AsyncSliceDecoder::new(reader, hash.into(), 0, u64::MAX);
     // we don't know the size yet, so we just allocate a reasonable amount
     let mut decoded = Vec::with_capacity(4096);
@@ -136,7 +139,7 @@ pub async fn read_bao_encoded<R: AsyncRead + Unpin>(reader: R, hash: Hash) -> Re
 
 /// Return a buffer of the data, based on the length prefix, from the given source.
 /// The new buffer is split off from the buffer that is passed in the function.
-pub async fn read_lp_data<R: AsyncRead + Unpin>(
+pub(crate) async fn read_lp_data<R: AsyncRead + Unpin>(
     mut reader: R,
     buffer: &mut BytesMut,
 ) -> Result<Option<Bytes>> {
