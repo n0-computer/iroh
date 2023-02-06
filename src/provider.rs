@@ -1,4 +1,12 @@
-//! Provider api
+//! Provider API
+//!
+//! A provider is a server that serves content-addressed data (blobs or collections).
+//! To create a provider, create a database using [create_collection], then build a
+//! provider using [Builder] and spawn it using [Builder::spawn].
+//!
+//! You can monitor what is happening in the provider using [Provider::subscribe].
+//!
+//! To shut down the provider, call [Provider::abort].
 use std::fmt::{self, Display};
 use std::io::{BufReader, Read};
 use std::net::SocketAddr;
@@ -179,12 +187,12 @@ pub struct Provider {
 pub enum Event {
     /// A new client connected to the provider.
     ClientConnected {
-        /// The quic connection id.
+        /// An unique connection id.
         connection_id: u64,
     },
     /// A request was received from a client.
     RequestReceived {
-        /// The quic connection id.
+        /// An unique connection id.
         connection_id: u64,
         /// The request id.
         request_id: u64,
@@ -193,7 +201,7 @@ pub enum Event {
     },
     /// A request was completed and the data was sent to the client.
     TransferCompleted {
-        /// The quic connection id.
+        /// An unique connection id.
         connection_id: u64,
         /// The request id.
         request_id: u64,
@@ -271,6 +279,7 @@ async fn handle_stream(
 ) -> Result<()> {
     debug!("stream opened from {:?}", stream.connection().remote_addr());
     let connection_id = stream.connection().id();
+    stream.connection().application_protocol().unwrap();
     let (mut reader, mut writer) = stream.split();
     let mut out_buffer = BytesMut::with_capacity(1024);
     let mut in_buffer = BytesMut::with_capacity(1024);
@@ -455,11 +464,11 @@ pub enum DataSource {
 }
 
 impl DataSource {
-    /// Create a new [`DataSource`] from a [`PathBuf`].
+    /// Creates a new [`DataSource`] from a [`PathBuf`].
     pub fn new(path: PathBuf) -> Self {
         DataSource::File(path)
     }
-    /// Create a new [`DataSource`] from a [`PathBuf`] and a custom name.
+    /// Creates a new [`DataSource`] from a [`PathBuf`] and a custom name.
     pub fn with_name(path: PathBuf, name: String) -> Self {
         DataSource::NamedFile { path, name }
     }

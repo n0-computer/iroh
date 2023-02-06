@@ -276,7 +276,7 @@ pub struct SliceValidator<R> {
 }
 
 impl<R> SliceValidator<R> {
-    /// create a new slice validator for the given hash and range
+    /// creates a new slice validator for the given hash and range
     pub fn new(inner: R, hash: blake3::Hash, start: u64, len: u64) -> Self {
         let range = start..start.saturating_add(len);
         Self {
@@ -389,7 +389,7 @@ impl<R: Read> Iterator for SliceValidator<R> {
 pub struct AsyncSliceValidator<R: tokio::io::AsyncRead + Unpin>(SliceValidator<R>);
 
 impl<R: tokio::io::AsyncRead + Unpin> AsyncSliceValidator<R> {
-    /// create a new slice validator for the given hash and range
+    /// creates a new slice validator for the given hash and range
     pub fn new(inner: R, hash: blake3::Hash, start: u64, len: u64) -> Self {
         Self(SliceValidator::new(inner, hash, start, len))
     }
@@ -511,7 +511,7 @@ pub(crate) struct AsyncSliceDecoder<R: tokio::io::AsyncRead + Unpin> {
 }
 
 impl<R: tokio::io::AsyncRead + Unpin> AsyncSliceDecoder<R> {
-    /// Create a new slice decoder for the given hash and range
+    /// Creates a new slice decoder for the given hash and range
     ///
     /// The hash is the hash of the entire stream, and the range is the range being sent.
     /// If you want to decode an entire file and do not know the length, it is OK to pass

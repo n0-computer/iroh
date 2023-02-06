@@ -1,4 +1,8 @@
-//! The client side api
+//! The client side API
+//!
+//! The main entry point is [`run`]. This function takes callbacks that will
+//! be invoked when blobs or collections are received. It is up to the caller
+//! to store the received data.
 use std::fmt::Debug;
 use std::io;
 use std::net::SocketAddr;
@@ -71,8 +75,14 @@ pub struct Stats {
     pub data_len: u64,
     /// The time it took to transfer the data
     pub elapsed: Duration,
+}
+
+impl Stats {
     /// Transfer rate in megabits per second
-    pub mbits: f64,
+    pub fn mbits(&self) -> f64 {
+        let data_len_bit = self.data_len * 8;
+        data_len_bit as f64 / (1000. * 1000.) / self.elapsed.as_secs_f64()
+    }
 }
 
 /// A verified stream of data coming from the provider
@@ -222,15 +232,8 @@ where
                 writer.close().await?;
 
                 let elapsed = now.elapsed();
-                let elapsed_s = elapsed.as_secs_f64();
-                let data_len_bit = data_len * 8;
-                let mbits = data_len_bit as f64 / (1000. * 1000.) / elapsed_s;
 
-                let stats = Stats {
-                    data_len,
-                    elapsed,
-                    mbits,
-                };
+                let stats = Stats { data_len, elapsed };
 
                 Ok(stats)
             }
