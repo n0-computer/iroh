@@ -25,7 +25,14 @@ use crate::util::{self, Hash};
 const MAX_CONNECTIONS: u64 = 1024;
 const MAX_STREAMS: u64 = 10;
 
-pub type Database = Arc<HashMap<Hash, BlobOrCollection>>;
+#[derive(Debug, Clone)]
+pub struct Database(Arc<HashMap<Hash, BlobOrCollection>>);
+
+impl Database {
+    fn get(&self, key: &Hash) -> Option<&BlobOrCollection> {
+        self.0.get(key)
+    }
+}
 
 /// Builder for the [`Provider`].
 ///
@@ -44,7 +51,7 @@ pub struct Builder {
 }
 
 #[derive(Debug)]
-pub enum BlobOrCollection {
+pub(crate) enum BlobOrCollection {
     Blob(Data),
     Collection((Bytes, Bytes)),
 }
@@ -408,7 +415,7 @@ async fn send_blob<W: AsyncWrite + Unpin + Send + 'static>(
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Data {
+pub(crate) struct Data {
     /// Outboard data from bao.
     outboard: Bytes,
     /// Path to the original data, which must not change while in use.
@@ -560,7 +567,7 @@ pub async fn create_collection(data_sources: Vec<DataSource>) -> Result<(Databas
         BlobOrCollection::Collection((Bytes::from(outboard), Bytes::from(data.to_vec()))),
     );
 
-    Ok((Arc::new(db), hash))
+    Ok((Database(Arc::new(db)), hash))
 }
 
 async fn write_response<W: AsyncWrite + Unpin>(
