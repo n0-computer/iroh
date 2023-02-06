@@ -17,11 +17,9 @@ use std::str::FromStr;
 use std::task::Poll;
 use std::{collections::HashMap, sync::Arc};
 
-use anyhow::{anyhow, bail, ensure, Context, Result};
+use anyhow::{bail, ensure, Context, Result};
 use bao::encode::SliceExtractor;
 use bytes::{Bytes, BytesMut};
-use s2n_quic::stream::BidirectionalStream;
-use s2n_quic::Server as QuicServer;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncWrite, AsyncWriteExt};
 use tokio::sync::broadcast;
@@ -34,7 +32,7 @@ use crate::protocol::{read_lp, write_lp, AuthToken, Handshake, Request, Res, Res
 use crate::tls::{self, Keypair, PeerId};
 use crate::util::{self, Hash};
 
-const MAX_CONNECTIONS: u64 = 1024;
+const MAX_CONNECTIONS: u32 = 1024;
 const MAX_STREAMS: u64 = 10;
 
 /// Database containing content-addressed data (blobs or collections).
@@ -106,26 +104,25 @@ impl Builder {
     /// connections.  The returned [`Provider`] can be used to control the task as well as
     /// get information about it.
     pub fn spawn(self) -> Result<Provider> {
-        let server_config = tls::make_server_config(&self.keypair)?;
-        let tls = s2n_quic::provider::tls::rustls::Server::from(server_config);
-        let limits = s2n_quic::provider::limits::Limits::default()
-            .with_max_active_connection_ids(MAX_CONNECTIONS)?
-            .with_max_open_local_bidirectional_streams(MAX_STREAMS)?
-            .with_max_open_remote_bidirectional_streams(MAX_STREAMS)?;
+        let tls_server_config = tls::make_server_config(&self.keypair)?;
+        let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(tls_server_config));
+        let mut transport_config = quinn::TransportConfig::default();
+        transport_config
+            .max_concurrent_bidi_streams(MAX_STREAMS.try_into()?)
+            .max_concurrent_uni_streams(0u32.into());
 
-        let server = QuicServer::builder()
-            .with_tls(tls)?
-            .with_io(self.bind_addr)?
-            .with_limits(limits)?
-            .start()
-            .map_err(|e| anyhow!("{:?}", e))?;
-        let listen_addr = server.local_addr().unwrap();
+        server_config
+            .transport_config(Arc::new(transport_config))
+            .concurrent_connections(MAX_CONNECTIONS);
+
+        let endpoint = quinn::Endpoint::server(server_config, self.bind_addr)?;
+        let listen_addr = endpoint.local_addr().unwrap();
         let db2 = self.db.clone();
         let (events_sender, _events_receiver) = broadcast::channel(8);
         let events = events_sender.clone();
         let task =
             tokio::spawn(
-                async move { Self::run(server, db2, self.auth_token, events_sender).await },
+                async move { Self::run(endpoint, db2, self.auth_token, events_sender).await },
             );
 
         Ok(Provider {
@@ -138,30 +135,38 @@ impl Builder {
     }
 
     async fn run(
-        mut server: s2n_quic::server::Server,
+        server: quinn::Endpoint,
         db: Database,
         token: AuthToken,
         events: broadcast::Sender<Event>,
     ) {
         debug!("\nlistening at: {:#?}", server.local_addr().unwrap());
 
-        while let Some(mut connection) = server.accept().await {
+        while let Some(connecting) = server.accept().await {
             let db = db.clone();
             let events = events.clone();
             tokio::spawn(async move {
-                debug!("connection accepted from {:?}", connection.remote_addr());
-                while let Ok(Some(stream)) = connection.accept_bidirectional_stream().await {
-                    let _ = events.send(Event::ClientConnected {
-                        connection_id: connection.id(),
-                    });
-                    let db = db.clone();
-                    let events = events.clone();
-                    tokio::spawn(async move {
-                        if let Err(err) = handle_stream(db, token, stream, events).await {
-                            warn!("error: {:#?}", err);
+                match connecting.await {
+                    Ok(connection) => {
+                        debug!("connection accepted from {:?}", connection.remote_address());
+                        while let Ok(stream) = connection.accept_bi().await {
+                            let connection_id = connection.stable_id() as _;
+                            let _ = events.send(Event::ClientConnected { connection_id });
+                            let db = db.clone();
+                            let events = events.clone();
+                            tokio::spawn(async move {
+                                if let Err(err) =
+                                    handle_stream(db, token, connection_id, stream, events).await
+                                {
+                                    warn!("error: {:#?}", err);
+                                }
+                                debug!("disconnected");
+                            });
                         }
-                        debug!("disconnected");
-                    });
+                    }
+                    Err(err) => {
+                        warn!("error: {:#?}", err)
+                    }
                 }
             });
         }
@@ -281,13 +286,10 @@ impl Future for Provider {
 async fn handle_stream(
     db: Database,
     token: AuthToken,
-    stream: BidirectionalStream,
+    connection_id: u64,
+    (mut writer, mut reader): (quinn::SendStream, quinn::RecvStream),
     events: broadcast::Sender<Event>,
 ) -> Result<()> {
-    debug!("stream opened from {:?}", stream.connection().remote_addr());
-    let connection_id = stream.connection().id();
-    stream.connection().application_protocol().unwrap();
-    let (mut reader, mut writer) = stream.split();
     let mut out_buffer = BytesMut::with_capacity(1024);
     let mut in_buffer = BytesMut::with_capacity(1024);
 

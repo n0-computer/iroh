@@ -23,11 +23,11 @@ ed25519-dalek = { version = "1.0.1", features = ["serde"] }
 futures = "0.3.25"
 indicatif = { version = "0.17", features = ["tokio"], optional = true }
 postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"] }
+quinn = "0.9.3"
 rand = "0.7"
 rcgen = "0.10"
 ring = "0.16.20"
 rustls = { version = "0.20.8", default-features = false, features = ["dangerous_configuration"] }
-s2n-quic = { version = "1.14.0", default-features = false, features = [ "provider-tls-rustls", "provider-address-token-default" ] }
 serde = { version = "1", features = ["derive"] }
 ssh-key = { version = "0.5.1", features = ["ed25519", "std", "rand_core"] }
 tempfile = "3"

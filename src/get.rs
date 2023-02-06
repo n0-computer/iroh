@@ -6,16 +6,14 @@
 use std::fmt::Debug;
 use std::io;
 use std::net::SocketAddr;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail, ensure, Result};
 use bytes::BytesMut;
 use futures::Future;
 use postcard::experimental::max_size::MaxSize;
-use s2n_quic::client::Connect;
-use s2n_quic::stream::ReceiveStream;
-use s2n_quic::{Client, Connection};
-use tokio::io::{AsyncRead, ReadBuf};
+use tokio::io::{AsyncRead, AsyncWriteExt, ReadBuf};
 use tracing::debug;
 
 use crate::bao_slice_decoder::AsyncSliceDecoder;
@@ -48,24 +46,23 @@ impl Default for Options {
 }
 
 /// Setup a QUIC connection to the provided address.
-async fn setup(opts: Options) -> Result<(Client, Connection)> {
+async fn setup(opts: Options) -> Result<quinn::Connection> {
     let keypair = Keypair::generate();
 
-    let client_config = tls::make_client_config(&keypair, opts.peer_id)?;
-    let tls = s2n_quic::provider::tls::rustls::Client::from(client_config);
+    let tls_client_config = tls::make_client_config(&keypair, opts.peer_id)?;
+    let mut client_config = quinn::ClientConfig::new(Arc::new(tls_client_config));
+    let mut endpoint = quinn::Endpoint::client("0.0.0.0:0".parse().unwrap())?;
+    let mut transport_config = quinn::TransportConfig::default();
+    transport_config.keep_alive_interval(Some(Duration::from_secs(1)));
+    client_config.transport_config(Arc::new(transport_config));
 
-    let client = Client::builder()
-        .with_tls(tls)?
-        .with_io("0.0.0.0:0")?
-        .start()
-        .map_err(|e| anyhow!("{:?}", e))?;
+    endpoint.set_default_client_config(client_config);
 
     debug!("connecting to {}", opts.addr);
-    let connect = Connect::new(opts.addr).with_server_name("localhost");
-    let mut connection = client.connect(connect).await?;
+    let connect = endpoint.connect(opts.addr, "localhost")?;
+    let connection = connect.await?;
 
-    connection.keep_alive(true)?;
-    Ok((client, connection))
+    Ok(connection)
 }
 
 /// Stats about the transfer.
@@ -90,10 +87,10 @@ impl Stats {
 /// We guarantee that the data is correct by incrementally verifying a hash
 #[repr(transparent)]
 #[derive(Debug)]
-pub struct DataStream(AsyncSliceDecoder<ReceiveStream>);
+pub struct DataStream(AsyncSliceDecoder<quinn::RecvStream>);
 
 impl DataStream {
-    fn new(inner: ReceiveStream, hash: Hash) -> Self {
+    fn new(inner: quinn::RecvStream, hash: Hash) -> Self {
         DataStream(AsyncSliceDecoder::new(inner, hash.into(), 0, u64::MAX))
     }
 
@@ -101,7 +98,7 @@ impl DataStream {
         self.0.read_size().await
     }
 
-    fn into_inner(self) -> ReceiveStream {
+    fn into_inner(self) -> quinn::RecvStream {
         self.0.into_inner()
     }
 }
@@ -134,10 +131,9 @@ where
     FutC: Future<Output = Result<DataStream>>,
 {
     let now = Instant::now();
-    let (_client, mut connection) = setup(opts).await?;
+    let connection = setup(opts).await?;
 
-    let stream = connection.open_bidirectional_stream().await?;
-    let (mut reader, mut writer) = stream.split();
+    let (mut writer, mut reader) = connection.open_bi().await?;
 
     on_connected().await?;
 
@@ -229,7 +225,7 @@ where
 
                 // Shut down the stream
                 debug!("shutting down stream");
-                writer.close().await?;
+                writer.shutdown().await?;
 
                 let elapsed = now.elapsed();
 
@@ -250,7 +246,7 @@ where
 /// The `AsyncReader` can be used to read the content.
 async fn handle_blob_response(
     hash: Hash,
-    mut reader: ReceiveStream,
+    mut reader: quinn::RecvStream,
     buffer: &mut BytesMut,
 ) -> Result<DataStream> {
     match read_lp_data(&mut reader, buffer).await? {
