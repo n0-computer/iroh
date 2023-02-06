@@ -1,3 +1,6 @@
+//! Send data over the internet.
+#![deny(missing_docs)]
+#![deny(rustdoc::broken_intra_doc_links)]
 pub mod blobs;
 pub mod get;
 pub mod protocol;

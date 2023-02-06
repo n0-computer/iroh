@@ -1,3 +1,12 @@
+//! Provider API
+//!
+//! A provider is a server that serves content-addressed data (blobs or collections).
+//! To create a provider, create a database using [create_collection], then build a
+//! provider using [Builder] and spawn it using [Builder::spawn].
+//!
+//! You can monitor what is happening in the provider using [Provider::subscribe].
+//!
+//! To shut down the provider, call [Provider::abort].
 use std::fmt::{self, Display};
 use std::io::{BufReader, Read};
 use std::net::SocketAddr;
@@ -25,7 +34,15 @@ use crate::util::{self, Hash};
 const MAX_CONNECTIONS: u64 = 1024;
 const MAX_STREAMS: u64 = 10;
 
-pub type Database = Arc<HashMap<Hash, BlobOrCollection>>;
+/// Database containing content-addressed data (blobs or collections).
+#[derive(Debug, Clone)]
+pub struct Database(Arc<HashMap<Hash, BlobOrCollection>>);
+
+impl Database {
+    fn get(&self, key: &Hash) -> Option<&BlobOrCollection> {
+        self.0.get(key)
+    }
+}
 
 /// Builder for the [`Provider`].
 ///
@@ -44,7 +61,7 @@ pub struct Builder {
 }
 
 #[derive(Debug)]
-pub enum BlobOrCollection {
+pub(crate) enum BlobOrCollection {
     Blob(Data),
     Collection((Bytes, Bytes)),
 }
@@ -168,20 +185,32 @@ pub struct Provider {
 /// Events emitted by the [`Provider`] informing about the current status.
 #[derive(Debug, Clone)]
 pub enum Event {
+    /// A new client connected to the provider.
     ClientConnected {
+        /// An unique connection id.
         connection_id: u64,
     },
+    /// A request was received from a client.
     RequestReceived {
+        /// An unique connection id.
         connection_id: u64,
+        /// The request id.
         request_id: u64,
+        /// The hash for which the client wants to receive data.
         hash: Hash,
     },
+    /// A request was completed and the data was sent to the client.
     TransferCompleted {
+        /// An unique connection id.
         connection_id: u64,
+        /// The request id.
         request_id: u64,
     },
+    /// A request was aborted because the client disconnected.
     TransferAborted {
+        /// The quic connection id.
         connection_id: u64,
+        /// The request id.
         request_id: u64,
     },
 }
@@ -250,6 +279,7 @@ async fn handle_stream(
 ) -> Result<()> {
     debug!("stream opened from {:?}", stream.connection().remote_addr());
     let connection_id = stream.connection().id();
+    stream.connection().application_protocol().unwrap();
     let (mut reader, mut writer) = stream.split();
     let mut out_buffer = BytesMut::with_capacity(1024);
     let mut in_buffer = BytesMut::with_capacity(1024);
@@ -408,7 +438,7 @@ async fn send_blob<W: AsyncWrite + Unpin + Send + 'static>(
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Data {
+pub(crate) struct Data {
     /// Outboard data from bao.
     outboard: Bytes,
     /// Path to the original data, which must not change while in use.
@@ -417,6 +447,7 @@ pub struct Data {
     size: u64,
 }
 
+/// A data source
 #[derive(Debug)]
 pub enum DataSource {
     /// A blob of data originating from the filesystem. The name of the blob is derived from
@@ -424,13 +455,20 @@ pub enum DataSource {
     File(PathBuf),
     /// NamedFile is treated the same as [`DataSource::File`], except you can pass in a custom
     /// name. Passing in the empty string will explicitly _not_ persist the filename.
-    NamedFile { path: PathBuf, name: String },
+    NamedFile {
+        /// Path to the file
+        path: PathBuf,
+        /// Custom name
+        name: String,
+    },
 }
 
 impl DataSource {
+    /// Creates a new [`DataSource`] from a [`PathBuf`].
     pub fn new(path: PathBuf) -> Self {
         DataSource::File(path)
     }
+    /// Creates a new [`DataSource`] from a [`PathBuf`] and a custom name.
     pub fn with_name(path: PathBuf, name: String) -> Self {
         DataSource::NamedFile { path, name }
     }
@@ -560,7 +598,7 @@ pub async fn create_collection(data_sources: Vec<DataSource>) -> Result<(Databas
         BlobOrCollection::Collection((Bytes::from(outboard), Bytes::from(data.to_vec()))),
     );
 
-    Ok((Arc::new(db), hash))
+    Ok((Database(Arc::new(db)), hash))
 }
 
 async fn write_response<W: AsyncWrite + Unpin>(
@@ -600,11 +638,13 @@ pub struct Ticket {
 }
 
 impl Ticket {
+    /// Deserializes from bytes.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
         let slf = postcard::from_bytes(bytes)?;
         Ok(slf)
     }
 
+    /// Serializes to bytes.
     pub fn to_bytes(&self) -> Vec<u8> {
         postcard::to_stdvec(self).expect("postcard::to_stdvec is infallible")
     }

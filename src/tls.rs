@@ -22,6 +22,7 @@ use crate::util;
 // TODO: change?
 const P2P_ALPN: [u8; 6] = *b"libp2p";
 
+/// A keypair.
 #[derive(Debug)]
 pub struct Keypair(ed25519_dalek::Keypair);
 
@@ -34,25 +35,30 @@ impl Deref for Keypair {
 }
 
 impl Keypair {
+    /// The public key of this keypair.
     pub fn public(&self) -> PublicKey {
         self.0.public
     }
 
+    /// The secret key of this keypair.
     pub fn secret(&self) -> &SecretKey {
         &self.0.secret
     }
 
+    /// Generate a new keypair.
     pub fn generate() -> Self {
         let mut rng = rand::rngs::OsRng;
         let key = ed25519_dalek::Keypair::generate(&mut rng);
         Self(key)
     }
 
+    /// Serialise the keypair to OpenSSH format.
     pub fn to_openssh(&self) -> ssh_key::Result<zeroize::Zeroizing<String>> {
         let ckey = ssh_key::private::Ed25519Keypair::from(&self.0);
         ssh_key::private::PrivateKey::from(ckey).to_openssh(LineEnding::default())
     }
 
+    /// Deserialise the keypair from OpenSSH format.
     pub fn try_from_openssh<T: AsRef<[u8]>>(data: T) -> anyhow::Result<Self> {
         let ser_key = ssh_key::private::PrivateKey::from_openssh(data)?;
         match ser_key.key_data() {
@@ -111,10 +117,13 @@ impl Display for PeerId {
     }
 }
 
+/// Error when deserialising a [`PeerId`].
 #[derive(thiserror::Error, Debug)]
 pub enum PeerIdError {
+    /// Error when decoding the base64.
     #[error("encoding: {0}")]
     Base64(#[from] base64::DecodeError),
+    /// Error when decoding the public key.
     #[error("key: {0}")]
     Key(#[from] ed25519_dalek::SignatureError),
 }

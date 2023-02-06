@@ -1,3 +1,8 @@
+//! The client side API
+//!
+//! The main entry point is [`run`]. This function takes callbacks that will
+//! be invoked when blobs or collections are received. It is up to the caller
+//! to store the received data.
 use std::fmt::Debug;
 use std::io;
 use std::net::SocketAddr;
@@ -24,9 +29,12 @@ pub use crate::util::Hash;
 
 const MAX_DATA_SIZE: u64 = 1024 * 1024 * 1024;
 
+/// Options for the client
 #[derive(Clone, Debug)]
 pub struct Options {
+    /// The address to connect to
     pub addr: SocketAddr,
+    /// The peer id to expect
     pub peer_id: Option<PeerId>,
 }
 
@@ -63,9 +71,18 @@ async fn setup(opts: Options) -> Result<(Client, Connection)> {
 /// Stats about the transfer.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Stats {
+    /// The number of bytes transferred
     pub data_len: u64,
+    /// The time it took to transfer the data
     pub elapsed: Duration,
-    pub mbits: f64,
+}
+
+impl Stats {
+    /// Transfer rate in megabits per second
+    pub fn mbits(&self) -> f64 {
+        let data_len_bit = self.data_len * 8;
+        data_len_bit as f64 / (1000. * 1000.) / self.elapsed.as_secs_f64()
+    }
 }
 
 /// A verified stream of data coming from the provider
@@ -99,6 +116,7 @@ impl AsyncRead for DataStream {
     }
 }
 
+/// Get a collection and all its blobs from a provider
 pub async fn run<A, B, C, FutA, FutB, FutC>(
     hash: Hash,
     token: AuthToken,
@@ -214,15 +232,8 @@ where
                 writer.close().await?;
 
                 let elapsed = now.elapsed();
-                let elapsed_s = elapsed.as_secs_f64();
-                let data_len_bit = data_len * 8;
-                let mbits = data_len_bit as f64 / (1000. * 1000.) / elapsed_s;
 
-                let stats = Stats {
-                    data_len,
-                    elapsed,
-                    mbits,
-                };
+                let stats = Stats { data_len, elapsed };
 
                 Ok(stats)
             }
