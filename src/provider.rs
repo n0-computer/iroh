@@ -599,10 +599,21 @@ pub struct Ticket {
     pub token: AuthToken,
 }
 
+impl Ticket {
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
+        let slf = postcard::from_bytes(bytes)?;
+        Ok(slf)
+    }
+
+    pub fn to_bytes(&self) -> Vec<u8> {
+        postcard::to_stdvec(self).expect("postcard::to_stdvec is infallible")
+    }
+}
+
 /// Serializes to base64.
 impl Display for Ticket {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let encoded = postcard::to_stdvec(self).map_err(|_| fmt::Error)?;
+        let encoded = self.to_bytes();
         write!(f, "{}", util::encode(encoded))
     }
 }
@@ -613,7 +624,7 @@ impl FromStr for Ticket {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let bytes = util::decode(s)?;
-        let slf = postcard::from_bytes(&bytes)?;
+        let slf = Self::from_bytes(&bytes)?;
         Ok(slf)
     }
 }

@@ -7,9 +7,9 @@ use anyhow::{anyhow, bail, ensure, Result};
 use bytes::BytesMut;
 use futures::Future;
 use postcard::experimental::max_size::MaxSize;
+use s2n_quic::client::Connect;
 use s2n_quic::stream::ReceiveStream;
-use s2n_quic::Connection;
-use s2n_quic::{client::Connect, Client};
+use s2n_quic::{Client, Connection};
 use tokio::io::{AsyncRead, ReadBuf};
 use tracing::debug;
 
@@ -19,7 +19,8 @@ use crate::protocol::{
     read_bao_encoded, read_lp_data, write_lp, AuthToken, Handshake, Request, Res, Response,
 };
 use crate::tls::{self, Keypair, PeerId};
-use crate::util::Hash;
+
+pub use crate::util::Hash;
 
 const MAX_DATA_SIZE: u64 = 1024 * 1024 * 1024;
 
@@ -111,7 +112,7 @@ where
     FutA: Future<Output = Result<()>>,
     B: FnMut(Collection) -> FutB,
     FutB: Future<Output = Result<()>>,
-    C: FnMut(Hash, DataStream, Option<String>) -> FutC,
+    C: FnMut(Hash, DataStream, String) -> FutC,
     FutC: Future<Output = Result<DataStream>>,
 {
     let now = Instant::now();
@@ -190,8 +191,7 @@ where
                                 "downloaded more than {total_blobs_size}"
                             );
                             remaining_size -= size;
-                            let blob_reader =
-                                on_blob(blob.hash, blob_reader, Some(blob.name)).await?;
+                            let blob_reader = on_blob(blob.hash, blob_reader, blob.name).await?;
                             reader = blob_reader.into_inner();
                         }
                     }
