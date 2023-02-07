@@ -43,6 +43,17 @@ impl Database {
     fn get(&self, key: &Hash) -> Option<&BlobOrCollection> {
         self.0.get(key)
     }
+
+    /// Iterate over all blobs in the database.
+    pub fn blobs(&self) -> impl Iterator<Item = (&Hash, &PathBuf, u64)> + '_ {
+        self.0
+            .iter()
+            .filter_map(|(k, v)| match v {
+                BlobOrCollection::Blob(data) => Some((k, data)),
+                BlobOrCollection::Collection(_) => None,
+            })
+            .map(|(k, data)| (k, &data.path, data.size))
+    }
 }
 
 /// Builder for the [`Provider`].
@@ -595,13 +606,6 @@ pub async fn create_collection(data_sources: Vec<DataSource>) -> Result<(Databas
     let data = postcard::to_slice(&c, &mut buffer)?;
     let (outboard, hash) = bao::encode::outboard(&data);
     let hash = Hash::from(hash);
-    println!("Collection: {hash}\n");
-    for el in db.values() {
-        if let BlobOrCollection::Blob(blob) = el {
-            println!("- {}: {} bytes", blob.path.display(), blob.size);
-        }
-    }
-    println!();
     db.insert(
         hash,
         BlobOrCollection::Collection((Bytes::from(outboard), Bytes::from(data.to_vec()))),
