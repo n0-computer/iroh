@@ -103,7 +103,7 @@ impl OutWriter {
 
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Blake3Cid(Hash);
+struct Blake3Cid(Hash);
 
 const CID_PREFIX: [u8; 4] = [
     0x01, // version
@@ -117,11 +117,11 @@ impl Blake3Cid {
         Blake3Cid(hash)
     }
 
-    pub fn hash(&self) -> &Hash {
+    pub fn as_hash(&self) -> &Hash {
         &self.0
     }
 
-    pub fn into_bytes(&self) -> [u8; 36] {
+    pub fn as_bytes(&self) -> [u8; 36] {
         let hash: [u8; 32] = self.0.as_ref().try_into().unwrap();
         let mut res = [0u8; 36];
         res[0..4].copy_from_slice(&CID_PREFIX);
@@ -147,7 +147,7 @@ impl fmt::Display for Blake3Cid {
         // result will be 58 bytes plus prefix
         let mut res = [b'b'; 59];
         // write the encoded bytes
-        data_encoding::BASE32_NOPAD.encode_mut(&self.into_bytes(), &mut res[1..]);
+        data_encoding::BASE32_NOPAD.encode_mut(&self.as_bytes(), &mut res[1..]);
         // convert to string, this is guaranteed to succeed
         let t = std::str::from_utf8_mut(res.as_mut()).unwrap();
         // hack since data_encoding doesn't have BASE32LOWER_NOPAD as a const
@@ -215,7 +215,7 @@ async fn main() -> Result<()> {
             }
             let token =
                 AuthToken::from_str(&token).context("Wrong format for authentication token")?;
-            get_interactive(*hash.hash(), opts, token, out).await?;
+            get_interactive(*hash.as_hash(), opts, token, out).await?;
         }
         Commands::GetTicket { out, ticket } => {
             let Ticket {
