@@ -37,6 +37,7 @@ thiserror = "1"
 tokio = { version = "1", features = ["full"] }
 tokio-util = { version = "0.7", features = ["io-util", "io"] }
 tracing = "0.1"
+tracing-futures = { version = "0.2.5", features = ["tokio"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 webpki = "0.22"
 x509-parser = "0.14"
