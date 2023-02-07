@@ -1,12 +1,12 @@
 //! Provider API
 //!
 //! A provider is a server that serves content-addressed data (blobs or collections).
-//! To create a provider, create a database using [create_collection], then build a
-//! provider using [Builder] and spawn it using [Builder::spawn].
+//! To create a provider, create a database using [`create_collection`], then build a
+//! provider using [`Builder`] and spawn it using [`Builder::spawn`].
 //!
-//! You can monitor what is happening in the provider using [Provider::subscribe].
+//! You can monitor what is happening in the provider using [`Provider::subscribe`].
 //!
-//! To shut down the provider, call [Provider::abort].
+//! To shut down the provider, call [`Provider::shutdown`].
 use std::fmt::{self, Display};
 use std::future::Future;
 use std::io::{BufReader, Read};
@@ -25,7 +25,9 @@ use tokio::io::{AsyncWrite, AsyncWriteExt};
 use tokio::sync::broadcast;
 use tokio::task::{JoinError, JoinHandle};
 use tokio_util::io::SyncIoBridge;
-use tracing::{debug, warn};
+use tokio_util::sync::CancellationToken;
+use tracing::{debug, debug_span, warn};
+use tracing_futures::Instrument;
 
 use crate::blobs::{Blob, Collection};
 use crate::protocol::{read_lp, write_lp, AuthToken, Handshake, Request, Res, Response, VERSION};
@@ -50,9 +52,8 @@ impl Database {
 /// You must supply a database which can be created using [`create_collection`], everything else is
 /// optional.  Finally you can create and run the provider by calling [`Builder::spawn`].
 ///
-/// The returned [`Provider`] is awaitable to know when it finishes.  Currently it needs to
-/// be aborted using [`Provider::abort`], graceful shutdown will be implemented in the
-/// future.
+/// The returned [`Provider`] is awaitable to know when it finishes.  It can be terminated
+/// using [`Provider::shutdown`].
 #[derive(Debug)]
 pub struct Builder {
     bind_addr: SocketAddr,
@@ -120,10 +121,13 @@ impl Builder {
         let db2 = self.db.clone();
         let (events_sender, _events_receiver) = broadcast::channel(8);
         let events = events_sender.clone();
-        let task =
-            tokio::spawn(
-                async move { Self::run(endpoint, db2, self.auth_token, events_sender).await },
-            );
+        let cancel_token = CancellationToken::new();
+        let task = {
+            let cancel_token = cancel_token.clone();
+            tokio::spawn(async move {
+                Self::run(endpoint, db2, self.auth_token, events_sender, cancel_token).await
+            })
+        };
 
         Ok(Provider {
             listen_addr,
@@ -131,45 +135,37 @@ impl Builder {
             auth_token: self.auth_token,
             task,
             events,
+            cancel_token,
         })
     }
 
     async fn run(
         server: quinn::Endpoint,
         db: Database,
-        token: AuthToken,
+        auth_token: AuthToken,
         events: broadcast::Sender<Event>,
+        cancel_token: CancellationToken,
     ) {
         debug!("\nlistening at: {:#?}", server.local_addr().unwrap());
 
-        while let Some(connecting) = server.accept().await {
-            let db = db.clone();
-            let events = events.clone();
-            tokio::spawn(async move {
-                match connecting.await {
-                    Ok(connection) => {
-                        debug!("connection accepted from {:?}", connection.remote_address());
-                        while let Ok(stream) = connection.accept_bi().await {
-                            let connection_id = connection.stable_id() as _;
-                            let _ = events.send(Event::ClientConnected { connection_id });
-                            let db = db.clone();
-                            let events = events.clone();
-                            tokio::spawn(async move {
-                                if let Err(err) =
-                                    handle_stream(db, token, connection_id, stream, events).await
-                                {
-                                    warn!("error: {:#?}", err);
-                                }
-                                debug!("disconnected");
-                            });
-                        }
-                    }
-                    Err(err) => {
-                        warn!("error: {:#?}", err)
-                    }
+        loop {
+            tokio::select! {
+                biased;
+                _ = cancel_token.cancelled() => break,
+                Some(connecting) = server.accept() => {
+                    let db = db.clone();
+                    let events = events.clone();
+                    tokio::spawn(handle_connection(connecting, db, auth_token, events));
                 }
-            });
+                else => break,
+            }
         }
+
+        // Closing the Endpoint is the equivalent of calling Connection::close on all
+        // connections: Operations will immediately fail with
+        // ConnectionError::LocallyClosed.  All streams are interrupted, this is not
+        // graceful.
+        server.close(1u16.into(), b"provider terminating");
     }
 }
 
@@ -181,7 +177,8 @@ impl Builder {
 /// is a shorthand to create a suitable [`Builder`].
 ///
 /// This runs a tokio task which can be aborted and joined if desired.  To join the task
-/// await the [`Provider`] struct directly, it will complete when the task completes.
+/// await the [`Provider`] struct directly, it will complete when the task completes.  If
+/// this is dropped the provider task is not stopped but keeps running.
 #[derive(Debug)]
 pub struct Provider {
     listen_addr: SocketAddr,
@@ -189,6 +186,7 @@ pub struct Provider {
     auth_token: AuthToken,
     task: JoinHandle<()>,
     events: broadcast::Sender<Event>,
+    cancel_token: CancellationToken,
 }
 
 /// Events emitted by the [`Provider`] informing about the current status.
@@ -268,9 +266,13 @@ impl Provider {
 
     /// Aborts the provider.
     ///
-    /// TODO: temporary, do graceful shutdown instead.
-    pub fn abort(&self) {
-        self.task.abort();
+    /// This does not gracefully terminate currently: all connections are closed and
+    /// anything in-transit is lost.  The task will stop running and awaiting this
+    /// [`Provider`] will complete.
+    ///
+    /// The shutdown behaviour will become more graceful in the future.
+    pub fn shutdown(&self) {
+        self.cancel_token.cancel();
     }
 }
 
@@ -281,6 +283,44 @@ impl Future for Provider {
     fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
         Pin::new(&mut self.task).poll(cx)
     }
+}
+
+async fn handle_connection(
+    connecting: quinn::Connecting,
+    db: Database,
+    auth_token: AuthToken,
+    events: broadcast::Sender<Event>,
+) {
+    let remote_addr = connecting.remote_address();
+    let connection = match connecting.await {
+        Ok(conn) => conn,
+        Err(err) => {
+            warn!(%remote_addr, "Error connecting: {err:#}");
+            return;
+        }
+    };
+    let connection_id = connection.stable_id() as u64;
+    let span = debug_span!("connection", connection_id, %remote_addr);
+    async move {
+        while let Ok(stream) = connection.accept_bi().await {
+            let span = debug_span!("stream", stream_id = %stream.0.id());
+            events.send(Event::ClientConnected { connection_id }).ok();
+            let db = db.clone();
+            let events = events.clone();
+            tokio::spawn(
+                async move {
+                    if let Err(err) =
+                        handle_stream(db, auth_token, connection_id, stream, events).await
+                    {
+                        warn!("error: {err:#?}",);
+                    }
+                }
+                .instrument(span),
+            );
+        }
+    }
+    .instrument(span)
+    .await
 }
 
 async fn handle_stream(

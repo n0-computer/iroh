@@ -245,7 +245,7 @@ mod tests {
         )
         .await?;
 
-        provider.abort();
+        provider.shutdown();
         provider.await.ok(); // .abort() makes this a Result::Err
 
         let events = events_task.await.unwrap();

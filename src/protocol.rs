@@ -1,5 +1,6 @@
 //! Protocol for communication between provider and client.
 use std::fmt::Display;
+use std::io;
 use std::str::FromStr;
 
 use anyhow::{ensure, Result};
@@ -84,7 +85,11 @@ pub(crate) async fn read_lp<'a, R: AsyncRead + Unpin, T: Deserialize<'a>>(
     buffer: &'a mut BytesMut,
 ) -> Result<Option<(T, usize)>> {
     // read length prefix
-    let size = read_prefix(&mut reader).await?;
+    let size = match read_prefix(&mut reader).await {
+        Ok(size) => size,
+        Err(err) if err.kind() == io::ErrorKind::UnexpectedEof => return Ok(None),
+        Err(err) => return Err(err.into()),
+    };
     let mut reader = reader.take(size);
 
     let size = usize::try_from(size)?;
@@ -152,7 +157,7 @@ pub(crate) async fn read_lp_data<R: AsyncRead + Unpin>(
     Ok(Some(response))
 }
 
-async fn read_prefix<R: AsyncRead + Unpin>(mut reader: R) -> Result<u64> {
+async fn read_prefix<R: AsyncRead + Unpin>(mut reader: R) -> Result<u64, io::Error> {
     // read length prefix
     let size = reader.read_u64_le().await?;
     Ok(size)
