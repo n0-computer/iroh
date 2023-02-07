@@ -105,7 +105,12 @@ impl OutWriter {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Blake3Cid(Hash);
 
-const CID_PREFIX: [u8; 4] = [0x01, 0x55, 0x1e, 0x20];
+const CID_PREFIX: [u8; 4] = [
+    0x01, // version
+    0x55, // raw codec
+    0x1e, // hash function, blake3
+    0x20, // hash size, 32 bytes
+];
 
 impl Blake3Cid {
     pub fn new(hash: Hash) -> Self {
