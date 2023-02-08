@@ -215,7 +215,16 @@ async fn main() -> Result<()> {
             }
             let token =
                 AuthToken::from_str(&token).context("Wrong format for authentication token")?;
-            get_interactive(*hash.as_hash(), opts, token, out).await?;
+            tokio::select! {
+                biased;
+                res = get_interactive(*hash.as_hash(), opts, token, out) => {
+                    res
+                }
+                _ = tokio::signal::ctrl_c() => {
+                    println!("Ending transfer early...");
+                    Ok(())
+                }
+            }
         }
         Commands::GetTicket { out, ticket } => {
             let Ticket {
@@ -228,7 +237,16 @@ async fn main() -> Result<()> {
                 addr,
                 peer_id: Some(peer),
             };
-            get_interactive(hash, opts, token, out).await?;
+            tokio::select! {
+                biased;
+                res = get_interactive(hash, opts, token, out) => {
+                    res
+                }
+                _ = tokio::signal::ctrl_c() => {
+                    println!("Ending transfer early...");
+                    Ok(())
+                }
+            }
         }
         Commands::Provide {
             path,
@@ -236,72 +254,89 @@ async fn main() -> Result<()> {
             auth_token,
             key,
         } => {
-            let out_writer = OutWriter::new();
-            let keypair = get_keypair(key).await?;
-
-            let mut tmp_path = None;
-
-            let sources = if let Some(path) = path {
-                out_writer
-                    .println(format!("Reading {}", path.display()))
-                    .await;
-                if path.is_dir() {
-                    let mut paths = Vec::new();
-                    let mut iter = tokio::fs::read_dir(&path).await?;
-                    while let Some(el) = iter.next_entry().await? {
-                        if el.path().is_file() {
-                            paths.push(el.path().into());
-                        }
-                    }
-                    paths
-                } else if path.is_file() {
-                    vec![path.into()]
-                } else {
-                    bail!("path must be either a Directory or a File");
+            tokio::select! {
+                biased;
+                res = provide_interactive(path, addr, auth_token, key) => {
+                    res
                 }
-            } else {
-                // Store STDIN content into a temporary file
-                let (file, path) = tempfile::NamedTempFile::new()?.into_parts();
-                let mut file = tokio::fs::File::from_std(file);
-                let path_buf = path.to_path_buf();
-                tmp_path = Some(path);
-                tokio::io::copy(&mut tokio::io::stdin(), &mut file).await?;
-                vec![path_buf.into()]
-            };
-
-            let (db, hash) = provider::create_collection(sources).await?;
-
-            println!("Collection: {}\n", Blake3Cid::new(hash));
-            for (_, path, size) in db.blobs() {
-                println!("- {}: {} bytes", path.display(), size);
+                _ = tokio::signal::ctrl_c() => {
+                    println!("\nShutting down provider...");
+                    Ok(())
+                }
             }
-            println!();
-            let mut builder = provider::Provider::builder(db).keypair(keypair);
-            if let Some(addr) = addr {
-                builder = builder.bind_addr(addr);
-            }
-            if let Some(ref encoded) = auth_token {
-                let auth_token = AuthToken::from_str(encoded)?;
-                builder = builder.auth_token(auth_token);
-            }
-            let provider = builder.spawn()?;
-
-            out_writer
-                .println(format!("PeerID: {}", provider.peer_id()))
-                .await;
-            out_writer
-                .println(format!("Auth token: {}", provider.auth_token()))
-                .await;
-            out_writer
-                .println(format!("All-in-one ticket: {}", provider.ticket(hash)))
-                .await;
-            provider.await?;
-
-            // Drop tempath to signal it can be destroyed
-            drop(tmp_path);
         }
     }
+}
 
+async fn provide_interactive(
+    path: Option<PathBuf>,
+    addr: Option<SocketAddr>,
+    auth_token: Option<String>,
+    key: Option<PathBuf>,
+) -> Result<()> {
+    let out_writer = OutWriter::new();
+    let keypair = get_keypair(key).await?;
+
+    let mut tmp_path = None;
+
+    let sources = if let Some(path) = path {
+        out_writer
+            .println(format!("Reading {}", path.display()))
+            .await;
+        if path.is_dir() {
+            let mut paths = Vec::new();
+            let mut iter = tokio::fs::read_dir(&path).await?;
+            while let Some(el) = iter.next_entry().await? {
+                if el.path().is_file() {
+                    paths.push(el.path().into());
+                }
+            }
+            paths
+        } else if path.is_file() {
+            vec![path.into()]
+        } else {
+            bail!("path must be either a Directory or a File");
+        }
+    } else {
+        // Store STDIN content into a temporary file
+        let (file, path) = tempfile::NamedTempFile::new()?.into_parts();
+        let mut file = tokio::fs::File::from_std(file);
+        let path_buf = path.to_path_buf();
+        tmp_path = Some(path);
+        tokio::io::copy(&mut tokio::io::stdin(), &mut file).await?;
+        vec![path_buf.into()]
+    };
+
+    let (db, hash) = provider::create_collection(sources).await?;
+
+    println!("Collection: {}\n", Blake3Cid::new(hash));
+    for (_, path, size) in db.blobs() {
+        println!("- {}: {} bytes", path.display(), size);
+    }
+    println!();
+    let mut builder = provider::Provider::builder(db).keypair(keypair);
+    if let Some(addr) = addr {
+        builder = builder.bind_addr(addr);
+    }
+    if let Some(ref encoded) = auth_token {
+        let auth_token = AuthToken::from_str(encoded)?;
+        builder = builder.auth_token(auth_token);
+    }
+    let provider = builder.spawn()?;
+
+    out_writer
+        .println(format!("PeerID: {}", provider.peer_id()))
+        .await;
+    out_writer
+        .println(format!("Auth token: {}", provider.auth_token()))
+        .await;
+    out_writer
+        .println(format!("All-in-one ticket: {}", provider.ticket(hash)))
+        .await;
+    provider.await?;
+
+    // Drop tempath to signal it can be destroyed
+    drop(tmp_path);
     Ok(())
 }
 
@@ -388,6 +423,7 @@ async fn get_interactive(
             Ok(())
         }
     };
+
     let on_blob = |hash: Hash, mut reader, name: String| {
         let out = &out;
         let pb = &pb;
@@ -419,6 +455,7 @@ async fn get_interactive(
                     Ok::<_, anyhow::Error>((temp_file, dup))
                 })
                 .await??;
+
                 let file = tokio::fs::File::from_std(dup);
                 let mut file_buf = tokio::io::BufWriter::new(file);
                 tokio::io::copy(&mut wrapped_reader, &mut file_buf).await?;
