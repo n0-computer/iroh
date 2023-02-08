@@ -125,7 +125,7 @@ pub async fn run<A, B, C, FutA, FutB, FutC>(
 where
     A: FnOnce() -> FutA,
     FutA: Future<Output = Result<()>>,
-    B: FnMut(Collection) -> FutB,
+    B: FnMut(&Collection) -> FutB,
     FutB: Future<Output = Result<()>>,
     C: FnMut(Hash, DataStream, String) -> FutC,
     FutC: Future<Output = Result<DataStream>>,
@@ -187,7 +187,7 @@ where
 
                         // decode the collection
                         let collection = Collection::from_bytes(&data)?;
-                        on_collection(collection.clone()).await?;
+                        on_collection(&collection).await?;
 
                         // expect to get blob data in the order they appear in the collection
                         let mut remaining_size = total_blobs_size;

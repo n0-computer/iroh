@@ -116,8 +116,8 @@ mod tests {
                 hash,
                 token,
                 opts,
-                || async move { Ok(()) },
-                |_collection| async move { Ok(()) },
+                || async { Ok(()) },
+                |_collection| async { Ok(()) },
                 |got_hash, mut reader, got_name| async move {
                     assert_eq!(file_hash, got_hash);
                     let mut got = Vec::new();
@@ -221,10 +221,10 @@ mod tests {
             collection_hash,
             provider.auth_token(),
             opts,
-            || async move { Ok(()) },
-            |collection| async move {
+            || async { Ok(()) },
+            |collection| {
                 assert_eq!(collection.blobs.len(), num_blobs);
-                Ok(())
+                async { Ok(()) }
             },
             |got_hash, mut reader, got_name| {
                 let i = &i;

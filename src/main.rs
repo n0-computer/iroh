@@ -362,13 +362,13 @@ async fn get_interactive(
             Ok(())
         }
     };
-    let on_collection = |collection: sendme::blobs::Collection| {
+    let on_collection = |collection: &sendme::blobs::Collection| {
         let pb = &pb;
         let out_writer = &out_writer;
+        let name = collection.name().to_string();
+        let total_entries = collection.total_entries();
+        let size = collection.total_blobs_size();
         async move {
-            let name = collection.name();
-            let total_entries = collection.total_entries();
-            let size = collection.total_blobs_size();
             out_writer
                 .println(format!(
                     "{} Downloading {name}...",
