@@ -5,7 +5,7 @@
 
 use std::{
     collections::HashMap,
-    net::IpAddr,
+    net::{IpAddr, SocketAddr},
     time::{Duration, SystemTime},
 };
 
@@ -1208,7 +1208,7 @@ struct InnerReportState {
     // to be returned by GetReport
     report: Report,
     // called without c.mu held
-    in_flight: HashMap<stun::TransactionId, Box<dyn Fn(IpAddr)>>,
+    in_flight: HashMap<stun::TransactionId, Box<dyn Fn(SocketAddr)>>,
     got_ep4: String,
     timers: Vec<Timeout<()>>,
 }
