@@ -345,25 +345,25 @@ impl State {
     }
 }
 
-fn filtered_ipps<F>(ipps: &[IpNet], use_ip: F) -> Vec<&IpNet>
-where
-    F: Fn(IpAddr) -> bool,
-{
-    // TODO: avoid alloc
-    let mut x = Vec::new();
-    for ipp in ipps {
-        if use_ip(ipp.addr()) {
-            x.push(ipp);
-        }
-    }
-    x
-}
-
 fn prefixes_equal_filtered<F>(a: &[IpNet], b: &[IpNet], use_ip: F) -> bool
 where
     F: Fn(IpAddr) -> bool,
 {
-    filtered_ipps(a, &use_ip) == filtered_ipps(b, &use_ip)
+    if a.len() != b.len() {
+        return false;
+    }
+    for (a, b) in a.iter().zip(b.iter()) {
+        let use_a = use_ip(a.addr());
+        let use_b = use_ip(b.addr());
+        if use_a != use_b {
+            return false;
+        }
+        if use_a && a.addr() != b.addr() {
+            return false;
+        }
+    }
+
+    true
 }
 
 // An InterfaceFilter that reports whether i is an interesting interface.
@@ -458,7 +458,7 @@ pub struct DefaultRouteDetails {
     /// longer description, like "Red Hat VirtIO Ethernet Adapter".
     pub interface_description: Option<String>,
 
-    /// Llike net.Interface.Index. Zero means not populated.
+    /// Like net.Interface.Index. Zero means not populated.
     pub interface_index: u32,
 }
 
@@ -499,20 +499,20 @@ mod bsd {
 
     pub fn default_route() -> Option<DefaultRouteDetails> {
         let idx = default_route_interface_index()?;
-        // let iface = net.InterfaceByIndex(idx)?;
-        todo!()
+        let interfaces = default_net::get_interfaces();
+        let iface = interfaces.into_iter().find(|i| i.index == idx)?;
 
-        // Some(DefaultRouteDetails {
-        //     interface_index: idx,
-        //     interface_name: iface.name,
-        //     interface_description: None,
-        // })
+        Some(DefaultRouteDetails {
+            interface_index: idx,
+            interface_name: iface.name,
+            interface_description: None,
+        })
     }
 
     /// Returns the index of the network interface that
     /// owns the default route. It returns the first IPv4 or IPv6 default route it
     /// finds (it does not prefer one or the other).
-    fn default_route_interface_index() -> Option<u16> {
+    fn default_route_interface_index() -> Option<u32> {
         // $ netstat -nr
         // Routing tables
         // Internet:
@@ -531,7 +531,7 @@ mod bsd {
         let msgs = parse_routing_table(&rib)?;
         for rm in msgs {
             if is_default_gateway(&rm) {
-                return Some(rm.index);
+                return Some(rm.index as u32);
             }
         }
         None
