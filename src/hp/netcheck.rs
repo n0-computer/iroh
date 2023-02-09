@@ -319,7 +319,7 @@ impl Client {
                 pc6: None,
                 pc4_hair: Arc::new(pc4_hair),
                 stop_probe: Arc::new(oneshot::channel()),
-                wait_port_map: Arc::new(awaitgroup::WaitGroup::new()),
+                wait_port_map: wg::AsyncWaitGroup::new(),
                 state: Arc::new(Mutex::new(InnerReportState {
                     sent_hair_check: false,
                     report: Report::default(),
@@ -381,7 +381,7 @@ impl Client {
             }
 
             if !self.skip_external_network && self.port_mapper.is_some() {
-                let worker = rs.wait_port_map.worker();
+                let worker = rs.wait_port_map.add(1);
                 tokio::task::spawn(async move {
                     rs.probe_port_map_services().await;
                     worker.done();
@@ -1185,7 +1185,7 @@ struct ReportState {
     pc4_hair: Arc<Box<dyn PacketConn>>,
     incremental: bool, // doing a lite, follow-up netcheck
     stop_probe: Arc<(oneshot::Sender<()>, oneshot::Receiver<()>)>,
-    wait_port_map: Arc<awaitgroup::WaitGroup>,
+    wait_port_map: wg::AsyncWaitGroup,
     state: Arc<Mutex<InnerReportState>>,
 }
 
