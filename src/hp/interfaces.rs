@@ -541,42 +541,46 @@ mod bsd {
     const V6_DEFAULT: [u8; 16] = [0u8; 16];
 
     fn is_default_gateway(rm: &RouteMessage) -> bool {
-        todo!()
-        // if rm.Flags&unix.RTF_GATEWAY == 0 {
-        //     return false
-        // }
-        // // Defined locally because FreeBSD does not have unix.RTF_IFSCOPE.
-        // const RTF_IFSCOPE = 0x1000000
-        //     if rm.Flags&RTF_IFSCOPE != 0 {
-        // 	return false
-        //     }
+        if rm.flags & libc::RTF_GATEWAY as u32 == 0 {
+            return false;
+        }
 
-        // // Addrs is [RTAX_DST, RTAX_GATEWAY, RTAX_NETMASK, ...]
-        // if len(rm.Addrs) <= unix.RTAX_NETMASK {
-        //     return false
-        // }
+        if rm.flags & libc::RTF_IFSCOPE as u32 != 0 {
+            return false;
+        }
 
-        // dst := rm.Addrs[unix.RTAX_DST]
-        //     netmask := rm.Addrs[unix.RTAX_NETMASK]
-        //     if dst == nil || netmask == nil {
-        // 	return false
-        //     }
+        // Addrs is [RTAX_DST, RTAX_GATEWAY, RTAX_NETMASK, ...]
+        if rm.addrs.len() <= libc::RTAX_NETMASK as usize {
+            return false;
+        }
 
-        // if dst.Family() == syscall.AF_INET && netmask.Family() == syscall.AF_INET {
-        //     dstAddr, dstOk := dst.(*route.Inet4Addr)
-        // 	nmAddr, nmOk := netmask.(*route.Inet4Addr)
-        // 	if dstOk && nmOk && dstAddr.IP == v4default && nmAddr.IP == v4default {
-        // 	    return true
-        // 	}
-        // }
+        let dst = rm.addrs.get(libc::RTAX_DST as usize);
+        let netmask = rm.addrs.get(libc::RTAX_NETMASK as usize);
+        if dst.is_none() || netmask.is_none() {
+            return false;
+        }
+        let dst = dst.unwrap();
+        let netmask = netmask.unwrap();
 
-        // if dst.Family() == syscall.AF_INET6 && netmask.Family() == syscall.AF_INET6 {
-        //     dstAddr, dstOk := dst.(*route.Inet6Addr)
-        // 	nmAddr, nmOk := netmask.(*route.Inet6Addr)
-        // 	if dstOk && nmOk && dstAddr.IP == v6default && nmAddr.IP == v6default {
-        // 	    return true
-        // 	}
-        // }
+        match (dst, netmask) {
+            (Addr::Inet4 { ip: dst }, Addr::Inet4 { ip: netmask }) => {
+                if dst.octets() == V4_DEFAULT && netmask.octets() == V4_DEFAULT {
+                    return true;
+                }
+            }
+            _ => {}
+        }
+
+        match (dst, netmask) {
+            (Addr::Inet6 { ip: dst, .. }, Addr::Inet6 { ip: netmask, .. }) => {
+                if dst.octets() == V6_DEFAULT && netmask.octets() == V6_DEFAULT {
+                    return true;
+                }
+            }
+            _ => {}
+        }
+
+        false
     }
 
     #[cfg(any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd",))]

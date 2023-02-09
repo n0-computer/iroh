@@ -8,7 +8,7 @@ use std::{
     net::{IpAddr, SocketAddr},
     ops::Deref,
     sync::Arc,
-    time::{Duration, Instant, SystemTime},
+    time::{Duration, Instant},
 };
 
 use anyhow::Error;
@@ -24,7 +24,7 @@ use tracing::{debug, info};
 use crate::hp::stun::to_canonical;
 
 use super::{
-    derp::{DerpMap, DerpNode, DerpRegion},
+    derp::{DerpMap, DerpNode, DerpRegion, UseIpv4, UseIpv6},
     interfaces,
     ping::Pinger,
     stun,
@@ -108,7 +108,7 @@ pub struct Report {
     /// keyed by DERP Region ID
     pub region_v4_latency: HashMap<usize, Duration>,
     /// keyed by DERP Region ID
-    pub region_v6_latency: HashMap<i32, Duration>,
+    pub region_v6_latency: HashMap<usize, Duration>,
 
     /// ip:port of global IPv4
     pub global_v4: String,
@@ -153,7 +153,7 @@ struct Reports {
     /// Do a full region scan, even if last is `Some`.
     next_full: bool,
     /// Some previous reports.
-    prev: HashMap<SystemTime, Report>,
+    prev: HashMap<Instant, Report>,
     /// Most recent report.
     last: Option<Report>,
     /// Time of last full (non-incremental) report.
@@ -521,8 +521,8 @@ impl Client {
                     let mut task_set = JoinSet::new();
                     let mut need = Vec::new();
 
-                    for (rid, reg) in dm.regions.iter().enumerate() {
-                        if !rs.have_region_latency(rid).await && region_has_derp_node(reg) {
+                    for (rid, reg) in dm.regions.iter() {
+                        if !rs.have_region_latency(*rid).await && region_has_derp_node(reg) {
                             need.push(reg.clone()); // TODO: avoid clone
                         }
                     }
@@ -597,118 +597,123 @@ impl Client {
     }
 
     fn log_concise_report(&self, r: &Report, dm: &DerpMap) {
-        todo!()
-        // 	c.logf("[v1] report: %v", logger.ArgWriter(func(w *bufio.Writer) {
-        // 		fmt.Fprintf(w, "udp=%v", r.UDP)
-        // 		if !r.IPv4 {
-        // 			fmt.Fprintf(w, " v4=%v", r.IPv4)
-        // 		}
-        // 		if !r.UDP {
-        // 			fmt.Fprintf(w, " icmpv4=%v", r.ICMPv4)
-        // 		}
+        let mut log = "[v1] report: ".to_string();
+        log += &format!("udp={}", r.udp);
+        if !r.ipv4 {
+            log += &format!(" v4={}", r.ipv4)
+        }
+        if !r.udp {
+            log += &format!(" icmpv4={}", r.icmpv4)
+        }
 
-        // 		fmt.Fprintf(w, " v6=%v", r.IPv6)
-        // 		if !r.IPv6 {
-        // 			fmt.Fprintf(w, " v6os=%v", r.OSHasIPv6)
-        // 		}
-        // 		fmt.Fprintf(w, " mapvarydest=%v", r.MappingVariesByDestIP)
-        // 		fmt.Fprintf(w, " hair=%v", r.HairPinning)
-        // 		if r.AnyPortMappingChecked() {
-        // 			fmt.Fprintf(w, " portmap=%v%v%v", conciseOptBool(r.UPnP, "U"), conciseOptBool(r.PMP, "M"), conciseOptBool(r.PCP, "C"))
-        // 		} else {
-        // 			fmt.Fprintf(w, " portmap=?")
-        // 		}
-        // 		if r.GlobalV4 != "" {
-        // 			fmt.Fprintf(w, " v4a=%v", r.GlobalV4)
-        // 		}
-        // 		if r.GlobalV6 != "" {
-        // 			fmt.Fprintf(w, " v6a=%v", r.GlobalV6)
-        // 		}
-        // 		if r.CaptivePortal != "" {
-        // 			fmt.Fprintf(w, " captiveportal=%v", r.CaptivePortal)
-        // 		}
-        // 		fmt.Fprintf(w, " derp=%v", r.PreferredDERP)
-        // 		if r.PreferredDERP != 0 {
-        // 			fmt.Fprintf(w, " derpdist=")
-        // 			needComma := false
-        // 			for _, rid := range dm.RegionIDs() {
-        // 				if d := r.RegionV4Latency[rid]; d != 0 {
-        // 					if needComma {
-        // 						w.WriteByte(',')
-        // 					}
-        // 					fmt.Fprintf(w, "%dv4:%v", rid, d.Round(time.Millisecond))
-        // 					needComma = true
-        // 				}
-        // 				if d := r.RegionV6Latency[rid]; d != 0 {
-        // 					if needComma {
-        // 						w.WriteByte(',')
-        // 					}
-        // 					fmt.Fprintf(w, "%dv6:%v", rid, d.Round(time.Millisecond))
-        // 					needComma = true
-        // 				}
-        // 			}
-        // 		}
-        // 	}))
+        log += &format!(" v6={}", r.ipv6);
+        if !r.ipv6 {
+            log += &format!(" v6os={}", r.os_has_ipv6);
+        }
+        log += &format!(" mapvarydest={:?}", r.mapping_varies_by_dest_ip);
+        log += &format!(" hair={:?}", r.hair_pinning);
+        if r.any_port_mapping_checked() {
+            log += &format!(
+                " portmap={{ UPnP: {:?}, PMP: {:?}, PCP: {:?} }}",
+                r.upnp, r.pmp, r.pcp
+            );
+        } else {
+            log += &format!(" portmap=?");
+        }
+        if r.global_v4 != "" {
+            log += &format!(" v4a={}", r.global_v4);
+        }
+        if r.global_v6 != "" {
+            log += &format!(" v6a={}", r.global_v6);
+        }
+        if let Some(c) = r.captive_portal {
+            log += &format!(" captiveportal={}", c);
+        }
+        log += &format!(" derp={}", r.preferred_derp);
+        if r.preferred_derp != 0 {
+            log += &format!(" derpdist=");
+            let mut need_comma = false;
+            for rid in &dm.region_ids() {
+                if let Some(d) = r.region_v4_latency.get(rid) {
+                    if need_comma {
+                        log += ",";
+                    }
+                    log += &format!("{}v4:{}", rid, d.as_millis());
+                    need_comma = true;
+                }
+                if let Some(d) = r.region_v6_latency.get(rid) {
+                    if need_comma {
+                        log += ",";
+                    }
+                    log += &format!("{}v6:{}", rid, d.as_millis());
+                    need_comma = true;
+                }
+            }
+        }
+
+        info!("{}", log);
     }
 
-    /// Adds `r` to the set of recent Reports and mutates r.PreferredDERP to contain the best recent one.
-    fn add_report_history_and_set_preferred_derp(&self, r: &mut Report) {
-        todo!()
-        // 	c.mu.Lock()
-        // 	defer c.mu.Unlock()
+    /// Adds `r` to the set of recent Reports and mutates `r.preferred_derp` to contain the best recent one.
+    async fn add_report_history_and_set_preferred_derp(&self, r: &mut Report) {
+        let mut reports = self.reports.lock().await;
+        let mut prev_derp = 0;
+        if let Some(ref last) = reports.last {
+            prev_derp = last.preferred_derp;
+        }
+        let now = Instant::now();
 
-        // 	var prevDERP int
-        // 	if c.last != nil {
-        // 		prevDERP = c.last.PreferredDERP
-        // 	}
-        // 	if c.prev == nil {
-        // 		c.prev = map[time.Time]*Report{}
-        // 	}
-        // 	now := c.timeNow()
-        // 	c.prev[now] = r
-        // 	c.last = r
+        const MAX_AGE: Duration = Duration::from_secs(5 * 60);
 
-        // 	const maxAge = 5 * time.Minute
+        // region ID => its best recent latency in last MAX_AGE
+        let mut best_recent = HashMap::new();
 
-        // 	// region ID => its best recent latency in last maxAge
-        // 	bestRecent := map[int]time.Duration{}
+        let mut to_remove = Vec::new();
+        for (t, pr) in &reports.prev {
+            if now.duration_since(*t) > MAX_AGE {
+                to_remove.push(*t);
+                continue;
+            }
+            for (region_id, d) in &pr.region_latency {
+                let bd = best_recent.entry(*region_id).or_insert(*d);
+                if d < bd {
+                    *bd = *d;
+                }
+            }
+        }
 
-        // 	for t, pr := range c.prev {
-        // 		if now.Sub(t) > maxAge {
-        // 			delete(c.prev, t)
-        // 			continue
-        // 		}
-        // 		for regionID, d := range pr.RegionLatency {
-        // 			if bd, ok := bestRecent[regionID]; !ok || d < bd {
-        // 				bestRecent[regionID] = d
-        // 			}
-        // 		}
-        // 	}
+        for t in to_remove {
+            reports.prev.remove(&t);
+        }
 
-        // 	// Then, pick which currently-alive DERP server from the
-        // 	// current report has the best latency over the past maxAge.
-        // 	var bestAny time.Duration
-        // 	var oldRegionCurLatency time.Duration
-        // 	for regionID, d := range r.RegionLatency {
-        // 		if regionID == prevDERP {
-        // 			oldRegionCurLatency = d
-        // 		}
-        // 		best := bestRecent[regionID]
-        // 		if r.PreferredDERP == 0 || best < bestAny {
-        // 			bestAny = best
-        // 			r.PreferredDERP = regionID
-        // 		}
-        // 	}
+        // Then, pick which currently-alive DERP server from the
+        // current report has the best latency over the past MAX_AGE.
+        let mut best_any = Duration::default();
+        let mut old_region_cur_latency = Duration::default();
+        for (region_id, d) in &r.region_latency {
+            if *region_id == prev_derp {
+                old_region_cur_latency = *d;
+            }
+            let best = *best_recent.get(region_id).unwrap();
+            if r.preferred_derp == 0 || best < best_any {
+                best_any = best;
+                r.preferred_derp = *region_id;
+            }
+        }
 
-        // 	// If we're changing our preferred DERP but the old one's still
-        // 	// accessible and the new one's not much better, just stick with
-        // 	// where we are.
-        // 	if prevDERP != 0 &&
-        // 		r.PreferredDERP != prevDERP &&
-        // 		oldRegionCurLatency != 0 &&
-        // 		bestAny > oldRegionCurLatency/3*2 {
-        // 		r.PreferredDERP = prevDERP
-        // 	}
+        // If we're changing our preferred DERP but the old one's still
+        // accessible and the new one's not much better, just stick with
+        // where we are.
+        if prev_derp != 0
+            && r.preferred_derp != prev_derp
+            && !old_region_cur_latency.is_zero()
+            && best_any > old_region_cur_latency / 3 * 2
+        {
+            r.preferred_derp = prev_derp;
+        }
+
+        reports.prev.insert(now, r.clone());
+        reports.last = Some(r.clone());
     }
 }
 
@@ -801,11 +806,17 @@ async fn check_captive_portal(dm: &DerpMap, preferred_derp: Option<usize>) -> Re
     // If we have a preferred DERP region with more than one node, try
     // that; otherwise, pick a random one not marked as "Avoid".
     let preferred_derp = if preferred_derp.is_none()
-        || dm.regions.get(preferred_derp.unwrap()).is_none()
-        || (preferred_derp.is_some() && dm.regions[preferred_derp.unwrap()].nodes.is_empty())
+        || dm.regions.get(&preferred_derp.unwrap()).is_none()
+        || (preferred_derp.is_some()
+            && dm
+                .regions
+                .get(&preferred_derp.unwrap())
+                .unwrap()
+                .nodes
+                .is_empty())
     {
         let mut rids = Vec::with_capacity(dm.regions.len());
-        for (id, reg) in dm.regions.iter().enumerate() {
+        for (id, reg) in dm.regions.iter() {
             if reg.avoid || reg.nodes.is_empty() {
                 continue;
             }
@@ -824,7 +835,7 @@ async fn check_captive_portal(dm: &DerpMap, preferred_derp: Option<usize>) -> Re
     };
 
     // Has a node, as we filtered out regions without nodes above.
-    let node = &dm.regions[preferred_derp].nodes[0];
+    let node = &dm.regions.get(&preferred_derp).unwrap().nodes[0];
 
     if node.host_name.ends_with(&DOT_INVALID) {
         // Don't try to connect to invalid hostnames. This occurred in tests:
@@ -909,12 +920,12 @@ async fn get_node_addr(n: &DerpNode, proto: ProbeProto) -> Option<SocketAddr> {
 
     match proto {
         ProbeProto::IPv4 => {
-            if let Some(ip) = n.ipv4 {
+            if let UseIpv4::Some(ip) = n.ipv4 {
                 return Some(SocketAddr::new(IpAddr::V4(ip), port));
             }
         }
         ProbeProto::IPv6 => {
-            if let Some(ip) = n.ipv6 {
+            if let UseIpv6::Some(ip) = n.ipv6 {
                 return Some(SocketAddr::new(IpAddr::V6(ip), port));
             }
         }
@@ -973,7 +984,7 @@ struct Probe {
     /// How the node should be probed.
     proto: ProbeProto,
 
-    /// Hhow long to wait until the probe is considered failed.
+    /// How long to wait until the probe is considered failed.
     /// 0 means to use a default value.
     wait: Duration,
 }
@@ -1044,123 +1055,142 @@ fn make_probe_plan(dm: &DerpMap, if_state: &interfaces::State, last: Option<&Rep
     let had4 = !last.region_v4_latency.is_empty();
     let had6 = !last.region_v6_latency.is_empty();
     let had_both = have6if && had4 && had6;
-    // for ri, reg := range sortRegions(dm, last) {
-    //     if ri == numIncrementalRegions {
-    //     	break
-    //     }
-    //     var p4, p6 []probe
-    //         let do4 = have4if;
-    //     let do6 = have6if;
+    for (ri, reg) in sort_regions(dm, last).into_iter().enumerate() {
+        if ri == NUM_INCREMENTAL_REGIONS {
+            break;
+        }
+        let mut do4 = have4if;
+        let mut do6 = have6if;
 
-    //     // By default, each node only gets one STUN packet sent,
-    //     // except the fastest two from the previous round.
-    //     let tries = 1;
-    //     let isFastestTwo = ri < 2;
+        // By default, each node only gets one STUN packet sent,
+        // except the fastest two from the previous round.
+        let mut tries = 1;
+        let is_fastest_two = ri < 2;
 
-    //     if isFastestTwo {
-    //     	tries = 2;
-    //     } else if hadBoth {
-    //     	// For dual stack machines, make the 3rd & slower nodes alternate
-    //     	// between.
-    //     	if ri%2 == 0 {
-    //     		do4, do6 = true, false
-    //     	} else {
-    //     		do4, do6 = false, true
-    //     	}
-    //     }
-    //     if !isFastestTwo && !had6 {
-    //     	do6 = false;
-    //     }
+        if is_fastest_two {
+            tries = 2;
+        } else if had_both {
+            // For dual stack machines, make the 3rd & slower nodes alternate between.
+            if ri % 2 == 0 {
+                (do4, do6) = (true, false);
+            } else {
+                (do4, do6) = (false, true);
+            }
+        }
+        if !is_fastest_two && !had6 {
+            do6 = false;
+        }
 
-    //     if reg.RegionID == last.PreferredDERP {
-    //     	// But if we already had a DERP home, try extra hard to
-    //     	// make sure it's there so we don't flip flop around.
-    //     	tries = 4;
-    //     }
+        if reg.region_id == last.preferred_derp {
+            // But if we already had a DERP home, try extra hard to
+            // make sure it's there so we don't flip flop around.
+            tries = 4;
+        }
 
-    //     for try := 0; try < tries; try++ {
-    //     	if len(reg.Nodes) == 0 {
-    //     		// Shouldn't be possible.
-    //     		continue;
-    //     	}
-    //     	if try != 0 && !had6 {
-    //     		do6 = false;
-    //     	}
-    //         let n = reg.Nodes[try%len(reg.Nodes)];
-    //         let prevLatency = last.RegionLatency[reg.RegionID] * 120 / 100;
-    //         if prevLatency == 0 {
-    //     	prevLatency = defaultActiveRetransmitTime;
-    //         }
-    //         delay := time.Duration(try) * prevLatency;
-    //         if try > 1 {
-    //     	delay += time.Duration(try) * 50 * time.Millisecond;
-    //         }
-    //         if do4 {
-    //     	p4 = append(p4, probe{delay: delay, node: n.Name, proto: probeIPv4});
-    //         }
-    //         if do6 {
-    //     	p6 = append(p6, probe{delay: delay, node: n.Name, proto: probeIPv6});
-    //         }
-    //     }
-    //     if len(p4) > 0 {
-    //         plan[fmt.Sprintf("region-%d-v4", reg.RegionID)] = p4;
-    //     }
-    //     if len(p6) > 0 {
-    //         plan[fmt.Sprintf("region-%d-v6", reg.RegionID)] = p6;
-    //     }
-    // }
+        let mut p4 = Vec::new();
+        let mut p6 = Vec::new();
+
+        for tr in 0..tries {
+            if reg.nodes.is_empty() {
+                // Shouldn't be possible.
+                continue;
+            }
+            if tr != 0 && !had6 {
+                do6 = false;
+            }
+            let n = &reg.nodes[tr % reg.nodes.len()];
+            let mut prev_latency = last.region_latency[&reg.region_id] * 120 / 100;
+            if prev_latency.is_zero() {
+                prev_latency = DEFAULT_ACTIVE_RETRANSMIT_TIME;
+            }
+            let mut delay = prev_latency * tr as u32;
+            if tr > 1 {
+                delay += Duration::from_millis(50) * tr as u32;
+            }
+            if do4 {
+                p4.push(Probe {
+                    delay,
+                    node: n.name.clone(),
+                    proto: ProbeProto::IPv4,
+                    wait: Duration::default(),
+                });
+            }
+            if do6 {
+                p6.push(Probe {
+                    delay,
+                    node: n.name.clone(),
+                    proto: ProbeProto::IPv6,
+                    wait: Duration::default(),
+                });
+            }
+        }
+        if !p4.is_empty() {
+            plan.0.insert(format!("region-{}-v4", reg.region_id), p4);
+        }
+        if !p6.is_empty() {
+            plan.0.insert(format!("region-{}-v6", reg.region_id), p6);
+        }
+    }
     plan
 }
 
 fn make_probe_plan_initial(dm: &DerpMap, if_state: &interfaces::State) -> ProbePlan {
-    todo!()
-    // 	plan = make(probePlan)
+    let mut plan = ProbePlan::default();
 
-    // 	for _, reg := range dm.Regions {
-    // 		var p4 []probe
-    // 		var p6 []probe
-    // 		for try := 0; try < 3; try++ {
-    // 			n := reg.Nodes[try%len(reg.Nodes)]
-    // 			delay := time.Duration(try) * defaultInitialRetransmitTime
-    // 			if ifState.HaveV4 && nodeMight4(n) {
-    // 				p4 = append(p4, probe{delay: delay, node: n.Name, proto: probeIPv4})
-    // 			}
-    // 			if ifState.HaveV6 && nodeMight6(n) {
-    // 				p6 = append(p6, probe{delay: delay, node: n.Name, proto: probeIPv6})
-    // 			}
-    // 		}
-    // 		if len(p4) > 0 {
-    // 			plan[fmt.Sprintf("region-%d-v4", reg.RegionID)] = p4
-    // 		}
-    // 		if len(p6) > 0 {
-    // 			plan[fmt.Sprintf("region-%d-v6", reg.RegionID)] = p6
-    // 		}
-    // 	}
-    // 	return plan
+    for (_, reg) in &dm.regions {
+        let mut p4 = Vec::new();
+        let mut p6 = Vec::new();
+
+        for tr in 0..3 {
+            let n = &reg.nodes[tr % reg.nodes.len()];
+            let mut delay = DEFAULT_INITIAL_RETRANSMIT * tr as u32;
+            if if_state.have_v4 && node_might4(n) {
+                p4.push(Probe {
+                    delay,
+                    node: n.name.clone(),
+                    proto: ProbeProto::IPv4,
+                    wait: Duration::default(),
+                });
+            }
+            if if_state.have_v6 && node_might6(n) {
+                p6.push(Probe {
+                    delay,
+                    node: n.name.clone(),
+                    proto: ProbeProto::IPv6,
+                    wait: Duration::default(),
+                })
+            }
+        }
+        if !p4.is_empty() {
+            plan.0.insert(format!("region-{}-v4", reg.region_id), p4);
+        }
+        if !p6.is_empty() {
+            plan.0.insert(format!("region-{}-v6", reg.region_id), p6);
+        }
+    }
+    plan
 }
 
 /// Reports whether n might reply to STUN over IPv6 based on
 /// its config alone, without DNS lookups. It only returns false if
 /// it's not explicitly disabled.
 fn node_might6(n: &DerpNode) -> bool {
-    todo!()
-    // if n.ipv6 == "" {
-    //     return true;
-    // }
-    // ip, _ := netip.ParseAddr(n.IPv6);
-    // return ip.Is6()
+    match n.ipv6 {
+        UseIpv6::None => true,
+        UseIpv6::Disabled => false,
+        UseIpv6::Some(_) => true,
+    }
 }
 
 /// Reports whether n might reply to STUN over IPv4 based on
 /// its config alone, without DNS lookups. It only returns false if
 /// it's not explicitly disabled.
 fn node_might4(n: &DerpNode) -> bool {
-    todo!()
-    // 	if n.IPv4 == "" {
-    // 		return true
-    // 	}
-    // 	ip, _ := netip.ParseAddr(n.IPv4)
-    // 	return ip.Is4()
+    match n.ipv4 {
+        UseIpv4::None => true,
+        UseIpv4::Disabled => false,
+        UseIpv4::Some(_) => true,
+    }
 }
 
 /// Holds the state for a single invocation of `Client::get_report`.
@@ -1463,7 +1493,7 @@ fn update_latency(m: &mut HashMap<usize, Duration>, region_id: usize, d: Duratio
 }
 
 fn named_node<'a>(dm: &'a DerpMap, node_name: &str) -> Option<&'a DerpNode> {
-    for r in &dm.regions {
+    for (_, r) in &dm.regions {
         for n in &r.nodes {
             if n.name == node_name {
                 return Some(n);
