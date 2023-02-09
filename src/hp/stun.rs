@@ -11,8 +11,8 @@ pub use stun_rs::{
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    #[error(transparent)]
-    Parse(#[from] StunDecodeError),
+    #[error("invalid message")]
+    InvalidMessage,
     #[error("not binding")]
     NotBinding,
     #[error("not success response")]
@@ -54,13 +54,22 @@ pub fn response(tx: TransactionId, addr: SocketAddr) -> Vec<u8> {
     buffer
 }
 
+/// Reports whether b is a STUN message.
+pub fn is(b: &[u8]) -> bool {
+    let cookie: [u8; 4] = b[4..8].try_into().unwrap();
+
+    b.len() >= stun_rs::MESSAGE_HEADER_SIZE &&
+	b[0]&0b11000000 == 0 && // top two bits must be zero
+	cookie == stun_rs::MAGIC_COOKIE
+}
+
 /// Parses a STUN binding request.
 pub fn parse_binding_request(b: &[u8]) -> Result<TransactionId, Error> {
     let ctx = DecoderContextBuilder::default()
         .with_validation() // ensure fingerprint is validated
         .build();
     let decoder = MessageDecoderBuilder::default().with_context(ctx).build();
-    let (msg, _) = decoder.decode(b)?;
+    let (msg, _) = decoder.decode(b).map_err(|_| Error::InvalidMessage)?;
 
     let tx = *msg.transaction_id();
     if msg.method() != methods::BINDING {
@@ -81,7 +90,7 @@ pub fn parse_binding_request(b: &[u8]) -> Result<TransactionId, Error> {
 /// The IP address is extracted from the XOR-MAPPED-ADDRESS attribute.
 pub fn parse_response(b: &[u8]) -> Result<(TransactionId, SocketAddr), Error> {
     let decoder = MessageDecoder::default();
-    let (msg, _) = decoder.decode(b)?;
+    let (msg, _) = decoder.decode(b).map_err(|_| Error::InvalidMessage)?;
 
     let tx = *msg.transaction_id();
     if msg.class() != MessageClass::SuccessResponse {
@@ -312,7 +321,7 @@ mod tests {
         for (i, test) in cases.into_iter().enumerate() {
             println!("Case {i}: {}", test.name);
             let (tx, addr_port) = parse_response(&test.data).unwrap();
-
+            assert!(is(&test.data));
             assert_eq!(tx.as_bytes(), &test.want_tid[..]);
             assert_eq!(addr_port.ip(), test.want_addr);
             assert_eq!(addr_port.port(), test.want_port);
@@ -323,6 +332,7 @@ mod tests {
     fn test_parse_binding_request() {
         let tx = TransactionId::default();
         let req = request(tx);
+        assert!(is(&req));
         let got_tx = parse_binding_request(&req).unwrap();
         assert_eq!(got_tx, tx);
     }
@@ -364,6 +374,7 @@ mod tests {
 
         for tt in tests {
             let res = response(tt.tx, SocketAddr::new(tt.addr, tt.port));
+            assert!(is(&res));
             let (tx2, addr2) = parse_response(&res).unwrap();
             assert_eq!(tt.tx, tx2);
             assert_eq!(tt.addr, addr2.ip());
