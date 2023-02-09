@@ -292,7 +292,7 @@ mod tests {
         ];
 
         for (i, test) in cases.into_iter().enumerate() {
-            println!("Case {i}");
+            println!("Case {i}: {}", test.name);
             let (tx, addr_port) = parse_response(&test.data).unwrap();
 
             assert_eq!(tx.as_bytes(), &test.want_tid[..]);
