@@ -1,5 +1,9 @@
 use std::net::{IpAddr, SocketAddr};
 
+use stun_rs::{
+    attributes::stun::{Fingerprint, XorMappedAddress},
+    DecoderContextBuilder, MessageDecoderBuilder, MessageEncoderBuilder, StunMessageBuilder,
+};
 pub use stun_rs::{
     attributes::StunAttribute, error::StunDecodeError, methods, MessageClass, MessageDecoder,
     TransactionId,
@@ -21,9 +25,41 @@ pub enum Error {
     InvalidFingerprint,
 }
 
+// Generates a binding request STUN packet.
+pub fn request(tx: TransactionId) -> Vec<u8> {
+    let fp = Fingerprint::default();
+    let msg = StunMessageBuilder::new(methods::BINDING, MessageClass::Request)
+        .with_transaction_id(tx)
+        .with_attribute(fp)
+        .build();
+
+    let encoder = MessageEncoderBuilder::default().build();
+    let mut buffer = vec![0u8; 150];
+    let size = encoder.encode(&mut buffer, &msg).expect("invalid encoding");
+    buffer.truncate(size);
+    buffer
+}
+
+/// Generates a binding response.
+pub fn response(tx: TransactionId, addr: SocketAddr) -> Vec<u8> {
+    let msg = StunMessageBuilder::new(methods::BINDING, MessageClass::SuccessResponse)
+        .with_transaction_id(tx)
+        .with_attribute(XorMappedAddress::from(addr))
+        .build();
+
+    let encoder = MessageEncoderBuilder::default().build();
+    let mut buffer = vec![0u8; 150];
+    let size = encoder.encode(&mut buffer, &msg).expect("invalid encoding");
+    buffer.truncate(size);
+    buffer
+}
+
 /// Parses a STUN binding request.
 pub fn parse_binding_request(b: &[u8]) -> Result<TransactionId, Error> {
-    let decoder = MessageDecoder::default();
+    let ctx = DecoderContextBuilder::default()
+        .with_validation() // ensure fingerprint is validated
+        .build();
+    let decoder = MessageDecoderBuilder::default().with_context(ctx).build();
     let (msg, _) = decoder.decode(b)?;
 
     let tx = *msg.transaction_id();
@@ -33,27 +69,9 @@ pub fn parse_binding_request(b: &[u8]) -> Result<TransactionId, Error> {
 
     // TODO: Tailscale sets the software to tailscale, we should check if we want to do this too.
 
-    let mut got_fp = None;
-
     let attrs = msg.attributes();
-    let attrs_len = attrs.len();
-    for (i, attr) in attrs.iter().enumerate() {
-        match attr {
-            StunAttribute::Fingerprint(fp) => {
-                // must be last
-                if i != attrs_len - 1 {
-                    return Err(Error::NoFingerprint);
-                }
-                got_fp = Some(fp);
-            }
-            _ => {}
-        }
-    }
-
-    let fp = got_fp.ok_or_else(|| Error::NoFingerprint)?;
-    const FINGERPRINT_SIZE: usize = 4;
-    if !fp.validate(&b[..b.len() - FINGERPRINT_SIZE]) {
-        return Err(Error::InvalidFingerprint);
+    if attrs.is_empty() || !attrs.last().unwrap().is_fingerprint() {
+        return Err(Error::NoFingerprint);
     }
 
     Ok(tx)
@@ -303,51 +321,53 @@ mod tests {
 
     #[test]
     fn test_parse_binding_request() {
-        todo!()
-        // func TestParseBindingRequest(t *testing.T) {
-        //     tx := stun.NewTxID();
-        //     req := stun.Request(tx);
-        //     gotTx, err := stun.ParseBindingRequest(req).unwrap();
-        //     if gotTx != tx {
-        //         t.Errorf("original txID %q != got txID %q", tx, gotTx)
-        //     }
+        let tx = TransactionId::default();
+        let req = request(tx);
+        let got_tx = parse_binding_request(&req).unwrap();
+        assert_eq!(got_tx, tx);
     }
 
     #[test]
     fn test_response() {
-        todo!()
-        // txN := func(n int) (x stun.TxID) {
-        // 	for i := range x {
-        // 		x[i] = byte(n)
-        // 	}
-        // 	return
-        // }
-        // tests := []struct {
-        // 	tx   stun.TxID
-        // 	addr netip.Addr
-        // 	port uint16
-        // }{
-        // 	{tx: txN(1), addr: netip.MustParseAddr("1.2.3.4"), port: 254},
-        // 	{tx: txN(2), addr: netip.MustParseAddr("1.2.3.4"), port: 257},
-        // 	{tx: txN(3), addr: netip.MustParseAddr("1::4"), port: 254},
-        // 	{tx: txN(4), addr: netip.MustParseAddr("1::4"), port: 257},
-        // }
-        // for _, tt := range tests {
-        // 	res := stun.Response(tt.tx, netip.AddrPortFrom(tt.addr, tt.port))
-        // 	tx2, addr2, err := stun.ParseResponse(res)
-        // 	if err != nil {
-        // 		t.Errorf("TX %x: error: %v", tt.tx, err)
-        // 		continue
-        // 	}
-        // 	if tt.tx != tx2 {
-        // 		t.Errorf("TX %x: got TxID = %v", tt.tx, tx2)
-        // 	}
-        // 	if tt.addr.Compare(addr2.Addr()) != 0 {
-        // 		t.Errorf("TX %x: addr = %v; want %v", tt.tx, addr2.Addr(), tt.addr)
-        // 	}
-        // 	if tt.port != addr2.Port() {
-        // 		t.Errorf("TX %x: port = %v; want %v", tt.tx, addr2.Port(), tt.port)
-        // 	}
-        // }
+        let txn = |n| {
+            let mut raw = [n; 12];
+            TransactionId::from(raw)
+        };
+
+        struct Case {
+            tx: TransactionId,
+            addr: IpAddr,
+            port: u16,
+        }
+        let tests = vec![
+            Case {
+                tx: txn(1),
+                addr: "1.2.3.4".parse().unwrap(),
+                port: 254,
+            },
+            Case {
+                tx: txn(2),
+                addr: "1.2.3.4".parse().unwrap(),
+                port: 257,
+            },
+            Case {
+                tx: txn(3),
+                addr: "1::4".parse().unwrap(),
+                port: 254,
+            },
+            Case {
+                tx: txn(4),
+                addr: "1::4".parse().unwrap(),
+                port: 257,
+            },
+        ];
+
+        for tt in tests {
+            let res = response(tt.tx, SocketAddr::new(tt.addr, tt.port));
+            let (tx2, addr2) = parse_response(&res).unwrap();
+            assert_eq!(tt.tx, tx2);
+            assert_eq!(tt.addr, addr2.ip());
+            assert_eq!(tt.port, addr2.port());
+        }
     }
 }

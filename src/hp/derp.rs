@@ -16,6 +16,7 @@ pub struct DerpRegion {
 #[derive(Debug, Clone)]
 pub struct DerpNode {
     pub name: String,
+    pub region_id: usize,
     pub host_name: String,
     pub stun_only: bool,
     pub stun_port: u16,
