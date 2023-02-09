@@ -6,28 +6,37 @@
 use std::{
     collections::HashMap,
     net::{IpAddr, SocketAddr},
-    time::{Duration, SystemTime},
+    ops::Deref,
+    sync::Arc,
+    time::{Duration, Instant, SystemTime},
 };
 
+use anyhow::Error;
+use rand::seq::IteratorRandom;
 use tokio::{
-    sync::{mpsc, Mutex},
-    time::Timeout,
+    sync::{mpsc, oneshot, Mutex},
+    task::JoinSet,
+    time::{self, Timeout},
 };
 use tracing::{debug, info};
 
-use crate::hp::stun;
+use crate::hp::stun::to_canonical;
 
 use super::{
     derp::{DerpMap, DerpNode, DerpRegion},
     interfaces,
     ping::Pinger,
+    stun,
 };
 
+/// Fake DNS TLD used in tests for an invalid hostname.
+const DOT_INVALID: &str = ".invalid";
+
 // TODO: better type
-pub trait PacketConn {}
+pub trait PacketConn: Sync + Send {}
 
 // The interface required by the netcheck Client when reusing an existing UDP connection.
-pub trait StunConn {
+pub trait StunConn: Sync + Send {
     // WriteToUDPAddrPort([]byte, netip.AddrPort) (int, error)
     //     WriteTo([]byte, net.Addr) (int, error)
     //     ReadFrom([]byte) (int, net.Addr, error)
@@ -146,7 +155,7 @@ struct Reports {
     /// Most recent report.
     last: Option<Report>,
     /// Time of last full (non-incremental) report.
-    last_full: SystemTime,
+    last_full: Instant,
     /// `Some` if we're in a call to `get_report`.
     cur_state: Option<ReportState>,
 }
@@ -233,7 +242,7 @@ impl Client {
 
     /// Reads STUN packets from pc until there's an error or ctx is done.
     /// In either case, it closes pc.
-    fn read_packets(&self, /*ctx context.Context,*/ pc: impl PacketConn) {
+    async fn read_packets(&self, /*ctx context.Context,*/ pc: impl PacketConn) {
         todo!()
         // 	done := make(chan struct{})
         // 	defer close(done)
@@ -280,311 +289,308 @@ impl Client {
 
     /// Gets a report.
     ///
-    ///It may not be called concurrently with itself.
-    pub fn get_report(&self, /*ctx context.Context,*/ dm: &DerpMap) -> Result<Report, ()> {
-        todo!()
-        // 	defer func() {
-        // 		if reterr != nil {
-        // 			metricNumGetReportError.Add(1)
-        // 		}
-        // 	}()
-        // 	metricNumGetReport.Add(1)
-        // 	// Mask user context with ours that we guarantee to cancel so
-        // 	// we can depend on it being closed in goroutines later.
-        // 	// (User ctx might be context.Background, etc)
-        // 	ctx, cancel := context.WithTimeout(ctx, overallProbeTimeout)
-        // 	defer cancel()
+    /// It may not be called concurrently with itself.
+    pub async fn get_report(&mut self, dm: &DerpMap) -> Result<Report, Error> {
+        // TODO
+        // metricNumGetReport.Add(1)
 
-        // 	if dm == nil {
-        // 		return nil, errors.New("netcheck: GetReport: DERP map is nil")
-        // 	}
+        // Wrap in timeout
+        let rs = time::timeout(OVERALL_PROBE_TIMEOUT, async move {
+            let reports = self.reports.lock().await;
+            if reports.cur_state.is_some() {
+                anyhow::bail!("invalid concurrent call to get_report");
+            }
 
-        // 	c.mu.Lock()
-        // 	if c.curState != nil {
-        // 		c.mu.Unlock()
-        // 		return nil, errors.New("invalid concurrent call to GetReport")
-        // 	}
-        // 	rs := &reportState{
-        // 		c:           c,
-        // 		report:      newReport(),
-        // 		inFlight:    map[stun.TxID]func(netip.AddrPort){},
-        // 		hairTX:      stun.NewTxID(), // random payload
-        // 		gotHairSTUN: make(chan netip.AddrPort, 1),
-        // 		hairTimeout: make(chan struct{}),
-        // 		stopProbeCh: make(chan struct{}, 1),
-        // 	}
-        // 	c.curState = rs
-        // 	last := c.last
+            // Create a UDP4 socket used for sending to our discovered IPv4 address.
+            let pc4_hair = nettype
+                .MakePacketListenerWithNetIP(netns.Listener(c.logf))
+                .ListenPacket("udp4", ":0");
+            let pc4_hair = match pc4_hair {
+                Ok(val) => val,
+                Err(err) => {
+                    info!("udp4: {:?}", err);
+                    return Err(err);
+                }
+            };
 
-        // 	// Even if we're doing a non-incremental update, we may want to try our
-        // 	// preferred DERP region for captive portal detection. Save that, if we
-        // 	// have it.
-        // 	var preferredDERP int
-        // 	if last != nil {
-        // 		preferredDERP = last.PreferredDERP
-        // 	}
+            let mut rs = ReportState {
+                incremental: false,
+                pc4: None,
+                pc6: None,
+                pc4_hair: Arc::new(pc4_hair),
+                stop_probe: Arc::new(oneshot::channel()),
+                wait_port_map: Arc::new(awaitgroup::WaitGroup::new()),
+                state: Arc::new(Mutex::new(InnerReportState {
+                    sent_hair_check: false,
+                    report: Report::default(),
+                    in_flight: Default::default(),
+                    got_ep4: None,
+                    timers: Default::default(),
+                })),
+                hair_tx: stun::TransactionId::default(), // random payload
+                got_hair_stun: Arc::new(mpsc::channel(1)),
+            };
+            reports.cur_state = Some(rs);
+            let mut last = reports.last;
 
-        // 	now := c.timeNow()
+            // Even if we're doing a non-incremental update, we may want to try our
+            // preferred DERP region for captive portal detection. Save that, if we have it.
+            let preferred_derp = last.map(|l| l.preferred_derp);
+            let now = Instant::now();
 
-        // 	doFull := false
-        // 	if c.nextFull || now.Sub(c.lastFull) > 5*time.Minute {
-        // 		doFull = true
-        // 	}
-        // 	// If the last report had a captive portal and reported no UDP access,
-        // 	// it's possible that we didn't get a useful netcheck due to the
-        // 	// captive portal blocking us. If so, make this report a full
-        // 	// (non-incremental) one.
-        // 	if !doFull && last != nil {
-        // 		doFull = !last.UDP && last.CaptivePortal.EqualBool(true)
-        // 	}
-        // 	if doFull {
-        // 		last = nil // causes makeProbePlan below to do a full (initial) plan
-        // 		c.nextFull = false
-        // 		c.lastFull = now
-        // 		metricNumGetReportFull.Add(1)
-        // 	}
+            let mut do_full = false;
+            if reports.next_full
+                || now.duration_since(reports.last_full) > Duration::from_secs(5 * 60)
+            {
+                do_full = true;
+            }
 
-        // 	rs.incremental = last != nil
-        // 	c.mu.Unlock()
+            // If the last report had a captive portal and reported no UDP access,
+            // it's possible that we didn't get a useful netcheck due to the
+            // captive portal blocking us. If so, make this report a full
+            // (non-incremental) one.
+            if !do_full {
+                if let Some(last) = last {
+                    do_full = !last.udp && last.captive_portal.unwrap_or_default();
+                }
+            }
+            if do_full {
+                last = None; // causes makeProbePlan below to do a full (initial) plan
+                reports.next_full = false;
+                reports.last_full = now;
 
-        // 	defer func() {
-        // 		c.mu.Lock()
-        // 		defer c.mu.Unlock()
-        // 		c.curState = nil
-        // 	}()
+                // TODO
+                // metricNumGetReportFull.Add(1);
+            }
 
-        // 	if runtime.GOOS == "js" {
-        // 		if err := c.runHTTPOnlyChecks(ctx, last, rs, dm); err != nil {
-        // 			return nil, err
-        // 		}
-        // 		return c.finishAndStoreReport(rs, dm), nil
-        // 	}
+            rs.incremental = last.is_some();
+            drop(reports);
 
-        // 	ifState, err := interfaces.GetState()
-        // 	if err != nil {
-        // 		c.logf("[v1] interfaces: %v", err)
-        // 		return nil, err
-        // 	}
+            // TODO: always clear `cur_state`
+            // defer func() { c.curState = nil }()
 
-        // 	// See if IPv6 works at all, or if it's been hard disabled at the
-        // 	// OS level.
-        // 	v6udp, err := nettype.MakePacketListenerWithNetIP(netns.Listener(c.logf)).ListenPacket(ctx, "udp6", "[::1]:0")
-        // 	if err == nil {
-        // 		rs.report.OSHasIPv6 = true
-        // 		v6udp.Close()
-        // 	}
+            let if_state = interfaces::State::new();
 
-        // 	// Create a UDP4 socket used for sending to our discovered IPv4 address.
-        // 	rs.pc4Hair, err = nettype.MakePacketListenerWithNetIP(netns.Listener(c.logf)).ListenPacket(ctx, "udp4", ":0")
-        // 	if err != nil {
-        // 		c.logf("udp4: %v", err)
-        // 		return nil, err
-        // 	}
-        // 	defer rs.pc4Hair.Close()
+            // See if IPv6 works at all, or if it's been hard disabled at the OS level.
+            let v6udp = nettype
+                .MakePacketListenerWithNetIP(netns.Listener(c.logf))
+                .ListenPacket("udp6", "[::1]:0");
+            let mut inner_report = rs.state.lock().await;
+            if v6udp.is_ok() {
+                inner_report.report.os_has_ipv6 = true;
+            }
 
-        // 	if !c.SkipExternalNetwork && c.PortMapper != nil {
-        // 		rs.waitPortMap.Add(1)
-        // 		go rs.probePortMapServices()
-        // 	}
+            if !self.skip_external_network && self.port_mapper.is_some() {
+                let worker = rs.wait_port_map.worker();
+                tokio::task::spawn(async move {
+                    rs.probe_port_map_services().await;
+                    worker.done();
+                });
+            }
 
-        // 	// At least the Apple Airport Extreme doesn't allow hairpin
-        // 	// sends from a private socket until it's seen traffic from
-        // 	// that src IP:port to something else out on the internet.
-        // 	//
-        // 	// See https://github.com/tailscale/tailscale/issues/188#issuecomment-600728643
-        // 	//
-        // 	// And it seems that even sending to a likely-filtered RFC 5737
-        // 	// documentation-only IPv4 range is enough to set up the mapping.
-        // 	// So do that for now. In the future we might want to classify networks
-        // 	// that do and don't require this separately. But for now help it.
-        // 	const documentationIP = "203.0.113.1"
-        // 	rs.pc4Hair.WriteTo([]byte("tailscale netcheck; see https://github.com/tailscale/tailscale/issues/188"), &net.UDPAddr{IP: net.ParseIP(documentationIP), Port: 12345})
+            // At least the Apple Airport Extreme doesn't allow hairpin
+            // sends from a private socket until it's seen traffic from
+            // that src IP:port to something else out on the internet.
+            //
+            // See https://github.com/tailscale/tailscale/issues/188#issuecomment-600728643
+            //
+            // And it seems that even sending to a likely-filtered RFC 5737
+            // documentation-only IPv4 range is enough to set up the mapping.
+            // So do that for now. In the future we might want to classify networks
+            // that do and don't require this separately. But for now help it.
+            let documentation_ip: SocketAddr = "203.0.113.1:12345".parse().unwrap();
 
-        // 	if f := c.GetSTUNConn4; f != nil {
-        // 		rs.pc4 = f()
-        // 	} else {
-        // 		u4, err := nettype.MakePacketListenerWithNetIP(netns.Listener(c.logf)).ListenPacket(ctx, "udp4", c.udpBindAddr())
-        // 		if err != nil {
-        // 			c.logf("udp4: %v", err)
-        // 			return nil, err
-        // 		}
-        // 		rs.pc4 = u4
-        // 		go c.readPackets(ctx, u4)
-        // 	}
+            rs.pc4_hair.write_to(
+                b"tailscale netcheck; see https://github.com/tailscale/tailscale/issues/188",
+                documentation_ip,
+            );
 
-        // 	if ifState.HaveV6 {
-        // 		if f := c.GetSTUNConn6; f != nil {
-        // 			rs.pc6 = f()
-        // 		} else {
-        // 			u6, err := nettype.MakePacketListenerWithNetIP(netns.Listener(c.logf)).ListenPacket(ctx, "udp6", c.udpBindAddr())
-        // 			if err != nil {
-        // 				c.logf("udp6: %v", err)
-        // 			} else {
-        // 				rs.pc6 = u6
-        // 				go c.readPackets(ctx, u6)
-        // 			}
-        // 		}
-        // 	}
+            let u4 = nettype
+                .MakePacketListenerWithNetIP(netns.Listener(c.logf))
+                .ListenPacket(ctx, "udp4", self.udp_bind_addr());
+            match u4 {
+                Ok(u4) => {
+                    rs.pc4 = u4;
+                    // TODO: track task
+                    tokio::task::spawn(self.read_packets(/*ctx, */ u4));
+                }
+                Err(err) => {
+                    info!("udp4: {:?}", err);
+                    return Err(err);
+                }
+            }
 
-        // 	plan := makeProbePlan(dm, ifState, last)
+            if if_state.have_v6 {
+                let u6 = nettype
+                    .MakePacketListenerWithNetIP(netns.Listener(c.logf))
+                    .ListenPacket("udp6", self.udp_bind_addr());
+                match u6 {
+                    Ok(u6) => {
+                        rs.pc6 = u6;
+                        // TODO: track task
+                        tokio::task::spawn(self.read_packets(/*ctx, */ u6));
+                    }
+                    Err(err) => {
+                        info!("udp6: {:?}", err);
+                        return Err(err);
+                    }
+                }
+            }
 
-        // 	// If we're doing a full probe, also check for a captive portal. We
-        // 	// delay by a bit to wait for UDP STUN to finish, to avoid the probe if
-        // 	// it's unnecessary.
-        // 	captivePortalDone := syncs.ClosedChan()
-        // 	captivePortalStop := func() {}
-        // 	if !rs.incremental {
-        // 		// NOTE(andrew): we can't simply add this goroutine to the
-        // 		// `NewWaitGroupChan` below, since we don't wait for that
-        // 		// waitgroup to finish when exiting this function and thus get
-        // 		// a data race.
-        // 		ch := make(chan struct{})
-        // 		captivePortalDone = ch
+            let plan = make_probe_plan(dm, &if_state, last.as_ref());
 
-        // 		tmr := time.AfterFunc(c.captivePortalDelay(), func() {
-        // 			defer close(ch)
-        // 			found, err := c.checkCaptivePortal(ctx, dm, preferredDERP)
-        // 			if err != nil {
-        // 				c.logf("[v1] checkCaptivePortal: %v", err)
-        // 				return
-        // 			}
-        // 			rs.report.CaptivePortal.Set(found)
-        // 		})
+            // If we're doing a full probe, also check for a captive portal. We
+            // delay by a bit to wait for UDP STUN to finish, to avoid the probe if
+            // it's unnecessary.
+            let (done_send, captive_portal_done) = oneshot::channel();
+            let mut captive_task = None;
+            if !rs.incremental {
+                // TODO: track task
+                captive_task = Some(tokio::task::spawn(async move {
+                    // wait
+                    time::sleep(self.captive_portal_delay()).await;
+                    match self.check_captive_portal(dm, preferred_derp).await {
+                        Ok(found) => {
+                            rs.state.lock().await.report.captive_portal = Some(found);
+                        }
+                        Err(err) => {
+                            info!("[v1] checkCaptivePortal: {:?}", err);
+                        }
+                    }
+                    done_send.send(());
+                }));
+            }
 
-        // 		captivePortalStop = func() {
-        // 			// Don't cancel our captive portal check if we're
-        // 			// explicitly doing a verbose netcheck.
-        // 			if c.Verbose {
-        // 				return
-        // 			}
+            let mut task_set = JoinSet::new();
 
-        // 			if tmr.Stop() {
-        // 				// Stopped successfully; need to close the
-        // 				// signal channel ourselves.
-        // 				close(ch)
-        // 				return
-        // 			}
+            for probe_set in plan.values() {
+                for probe in probe_set {
+                    task_set.spawn(async move {
+                        rs.run_probe(dm, probe).await;
+                    });
+                }
+            }
 
-        // 			// Did not stop; do nothing and it'll finish by itself
-        // 			// and close the signal channel.
-        // 		}
-        // 	}
+            let stun_timer = time::sleep(STUN_PROBE_TIMEOUT);
+            let probes_done = async move {
+                while let Some(t) = task_set.join_next().await {
+                    t?;
+                }
+                Ok(())
+            };
 
-        // 	wg := syncs.NewWaitGroupChan()
-        // 	wg.Add(len(plan))
-        // 	for _, probeSet := range plan {
-        // 		setCtx, cancelSet := context.WithCancel(ctx)
-        // 		go func(probeSet []probe) {
-        // 			for _, probe := range probeSet {
-        // 				go rs.runProbe(setCtx, dm, probe, cancelSet)
-        // 			}
-        // 			<-setCtx.Done()
-        // 			wg.Decr()
-        // 		}(probeSet)
-        // 	}
+            let probes_aborted = rs.stop_probe.1;
 
-        // 	stunTimer := time.NewTimer(stunProbeTimeout)
-        // 	defer stunTimer.Stop()
+            tokio::select! {
+                _ = stun_timer => {},
+                _ = probes_done => {
+                    // All of our probes finished, so if we have >0 responses, we
+                    // stop our captive portal check.
+                    if rs.any_udp() {
+                        if let Some(task) = captive_task {
+                            task.abort();
+                        }
+                    }
+                }
+                _ = probes_aborted => {
+                    // Saw enough regions.
+                    debug!("saw enough regions; not waiting for rest");
+                    // We can stop the captive portal check since we know that we
+                    // got a bunch of STUN responses.
+                    if let Some(task) = captive_task {
+                        task.abort();
+                    }
+                }
+            }
 
-        // 	select {
-        // 	case <-stunTimer.C:
-        // 	case <-ctx.Done():
-        // 	case <-wg.DoneChan():
-        // 		// All of our probes finished, so if we have >0 responses, we
-        // 		// stop our captive portal check.
-        // 		if rs.anyUDP() {
-        // 			captivePortalStop()
-        // 		}
-        // 	case <-rs.stopProbeCh:
-        // 		// Saw enough regions.
-        // 		c.vlogf("saw enough regions; not waiting for rest")
-        // 		// We can stop the captive portal check since we know that we
-        // 		// got a bunch of STUN responses.
-        // 		captivePortalStop()
-        // 	}
+            rs.wait_hair_check().await;
+            debug!("hair_check done");
 
-        // 	rs.waitHairCheck(ctx)
-        // 	c.vlogf("hairCheck done")
-        // 	if !c.SkipExternalNetwork && c.PortMapper != nil {
-        // 		rs.waitPortMap.Wait()
-        // 		c.vlogf("portMap done")
-        // 	}
-        // 	rs.stopTimers()
+            if !self.skip_external_network && self.port_mapper.is_some() {
+                rs.wait_port_map.wait().await;
+                debug!("port_map done");
+            }
 
-        // 	// Try HTTPS and ICMP latency check if all STUN probes failed due to
-        // 	// UDP presumably being blocked.
-        // 	// TODO: this should be moved into the probePlan, using probeProto probeHTTPS.
-        // 	if !rs.anyUDP() && ctx.Err() == nil {
-        // 		var wg sync.WaitGroup
-        // 		var need []*tailcfg.DERPRegion
-        // 		for rid, reg := range dm.Regions {
-        // 			if !rs.haveRegionLatency(rid) && regionHasDERPNode(reg) {
-        // 				need = append(need, reg)
-        // 			}
-        // 		}
-        // 		if len(need) > 0 {
-        // 			// Kick off ICMP in parallel to HTTPS checks; we don't
-        // 			// reuse the same WaitGroup for those probes because we
-        // 			// need to close the underlying Pinger after a timeout
-        // 			// or when all ICMP probes are done, regardless of
-        // 			// whether the HTTPS probes have finished.
-        // 			wg.Add(1)
-        // 			go func() {
-        // 				defer wg.Done()
-        // 				if err := c.measureAllICMPLatency(ctx, rs, need); err != nil {
-        // 					c.logf("[v1] measureAllICMPLatency: %v", err)
-        // 				}
-        // 			}()
+            rs.stop_timers().await;
 
-        // 			wg.Add(len(need))
-        // 			c.logf("netcheck: UDP is blocked, trying HTTPS")
-        // 		}
-        // 		for _, reg := range need {
-        // 			go func(reg *tailcfg.DERPRegion) {
-        // 				defer wg.Done()
-        // 				if d, ip, err := c.measureHTTPSLatency(ctx, reg); err != nil {
-        // 					c.logf("[v1] netcheck: measuring HTTPS latency of %v (%d): %v", reg.RegionCode, reg.RegionID, err)
-        // 				} else {
-        // 					rs.mu.Lock()
-        // 					if l, ok := rs.report.RegionLatency[reg.RegionID]; !ok {
-        // 						mak.Set(&rs.report.RegionLatency, reg.RegionID, d)
-        // 					} else if l >= d {
-        // 						rs.report.RegionLatency[reg.RegionID] = d
-        // 					}
-        // 					// We set these IPv4 and IPv6 but they're not really used
-        // 					// and we don't necessarily set them both. If UDP is blocked
-        // 					// and both IPv4 and IPv6 are available over TCP, it's basically
-        // 					// random which fields end up getting set here.
-        // 					// Since they're not needed, that's fine for now.
-        // 					if ip.Is4() {
-        // 						rs.report.IPv4 = true
-        // 					}
-        // 					if ip.Is6() {
-        // 						rs.report.IPv6 = true
-        // 					}
-        // 					rs.mu.Unlock()
-        // 				}
-        // 			}(reg)
-        // 		}
-        // 		wg.Wait()
-        // 	}
+            // Try HTTPS and ICMP latency check if all STUN probes failed due to
+            // UDP presumably being blocked.
+            // TODO: this should be moved into the probePlan, using probeProto probeHTTPS.
+            if !rs.any_udp() {
+                let task_set = JoinSet::new();
+                let mut need = Vec::new();
 
-        // 	// Wait for captive portal check before finishing the report.
-        // 	<-captivePortalDone
+                for (rid, reg) in dm.regions.iter().enumerate() {
+                    if !rs.have_region_latency(rid) && region_has_derp_node(reg) {
+                        need.push(reg.clone()); // TODO: avoid clone
+                    }
+                }
+                if !need.is_empty() {
+                    // Kick off ICMP in parallel to HTTPS checks; we don't
+                    // reuse the same WaitGroup for those probes because we
+                    // need to close the underlying Pinger after a timeout
+                    // or when all ICMP probes are done, regardless of
+                    // whether the HTTPS probes have finished.
+                    task_set.spawn(async move {
+                        if let Err(err) = self.measure_all_icmp_latency(&rs, &need).await {
+                            debug!("[v1] measureAllICMPLatency: {:?}", err);
+                        }
+                    });
+                    debug!("netcheck: UDP is blocked, trying HTTPS");
+                }
+                for reg in &need {
+                    task_set.spawn(async move {
+                        match self.measure_https_latency(reg).await {
+                            Ok((d, ip)) => {
+                                // rs.mu.Lock()
+                                //  if l, ok := rs.report.RegionLatency[reg.RegionID]; !ok {
+                                // 			mak.Set(&rs.report.RegionLatency, reg.RegionID, d)
+                                // 		} else if l >= d {
+                                // 			rs.report.RegionLatency[reg.RegionID] = d
+                                // 		}
+                                // 		// We set these IPv4 and IPv6 but they're not really used
+                                // 		// and we don't necessarily set them both. If UDP is blocked
+                                // 		// and both IPv4 and IPv6 are available over TCP, it's basically
+                                // 		// random which fields end up getting set here.
+                                // 		// Since they're not needed, that's fine for now.
+                                // 		if ip.Is4() {
+                                // 			rs.report.IPv4 = true
+                                // 		}
+                                // 		if ip.Is6() {
+                                // 			rs.report.IPv6 = true
+                                // 		}
+                                // 		rs.mu.Unlock()
+                                // 	}
+                            }
+                            Err(err) => {
+                                debug!(
+                                    "[v1] netcheck: measuring HTTPS latency of {} ({}): {:?}",
+                                    reg.region_code, reg.region_id, err
+                                );
+                            }
+                        }
+                    });
+                }
+                while let Some(t) = task_set.join_next().await {
+                    t?;
+                }
+            }
+            // Wait for captive portal check before finishing the report.
+            captive_portal_done.await;
 
-        // 	return c.finishAndStoreReport(rs, dm), nil
+            Ok(rs)
+        })
+        .await??;
+        let report = self.finish_and_store_report(&rs, dm).await;
+        Ok(report)
     }
 
-    fn finish_and_store_report(&self, rs: &ReportState, dm: &DerpMap) -> Report {
-        todo!()
-        // 	rs.mu.Lock()
-        // 	report := rs.report.Clone()
-        // 	rs.mu.Unlock()
+    async fn finish_and_store_report(&self, rs: &ReportState, dm: &DerpMap) -> Report {
+        let mut report = rs.state.lock().await.report.clone();
+        self.add_report_history_and_set_preferred_derp(&mut report);
+        self.log_concise_report(&report, dm);
 
-        // 	c.addReportHistoryAndSetPreferredDERP(report)
-        // 	c.logConciseReport(report, dm)
-
-        // 	return report
+        report
     }
 
     /// Reports whether or not we think the system is behind a
@@ -592,217 +598,165 @@ impl Client {
     /// return a "204 No Content" response and checking if that's what we get.
     ///
     /// The boolean return is whether we think we have a captive portal.
-    fn check_captive_portal(
+    async fn check_captive_portal(
         &self,
-        /*ctx context.Context,*/ dm: &DerpMap,
-        preferred_derp: usize,
-    ) -> Result<bool, ()> {
-        todo!()
-        // 	defer noRedirectClient.CloseIdleConnections()
+        dm: &DerpMap,
+        preferred_derp: Option<usize>,
+    ) -> Result<bool, Error> {
+        // If we have a preferred DERP region with more than one node, try
+        // that; otherwise, pick a random one not marked as "Avoid".
+        let preferred_derp = if preferred_derp.is_none()
+            || dm.regions.get(preferred_derp.unwrap()).is_none()
+            || (preferred_derp.is_some() && dm.regions[preferred_derp.unwrap()].nodes.is_empty())
+        {
+            let mut rids = Vec::with_capacity(dm.regions.len());
+            for (id, reg) in dm.regions.iter().enumerate() {
+                if reg.avoid || reg.nodes.is_empty() {
+                    continue;
+                }
+                rids.push(id);
+            }
 
-        // 	// If we have a preferred DERP region with more than one node, try
-        // 	// that; otherwise, pick a random one not marked as "Avoid".
-        // 	if preferredDERP == 0 || dm.Regions[preferredDERP] == nil ||
-        // 		(preferredDERP != 0 && len(dm.Regions[preferredDERP].Nodes) == 0) {
-        // 		rids := make([]int, 0, len(dm.Regions))
-        // 		for id, reg := range dm.Regions {
-        // 			if reg == nil || reg.Avoid || len(reg.Nodes) == 0 {
-        // 				continue
-        // 			}
-        // 			rids = append(rids, id)
-        // 		}
-        // 		if len(rids) == 0 {
-        // 			return false, nil
-        // 		}
-        // 		preferredDERP = rids[rand.Intn(len(rids))]
-        // 	}
+            if rids.is_empty() {
+                return Ok(false);
+            }
+            (0..rids.len())
+                .into_iter()
+                .choose(&mut rand::thread_rng())
+                .unwrap_or_default()
+        } else {
+            preferred_derp.unwrap()
+        };
 
-        // 	node := dm.Regions[preferredDERP].Nodes[0]
+        // Has a node, as we filtered out regions without nodes above.
+        let node = &dm.regions[preferred_derp].nodes[0];
 
-        // 	if strings.HasSuffix(node.HostName, tailcfg.DotInvalid) {
-        // 		// Don't try to connect to invalid hostnames. This occurred in tests:
-        // 		// https://github.com/tailscale/tailscale/issues/6207
-        // 		// TODO(bradfitz,andrew-d): how to actually handle this nicely?
-        // 		return false, nil
-        // 	}
+        if node.host_name.ends_with(&DOT_INVALID) {
+            // Don't try to connect to invalid hostnames. This occurred in tests:
+            // https://github.com/tailscale/tailscale/issues/6207
+            // TODO(bradfitz,andrew-d): how to actually handle this nicely?
+            return Ok(false);
+        }
 
-        // 	req, err := http.NewRequestWithContext(ctx, "GET", "http://"+node.HostName+"/generate_204", nil)
-        // 	if err != nil {
-        // 		return false, err
-        // 	}
+        let client = reqwest::ClientBuilder::new()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()?;
 
-        // 	// Note: the set of valid characters in a challenge and the total
-        // 	// length is limited; see isChallengeChar in cmd/derper for more
-        // 	// details.
-        // 	chal := "ts_" + node.HostName
-        // 	req.Header.Set("X-Tailscale-Challenge", chal)
-        // 	r, err := noRedirectClient.Do(req)
-        // 	if err != nil {
-        // 		return false, err
-        // 	}
-        // 	defer r.Body.Close()
+        // Note: the set of valid characters in a challenge and the total
+        // length is limited; see isChallengeChar in cmd/derper for more
+        // details.
+        let chal = format!("ts_{}", node.host_name);
 
-        // 	expectedResponse := "response " + chal
-        // 	validResponse := r.Header.Get("X-Tailscale-Response") == expectedResponse
+        let res = client
+            .request(
+                reqwest::Method::GET,
+                format!("http://{}/generate_204", node.host_name),
+            )
+            .header("X-Tailscale-Challenge", &chal)
+            .send()
+            .await?;
 
-        // 	c.logf("[v2] checkCaptivePortal url=%q status_code=%d valid_response=%v", req.URL.String(), r.StatusCode, validResponse)
-        // 	return r.StatusCode != 204 || !validResponse, nil
+        let expected_response = format!("response {chal}");
+        let is_valid_response = res
+            .headers()
+            .get("X-Tailscale-Response")
+            .map(|s| s.to_str().unwrap_or_default())
+            == Some(&expected_response);
+
+        info!(
+            "[v2] checkCaptivePortal url={} status_code={} valid_response={}",
+            res.url(),
+            res.status(),
+            is_valid_response,
+        );
+        let has_captive = res.status() != 204 || !is_valid_response;
+
+        Ok(has_captive)
     }
 
-    fn measure_https_latency(
+    async fn measure_https_latency(
         &self,
         /*ctx context.Context,*/ reg: &DerpRegion,
     ) -> Result<(Duration, IpAddr), ()> {
         todo!()
-        // 	metricHTTPSend.Add(1)
-        // 	var result httpstat.Result
-        // 	ctx, cancel := context.WithTimeout(httpstat.WithHTTPStat(ctx, &result), overallProbeTimeout)
-        // 	defer cancel()
+        // TODO:
+        // - needs derphttp::Client
+        // - measurement hooks to measure server processing time
 
-        // 	var ip netip.Addr
+        // metricHTTPSend.Add(1)
+        // let ctx, cancel := context.WithTimeout(httpstat.WithHTTPStat(ctx, &result), overallProbeTimeout);
+        // let dc := derphttp.NewNetcheckClient(c.logf);
+        // let tlsConn, tcpConn, node := dc.DialRegionTLS(ctx, reg)?;
+        // if ta, ok := tlsConn.RemoteAddr().(*net.TCPAddr);
+        // req, err := http.NewRequestWithContext(ctx, "GET", "https://"+node.HostName+"/derp/latency-check", nil);
+        // resp, err := hc.Do(req);
 
-        // 	dc := derphttp.NewNetcheckClient(c.logf)
-        // 	defer dc.Close()
+        // // DERPs should give us a nominal status code, so anything else is probably
+        // // an access denied by a MITM proxy (or at the very least a signal not to
+        // // trust this latency check).
+        // if resp.StatusCode > 299 {
+        //     return 0, ip, fmt.Errorf("unexpected status code: %d (%s)", resp.StatusCode, resp.Status)
+        // }
+        // _, err = io.Copy(io.Discard, io.LimitReader(resp.Body, 8<<10));
+        // result.End(c.timeNow())
 
-        // 	tlsConn, tcpConn, node, err := dc.DialRegionTLS(ctx, reg)
-        // 	if err != nil {
-        // 		return 0, ip, err
-        // 	}
-        // 	defer tcpConn.Close()
-
-        // 	if ta, ok := tlsConn.RemoteAddr().(*net.TCPAddr); ok {
-        // 		ip, _ = netip.AddrFromSlice(ta.IP)
-        // 		ip = ip.Unmap()
-        // 	}
-        // 	if ip == (netip.Addr{}) {
-        // 		return 0, ip, fmt.Errorf("no unexpected RemoteAddr %#v", tlsConn.RemoteAddr())
-        // 	}
-
-        // 	connc := make(chan *tls.Conn, 1)
-        // 	connc <- tlsConn
-
-        // 	tr := &http.Transport{
-        // 		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-        // 			return nil, errors.New("unexpected DialContext dial")
-        // 		},
-        // 		DialTLSContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-        // 			select {
-        // 			case nc := <-connc:
-        // 				return nc, nil
-        // 			default:
-        // 				return nil, errors.New("only one conn expected")
-        // 			}
-        // 		},
-        // 	}
-        // 	hc := &http.Client{Transport: tr}
-
-        // 	req, err := http.NewRequestWithContext(ctx, "GET", "https://"+node.HostName+"/derp/latency-check", nil)
-        // 	if err != nil {
-        // 		return 0, ip, err
-        // 	}
-
-        // 	resp, err := hc.Do(req)
-        // 	if err != nil {
-        // 		return 0, ip, err
-        // 	}
-        // 	defer resp.Body.Close()
-
-        // 	// DERPs should give us a nominal status code, so anything else is probably
-        // 	// an access denied by a MITM proxy (or at the very least a signal not to
-        // 	// trust this latency check).
-        // 	if resp.StatusCode > 299 {
-        // 		return 0, ip, fmt.Errorf("unexpected status code: %d (%s)", resp.StatusCode, resp.Status)
-        // 	}
-
-        // 	_, err = io.Copy(io.Discard, io.LimitReader(resp.Body, 8<<10))
-        // 	if err != nil {
-        // 		return 0, ip, err
-        // 	}
-        // 	result.End(c.timeNow())
-
-        // 	// TODO: decide best timing heuristic here.
-        // 	// Maybe the server should return the tcpinfo_rtt?
-        // 	return result.ServerProcessing, ip, nil
+        // // TODO: decide best timing heuristic here.
+        // // Maybe the server should return the tcpinfo_rtt?
+        // return result.ServerProcessing, ip, nil
     }
 
-    fn measure_all_icmp_latency(
+    async fn measure_all_icmp_latency(
         &self,
-        /*ctx context.Context,*/ rs: &ReportState,
+        rs: &ReportState,
         need: &[DerpRegion],
-    ) -> Result<(), ()> {
-        todo!()
-        // 	if len(need) == 0 {
-        // 		return nil
-        // 	}
-        // 	ctx, done := context.WithTimeout(ctx, icmpProbeTimeout)
-        // 	defer done()
+    ) -> Result<(), Error> {
+        if need.is_empty() {
+            return Ok(());
+        }
+        info!("UDP is blocked, trying ICMP");
 
-        // 	p, err := ping.New(ctx, c.logf)
-        // 	if err != nil {
-        // 		return err
-        // 	}
-        // 	defer p.Close()
+        time::timeout(ICMP_PROBE_TIMEOUT, async move {
+            let p = Pinger::new()?;
 
-        // 	c.logf("UDP is blocked, trying ICMP")
+            let mut tasks = JoinSet::new();
+            for reg in need {
+                let p = p.clone();
+                let reg = reg.clone(); // TODO: avoid
+                let rs = rs.clone(); // TODO: avoid
+                tasks.spawn(async move {
+                    match measure_icmp_latency(&reg, &p).await {
+                        Err(err) => {
+                            info!(
+                                "[v1] measuring ICMP latency of {} ({}): {:?}",
+                                reg.region_code, reg.region_id, err
+                            )
+                        }
+                        Ok(d) => {
+                            info!(
+                                "[v1] ICMP latency of {} ({}): {:?}",
+                                reg.region_code, reg.region_id, d
+                            );
+                            let mut rsl = rs.state.lock().await;
+                            let l = rsl.report.region_latency.entry(reg.region_id).or_insert(d);
+                            if *l >= d {
+                                *l = d;
+                            }
+                            // We only send IPv4 ICMP right now
+                            rsl.report.ipv4 = true;
+                            rsl.report.icmpv4 = true;
+                        }
+                    }
+                });
+            }
 
-        // 	var wg sync.WaitGroup
-        // 	wg.Add(len(need))
-        // 	for _, reg := range need {
-        // 		go func(reg *tailcfg.DERPRegion) {
-        // 			defer wg.Done()
-        // 			if d, err := c.measureICMPLatency(ctx, reg, p); err != nil {
-        // 				c.logf("[v1] measuring ICMP latency of %v (%d): %v", reg.RegionCode, reg.RegionID, err)
-        // 			} else {
-        // 				c.logf("[v1] ICMP latency of %v (%d): %v", reg.RegionCode, reg.RegionID, d)
-        // 				rs.mu.Lock()
-        // 				if l, ok := rs.report.RegionLatency[reg.RegionID]; !ok {
-        // 					mak.Set(&rs.report.RegionLatency, reg.RegionID, d)
-        // 				} else if l >= d {
-        // 					rs.report.RegionLatency[reg.RegionID] = d
-        // 				}
+            while let Some(t) = tasks.join_next().await {
+                t?;
+            }
+            Ok::<_, Error>(())
+        })
+        .await??;
 
-        // 				// We only send IPv4 ICMP right now
-        // 				rs.report.IPv4 = true
-        // 				rs.report.ICMPv4 = true
-
-        // 				rs.mu.Unlock()
-        // 			}
-        // 		}(reg)
-        // 	}
-
-        // 	wg.Wait()
-        // 	return nil
-    }
-
-    fn measure_icmp_latency(
-        &self,
-        /*ctx context.Context,*/ reg: &DerpRegion,
-        p: &Pinger,
-    ) -> Result<Duration, ()> {
-        todo!()
-        // 	if len(reg.Nodes) == 0 {
-        // 		return 0, fmt.Errorf("no nodes for region %d (%v)", reg.RegionID, reg.RegionCode)
-        // 	}
-
-        // 	// Try pinging the first node in the region
-        // 	node := reg.Nodes[0]
-
-        // 	// Get the IPAddr by asking for the UDP address that we would use for
-        // 	// STUN and then using that IP.
-        // 	//
-        // 	// TODO(andrew-d): this is a bit ugly
-        // 	nodeAddr := c.nodeAddr(ctx, node, probeIPv4)
-        // 	if !nodeAddr.IsValid() {
-        // 		return 0, fmt.Errorf("no address for node %v", node.Name)
-        // 	}
-        // 	addr := &net.IPAddr{
-        // 		IP:   net.IP(nodeAddr.Addr().AsSlice()),
-        // 		Zone: nodeAddr.Addr().Zone(),
-        // 	}
-
-        // 	// Use the unique node.Name field as the packet data to reduce the
-        // 	// likelihood that we get a mismatched echo response.
-        // 	return p.Send(ctx, addr, []byte(node.Name))
+        Ok(())
     }
 
     fn log_concise_report(&self, r: &Report, dm: &DerpMap) {
@@ -923,62 +877,85 @@ impl Client {
         // 		r.PreferredDERP = prevDERP
         // 	}
     }
+}
 
-    /// Proto is 4 or 6. If it returns nil, the node is skipped.
-    fn node_addr(&self, /*ctx context.Context,*/ n: DerpNode, proto: ProbeProto) -> IpAddr {
-        todo!()
-        // 	port := n.STUNPort
-        // 	if port == 0 {
-        // 		port = 3478
-        // 	}
-        // 	if port < 0 || port > 1<<16-1 {
-        // 		return
-        // 	}
-        // 	if n.STUNTestIP != "" {
-        // 		ip, err := netip.ParseAddr(n.STUNTestIP)
-        // 		if err != nil {
-        // 			return
-        // 		}
-        // 		if proto == probeIPv4 && ip.Is6() {
-        // 			return
-        // 		}
-        // 		if proto == probeIPv6 && ip.Is4() {
-        // 			return
-        // 		}
-        // 		return netip.AddrPortFrom(ip, uint16(port))
-        // 	}
-
-        // 	switch proto {
-        // 	case probeIPv4:
-        // 		if n.IPv4 != "" {
-        // 			ip, _ := netip.ParseAddr(n.IPv4)
-        // 			if !ip.Is4() {
-        // 				return
-        // 			}
-        // 			return netip.AddrPortFrom(ip, uint16(port))
-        // 		}
-        // 	case probeIPv6:
-        // 		if n.IPv6 != "" {
-        // 			ip, _ := netip.ParseAddr(n.IPv6)
-        // 			if !ip.Is6() {
-        // 				return
-        // 			}
-        // 			return netip.AddrPortFrom(ip, uint16(port))
-        // 		}
-        // 	default:
-        // 		return
-        // 	}
-
-        // 	// TODO(bradfitz): add singleflight+dnscache here.
-        // 	addrs, _ := net.DefaultResolver.LookupIPAddr(ctx, n.HostName)
-        // 	for _, a := range addrs {
-        // 		if (a.IP.To4() != nil) == (proto == probeIPv4) {
-        // 			na, _ := netip.AddrFromSlice(a.IP.To4())
-        // 			return netip.AddrPortFrom(na.Unmap(), uint16(port))
-        // 		}
-        // 	}
-        // 	return
+async fn measure_icmp_latency(reg: &DerpRegion, p: &Pinger) -> Result<Duration, Error> {
+    if reg.nodes.is_empty() {
+        anyhow::bail!(
+            "no nodes for region {} ({})",
+            reg.region_id,
+            reg.region_code
+        );
     }
+
+    // Try pinging the first node in the region
+    let node = &reg.nodes[0];
+
+    // Get the IPAddr by asking for the UDP address that we would use for
+    // STUN and then using that IP.
+    let node_addr = get_node_addr(/*ctx,*/ node, ProbeProto::IPv4)
+        .await
+        .ok_or_else(|| anyhow::anyhow!("no address for node {}", node.name))?;
+
+    // Use the unique node.name field as the packet data to reduce the
+    // likelihood that we get a mismatched echo response.
+    p.send(node_addr, node.name.as_bytes()).await
+}
+
+/// Proto must V4 or V6. If it returns `None`, the node is skipped.
+async fn get_node_addr(n: &DerpNode, proto: ProbeProto) -> Option<SocketAddr> {
+    let mut port = n.stun_port;
+    if port == 0 {
+        port = 3478;
+    }
+    if let Some(ip) = n.stun_test_ip {
+        if proto == ProbeProto::IPv4 && ip.is_ipv6() {
+            return None;
+        }
+        if proto == ProbeProto::IPv6 && ip.is_ipv4() {
+            return None;
+        }
+        return Some(SocketAddr::new(ip, port));
+    }
+
+    match proto {
+        ProbeProto::IPv4 => {
+            if let Some(ip) = n.ipv4 {
+                return Some(SocketAddr::new(IpAddr::V4(ip), port));
+            }
+        }
+        ProbeProto::IPv6 => {
+            if let Some(ip) = n.ipv6 {
+                return Some(SocketAddr::new(IpAddr::V6(ip), port));
+            }
+        }
+        _ => {
+            return None;
+        }
+    }
+
+    // TODO: add singleflight+dnscache here.
+    if let Ok(addrs) = dns_lookup(&n.host_name).await {
+        for addr in addrs {
+            if addr.is_ipv4() && proto == ProbeProto::IPv4 {
+                let addr = to_canonical(addr);
+                return Some(SocketAddr::new(addr, port));
+            }
+        }
+    }
+
+    None
+}
+
+async fn dns_lookup(host: &str) -> Result<trust_dns_resolver::lookup_ip::LookupIp, Error> {
+    // TODO: dnscache
+
+    use trust_dns_resolver::TokioAsyncResolver;
+
+    let resolver = TokioAsyncResolver::tokio_from_system_conf()?;
+    let response = resolver.lookup_ip(host).await?;
+
+    Ok(response)
 }
 
 /// The protocol used to time a node's latency.
@@ -1026,6 +1003,13 @@ struct Probe {
 #[derive(Debug, Default, Clone)]
 struct ProbePlan(HashMap<String, Vec<Probe>>);
 
+impl Deref for ProbePlan {
+    type Target = HashMap<String, Vec<Probe>>;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
 /// Returns the regions of dm first sorted from fastest to slowest (based on the 'last' report),
 /// end in regions that have no data.
 fn sort_regions<'a>(dm: &'a DerpMap, last: &Report) -> Vec<&'a DerpRegion> {
@@ -1057,10 +1041,11 @@ const NUM_INCREMENTAL_REGIONS: usize = 3;
 
 /// Generates the probe plan for a `DerpMap`, given the most recent report and
 /// whether IPv6 is configured on an interface.
-fn make_probe_plan(dm: &DerpMap, if_state: &interfaces::State, last: &Report) -> ProbePlan {
-    if last.region_latency.is_empty() {
+fn make_probe_plan(dm: &DerpMap, if_state: &interfaces::State, last: Option<&Report>) -> ProbePlan {
+    if last.is_none() || last.unwrap().region_latency.is_empty() {
         return make_probe_plan_initial(dm, if_state);
     }
+    let last = last.unwrap();
     let have6if = if_state.have_v6;
     let have4if = if_state.have_v4;
     let mut plan = ProbePlan::default();
@@ -1190,17 +1175,18 @@ fn node_might4(n: &DerpNode) -> bool {
 }
 
 /// Holds the state for a single invocation of `Client::get_report`.
+#[derive(Clone)]
 struct ReportState {
     hair_tx: stun_rs::TransactionId,
-    got_hair_stun: mpsc::Receiver<IpAddr>,
+    got_hair_stun: Arc<(mpsc::Sender<IpAddr>, mpsc::Receiver<IpAddr>)>,
     // hairTimeout chan struct{} // closed on timeout
-    pc4: Box<dyn StunConn>,
-    pc6: Box<dyn StunConn>,
-    pc4_hair: Box<dyn PacketConn>,
+    pc4: Option<Arc<Box<dyn StunConn>>>,
+    pc6: Option<Arc<Box<dyn StunConn>>>,
+    pc4_hair: Arc<Box<dyn PacketConn>>,
     incremental: bool, // doing a lite, follow-up netcheck
-    // stopProbeCh chan struct{}
-    // waitPortMap: sync.WaitGroup
-    state: Mutex<InnerReportState>,
+    stop_probe: Arc<(oneshot::Sender<()>, oneshot::Receiver<()>)>,
+    wait_port_map: Arc<awaitgroup::WaitGroup>,
+    state: Arc<Mutex<InnerReportState>>,
 }
 
 struct InnerReportState {
@@ -1208,8 +1194,8 @@ struct InnerReportState {
     // to be returned by GetReport
     report: Report,
     // called without c.mu held
-    in_flight: HashMap<stun::TransactionId, Box<dyn Fn(SocketAddr)>>,
-    got_ep4: String,
+    in_flight: HashMap<stun::TransactionId, Box<dyn Fn(SocketAddr) + Sync + Send>>,
+    got_ep4: Option<String>,
     timers: Vec<Timeout<()>>,
 }
 
@@ -1274,7 +1260,7 @@ impl ReportState {
         // 	time.AfterFunc(hairpinCheckTimeout, func() { close(rs.hairTimeout) })
     }
 
-    fn wait_hair_check(&self /*ctx context.Context*/) {
+    async fn wait_hair_check(&self /*ctx context.Context*/) {
         todo!()
         // 	rs.mu.Lock()
         // 	defer rs.mu.Unlock()
@@ -1306,7 +1292,7 @@ impl ReportState {
         // 	}
     }
 
-    fn stop_timers(&self) {
+    async fn stop_timers(&self) {
         todo!()
         // 	rs.mu.Lock()
         // 	defer rs.mu.Unlock()
@@ -1384,7 +1370,7 @@ impl ReportState {
     }
 
     /// Starts probes for UPnP, PMP and PCP.
-    fn probe_port_map_services(&self) {
+    async fn probe_port_map_services(&self) {
         todo!()
         // 	defer rs.waitPortMap.Done()
 
@@ -1408,12 +1394,7 @@ impl ReportState {
         // 	rs.setOptBool(&rs.report.PCP, res.PCP)
     }
 
-    fn run_probe(
-        &self,
-        /*ctx context.Context,*/ dm: &DerpMap,
-        probe: Probe,
-        cancel_set: (), /* func()*/
-    ) {
+    async fn run_probe(&self, /*ctx context.Context,*/ dm: &DerpMap, probe: &Probe) {
         todo!()
         // 	c := rs.c
         // 	node := namedNode(dm, probe.node)
