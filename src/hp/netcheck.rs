@@ -14,7 +14,8 @@ use std::{
 use anyhow::Error;
 use rand::seq::IteratorRandom;
 use tokio::{
-    sync::{mpsc, oneshot, Mutex},
+    net,
+    sync::{self, mpsc, oneshot, Mutex},
     task::JoinSet,
     time::{self, Timeout},
 };
@@ -127,6 +128,7 @@ impl Report {
 }
 
 /// Generates a netcheck [`Report`].
+#[derive(Clone)]
 pub struct Client {
     /// Enables verbose logging.
     pub verbose: bool,
@@ -138,13 +140,13 @@ pub struct Client {
 
     /// If set, is the address to listen on for UDP.
     /// It defaults to ":0".
-    pub udp_bind_addr: Option<String>,
+    pub udp_bind_addr: SocketAddr,
 
     // Used for portmap queries.
     // If `None`, portmap discovery is not done.
     pub port_mapper: Option<()>, // TODO*portmapper.Client // lazily initialized on first use
 
-    reports: Mutex<Reports>,
+    reports: Arc<Mutex<Reports>>,
 }
 
 struct Reports {
@@ -242,7 +244,7 @@ impl Client {
 
     /// Reads STUN packets from pc until there's an error or ctx is done.
     /// In either case, it closes pc.
-    async fn read_packets(&self, /*ctx context.Context,*/ pc: impl PacketConn) {
+    async fn read_packets(&self, pc: Arc<net::UdpSocket>) {
         todo!()
         // 	done := make(chan struct{})
         // 	defer close(done)
@@ -280,11 +282,20 @@ impl Client {
         // 	}
     }
 
-    fn udp_bind_addr(&self) -> &str {
-        self.udp_bind_addr
-            .as_ref()
-            .map(|s| s.as_str())
-            .unwrap_or(":0")
+    fn udp_bind_addr_v6(&self) -> SocketAddr {
+        if self.udp_bind_addr.is_ipv6() {
+            return self.udp_bind_addr;
+        }
+
+        "[::1]:0".parse().unwrap()
+    }
+
+    fn udp_bind_addr_v4(&self) -> SocketAddr {
+        if self.udp_bind_addr.is_ipv4() {
+            return self.udp_bind_addr;
+        }
+
+        "0.0.0.0:0".parse().unwrap()
     }
 
     /// Gets a report.
@@ -295,292 +306,300 @@ impl Client {
         // metricNumGetReport.Add(1)
 
         // Wrap in timeout
-        let rs = time::timeout(OVERALL_PROBE_TIMEOUT, async move {
-            let reports = self.reports.lock().await;
-            if reports.cur_state.is_some() {
-                anyhow::bail!("invalid concurrent call to get_report");
-            }
-
-            // Create a UDP4 socket used for sending to our discovered IPv4 address.
-            let pc4_hair = nettype
-                .MakePacketListenerWithNetIP(netns.Listener(c.logf))
-                .ListenPacket("udp4", ":0");
-            let pc4_hair = match pc4_hair {
-                Ok(val) => val,
-                Err(err) => {
-                    info!("udp4: {:?}", err);
-                    return Err(err);
+        let this = self.clone();
+        let rs =
+            time::timeout(OVERALL_PROBE_TIMEOUT, async move {
+                let mut reports = this.reports.lock().await;
+                if reports.cur_state.is_some() {
+                    anyhow::bail!("invalid concurrent call to get_report");
                 }
-            };
 
-            let mut rs = ReportState {
-                incremental: false,
-                pc4: None,
-                pc6: None,
-                pc4_hair: Arc::new(pc4_hair),
-                stop_probe: Arc::new(oneshot::channel()),
-                wait_port_map: wg::AsyncWaitGroup::new(),
-                state: Arc::new(Mutex::new(InnerReportState {
-                    sent_hair_check: false,
-                    report: Report::default(),
-                    in_flight: Default::default(),
-                    got_ep4: None,
-                    timers: Default::default(),
-                })),
-                hair_tx: stun::TransactionId::default(), // random payload
-                got_hair_stun: Arc::new(mpsc::channel(1)),
-            };
-            reports.cur_state = Some(rs);
-            let mut last = reports.last;
-
-            // Even if we're doing a non-incremental update, we may want to try our
-            // preferred DERP region for captive portal detection. Save that, if we have it.
-            let preferred_derp = last.map(|l| l.preferred_derp);
-            let now = Instant::now();
-
-            let mut do_full = false;
-            if reports.next_full
-                || now.duration_since(reports.last_full) > Duration::from_secs(5 * 60)
-            {
-                do_full = true;
-            }
-
-            // If the last report had a captive portal and reported no UDP access,
-            // it's possible that we didn't get a useful netcheck due to the
-            // captive portal blocking us. If so, make this report a full
-            // (non-incremental) one.
-            if !do_full {
-                if let Some(last) = last {
-                    do_full = !last.udp && last.captive_portal.unwrap_or_default();
-                }
-            }
-            if do_full {
-                last = None; // causes makeProbePlan below to do a full (initial) plan
-                reports.next_full = false;
-                reports.last_full = now;
-
-                // TODO
-                // metricNumGetReportFull.Add(1);
-            }
-
-            rs.incremental = last.is_some();
-            drop(reports);
-
-            // TODO: always clear `cur_state`
-            // defer func() { c.curState = nil }()
-
-            let if_state = interfaces::State::new();
-
-            // See if IPv6 works at all, or if it's been hard disabled at the OS level.
-            let v6udp = nettype
-                .MakePacketListenerWithNetIP(netns.Listener(c.logf))
-                .ListenPacket("udp6", "[::1]:0");
-            let mut inner_report = rs.state.lock().await;
-            if v6udp.is_ok() {
-                inner_report.report.os_has_ipv6 = true;
-            }
-
-            if !self.skip_external_network && self.port_mapper.is_some() {
-                let worker = rs.wait_port_map.add(1);
-                tokio::task::spawn(async move {
-                    rs.probe_port_map_services().await;
-                    worker.done();
-                });
-            }
-
-            // At least the Apple Airport Extreme doesn't allow hairpin
-            // sends from a private socket until it's seen traffic from
-            // that src IP:port to something else out on the internet.
-            //
-            // See https://github.com/tailscale/tailscale/issues/188#issuecomment-600728643
-            //
-            // And it seems that even sending to a likely-filtered RFC 5737
-            // documentation-only IPv4 range is enough to set up the mapping.
-            // So do that for now. In the future we might want to classify networks
-            // that do and don't require this separately. But for now help it.
-            let documentation_ip: SocketAddr = "203.0.113.1:12345".parse().unwrap();
-
-            rs.pc4_hair.write_to(
-                b"tailscale netcheck; see https://github.com/tailscale/tailscale/issues/188",
-                documentation_ip,
-            );
-
-            let u4 = nettype
-                .MakePacketListenerWithNetIP(netns.Listener(c.logf))
-                .ListenPacket(ctx, "udp4", self.udp_bind_addr());
-            match u4 {
-                Ok(u4) => {
-                    rs.pc4 = u4;
-                    // TODO: track task
-                    tokio::task::spawn(self.read_packets(/*ctx, */ u4));
-                }
-                Err(err) => {
-                    info!("udp4: {:?}", err);
-                    return Err(err);
-                }
-            }
-
-            if if_state.have_v6 {
-                let u6 = nettype
-                    .MakePacketListenerWithNetIP(netns.Listener(c.logf))
-                    .ListenPacket("udp6", self.udp_bind_addr());
-                match u6 {
-                    Ok(u6) => {
-                        rs.pc6 = u6;
-                        // TODO: track task
-                        tokio::task::spawn(self.read_packets(/*ctx, */ u6));
+                // Create a UDP4 socket used for sending to our discovered IPv4 address.
+                let pc4_hair = match net::UdpSocket::bind("0.0.0.0:0").await {
+                    Ok(val) => val,
+                    Err(_) => {
+                        info!("udp4: failed to bind");
+                        return Err(anyhow::anyhow!("failed to bind UDP v4"));
                     }
-                    Err(err) => {
-                        info!("udp6: {:?}", err);
-                        return Err(err);
+                };
+
+                let mut rs = ReportState {
+                    incremental: false,
+                    pc4: None,
+                    pc6: None,
+                    pc4_hair: Arc::new(pc4_hair),
+                    stop_probe: Arc::new(sync::Notify::new()),
+                    wait_port_map: wg::AsyncWaitGroup::new(),
+                    state: Arc::new(Mutex::new(InnerReportState {
+                        sent_hair_check: false,
+                        report: Report::default(),
+                        in_flight: Default::default(),
+                        got_ep4: None,
+                        timers: Default::default(),
+                    })),
+                    hair_tx: stun::TransactionId::default(), // random payload
+                    got_hair_stun: Arc::new(mpsc::channel(1)),
+                };
+
+                let mut last = reports.last.clone();
+
+                // Even if we're doing a non-incremental update, we may want to try our
+                // preferred DERP region for captive portal detection. Save that, if we have it.
+                let preferred_derp = last.as_ref().map(|l| l.preferred_derp);
+                let now = Instant::now();
+
+                let mut do_full = false;
+                if reports.next_full
+                    || now.duration_since(reports.last_full) > Duration::from_secs(5 * 60)
+                {
+                    do_full = true;
+                }
+
+                // If the last report had a captive portal and reported no UDP access,
+                // it's possible that we didn't get a useful netcheck due to the
+                // captive portal blocking us. If so, make this report a full
+                // (non-incremental) one.
+                if !do_full {
+                    if let Some(ref last) = last {
+                        do_full = !last.udp && last.captive_portal.unwrap_or_default();
                     }
                 }
-            }
+                if do_full {
+                    last = None; // causes makeProbePlan below to do a full (initial) plan
+                    reports.next_full = false;
+                    reports.last_full = now;
 
-            let plan = make_probe_plan(dm, &if_state, last.as_ref());
+                    // TODO
+                    // metricNumGetReportFull.Add(1);
+                }
 
-            // If we're doing a full probe, also check for a captive portal. We
-            // delay by a bit to wait for UDP STUN to finish, to avoid the probe if
-            // it's unnecessary.
-            let (done_send, captive_portal_done) = oneshot::channel();
-            let mut captive_task = None;
-            if !rs.incremental {
-                // TODO: track task
-                captive_task = Some(tokio::task::spawn(async move {
-                    // wait
-                    time::sleep(self.captive_portal_delay()).await;
-                    match self.check_captive_portal(dm, preferred_derp).await {
-                        Ok(found) => {
-                            rs.state.lock().await.report.captive_portal = Some(found);
-                        }
-                        Err(err) => {
-                            info!("[v1] checkCaptivePortal: {:?}", err);
-                        }
+                rs.incremental = last.is_some();
+                reports.cur_state = Some(rs.clone());
+                drop(reports);
+
+                // TODO: always clear `cur_state`
+                // defer func() { c.curState = nil }()
+
+                let if_state = interfaces::State::new();
+
+                // See if IPv6 works at all, or if it's been hard disabled at the OS level.
+                {
+                    let v6udp = net::UdpSocket::bind("[::1]:0").await;
+                    if v6udp.is_ok() {
+                        let mut inner_report = rs.state.lock().await;
+
+                        inner_report.report.os_has_ipv6 = true;
                     }
-                    done_send.send(());
-                }));
-            }
+                }
 
-            let mut task_set = JoinSet::new();
-
-            for probe_set in plan.values() {
-                for probe in probe_set {
-                    task_set.spawn(async move {
-                        rs.run_probe(dm, probe).await;
+                if !this.skip_external_network && this.port_mapper.is_some() {
+                    let worker = rs.wait_port_map.add(1);
+                    let rs = rs.clone();
+                    tokio::task::spawn(async move {
+                        rs.probe_port_map_services().await;
+                        worker.done();
                     });
                 }
-            }
 
-            let stun_timer = time::sleep(STUN_PROBE_TIMEOUT);
-            let probes_done = async move {
-                while let Some(t) = task_set.join_next().await {
-                    t?;
+                // At least the Apple Airport Extreme doesn't allow hairpin
+                // sends from a private socket until it's seen traffic from
+                // that src IP:port to something else out on the internet.
+                //
+                // See https://github.com/tailscale/tailscale/issues/188#issuecomment-600728643
+                //
+                // And it seems that even sending to a likely-filtered RFC 5737
+                // documentation-only IPv4 range is enough to set up the mapping.
+                // So do that for now. In the future we might want to classify networks
+                // that do and don't require this separately. But for now help it.
+                let documentation_ip: SocketAddr = "203.0.113.1:12345".parse().unwrap();
+
+                rs.pc4_hair.send_to(
+                    b"tailscale netcheck; see https://github.com/tailscale/tailscale/issues/188",
+                    documentation_ip,
+                ).await?;
+
+                match net::UdpSocket::bind(this.udp_bind_addr_v4()).await {
+                    Ok(u4) => {
+                        let u4 = Arc::new(u4);
+                        rs.pc4 = Some(u4.clone());
+                        // TODO: track task
+                        let this = this.clone();
+                        tokio::task::spawn(async move { this.read_packets(u4).await });
+                    }
+                    Err(err) => {
+                        info!("udp4: failed to bind");
+                        return Err(anyhow::anyhow!("failed to bind UDP 4"));
+                    }
                 }
-                Ok(())
-            };
 
-            let probes_aborted = rs.stop_probe.1;
+                if if_state.have_v6 {
+                    match net::UdpSocket::bind(this.udp_bind_addr_v6()).await {
+                        Ok(u6) => {
+                            let u6 = Arc::new(u6);
+                            rs.pc6 = Some(u6.clone());
+                            // TODO: track task
+                            let this = this.clone();
+                            tokio::task::spawn(async move { this.read_packets(u6).await });
+                        }
+                        Err(err) => {
+                            info!("udp6: failed to bind");
+                            return Err(anyhow::anyhow!("failed to bind UDP 6"));
+                        }
+                    }
+                }
 
-            tokio::select! {
-                _ = stun_timer => {},
-                _ = probes_done => {
-                    // All of our probes finished, so if we have >0 responses, we
-                    // stop our captive portal check.
-                    if rs.any_udp() {
+                let plan = make_probe_plan(dm, &if_state, last.as_ref());
+
+                // If we're doing a full probe, also check for a captive portal. We
+                // delay by a bit to wait for UDP STUN to finish, to avoid the probe if
+                // it's unnecessary.
+                let (done_send, captive_portal_done) = oneshot::channel();
+                let mut captive_task = None;
+                if !rs.incremental {
+                    // TODO: track task
+                    let rs = rs.clone();
+                    let delay = this.captive_portal_delay();
+                    let dm = dm.clone(); // TODO: avoid or make cheap
+                    captive_task = Some(tokio::task::spawn(async move {
+                        // wait
+                        time::sleep(delay).await;
+                        match check_captive_portal(&dm, preferred_derp).await {
+                            Ok(found) => {
+                                rs.state.lock().await.report.captive_portal = Some(found);
+                            }
+                            Err(err) => {
+                                info!("[v1] checkCaptivePortal: {:?}", err);
+                            }
+                        }
+                        let _ = done_send.send(());
+                    }));
+                }
+
+                let mut task_set = JoinSet::new();
+
+                for probe_set in plan.values() {
+                    for probe in probe_set {
+                        let probe = probe.clone();
+                        let rs = rs.clone();
+                        let dm = dm.clone(); // TODO: avoid or make cheap
+                        task_set.spawn(async move {
+                            rs.run_probe(&dm, probe).await;
+                        });
+                    }
+                }
+
+                let stun_timer = time::sleep(STUN_PROBE_TIMEOUT);
+                let probes_done = async move {
+                    while let Some(t) = task_set.join_next().await {
+                        t?;
+                    }
+                    Ok::<_, Error>(())
+                };
+
+                let probes_aborted = rs.stop_probe.clone();
+
+                tokio::select! {
+                    _ = stun_timer => {},
+                    _ = probes_done => {
+                        // All of our probes finished, so if we have >0 responses, we
+                        // stop our captive portal check.
+                        if rs.any_udp().await {
+                            if let Some(task) = captive_task {
+                                task.abort();
+                            }
+                        }
+                    }
+                    _ = probes_aborted.notified() => {
+                        // Saw enough regions.
+                        debug!("saw enough regions; not waiting for rest");
+                        // We can stop the captive portal check since we know that we
+                        // got a bunch of STUN responses.
                         if let Some(task) = captive_task {
                             task.abort();
                         }
                     }
                 }
-                _ = probes_aborted => {
-                    // Saw enough regions.
-                    debug!("saw enough regions; not waiting for rest");
-                    // We can stop the captive portal check since we know that we
-                    // got a bunch of STUN responses.
-                    if let Some(task) = captive_task {
-                        task.abort();
+
+                rs.wait_hair_check().await;
+                debug!("hair_check done");
+
+                if !this.skip_external_network && this.port_mapper.is_some() {
+                    rs.wait_port_map.wait().await;
+                    debug!("port_map done");
+                }
+
+                rs.stop_timers().await;
+
+                // Try HTTPS and ICMP latency check if all STUN probes failed due to
+                // UDP presumably being blocked.
+                // TODO: this should be moved into the probePlan, using probeProto probeHTTPS.
+                if !rs.any_udp().await {
+                    let mut task_set = JoinSet::new();
+                    let mut need = Vec::new();
+
+                    for (rid, reg) in dm.regions.iter().enumerate() {
+                        if !rs.have_region_latency(rid).await && region_has_derp_node(reg) {
+                            need.push(reg.clone()); // TODO: avoid clone
+                        }
+                    }
+                    if !need.is_empty() {
+                        // Kick off ICMP in parallel to HTTPS checks; we don't
+                        // reuse the same WaitGroup for those probes because we
+                        // need to close the underlying Pinger after a timeout
+                        // or when all ICMP probes are done, regardless of
+                        // whether the HTTPS probes have finished.
+                        let rs = rs.clone();
+                        let need = need.clone();
+                        task_set.spawn(async move {
+                            if let Err(err) = measure_all_icmp_latency(&rs, &need).await {
+                                debug!("[v1] measureAllICMPLatency: {:?}", err);
+                            }
+                        });
+                        debug!("netcheck: UDP is blocked, trying HTTPS");
+                    }
+                    for reg in need.into_iter() {
+                        task_set.spawn(async move {
+                            match measure_https_latency(&reg).await {
+                                Ok((d, ip)) => {
+                                    // rs.mu.Lock()
+                                    //  if l, ok := rs.report.RegionLatency[reg.RegionID]; !ok {
+                                    // 			mak.Set(&rs.report.RegionLatency, reg.RegionID, d)
+                                    // 		} else if l >= d {
+                                    // 			rs.report.RegionLatency[reg.RegionID] = d
+                                    // 		}
+                                    // 		// We set these IPv4 and IPv6 but they're not really used
+                                    // 		// and we don't necessarily set them both. If UDP is blocked
+                                    // 		// and both IPv4 and IPv6 are available over TCP, it's basically
+                                    // 		// random which fields end up getting set here.
+                                    // 		// Since they're not needed, that's fine for now.
+                                    // 		if ip.Is4() {
+                                    // 			rs.report.IPv4 = true
+                                    // 		}
+                                    // 		if ip.Is6() {
+                                    // 			rs.report.IPv6 = true
+                                    // 		}
+                                    // 		rs.mu.Unlock()
+                                    // 	}
+                                }
+                                Err(err) => {
+                                    debug!(
+                                        "[v1] netcheck: measuring HTTPS latency of {} ({}): {:?}",
+                                        reg.region_code, reg.region_id, err
+                                    );
+                                }
+                            }
+                        });
+                    }
+                    while let Some(t) = task_set.join_next().await {
+                        t?;
                     }
                 }
-            }
+                // Wait for captive portal check before finishing the report.
+                captive_portal_done.await?;
 
-            rs.wait_hair_check().await;
-            debug!("hair_check done");
-
-            if !self.skip_external_network && self.port_mapper.is_some() {
-                rs.wait_port_map.wait().await;
-                debug!("port_map done");
-            }
-
-            rs.stop_timers().await;
-
-            // Try HTTPS and ICMP latency check if all STUN probes failed due to
-            // UDP presumably being blocked.
-            // TODO: this should be moved into the probePlan, using probeProto probeHTTPS.
-            if !rs.any_udp() {
-                let task_set = JoinSet::new();
-                let mut need = Vec::new();
-
-                for (rid, reg) in dm.regions.iter().enumerate() {
-                    if !rs.have_region_latency(rid) && region_has_derp_node(reg) {
-                        need.push(reg.clone()); // TODO: avoid clone
-                    }
-                }
-                if !need.is_empty() {
-                    // Kick off ICMP in parallel to HTTPS checks; we don't
-                    // reuse the same WaitGroup for those probes because we
-                    // need to close the underlying Pinger after a timeout
-                    // or when all ICMP probes are done, regardless of
-                    // whether the HTTPS probes have finished.
-                    task_set.spawn(async move {
-                        if let Err(err) = self.measure_all_icmp_latency(&rs, &need).await {
-                            debug!("[v1] measureAllICMPLatency: {:?}", err);
-                        }
-                    });
-                    debug!("netcheck: UDP is blocked, trying HTTPS");
-                }
-                for reg in &need {
-                    task_set.spawn(async move {
-                        match self.measure_https_latency(reg).await {
-                            Ok((d, ip)) => {
-                                // rs.mu.Lock()
-                                //  if l, ok := rs.report.RegionLatency[reg.RegionID]; !ok {
-                                // 			mak.Set(&rs.report.RegionLatency, reg.RegionID, d)
-                                // 		} else if l >= d {
-                                // 			rs.report.RegionLatency[reg.RegionID] = d
-                                // 		}
-                                // 		// We set these IPv4 and IPv6 but they're not really used
-                                // 		// and we don't necessarily set them both. If UDP is blocked
-                                // 		// and both IPv4 and IPv6 are available over TCP, it's basically
-                                // 		// random which fields end up getting set here.
-                                // 		// Since they're not needed, that's fine for now.
-                                // 		if ip.Is4() {
-                                // 			rs.report.IPv4 = true
-                                // 		}
-                                // 		if ip.Is6() {
-                                // 			rs.report.IPv6 = true
-                                // 		}
-                                // 		rs.mu.Unlock()
-                                // 	}
-                            }
-                            Err(err) => {
-                                debug!(
-                                    "[v1] netcheck: measuring HTTPS latency of {} ({}): {:?}",
-                                    reg.region_code, reg.region_id, err
-                                );
-                            }
-                        }
-                    });
-                }
-                while let Some(t) = task_set.join_next().await {
-                    t?;
-                }
-            }
-            // Wait for captive portal check before finishing the report.
-            captive_portal_done.await;
-
-            Ok(rs)
-        })
-        .await??;
+                Ok(rs)
+            })
+            .await??;
         let report = self.finish_and_store_report(&rs, dm).await;
         Ok(report)
     }
@@ -591,172 +610,6 @@ impl Client {
         self.log_concise_report(&report, dm);
 
         report
-    }
-
-    /// Reports whether or not we think the system is behind a
-    /// captive portal, detected by making a request to a URL that we know should
-    /// return a "204 No Content" response and checking if that's what we get.
-    ///
-    /// The boolean return is whether we think we have a captive portal.
-    async fn check_captive_portal(
-        &self,
-        dm: &DerpMap,
-        preferred_derp: Option<usize>,
-    ) -> Result<bool, Error> {
-        // If we have a preferred DERP region with more than one node, try
-        // that; otherwise, pick a random one not marked as "Avoid".
-        let preferred_derp = if preferred_derp.is_none()
-            || dm.regions.get(preferred_derp.unwrap()).is_none()
-            || (preferred_derp.is_some() && dm.regions[preferred_derp.unwrap()].nodes.is_empty())
-        {
-            let mut rids = Vec::with_capacity(dm.regions.len());
-            for (id, reg) in dm.regions.iter().enumerate() {
-                if reg.avoid || reg.nodes.is_empty() {
-                    continue;
-                }
-                rids.push(id);
-            }
-
-            if rids.is_empty() {
-                return Ok(false);
-            }
-            (0..rids.len())
-                .into_iter()
-                .choose(&mut rand::thread_rng())
-                .unwrap_or_default()
-        } else {
-            preferred_derp.unwrap()
-        };
-
-        // Has a node, as we filtered out regions without nodes above.
-        let node = &dm.regions[preferred_derp].nodes[0];
-
-        if node.host_name.ends_with(&DOT_INVALID) {
-            // Don't try to connect to invalid hostnames. This occurred in tests:
-            // https://github.com/tailscale/tailscale/issues/6207
-            // TODO(bradfitz,andrew-d): how to actually handle this nicely?
-            return Ok(false);
-        }
-
-        let client = reqwest::ClientBuilder::new()
-            .redirect(reqwest::redirect::Policy::none())
-            .build()?;
-
-        // Note: the set of valid characters in a challenge and the total
-        // length is limited; see isChallengeChar in cmd/derper for more
-        // details.
-        let chal = format!("ts_{}", node.host_name);
-
-        let res = client
-            .request(
-                reqwest::Method::GET,
-                format!("http://{}/generate_204", node.host_name),
-            )
-            .header("X-Tailscale-Challenge", &chal)
-            .send()
-            .await?;
-
-        let expected_response = format!("response {chal}");
-        let is_valid_response = res
-            .headers()
-            .get("X-Tailscale-Response")
-            .map(|s| s.to_str().unwrap_or_default())
-            == Some(&expected_response);
-
-        info!(
-            "[v2] checkCaptivePortal url={} status_code={} valid_response={}",
-            res.url(),
-            res.status(),
-            is_valid_response,
-        );
-        let has_captive = res.status() != 204 || !is_valid_response;
-
-        Ok(has_captive)
-    }
-
-    async fn measure_https_latency(
-        &self,
-        /*ctx context.Context,*/ reg: &DerpRegion,
-    ) -> Result<(Duration, IpAddr), ()> {
-        todo!()
-        // TODO:
-        // - needs derphttp::Client
-        // - measurement hooks to measure server processing time
-
-        // metricHTTPSend.Add(1)
-        // let ctx, cancel := context.WithTimeout(httpstat.WithHTTPStat(ctx, &result), overallProbeTimeout);
-        // let dc := derphttp.NewNetcheckClient(c.logf);
-        // let tlsConn, tcpConn, node := dc.DialRegionTLS(ctx, reg)?;
-        // if ta, ok := tlsConn.RemoteAddr().(*net.TCPAddr);
-        // req, err := http.NewRequestWithContext(ctx, "GET", "https://"+node.HostName+"/derp/latency-check", nil);
-        // resp, err := hc.Do(req);
-
-        // // DERPs should give us a nominal status code, so anything else is probably
-        // // an access denied by a MITM proxy (or at the very least a signal not to
-        // // trust this latency check).
-        // if resp.StatusCode > 299 {
-        //     return 0, ip, fmt.Errorf("unexpected status code: %d (%s)", resp.StatusCode, resp.Status)
-        // }
-        // _, err = io.Copy(io.Discard, io.LimitReader(resp.Body, 8<<10));
-        // result.End(c.timeNow())
-
-        // // TODO: decide best timing heuristic here.
-        // // Maybe the server should return the tcpinfo_rtt?
-        // return result.ServerProcessing, ip, nil
-    }
-
-    async fn measure_all_icmp_latency(
-        &self,
-        rs: &ReportState,
-        need: &[DerpRegion],
-    ) -> Result<(), Error> {
-        if need.is_empty() {
-            return Ok(());
-        }
-        info!("UDP is blocked, trying ICMP");
-
-        time::timeout(ICMP_PROBE_TIMEOUT, async move {
-            let p = Pinger::new()?;
-
-            let mut tasks = JoinSet::new();
-            for reg in need {
-                let p = p.clone();
-                let reg = reg.clone(); // TODO: avoid
-                let rs = rs.clone(); // TODO: avoid
-                tasks.spawn(async move {
-                    match measure_icmp_latency(&reg, &p).await {
-                        Err(err) => {
-                            info!(
-                                "[v1] measuring ICMP latency of {} ({}): {:?}",
-                                reg.region_code, reg.region_id, err
-                            )
-                        }
-                        Ok(d) => {
-                            info!(
-                                "[v1] ICMP latency of {} ({}): {:?}",
-                                reg.region_code, reg.region_id, d
-                            );
-                            let mut rsl = rs.state.lock().await;
-                            let l = rsl.report.region_latency.entry(reg.region_id).or_insert(d);
-                            if *l >= d {
-                                *l = d;
-                            }
-                            // We only send IPv4 ICMP right now
-                            rsl.report.ipv4 = true;
-                            rsl.report.icmpv4 = true;
-                        }
-                    }
-                });
-            }
-
-            while let Some(t) = tasks.join_next().await {
-                t?;
-            }
-            Ok::<_, Error>(())
-        })
-        .await??;
-
-        Ok(())
     }
 
     fn log_concise_report(&self, r: &Report, dm: &DerpMap) {
@@ -879,6 +732,162 @@ impl Client {
     }
 }
 
+async fn measure_https_latency(
+    /*ctx context.Context,*/ reg: &DerpRegion,
+) -> Result<(Duration, IpAddr), ()> {
+    todo!()
+    // TODO:
+    // - needs derphttp::Client
+    // - measurement hooks to measure server processing time
+
+    // metricHTTPSend.Add(1)
+    // let ctx, cancel := context.WithTimeout(httpstat.WithHTTPStat(ctx, &result), overallProbeTimeout);
+    // let dc := derphttp.NewNetcheckClient(c.logf);
+    // let tlsConn, tcpConn, node := dc.DialRegionTLS(ctx, reg)?;
+    // if ta, ok := tlsConn.RemoteAddr().(*net.TCPAddr);
+    // req, err := http.NewRequestWithContext(ctx, "GET", "https://"+node.HostName+"/derp/latency-check", nil);
+    // resp, err := hc.Do(req);
+
+    // // DERPs should give us a nominal status code, so anything else is probably
+    // // an access denied by a MITM proxy (or at the very least a signal not to
+    // // trust this latency check).
+    // if resp.StatusCode > 299 {
+    //     return 0, ip, fmt.Errorf("unexpected status code: %d (%s)", resp.StatusCode, resp.Status)
+    // }
+    // _, err = io.Copy(io.Discard, io.LimitReader(resp.Body, 8<<10));
+    // result.End(c.timeNow())
+
+    // // TODO: decide best timing heuristic here.
+    // // Maybe the server should return the tcpinfo_rtt?
+    // return result.ServerProcessing, ip, nil
+}
+
+async fn measure_all_icmp_latency(rs: &ReportState, need: &[DerpRegion]) -> Result<(), Error> {
+    if need.is_empty() {
+        return Ok(());
+    }
+    info!("UDP is blocked, trying ICMP");
+
+    time::timeout(ICMP_PROBE_TIMEOUT, async move {
+        let p = Pinger::new()?;
+
+        let mut tasks = JoinSet::new();
+        for reg in need {
+            let p = p.clone();
+            let reg = reg.clone(); // TODO: avoid
+            let rs = rs.clone(); // TODO: avoid
+            tasks.spawn(async move {
+                match measure_icmp_latency(&reg, &p).await {
+                    Err(err) => {
+                        info!(
+                            "[v1] measuring ICMP latency of {} ({}): {:?}",
+                            reg.region_code, reg.region_id, err
+                        )
+                    }
+                    Ok(d) => {
+                        info!(
+                            "[v1] ICMP latency of {} ({}): {:?}",
+                            reg.region_code, reg.region_id, d
+                        );
+                        let mut rsl = rs.state.lock().await;
+                        let l = rsl.report.region_latency.entry(reg.region_id).or_insert(d);
+                        if *l >= d {
+                            *l = d;
+                        }
+                        // We only send IPv4 ICMP right now
+                        rsl.report.ipv4 = true;
+                        rsl.report.icmpv4 = true;
+                    }
+                }
+            });
+        }
+
+        while let Some(t) = tasks.join_next().await {
+            t?;
+        }
+        Ok::<_, Error>(())
+    })
+    .await??;
+
+    Ok(())
+}
+
+/// Reports whether or not we think the system is behind a
+/// captive portal, detected by making a request to a URL that we know should
+/// return a "204 No Content" response and checking if that's what we get.
+///
+/// The boolean return is whether we think we have a captive portal.
+async fn check_captive_portal(dm: &DerpMap, preferred_derp: Option<usize>) -> Result<bool, Error> {
+    // If we have a preferred DERP region with more than one node, try
+    // that; otherwise, pick a random one not marked as "Avoid".
+    let preferred_derp = if preferred_derp.is_none()
+        || dm.regions.get(preferred_derp.unwrap()).is_none()
+        || (preferred_derp.is_some() && dm.regions[preferred_derp.unwrap()].nodes.is_empty())
+    {
+        let mut rids = Vec::with_capacity(dm.regions.len());
+        for (id, reg) in dm.regions.iter().enumerate() {
+            if reg.avoid || reg.nodes.is_empty() {
+                continue;
+            }
+            rids.push(id);
+        }
+
+        if rids.is_empty() {
+            return Ok(false);
+        }
+        (0..rids.len())
+            .into_iter()
+            .choose(&mut rand::thread_rng())
+            .unwrap_or_default()
+    } else {
+        preferred_derp.unwrap()
+    };
+
+    // Has a node, as we filtered out regions without nodes above.
+    let node = &dm.regions[preferred_derp].nodes[0];
+
+    if node.host_name.ends_with(&DOT_INVALID) {
+        // Don't try to connect to invalid hostnames. This occurred in tests:
+        // https://github.com/tailscale/tailscale/issues/6207
+        // TODO(bradfitz,andrew-d): how to actually handle this nicely?
+        return Ok(false);
+    }
+
+    let client = reqwest::ClientBuilder::new()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()?;
+
+    // Note: the set of valid characters in a challenge and the total
+    // length is limited; see isChallengeChar in cmd/derper for more
+    // details.
+    let chal = format!("ts_{}", node.host_name);
+
+    let res = client
+        .request(
+            reqwest::Method::GET,
+            format!("http://{}/generate_204", node.host_name),
+        )
+        .header("X-Tailscale-Challenge", &chal)
+        .send()
+        .await?;
+
+    let expected_response = format!("response {chal}");
+    let is_valid_response = res
+        .headers()
+        .get("X-Tailscale-Response")
+        .map(|s| s.to_str().unwrap_or_default())
+        == Some(&expected_response);
+
+    info!(
+        "[v2] checkCaptivePortal url={} status_code={} valid_response={}",
+        res.url(),
+        res.status(),
+        is_valid_response,
+    );
+    let has_captive = res.status() != 204 || !is_valid_response;
+
+    Ok(has_captive)
+}
 async fn measure_icmp_latency(reg: &DerpRegion, p: &Pinger) -> Result<Duration, Error> {
     if reg.nodes.is_empty() {
         anyhow::bail!(
@@ -1054,7 +1063,7 @@ fn make_probe_plan(dm: &DerpMap, if_state: &interfaces::State, last: Option<&Rep
     }
     let had4 = !last.region_v4_latency.is_empty();
     let had6 = !last.region_v6_latency.is_empty();
-    let hadBoth = have6if && had4 && had6;
+    let had_both = have6if && had4 && had6;
     // for ri, reg := range sortRegions(dm, last) {
     //     if ri == numIncrementalRegions {
     //     	break
@@ -1180,11 +1189,11 @@ struct ReportState {
     hair_tx: stun_rs::TransactionId,
     got_hair_stun: Arc<(mpsc::Sender<IpAddr>, mpsc::Receiver<IpAddr>)>,
     // hairTimeout chan struct{} // closed on timeout
-    pc4: Option<Arc<Box<dyn StunConn>>>,
-    pc6: Option<Arc<Box<dyn StunConn>>>,
-    pc4_hair: Arc<Box<dyn PacketConn>>,
+    pc4: Option<Arc<net::UdpSocket>>,
+    pc6: Option<Arc<net::UdpSocket>>,
+    pc4_hair: Arc<net::UdpSocket>,
     incremental: bool, // doing a lite, follow-up netcheck
-    stop_probe: Arc<(oneshot::Sender<()>, oneshot::Receiver<()>)>,
+    stop_probe: Arc<sync::Notify>,
     wait_port_map: wg::AsyncWaitGroup,
     state: Arc<Mutex<InnerReportState>>,
 }
@@ -1200,19 +1209,17 @@ struct InnerReportState {
 }
 
 impl ReportState {
-    fn any_udp(&self) -> bool {
-        todo!()
-        // 	rs.mu.Lock()
-        // 	defer rs.mu.Unlock()
-        // 	return rs.report.UDP
+    async fn any_udp(&self) -> bool {
+        self.state.lock().await.report.udp
     }
 
-    fn have_region_latency(&self, region_id: usize) -> bool {
-        todo!()
-        // 	rs.mu.Lock()
-        // 	defer rs.mu.Unlock()
-        // 	_, ok := rs.report.RegionLatency[regionID]
-        // 	return ok
+    async fn have_region_latency(&self, region_id: usize) -> bool {
+        self.state
+            .lock()
+            .await
+            .report
+            .region_latency
+            .contains_key(&region_id)
     }
 
     /// Reports whether executing the given probe would yield any new information.
@@ -1394,7 +1401,7 @@ impl ReportState {
         // 	rs.setOptBool(&rs.report.PCP, res.PCP)
     }
 
-    async fn run_probe(&self, /*ctx context.Context,*/ dm: &DerpMap, probe: &Probe) {
+    async fn run_probe(&self, /*ctx context.Context,*/ dm: &DerpMap, probe: Probe) {
         todo!()
         // 	c := rs.c
         // 	node := namedNode(dm, probe.node)
