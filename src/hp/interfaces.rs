@@ -541,6 +541,7 @@ mod bsd {
     const V6_DEFAULT: [u8; 16] = [0u8; 16];
 
     fn is_default_gateway(rm: &RouteMessage) -> bool {
+        todo!()
         // if rm.Flags&unix.RTF_GATEWAY == 0 {
         //     return false
         // }
@@ -576,8 +577,6 @@ mod bsd {
         // 	    return true
         // 	}
         // }
-
-        false
     }
 
     #[cfg(any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd",))]

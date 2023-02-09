@@ -178,7 +178,7 @@ impl Client {
     }
 
     /// Reports whether `pkt` (from `src`) was our magic hairpin probe packet that we sent to ourselves.
-    async fn handle_hair_stun_locked(&self, pkt: &[u8], src: IpAddr) -> bool {
+    async fn handle_hair_stun_locked(&self, pkt: &[u8], src: SocketAddr) -> bool {
         let reports = &*self.reports.lock().await;
         if let Some(ref rs) = reports.cur_state {
             if let Ok(tx) = stun::parse_binding_request(pkt) {
@@ -197,7 +197,7 @@ impl Client {
         self.reports.lock().await.next_full = true;
     }
 
-    async fn receive_stun_packet(&self, pkt: &[u8], src: IpAddr) {
+    async fn receive_stun_packet(&self, pkt: &[u8], src: SocketAddr) {
         debug!("received STUN packet from {}", src);
 
         if src.is_ipv4() {
@@ -215,29 +215,29 @@ impl Client {
             return;
         }
 
-        match stun::parse_response(pkt) {
-            Ok((tx, addr_port)) => {
-                let reports = &mut *self.reports.lock().await;
-                if let Some(ref mut rs) = reports.cur_state {
-                    // TODO: avoid lock
-                    let mut rs_state = rs.state.lock().await;
-                    if let Some(on_done) = rs_state.in_flight.remove(&tx) {
-                        drop(rs_state);
-                        drop(reports);
-                        on_done(addr_port);
-                    }
-                }
+        let res = stun::parse_response(pkt);
+        if let Err(err) = res {
+            if stun::parse_binding_request(pkt).is_ok() {
+                // This was probably our own netcheck hairpin
+                // check probe coming in late. Ignore.
+                return;
             }
-            Err(err) => {
-                if stun::parse_binding_request(pkt).is_ok() {
-                    // This was probably our own netcheck hairpin
-                    // check probe coming in late. Ignore.
-                    return;
-                }
-                info!(
-                    "netcheck: received unexpected STUN message response from {}: {:?}",
-                    src, err
-                );
+            info!(
+                "netcheck: received unexpected STUN message response from {}: {:?}",
+                src, err
+            );
+            return;
+        };
+        let (tx, addr_port) = res.unwrap();
+
+        let mut reports = self.reports.lock().await;
+        if let Some(ref mut rs) = reports.cur_state {
+            // TODO: avoid lock
+            let mut rs_state = rs.state.lock().await;
+            if let Some(on_done) = rs_state.in_flight.remove(&tx) {
+                drop(rs_state);
+                drop(reports);
+                on_done(addr_port);
             }
         }
     }
@@ -245,41 +245,24 @@ impl Client {
     /// Reads STUN packets from pc until there's an error or ctx is done.
     /// In either case, it closes pc.
     async fn read_packets(&self, pc: Arc<net::UdpSocket>) {
-        todo!()
-        // 	done := make(chan struct{})
-        // 	defer close(done)
-
-        // 	go func() {
-        // 		select {
-        // 		case <-ctx.Done():
-        // 		case <-done:
-        // 		}
-        // 		pc.Close()
-        // 	}()
-
-        // 	var buf [64 << 10]byte
-        // 	for {
-        // 		n, addr, err := pc.ReadFrom(buf[:])
-        // 		if err != nil {
-        // 			if ctx.Err() != nil {
-        // 				return
-        // 			}
-        // 			c.logf("ReadFrom: %v", err)
-        // 			return
-        // 		}
-        // 		ua, ok := addr.(*net.UDPAddr)
-        // 		if !ok {
-        // 			c.logf("ReadFrom: unexpected addr %T", addr)
-        // 			continue
-        // 		}
-        // 		pkt := buf[:n]
-        // 		if !stun.Is(pkt) {
-        // 			continue
-        // 		}
-        // 		if ap := netaddr.Unmap(ua.AddrPort()); ap.IsValid() {
-        // 			c.ReceiveSTUNPacket(pkt, ap)
-        // 		}
-        // 	}
+        let mut buf = vec![0u8; 64 << 10];
+        loop {
+            match pc.recv_from(&mut buf).await {
+                Err(err) => {
+                    info!("ReadFrom: {:?}", err);
+                    break;
+                }
+                Ok((n, mut addr)) => {
+                    let pkt = &buf[..n];
+                    if !stun::is(pkt) {
+                        // ignore non stun packets
+                        continue;
+                    }
+                    addr.set_ip(to_canonical(addr.ip()));
+                    self.receive_stun_packet(pkt, addr).await;
+                }
+            }
+        }
     }
 
     fn udp_bind_addr_v6(&self) -> SocketAddr {
@@ -1472,20 +1455,8 @@ impl ReportState {
     }
 }
 
-// var noRedirectClient = &http.Client{
-// 	// No redirects allowed
-// 	CheckRedirect: func(req *http.Request, via []*http.Request) error {
-// 		return http.ErrUseLastResponse
-// 	},
-
-// 	// Remaining fields are the same as the default client.
-// 	Transport: http.DefaultClient.Transport,
-// 	Jar:       http.DefaultClient.Jar,
-// 	Timeout:   http.DefaultClient.Timeout,
-// }
-
 fn update_latency(m: &mut HashMap<usize, Duration>, region_id: usize, d: Duration) {
-    let mut prev = m.entry(region_id).or_insert(d);
+    let prev = m.entry(region_id).or_insert(d);
     if d < *prev {
         *prev = d;
     }
