@@ -328,6 +328,7 @@ impl Client {
                     pc4: None,
                     pc6: None,
                     pc4_hair: Arc::new(pc4_hair),
+                    hair_timeout: Arc::new(sync::Notify::new()),
                     stop_probe: Arc::new(sync::Notify::new()),
                     wait_port_map: wg::AsyncWaitGroup::new(),
                     state: Arc::new(Mutex::new(InnerReportState {
@@ -665,10 +666,6 @@ impl Client {
         // 			}
         // 		}
         // 	}))
-    }
-
-    fn time_now(&self) -> SystemTime {
-        SystemTime::now()
     }
 
     /// Adds `r` to the set of recent Reports and mutates r.PreferredDERP to contain the best recent one.
@@ -1188,7 +1185,8 @@ fn node_might4(n: &DerpNode) -> bool {
 struct ReportState {
     hair_tx: stun_rs::TransactionId,
     got_hair_stun: Arc<(mpsc::Sender<IpAddr>, mpsc::Receiver<IpAddr>)>,
-    // hairTimeout chan struct{} // closed on timeout
+    // notified on hair pin timeout
+    hair_timeout: Arc<sync::Notify>,
     pc4: Option<Arc<net::UdpSocket>>,
     pc6: Option<Arc<net::UdpSocket>>,
     pc4_hair: Arc<net::UdpSocket>,
@@ -1225,46 +1223,54 @@ impl ReportState {
     /// Reports whether executing the given probe would yield any new information.
     /// The given node is provided just because the sole caller already has it
     /// and it saves a lookup.
-    fn probe_would_help(&self, probe: Probe, node: DerpNode) -> bool {
-        todo!()
-        // 	rs.mu.Lock()
-        // 	defer rs.mu.Unlock()
+    async fn probe_would_help(&self, probe: Probe, node: DerpNode) -> bool {
+        let state = self.state.lock().await;
 
-        // 	// If the probe is for a region we don't yet know about, that
-        // 	// would help.
-        // 	if _, ok := rs.report.RegionLatency[node.RegionID]; !ok {
-        // 		return true
-        // 	}
+        // If the probe is for a region we don't yet know about, that
+        // would help.
+        if state.report.region_latency.contains_key(&node.region_id) {
+            return true;
+        }
 
-        // 	// If the probe is for IPv6 and we don't yet have an IPv6
-        // 	// report, that would help.
-        // 	if probe.proto == probeIPv6 && len(rs.report.RegionV6Latency) == 0 {
-        // 		return true
-        //      }
+        // If the probe is for IPv6 and we don't yet have an IPv6 report, that would help.
+        if probe.proto == ProbeProto::IPv6 && state.report.region_v6_latency.is_empty() {
+            return true;
+        }
 
-        // 	// For IPv4, we need at least two IPv4 results overall to
-        // 	// determine whether we're behind a NAT that shows us as
-        // 	// different source IPs and/or ports depending on who we're
-        // 	// talking to. If we don't yet have two results yet
-        // 	// (MappingVariesByDestIP is blank), then another IPv4 probe
-        // 	// would be good.
-        // 	if probe.proto == probeIPv4 && rs.report.MappingVariesByDestIP == "" {
-        // 		return true
-        // 	}
+        // For IPv4, we need at least two IPv4 results overall to
+        // determine whether we're behind a NAT that shows us as
+        // different source IPs and/or ports depending on who we're
+        // talking to. If we don't yet have two results yet
+        // (`mapping_varies_by_dest_ip` is blank), then another IPv4 probe
+        // would be good.
+        if probe.proto == ProbeProto::IPv4 && state.report.mapping_varies_by_dest_ip.is_none() {
+            return true;
+        }
 
-        // 	// Otherwise not interesting.
-        // 	return false
+        // Otherwise not interesting.
+        false
     }
 
-    fn start_hair_check_locked(&self, inner: &mut InnerReportState, dst: IpAddr) {
-        todo!()
-        // 	if rs.sentHairCheck || rs.incremental {
-        // 		return
-        // 	}
-        // 	rs.sentHairCheck = true
-        // 	rs.pc4Hair.WriteToUDPAddrPort(stun.Request(rs.hairTX), dst)
-        // 	rs.c.vlogf("sent haircheck to %v", dst)
-        // 	time.AfterFunc(hairpinCheckTimeout, func() { close(rs.hairTimeout) })
+    async fn start_hair_check_locked(&self, inner: &mut InnerReportState, dst: SocketAddr) {
+        if inner.sent_hair_check || self.incremental {
+            return;
+        }
+        inner.sent_hair_check = true;
+        if let Err(err) = self
+            .pc4_hair
+            .send_to(&stun::request(self.hair_tx), dst)
+            .await
+        {
+            debug!("failed to send haircheck to {}: {:?}", dst, err);
+        }
+
+        debug!("sent haircheck to {}", dst);
+
+        let timeout = self.hair_timeout.clone();
+        tokio::task::spawn(async move {
+            time::sleep(HAIRPIN_CHECK_TIMEOUT).await;
+            timeout.notify_waiters();
+        });
     }
 
     async fn wait_hair_check(&self /*ctx context.Context*/) {
