@@ -147,6 +147,135 @@ pub fn to_canonical(ip: IpAddr) -> IpAddr {
 }
 
 #[cfg(test)]
+pub mod test {
+    use std::{net::SocketAddr, sync::Arc};
+
+    use crate::hp::derp::{DerpMap, DerpNode, DerpRegion, UseIpv4, UseIpv6};
+
+    use super::*;
+    use anyhow::Result;
+    use tokio::{
+        net,
+        sync::{oneshot, Mutex},
+    };
+    use tracing::debug;
+
+    // (read_ipv4, read_ipv5)
+    #[derive(Debug, Default, Clone)]
+    pub struct StunStats(Arc<Mutex<(usize, usize)>>);
+
+    impl StunStats {
+        pub async fn total(&self) -> usize {
+            let s = self.0.lock().await;
+            s.0 + s.1
+        }
+    }
+
+    pub fn derp_map_of(stun: impl Iterator<Item = SocketAddr>) -> DerpMap {
+        let mut m = DerpMap::default();
+
+        for (i, addr) in stun.enumerate() {
+            let region_id = i + 1;
+            let host = addr.ip();
+            let port = addr.port();
+
+            let (ipv4, ipv6) = match host {
+                IpAddr::V4(v4) => (UseIpv4::Some(v4), UseIpv6::None),
+                IpAddr::V6(v6) => (UseIpv4::None, UseIpv6::Some(v6)),
+            };
+
+            let node = DerpNode {
+                name: format!("{region_id}a"),
+                region_id,
+                host_name: format!("{region_id}.invalid"),
+                ipv4,
+                ipv6,
+                stun_port: port,
+                stun_only: true,
+                stun_test_ip: None,
+            };
+            m.regions.insert(
+                region_id,
+                DerpRegion {
+                    region_id,
+                    region_code: 0,
+                    avoid: false,
+                    nodes: vec![node],
+                },
+            );
+        }
+
+        m
+    }
+
+    /// Sets up a simple STUN server.
+    pub async fn serve() -> Result<(SocketAddr, StunStats, oneshot::Sender<()>)> {
+        let stats = StunStats::default();
+
+        let pc = net::UdpSocket::bind("0.0.0.0:0").await?;
+        let mut addr = pc.local_addr()?;
+        match addr.ip() {
+            IpAddr::V4(ip) => {
+                if ip.octets() == [0, 0, 0, 0] {
+                    addr.set_ip("127.0.0.0".parse().unwrap());
+                }
+            }
+            _ => unreachable!("using ipv4"),
+        }
+
+        println!("listening on {}", addr);
+        let (s, r) = oneshot::channel();
+        let stats_c = stats.clone();
+        tokio::task::spawn(async move {
+            run_stun(pc, stats_c, r).await;
+        });
+
+        Ok((addr, stats, s))
+    }
+
+    async fn run_stun(pc: net::UdpSocket, stats: StunStats, mut done: oneshot::Receiver<()>) {
+        let mut buf = vec![0u8; 64 << 10];
+        loop {
+            debug!("read loop");
+            tokio::select! {
+                _ = &mut done => {
+                    debug!("shutting down");
+                    break;
+                }
+                res = pc.recv_from(&mut buf) => match res {
+                    Ok((n, addr)) => {
+                        debug!("read packet {}bytes from {}", n, addr);
+                        let pkt = &buf[..n];
+                        if !is(pkt) {
+                            debug!("received non STUN pkt");
+                            continue;
+                        }
+                        if let Ok(txid) = parse_binding_request(pkt) {
+                            debug!("received binding request");
+                            let mut s = stats.0.lock().await;
+                            if addr.is_ipv4() {
+                                s.0 += 1;
+                            } else {
+                                s.1 += 1;
+                            }
+                            drop(s);
+
+                            let res = response(txid, addr);
+                            if let Err(err) = pc.send_to(&res, addr).await {
+                                eprintln!("STUN server write failed: {:?}", err);
+                            }
+                        }
+                    }
+                    Err(err) => {
+                        eprintln!("failed to read: {:?}", err);
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use std::net::{IpAddr, Ipv4Addr};
 

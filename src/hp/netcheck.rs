@@ -2,6 +2,7 @@
 //! Based on https://github.com/tailscale/tailscale/blob/main/net/netcheck/netcheck.go
 
 use std::{
+    cmp::Ordering,
     collections::HashMap,
     fmt::Debug,
     net::{IpAddr, SocketAddr},
@@ -133,9 +134,6 @@ impl Report {
 /// Generates a netcheck [`Report`].
 #[derive(Clone, Debug)]
 pub struct Client {
-    /// Enables verbose logging.
-    pub verbose: bool,
-
     /// Controls whether the client should not try
     /// to reach things other than localhost. This is set to true
     /// in tests to avoid probing the local LAN's router, etc.
@@ -169,6 +167,23 @@ struct Reports {
 const ENOUGH_REGIONS: usize = 3;
 // Chosen semi-arbitrarily
 const CAPTIVE_PORTAL_DELAY: Duration = Duration::from_millis(200);
+
+impl Default for Client {
+    fn default() -> Self {
+        Client {
+            skip_external_network: false,
+            udp_bind_addr: "0.0.0.0:0".parse().unwrap(),
+            port_mapper: None,
+            reports: Arc::new(Mutex::new(Reports {
+                next_full: false,
+                prev: Default::default(),
+                last: None,
+                last_full: Instant::now(),
+                cur_state: None,
+            })),
+        }
+    }
+}
 
 impl Client {
     /// Reports whether `pkt` (from `src`) was our magic hairpin probe packet that we sent to ourselves.
@@ -472,14 +487,17 @@ impl Client {
             }
 
             let mut task_set = JoinSet::new();
-
+            let probe_done = Arc::new(sync::Notify::new());
             for probe_set in plan.values() {
                 for probe in probe_set {
                     let probe = probe.clone();
                     let rs = rs.clone();
                     let dm = dm.clone(); // TODO: avoid or make cheap
+                    let probe_done = probe_done.clone();
                     task_set.spawn(async move {
-                        rs.run_probe(&dm, probe).await;
+                        rs.run_probe(&dm, probe, probe_done.clone()).await;
+                        // wait for the probe to actually finish
+                        probe_done.notified().await;
                     });
                 }
             }
@@ -495,8 +513,11 @@ impl Client {
             let probes_aborted = rs.stop_probe.clone();
 
             tokio::select! {
-                _ = stun_timer => {},
+                _ = stun_timer => {
+                    debug!("stun timer expired");
+                },
                 _ = probes_done => {
+                    debug!("probes done");
                     // All of our probes finished, so if we have >0 responses, we
                     // stop our captive portal check.
                     if rs.any_udp().await {
@@ -842,10 +863,12 @@ async fn check_captive_portal(dm: &DerpMap, preferred_derp: Option<usize>) -> Re
         if rids.is_empty() {
             return Ok(false);
         }
-        (0..rids.len())
+
+        let i = (0..rids.len())
             .into_iter()
             .choose(&mut rand::thread_rng())
-            .unwrap_or_default()
+            .unwrap_or_default();
+        *rids[i]
     } else {
         preferred_derp.unwrap()
     };
@@ -1029,25 +1052,21 @@ impl Deref for ProbePlan {
 /// Returns the regions of dm first sorted from fastest to slowest (based on the 'last' report),
 /// end in regions that have no data.
 fn sort_regions<'a>(dm: &'a DerpMap, last: &Report) -> Vec<&'a DerpRegion> {
-    let mut prev = Vec::with_capacity(dm.regions.len());
-    /*for _, reg := range dm.Regions {
-    if reg.Avoid {
-        continue
-    }
-    prev = append(prev, reg)
-    }
-    sort.Slice(prev, func(i, j int) bool {
-    da, db := last.RegionLatency[prev[i].RegionID], last.RegionLatency[prev[j].RegionID]
-        if db == 0 && da != 0 {
-        // Non-zero sorts before zero.
-        return true
+    let mut prev: Vec<_> = dm.regions.values().filter(|r| !r.avoid).collect();
+    prev.sort_by(|a, b| {
+        let da = last.region_latency.get(&a.region_id);
+        let db = last.region_latency.get(&b.region_id);
+        if db.is_none() && da.is_some() {
+            // Non-zero sorts before zero.
+            return Ordering::Greater;
         }
-    if da == 0 {
-        // Zero can't sort before anything else.
-        return false
-    }
-    return da < db
-    })*/
+        if da.is_none() {
+            // Zero can't sort before anything else.
+            return Ordering::Less;
+        }
+        da.cmp(&db)
+    });
+
     prev
 }
 
@@ -1212,7 +1231,7 @@ fn node_might4(n: &DerpNode) -> bool {
 /// Holds the state for a single invocation of `Client::get_report`.
 #[derive(Clone, Debug)]
 struct ReportState {
-    hair_tx: stun_rs::TransactionId,
+    hair_tx: stun::TransactionId,
     got_hair_stun: Arc<Mutex<mpsc::Receiver<SocketAddr>>>,
     // notified on hair pin timeout
     hair_timeout: Arc<sync::Notify>,
@@ -1225,6 +1244,7 @@ struct ReportState {
     state: Arc<Mutex<InnerReportState>>,
 }
 
+#[derive(Default)]
 struct InnerReportState {
     sent_hair_check: bool,
     // to be returned by GetReport
@@ -1251,6 +1271,24 @@ impl Debug for InnerReportState {
 }
 
 impl ReportState {
+    pub fn new(
+        got_hair_stun: Arc<Mutex<mpsc::Receiver<SocketAddr>>>,
+        pc4_hair: Arc<net::UdpSocket>,
+    ) -> Self {
+        Self {
+            hair_tx: stun::TransactionId::default(),
+            got_hair_stun,
+            hair_timeout: Default::default(),
+            pc4: None,
+            pc6: None,
+            pc4_hair,
+            incremental: false,
+            stop_probe: Default::default(),
+            wait_port_map: wg::AsyncWaitGroup::default(),
+            state: Default::default(),
+        }
+    }
+
     async fn any_udp(&self) -> bool {
         self.state.lock().await.report.udp
     }
@@ -1349,6 +1387,7 @@ impl ReportState {
     /// Updates `self` to note that node's latency is `d`. If `ipp`
     /// is non-zero (for all but HTTPS replies), it's recorded as our UDP IP:port.
     async fn add_node_latency(&self, node: &DerpNode, ipp: Option<SocketAddr>, d: Duration) {
+        debug!("add node latency: {} - {}ms", node.name, d.as_millis());
         let mut rs = self.state.lock().await;
         rs.report.udp = true;
         update_latency(&mut rs.report.region_latency, node.region_id, d);
@@ -1432,7 +1471,8 @@ impl ReportState {
         }
     }
 
-    async fn run_probe(&self, dm: &DerpMap, probe: Probe) {
+    async fn run_probe(&self, dm: &DerpMap, probe: Probe, done: Arc<sync::Notify>) {
+        debug!("run_probe: {:?}", probe);
         let node = named_node(dm, &probe.node);
         if node.is_none() {
             info!("netcheck.runProbe: named node {} not found", probe.node);
@@ -1441,12 +1481,18 @@ impl ReportState {
         let node = node.unwrap();
 
         if !probe.delay.is_zero() {
-            time::sleep(probe.delay).await;
+            debug!("delaying probe by {}ms", probe.delay.as_millis());
+            tokio::select! {
+                _ = done.notified() => {
+                    debug!("aborting probe early");
+                    return;
+                }
+                _ = time::sleep(probe.delay) => {}
+            }
         }
 
         if !self.probe_would_help(&probe, node).await {
-            // TODO:
-            // cancelSet
+            done.notify_waiters();
             return;
         }
 
@@ -1465,18 +1511,19 @@ impl ReportState {
             // TODO: reduce cloning below
             let this = self.clone();
             let node = node.clone();
+            let done = done.clone();
 
             state.in_flight.insert(
                 txid,
                 Box::new(move |ipp| {
                     let node = node.clone();
                     let this = this.clone();
+                    let done = done.clone();
 
                     async move {
                         let elapsed = sent.elapsed();
                         this.add_node_latency(&node, Some(ipp), elapsed).await;
-                        // TODO:
-                        // cancelSet() // abort other nodes in this set
+                        done.notify_waiters();
                     }
                     .boxed()
                 }),
@@ -1489,6 +1536,7 @@ impl ReportState {
                 // metricSTUNSend4.Add(1)
                 if let Some(ref pc4) = self.pc4 {
                     let n = pc4.send_to(&req, addr).await;
+                    debug!("sending probe IPV4: {:?}", n);
                     // TODO:  || neterror.TreatAsLostUDP(err)
                     if n.is_ok() && n.unwrap() == req.len() {
                         self.state.lock().await.report.ipv4_can_send = true;
@@ -1499,6 +1547,7 @@ impl ReportState {
                 if let Some(ref pc6) = self.pc6 {
                     // TODO:
                     // metricSTUNSend6.Add(1)
+                    debug!("sending probe IPV6");
                     let n = pc6.send_to(&req, addr).await;
                     // TODO:  || neterror.TreatAsLostUDP(err)
                     if n.is_ok() && n.unwrap() == req.len() {
@@ -1558,3 +1607,100 @@ fn max_duration_value(m: &HashMap<usize, Duration>) -> Duration {
 // 	metricSTUNRecv6 = clientmetric.NewCounter("netcheck_stun_recv_ipv6")
 // 	metricHTTPSend  = clientmetric.NewCounter("netcheck_https_measure")
 // )
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tracing_subscriber::{prelude::*, EnvFilter};
+
+    #[tokio::test]
+    async fn test_hairpin_stun() {
+        let client = Client::default();
+        let pc4_hair = Arc::new(net::UdpSocket::bind("0.0.0.0:0").await.unwrap());
+        let (hs_s, hs_r) = mpsc::channel(1);
+        let hs_r = Arc::new(Mutex::new(hs_r));
+        let s = ReportState::new(hs_r.clone(), pc4_hair);
+        let tx = s.hair_tx;
+        client.reports.lock().await.cur_state = Some(s);
+
+        let req = stun::request(tx);
+        assert!(stun::is(&req));
+        let src = "127.0.0.0:0".parse().unwrap();
+
+        let res = client.handle_hair_stun_locked(&req, src, hs_s).await;
+        assert!(res, "expected hair to be true");
+        assert_eq!(hs_r.lock().await.recv().await.unwrap(), src);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_basic() -> Result<(), Error> {
+        tracing_subscriber::registry()
+            .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
+            .with(EnvFilter::from_default_env())
+            .init();
+
+        let (stun_addr, stun_stats, done) = stun::test::serve().await?;
+
+        let mut client = Client::default();
+        client.udp_bind_addr = "127.0.0.1:0".parse().unwrap();
+
+        let dm = stun::test::derp_map_of([stun_addr].into_iter());
+        let r = client.get_report(&dm).await?;
+
+        assert!(r.udp, "want UDP");
+        assert_eq!(
+            r.region_latency.len(),
+            1,
+            "expected 1 key in DERPLatency; got {}",
+            r.region_latency.len()
+        );
+        assert!(
+            r.region_latency.get(&1).is_some(),
+            "expected key 1 in DERPLatency; got {:?}",
+            r.region_latency
+        );
+        assert!(r.global_v4.is_some(), "expected globalV4 set");
+        assert_eq!(
+            r.preferred_derp, 1,
+            "preferred_derp = {}; want 1",
+            r.preferred_derp
+        );
+
+        done.send(()).unwrap();
+        assert_eq!(stun_stats.total().await, 1, "expected 1 stun");
+
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_udp() -> Result<(), Error> {
+        let server = net::UdpSocket::bind("0.0.0.0:8080").await?;
+        let addr = server.local_addr()?;
+
+        let server_task = tokio::task::spawn(async move {
+            let mut buf = vec![0u8; 1024];
+            println!("server recv");
+            let (n, addr) = server.recv_from(&mut buf).await?;
+            println!("server send");
+            server.send_to(&buf[..n], addr).await?;
+
+            Ok::<(), Error>(())
+        });
+
+        let client = net::UdpSocket::bind("0.0.0.0:9090").await?;
+        let data = b"foobar";
+        println!("client: send");
+        client
+            .send_to(data, format!("127.0.0.0:{}", addr.port()))
+            .await?;
+        let mut buf = vec![0u8; 1024];
+        println!("client recv");
+        let (n, addr_r) = client.recv_from(&mut buf).await?;
+        assert_eq!(&buf[..n], data);
+        assert_eq!(addr_r, addr);
+
+        server_task.await??;
+
+        Ok(())
+    }
+}
