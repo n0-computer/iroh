@@ -368,7 +368,9 @@ async fn get_interactive(
     out: Option<PathBuf>,
 ) -> Result<()> {
     let out_writer = OutWriter::new();
-    out_writer.println(format!("Fetching: {hash}")).await;
+    out_writer
+        .println(format!("Fetching: {}", Blake3Cid::new(hash)))
+        .await;
 
     out_writer
         .println(format!("{} Connecting ...", style("[1/3]").bold().dim()))
