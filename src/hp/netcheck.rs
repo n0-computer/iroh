@@ -11,6 +11,7 @@ use std::{
 };
 
 use anyhow::Error;
+use futures::{future::BoxFuture, FutureExt};
 use rand::seq::IteratorRandom;
 use tokio::{
     net,
@@ -26,6 +27,7 @@ use super::{
     derp::{DerpMap, DerpNode, DerpRegion, UseIpv4, UseIpv6},
     interfaces,
     ping::Pinger,
+    portmapper::PortMapper,
     stun,
 };
 
@@ -145,7 +147,7 @@ pub struct Client {
 
     // Used for portmap queries.
     // If `None`, portmap discovery is not done.
-    pub port_mapper: Option<()>, // TODO*portmapper.Client // lazily initialized on first use
+    pub port_mapper: Option<PortMapper>,
 
     reports: Arc<Mutex<Reports>>,
 }
@@ -238,13 +240,12 @@ impl Client {
             if let Some(on_done) = rs_state.in_flight.remove(&tx) {
                 drop(rs_state);
                 drop(reports);
-                on_done(addr_port);
+                on_done(addr_port).await;
             }
         }
     }
 
-    /// Reads STUN packets from pc until there's an error or ctx is done.
-    /// In either case, it closes pc.
+    /// Reads STUN packets from pc until there's an error. In either case, it closes `pc`.
     async fn read_packets(&self, pc: Arc<net::UdpSocket>, hs_s: mpsc::Sender<SocketAddr>) {
         let mut buf = vec![0u8; 64 << 10];
         loop {
@@ -264,6 +265,7 @@ impl Client {
                 }
             }
         }
+        // TODO: close pc
     }
 
     fn udp_bind_addr_v6(&self) -> SocketAddr {
@@ -377,13 +379,16 @@ impl Client {
                 }
             }
 
-            if !this.skip_external_network && this.port_mapper.is_some() {
-                let worker = rs.wait_port_map.add(1);
-                let rs = rs.clone();
-                tokio::task::spawn(async move {
-                    rs.probe_port_map_services().await;
-                    worker.done();
-                });
+            if !this.skip_external_network {
+                if let Some(ref port_mapper) = this.port_mapper {
+                    let worker = rs.wait_port_map.add(1);
+                    let rs = rs.clone();
+                    let port_mapper = port_mapper.clone();
+                    tokio::task::spawn(async move {
+                        rs.probe_port_map_services(port_mapper).await;
+                        worker.done();
+                    });
+                }
             }
 
             // At least the Apple Airport Extreme doesn't allow hairpin
@@ -730,9 +735,7 @@ impl Client {
     }
 }
 
-async fn measure_https_latency(
-    /*ctx context.Context,*/ reg: &DerpRegion,
-) -> Result<(Duration, IpAddr), ()> {
+async fn measure_https_latency(reg: &DerpRegion) -> Result<(Duration, IpAddr), ()> {
     todo!()
     // TODO:
     // - needs derphttp::Client
@@ -906,7 +909,7 @@ async fn measure_icmp_latency(reg: &DerpRegion, p: &Pinger) -> Result<Duration, 
 
     // Get the IPAddr by asking for the UDP address that we would use for
     // STUN and then using that IP.
-    let node_addr = get_node_addr(/*ctx,*/ node, ProbeProto::IPv4)
+    let node_addr = get_node_addr(node, ProbeProto::IPv4)
         .await
         .ok_or_else(|| anyhow::anyhow!("no address for node {}", node.name))?;
 
@@ -1227,7 +1230,10 @@ struct InnerReportState {
     // to be returned by GetReport
     report: Report,
     // TODO: called without lock held
-    in_flight: HashMap<stun::TransactionId, Box<dyn Fn(SocketAddr) + Sync + Send>>,
+    in_flight: HashMap<
+        stun::TransactionId,
+        Box<dyn Fn(SocketAddr) -> BoxFuture<'static, ()> + Sync + Send>,
+    >,
     got_ep4: Option<SocketAddr>,
     timers: JoinSet<()>,
 }
@@ -1261,7 +1267,7 @@ impl ReportState {
     /// Reports whether executing the given probe would yield any new information.
     /// The given node is provided just because the sole caller already has it
     /// and it saves a lookup.
-    async fn probe_would_help(&self, probe: Probe, node: DerpNode) -> bool {
+    async fn probe_would_help(&self, probe: &Probe, node: &DerpNode) -> bool {
         let state = self.state.lock().await;
 
         // If the probe is for a region we don't yet know about, that
@@ -1391,92 +1397,120 @@ impl ReportState {
     }
 
     /// Starts probes for UPnP, PMP and PCP.
-    async fn probe_port_map_services(&self) {
-        todo!()
-        // 	defer rs.waitPortMap.Done()
+    async fn probe_port_map_services(&self, port_mapper: PortMapper) {
+        struct Guard(wg::AsyncWaitGroup);
+        impl Drop for Guard {
+            fn drop(&mut self) {
+                self.0.done();
+            }
+        }
+        let _guard = Guard(self.wait_port_map.clone());
 
-        // 	rs.setOptBool(&rs.report.UPnP, false)
-        // 	rs.setOptBool(&rs.report.PMP, false)
-        // 	rs.setOptBool(&rs.report.PCP, false)
+        {
+            let mut state = self.state.lock().await;
+            state.report.upnp = Some(false);
+            state.report.pmp = Some(false);
+            state.report.pcp = Some(false);
+        }
 
-        // 	res, err := rs.c.PortMapper.Probe(context.Background())
-        // 	if err != nil {
-        // 		if !errors.Is(err, portmapper.ErrGatewayRange) {
-        // 			// "skipping portmap; gateway range likely lacks support"
-        // 			// is not very useful, and too spammy on cloud systems.
-        // 			// If there are other errors, we want to log those.
-        // 			rs.c.logf("probePortMapServices: %v", err)
-        // 		}
-        // 		return
-        // 	}
-
-        // 	rs.setOptBool(&rs.report.UPnP, res.UPnP)
-        // 	rs.setOptBool(&rs.report.PMP, res.PMP)
-        // 	rs.setOptBool(&rs.report.PCP, res.PCP)
+        match port_mapper.probe().await {
+            Err(err) => {
+                // if !errors.Is(err, portmapper.ErrGatewayRange) {
+                // "skipping portmap; gateway range likely lacks support"
+                // is not very useful, and too spammy on cloud systems.
+                // If there are other errors, we want to log those.
+                // rs.c.logf("probePortMapServices: %v", err)
+                // }
+                return;
+            }
+            Ok(res) => {
+                let mut state = self.state.lock().await;
+                state.report.upnp = Some(res.upnp);
+                state.report.pmp = Some(res.pmp);
+                state.report.pcp = Some(res.pcp);
+            }
+        }
     }
 
-    async fn run_probe(&self, /*ctx context.Context,*/ dm: &DerpMap, probe: Probe) {
-        todo!()
-        // 	c := rs.c
-        // 	node := namedNode(dm, probe.node)
-        // 	if node == nil {
-        // 		c.logf("netcheck.runProbe: named node %q not found", probe.node)
-        // 		return
-        // 	}
+    async fn run_probe(&self, dm: &DerpMap, probe: Probe) {
+        let node = named_node(dm, &probe.node);
+        if node.is_none() {
+            info!("netcheck.runProbe: named node {} not found", probe.node);
+            return;
+        }
+        let node = node.unwrap();
 
-        // 	if probe.delay > 0 {
-        // 		delayTimer := time.NewTimer(probe.delay)
-        // 		select {
-        // 		case <-delayTimer.C:
-        // 		case <-ctx.Done():
-        // 			delayTimer.Stop()
-        // 			return
-        // 		}
-        // 	}
+        if !probe.delay.is_zero() {
+            time::sleep(probe.delay).await;
+        }
 
-        // 	if !rs.probeWouldHelp(probe, node) {
-        // 		cancelSet()
-        // 		return
-        // 	}
+        if !self.probe_would_help(&probe, node).await {
+            // TODO:
+            // cancelSet
+            return;
+        }
 
-        // 	addr := c.nodeAddr(ctx, node, probe.proto)
-        // 	if !addr.IsValid() {
-        // 		return
-        // 	}
+        let addr = get_node_addr(node, probe.proto).await;
+        if addr.is_none() {
+            return;
+        }
+        let addr = addr.unwrap();
 
-        // 	txID := stun.NewTxID()
-        // 	req := stun.Request(txID)
+        let txid = stun::TransactionId::default();
+        let req = stun::request(txid);
+        let sent = Instant::now(); // after DNS lookup above
 
-        // 	sent := time.Now() // after DNS lookup above
+        {
+            let mut state = self.state.lock().await;
+            // TODO: reduce cloning below
+            let this = self.clone();
+            let node = node.clone();
 
-        // 	rs.mu.Lock()
-        // 	rs.inFlight[txID] = func(ipp netip.AddrPort) {
-        // 		rs.addNodeLatency(node, ipp, time.Since(sent))
-        // 		cancelSet() // abort other nodes in this set
-        // 	}
-        // 	rs.mu.Unlock()
+            state.in_flight.insert(
+                txid,
+                Box::new(move |ipp| {
+                    let node = node.clone();
+                    let this = this.clone();
 
-        // 	switch probe.proto {
-        // 	case probeIPv4:
-        // 		metricSTUNSend4.Add(1)
-        // 		n, err := rs.pc4.WriteToUDPAddrPort(req, addr)
-        // 		if n == len(req) && err == nil || neterror.TreatAsLostUDP(err) {
-        // 			rs.mu.Lock()
-        // 			rs.report.IPv4CanSend = true
-        // 			rs.mu.Unlock()
-        // 		}
-        // 	case probeIPv6:
-        // 		metricSTUNSend6.Add(1)
-        // 		n, err := rs.pc6.WriteToUDPAddrPort(req, addr)
-        // 		if n == len(req) && err == nil || neterror.TreatAsLostUDP(err) {
-        // 			rs.mu.Lock()
-        // 			rs.report.IPv6CanSend = true
-        // 			rs.mu.Unlock()
-        // 		}
-        // 	default:
-        // 		panic("bad probe proto " + fmt.Sprint(probe.proto))
-        // 	}
-        // 	c.vlogf("sent to %v", addr)
+                    async move {
+                        let elapsed = sent.elapsed();
+                        this.add_node_latency(&node, Some(ipp), elapsed).await;
+                        // TODO:
+                        // cancelSet() // abort other nodes in this set
+                    }
+                    .boxed()
+                }),
+            );
+        }
+
+        match probe.proto {
+            ProbeProto::IPv4 => {
+                // TODO:
+                // metricSTUNSend4.Add(1)
+                if let Some(ref pc4) = self.pc4 {
+                    let n = pc4.send_to(&req, addr).await;
+                    // TODO:  || neterror.TreatAsLostUDP(err)
+                    if n.is_ok() && n.unwrap() == req.len() {
+                        self.state.lock().await.report.ipv4_can_send = true;
+                    }
+                }
+            }
+            ProbeProto::IPv6 => {
+                if let Some(ref pc6) = self.pc6 {
+                    // TODO:
+                    // metricSTUNSend6.Add(1)
+                    let n = pc6.send_to(&req, addr).await;
+                    // TODO:  || neterror.TreatAsLostUDP(err)
+                    if n.is_ok() && n.unwrap() == req.len() {
+                        self.state.lock().await.report.ipv6_can_send = true;
+                    }
+                }
+            }
+            _ => {
+                panic!("bad probe proto: {:?}", probe.proto);
+            }
+        }
+        debug!("sent to {}", addr);
     }
 }
 
