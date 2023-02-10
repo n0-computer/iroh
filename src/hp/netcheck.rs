@@ -657,7 +657,7 @@ impl Client {
                 r.upnp, r.pmp, r.pcp
             );
         } else {
-            log += &format!(" portmap=?");
+            log += " portmap=?";
         }
         if let Some(ipp) = r.global_v4 {
             log += &format!(" v4a={}", ipp);
@@ -670,7 +670,7 @@ impl Client {
         }
         log += &format!(" derp={}", r.preferred_derp);
         if r.preferred_derp != 0 {
-            log += &format!(" derpdist=");
+            log += " derpdist=";
             let mut need_comma = false;
             for rid in &dm.region_ids() {
                 if let Some(d) = r.region_v4_latency.get(rid) {
@@ -756,7 +756,7 @@ impl Client {
     }
 }
 
-async fn measure_https_latency(reg: &DerpRegion) -> Result<(Duration, IpAddr), ()> {
+async fn measure_https_latency(_reg: &DerpRegion) -> Result<(Duration, IpAddr), ()> {
     todo!()
     // TODO:
     // - needs derphttp::Client
@@ -1424,12 +1424,10 @@ impl ReportState {
                     rs.got_ep4 = Some(ipp);
                     rs.report.global_v4 = Some(ipp);
                     self.start_hair_check_locked(&mut rs, ipp).await;
-                } else {
-                    if rs.got_ep4 != Some(ipp) {
-                        rs.report.mapping_varies_by_dest_ip = Some(true);
-                    } else if rs.report.mapping_varies_by_dest_ip.is_none() {
-                        rs.report.mapping_varies_by_dest_ip = Some(false);
-                    }
+                } else if rs.got_ep4 != Some(ipp) {
+                    rs.report.mapping_varies_by_dest_ip = Some(true);
+                } else if rs.report.mapping_varies_by_dest_ip.is_none() {
+                    rs.report.mapping_varies_by_dest_ip = Some(false);
                 }
             }
         }
@@ -1453,14 +1451,13 @@ impl ReportState {
         }
 
         match port_mapper.probe().await {
-            Err(err) => {
+            Err(_err) => {
                 // if !errors.Is(err, portmapper.ErrGatewayRange) {
                 // "skipping portmap; gateway range likely lacks support"
                 // is not very useful, and too spammy on cloud systems.
                 // If there are other errors, we want to log those.
                 // rs.c.logf("probePortMapServices: %v", err)
                 // }
-                return;
             }
             Ok(res) => {
                 let mut state = self.state.lock().await;

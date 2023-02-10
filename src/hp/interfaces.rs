@@ -66,12 +66,10 @@ fn local_addresses() -> (Vec<IpAddr>, Vec<IpAddr>) {
                 // Google Cloud Run uses NAT with IPv6 Unique
                 // Local Addresses to provide IPv6 connectivity.
                 ula6.push(ip);
+            } else if ip.is_ipv4() {
+                regular4.push(ip);
             } else {
-                if ip.is_ipv4() {
-                    regular4.push(ip);
-                } else {
-                    regular6.push(ip);
-                }
+                regular6.push(ip);
             }
         }
     }
@@ -261,7 +259,7 @@ impl State {
                 }
                 let i2 = i2.unwrap();
                 let ips2 = s2.interface_ips.get(iname);
-                if !ips2.is_none() {
+                if ips2.is_some() {
                     return false;
                 }
                 let ips2 = ips2.unwrap();
@@ -643,7 +641,7 @@ mod bsd {
             target_os = "macos",
             target_os = "ios"
         ))]
-        fn parse(&self, typ: RIBType, data: &[u8]) -> Result<Option<RouteMessage>, RouteError> {
+        fn parse(&self, _typ: RIBType, data: &[u8]) -> Result<Option<RouteMessage>, RouteError> {
             match self.typ {
                 MessageType::Route => {
                     if data.len() < self.body_off {
@@ -704,7 +702,7 @@ mod bsd {
     }
 
     use once_cell::sync::Lazy;
-    static ROUTING_STACK: Lazy<RoutingStack> = Lazy::new(|| probe_routing_stack());
+    static ROUTING_STACK: Lazy<RoutingStack> = Lazy::new(probe_routing_stack);
 
     // Hardcoded based on the generated values here: https://cs.opensource.google/go/x/net/+/master:route/zsys_darwin.go
     #[cfg(any(target_os = "macos", target_os = "ios"))]
@@ -1037,7 +1035,7 @@ mod bsd {
         F: Fn(i32, &[u8]) -> Result<(i32, Addr), RouteError>,
     {
         let mut addrs = Vec::with_capacity(libc::RTAX_MAX as usize);
-        let mut af = libc::AF_UNSPEC;
+        let af = libc::AF_UNSPEC;
 
         let mut b = data;
         for i in 0..libc::RTAX_MAX as usize {
@@ -1393,7 +1391,7 @@ mod bsd {
 
             for (i, tt) in parse_addrs_little_endian_tests.into_iter().enumerate() {
                 let addrs =
-                    parse_addrs(tt.attrs, tt.parse_fn, &tt.b).expect(&format!("failed {}", i));
+                    parse_addrs(tt.attrs, tt.parse_fn, &tt.b).unwrap_or_else(|_| panic!("failed {}", i));
 
                 assert_eq!(addrs, tt.addrs, "{}", i);
             }

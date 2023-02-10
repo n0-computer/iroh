@@ -14,7 +14,7 @@ impl Pinger {
         todo!()
     }
 
-    pub async fn send(&self, addr: SocketAddr, data: &[u8]) -> Result<Duration, Error> {
+    pub async fn send(&self, _addr: SocketAddr, _data: &[u8]) -> Result<Duration, Error> {
         todo!()
     }
 }
