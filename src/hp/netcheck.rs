@@ -244,7 +244,7 @@ impl Client {
                 return;
             }
             info!(
-                "netcheck: received unexpected STUN message response from {}: {:?}",
+                "received unexpected STUN message response from {}: {:?}",
                 src, err
             );
             return;
@@ -485,7 +485,7 @@ impl Client {
                             rs.report.0.write().await.captive_portal = Some(found);
                         }
                         Err(err) => {
-                            info!("[v1] checkCaptivePortal: {:?}", err);
+                            info!("check_captive_portal error: {:?}", err);
                         }
                     }
                     let _ = done_send.send(());
@@ -501,9 +501,10 @@ impl Client {
                     let dm = dm.clone(); // TODO: avoid or make cheap
                     let probe_done = probe_done.clone();
                     task_set.spawn(async move {
+                        let notified = probe_done.notified();
                         rs.run_probe(&dm, probe, probe_done.clone()).await;
                         // wait for the probe to actually finish
-                        probe_done.notified().await;
+                        notified.await;
                     });
                 }
             }
@@ -520,10 +521,9 @@ impl Client {
 
             tokio::select! {
                 _ = stun_timer => {
-                    debug!("stun timer expired");
+                    debug!("STUN timer expired");
                 },
                 _ = probes_done => {
-                    debug!("probes done");
                     // All of our probes finished, so if we have >0 responses, we
                     // stop our captive portal check.
                     if rs.any_udp().await {
@@ -546,8 +546,8 @@ impl Client {
             {
                 let reports = this.reports.lock().await;
                 rs.wait_hair_check(reports.last.as_ref()).await;
+                debug!("hair_check done");
             }
-            debug!("hair_check done");
 
             if !this.skip_external_network && this.port_mapper.is_some() {
                 rs.wait_port_map.wait().await;
@@ -560,6 +560,7 @@ impl Client {
             // UDP presumably being blocked.
             // TODO: this should be moved into the probePlan, using probeProto probeHTTPS.
             if !rs.any_udp().await {
+                debug!("UDP is likely blocked, probing HTTPS & ICMP");
                 let mut task_set = JoinSet::new();
                 let mut need = Vec::new();
 
@@ -578,10 +579,10 @@ impl Client {
                     let need = need.clone();
                     task_set.spawn(async move {
                         if let Err(err) = measure_all_icmp_latency(&rs, &need).await {
-                            debug!("[v1] measureAllICMPLatency: {:?}", err);
+                            debug!("measure_all_icmp_latency: {:?}", err);
                         }
                     });
-                    debug!("netcheck: UDP is blocked, trying HTTPS");
+                    debug!("UDP is blocked, trying HTTPS");
                 }
                 for reg in need.into_iter() {
                     let rs = rs.clone();
@@ -607,7 +608,7 @@ impl Client {
                             }
                             Err(err) => {
                                 debug!(
-                                    "[v1] netcheck: measuring HTTPS latency of {} ({}): {:?}",
+                                    "measuring HTTPS latency of {} ({}): {:?}",
                                     reg.region_code, reg.region_id, err
                                 );
                             }
@@ -619,7 +620,8 @@ impl Client {
                 }
             }
             // Wait for captive portal check before finishing the report.
-            captive_portal_done.await?;
+            // If the task is aborted, this will error, so ignore potential task joining errors.
+            captive_portal_done.await.ok();
 
             Ok(rs)
         })
@@ -639,7 +641,7 @@ impl Client {
 
     async fn log_concise_report(&self, r: &Report, dm: &DerpMap) {
         let r = &*r.0.read().await;
-        let mut log = "[v1] report: ".to_string();
+        let mut log = "report: ".to_string();
         log += &format!("udp={}", r.udp);
         if !r.ipv4 {
             log += &format!(" v4={}", r.ipv4)
@@ -809,13 +811,13 @@ async fn measure_all_icmp_latency(rs: &ReportState, need: &[DerpRegion]) -> Resu
                 match measure_icmp_latency(&reg, &p).await {
                     Err(err) => {
                         info!(
-                            "[v1] measuring ICMP latency of {} ({}): {:?}",
+                            "measuring ICMP latency of {} ({}): {:?}",
                             reg.region_code, reg.region_id, err
                         )
                     }
                     Ok(d) => {
                         info!(
-                            "[v1] ICMP latency of {} ({}): {:?}",
+                            "ICMP latency of {} ({}): {:?}",
                             reg.region_code, reg.region_id, d
                         );
                         let mut report = rs.report.0.write().await;
@@ -1709,47 +1711,6 @@ mod tests {
         assert_eq!(addr_r.port(), addr.port());
 
         server_task.await?;
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_udp_std() -> Result<(), Error> {
-        use std::net;
-        let local_addr = "127.0.0.1";
-        let bind_addr = "0.0.0.0";
-        let server = net::UdpSocket::bind(format!("{bind_addr}:0"))?;
-        let addr = server.local_addr()?;
-
-        let server_task = std::thread::spawn(move || {
-            println!("server: start: {}", server.local_addr().unwrap());
-            let mut buf = vec![0u8; 32];
-            println!("server: recv");
-            let (n, addr) = server.recv_from(&mut buf).unwrap();
-            println!("server: send");
-            server.send_to(&buf[..n], addr).unwrap();
-            println!("server: done");
-        });
-
-        // wait to ensure the server is running
-        std::thread::sleep(Duration::from_millis(500));
-
-        let data = b"foobar";
-        let server_addr = format!("{}:{}", local_addr, addr.port());
-        let client = net::UdpSocket::bind(format!("{bind_addr}:0")).unwrap();
-
-        println!("client: send");
-        client.send_to(data, &server_addr).unwrap();
-        std::thread::sleep(Duration::from_millis(100));
-
-        let mut buf = vec![0u8; 32];
-        println!("client: recv");
-        let (n, addr_r) = client.recv_from(&mut buf).unwrap();
-
-        assert_eq!(&buf[..n], data);
-        assert_eq!(addr_r.port(), addr.port());
-
-        server_task.join().unwrap();
 
         Ok(())
     }
