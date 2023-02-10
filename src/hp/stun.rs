@@ -339,10 +339,7 @@ mod tests {
 
     #[test]
     fn test_response() {
-        let txn = |n| {
-            let mut raw = [n; 12];
-            TransactionId::from(raw)
-        };
+        let txn = |n| TransactionId::from([n; 12]);
 
         struct Case {
             tx: TransactionId,

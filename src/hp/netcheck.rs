@@ -1,10 +1,9 @@
 //! Checks the network conditions from the current host.
 //! Based on https://github.com/tailscale/tailscale/blob/main/net/netcheck/netcheck.go
 
-// The various default timeouts for things.
-
 use std::{
     collections::HashMap,
+    fmt::Debug,
     net::{IpAddr, SocketAddr},
     ops::Deref,
     sync::Arc,
@@ -17,7 +16,7 @@ use tokio::{
     net,
     sync::{self, mpsc, oneshot, Mutex},
     task::JoinSet,
-    time::{self, Timeout},
+    time,
 };
 use tracing::{debug, info};
 
@@ -42,6 +41,8 @@ pub trait StunConn: Sync + Send {
     //     WriteTo([]byte, net.Addr) (int, error)
     //     ReadFrom([]byte) (int, net.Addr, error)
 }
+
+// The various default timeouts for things.
 
 /// The maximum amount of time netcheck will spend gathering a single report.
 const OVERALL_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
@@ -111,9 +112,9 @@ pub struct Report {
     pub region_v6_latency: HashMap<usize, Duration>,
 
     /// ip:port of global IPv4
-    pub global_v4: String,
+    pub global_v4: Option<SocketAddr>,
     /// [ip]:port of global IPv6
-    pub global_v6: String,
+    pub global_v6: Option<SocketAddr>,
 
     /// CaptivePortal is set when we think there's a captive portal that is
     /// intercepting HTTP traffic.
@@ -128,7 +129,7 @@ impl Report {
 }
 
 /// Generates a netcheck [`Report`].
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Client {
     /// Enables verbose logging.
     pub verbose: bool,
@@ -149,6 +150,7 @@ pub struct Client {
     reports: Arc<Mutex<Reports>>,
 }
 
+#[derive(Debug)]
 struct Reports {
     /// Do a full region scan, even if last is `Some`.
     next_full: bool,
@@ -162,21 +164,11 @@ struct Reports {
     cur_state: Option<ReportState>,
 }
 
+const ENOUGH_REGIONS: usize = 3;
+// Chosen semi-arbitrarily
+const CAPTIVE_PORTAL_DELAY: Duration = Duration::from_millis(200);
+
 impl Client {
-    fn enough_regions(&self) -> usize {
-        if self.verbose {
-            // Abuse verbose a bit here so netcheck can show all region latencies
-            // in verbose mode.
-            return 100;
-        }
-        3
-    }
-
-    fn captive_portal_delay(&self) -> Duration {
-        // Chosen semi-arbitrarily
-        Duration::from_millis(200)
-    }
-
     /// Reports whether `pkt` (from `src`) was our magic hairpin probe packet that we sent to ourselves.
     async fn handle_hair_stun_locked(
         &self,
@@ -423,7 +415,7 @@ impl Client {
                     tokio::task::spawn(async move { this.read_packets(u4, got_hair_stun_s).await });
                 }
                 Err(err) => {
-                    info!("udp4: failed to bind");
+                    info!("udp4: failed to bind: {:?}", err);
                     return Err(anyhow::anyhow!("failed to bind UDP 4"));
                 }
             }
@@ -441,7 +433,7 @@ impl Client {
                         );
                     }
                     Err(err) => {
-                        info!("udp6: failed to bind");
+                        info!("udp6: failed to bind: {:?}", err);
                         return Err(anyhow::anyhow!("failed to bind UDP 6"));
                     }
                 }
@@ -457,7 +449,7 @@ impl Client {
             if !rs.incremental {
                 // TODO: track task
                 let rs = rs.clone();
-                let delay = this.captive_portal_delay();
+                let delay = CAPTIVE_PORTAL_DELAY;
                 let dm = dm.clone(); // TODO: avoid or make cheap
                 captive_task = Some(tokio::task::spawn(async move {
                     // wait
@@ -560,28 +552,30 @@ impl Client {
                     debug!("netcheck: UDP is blocked, trying HTTPS");
                 }
                 for reg in need.into_iter() {
+                    let rs = rs.clone();
                     task_set.spawn(async move {
                         match measure_https_latency(&reg).await {
                             Ok((d, ip)) => {
-                                // rs.mu.Lock()
-                                //  if l, ok := rs.report.RegionLatency[reg.RegionID]; !ok {
-                                // 			mak.Set(&rs.report.RegionLatency, reg.RegionID, d)
-                                // 		} else if l >= d {
-                                // 			rs.report.RegionLatency[reg.RegionID] = d
-                                // 		}
-                                // 		// We set these IPv4 and IPv6 but they're not really used
-                                // 		// and we don't necessarily set them both. If UDP is blocked
-                                // 		// and both IPv4 and IPv6 are available over TCP, it's basically
-                                // 		// random which fields end up getting set here.
-                                // 		// Since they're not needed, that's fine for now.
-                                // 		if ip.Is4() {
-                                // 			rs.report.IPv4 = true
-                                // 		}
-                                // 		if ip.Is6() {
-                                // 			rs.report.IPv6 = true
-                                // 		}
-                                // 		rs.mu.Unlock()
-                                // 	}
+                                let mut state = rs.state.lock().await;
+                                let l = state
+                                    .report
+                                    .region_latency
+                                    .entry(reg.region_id)
+                                    .or_insert(d);
+                                if *l >= d {
+                                    *l = d;
+                                }
+                                // We set these IPv4 and IPv6 but they're not really used
+                                // and we don't necessarily set them both. If UDP is blocked
+                                // and both IPv4 and IPv6 are available over TCP, it's basically
+                                // random which fields end up getting set here.
+                                // Since they're not needed, that's fine for now.
+                                if ip.is_ipv4() {
+                                    state.report.ipv4 = true
+                                }
+                                if ip.is_ipv6() {
+                                    state.report.ipv6 = true
+                                }
                             }
                             Err(err) => {
                                 debug!(
@@ -608,7 +602,8 @@ impl Client {
 
     async fn finish_and_store_report(&self, rs: &ReportState, dm: &DerpMap) -> Report {
         let mut report = rs.state.lock().await.report.clone();
-        self.add_report_history_and_set_preferred_derp(&mut report);
+        self.add_report_history_and_set_preferred_derp(&mut report)
+            .await;
         self.log_concise_report(&report, dm);
 
         report
@@ -638,11 +633,11 @@ impl Client {
         } else {
             log += &format!(" portmap=?");
         }
-        if r.global_v4 != "" {
-            log += &format!(" v4a={}", r.global_v4);
+        if let Some(ipp) = r.global_v4 {
+            log += &format!(" v4a={}", ipp);
         }
-        if r.global_v6 != "" {
-            log += &format!(" v6a={}", r.global_v6);
+        if let Some(ipp) = r.global_v6 {
+            log += &format!(" v6a={}", ipp);
         }
         if let Some(c) = r.captive_portal {
             log += &format!(" captiveportal={}", c);
@@ -1161,7 +1156,7 @@ fn make_probe_plan_initial(dm: &DerpMap, if_state: &interfaces::State) -> ProbeP
 
         for tr in 0..3 {
             let n = &reg.nodes[tr % reg.nodes.len()];
-            let mut delay = DEFAULT_INITIAL_RETRANSMIT * tr as u32;
+            let delay = DEFAULT_INITIAL_RETRANSMIT * tr as u32;
             if if_state.have_v4 && node_might4(n) {
                 p4.push(Probe {
                     delay,
@@ -1212,7 +1207,7 @@ fn node_might4(n: &DerpNode) -> bool {
 }
 
 /// Holds the state for a single invocation of `Client::get_report`.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct ReportState {
     hair_tx: stun_rs::TransactionId,
     got_hair_stun: Arc<Mutex<mpsc::Receiver<SocketAddr>>>,
@@ -1231,10 +1226,22 @@ struct InnerReportState {
     sent_hair_check: bool,
     // to be returned by GetReport
     report: Report,
-    // called without c.mu held
+    // TODO: called without lock held
     in_flight: HashMap<stun::TransactionId, Box<dyn Fn(SocketAddr) + Sync + Send>>,
-    got_ep4: Option<String>,
-    timers: Vec<Timeout<()>>,
+    got_ep4: Option<SocketAddr>,
+    timers: JoinSet<()>,
+}
+
+impl Debug for InnerReportState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("InnerReportState")
+            .field("sent_hair_check", &self.sent_hair_check)
+            .field("report", &self.report)
+            .field("in_flight", &self.in_flight.keys().collect::<Vec<_>>())
+            .field("got_ep4", &self.got_ep4)
+            .field("timers", &self.timers)
+            .finish()
+    }
 }
 
 impl ReportState {
@@ -1330,80 +1337,57 @@ impl ReportState {
     }
 
     async fn stop_timers(&self) {
-        todo!()
-        // 	rs.mu.Lock()
-        // 	defer rs.mu.Unlock()
-        // 	for _, t := range rs.timers {
-        // 		t.Stop()
-        // 	}
+        self.state.lock().await.timers.abort_all();
     }
 
-    /// Updates rs to note that node's latency is d. If ipp
+    /// Updates `self` to note that node's latency is `d`. If `ipp`
     /// is non-zero (for all but HTTPS replies), it's recorded as our UDP IP:port.
-    fn add_node_latency(&self, node: &DerpNode, ipp: IpAddr, d: Duration) {
-        todo!()
-        // 	var ipPortStr string
-        // 	if ipp != (netip.AddrPort{}) {
-        // 		ipPortStr = net.JoinHostPort(ipp.Addr().String(), fmt.Sprint(ipp.Port()))
-        // 	}
+    async fn add_node_latency(&self, node: &DerpNode, ipp: Option<SocketAddr>, d: Duration) {
+        let mut rs = self.state.lock().await;
+        rs.report.udp = true;
+        update_latency(&mut rs.report.region_latency, node.region_id, d);
 
-        // 	rs.mu.Lock()
-        // 	defer rs.mu.Unlock()
-        // 	ret := rs.report
+        // Once we've heard from enough regions (3), start a timer to
+        // give up on the other ones. The timer's duration is a
+        // function of whether this is our initial full probe or an
+        // incremental one. For incremental ones, wait for the
+        // duration of the slowest region. For initial ones, double that.
+        if rs.report.region_latency.len() == ENOUGH_REGIONS {
+            let mut timeout = max_duration_value(&rs.report.region_latency);
+            if !self.incremental {
+                timeout *= 2;
+            }
 
-        // 	ret.UDP = true
-        // 	updateLatency(ret.RegionLatency, node.RegionID, d)
+            let stop_probe = self.stop_probe.clone();
+            rs.timers.spawn(async move {
+                time::sleep(timeout).await;
+                stop_probe.notify_waiters();
+            });
+        }
 
-        // 	// Once we've heard from enough regions (3), start a timer to
-        // 	// give up on the other ones. The timer's duration is a
-        // 	// function of whether this is our initial full probe or an
-        // 	// incremental one. For incremental ones, wait for the
-        // 	// duration of the slowest region. For initial ones, double
-        // 	// that.
-        // 	if len(ret.RegionLatency) == rs.c.enoughRegions() {
-        // 		timeout := maxDurationValue(ret.RegionLatency)
-        // 		if !rs.incremental {
-        // 			timeout *= 2
-        // 		}
-        // 		rs.timers = append(rs.timers, time.AfterFunc(timeout, rs.stopProbes))
-        // 	}
-
-        // 	switch {
-        // 	case ipp.Addr().Is6():
-        // 		updateLatency(ret.RegionV6Latency, node.RegionID, d)
-        // 		ret.IPv6 = true
-        // 		ret.GlobalV6 = ipPortStr
-        // 		// TODO: track MappingVariesByDestIP for IPv6
-        // 		// too? Would be sad if so, but who knows.
-        // 	case ipp.Addr().Is4():
-        // 		updateLatency(ret.RegionV4Latency, node.RegionID, d)
-        // 		ret.IPv4 = true
-        // 		if rs.gotEP4 == "" {
-        // 			rs.gotEP4 = ipPortStr
-        // 			ret.GlobalV4 = ipPortStr
-        // 			rs.startHairCheckLocked(ipp)
-        // 		} else {
-        // 			if rs.gotEP4 != ipPortStr {
-        // 				ret.MappingVariesByDestIP.Set(true)
-        // 			} else if ret.MappingVariesByDestIP == "" {
-        // 				ret.MappingVariesByDestIP.Set(false)
-        // 			}
-        // 		}
-        // 	}
-    }
-
-    fn stop_probes(&self) {
-        todo!()
-        // 	select {
-        // 	case rs.stopProbeCh <- struct{}{}:
-        // 	default:
-        // 	}
-    }
-
-    fn set_opt_bool(&self, b: Option<bool>, v: bool) {
-        // 	rs.mu.Lock()
-        // 	defer rs.mu.Unlock()
-        // 	b.Set(v)
+        if let Some(ipp) = ipp {
+            if ipp.is_ipv6() {
+                update_latency(&mut rs.report.region_v6_latency, node.region_id, d);
+                rs.report.ipv6 = true;
+                rs.report.global_v6 = Some(ipp);
+            // TODO: track MappingVariesByDestIP for IPv6
+            // too? Would be sad if so, but who knows.
+            } else if ipp.is_ipv4() {
+                update_latency(&mut rs.report.region_v4_latency, node.region_id, d);
+                rs.report.ipv4 = true;
+                if rs.got_ep4.is_none() {
+                    rs.got_ep4 = Some(ipp);
+                    rs.report.global_v4 = Some(ipp);
+                    self.start_hair_check_locked(&mut rs, ipp).await;
+                } else {
+                    if rs.got_ep4 != Some(ipp) {
+                        rs.report.mapping_varies_by_dest_ip = Some(true);
+                    } else if rs.report.mapping_varies_by_dest_ip.is_none() {
+                        rs.report.mapping_varies_by_dest_ip = Some(false);
+                    }
+                }
+            }
+        }
     }
 
     /// Starts probes for UPnP, PMP and PCP.
@@ -1524,8 +1508,8 @@ fn region_has_derp_node(r: &DerpRegion) -> bool {
     false
 }
 
-fn max_duration_value(m: &HashMap<usize, Duration>) -> Option<Duration> {
-    m.values().max().cloned()
+fn max_duration_value(m: &HashMap<usize, Duration>) -> Duration {
+    m.values().max().cloned().unwrap_or_default()
 }
 
 // TODO: Metrics

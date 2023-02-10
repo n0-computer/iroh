@@ -11,7 +11,8 @@ pub mod rpc_protocol;
 mod tls;
 mod util;
 
-mod hp;
+#[allow(missing_docs)]
+pub mod hp;
 
 pub use tls::{Keypair, PeerId, PeerIdError, PublicKey, SecretKey, Signature};
 pub use util::Hash;
