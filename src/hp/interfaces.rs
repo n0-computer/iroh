@@ -471,6 +471,11 @@ impl DefaultRouteDetails {
     pub fn new() -> Option<Self> {
         bsd::default_route()
     }
+
+    #[cfg(target_os = "linux")]
+    pub fn new() -> Option<Self> {
+        todo!()
+    }
 }
 
 /// Like `DefaultRoutDetails::new` but only returns the interface name.
