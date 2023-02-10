@@ -203,13 +203,12 @@ pub struct State {
     /// instead of Wifi. This field is not populated by `get_state`.
     pub is_expensive: bool,
 
-    /// DefaultRouteInterface is the interface name for the
-    /// machine's default route.
+    /// The interface name for the machine's default route.
     ///
     /// It is not yet populated on all OSes.
     ///
     /// When set, its value is the map key into `interface` and `interface_ips`.
-    default_route_interface: Option<String>,
+    pub default_route_interface: Option<String>,
 
     /// The HTTP proxy to use, if any.
     pub http_proxy: Option<String>,
@@ -447,6 +446,7 @@ fn is_interesting_ip(ip: &IpAddr) -> bool {
 }
 
 /// The details about a default route.
+#[derive(Debug, Clone)]
 pub struct DefaultRouteDetails {
     /// The interface name. It must always be populated.
     /// It's like "eth0" (Linux), "Ethernet 2" (Windows), "en0" (macOS).
@@ -499,6 +499,10 @@ mod bsd {
     };
 
     use super::DefaultRouteDetails;
+    use once_cell::sync::Lazy;
+
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    use macos::*;
 
     pub fn default_route() -> Option<DefaultRouteDetails> {
         let idx = default_route_interface_index()?;
@@ -706,112 +710,12 @@ mod bsd {
         InterfaceMulticastAddr,
     }
 
-    use once_cell::sync::Lazy;
     static ROUTING_STACK: Lazy<RoutingStack> = Lazy::new(probe_routing_stack);
-
-    // Hardcoded based on the generated values here: https://cs.opensource.google/go/x/net/+/master:route/zsys_darwin.go
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
-    const sizeofIfMsghdrDarwin15: usize = 0x70;
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
-    const sizeofIfaMsghdrDarwin15: usize = 0x14;
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
-    const sizeofIfmaMsghdrDarwin15: usize = 0x10;
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
-    const sizeofIfMsghdr2Darwin15: usize = 0xa0;
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
-    const sizeofIfmaMsghdr2Darwin15: usize = 0x14;
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
-    const sizeofIfDataDarwin15: usize = 0x60;
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
-    const sizeofIfData64Darwin15: usize = 0x80;
-
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
-    const sizeofRtMsghdrDarwin15: usize = 0x5c;
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
-    const sizeofRtMsghdr2Darwin15: usize = 0x5c;
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
-    const sizeofRtMetricsDarwin15: usize = 0x38;
-
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
-    const sizeofSockaddrStorage: usize = 0x80;
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
-    const sizeofSockaddrInet: usize = 0x10;
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
-    const sizeofSockaddrInet6: usize = 0x1c;
 
     struct RoutingStack {
         rtm_version: i32,
         kernel_align: usize,
         wire_formats: HashMap<i32, WireFormat>,
-    }
-
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
-    fn probe_routing_stack() -> RoutingStack {
-        let rtm_version = libc::RTM_VERSION;
-
-        let rtm = WireFormat {
-            ext_off: 36,
-            body_off: sizeofRtMsghdrDarwin15,
-            typ: MessageType::Route,
-        };
-        let rtm2 = WireFormat {
-            ext_off: 36,
-            body_off: sizeofRtMsghdr2Darwin15,
-            typ: MessageType::Route,
-        };
-        let ifm = WireFormat {
-            ext_off: 16,
-            body_off: sizeofIfMsghdrDarwin15,
-            typ: MessageType::Interface,
-        };
-        let ifm2 = WireFormat {
-            ext_off: 32,
-            body_off: sizeofIfMsghdr2Darwin15,
-            typ: MessageType::Interface,
-        };
-        let ifam = WireFormat {
-            ext_off: sizeofIfaMsghdrDarwin15,
-            body_off: sizeofIfaMsghdrDarwin15,
-            typ: MessageType::InterfaceAddr,
-        };
-        let ifmam = WireFormat {
-            ext_off: sizeofIfmaMsghdrDarwin15,
-            body_off: sizeofIfmaMsghdrDarwin15,
-            typ: MessageType::InterfaceMulticastAddr,
-        };
-        let ifmam2 = WireFormat {
-            ext_off: sizeofIfmaMsghdr2Darwin15,
-            body_off: sizeofIfmaMsghdr2Darwin15,
-            typ: MessageType::InterfaceMulticastAddr,
-        };
-
-        let wire_formats = [
-            (libc::RTM_ADD, rtm),
-            (libc::RTM_DELETE, rtm),
-            (libc::RTM_CHANGE, rtm),
-            (libc::RTM_GET, rtm),
-            (libc::RTM_LOSING, rtm),
-            (libc::RTM_REDIRECT, rtm),
-            (libc::RTM_MISS, rtm),
-            (libc::RTM_LOCK, rtm),
-            (libc::RTM_RESOLVE, rtm),
-            (libc::RTM_NEWADDR, ifam),
-            (libc::RTM_DELADDR, ifam),
-            (libc::RTM_IFINFO, ifm),
-            (libc::RTM_NEWMADDR, ifmam),
-            (libc::RTM_DELMADDR, ifmam),
-            (libc::RTM_IFINFO2, ifm2),
-            (libc::RTM_NEWMADDR2, ifmam2),
-            (libc::RTM_GET2, rtm2),
-        ]
-        .into_iter()
-        .collect();
-
-        RoutingStack {
-            rtm_version,
-            wire_formats,
-            kernel_align: 4,
-        }
     }
 
     /// Parses b as a routing information base and returns a list of routing messages.
@@ -908,11 +812,99 @@ mod bsd {
         // raw:  []byte // raw message
     }
 
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    mod macos {
+        use super::*;
+
+        // Hardcoded based on the generated values here: https://cs.opensource.google/go/x/net/+/master:route/zsys_darwin.go
+
+        pub(super) const SIZEOF_IF_MSGHDR_DARWIN15: usize = 0x70;
+        pub(super) const SIZEOF_IFA_MSGHDR_DARWIN15: usize = 0x14;
+        pub(super) const SIZEOF_IFMA_MSGHDR_DARWIN15: usize = 0x10;
+        pub(super) const SIZEOF_IF_MSGHDR2_DARWIN15: usize = 0xa0;
+        pub(super) const SIZEOF_IFMA_MSGHDR2_DARWIN15: usize = 0x14;
+        pub(super) const SIZEOF_IF_DATA_DARWIN15: usize = 0x60;
+        pub(super) const SIZEOF_IF_DATA64_DARWIN15: usize = 0x80;
+
+        pub(super) const SIZEOF_RT_MSGHDR_DARWIN15: usize = 0x5c;
+        pub(super) const SIZEOF_RT_MSGHDR2_DARWIN15: usize = 0x5c;
+        pub(super) const SIZEOF_RT_METRICS_DARWIN15: usize = 0x38;
+
+        pub(super) const SIZEOF_SOCKADDR_STORAGE: usize = 0x80;
+        pub(super) const SIZEOF_SOCKADDR_INET: usize = 0x10;
+        pub(super) const SIZEOF_SOCKADDR_INET6: usize = 0x1c;
+
+        pub(super) fn probe_routing_stack() -> RoutingStack {
+            let rtm_version = libc::RTM_VERSION;
+
+            let rtm = WireFormat {
+                ext_off: 36,
+                body_off: SIZEOF_RT_MSGHDR_DARWIN15,
+                typ: MessageType::Route,
+            };
+            let rtm2 = WireFormat {
+                ext_off: 36,
+                body_off: SIZEOF_RT_MSGHDR2_DARWIN15,
+                typ: MessageType::Route,
+            };
+            let ifm = WireFormat {
+                ext_off: 16,
+                body_off: SIZEOF_IF_MSGHDR_DARWIN15,
+                typ: MessageType::Interface,
+            };
+            let ifm2 = WireFormat {
+                ext_off: 32,
+                body_off: SIZEOF_IF_MSGHDR2_DARWIN15,
+                typ: MessageType::Interface,
+            };
+            let ifam = WireFormat {
+                ext_off: SIZEOF_IFA_MSGHDR_DARWIN15,
+                body_off: SIZEOF_IFA_MSGHDR_DARWIN15,
+                typ: MessageType::InterfaceAddr,
+            };
+            let ifmam = WireFormat {
+                ext_off: SIZEOF_IFMA_MSGHDR_DARWIN15,
+                body_off: SIZEOF_IFMA_MSGHDR_DARWIN15,
+                typ: MessageType::InterfaceMulticastAddr,
+            };
+            let ifmam2 = WireFormat {
+                ext_off: SIZEOF_IFMA_MSGHDR2_DARWIN15,
+                body_off: SIZEOF_IFMA_MSGHDR2_DARWIN15,
+                typ: MessageType::InterfaceMulticastAddr,
+            };
+
+            let wire_formats = [
+                (libc::RTM_ADD, rtm),
+                (libc::RTM_DELETE, rtm),
+                (libc::RTM_CHANGE, rtm),
+                (libc::RTM_GET, rtm),
+                (libc::RTM_LOSING, rtm),
+                (libc::RTM_REDIRECT, rtm),
+                (libc::RTM_MISS, rtm),
+                (libc::RTM_LOCK, rtm),
+                (libc::RTM_RESOLVE, rtm),
+                (libc::RTM_NEWADDR, ifam),
+                (libc::RTM_DELADDR, ifam),
+                (libc::RTM_IFINFO, ifm),
+                (libc::RTM_NEWMADDR, ifmam),
+                (libc::RTM_DELMADDR, ifmam),
+                (libc::RTM_IFINFO2, ifm2),
+                (libc::RTM_NEWMADDR2, ifmam2),
+                (libc::RTM_GET2, rtm2),
+            ]
+            .into_iter()
+            .collect();
+
+            RoutingStack {
+                rtm_version,
+                wire_formats,
+                kernel_align: 4,
+            }
+        }
+    }
+
     /// Represents a type of routing information base.
     type RIBType = i32;
-
-    const RIBTypeRoute: RIBType = libc::NET_RT_DUMP;
-    const RIBTypeInterface: RIBType = libc::NET_RT_IFLIST;
 
     #[derive(Debug, thiserror::Error)]
     enum RouteError {
@@ -1104,7 +1096,7 @@ mod bsd {
     fn parse_inet_addr(af: i32, b: &[u8]) -> Result<Addr, RouteError> {
         match af {
             libc::AF_INET => {
-                if b.len() < sizeofSockaddrInet {
+                if b.len() < SIZEOF_SOCKADDR_INET {
                     return Err(RouteError::InvalidAddress);
                 }
 
@@ -1112,7 +1104,7 @@ mod bsd {
                 Ok(Addr::Inet4 { ip })
             }
             libc::AF_INET6 => {
-                if b.len() < sizeofSockaddrInet6 {
+                if b.len() < SIZEOF_SOCKADDR_INET6 {
                     return Err(RouteError::InvalidAddress);
                 }
 
@@ -1181,33 +1173,33 @@ mod bsd {
         }
         // Don't reorder case expressions.
         // The case expressions for IPv6 must come first.
-        const off4: usize = 4; // offset of in_addr
-        const off6: usize = 8; // offset of in6_addr
+        const OFF4: usize = 4; // offset of in_addr
+        const OFF6: usize = 8; // offset of in6_addr
 
-        let addr = if b[0] as usize == sizeofSockaddrInet6 {
-            let octets: [u8; 16] = b[off6..off6 + 16].try_into().unwrap();
+        let addr = if b[0] as usize == SIZEOF_SOCKADDR_INET6 {
+            let octets: [u8; 16] = b[OFF6..OFF6 + 16].try_into().unwrap();
             let ip = Ipv6Addr::from(octets);
             Addr::Inet6 { ip, zone: 0 }
         } else if af == libc::AF_INET6 {
             let mut octets = [0u8; 16];
-            if l - 1 < off6 {
+            if l - 1 < OFF6 {
                 octets[..l - 1].copy_from_slice(&b[1..l]);
             } else {
-                octets.copy_from_slice(&b[l - off6..l]);
+                octets.copy_from_slice(&b[l - OFF6..l]);
             }
             let ip = Ipv6Addr::from(octets);
             Addr::Inet6 { ip, zone: 0 }
-        } else if b[0] as usize == sizeofSockaddrInet {
-            let octets: [u8; 4] = b[off4..off4 + 4].try_into().unwrap();
+        } else if b[0] as usize == SIZEOF_SOCKADDR_INET {
+            let octets: [u8; 4] = b[OFF4..OFF4 + 4].try_into().unwrap();
             let ip = Ipv4Addr::from(octets);
             Addr::Inet4 { ip }
         } else {
             // an old fashion, AF_UNSPEC or unknown means AF_INET
             let mut octets = [0u8; 4];
-            if l - 1 < off4 {
+            if l - 1 < OFF4 {
                 octets[..l - 1].copy_from_slice(&b[1..l]);
             } else {
-                octets.copy_from_slice(&b[l - off4..l]);
+                octets.copy_from_slice(&b[l - OFF4..l]);
             }
             let ip = Ipv4Addr::from(octets);
             Addr::Inet4 { ip }
