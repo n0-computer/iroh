@@ -1673,33 +1673,66 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn test_udp() -> Result<(), Error> {
+    async fn test_udp_tokio() -> Result<(), Error> {
         let server = net::UdpSocket::bind("0.0.0.0:8080").await?;
         let addr = server.local_addr()?;
 
         let server_task = tokio::task::spawn(async move {
-            let mut buf = vec![0u8; 1024];
+            let mut buf = vec![0u8; 32];
             println!("server recv");
-            let (n, addr) = server.recv_from(&mut buf).await?;
+            let (n, addr) = server.recv_from(&mut buf).await.unwrap();
             println!("server send");
-            server.send_to(&buf[..n], addr).await?;
-
-            Ok::<(), Error>(())
+            server.send_to(&buf[..n], addr).await.unwrap();
         });
 
-        let client = net::UdpSocket::bind("0.0.0.0:9090").await?;
+        let client = net::UdpSocket::bind("0.0.0.0:0").await?;
         let data = b"foobar";
         println!("client: send");
-        client
-            .send_to(data, format!("127.0.0.0:{}", addr.port()))
-            .await?;
-        let mut buf = vec![0u8; 1024];
+        let server_addr = format!("127.0.0.0:{}", addr.port());
+        client.send_to(data, server_addr).await?;
+        let mut buf = vec![0u8; 32];
         println!("client recv");
         let (n, addr_r) = client.recv_from(&mut buf).await?;
         assert_eq!(&buf[..n], data);
-        assert_eq!(addr_r, addr);
+        assert_eq!(addr_r.port(), addr.port());
 
-        server_task.await??;
+        server_task.await?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_udp_std() -> Result<(), Error> {
+        use std::net;
+        let server = net::UdpSocket::bind("0.0.0.0:0")?;
+        let addr = server.local_addr()?;
+
+        let server_task = std::thread::spawn(move || {
+            println!("server: start");
+            let mut buf = vec![0u8; 32];
+            println!("server: recv");
+            let (n, addr) = server.recv_from(&mut buf).unwrap();
+            println!("server: send");
+            server.send_to(&buf[..n], addr).unwrap();
+            println!("server: done");
+        });
+        // wait to ensure the server is running
+        std::thread::sleep(Duration::from_millis(500));
+
+        let data = b"foobar";
+        let server_addr = format!("127.0.0.0:{}", addr.port());
+        let client = net::UdpSocket::bind("0.0.0.0:0")?;
+
+        println!("client: send");
+        client.send_to(data, server_addr)?;
+        let mut buf = vec![0u8; 32];
+        println!("client: recv");
+        let (n, addr_r) = client.recv_from(&mut buf)?;
+
+        assert_eq!(&buf[..n], data);
+        assert_eq!(addr_r.port(), addr.port());
+
+        server_task.join().unwrap();
 
         Ok(())
     }
