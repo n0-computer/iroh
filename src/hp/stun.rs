@@ -217,7 +217,7 @@ pub mod test {
         match addr.ip() {
             IpAddr::V4(ip) => {
                 if ip.octets() == [0, 0, 0, 0] {
-                    addr.set_ip("127.0.0.0".parse().unwrap());
+                    addr.set_ip("127.0.0.1".parse().unwrap());
                 }
             }
             _ => unreachable!("using ipv4"),
