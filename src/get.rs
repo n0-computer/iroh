@@ -119,13 +119,13 @@ pub async fn run<A, B, C, FutA, FutB, FutC>(
     token: AuthToken,
     opts: Options,
     on_connected: A,
-    mut on_collection: B,
+    on_collection: B,
     mut on_blob: C,
 ) -> Result<Stats>
 where
     A: FnOnce() -> FutA,
     FutA: Future<Output = Result<()>>,
-    B: FnMut(&Collection) -> FutB,
+    B: FnOnce(&Collection) -> FutB,
     FutB: Future<Output = Result<()>>,
     C: FnMut(Hash, DataStream, String) -> FutC,
     FutC: Future<Output = Result<DataStream>>,
