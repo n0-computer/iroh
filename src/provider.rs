@@ -556,6 +556,8 @@ impl From<&std::path::Path> for DataSource {
 ///
 /// If the size of the file is changed while this is running, an error will be
 /// returned.
+///
+/// path and name are returned with the result to provide context
 fn compute_outboard(
     path: PathBuf,
     name: Option<String>,
@@ -600,9 +602,9 @@ pub async fn create_collection(data_sources: Vec<DataSource>) -> Result<(Databas
     let mut db = HashMap::with_capacity(data_sources.len() + 1);
     let mut blobs = Vec::with_capacity(data_sources.len());
     let mut total_blobs_size: u64 = 0;
-
     let mut blobs_encoded_size_estimate = 0;
 
+    // compute outboards in parallel, using tokio's blocking thread pool
     let outboards = data_sources.into_iter().map(|data| {
         let (path, name) = match data {
             DataSource::File(path) => (path, None),
@@ -610,10 +612,13 @@ pub async fn create_collection(data_sources: Vec<DataSource>) -> Result<(Databas
         };
         tokio::task::spawn_blocking(move || compute_outboard(path, name))
     });
+    // wait for completion and collect results
     let outboards = future::join_all(outboards)
         .await
         .into_iter()
         .collect::<Result<Result<Vec<_>, _>, _>>()??;
+    // insert outboards into the database and build collection
+
     for (path, name, hash, outboard) in outboards {
         debug_assert!(outboard.len() >= 8, "outboard must at least contain size");
         let size = u64::from_le_bytes(outboard[..8].try_into().unwrap());
