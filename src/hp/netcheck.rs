@@ -8,21 +8,21 @@ use std::{
     net::{IpAddr, SocketAddr},
     ops::Deref,
     sync::Arc,
-    time::{Duration, Instant},
 };
 
 use anyhow::Error;
+use async_time_mock_tokio::Instant;
 use futures::{future::BoxFuture, FutureExt};
 use rand::seq::IteratorRandom;
 use tokio::{
     net,
     sync::{self, mpsc, oneshot, Mutex, RwLock},
     task::JoinSet,
-    time,
+    time::{self, Duration},
 };
 use tracing::{debug, info};
 
-use crate::hp::stun::to_canonical;
+use crate::hp::{stun::to_canonical, CLOCK};
 
 use super::{
     derp::{DerpMap, DerpNode, DerpRegion, UseIpv4, UseIpv6},
@@ -34,16 +34,6 @@ use super::{
 
 /// Fake DNS TLD used in tests for an invalid hostname.
 const DOT_INVALID: &str = ".invalid";
-
-// TODO: better type
-pub trait PacketConn: Sync + Send {}
-
-// The interface required by the netcheck Client when reusing an existing UDP connection.
-pub trait StunConn: Sync + Send {
-    // WriteToUDPAddrPort([]byte, netip.AddrPort) (int, error)
-    //     WriteTo([]byte, net.Addr) (int, error)
-    //     ReadFrom([]byte) (int, net.Addr, error)
-}
 
 // The various default timeouts for things.
 
@@ -181,7 +171,7 @@ impl Default for Client {
                 next_full: false,
                 prev: Default::default(),
                 last: None,
-                last_full: Instant::now(),
+                last_full: CLOCK.now(),
                 cur_state: None,
             })),
         }
@@ -355,7 +345,7 @@ impl Client {
             } else {
                 None
             };
-            let now = Instant::now();
+            let now = CLOCK.now();
 
             let mut do_full = false;
             if reports.next_full
@@ -479,7 +469,7 @@ impl Client {
                 let dm = dm.clone(); // TODO: avoid or make cheap
                 captive_task = Some(tokio::task::spawn(async move {
                     // wait
-                    time::sleep(delay).await;
+                    CLOCK.sleep(delay).await;
                     match check_captive_portal(&dm, preferred_derp).await {
                         Ok(found) => {
                             rs.report.0.write().await.captive_portal = Some(found);
@@ -509,7 +499,7 @@ impl Client {
                 }
             }
 
-            let stun_timer = time::sleep(STUN_PROBE_TIMEOUT);
+            let stun_timer = CLOCK.sleep(STUN_PROBE_TIMEOUT);
             let probes_done = async move {
                 while let Some(t) = task_set.join_next().await {
                     t?;
@@ -705,7 +695,7 @@ impl Client {
         if let Some(ref last) = reports.last {
             prev_derp = last.0.read().await.preferred_derp;
         }
-        let now = Instant::now();
+        let now = CLOCK.now();
 
         reports.prev.insert(now, r.clone());
         reports.last = Some(r.clone());
@@ -717,8 +707,8 @@ impl Client {
 
         let mut to_remove = Vec::new();
         for (t, pr) in &reports.prev {
-            if now.duration_since(*t) > MAX_AGE {
-                to_remove.push(*t);
+            if dbg!(now.duration_since(*t)) > MAX_AGE {
+                to_remove.push(dbg!(*t));
                 continue;
             }
             let pr = pr.0.read().await;
@@ -800,7 +790,7 @@ async fn measure_all_icmp_latency(rs: &ReportState, need: &[DerpRegion]) -> Resu
     info!("UDP is blocked, trying ICMP");
 
     time::timeout(ICMP_PROBE_TIMEOUT, async move {
-        let p = Pinger::new()?;
+        let p = Pinger::new().await?;
 
         let mut tasks = JoinSet::new();
         for reg in need {
@@ -1362,7 +1352,7 @@ impl ReportState {
 
         let timeout = self.hair_timeout.clone();
         tokio::task::spawn(async move {
-            time::sleep(HAIRPIN_CHECK_TIMEOUT).await;
+            CLOCK.sleep(HAIRPIN_CHECK_TIMEOUT).await;
             timeout.notify_waiters();
         });
     }
@@ -1418,7 +1408,7 @@ impl ReportState {
 
             let stop_probe = self.stop_probe.clone();
             rs.timers.spawn(async move {
-                time::sleep(timeout).await;
+                CLOCK.sleep(timeout).await;
                 stop_probe.notify_waiters();
             });
         }
@@ -1497,7 +1487,7 @@ impl ReportState {
                     debug!("aborting probe early");
                     return;
                 }
-                _ = time::sleep(probe.delay) => {}
+                _ = CLOCK.sleep(probe.delay) => {}
             }
         }
 
@@ -1514,7 +1504,7 @@ impl ReportState {
 
         let txid = stun::TransactionId::default();
         let req = stun::request(txid);
-        let sent = Instant::now(); // after DNS lookup above
+        let sent = CLOCK.now(); // after DNS lookup above
 
         {
             let mut state = self.state.lock().await;
@@ -1531,7 +1521,7 @@ impl ReportState {
                     let done = done.clone();
 
                     async move {
-                        let elapsed = sent.elapsed();
+                        let elapsed = CLOCK.now().duration_since(sent);
                         this.add_node_latency(&node, Some(ipp), elapsed).await;
                         done.notify_waiters();
                     }
@@ -1644,11 +1634,6 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_basic() -> Result<(), Error> {
-        tracing_subscriber::registry()
-            .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
-            .with(EnvFilter::from_default_env())
-            .init();
-
         let (stun_addr, stun_stats, done) = stun::test::serve().await?;
 
         let mut client = Client::default();
@@ -1711,6 +1696,223 @@ mod tests {
         assert_eq!(addr_r.port(), addr.port());
 
         server_task.await?;
+
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_udp_blocked() -> Result<(), Error> {
+        tracing_subscriber::registry()
+            .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
+            .with(EnvFilter::from_default_env())
+            .init();
+
+        let blackhole = tokio::net::UdpSocket::bind("127.0.0.1:0").await?;
+        let stun_addr = blackhole.local_addr()?;
+        let mut dm = stun::test::derp_map_of([stun_addr].into_iter());
+        dm.regions.get_mut(&1).unwrap().nodes[0].stun_only = true;
+
+        tokio::task::spawn(CLOCK.sleep(Duration::from_millis(500)));
+        let mut client = Client::default();
+        let r = client.get_report(&dm).await?;
+        let r = &mut *r.0.write().await;
+        r.upnp = None;
+        r.pmp = None;
+        r.pcp = None;
+
+        let want_source = Report::default();
+        let want = &mut *want_source.0.write().await;
+
+        // The ip_v4_can_send flag gets set differently across platforms.
+        // On Windows this test detects false, while on Linux detects true.
+        // That's not relevant to this test, so just accept what we're given.
+        want.ipv4_can_send = r.ipv4_can_send;
+        // OS IPv6 test is irrelevant here, accept whatever the current machine has.
+        want.os_has_ipv6 = r.os_has_ipv6;
+        // Captive portal test is irrelevant; accept what the current report has.
+        want.captive_portal = r.captive_portal;
+
+        assert_eq!(r, want);
+
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_add_reporrt_history_set_preferred_derp() -> Result<(), Error> {
+        // report returns a *Report from (DERP host, Duration)+ pairs.
+        fn report(a: impl IntoIterator<Item = (&'static str, u64)>) -> Report {
+            let report = Report::default();
+            {
+                let r = &mut *report.0.try_write().unwrap();
+                for (s, d) in a {
+                    assert!(s.starts_with("d"), "invalid derp server key");
+                    let region_id: usize = s[1..].parse().unwrap();
+                    r.region_latency.insert(region_id, Duration::from_secs(d));
+                }
+            }
+            report
+        }
+        struct Step {
+            /// Delay in seconds
+            after: u64,
+            r: Report,
+        }
+        struct Test {
+            name: &'static str,
+            steps: Vec<Step>,
+            /// want PreferredDERP on final step
+            want_derp: usize,
+            // wanted len(c.prev)
+            want_prev_len: usize,
+        }
+
+        let tests = [
+            Test {
+                name: "first_reading",
+                steps: vec![Step {
+                    after: 0,
+                    r: report([("d1", 2), ("d2", 3)]),
+                }],
+                want_prev_len: 1,
+                want_derp: 1,
+            },
+            Test {
+                name: "with_two",
+                steps: vec![
+                    Step {
+                        after: 0,
+                        r: report([("d1", 2), ("d2", 3)]),
+                    },
+                    Step {
+                        after: 1,
+                        r: report([("d1", 4), ("d2", 3)]),
+                    },
+                ],
+                want_prev_len: 2,
+                want_derp: 1, // t0's d1 of 2 is still best
+            },
+            Test {
+                name: "but_now_d1_gone",
+                steps: vec![
+                    Step {
+                        after: 0,
+                        r: report([("d1", 2), ("d2", 3)]),
+                    },
+                    Step {
+                        after: 1,
+                        r: report([("d1", 4), ("d2", 3)]),
+                    },
+                    Step {
+                        after: 2,
+                        r: report([("d2", 3)]),
+                    },
+                ],
+                want_prev_len: 3,
+                want_derp: 2, // only option
+            },
+            Test {
+                name: "d1_is_back",
+                steps: vec![
+                    Step {
+                        after: 0,
+                        r: report([("d1", 2), ("d2", 3)]),
+                    },
+                    Step {
+                        after: 1,
+                        r: report([("d1", 4), ("d2", 3)]),
+                    },
+                    Step {
+                        after: 2,
+                        r: report([("d2", 3)]),
+                    },
+                    Step {
+                        after: 3,
+                        r: report([("d1", 4), ("d2", 3)]),
+                    }, // same as 2 seconds ago
+                ],
+                want_prev_len: 4,
+                want_derp: 1, // t0's d1 of 2 is still best
+            },
+            Test {
+                name: "things_clean_up",
+                steps: vec![
+                    Step {
+                        after: 0,
+                        r: report([("d1", 1), ("d2", 2)]),
+                    },
+                    Step {
+                        after: 1,
+                        r: report([("d1", 1), ("d2", 2)]),
+                    },
+                    Step {
+                        after: 2,
+                        r: report([("d1", 1), ("d2", 2)]),
+                    },
+                    Step {
+                        after: 3,
+                        r: report([("d1", 1), ("d2", 2)]),
+                    },
+                    Step {
+                        after: 10 * 60,
+                        r: report([("d3", 3)]),
+                    },
+                ],
+                want_prev_len: 1, // t=[0123]s all gone. (too old, older than 10 min)
+                want_derp: 3,     // only option
+            },
+            Test {
+                name: "preferred_derp_hysteresis_no_switch",
+                steps: vec![
+                    Step {
+                        after: 0,
+                        r: report([("d1", 4), ("d2", 5)]),
+                    },
+                    Step {
+                        after: 1,
+                        r: report([("d1", 4), ("d2", 3)]),
+                    },
+                ],
+                want_prev_len: 2,
+                want_derp: 1, // 2 didn't get fast enough
+            },
+            Test {
+                name: "preferred_derp_hysteresis_do_switch",
+                steps: vec![
+                    Step {
+                        after: 0,
+                        r: report([("d1", 4), ("d2", 5)]),
+                    },
+                    Step {
+                        after: 1,
+                        r: report([("d1", 4), ("d2", 1)]),
+                    },
+                ],
+                want_prev_len: 2,
+                want_derp: 2, // 2 got fast enough
+            },
+        ];
+        for mut tt in tests {
+            println!("test: {}", tt.name);
+            let client = Client::default();
+
+            for s in &mut tt.steps {
+                tokio::task::spawn(CLOCK.sleep(Duration::from_millis(10))); // trigger at timer
+                CLOCK
+                    .controller
+                    .advance_time(Duration::from_secs(s.after))
+                    .await;
+                client
+                    .add_report_history_and_set_preferred_derp(&mut s.r)
+                    .await;
+            }
+            let last_report = tt.steps[tt.steps.len() - 1].r.clone();
+            let got = client.reports.lock().await.prev.len();
+            let want = tt.want_prev_len;
+            assert_eq!(got, want, "prev length");
+            let got = last_report.0.read().await.preferred_derp;
+            let want = tt.want_derp;
+            assert_eq!(got, want, "preferred_derp");
+        }
 
         Ok(())
     }
