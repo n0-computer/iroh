@@ -154,10 +154,8 @@ jobs:
           toolchain: stable
           override: true
           components: clippy
-    - uses: actions-rs/clippy-check@v1
-      with:
-        token: ${{ secrets.GITHUB_TOKEN }}
-        args: --all-features --all-targets
+    - name: clippy check
+      run: cargo clippy --message-format=json --all-features --all-targets
 
   msrv:
     name: Minimal Supported Rust Version
