@@ -13,7 +13,7 @@ use anyhow::{anyhow, bail, ensure, Result};
 use bytes::BytesMut;
 use futures::Future;
 use postcard::experimental::max_size::MaxSize;
-use tokio::io::{AsyncRead, AsyncWriteExt, ReadBuf};
+use tokio::io::{AsyncRead, ReadBuf};
 use tracing::debug;
 
 use crate::bao_slice_decoder::AsyncSliceDecoder;
@@ -116,7 +116,7 @@ impl AsyncRead for DataStream {
 /// Get a collection and all its blobs from a provider
 pub async fn run<A, B, C, FutA, FutB, FutC>(
     hash: Hash,
-    token: AuthToken,
+    auth_token: AuthToken,
     opts: Options,
     on_connected: A,
     on_collection: B,
@@ -145,7 +145,7 @@ where
     // 1. Send Handshake
     {
         debug!("sending handshake");
-        let handshake = Handshake::new(token);
+        let handshake = Handshake::new(auth_token);
         let used = postcard::to_slice(&handshake, &mut out_buffer)?;
         write_lp(&mut writer, used).await?;
     }
@@ -158,6 +158,8 @@ where
         let used = postcard::to_slice(&req, &mut out_buffer)?;
         write_lp(&mut writer, used).await?;
     }
+    writer.finish().await?;
+    drop(writer);
 
     // 3. Read response
     {
@@ -224,8 +226,7 @@ where
                 }
 
                 // Shut down the stream
-                debug!("shutting down stream");
-                writer.shutdown().await?;
+                drop(reader);
 
                 let elapsed = now.elapsed();
 
@@ -234,7 +235,7 @@ where
                 Ok(stats)
             }
             None => {
-                bail!("provider disconnected");
+                bail!("provider closed stream");
             }
         }
     }

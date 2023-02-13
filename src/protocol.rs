@@ -6,6 +6,7 @@ use std::str::FromStr;
 use anyhow::{ensure, Result};
 use bytes::{Bytes, BytesMut};
 use postcard::experimental::max_size::MaxSize;
+use quinn::VarInt;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tracing::debug;
@@ -209,6 +210,67 @@ impl FromStr for AuthToken {
             .try_into()
             .map_err(|v: Vec<u8>| AuthTokenParseError::Length(v.len()))?;
         Ok(AuthToken { bytes })
+    }
+}
+
+/// Reasons to close connections or stop streams.
+///
+/// A QUIC **connection** can be *closed* and a **stream** can request the other side to
+/// *stop* sending data.  Both closing and stopping have an associated `error_code`, closing
+/// also adds a `reason` as some arbitrary bytes.
+///
+/// This enum exists so we have a single namespace for `error_code`s used.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(u16)]
+pub(crate) enum Closed {
+    /// The [`quinn::RecvStream`] was dropped.
+    ///
+    /// Used implicitly when a [`quinn::RecvStream`] is dropped without explicit call to
+    /// [`quinn::RecvStream::stop`].  We don't use this explicitly but this is here as
+    /// documentation as to what happened to `0`.
+    StreamDropped = 0,
+    /// The provider is terminating.
+    ///
+    /// When a provider terminates all connections and associated streams are closed.
+    ProviderTerminating = 1,
+    /// The provider has received the request.
+    ///
+    /// Only a single request is allowed on a stream, once this request is received the
+    /// provider will close its [`quinn::RecvStream`] with this error code.
+    RequestReceived = 2,
+}
+
+impl Closed {
+    pub fn reason(&self) -> &'static [u8] {
+        match self {
+            Closed::StreamDropped => &b"stream dropped"[..],
+            Closed::ProviderTerminating => &b"provider terminating"[..],
+            Closed::RequestReceived => &b"request received"[..],
+        }
+    }
+}
+
+impl From<Closed> for VarInt {
+    fn from(source: Closed) -> Self {
+        VarInt::from(source as u16)
+    }
+}
+
+/// Unknown error_code, can not be converted into [`Closed`].
+#[derive(thiserror::Error, Debug)]
+#[error("Unknown error_code: {0}")]
+pub(crate) struct UnknownErrorCode(u64);
+
+impl TryFrom<VarInt> for Closed {
+    type Error = UnknownErrorCode;
+
+    fn try_from(value: VarInt) -> std::result::Result<Self, Self::Error> {
+        match value.into_inner() {
+            0 => Ok(Self::StreamDropped),
+            1 => Ok(Self::ProviderTerminating),
+            2 => Ok(Self::RequestReceived),
+            val => Err(UnknownErrorCode(val)),
+        }
     }
 }
 

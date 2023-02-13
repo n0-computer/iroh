@@ -30,7 +30,9 @@ use tracing::{debug, debug_span, warn};
 use tracing_futures::Instrument;
 
 use crate::blobs::{Blob, Collection};
-use crate::protocol::{read_lp, write_lp, AuthToken, Handshake, Request, Res, Response, VERSION};
+use crate::protocol::{
+    read_lp, write_lp, AuthToken, Closed, Handshake, Request, Res, Response, VERSION,
+};
 use crate::tls::{self, Keypair, PeerId};
 use crate::util::{self, Hash};
 
@@ -176,7 +178,8 @@ impl Builder {
         // connections: Operations will immediately fail with
         // ConnectionError::LocallyClosed.  All streams are interrupted, this is not
         // graceful.
-        server.close(1u16.into(), b"provider terminating");
+        let error_code = Closed::ProviderTerminating;
+        server.close(error_code.into(), error_code.reason());
     }
 }
 
@@ -359,90 +362,80 @@ async fn handle_stream(
         bail!("no valid handshake received");
     }
 
-    // 2. Decode protocol messages.
-    loop {
-        debug!("reading request");
-        match read_lp::<_, Request>(&mut reader, &mut in_buffer).await? {
-            Some((request, _size)) => {
-                let hash = request.name;
-                debug!("got request({})", request.id);
-                let _ = events.send(Event::RequestReceived {
-                    connection_id,
-                    request_id: request.id,
-                    hash,
-                });
+    // 2. Decode the request.
+    debug!("reading request");
+    let request = read_lp::<_, Request>(&mut reader, &mut in_buffer).await?;
+    reader.stop(Closed::RequestReceived.into())?;
+    if let Some((request, _size)) = request {
+        let hash = request.name;
+        debug!("got request({})", request.id);
+        let _ = events.send(Event::RequestReceived {
+            connection_id,
+            request_id: request.id,
+            hash,
+        });
 
-                match db.get(&hash) {
-                    // We only respond to requests for collections, not individual blobs
-                    Some(BlobOrCollection::Collection((outboard, data))) => {
-                        debug!("found collection {}", hash);
+        match db.get(&hash) {
+            // We only respond to requests for collections, not individual blobs
+            Some(BlobOrCollection::Collection((outboard, data))) => {
+                debug!("found collection {}", hash);
 
-                        let mut extractor = SliceExtractor::new_outboard(
-                            std::io::Cursor::new(&data[..]),
-                            std::io::Cursor::new(&outboard[..]),
-                            0,
-                            data.len() as u64,
-                        );
-                        let encoded_size: usize = bao::encode::encoded_size(data.len() as u64)
-                            .try_into()
-                            .unwrap();
-                        let mut encoded = Vec::with_capacity(encoded_size);
-                        extractor.read_to_end(&mut encoded)?;
+                let mut extractor = SliceExtractor::new_outboard(
+                    std::io::Cursor::new(&data[..]),
+                    std::io::Cursor::new(&outboard[..]),
+                    0,
+                    data.len() as u64,
+                );
+                let encoded_size: usize = bao::encode::encoded_size(data.len() as u64)
+                    .try_into()
+                    .unwrap();
+                let mut encoded = Vec::with_capacity(encoded_size);
+                extractor.read_to_end(&mut encoded)?;
 
-                        let c: Collection = postcard::from_bytes(data)?;
+                let c: Collection = postcard::from_bytes(data)?;
 
-                        // TODO: we should check if the blobs referenced in this container
-                        // actually exist in this provider before returning `FoundCollection`
-                        write_response(
-                            &mut writer,
-                            &mut out_buffer,
-                            request.id,
-                            Res::FoundCollection {
-                                total_blobs_size: c.total_blobs_size,
-                            },
-                        )
-                        .await?;
+                // TODO: we should check if the blobs referenced in this container
+                // actually exist in this provider before returning `FoundCollection`
+                write_response(
+                    &mut writer,
+                    &mut out_buffer,
+                    request.id,
+                    Res::FoundCollection {
+                        total_blobs_size: c.total_blobs_size,
+                    },
+                )
+                .await?;
 
-                        let mut data = BytesMut::from(&encoded[..]);
-                        writer.write_buf(&mut data).await?;
-                        for blob in c.blobs {
-                            let (status, writer1) = send_blob(
-                                db.clone(),
-                                blob.hash,
-                                writer,
-                                &mut out_buffer,
-                                request.id,
-                            )
+                let mut data = BytesMut::from(&encoded[..]);
+                writer.write_buf(&mut data).await?;
+                for blob in c.blobs {
+                    let (status, writer1) =
+                        send_blob(db.clone(), blob.hash, writer, &mut out_buffer, request.id)
                             .await?;
-                            writer = writer1;
-                            if SentStatus::NotFound == status {
-                                break;
-                            }
-                        }
-                        let _ = events.send(Event::TransferCompleted {
-                            connection_id,
-                            request_id: request.id,
-                        });
-                    }
-                    _ => {
-                        debug!("not found {}", hash);
-                        write_response(&mut writer, &mut out_buffer, request.id, Res::NotFound)
-                            .await?;
-
-                        let _ = events.send(Event::TransferAborted {
-                            connection_id,
-                            request_id: request.id,
-                        });
+                    writer = writer1;
+                    if SentStatus::NotFound == status {
+                        break;
                     }
                 }
 
+                writer.finish().await?;
+                let _ = events.send(Event::TransferCompleted {
+                    connection_id,
+                    request_id: request.id,
+                });
                 debug!("finished response");
             }
-            None => {
-                break;
+            _ => {
+                debug!("not found {}", hash);
+                write_response(&mut writer, &mut out_buffer, request.id, Res::NotFound).await?;
+                writer.finish().await?;
+                // TODO: If the connection drops mid-way we also need to emit this!
+                let _ = events.send(Event::TransferAborted {
+                    connection_id,
+                    request_id: request.id,
+                });
             }
         }
-        in_buffer.clear();
     }
 
     Ok(())

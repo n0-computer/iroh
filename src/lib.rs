@@ -19,16 +19,21 @@ mod tests {
         net::SocketAddr,
         path::PathBuf,
         sync::{atomic::AtomicUsize, Arc},
+        time::Duration,
     };
 
-    use crate::tls::PeerId;
-    use crate::{protocol::AuthToken, util::Hash};
-
-    use super::*;
-    use anyhow::Result;
+    use anyhow::{anyhow, Context, Result};
     use rand::RngCore;
     use testdir::testdir;
-    use tokio::io::AsyncReadExt;
+    use tokio::fs;
+    use tokio::io::{self, AsyncReadExt};
+
+    use crate::protocol::AuthToken;
+    use crate::provider::{create_collection, Event, Provider};
+    use crate::tls::PeerId;
+    use crate::util::Hash;
+
+    use super::*;
 
     #[tokio::test]
     async fn basics() -> Result<()> {
@@ -204,7 +209,13 @@ mod tests {
         let events_task = tokio::task::spawn(async move {
             let mut events = Vec::new();
             while let Ok(event) = provider_events.recv().await {
-                events.push(event);
+                match event {
+                    Event::TransferCompleted { .. } => {
+                        events.push(event);
+                        break;
+                    }
+                    _ => events.push(event),
+                }
             }
             events
         });
@@ -245,12 +256,77 @@ mod tests {
         )
         .await?;
 
+        // We have to wait for the completed event before shutting down the provider.
+        let events = tokio::time::timeout(Duration::from_secs(30), events_task)
+            .await
+            .expect("duration expired")
+            .expect("events task failed");
         provider.shutdown();
-        provider.await.ok(); // .abort() makes this a Result::Err
+        provider.await?;
 
-        let events = events_task.await.unwrap();
         assert_eq!(events.len(), 3);
 
         Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_server_close() {
+        // Prepare a Provider transferring a file.
+        let dir = testdir!();
+        let src = dir.join("src");
+        fs::write(&src, "hello there").await.unwrap();
+        let (db, hash) = create_collection(vec![src.into()]).await.unwrap();
+        let mut provider = Provider::builder(db)
+            .bind_addr("127.0.0.1:0".parse().unwrap())
+            .spawn()
+            .unwrap();
+        let auth_token = provider.auth_token();
+        let provider_addr = provider.listen_addr();
+
+        // This tasks closes the connection on the provider side as soon as the transfer
+        // completes.
+        let supervisor = tokio::spawn(async move {
+            let mut events = provider.subscribe();
+            loop {
+                tokio::select! {
+                    biased;
+                    res = &mut provider => break res.context("provider failed"),
+                    maybe_event = events.recv() => {
+                        match maybe_event {
+                            Ok(event) => {
+                                match event {
+                                    Event::TransferCompleted { .. } => provider.shutdown(),
+                                    Event::TransferAborted { .. } => {
+                                        break Err(anyhow!("transfer aborted"));
+                                    }
+                                    _ => (),
+                                }
+                            }
+                            Err(err) => break Err(anyhow!("event failed: {err:#}")),
+                        }
+                    }
+                }
+            }
+        });
+
+        get::run(
+            hash,
+            auth_token,
+            get::Options {
+                addr: provider_addr,
+                peer_id: None,
+            },
+            || async move { Ok(()) },
+            |_collection| async move { Ok(()) },
+            |_hash, mut stream, _name| async move {
+                io::copy(&mut stream, &mut io::sink()).await?;
+                Ok(stream)
+            },
+        )
+        .await
+        .unwrap();
+
+        // Unwrap the JoinHandle, then the result of the Provider
+        supervisor.await.unwrap().unwrap();
     }
 }
