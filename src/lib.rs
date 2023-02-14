@@ -3,6 +3,7 @@
 #![deny(rustdoc::broken_intra_doc_links)]
 pub mod blobs;
 pub mod get;
+pub mod progress;
 pub mod protocol;
 pub mod provider;
 

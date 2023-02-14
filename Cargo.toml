@@ -24,6 +24,7 @@ ed25519-dalek = { version = "1.0.1", features = ["serde"] }
 futures = "0.3.25"
 indicatif = { version = "0.17", features = ["tokio"], optional = true }
 multibase = { version = "0.9.1", optional = true }
+portable-atomic = "1"
 postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"] }
 quinn = "0.9.3"
 rand = "0.7"
