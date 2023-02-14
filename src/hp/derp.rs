@@ -3,6 +3,11 @@ use std::{
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
 };
 
+pub mod http {
+    #[derive(Default, Debug, Clone)]
+    pub struct Client {}
+}
+
 #[derive(Debug, Default, Clone)]
 pub struct DerpMap {
     pub regions: HashMap<usize, DerpRegion>,
