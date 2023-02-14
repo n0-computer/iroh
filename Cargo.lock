@@ -781,7 +781,7 @@ checksum = "cef509aa9bc73864d6756f0d34d35504af3cf0844373afe9b8669a5b8005a729"
 dependencies = [
  "console",
  "number_prefix",
- "portable-atomic",
+ "portable-atomic 0.3.19",
  "tokio",
  "unicode-width",
 ]
@@ -1205,6 +1205,12 @@ name = "portable-atomic"
 version = "0.3.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "26f6a7b87c2e435a3241addceeeff740ff8b7e76b74c13bf9acb17fa454ea00b"
+
+[[package]]
+name = "portable-atomic"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "39c00c8683a03bd4fe7db7dd64ab4abee6b42166bc81231da983486ce96be51a"
 
 [[package]]
 name = "postcard"
@@ -1714,6 +1720,7 @@ dependencies = [
  "hex",
  "indicatif",
  "multibase",
+ "portable-atomic 1.0.1",
  "postcard",
  "proptest",
  "quinn",
