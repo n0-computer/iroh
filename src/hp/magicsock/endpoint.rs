@@ -13,7 +13,7 @@ use tokio::{
 
 use crate::hp::{cfg, key, stun};
 
-use super::{Conn, EndpointState, PeerInfo, SentPing};
+use super::{Conn, PeerInfo, PongReply, SentPing};
 
 /// A wireguard/conn.Endpoint that picks the best available path to communicate with a peer,
 /// based on network conditions and what the peer supports.
@@ -639,21 +639,6 @@ impl Endpoint {
     // 	return a.latency < b.latency
     // }
 
-    // // endpoint.mu must be held.
-    // func (st *endpointState) addPongReplyLocked(r pongReply) {
-    // 	if n := len(st.recentPongs); n < pongHistoryCount {
-    // 		st.recentPong = uint16(n)
-    // 		st.recentPongs = append(st.recentPongs, r)
-    // 		return
-    // 	}
-    // 	i := st.recentPong + 1
-    // 	if i == pongHistoryCount {
-    // 		i = 0
-    // 	}
-    // 	st.recentPongs[i] = r
-    // 	st.recentPong = i
-    // }
-
     // // handleCallMeMaybe handles a CallMeMaybe discovery message via
     // // DERP. The contract for use of this message is that the peer has
     // // already sent to us via UDP, so their stateful firewall should be
@@ -776,6 +761,13 @@ impl Endpoint {
     // func (de *endpoint) numStopAndReset() int64 {
     // 	return atomic.LoadInt64(&de.numStopAndResetAtomic)
     // }
+
+    // func (de *endpoint) deleteEndpointLocked(ep netip.AddrPort) {
+    // 	delete(de.endpointState, ep)
+    // 	if de.bestAddr.AddrPort == ep {
+    // 		de.bestAddr = addrLatency{}
+    // 	}
+    // }
 }
 
 /// A `SocketAddr` with an associated latency.
@@ -886,4 +878,70 @@ impl PeerMap {
             }
         }
     }
+}
+
+/// Some state and history for a specific endpoint of a endpoint.
+/// (The subject is the endpoint.endpointState map key)
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct EndpointState {
+    /// The last (outgoing) ping time.
+    last_ping: Instant,
+
+    /// If non-zero, means that this was an endpoint
+    /// that we learned about at runtime (from an incoming ping)
+    /// and that is not in the network map. If so, we keep the time
+    /// updated and use it to discard old candidates.
+    last_got_ping: Option<Instant>,
+
+    /// Contains the TxID for the last incoming ping. This is
+    /// used to de-dup incoming pings that we may see on both the raw disco
+    /// socket on Linux, and UDP socket. We cannot rely solely on the raw socket
+    /// disco handling due to https://github.com/tailscale/tailscale/issues/7078.
+    last_got_ping_tx_id: stun::TransactionId,
+
+    /// If non-zero, is the time this endpoint was advertised last via a call-me-maybe disco message.
+    call_me_maybe_time: Option<Instant>,
+
+    /// Ring buffer up to PongHistoryCount entries
+    recent_pongs: Vec<PongReply>,
+    /// Index into recentPongs of most recent; older before, wrapped
+    recent_pong: usize,
+
+    /// Index in nodecfg.Node.Endpoints; meaningless if last_got_ping non-zero.
+    index: usize,
+}
+
+// // indexSentinelDeleted is the temporary value that endpointState.index takes while
+// // a endpoint's endpoints are being updated from a new network map.
+// const indexSentinelDeleted = -1
+
+impl EndpointState {
+    // // endpoint.mu must be held.
+    // func (st *endpointState) addPongReplyLocked(r pongReply) {
+    // 	if n := len(st.recentPongs); n < pongHistoryCount {
+    // 		st.recentPong = uint16(n)
+    // 		st.recentPongs = append(st.recentPongs, r)
+    // 		return
+    // 	}
+    // 	i := st.recentPong + 1
+    // 	if i == pongHistoryCount {
+    // 		i = 0
+    // 	}
+    // 	st.recentPongs[i] = r
+    // 	st.recentPong = i
+    // }
+
+    // // shouldDeleteLocked reports whether we should delete this endpoint.
+    // func (st *endpointState) shouldDeleteLocked() bool {
+    // 	switch {
+    // 	case !st.callMeMaybeTime.IsZero():
+    // 		return false
+    // 	case st.lastGotPing.IsZero():
+    // 		// This was an endpoint from the network map. Is it still in the network map?
+    // 		return st.index == indexSentinelDeleted
+    // 	default:
+    // 		// This was an endpoint discovered at runtime.
+    // 		return time.Since(st.lastGotPing) > sessionActiveTimeout
+    // 	}
+    // }
 }

@@ -16,7 +16,7 @@ use crate::hp::{
     key, monitor, netcheck, netmap, portmapper,
 };
 
-use super::{endpoint::PeerMap, ActiveDerp, ConnBind, Endpoint, RebindingUdpConn};
+use super::{endpoint::PeerMap, rebinding_conn::RebindingUdpConn, ActiveDerp, ConnBind, Endpoint};
 
 /// Contains options for `Conn::listen`.
 pub struct Options {
@@ -2457,6 +2457,440 @@ impl Conn {
     // // Bind returns the wireguard-go conn.Bind for c.
     // func (c *Conn) Bind() conn.Bind {
     // 	return c.bind
+    // }
+
+    // func (c *Conn) derpRegionCodeOfAddrLocked(ipPort string) string {
+    // 	_, portStr, err := net.SplitHostPort(ipPort)
+    // 	if err != nil {
+    // 		return ""
+    // 	}
+    // 	regionID, err := strconv.Atoi(portStr)
+    // 	if err != nil {
+    // 		return ""
+    // 	}
+    // 	return c.derpRegionCodeOfIDLocked(regionID)
+    // }
+
+    // func (c *Conn) derpRegionCodeOfIDLocked(regionID int) string {
+    // 	if c.derpMap == nil {
+    // 		return ""
+    // 	}
+    // 	if r, ok := c.derpMap.Regions[regionID]; ok {
+    // 		return r.RegionCode
+    // 	}
+    // 	return ""
+    // }
+
+    // func (c *Conn) UpdateStatus(sb *ipnstate.StatusBuilder) {
+    // 	c.mu.Lock()
+    // 	defer c.mu.Unlock()
+
+    // 	var tailscaleIPs []netip.Addr
+    // 	if c.netMap != nil {
+    // 		tailscaleIPs = make([]netip.Addr, 0, len(c.netMap.Addresses))
+    // 		for _, addr := range c.netMap.Addresses {
+    // 			if !addr.IsSingleIP() {
+    // 				continue
+    // 			}
+    // 			sb.AddTailscaleIP(addr.Addr())
+    // 			tailscaleIPs = append(tailscaleIPs, addr.Addr())
+    // 		}
+    // 	}
+
+    // 	sb.MutateSelfStatus(func(ss *ipnstate.PeerStatus) {
+    // 		if !c.privateKey.IsZero() {
+    // 			ss.PublicKey = c.privateKey.Public()
+    // 		} else {
+    // 			ss.PublicKey = key.NodePublic{}
+    // 		}
+    // 		ss.Addrs = make([]string, 0, len(c.lastEndpoints))
+    // 		for _, ep := range c.lastEndpoints {
+    // 			ss.Addrs = append(ss.Addrs, ep.Addr.String())
+    // 		}
+    // 		ss.OS = version.OS()
+    // 		if c.derpMap != nil {
+    // 			derpRegion, ok := c.derpMap.Regions[c.myDerp]
+    // 			if ok {
+    // 				ss.Relay = derpRegion.RegionCode
+    // 			}
+    // 		}
+    // 		ss.TailscaleIPs = tailscaleIPs
+    // 	})
+
+    // 	if sb.WantPeers {
+    // 		c.peerMap.forEachEndpoint(func(ep *endpoint) {
+    // 			ps := &ipnstate.PeerStatus{InMagicSock: true}
+    // 			//ps.Addrs = append(ps.Addrs, n.Endpoints...)
+    // 			ep.populatePeerStatus(ps)
+    // 			sb.AddPeer(ep.publicKey, ps)
+    // 		})
+    // 	}
+
+    // 	c.foreachActiveDerpSortedLocked(func(node int, ad activeDerp) {
+    // 		// TODO(bradfitz): add to ipnstate.StatusBuilder
+    // 		//f("<li><b>derp-%v</b>: cr%v,wr%v</li>", node, simpleDur(now.Sub(ad.createTime)), simpleDur(now.Sub(*ad.lastWrite)))
+    // 	})
+    // }
+
+    // // SetStatistics specifies a per-connection statistics aggregator.
+    // // Nil may be specified to disable statistics gathering.
+    // func (c *Conn) SetStatistics(stats *connstats.Statistics) {
+    // 	c.stats.Store(stats)
+    // }
+
+    // // Close closes the connection.
+    // //
+    // // Only the first close does anything. Any later closes return nil.
+    // func (c *Conn) Close() error {
+    // 	c.mu.Lock()
+    // 	defer c.mu.Unlock()
+    // 	if c.closed {
+    // 		return nil
+    // 	}
+    // 	c.closing.Store(true)
+    // 	if c.derpCleanupTimerArmed {
+    // 		c.derpCleanupTimer.Stop()
+    // 	}
+    // 	c.stopPeriodicReSTUNTimerLocked()
+    // 	c.portMapper.Close()
+
+    // 	c.peerMap.forEachEndpoint(func(ep *endpoint) {
+    // 		ep.stopAndReset()
+    // 	})
+
+    // 	c.closed = true
+    // 	c.connCtxCancel()
+    // 	c.closeAllDerpLocked("conn-close")
+    // 	// Ignore errors from c.pconnN.Close.
+    // 	// They will frequently have been closed already by a call to connBind.Close.
+    // 	c.pconn6.Close()
+    // 	c.pconn4.Close()
+
+    // 	// Wait on goroutines updating right at the end, once everything is
+    // 	// already closed. We want everything else in the Conn to be
+    // 	// consistently in the closed state before we release mu to wait
+    // 	// on the endpoint updater & derphttp.Connect.
+    // 	for c.goroutinesRunningLocked() {
+    // 		c.muCond.Wait()
+    // 	}
+    // 	return nil
+    // }
+
+    // func (c *Conn) goroutinesRunningLocked() bool {
+    // 	if c.endpointsUpdateActive {
+    // 		return true
+    // 	}
+    // 	// The goroutine running dc.Connect in derpWriteChanOfAddr may linger
+    // 	// and appear to leak, as observed in https://github.com/tailscale/tailscale/issues/554.
+    // 	// This is despite the underlying context being cancelled by connCtxCancel above.
+    // 	// To avoid this condition, we must wait on derpStarted here
+    // 	// to ensure that this goroutine has exited by the time Close returns.
+    // 	// We only do this if derpWriteChanOfAddr has executed at least once:
+    // 	// on the first run, it sets firstDerp := true and spawns the aforementioned goroutine.
+    // 	// To detect this, we check activeDerp, which is initialized to non-nil on the first run.
+    // 	if c.activeDerp != nil {
+    // 		select {
+    // 		case <-c.derpStarted:
+    // 			break
+    // 		default:
+    // 			return true
+    // 		}
+    // 	}
+    // 	return false
+    // }
+
+    // func maxIdleBeforeSTUNShutdown() time.Duration {
+    // 	if debugReSTUNStopOnIdle() {
+    // 		return 45 * time.Second
+    // 	}
+    // 	return sessionActiveTimeout
+    // }
+
+    // func (c *Conn) shouldDoPeriodicReSTUNLocked() bool {
+    // 	if c.networkDown() {
+    // 		return false
+    // 	}
+    // 	if len(c.peerSet) == 0 || c.privateKey.IsZero() {
+    // 		// If no peers, not worth doing.
+    // 		// Also don't if there's no key (not running).
+    // 		return false
+    // 	}
+    // 	if f := c.idleFunc; f != nil {
+    // 		idleFor := f()
+    // 		if debugReSTUNStopOnIdle() {
+    // 			c.logf("magicsock: periodicReSTUN: idle for %v", idleFor.Round(time.Second))
+    // 		}
+    // 		if idleFor > maxIdleBeforeSTUNShutdown() {
+    // 			if c.netMap != nil && c.netMap.Debug != nil && c.netMap.Debug.ForceBackgroundSTUN {
+    // 				// Overridden by control.
+    // 				return true
+    // 			}
+    // 			return false
+    // 		}
+    // 	}
+    // 	return true
+    // }
+
+    // func (c *Conn) onPortMapChanged() { c.ReSTUN("portmap-changed") }
+
+    // // ReSTUN triggers an address discovery.
+    // // The provided why string is for debug logging only.
+    // func (c *Conn) ReSTUN(why string) {
+    // 	c.mu.Lock()
+    // 	defer c.mu.Unlock()
+    // 	if c.closed {
+    // 		// raced with a shutdown.
+    // 		return
+    // 	}
+    // 	metricReSTUNCalls.Add(1)
+
+    // 	// If the user stopped the app, stop doing work. (When the
+    // 	// user stops Tailscale via the GUI apps, ipn/local.go
+    // 	// reconfigures the engine with a zero private key.)
+    // 	//
+    // 	// This used to just check c.privateKey.IsZero, but that broke
+    // 	// some end-to-end tests that didn't ever set a private
+    // 	// key somehow. So for now, only stop doing work if we ever
+    // 	// had a key, which helps real users, but appeases tests for
+    // 	// now. TODO: rewrite those tests to be less brittle or more
+    // 	// realistic.
+    // 	if c.privateKey.IsZero() && c.everHadKey {
+    // 		c.logf("magicsock: ReSTUN(%q) ignored; stopped, no private key", why)
+    // 		return
+    // 	}
+
+    // 	if c.endpointsUpdateActive {
+    // 		if c.wantEndpointsUpdate != why {
+    // 			c.dlogf("[v1] magicsock: ReSTUN: endpoint update active, need another later (%q)", why)
+    // 			c.wantEndpointsUpdate = why
+    // 		}
+    // 	} else {
+    // 		c.endpointsUpdateActive = true
+    // 		go c.updateEndpoints(why)
+    // 	}
+    // }
+
+    // // listenPacket opens a packet listener.
+    // // The network must be "udp4" or "udp6".
+    // func (c *Conn) listenPacket(network string, port uint16) (nettype.PacketConn, error) {
+    // 	ctx := context.Background() // unused without DNS name to resolve
+    // 	addr := net.JoinHostPort("", fmt.Sprint(port))
+    // 	if c.testOnlyPacketListener != nil {
+    // 		return nettype.MakePacketListenerWithNetIP(c.testOnlyPacketListener).ListenPacket(ctx, network, addr)
+    // 	}
+    // 	return nettype.MakePacketListenerWithNetIP(netns.Listener(c.logf)).ListenPacket(ctx, network, addr)
+    // }
+
+    // var debugBindSocket = envknob.RegisterBool("TS_DEBUG_MAGICSOCK_BIND_SOCKET")
+
+    // // bindSocket initializes rucPtr if necessary and binds a UDP socket to it.
+    // // Network indicates the UDP socket type; it must be "udp4" or "udp6".
+    // // If rucPtr had an existing UDP socket bound, it closes that socket.
+    // // The caller is responsible for informing the portMapper of any changes.
+    // // If curPortFate is set to dropCurrentPort, no attempt is made to reuse
+    // // the current port.
+    // func (c *Conn) bindSocket(ruc *RebindingUDPConn, network string, curPortFate currentPortFate) error {
+    // 	if debugBindSocket() {
+    // 		c.logf("magicsock: bindSocket: network=%q curPortFate=%v", network, curPortFate)
+    // 	}
+
+    // 	// Hold the ruc lock the entire time, so that the close+bind is atomic
+    // 	// from the perspective of ruc receive functions.
+    // 	ruc.mu.Lock()
+    // 	defer ruc.mu.Unlock()
+
+    // 	if runtime.GOOS == "js" {
+    // 		ruc.setConnLocked(newBlockForeverConn(), "")
+    // 		return nil
+    // 	}
+
+    // 	if debugAlwaysDERP() {
+    // 		c.logf("disabled %v per TS_DEBUG_ALWAYS_USE_DERP", network)
+    // 		ruc.setConnLocked(newBlockForeverConn(), "")
+    // 		return nil
+    // 	}
+
+    // 	// Build a list of preferred ports.
+    // 	// Best is the port that the user requested.
+    // 	// Second best is the port that is currently in use.
+    // 	// If those fail, fall back to 0.
+    // 	var ports []uint16
+    // 	if port := uint16(c.port.Load()); port != 0 {
+    // 		ports = append(ports, port)
+    // 	}
+    // 	if ruc.pconn != nil && curPortFate == keepCurrentPort {
+    // 		curPort := uint16(ruc.localAddrLocked().Port)
+    // 		ports = append(ports, curPort)
+    // 	}
+    // 	ports = append(ports, 0)
+    // 	// Remove duplicates. (All duplicates are consecutive.)
+    // 	uniq.ModifySlice(&ports)
+
+    // 	if debugBindSocket() {
+    // 		c.logf("magicsock: bindSocket: candidate ports: %+v", ports)
+    // 	}
+
+    // 	var pconn nettype.PacketConn
+    // 	for _, port := range ports {
+    // 		// Close the existing conn, in case it is sitting on the port we want.
+    // 		err := ruc.closeLocked()
+    // 		if err != nil && !errors.Is(err, net.ErrClosed) && !errors.Is(err, errNilPConn) {
+    // 			c.logf("magicsock: bindSocket %v close failed: %v", network, err)
+    // 		}
+    // 		// Open a new one with the desired port.
+    // 		pconn, err = c.listenPacket(network, port)
+    // 		if err != nil {
+    // 			c.logf("magicsock: unable to bind %v port %d: %v", network, port, err)
+    // 			continue
+    // 		}
+    // 		trySetSocketBuffer(pconn, c.logf)
+    // 		// Success.
+    // 		if debugBindSocket() {
+    // 			c.logf("magicsock: bindSocket: successfully listened %v port %d", network, port)
+    // 		}
+    // 		ruc.setConnLocked(pconn, network)
+    // 		if network == "udp4" {
+    // 			health.SetUDP4Unbound(false)
+    // 		}
+    // 		return nil
+    // 	}
+
+    // 	// Failed to bind, including on port 0 (!).
+    // 	// Set pconn to a dummy conn whose reads block until closed.
+    // 	// This keeps the receive funcs alive for a future in which
+    // 	// we get a link change and we can try binding again.
+    // 	ruc.setConnLocked(newBlockForeverConn(), "")
+    // 	if network == "udp4" {
+    // 		health.SetUDP4Unbound(true)
+    // 	}
+    // 	return fmt.Errorf("failed to bind any ports (tried %v)", ports)
+    // }
+
+    // type currentPortFate uint8
+
+    // const (
+    // 	keepCurrentPort = currentPortFate(0)
+    // 	dropCurrentPort = currentPortFate(1)
+    // )
+
+    // // rebind closes and re-binds the UDP sockets.
+    // // We consider it successful if we manage to bind the IPv4 socket.
+    // func (c *Conn) rebind(curPortFate currentPortFate) error {
+    // 	if err := c.bindSocket(&c.pconn6, "udp6", curPortFate); err != nil {
+    // 		c.logf("magicsock: Rebind ignoring IPv6 bind failure: %v", err)
+    // 	}
+    // 	if err := c.bindSocket(&c.pconn4, "udp4", curPortFate); err != nil {
+    // 		return fmt.Errorf("magicsock: Rebind IPv4 failed: %w", err)
+    // 	}
+    // 	c.portMapper.SetLocalPort(c.LocalPort())
+    // 	return nil
+    // }
+
+    // // Rebind closes and re-binds the UDP sockets and resets the DERP connection.
+    // // It should be followed by a call to ReSTUN.
+    // func (c *Conn) Rebind() {
+    // 	metricRebindCalls.Add(1)
+    // 	if err := c.rebind(keepCurrentPort); err != nil {
+    // 		c.logf("%w", err)
+    // 		return
+    // 	}
+
+    // 	var ifIPs []netip.Prefix
+    // 	if c.linkMon != nil {
+    // 		st := c.linkMon.InterfaceState()
+    // 		defIf := st.DefaultRouteInterface
+    // 		ifIPs = st.InterfaceIPs[defIf]
+    // 		c.logf("Rebind; defIf=%q, ips=%v", defIf, ifIPs)
+    // 	}
+
+    // 	c.maybeCloseDERPsOnRebind(ifIPs)
+    // 	c.resetEndpointStates()
+    // }
+
+    // // resetEndpointStates resets the preferred address for all peers.
+    // // This is called when connectivity changes enough that we no longer
+    // // trust the old routes.
+    // func (c *Conn) resetEndpointStates() {
+    // 	c.mu.Lock()
+    // 	defer c.mu.Unlock()
+    // 	c.peerMap.forEachEndpoint(func(ep *endpoint) {
+    // 		ep.noteConnectivityChange()
+    // 	})
+    // }
+
+    // // packIPPort packs an IPPort into the form wanted by WireGuard.
+    // func packIPPort(ua netip.AddrPort) []byte {
+    // 	ip := ua.Addr().Unmap()
+    // 	a := ip.As16()
+    // 	ipb := a[:]
+    // 	if ip.Is4() {
+    // 		ipb = ipb[12:]
+    // 	}
+    // 	b := make([]byte, 0, len(ipb)+2)
+    // 	b = append(b, ipb...)
+    // 	b = append(b, byte(ua.Port()))
+    // 	b = append(b, byte(ua.Port()>>8))
+    // 	return b
+    // }
+
+    // // ParseEndpoint is called by WireGuard to connect to an endpoint.
+    // func (c *Conn) ParseEndpoint(nodeKeyStr string) (conn.Endpoint, error) {
+    // 	k, err := key.ParseNodePublicUntyped(mem.S(nodeKeyStr))
+    // 	if err != nil {
+    // 		return nil, fmt.Errorf("magicsock: ParseEndpoint: parse failed on %q: %w", nodeKeyStr, err)
+    // 	}
+
+    // 	c.mu.Lock()
+    // 	defer c.mu.Unlock()
+    // 	if c.closed {
+    // 		return nil, errConnClosed
+    // 	}
+    // 	ep, ok := c.peerMap.endpointForNodeKey(k)
+    // 	if !ok {
+    // 		// We should never be telling WireGuard about a new peer
+    // 		// before magicsock knows about it.
+    // 		c.logf("[unexpected] magicsock: ParseEndpoint: unknown node key=%s", k.ShortString())
+    // 		return nil, fmt.Errorf("magicsock: ParseEndpoint: unknown peer %q", k.ShortString())
+    // 	}
+
+    // 	return ep, nil
+    // }
+
+    // type batchReaderWriter interface {
+    // 	batchReader
+    // 	batchWriter
+    // }
+
+    // type batchWriter interface {
+    // 	WriteBatch([]ipv6.Message, int) (int, error)
+    // }
+
+    // type batchReader interface {
+    // 	ReadBatch([]ipv6.Message, int) (int, error)
+    // }
+
+    // // udpConnWithBatchOps wraps a *net.UDPConn in order to extend it to support
+    // // batch operations.
+    // //
+    // // TODO(jwhited): This wrapping is temporary. https://github.com/golang/go/issues/45886
+    // type udpConnWithBatchOps struct {
+    // 	*net.UDPConn
+    // 	xpc batchReaderWriter
+    // }
+
+    // func newUDPConnWithBatchOps(conn *net.UDPConn, network string) udpConnWithBatchOps {
+    // 	ucbo := udpConnWithBatchOps{
+    // 		UDPConn: conn,
+    // 	}
+    // 	switch network {
+    // 	case "udp4":
+    // 		ucbo.xpc = ipv4.NewPacketConn(conn)
+    // 	case "udp6":
+    // 		ucbo.xpc = ipv6.NewPacketConn(conn)
+    // 	default:
+    // 		panic("bogus network")
+    // 	}
+    // 	return ucbo
     // }
 }
 
