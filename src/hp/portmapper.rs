@@ -15,3 +15,7 @@ impl PortMapper {
         todo!()
     }
 }
+
+/// A port mapping client.
+#[derive(Debug)]
+pub struct Client {}
