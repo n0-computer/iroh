@@ -4,7 +4,7 @@ use std::{
 };
 
 pub mod http {
-    #[derive(Default, Debug, Clone)]
+    #[derive(Default, Debug, Clone, PartialEq, Eq)]
     pub struct Client {}
 }
 
