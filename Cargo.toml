@@ -8,7 +8,7 @@ authors = ["dignifiedquire <me@dignifiedquire.com>"]
 repository = "https://github.com/n0-computer/sendme"
 
 # Sadly this also needs to be updated in .github/workflows/ci.yml
-rust-version = "1.64"
+rust-version = "1.63"
 
 [dependencies]
 anyhow = { version = "1", features = ["backtrace"] }
