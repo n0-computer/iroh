@@ -2,7 +2,23 @@
 //!
 //! Based on tailscale/wgengine/magicsock
 
-use std::{collections::HashMap, net::SocketAddr};
+use std::{
+    collections::{HashMap, HashSet},
+    net::{IpAddr, SocketAddr},
+    ops::Deref,
+    sync::{atomic::AtomicBool, Arc},
+    time::Duration,
+};
+
+use tokio::{
+    sync::{self, Mutex, RwLock},
+    time::{self, Instant},
+};
+
+use super::{
+    derp::{self, DerpMap},
+    monitor, stun,
+};
 
 /// UDP socket read/write buffer size (7MB). The value of 7MB is chosen as it
 /// is the max supported by a default configuration of macOS. Some platforms will silently clamp the value.
@@ -22,14 +38,14 @@ fn use_derp_route() -> bool {
 }
 
 /// All the information magicsock tracks about a particular peer.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct PeerInfo {
     ep: Endpoint,
     // ipPorts is an inverted version of peerMap.byIPPort (below), so
     // that when we're deleting this node, we can rapidly find out the
     // keys that need deleting from peerMap.byIPPort without having to
     // iterate over every IPPort known for any peer.
-    ip_ports: HashSet<SocketAddr, bool>,
+    ip_ports: Arc<HashMap<SocketAddr, bool>>,
 }
 
 impl PeerInfo {
@@ -41,14 +57,160 @@ impl PeerInfo {
     }
 }
 
+mod netmap {
+    //! Based on tailscale/types/netmap
+
+    #[derive(Debug)]
+    pub struct NetworkMap {}
+}
+
+mod cfg {
+    //! Types from tailscale/tailcfg
+
+    use std::{
+        collections::HashMap,
+        fmt::Display,
+        net::{IpAddr, SocketAddr},
+    };
+
+    /// An endpoint IPPort and an associated type.
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct Endpoint {
+        pub addr: SocketAddr,
+        pub typ: EndpointType,
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum EndpointType {
+        Unknown,
+        Local,
+        Stun,
+        Portmapped,
+        /// hard NAT: STUN'ed IPv4 address + local fixed port
+        Stun4LocalPort,
+    }
+
+    impl Display for EndpointType {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            match self {
+                EndpointType::Unknown => write!(f, "?"),
+                EndpointType::Local => write!(f, "local"),
+                EndpointType::Stun => write!(f, "stun"),
+                EndpointType::Portmapped => write!(f, "portmap"),
+                EndpointType::Stun4LocalPort => write!(f, "stun4localport"),
+            }
+        }
+    }
+
+    /// Contains information about the host's network state.
+    #[derive(Debug, Clone, PartialEq)]
+    pub struct NetInfo {
+        /// Says whether the host's NAT mappings vary based on the destination IP.
+        pub mapping_varies_by_dest_ip: Option<bool>,
+
+        /// If their router does hairpinning. It reports true even if there's no NAT involved.
+        pub hair_pinning: Option<bool>,
+
+        /// Whether the host has IPv6 internet connectivity.
+        pub working_i_pv6: Option<bool>,
+
+        /// Whether the OS supports IPv6 at all, regardless of whether IPv6 internet connectivity is available.
+        pub os_has_i_pv6: Option<bool>,
+
+        /// Whether the host has UDP internet connectivity.
+        pub working_udp: Option<bool>,
+
+        /// Whether ICMPv4 works. Empty means not checked.
+        pub working_icm_pv4: Option<bool>,
+
+        /// Whether we have an existing portmap open (UPnP, PMP, or PCP).
+        pub have_port_map: bool,
+
+        /// Whether UPnP appears present on the LAN. Empty means not checked.
+        pub upnp: Option<bool>,
+
+        /// Whether NAT-PMP appears present on the LAN. Empty means not checked.
+        pub pmp: Option<bool>,
+
+        /// Whether PCP appears present on the LAN. Empty means not checked.
+        pub pcp: Option<bool>,
+
+        /// This node's preferred DERP server for incoming traffic. The node might be be temporarily
+        /// connected to multiple DERP servers (to send to other nodes)
+        /// but PreferredDERP is the instance number that the node
+        /// subscribes to traffic at. Zero means disconnected or unknown.
+        pub preferred_derp: usize,
+
+        /// LinkType is the current link type, if known.
+        pub link_type: Option<LinkType>,
+
+        /// The fastest recent time to reach various DERP STUN servers, in seconds. The map key is the
+        /// "regionID-v4" or "-v6"; it was previously the DERP server's STUN host:port.
+        ///
+        /// This should only be updated rarely, or when there's a
+        /// material change, as any change here also gets uploaded to the control plane.
+        pub derp_latency: HashMap<String, f64>,
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum LinkType {
+        Wired,
+        Wifi,
+        //LTE, 4G, 3G, etc
+        Mobile,
+    }
+
+    /// Contains response information for the "tailscale ping" subcommand,
+    /// saying how Tailscale can reach a Tailscale IP or subnet-routed IP.
+    /// See tailcfg.PingResponse for a related response that is sent back to control
+    /// for remote diagnostic pings.
+    // Based on tailscale/ipnstate
+    #[derive(Debug, Clone, PartialEq)]
+    pub struct PingResult {
+        /// ping destination
+        pub ip: IpAddr,
+        /// Tailscale IP of node handling IP (different for subnet routers)
+        pub node_ip: IpAddr,
+        /// DNS name base or (possibly not unique) hostname
+        pub node_name: String,
+
+        pub err: String,
+        pub latency_seconds: f64,
+
+        /// The ip:port if direct UDP was used. It is not currently set for TSMP pings.
+        pub endpoint: SocketAddr,
+
+        /// Non-zero DERP region ID if DERP was used. It is not currently set for TSMP pings.
+        pub derp_region_id: usize,
+
+        /// The three-letter region code corresponding to derp_region_id. It is not currently set for TSMP pings.
+        pub derp_region_code: String,
+
+        /// Whether the ping request error is due to it being a ping to the local node.
+        pub is_local_ip: bool,
+    }
+}
+
 mod key {
-    /// Public Node for a regular peer.
+    /// Public Key for a regular peer.
     #[derive(Debug, Clone, PartialEq, Eq, Hash)]
     pub struct NodePublic {}
 
-    /// Public Key for a DERP Node.
+    /// Private Key for a regular peer.
+    #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+    pub struct NodePrivate {}
+
+    /// Public Key for a discovery Node.
     #[derive(Debug, Clone, PartialEq, Eq, Hash)]
     pub struct DiscoPublic {}
+
+    /// Private Key for a discovery Node.
+    #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+    pub struct DiscoPrivate {}
+
+    /// Shared Secret for a discovery Node.
+    #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+    pub struct DiscoShared {}
 }
 
 /// An index of peerInfos by node (WireGuard) key, disco key, and discovered ip:port endpoints.
@@ -59,13 +221,13 @@ struct PeerMap {
     by_ip_port: HashMap<SocketAddr, PeerInfo>,
 
     /// nodesOfDisco contains the set of nodes that are using a DiscoKey. Usually those sets will be just one node.
-    nodes_of_disco: HashMap<key::DiscoPublic, HashSet<key::NodePublic, bool>>,
+    nodes_of_disco: HashMap<key::DiscoPublic, HashMap<key::NodePublic, bool>>,
 }
 
 impl PeerMap {
     /// Number of nodes currently listed.
     fn node_count(&self) -> usize {
-        self.byNodeKey.len()
+        self.by_node_key.len()
     }
 
     /// Reports whether there exists any peers in the netmap with dk as their DiscoKey.
@@ -88,7 +250,7 @@ impl PeerMap {
     where
         F: Fn(&Endpoint),
     {
-        for pi in &self.by_node_key {
+        for (_, pi) in &self.by_node_key {
             f(&pi.ep)
         }
     }
@@ -99,10 +261,12 @@ impl PeerMap {
     where
         F: Fn(&Endpoint) -> bool,
     {
-        for nk in &self.nodes_of_disco.get(dk) {
-            if let Some(pi) = self.by_node_key.get(nk) {
-                if !f(&pi.ep) {
-                    return;
+        if let Some(nodes) = self.nodes_of_disco.get(dk) {
+            for (nk, _) in nodes {
+                if let Some(pi) = self.by_node_key.get(nk) {
+                    if !f(&pi.ep) {
+                        return;
+                    }
                 }
             }
         }
@@ -111,16 +275,17 @@ impl PeerMap {
     /// Stores endpoint in the peerInfo for ep.publicKey, and updates indexes. m must already have a
     /// tailcfg.Node for ep.publicKey.
     fn upsert_endpoint(&mut self, ep: &Endpoint, old_disco_key: &key::DiscoPublic) {
-        if !self.by_node_key.contains_key(ep.public_key) {
-            self.by_node_key.insert(ep.public_key, PeerInfo::new(ep));
+        if !self.by_node_key.contains_key(&ep.public_key) {
+            self.by_node_key
+                .insert(ep.public_key, PeerInfo::new(ep.clone()));
         }
         if old_disco_key != ep.disco_key {
             if let Some(v) = self.nodes_of_disco.get_mut(old_disco_key) {
-                v.delete(ep.public_key);
+                v.remove(&ep.public_key);
             }
         }
         let mut set = self.nodes_of_disco.entry(ep.disco_key).or_default();
-        set.insert(ep.public_key);
+        set.insert(ep.public_key, true);
     }
 
     /// Makes future peer lookups by ipp return the same endpoint as a lookup by nk.
@@ -134,8 +299,8 @@ impl PeerMap {
             self.by_ip_port.remove(ipp);
         }
         if let Some(pi) = self.by_node_key.get(nk) {
-            pi.ip_ports.insert(ipp);
-            self.by_ip_port.insert(ipp, pi);
+            pi.ip_ports.insert(ipp.clone());
+            self.by_ip_port.insert(*ipp, pi);
         }
     }
 
@@ -144,25 +309,47 @@ impl PeerMap {
         ep.stop_and_reset();
         self.nodes_of_disco.remove(&ep.disco_key);
         if let Some(pi) = self.by_node_key.remove(&ep.public_key) {
-            for ip in pi.ip_ports {
+            for ip in pi.ip_ports.keys() {
                 self.by_ip_port.remove(ip);
             }
         }
     }
 }
 
-struct ConnOptions {
-    // epFunc:                 func([]tailcfg.Endpoint),
-    // derpActiveFunc:         func(),
-    // idleFunc:               func() time.Duration, // nil means unknown
-    // testOnlyPacketListener: nettype.PacketListener,
-    // noteRecvActivity:       func(key.NodePublic), // or nil, see Options.NoteRecvActivity
-    // linkMon:                *monitor.Mon,         // or nil
+/// Contains options for `Conn::listen`.
+pub struct Options {
+    /// The port to listen on.
+    // Zero means to pick one automatically.
+    pub port: u16,
+
+    /// Optionally provides a func to be called when endpoints change.
+    pub on_endpoints: Option<Box<dyn Fn(&Endpoint)>>,
+
+    // Optionally provides a func to be called when a connection is made to a DERP server.
+    pub on_derp_active: Option<Box<dyn Fn()>>,
+
+    // Optionally provides a func to return how long it's been since a TUN packet was sent or received.
+    pub on_idle: Option<Box<dyn Fn() -> Duration>>,
+
+    /// If provided, is a function for magicsock to call
+    /// whenever it receives a packet from a a peer if it's been more
+    /// than ~10 seconds since the last one. (10 seconds is somewhat
+    /// arbitrary; the sole user just doesn't need or want it called on
+    /// every packet, just every minute or two for WireGuard timeouts,
+    /// and 10 seconds seems like a good trade-off between often enough
+    /// and not too often.)
+    /// The provided func is likely to call back into
+    /// Conn.ParseEndpoint, which acquires Conn.mu. As such, you should
+    /// not hold Conn.mu while calling it.
+    pub on_note_recv_activity: Option<Box<dyn Fn(&key::NodePublic)>>,
+
+    /// The link monitor to use. With one, the portmapper won't be used.
+    pub link_monitor: Option<monitor::Monitor>,
 }
 
 /// Routes UDP packets and actively manages a list of its endpoints.
 pub struct Conn {
-    options: ConnOptions,
+    options: Options,
     // ================================================================
     // No locking required to access these fields, either because
     // they're static after construction, or are wholly owned by a single goroutine.
@@ -247,117 +434,99 @@ pub struct Conn {
 
     //     // stats maintains per-connection counters.
     //     stats atomic.Pointer[connstats.Statistics]
+    /// A callback that provides a `cfg::NetInfo` when discovered network conditions change.
+    net_info_func: Box<dyn Fn(&cfg::NetInfo)>,
 
     //     // ============================================================
     //     // mu guards all following fields; see userspaceEngine lock
     //     // ordering rules against the engine. For derphttp, mu must
     //     // be held before derphttp.Client.mu.
-    //     mu     sync.Mutex
-    //     muCond *sync.Cond
-
-    //     closed  bool        // Close was called
-    //     closing atomic.Bool // Close is in progress (or done)
-
-    //     // derpCleanupTimer is the timer that fires to occasionally clean
-    //     // up idle DERP connections. It's only used when there is a non-home
-    //     // DERP connection in use.
-    //     derpCleanupTimer *time.Timer
-
-    //     // derpCleanupTimerArmed is whether derpCleanupTimer is
-    //     // scheduled to fire within derpCleanStaleInterval.
-    //     derpCleanupTimerArmed bool
-
-    //     // periodicReSTUNTimer, when non-nil, is an AfterFunc timer
-    //     // that will call Conn.doPeriodicSTUN.
-    //     periodicReSTUNTimer *time.Timer
-
-    //     // endpointsUpdateActive indicates that updateEndpoints is
-    //     // currently running. It's used to deduplicate concurrent endpoint
-    //     // update requests.
-    //     endpointsUpdateActive bool
-    //     // wantEndpointsUpdate, if non-empty, means that a new endpoints
-    //     // update should begin immediately after the currently-running one
-    //     // completes. It can only be non-empty if
-    //     // endpointsUpdateActive==true.
-    //     wantEndpointsUpdate string // true if non-empty; string is reason
-    //     // lastEndpoints records the endpoints found during the previous
-    //     // endpoint discovery. It's used to avoid duplicate endpoint
-    //     // change notifications.
-    //     lastEndpoints []tailcfg.Endpoint
-
-    //     // lastEndpointsTime is the last time the endpoints were updated,
-    //     // even if there was no change.
-    //     lastEndpointsTime time.Time
-
-    //     // onEndpointRefreshed are funcs to run (in their own goroutines)
-    //     // when endpoints are refreshed.
-    //     onEndpointRefreshed map[*endpoint]func()
-
-    //     // peerSet is the set of peers that are currently configured in
-    //     // WireGuard. These are not used to filter inbound or outbound
-    //     // traffic at all, but only to track what state can be cleaned up
-    //     // in other maps below that are keyed by peer public key.
-    //     peerSet map[key.NodePublic]struct{}
-
-    //     // discoPrivate is the private naclbox key used for active
-    //     // discovery traffic. It's created once near (but not during)
-    //     // construction.
-    //     discoPrivate key.DiscoPrivate
-    //     discoPublic  key.DiscoPublic // public of discoPrivate
-    //     discoShort   string          // ShortString of discoPublic (to save logging work later)
-    //     // nodeOfDisco tracks the networkmap Node entity for each peer
-    //     // discovery key.
-    //     peerMap peerMap
-
-    //     // discoInfo is the state for an active DiscoKey.
-    //     discoInfo map[key.DiscoPublic]*discoInfo
-
-    //     // netInfoFunc is a callback that provides a tailcfg.NetInfo when
-    //     // discovered network conditions change.
-    //     //
-    //     // TODO(danderson): why can't it be set at construction time?
-    //     // There seem to be a few natural places in ipn/local.go to
-    //     // swallow untimely invocations.
-    //     netInfoFunc func(*tailcfg.NetInfo) // nil until set
-    //     // netInfoLast is the NetInfo provided in the last call to
-    //     // netInfoFunc. It's used to deduplicate calls to netInfoFunc.
-    //     //
-    //     // TODO(danderson): should all the deduping happen in
-    //     // ipn/local.go? We seem to be doing dedupe at several layers, and
-    //     // magicsock could do with any complexity reduction it can get.
-    //     netInfoLast *tailcfg.NetInfo
-
-    //     derpMap     *tailcfg.DERPMap // nil (or zero regions/nodes) means DERP is disabled
-    //     netMap      *netmap.NetworkMap
-    //     privateKey  key.NodePrivate    // WireGuard private key for this node
-    //     everHadKey  bool               // whether we ever had a non-zero private key
-    //     myDerp      int                // nearest DERP region ID; 0 means none/unknown
-    //     derpStarted chan struct{}      // closed on first connection to DERP; for tests & cleaner Close
-    //     activeDerp  map[int]activeDerp // DERP regionID -> connection to a node in that region
-    //     prevDerp    map[int]*syncs.WaitGroupChan
-
-    //     // derpRoute contains optional alternate routes to use as an
-    //     // optimization instead of contacting a peer via their home
-    //     // DERP connection.  If they sent us a message on a different
-    //     // DERP connection (which should really only be on our DERP
-    //     // home connection, or what was once our home), then we
-    //     // remember that route here to optimistically use instead of
-    //     // creating a new DERP connection back to their home.
-    //     derpRoute map[key.NodePublic]derpRoute
-
-    //     // peerLastDerp tracks which DERP node we last used to speak with a
-    //     // peer. It's only used to quiet logging, so we only log on change.
-    //     peerLastDerp map[key.NodePublic]int
+    state: Mutex<ConnState>,
+    state_notifier: sync::Notify,
 }
 
-// // derpRoute is a route entry for a public key, saying that a certain
-// // peer should be available at DERP node derpID, as long as the
-// // current connection for that derpID is dc. (but dc should not be
-// // used to write directly; it's owned by the read/write loops)
-// type derpRoute struct {
-// 	derpID int
-// 	dc     *derphttp.Client // don't use directly; see comment above
-// }
+struct ConnState {
+    /// Close was called
+    closed: bool,
+    /// Close is in progress (or done)
+    closing: AtomicBool,
+
+    /// A timer that fires to occasionally clean up idle DERP connections.
+    /// It's only used when there is a non-home DERP connection in use.
+    derp_cleanup_timer: time::Interval,
+
+    /// Whether derp_cleanup_timer is scheduled to fire within derp_clean_stale_interval.
+    derp_cleanup_timer_armed: bool,
+    // When set, is an AfterFunc timer that will call Conn::do_periodic_stun.
+    periodic_re_stun_timer: Option<time::Interval>,
+
+    /// Indicates that update_endpoints is currently running. It's used to deduplicate
+    /// concurrent endpoint update requests.
+    endpoints_update_active: bool,
+    /// If set, means that a new endpoints update should begin immediately after the currently-running one
+    /// completes. It can only be non-empty if `endpoints_update_active == true`.
+    want_endpoints_update: Option<String>, // true if non-empty; string is reason
+    /// Records the endpoints found during the previous
+    /// endpoint discovery. It's used to avoid duplicate endpoint change notifications.
+    last_endpoints: Vec<cfg::Endpoint>,
+
+    /// The last time the endpoints were updated, even if there was no change.
+    last_endpoints_time: Instant,
+
+    /// Functions to run (in their own tasks) when endpoints are refreshed.
+    on_endpoint_refreshed: HashMap<Endpoint, Box<dyn Fn()>>,
+
+    /// The set of peers that are currently configured in
+    /// WireGuard. These are not used to filter inbound or outbound
+    /// traffic at all, but only to track what state can be cleaned up
+    /// in other maps below that are keyed by peer public key.
+    peer_set: HashSet<key::NodePublic>,
+
+    /// The private naclbox key used for active discovery traffic. It's created once near
+    /// (but not during) construction.
+    disco_private: key::DiscoPrivate,
+    /// Public key of disco_private.
+    disco_public: key::DiscoPublic,
+
+    /// Tracks the networkmap Node entity for each peer discovery key.
+    peer_map: PeerMap,
+
+    // The state for an active DiscoKey.
+    disco_info: HashMap<key::DiscoPublic, DiscoInfo>,
+
+    /// The `NetInfo` provided in the last call to `net_info_func`. It's used to deduplicate calls to netInfoFunc.
+    net_info_last: Option<cfg::NetInfo>,
+
+    /// None (or zero regions/nodes) means DERP is disabled.
+    derp_map: Option<DerpMap>,
+    net_map: netmap::NetworkMap,
+    /// WireGuard private key for this node
+    private_key: key::NodePrivate,
+    /// Whether we ever had a non-zero private key
+    ever_had_key: bool,
+    /// Nearest DERP region ID; 0 means none/unknown.
+    my_derp: usize,
+    // derp_started chan struct{}      // closed on first connection to DERP; for tests & cleaner Close
+    /// DERP regionID -> connection to a node in that region
+    active_derp: HashMap<usize, ActiveDerp>,
+    prev_derp: HashMap<usize, ()>, //    map[int]*syncs.WaitGroupChan
+
+    /// Contains optional alternate routes to use as an optimization instead of
+    /// contacting a peer via their home DERP connection.  If they sent us a message
+    /// on a different DERP connection (which should really only be on our DERP
+    /// home connection, or what was once our home), then we remember that route here to optimistically
+    /// use instead of creating a new DERP connection back to their home.
+    derp_route: HashMap<key::NodePublic, DerpRoute>,
+}
+
+/// A route entry for a public key, saying that a certain peer should be available at DERP
+/// node derpID, as long as the current connection for that derpID is dc. (but dc should not be
+/// used to write directly; it's owned by the read/write loops)
+#[derive(Debug)]
+struct DerpRoute {
+    derp_id: usize,
+    dc: derp::http::Client, // don't use directly; see comment above
+}
 
 // // removeDerpPeerRoute removes a DERP route entry previously added by addDerpPeerRoute.
 // func (c *Conn) removeDerpPeerRoute(peer key.NodePublic, derpID int, dc *derphttp.Client) {
@@ -380,81 +549,18 @@ pub struct Conn {
 
 // var derpMagicIPAddr = netip.MustParseAddr(tailcfg.DerpMagicIP)
 
-// // activeDerp contains fields for an active DERP connection.
-// type activeDerp struct {
-// 	c       *derphttp.Client
-// 	cancel  context.CancelFunc
-// 	writeCh chan<- derpWriteRequest
-// 	// lastWrite is the time of the last request for its write
-// 	// channel (currently even if there was no write).
-// 	// It is always non-nil and initialized to a non-zero Time.
-// 	lastWrite  *time.Time
-// 	createTime time.Time
-// }
-
-// // Options contains options for Listen.
-// type Options struct {
-// 	// Logf optionally provides a log function to use.
-// 	// Must not be nil.
-// 	Logf logger.Logf
-
-// 	// Port is the port to listen on.
-// 	// Zero means to pick one automatically.
-// 	Port uint16
-
-// 	// EndpointsFunc optionally provides a func to be called when
-// 	// endpoints change. The called func does not own the slice.
-// 	EndpointsFunc func([]tailcfg.Endpoint)
-
-// 	// DERPActiveFunc optionally provides a func to be called when
-// 	// a connection is made to a DERP server.
-// 	DERPActiveFunc func()
-
-// 	// IdleFunc optionally provides a func to return how long
-// 	// it's been since a TUN packet was sent or received.
-// 	IdleFunc func() time.Duration
-
-// 	// TestOnlyPacketListener optionally specifies how to create PacketConns.
-// 	// Only used by tests.
-// 	TestOnlyPacketListener nettype.PacketListener
-
-// 	// NoteRecvActivity, if provided, is a func for magicsock to call
-// 	// whenever it receives a packet from a a peer if it's been more
-// 	// than ~10 seconds since the last one. (10 seconds is somewhat
-// 	// arbitrary; the sole user just doesn't need or want it called on
-// 	// every packet, just every minute or two for WireGuard timeouts,
-// 	// and 10 seconds seems like a good trade-off between often enough
-// 	// and not too often.)
-// 	// The provided func is likely to call back into
-// 	// Conn.ParseEndpoint, which acquires Conn.mu. As such, you should
-// 	// not hold Conn.mu while calling it.
-// 	NoteRecvActivity func(key.NodePublic)
-
-// 	// LinkMonitor is the link monitor to use.
-// 	// With one, the portmapper won't be used.
-// 	LinkMonitor *monitor.Mon
-// }
-
-// func (o *Options) logf() logger.Logf {
-// 	if o.Logf == nil {
-// 		panic("must provide magicsock.Options.logf")
-// 	}
-// 	return o.Logf
-// }
-
-// func (o *Options) endpointsFunc() func([]tailcfg.Endpoint) {
-// 	if o == nil || o.EndpointsFunc == nil {
-// 		return func([]tailcfg.Endpoint) {}
-// 	}
-// 	return o.EndpointsFunc
-// }
-
-// func (o *Options) derpActiveFunc() func() {
-// 	if o == nil || o.DERPActiveFunc == nil {
-// 		return func() {}
-// 	}
-// 	return o.DERPActiveFunc
-// }
+/// Contains fields for an active DERP connection.
+#[derive(Debug)]
+struct ActiveDerp {
+    c: derp::http::Client,
+    // cancel  context.CancelFunc
+    // writeCh chan<- derpWriteRequest
+    /// The time of the last request for its write
+    // channel (currently even if there was no write).
+    // It is always non-nil and initialized to a non-zero Time.
+    last_write: Instant,
+    create_time: Instant,
+}
 
 // // newConn is the error-free, network-listening-side-effect-free based
 // // of NewConn. Mostly for tests.
@@ -3514,68 +3620,81 @@ pub struct Conn {
 // 	return ua.String()
 // }
 
-// // endpointSendFunc is a func that writes encrypted Wireguard payloads from
-// // WireGuard to a peer. It might write via UDP, DERP, both, or neither.
-// //
-// // What these funcs should NOT do is too much work. Minimize use of mutexes, map
-// // lookups, etc. The idea is that selecting the path to use is done infrequently
-// // and mostly async from sending packets. When conditions change (including the
-// // passing of time and loss of confidence in certain routes), then a new send
-// // func gets set on an sendpoint.
-// //
-// // A nil value means the current fast path has expired and needs to be
-// // recalculated.
-// type endpointSendFunc func([][]byte) error
+/// A wireguard/conn.Endpoint that picks the best available path to communicate with a peer,
+/// based on network conditions and what the peer supports.
+#[derive(Clone)]
+struct Endpoint(Arc<InnerEndpoint>);
 
-// // endpoint is a wireguard/conn.Endpoint that picks the best
-// // available path to communicate with a peer, based on network
-// // conditions and what the peer supports.
-// type endpoint struct {
-// 	// atomically accessed; declared first for alignment reasons
-// 	lastRecv              mono.Time
-// 	numStopAndResetAtomic int64
-// 	sendFunc              syncs.AtomicValue[endpointSendFunc] // nil or unset means unused
+impl Deref for Endpoint {
+    type Target = InnerEndpoint;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
 
-// 	// These fields are initialized once and never modified.
-// 	c            *Conn
-// 	publicKey    key.NodePublic // peer public key (for WireGuard + DERP)
-// 	publicKeyHex string         // cached output of publicKey.UntypedHexString
-// 	fakeWGAddr   netip.AddrPort // the UDP address we tell wireguard-go we're using
-// 	nodeAddr     netip.Addr     // the node's first tailscale address; used for logging & wireguard rate-limiting (Issue 6686)
+struct InnerEndpoint {
+    // Atomically accessed; declared first for alignment reasons
+    last_recv: Instant,
+    num_stop_and_reset_atomic: i64,
+    /// A function that writes encrypted Wireguard payloads from
+    /// WireGuard to a peer. It might write via UDP, DERP, both, or neither.
+    ///
+    /// What these funcs should NOT do is too much work. Minimize use of mutexes, map
+    /// lookups, etc. The idea is that selecting the path to use is done infrequently
+    /// and mostly async from sending packets. When conditions change (including the
+    /// passing of time and loss of confidence in certain routes), then a new send
+    /// func gets set on an sendpoint.
+    ///
+    /// A nil value means the current fast path has expired and needs to be recalculated.
+    send_func: RwLock<Option<Box<dyn Fn(&[&[u8]]) -> std::io::Result<()>>>>, // syncs.AtomicValue[endpointSendFunc] // nil or unset means unused
 
-// 	// mu protects all following fields.
-// 	mu sync.Mutex // Lock ordering: Conn.mu, then endpoint.mu
+    // These fields are initialized once and never modified.
+    c: Conn,
+    /// Peer public key (for WireGuard + DERP)
+    public_key: key::NodePublic,
+    /// The UDP address we tell wireguard-go we're using
+    fake_wg_addr: SocketAddr,
+    /// The node's first tailscale address; used for logging & wireguard rate-limiting (Issue 6686)
+    node_addr: IpAddr,
 
-// 	discoKey   key.DiscoPublic // for discovery messages. Should never be the zero value.
-// 	discoShort string          // ShortString of discoKey. Empty if peer can't disco.
+    // Lock ordering: Conn.state, then Endpoint.state
+    state: Mutex<InnerMutEndpoint>,
+}
 
-// 	heartBeatTimer *time.Timer    // nil when idle
-// 	lastSend       mono.Time      // last time there was outgoing packets sent to this peer (from wireguard-go)
-// 	lastFullPing   mono.Time      // last time we pinged all endpoints
-// 	derpAddr       netip.AddrPort // fallback/bootstrap path, if non-zero (non-zero for well-behaved clients)
+struct InnerMutEndpoint {
+    /// For discovery messages.
+    disco_key: key::DiscoPublic,
 
-// 	bestAddr           addrLatency // best non-DERP path; zero if none
-// 	bestAddrAt         mono.Time   // time best address re-confirmed
-// 	trustBestAddrUntil mono.Time   // time when bestAddr expires
-// 	sentPing           map[stun.TxID]sentPing
-// 	endpointState      map[netip.AddrPort]*endpointState
-// 	isCallMeMaybeEP    map[netip.AddrPort]bool
+    /// None when idle
+    heart_beat_timer: Option<time::Interval>,
+    /// Last time there was outgoing packets sent to this peer (from wireguard-go)
+    last_send: Instant,
+    /// Last time we pinged all endpoints
+    last_full_ping: Instant,
+    /// fallback/bootstrap path, if non-zero (non-zero for well-behaved clients)
+    derp_addr: Option<SocketAddr>,
 
-// 	pendingCLIPings []pendingCLIPing // any outstanding "tailscale ping" commands running
+    /// Best non-DERP path; zero if none
+    best_addr: AddrLatency,
+    /// Time best address re-confirmed
+    best_addr_at: Instant,
+    /// Time when bestAddr expires
+    trust_best_addr_until: Instant,
+    sent_ping: HashMap<stun::TransactionId, SentPing>,
+    endpoint_state: HashMap<SocketAddr, EndpointState>,
+    is_call_me_maybe_ep: HashMap<SocketAddr, bool>,
 
-// 	// The following fields are related to the new "silent disco"
-// 	// implementation that's a WIP as of 2022-10-20.
-// 	// See #540 for background.
-// 	heartbeatDisabled bool
-// 	pathFinderRunning bool
+    /// Any outstanding "tailscale ping" commands running
+    pending_cli_pings: Vec<PendingCliPing>,
 
-// 	expired bool // whether the node has expired
-// }
+    /// Whether the node has expired.
+    expired: bool,
+}
 
-// type pendingCLIPing struct {
-// 	res *ipnstate.PingResult
-// 	cb  func(*ipnstate.PingResult)
-// }
+struct PendingCliPing {
+    res: cfg::PingResult,
+    cb: Box<dyn Fn(&cfg::PingResult)>,
+}
 
 // const (
 // 	// sessionActiveTimeout is how long since the last activity we
@@ -3627,36 +3746,36 @@ pub struct Conn {
 // 	discoPingInterval = 5 * time.Second
 // )
 
-// // endpointState is some state and history for a specific endpoint of
-// // a endpoint. (The subject is the endpoint.endpointState
-// // map key)
-// type endpointState struct {
-// 	// all fields guarded by endpoint.mu
+/// Some state and history for a specific endpoint of a endpoint.
+/// (The subject is the endpoint.endpointState map key)
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct EndpointState {
+    /// The last (outgoing) ping time.
+    last_ping: Instant,
 
-// 	// lastPing is the last (outgoing) ping time.
-// 	lastPing mono.Time
+    /// If non-zero, means that this was an endpoint
+    /// that we learned about at runtime (from an incoming ping)
+    /// and that is not in the network map. If so, we keep the time
+    /// updated and use it to discard old candidates.
+    last_got_ping: Option<Instant>,
 
-// 	// lastGotPing, if non-zero, means that this was an endpoint
-// 	// that we learned about at runtime (from an incoming ping)
-// 	// and that is not in the network map. If so, we keep the time
-// 	// updated and use it to discard old candidates.
-// 	lastGotPing time.Time
+    /// Contains the TxID for the last incoming ping. This is
+    /// used to de-dup incoming pings that we may see on both the raw disco
+    /// socket on Linux, and UDP socket. We cannot rely solely on the raw socket
+    /// disco handling due to https://github.com/tailscale/tailscale/issues/7078.
+    last_got_ping_tx_id: stun::TransactionId,
 
-// 	// lastGotPingTxID contains the TxID for the last incoming ping. This is
-// 	// used to de-dup incoming pings that we may see on both the raw disco
-// 	// socket on Linux, and UDP socket. We cannot rely solely on the raw socket
-// 	// disco handling due to https://github.com/tailscale/tailscale/issues/7078.
-// 	lastGotPingTxID stun.TxID
+    /// If non-zero, is the time this endpoint was advertised last via a call-me-maybe disco message.
+    call_me_maybe_time: Option<Instant>,
 
-// 	// callMeMaybeTime, if non-zero, is the time this endpoint
-// 	// was advertised last via a call-me-maybe disco message.
-// 	callMeMaybeTime time.Time
+    /// Ring buffer up to PongHistoryCount entries
+    recent_pongs: Vec<PongReply>,
+    /// Index into recentPongs of most recent; older before, wrapped
+    recent_pong: usize,
 
-// 	recentPongs []pongReply // ring buffer up to pongHistoryCount entries
-// 	recentPong  uint16      // index into recentPongs of most recent; older before, wrapped
-
-// 	index int16 // index in nodecfg.Node.Endpoints; meaningless if lastGotPing non-zero
-// }
+    /// Index in nodecfg.Node.Endpoints; meaningless if last_got_ping non-zero.
+    index: usize,
+}
 
 // // indexSentinelDeleted is the temporary value that endpointState.index takes while
 // // a endpoint's endpoints are being updated from a new network map.
@@ -3683,22 +3802,28 @@ pub struct Conn {
 // 	}
 // }
 
-// // pongHistoryCount is how many pongReply values we keep per endpointState
-// const pongHistoryCount = 64
+/// How many `PongReply` values we keep per `EndpointState`.
+const PONG_HISTORY_COUNT: usize = 64;
 
-// type pongReply struct {
-// 	latency time.Duration
-// 	pongAt  mono.Time      // when we received the pong
-// 	from    netip.AddrPort // the pong's src (usually same as endpoint map key)
-// 	pongSrc netip.AddrPort // what they reported they heard
-// }
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct PongReply {
+    latency: Duration,
+    /// When we received the pong.
+    pong_at: Instant,
+    // The pong's src (usually same as endpoint map key).
+    from: SocketAddr,
+    // What they reported they heard.
+    pong_src: SocketAddr,
+}
 
-// type sentPing struct {
-// 	to      netip.AddrPort
-// 	at      mono.Time
-// 	timer   *time.Timer // timeout timer
-// 	purpose discoPingPurpose
-// }
+#[derive(Debug)]
+struct SentPing {
+    to: SocketAddr,
+    at: Instant,
+    // timeout timer
+    timer: time::Interval,
+    purpose: DiscoPingPurpose,
+}
 
 // // initFakeUDPAddr populates fakeWGAddr with a globally unique fake UDPAddr.
 // // The current implementation just uses the pointer value of de jammed into an IPv6
@@ -3966,23 +4091,16 @@ pub struct Conn {
 // 	}
 // }
 
-// // discoPingPurpose is the reason why a discovery ping message was sent.
-// type discoPingPurpose int
-
-// //go:generate go run tailscale.com/cmd/addlicense -file discopingpurpose_string.go go run golang.org/x/tools/cmd/stringer -type=discoPingPurpose -trimprefix=ping
-// const (
-// 	// pingDiscovery means that purpose of a ping was to see if a
-// 	// path was valid.
-// 	pingDiscovery discoPingPurpose = iota
-
-// 	// pingHeartbeat means that purpose of a ping was whether a
-// 	// peer was still there.
-// 	pingHeartbeat
-
-// 	// pingCLI means that the user is running "tailscale ping"
-// 	// from the CLI. These types of pings can go over DERP.
-// 	pingCLI
-// )
+/// The reason why a discovery ping message was sent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DiscoPingPurpose {
+    /// Means that purpose of a ping was to see if a path was valid.
+    Discovery,
+    /// Means that purpose of a ping was whether a peer was still there.
+    Heartbeat,
+    /// Mmeans that the user is running "tailscale ping" from the CLI. These types of pings can go over DERP.
+    Cli,
+}
 
 // func (de *endpoint) startPingLocked(ep netip.AddrPort, now mono.Time, purpose discoPingPurpose) {
 // 	if runtime.GOOS == "js" {
@@ -4240,11 +4358,12 @@ pub struct Conn {
 // 	}
 // }
 
-// // addrLatency is an IPPort with an associated latency.
-// type addrLatency struct {
-// 	netip.AddrPort
-// 	latency time.Duration
-// }
+/// A `SocketAddr` with an associated latency.
+#[derive(Debug, Clone)]
+struct AddrLatency {
+    addr: SocketAddr,
+    latency: Duration,
+}
 
 // // betterAddr reports whether a is a better addr to use than b.
 // func betterAddr(a, b addrLatency) bool {
@@ -4420,46 +4539,39 @@ pub struct Conn {
 // 	de  *endpoint
 // }
 
-// // discoInfo is the info and state for the DiscoKey
-// // in the Conn.discoInfo map key.
-// //
-// // Note that a DiscoKey does not necessarily map to exactly one
-// // node. In the case of shared nodes and users switching accounts, two
-// // nodes in the NetMap may legitimately have the same DiscoKey.  As
-// // such, no fields in here should be considered node-specific.
-// type discoInfo struct {
-// 	// discoKey is the same as the Conn.discoInfo map key,
-// 	// just so you can pass around a *discoInfo alone.
-// 	// Not modified once initialized.
-// 	discoKey key.DiscoPublic
+// discoInfo is the info and state for the DiscoKey
+// in the Conn.discoInfo map key.
+//
+// Note that a DiscoKey does not necessarily map to exactly one
+// node. In the case of shared nodes and users switching accounts, two
+// nodes in the NetMap may legitimately have the same DiscoKey.  As
+// such, no fields in here should be considered node-specific.
+#[derive(Debug)]
+struct DiscoInfo {
+    /// The same as the Conn.discoInfo map key, just so you can pass around a `DiscoInfo` alone.
+    /// Not modified once initialized.
+    disco_key: key::DiscoPublic,
 
-// 	// discoShort is discoKey.ShortString().
-// 	// Not modified once initialized;
-// 	discoShort string
+    /// The precomputed key for communication with the peer that has the `DiscoKey` used to
+    /// look up this `DiscoInfo` in Conn.discoInfo.
+    /// Not modified once initialized.
+    shared_key: key::DiscoShared,
 
-// 	// sharedKey is the precomputed key for communication with the
-// 	// peer that has the DiscoKey used to look up this *discoInfo in
-// 	// Conn.discoInfo.
-// 	// Not modified once initialized.
-// 	sharedKey key.DiscoShared
+    // Mutable fields follow, owned by Conn.mu:
+    /// Tthe src of a ping for `DiscoKey`.
+    last_ping_from: SocketAddr,
 
-// 	// Mutable fields follow, owned by Conn.mu:
+    /// The last time of a ping for discoKey.
+    last_ping_time: Instant,
 
-// 	// lastPingFrom is the src of a ping for discoKey.
-// 	lastPingFrom netip.AddrPort
+    /// The last NodeKey seen using `DiscoKey`.
+    /// It's only updated if the NodeKey is unambiguous.
+    last_node_key: key::NodePublic,
 
-// 	// lastPingTime is the last time of a ping for discoKey.
-// 	lastPingTime time.Time
-
-// 	// lastNodeKey is the last NodeKey seen using discoKey.
-// 	// It's only updated if the NodeKey is unambiguous.
-// 	lastNodeKey key.NodePublic
-
-// 	// lastNodeKeyTime is the time a NodeKey was last seen using
-// 	// this discoKey. It's only updated if the NodeKey is
-// 	// unambiguous.
-// 	lastNodeKeyTime time.Time
-// }
+    /// The time a NodeKey was last seen using this `DiscoKey`. It's only updated if the
+    /// NodeKey is unambiguous.
+    last_node_key_time: Instant,
+}
 
 // // setNodeKey sets the most recent mapping from di.discoKey to the
 // // NodeKey nk.
