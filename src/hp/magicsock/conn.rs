@@ -6,6 +6,7 @@ use std::{
 };
 
 use tokio::{
+    net::UdpSocket,
     sync::{self, Mutex, RwLock},
     time::{self, Instant},
 };
@@ -16,7 +17,7 @@ use crate::hp::{
     key, monitor, netcheck, netmap, portmapper,
 };
 
-use super::{endpoint::PeerMap, rebinding_conn::RebindingUdpConn, ActiveDerp, ConnBind, Endpoint};
+use super::{endpoint::PeerMap, rebinding_conn::RebindingUdpConn, ActiveDerp, Endpoint};
 
 /// Contains options for `Conn::listen`.
 pub struct Options {
@@ -85,7 +86,7 @@ pub struct Conn {
     // It must have buffer size > 0; see issue 3736.
     // derpRecvCh chan derpReadResult
     /// The wireguard-go conn.Bind for Conn.
-    bind: ConnBind,
+    bind: UdpSocket, // ConnBind,
 
     // TODO:
     // owned by receiveIPv4 and receiveIPv6, respectively, to cache an IPPort->endpoint for hot flows.
@@ -2854,43 +2855,6 @@ impl Conn {
     // 	}
 
     // 	return ep, nil
-    // }
-
-    // type batchReaderWriter interface {
-    // 	batchReader
-    // 	batchWriter
-    // }
-
-    // type batchWriter interface {
-    // 	WriteBatch([]ipv6.Message, int) (int, error)
-    // }
-
-    // type batchReader interface {
-    // 	ReadBatch([]ipv6.Message, int) (int, error)
-    // }
-
-    // // udpConnWithBatchOps wraps a *net.UDPConn in order to extend it to support
-    // // batch operations.
-    // //
-    // // TODO(jwhited): This wrapping is temporary. https://github.com/golang/go/issues/45886
-    // type udpConnWithBatchOps struct {
-    // 	*net.UDPConn
-    // 	xpc batchReaderWriter
-    // }
-
-    // func newUDPConnWithBatchOps(conn *net.UDPConn, network string) udpConnWithBatchOps {
-    // 	ucbo := udpConnWithBatchOps{
-    // 		UDPConn: conn,
-    // 	}
-    // 	switch network {
-    // 	case "udp4":
-    // 		ucbo.xpc = ipv4.NewPacketConn(conn)
-    // 	case "udp6":
-    // 		ucbo.xpc = ipv6.NewPacketConn(conn)
-    // 	default:
-    // 		panic("bogus network")
-    // 	}
-    // 	return ucbo
     // }
 }
 
