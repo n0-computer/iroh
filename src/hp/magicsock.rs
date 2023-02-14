@@ -4,11 +4,7 @@
 
 use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Duration};
 
-use tokio::{
-    net::UdpSocket,
-    sync::Mutex,
-    time::{self, Instant},
-};
+use tokio::time::{self, Instant};
 
 use super::derp;
 
@@ -69,254 +65,38 @@ struct ActiveDerp {
     create_time: Instant,
 }
 
-/// A wireguard-go conn.Bind for a Conn. It bridges the behavior of wireguard-go and a Conn.
-/// wireguard-go calls Close then Open on device.Up.
-/// That won't work well for a Conn, which is only closed on shutdown.
-/// The subsequent Close is a real close.
-struct ConnBind {
-    conn: UdpSocket,
-    closed: Mutex<bool>,
-}
+/// How long since the last activity we try to keep an established endpoint peering alive.
+/// It's also the idle time at which we stop doing STUN queries to keep NAT mappings alive.
+const SESSION_ACTIVE_TIMEOUT: Duration = Duration::from_secs(45);
 
-// func (c *connBind) BatchSize() int {
-// 	// TODO(raggi): determine by properties rather than hardcoding platform behavior
-// 	switch runtime.GOOS {
-// 	case "linux":
-// 		return conn.DefaultBatchSize
-// 	default:
-// 		return 1
-// 	}
-// }
+/// How often we try to upgrade to a better patheven if we have some non-DERP route that works.
+const UPGRADE_INTERVAL: Duration = Duration::from_secs(1 * 60);
 
-// // Open is called by WireGuard to create a UDP binding.
-// // The ignoredPort comes from wireguard-go, via the wgcfg config.
-// // We ignore that port value here, since we have the local port available easily.
-// func (c *connBind) Open(ignoredPort uint16) ([]conn.ReceiveFunc, uint16, error) {
-// 	c.mu.Lock()
-// 	defer c.mu.Unlock()
-// 	if !c.closed {
-// 		return nil, 0, errors.New("magicsock: connBind already open")
-// 	}
-// 	c.closed = false
-// 	fns := []conn.ReceiveFunc{c.receiveIPv4, c.receiveIPv6, c.receiveDERP}
-// 	if runtime.GOOS == "js" {
-// 		fns = []conn.ReceiveFunc{c.receiveDERP}
-// 	}
-// 	// TODO: Combine receiveIPv4 and receiveIPv6 and receiveIP into a single
-// 	// closure that closes over a *RebindingUDPConn?
-// 	return fns, c.LocalPort(), nil
-// }
+/// How often pings to the best UDP address are sent.
+const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(3);
 
-// // SetMark is used by wireguard-go to set a mark bit for packets to avoid routing loops.
-// // We handle that ourselves elsewhere.
-// func (c *connBind) SetMark(value uint32) error {
-// 	return nil
-// }
+/// How long we trust a UDP address as the exclusive path (without using DERP) without having heard a Pong reply.
+const TRUST_UDP_ADDR_DURATION: Duration = Duration::from_millis(6500);
 
-// // Close closes the connBind, unless it is already closed.
-// func (c *connBind) Close() error {
-// 	c.mu.Lock()
-// 	defer c.mu.Unlock()
-// 	if c.closed {
-// 		return nil
-// 	}
-// 	c.closed = true
-// 	// Unblock all outstanding receives.
-// 	c.pconn4.Close()
-// 	c.pconn6.Close()
-// 	if c.closeDisco4 != nil {
-// 		c.closeDisco4.Close()
-// 	}
-// 	if c.closeDisco6 != nil {
-// 		c.closeDisco6.Close()
-// 	}
-// 	// Send an empty read result to unblock receiveDERP,
-// 	// which will then check connBind.Closed.
-// 	// connBind.Closed takes c.mu, but c.derpRecvCh is buffered.
-// 	c.derpRecvCh <- derpReadResult{}
-// 	return nil
-// }
+/// The latency at or under which we don't try to upgrade to a better path.
+const GOOD_ENOUGH_LATENCY: Duration = Duration::from_millis(5);
 
-// // Closed reports whether c is closed.
-// func (c *connBind) Closed() bool {
-// 	c.mu.Lock()
-// 	defer c.mu.Unlock()
-// 	return c.closed
-// }
+/// How long a non-home DERP connection needs to be idle (last written to) before we close it.
+const DERP_INACTIVE_CLEANUP_TIME: Duration = Duration::from_secs(60);
 
-// func (u udpConnWithBatchOps) WriteBatch(ms []ipv6.Message, flags int) (int, error) {
-// 	return u.xpc.WriteBatch(ms, flags)
-// }
+/// How often `clean_stale_derp` runs when there are potentially-stale DERP connections to close.
+const DERP_CLEAN_STALE_INTERVAL: Duration = Duration::from_secs(15);
 
-// func (u udpConnWithBatchOps) ReadBatch(ms []ipv6.Message, flags int) (int, error) {
-// 	return u.xpc.ReadBatch(ms, flags)
-// }
+/// How long we consider a STUN-derived endpoint valid for. UDP NAT mappings typically
+/// expire at 30 seconds, so this is a few seconds shy of that.
+const ENDPOINTS_FRESH_ENOUGH_DURATION: Duration = Duration::from_secs(27);
 
-// // upgradePacketConn may upgrade a nettype.PacketConn to a udpConnWithBatchOps.
-// func upgradePacketConn(p nettype.PacketConn, network string) nettype.PacketConn {
-// 	uc, ok := p.(*net.UDPConn)
-// 	if ok && runtime.GOOS == "linux" && (network == "udp4" || network == "udp6") {
-// 		// recvmmsg/sendmmsg were added in 2.6.33 but we support down to 2.6.32
-// 		// for old NAS devices. See https://github.com/tailscale/tailscale/issues/6807.
-// 		// As a cheap heuristic: if the Linux kernel starts with "2", just consider
-// 		// it too old for the fast paths. Nobody who cares about performance runs such
-// 		// ancient kernels.
-// 		if strings.HasPrefix(hostinfo.GetOSVersion(), "2") {
-// 			return p
-// 		}
-// 		// Non-Linux does not support batch operations. x/net will fall back to
-// 		// recv/sendmsg, but not all platforms have recv/sendmsg support. Keep
-// 		// this simple for now.
-// 		return newUDPConnWithBatchOps(uc, network)
-// 	}
-// 	return p
-// }
+/// How long we wait for a pong reply before assuming it's never coming.
+const PING_TIMEOUT_DURATION: Duration = Duration::from_secs(5);
 
-// func newBlockForeverConn() *blockForeverConn {
-// 	c := new(blockForeverConn)
-// 	c.cond = sync.NewCond(&c.mu)
-// 	return c
-// }
-
-// // blockForeverConn is a net.PacketConn whose reads block until it is closed.
-// type blockForeverConn struct {
-// 	mu     sync.Mutex
-// 	cond   *sync.Cond
-// 	closed bool
-// }
-
-// func (c *blockForeverConn) ReadFrom(p []byte) (n int, addr net.Addr, err error) {
-// 	c.mu.Lock()
-// 	for !c.closed {
-// 		c.cond.Wait()
-// 	}
-// 	c.mu.Unlock()
-// 	return 0, nil, net.ErrClosed
-// }
-
-// func (c *blockForeverConn) WriteTo(p []byte, addr net.Addr) (n int, err error) {
-// 	// Silently drop writes.
-// 	return len(p), nil
-// }
-
-// func (c *blockForeverConn) WriteToUDPAddrPort(p []byte, addr netip.AddrPort) (int, error) {
-// 	// Silently drop writes.
-// 	return len(p), nil
-// }
-
-// func (c *blockForeverConn) ReadBatch(p []ipv6.Message, flags int) (int, error) {
-// 	c.mu.Lock()
-// 	for !c.closed {
-// 		c.cond.Wait()
-// 	}
-// 	c.mu.Unlock()
-// 	return 0, net.ErrClosed
-// }
-
-// func (c *blockForeverConn) WriteBatch(p []ipv6.Message, flags int) (int, error) {
-// 	// Silently drop writes.
-// 	return len(p), nil
-// }
-
-// func (c *blockForeverConn) LocalAddr() net.Addr {
-// 	// Return a *net.UDPAddr because lots of code assumes that it will.
-// 	return new(net.UDPAddr)
-// }
-
-// func (c *blockForeverConn) Close() error {
-// 	c.mu.Lock()
-// 	defer c.mu.Unlock()
-// 	if c.closed {
-// 		return net.ErrClosed
-// 	}
-// 	c.closed = true
-// 	c.cond.Broadcast()
-// 	return nil
-// }
-
-// func (c *blockForeverConn) SetDeadline(t time.Time) error      { return errors.New("unimplemented") }
-// func (c *blockForeverConn) SetReadDeadline(t time.Time) error  { return errors.New("unimplemented") }
-// func (c *blockForeverConn) SetWriteDeadline(t time.Time) error { return errors.New("unimplemented") }
-
-// // simpleDur rounds d such that it stringifies to something short.
-// func simpleDur(d time.Duration) time.Duration {
-// 	if d < time.Second {
-// 		return d.Round(time.Millisecond)
-// 	}
-// 	if d < time.Minute {
-// 		return d.Round(time.Second)
-// 	}
-// 	return d.Round(time.Minute)
-// }
-
-// func sbPrintAddr(sb *strings.Builder, a netip.AddrPort) {
-// 	is6 := a.Addr().Is6()
-// 	if is6 {
-// 		sb.WriteByte('[')
-// 	}
-// 	fmt.Fprintf(sb, "%s", a.Addr())
-// 	if is6 {
-// 		sb.WriteByte(']')
-// 	}
-// 	fmt.Fprintf(sb, ":%d", a.Port())
-// }
-
-// func ippDebugString(ua netip.AddrPort) string {
-// 	if ua.Addr() == derpMagicIPAddr {
-// 		return fmt.Sprintf("derp-%d", ua.Port())
-// 	}
-// 	return ua.String()
-// }
-
-// const (
-// 	// sessionActiveTimeout is how long since the last activity we
-// 	// try to keep an established endpoint peering alive.
-// 	// It's also the idle time at which we stop doing STUN queries to
-// 	// keep NAT mappings alive.
-// 	sessionActiveTimeout = 45 * time.Second
-
-// 	// upgradeInterval is how often we try to upgrade to a better path
-// 	// even if we have some non-DERP route that works.
-// 	upgradeInterval = 1 * time.Minute
-
-// 	// heartbeatInterval is how often pings to the best UDP address
-// 	// are sent.
-// 	heartbeatInterval = 3 * time.Second
-
-// 	// trustUDPAddrDuration is how long we trust a UDP address as the exclusive
-// 	// path (without using DERP) without having heard a Pong reply.
-// 	trustUDPAddrDuration = 6500 * time.Millisecond
-
-// 	// goodEnoughLatency is the latency at or under which we don't
-// 	// try to upgrade to a better path.
-// 	goodEnoughLatency = 5 * time.Millisecond
-
-// 	// derpInactiveCleanupTime is how long a non-home DERP connection
-// 	// needs to be idle (last written to) before we close it.
-// 	derpInactiveCleanupTime = 60 * time.Second
-
-// 	// derpCleanStaleInterval is how often cleanStaleDerp runs when there
-// 	// are potentially-stale DERP connections to close.
-// 	derpCleanStaleInterval = 15 * time.Second
-
-// 	// endpointsFreshEnoughDuration is how long we consider a
-// 	// STUN-derived endpoint valid for. UDP NAT mappings typically
-// 	// expire at 30 seconds, so this is a few seconds shy of that.
-// 	endpointsFreshEnoughDuration = 27 * time.Second
-// )
-
-// // Constants that are variable for testing.
-// var (
-// 	// pingTimeoutDuration is how long we wait for a pong reply before
-// 	// assuming it's never coming.
-// 	pingTimeoutDuration = 5 * time.Second
-
-// 	// discoPingInterval is the minimum time between pings
-// 	// to an endpoint. (Except in the case of CallMeMaybe frames
-// 	// resetting the counter, as the first pings likely didn't through
-// 	// the firewall)
-// 	discoPingInterval = 5 * time.Second
-// )
+/// The minimum time between pings to an endpoint. (Except in the case of CallMeMaybe frames
+/// resetting the counter, as the first pings likely didn't through the firewall)
+const DISCO_PING_INTERVAL: Duration = Duration::from_secs(5);
 
 /// How many `PongReply` values we keep per `EndpointState`.
 const PONG_HISTORY_COUNT: usize = 64;
