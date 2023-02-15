@@ -3,6 +3,7 @@ use std::fmt::Display;
 use std::io;
 use std::str::FromStr;
 
+use abao::decode::AsyncSliceDecoder;
 use anyhow::{ensure, Result};
 use bytes::{Bytes, BytesMut};
 use postcard::experimental::max_size::MaxSize;
@@ -11,10 +12,7 @@ use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tracing::debug;
 
-use crate::{
-    bao_slice_decoder::AsyncSliceDecoder,
-    util::{self, Hash},
-};
+use crate::util::{self, Hash};
 
 /// Maximum message size is limited to 100MiB for now.
 const MAX_MESSAGE_SIZE: usize = 1024 * 1024 * 100;
@@ -138,7 +136,7 @@ pub(crate) async fn read_bao_encoded<R: AsyncRead + Unpin>(
     reader: R,
     hash: Hash,
 ) -> Result<Vec<u8>> {
-    let mut decoder = AsyncSliceDecoder::new(reader, hash.into(), 0, u64::MAX);
+    let mut decoder = AsyncSliceDecoder::new(reader, &hash.into(), 0, u64::MAX);
     // we don't know the size yet, so we just allocate a reasonable amount
     let mut decoded = Vec::with_capacity(4096);
     decoder.read_to_end(&mut decoded).await?;
