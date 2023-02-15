@@ -171,13 +171,13 @@ pub struct Conn {
     //     // be held before derphttp.Client.mu.
     state: Mutex<ConnState>,
     state_notifier: sync::Notify,
+    /// Close is in progress (or done)
+    closing: AtomicBool,
 }
 
 struct ConnState {
     /// Close was called
     closed: bool,
-    /// Close is in progress (or done)
-    closing: AtomicBool,
 
     /// A timer that fires to occasionally clean up idle DERP connections.
     /// It's only used when there is a non-home DERP connection in use.
@@ -253,7 +253,6 @@ impl Default for ConnState {
         let disco_public = disco_private.public();
         ConnState {
             closed: false,
-            closing: AtomicBool::new(false),
             derp_cleanup_timer: None,
             derp_cleanup_timer_armed: false,
             periodic_re_stun_timer: None,
@@ -360,6 +359,7 @@ impl Conn {
             state: Default::default(),
             close_disco4: None,
             close_disco6: None,
+            closing: AtomicBool::new(false),
         };
 
         c.rebind(CurrentPortFate::Keep).await?;
@@ -404,6 +404,10 @@ impl Conn {
     fn listen_raw_disco(&self, family: &str) -> Result<()> {
         // TODO: figure out support & if it needed for different OSes
         bail!("not supported on this OS");
+    }
+
+    pub(super) fn is_closing(&self) -> bool {
+        self.closing.load(Ordering::Relaxed)
     }
 
     // // doPeriodicSTUN is called (in a new goroutine) by
@@ -2750,7 +2754,7 @@ impl Conn {
             );
         }
         socket.set_nonblocking(true)?;
-        socket.bind(&addr.into());
+        socket.bind(&addr.into())?;
         let socket = UdpSocket::from_std(socket.into())?;
 
         Ok(socket)

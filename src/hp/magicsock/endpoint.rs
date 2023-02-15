@@ -1,8 +1,11 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     net::{IpAddr, SocketAddr},
     ops::Deref,
-    sync::Arc,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
     time::Duration,
 };
 
@@ -10,6 +13,7 @@ use tokio::{
     sync::{Mutex, RwLock},
     time::{self, Instant},
 };
+use tracing::info;
 
 use crate::hp::{cfg, key, stun};
 
@@ -27,10 +31,10 @@ impl Deref for Endpoint {
     }
 }
 
-struct InnerEndpoint {
+pub struct InnerEndpoint {
     // Atomically accessed; declared first for alignment reasons
     last_recv: Instant,
-    num_stop_and_reset_atomic: i64,
+    num_stop_and_reset_atomic: AtomicU64,
     /// A function that writes encrypted Wireguard payloads from
     /// WireGuard to a peer. It might write via UDP, DERP, both, or neither.
     ///
@@ -63,21 +67,21 @@ struct InnerMutEndpoint {
     /// None when idle
     heart_beat_timer: Option<time::Interval>,
     /// Last time there was outgoing packets sent to this peer (from wireguard-go)
-    last_send: Instant,
+    last_send: Option<Instant>,
     /// Last time we pinged all endpoints
-    last_full_ping: Instant,
+    last_full_ping: Option<Instant>,
     /// fallback/bootstrap path, if non-zero (non-zero for well-behaved clients)
     derp_addr: Option<SocketAddr>,
 
-    /// Best non-DERP path; zero if none
-    best_addr: AddrLatency,
+    /// Best non-DERP path.
+    best_addr: Option<AddrLatency>,
     /// Time best address re-confirmed
-    best_addr_at: Instant,
-    /// Time when bestAddr expires
-    trust_best_addr_until: Instant,
+    best_addr_at: Option<Instant>,
+    /// Time when best_addr expires
+    trust_best_addr_until: Option<Instant>,
     sent_ping: HashMap<stun::TransactionId, SentPing>,
     endpoint_state: HashMap<SocketAddr, EndpointState>,
-    is_call_me_maybe_ep: HashMap<SocketAddr, bool>,
+    is_call_me_maybe_ep: HashSet<SocketAddr>,
 
     /// Any outstanding "tailscale ping" commands running
     pending_cli_pings: Vec<PendingCliPing>,
@@ -332,13 +336,6 @@ impl Endpoint {
     // 	if sp, ok := de.sentPing[txid]; ok {
     // 		de.removeSentPingLocked(txid, sp)
     // 	}
-    // }
-
-    // func (de *endpoint) removeSentPingLocked(txid stun.TxID, sp sentPing) {
-    // 	// Stop the timer for the case where sendPing failed to write to UDP.
-    // 	// In the case of a timer already having fired, this is a no-op:
-    // 	sp.timer.Stop()
-    // 	delete(de.sentPing, txid)
     // }
 
     // // sendDiscoPing sends a ping with the provided txid to ep using de's discoKey.
@@ -706,43 +703,26 @@ impl Endpoint {
     // 	}
     // }
 
-    // // stopAndReset stops timers associated with de and resets its state back to zero.
-    // // It's called when a discovery endpoint is no longer present in the
-    // // NetworkMap, or when magicsock is transitioning from running to
-    // // stopped state (via SetPrivateKey(zero))
-    // func (de *endpoint) stopAndReset() {
-    // 	atomic.AddInt64(&de.numStopAndResetAtomic, 1)
-    // 	de.mu.Lock()
-    // 	defer de.mu.Unlock()
+    /// Stops timers associated with de and resets its state back to zero.
+    /// It's called when a discovery endpoint is no longer present in the
+    /// NetworkMap, or when magicsock is transitioning from running to
+    /// stopped state (via `set_private_key(None)`).
+    async fn stop_and_reset(&self) {
+        self.num_stop_and_reset_atomic
+            .fetch_add(1, Ordering::Relaxed);
+        let mut state = self.state.lock().await;
 
-    // 	if closing := de.c.closing.Load(); !closing {
-    // 		de.c.logf("[v1] magicsock: doing cleanup for discovery key %s", de.discoKey.ShortString())
-    // 	}
+        if !self.c.is_closing() {
+            info!("doing cleanup for discovery key {:?}", state.disco_key);
+        }
 
-    // 	de.resetLocked()
-    // 	if de.heartBeatTimer != nil {
-    // 		de.heartBeatTimer.Stop()
-    // 		de.heartBeatTimer = nil
-    // 	}
-    // 	de.pendingCLIPings = nil
-    // }
-
-    // // resetLocked clears all the endpoint's p2p state, reverting it to a
-    // // DERP-only endpoint. It does not stop the endpoint's heartbeat
-    // // timer, if one is running.
-    // func (de *endpoint) resetLocked() {
-    // 	de.lastSend = 0
-    // 	de.lastFullPing = 0
-    // 	de.bestAddr = addrLatency{}
-    // 	de.bestAddrAt = 0
-    // 	de.trustBestAddrUntil = 0
-    // 	for _, es := range de.endpointState {
-    // 		es.lastPing = 0
-    // 	}
-    // 	for txid, sp := range de.sentPing {
-    // 		de.removeSentPingLocked(txid, sp)
-    // 	}
-    // }
+        state.reset();
+        if let Some(timer) = state.heart_beat_timer.take() {
+            // TODO: needed?
+            // de.heartBeatTimer.Stop()
+        }
+        state.pending_cli_pings.clear();
+    }
 
     // func (de *endpoint) numStopAndReset() int64 {
     // 	return atomic.LoadInt64(&de.numStopAndResetAtomic)
@@ -754,6 +734,40 @@ impl Endpoint {
     // 		de.bestAddr = addrLatency{}
     // 	}
     // }
+}
+
+impl InnerMutEndpoint {
+    /// Clears all the endpoint's p2p state, reverting it to a
+    // DERP-only endpoint. It does not stop the endpoint's heartbeat
+    // timer, if one is running.
+    fn reset(&mut self) {
+        self.last_send = None;
+        self.last_full_ping = None;
+        self.best_addr = None;
+        self.best_addr_at = None;
+        self.trust_best_addr_until = None;
+
+        for es in self.endpoint_state.values_mut() {
+            es.last_ping = None;
+        }
+
+        for (txid, sp) in self.sent_ping.drain() {
+            // Inlined remove_sent_ping due to borrowing issues
+
+            // Stop the timer for the case where sendPing failed to write to UDP.
+            // In the case of a timer already having fired, this is a no-op:
+            // TODO: figure out
+            // sp.timer.stop();
+        }
+    }
+
+    fn remove_sent_ping(&mut self, txid: &stun::TransactionId, sp: &mut SentPing) {
+        // Stop the timer for the case where sendPing failed to write to UDP.
+        // In the case of a timer already having fired, this is a no-op:
+        // TODO: figure out
+        // sp.timer.stop();
+        self.sent_ping.remove(txid);
+    }
 }
 
 /// A `SocketAddr` with an associated latency.
@@ -771,7 +785,7 @@ pub struct PeerMap {
     by_ip_port: HashMap<SocketAddr, PeerInfo>,
 
     /// nodesOfDisco contains the set of nodes that are using a DiscoKey. Usually those sets will be just one node.
-    nodes_of_disco: HashMap<key::DiscoPublic, HashMap<key::NodePublic, bool>>,
+    nodes_of_disco: HashMap<key::DiscoPublic, HashSet<key::NodePublic>>,
 }
 
 impl PeerMap {
@@ -812,7 +826,7 @@ impl PeerMap {
         F: Fn(&Endpoint) -> bool,
     {
         if let Some(nodes) = self.nodes_of_disco.get(dk) {
-            for (nk, _) in nodes {
+            for nk in nodes {
                 if let Some(pi) = self.by_node_key.get(nk) {
                     if !f(&pi.ep) {
                         return;
@@ -824,18 +838,19 @@ impl PeerMap {
 
     /// Stores endpoint in the peerInfo for ep.publicKey, and updates indexes. m must already have a
     /// tailcfg.Node for ep.publicKey.
-    fn upsert_endpoint(&mut self, ep: &Endpoint, old_disco_key: &key::DiscoPublic) {
+    async fn upsert_endpoint(&mut self, ep: &Endpoint, old_disco_key: &key::DiscoPublic) {
         if !self.by_node_key.contains_key(&ep.public_key) {
             self.by_node_key
-                .insert(ep.public_key, PeerInfo::new(ep.clone()));
+                .insert(ep.public_key.clone(), PeerInfo::new(ep.clone()));
         }
-        if old_disco_key != ep.disco_key {
+        let disco_key = ep.0.state.lock().await.disco_key.clone();
+        if old_disco_key != &disco_key {
             if let Some(v) = self.nodes_of_disco.get_mut(old_disco_key) {
                 v.remove(&ep.public_key);
             }
         }
-        let mut set = self.nodes_of_disco.entry(ep.disco_key).or_default();
-        set.insert(ep.public_key, true);
+        let set = self.nodes_of_disco.entry(disco_key).or_default();
+        set.insert(ep.public_key.clone());
     }
 
     /// Makes future peer lookups by ipp return the same endpoint as a lookup by nk.
@@ -844,22 +859,22 @@ impl PeerMap {
     /// nk, because calling this function defines the endpoint we hand to
     /// WireGuard for packets received from ipp.
     fn set_node_key_for_ip_port(&mut self, ipp: &SocketAddr, nk: &key::NodePublic) {
-        if let Some(pi) = self.by_ip_port.get(ipp) {
+        if let Some(pi) = self.by_ip_port.get_mut(ipp) {
             pi.ip_ports.remove(ipp);
             self.by_ip_port.remove(ipp);
         }
-        if let Some(pi) = self.by_node_key.get(nk) {
-            pi.ip_ports.insert(ipp.clone(), true);
+        if let Some(pi) = self.by_node_key.get_mut(nk) {
+            pi.ip_ports.insert(ipp.clone());
             self.by_ip_port.insert(*ipp, pi.clone());
         }
     }
 
     /// Deletes the peerInfo associated with ep, and updates indexes.
-    fn delete_endpoint(&self, ep: &Endpoint) {
-        ep.stop_and_reset();
-        self.nodes_of_disco.remove(&ep.disco_key);
+    async fn delete_endpoint(&mut self, ep: &Endpoint) {
+        ep.stop_and_reset().await;
+        self.nodes_of_disco.remove(&ep.state.lock().await.disco_key);
         if let Some(pi) = self.by_node_key.remove(&ep.public_key) {
-            for ip in pi.ip_ports.keys() {
+            for ip in &pi.ip_ports {
                 self.by_ip_port.remove(ip);
             }
         }
@@ -871,7 +886,7 @@ impl PeerMap {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct EndpointState {
     /// The last (outgoing) ping time.
-    last_ping: Instant,
+    last_ping: Option<Instant>,
 
     /// If non-zero, means that this was an endpoint
     /// that we learned about at runtime (from an incoming ping)

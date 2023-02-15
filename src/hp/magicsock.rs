@@ -2,7 +2,8 @@
 //!
 //! Based on tailscale/wgengine/magicsock
 
-use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Duration};
+use std::collections::HashSet;
+use std::{net::SocketAddr, time::Duration};
 
 use tokio::time::{self, Instant};
 
@@ -36,11 +37,11 @@ fn use_derp_route() -> bool {
 #[derive(Clone)]
 struct PeerInfo {
     ep: Endpoint,
-    // ipPorts is an inverted version of peerMap.byIPPort (below), so
-    // that when we're deleting this node, we can rapidly find out the
-    // keys that need deleting from peerMap.byIPPort without having to
-    // iterate over every IPPort known for any peer.
-    ip_ports: Arc<HashMap<SocketAddr, bool>>,
+    /// An inverted version of `PeerMap.by_ip_port` (below), so
+    /// that when we're deleting this node, we can rapidly find out the
+    /// keys that need deleting from `PeerMap::by_ip_port` without having to
+    /// iterate over every `SocketAddr known for any peer.
+    ip_ports: HashSet<SocketAddr>, // TODO: figure out clone behaviour
 }
 
 impl PeerInfo {

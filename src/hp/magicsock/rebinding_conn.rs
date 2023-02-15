@@ -213,6 +213,8 @@ impl Inner {
     }
 
     pub fn local_addr(&self) -> Option<SocketAddr> {
-        self.pconn.and_then(|pconn| pconn.local_addr().ok())
+        self.pconn
+            .as_ref()
+            .and_then(|pconn| pconn.local_addr().ok())
     }
 }
