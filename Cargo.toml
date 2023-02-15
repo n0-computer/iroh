@@ -41,6 +41,7 @@ ring = "0.16.20"
 rustls = { version = "0.20.8", default-features = false, features = ["dangerous_configuration"] }
 serde = { version = "1", features = ["derive"] }
 serde-error = "0.1.2"
+socket2 = "0.4.7"
 ssh-key = { version = "0.5.1", features = ["ed25519", "std", "rand_core"] }
 stun-rs = "0.1.4"
 syscalls = { version = "0.6.7", features = ["full"] } # todo not all
