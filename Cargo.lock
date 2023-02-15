@@ -4,13 +4,14 @@ version = 3
 
 [[package]]
 name = "abao"
-version = "0.1.1"
+version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e19aae7996efbfa033c10ce360f73c87e70af3401282e724cd04346973c36069"
+checksum = "fa67f56b146a784d8feb9f5e4dc5e309fdbf7e3f6631a9c6d709348536abc628"
 dependencies = [
  "arrayref",
  "arrayvec",
  "blake3",
+ "futures",
  "tokio",
 ]
 
