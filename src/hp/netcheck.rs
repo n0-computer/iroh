@@ -29,8 +29,7 @@ use super::{
     derp::{DerpMap, DerpNode, DerpRegion, UseIpv4, UseIpv6},
     interfaces,
     ping::Pinger,
-    portmapper::PortMapper,
-    stun,
+    portmapper, stun,
 };
 
 /// Fake DNS TLD used in tests for an invalid hostname.
@@ -139,7 +138,7 @@ pub struct Client {
 
     // Used for portmap queries.
     // If `None`, portmap discovery is not done.
-    pub port_mapper: Option<PortMapper>,
+    pub port_mapper: Option<portmapper::Client>,
 
     clock: Clock,
 
@@ -1447,7 +1446,7 @@ impl ReportState {
     }
 
     /// Starts probes for UPnP, PMP and PCP.
-    async fn probe_port_map_services(&self, port_mapper: PortMapper) {
+    async fn probe_port_map_services(&self, port_mapper: portmapper::Client) {
         struct Guard(wg::AsyncWaitGroup);
         impl Drop for Guard {
             fn drop(&mut self) {

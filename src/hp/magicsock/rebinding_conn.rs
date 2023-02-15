@@ -1,7 +1,21 @@
+use std::net::SocketAddr;
+
 use tokio::{net::UdpSocket, sync::RwLock};
 
+use super::conn::Network;
+
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    #[error("no connection set")]
+    NoConn,
+}
+
 /// A UDP socket that can be re-bound. Unix has no notion of re-binding a socket, so we swap it out for a new one.
-pub struct RebindingUdpConn {
+#[derive(Default)]
+pub struct RebindingUdpConn(pub(super) RwLock<Inner>);
+
+#[derive(Default)]
+pub(super) struct Inner {
     // TODO: evaluate which locking strategy to use
     // pconnAtomic is a pointer to the value stored in pconn, but doesn't
     // require acquiring mu. It's used for reads/writes and only upon failure
@@ -11,30 +25,16 @@ pub struct RebindingUdpConn {
     // to keep it distinct.
     // Neither is expected to be nil, sockets are bound on creation.
     // pconn_atomic: atomic.Pointer[nettype.PacketConn],
-    pconn: RwLock<UdpSocket>,
-    port: u16,
+    pub(super) pconn: Option<UdpSocket>,
+    pub(super) port: u16,
 }
 
 impl RebindingUdpConn {
-    // // setConnLocked sets the provided nettype.PacketConn. It should be called only
-    // // after acquiring RebindingUDPConn.mu. It upgrades the provided
-    // // nettype.PacketConn to a udpConnWithBatchOps when appropriate. This upgrade
-    // // is intentionally pushed closest to where read/write ops occur in order to
-    // // avoid disrupting surrounding code that assumes nettype.PacketConn is a
-    // // *net.UDPConn.
-    // func (c *RebindingUDPConn) setConnLocked(p nettype.PacketConn, network string) {
-    // 	upc := upgradePacketConn(p, network)
-    // 	c.pconn = upc
-    // 	c.pconnAtomic.Store(&upc)
-    // 	c.port = uint16(c.localAddrLocked().Port)
-    // }
-
-    // // currentConn returns c's current pconn, acquiring c.mu in the process.
-    // func (c *RebindingUDPConn) currentConn() nettype.PacketConn {
-    // 	c.mu.Lock()
-    // 	defer c.mu.Unlock()
-    // 	return c.pconn
-    // }
+    /// Returns c's current pconn, acquiring c.mu in the process.
+    async fn current_conn(&self) -> Option<UdpSocket> {
+        todo!()
+        // self.0.read().await.pconn.clone()
+    }
 
     // func (c *RebindingUDPConn) readFromWithInitPconn(pconn nettype.PacketConn, b []byte) (int, net.Addr, error) {
     // 	for {
@@ -146,38 +146,18 @@ impl RebindingUdpConn {
     // 	}
     // }
 
-    // func (c *RebindingUDPConn) Port() uint16 {
-    // 	c.mu.Lock()
-    // 	defer c.mu.Unlock()
-    // 	return c.port
-    // }
+    pub async fn port(&self) -> u16 {
+        self.0.read().await.port
+    }
 
-    // func (c *RebindingUDPConn) LocalAddr() *net.UDPAddr {
-    // 	c.mu.Lock()
-    // 	defer c.mu.Unlock()
-    // 	return c.localAddrLocked()
-    // }
-
-    // func (c *RebindingUDPConn) localAddrLocked() *net.UDPAddr {
-    // 	return c.pconn.LocalAddr().(*net.UDPAddr)
-    // }
-
-    // // errNilPConn is returned by RebindingUDPConn.Close when there is no current pconn.
-    // // It is for internal use only and should not be returned to users.
-    // var errNilPConn = errors.New("nil pconn")
+    pub async fn local_addr(&self) -> Option<SocketAddr> {
+        self.0.read().await.local_addr()
+    }
 
     // func (c *RebindingUDPConn) Close() error {
     // 	c.mu.Lock()
     // 	defer c.mu.Unlock()
     // 	return c.closeLocked()
-    // }
-
-    // func (c *RebindingUDPConn) closeLocked() error {
-    // 	if c.pconn == nil {
-    // 		return errNilPConn
-    // 	}
-    // 	c.port = 0
-    // 	return c.pconn.Close()
     // }
 
     // func (c *RebindingUDPConn) writeToWithInitPconn(pconn nettype.PacketConn, b []byte, addr net.Addr) (int, error) {
@@ -205,4 +185,34 @@ impl RebindingUdpConn {
     // 		return n, err
     // 	}
     // }
+}
+
+impl Inner {
+    /// Sets the provided nettype.PacketConn. It should be called only
+    /// after acquiring RebindingUDPConn.mu. It upgrades the provided
+    /// nettype.PacketConn to a udpConnWithBatchOps when appropriate. This upgrade
+    /// is intentionally pushed closest to where read/write ops occur in order to
+    /// avoid disrupting surrounding code that assumes nettype.PacketConn is a *net.UDPConn.
+    pub fn set_conn(&mut self, p: UdpSocket, network: Network) {
+        // upc := upgradePacketConn(p, network)
+        let port = p.local_addr().expect("missing addr").port();
+        self.pconn = Some(p);
+        self.port = port;
+    }
+
+    pub fn close(&mut self) -> Result<(), Error> {
+        match self.pconn.take() {
+            Some(pconn) => {
+                self.port = 0;
+                // pconn.close() is not available, so we just drop for now
+                // TODO: make sure the recv loops get shutdown
+                Ok(())
+            }
+            None => Err(Error::NoConn),
+        }
+    }
+
+    pub fn local_addr(&self) -> Option<SocketAddr> {
+        self.pconn.and_then(|pconn| pconn.local_addr().ok())
+    }
 }

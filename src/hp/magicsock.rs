@@ -132,9 +132,7 @@ enum DiscoPingPurpose {
     Cli,
 }
 
-// // derpStr replaces DERP IPs in s with "derp-".
-// func derpStr(s string) string { return strings.ReplaceAll(s, "127.3.3.40:", "derp-") }
-
+// TODO:
 // // ippEndpointCache is a mutex-free single-element cache, mapping from
 // // a single netip.AddrPort to a single endpoint.
 // type ippEndpointCache struct {
@@ -142,6 +140,8 @@ enum DiscoPingPurpose {
 // 	gen int64
 // 	de  *endpoint
 // }
+
+// TODO: once derp::http::Client is implemented
 
 // // derpAddrFamSelector is the derphttp.AddressFamilySelector we pass
 // // to derphttp.Client.SetAddressFamilySelector.
@@ -159,6 +159,7 @@ enum DiscoPingPurpose {
 // 	return false
 // }
 
+// TODO: metrics
 // var (
 // 	metricNumPeers     = clientmetric.NewGauge("magicsock_netmap_num_peers")
 // 	metricNumDERPConns = clientmetric.NewGauge("magicsock_num_derp_conns")

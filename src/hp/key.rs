@@ -14,6 +14,16 @@ pub struct DiscoPublic {}
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct DiscoPrivate {}
 
+impl DiscoPrivate {
+    pub fn new() -> Self {
+        todo!()
+    }
+
+    pub fn public(&self) -> DiscoPublic {
+        todo!()
+    }
+}
+
 /// Shared Secret for a discovery Node.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct DiscoShared {}
