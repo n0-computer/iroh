@@ -11,8 +11,8 @@ repository = "https://github.com/n0-computer/sendme"
 rust-version = "1.63"
 
 [dependencies]
+abao = { version = "0.1.1" }
 anyhow = { version = "1", features = ["backtrace"] }
-bao = "0.12.1"
 base64 = "0.21.0"
 blake3 = "1.3.3"
 bytes = "1"
