@@ -52,10 +52,10 @@ pub struct NetInfo {
     pub hair_pinning: Option<bool>,
 
     /// Whether the host has IPv6 internet connectivity.
-    pub working_i_pv6: Option<bool>,
+    pub working_ipv6: Option<bool>,
 
     /// Whether the OS supports IPv6 at all, regardless of whether IPv6 internet connectivity is available.
-    pub os_has_i_pv6: Option<bool>,
+    pub os_has_ipv6: Option<bool>,
 
     /// Whether the host has UDP internet connectivity.
     pub working_udp: Option<bool>,

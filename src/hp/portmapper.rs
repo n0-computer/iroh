@@ -37,4 +37,8 @@ impl Client {
     pub async fn get_cached_mapping_or_start_creating_one(&self) -> (SocketAddr, bool) {
         todo!()
     }
+
+    pub fn have_mapping(&self) -> bool {
+        todo!()
+    }
 }
