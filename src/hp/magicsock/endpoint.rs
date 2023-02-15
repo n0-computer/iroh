@@ -600,20 +600,6 @@ impl Endpoint {
     // 	return
     // }
 
-    // // portableTrySetSocketBuffer sets SO_SNDBUF and SO_RECVBUF on pconn to socketBufferSize,
-    // // logging an error if it occurs.
-    // func portableTrySetSocketBuffer(pconn nettype.PacketConn, logf logger.Logf) {
-    // 	if c, ok := pconn.(*net.UDPConn); ok {
-    // 		// Attempt to increase the buffer size, and allow failures.
-    // 		if err := c.SetReadBuffer(socketBufferSize); err != nil {
-    // 			logf("magicsock: failed to set UDP read buffer size to %d: %v", socketBufferSize, err)
-    // 		}
-    // 		if err := c.SetWriteBuffer(socketBufferSize); err != nil {
-    // 			logf("magicsock: failed to set UDP write buffer size to %d: %v", socketBufferSize, err)
-    // 		}
-    // 	}
-    // }
-
     // // betterAddr reports whether a is a better addr to use than b.
     // func betterAddr(a, b addrLatency) bool {
     // 	if a.AddrPort == b.AddrPort {

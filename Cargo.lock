@@ -2335,6 +2335,7 @@ dependencies = [
  "ring",
  "rustls",
  "serde",
+ "socket2",
  "ssh-key",
  "stun-rs",
  "syscalls",

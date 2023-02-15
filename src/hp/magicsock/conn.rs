@@ -1,15 +1,17 @@
 use std::{
     collections::{HashMap, HashSet},
     net::SocketAddr,
-    sync::atomic::{AtomicBool, AtomicU16},
+    sync::atomic::{AtomicBool, AtomicU16, Ordering},
     time::Duration,
 };
 
+use anyhow::{bail, Context as _, Result};
 use tokio::{
     net::UdpSocket,
     sync::{self, Mutex, RwLock},
     time::{self, Instant},
 };
+use tracing::{debug, info};
 
 use crate::hp::{
     cfg,
@@ -17,7 +19,30 @@ use crate::hp::{
     key, monitor, netcheck, netmap, portmapper,
 };
 
-use super::{endpoint::PeerMap, rebinding_conn::RebindingUdpConn, ActiveDerp, Endpoint};
+use super::{
+    endpoint::PeerMap, rebinding_conn::RebindingUdpConn, ActiveDerp, Endpoint, SOCKET_BUFFER_SIZE,
+};
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+enum CurrentPortFate {
+    Keep,
+    Drop,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub(super) enum Network {
+    Ip4,
+    Ip6,
+}
+
+impl From<Network> for socket2::Domain {
+    fn from(value: Network) -> Self {
+        match value {
+            Network::Ip4 => socket2::Domain::IPV4,
+            Network::Ip6 => socket2::Domain::IPV6,
+        }
+    }
+}
 
 /// Contains options for `Conn::listen`.
 pub struct Options {
@@ -33,6 +58,9 @@ pub struct Options {
 
     // Optionally provides a func to return how long it's been since a TUN packet was sent or received.
     pub on_idle: Option<Box<dyn Fn() -> Duration>>,
+
+    /// A callback that provides a `cfg::NetInfo` when discovered network conditions change.
+    pub on_net_info: Option<Box<dyn Fn(&cfg::NetInfo)>>,
 
     /// If provided, is a function for magicsock to call
     /// whenever it receives a packet from a a peer if it's been more
@@ -52,7 +80,13 @@ pub struct Options {
 
 /// Routes UDP packets and actively manages a list of its endpoints.
 pub struct Conn {
-    options: Options,
+    on_endpoints: Option<Box<dyn Fn(&Endpoint)>>,
+    on_derp_active: Option<Box<dyn Fn()>>,
+    on_idle: Option<Box<dyn Fn() -> Duration>>,
+    on_note_recv_activity: Option<Box<dyn Fn(&key::NodePublic)>>,
+    link_monitor: Option<monitor::Monitor>,
+    /// A callback that provides a `cfg::NetInfo` when discovered network conditions change.
+    on_net_info: Option<Box<dyn Fn(&cfg::NetInfo)>>,
 
     // ================================================================
     // No locking required to access these fields, either because
@@ -70,8 +104,8 @@ pub struct Conn {
     // TODO:
     // closeDisco4 and closeDisco6 are io.Closers to shut down the raw
     // disco packet receivers. If nil, no raw disco receiver is running for the given family.
-    // closeDisco4 io.Closer
-    // closeDisco6 io.Closer
+    close_disco4: Option<()>, // io.Closer
+    close_disco6: Option<()>, // io.Closer
     /// The prober that discovers local network conditions, including the closest DERP relay and NAT mappings.
     net_checker: netcheck::Client,
 
@@ -79,14 +113,16 @@ pub struct Conn {
     port_mapper: portmapper::Client,
 
     /// Holds the current STUN packet processing func.
-    stun_receive_func: RwLock<Box<dyn Fn(&[u8], SocketAddr)>>, // syncs.AtomicValue[func(p []byte, fromAddr netip.AddrPort)]
+    on_stun_receive: RwLock<Option<Box<dyn Fn(&[u8], SocketAddr)>>>, // syncs.AtomicValue[func(p []byte, fromAddr netip.AddrPort)]
 
     // TODO:
     // Used by receiveDERP to read DERP messages.
     // It must have buffer size > 0; see issue 3736.
     // derpRecvCh chan derpReadResult
+
+    // TODO: check if this is needed
     /// The wireguard-go conn.Bind for Conn.
-    bind: UdpSocket, // ConnBind,
+    // bind: UdpSocket, // ConnBind,
 
     // TODO:
     // owned by receiveIPv4 and receiveIPv6, respectively, to cache an IPPort->endpoint for hot flows.
@@ -120,7 +156,7 @@ pub struct Conn {
     // sync.Mutex. For use with NewRegionClient's callback, to avoid
     // lock ordering deadlocks. See issue 3726 and mu field docs.
     // derpMapAtomic atomic.Pointer[tailcfg.DERPMap]
-    last_net_check_report: RwLock<netcheck::Report>,
+    last_net_check_report: RwLock<Option<netcheck::Report>>,
 
     /// Preferred port from opts.Port; 0 means auto.
     port: AtomicU16,
@@ -128,8 +164,6 @@ pub struct Conn {
     // TODO
     // Maintains per-connection counters. (atomic pointer originally)
     // stats: RwLock<connstats.Statistics>
-    /// A callback that provides a `cfg::NetInfo` when discovered network conditions change.
-    net_info_func: Box<dyn Fn(&cfg::NetInfo)>,
 
     //     // ============================================================
     //     // mu guards all following fields; see userspaceEngine lock
@@ -147,7 +181,7 @@ struct ConnState {
 
     /// A timer that fires to occasionally clean up idle DERP connections.
     /// It's only used when there is a non-home DERP connection in use.
-    derp_cleanup_timer: time::Interval,
+    derp_cleanup_timer: Option<time::Interval>,
 
     /// Whether derp_cleanup_timer is scheduled to fire within derp_clean_stale_interval.
     derp_cleanup_timer_armed: bool,
@@ -165,7 +199,7 @@ struct ConnState {
     last_endpoints: Vec<cfg::Endpoint>,
 
     /// The last time the endpoints were updated, even if there was no change.
-    last_endpoints_time: Instant,
+    last_endpoints_time: Option<Instant>,
 
     /// Functions to run (in their own tasks) when endpoints are refreshed.
     on_endpoint_refreshed: HashMap<Endpoint, Box<dyn Fn()>>,
@@ -193,9 +227,9 @@ struct ConnState {
 
     /// None (or zero regions/nodes) means DERP is disabled.
     derp_map: Option<DerpMap>,
-    net_map: netmap::NetworkMap,
+    net_map: Option<netmap::NetworkMap>,
     /// WireGuard private key for this node
-    private_key: key::NodePrivate,
+    private_key: Option<key::NodePrivate>,
     /// Whether we ever had a non-zero private key
     ever_had_key: bool,
     /// Nearest DERP region ID; 0 means none/unknown.
@@ -211,6 +245,39 @@ struct ConnState {
     /// home connection, or what was once our home), then we remember that route here to optimistically
     /// use instead of creating a new DERP connection back to their home.
     derp_route: HashMap<key::NodePublic, DerpRoute>,
+}
+
+impl Default for ConnState {
+    fn default() -> Self {
+        let disco_private = key::DiscoPrivate::new();
+        let disco_public = disco_private.public();
+        ConnState {
+            closed: false,
+            closing: AtomicBool::new(false),
+            derp_cleanup_timer: None,
+            derp_cleanup_timer_armed: false,
+            periodic_re_stun_timer: None,
+            endpoints_update_active: false,
+            want_endpoints_update: None,
+            last_endpoints: Vec::new(),
+            last_endpoints_time: None,
+            on_endpoint_refreshed: HashMap::new(),
+            peer_set: HashSet::new(),
+            disco_private,
+            disco_public,
+            peer_map: PeerMap::default(),
+            disco_info: HashMap::new(),
+            net_info_last: None,
+            derp_map: None,
+            net_map: None,
+            private_key: None,
+            ever_had_key: false,
+            my_derp: 0,
+            active_derp: HashMap::new(),
+            prev_derp: HashMap::new(),
+            derp_route: HashMap::new(),
+        }
+    }
 }
 
 impl Conn {
@@ -244,100 +311,100 @@ impl Conn {
         state.derp_route.insert(peer, DerpRoute { derp_id, dc });
     }
 
-    // // newConn is the error-free, network-listening-side-effect-free based
-    // // of NewConn. Mostly for tests.
-    // func newConn() *Conn {
-    // 	c := &Conn{
-    // 		derpRecvCh:   make(chan derpReadResult, 1), // must be buffered, see issue 3736
-    // 		derpStarted:  make(chan struct{}),
-    // 		peerLastDerp: make(map[key.NodePublic]int),
-    // 		peerMap:      newPeerMap(),
-    // 		discoInfo:    make(map[key.DiscoPublic]*discoInfo),
-    // 	}
-    // 	c.bind = &connBind{Conn: c, closed: true}
-    // 	c.receiveBatchPool = sync.Pool{New: func() any {
-    // 		msgs := make([]ipv6.Message, c.bind.BatchSize())
-    // 		for i := range msgs {
-    // 			msgs[i].Buffers = make([][]byte, 1)
-    // 		}
-    // 		batch := &receiveBatch{
-    // 			msgs: msgs,
-    // 		}
-    // 		return batch
-    // 	}}
-    // 	c.sendBatchPool = sync.Pool{New: func() any {
-    // 		ua := &net.UDPAddr{
-    // 			IP: make([]byte, 16),
-    // 		}
-    // 		msgs := make([]ipv6.Message, c.bind.BatchSize())
-    // 		for i := range msgs {
-    // 			msgs[i].Buffers = make([][]byte, 1)
-    // 			msgs[i].Addr = ua
-    // 		}
-    // 		return &sendBatch{
-    // 			ua:   ua,
-    // 			msgs: msgs,
-    // 		}
-    // 	}}
-    // 	c.muCond = sync.NewCond(&c.mu)
-    // 	c.networkUp.Store(true) // assume up until told otherwise
-    // 	return c
-    // }
+    /// Creates a magic `Conn` listening on `opts.port`.
+    /// As the set of possible endpoints for a Conn changes, the callback opts.EndpointsFunc is called.
+    pub async fn new(opts: Options) -> Result<Self> {
+        let port_mapper = portmapper::Client::new(); // TODO: pass self.on_port_map_changed
+        let mut net_checker = netcheck::Client::default();
+        // TODO:
+        // GetSTUNConn4:        func() netcheck.STUNConn { return &c.pconn4 },
+        // GetSTUNConn6:        func() netcheck.STUNConn { return &c.pconn6 },
+        // SkipExternalNetwork: inTest(),
+        net_checker.port_mapper = Some(port_mapper.clone());
 
-    // // NewConn creates a magic Conn listening on opts.Port.
-    // // As the set of possible endpoints for a Conn changes, the
-    // // callback opts.EndpointsFunc is called.
-    // func NewConn(opts Options) (*Conn, error) {
-    // 	c := newConn()
-    // 	c.port.Store(uint32(opts.Port))
-    // 	c.logf = opts.logf()
-    // 	c.epFunc = opts.endpointsFunc()
-    // 	c.derpActiveFunc = opts.derpActiveFunc()
-    // 	c.idleFunc = opts.IdleFunc
-    // 	c.testOnlyPacketListener = opts.TestOnlyPacketListener
-    // 	c.noteRecvActivity = opts.NoteRecvActivity
-    // 	c.portMapper = portmapper.NewClient(logger.WithPrefix(c.logf, "portmapper: "), c.onPortMapChanged)
-    // 	if opts.LinkMonitor != nil {
-    // 		c.portMapper.SetGatewayLookupFunc(opts.LinkMonitor.GatewayAndSelfIP)
-    // 	}
-    // 	c.linkMon = opts.LinkMonitor
+        let Options {
+            port,
+            on_endpoints,
+            on_derp_active,
+            on_idle,
+            on_net_info,
+            on_note_recv_activity,
+            link_monitor,
+        } = opts;
 
-    // 	if err := c.rebind(keepCurrentPort); err != nil {
-    // 		return nil, err
-    // 	}
+        if let Some(ref link_monitor) = link_monitor {
+            // TODO:
+            // c.portMapper.SetGatewayLookupFunc(opts.LinkMonitor.GatewayAndSelfIP)
+        }
 
-    // 	c.connCtx, c.connCtxCancel = context.WithCancel(context.Background())
-    // 	c.donec = c.connCtx.Done()
-    // 	c.netChecker = &netcheck.Client{
-    // 		Logf:                logger.WithPrefix(c.logf, "netcheck: "),
-    // 		GetSTUNConn4:        func() netcheck.STUNConn { return &c.pconn4 },
-    // 		GetSTUNConn6:        func() netcheck.STUNConn { return &c.pconn6 },
-    // 		SkipExternalNetwork: inTest(),
-    // 		PortMapper:          c.portMapper,
-    // 	}
+        let mut c = Conn {
+            on_endpoints,
+            on_derp_active,
+            on_idle,
+            on_net_info,
+            on_note_recv_activity,
+            link_monitor,
+            network_up: AtomicBool::new(true), // assume up until told otherwise
+            port: AtomicU16::new(port),
+            port_mapper,
+            net_checker,
+            have_private_key: AtomicBool::new(false),
+            last_net_check_report: Default::default(),
+            no_v4: AtomicBool::new(false),
+            no_v6: AtomicBool::new(false),
+            no_v4_send: AtomicBool::new(false),
+            pconn4: RebindingUdpConn::default(),
+            pconn6: RebindingUdpConn::default(),
+            state_notifier: sync::Notify::new(),
+            on_stun_receive: Default::default(),
+            state: Default::default(),
+            close_disco4: None,
+            close_disco6: None,
+        };
 
-    // 	c.ignoreSTUNPackets()
+        c.rebind(CurrentPortFate::Keep).await?;
 
-    // 	if d4, err := c.listenRawDisco("ip4"); err == nil {
-    // 		c.logf("[v1] using BPF disco receiver for IPv4")
-    // 		c.closeDisco4 = d4
-    // 	} else {
-    // 		c.logf("[v1] couldn't create raw v4 disco listener, using regular listener instead: %v", err)
-    // 	}
-    // 	if d6, err := c.listenRawDisco("ip6"); err == nil {
-    // 		c.logf("[v1] using BPF disco receiver for IPv6")
-    // 		c.closeDisco6 = d6
-    // 	} else {
-    // 		c.logf("[v1] couldn't create raw v6 disco listener, using regular listener instead: %v", err)
-    // 	}
+        // TODO:
+        // c.connCtx, c.connCtxCancel = context.WithCancel(context.Background())
+        // c.donec = c.connCtx.Done()
 
-    // 	return c, nil
-    // }
+        match c.listen_raw_disco("ip4") {
+            Ok(d4) => {
+                info!("using BPF disco receiver for IPv4");
+                c.close_disco4 = Some(d4);
+            }
+            Err(err) => {
+                info!(
+                    "couldn't create raw v4 disco listener, using regular listener instead: {:?}",
+                    err
+                );
+            }
+        }
+        match c.listen_raw_disco("ip6") {
+            Ok(d6) => {
+                info!("[v1] using BPF disco receiver for IPv6");
+                c.close_disco6 = Some(d6);
+            }
+            Err(err) => {
+                info!(
+                    "couldn't create raw v6 disco listener, using regular listener instead: {:?}",
+                    err
+                );
+            }
+        }
 
-    // // ignoreSTUNPackets sets a STUN packet processing func that does nothing.
-    // func (c *Conn) ignoreSTUNPackets() {
-    // 	c.stunReceiveFunc.Store(func([]byte, netip.AddrPort) {})
-    // }
+        Ok(c)
+    }
+
+    /// Sets a STUN packet processing func that does nothing.
+    async fn ignore_stun_packets(&self) {
+        *self.on_stun_receive.write().await = None;
+    }
+
+    fn listen_raw_disco(&self, family: &str) -> Result<()> {
+        // TODO: figure out support & if it needed for different OSes
+        bail!("not supported on this OS");
+    }
 
     // // doPeriodicSTUN is called (in a new goroutine) by
     // // periodicReSTUNTimer when periodic STUNs are active.
@@ -905,16 +972,11 @@ impl Conn {
     // 	return true
     // }
 
-    // // LocalPort returns the current IPv4 listener's port number.
-    // func (c *Conn) LocalPort() uint16 {
-    // 	if runtime.GOOS == "js" {
-    // 		return 12345
-    // 	}
-    // 	laddr := c.pconn4.LocalAddr()
-    // 	return uint16(laddr.Port)
-    // }
-
-    // var errNetworkDown = errors.New("magicsock: network down")
+    /// Returns the current IPv4 listener's port number.
+    pub async fn local_port(&self) -> u16 {
+        let laddr = self.pconn4.local_addr().await;
+        laddr.map(|l| l.port()).unwrap_or_default()
+    }
 
     // func (c *Conn) networkDown() bool { return !c.networkUp.Load() }
 
@@ -2455,11 +2517,6 @@ impl Conn {
     // 	return len(c.activeDerp)
     // }
 
-    // // Bind returns the wireguard-go conn.Bind for c.
-    // func (c *Conn) Bind() conn.Bind {
-    // 	return c.bind
-    // }
-
     // func (c *Conn) derpRegionCodeOfAddrLocked(ipPort string) string {
     // 	_, portStr, err := net.SplitHostPort(ipPort)
     // 	if err != nil {
@@ -2671,121 +2728,130 @@ impl Conn {
     // 	}
     // }
 
-    // // listenPacket opens a packet listener.
-    // // The network must be "udp4" or "udp6".
-    // func (c *Conn) listenPacket(network string, port uint16) (nettype.PacketConn, error) {
-    // 	ctx := context.Background() // unused without DNS name to resolve
-    // 	addr := net.JoinHostPort("", fmt.Sprint(port))
-    // 	if c.testOnlyPacketListener != nil {
-    // 		return nettype.MakePacketListenerWithNetIP(c.testOnlyPacketListener).ListenPacket(ctx, network, addr)
-    // 	}
-    // 	return nettype.MakePacketListenerWithNetIP(netns.Listener(c.logf)).ListenPacket(ctx, network, addr)
-    // }
+    /// Opens a packet listener.
+    async fn listen_packet(&self, network: Network, port: u16) -> Result<UdpSocket> {
+        let addr: SocketAddr = format!(":{}", port).parse().expect("invalid bind address");
+        let socket = socket2::Socket::new(
+            network.into(),
+            socket2::Type::DGRAM,
+            Some(socket2::Protocol::UDP),
+        )?;
 
-    // var debugBindSocket = envknob.RegisterBool("TS_DEBUG_MAGICSOCK_BIND_SOCKET")
+        if let Err(err) = socket.set_recv_buffer_size(SOCKET_BUFFER_SIZE) {
+            info!(
+                "failed to set recv_buffer_size to {}: {:?}",
+                SOCKET_BUFFER_SIZE, err
+            );
+        }
+        if let Err(err) = socket.set_send_buffer_size(SOCKET_BUFFER_SIZE) {
+            info!(
+                "failed to set send_buffer_size to {}: {:?}",
+                SOCKET_BUFFER_SIZE, err
+            );
+        }
+        socket.set_nonblocking(true)?;
+        socket.bind(&addr.into());
+        let socket = UdpSocket::from_std(socket.into())?;
 
-    // // bindSocket initializes rucPtr if necessary and binds a UDP socket to it.
-    // // Network indicates the UDP socket type; it must be "udp4" or "udp6".
-    // // If rucPtr had an existing UDP socket bound, it closes that socket.
-    // // The caller is responsible for informing the portMapper of any changes.
-    // // If curPortFate is set to dropCurrentPort, no attempt is made to reuse
-    // // the current port.
-    // func (c *Conn) bindSocket(ruc *RebindingUDPConn, network string, curPortFate currentPortFate) error {
-    // 	if debugBindSocket() {
-    // 		c.logf("magicsock: bindSocket: network=%q curPortFate=%v", network, curPortFate)
-    // 	}
+        Ok(socket)
+    }
 
-    // 	// Hold the ruc lock the entire time, so that the close+bind is atomic
-    // 	// from the perspective of ruc receive functions.
-    // 	ruc.mu.Lock()
-    // 	defer ruc.mu.Unlock()
+    // bindSocket initializes rucPtr if necessary and binds a UDP socket to it.
+    // Network indicates the UDP socket type; it must be "udp4" or "udp6".
+    // If rucPtr had an existing UDP socket bound, it closes that socket.
+    // The caller is responsible for informing the portMapper of any changes.
+    // If curPortFate is set to dropCurrentPort, no attempt is made to reuse
+    // the current port.
+    async fn bind_socket(
+        &self,
+        ruc: &RebindingUdpConn,
+        network: Network,
+        cur_port_fate: CurrentPortFate,
+    ) -> Result<()> {
+        debug!(
+            "bind_socket: network={:?} cur_port_fate={:?}",
+            network, cur_port_fate
+        );
 
-    // 	if runtime.GOOS == "js" {
-    // 		ruc.setConnLocked(newBlockForeverConn(), "")
-    // 		return nil
-    // 	}
+        // Hold the ruc lock the entire time, so that the close+bind is atomic from the perspective of ruc receive functions.
+        let mut ruc = ruc.0.write().await;
 
-    // 	if debugAlwaysDERP() {
-    // 		c.logf("disabled %v per TS_DEBUG_ALWAYS_USE_DERP", network)
-    // 		ruc.setConnLocked(newBlockForeverConn(), "")
-    // 		return nil
-    // 	}
+        // Build a list of preferred ports.
+        // - Best is the port that the user requested.
+        // - Second best is the port that is currently in use.
+        // - If those fail, fall back to 0.
 
-    // 	// Build a list of preferred ports.
-    // 	// Best is the port that the user requested.
-    // 	// Second best is the port that is currently in use.
-    // 	// If those fail, fall back to 0.
-    // 	var ports []uint16
-    // 	if port := uint16(c.port.Load()); port != 0 {
-    // 		ports = append(ports, port)
-    // 	}
-    // 	if ruc.pconn != nil && curPortFate == keepCurrentPort {
-    // 		curPort := uint16(ruc.localAddrLocked().Port)
-    // 		ports = append(ports, curPort)
-    // 	}
-    // 	ports = append(ports, 0)
-    // 	// Remove duplicates. (All duplicates are consecutive.)
-    // 	uniq.ModifySlice(&ports)
+        let mut ports = Vec::new();
+        let port = self.port.load(Ordering::Relaxed);
+        if port != 0 {
+            ports.push(port);
+        }
+        if cur_port_fate == CurrentPortFate::Keep {
+            if let Some(cur_addr) = ruc.local_addr() {
+                ports.push(cur_addr.port());
+            }
+        }
+        ports.push(0);
+        // Remove duplicates. (All duplicates are consecutive.)
+        ports.dedup();
+        debug!("bind_socket: candidate ports: {:?}", ports);
 
-    // 	if debugBindSocket() {
-    // 		c.logf("magicsock: bindSocket: candidate ports: %+v", ports)
-    // 	}
+        for port in &ports {
+            // Close the existing conn, in case it is sitting on the port we want.
+            if let Err(err) = ruc.close() {
+                // !errors.Is(err, net.ErrClosed) && !errors.Is(err, errNilPConn) {
+                info!("bind_socket {:?} close failed: {:?}", network, err);
+            }
+            // Open a new one with the desired port.
+            match self.listen_packet(network, *port).await {
+                Ok(pconn) => {
+                    debug!(
+                        "bind_socket: successfully listened {:?} port {}",
+                        network, port
+                    );
+                    ruc.set_conn(pconn, network);
+                    break;
+                }
+                Err(err) => {
+                    info!(
+                        "bind_socket: unable to bind {:?} port {}: {:?}",
+                        network, port, err
+                    );
+                    continue;
+                }
+            }
+        }
 
-    // 	var pconn nettype.PacketConn
-    // 	for _, port := range ports {
-    // 		// Close the existing conn, in case it is sitting on the port we want.
-    // 		err := ruc.closeLocked()
-    // 		if err != nil && !errors.Is(err, net.ErrClosed) && !errors.Is(err, errNilPConn) {
-    // 			c.logf("magicsock: bindSocket %v close failed: %v", network, err)
-    // 		}
-    // 		// Open a new one with the desired port.
-    // 		pconn, err = c.listenPacket(network, port)
-    // 		if err != nil {
-    // 			c.logf("magicsock: unable to bind %v port %d: %v", network, port, err)
-    // 			continue
-    // 		}
-    // 		trySetSocketBuffer(pconn, c.logf)
-    // 		// Success.
-    // 		if debugBindSocket() {
-    // 			c.logf("magicsock: bindSocket: successfully listened %v port %d", network, port)
-    // 		}
-    // 		ruc.setConnLocked(pconn, network)
-    // 		if network == "udp4" {
-    // 			health.SetUDP4Unbound(false)
-    // 		}
-    // 		return nil
-    // 	}
+        // Failed to bind, including on port 0 (!).
+        // Set pconn to a dummy conn whose reads block until closed.
+        // This keeps the receive funcs alive for a future in which
+        // we get a link change and we can try binding again.
 
-    // 	// Failed to bind, including on port 0 (!).
-    // 	// Set pconn to a dummy conn whose reads block until closed.
-    // 	// This keeps the receive funcs alive for a future in which
-    // 	// we get a link change and we can try binding again.
-    // 	ruc.setConnLocked(newBlockForeverConn(), "")
-    // 	if network == "udp4" {
-    // 		health.SetUDP4Unbound(true)
-    // 	}
-    // 	return fmt.Errorf("failed to bind any ports (tried %v)", ports)
-    // }
+        // TODO:
+        // ruc.set_conn(newBlockForeverConn(), "");
 
-    // type currentPortFate uint8
+        bail!("failed to bind any ports (tried {:?})", ports);
+    }
 
-    // const (
-    // 	keepCurrentPort = currentPortFate(0)
-    // 	dropCurrentPort = currentPortFate(1)
-    // )
+    /// Closes and re-binds the UDP sockets.
+    /// We consider it successful if we manage to bind the IPv4 socket.
+    async fn rebind(&self, cur_port_fate: CurrentPortFate) -> Result<()> {
+        if let Err(err) = self
+            .bind_socket(&self.pconn6, Network::Ip6, cur_port_fate)
+            .await
+        {
+            info!("rebind ignoring IPv6 bind failure: {:?}", err);
+        }
+        self.bind_socket(&self.pconn4, Network::Ip4, cur_port_fate)
+            .await
+            .context("rebind IPv4 failed")?;
 
-    // // rebind closes and re-binds the UDP sockets.
-    // // We consider it successful if we manage to bind the IPv4 socket.
-    // func (c *Conn) rebind(curPortFate currentPortFate) error {
-    // 	if err := c.bindSocket(&c.pconn6, "udp6", curPortFate); err != nil {
-    // 		c.logf("magicsock: Rebind ignoring IPv6 bind failure: %v", err)
-    // 	}
-    // 	if err := c.bindSocket(&c.pconn4, "udp4", curPortFate); err != nil {
-    // 		return fmt.Errorf("magicsock: Rebind IPv4 failed: %w", err)
-    // 	}
-    // 	c.portMapper.SetLocalPort(c.LocalPort())
-    // 	return nil
-    // }
+        self.port_mapper
+            .set_local_port(self.local_port().await)
+            .await;
+
+        Ok(())
+    }
 
     // // Rebind closes and re-binds the UDP sockets and resets the DERP connection.
     // // It should be followed by a call to ReSTUN.
