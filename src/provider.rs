@@ -20,6 +20,7 @@ use std::{collections::HashMap, sync::Arc};
 use abao::encode::SliceExtractor;
 use anyhow::{bail, ensure, Context, Result};
 use bytes::{Bytes, BytesMut};
+use futures::future;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncWrite, AsyncWriteExt};
 use tokio::sync::broadcast;
@@ -547,8 +548,18 @@ impl From<&std::path::Path> for DataSource {
 ///
 /// If the size of the file is changed while this is running, an error will be
 /// returned.
-fn compute_outboard(path: PathBuf) -> anyhow::Result<(Hash, Vec<u8>)> {
-    let file = std::fs::File::open(path)?;
+///
+/// path and name are returned with the result to provide context
+fn compute_outboard(
+    path: PathBuf,
+    name: Option<String>,
+) -> anyhow::Result<(PathBuf, Option<String>, Hash, Vec<u8>)> {
+    ensure!(
+        path.is_file(),
+        "can only transfer blob data: {}",
+        path.display()
+    );
+    let file = std::fs::File::open(&path)?;
     let len = file.metadata()?.len();
     // compute outboard size so we can pre-allocate the buffer.
     //
@@ -573,7 +584,7 @@ fn compute_outboard(path: PathBuf) -> anyhow::Result<(Hash, Vec<u8>)> {
     // this flips the outboard encoding from post-order to pre-order
     let hash = encoder.finalize()?;
 
-    Ok((hash.into(), outboard))
+    Ok((path, name, hash.into(), outboard))
 }
 
 /// Creates a database of blobs (stored in outboard storage) and Collections, stored in memory.
@@ -583,25 +594,24 @@ pub async fn create_collection(data_sources: Vec<DataSource>) -> Result<(Databas
     let mut db = HashMap::with_capacity(data_sources.len() + 1);
     let mut blobs = Vec::with_capacity(data_sources.len());
     let mut total_blobs_size: u64 = 0;
-
     let mut blobs_encoded_size_estimate = 0;
-    for data in data_sources {
+
+    // compute outboards in parallel, using tokio's blocking thread pool
+    let outboards = data_sources.into_iter().map(|data| {
         let (path, name) = match data {
             DataSource::File(path) => (path, None),
             DataSource::NamedFile { path, name } => (path, Some(name)),
         };
+        tokio::task::spawn_blocking(move || compute_outboard(path, name))
+    });
+    // wait for completion and collect results
+    let outboards = future::join_all(outboards)
+        .await
+        .into_iter()
+        .collect::<Result<Result<Vec<_>, _>, _>>()??;
+    // insert outboards into the database and build collection
 
-        ensure!(
-            path.is_file(),
-            "can only transfer blob data: {}",
-            path.display()
-        );
-        // spawn a blocking task for computing the hash and outboard.
-        // pretty sure this is best to remain sync even once bao is async.
-        let path2 = path.clone();
-        let (hash, outboard) =
-            tokio::task::spawn_blocking(move || compute_outboard(path2)).await??;
-
+    for (path, name, hash, outboard) in outboards {
         debug_assert!(outboard.len() >= 8, "outboard must at least contain size");
         let size = u64::from_le_bytes(outboard[..8].try_into().unwrap());
         db.insert(
@@ -623,6 +633,7 @@ pub async fn create_collection(data_sources: Vec<DataSource>) -> Result<(Databas
         blobs_encoded_size_estimate += name.len() + 32;
         blobs.push(Blob { name, hash });
     }
+
     let c = Collection {
         name: "collection".to_string(),
         blobs,
