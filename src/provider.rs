@@ -17,8 +17,8 @@ use std::str::FromStr;
 use std::task::Poll;
 use std::{collections::HashMap, sync::Arc};
 
+use abao::encode::SliceExtractor;
 use anyhow::{bail, ensure, Context, Result};
-use bao::encode::SliceExtractor;
 use bytes::{Bytes, BytesMut};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncWrite, AsyncWriteExt};
@@ -386,7 +386,7 @@ async fn handle_stream(
                     0,
                     data.len() as u64,
                 );
-                let encoded_size: usize = bao::encode::encoded_size(data.len() as u64)
+                let encoded_size: usize = abao::encode::encoded_size(data.len() as u64)
                     .try_into()
                     .unwrap();
                 let mut encoded = Vec::with_capacity(encoded_size);
@@ -471,7 +471,7 @@ async fn send_blob<W: AsyncWrite + Unpin + Send + 'static>(
                 let file_reader = std::fs::File::open(&path)?;
                 let outboard_reader = std::io::Cursor::new(outboard);
                 let mut wrapper = SyncIoBridge::new(&mut writer);
-                let mut slice_extractor = bao::encode::SliceExtractor::new_outboard(
+                let mut slice_extractor = abao::encode::SliceExtractor::new_outboard(
                     file_reader,
                     outboard_reader,
                     0,
@@ -558,13 +558,13 @@ fn compute_outboard(path: PathBuf) -> anyhow::Result<(Hash, Vec<u8>)> {
     //
     // The way to solve this would be to have larger blocks than the blake3 chunk size of 1024.
     // I think we really want to keep the outboard in memory for simplicity.
-    let outboard_size = usize::try_from(bao::encode::outboard_size(len))
+    let outboard_size = usize::try_from(abao::encode::outboard_size(len))
         .context("outboard too large to fit in memory")?;
     let mut outboard = Vec::with_capacity(outboard_size);
 
     // copy the file into the encoder. Data will be skipped by the encoder in outboard mode.
     let outboard_cursor = std::io::Cursor::new(&mut outboard);
-    let mut encoder = bao::encode::Encoder::new_outboard(outboard_cursor);
+    let mut encoder = abao::encode::Encoder::new_outboard(outboard_cursor);
 
     let mut reader = BufReader::new(file);
     // the length we have actually written, should be the same as the length of the file.
@@ -637,7 +637,7 @@ pub async fn create_collection(data_sources: Vec<DataSource>) -> Result<(Databas
     // to account for any postcard encoding data.
     let mut buffer = BytesMut::zeroed(blobs_encoded_size_estimate + 1024);
     let data = postcard::to_slice(&c, &mut buffer)?;
-    let (outboard, hash) = bao::encode::outboard(&data);
+    let (outboard, hash) = abao::encode::outboard(&data);
     let hash = Hash::from(hash);
     db.insert(
         hash,
@@ -724,7 +724,7 @@ mod tests {
 
     #[test]
     fn test_ticket_base64_roundtrip() {
-        let (_encoded, hash) = bao::encode::encode(b"hi there");
+        let (_encoded, hash) = abao::encode::encode(b"hi there");
         let hash = Hash::from(hash);
         let peer = PeerId::from(Keypair::generate().public());
         let addr = SocketAddr::from_str("127.0.0.1:1234").unwrap();
@@ -747,7 +747,7 @@ mod tests {
     async fn test_create_collection() -> Result<()> {
         let dir: PathBuf = testdir!();
         let mut expect_blobs = vec![];
-        let (_, hash) = bao::encode::outboard(vec![]);
+        let (_, hash) = abao::encode::outboard(vec![]);
         let hash = Hash::from(hash);
 
         // DataSource::File
