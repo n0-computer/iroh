@@ -64,8 +64,16 @@ const DEFAULT_INITIAL_RETRANSMIT: Duration = Duration::from_millis(100);
 #[derive(Default, Debug, Clone)]
 pub struct Report(Arc<RwLock<InnerReport>>);
 
+impl Deref for Report {
+    type Target = RwLock<InnerReport>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
 #[derive(Default, Debug, PartialEq, Eq)]
-struct InnerReport {
+pub struct InnerReport {
     /// A UDP STUN round trip completed.
     pub udp: bool,
     /// An IPv6 STUN round trip completed.

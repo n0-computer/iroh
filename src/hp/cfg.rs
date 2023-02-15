@@ -14,13 +14,13 @@ use std::{
 pub const DERP_MAGIC_IP: IpAddr = IpAddr::V4(Ipv4Addr::new(127, 3, 3, 30));
 
 /// An endpoint IPPort and an associated type.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Endpoint {
     pub addr: SocketAddr,
     pub typ: EndpointType,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum EndpointType {
     Unknown,
     Local,
@@ -90,6 +90,12 @@ pub struct NetInfo {
     /// This should only be updated rarely, or when there's a
     /// material change, as any change here also gets uploaded to the control plane.
     pub derp_latency: HashMap<String, f64>,
+}
+
+impl NetInfo {
+    pub fn basically_equal(&self, other: &Self) -> bool {
+        todo!()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

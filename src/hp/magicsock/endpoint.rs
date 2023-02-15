@@ -11,13 +11,13 @@ use std::{
 
 use tokio::{
     sync::{Mutex, RwLock},
-    time::{self, Instant},
+    time::Instant,
 };
 use tracing::info;
 
 use crate::hp::{cfg, key, stun};
 
-use super::{Conn, PeerInfo, PongReply, SentPing};
+use super::{Conn, PeerInfo, PongReply, SentPing, Timer};
 
 /// A wireguard/conn.Endpoint that picks the best available path to communicate with a peer,
 /// based on network conditions and what the peer supports.
@@ -45,7 +45,7 @@ pub struct InnerEndpoint {
     /// func gets set on an sendpoint.
     ///
     /// A nil value means the current fast path has expired and needs to be recalculated.
-    send_func: RwLock<Option<Box<dyn Fn(&[&[u8]]) -> std::io::Result<()>>>>, // syncs.AtomicValue[endpointSendFunc] // nil or unset means unused
+    send_func: RwLock<Option<Box<dyn Fn(&[&[u8]]) -> std::io::Result<()> + Send + Sync + 'static>>>, // syncs.AtomicValue[endpointSendFunc] // nil or unset means unused
 
     // These fields are initialized once and never modified.
     c: Conn,
@@ -65,7 +65,7 @@ struct InnerMutEndpoint {
     disco_key: key::DiscoPublic,
 
     /// None when idle
-    heart_beat_timer: Option<time::Interval>,
+    heart_beat_timer: Option<Timer>,
     /// Last time there was outgoing packets sent to this peer (from wireguard-go)
     last_send: Option<Instant>,
     /// Last time we pinged all endpoints
@@ -92,7 +92,7 @@ struct InnerMutEndpoint {
 
 struct PendingCliPing {
     res: cfg::PingResult,
-    cb: Box<dyn Fn(&cfg::PingResult)>,
+    cb: Box<dyn Fn(&cfg::PingResult) + Send + Sync + 'static>,
 }
 
 impl Endpoint {
@@ -517,15 +517,12 @@ impl Endpoint {
     // 	return false
     // }
 
-    // // noteConnectivityChange is called when connectivity changes enough
-    // // that we should question our earlier assumptions about which paths
-    // // work.
-    // func (de *endpoint) noteConnectivityChange() {
-    // 	de.mu.Lock()
-    // 	defer de.mu.Unlock()
-
-    // 	de.trustBestAddrUntil = 0
-    // }
+    /// Called when connectivity changes enough
+    /// that we should question our earlier assumptions about which paths work.
+    pub(super) async fn note_connectivity_change(&self) {
+        let mut state = self.state.lock().await;
+        state.trust_best_addr_until = None;
+    }
 
     // // handlePongConnLocked handles a Pong message (a reply to an earlier ping).
     // // It should be called with the Conn.mu held.
@@ -716,10 +713,9 @@ impl Endpoint {
             info!("doing cleanup for discovery key {:?}", state.disco_key);
         }
 
-        state.reset();
+        state.reset().await;
         if let Some(timer) = state.heart_beat_timer.take() {
-            // TODO: needed?
-            // de.heartBeatTimer.Stop()
+            timer.stop().await;
         }
         state.pending_cli_pings.clear();
     }
@@ -740,7 +736,7 @@ impl InnerMutEndpoint {
     /// Clears all the endpoint's p2p state, reverting it to a
     // DERP-only endpoint. It does not stop the endpoint's heartbeat
     // timer, if one is running.
-    fn reset(&mut self) {
+    async fn reset(&mut self) {
         self.last_send = None;
         self.last_full_ping = None;
         self.best_addr = None;
@@ -756,16 +752,16 @@ impl InnerMutEndpoint {
 
             // Stop the timer for the case where sendPing failed to write to UDP.
             // In the case of a timer already having fired, this is a no-op:
-            // TODO: figure out
-            // sp.timer.stop();
+            sp.timer.stop().await;
         }
     }
 
-    fn remove_sent_ping(&mut self, txid: &stun::TransactionId, sp: &mut SentPing) {
+    async fn remove_sent_ping(&mut self, txid: &stun::TransactionId, sp: SentPing) {
         // Stop the timer for the case where sendPing failed to write to UDP.
         // In the case of a timer already having fired, this is a no-op:
         // TODO: figure out
-        // sp.timer.stop();
+
+        sp.timer.stop().await;
         self.sent_ping.remove(txid);
     }
 }
@@ -809,14 +805,8 @@ impl PeerMap {
         self.by_ip_port.get(ipp).map(|i| &i.ep)
     }
 
-    /// Invokes f on every endpoint.
-    fn for_each_endpoint<F>(&self, f: F)
-    where
-        F: Fn(&Endpoint),
-    {
-        for (_, pi) in &self.by_node_key {
-            f(&pi.ep)
-        }
+    pub fn endpoints(&self) -> impl Iterator<Item = &Endpoint> {
+        self.by_node_key.values().map(|pi| &pi.ep)
     }
 
     /// Invokes f on every endpoint in m that has the provided DiscoKey until
