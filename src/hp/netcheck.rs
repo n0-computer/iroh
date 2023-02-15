@@ -16,7 +16,7 @@ use futures::{future::BoxFuture, FutureExt};
 use rand::seq::IteratorRandom;
 use tokio::{
     net,
-    sync::{self, mpsc, oneshot, Mutex, RwLock},
+    sync::{self, broadcast, oneshot, Mutex, RwLock},
     task::JoinSet,
     time::Duration,
 };
@@ -150,6 +150,8 @@ pub struct Client {
 
     clock: Clock,
 
+    got_hair_stun: broadcast::Sender<SocketAddr>,
+
     reports: Arc<Mutex<Reports>>,
 }
 
@@ -175,12 +177,14 @@ impl Default for Client {
     fn default() -> Self {
         let clock = Clock::default();
         let last_full = clock.now();
+        let (got_hair_stun, _) = broadcast::channel(1);
 
         Client {
             skip_external_network: false,
             udp_bind_addr: "0.0.0.0:0".parse().unwrap(),
             port_mapper: None,
             clock,
+            got_hair_stun,
             reports: Arc::new(Mutex::new(Reports {
                 next_full: false,
                 prev: Default::default(),
@@ -194,17 +198,12 @@ impl Default for Client {
 
 impl Client {
     /// Reports whether `pkt` (from `src`) was our magic hairpin probe packet that we sent to ourselves.
-    async fn handle_hair_stun_locked(
-        &self,
-        pkt: &[u8],
-        src: SocketAddr,
-        hs_s: mpsc::Sender<SocketAddr>,
-    ) -> bool {
+    async fn handle_hair_stun_locked(&self, pkt: &[u8], src: SocketAddr) -> bool {
         let reports = &*self.reports.lock().await;
         if let Some(ref rs) = reports.cur_state {
             if let Ok(tx) = stun::parse_binding_request(pkt) {
                 if tx == rs.hair_tx {
-                    hs_s.send(src).await.ok();
+                    self.got_hair_stun.send(src).ok();
                     return true;
                 }
             }
@@ -217,12 +216,7 @@ impl Client {
         self.reports.lock().await.next_full = true;
     }
 
-    async fn receive_stun_packet(
-        &self,
-        pkt: &[u8],
-        src: SocketAddr,
-        hs_s: mpsc::Sender<SocketAddr>,
-    ) {
+    pub async fn receive_stun_packet(&self, pkt: &[u8], src: SocketAddr) {
         debug!("received STUN packet from {}", src);
 
         if src.is_ipv4() {
@@ -233,7 +227,7 @@ impl Client {
             // metricSTUNRecv6.Add(1)
         }
 
-        if self.handle_hair_stun_locked(pkt, src, hs_s).await {
+        if self.handle_hair_stun_locked(pkt, src).await {
             return;
         }
         if self.reports.lock().await.cur_state.is_none() {
@@ -268,7 +262,7 @@ impl Client {
     }
 
     /// Reads STUN packets from pc until there's an error. In either case, it closes `pc`.
-    async fn read_packets(&self, pc: Arc<net::UdpSocket>, hs_s: mpsc::Sender<SocketAddr>) {
+    async fn read_packets(&self, pc: Arc<net::UdpSocket>) {
         let mut buf = vec![0u8; 64 << 10];
         loop {
             match pc.recv_from(&mut buf).await {
@@ -283,7 +277,7 @@ impl Client {
                         continue;
                     }
                     addr.set_ip(to_canonical(addr.ip()));
-                    self.receive_stun_packet(pkt, addr, hs_s.clone()).await;
+                    self.receive_stun_packet(pkt, addr).await;
                 }
             }
         }
@@ -309,7 +303,7 @@ impl Client {
     /// Gets a report.
     ///
     /// It may not be called concurrently with itself.
-    pub async fn get_report(&mut self, dm: &DerpMap) -> Result<Report, Error> {
+    pub async fn get_report(&self, dm: &DerpMap) -> Result<Report, Error> {
         // TODO
         // metricNumGetReport.Add(1)
 
@@ -334,7 +328,7 @@ impl Client {
             .await
             .context("udp4: failed to bind")?;
 
-        let (got_hair_stun_s, got_hair_stun_r) = mpsc::channel(1);
+        let got_hair_stun_r = self.got_hair_stun.subscribe();
         let mut rs = ReportState {
             incremental: false,
             pc4: None,
@@ -447,8 +441,7 @@ impl Client {
             rs.pc4 = Some(u4.clone());
             // TODO: track task
             let this = self.clone();
-            let got_hair_stun_s = got_hair_stun_s.clone();
-            tokio::task::spawn(async move { this.read_packets(u4, got_hair_stun_s).await });
+            tokio::task::spawn(async move { this.read_packets(u4).await });
         }
 
         if if_state.have_v6 {
@@ -459,8 +452,7 @@ impl Client {
             rs.pc6 = Some(u6.clone());
             // TODO: track task
             let this = self.clone();
-            let got_hair_stun_s = got_hair_stun_s.clone();
-            tokio::task::spawn(async move { this.read_packets(u6, got_hair_stun_s).await });
+            tokio::task::spawn(async move { this.read_packets(u6).await });
         }
 
         let plan = make_probe_plan(dm, &if_state, last.as_ref()).await;
@@ -1246,7 +1238,7 @@ fn node_might4(n: &DerpNode) -> bool {
 #[derive(Clone, Debug)]
 struct ReportState {
     hair_tx: stun::TransactionId,
-    got_hair_stun: Arc<Mutex<mpsc::Receiver<SocketAddr>>>,
+    got_hair_stun: Arc<Mutex<broadcast::Receiver<SocketAddr>>>,
     // notified on hair pin timeout
     hair_timeout: Arc<sync::Notify>,
     pc4: Option<Arc<net::UdpSocket>>,
@@ -1287,7 +1279,7 @@ impl Debug for InnerReportState {
 impl ReportState {
     #[cfg(test)]
     pub fn new(
-        got_hair_stun: Arc<Mutex<mpsc::Receiver<SocketAddr>>>,
+        got_hair_stun: Arc<Mutex<broadcast::Receiver<SocketAddr>>>,
         pc4_hair: Arc<net::UdpSocket>,
         clock: Clock,
     ) -> Self {
@@ -1634,8 +1626,7 @@ mod tests {
     async fn test_hairpin_stun() {
         let client = Client::default();
         let pc4_hair = Arc::new(net::UdpSocket::bind("0.0.0.0:0").await.unwrap());
-        let (hs_s, hs_r) = mpsc::channel(1);
-        let hs_r = Arc::new(Mutex::new(hs_r));
+        let hs_r = Arc::new(Mutex::new(client.got_hair_stun.subscribe()));
         let s = ReportState::new(hs_r.clone(), pc4_hair, client.clock.clone());
         let tx = s.hair_tx;
         client.reports.lock().await.cur_state = Some(s);
@@ -1644,7 +1635,7 @@ mod tests {
         assert!(stun::is(&req));
         let src = "127.0.0.1:0".parse().unwrap();
 
-        let res = client.handle_hair_stun_locked(&req, src, hs_s).await;
+        let res = client.handle_hair_stun_locked(&req, src).await;
         assert!(res, "expected hair to be true");
         assert_eq!(hs_r.lock().await.recv().await.unwrap(), src);
     }
@@ -1729,7 +1720,7 @@ mod tests {
         let mut dm = stun::test::derp_map_of([stun_addr].into_iter());
         dm.regions.get_mut(&1).unwrap().nodes[0].stun_only = true;
 
-        let mut client = Client::default();
+        let client = Client::default();
 
         let r = client.get_report(&dm).await?;
         let r = &mut *r.0.write().await;

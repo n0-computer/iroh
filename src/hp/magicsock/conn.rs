@@ -10,7 +10,8 @@ use std::{
 };
 
 use anyhow::{bail, Context as _, Result};
-use rand::Rng;
+use futures::future::BoxFuture;
+use rand::{seq::SliceRandom, Rng, SeedableRng};
 use tokio::{
     net::UdpSocket,
     sync::{self, Mutex, RwLock},
@@ -132,7 +133,9 @@ pub struct Inner {
     port_mapper: portmapper::Client,
 
     /// Holds the current STUN packet processing func.
-    on_stun_receive: RwLock<Option<Box<dyn Fn(&[u8], SocketAddr) + Send + Sync + 'static>>>, // syncs.AtomicValue[func(p []byte, fromAddr netip.AddrPort)]
+    on_stun_receive: RwLock<
+        Option<Box<dyn Fn(&[u8], SocketAddr) -> BoxFuture<'static, ()> + Send + Sync + 'static>>,
+    >, // syncs.AtomicValue[func(p []byte, fromAddr netip.AddrPort)]
 
     // TODO:
     // Used by receiveDERP to read DERP messages.
@@ -554,107 +557,108 @@ impl Conn {
     }
 
     async fn update_net_info(&self) -> Result<netcheck::Report> {
-        todo!()
-        // 	c.mu.Lock()
-        // 	dm := c.derpMap
-        // 	c.mu.Unlock()
+        let dm = self.state.lock().await.derp_map.clone();
+        if dm.is_none() || self.network_down() {
+            return Ok(Default::default());
+        }
 
-        // 	if dm == nil || c.networkDown() {
-        // 		return new(netcheck.Report), nil
-        // 	}
+        let report = time::timeout(Duration::from_secs(2), async move {
+            let dm = dm.unwrap();
+            let this = self.clone();
+            *self.on_stun_receive.write().await = Some(Box::new(move |a, b| {
+                let a = a.to_vec(); // :(
+                let this = this.clone();
+                Box::pin(async move {
+                    this.net_checker.receive_stun_packet(&a, b).await;
+                })
+            }));
+            let report = self.net_checker.get_report(&dm).await?;
+            *self.last_net_check_report.write().await = Some(report.clone());
+            let r = report.read().await;
+            self.no_v4.store(r.ipv4, Ordering::Relaxed);
+            self.no_v6.store(r.ipv6, Ordering::Relaxed);
+            self.no_v4_send.store(r.ipv4_can_send, Ordering::Relaxed);
 
-        // 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
-        // 	defer cancel()
+            let mut ni = cfg::NetInfo {
+                derp_latency: Default::default(),
+                mapping_varies_by_dest_ip: r.mapping_varies_by_dest_ip,
+                hair_pinning: r.hair_pinning,
+                upnp: r.upnp,
+                pmp: r.pmp,
+                pcp: r.pcp,
+                have_port_map: self.port_mapper.have_mapping(),
+                working_ipv6: Some(r.ipv6),
+                os_has_ipv6: Some(r.os_has_ipv6),
+                working_udp: Some(r.udp),
+                working_icm_pv4: Some(r.icmpv4),
+                preferred_derp: r.preferred_derp,
+                link_type: None,
+            };
+            for (rid, d) in &r.region_v4_latency {
+                ni.derp_latency
+                    .insert(format!("{}-v4", rid), d.as_secs_f64());
+            }
+            for (rid, d) in &r.region_v6_latency {
+                ni.derp_latency
+                    .insert(format!("{}-v6", rid), d.as_secs_f64());
+            }
 
-        // 	c.stunReceiveFunc.Store(c.netChecker.ReceiveSTUNPacket)
-        // 	defer c.ignoreSTUNPackets()
+            if ni.preferred_derp == 0 {
+                // Perhaps UDP is blocked. Pick a deterministic but arbitrary one.
+                ni.preferred_derp = self.pick_derp_fallback().await;
+            }
+            if !self.set_nearest_derp(ni.preferred_derp).await {
+                ni.preferred_derp = 0;
+            }
 
-        // 	report, err := c.netChecker.GetReport(ctx, dm)
-        // 	if err != nil {
-        // 		return nil, err
-        // 	}
+            // TODO: set link type
 
-        // 	c.lastNetCheckReport.Store(report)
-        // 	c.noV4.Store(!report.IPv4)
-        // 	c.noV6.Store(!report.IPv6)
-        // 	c.noV4Send.Store(!report.IPv4CanSend)
+            drop(r);
+            self.call_net_info_callback(ni);
+            Ok::<_, anyhow::Error>(report)
+        })
+        .await;
 
-        // 	ni := &tailcfg.NetInfo{
-        // 		DERPLatency:           map[string]float64{},
-        // 		MappingVariesByDestIP: report.MappingVariesByDestIP,
-        // 		HairPinning:           report.HairPinning,
-        // 		UPnP:                  report.UPnP,
-        // 		PMP:                   report.PMP,
-        // 		PCP:                   report.PCP,
-        // 		HavePortMap:           c.portMapper.HaveMapping(),
-        // 	}
-        // 	for rid, d := range report.RegionV4Latency {
-        // 		ni.DERPLatency[fmt.Sprintf("%d-v4", rid)] = d.Seconds()
-        // 	}
-        // 	for rid, d := range report.RegionV6Latency {
-        // 		ni.DERPLatency[fmt.Sprintf("%d-v6", rid)] = d.Seconds()
-        // 	}
-        // 	ni.WorkingIPv6.Set(report.IPv6)
-        // 	ni.OSHasIPv6.Set(report.OSHasIPv6)
-        // 	ni.WorkingUDP.Set(report.UDP)
-        // 	ni.WorkingICMPv4.Set(report.ICMPv4)
-        // 	ni.PreferredDERP = report.PreferredDERP
-
-        // 	if ni.PreferredDERP == 0 {
-        // 		// Perhaps UDP is blocked. Pick a deterministic but arbitrary
-        // 		// one.
-        // 		ni.PreferredDERP = c.pickDERPFallback()
-        // 	}
-        // 	if !c.setNearestDERP(ni.PreferredDERP) {
-        // 		ni.PreferredDERP = 0
-        // 	}
-
-        // 	// TODO: set link type
-
-        // 	c.callNetInfoCallback(ni)
-        // 	return report, nil
+        self.ignore_stun_packets().await;
+        let report = report??;
+        Ok(report)
     }
 
-    // var processStartUnixNano = time.Now().UnixNano()
+    /// Returns a non-zero but deterministic DERP node to
+    /// connect to.  This is only used if netcheck couldn't find the
+    /// nearest one (for instance, if UDP is blocked and thus STUN latency checks aren't working).
+    async fn pick_derp_fallback(&self) -> usize {
+        let mut state = self.state.lock().await;
+        if !self.want_derp_locked(&mut state) {
+            return 0;
+        }
+        let ids = state
+            .derp_map
+            .as_ref()
+            .map(|d| d.region_ids())
+            .unwrap_or_default();
+        if ids.is_empty() {
+            // No DERP regions in map.
+            return 0;
+        }
 
-    // // pickDERPFallback returns a non-zero but deterministic DERP node to
-    // // connect to.  This is only used if netcheck couldn't find the
-    // // nearest one (for instance, if UDP is blocked and thus STUN latency
-    // // checks aren't working).
-    // //
-    // // c.mu must NOT be held.
-    // func (c *Conn) pickDERPFallback() int {
-    // 	c.mu.Lock()
-    // 	defer c.mu.Unlock()
+        // TODO: figure out which DERP region most of our peers are using,
+        // and use that region as our fallback.
+        //
+        // If we already had selected something in the past and it has any
+        // peers, we want to stay on it. If there are no peers at all,
+        // stay on whatever DERP we previously picked. If we need to pick
+        // one and have no peer info, pick a region randomly.
+        //
+        // We used to do the above for legacy clients, but never updated it for disco.
 
-    // 	if !c.wantDerpLocked() {
-    // 		return 0
-    // 	}
-    // 	ids := c.derpMap.RegionIDs()
-    // 	if len(ids) == 0 {
-    // 		// No DERP regions in non-nil map.
-    // 		return 0
-    // 	}
+        if state.my_derp != 0 {
+            return state.my_derp;
+        }
 
-    // 	// TODO: figure out which DERP region most of our peers are using,
-    // 	// and use that region as our fallback.
-    // 	//
-    // 	// If we already had selected something in the past and it has any
-    // 	// peers, we want to stay on it. If there are no peers at all,
-    // 	// stay on whatever DERP we previously picked. If we need to pick
-    // 	// one and have no peer info, pick a region randomly.
-    // 	//
-    // 	// We used to do the above for legacy clients, but never updated
-    // 	// it for disco.
-
-    // 	if c.myDerp != 0 {
-    // 		return c.myDerp
-    // 	}
-
-    // 	h := fnv.New64()
-    // 	fmt.Fprintf(h, "%p/%d", c, processStartUnixNano) // arbitrary
-    // 	return ids[rand.New(rand.NewSource(int64(h.Sum64()))).Intn(len(ids))]
-    // }
+        let mut rng = rand::rngs::StdRng::seed_from_u64(0);
+        *ids.choose(&mut rng).unwrap()
+    }
 
     /// Calls the NetInfo callback (if previously
     /// registered with SetNetInfoCallback) if ni has substantially changed
@@ -786,45 +790,54 @@ impl Conn {
     // 	return c.discoPublic
     // }
 
-    // // c.mu must NOT be held.
-    // func (c *Conn) setNearestDERP(derpNum int) (wantDERP bool) {
-    // 	c.mu.Lock()
-    // 	defer c.mu.Unlock()
-    // 	if !c.wantDerpLocked() {
-    // 		c.myDerp = 0
-    // 		health.SetMagicSockDERPHome(0)
-    // 		return false
-    // 	}
-    // 	if derpNum == c.myDerp {
-    // 		// No change.
-    // 		return true
-    // 	}
-    // 	if c.myDerp != 0 && derpNum != 0 {
-    // 		metricDERPHomeChange.Add(1)
-    // 	}
-    // 	c.myDerp = derpNum
-    // 	health.SetMagicSockDERPHome(derpNum)
+    async fn set_nearest_derp(&self, derp_num: usize) -> bool {
+        let mut state = self.state.lock().await;
 
-    // 	if c.privateKey.IsZero() {
-    // 		// No private key yet, so DERP connections won't come up anyway.
-    // 		// Return early rather than ultimately log a couple lines of noise.
-    // 		return true
-    // 	}
+        if !self.want_derp_locked(&mut state) {
+            state.my_derp = 0;
+            return false;
+        }
+        if derp_num == state.my_derp {
+            // No change.
+            return true;
+        }
+        if state.my_derp != 0 && derp_num != 0 {
+            // TODO
+            // metricDERPHomeChange.Add(1)
+        }
+        state.my_derp = derp_num;
 
-    // 	// On change, notify all currently connected DERP servers and
-    // 	// start connecting to our home DERP if we are not already.
-    // 	dr := c.derpMap.Regions[derpNum]
-    // 	if dr == nil {
-    // 		c.logf("[unexpected] magicsock: derpMap.Regions[%v] is nil", derpNum)
-    // 	} else {
-    // 		c.logf("magicsock: home is now derp-%v (%v)", derpNum, c.derpMap.Regions[derpNum].RegionCode)
-    // 	}
-    // 	for i, ad := range c.activeDerp {
-    // 		go ad.c.NotePreferred(i == c.myDerp)
-    // 	}
-    // 	c.goDerpConnect(derpNum)
-    // 	return true
-    // }
+        if state.private_key.is_none() {
+            // No private key yet, so DERP connections won't come up anyway.
+            // Return early rather than ultimately log a couple lines of noise.
+            return true;
+        }
+
+        // On change, notify all currently connected DERP servers and
+        // start connecting to our home DERP if we are not already.
+        match state
+            .derp_map
+            .as_ref()
+            .expect("already checked")
+            .regions
+            .get(&derp_num)
+        {
+            Some(dr) => {
+                info!("home is now derp-{} ({})", derp_num, dr.region_code);
+            }
+            None => {
+                info!("[unexpected]: derpMap.Regions[{}] is empty", derp_num);
+            }
+        }
+        for (i, ad) in &state.active_derp {
+            // TODO: spawn
+            let b = *i == state.my_derp;
+            // TODO:
+            // tokio::task::spawn(async move { ad.c.note_preferred(b).await });
+        }
+        self.go_derp_connect(derp_num);
+        true
+    }
 
     /// Starts connecting to our DERP home, if any.
     fn start_derp_home_connect_locked(&self, state: &mut ConnState) {
@@ -2331,7 +2344,9 @@ impl Conn {
     // 	}
     // }
 
-    // func (c *Conn) wantDerpLocked() bool { return c.derpMap != nil }
+    fn want_derp_locked(&self, state: &mut ConnState) -> bool {
+        state.derp_map.is_some()
+    }
 
     // // c.mu must be held.
     // func (c *Conn) closeAllDerpLocked(why string) {
