@@ -22,7 +22,7 @@ const fn is_loopback(interface: &default_net::Interface) -> bool {
 /// whether they're loopback addresses. If there are no regular addresses
 /// it will return any IPv4 linklocal or IPv6 unique local addresses because we
 /// know of environments where these are used with NAT to provide connectivity.
-fn local_addresses() -> (Vec<IpAddr>, Vec<IpAddr>) {
+pub fn local_addresses() -> (Vec<IpAddr>, Vec<IpAddr>) {
     // TODO: don't serve interface addresses that we are routing
 
     let ifaces = default_net::interface::get_interfaces();

@@ -1,3 +1,5 @@
+use std::net::SocketAddr;
+
 use anyhow::Error;
 
 #[derive(Debug, Clone)]
@@ -25,6 +27,14 @@ impl Client {
 
     /// Updates the local port number to which we want to port map UDP traffic.
     pub async fn set_local_port(&self, local_port: u16) {
+        todo!()
+    }
+
+    /// Quickly returns with our current cached portmapping, if any.
+    /// If there's not one, it starts up a background goroutine to create one.
+    /// If the background goroutine ends up creating one, the `on_change` hook registered with the
+    /// `Client::new` constructor (if any) will fire.
+    pub async fn get_cached_mapping_or_start_creating_one(&self) -> (SocketAddr, bool) {
         todo!()
     }
 }

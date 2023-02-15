@@ -4,6 +4,14 @@
 //!
 //! Based on tailscale/wgengine/monitor
 
+use super::interfaces;
+
 /// Represents a monitoring instance.
 #[derive(Debug)]
 pub struct Monitor {}
+
+impl Monitor {
+    pub fn interface_state(&self) -> interfaces::State {
+        todo!()
+    }
+}

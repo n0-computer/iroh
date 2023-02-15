@@ -4,8 +4,21 @@ use std::{
 };
 
 pub mod http {
+    use std::net::SocketAddr;
+
+    use anyhow::Result;
+
     #[derive(Default, Debug, Clone, PartialEq, Eq)]
     pub struct Client {}
+
+    impl Client {
+        pub fn local_addr(&self) -> Option<SocketAddr> {
+            todo!()
+        }
+        pub async fn ping(&self) -> Result<()> {
+            todo!()
+        }
+    }
 }
 
 #[derive(Debug, Default, Clone)]
