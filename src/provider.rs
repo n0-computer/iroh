@@ -365,7 +365,6 @@ async fn handle_stream(
     // 2. Decode the request.
     debug!("reading request");
     let request = read_lp::<_, Request>(&mut reader, &mut in_buffer).await?;
-    reader.stop(Closed::RequestReceived.into())?;
     if let Some((request, _size)) = request {
         let hash = request.name;
         debug!("got request({})", request.id);

@@ -233,8 +233,8 @@ pub(crate) enum Closed {
     ProviderTerminating = 1,
     /// The provider has received the request.
     ///
-    /// Only a single request is allowed on a stream, once this request is received the
-    /// provider will close its [`quinn::RecvStream`] with this error code.
+    /// Only a single request is allowed on a stream, if more data is received after this a
+    /// provider may send this error code in a STOP_STREAM frame.
     RequestReceived = 2,
 }
 
