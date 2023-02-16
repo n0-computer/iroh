@@ -56,7 +56,7 @@ mod tests {
     fn roundtrip_blob() {
         let b = Blob {
             name: "test".to_string(),
-            hash: bao::Hash::from_hex(
+            hash: abao::Hash::from_hex(
                 "3aa61c409fd7717c9d9c639202af2fae470c0ef669be7ba2caea5779cb534e9d",
             )
             .unwrap()

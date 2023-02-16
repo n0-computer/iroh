@@ -9,7 +9,7 @@ on:
 env:
   RUST_BACKTRACE: 1
   RUSTFLAGS: -Dwarnings
-  MSRV: "1.64"
+  MSRV: "1.63"
 
 
 jobs:
@@ -169,4 +169,4 @@ jobs:
           override: true
     - name: Check MSRV all features
       run: |
-        cargo +$MSRV check --workspace --all-targets --all-features
+        cargo +$MSRV check --workspace --all-targets --no-default-features

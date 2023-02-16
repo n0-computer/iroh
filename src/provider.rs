@@ -18,9 +18,10 @@ use std::sync::Mutex;
 use std::task::Poll;
 use std::{collections::HashMap, sync::Arc};
 
+use abao::encode::SliceExtractor;
 use anyhow::{bail, ensure, Context, Result};
-use bao::encode::SliceExtractor;
 use bytes::{Bytes, BytesMut};
+use futures::future;
 use futures::Stream;
 use quic_rpc::server::{RpcChannel, RpcServerError};
 use quic_rpc::transport::misc::DummyServerEndpoint;
@@ -467,7 +468,6 @@ async fn handle_stream(
     // 2. Decode the request.
     debug!("reading request");
     let request = read_lp::<_, Request>(&mut reader, &mut in_buffer).await?;
-    reader.stop(Closed::RequestReceived.into())?;
     if let Some((request, _size)) = request {
         let hash = request.name;
         debug!("got request({})", request.id);
@@ -488,7 +488,7 @@ async fn handle_stream(
                     0,
                     data.len() as u64,
                 );
-                let encoded_size: usize = bao::encode::encoded_size(data.len() as u64)
+                let encoded_size: usize = abao::encode::encoded_size(data.len() as u64)
                     .try_into()
                     .unwrap();
                 let mut encoded = Vec::with_capacity(encoded_size);
@@ -570,7 +570,7 @@ async fn send_blob<W: AsyncWrite + Unpin + Send + 'static>(
                 let file_reader = std::fs::File::open(&path)?;
                 let outboard_reader = std::io::Cursor::new(outboard);
                 let mut wrapper = SyncIoBridge::new(&mut writer);
-                let mut slice_extractor = bao::encode::SliceExtractor::new_outboard(
+                let mut slice_extractor = abao::encode::SliceExtractor::new_outboard(
                     file_reader,
                     outboard_reader,
                     0,
@@ -647,8 +647,18 @@ impl From<&std::path::Path> for DataSource {
 ///
 /// If the size of the file is changed while this is running, an error will be
 /// returned.
-fn compute_outboard(path: PathBuf) -> anyhow::Result<(Hash, Vec<u8>)> {
-    let file = std::fs::File::open(path)?;
+///
+/// path and name are returned with the result to provide context
+fn compute_outboard(
+    path: PathBuf,
+    name: Option<String>,
+) -> anyhow::Result<(PathBuf, Option<String>, Hash, Vec<u8>)> {
+    ensure!(
+        path.is_file(),
+        "can only transfer blob data: {}",
+        path.display()
+    );
+    let file = std::fs::File::open(&path)?;
     let len = file.metadata()?.len();
     // compute outboard size so we can pre-allocate the buffer.
     //
@@ -657,13 +667,13 @@ fn compute_outboard(path: PathBuf) -> anyhow::Result<(Hash, Vec<u8>)> {
     //
     // The way to solve this would be to have larger blocks than the blake3 chunk size of 1024.
     // I think we really want to keep the outboard in memory for simplicity.
-    let outboard_size = usize::try_from(bao::encode::outboard_size(len))
+    let outboard_size = usize::try_from(abao::encode::outboard_size(len))
         .context("outboard too large to fit in memory")?;
     let mut outboard = Vec::with_capacity(outboard_size);
 
     // copy the file into the encoder. Data will be skipped by the encoder in outboard mode.
     let outboard_cursor = std::io::Cursor::new(&mut outboard);
-    let mut encoder = bao::encode::Encoder::new_outboard(outboard_cursor);
+    let mut encoder = abao::encode::Encoder::new_outboard(outboard_cursor);
 
     let mut reader = BufReader::new(file);
     // the length we have actually written, should be the same as the length of the file.
@@ -673,7 +683,7 @@ fn compute_outboard(path: PathBuf) -> anyhow::Result<(Hash, Vec<u8>)> {
     // this flips the outboard encoding from post-order to pre-order
     let hash = encoder.finalize()?;
 
-    Ok((hash.into(), outboard))
+    Ok((path, name, hash.into(), outboard))
 }
 
 /// Creates a database of blobs (stored in outboard storage) and Collections, stored in memory.
@@ -692,25 +702,24 @@ async fn create_collection_inner(
     let mut db = HashMap::with_capacity(data_sources.len() + 1);
     let mut blobs = Vec::with_capacity(data_sources.len());
     let mut total_blobs_size: u64 = 0;
-
     let mut blobs_encoded_size_estimate = 0;
-    for data in data_sources {
+
+    // compute outboards in parallel, using tokio's blocking thread pool
+    let outboards = data_sources.into_iter().map(|data| {
         let (path, name) = match data {
             DataSource::File(path) => (path, None),
             DataSource::NamedFile { path, name } => (path, Some(name)),
         };
+        tokio::task::spawn_blocking(move || compute_outboard(path, name))
+    });
+    // wait for completion and collect results
+    let outboards = future::join_all(outboards)
+        .await
+        .into_iter()
+        .collect::<Result<Result<Vec<_>, _>, _>>()??;
+    // insert outboards into the database and build collection
 
-        ensure!(
-            path.is_file(),
-            "can only transfer blob data: {}",
-            path.display()
-        );
-        // spawn a blocking task for computing the hash and outboard.
-        // pretty sure this is best to remain sync even once bao is async.
-        let path2 = path.clone();
-        let (hash, outboard) =
-            tokio::task::spawn_blocking(move || compute_outboard(path2)).await??;
-
+    for (path, name, hash, outboard) in outboards {
         debug_assert!(outboard.len() >= 8, "outboard must at least contain size");
         let size = u64::from_le_bytes(outboard[..8].try_into().unwrap());
         db.insert(
@@ -732,6 +741,7 @@ async fn create_collection_inner(
         blobs_encoded_size_estimate += name.len() + 32;
         blobs.push(Blob { name, hash });
     }
+
     let c = Collection {
         name: "collection".to_string(),
         blobs,
@@ -745,7 +755,7 @@ async fn create_collection_inner(
     // to account for any postcard encoding data.
     let mut buffer = BytesMut::zeroed(blobs_encoded_size_estimate + 1024);
     let data = postcard::to_slice(&c, &mut buffer)?;
-    let (outboard, hash) = bao::encode::outboard(&data);
+    let (outboard, hash) = abao::encode::outboard(&data);
     let hash = Hash::from(hash);
     db.insert(
         hash,
@@ -832,7 +842,7 @@ mod tests {
 
     #[test]
     fn test_ticket_base64_roundtrip() {
-        let (_encoded, hash) = bao::encode::encode(b"hi there");
+        let (_encoded, hash) = abao::encode::encode(b"hi there");
         let hash = Hash::from(hash);
         let peer = PeerId::from(Keypair::generate().public());
         let addr = SocketAddr::from_str("127.0.0.1:1234").unwrap();
@@ -855,7 +865,7 @@ mod tests {
     async fn test_create_collection() -> Result<()> {
         let dir: PathBuf = testdir!();
         let mut expect_blobs = vec![];
-        let (_, hash) = bao::encode::outboard(vec![]);
+        let (_, hash) = abao::encode::outboard(vec![]);
         let hash = Hash::from(hash);
 
         // DataSource::File

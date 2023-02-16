@@ -3,6 +3,19 @@
 version = 3
 
 [[package]]
+name = "abao"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fa67f56b146a784d8feb9f5e4dc5e309fdbf7e3f6631a9c6d709348536abc628"
+dependencies = [
+ "arrayref",
+ "arrayvec",
+ "blake3",
+ "futures",
+ "tokio",
+]
+
+[[package]]
 name = "addr2line"
 version = "0.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -96,17 +109,6 @@ dependencies = [
  "miniz_oxide",
  "object",
  "rustc-demangle",
-]
-
-[[package]]
-name = "bao"
-version = "0.12.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3663af8a469bf3a2d818b8c1a7b62e4dc55c4547b4c14f5dab35fc9e707bef83"
-dependencies = [
- "arrayref",
- "arrayvec",
- "blake3",
 ]
 
 [[package]]
@@ -1375,6 +1377,8 @@ dependencies = [
 [[package]]
 name = "quic-rpc"
 version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f068e48c73409eac6a2ed7426297a3ddfc1343a97d195445aff581fc0e1ab43d"
 dependencies = [
  "bincode",
  "flume",
@@ -1809,8 +1813,8 @@ dependencies = [
 name = "sendme"
 version = "0.1.0"
 dependencies = [
+ "abao",
  "anyhow",
- "bao",
  "base64 0.21.0",
  "blake3",
  "bytes",

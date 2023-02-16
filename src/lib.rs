@@ -8,7 +8,6 @@ pub mod protocol;
 pub mod provider;
 pub mod rpc_protocol;
 
-mod bao_slice_decoder;
 mod tls;
 mod util;
 
@@ -97,7 +96,7 @@ mod tests {
         tokio::fs::write(&path, content).await?;
         // hash of the transfer file
         let data = tokio::fs::read(&path).await?;
-        let (_, expect_hash) = bao::encode::outboard(&data);
+        let (_, expect_hash) = abao::encode::outboard(&data);
         let expect_name = filename.to_string();
 
         let (db, hash) =
@@ -193,7 +192,7 @@ mod tests {
             let name = name.into();
             let path = dir.join(name.clone());
             // get expected hash of file
-            let (_, hash) = bao::encode::outboard(&data);
+            let (_, hash) = abao::encode::outboard(&data);
             let hash = Hash::from(hash);
 
             tokio::fs::write(&path, data).await?;
