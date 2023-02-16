@@ -22,7 +22,7 @@ use tracing::{debug, info};
 use crate::hp::{
     cfg::{self, DERP_MAGIC_IP},
     derp::{self, DerpMap},
-    interfaces, key,
+    disco, interfaces, key,
     magicsock::SESSION_ACTIVE_TIMEOUT,
     monitor, netcheck, netmap, portmapper,
 };
@@ -722,72 +722,70 @@ impl Conn {
     {
         let state = self.state.lock().await;
 
+        let mut res = cfg::PingResult::default();
+
         if state.private_key.is_none() {
-            let res = cfg::PingResult::Err("local node stopped".to_string());
+            res.err = Some("local node stopped".to_string());
             cb(res);
             return;
         }
 
-        let node_ip = peer.addresses.get(0).copied();
-
-        let node_name = match peer.name.as_ref().and_then(|n| n.split('.').next()) {
+        res.node_ip = peer.addresses.get(0).copied();
+        res.node_name = match peer.name.as_ref().and_then(|n| n.split('.').next()) {
             Some(name) => {
                 // prefer DNS name
-                name.to_string()
+                Some(name.to_string())
             }
             None => {
                 // else hostname
-                peer.hostinfo.hostname.clone()
+                Some(peer.hostinfo.hostname.clone())
             }
         };
         let ep = state.peer_map.endpoint_for_node_key(&peer.key);
         match ep {
             Some(ep) => {
-                let res = cfg::PingResult::Partial { node_ip, node_name };
                 ep.cli_ping(res, cb);
             }
             None => {
-                let res = cfg::PingResult::Err("unknown peer".to_string());
+                res.err = Some("unknown peer".to_string());
                 cb(res);
             }
         }
     }
 
-    // // c.mu must be held
-    // func (c *Conn) populateCLIPingResponseLocked(res *ipnstate.PingResult, latency time.Duration, ep netip.AddrPort) {
-    // 	res.LatencySeconds = latency.Seconds()
-    // 	if ep.Addr() != derpMagicIPAddr {
-    // 		res.Endpoint = ep.String()
-    // 		return
-    // 	}
-    // 	regionID := int(ep.Port())
-    // 	res.DERPRegionID = regionID
-    // 	res.DERPRegionCode = c.derpRegionCodeLocked(regionID)
-    // }
+    fn populate_cli_ping_response_locked(
+        &self,
+        state: &mut ConnState,
+        mut res: cfg::PingResult,
+        latency: Duration,
+        ep: SocketAddr,
+    ) {
+        res.latency_seconds = Some(latency.as_secs_f64());
+        if ep.ip() != DERP_MAGIC_IP {
+            res.endpoint = Some(ep);
+            return;
+        }
+        let region_id = usize::from(ep.port());
+        res.derp_region_id = Some(region_id);
+        res.derp_region_code = self.derp_region_code_locked(state, region_id);
+    }
 
-    // func (c *Conn) derpRegionCodeLocked(regionID int) string {
-    // 	if c.derpMap == nil {
-    // 		return ""
-    // 	}
-    // 	if dr, ok := c.derpMap.Regions[regionID]; ok {
-    // 		return dr.RegionCode
-    // 	}
-    // 	return ""
-    // }
+    fn derp_region_code_locked(&self, state: &mut ConnState, region_id: usize) -> String {
+        match state.derp_map {
+            Some(ref dm) => match dm.regions.get(&region_id) {
+                Some(dr) => dr.region_code.clone(),
+                None => "".to_string(),
+            },
+            None => "".to_string(),
+        }
+    }
 
-    // // DiscoPublicKey returns the discovery public key.
-    // func (c *Conn) DiscoPublicKey() key.DiscoPublic {
-    // 	c.mu.Lock()
-    // 	defer c.mu.Unlock()
-    // 	if c.discoPrivate.IsZero() {
-    // 		priv := key.NewDisco()
-    // 		c.discoPrivate = priv
-    // 		c.discoPublic = priv.Public()
-    // 		c.discoShort = c.discoPublic.ShortString()
-    // 		c.logf("magicsock: disco key = %v", c.discoShort)
-    // 	}
-    // 	return c.discoPublic
-    // }
+    /// Returns the discovery public key.
+    async fn disco_public_key(&self) -> key::DiscoPublic {
+        // TODO: move this out of ConnState?
+        let state = self.state.lock().await;
+        state.disco_public.clone()
+    }
 
     async fn set_nearest_derp(&self, derp_num: usize) -> bool {
         let mut state = self.state.lock().await;
@@ -1883,37 +1881,44 @@ impl Conn {
     // 	return
     // }
 
-    // // unambiguousNodeKeyOfPingLocked attempts to look up an unambiguous mapping
-    // // from a DiscoKey dk (which sent ping dm) to a NodeKey. ok is true
-    // // if there's the NodeKey is known unambiguously.
-    // //
-    // // derpNodeSrc is non-zero if the disco ping arrived via DERP.
-    // //
-    // // c.mu must be held.
-    // func (c *Conn) unambiguousNodeKeyOfPingLocked(dm *disco.Ping, dk key.DiscoPublic, derpNodeSrc key.NodePublic) (nk key.NodePublic, ok bool) {
-    // 	if !derpNodeSrc.IsZero() {
-    // 		if ep, ok := c.peerMap.endpointForNodeKey(derpNodeSrc); ok && ep.discoKey == dk {
-    // 			return derpNodeSrc, true
-    // 		}
-    // 	}
+    /// Attempts to look up an unambiguous mapping from a DiscoKey `dk` (which sent ping dm) to a NodeKey.
+    /// `None` if not unamabigous.
+    ///
+    /// derp_node_src is `Some` if the disco ping arrived via DERP.
+    fn unambiguous_node_key_of_ping_locked(
+        &self,
+        state: &mut ConnState,
+        dm: &disco::Ping,
+        dk: &key::DiscoPublic,
+        derp_node_src: Option<&key::NodePublic>,
+    ) -> Option<key::NodePublic> {
+        if let Some(src) = derp_node_src {
+            if let Some(ep) = state.peer_map.endpoint_for_node_key(src) {
+                todo!()
+                // if ep.disco_key == dk {
+                //     return Some(*src);
+                // }
+            }
+        }
 
-    // 	// Pings after 1.16.0 contains its node source. See if it maps back.
-    // 	if !dm.NodeKey.IsZero() {
-    // 		if ep, ok := c.peerMap.endpointForNodeKey(dm.NodeKey); ok && ep.discoKey == dk {
-    // 			return dm.NodeKey, true
-    // 		}
-    // 	}
+        // Pings contains its node source. See if it maps back.
+        if let Some(ep) = state.peer_map.endpoint_for_node_key(&dm.node_key) {
+            todo!();
+            // if ep.disco_key == dk {
+            //     return Some(dm.node_key);
+            // }
+        }
 
-    // 	// If there's exactly 1 node in our netmap with DiscoKey dk,
-    // 	// then it's not ambiguous which node key dm was from.
-    // 	if set := c.peerMap.nodesOfDisco[dk]; len(set) == 1 {
-    // 		for nk = range set {
-    // 			return nk, true
-    // 		}
-    // 	}
+        // If there's exactly 1 node in our netmap with DiscoKey dk,
+        // then it's not ambiguous which node key dm was from.
+        if let Some(set) = state.peer_map.nodes_of_disco.get(dk) {
+            if set.len() == 1 {
+                return Some(set.iter().next().unwrap().clone());
+            }
+        }
 
-    // 	return nk, false
-    // }
+        None
+    }
 
     // // di is the discoInfo of the source of the ping.
     // // derpNodeSrc is non-zero if the ping arrived via DERP.

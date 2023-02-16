@@ -33,18 +33,18 @@ fn use_derp_route() -> bool {
     // if v, ok := ob.Get(); ok {
     //     return v
     // }
-    return true;
+    true
 }
 
 /// All the information magicsock tracks about a particular peer.
 #[derive(Clone)]
-struct PeerInfo {
-    ep: Endpoint,
+pub struct PeerInfo {
+    pub ep: Endpoint,
     /// An inverted version of `PeerMap.by_ip_port` (below), so
     /// that when we're deleting this node, we can rapidly find out the
     /// keys that need deleting from `PeerMap::by_ip_port` without having to
     /// iterate over every `SocketAddr known for any peer.
-    ip_ports: HashSet<SocketAddr>, // TODO: figure out clone behaviour
+    pub ip_ports: HashSet<SocketAddr>, // TODO: figure out clone behaviour
 }
 
 impl PeerInfo {
