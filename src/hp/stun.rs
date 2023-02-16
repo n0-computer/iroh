@@ -198,7 +198,7 @@ pub mod test {
                 region_id,
                 DerpRegion {
                     region_id,
-                    region_code: 0,
+                    region_code: "".to_string(),
                     avoid: false,
                     nodes: vec![node],
                 },

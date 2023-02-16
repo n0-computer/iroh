@@ -114,35 +114,26 @@ pub enum LinkType {
 /// See tailcfg.PingResponse for a related response that is sent back to control
 /// for remote diagnostic pings.
 // Based on tailscale/ipnstate
-#[derive(Debug, Clone, PartialEq)]
-pub enum PingResult {
-    Partial {
-        node_name: String,
-        node_ip: Option<IpAddr>,
-    },
-    Ok {
-        /// ping destination
-        ip: IpAddr,
-        /// Tailscale IP of node handling IP (different for subnet routers)
-        node_ip: IpAddr,
-        /// DNS name base or (possibly not unique) hostname
-        node_name: String,
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct PingResult {
+    /// ping destination
+    pub ip: Option<IpAddr>,
+    /// Tailscale IP of node handling IP (different for subnet routers)
+    pub node_ip: Option<IpAddr>,
+    /// DNS name base or (possibly not unique) hostname
+    pub node_name: Option<String>,
+    pub latency_seconds: Option<f64>,
+    /// The ip:port if direct UDP was used. It is not currently set for TSMP pings.
+    pub endpoint: Option<SocketAddr>,
+    /// Non-zero DERP region ID if DERP was used. It is not currently set for TSMP pings.
+    pub derp_region_id: Option<usize>,
+    /// The three-letter region code corresponding to derp_region_id. It is not currently set for TSMP pings.
+    pub derp_region_code: String,
+    /// Whether the ping request error is due to it being a ping to the local node.
+    pub is_local_ip: Option<bool>,
 
-        latency_seconds: f64,
-
-        /// The ip:port if direct UDP was used. It is not currently set for TSMP pings.
-        endpoint: SocketAddr,
-
-        /// Non-zero DERP region ID if DERP was used. It is not currently set for TSMP pings.
-        derp_region_id: usize,
-
-        /// The three-letter region code corresponding to derp_region_id. It is not currently set for TSMP pings.
-        derp_region_code: String,
-
-        /// Whether the ping request error is due to it being a ping to the local node.
-        is_local_ip: bool,
-    },
-    Err(String),
+    /// Did any error occur?
+    pub err: Option<String>,
 }
 
 #[derive(Debug)]

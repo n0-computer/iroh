@@ -780,11 +780,11 @@ struct AddrLatency {
 /// Doesn't do any locking, all access must be done with Conn.mu held.
 #[derive(Default)]
 pub struct PeerMap {
-    by_node_key: HashMap<key::NodePublic, PeerInfo>,
-    by_ip_port: HashMap<SocketAddr, PeerInfo>,
+    pub by_node_key: HashMap<key::NodePublic, PeerInfo>,
+    pub by_ip_port: HashMap<SocketAddr, PeerInfo>,
 
-    /// nodesOfDisco contains the set of nodes that are using a DiscoKey. Usually those sets will be just one node.
-    nodes_of_disco: HashMap<key::DiscoPublic, HashSet<key::NodePublic>>,
+    /// Contains the set of nodes that are using a DiscoKey. Usually those sets will be just one node.
+    pub nodes_of_disco: HashMap<key::DiscoPublic, HashSet<key::NodePublic>>,
 }
 
 impl PeerMap {

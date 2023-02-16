@@ -42,7 +42,7 @@ pub struct DerpRegion {
     pub region_id: usize,
     pub nodes: Vec<DerpNode>,
     pub avoid: bool,
-    pub region_code: usize,
+    pub region_code: String,
 }
 
 #[derive(Debug, Clone)]
