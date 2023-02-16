@@ -614,7 +614,7 @@ impl Conn {
             // TODO: set link type
 
             drop(r);
-            self.call_net_info_callback(ni);
+            self.call_net_info_callback(ni).await;
             Ok::<_, anyhow::Error>(report)
         })
         .await;
@@ -893,7 +893,7 @@ impl Conn {
         }
         if have_portmap {
             add_addr!(already, eps, portmap_ext, cfg::EndpointType::Portmapped);
-            self.set_net_info_have_port_map();
+            self.set_net_info_have_port_map().await;
         }
 
         let nr = nr.read().await;
