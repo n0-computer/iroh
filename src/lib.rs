@@ -27,6 +27,7 @@ mod tests {
     use testdir::testdir;
     use tokio::fs;
     use tokio::io::{self, AsyncReadExt, AsyncWriteExt};
+    use tracing_subscriber::{prelude::*, EnvFilter};
 
     use crate::protocol::AuthToken;
     use crate::provider::{create_collection, Event, Provider};
@@ -269,9 +270,18 @@ mod tests {
         Ok(())
     }
 
+    fn setup_logging() {
+        tracing_subscriber::registry()
+            .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
+            .with(EnvFilter::from_default_env())
+            .try_init()
+            .ok();
+    }
+
     #[tokio::test]
     async fn test_server_close() {
         // Prepare a Provider transferring a file.
+        setup_logging();
         let dir = testdir!();
         let src = dir.join("src");
         fs::write(&src, "hello there").await.unwrap();
@@ -327,7 +337,11 @@ mod tests {
         .unwrap();
 
         // Unwrap the JoinHandle, then the result of the Provider
-        supervisor.await.unwrap().unwrap();
+        tokio::time::timeout(Duration::from_secs(10), supervisor)
+            .await
+            .expect("supervisor timeout")
+            .expect("supervisor failed")
+            .expect("supervisor error");
     }
 
     #[tokio::test]
