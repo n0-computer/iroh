@@ -17,7 +17,8 @@ mod endpoint;
 mod rebinding_conn;
 
 pub use self::conn::Conn;
-pub use self::endpoint::Endpoint;
+
+use self::endpoint::Endpoint;
 
 /// UDP socket read/write buffer size (7MB). The value of 7MB is chosen as it
 /// is the max supported by a default configuration of macOS. Some platforms will silently clamp the value.
