@@ -34,6 +34,7 @@ rcgen = "0.10"
 ring = "0.16.20"
 rustls = { version = "0.20.8", default-features = false, features = ["dangerous_configuration"] }
 serde = { version = "1", features = ["derive"] }
+serde-error = "0.1.2"
 ssh-key = { version = "0.5.1", features = ["ed25519", "std", "rand_core"] }
 tempfile = "3"
 thiserror = "1"

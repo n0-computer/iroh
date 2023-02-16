@@ -321,14 +321,20 @@ async fn main() -> Result<()> {
             let client = make_rpc_client()?;
             let mut response = client.server_streaming(ListRequest).await?;
             while let Some(item) = response.next().await {
-                println!("{item:?}");
+                let item = item?;
+                println!(
+                    "{} {} ({} bytes)",
+                    item.path.display(),
+                    item.hash,
+                    item.size
+                );
             }
             Ok(())
         }
         Commands::Add { path } => {
             let client = make_rpc_client()?;
-            let response = client.rpc(ProvideRequest { path }).await?;
-            println!("{response:?}");
+            let response = client.rpc(ProvideRequest { path: path.clone() }).await??;
+            println!("path {} added. Hash {}", path.display(), response.hash);
             Ok(())
         }
     }

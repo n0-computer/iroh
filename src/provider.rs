@@ -369,14 +369,27 @@ impl Handler {
             .collect::<Vec<_>>();
         futures::stream::iter(text)
     }
-    async fn provide(self, msg: ProvideRequest) -> ProvideResponse {
+    async fn provide(self, msg: ProvideRequest) -> anyhow::Result<ProvideResponse> {
+        let path = msg.path;
+        let data_sources = if path.is_dir() {
+            let mut paths = Vec::new();
+            let mut iter = tokio::fs::read_dir(&path).await?;
+            while let Some(el) = iter.next_entry().await? {
+                if el.path().is_file() {
+                    paths.push(el.path().into());
+                }
+            }
+            paths
+        } else if path.is_file() {
+            vec![path.into()]
+        } else {
+            anyhow::bail!("path must be either a Directory or a File");
+        };
         // create the collection
         // todo: provide feedback for progress
-        let (db, hash) = create_collection_inner(vec![DataSource::File(msg.path)])
-            .await
-            .unwrap();
+        let (db, hash) = create_collection_inner(data_sources).await?;
         self.0.union_with(db);
-        ProvideResponse { hash }
+        Ok(ProvideResponse { hash })
     }
 }
 
@@ -397,7 +410,7 @@ fn handle_rpc_request<C: ServiceEndpoint<SendmeService>>(
         use SendmeRequest::*;
         match msg {
             List(msg) => chan.server_streaming(msg, handler, Handler::list).await,
-            Provide(msg) => chan.rpc(msg, handler, Handler::provide).await,
+            Provide(msg) => chan.rpc_map_err(msg, handler, Handler::provide).await,
         }
     });
 }
