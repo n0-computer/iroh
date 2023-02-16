@@ -14,12 +14,17 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::str::FromStr;
+use std::sync::Mutex;
 use std::task::Poll;
 use std::{collections::HashMap, sync::Arc};
 
 use anyhow::{bail, ensure, Context, Result};
 use bao::encode::SliceExtractor;
 use bytes::{Bytes, BytesMut};
+use futures::Stream;
+use quic_rpc::server::{RpcChannel, RpcServerError};
+use quic_rpc::transport::misc::DummyServerEndpoint;
+use quic_rpc::{RpcServer, ServiceEndpoint};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncWrite, AsyncWriteExt};
 use tokio::sync::broadcast;
@@ -33,6 +38,9 @@ use crate::blobs::{Blob, Collection};
 use crate::protocol::{
     read_lp, write_lp, AuthToken, Closed, Handshake, Request, Res, Response, VERSION,
 };
+use crate::rpc_protocol::{
+    ListRequest, ListResponse, ProvideRequest, ProvideResponse, SendmeRequest, SendmeService,
+};
 use crate::tls::{self, Keypair, PeerId};
 use crate::util::{self, Hash};
 
@@ -40,23 +48,33 @@ const MAX_CONNECTIONS: u32 = 1024;
 const MAX_STREAMS: u64 = 10;
 
 /// Database containing content-addressed data (blobs or collections).
-#[derive(Debug, Clone)]
-pub struct Database(Arc<HashMap<Hash, BlobOrCollection>>);
+#[derive(Debug, Clone, Default)]
+pub struct Database(Arc<Mutex<HashMap<Hash, BlobOrCollection>>>);
 
 impl Database {
-    fn get(&self, key: &Hash) -> Option<&BlobOrCollection> {
-        self.0.get(key)
+    fn get(&self, key: &Hash) -> Option<BlobOrCollection> {
+        self.0.lock().unwrap().get(key).cloned()
+    }
+
+    fn union_with(&self, db: HashMap<Hash, BlobOrCollection>) {
+        let mut inner = self.0.lock().unwrap();
+        for (k, v) in db {
+            inner.entry(k).or_insert(v);
+        }
     }
 
     /// Iterate over all blobs in the database.
-    pub fn blobs(&self) -> impl Iterator<Item = (&Hash, &PathBuf, u64)> + '_ {
+    pub fn blobs(&self) -> Vec<(Hash, PathBuf, u64)> {
         self.0
+            .lock()
+            .unwrap()
             .iter()
             .filter_map(|(k, v)| match v {
                 BlobOrCollection::Blob(data) => Some((k, data)),
                 BlobOrCollection::Collection(_) => None,
             })
-            .map(|(k, data)| (k, &data.path, data.size))
+            .map(|(k, data)| (*k, data.path.clone(), data.size))
+            .collect()
     }
 }
 
@@ -68,14 +86,15 @@ impl Database {
 /// The returned [`Provider`] is awaitable to know when it finishes.  It can be terminated
 /// using [`Provider::shutdown`].
 #[derive(Debug)]
-pub struct Builder {
+pub struct Builder<E: quic_rpc::ServiceEndpoint<SendmeService> = DummyServerEndpoint> {
     bind_addr: SocketAddr,
     keypair: Keypair,
     auth_token: AuthToken,
+    endpoint: E,
     db: Database,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) enum BlobOrCollection {
     Blob(Data),
     Collection((Bytes, Bytes)),
@@ -88,7 +107,24 @@ impl Builder {
             bind_addr: "127.0.0.1:4433".parse().unwrap(),
             keypair: Keypair::generate(),
             auth_token: AuthToken::generate(),
+            endpoint: Default::default(),
             db,
+        }
+    }
+}
+
+impl<E: quic_rpc::ServiceEndpoint<SendmeService>> Builder<E> {
+    ///
+    pub fn rpc_endpoint<E2: quic_rpc::ServiceEndpoint<SendmeService>>(
+        self,
+        endpoint: E2,
+    ) -> Builder<E2> {
+        Builder {
+            bind_addr: self.bind_addr,
+            keypair: self.keypair,
+            auth_token: self.auth_token,
+            db: self.db,
+            endpoint,
         }
     }
 
@@ -118,7 +154,8 @@ impl Builder {
     /// connections.  The returned [`Provider`] can be used to control the task as well as
     /// get information about it.
     pub fn spawn(self) -> Result<Provider> {
-        let tls_server_config = tls::make_server_config(&self.keypair)?;
+        let tls_server_config =
+            tls::make_server_config(&self.keypair, vec![crate::tls::P2P_ALPN.to_vec()])?;
         let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(tls_server_config));
         let mut transport_config = quinn::TransportConfig::default();
         transport_config
@@ -135,10 +172,19 @@ impl Builder {
         let (events_sender, _events_receiver) = broadcast::channel(8);
         let events = events_sender.clone();
         let cancel_token = CancellationToken::new();
+        let rpc = RpcServer::new(self.endpoint);
         let task = {
             let cancel_token = cancel_token.clone();
             tokio::spawn(async move {
-                Self::run(endpoint, db2, self.auth_token, events_sender, cancel_token).await
+                Self::run(
+                    endpoint,
+                    db2,
+                    self.auth_token,
+                    events_sender,
+                    cancel_token,
+                    rpc,
+                )
+                .await
             })
         };
 
@@ -158,6 +204,7 @@ impl Builder {
         auth_token: AuthToken,
         events: broadcast::Sender<Event>,
         cancel_token: CancellationToken,
+        rpc: quic_rpc::RpcServer<SendmeService, E>,
     ) {
         debug!("\nlistening at: {:#?}", server.local_addr().unwrap());
 
@@ -165,6 +212,12 @@ impl Builder {
             tokio::select! {
                 biased;
                 _ = cancel_token.cancelled() => break,
+                // handle rpc requests. This will do nothing if rpc is not configured, since
+                // accept is just a pending future.
+                request = rpc.accept() => {
+                    handle_rpc_request(request, &db);
+                },
+                // handle incoming p2p connections
                 Some(connecting) = server.accept() => {
                     let db = db.clone();
                     let events = events.clone();
@@ -299,6 +352,55 @@ impl Future for Provider {
     }
 }
 
+struct Handler(Database);
+
+impl Handler {
+    fn list(self, _msg: ListRequest) -> impl Stream<Item = ListResponse> + Send + 'static {
+        let text = self
+            .0
+            .blobs()
+            .iter()
+            .map(|(hash, path, size)| ListResponse {
+                hash: *hash,
+                path: path.clone(),
+                size: *size,
+            })
+            .collect::<Vec<_>>();
+        futures::stream::iter(text)
+    }
+    async fn provide(self, msg: ProvideRequest) -> ProvideResponse {
+        // create the collection
+        // todo: provide feedback for progress
+        let (db, hash) = create_collection_inner(vec![DataSource::File(msg.path)])
+            .await
+            .unwrap();
+        self.0.union_with(db);
+        ProvideResponse { hash }
+    }
+}
+
+fn handle_rpc_request<C: ServiceEndpoint<SendmeService>>(
+    request: Result<(SendmeRequest, RpcChannel<SendmeService, C>), RpcServerError<C>>,
+    db: &Database,
+) {
+    let (msg, chan) = match request {
+        Ok((msg, chan)) => (msg, chan),
+        Err(err) => {
+            warn!("Error accepting RPC request: {:#}", err);
+            return;
+        }
+    };
+    let db = db.clone();
+    tokio::spawn(async move {
+        let handler = Handler(db.clone());
+        use SendmeRequest::*;
+        match msg {
+            List(msg) => chan.server_streaming(msg, handler, Handler::list).await,
+            Provide(msg) => chan.rpc(msg, handler, Handler::provide).await,
+        }
+    });
+}
+
 async fn handle_connection(
     connecting: quinn::Connecting,
     db: Database,
@@ -392,7 +494,7 @@ async fn handle_stream(
                 let mut encoded = Vec::with_capacity(encoded_size);
                 extractor.read_to_end(&mut encoded)?;
 
-                let c: Collection = postcard::from_bytes(data)?;
+                let c: Collection = postcard::from_bytes(&data)?;
 
                 // TODO: we should check if the blobs referenced in this container
                 // actually exist in this provider before returning `FoundCollection`
@@ -461,9 +563,6 @@ async fn send_blob<W: AsyncWrite + Unpin + Send + 'static>(
             size,
         })) => {
             write_response(&mut writer, buffer, id, Res::Found).await?;
-            let path = path.clone();
-            let outboard = outboard.clone();
-            let size = *size;
             // need to thread the writer though the spawn_blocking, since
             // taking a reference does not work. spawn_blocking requires
             // 'static lifetime.
@@ -580,6 +679,15 @@ fn compute_outboard(path: PathBuf) -> anyhow::Result<(Hash, Vec<u8>)> {
 /// Creates a database of blobs (stored in outboard storage) and Collections, stored in memory.
 /// Returns a the hash of the collection created by the given list of DataSources
 pub async fn create_collection(data_sources: Vec<DataSource>) -> Result<(Database, Hash)> {
+    let (db, hash) = create_collection_inner(data_sources).await?;
+    Ok((Database(Arc::new(Mutex::new(db))), hash))
+}
+
+/// The actual implementation of create_collection, except for the wrapping into arc and mutex to make
+/// a public Database.
+async fn create_collection_inner(
+    data_sources: Vec<DataSource>,
+) -> Result<(HashMap<Hash, BlobOrCollection>, Hash)> {
     // +1 is for the collection itself
     let mut db = HashMap::with_capacity(data_sources.len() + 1);
     let mut blobs = Vec::with_capacity(data_sources.len());
@@ -644,7 +752,7 @@ pub async fn create_collection(data_sources: Vec<DataSource>) -> Result<(Databas
         BlobOrCollection::Collection((Bytes::from(outboard), Bytes::from(data.to_vec()))),
     );
 
-    Ok((Database(Arc::new(db)), hash))
+    Ok((db, hash))
 }
 
 async fn write_response<W: AsyncWrite + Unpin>(
@@ -788,7 +896,7 @@ mod tests {
         let collection = {
             let c = db.get(&hash).unwrap();
             if let BlobOrCollection::Collection((_, data)) = c {
-                Collection::from_bytes(data)?
+                Collection::from_bytes(&data)?
             } else {
                 panic!("expected hash to correspond with a `Collection`, found `Blob` instead");
             }
@@ -798,4 +906,24 @@ mod tests {
 
         Ok(())
     }
+}
+
+/// Create a [`quinn::ServerConfig`] with the given keypair and limits.
+pub fn make_server_config(
+    keypair: &Keypair,
+    max_streams: u64,
+    max_connections: u32,
+    alpn_protocols: Vec<Vec<u8>>,
+) -> anyhow::Result<quinn::ServerConfig> {
+    let tls_server_config = tls::make_server_config(keypair, alpn_protocols)?;
+    let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(tls_server_config));
+    let mut transport_config = quinn::TransportConfig::default();
+    transport_config
+        .max_concurrent_bidi_streams(max_streams.try_into()?)
+        .max_concurrent_uni_streams(0u32.into());
+
+    server_config
+        .transport_config(Arc::new(transport_config))
+        .concurrent_connections(max_connections);
+    Ok(server_config)
 }

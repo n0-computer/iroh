@@ -45,11 +45,14 @@ impl Default for Options {
     }
 }
 
-/// Setup a QUIC connection to the provided address.
-async fn setup(opts: Options) -> Result<quinn::Connection> {
+/// Create a quinn client endpoint
+pub fn make_client_endpoint(
+    peer_id: Option<PeerId>,
+    alpn_protocols: Vec<Vec<u8>>,
+) -> Result<quinn::Endpoint> {
     let keypair = Keypair::generate();
 
-    let tls_client_config = tls::make_client_config(&keypair, opts.peer_id)?;
+    let tls_client_config = tls::make_client_config(&keypair, peer_id, alpn_protocols)?;
     let mut client_config = quinn::ClientConfig::new(Arc::new(tls_client_config));
     let mut endpoint = quinn::Endpoint::client("0.0.0.0:0".parse().unwrap())?;
     let mut transport_config = quinn::TransportConfig::default();
@@ -57,6 +60,12 @@ async fn setup(opts: Options) -> Result<quinn::Connection> {
     client_config.transport_config(Arc::new(transport_config));
 
     endpoint.set_default_client_config(client_config);
+    Ok(endpoint)
+}
+
+/// Setup a QUIC connection to the provided address.
+async fn setup(opts: Options) -> Result<quinn::Connection> {
+    let endpoint = make_client_endpoint(opts.peer_id, vec![tls::P2P_ALPN.to_vec()])?;
 
     debug!("connecting to {}", opts.addr);
     let connect = endpoint.connect(opts.addr, "localhost")?;

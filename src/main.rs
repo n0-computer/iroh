@@ -3,11 +3,17 @@ use std::{fmt, net::SocketAddr, path::PathBuf, str::FromStr};
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 use console::style;
+use futures::StreamExt;
 use indicatif::{
     HumanBytes, HumanDuration, ProgressBar, ProgressDrawTarget, ProgressState, ProgressStyle,
 };
-use sendme::protocol::AuthToken;
+use quic_rpc::transport::quinn::{QuinnConnection, QuinnServerEndpoint};
+use quic_rpc::{RpcClient, ServiceEndpoint};
 use sendme::provider::Ticket;
+use sendme::rpc_protocol::{
+    ListRequest, ProvideRequest, SendmeRequest, SendmeResponse, SendmeService,
+};
+use sendme::{protocol::AuthToken, provider::Database};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
 use tracing_subscriber::{prelude::*, EnvFilter};
@@ -40,6 +46,26 @@ enum Commands {
         #[clap(long)]
         key: Option<PathBuf>,
     },
+    /// Start sendme as a service
+    #[clap(about = "Start sendme as a service")]
+    Start {
+        /// Optional port, defaults to 127.0.01:4433.
+        #[clap(long, short)]
+        addr: Option<SocketAddr>,
+        /// Auth token, defaults to random generated.
+        #[clap(long)]
+        auth_token: Option<String>,
+        /// If this path is provided and it exists, the private key is read from this file and used, if it does not exist the private key will be persisted to this location.
+        #[clap(long)]
+        key: Option<PathBuf>,
+    },
+
+    /// Start sendme as a service
+    #[clap(about = "List hashes")]
+    List {},
+    /// Add some data to the database.
+    #[clap(about = "Add data from the given path")]
+    Add { path: PathBuf },
     /// Fetch some data by hash.
     #[clap(about = "Fetch the data from the hash")]
     Get {
@@ -186,6 +212,16 @@ impl FromStr for Blake3Cid {
     }
 }
 
+fn make_rpc_client(
+) -> anyhow::Result<RpcClient<SendmeService, QuinnConnection<SendmeResponse, SendmeRequest>>> {
+    let endpoint = sendme::get::make_client_endpoint(None, vec!["rpc".as_bytes().to_vec()])?;
+    let addr: SocketAddr = "127.0.0.1:12345".parse()?;
+    let hostname = "localhost".to_owned();
+    let connection = QuinnConnection::new(endpoint, addr, hostname);
+    let client = RpcClient::<SendmeService, _>::new(connection);
+    Ok(client)
+}
+
 const PROGRESS_STYLE: &str =
     "{msg}\n{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {bytes}/{total_bytes} ({eta})";
 
@@ -265,6 +301,36 @@ async fn main() -> Result<()> {
                 }
             }
         }
+        Commands::Start {
+            addr,
+            auth_token,
+            key,
+        } => {
+            tokio::select! {
+                biased;
+                res = provide_service(addr, auth_token, key) => {
+                    res
+                }
+                _ = tokio::signal::ctrl_c() => {
+                    println!("\nShutting down provider...");
+                    Ok(())
+                }
+            }
+        }
+        Commands::List {} => {
+            let client = make_rpc_client()?;
+            let mut response = client.server_streaming(ListRequest).await?;
+            while let Some(item) = response.next().await {
+                println!("{item:?}");
+            }
+            Ok(())
+        }
+        Commands::Add { path } => {
+            let client = make_rpc_client()?;
+            let response = client.rpc(ProvideRequest { path }).await?;
+            println!("{response:?}");
+            Ok(())
+        }
     }
 }
 
@@ -337,6 +403,41 @@ async fn provide_interactive(
 
     // Drop tempath to signal it can be destroyed
     drop(tmp_path);
+    Ok(())
+}
+
+fn make_rpc_endpoint(keypair: &Keypair) -> Result<impl ServiceEndpoint<SendmeService>> {
+    let rpc_addr = "0.0.0.0:12345".parse()?;
+    let rpc_quinn_endpoint = quinn::Endpoint::server(
+        sendme::provider::make_server_config(keypair, 1024, 16, vec!["rpc".as_bytes().to_vec()])?,
+        rpc_addr,
+    )?;
+    let rpc_endpoint =
+        QuinnServerEndpoint::<SendmeRequest, SendmeResponse>::new(rpc_quinn_endpoint)?;
+    Ok(rpc_endpoint)
+}
+
+async fn provide_service(
+    addr: Option<SocketAddr>,
+    auth_token: Option<String>,
+    key: Option<PathBuf>,
+) -> Result<()> {
+    let keypair = get_keypair(key).await?;
+
+    let rpc_endpoint = make_rpc_endpoint(&keypair)?;
+    let db = Database::default();
+    let mut builder = provider::Provider::builder(db)
+        .rpc_endpoint(rpc_endpoint)
+        .keypair(keypair);
+    if let Some(addr) = addr {
+        builder = builder.bind_addr(addr);
+    }
+    if let Some(ref encoded) = auth_token {
+        let auth_token = AuthToken::from_str(encoded)?;
+        builder = builder.auth_token(auth_token);
+    }
+    let provider = builder.spawn()?;
+    provider.await?;
     Ok(())
 }
 

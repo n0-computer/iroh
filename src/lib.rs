@@ -6,6 +6,7 @@ pub mod get;
 pub mod progress;
 pub mod protocol;
 pub mod provider;
+pub mod rpc_protocol;
 
 mod bao_slice_decoder;
 mod tls;

@@ -20,7 +20,7 @@ use ssh_key::LineEnding;
 use crate::util;
 
 // TODO: change?
-const P2P_ALPN: [u8; 6] = *b"libp2p";
+pub(crate) const P2P_ALPN: [u8; 6] = *b"libp2p";
 
 /// A keypair.
 #[derive(Debug)]
@@ -145,6 +145,7 @@ impl FromStr for PeerId {
 pub fn make_client_config(
     keypair: &Keypair,
     remote_peer_id: Option<PeerId>,
+    alpn_protocols: Vec<Vec<u8>>,
 ) -> Result<rustls::ClientConfig, certificate::GenError> {
     let (certificate, private_key) = certificate::generate(keypair)?;
 
@@ -158,7 +159,7 @@ pub fn make_client_config(
         ))
         .with_single_cert(vec![certificate], private_key)
         .expect("Client cert key DER is valid; qed");
-    crypto.alpn_protocols = vec![P2P_ALPN.to_vec()];
+    crypto.alpn_protocols = alpn_protocols;
 
     Ok(crypto)
 }
@@ -166,6 +167,7 @@ pub fn make_client_config(
 /// Create a TLS server configuration.
 pub fn make_server_config(
     keypair: &Keypair,
+    alpn_protocols: Vec<Vec<u8>>,
 ) -> Result<rustls::ServerConfig, certificate::GenError> {
     let (certificate, private_key) = certificate::generate(keypair)?;
 
@@ -177,8 +179,7 @@ pub fn make_server_config(
         .with_client_cert_verifier(Arc::new(verifier::Libp2pCertificateVerifier::new()))
         .with_single_cert(vec![certificate], private_key)
         .expect("Server cert key DER is valid; qed");
-    crypto.alpn_protocols = vec![P2P_ALPN.to_vec()];
-
+    crypto.alpn_protocols = alpn_protocols;
     Ok(crypto)
 }
 
