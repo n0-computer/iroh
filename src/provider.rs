@@ -607,6 +607,10 @@ pub(crate) struct Data {
     /// Outboard data from bao.
     outboard: Bytes,
     /// Path to the original data, which must not change while in use.
+    ///
+    /// Note that when adding multiple files with the same content, only one of them
+    /// will get added to the store. So the path is not that useful for information.
+    /// It is just a place to look for the data correspoding to the hash and outboard.
     path: PathBuf,
     /// Size of the original data.
     size: u64,
