@@ -16,6 +16,7 @@ use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::Mutex;
 use std::task::Poll;
+use std::time::Duration;
 use std::{collections::HashMap, sync::Arc};
 
 use abao::encode::SliceExtractor;
@@ -41,12 +42,14 @@ use crate::protocol::{
 };
 use crate::rpc_protocol::{
     ListRequest, ListResponse, ProvideRequest, ProvideResponse, SendmeRequest, SendmeService,
+    VersionRequest, VersionResponse, WatchRequest, WatchResponse,
 };
 use crate::tls::{self, Keypair, PeerId};
 use crate::util::{self, Hash};
 
 const MAX_CONNECTIONS: u32 = 1024;
 const MAX_STREAMS: u64 = 10;
+const HEALTH_POLL_WAIT: Duration = Duration::from_secs(1);
 
 /// Database containing content-addressed data (blobs or collections).
 #[derive(Debug, Clone, Default)]
@@ -391,6 +394,22 @@ impl Handler {
         self.0.union_with(db);
         Ok(ProvideResponse { hash })
     }
+    async fn version(self, _: VersionRequest) -> VersionResponse {
+        VersionResponse {
+            version: env!("CARGO_PKG_VERSION").to_string(),
+        }
+    }
+    fn watch(self, _: WatchRequest) -> impl Stream<Item = WatchResponse> {
+        futures::stream::unfold((), |()| async move {
+            tokio::time::sleep(HEALTH_POLL_WAIT).await;
+            Some((
+                WatchResponse {
+                    version: env!("CARGO_PKG_VERSION").to_string(),
+                },
+                (),
+            ))
+        })
+    }
 }
 
 fn handle_rpc_request<C: ServiceEndpoint<SendmeService>>(
@@ -411,6 +430,8 @@ fn handle_rpc_request<C: ServiceEndpoint<SendmeService>>(
         match msg {
             List(msg) => chan.server_streaming(msg, handler, Handler::list).await,
             Provide(msg) => chan.rpc_map_err(msg, handler, Handler::provide).await,
+            Watch(msg) => chan.server_streaming(msg, handler, Handler::watch).await,
+            Version(msg) => chan.rpc(msg, handler, Handler::version).await,
         }
     });
 }

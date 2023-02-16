@@ -14,7 +14,7 @@ pub struct ProvideRequest {
     pub path: PathBuf,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ProvideResponse {
     pub hash: Hash,
 }
@@ -26,7 +26,7 @@ impl RpcMsg<SendmeService> for ProvideRequest {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ListRequest;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ListResponse {
     pub path: PathBuf,
     pub hash: Hash,
@@ -39,6 +39,34 @@ impl Msg<SendmeService> for ListRequest {
     type Response = ListResponse;
 }
 
+#[derive(Serialize, Deserialize, Debug)]
+pub struct WatchRequest;
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct VersionRequest;
+
+impl RpcMsg<SendmeService> for VersionRequest {
+    type Response = VersionResponse;
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct WatchResponse {
+    pub version: String,
+}
+
+impl Msg<SendmeService> for WatchRequest {
+    type Response = WatchResponse;
+
+    type Update = Self;
+
+    type Pattern = ServerStreaming;
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct VersionResponse {
+    pub version: String,
+}
+
 /// The RPC service for sendme.
 #[derive(Debug, Clone)]
 pub struct SendmeService;
@@ -46,6 +74,8 @@ pub struct SendmeService;
 /// Request enum
 #[derive(Debug, Serialize, Deserialize, From, TryInto)]
 pub enum SendmeRequest {
+    Watch(WatchRequest),
+    Version(VersionRequest),
     List(ListRequest),
     Provide(ProvideRequest),
 }
@@ -53,6 +83,8 @@ pub enum SendmeRequest {
 /// Response enum
 #[derive(Debug, Serialize, Deserialize, From, TryInto)]
 pub enum SendmeResponse {
+    Watch(WatchResponse),
+    Version(VersionResponse),
     List(ListResponse),
     Provide(RpcResult<ProvideResponse>),
 }

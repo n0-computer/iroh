@@ -1,3 +1,4 @@
+use std::time::Duration;
 use std::{fmt, net::SocketAddr, path::PathBuf, str::FromStr};
 
 use anyhow::{bail, Context, Result};
@@ -11,7 +12,7 @@ use quic_rpc::transport::quinn::{QuinnConnection, QuinnServerEndpoint};
 use quic_rpc::{RpcClient, ServiceEndpoint};
 use sendme::provider::Ticket;
 use sendme::rpc_protocol::{
-    ListRequest, ProvideRequest, SendmeRequest, SendmeResponse, SendmeService,
+    ListRequest, ProvideRequest, SendmeRequest, SendmeResponse, SendmeService, VersionRequest,
 };
 use sendme::{protocol::AuthToken, provider::Database};
 use tokio::io::AsyncWriteExt;
@@ -212,13 +213,16 @@ impl FromStr for Blake3Cid {
     }
 }
 
-fn make_rpc_client(
+async fn make_rpc_client(
 ) -> anyhow::Result<RpcClient<SendmeService, QuinnConnection<SendmeResponse, SendmeRequest>>> {
     let endpoint = sendme::get::make_client_endpoint(None, vec!["rpc".as_bytes().to_vec()])?;
     let addr: SocketAddr = "127.0.0.1:12345".parse()?;
     let hostname = "localhost".to_owned();
     let connection = QuinnConnection::new(endpoint, addr, hostname);
     let client = RpcClient::<SendmeService, _>::new(connection);
+    let _version = tokio::time::timeout(Duration::from_secs(1), client.rpc(VersionRequest))
+        .await
+        .context("sendme server is not running")??;
     Ok(client)
 }
 
@@ -318,7 +322,7 @@ async fn main() -> Result<()> {
             }
         }
         Commands::List {} => {
-            let client = make_rpc_client()?;
+            let client = make_rpc_client().await?;
             let mut response = client.server_streaming(ListRequest).await?;
             while let Some(item) = response.next().await {
                 let item = item?;
@@ -332,7 +336,7 @@ async fn main() -> Result<()> {
             Ok(())
         }
         Commands::Add { path } => {
-            let client = make_rpc_client()?;
+            let client = make_rpc_client().await?;
             let response = client.rpc(ProvideRequest { path: path.clone() }).await??;
             println!("path {} added. Hash {}", path.display(), response.hash);
             Ok(())
