@@ -32,6 +32,12 @@ use super::{
     SOCKET_BUFFER_SIZE,
 };
 
+/// How many packets writes can be queued up the DERP client to write on the wire before we start
+/// dropping.
+///
+/// TODO: this is currently arbitrary. Figure out something better?
+const BUFFERED_DERP_WRITES_BEFORE_DROP: usize = 32;
+
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 enum CurrentPortFate {
     Keep,
@@ -686,73 +692,66 @@ impl Conn {
         }
     }
 
-    // // addValidDiscoPathForTest makes addr a validated disco address for
-    // // discoKey. It's used in tests to enable receiving of packets from
-    // // addr without having to spin up the entire active discovery
-    // // machinery.
-    // func (c *Conn) addValidDiscoPathForTest(nodeKey key.NodePublic, addr netip.AddrPort) {
-    // 	c.mu.Lock()
-    // 	defer c.mu.Unlock()
-    // 	c.peerMap.setNodeKeyForIPPort(addr, nodeKey)
-    // }
+    /// Makes addr a validated disco address for discoKey. It's used in tests to enable receiving of packets from
+    /// addr without having to spin up the entire active discovery machinery.
+    #[cfg(test)]
+    async fn add_valid_disco_path_for_test(&self, node_key: &key::NodePublic, addr: &SocketAddr) {
+        let mut state = self.state.lock().await;
+        state.peer_map.set_node_key_for_ip_port(addr, node_key);
+    }
 
-    // func (c *Conn) SetNetInfoCallback(fn func(*tailcfg.NetInfo)) {
-    // 	if fn == nil {
-    // 		panic("nil NetInfoCallback")
-    // 	}
-    // 	c.mu.Lock()
-    // 	last := c.netInfoLast
-    // 	c.netInfoFunc = fn
-    // 	c.mu.Unlock()
+    /// Describes the time we last got traffic from this endpoint (updated every ~10 seconds).
+    async fn last_recv_activity_of_node_key(&self, nk: &key::NodePublic) -> String {
+        let state = self.state.lock().await;
+        match state.peer_map.endpoint_for_node_key(nk) {
+            Some(de) => {
+                let saw = &*de.last_recv.read().await;
+                match saw {
+                    Some(saw) => saw.elapsed().as_secs().to_string(),
+                    None => "never".to_string(),
+                }
+            }
+            None => "never".to_string(),
+        }
+    }
 
-    // 	if last != nil {
-    // 		fn(last)
-    // 	}
-    // }
+    /// Handles a "ping" CLI query.
+    pub async fn ping<F>(&self, peer: cfg::Node, res: cfg::PingResult, cb: F)
+    where
+        F: Fn(cfg::PingResult),
+    {
+        let state = self.state.lock().await;
 
-    // // LastRecvActivityOfNodeKey describes the time we last got traffic from
-    // // this endpoint (updated every ~10 seconds).
-    // func (c *Conn) LastRecvActivityOfNodeKey(nk key.NodePublic) string {
-    // 	c.mu.Lock()
-    // 	defer c.mu.Unlock()
-    // 	de, ok := c.peerMap.endpointForNodeKey(nk)
-    // 	if !ok {
-    // 		return "never"
-    // 	}
-    // 	saw := de.lastRecv.LoadAtomic()
-    // 	if saw == 0 {
-    // 		return "never"
-    // 	}
-    // 	return mono.Since(saw).Round(time.Second).String()
-    // }
+        if state.private_key.is_none() {
+            let res = cfg::PingResult::Err("local node stopped".to_string());
+            cb(res);
+            return;
+        }
 
-    // // Ping handles a "tailscale ping" CLI query.
-    // func (c *Conn) Ping(peer *tailcfg.Node, res *ipnstate.PingResult, cb func(*ipnstate.PingResult)) {
-    // 	c.mu.Lock()
-    // 	defer c.mu.Unlock()
-    // 	if c.privateKey.IsZero() {
-    // 		res.Err = "local tailscaled stopped"
-    // 		cb(res)
-    // 		return
-    // 	}
-    // 	if len(peer.Addresses) > 0 {
-    // 		res.NodeIP = peer.Addresses[0].Addr().String()
-    // 	}
-    // 	res.NodeName = peer.Name // prefer DNS name
-    // 	if res.NodeName == "" {
-    // 		res.NodeName = peer.Hostinfo.Hostname() // else hostname
-    // 	} else {
-    // 		res.NodeName, _, _ = strings.Cut(res.NodeName, ".")
-    // 	}
+        let node_ip = peer.addresses.get(0).copied();
 
-    // 	ep, ok := c.peerMap.endpointForNodeKey(peer.Key)
-    // 	if !ok {
-    // 		res.Err = "unknown peer"
-    // 		cb(res)
-    // 		return
-    // 	}
-    // 	ep.cliPing(res, cb)
-    // }
+        let node_name = match peer.name.as_ref().and_then(|n| n.split('.').next()) {
+            Some(name) => {
+                // prefer DNS name
+                name.to_string()
+            }
+            None => {
+                // else hostname
+                peer.hostinfo.hostname.clone()
+            }
+        };
+        let ep = state.peer_map.endpoint_for_node_key(&peer.key);
+        match ep {
+            Some(ep) => {
+                let res = cfg::PingResult::Partial { node_ip, node_name };
+                ep.cli_ping(res, cb);
+            }
+            None => {
+                let res = cfg::PingResult::Err("unknown peer".to_string());
+                cb(res);
+            }
+        }
+    }
 
     // // c.mu must be held
     // func (c *Conn) populateCLIPingResponseLocked(res *ipnstate.PingResult, latency time.Duration, ep netip.AddrPort) {
@@ -1105,13 +1104,6 @@ impl Conn {
     // 		return false, errDropDerpPacket
     // 	}
     // }
-
-    // // bufferedDerpWritesBeforeDrop is how many packets writes can be
-    // // queued up the DERP client to write on the wire before we start
-    // // dropping.
-    // //
-    // // TODO: this is currently arbitrary. Figure out something better?
-    // const bufferedDerpWritesBeforeDrop = 32
 
     /// Returns a DERP client for fake UDP addresses that
     /// represent DERP servers, creating them as necessary. For real UDP

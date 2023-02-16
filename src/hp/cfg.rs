@@ -4,7 +4,10 @@ use std::{
     collections::HashMap,
     fmt::Display,
     net::{IpAddr, Ipv4Addr, SocketAddr},
+    time::Instant,
 };
+
+use super::{hostinfo::Hostinfo, key};
 
 /// Fake WireGuard endpoint IP address that means to
 /// use DERP. When used (in the Node.DERP field), the port number of
@@ -112,26 +115,65 @@ pub enum LinkType {
 /// for remote diagnostic pings.
 // Based on tailscale/ipnstate
 #[derive(Debug, Clone, PartialEq)]
-pub struct PingResult {
-    /// ping destination
-    pub ip: IpAddr,
-    /// Tailscale IP of node handling IP (different for subnet routers)
-    pub node_ip: IpAddr,
-    /// DNS name base or (possibly not unique) hostname
-    pub node_name: String,
+pub enum PingResult {
+    Partial {
+        node_name: String,
+        node_ip: Option<IpAddr>,
+    },
+    Ok {
+        /// ping destination
+        ip: IpAddr,
+        /// Tailscale IP of node handling IP (different for subnet routers)
+        node_ip: IpAddr,
+        /// DNS name base or (possibly not unique) hostname
+        node_name: String,
 
-    pub err: String,
-    pub latency_seconds: f64,
+        latency_seconds: f64,
 
-    /// The ip:port if direct UDP was used. It is not currently set for TSMP pings.
-    pub endpoint: SocketAddr,
+        /// The ip:port if direct UDP was used. It is not currently set for TSMP pings.
+        endpoint: SocketAddr,
 
-    /// Non-zero DERP region ID if DERP was used. It is not currently set for TSMP pings.
-    pub derp_region_id: usize,
+        /// Non-zero DERP region ID if DERP was used. It is not currently set for TSMP pings.
+        derp_region_id: usize,
 
-    /// The three-letter region code corresponding to derp_region_id. It is not currently set for TSMP pings.
-    pub derp_region_code: String,
+        /// The three-letter region code corresponding to derp_region_id. It is not currently set for TSMP pings.
+        derp_region_code: String,
 
-    /// Whether the ping request error is due to it being a ping to the local node.
-    pub is_local_ip: bool,
+        /// Whether the ping request error is due to it being a ping to the local node.
+        is_local_ip: bool,
+    },
+    Err(String),
+}
+
+#[derive(Debug)]
+pub struct Node {
+    pub id: u64,
+    pub stable_id: String,
+    // DNS name
+    pub name: Option<String>,
+
+    pub key: key::NodePublic,
+    pub disco_key: key::DiscoPublic,
+    /// IP addresses of this Node directly
+    pub addresses: Vec<IpAddr>,
+    /// range of IP addresses to route to this node
+    pub allowed_ips: Vec<IpAddr>,
+    // IP+port (public via STUN, and local LANs)
+    pub endpoints: Vec<SocketAddr>,
+    /// DERP-in-IP:port ("127.3.3.40:N") endpoint
+    pub derp_derp: SocketAddr,
+    pub hostinfo: Hostinfo,
+    pub created: Instant,
+
+    /// When the node was last online. It is not
+    /// updated when Online is true. It is nil if the current
+    /// node doesn't have permission to know, or the node has never been online.
+    pub last_seen: Option<Instant>,
+
+    /// Whether the node is currently connected to the
+    /// coordination server. A value of None means unknown, or the current node doesn't have permission to know.
+    pub online: Option<bool>,
+
+    /// Open and keep open a connection to this peer
+    pub keep_alive: bool,
 }

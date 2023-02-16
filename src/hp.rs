@@ -9,5 +9,6 @@ pub mod stun;
 
 mod cfg;
 mod clock;
+mod hostinfo;
 mod key;
 mod netmap;

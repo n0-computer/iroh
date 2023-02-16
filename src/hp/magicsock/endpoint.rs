@@ -33,7 +33,7 @@ impl Deref for Endpoint {
 
 pub struct InnerEndpoint {
     // Atomically accessed; declared first for alignment reasons
-    last_recv: Instant,
+    pub(super) last_recv: RwLock<Option<Instant>>,
     num_stop_and_reset_atomic: AtomicU64,
     /// A function that writes encrypted Wireguard payloads from
     /// WireGuard to a peer. It might write via UDP, DERP, both, or neither.
@@ -218,38 +218,41 @@ impl Endpoint {
     // 	}
     // }
 
-    // // cliPing starts a ping for the "tailscale ping" command. res is value to call cb with,
-    // // already partially filled.
-    // func (de *endpoint) cliPing(res *ipnstate.PingResult, cb func(*ipnstate.PingResult)) {
-    // 	de.mu.Lock()
-    // 	defer de.mu.Unlock()
+    /// Starts a ping for the "ping" command.
+    /// `res` is value to call cb with, already partially filled.
+    pub fn cli_ping<F>(&self, res: cfg::PingResult, cb: F)
+    where
+        F: Fn(cfg::PingResult),
+    {
+        // 	de.mu.Lock()
+        // 	defer de.mu.Unlock()
 
-    // 	if de.expired {
-    // 		res.Err = errExpired.Error()
-    // 		cb(res)
-    // 		return
-    // 	}
+        // 	if de.expired {
+        // 		res.Err = errExpired.Error()
+        // 		cb(res)
+        // 		return
+        // 	}
 
-    // 	de.pendingCLIPings = append(de.pendingCLIPings, pendingCLIPing{res, cb})
+        // 	de.pendingCLIPings = append(de.pendingCLIPings, pendingCLIPing{res, cb})
 
-    // 	now := mono.Now()
-    // 	udpAddr, derpAddr := de.addrForSendLocked(now)
-    // 	if derpAddr.IsValid() {
-    // 		de.startPingLocked(derpAddr, now, pingCLI)
-    // 	}
-    // 	if udpAddr.IsValid() && now.Before(de.trustBestAddrUntil) {
-    // 		// Already have an active session, so just ping the address we're using.
-    // 		// Otherwise "tailscale ping" results to a node on the local network
-    // 		// can look like they're bouncing between, say 10.0.0.0/9 and the peer's
-    // 		// IPv6 address, both 1ms away, and it's random who replies first.
-    // 		de.startPingLocked(udpAddr, now, pingCLI)
-    // 	} else {
-    // 		for ep := range de.endpointState {
-    // 			de.startPingLocked(ep, now, pingCLI)
-    // 		}
-    // 	}
-    // 	de.noteActiveLocked()
-    // }
+        // 	now := mono.Now()
+        // 	udpAddr, derpAddr := de.addrForSendLocked(now)
+        // 	if derpAddr.IsValid() {
+        // 		de.startPingLocked(derpAddr, now, pingCLI)
+        // 	}
+        // 	if udpAddr.IsValid() && now.Before(de.trustBestAddrUntil) {
+        // 		// Already have an active session, so just ping the address we're using.
+        // 		// Otherwise "tailscale ping" results to a node on the local network
+        // 		// can look like they're bouncing between, say 10.0.0.0/9 and the peer's
+        // 		// IPv6 address, both 1ms away, and it's random who replies first.
+        // 		de.startPingLocked(udpAddr, now, pingCLI)
+        // 	} else {
+        // 		for ep := range de.endpointState {
+        // 			de.startPingLocked(ep, now, pingCLI)
+        // 		}
+        // 	}
+        // 	de.noteActiveLocked()
+    }
 
     // var (
     // 	errExpired     = errors.New("peer's node key has expired")
@@ -786,22 +789,22 @@ pub struct PeerMap {
 
 impl PeerMap {
     /// Number of nodes currently listed.
-    fn node_count(&self) -> usize {
+    pub fn node_count(&self) -> usize {
         self.by_node_key.len()
     }
 
     /// Reports whether there exists any peers in the netmap with dk as their DiscoKey.
-    fn any_endpoint_for_disco_key(&self, dk: &key::DiscoPublic) -> bool {
+    pub fn any_endpoint_for_disco_key(&self, dk: &key::DiscoPublic) -> bool {
         self.nodes_of_disco.contains_key(dk)
     }
 
     /// Returns the endpoint for nk, or nil if nk is not known to us.
-    fn endpoint_for_node_key(&self, nk: &key::NodePublic) -> Option<&Endpoint> {
+    pub fn endpoint_for_node_key(&self, nk: &key::NodePublic) -> Option<&Endpoint> {
         self.by_node_key.get(nk).map(|i| &i.ep)
     }
 
     /// Returns the endpoint for the peer we believe to be at ipp, or nil if we don't know of any such peer.
-    fn endpoint_for_ip_port(&self, ipp: &SocketAddr) -> Option<&Endpoint> {
+    pub fn endpoint_for_ip_port(&self, ipp: &SocketAddr) -> Option<&Endpoint> {
         self.by_ip_port.get(ipp).map(|i| &i.ep)
     }
 
@@ -848,7 +851,7 @@ impl PeerMap {
     /// This should only be called with a fully verified mapping of ipp to
     /// nk, because calling this function defines the endpoint we hand to
     /// WireGuard for packets received from ipp.
-    fn set_node_key_for_ip_port(&mut self, ipp: &SocketAddr, nk: &key::NodePublic) {
+    pub fn set_node_key_for_ip_port(&mut self, ipp: &SocketAddr, nk: &key::NodePublic) {
         if let Some(pi) = self.by_ip_port.get_mut(ipp) {
             pi.ip_ports.remove(ipp);
             self.by_ip_port.remove(ipp);
