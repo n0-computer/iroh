@@ -1,7 +1,7 @@
 #![allow(missing_docs)]
 use std::path::PathBuf;
 
-use crate::{Hash, util::RpcResult};
+use crate::{util::RpcResult, Hash};
 use derive_more::{From, TryInto};
 use quic_rpc::{
     message::{Msg, RpcMsg, ServerStreaming, ServerStreamingMsg},

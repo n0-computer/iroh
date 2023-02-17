@@ -1,6 +1,6 @@
 use std::{
-    result,
     fmt::{self, Display},
+    result,
     str::FromStr,
 };
 
@@ -138,7 +138,6 @@ impl From<anyhow::Error> for RpcError {
 }
 
 pub type RpcResult<T> = result::Result<T, RpcError>;
-
 
 #[cfg(test)]
 mod tests {

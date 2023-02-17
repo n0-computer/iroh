@@ -68,8 +68,9 @@ impl Database {
     }
 
     /// Iterate over all blobs in the database.
-    pub fn blobs(&self) -> Vec<(Hash, PathBuf, u64)> {
-        self.0
+    pub fn blobs(&self) -> impl Iterator<Item = (Hash, PathBuf, u64)> + 'static {
+        let items = self
+            .0
             .lock()
             .unwrap()
             .iter()
@@ -78,7 +79,10 @@ impl Database {
                 BlobOrCollection::Collection(_) => None,
             })
             .map(|(k, data)| (*k, data.path.clone(), data.size))
-            .collect()
+            .collect::<Vec<_>>();
+        // todo: make this a proper lazy iterator at some point
+        // e.g. by using an immutable map or a real database that supports snapshots.
+        items.into_iter()
     }
 }
 
@@ -90,7 +94,7 @@ impl Database {
 /// The returned [`Provider`] is awaitable to know when it finishes.  It can be terminated
 /// using [`Provider::shutdown`].
 #[derive(Debug)]
-pub struct Builder<E: quic_rpc::ServiceEndpoint<SendmeService> = DummyServerEndpoint> {
+pub struct Builder<E: ServiceEndpoint<SendmeService> = DummyServerEndpoint> {
     bind_addr: SocketAddr,
     keypair: Keypair,
     auth_token: AuthToken,
@@ -117,12 +121,9 @@ impl Builder {
     }
 }
 
-impl<E: quic_rpc::ServiceEndpoint<SendmeService>> Builder<E> {
+impl<E: ServiceEndpoint<SendmeService>> Builder<E> {
     ///
-    pub fn rpc_endpoint<E2: quic_rpc::ServiceEndpoint<SendmeService>>(
-        self,
-        endpoint: E2,
-    ) -> Builder<E2> {
+    pub fn rpc_endpoint<E2: ServiceEndpoint<SendmeService>>(self, endpoint: E2) -> Builder<E2> {
         Builder {
             bind_addr: self.bind_addr,
             keypair: self.keypair,
@@ -360,17 +361,12 @@ struct Handler(Database);
 
 impl Handler {
     fn list(self, _msg: ListRequest) -> impl Stream<Item = ListResponse> + Send + 'static {
-        let text = self
+        let items = self
             .0
             .blobs()
-            .iter()
-            .map(|(hash, path, size)| ListResponse {
-                hash: *hash,
-                path: path.clone(),
-                size: *size,
-            })
-            .collect::<Vec<_>>();
-        futures::stream::iter(text)
+            .into_iter()
+            .map(|(hash, path, size)| ListResponse { hash, path, size });
+        futures::stream::iter(items)
     }
     async fn provide(self, msg: ProvideRequest) -> anyhow::Result<ProvideResponse> {
         let path = msg.path;
