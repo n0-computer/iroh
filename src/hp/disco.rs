@@ -46,7 +46,7 @@ const TX_LEN: usize = 12;
 /// Header: Type | Version
 const HEADER_LEN: usize = 2;
 
-const PING_LEN: usize = TX_LEN + key::NODE_PUBLIC_RAW_LEN;
+const PING_LEN: usize = TX_LEN + key::node::PUBLIC_KEY_LENGTH;
 const PONG_LEN: usize = TX_LEN + EP_LENGTH;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -104,7 +104,7 @@ pub struct Ping {
     /// Allegedly the ping sender's wireguard public key.
     /// It shouldn't be trusted by itself, but can be combined with
     /// netmap data to reduce the discokey:nodekey relation from 1:N to 1:1.
-    pub node_key: key::NodePublic,
+    pub node_key: key::node::PublicKey,
 }
 
 /// A response a Ping.
@@ -136,10 +136,11 @@ impl Ping {
         // Deliberately lax on longer-than-expected messages, for future compatibility.
         ensure!(p.len() >= PING_LEN, "message too short");
         let tx_id: [u8; TX_LEN] = p[..TX_LEN].try_into().unwrap();
-        let raw_key: [u8; key::NODE_PUBLIC_RAW_LEN] = p[TX_LEN..TX_LEN + key::NODE_PUBLIC_RAW_LEN]
+        let raw_key: [u8; key::node::PUBLIC_KEY_LENGTH] = p
+            [TX_LEN..TX_LEN + key::node::PUBLIC_KEY_LENGTH]
             .try_into()
             .unwrap();
-        let node_key = key::NodePublic::from(raw_key);
+        let node_key = key::node::PublicKey::from(raw_key);
 
         Ok(Ping { tx_id, node_key })
     }
@@ -150,7 +151,7 @@ impl Ping {
 
         out[..HEADER_LEN].copy_from_slice(&header);
         out[HEADER_LEN..HEADER_LEN + TX_LEN].copy_from_slice(&self.tx_id);
-        out[HEADER_LEN + TX_LEN..].copy_from_slice(&self.node_key);
+        out[HEADER_LEN + TX_LEN..].copy_from_slice(self.node_key.as_ref());
 
         out
     }
@@ -312,7 +313,7 @@ mod tests {
 		name: "ping_with_nodekey_src",
 		m: Message::Ping(Ping {
 		    tx_id:    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
-		    node_key: key::NodePublic::from([0, 1, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 30, 31]),
+		    node_key: key::node::PublicKey::from([0, 1, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 30, 31]),
 		}),
 		want: "01 00 01 02 03 04 05 06 07 08 09 0a 0b 0c 00 01 02 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 1e 1f",
 	    },

@@ -143,8 +143,8 @@ pub struct Node {
     // DNS name
     pub name: Option<String>,
 
-    pub key: key::NodePublic,
-    pub disco_key: key::DiscoPublic,
+    pub key: key::node::PublicKey,
+    pub disco_key: key::disco::PublicKey,
     /// IP addresses of this Node directly
     pub addresses: Vec<IpAddr>,
     /// range of IP addresses to route to this node

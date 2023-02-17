@@ -118,17 +118,17 @@ struct PongReply {
 }
 
 #[derive(Debug)]
-struct SentPing {
-    to: SocketAddr,
-    at: Instant,
+pub struct SentPing {
+    pub to: SocketAddr,
+    pub at: Instant,
     // timeout timer
-    timer: Timer,
-    purpose: DiscoPingPurpose,
+    pub timer: Timer,
+    pub purpose: DiscoPingPurpose,
 }
 
 /// The reason why a discovery ping message was sent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum DiscoPingPurpose {
+pub enum DiscoPingPurpose {
     /// Means that purpose of a ping was to see if a path was valid.
     Discovery,
     /// Means that purpose of a ping was whether a peer was still there.
