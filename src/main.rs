@@ -339,7 +339,11 @@ async fn main() -> Result<()> {
         Commands::Add { path } => {
             let client = make_rpc_client().await?;
             let response = client.rpc(ProvideRequest { path: path.clone() }).await??;
-            println!("path {} added. Hash {}", path.display(), response.hash);
+            println!(
+                "path {} added. Hash {}",
+                path.display(),
+                Blake3Cid(response.hash)
+            );
             Ok(())
         }
     }
@@ -448,6 +452,11 @@ async fn provide_service(
         builder = builder.auth_token(auth_token);
     }
     let provider = builder.spawn()?;
+
+    println!("Starting sendme process");
+    println!("PeerID:      {}", provider.peer_id());
+    println!("Auth token:  {}", provider.auth_token());
+    println!("Listen addr: {}", provider.listen_addr());
     provider.await?;
     Ok(())
 }
