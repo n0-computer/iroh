@@ -1,7 +1,7 @@
 #![allow(missing_docs)]
-use std::{fmt, path::PathBuf, result};
+use std::path::PathBuf;
 
-use crate::Hash;
+use crate::{Hash, util::RpcResult};
 use derive_more::{From, TryInto};
 use quic_rpc::{
     message::{Msg, RpcMsg, ServerStreaming, ServerStreamingMsg},
@@ -95,23 +95,3 @@ impl Service for SendmeService {
     type Req = SendmeRequest;
     type Res = SendmeResponse;
 }
-
-/// A serializable error type for use in RPC responses.
-#[derive(Serialize, Deserialize, Debug)]
-pub struct RpcError(serde_error::Error);
-
-impl std::error::Error for RpcError {}
-
-impl fmt::Display for RpcError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Debug::fmt(self, f)
-    }
-}
-
-impl From<anyhow::Error> for RpcError {
-    fn from(e: anyhow::Error) -> Self {
-        RpcError(serde_error::Error::new(&*e))
-    }
-}
-
-pub type RpcResult<T> = result::Result<T, RpcError>;
