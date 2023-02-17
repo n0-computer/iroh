@@ -211,7 +211,7 @@ mod tests {
             let mut events = Vec::new();
             while let Ok(event) = provider_events.recv().await {
                 match event {
-                    Event::TransferCompleted { .. } => {
+                    Event::TransferCompleted { .. } | Event::TransferAborted { .. } => {
                         events.push(event);
                         break;
                     }
@@ -265,9 +265,16 @@ mod tests {
         provider.shutdown();
         provider.await?;
 
-        assert_eq!(events.len(), 3);
+        assert_events(events);
 
         Ok(())
+    }
+
+    fn assert_events(events: Vec<Event>) {
+        assert_eq!(events.len(), 3);
+        assert!(matches!(events[0], Event::ClientConnected { .. }));
+        assert!(matches!(events[1], Event::RequestReceived { .. }));
+        assert!(matches!(events[2], Event::TransferCompleted { .. }));
     }
 
     fn setup_logging() {

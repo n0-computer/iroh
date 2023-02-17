@@ -80,7 +80,7 @@ impl ProgressEmitter {
 ///
 /// This exists so it can be Arc'd into [`ProgressEmitter`] and we can easily have multiple
 /// `Send + Sync` copies of it.  This is used by the
-/// [`ProgressEmitter::ProgressAsyncReader`] to update the progress without intertwining
+/// [`ProgressAsyncReader`] to update the progress without intertwining
 /// lifetimes.
 #[derive(Debug)]
 struct InnerProgressEmitter {
