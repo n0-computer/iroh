@@ -9,6 +9,7 @@ use std::{
     time::Duration,
 };
 
+use anyhow::Result;
 use tokio::{
     sync::{Mutex, RwLock},
     time::Instant,
@@ -260,64 +261,65 @@ impl Endpoint {
     // 	errNoUDPOrDERP = errors.New("no UDP or DERP addr")
     // )
 
-    // func (de *endpoint) send(buffs [][]byte) error {
-    // 	if fn := de.sendFunc.Load(); fn != nil {
-    // 		return fn(buffs)
-    // 	}
+    pub async fn send(&self, buffs: &[&[u8]]) -> Result<()> {
+        todo!()
+        // 	if fn := de.sendFunc.Load(); fn != nil {
+        // 		return fn(buffs)
+        // 	}
 
-    // 	de.mu.Lock()
-    // 	if de.expired {
-    // 		de.mu.Unlock()
-    // 		return errExpired
-    // 	}
+        // 	de.mu.Lock()
+        // 	if de.expired {
+        // 		de.mu.Unlock()
+        // 		return errExpired
+        // 	}
 
-    // 	// if heartbeat disabled, kick off pathfinder
-    // 	if de.heartbeatDisabled {
-    // 		if !de.pathFinderRunning {
-    // 			de.startPathFinder()
-    // 		}
-    // 	}
+        // 	// if heartbeat disabled, kick off pathfinder
+        // 	if de.heartbeatDisabled {
+        // 		if !de.pathFinderRunning {
+        // 			de.startPathFinder()
+        // 		}
+        // 	}
 
-    // 	now := mono.Now()
-    // 	udpAddr, derpAddr := de.addrForSendLocked(now)
-    // 	if !udpAddr.IsValid() || now.After(de.trustBestAddrUntil) {
-    // 		de.sendPingsLocked(now, true)
-    // 	}
-    // 	de.noteActiveLocked()
-    // 	de.mu.Unlock()
+        // 	now := mono.Now()
+        // 	udpAddr, derpAddr := de.addrForSendLocked(now)
+        // 	if !udpAddr.IsValid() || now.After(de.trustBestAddrUntil) {
+        // 		de.sendPingsLocked(now, true)
+        // 	}
+        // 	de.noteActiveLocked()
+        // 	de.mu.Unlock()
 
-    // 	if !udpAddr.IsValid() && !derpAddr.IsValid() {
-    // 		return errNoUDPOrDERP
-    // 	}
-    // 	var err error
-    // 	if udpAddr.IsValid() {
-    // 		_, err = de.c.sendUDPBatch(udpAddr, buffs)
-    // 		// TODO(raggi): needs updating for accuracy, as in error conditions we may have partial sends.
-    // 		if stats := de.c.stats.Load(); err == nil && stats != nil {
-    // 			var txBytes int
-    // 			for _, b := range buffs {
-    // 				txBytes += len(b)
-    // 			}
-    // 			stats.UpdateTxPhysical(de.nodeAddr, udpAddr, txBytes)
-    // 		}
-    // 	}
-    // 	if derpAddr.IsValid() {
-    // 		allOk := true
-    // 		for _, buff := range buffs {
-    // 			ok, _ := de.c.sendAddr(derpAddr, de.publicKey, buff)
-    // 			if stats := de.c.stats.Load(); stats != nil {
-    // 				stats.UpdateTxPhysical(de.nodeAddr, derpAddr, len(buff))
-    // 			}
-    // 			if !ok {
-    // 				allOk = false
-    // 			}
-    // 		}
-    // 		if allOk {
-    // 			return nil
-    // 		}
-    // 	}
-    // 	return err
-    // }
+        // 	if !udpAddr.IsValid() && !derpAddr.IsValid() {
+        // 		return errNoUDPOrDERP
+        // 	}
+        // 	var err error
+        // 	if udpAddr.IsValid() {
+        // 		_, err = de.c.sendUDPBatch(udpAddr, buffs)
+        // 		// TODO(raggi): needs updating for accuracy, as in error conditions we may have partial sends.
+        // 		if stats := de.c.stats.Load(); err == nil && stats != nil {
+        // 			var txBytes int
+        // 			for _, b := range buffs {
+        // 				txBytes += len(b)
+        // 			}
+        // 			stats.UpdateTxPhysical(de.nodeAddr, udpAddr, txBytes)
+        // 		}
+        // 	}
+        // 	if derpAddr.IsValid() {
+        // 		allOk := true
+        // 		for _, buff := range buffs {
+        // 			ok, _ := de.c.sendAddr(derpAddr, de.publicKey, buff)
+        // 			if stats := de.c.stats.Load(); stats != nil {
+        // 				stats.UpdateTxPhysical(de.nodeAddr, derpAddr, len(buff))
+        // 			}
+        // 			if !ok {
+        // 				allOk = false
+        // 			}
+        // 		}
+        // 		if allOk {
+        // 			return nil
+        // 		}
+        // 	}
+        // 	return err
+    }
 
     // func (de *endpoint) pingTimeout(txid stun.TxID) {
     // 	de.mu.Lock()

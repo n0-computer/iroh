@@ -14,7 +14,7 @@ use futures::future::BoxFuture;
 use rand::{seq::SliceRandom, Rng, SeedableRng};
 use tokio::{
     net::UdpSocket,
-    sync::{self, Mutex, RwLock},
+    sync::{self, oneshot, Mutex, RwLock},
     time::{self, Instant},
 };
 use tracing::{debug, info};
@@ -971,151 +971,119 @@ impl Conn {
         !self.network_up.load(Ordering::Relaxed)
     }
 
-    // func (c *Conn) Send(buffs [][]byte, ep conn.Endpoint) error {
-    // 	n := int64(len(buffs))
-    // 	metricSendData.Add(n)
-    // 	if c.networkDown() {
-    // 		metricSendDataNetworkDown.Add(n)
-    // 		return errNetworkDown
-    // 	}
-    // 	return ep.(*endpoint).send(buffs)
-    // }
+    pub async fn send(&self, buffs: &[&[u8]], ep: &Endpoint) -> Result<()> {
+        let n = buffs.len();
 
-    // var errConnClosed = errors.New("Conn closed")
+        // TODO:
+        // metricSendData.Add(n)
+        if self.network_down() {
+            // TODO:
+            // metricSendDataNetworkDown.Add(n)
+            bail!("network down");
+        }
 
-    // var errDropDerpPacket = errors.New("too many DERP packets queued; dropping")
+        ep.send(buffs).await
+    }
 
-    // var errNoUDP = errors.New("no UDP available on platform")
+    // Sends UDP packet `b` to `ipp`.
+    async fn send_udp(&self, ipp: SocketAddr, b: &[u8]) -> Result<bool> {
+        let res = self.send_udp_std(ipp, b).await;
 
-    // var (
-    // 	// This acts as a compile-time check for our usage of ipv6.Message in
-    // 	// udpConnWithBatchOps for both IPv6 and IPv4 operations.
-    // 	_ ipv6.Message = ipv4.Message{}
-    // )
+        match res {
+            Ok(true) => {
+                // TODO
+                // metricSendUDP.Add(1)
+            }
+            _ => {}
+            Err(_) => {
+                // TODO:
+                // metricSendUDPError.Add(1)
+            }
+        }
 
-    // type sendBatch struct {
-    // 	ua   *net.UDPAddr
-    // 	msgs []ipv6.Message // ipv4.Message and ipv6.Message are the same underlying type
-    // }
+        res
+    }
 
-    // func (c *Conn) sendUDPBatch(addr netip.AddrPort, buffs [][]byte) (sent bool, err error) {
-    // 	batch := c.sendBatchPool.Get().(*sendBatch)
-    // 	defer c.sendBatchPool.Put(batch)
+    /// Sends UDP packet b to addr.
+    async fn send_udp_std(&self, addr: SocketAddr, b: &[u8]) -> Result<bool> {
+        let res = match addr {
+            SocketAddr::V4(_) => {
+                let res = self.pconn4.write_to(addr, b).await;
+                if res.is_err()
+                    && (self.no_v4.load(Ordering::Relaxed)
+                        || res.as_ref().unwrap_err().treat_as_lost_udp())
+                {
+                    return Ok(false);
+                }
+                res
+            }
+            SocketAddr::V6(_) => {
+                let res = self.pconn6.write_to(addr, b).await;
+                if res.is_err()
+                    && (self.no_v6.load(Ordering::Relaxed)
+                        || res.as_ref().unwrap_err().treat_as_lost_udp())
+                {
+                    return Ok(false);
+                }
+                res
+            }
+        };
 
-    // 	isIPv6 := false
-    // 	switch {
-    // 	case addr.Addr().Is4():
-    // 	case addr.Addr().Is6():
-    // 		isIPv6 = true
-    // 	default:
-    // 		panic("bogus sendUDPBatch addr type")
-    // 	}
+        res.map(|_| true).map_err(Into::into)
+    }
 
-    // 	as16 := addr.Addr().As16()
-    // 	copy(batch.ua.IP, as16[:])
-    // 	batch.ua.Port = int(addr.Port())
-    // 	for i, buff := range buffs {
-    // 		batch.msgs[i].Buffers[0] = buff
-    // 		batch.msgs[i].Addr = batch.ua
-    // 	}
+    /// Sends packet b to addr, which is either a real UDP address
+    /// or a fake UDP address representing a DERP server (see derpmap).
+    /// The provided public key identifies the recipient.
+    ///
+    /// The returned error is whether there was an error writing when it should've worked.
+    /// The returned sent is whether a packet went out at all. An example of when they might
+    /// be different: sending to an IPv6 address when the local machine doesn't have IPv6 support
+    /// returns Ok(false); it's not an error, but nothing was sent.
+    async fn send_addr(
+        &self,
+        addr: SocketAddr,
+        pub_key: Option<&key::node::PublicKey>,
+        b: &[u8],
+    ) -> Result<bool> {
+        if addr.ip() != DERP_MAGIC_IP {
+            return self.send_udp(addr, b).await;
+        }
 
-    // 	if isIPv6 {
-    // 		_, err = c.pconn6.WriteBatch(batch.msgs[:len(buffs)], 0)
-    // 	} else {
-    // 		_, err = c.pconn4.WriteBatch(batch.msgs[:len(buffs)], 0)
-    // 	}
-    // 	return err == nil, err
-    // }
+        match self.derp_write_chan_of_addr(addr, pub_key) {
+            None => {
+                // TODO:
+                // metricSendDERPErrorChan.Add(1)
+                return Ok(false);
+            }
+            Some(ch) => {
+                let pkt = b.to_vec();
 
-    // // sendUDP sends UDP packet b to ipp.
-    // // See sendAddr's docs on the return value meanings.
-    // func (c *Conn) sendUDP(ipp netip.AddrPort, b []byte) (sent bool, err error) {
-    // 	if runtime.GOOS == "js" {
-    // 		return false, errNoUDP
-    // 	}
-    // 	sent, err = c.sendUDPStd(ipp, b)
-    // 	if err != nil {
-    // 		metricSendUDPError.Add(1)
-    // 	} else {
-    // 		if sent {
-    // 			metricSendUDP.Add(1)
-    // 		}
-    // 	}
-    // 	return
-    // }
+                // tokio::select! {
+                // case <-c.donec:
+                //   metricSendDERPErrorClosed.Add(1)
+                //   return false, errConnClosed
+                // case ch <- derpWriteRequest{addr, pubKey, pkt}:
+                //   metricSendDERPQueued.Add(1)
+                //   return true, nil
+                // default:
+                //   metricSendDERPErrorQueue.Add(1)
+                //   // Too many writes queued. Drop packet.
+                //   return false, errDropDerpPacket
+                // }
+                todo!()
+            }
+        }
+    }
 
-    // // sendUDP sends UDP packet b to addr.
-    // // See sendAddr's docs on the return value meanings.
-    // func (c *Conn) sendUDPStd(addr netip.AddrPort, b []byte) (sent bool, err error) {
-    // 	switch {
-    // 	case addr.Addr().Is4():
-    // 		_, err = c.pconn4.WriteToUDPAddrPort(b, addr)
-    // 		if err != nil && (c.noV4.Load() || neterror.TreatAsLostUDP(err)) {
-    // 			return false, nil
-    // 		}
-    // 	case addr.Addr().Is6():
-    // 		_, err = c.pconn6.WriteToUDPAddrPort(b, addr)
-    // 		if err != nil && (c.noV6.Load() || neterror.TreatAsLostUDP(err)) {
-    // 			return false, nil
-    // 		}
-    // 	default:
-    // 		panic("bogus sendUDPStd addr type")
-    // 	}
-    // 	return err == nil, err
-    // }
-
-    // // sendAddr sends packet b to addr, which is either a real UDP address
-    // // or a fake UDP address representing a DERP server (see derpmap.go).
-    // // The provided public key identifies the recipient.
-    // //
-    // // The returned err is whether there was an error writing when it
-    // // should've worked.
-    // // The returned sent is whether a packet went out at all.
-    // // An example of when they might be different: sending to an
-    // // IPv6 address when the local machine doesn't have IPv6 support
-    // // returns (false, nil); it's not an error, but nothing was sent.
-    // func (c *Conn) sendAddr(addr netip.AddrPort, pubKey key.node::PublicKey, b []byte) (sent bool, err error) {
-    // 	if addr.Addr() != derpMagicIPAddr {
-    // 		return c.sendUDP(addr, b)
-    // 	}
-
-    // 	ch := c.derpWriteChanOfAddr(addr, pubKey)
-    // 	if ch == nil {
-    // 		metricSendDERPErrorChan.Add(1)
-    // 		return false, nil
-    // 	}
-
-    // 	// TODO(bradfitz): this makes garbage for now; we could use a
-    // 	// buffer pool later.  Previously we passed ownership of this
-    // 	// to derpWriteRequest and waited for derphttp.Client.Send to
-    // 	// complete, but that's too slow while holding wireguard-go
-    // 	// internal locks.
-    // 	pkt := make([]byte, len(b))
-    // 	copy(pkt, b)
-
-    // 	select {
-    // 	case <-c.donec:
-    // 		metricSendDERPErrorClosed.Add(1)
-    // 		return false, errConnClosed
-    // 	case ch <- derpWriteRequest{addr, pubKey, pkt}:
-    // 		metricSendDERPQueued.Add(1)
-    // 		return true, nil
-    // 	default:
-    // 		metricSendDERPErrorQueue.Add(1)
-    // 		// Too many writes queued. Drop packet.
-    // 		return false, errDropDerpPacket
-    // 	}
-    // }
-
-    /// Returns a DERP client for fake UDP addresses that
-    /// represent DERP servers, creating them as necessary. For real UDP
-    /// addresses, it returns `None`.
+    /// Returns a DERP client for fake UDP addresses that represent DERP servers, creating them as necessary.
+    /// For real UDP addresses, it returns `None`.
     ///
     /// If peer is `Some`, it can be used to find an active reverse path, without using addr.
     fn derp_write_chan_of_addr(
         &self,
         addr: SocketAddr,
-        peer: Option<key::node::PublicKey>,
+        peer: Option<&key::node::PublicKey>,
     ) -> Option<()> {
         todo!()
         // chan<- derpWriteRequest {
@@ -1139,300 +1107,253 @@ impl Conn {
         // if c.privateKey.IsZero() {
         // 	c.logf("magicsock: DERP lookup of %v with no private key; ignoring", addr)
         // 	return nil
+        // }
+
+        // 	// See if we have a connection open to that DERP node ID
+        // 	// first. If so, might as well use it. (It's a little
+        // 	// arbitrary whether we use this one vs. the reverse route
+        // 	// below when we have both.)
+        // 	ad, ok := c.activeDerp[regionID]
+        // 	if ok {
+        // 		*ad.lastWrite = time.Now()
+        // 		c.setPeerLastDerpLocked(peer, regionID, regionID)
+        // 		return ad.writeCh
+        // 	}
+
+        // 	// If we don't have an open connection to the peer's home DERP
+        // 	// node, see if we have an open connection to a DERP node
+        // 	// where we'd heard from that peer already. For instance,
+        // 	// perhaps peer's home is Frankfurt, but they dialed our home DERP
+        // 	// node in SF to reach us, so we can reply to them using our
+        // 	// SF connection rather than dialing Frankfurt. (Issue 150)
+        // 	if !peer.IsZero() && useDerpRoute() {
+        // 		if r, ok := c.derpRoute[peer]; ok {
+        // 			if ad, ok := c.activeDerp[r.derpID]; ok && ad.c == r.dc {
+        // 				c.setPeerLastDerpLocked(peer, r.derpID, regionID)
+        // 				*ad.lastWrite = time.Now()
+        // 				return ad.writeCh
+        // 			}
+        // 		}
+        // 	}
+
+        // 	why := "home-keep-alive"
+        // 	if !peer.IsZero() {
+        // 		why = peer.ShortString()
+        // 	}
+        // 	c.logf("magicsock: adding connection to derp-%v for %v", regionID, why)
+
+        // 	firstDerp := false
+        // 	if c.activeDerp == nil {
+        // 		firstDerp = true
+        // 		c.activeDerp = make(map[int]activeDerp)
+        // 		c.prevDerp = make(map[int]*syncs.WaitGroupChan)
+        // 	}
+
+        // 	// Note that derphttp.NewRegionClient does not dial the server
+        // 	// (it doesn't block) so it is safe to do under the c.mu lock.
+        // 	dc := derphttp.NewRegionClient(c.privateKey, c.logf, func() *tailcfg.DERPRegion {
+        // 		// Warning: it is not legal to acquire
+        // 		// magicsock.Conn.mu from this callback.
+        // 		// It's run from derphttp.Client.connect (via Send, etc)
+        // 		// and the lock ordering rules are that magicsock.Conn.mu
+        // 		// must be acquired before derphttp.Client.mu.
+        // 		// See https://github.com/tailscale/tailscale/issues/3726
+        // 		if c.connCtx.Err() != nil {
+        // 			// We're closing anyway; return nil to stop dialing.
+        // 			return nil
+        // 		}
+        // 		derpMap := c.derpMapAtomic.Load()
+        // 		if derpMap == nil {
+        // 			return nil
+        // 		}
+        // 		return derpMap.Regions[regionID]
+        // 	})
+
+        // 	dc.SetCanAckPings(true)
+        // 	dc.NotePreferred(c.myDerp == regionID)
+        // 	dc.SetAddressFamilySelector(derpAddrFamSelector{c})
+        // 	dc.DNSCache = dnscache.Get()
+
+        // 	ctx, cancel := context.WithCancel(c.connCtx)
+        // 	ch := make(chan derpWriteRequest, bufferedDerpWritesBeforeDrop)
+
+        // 	ad.c = dc
+        // 	ad.writeCh = ch
+        // 	ad.cancel = cancel
+        // 	ad.lastWrite = new(time.Time)
+        // 	*ad.lastWrite = time.Now()
+        // 	ad.createTime = time.Now()
+        // 	c.activeDerp[regionID] = ad
+        // 	metricNumDERPConns.Set(int64(len(c.activeDerp)))
+        // 	c.logActiveDerpLocked()
+        // 	c.setPeerLastDerpLocked(peer, regionID, regionID)
+        // 	c.scheduleCleanStaleDerpLocked()
+
+        // 	// Build a startGate for the derp reader+writer
+        // 	// goroutines, so they don't start running until any
+        // 	// previous generation is closed.
+        // 	startGate := syncs.ClosedChan()
+        // 	if prev := c.prevDerp[regionID]; prev != nil {
+        // 		startGate = prev.DoneChan()
+        // 	}
+        // 	// And register a WaitGroup(Chan) for this generation.
+        // 	wg := syncs.NewWaitGroupChan()
+        // 	wg.Add(2)
+        // 	c.prevDerp[regionID] = wg
+
+        // 	if firstDerp {
+        // 		startGate = c.derpStarted
+        // 		go func() {
+        // 			dc.Connect(ctx)
+        // 			close(c.derpStarted)
+        // 			c.muCond.Broadcast()
+        // 		}()
+        // 	}
+
+        // 	go c.runDerpReader(ctx, addr, dc, wg, startGate)
+        // 	go c.runDerpWriter(ctx, dc, ch, wg, startGate)
+        // 	go c.derpActiveFunc()
+
+        // 	return ad.writeCh
     }
 
-    // 	// See if we have a connection open to that DERP node ID
-    // 	// first. If so, might as well use it. (It's a little
-    // 	// arbitrary whether we use this one vs. the reverse route
-    // 	// below when we have both.)
-    // 	ad, ok := c.activeDerp[regionID]
-    // 	if ok {
-    // 		*ad.lastWrite = time.Now()
-    // 		c.setPeerLastDerpLocked(peer, regionID, regionID)
-    // 		return ad.writeCh
-    // 	}
+    // /// Runs in a task for the life of a DERP connection, handling received packets.
+    // fn run_derp_reader(&self, derp_fake_addr: SocketAddr, dc: derp::http::Client, /*wg *syncs.WaitGroupChan, startGate <-chan struct{}*/) {
+    //     // TODO:
+    //     // defer wg.Decr()
+    //     // defer dc.Close()
 
-    // 	// If we don't have an open connection to the peer's home DERP
-    // 	// node, see if we have an open connection to a DERP node
-    // 	// where we'd heard from that peer already. For instance,
-    // 	// perhaps peer's home is Frankfurt, but they dialed our home DERP
-    // 	// node in SF to reach us, so we can reply to them using our
-    // 	// SF connection rather than dialing Frankfurt. (Issue 150)
-    // 	if !peer.IsZero() && useDerpRoute() {
-    // 		if r, ok := c.derpRoute[peer]; ok {
-    // 			if ad, ok := c.activeDerp[r.derpID]; ok && ad.c == r.dc {
-    // 				c.setPeerLastDerpLocked(peer, r.derpID, regionID)
-    // 				*ad.lastWrite = time.Now()
-    // 				return ad.writeCh
-    // 			}
-    // 		}
-    // 	}
+    //     // TODO:
+    //     // select {
+    //     // case <-startGate:
+    //     // case <-ctx.Done():
+    //     // 	return
+    //     // }
 
-    // 	why := "home-keep-alive"
-    // 	if !peer.IsZero() {
-    // 		why = peer.ShortString()
-    // 	}
-    // 	c.logf("magicsock: adding connection to derp-%v for %v", regionID, why)
+    //     let (did_copy_s, did_copy_r) = oneshot::channel();
+    //     let region_id = usize::from(derp_fake_addr.port());
+    //     let mut pkt = derp::ReceivedPacket;
+    //     let mut res = DerpReadResult {
+    //         region_id,
+    //         n: 0,
+    //         copy_buf: Box::new(|| |dst: &[u8]| -> usize {
+    //             let n = pkt.data[..dst.len()].copy_from_slice(dst);
+    //     	did_copy_s.send(());
+    //     	return n
+    //         })
+    //     };
 
-    // 	firstDerp := false
-    // 	if c.activeDerp == nil {
-    // 		firstDerp = true
-    // 		c.activeDerp = make(map[int]activeDerp)
-    // 		c.prevDerp = make(map[int]*syncs.WaitGroupChan)
-    // 	}
+    //     // The set of senders we know are present on this connection, based on messages we've received from the server.
 
-    // 	// Note that derphttp.NewRegionClient does not dial the server
-    // 	// (it doesn't block) so it is safe to do under the c.mu lock.
-    // 	dc := derphttp.NewRegionClient(c.privateKey, c.logf, func() *tailcfg.DERPRegion {
-    // 		// Warning: it is not legal to acquire
-    // 		// magicsock.Conn.mu from this callback.
-    // 		// It's run from derphttp.Client.connect (via Send, etc)
-    // 		// and the lock ordering rules are that magicsock.Conn.mu
-    // 		// must be acquired before derphttp.Client.mu.
-    // 		// See https://github.com/tailscale/tailscale/issues/3726
-    // 		if c.connCtx.Err() != nil {
-    // 			// We're closing anyway; return nil to stop dialing.
-    // 			return nil
-    // 		}
-    // 		derpMap := c.derpMapAtomic.Load()
-    // 		if derpMap == nil {
-    // 			return nil
-    // 		}
-    // 		return derpMap.Regions[regionID]
-    // 	})
+    //     let mut peer_present = map[key.node::PublicKey]bool{};
+    //     // let bo = backoff.NewBackoff(fmt.Sprintf("derp-%d", regionID), c.logf, 5*time.Second);
+    //     let mut  last_packet_time: Option<Instant> = None;
+    //     let mut last_packet_src: Option<key:node::PublicKey> = None;
 
-    // 	dc.SetCanAckPings(true)
-    // 	dc.NotePreferred(c.myDerp == regionID)
-    // 	dc.SetAddressFamilySelector(derpAddrFamSelector{c})
-    // 	dc.DNSCache = dnscache.Get()
+    //     loop {
+    //         match dc.recv_detail().await {
+    //             Err(err)=> {
+    //     	    // Forget that all these peers have routes.
+    //     	    for peer := range peerPresent {
+    //     		delete(peerPresent, peer);
+    //     		c.removeDerpPeerRoute(peer, regionID, dc);
+    //     	    }
+    //     	    if err == derphttp.ErrClientClosed {
+    //     		return;
+    //     	    }
+    //     	    if c.networkDown() {
+    //     		c.logf("[v1] magicsock: derp.Recv(derp-%d): network down, closing", regionID);
+    //     		return;
+    //     	    }
+    //                 if ctx.done() {
+    //                     return
+    //                 }
 
-    // 	ctx, cancel := context.WithCancel(c.connCtx)
-    // 	ch := make(chan derpWriteRequest, bufferedDerpWritesBeforeDrop)
+    //     	    c.logf("magicsock: [%p] derp.Recv(derp-%d): %v", dc, regionID, err);
 
-    // 	ad.c = dc
-    // 	ad.writeCh = ch
-    // 	ad.cancel = cancel
-    // 	ad.lastWrite = new(time.Time)
-    // 	*ad.lastWrite = time.Now()
-    // 	ad.createTime = time.Now()
-    // 	c.activeDerp[regionID] = ad
-    // 	metricNumDERPConns.Set(int64(len(c.activeDerp)))
-    // 	c.logActiveDerpLocked()
-    // 	c.setPeerLastDerpLocked(peer, regionID, regionID)
-    // 	c.scheduleCleanStaleDerpLocked()
+    //     	    // If our DERP connection broke, it might be because our network
+    //     	    // conditions changed. Start that check.
+    //     	    c.ReSTUN("derp-recv-error");
 
-    // 	// Build a startGate for the derp reader+writer
-    // 	// goroutines, so they don't start running until any
-    // 	// previous generation is closed.
-    // 	startGate := syncs.ClosedChan()
-    // 	if prev := c.prevDerp[regionID]; prev != nil {
-    // 		startGate = prev.DoneChan()
-    // 	}
-    // 	// And register a WaitGroup(Chan) for this generation.
-    // 	wg := syncs.NewWaitGroupChan()
-    // 	wg.Add(2)
-    // 	c.prevDerp[regionID] = wg
+    //     	    // Back off a bit before reconnecting.
+    //     	    bo.BackOff(ctx, err);
 
-    // 	if firstDerp {
-    // 		startGate = c.derpStarted
-    // 		go func() {
-    // 			dc.Connect(ctx)
-    // 			close(c.derpStarted)
-    // 			c.muCond.Broadcast()
-    // 		}()
-    // 	}
+    //                 if ctx.Done() {
+    //                     return;
+    //                 }
+    //     	}
+    //             Ok(msg, conn_gen) => {
+    //                 // reset
+    //     	    bo.BackOff(ctx, nil);
 
-    // 	go c.runDerpReader(ctx, addr, dc, wg, startGate)
-    // 	go c.runDerpWriter(ctx, dc, ch, wg, startGate)
-    // 	go c.derpActiveFunc()
+    //     	    let now = time.Now();
+    //     	    if lastPacketTime.IsZero() || now.Sub(lastPacketTime) > 5*time.Second {
+    //     		health.NoteDERPRegionReceivedFrame(regionID);
+    //     		lastPacketTime = now;
+    //     	    }
+    //                 match msg.typ {
+    //     	        derp.ServerInfoMessage => {
+    //     		    health.SetDERPRegionConnectedState(regionID, true);
+    //     		    health.SetDERPRegionHealth(regionID, ""); // until declared otherwise
+    //     		    c.logf("magicsock: derp-%d connected; connGen=%v", regionID, connGen);
+    //     		    continue;
+    //                     }
+    //     	        derp.ReceivedPacket => {
+    //     		    pkt = m;
+    //     		    res.n = len(m.Data);
+    //     		    res.src = m.Source;
+    //     		    debug!("magicsock: got derp-%v packet: %q", regionID, m.Data);
+    //     		    // If this is a new sender we hadn't seen before, remember it and
+    //     		    // register a route for this peer.
+    //     		    if res.src != lastPacketSrc { // avoid map lookup w/ high throughput single peer
+    //     			lastPacketSrc = res.src;
+    //     			if _, ok := peerPresent[res.src]; !ok {
+    //     				peerPresent[res.src] = true;
+    //     			    c.addDerpPeerRoute(res.src, regionID, dc);
+    //     			}
+    //     		    }
+    //                     }
+    //     	        derp.PingMessage => {
+    //     		    // Best effort reply to the ping.
+    //     		    pingData := [8]byte(m);
+    //     		    go func() {
+    //     			if err := dc.SendPong(pingData); err != nil {
+    //     			    c.logf("magicsock: derp-%d SendPong error: %v", regionID, err);
+    //     			}
+    //     		    }();
+    //     		    continue;
+    //                     }
+    //     	        derp.HealthMessage => {
+    //     		    health.SetDERPRegionHealth(regionID, m.Problem);
+    //                     }
+    //     	        derp.PeerGoneMessage => {
+    //     		    c.removeDerpPeerRoute(key.node::PublicKey(m), regionID, dc)
+    //                     }
+    //     	        _ => {
+    //     		    // Ignore.
+    //     		    continue;
+    //     	        }
+    //                 }
 
-    // 	return ad.writeCh
-    // }
+    //     	    tokio::select! {
+    //     	        _ = ctx.Done() => {
+    //     		    return;
+    //                     }
+    //     	        _ = c.derpRecvCh.send(res) => {
+    //                     }
+    //     	    }
 
-    // // setPeerLastDerpLocked notes that peer is now being written to via
-    // // the provided DERP regionID, and that the peer advertises a DERP
-    // // home region ID of homeID.
-    // //
-    // // If there's any change, it logs.
-    // //
-    // // c.mu must be held.
-    // func (c *Conn) setPeerLastDerpLocked(peer key.node::PublicKey, regionID, homeID int) {
-    // 	if peer.IsZero() {
-    // 		return
-    // 	}
-    // 	old := c.peerLastDerp[peer]
-    // 	if old == regionID {
-    // 		return
-    // 	}
-    // 	c.peerLastDerp[peer] = regionID
-
-    // 	var newDesc string
-    // 	switch {
-    // 	case regionID == homeID && regionID == c.myDerp:
-    // 		newDesc = "shared home"
-    // 	case regionID == homeID:
-    // 		newDesc = "their home"
-    // 	case regionID == c.myDerp:
-    // 		newDesc = "our home"
-    // 	case regionID != homeID:
-    // 		newDesc = "alt"
-    // 	}
-    // 	if old == 0 {
-    // 		c.logf("[v1] magicsock: derp route for %s set to derp-%d (%s)", peer.ShortString(), regionID, newDesc)
-    // 	} else {
-    // 		c.logf("[v1] magicsock: derp route for %s changed from derp-%d => derp-%d (%s)", peer.ShortString(), old, regionID, newDesc)
-    // 	}
-    // }
-
-    // // derpReadResult is the type sent by runDerpClient to ReceiveIPv4
-    // // when a DERP packet is available.
-    // //
-    // // Notably, it doesn't include the derp.ReceivedPacket because we
-    // // don't want to give the receiver access to the aliased []byte.  To
-    // // get at the packet contents they need to call copyBuf to copy it
-    // // out, which also releases the buffer.
-    // type derpReadResult struct {
-    // 	regionID int
-    // 	n        int // length of data received
-    // 	src      key.node::PublicKey
-    // 	// copyBuf is called to copy the data to dst.  It returns how
-    // 	// much data was copied, which will be n if dst is large
-    // 	// enough. copyBuf can only be called once.
-    // 	// If copyBuf is nil, that's a signal from the sender to ignore
-    // 	// this message.
-    // 	copyBuf func(dst []byte) int
-    // }
-
-    // // runDerpReader runs in a goroutine for the life of a DERP
-    // // connection, handling received packets.
-    // func (c *Conn) runDerpReader(ctx context.Context, derpFakeAddr netip.AddrPort, dc *derphttp.Client, wg *syncs.WaitGroupChan, startGate <-chan struct{}) {
-    // 	defer wg.Decr()
-    // 	defer dc.Close()
-
-    // 	select {
-    // 	case <-startGate:
-    // 	case <-ctx.Done():
-    // 		return
-    // 	}
-
-    // 	didCopy := make(chan struct{}, 1)
-    // 	regionID := int(derpFakeAddr.Port())
-    // 	res := derpReadResult{regionID: regionID}
-    // 	var pkt derp.ReceivedPacket
-    // 	res.copyBuf = func(dst []byte) int {
-    // 		n := copy(dst, pkt.Data)
-    // 		didCopy <- struct{}{}
-    // 		return n
-    // 	}
-
-    // 	defer health.SetDERPRegionConnectedState(regionID, false)
-    // 	defer health.SetDERPRegionHealth(regionID, "")
-
-    // 	// peerPresent is the set of senders we know are present on this
-    // 	// connection, based on messages we've received from the server.
-    // 	peerPresent := map[key.node::PublicKey]bool{}
-    // 	bo := backoff.NewBackoff(fmt.Sprintf("derp-%d", regionID), c.logf, 5*time.Second)
-    // 	var lastPacketTime time.Time
-    // 	var lastPacketSrc key.node::PublicKey
-
-    // 	for {
-    // 		msg, connGen, err := dc.RecvDetail()
-    // 		if err != nil {
-    // 			health.SetDERPRegionConnectedState(regionID, false)
-    // 			// Forget that all these peers have routes.
-    // 			for peer := range peerPresent {
-    // 				delete(peerPresent, peer)
-    // 				c.removeDerpPeerRoute(peer, regionID, dc)
-    // 			}
-    // 			if err == derphttp.ErrClientClosed {
-    // 				return
-    // 			}
-    // 			if c.networkDown() {
-    // 				c.logf("[v1] magicsock: derp.Recv(derp-%d): network down, closing", regionID)
-    // 				return
-    // 			}
-    // 			select {
-    // 			case <-ctx.Done():
-    // 				return
-    // 			default:
-    // 			}
-
-    // 			c.logf("magicsock: [%p] derp.Recv(derp-%d): %v", dc, regionID, err)
-
-    // 			// If our DERP connection broke, it might be because our network
-    // 			// conditions changed. Start that check.
-    // 			c.ReSTUN("derp-recv-error")
-
-    // 			// Back off a bit before reconnecting.
-    // 			bo.BackOff(ctx, err)
-    // 			select {
-    // 			case <-ctx.Done():
-    // 				return
-    // 			default:
-    // 			}
-    // 			continue
-    // 		}
-    // 		bo.BackOff(ctx, nil) // reset
-
-    // 		now := time.Now()
-    // 		if lastPacketTime.IsZero() || now.Sub(lastPacketTime) > 5*time.Second {
-    // 			health.NoteDERPRegionReceivedFrame(regionID)
-    // 			lastPacketTime = now
-    // 		}
-
-    // 		switch m := msg.(type) {
-    // 		case derp.ServerInfoMessage:
-    // 			health.SetDERPRegionConnectedState(regionID, true)
-    // 			health.SetDERPRegionHealth(regionID, "") // until declared otherwise
-    // 			c.logf("magicsock: derp-%d connected; connGen=%v", regionID, connGen)
-    // 			continue
-    // 		case derp.ReceivedPacket:
-    // 			pkt = m
-    // 			res.n = len(m.Data)
-    // 			res.src = m.Source
-    // 			if logDerpVerbose() {
-    // 				c.logf("magicsock: got derp-%v packet: %q", regionID, m.Data)
-    // 			}
-    // 			// If this is a new sender we hadn't seen before, remember it and
-    // 			// register a route for this peer.
-    // 			if res.src != lastPacketSrc { // avoid map lookup w/ high throughput single peer
-    // 				lastPacketSrc = res.src
-    // 				if _, ok := peerPresent[res.src]; !ok {
-    // 					peerPresent[res.src] = true
-    // 					c.addDerpPeerRoute(res.src, regionID, dc)
-    // 				}
-    // 			}
-    // 		case derp.PingMessage:
-    // 			// Best effort reply to the ping.
-    // 			pingData := [8]byte(m)
-    // 			go func() {
-    // 				if err := dc.SendPong(pingData); err != nil {
-    // 					c.logf("magicsock: derp-%d SendPong error: %v", regionID, err)
-    // 				}
-    // 			}()
-    // 			continue
-    // 		case derp.HealthMessage:
-    // 			health.SetDERPRegionHealth(regionID, m.Problem)
-    // 		case derp.PeerGoneMessage:
-    // 			c.removeDerpPeerRoute(key.node::PublicKey(m), regionID, dc)
-    // 		default:
-    // 			// Ignore.
-    // 			continue
-    // 		}
-
-    // 		select {
-    // 		case <-ctx.Done():
-    // 			return
-    // 		case c.derpRecvCh <- res:
-    // 		}
-
-    // 		select {
-    // 		case <-ctx.Done():
-    // 			return
-    // 		case <-didCopy:
-    // 			continue
-    // 		}
-    // 	}
+    //     	    tokio::select! {
+    //     	        _ = ctx.Done() => {
+    //     		    return;
+    //     	        }
+    //                     case = did_copy => {
+    //     		    continue
+    //                     }
+    //                 }
+    //     	}
+    //         }
+    //     }
     // }
 
     // type derpWriteRequest struct {
@@ -3027,4 +2948,21 @@ fn endpoint_sets_equal(xs: &[cfg::Endpoint], ys: &[cfg::Endpoint]) -> bool {
     }
 
     m.values().all(|v| *v == 3)
+}
+
+/// The type sent by runDerpClient to ReceiveIPv4when a DERP packet is available.
+///
+/// Notably, it doesn't include the derp.ReceivedPacket because we
+/// don't want to give the receiver access to the aliased []byte.  To
+/// get at the packet contents they need to call copyBuf to copy it
+/// out, which also releases the buffer.
+struct DerpReadResult {
+    region_id: usize,
+    /// length of data received
+    n: usize,
+    src: key::node::PublicKey,
+    /// Called to copy the data to dst. It returns how much data was copied,
+    /// which will be `n` if `dst` is large enough.
+    /// If copy_buf is `None`, that's a signal from the sender to ignore this message.
+    copy_buf: Option<Box<dyn FnOnce(&[u8]) -> usize>>,
 }
