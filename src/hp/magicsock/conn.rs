@@ -87,7 +87,7 @@ pub struct Options {
     /// The provided func is likely to call back into
     /// Conn.ParseEndpoint, which acquires Conn.mu. As such, you should
     /// not hold Conn.mu while calling it.
-    pub on_note_recv_activity: Option<Box<dyn Fn(&key::NodePublic) + Send + Sync + 'static>>,
+    pub on_note_recv_activity: Option<Box<dyn Fn(&key::node::PublicKey) + Send + Sync + 'static>>,
 
     /// The link monitor to use. With one, the portmapper won't be used.
     pub link_monitor: Option<monitor::Monitor>,
@@ -109,7 +109,7 @@ pub struct Inner {
     on_endpoints: Option<Box<dyn Fn(&[cfg::Endpoint]) + Send + Sync + 'static>>,
     on_derp_active: Option<Box<dyn Fn() + Send + Sync + 'static>>,
     idle_for: Option<Box<dyn Fn() -> Duration + Send + Sync + 'static>>,
-    on_note_recv_activity: Option<Box<dyn Fn(&key::NodePublic) + Send + Sync + 'static>>,
+    on_note_recv_activity: Option<Box<dyn Fn(&key::node::PublicKey) + Send + Sync + 'static>>,
     link_monitor: Option<monitor::Monitor>,
     /// A callback that provides a `cfg::NetInfo` when discovered network conditions change.
     on_net_info: Option<Box<dyn Fn(cfg::NetInfo) + Send + Sync + 'static>>,
@@ -235,19 +235,19 @@ struct ConnState {
     /// WireGuard. These are not used to filter inbound or outbound
     /// traffic at all, but only to track what state can be cleaned up
     /// in other maps below that are keyed by peer public key.
-    peer_set: HashSet<key::NodePublic>,
+    peer_set: HashSet<key::node::PublicKey>,
 
     /// The private naclbox key used for active discovery traffic. It's created once near
     /// (but not during) construction.
-    disco_private: key::DiscoPrivate,
+    disco_private: key::disco::SecretKey,
     /// Public key of disco_private.
-    disco_public: key::DiscoPublic,
+    disco_public: key::disco::PublicKey,
 
     /// Tracks the networkmap Node entity for each peer discovery key.
     peer_map: PeerMap,
 
     // The state for an active DiscoKey.
-    disco_info: HashMap<key::DiscoPublic, DiscoInfo>,
+    disco_info: HashMap<key::disco::PublicKey, DiscoInfo>,
 
     /// The `NetInfo` provided in the last call to `net_info_func`. It's used to deduplicate calls to netInfoFunc.
     net_info_last: Option<cfg::NetInfo>,
@@ -256,7 +256,7 @@ struct ConnState {
     derp_map: Option<DerpMap>,
     net_map: Option<netmap::NetworkMap>,
     /// WireGuard private key for this node
-    private_key: Option<key::NodePrivate>,
+    private_key: Option<key::node::SecretKey>,
     /// Whether we ever had a non-zero private key
     ever_had_key: bool,
     /// Nearest DERP region ID; 0 means none/unknown.
@@ -271,12 +271,12 @@ struct ConnState {
     /// on a different DERP connection (which should really only be on our DERP
     /// home connection, or what was once our home), then we remember that route here to optimistically
     /// use instead of creating a new DERP connection back to their home.
-    derp_route: HashMap<key::NodePublic, DerpRoute>,
+    derp_route: HashMap<key::node::PublicKey, DerpRoute>,
 }
 
 impl Default for ConnState {
     fn default() -> Self {
-        let disco_private = key::DiscoPrivate::new();
+        let disco_private = key::disco::SecretKey::generate();
         let disco_public = disco_private.public();
         ConnState {
             closed: false,
@@ -310,7 +310,7 @@ impl Conn {
     /// Removes a DERP route entry previously added by addDerpPeerRoute.
     async fn remove_derp_peer_route(
         &self,
-        peer: key::NodePublic,
+        peer: key::node::PublicKey,
         derp_id: usize,
         dc: &derp::http::Client,
     ) {
@@ -329,7 +329,7 @@ impl Conn {
     /// connection identified by `dc`.
     async fn add_derp_peer_route(
         &self,
-        peer: key::NodePublic,
+        peer: key::node::PublicKey,
         derp_id: usize,
         dc: derp::http::Client,
     ) {
@@ -695,13 +695,17 @@ impl Conn {
     /// Makes addr a validated disco address for discoKey. It's used in tests to enable receiving of packets from
     /// addr without having to spin up the entire active discovery machinery.
     #[cfg(test)]
-    async fn add_valid_disco_path_for_test(&self, node_key: &key::NodePublic, addr: &SocketAddr) {
+    async fn add_valid_disco_path_for_test(
+        &self,
+        node_key: &key::node::PublicKey,
+        addr: &SocketAddr,
+    ) {
         let mut state = self.state.lock().await;
         state.peer_map.set_node_key_for_ip_port(addr, node_key);
     }
 
     /// Describes the time we last got traffic from this endpoint (updated every ~10 seconds).
-    async fn last_recv_activity_of_node_key(&self, nk: &key::NodePublic) -> String {
+    async fn last_recv_activity_of_node_key(&self, nk: &key::node::PublicKey) -> String {
         let state = self.state.lock().await;
         match state.peer_map.endpoint_for_node_key(nk) {
             Some(de) => {
@@ -781,7 +785,7 @@ impl Conn {
     }
 
     /// Returns the discovery public key.
-    async fn disco_public_key(&self) -> key::DiscoPublic {
+    async fn disco_public_key(&self) -> key::disco::PublicKey {
         // TODO: move this out of ConnState?
         let state = self.state.lock().await;
         state.disco_public.clone()
@@ -1070,7 +1074,7 @@ impl Conn {
     // // An example of when they might be different: sending to an
     // // IPv6 address when the local machine doesn't have IPv6 support
     // // returns (false, nil); it's not an error, but nothing was sent.
-    // func (c *Conn) sendAddr(addr netip.AddrPort, pubKey key.NodePublic, b []byte) (sent bool, err error) {
+    // func (c *Conn) sendAddr(addr netip.AddrPort, pubKey key.node::PublicKey, b []byte) (sent bool, err error) {
     // 	if addr.Addr() != derpMagicIPAddr {
     // 		return c.sendUDP(addr, b)
     // 	}
@@ -1111,7 +1115,7 @@ impl Conn {
     fn derp_write_chan_of_addr(
         &self,
         addr: SocketAddr,
-        peer: Option<key::NodePublic>,
+        peer: Option<key::node::PublicKey>,
     ) -> Option<()> {
         todo!()
         // chan<- derpWriteRequest {
@@ -1252,7 +1256,7 @@ impl Conn {
     // // If there's any change, it logs.
     // //
     // // c.mu must be held.
-    // func (c *Conn) setPeerLastDerpLocked(peer key.NodePublic, regionID, homeID int) {
+    // func (c *Conn) setPeerLastDerpLocked(peer key.node::PublicKey, regionID, homeID int) {
     // 	if peer.IsZero() {
     // 		return
     // 	}
@@ -1290,7 +1294,7 @@ impl Conn {
     // type derpReadResult struct {
     // 	regionID int
     // 	n        int // length of data received
-    // 	src      key.NodePublic
+    // 	src      key.node::PublicKey
     // 	// copyBuf is called to copy the data to dst.  It returns how
     // 	// much data was copied, which will be n if dst is large
     // 	// enough. copyBuf can only be called once.
@@ -1326,10 +1330,10 @@ impl Conn {
 
     // 	// peerPresent is the set of senders we know are present on this
     // 	// connection, based on messages we've received from the server.
-    // 	peerPresent := map[key.NodePublic]bool{}
+    // 	peerPresent := map[key.node::PublicKey]bool{}
     // 	bo := backoff.NewBackoff(fmt.Sprintf("derp-%d", regionID), c.logf, 5*time.Second)
     // 	var lastPacketTime time.Time
-    // 	var lastPacketSrc key.NodePublic
+    // 	var lastPacketSrc key.node::PublicKey
 
     // 	for {
     // 		msg, connGen, err := dc.RecvDetail()
@@ -1410,7 +1414,7 @@ impl Conn {
     // 		case derp.HealthMessage:
     // 			health.SetDERPRegionHealth(regionID, m.Problem)
     // 		case derp.PeerGoneMessage:
-    // 			c.removeDerpPeerRoute(key.NodePublic(m), regionID, dc)
+    // 			c.removeDerpPeerRoute(key.node::PublicKey(m), regionID, dc)
     // 		default:
     // 			// Ignore.
     // 			continue
@@ -1433,7 +1437,7 @@ impl Conn {
 
     // type derpWriteRequest struct {
     // 	addr   netip.AddrPort
-    // 	pubKey key.NodePublic
+    // 	pubKey key.node::PublicKey
     // 	b      []byte // copied; ownership passed to receiver
     // }
 
@@ -1563,7 +1567,7 @@ impl Conn {
     // 		c.stunReceiveFunc.Load()(b, ipp)
     // 		return nil, false
     // 	}
-    // 	if c.handleDiscoMessage(b, ipp, key.NodePublic{}) {
+    // 	if c.handleDiscoMessage(b, ipp, key.node::PublicKey{}) {
     // 		return nil, false
     // 	}
     // 	if !c.havePrivateKey.Load() {
@@ -1673,7 +1677,7 @@ impl Conn {
     // //
     // // The dstKey should only be non-zero if the dstDisco key
     // // unambiguously maps to exactly one peer.
-    // func (c *Conn) sendDiscoMessage(dst netip.AddrPort, dstKey key.NodePublic, dstDisco key.DiscoPublic, m disco.Message, logLevel discoLogLevel) (sent bool, err error) {
+    // func (c *Conn) sendDiscoMessage(dst netip.AddrPort, dstKey key.node::PublicKey, dstDisco key.DiscoPublic, m disco.Message, logLevel discoLogLevel) (sent bool, err error) {
     // 	isDERP := dst.Addr() == derpMagicIPAddr
     // 	if _, isPong := m.(*disco.Pong); isPong && !isDERP && dst.Addr().Is4() {
     // 		time.Sleep(debugIPv4DiscoPingPenalty())
@@ -1748,7 +1752,7 @@ impl Conn {
     // // src.Port() being the region ID) and the derpNodeSrc will be the node key
     // // it was received from at the DERP layer. derpNodeSrc is zero when received
     // // over UDP.
-    // func (c *Conn) handleDiscoMessage(msg []byte, src netip.AddrPort, derpNodeSrc key.NodePublic) (isDiscoMsg bool) {
+    // func (c *Conn) handleDiscoMessage(msg []byte, src netip.AddrPort, derpNodeSrc key.node::PublicKey) (isDiscoMsg bool) {
     // 	const headerLen = len(disco.Magic) + key.DiscoPublicRawLen
     // 	if len(msg) < headerLen || string(msg[:len(disco.Magic)]) != disco.Magic {
     // 		return false
@@ -1885,28 +1889,26 @@ impl Conn {
     /// `None` if not unamabigous.
     ///
     /// derp_node_src is `Some` if the disco ping arrived via DERP.
-    fn unambiguous_node_key_of_ping_locked(
+    async fn unambiguous_node_key_of_ping_locked(
         &self,
         state: &mut ConnState,
         dm: &disco::Ping,
-        dk: &key::DiscoPublic,
-        derp_node_src: Option<&key::NodePublic>,
-    ) -> Option<key::NodePublic> {
+        dk: &key::disco::PublicKey,
+        derp_node_src: Option<&key::node::PublicKey>,
+    ) -> Option<key::node::PublicKey> {
         if let Some(src) = derp_node_src {
             if let Some(ep) = state.peer_map.endpoint_for_node_key(src) {
-                todo!()
-                // if ep.disco_key == dk {
-                //     return Some(*src);
-                // }
+                if &ep.state.lock().await.disco_key == dk {
+                    return Some(src.clone());
+                }
             }
         }
 
         // Pings contains its node source. See if it maps back.
         if let Some(ep) = state.peer_map.endpoint_for_node_key(&dm.node_key) {
-            todo!();
-            // if ep.disco_key == dk {
-            //     return Some(dm.node_key);
-            // }
+            if &ep.state.lock().await.disco_key == dk {
+                return Some(dm.node_key.clone());
+            }
         }
 
         // If there's exactly 1 node in our netmap with DiscoKey dk,
@@ -1922,7 +1924,7 @@ impl Conn {
 
     // // di is the discoInfo of the source of the ping.
     // // derpNodeSrc is non-zero if the ping arrived via DERP.
-    // func (c *Conn) handlePingLocked(dm *disco.Ping, src netip.AddrPort, di *discoInfo, derpNodeSrc key.NodePublic) {
+    // func (c *Conn) handlePingLocked(dm *disco.Ping, src netip.AddrPort, di *discoInfo, derpNodeSrc key.node::PublicKey) {
     // 	likelyHeartBeat := src == di.lastPingFrom && time.Since(di.lastPingTime) < 5*time.Second
     // 	di.lastPingFrom = src
     // 	di.lastPingTime = time.Now()
@@ -1977,7 +1979,7 @@ impl Conn {
     // 		if numNodes > 1 {
     // 			// Zero it out if it's ambiguous, so sendDiscoMessage logging
     // 			// isn't confusing.
-    // 			dstKey = key.NodePublic{}
+    // 			dstKey = key.node::PublicKey{}
     // 		}
     // 	}
 
@@ -2106,7 +2108,7 @@ impl Conn {
     // 	c.havePrivateKey.Store(!newKey.IsZero())
 
     // 	if newKey.IsZero() {
-    // 		c.publicKeyAtomic.Store(key.NodePublic{})
+    // 		c.publicKeyAtomic.Store(key.node::PublicKey{})
     // 	} else {
     // 		c.publicKeyAtomic.Store(newKey.Public())
     // 	}
@@ -2144,14 +2146,14 @@ impl Conn {
     // // then removes any state for old peers.
     // //
     // // The caller passes ownership of newPeers map to UpdatePeers.
-    // func (c *Conn) UpdatePeers(newPeers map[key.NodePublic]struct{}) {
+    // func (c *Conn) UpdatePeers(newPeers map[key.node::PublicKey]struct{}) {
     // 	c.mu.Lock()
     // 	defer c.mu.Unlock()
 
     // 	oldPeers := c.peerSet
     // 	c.peerSet = newPeers
 
-    // 	// Clean up any key.NodePublic-keyed maps for peers that no longer
+    // 	// Clean up any key.node::PublicKey-keyed maps for peers that no longer
     // 	// exist.
     // 	for peer := range oldPeers {
     // 		if _, ok := newPeers[peer]; !ok {
@@ -2322,7 +2324,7 @@ impl Conn {
     // 	// current netmap. If that happens, go through the allocful
     // 	// deletion path to clean up moribund nodes.
     // 	if c.peerMap.nodeCount() != len(nm.Peers) {
-    // 		keep := make(map[key.NodePublic]bool, len(nm.Peers))
+    // 		keep := make(map[key.node::PublicKey]bool, len(nm.Peers))
     // 		for _, n := range nm.Peers {
     // 			keep[n.Key] = true
     // 		}
@@ -2574,7 +2576,7 @@ impl Conn {
     // 		if !c.privateKey.IsZero() {
     // 			ss.PublicKey = c.privateKey.Public()
     // 		} else {
-    // 			ss.PublicKey = key.NodePublic{}
+    // 			ss.PublicKey = key.node::PublicKey{}
     // 		}
     // 		ss.Addrs = make([]string, 0, len(c.lastEndpoints))
     // 		for _, ep := range c.lastEndpoints {
@@ -2923,7 +2925,7 @@ impl Conn {
 
     // // ParseEndpoint is called by WireGuard to connect to an endpoint.
     // func (c *Conn) ParseEndpoint(nodeKeyStr string) (conn.Endpoint, error) {
-    // 	k, err := key.ParseNodePublicUntyped(mem.S(nodeKeyStr))
+    // 	k, err := key.Parsenode::PublicKeyUntyped(mem.S(nodeKeyStr))
     // 	if err != nil {
     // 		return nil, fmt.Errorf("magicsock: ParseEndpoint: parse failed on %q: %w", nodeKeyStr, err)
     // 	}
@@ -2960,16 +2962,15 @@ struct DerpRoute {
 /// node. In the case of shared nodes and users switching accounts, two
 /// nodes in the NetMap may legitimately have the same DiscoKey.  As
 /// such, no fields in here should be considered node-specific.
-#[derive(Debug)]
 struct DiscoInfo {
     /// The same as the Conn.discoInfo map key, just so you can pass around a `DiscoInfo` alone.
     /// Not modified once initialized.
-    disco_key: key::DiscoPublic,
+    disco_key: key::disco::PublicKey,
 
     /// The precomputed key for communication with the peer that has the `DiscoKey` used to
     /// look up this `DiscoInfo` in Conn.discoInfo.
     /// Not modified once initialized.
-    shared_key: key::DiscoShared,
+    shared_key: key::disco::SharedSecret,
 
     // Mutable fields follow, owned by Conn.mu:
     /// Tthe src of a ping for `DiscoKey`.
@@ -2980,7 +2981,7 @@ struct DiscoInfo {
 
     /// The last NodeKey seen using `DiscoKey`.
     /// It's only updated if the NodeKey is unambiguous.
-    last_node_key: key::NodePublic,
+    last_node_key: key::node::PublicKey,
 
     /// The time a NodeKey was last seen using this `DiscoKey`. It's only updated if the
     /// NodeKey is unambiguous.
@@ -2989,7 +2990,7 @@ struct DiscoInfo {
 
 // // setNodeKey sets the most recent mapping from di.discoKey to the
 // // NodeKey nk.
-// func (di *discoInfo) setNodeKey(nk key.NodePublic) {
+// func (di *discoInfo) setNodeKey(nk key.node::PublicKey) {
 // 	di.lastNodeKey = nk
 // 	di.lastNodeKeyTime = time.Now()
 // }

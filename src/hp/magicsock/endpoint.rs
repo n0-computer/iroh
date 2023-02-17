@@ -33,8 +33,8 @@ impl Deref for Endpoint {
 
 pub struct InnerEndpoint {
     // Atomically accessed; declared first for alignment reasons
-    pub(super) last_recv: RwLock<Option<Instant>>,
-    num_stop_and_reset_atomic: AtomicU64,
+    pub last_recv: RwLock<Option<Instant>>,
+    pub num_stop_and_reset_atomic: AtomicU64,
     /// A function that writes encrypted Wireguard payloads from
     /// WireGuard to a peer. It might write via UDP, DERP, both, or neither.
     ///
@@ -45,54 +45,55 @@ pub struct InnerEndpoint {
     /// func gets set on an sendpoint.
     ///
     /// A nil value means the current fast path has expired and needs to be recalculated.
-    send_func: RwLock<Option<Box<dyn Fn(&[&[u8]]) -> std::io::Result<()> + Send + Sync + 'static>>>, // syncs.AtomicValue[endpointSendFunc] // nil or unset means unused
+    pub send_func:
+        RwLock<Option<Box<dyn Fn(&[&[u8]]) -> std::io::Result<()> + Send + Sync + 'static>>>, // syncs.AtomicValue[endpointSendFunc] // nil or unset means unused
 
     // These fields are initialized once and never modified.
-    c: Conn,
+    pub c: Conn,
     /// Peer public key (for WireGuard + DERP)
-    public_key: key::NodePublic,
+    pub public_key: key::node::PublicKey,
     /// The UDP address we tell wireguard-go we're using
-    fake_wg_addr: SocketAddr,
+    pub fake_wg_addr: SocketAddr,
     /// The node's first tailscale address; used for logging & wireguard rate-limiting (Issue 6686)
-    node_addr: IpAddr,
+    pub node_addr: IpAddr,
 
     // Lock ordering: Conn.state, then Endpoint.state
-    state: Mutex<InnerMutEndpoint>,
+    pub state: Mutex<InnerMutEndpoint>,
 }
 
-struct InnerMutEndpoint {
+pub struct InnerMutEndpoint {
     /// For discovery messages.
-    disco_key: key::DiscoPublic,
+    pub disco_key: key::disco::PublicKey,
 
     /// None when idle
-    heart_beat_timer: Option<Timer>,
+    pub heart_beat_timer: Option<Timer>,
     /// Last time there was outgoing packets sent to this peer (from wireguard-go)
-    last_send: Option<Instant>,
+    pub last_send: Option<Instant>,
     /// Last time we pinged all endpoints
-    last_full_ping: Option<Instant>,
+    pub last_full_ping: Option<Instant>,
     /// fallback/bootstrap path, if non-zero (non-zero for well-behaved clients)
-    derp_addr: Option<SocketAddr>,
+    pub derp_addr: Option<SocketAddr>,
 
     /// Best non-DERP path.
-    best_addr: Option<AddrLatency>,
+    pub best_addr: Option<AddrLatency>,
     /// Time best address re-confirmed
-    best_addr_at: Option<Instant>,
+    pub best_addr_at: Option<Instant>,
     /// Time when best_addr expires
-    trust_best_addr_until: Option<Instant>,
-    sent_ping: HashMap<stun::TransactionId, SentPing>,
-    endpoint_state: HashMap<SocketAddr, EndpointState>,
-    is_call_me_maybe_ep: HashSet<SocketAddr>,
+    pub trust_best_addr_until: Option<Instant>,
+    pub sent_ping: HashMap<stun::TransactionId, SentPing>,
+    pub endpoint_state: HashMap<SocketAddr, EndpointState>,
+    pub is_call_me_maybe_ep: HashSet<SocketAddr>,
 
     /// Any outstanding "tailscale ping" commands running
-    pending_cli_pings: Vec<PendingCliPing>,
+    pub pending_cli_pings: Vec<PendingCliPing>,
 
     /// Whether the node has expired.
-    expired: bool,
+    pub expired: bool,
 }
 
-struct PendingCliPing {
-    res: cfg::PingResult,
-    cb: Box<dyn Fn(&cfg::PingResult) + Send + Sync + 'static>,
+pub struct PendingCliPing {
+    pub res: cfg::PingResult,
+    pub cb: Box<dyn Fn(&cfg::PingResult) + Send + Sync + 'static>,
 }
 
 impl Endpoint {
@@ -771,20 +772,20 @@ impl InnerMutEndpoint {
 
 /// A `SocketAddr` with an associated latency.
 #[derive(Debug, Clone)]
-struct AddrLatency {
-    addr: SocketAddr,
-    latency: Duration,
+pub struct AddrLatency {
+    pub addr: SocketAddr,
+    pub latency: Duration,
 }
 
 /// An index of peerInfos by node (WireGuard) key, disco key, and discovered ip:port endpoints.
 /// Doesn't do any locking, all access must be done with Conn.mu held.
 #[derive(Default)]
 pub struct PeerMap {
-    pub by_node_key: HashMap<key::NodePublic, PeerInfo>,
+    pub by_node_key: HashMap<key::node::PublicKey, PeerInfo>,
     pub by_ip_port: HashMap<SocketAddr, PeerInfo>,
 
     /// Contains the set of nodes that are using a DiscoKey. Usually those sets will be just one node.
-    pub nodes_of_disco: HashMap<key::DiscoPublic, HashSet<key::NodePublic>>,
+    pub nodes_of_disco: HashMap<key::disco::PublicKey, HashSet<key::node::PublicKey>>,
 }
 
 impl PeerMap {
@@ -794,12 +795,12 @@ impl PeerMap {
     }
 
     /// Reports whether there exists any peers in the netmap with dk as their DiscoKey.
-    pub fn any_endpoint_for_disco_key(&self, dk: &key::DiscoPublic) -> bool {
+    pub fn any_endpoint_for_disco_key(&self, dk: &key::disco::PublicKey) -> bool {
         self.nodes_of_disco.contains_key(dk)
     }
 
     /// Returns the endpoint for nk, or nil if nk is not known to us.
-    pub fn endpoint_for_node_key(&self, nk: &key::NodePublic) -> Option<&Endpoint> {
+    pub fn endpoint_for_node_key(&self, nk: &key::node::PublicKey) -> Option<&Endpoint> {
         self.by_node_key.get(nk).map(|i| &i.ep)
     }
 
@@ -814,7 +815,7 @@ impl PeerMap {
 
     /// Invokes f on every endpoint in m that has the provided DiscoKey until
     /// f returns false or there are no endpoints left to iterate.
-    fn for_each_endpoint_with_disco_key<F>(&self, dk: &key::DiscoPublic, f: F)
+    fn for_each_endpoint_with_disco_key<F>(&self, dk: &key::disco::PublicKey, f: F)
     where
         F: Fn(&Endpoint) -> bool,
     {
@@ -831,7 +832,7 @@ impl PeerMap {
 
     /// Stores endpoint in the peerInfo for ep.publicKey, and updates indexes. m must already have a
     /// tailcfg.Node for ep.publicKey.
-    async fn upsert_endpoint(&mut self, ep: &Endpoint, old_disco_key: &key::DiscoPublic) {
+    async fn upsert_endpoint(&mut self, ep: &Endpoint, old_disco_key: &key::disco::PublicKey) {
         if !self.by_node_key.contains_key(&ep.public_key) {
             self.by_node_key
                 .insert(ep.public_key.clone(), PeerInfo::new(ep.clone()));
@@ -851,7 +852,7 @@ impl PeerMap {
     /// This should only be called with a fully verified mapping of ipp to
     /// nk, because calling this function defines the endpoint we hand to
     /// WireGuard for packets received from ipp.
-    pub fn set_node_key_for_ip_port(&mut self, ipp: &SocketAddr, nk: &key::NodePublic) {
+    pub fn set_node_key_for_ip_port(&mut self, ipp: &SocketAddr, nk: &key::node::PublicKey) {
         if let Some(pi) = self.by_ip_port.get_mut(ipp) {
             pi.ip_ports.remove(ipp);
             self.by_ip_port.remove(ipp);
@@ -877,7 +878,7 @@ impl PeerMap {
 /// Some state and history for a specific endpoint of a endpoint.
 /// (The subject is the endpoint.endpointState map key)
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct EndpointState {
+pub struct EndpointState {
     /// The last (outgoing) ping time.
     last_ping: Option<Instant>,
 
