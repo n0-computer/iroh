@@ -1,3 +1,4 @@
+use std::net::{Ipv4Addr, SocketAddrV4};
 use std::time::Duration;
 use std::{fmt, net::SocketAddr, path::PathBuf, str::FromStr};
 
@@ -20,6 +21,8 @@ use tokio::sync::Mutex;
 use tracing_subscriber::{prelude::*, EnvFilter};
 
 use sendme::{get, provider, Hash, Keypair, PeerId};
+
+const RPC_PORT: u16 = 0x1337;
 
 #[derive(Parser, Debug, Clone)]
 #[clap(version, about, long_about = None)]
@@ -216,7 +219,7 @@ impl FromStr for Blake3Cid {
 async fn make_rpc_client(
 ) -> anyhow::Result<RpcClient<SendmeService, QuinnConnection<SendmeResponse, SendmeRequest>>> {
     let endpoint = sendme::get::make_client_endpoint(None, vec!["rpc".as_bytes().to_vec()])?;
-    let addr: SocketAddr = "127.0.0.1:12345".parse()?;
+    let addr: SocketAddr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, RPC_PORT));
     let server_name = "localhost".to_string();
     let connection = QuinnConnection::new(endpoint, addr, server_name);
     let client = RpcClient::<SendmeService, _>::new(connection);
@@ -422,7 +425,7 @@ async fn provide_interactive(
 }
 
 fn make_rpc_endpoint(keypair: &Keypair) -> Result<impl ServiceEndpoint<SendmeService>> {
-    let rpc_addr = "0.0.0.0:12345".parse()?;
+    let rpc_addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, RPC_PORT));
     let rpc_quinn_endpoint = quinn::Endpoint::server(
         sendme::provider::make_server_config(keypair, 1024, 16, vec!["rpc".as_bytes().to_vec()])?,
         rpc_addr,
