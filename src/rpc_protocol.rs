@@ -4,7 +4,7 @@ use std::{fmt, path::PathBuf, result};
 use crate::Hash;
 use derive_more::{From, TryInto};
 use quic_rpc::{
-    message::{Msg, RpcMsg, ServerStreaming},
+    message::{Msg, RpcMsg, ServerStreaming, ServerStreamingMsg},
     Service,
 };
 use serde::{Deserialize, Serialize};
@@ -35,7 +35,9 @@ pub struct ListResponse {
 
 impl Msg<SendmeService> for ListRequest {
     type Pattern = ServerStreaming;
-    type Update = Self;
+}
+
+impl ServerStreamingMsg<SendmeService> for ListRequest {
     type Response = ListResponse;
 }
 
@@ -55,11 +57,11 @@ pub struct WatchResponse {
 }
 
 impl Msg<SendmeService> for WatchRequest {
-    type Response = WatchResponse;
-
-    type Update = Self;
-
     type Pattern = ServerStreaming;
+}
+
+impl ServerStreamingMsg<SendmeService> for WatchRequest {
+    type Response = WatchResponse;
 }
 
 #[derive(Serialize, Deserialize, Debug)]

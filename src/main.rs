@@ -218,12 +218,9 @@ async fn make_rpc_client(
     let endpoint = sendme::get::make_client_endpoint(None, vec!["rpc".as_bytes().to_vec()])?;
     let addr: SocketAddr = "127.0.0.1:12345".parse()?;
     let server_name = "localhost".to_string();
-    // todo: open just a single connection
-    //
-    // QuinnConnection::new will attempt reconnects in the background etc.
-    // Not sure we want this for short-lived cli calls.
     let connection = QuinnConnection::new(endpoint, addr, server_name);
     let client = RpcClient::<SendmeService, _>::new(connection);
+    // Do a version request to check if the server is running.
     let _version = tokio::time::timeout(Duration::from_secs(1), client.rpc(VersionRequest))
         .await
         .context("sendme server is not running")??;
