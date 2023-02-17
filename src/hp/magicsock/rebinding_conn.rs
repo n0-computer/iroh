@@ -8,6 +8,36 @@ use super::conn::Network;
 pub enum Error {
     #[error("no connection set")]
     NoConn,
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+}
+
+impl Error {
+    /// Reports whether err is an error from a UDP send
+    /// operation that should be treated as a UDP packet that just got lost.
+    ///
+    /// Notably, on Linux this reports true for EPERM errors (from outbound
+    /// firewall blocks) which aren't really send errors; they're just
+    /// sends that are never going to make it because the local OS blocked it.
+    pub fn treat_as_lost_udp(&self) -> bool {
+        if let Error::Io(io_err) = self {
+            // Linux, while not documented in the man page,
+            // returns EPERM when there's an OUTPUT rule with -j
+            // DROP or -j REJECT.  We use this very specific
+            // Linux+EPERM check rather than something super broad
+            // like net.Error.Temporary which could be anything.
+            //
+            // For now we only do this on Linux, as such outgoing
+            // firewall violations mapping to syscall errors
+            // hasn't yet been observed on other OSes.
+            if let Some(raw_os_err) = io_err.raw_os_error() {
+                if raw_os_err == libc::EPERM {
+                    return true;
+                }
+            }
+        }
+        false
+    }
 }
 
 /// A UDP socket that can be re-bound. Unix has no notion of re-binding a socket, so we swap it out for a new one.
@@ -30,121 +60,15 @@ pub(super) struct Inner {
 }
 
 impl RebindingUdpConn {
-    /// Returns c's current pconn, acquiring c.mu in the process.
-    async fn current_conn(&self) -> Option<UdpSocket> {
-        todo!()
-        // self.0.read().await.pconn.clone()
+    /// Reads a packet from the connection into b.
+    /// It returns the number of bytes copied and the source address.
+    pub async fn read_from(&self, b: &mut [u8]) -> Result<(usize, SocketAddr), Error> {
+        let state = self.0.read().await; // TODO: atomic access?
+        let pconn = state.pconn.as_ref().ok_or_else(|| Error::NoConn)?;
+
+        let res = pconn.recv_from(b).await?;
+        Ok(res)
     }
-
-    // func (c *RebindingUDPConn) readFromWithInitPconn(pconn nettype.PacketConn, b []byte) (int, net.Addr, error) {
-    // 	for {
-    // 		n, addr, err := pconn.ReadFrom(b)
-    // 		if err != nil && pconn != c.currentConn() {
-    // 			pconn = *c.pconnAtomic.Load()
-    // 			continue
-    // 		}
-    // 		return n, addr, err
-    // 	}
-    // }
-
-    // // ReadFrom reads a packet from c into b.
-    // // It returns the number of bytes copied and the source address.
-    // func (c *RebindingUDPConn) ReadFrom(b []byte) (int, net.Addr, error) {
-    // 	return c.readFromWithInitPconn(*c.pconnAtomic.Load(), b)
-    // }
-
-    // // ReadFromNetaddr reads a packet from c into b.
-    // // It returns the number of bytes copied and the return address.
-    // // It is identical to c.ReadFrom, except that it returns a netip.AddrPort instead of a net.Addr.
-    // // ReadFromNetaddr is designed to work with specific underlying connection types.
-    // // If c's underlying connection returns a non-*net.UPDAddr return address, ReadFromNetaddr will return an error.
-    // // ReadFromNetaddr exists because it removes an allocation per read,
-    // // when c's underlying connection is a net.UDPConn.
-    // func (c *RebindingUDPConn) ReadFromNetaddr(b []byte) (n int, ipp netip.AddrPort, err error) {
-    // 	for {
-    // 		pconn := *c.pconnAtomic.Load()
-
-    // 		// Optimization: Treat *net.UDPConn specially.
-    // 		// This lets us avoid allocations by calling ReadFromUDPAddrPort.
-    // 		// The non-*net.UDPConn case works, but it allocates.
-    // 		if udpConn, ok := pconn.(*net.UDPConn); ok {
-    // 			n, ipp, err = udpConn.ReadFromUDPAddrPort(b)
-    // 		} else {
-    // 			var addr net.Addr
-    // 			n, addr, err = pconn.ReadFrom(b)
-    // 			pAddr, ok := addr.(*net.UDPAddr)
-    // 			if addr != nil && !ok {
-    // 				return 0, netip.AddrPort{}, fmt.Errorf("RebindingUDPConn.ReadFromNetaddr: underlying connection returned address of type %T, want *netaddr.UDPAddr", addr)
-    // 			}
-    // 			if pAddr != nil {
-    // 				ipp = netaddr.Unmap(pAddr.AddrPort())
-    // 				if !ipp.IsValid() {
-    // 					return 0, netip.AddrPort{}, errors.New("netaddr.FromStdAddr failed")
-    // 				}
-    // 			}
-    // 		}
-
-    // 		if err != nil && pconn != c.currentConn() {
-    // 			// The connection changed underfoot. Try again.
-    // 			continue
-    // 		}
-    // 		return n, ipp, err
-    // 	}
-    // }
-
-    // func (c *RebindingUDPConn) WriteBatch(msgs []ipv6.Message, flags int) (int, error) {
-    // 	var (
-    // 		n     int
-    // 		err   error
-    // 		start int
-    // 	)
-    // 	for {
-    // 		pconn := *c.pconnAtomic.Load()
-    // 		bw, ok := pconn.(batchWriter)
-    // 		if !ok {
-    // 			for _, msg := range msgs {
-    // 				_, err = c.writeToWithInitPconn(pconn, msg.Buffers[0], msg.Addr)
-    // 				if err != nil {
-    // 					return n, err
-    // 				}
-    // 				n++
-    // 			}
-    // 			return n, nil
-    // 		}
-
-    // 		n, err = bw.WriteBatch(msgs[start:], flags)
-    // 		if err != nil {
-    // 			if pconn != c.currentConn() {
-    // 				continue
-    // 			}
-    // 			return n, err
-    // 		} else if n == len(msgs[start:]) {
-    // 			return len(msgs), nil
-    // 		} else {
-    // 			start += n
-    // 		}
-    // 	}
-    // }
-
-    // func (c *RebindingUDPConn) ReadBatch(msgs []ipv6.Message, flags int) (int, error) {
-    // 	for {
-    // 		pconn := *c.pconnAtomic.Load()
-    // 		br, ok := pconn.(batchReader)
-    // 		if !ok {
-    // 			var err error
-    // 			msgs[0].N, msgs[0].Addr, err = c.readFromWithInitPconn(pconn, msgs[0].Buffers[0])
-    // 			if err == nil {
-    // 				return 1, nil
-    // 			}
-    // 			return 0, err
-    // 		}
-    // 		n, err := br.ReadBatch(msgs, flags)
-    // 		if err != nil && pconn != c.currentConn() {
-    // 			continue
-    // 		}
-    // 		return n, err
-    // 	}
-    // }
 
     pub async fn port(&self) -> u16 {
         self.0.read().await.port
@@ -154,37 +78,18 @@ impl RebindingUdpConn {
         self.0.read().await.local_addr()
     }
 
-    // func (c *RebindingUDPConn) Close() error {
-    // 	c.mu.Lock()
-    // 	defer c.mu.Unlock()
-    // 	return c.closeLocked()
-    // }
+    pub async fn close(&self) -> Result<(), Error> {
+        let mut state = self.0.write().await;
+        state.close()
+    }
 
-    // func (c *RebindingUDPConn) writeToWithInitPconn(pconn nettype.PacketConn, b []byte, addr net.Addr) (int, error) {
-    // 	for {
-    // 		n, err := pconn.WriteTo(b, addr)
-    // 		if err != nil && pconn != c.currentConn() {
-    // 			pconn = *c.pconnAtomic.Load()
-    // 			continue
-    // 		}
-    // 		return n, err
-    // 	}
-    // }
+    pub async fn write_to(&self, addr: SocketAddr, b: &[u8]) -> Result<usize, Error> {
+        let state = self.0.read().await; // TODO: atomic access?
+        let pconn = state.pconn.as_ref().ok_or_else(|| Error::NoConn)?;
 
-    // func (c *RebindingUDPConn) WriteTo(b []byte, addr net.Addr) (int, error) {
-    // 	return c.writeToWithInitPconn(*c.pconnAtomic.Load(), b, addr)
-    // }
-
-    // func (c *RebindingUDPConn) WriteToUDPAddrPort(b []byte, addr netip.AddrPort) (int, error) {
-    // 	for {
-    // 		pconn := *c.pconnAtomic.Load()
-    // 		n, err := pconn.WriteToUDPAddrPort(b, addr)
-    // 		if err != nil && pconn != c.currentConn() {
-    // 			continue
-    // 		}
-    // 		return n, err
-    // 	}
-    // }
+        let written = pconn.send_to(b, addr).await?;
+        Ok(written)
+    }
 }
 
 impl Inner {
