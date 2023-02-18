@@ -1,6 +1,18 @@
-use std::net::SocketAddr;
+use std::{
+    fmt::Debug,
+    io,
+    net::SocketAddr,
+    pin::Pin,
+    sync::Arc,
+    task::{Context, Poll},
+};
 
-use tokio::{net::UdpSocket, sync::RwLock};
+use futures::{ready, Future, FutureExt};
+use quinn::AsyncUdpSocket;
+use tokio::{
+    io::Interest,
+    sync::{OwnedRwLockReadGuard, OwnedRwLockWriteGuard, RwLock},
+};
 
 use super::conn::Network;
 
@@ -42,9 +54,33 @@ impl Error {
 
 /// A UDP socket that can be re-bound. Unix has no notion of re-binding a socket, so we swap it out for a new one.
 #[derive(Default)]
-pub struct RebindingUdpConn(pub(super) RwLock<Inner>);
+pub struct RebindingUdpConn {
+    pub(super) inner: Arc<RwLock<Inner>>,
+    /// Used to aquire a read lock to inner in poll functions.
+    /// Sad type
+    /// - std::sync::Mutex -> lock in poll methods, as poll_recv does not take &mut self, but rather &self.
+    /// - Option -> it needs to be taken out/might not exist.
+    /// - Box -> unameable Future
+    /// - Send + Sync -> so that this struct is still Send and Sync
+    /// - OwnedRwLock{Read|Write}Guard -> need 'static lifetime for the guard
+    read_mutex: std::sync::Mutex<
+        Option<Pin<Box<dyn Future<Output = OwnedRwLockReadGuard<Inner>> + Send + Sync + 'static>>>,
+    >,
+    write_mutex:
+        Option<Pin<Box<dyn Future<Output = OwnedRwLockWriteGuard<Inner>> + Send + Sync + 'static>>>,
+}
 
-#[derive(Default)]
+impl Debug for RebindingUdpConn {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RebindingUdpConn")
+            .field("inner", &self.inner)
+            .field("read_mutex", &"..")
+            .field("write_mutex", &"..")
+            .finish()
+    }
+}
+
+#[derive(Default, Debug)]
 pub(super) struct Inner {
     // TODO: evaluate which locking strategy to use
     // pconnAtomic is a pointer to the value stored in pconn, but doesn't
@@ -60,35 +96,13 @@ pub(super) struct Inner {
 }
 
 impl RebindingUdpConn {
-    /// Reads a packet from the connection into b.
-    /// It returns the number of bytes copied and the source address.
-    pub async fn read_from(&self, b: &mut [u8]) -> Result<(usize, SocketAddr), Error> {
-        let state = self.0.read().await; // TODO: atomic access?
-        let pconn = state.pconn.as_ref().ok_or_else(|| Error::NoConn)?;
-
-        let res = pconn.recv_from(b).await?;
-        Ok(res)
-    }
-
     pub async fn port(&self) -> u16 {
-        self.0.read().await.port
-    }
-
-    pub async fn local_addr(&self) -> Option<SocketAddr> {
-        self.0.read().await.local_addr()
+        self.inner.read().await.port
     }
 
     pub async fn close(&self) -> Result<(), Error> {
-        let mut state = self.0.write().await;
+        let mut state = self.inner.write().await;
         state.close()
-    }
-
-    pub async fn write_to(&self, addr: SocketAddr, b: &[u8]) -> Result<usize, Error> {
-        let state = self.0.read().await; // TODO: atomic access?
-        let pconn = state.pconn.as_ref().ok_or_else(|| Error::NoConn)?;
-
-        let written = pconn.send_to(b, addr).await?;
-        Ok(written)
     }
 }
 
@@ -117,9 +131,156 @@ impl Inner {
         }
     }
 
-    pub fn local_addr(&self) -> Option<SocketAddr> {
-        self.pconn
+    pub fn local_addr(&self) -> io::Result<SocketAddr> {
+        let pconn = self
+            .pconn
             .as_ref()
-            .and_then(|pconn| pconn.local_addr().ok())
+            .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "no connection"))?;
+        pconn.local_addr()
+    }
+}
+
+impl AsyncUdpSocket for RebindingUdpConn {
+    fn poll_send(
+        &mut self,
+        state: &quinn_udp::UdpState,
+        cx: &mut Context,
+        transmits: &[quinn_proto::Transmit],
+    ) -> Poll<io::Result<usize>> {
+        if self.write_mutex.is_none() {
+            // Fast path, see if we can just grab the lock
+            if let Ok(ref mut guard) = self.inner.try_write() {
+                return poll_send(&mut guard.pconn, state, cx, transmits);
+            }
+
+            // Otherwise prepare a lock.
+            let fut = Box::pin(self.inner.clone().write_owned());
+            self.write_mutex.replace(fut);
+        }
+
+        // Waiting on aquiring the lock
+        let mut fut = self.write_mutex.take().expect("just set");
+
+        match fut.poll_unpin(cx) {
+            Poll::Pending => {
+                self.write_mutex.replace(fut);
+                Poll::Pending
+            }
+            Poll::Ready(mut guard) => poll_send(&mut guard.pconn, state, cx, transmits),
+        }
+    }
+
+    fn poll_recv(
+        &self,
+        cx: &mut Context,
+        bufs: &mut [io::IoSliceMut<'_>],
+        meta: &mut [quinn_udp::RecvMeta],
+    ) -> Poll<io::Result<usize>> {
+        let mut read_mutex = self.read_mutex.lock().unwrap();
+
+        if read_mutex.is_none() {
+            // Fast path, see if we can just grab the lock
+            if let Ok(ref mut guard) = self.inner.try_read() {
+                return poll_recv(&guard.pconn, cx, bufs, meta);
+            }
+
+            // Otherwise prepare a lock.
+            let fut = Box::pin(self.inner.clone().read_owned());
+            read_mutex.replace(fut);
+        }
+
+        // Waiting on aquiring the lock
+        let mut fut = read_mutex.take().expect("just set");
+        match fut.poll_unpin(cx) {
+            Poll::Pending => {
+                read_mutex.replace(fut);
+                return Poll::Pending;
+            }
+            Poll::Ready(guard) => poll_recv(&guard.pconn, cx, bufs, meta),
+        }
+    }
+
+    fn local_addr(&self) -> io::Result<SocketAddr> {
+        // blocking read..
+        self.inner.blocking_read().local_addr()
+    }
+}
+
+#[derive(Debug)]
+pub(super) struct UdpSocket {
+    io: tokio::net::UdpSocket,
+    inner: quinn_udp::UdpSocketState,
+}
+
+impl UdpSocket {
+    pub fn from_std(sock: std::net::UdpSocket) -> io::Result<Self> {
+        quinn_udp::UdpSocketState::configure((&sock).into())?;
+        Ok(UdpSocket {
+            io: tokio::net::UdpSocket::from_std(sock)?,
+            inner: quinn_udp::UdpSocketState::new(),
+        })
+    }
+}
+fn poll_send(
+    this: &mut Option<UdpSocket>,
+    state: &quinn_udp::UdpState,
+    cx: &mut Context,
+    transmits: &[quinn_proto::Transmit],
+) -> Poll<io::Result<usize>> {
+    match this {
+        Some(ref mut pconn) => pconn.poll_send(state, cx, transmits),
+        None => Poll::Ready(Err(io::Error::new(io::ErrorKind::Other, "no connection"))),
+    }
+}
+
+fn poll_recv(
+    this: &Option<UdpSocket>,
+    cx: &mut Context,
+    bufs: &mut [io::IoSliceMut<'_>],
+    meta: &mut [quinn_udp::RecvMeta],
+) -> Poll<io::Result<usize>> {
+    match this {
+        Some(ref pconn) => pconn.poll_recv(cx, bufs, meta),
+        None => Poll::Ready(Err(io::Error::new(io::ErrorKind::Other, "no connection"))),
+    }
+}
+
+impl AsyncUdpSocket for UdpSocket {
+    fn poll_send(
+        &mut self,
+        state: &quinn_udp::UdpState,
+        cx: &mut Context,
+        transmits: &[quinn_proto::Transmit],
+    ) -> Poll<io::Result<usize>> {
+        let inner = &mut self.inner;
+        let io = &self.io;
+        loop {
+            ready!(io.poll_send_ready(cx))?;
+            if let Ok(res) = io.try_io(Interest::WRITABLE, || {
+                inner.send(io.into(), state, transmits)
+            }) {
+                return Poll::Ready(Ok(res));
+            }
+        }
+    }
+
+    fn poll_recv(
+        &self,
+        cx: &mut Context,
+        bufs: &mut [io::IoSliceMut<'_>],
+        meta: &mut [quinn_udp::RecvMeta],
+    ) -> Poll<io::Result<usize>> {
+        loop {
+            ready!(self.io.poll_recv_ready(cx))?;
+            if let Ok(res) = self.io.try_io(Interest::READABLE, || {
+                self.inner.recv((&self.io).into(), bufs, meta)
+            }) {
+                return Poll::Ready(Ok(res));
+            }
+        }
+    }
+
+    fn local_addr(&self) -> io::Result<std::net::SocketAddr> {
+        self.io.local_addr()
     }
 }

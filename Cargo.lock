@@ -2635,6 +2635,8 @@ dependencies = [
  "postcard",
  "proptest",
  "quinn",
+ "quinn-proto",
+ "quinn-udp",
  "rand",
  "rcgen",
  "reqwest",
