@@ -10,11 +10,12 @@ use std::{
 };
 
 use anyhow::{bail, Context as _, Result};
+use backoff::backoff::Backoff;
 use futures::future::BoxFuture;
 use rand::{seq::SliceRandom, Rng, SeedableRng};
 use tokio::{
     net::UdpSocket,
-    sync::{self, oneshot, Mutex, RwLock},
+    sync::{self, mpsc, Mutex, RwLock},
     time::{self, Instant},
 };
 use tracing::{debug, info};
@@ -994,11 +995,11 @@ impl Conn {
                 // TODO
                 // metricSendUDP.Add(1)
             }
-            _ => {}
             Err(_) => {
                 // TODO:
                 // metricSendUDPError.Add(1)
             }
+            Ok(false) => {}
         }
 
         res
@@ -1217,176 +1218,176 @@ impl Conn {
         // 	return ad.writeCh
     }
 
-    // /// Runs in a task for the life of a DERP connection, handling received packets.
-    // fn run_derp_reader(&self, derp_fake_addr: SocketAddr, dc: derp::http::Client, /*wg *syncs.WaitGroupChan, startGate <-chan struct{}*/) {
-    //     // TODO:
-    //     // defer wg.Decr()
-    //     // defer dc.Close()
+    /// Runs in a task for the life of a DERP connection, handling received packets.
+    async fn run_derp_reader(
+        &self,
+        derp_fake_addr: SocketAddr,
+        dc: derp::http::Client, /*wg *syncs.WaitGroupChan, startGate <-chan struct{}*/
+    ) {
+        // TODO:
+        // defer wg.Decr()
+        // defer dc.Close()
 
-    //     // TODO:
-    //     // select {
-    //     // case <-startGate:
-    //     // case <-ctx.Done():
-    //     // 	return
-    //     // }
+        // TODO:
+        // select {
+        // case <-startGate:
+        // case <-ctx.Done():
+        // 	return
+        // }
 
-    //     let (did_copy_s, did_copy_r) = oneshot::channel();
-    //     let region_id = usize::from(derp_fake_addr.port());
-    //     let mut pkt = derp::ReceivedPacket;
-    //     let mut res = DerpReadResult {
-    //         region_id,
-    //         n: 0,
-    //         copy_buf: Box::new(|| |dst: &[u8]| -> usize {
-    //             let n = pkt.data[..dst.len()].copy_from_slice(dst);
-    //     	did_copy_s.send(());
-    //     	return n
-    //         })
-    //     };
+        let region_id = usize::from(derp_fake_addr.port());
 
-    //     // The set of senders we know are present on this connection, based on messages we've received from the server.
+        // The set of senders we know are present on this connection, based on messages we've received from the server.
 
-    //     let mut peer_present = map[key.node::PublicKey]bool{};
-    //     // let bo = backoff.NewBackoff(fmt.Sprintf("derp-%d", regionID), c.logf, 5*time.Second);
-    //     let mut  last_packet_time: Option<Instant> = None;
-    //     let mut last_packet_src: Option<key:node::PublicKey> = None;
+        let mut peer_present = HashSet::new();
+        let mut bo: backoff::exponential::ExponentialBackoff<backoff::SystemClock> =
+            backoff::exponential::ExponentialBackoffBuilder::new()
+                .with_initial_interval(Duration::from_millis(10))
+                .with_max_interval(Duration::from_secs(5))
+                .build();
+        // NewBackoff(fmt.Sprintf("derp-%d", regionID), c.logf, 5 * time.Second);
 
-    //     loop {
-    //         match dc.recv_detail().await {
-    //             Err(err)=> {
-    //     	    // Forget that all these peers have routes.
-    //     	    for peer := range peerPresent {
-    //     		delete(peerPresent, peer);
-    //     		c.removeDerpPeerRoute(peer, regionID, dc);
-    //     	    }
-    //     	    if err == derphttp.ErrClientClosed {
-    //     		return;
-    //     	    }
-    //     	    if c.networkDown() {
-    //     		c.logf("[v1] magicsock: derp.Recv(derp-%d): network down, closing", regionID);
-    //     		return;
-    //     	    }
-    //                 if ctx.done() {
-    //                     return
-    //                 }
+        let mut last_packet_time: Option<Instant> = None;
+        let mut last_packet_src: Option<key::node::PublicKey> = None;
 
-    //     	    c.logf("magicsock: [%p] derp.Recv(derp-%d): %v", dc, regionID, err);
+        loop {
+            match dc.recv_detail().await {
+                Err(err) => {
+                    // Forget that all these peers have routes.
+                    for peer in peer_present.drain() {
+                        self.remove_derp_peer_route(peer, region_id, &dc).await;
+                    }
+                    if err == derp::http::ClientError::Closed {
+                        return;
+                    }
+                    if self.network_down() {
+                        info!("derp.recv(derp-{}): network down, closing", region_id);
+                        return;
+                    }
+                    info!("[{:?}] derp.recv(derp-{}): {:?}", dc, region_id, err);
 
-    //     	    // If our DERP connection broke, it might be because our network
-    //     	    // conditions changed. Start that check.
-    //     	    c.ReSTUN("derp-recv-error");
+                    // If our DERP connection broke, it might be because our network
+                    // conditions changed. Start that check.
+                    self.re_stun("derp-recv-error").await;
 
-    //     	    // Back off a bit before reconnecting.
-    //     	    bo.BackOff(ctx, err);
+                    // Back off a bit before reconnecting.
+                    match bo.next_backoff() {
+                        Some(t) => {
+                            info!("backoff sleep: {}ms", t.as_millis());
+                            time::sleep(t).await
+                        }
+                        None => return,
+                    }
+                }
+                Ok((msg, conn_gen)) => {
+                    // reset
+                    bo.reset();
 
-    //                 if ctx.Done() {
-    //                     return;
-    //                 }
-    //     	}
-    //             Ok(msg, conn_gen) => {
-    //                 // reset
-    //     	    bo.BackOff(ctx, nil);
+                    let now = Instant::now();
+                    if last_packet_time.is_none()
+                        || last_packet_time.as_ref().unwrap().elapsed() > Duration::from_secs(5)
+                    {
+                        last_packet_time = Some(now);
+                    }
+                    match msg {
+                        derp::ReceivedMessage::ServerInfo { .. } => {
+                            info!("derp-{} connected; connGen={}", region_id, conn_gen);
+                            continue;
+                        }
+                        derp::ReceivedMessage::ReceivedPacket { source, data } => {
+                            debug!("magicsock: got derp-{} packet: {:?}", region_id, data);
+                            // If this is a new sender we hadn't seen before, remember it and
+                            // register a route for this peer.
+                            if last_packet_src.is_none()
+                                || &source != last_packet_src.as_ref().unwrap()
+                            {
+                                // avoid map lookup w/ high throughput single peer
+                                last_packet_src = Some(source.clone());
+                                if !peer_present.contains(&source) {
+                                    peer_present.insert(source.clone());
+                                    self.add_derp_peer_route(source.clone(), region_id, dc)
+                                        .await;
+                                }
+                            }
 
-    //     	    let now = time.Now();
-    //     	    if lastPacketTime.IsZero() || now.Sub(lastPacketTime) > 5*time.Second {
-    //     		health.NoteDERPRegionReceivedFrame(regionID);
-    //     		lastPacketTime = now;
-    //     	    }
-    //                 match msg.typ {
-    //     	        derp.ServerInfoMessage => {
-    //     		    health.SetDERPRegionConnectedState(regionID, true);
-    //     		    health.SetDERPRegionHealth(regionID, ""); // until declared otherwise
-    //     		    c.logf("magicsock: derp-%d connected; connGen=%v", regionID, connGen);
-    //     		    continue;
-    //                     }
-    //     	        derp.ReceivedPacket => {
-    //     		    pkt = m;
-    //     		    res.n = len(m.Data);
-    //     		    res.src = m.Source;
-    //     		    debug!("magicsock: got derp-%v packet: %q", regionID, m.Data);
-    //     		    // If this is a new sender we hadn't seen before, remember it and
-    //     		    // register a route for this peer.
-    //     		    if res.src != lastPacketSrc { // avoid map lookup w/ high throughput single peer
-    //     			lastPacketSrc = res.src;
-    //     			if _, ok := peerPresent[res.src]; !ok {
-    //     				peerPresent[res.src] = true;
-    //     			    c.addDerpPeerRoute(res.src, regionID, dc);
-    //     			}
-    //     		    }
-    //                     }
-    //     	        derp.PingMessage => {
-    //     		    // Best effort reply to the ping.
-    //     		    pingData := [8]byte(m);
-    //     		    go func() {
-    //     			if err := dc.SendPong(pingData); err != nil {
-    //     			    c.logf("magicsock: derp-%d SendPong error: %v", regionID, err);
-    //     			}
-    //     		    }();
-    //     		    continue;
-    //                     }
-    //     	        derp.HealthMessage => {
-    //     		    health.SetDERPRegionHealth(regionID, m.Problem);
-    //                     }
-    //     	        derp.PeerGoneMessage => {
-    //     		    c.removeDerpPeerRoute(key.node::PublicKey(m), regionID, dc)
-    //                     }
-    //     	        _ => {
-    //     		    // Ignore.
-    //     		    continue;
-    //     	        }
-    //                 }
+                            let res = DerpReadResult {
+                                region_id,
+                                n: data.len(),
+                                src: source,
+                                buf: data,
+                            };
+                            todo!()
+                            // self.derp_recv_ch.send(res).await;
+                        }
+                        derp::ReceivedMessage::Ping(data) => {
+                            // Best effort reply to the ping.
+                            let dc = dc.clone();
+                            tokio::task::spawn(async move {
+                                if let Err(err) = dc.send_pong(data).await {
+                                    info!("derp-{} send_pong error: {:?}", region_id, err);
+                                }
+                            });
+                            continue;
+                        }
+                        derp::ReceivedMessage::Health { .. } => {
+                            // health.SetDERPRegionHealth(regionID, m.Problem);
+                        }
+                        derp::ReceivedMessage::PeerGone(key) => {
+                            self.remove_derp_peer_route(key, region_id, &dc).await;
+                        }
+                        _ => {
+                            // Ignore.
+                            continue;
+                        }
+                    }
+                }
+            }
+        }
+    }
 
-    //     	    tokio::select! {
-    //     	        _ = ctx.Done() => {
-    //     		    return;
-    //                     }
-    //     	        _ = c.derpRecvCh.send(res) => {
-    //                     }
-    //     	    }
+    // runDerpWriter runs in a goroutine for the life of a DERP
+    // connection, handling received packets.
+    async fn run_derp_writer(
+        &self,
+        dc: derp::http::Client,
+        mut ch: mpsc::Receiver<DerpWriteRequest>, /*wg *syncs.WaitGroupChan, startGate <-chan struct{}*/
+    ) {
+        // TODO:
+        // defer wg.Decr()
 
-    //     	    tokio::select! {
-    //     	        _ = ctx.Done() => {
-    //     		    return;
-    //     	        }
-    //                     case = did_copy => {
-    //     		    continue
-    //                     }
-    //                 }
-    //     	}
-    //         }
-    //     }
-    // }
+        // TODO:
+        // select {
+        // case <-startGate:
+        // case <-ctx.Done():
+        // 	return
+        // }
 
-    // type derpWriteRequest struct {
-    // 	addr   netip.AddrPort
-    // 	pubKey key.node::PublicKey
-    // 	b      []byte // copied; ownership passed to receiver
-    // }
-
-    // // runDerpWriter runs in a goroutine for the life of a DERP
-    // // connection, handling received packets.
-    // func (c *Conn) runDerpWriter(ctx context.Context, dc *derphttp.Client, ch <-chan derpWriteRequest, wg *syncs.WaitGroupChan, startGate <-chan struct{}) {
-    // 	defer wg.Decr()
-    // 	select {
-    // 	case <-startGate:
-    // 	case <-ctx.Done():
-    // 		return
-    // 	}
-
-    // 	for {
-    // 		select {
-    // 		case <-ctx.Done():
-    // 			return
-    // 		case wr := <-ch:
-    // 			err := dc.Send(wr.pubKey, wr.b)
-    // 			if err != nil {
-    // 				c.logf("magicsock: derp.Send(%v): %v", wr.addr, err)
-    // 				metricSendDERPError.Add(1)
-    // 			} else {
-    // 				metricSendDERP.Add(1)
-    // 			}
-    // 		}
-    // 	}
-    // }
+        // TODO: in the loop
+        /*_ = done => {
+            // <-ctx.Done():
+            return;
+        }*/
+        loop {
+            tokio::select! {
+                wr = ch.recv() => match wr {
+                    Some(wr) => match dc.send(wr.pub_key, wr.b).await {
+                        Ok(_) => {
+                            // TODO
+                            // metricSendDERP.Add(1)
+                        }
+                        Err(err) => {
+                            info!("derp.send({:?}): {:?}", wr.addr, err);
+                            // TODO
+                            // metricSendDERPError.Add(1)
+                        }
+                    }
+                    None => {
+                        return;
+                    }
+                }
+            }
+        }
+    }
 
     // type receiveBatch struct {
     // 	msgs []ipv6.Message
@@ -2961,8 +2962,12 @@ struct DerpReadResult {
     /// length of data received
     n: usize,
     src: key::node::PublicKey,
-    /// Called to copy the data to dst. It returns how much data was copied,
-    /// which will be `n` if `dst` is large enough.
-    /// If copy_buf is `None`, that's a signal from the sender to ignore this message.
-    copy_buf: Option<Box<dyn FnOnce(&[u8]) -> usize>>,
+    /// packet data
+    buf: Vec<u8>,
+}
+
+struct DerpWriteRequest {
+    addr: SocketAddr,
+    pub_key: key::node::PublicKey,
+    b: Vec<u8>,
 }
