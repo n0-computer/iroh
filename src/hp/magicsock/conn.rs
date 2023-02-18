@@ -461,7 +461,7 @@ impl Conn {
                 // Pick a random duration between 20 and 26 seconds (just under 30s,
                 // a common UDP NAT timeout on Linux,etc)
                 let mut rng = rand::thread_rng();
-                let d: Duration = rng.gen_range(Duration::from_secs(20), Duration::from_secs(26));
+                let d: Duration = rng.gen_range(Duration::from_secs(20)..=Duration::from_secs(26));
                 if let Some(ref mut t) = state.periodic_re_stun_timer {
                     t.reset(d).await;
                 } else {

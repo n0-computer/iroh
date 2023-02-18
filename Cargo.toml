@@ -21,10 +21,11 @@ bytes = "1"
 clap = { version = "4", features = ["derive"], optional = true }
 console = { version = "0.15.5", optional = true }
 crypto_box = "0.8.2"
+curve25519-dalek = "=4.0.0-rc.1"
 data-encoding = { version = "2.3.3", optional = true }
 default-net = "0.12.0"
 der = { version = "0.6", features = ["alloc", "derive"] }
-ed25519-dalek = { version = "1.0.1", features = ["serde"] }
+ed25519-dalek = { version = "=2.0.0-pre.0", features = ["serde", "rand_core"] }
 futures = "0.3.25"
 hostname = "0.3.1"
 indicatif = { version = "0.17", features = ["tokio"], optional = true }
@@ -35,14 +36,14 @@ os_info = "3.6.0"
 portable-atomic = "1"
 postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"] }
 quinn = "0.9.3"
-rand = "0.7"
+rand = "0.8"
 rcgen = "0.10"
 reqwest = "0.11.14"
 ring = "0.16.20"
 rustls = { version = "0.20.8", default-features = false, features = ["dangerous_configuration"] }
 serde = { version = "1", features = ["derive"] }
 socket2 = "0.4.7"
-ssh-key = { version = "0.5.1", features = ["ed25519", "std", "rand_core"] }
+ssh-key = { version = "0.6.0-pre.0", features = ["ed25519", "std", "rand_core"] }
 stun-rs = "0.1.4"
 syscalls = { version = "0.6.7", features = ["full"] } # todo not all
 tempfile = "3"
