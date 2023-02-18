@@ -12,9 +12,9 @@ use std::{
 use anyhow::{bail, Context as _, Result};
 use backoff::backoff::Backoff;
 use futures::future::BoxFuture;
+use quinn::AsyncUdpSocket;
 use rand::{seq::SliceRandom, Rng, SeedableRng};
 use tokio::{
-    net::UdpSocket,
     sync::{self, mpsc, Mutex, RwLock},
     time::{self, Instant},
 };
@@ -29,8 +29,9 @@ use crate::hp::{
 };
 
 use super::{
-    endpoint::PeerMap, rebinding_conn::RebindingUdpConn, ActiveDerp, Endpoint, Timer,
-    SOCKET_BUFFER_SIZE,
+    endpoint::PeerMap,
+    rebinding_conn::{RebindingUdpConn, UdpSocket},
+    ActiveDerp, Endpoint, Timer, SOCKET_BUFFER_SIZE,
 };
 
 /// How many packets writes can be queued up the DERP client to write on the wire before we start
@@ -919,7 +920,7 @@ impl Conn {
 
         self.ignore_stun_packets().await;
 
-        if let Some(local_addr) = self.pconn4.local_addr().await {
+        if let Ok(local_addr) = self.pconn4.local_addr() {
             if local_addr.ip().is_unspecified() {
                 let (mut ips, loopback) = interfaces::local_addresses();
 
@@ -964,7 +965,7 @@ impl Conn {
 
     /// Returns the current IPv4 listener's port number.
     pub async fn local_port(&self) -> u16 {
-        let laddr = self.pconn4.local_addr().await;
+        let laddr = self.pconn4.local_addr();
         laddr.map(|l| l.port()).unwrap_or_default()
     }
 
@@ -1007,7 +1008,8 @@ impl Conn {
 
     /// Sends UDP packet b to addr.
     async fn send_udp_std(&self, addr: SocketAddr, b: &[u8]) -> Result<bool> {
-        let res = match addr {
+        todo!();
+        /*let res = match addr {
             SocketAddr::V4(_) => {
                 let res = self.pconn4.write_to(addr, b).await;
                 if res.is_err()
@@ -1030,7 +1032,7 @@ impl Conn {
             }
         };
 
-        res.map(|_| true).map_err(Into::into)
+        res.map(|_| true).map_err(Into::into)*/
     }
 
     /// Sends packet b to addr, which is either a real UDP address
@@ -1393,55 +1395,33 @@ impl Conn {
     // 	msgs []ipv6.Message
     // }
 
-    // func (c *Conn) getReceiveBatch() *receiveBatch {
-    // 	batch := c.receiveBatchPool.Get().(*receiveBatch)
-    // 	return batch
-    // }
+    async fn receive_ipv6(
+        &self,
+        buffs: &[&[u8]],
+        sizes: &[usize],
+        eps: &[Endpoint],
+    ) -> Result<usize> {
+        loop {
+            let num_msgs = buffs.len();
+            let mut report_to_caller = false;
+            todo!();
+            /*for (i, msg) in buffs.into_iter().enumerate() {
+            let ipp = msg.Addr.(*net.UDPAddr).AddrPort();
+            if let Ok(ep) = self.receive_ip(msg.Buffers[0][:msg.N], ipp, &c.ippEndpoint6) {
+                metricRecvDataIPv6.Add(1);
+                eps[i] = ep;
+                sizes[i] = msg.N;
+                report_to_caller = true;
+            } else {
+                sizes[i] = 0;
+            }
+            }*/
 
-    // func (c *Conn) putReceiveBatch(batch *receiveBatch) {
-    // 	for i := range batch.msgs {
-    // 		batch.msgs[i] = ipv6.Message{Buffers: batch.msgs[i].Buffers}
-    // 	}
-    // 	c.receiveBatchPool.Put(batch)
-    // }
-
-    // func (c *Conn) receiveIPv6(buffs [][]byte, sizes []int, eps []conn.Endpoint) (int, error) {
-    // 	health.ReceiveIPv6.Enter()
-    // 	defer health.ReceiveIPv6.Exit()
-
-    // 	batch := c.getReceiveBatch()
-    // 	defer c.putReceiveBatch(batch)
-    // 	for {
-    // 		for i := range buffs {
-    // 			batch.msgs[i].Buffers[0] = buffs[i]
-    // 		}
-    // 		numMsgs, err := c.pconn6.ReadBatch(batch.msgs, 0)
-    // 		if err != nil {
-    // 			if neterror.PacketWasTruncated(err) {
-    // 				// TODO(raggi): discuss whether to log?
-    // 				continue
-    // 			}
-    // 			return 0, err
-    // 		}
-
-    // 		reportToCaller := false
-    // 		for i, msg := range batch.msgs[:numMsgs] {
-    // 			ipp := msg.Addr.(*net.UDPAddr).AddrPort()
-    // 			if ep, ok := c.receiveIP(msg.Buffers[0][:msg.N], ipp, &c.ippEndpoint6); ok {
-    // 				metricRecvDataIPv6.Add(1)
-    // 				eps[i] = ep
-    // 				sizes[i] = msg.N
-    // 				reportToCaller = true
-    // 			} else {
-    // 				sizes[i] = 0
-    // 			}
-    // 		}
-
-    // 		if reportToCaller {
-    // 			return numMsgs, nil
-    // 		}
-    // 	}
-    // }
+            if report_to_caller {
+                return Ok(num_msgs);
+            }
+        }
+    }
 
     // func (c *Conn) receiveIPv4(buffs [][]byte, sizes []int, eps []conn.Endpoint) (int, error) {
     // 	health.ReceiveIPv4.Enter()
@@ -2715,7 +2695,7 @@ impl Conn {
         );
 
         // Hold the ruc lock the entire time, so that the close+bind is atomic from the perspective of ruc receive functions.
-        let mut ruc = ruc.0.write().await;
+        let mut ruc = ruc.inner.write().await;
 
         // Build a list of preferred ports.
         // - Best is the port that the user requested.
@@ -2728,7 +2708,7 @@ impl Conn {
             ports.push(port);
         }
         if cur_port_fate == CurrentPortFate::Keep {
-            if let Some(cur_addr) = ruc.local_addr() {
+            if let Ok(cur_addr) = ruc.local_addr() {
                 ports.push(cur_addr.port());
             }
         }
