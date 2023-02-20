@@ -196,7 +196,7 @@ impl Builder {
     }
 }
 
-/// A server which implements the sendme provider.
+/// A server which implements the iroh provider.
 ///
 /// Clients can connect to this server and requests hashes from it.
 ///

@@ -6,13 +6,13 @@ use console::style;
 use indicatif::{
     HumanBytes, HumanDuration, ProgressBar, ProgressDrawTarget, ProgressState, ProgressStyle,
 };
-use sendme::protocol::AuthToken;
-use sendme::provider::Ticket;
+use iroh::protocol::AuthToken;
+use iroh::provider::Ticket;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
 use tracing_subscriber::{prelude::*, EnvFilter};
 
-use sendme::{get, provider, Hash, Keypair, PeerId};
+use iroh::{get, provider, Hash, Keypair, PeerId};
 
 #[derive(Parser, Debug, Clone)]
 #[clap(version, about, long_about = None)]
@@ -419,7 +419,7 @@ async fn get_interactive(
             Ok(())
         }
     };
-    let on_collection = |collection: &sendme::blobs::Collection| {
+    let on_collection = |collection: &iroh::blobs::Collection| {
         let pb = &pb;
         let out_writer = &out_writer;
         let name = collection.name().to_string();
@@ -470,7 +470,7 @@ async fn get_interactive(
                 // Create temp file
                 let (temp_file, dup) = tokio::task::spawn_blocking(|| {
                     let temp_file = tempfile::Builder::new()
-                        .prefix("sendme-tmp-")
+                        .prefix("iroh-tmp-")
                         .tempfile_in(dirpath)
                         .context("Failed to create temporary output file")?;
                     let dup = temp_file.as_file().try_clone()?;
