@@ -39,6 +39,9 @@ enum Commands {
         /// If this path is provided and it exists, the private key is read from this file and used, if it does not exist the private key will be persisted to this location.
         #[clap(long)]
         key: Option<PathBuf>,
+        /// Log SSL pre-master key to file in SSLKEYLOGFILE environment variable.
+        #[clap(long)]
+        keylog: bool,
     },
     /// Fetch some data by hash.
     #[clap(about = "Fetch the data from the hash")]
@@ -57,6 +60,9 @@ enum Commands {
         /// Optional path to a new directory in which to save the file(s). If none is specified writes the data to STDOUT.
         #[clap(long, short)]
         out: Option<PathBuf>,
+        /// Log SSL pre-master key to file in SSLKEYLOGFILE environment variable.
+        #[clap(long)]
+        keylog: bool,
     },
     /// Fetches some data from a ticket,
     ///
@@ -72,6 +78,9 @@ enum Commands {
         out: Option<PathBuf>,
         /// Ticket containing everything to retrieve a hash from provider.
         ticket: Ticket,
+        /// Log SSL pre-master key to file in SSLKEYLOGFILE environment variable.
+        #[clap(long)]
+        keylog: bool,
     },
 }
 
@@ -205,9 +214,11 @@ async fn main() -> Result<()> {
             token,
             addr,
             out,
+            keylog,
         } => {
             let mut opts = get::Options {
                 peer_id: Some(peer),
+                keylog,
                 ..Default::default()
             };
             if let Some(addr) = addr {
@@ -226,7 +237,11 @@ async fn main() -> Result<()> {
                 }
             }
         }
-        Commands::GetTicket { out, ticket } => {
+        Commands::GetTicket {
+            out,
+            ticket,
+            keylog,
+        } => {
             let Ticket {
                 hash,
                 peer,
@@ -236,6 +251,7 @@ async fn main() -> Result<()> {
             let opts = get::Options {
                 addr,
                 peer_id: Some(peer),
+                keylog,
             };
             tokio::select! {
                 biased;
@@ -253,10 +269,11 @@ async fn main() -> Result<()> {
             addr,
             auth_token,
             key,
+            keylog,
         } => {
             tokio::select! {
                 biased;
-                res = provide_interactive(path, addr, auth_token, key) => {
+                res = provide_interactive(path, addr, auth_token, key, keylog) => {
                     res
                 }
                 _ = tokio::signal::ctrl_c() => {
@@ -273,6 +290,7 @@ async fn provide_interactive(
     addr: Option<SocketAddr>,
     auth_token: Option<String>,
     key: Option<PathBuf>,
+    keylog: bool,
 ) -> Result<()> {
     let out_writer = OutWriter::new();
     let keypair = get_keypair(key).await?;
@@ -314,7 +332,9 @@ async fn provide_interactive(
         println!("- {}: {} bytes", path.display(), size);
     }
     println!();
-    let mut builder = provider::Provider::builder(db).keypair(keypair);
+    let mut builder = provider::Provider::builder(db)
+        .keypair(keypair)
+        .keylog(keylog);
     if let Some(addr) = addr {
         builder = builder.bind_addr(addr);
     }

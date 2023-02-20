@@ -74,6 +74,7 @@ pub struct Builder {
     keypair: Keypair,
     auth_token: AuthToken,
     db: Database,
+    keylog: bool,
 }
 
 #[derive(Debug)]
@@ -90,6 +91,7 @@ impl Builder {
             keypair: Keypair::generate(),
             auth_token: AuthToken::generate(),
             db,
+            keylog: false,
         }
     }
 
@@ -113,13 +115,23 @@ impl Builder {
         self
     }
 
+    /// Whether to log the SSL pre-master key.
+    ///
+    /// If `true` and the `SSLKEYLOGFILE` environment variable is the path to a file this
+    /// file will be used to log the SSL pre-master key.  This is useful to inspect captured
+    /// traffic.
+    pub fn keylog(mut self, keylog: bool) -> Self {
+        self.keylog = keylog;
+        self
+    }
+
     /// Spawns the [`Provider`] in a tokio task.
     ///
     /// This will create the underlying network server and spawn a tokio task accepting
     /// connections.  The returned [`Provider`] can be used to control the task as well as
     /// get information about it.
     pub fn spawn(self) -> Result<Provider> {
-        let tls_server_config = tls::make_server_config(&self.keypair)?;
+        let tls_server_config = tls::make_server_config(&self.keypair, self.keylog)?;
         let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(tls_server_config));
         let mut transport_config = quinn::TransportConfig::default();
         transport_config

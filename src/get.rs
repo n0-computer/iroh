@@ -33,6 +33,8 @@ pub struct Options {
     pub addr: SocketAddr,
     /// The peer id to expect
     pub peer_id: Option<PeerId>,
+    /// Whether to log the SSL keys when `SSLKEYLOGFILE` environment variable is set.
+    pub keylog: bool,
 }
 
 impl Default for Options {
@@ -40,6 +42,7 @@ impl Default for Options {
         Options {
             addr: "127.0.0.1:4433".parse().unwrap(),
             peer_id: None,
+            keylog: false,
         }
     }
 }
@@ -48,7 +51,7 @@ impl Default for Options {
 async fn setup(opts: Options) -> Result<quinn::Connection> {
     let keypair = Keypair::generate();
 
-    let tls_client_config = tls::make_client_config(&keypair, opts.peer_id)?;
+    let tls_client_config = tls::make_client_config(&keypair, opts.peer_id, opts.keylog)?;
     let mut client_config = quinn::ClientConfig::new(Arc::new(tls_client_config));
     let mut endpoint = quinn::Endpoint::client("0.0.0.0:0".parse().unwrap())?;
     let mut transport_config = quinn::TransportConfig::default();
