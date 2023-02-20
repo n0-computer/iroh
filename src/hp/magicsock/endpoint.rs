@@ -726,9 +726,9 @@ impl Endpoint {
         state.pending_cli_pings.clear();
     }
 
-    // func (de *endpoint) numStopAndReset() int64 {
-    // 	return atomic.LoadInt64(&de.numStopAndResetAtomic)
-    // }
+    pub fn num_stop_and_reset(&self) -> u64 {
+        self.num_stop_and_reset_atomic.load(Ordering::Relaxed)
+    }
 
     // func (de *endpoint) deleteEndpointLocked(ep netip.AddrPort) {
     // 	delete(de.endpointState, ep)
