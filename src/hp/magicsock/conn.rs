@@ -1,11 +1,14 @@
 use std::{
     collections::{HashMap, HashSet},
+    fmt::Debug,
+    io,
     net::{IpAddr, SocketAddr},
     ops::Deref,
     sync::{
         atomic::{AtomicBool, AtomicU16, Ordering},
         Arc,
     },
+    task::{Context, Poll},
     time::Duration,
 };
 
@@ -25,7 +28,7 @@ use crate::hp::{
     derp::{self, DerpMap},
     disco, interfaces, key,
     magicsock::SESSION_ACTIVE_TIMEOUT,
-    monitor, netcheck, netmap, portmapper,
+    monitor, netcheck, netmap, portmapper, stun,
 };
 
 use super::{
@@ -96,7 +99,7 @@ pub struct Options {
 }
 
 /// Routes UDP packets and actively manages a list of its endpoints.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Conn(Arc<Inner>);
 
 impl Deref for Conn {
@@ -104,6 +107,13 @@ impl Deref for Conn {
 
     fn deref(&self) -> &Self::Target {
         &self.0
+    }
+}
+
+impl Debug for Inner {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // TODO:
+        f.debug_struct("Inner").finish()
     }
 }
 
@@ -920,7 +930,7 @@ impl Conn {
 
         self.ignore_stun_packets().await;
 
-        if let Ok(local_addr) = self.pconn4.local_addr() {
+        if let Ok(local_addr) = self.pconn4.local_addr().await {
             if local_addr.ip().is_unspecified() {
                 let (mut ips, loopback) = interfaces::local_addresses();
 
@@ -965,7 +975,7 @@ impl Conn {
 
     /// Returns the current IPv4 listener's port number.
     pub async fn local_port(&self) -> u16 {
-        let laddr = self.pconn4.local_addr();
+        let laddr = self.pconn4.local_addr().await;
         laddr.map(|l| l.port()).unwrap_or_default()
     }
 
@@ -987,54 +997,6 @@ impl Conn {
         ep.send(buffs).await
     }
 
-    // Sends UDP packet `b` to `ipp`.
-    async fn send_udp(&self, ipp: SocketAddr, b: &[u8]) -> Result<bool> {
-        let res = self.send_udp_std(ipp, b).await;
-
-        match res {
-            Ok(true) => {
-                // TODO
-                // metricSendUDP.Add(1)
-            }
-            Err(_) => {
-                // TODO:
-                // metricSendUDPError.Add(1)
-            }
-            Ok(false) => {}
-        }
-
-        res
-    }
-
-    /// Sends UDP packet b to addr.
-    async fn send_udp_std(&self, addr: SocketAddr, b: &[u8]) -> Result<bool> {
-        todo!();
-        /*let res = match addr {
-            SocketAddr::V4(_) => {
-                let res = self.pconn4.write_to(addr, b).await;
-                if res.is_err()
-                    && (self.no_v4.load(Ordering::Relaxed)
-                        || res.as_ref().unwrap_err().treat_as_lost_udp())
-                {
-                    return Ok(false);
-                }
-                res
-            }
-            SocketAddr::V6(_) => {
-                let res = self.pconn6.write_to(addr, b).await;
-                if res.is_err()
-                    && (self.no_v6.load(Ordering::Relaxed)
-                        || res.as_ref().unwrap_err().treat_as_lost_udp())
-                {
-                    return Ok(false);
-                }
-                res
-            }
-        };
-
-        res.map(|_| true).map_err(Into::into)*/
-    }
-
     /// Sends packet b to addr, which is either a real UDP address
     /// or a fake UDP address representing a DERP server (see derpmap).
     /// The provided public key identifies the recipient.
@@ -1050,7 +1012,8 @@ impl Conn {
         b: &[u8],
     ) -> Result<bool> {
         if addr.ip() != DERP_MAGIC_IP {
-            return self.send_udp(addr, b).await;
+            todo!();
+            // return self.send_udp(addr, b).await;
         }
 
         match self.derp_write_chan_of_addr(addr, pub_key) {
@@ -1464,40 +1427,36 @@ impl Conn {
     // //
     // // ok is whether this read should be reported up to wireguard-go (our
     // // caller).
-    // func (c *Conn) receiveIP(b []byte, ipp netip.AddrPort, cache *ippEndpointCache) (ep *endpoint, ok bool) {
-    // 	if stun.Is(b) {
-    // 		c.stunReceiveFunc.Load()(b, ipp)
-    // 		return nil, false
-    // 	}
-    // 	if c.handleDiscoMessage(b, ipp, key.node::PublicKey{}) {
-    // 		return nil, false
-    // 	}
-    // 	if !c.havePrivateKey.Load() {
-    // 		// If we have no private key, we're logged out or
-    // 		// stopped. Don't try to pass these wireguard packets
-    // 		// up to wireguard-go; it'll just complain (issue 1167).
-    // 		return nil, false
-    // 	}
-    // 	if cache.ipp == ipp && cache.de != nil && cache.gen == cache.de.numStopAndReset() {
-    // 		ep = cache.de
-    // 	} else {
-    // 		c.mu.Lock()
-    // 		de, ok := c.peerMap.endpointForIPPort(ipp)
-    // 		c.mu.Unlock()
-    // 		if !ok {
-    // 			return nil, false
-    // 		}
-    // 		cache.ipp = ipp
-    // 		cache.de = de
-    // 		cache.gen = de.numStopAndReset()
-    // 		ep = de
-    // 	}
-    // 	ep.noteRecvActivity()
-    // 	if stats := c.stats.Load(); stats != nil {
-    // 		stats.UpdateRxPhysical(ep.nodeAddr, ipp, len(b))
-    // 	}
-    // 	return ep, true
-    // }
+    fn receive_ip(&self, b: &mut io::IoSliceMut<'_>, meta: &mut quinn_udp::RecvMeta) -> bool {
+        if stun::is(b) {
+            if let Some(ref f) = &*self.on_stun_receive.blocking_read() {
+                f(b, meta.addr);
+            }
+            return false;
+        }
+        if self.handle_disco_message(b, meta.addr, None) {
+            return false;
+        }
+        if !self.have_private_key.load(Ordering::Relaxed) {
+            // If we have no private key, we're logged out or
+            // stopped. Don't try to pass these packets along
+            return false;
+        }
+
+        let state = self.state.blocking_lock();
+        match state.peer_map.endpoint_for_ip_port(&meta.addr) {
+            None => false,
+            Some(de) => {
+                meta.dst_ip = Some(de.fake_wg_addr.ip());
+
+                // ep.noteRecvActivity();
+                // if stats := c.stats.Load(); stats != nil {
+                //     stats.UpdateRxPhysical(ep.nodeAddr, ipp, len(b));
+                // }
+                true
+            }
+        }
+    }
 
     // func (c *connBind) receiveDERP(buffs [][]byte, sizes []int, eps []conn.Endpoint) (int, error) {
     // 	health.ReceiveDERP.Enter()
@@ -1654,138 +1613,145 @@ impl Conn {
     // // src.Port() being the region ID) and the derpNodeSrc will be the node key
     // // it was received from at the DERP layer. derpNodeSrc is zero when received
     // // over UDP.
-    // func (c *Conn) handleDiscoMessage(msg []byte, src netip.AddrPort, derpNodeSrc key.node::PublicKey) (isDiscoMsg bool) {
-    // 	const headerLen = len(disco.Magic) + key.DiscoPublicRawLen
-    // 	if len(msg) < headerLen || string(msg[:len(disco.Magic)]) != disco.Magic {
-    // 		return false
-    // 	}
+    fn handle_disco_message(
+        &self,
+        msg: &[u8],
+        src: SocketAddr,
+        derp_node_src: Option<key::node::PublicKey>,
+    ) -> bool {
+        todo!()
+        //        ->        (isDiscoMsg bool) {
+        // 	const headerLen = len(disco.Magic) + key.DiscoPublicRawLen
+        // 	if len(msg) < headerLen || string(msg[:len(disco.Magic)]) != disco.Magic {
+        // 		return false
+        // 	}
 
-    // 	// If the first four parts are the prefix of disco.Magic
-    // 	// (0x5453f09f) then it's definitely not a valid WireGuard
-    // 	// packet (which starts with little-endian uint32 1, 2, 3, 4).
-    // 	// Use naked returns for all following paths.
-    // 	isDiscoMsg = true
+        // 	// If the first four parts are the prefix of disco.Magic
+        // 	// (0x5453f09f) then it's definitely not a valid WireGuard
+        // 	// packet (which starts with little-endian uint32 1, 2, 3, 4).
+        // 	// Use naked returns for all following paths.
+        // 	isDiscoMsg = true
 
-    // 	sender := key.DiscoPublicFromRaw32(mem.B(msg[len(disco.Magic):headerLen]))
+        // 	sender := key.DiscoPublicFromRaw32(mem.B(msg[len(disco.Magic):headerLen]))
 
-    // 	c.mu.Lock()
-    // 	defer c.mu.Unlock()
+        // 	c.mu.Lock()
+        // 	defer c.mu.Unlock()
 
-    // 	if c.closed {
-    // 		return
-    // 	}
-    // 	if debugDisco() {
-    // 		c.logf("magicsock: disco: got disco-looking frame from %v", sender.ShortString())
-    // 	}
-    // 	if c.privateKey.IsZero() {
-    // 		// Ignore disco messages when we're stopped.
-    // 		// Still return true, to not pass it down to wireguard.
-    // 		return
-    // 	}
-    // 	if c.discoPrivate.IsZero() {
-    // 		if debugDisco() {
-    // 			c.logf("magicsock: disco: ignoring disco-looking frame, no local key")
-    // 		}
-    // 		return
-    // 	}
+        // 	if c.closed {
+        // 		return
+        // 	}
+        // 	if debugDisco() {
+        // 		c.logf("magicsock: disco: got disco-looking frame from %v", sender.ShortString())
+        // 	}
+        // 	if c.privateKey.IsZero() {
+        // 		// Ignore disco messages when we're stopped.
+        // 		// Still return true, to not pass it down to wireguard.
+        // 		return
+        // 	}
+        // 	if c.discoPrivate.IsZero() {
+        // 		if debugDisco() {
+        // 			c.logf("magicsock: disco: ignoring disco-looking frame, no local key")
+        // 		}
+        // 		return
+        // 	}
 
-    // 	if !c.peerMap.anyEndpointForDiscoKey(sender) {
-    // 		metricRecvDiscoBadPeer.Add(1)
-    // 		if debugDisco() {
-    // 			c.logf("magicsock: disco: ignoring disco-looking frame, don't know endpoint for %v", sender.ShortString())
-    // 		}
-    // 		return
-    // 	}
+        // 	if !c.peerMap.anyEndpointForDiscoKey(sender) {
+        // 		metricRecvDiscoBadPeer.Add(1)
+        // 		if debugDisco() {
+        // 			c.logf("magicsock: disco: ignoring disco-looking frame, don't know endpoint for %v", sender.ShortString())
+        // 		}
+        // 		return
+        // 	}
 
-    // 	// We're now reasonably sure we're expecting communication from
-    // 	// this peer, do the heavy crypto lifting to see what they want.
-    // 	//
-    // 	// From here on, peerNode and de are non-nil.
+        // 	// We're now reasonably sure we're expecting communication from
+        // 	// this peer, do the heavy crypto lifting to see what they want.
+        // 	//
+        // 	// From here on, peerNode and de are non-nil.
 
-    // 	di := c.discoInfoLocked(sender)
+        // 	di := c.discoInfoLocked(sender)
 
-    // 	sealedBox := msg[headerLen:]
-    // 	payload, ok := di.sharedKey.Open(sealedBox)
-    // 	if !ok {
-    // 		// This might be have been intended for a previous
-    // 		// disco key.  When we restart we get a new disco key
-    // 		// and old packets might've still been in flight (or
-    // 		// scheduled). This is particularly the case for LANs
-    // 		// or non-NATed endpoints.
-    // 		// Don't log in normal case. Pass on to wireguard, in case
-    // 		// it's actually a wireguard packet (super unlikely,
-    // 		// but).
-    // 		if debugDisco() {
-    // 			c.logf("magicsock: disco: failed to open naclbox from %v (wrong rcpt?)", sender)
-    // 		}
-    // 		metricRecvDiscoBadKey.Add(1)
-    // 		return
-    // 	}
+        // 	sealedBox := msg[headerLen:]
+        // 	payload, ok := di.sharedKey.Open(sealedBox)
+        // 	if !ok {
+        // 		// This might be have been intended for a previous
+        // 		// disco key.  When we restart we get a new disco key
+        // 		// and old packets might've still been in flight (or
+        // 		// scheduled). This is particularly the case for LANs
+        // 		// or non-NATed endpoints.
+        // 		// Don't log in normal case. Pass on to wireguard, in case
+        // 		// it's actually a wireguard packet (super unlikely,
+        // 		// but).
+        // 		if debugDisco() {
+        // 			c.logf("magicsock: disco: failed to open naclbox from %v (wrong rcpt?)", sender)
+        // 		}
+        // 		metricRecvDiscoBadKey.Add(1)
+        // 		return
+        // 	}
 
-    // 	dm, err := disco.Parse(payload)
-    // 	if debugDisco() {
-    // 		c.logf("magicsock: disco: disco.Parse = %T, %v", dm, err)
-    // 	}
-    // 	if err != nil {
-    // 		// Couldn't parse it, but it was inside a correctly
-    // 		// signed box, so just ignore it, assuming it's from a
-    // 		// newer version of Tailscale that we don't
-    // 		// understand. Not even worth logging about, lest it
-    // 		// be too spammy for old clients.
-    // 		metricRecvDiscoBadParse.Add(1)
-    // 		return
-    // 	}
+        // 	dm, err := disco.Parse(payload)
+        // 	if debugDisco() {
+        // 		c.logf("magicsock: disco: disco.Parse = %T, %v", dm, err)
+        // 	}
+        // 	if err != nil {
+        // 		// Couldn't parse it, but it was inside a correctly
+        // 		// signed box, so just ignore it, assuming it's from a
+        // 		// newer version of Tailscale that we don't
+        // 		// understand. Not even worth logging about, lest it
+        // 		// be too spammy for old clients.
+        // 		metricRecvDiscoBadParse.Add(1)
+        // 		return
+        // 	}
 
-    // 	isDERP := src.Addr() == derpMagicIPAddr
-    // 	if isDERP {
-    // 		metricRecvDiscoDERP.Add(1)
-    // 	} else {
-    // 		metricRecvDiscoUDP.Add(1)
-    // 	}
+        // 	isDERP := src.Addr() == derpMagicIPAddr
+        // 	if isDERP {
+        // 		metricRecvDiscoDERP.Add(1)
+        // 	} else {
+        // 		metricRecvDiscoUDP.Add(1)
+        // 	}
 
-    // 	switch dm := dm.(type) {
-    // 	case *disco.Ping:
-    // 		metricRecvDiscoPing.Add(1)
-    // 		c.handlePingLocked(dm, src, di, derpNodeSrc)
-    // 	case *disco.Pong:
-    // 		metricRecvDiscoPong.Add(1)
-    // 		// There might be multiple nodes for the sender's DiscoKey.
-    // 		// Ask each to handle it, stopping once one reports that
-    // 		// the Pong's TxID was theirs.
-    // 		c.peerMap.forEachEndpointWithDiscoKey(sender, func(ep *endpoint) (keepGoing bool) {
-    // 			if ep.handlePongConnLocked(dm, di, src) {
-    // 				return false
-    // 			}
-    // 			return true
-    // 		})
-    // 	case *disco.CallMeMaybe:
-    // 		metricRecvDiscoCallMeMaybe.Add(1)
-    // 		if !isDERP || derpNodeSrc.IsZero() {
-    // 			// CallMeMaybe messages should only come via DERP.
-    // 			c.logf("[unexpected] CallMeMaybe packets should only come via DERP")
-    // 			return
-    // 		}
-    // 		nodeKey := derpNodeSrc
-    // 		ep, ok := c.peerMap.endpointForNodeKey(nodeKey)
-    // 		if !ok {
-    // 			metricRecvDiscoCallMeMaybeBadNode.Add(1)
-    // 			c.logf("magicsock: disco: ignoring CallMeMaybe from %v; %v is unknown", sender.ShortString(), derpNodeSrc.ShortString())
-    // 			return
-    // 		}
-    // 		if ep.discoKey != di.discoKey {
-    // 			metricRecvDiscoCallMeMaybeBadDisco.Add(1)
-    // 			c.logf("[unexpected] CallMeMaybe from peer via DERP whose netmap discokey != disco source")
-    // 			return
-    // 		}
-    // 		di.setNodeKey(nodeKey)
-    // 		c.dlogf("[v1] magicsock: disco: %v<-%v (%v, %v)  got call-me-maybe, %d endpoints",
-    // 			c.discoShort, ep.discoShort,
-    // 			ep.publicKey.ShortString(), derpStr(src.String()),
-    // 			len(dm.MyNumber))
-    // 		go ep.handleCallMeMaybe(dm)
-    // 	}
-    // 	return
-    // }
+        // 	switch dm := dm.(type) {
+        // 	case *disco.Ping:
+        // 		metricRecvDiscoPing.Add(1)
+        // 		c.handlePingLocked(dm, src, di, derpNodeSrc)
+        // 	case *disco.Pong:
+        // 		metricRecvDiscoPong.Add(1)
+        // 		// There might be multiple nodes for the sender's DiscoKey.
+        // 		// Ask each to handle it, stopping once one reports that
+        // 		// the Pong's TxID was theirs.
+        // 		c.peerMap.forEachEndpointWithDiscoKey(sender, func(ep *endpoint) (keepGoing bool) {
+        // 			if ep.handlePongConnLocked(dm, di, src) {
+        // 				return false
+        // 			}
+        // 			return true
+        // 		})
+        // 	case *disco.CallMeMaybe:
+        // 		metricRecvDiscoCallMeMaybe.Add(1)
+        // 		if !isDERP || derpNodeSrc.IsZero() {
+        // 			// CallMeMaybe messages should only come via DERP.
+        // 			c.logf("[unexpected] CallMeMaybe packets should only come via DERP")
+        // 			return
+        // 		}
+        // 		nodeKey := derpNodeSrc
+        // 		ep, ok := c.peerMap.endpointForNodeKey(nodeKey)
+        // 		if !ok {
+        // 			metricRecvDiscoCallMeMaybeBadNode.Add(1)
+        // 			c.logf("magicsock: disco: ignoring CallMeMaybe from %v; %v is unknown", sender.ShortString(), derpNodeSrc.ShortString())
+        // 			return
+        // 		}
+        // 		if ep.discoKey != di.discoKey {
+        // 			metricRecvDiscoCallMeMaybeBadDisco.Add(1)
+        // 			c.logf("[unexpected] CallMeMaybe from peer via DERP whose netmap discokey != disco source")
+        // 			return
+        // 		}
+        // 		di.setNodeKey(nodeKey)
+        // 		c.dlogf("[v1] magicsock: disco: %v<-%v (%v, %v)  got call-me-maybe, %d endpoints",
+        // 			c.discoShort, ep.discoShort,
+        // 			ep.publicKey.ShortString(), derpStr(src.String()),
+        // 			len(dm.MyNumber))
+        // 		go ep.handleCallMeMaybe(dm)
+        // 	}
+        // 	return
+    }
 
     /// Attempts to look up an unambiguous mapping from a DiscoKey `dk` (which sent ping dm) to a NodeKey.
     /// `None` if not unamabigous.
@@ -2929,6 +2895,149 @@ fn endpoint_sets_equal(xs: &[cfg::Endpoint], ys: &[cfg::Endpoint]) -> bool {
     }
 
     m.values().all(|v| *v == 3)
+}
+
+impl AsyncUdpSocket for Conn {
+    fn poll_send(
+        &mut self,
+        state: &quinn_udp::UdpState,
+        cx: &mut Context,
+        transmits: &[quinn_proto::Transmit],
+    ) -> Poll<io::Result<usize>> {
+        // TODO: find a way around the copies
+        let mut transmits_ipv4: Vec<quinn::Transmit> = Vec::new();
+        let mut transmits_ipv6: Vec<quinn::Transmit> = Vec::new();
+
+        for t in transmits {
+            if t.destination.is_ipv6() {
+                transmits_ipv6.push(quinn::Transmit {
+                    destination: t.destination,
+                    ecn: t.ecn,
+                    contents: t.contents.clone(),
+                    segment_size: t.segment_size,
+                    src_ip: t.src_ip,
+                });
+            } else {
+                transmits_ipv4.push(quinn::Transmit {
+                    destination: t.destination,
+                    ecn: t.ecn,
+                    contents: t.contents.clone(),
+                    segment_size: t.segment_size,
+                    src_ip: t.src_ip,
+                });
+            }
+        }
+        let mut sum = 0;
+        if !transmits_ipv4.is_empty() {
+            match self.pconn4.poll_send(state, cx, &transmits_ipv4[..]) {
+                Poll::Pending => {}
+                Poll::Ready(Ok(r)) => {
+                    sum += r;
+                }
+                Poll::Ready(Err(err)) => {
+                    return Poll::Ready(Err(err));
+                }
+            }
+        }
+        if !transmits_ipv6.is_empty() {
+            match self.pconn6.poll_send(state, cx, &transmits_ipv6) {
+                Poll::Pending => {}
+                Poll::Ready(Ok(r)) => {
+                    sum += r;
+                }
+                Poll::Ready(Err(err)) => {
+                    return Poll::Ready(Err(err));
+                }
+            }
+        }
+
+        if sum > 0 {
+            return Poll::Ready(Ok(sum));
+        }
+
+        Poll::Pending
+    }
+
+    fn poll_recv(
+        &self,
+        cx: &mut Context,
+        bufs: &mut [io::IoSliceMut<'_>],
+        meta: &mut [quinn_udp::RecvMeta],
+    ) -> Poll<io::Result<usize>> {
+        // FIXME: currently ipv4 load results in ipv6 traffic being ignored
+        debug_assert_eq!(bufs.len(), meta.len());
+
+        let mut num_msgs_total = 0;
+        match self.pconn4.poll_recv(cx, bufs, meta) {
+            Poll::Pending => {}
+            Poll::Ready(Err(err)) => {
+                return Poll::Ready(Err(err));
+            }
+            Poll::Ready(Ok(mut num_msgs)) => {
+                debug_assert!(num_msgs < bufs.len());
+                let mut i = 0;
+                while i < num_msgs {
+                    if !self.receive_ip(&mut bufs[i], &mut meta[i]) {
+                        // move all following over
+                        for k in i..num_msgs - 1 {
+                            bufs.swap(k, k + 1);
+                            meta.swap(k, k + 1);
+                        }
+
+                        // reduce num_msgs
+                        num_msgs -= 1;
+                    }
+
+                    i += 1;
+                }
+                num_msgs_total += num_msgs;
+            }
+        }
+        if num_msgs_total < bufs.len() {
+            match self.pconn6.poll_recv(
+                cx,
+                &mut bufs[num_msgs_total..],
+                &mut meta[num_msgs_total..],
+            ) {
+                Poll::Pending => {}
+                Poll::Ready(Err(err)) => {
+                    return Poll::Ready(Err(err));
+                }
+                Poll::Ready(Ok(mut num_msgs)) => {
+                    debug_assert!(num_msgs + num_msgs_total < bufs.len());
+                    let mut i = num_msgs_total;
+                    while i < num_msgs + num_msgs_total {
+                        if !self.receive_ip(&mut bufs[i], &mut meta[i]) {
+                            // move all following over
+                            for k in i..num_msgs + num_msgs_total - 1 {
+                                bufs.swap(k, k + 1);
+                                meta.swap(k, k + 1);
+                            }
+
+                            // reduce num_msgs
+                            num_msgs -= 1;
+                        }
+
+                        i += 1;
+                    }
+                    num_msgs_total += num_msgs;
+                }
+            }
+        }
+
+        // If we have any msgs to report, they are in the first `num_msgs_total` slots
+        if num_msgs_total > 0 {
+            return Poll::Ready(Ok(num_msgs_total));
+        }
+
+        Poll::Pending
+    }
+
+    fn local_addr(&self) -> io::Result<SocketAddr> {
+        // TODO: Just uses ip4 for now, is this enough?
+        let addr = self.pconn4.local_addr_blocking()?;
+        Ok(addr)
+    }
 }
 
 /// The type sent by runDerpClient to ReceiveIPv4when a DERP packet is available.
