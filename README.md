@@ -1,4 +1,4 @@
-<h1 align="center">sendme</h1>
+<h1 align="center">iroh</h1>
 <div align="center">
  <strong>
    Send data over the internet.
@@ -9,17 +9,17 @@
 
 <div align="center">
   <!-- Crates version -->
-  <a href="https://crates.io/crates/sendme">
-    <img src="https://img.shields.io/crates/v/sendme.svg?style=flat-square"
+  <a href="https://crates.io/crates/iroh">
+    <img src="https://img.shields.io/crates/v/iroh.svg?style=flat-square"
     alt="Crates.io version" />
   </a>
   <!-- Downloads -->
-  <a href="https://crates.io/crates/sendme">
-    <img src="https://img.shields.io/crates/d/sendme.svg?style=flat-square"
+  <a href="https://crates.io/crates/iroh">
+    <img src="https://img.shields.io/crates/d/iroh.svg?style=flat-square"
       alt="Download" />
   </a>
   <!-- docs.rs docs -->
-  <a href="https://docs.rs/sendme">
+  <a href="https://docs.rs/iroh">
     <img src="https://img.shields.io/badge/docs-latest-blue.svg?style=flat-square"
       alt="docs.rs docs" />
   </a>
@@ -27,11 +27,11 @@
 
 <div align="center">
   <h3>
-    <a href="https://docs.rs/sendme">
+    <a href="https://docs.rs/iroh">
       API Docs
     </a>
     <span> | </span>
-    <a href="https://github.com/n0-computer/sendme/releases">
+    <a href="https://github.com/n0-computer/iroh/releases">
       Releases
     </a>
   </h3>
@@ -43,19 +43,19 @@
 ### Cli
 Sending data
 ```sh
-$ ./sendme provide <file>
+$ ./iroh provide <file>
 ```
 
 Receiving data
 ```sh
-$ ./sendme get <hash>
+$ ./iroh get <hash>
 ```
 
 ### As a library
-Disable default features when using `sendme` as a library:
-`sendme = { version: "...", default-features = false }`
+Disable default features when using `iroh` as a library:
+`iroh = { version: "...", default-features = false }`
 
-This removes dependencies that are only relevant when using `sendme` as
+This removes dependencies that are only relevant when using `iroh` as
 a library.
 
 # License
