@@ -66,8 +66,9 @@ pub struct RebindingUdpConn {
     read_mutex: std::sync::Mutex<
         Option<Pin<Box<dyn Future<Output = OwnedRwLockReadGuard<Inner>> + Send + Sync + 'static>>>,
     >,
-    write_mutex:
+    write_mutex: std::sync::Mutex<
         Option<Pin<Box<dyn Future<Output = OwnedRwLockWriteGuard<Inner>> + Send + Sync + 'static>>>,
+    >,
 }
 
 impl Debug for RebindingUdpConn {
@@ -104,6 +105,77 @@ impl RebindingUdpConn {
         let mut state = self.inner.write().await;
         state.close()
     }
+
+    pub fn poll_send(
+        &self,
+        state: &quinn_udp::UdpState,
+        cx: &mut Context,
+        transmits: &[quinn_proto::Transmit],
+    ) -> Poll<io::Result<usize>> {
+        let mut write_mutex = self.write_mutex.lock().unwrap();
+
+        if write_mutex.is_none() {
+            // Fast path, see if we can just grab the lock
+            if let Ok(ref mut guard) = self.inner.try_write() {
+                return poll_send(&mut guard.pconn, state, cx, transmits);
+            }
+
+            // Otherwise prepare a lock.
+            let fut = Box::pin(self.inner.clone().write_owned());
+            write_mutex.replace(fut);
+        }
+
+        // Waiting on aquiring the lock
+        let mut fut = write_mutex.take().expect("just set");
+
+        match fut.poll_unpin(cx) {
+            Poll::Pending => {
+                write_mutex.replace(fut);
+                Poll::Pending
+            }
+            Poll::Ready(mut guard) => poll_send(&mut guard.pconn, state, cx, transmits),
+        }
+    }
+
+    pub fn poll_recv(
+        &self,
+        cx: &mut Context,
+        bufs: &mut [io::IoSliceMut<'_>],
+        meta: &mut [quinn_udp::RecvMeta],
+    ) -> Poll<io::Result<usize>> {
+        let mut read_mutex = self.read_mutex.lock().unwrap();
+
+        if read_mutex.is_none() {
+            // Fast path, see if we can just grab the lock
+            if let Ok(ref mut guard) = self.inner.try_read() {
+                return poll_recv(&guard.pconn, cx, bufs, meta);
+            }
+
+            // Otherwise prepare a lock.
+            let fut = Box::pin(self.inner.clone().read_owned());
+            read_mutex.replace(fut);
+        }
+
+        // Waiting on aquiring the lock
+        let mut fut = read_mutex.take().expect("just set");
+        match fut.poll_unpin(cx) {
+            Poll::Pending => {
+                read_mutex.replace(fut);
+                return Poll::Pending;
+            }
+            Poll::Ready(guard) => poll_recv(&guard.pconn, cx, bufs, meta),
+        }
+    }
+
+    pub async fn local_addr(&self) -> io::Result<SocketAddr> {
+        let addr = self.inner.read().await.local_addr()?;
+        Ok(addr)
+    }
+
+    pub fn local_addr_blocking(&self) -> io::Result<SocketAddr> {
+        let addr = self.inner.blocking_read().local_addr()?;
+        Ok(addr)
+    }
 }
 
 impl Inner {
@@ -137,72 +209,6 @@ impl Inner {
             .as_ref()
             .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "no connection"))?;
         pconn.local_addr()
-    }
-}
-
-impl AsyncUdpSocket for RebindingUdpConn {
-    fn poll_send(
-        &mut self,
-        state: &quinn_udp::UdpState,
-        cx: &mut Context,
-        transmits: &[quinn_proto::Transmit],
-    ) -> Poll<io::Result<usize>> {
-        if self.write_mutex.is_none() {
-            // Fast path, see if we can just grab the lock
-            if let Ok(ref mut guard) = self.inner.try_write() {
-                return poll_send(&mut guard.pconn, state, cx, transmits);
-            }
-
-            // Otherwise prepare a lock.
-            let fut = Box::pin(self.inner.clone().write_owned());
-            self.write_mutex.replace(fut);
-        }
-
-        // Waiting on aquiring the lock
-        let mut fut = self.write_mutex.take().expect("just set");
-
-        match fut.poll_unpin(cx) {
-            Poll::Pending => {
-                self.write_mutex.replace(fut);
-                Poll::Pending
-            }
-            Poll::Ready(mut guard) => poll_send(&mut guard.pconn, state, cx, transmits),
-        }
-    }
-
-    fn poll_recv(
-        &self,
-        cx: &mut Context,
-        bufs: &mut [io::IoSliceMut<'_>],
-        meta: &mut [quinn_udp::RecvMeta],
-    ) -> Poll<io::Result<usize>> {
-        let mut read_mutex = self.read_mutex.lock().unwrap();
-
-        if read_mutex.is_none() {
-            // Fast path, see if we can just grab the lock
-            if let Ok(ref mut guard) = self.inner.try_read() {
-                return poll_recv(&guard.pconn, cx, bufs, meta);
-            }
-
-            // Otherwise prepare a lock.
-            let fut = Box::pin(self.inner.clone().read_owned());
-            read_mutex.replace(fut);
-        }
-
-        // Waiting on aquiring the lock
-        let mut fut = read_mutex.take().expect("just set");
-        match fut.poll_unpin(cx) {
-            Poll::Pending => {
-                read_mutex.replace(fut);
-                return Poll::Pending;
-            }
-            Poll::Ready(guard) => poll_recv(&guard.pconn, cx, bufs, meta),
-        }
-    }
-
-    fn local_addr(&self) -> io::Result<SocketAddr> {
-        // blocking read..
-        self.inner.blocking_read().local_addr()
     }
 }
 
