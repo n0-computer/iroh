@@ -164,19 +164,12 @@ pub struct Inner {
     /// The wireguard-go conn.Bind for Conn.
     // bind: UdpSocket, // ConnBind,
 
-    // TODO:
-    // owned by receiveIPv4 and receiveIPv6, respectively, to cache an IPPort->endpoint for hot flows.
-    // ippEndpoint4, ippEndpoint6 ippEndpointCache
+    // owned by receiveIPv4 and receiveIPv6, respectively, to cache an SocketAddr -> Endpoint for hot flows.
+    socket_endpoint4: SocketEndpointCache,
+    socket_endpoint6: SocketEndpointCache,
 
     // ============================================================
     // Fields that must be accessed via atomic load/stores.
-    /// Whether IPv4 and IPv6 are known to be missing.
-    /// They're only used to suppress log spam. The name
-    /// is named negatively because in early start-up, we don't yet
-    /// necessarily have a netcheck.Report and don't want to skip logging.
-    no_v4: AtomicBool,
-    no_v6: AtomicBool,
-
     /// Whether IPv4 UDP is known to be unable to transmit
     /// at all. This could happen if the socket is in an invalid state
     /// (as can happen on darwin after a network link status change).
@@ -388,11 +381,11 @@ impl Conn {
             net_checker,
             have_private_key: AtomicBool::new(false),
             last_net_check_report: Default::default(),
-            no_v4: AtomicBool::new(false),
-            no_v6: AtomicBool::new(false),
             no_v4_send: AtomicBool::new(false),
             pconn4: RebindingUdpConn::default(),
             pconn6: RebindingUdpConn::default(),
+            socket_endpoint4: SocketEndpointCache::default(),
+            socket_endpoint6: SocketEndpointCache::default(),
             state_notifier: sync::Notify::new(),
             on_stun_receive: Default::default(),
             state: Default::default(),
@@ -593,8 +586,6 @@ impl Conn {
             let report = self.net_checker.get_report(&dm).await?;
             *self.last_net_check_report.write().await = Some(report.clone());
             let r = report.read().await;
-            self.no_v4.store(r.ipv4, Ordering::Relaxed);
-            self.no_v6.store(r.ipv6, Ordering::Relaxed);
             self.no_v4_send.store(r.ipv4_can_send, Ordering::Relaxed);
 
             let mut ni = cfg::NetInfo {
@@ -1012,8 +1003,7 @@ impl Conn {
         b: &[u8],
     ) -> Result<bool> {
         if addr.ip() != DERP_MAGIC_IP {
-            todo!();
-            // return self.send_udp(addr, b).await;
+            return self.send_udp(addr, b).await;
         }
 
         match self.derp_write_chan_of_addr(addr, pub_key) {
@@ -1040,6 +1030,15 @@ impl Conn {
                 todo!()
             }
         }
+    }
+
+    async fn send_udp(&self, addr: SocketAddr, b: &[u8]) -> Result<bool> {
+        let ok = match addr {
+            SocketAddr::V4(_) => self.pconn4.send_to(addr, b).await?,
+            SocketAddr::V6(_) => self.pconn6.send_to(addr, b).await?,
+        };
+
+        Ok(ok)
     }
 
     /// Returns a DERP client for fake UDP addresses that represent DERP servers, creating them as necessary.
@@ -1354,80 +1353,14 @@ impl Conn {
         }
     }
 
-    // type receiveBatch struct {
-    // 	msgs []ipv6.Message
-    // }
-
-    async fn receive_ipv6(
+    /// Handles deciding if a received UDP packet should be reported to the above layer or not.
+    /// Returns `false` if this is an internal packet and it should not be reported.
+    fn receive_ip(
         &self,
-        buffs: &[&[u8]],
-        sizes: &[usize],
-        eps: &[Endpoint],
-    ) -> Result<usize> {
-        loop {
-            let num_msgs = buffs.len();
-            let mut report_to_caller = false;
-            todo!();
-            /*for (i, msg) in buffs.into_iter().enumerate() {
-            let ipp = msg.Addr.(*net.UDPAddr).AddrPort();
-            if let Ok(ep) = self.receive_ip(msg.Buffers[0][:msg.N], ipp, &c.ippEndpoint6) {
-                metricRecvDataIPv6.Add(1);
-                eps[i] = ep;
-                sizes[i] = msg.N;
-                report_to_caller = true;
-            } else {
-                sizes[i] = 0;
-            }
-            }*/
-
-            if report_to_caller {
-                return Ok(num_msgs);
-            }
-        }
-    }
-
-    // func (c *Conn) receiveIPv4(buffs [][]byte, sizes []int, eps []conn.Endpoint) (int, error) {
-    // 	health.ReceiveIPv4.Enter()
-    // 	defer health.ReceiveIPv4.Exit()
-
-    // 	batch := c.getReceiveBatch()
-    // 	defer c.putReceiveBatch(batch)
-    // 	for {
-    // 		for i := range buffs {
-    // 			batch.msgs[i].Buffers[0] = buffs[i]
-    // 		}
-    // 		numMsgs, err := c.pconn4.ReadBatch(batch.msgs, 0)
-    // 		if err != nil {
-    // 			if neterror.PacketWasTruncated(err) {
-    // 				// TODO(raggi): discuss whether to log?
-    // 				continue
-    // 			}
-    // 			return 0, err
-    // 		}
-
-    // 		reportToCaller := false
-    // 		for i, msg := range batch.msgs[:numMsgs] {
-    // 			ipp := msg.Addr.(*net.UDPAddr).AddrPort()
-    // 			if ep, ok := c.receiveIP(msg.Buffers[0][:msg.N], ipp, &c.ippEndpoint4); ok {
-    // 				metricRecvDataIPv4.Add(1)
-    // 				eps[i] = ep
-    // 				sizes[i] = msg.N
-    // 				reportToCaller = true
-    // 			} else {
-    // 				sizes[i] = 0
-    // 			}
-    // 		}
-    // 		if reportToCaller {
-    // 			return numMsgs, nil
-    // 		}
-    // 	}
-    // }
-
-    // // receiveIP is the shared bits of ReceiveIPv4 and ReceiveIPv6.
-    // //
-    // // ok is whether this read should be reported up to wireguard-go (our
-    // // caller).
-    fn receive_ip(&self, b: &mut io::IoSliceMut<'_>, meta: &mut quinn_udp::RecvMeta) -> bool {
+        b: &mut io::IoSliceMut<'_>,
+        meta: &mut quinn_udp::RecvMeta,
+        cache: &SocketEndpointCache,
+    ) -> bool {
         if stun::is(b) {
             if let Some(ref f) = &*self.on_stun_receive.blocking_read() {
                 f(b, meta.addr);
@@ -1443,19 +1376,26 @@ impl Conn {
             return false;
         }
 
-        let state = self.state.blocking_lock();
-        match state.peer_map.endpoint_for_ip_port(&meta.addr) {
-            None => false,
-            Some(de) => {
-                meta.dst_ip = Some(de.fake_wg_addr.ip());
-
-                // ep.noteRecvActivity();
-                // if stats := c.stats.Load(); stats != nil {
-                //     stats.UpdateRxPhysical(ep.nodeAddr, ipp, len(b));
-                // }
-                true
+        if let Some(de) = cache.get(&meta.addr) {
+            meta.dst_ip = Some(de.fake_wg_addr.ip());
+        } else {
+            let state = self.state.blocking_lock();
+            match state.peer_map.endpoint_for_ip_port(&meta.addr) {
+                None => {
+                    return false;
+                }
+                Some(de) => {
+                    cache.update(meta.addr, de.clone());
+                    meta.dst_ip = Some(de.fake_wg_addr.ip());
+                }
             }
         }
+
+        // ep.noteRecvActivity();
+        // if stats := c.stats.Load(); stats != nil {
+        //     stats.UpdateRxPhysical(ep.nodeAddr, ipp, len(b));
+        // }
+        true
     }
 
     // func (c *connBind) receiveDERP(buffs [][]byte, sizes []int, eps []conn.Endpoint) (int, error) {
@@ -2977,7 +2917,7 @@ impl AsyncUdpSocket for Conn {
                 debug_assert!(num_msgs < bufs.len());
                 let mut i = 0;
                 while i < num_msgs {
-                    if !self.receive_ip(&mut bufs[i], &mut meta[i]) {
+                    if !self.receive_ip(&mut bufs[i], &mut meta[i], &self.socket_endpoint4) {
                         // move all following over
                         for k in i..num_msgs - 1 {
                             bufs.swap(k, k + 1);
@@ -3007,7 +2947,7 @@ impl AsyncUdpSocket for Conn {
                     debug_assert!(num_msgs + num_msgs_total < bufs.len());
                     let mut i = num_msgs_total;
                     while i < num_msgs + num_msgs_total {
-                        if !self.receive_ip(&mut bufs[i], &mut meta[i]) {
+                        if !self.receive_ip(&mut bufs[i], &mut meta[i], &self.socket_endpoint6) {
                             // move all following over
                             for k in i..num_msgs + num_msgs_total - 1 {
                                 bufs.swap(k, k + 1);
@@ -3059,4 +2999,24 @@ struct DerpWriteRequest {
     addr: SocketAddr,
     pub_key: key::node::PublicKey,
     b: Vec<u8>,
+}
+
+#[derive(Default)]
+struct SocketEndpointCache(std::sync::Mutex<Option<(SocketAddr, u64, Endpoint)>>);
+
+impl SocketEndpointCache {
+    pub fn get(&self, addr: &SocketAddr) -> Option<Endpoint> {
+        if let Some(inner) = &*self.0.lock().unwrap() {
+            if &inner.0 == addr && inner.1 == inner.2.num_stop_and_reset() {
+                return Some(inner.2.clone());
+            }
+        }
+
+        None
+    }
+
+    pub fn update(&self, addr: SocketAddr, ep: Endpoint) {
+        let mut inner = self.0.lock().unwrap();
+        inner.replace((addr, ep.num_stop_and_reset(), ep));
+    }
 }
