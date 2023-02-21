@@ -23,6 +23,7 @@ use tracing_subscriber::{prelude::*, EnvFilter};
 use iroh::{get, provider, Hash, Keypair, PeerId};
 
 const RPC_PORT: u16 = 0x1337;
+const RPC_ALPN: [u8; 17] = *b"n0/provider-rpc/1";
 
 #[derive(Parser, Debug, Clone)]
 #[clap(version, about, long_about = None)]
@@ -222,7 +223,7 @@ impl FromStr for Blake3Cid {
 async fn make_rpc_client(
 ) -> anyhow::Result<RpcClient<ProviderService, QuinnConnection<ProviderResponse, ProviderRequest>>>
 {
-    let endpoint = iroh::get::make_client_endpoint(None, vec!["rpc".as_bytes().to_vec()], false)?;
+    let endpoint = iroh::get::make_client_endpoint(None, vec![RPC_ALPN.to_vec()], false)?;
     let addr: SocketAddr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, RPC_PORT));
     let server_name = "localhost".to_string();
     let connection = QuinnConnection::new(endpoint, addr, server_name);
@@ -436,7 +437,7 @@ async fn provide_interactive(
 fn make_rpc_endpoint(keypair: &Keypair) -> Result<impl ServiceEndpoint<ProviderService>> {
     let rpc_addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, RPC_PORT));
     let rpc_quinn_endpoint = quinn::Endpoint::server(
-        iroh::provider::make_server_config(keypair, 1024, 16, vec!["rpc".as_bytes().to_vec()])?,
+        iroh::provider::make_server_config(keypair, 1024, 4, vec![RPC_ALPN.to_vec()])?,
         rpc_addr,
     )?;
     let rpc_endpoint =
