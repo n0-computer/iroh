@@ -50,6 +50,8 @@ hex = "0.4.3"
 proptest = "1.0.0"
 rand = "0.7"
 testdir = "0.7.1"
+expect-test = "1.4.0"
+regex = { version = "1.7.1", features = ["std"] }
 
 [features]
 default = ["cli"]

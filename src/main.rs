@@ -297,6 +297,7 @@ async fn provide_interactive(
                     paths.push(el.path().into());
                 }
             }
+            paths.sort();
             paths
         } else if path.is_file() {
             vec![path.into()]
