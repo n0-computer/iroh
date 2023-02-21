@@ -17,7 +17,7 @@ pub use util::Hash;
 mod tests {
     use std::{
         net::SocketAddr,
-        path::PathBuf,
+        path::{Path, PathBuf},
         sync::{atomic::AtomicUsize, Arc},
         time::Duration,
     };
@@ -402,5 +402,46 @@ mod tests {
 
         err.expect_err("expected an error when passing in a misbehaving `on_blob` function");
         Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_ipv6() {
+        let readme = Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md");
+        let (db, hash) = create_collection(vec![readme.into()]).await.unwrap();
+        let provider = match Provider::builder(db)
+            .bind_addr("[::1]:0".parse().unwrap())
+            .spawn()
+        {
+            Ok(provider) => provider,
+            Err(_) => {
+                // We assume the problem here is IPv6 on this host.  If the problem is
+                // not IPv6 then other tests will also fail.
+                return;
+            }
+        };
+        let auth_token = provider.auth_token();
+        let addr = provider.listen_addr();
+        let peer_id = Some(provider.peer_id());
+        tokio::time::timeout(
+            Duration::from_secs(10),
+            get::run(
+                hash,
+                auth_token,
+                get::Options {
+                    addr,
+                    peer_id,
+                    keylog: true,
+                },
+                || async move { Ok(()) },
+                |_collection| async move { Ok(()) },
+                |_hash, mut stream, _name| async move {
+                    io::copy(&mut stream, &mut io::sink()).await?;
+                    Ok(stream)
+                },
+            ),
+        )
+        .await
+        .expect("timeout")
+        .expect("get failed");
     }
 }
