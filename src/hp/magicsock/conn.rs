@@ -4,6 +4,7 @@ use std::{
     io,
     net::{IpAddr, SocketAddr},
     ops::Deref,
+    pin::Pin,
     sync::{
         atomic::{AtomicBool, AtomicU16, Ordering},
         Arc,
@@ -14,14 +15,15 @@ use std::{
 
 use anyhow::{bail, Context as _, Result};
 use backoff::backoff::Backoff;
-use futures::future::BoxFuture;
+use futures::{future::BoxFuture, Future};
 use quinn::AsyncUdpSocket;
 use rand::{seq::SliceRandom, Rng, SeedableRng};
+use subtle::ConstantTimeEq;
 use tokio::{
     sync::{self, mpsc, Mutex, RwLock},
     time::{self, Instant},
 };
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use crate::hp::{
     cfg::{self, DERP_MAGIC_IP},
@@ -34,7 +36,8 @@ use crate::hp::{
 use super::{
     endpoint::PeerMap,
     rebinding_conn::{RebindingUdpConn, UdpSocket},
-    ActiveDerp, Endpoint, Timer, SOCKET_BUFFER_SIZE,
+    ActiveDerp, Endpoint, Timer, DERP_CLEAN_STALE_INTERVAL, DERP_INACTIVE_CLEANUP_TIME,
+    SOCKET_BUFFER_SIZE,
 };
 
 /// How many packets writes can be queued up the DERP client to write on the wire before we start
@@ -1855,306 +1858,246 @@ impl Conn {
         state.disco_info.get_mut(k).unwrap()
     }
 
-    // func (c *Conn) SetNetworkUp(up bool) {
-    // 	c.mu.Lock()
-    // 	defer c.mu.Unlock()
-    // 	if c.networkUp.Load() == up {
-    // 		return
-    // 	}
+    pub async fn set_network_up(&self, up: bool) {
+        let mut state = self.state.lock().await;
+        if self.network_up.load(Ordering::Relaxed) == up {
+            return;
+        }
 
-    // 	c.logf("magicsock: SetNetworkUp(%v)", up)
-    // 	c.networkUp.Store(up)
+        info!("magicsock: set_network_up({})", up);
+        self.network_up.store(up, Ordering::Relaxed);
 
-    // 	if up {
-    // 		c.startDerpHomeConnectLocked()
-    // 	} else {
-    // 		c.portMapper.NoteNetworkDown()
-    // 		c.closeAllDerpLocked("network-down")
-    // 	}
-    // }
+        if up {
+            self.start_derp_home_connect_locked(&mut state);
+        } else {
+            self.port_mapper.note_network_down();
+            self.close_all_derp_locked(&mut state, "network-down");
+        }
+    }
 
-    // // SetPreferredPort sets the connection's preferred local port.
-    // func (c *Conn) SetPreferredPort(port uint16) {
-    // 	if uint16(c.port.Load()) == port {
-    // 		return
-    // 	}
-    // 	c.port.Store(uint32(port))
+    /// Sets the connection's preferred local port.
+    pub async fn set_preferred_port(&self, port: u16) {
+        let existing_port = self.port.swap(port, Ordering::Relaxed);
+        if existing_port == port {
+            return;
+        }
 
-    // 	if err := c.rebind(dropCurrentPort); err != nil {
-    // 		c.logf("%w", err)
-    // 		return
-    // 	}
-    // 	c.resetEndpointStates()
-    // }
+        if let Err(err) = self.rebind(CurrentPortFate::Drop).await {
+            warn!("failed to rebind: {:?}", err);
+            return;
+        }
+        self.reset_endpoint_states().await;
+    }
 
-    // // SetPrivateKey sets the connection's private key.
-    // //
-    // // This is only used to be able prove our identity when connecting to
-    // // DERP servers.
-    // //
-    // // If the private key changes, any DERP connections are torn down &
-    // // recreated when needed.
-    // func (c *Conn) SetPrivateKey(privateKey key.NodePrivate) error {
-    // 	c.mu.Lock()
-    // 	defer c.mu.Unlock()
+    /// Sets the connection's secret key.
+    ///
+    /// This is only used to be able prove our identity when connecting to DERP servers.
+    ///
+    /// If the secret key changes, any DERP connections are torn down & recreated when needed.
+    pub async fn set_private_key(&self, new_key: key::node::SecretKey) -> Result<()> {
+        let mut state = self.state.lock().await;
 
-    // 	oldKey, newKey := c.privateKey, privateKey
-    // 	if newKey.Equal(oldKey) {
-    // 		return nil
-    // 	}
-    // 	c.privateKey = newKey
-    // 	c.havePrivateKey.Store(!newKey.IsZero())
+        let old_key = &state.private_key;
+        if old_key.is_some()
+            && old_key
+                .as_ref()
+                .unwrap()
+                .to_bytes()
+                .ct_eq(&new_key.to_bytes())
+                .into()
+        {
+            return Ok(());
+        }
+        let old_key = state.private_key.replace(new_key);
+        self.have_private_key.store(true, Ordering::Relaxed);
 
-    // 	if newKey.IsZero() {
-    // 		c.publicKeyAtomic.Store(key.node::PublicKey{})
-    // 	} else {
-    // 		c.publicKeyAtomic.Store(newKey.Public())
-    // 	}
+        if old_key.is_none() {
+            state.ever_had_key = true;
+            info!("set_private_key called (init)");
 
-    // 	if oldKey.IsZero() {
-    // 		c.everHadKey = true
-    // 		c.logf("magicsock: SetPrivateKey called (init)")
-    // 		go c.ReSTUN("set-private-key")
-    // 	} else if newKey.IsZero() {
-    // 		c.logf("magicsock: SetPrivateKey called (zeroed)")
-    // 		c.closeAllDerpLocked("zero-private-key")
-    // 		c.stopPeriodicReSTUNTimerLocked()
-    // 		c.onEndpointRefreshed = nil
-    // 	} else {
-    // 		c.logf("magicsock: SetPrivateKey called (changed)")
-    // 		c.closeAllDerpLocked("new-private-key")
-    // 	}
+            let this = self.clone();
+            tokio::task::spawn(async move {
+                this.re_stun("set-private-key").await;
+            });
+        } else {
+            info!("set_private_key called (changed)");
+            self.close_all_derp_locked(&mut state, "new-private-key");
+        }
 
-    // 	// Key changed. Close existing DERP connections and reconnect to home.
-    // 	if c.myDerp != 0 && !newKey.IsZero() {
-    // 		c.logf("magicsock: private key changed, reconnecting to home derp-%d", c.myDerp)
-    // 		c.startDerpHomeConnectLocked()
-    // 	}
+        // Key changed. Close existing DERP connections and reconnect to home.
+        if state.my_derp != 0 {
+            info!(
+                "private key changed, reconnecting to home derp-{}",
+                state.my_derp
+            );
+            self.start_derp_home_connect_locked(&mut state);
+        }
 
-    // 	if newKey.IsZero() {
-    // 		c.peerMap.forEachEndpoint(func(ep *endpoint) {
-    // 			ep.stopAndReset()
-    // 		})
-    // 	}
+        Ok(())
+    }
 
-    // 	return nil
-    // }
+    /// Called when the set of WireGuard peers changes. It then removes any state for old peers.
+    pub async fn update_peers(&self, new_peers: HashSet<key::node::PublicKey>) {
+        let mut state = self.state.lock().await;
 
-    // // UpdatePeers is called when the set of WireGuard peers changes. It
-    // // then removes any state for old peers.
-    // //
-    // // The caller passes ownership of newPeers map to UpdatePeers.
-    // func (c *Conn) UpdatePeers(newPeers map[key.node::PublicKey]struct{}) {
-    // 	c.mu.Lock()
-    // 	defer c.mu.Unlock()
+        let old_peers = std::mem::replace(&mut state.peer_set, new_peers);
 
-    // 	oldPeers := c.peerSet
-    // 	c.peerSet = newPeers
+        // Clean up any maps for peers that no longer exist.
+        for peer in &old_peers {
+            if !state.peer_set.contains(peer) {
+                state.derp_route.remove(peer);
+            }
+        }
 
-    // 	// Clean up any key.node::PublicKey-keyed maps for peers that no longer
-    // 	// exist.
-    // 	for peer := range oldPeers {
-    // 		if _, ok := newPeers[peer]; !ok {
-    // 			delete(c.derpRoute, peer)
-    // 			delete(c.peerLastDerp, peer)
-    // 		}
-    // 	}
+        if old_peers.is_empty() && !state.peer_set.is_empty() {
+            let this = self.clone();
+            tokio::task::spawn(async move {
+                this.re_stun("non-zero-peers").await;
+            });
+        }
+    }
 
-    // 	if len(oldPeers) == 0 && len(newPeers) > 0 {
-    // 		go c.ReSTUN("non-zero-peers")
-    // 	}
-    // }
+    /// Controls which (if any) DERP servers are used. A `None` value means to disable DERP; it's disabled by default.
+    pub async fn set_derp_map(&self, dm: Option<derp::DerpMap>) {
+        let mut state = self.state.lock().await;
 
-    // // SetDERPMap controls which (if any) DERP servers are used.
-    // // A nil value means to disable DERP; it's disabled by default.
-    // func (c *Conn) SetDERPMap(dm *tailcfg.DERPMap) {
-    // 	c.mu.Lock()
-    // 	defer c.mu.Unlock()
+        if state.derp_map == dm {
+            return;
+        }
 
-    // 	if reflect.DeepEqual(dm, c.derpMap) {
-    // 		return
-    // 	}
+        let old = std::mem::replace(&mut state.derp_map, dm);
+        if state.derp_map.is_none() {
+            self.close_all_derp_locked(&mut state, "derp-disabled");
+            return;
+        }
 
-    // 	c.derpMapAtomic.Store(dm)
-    // 	old := c.derpMap
-    // 	c.derpMap = dm
-    // 	if dm == nil {
-    // 		c.closeAllDerpLocked("derp-disabled")
-    // 		return
-    // 	}
+        // Reconnect any DERP region that changed definitions.
+        if let Some(old) = old {
+            let mut changes = false;
+            for (rid, old_def) in old.regions {
+                if let Some(new_def) = state.derp_map.as_ref().unwrap().regions.get(&rid) {
+                    if &old_def == new_def {
+                        continue;
+                    }
+                }
+                changes = true;
+                if rid == state.my_derp {
+                    state.my_derp = 0;
+                }
+                self.close_derp_locked(rid, "derp-region-redefined", &mut state.active_derp);
+            }
+            if changes {
+                self.log_active_derp_locked(&mut state);
+            }
+        }
 
-    // 	// Reconnect any DERP region that changed definitions.
-    // 	if old != nil {
-    // 		changes := false
-    // 		for rid, oldDef := range old.Regions {
-    // 			if reflect.DeepEqual(oldDef, dm.Regions[rid]) {
-    // 				continue
-    // 			}
-    // 			changes = true
-    // 			if rid == c.myDerp {
-    // 				c.myDerp = 0
-    // 			}
-    // 			c.closeDerpLocked(rid, "derp-region-redefined")
-    // 		}
-    // 		if changes {
-    // 			c.logActiveDerpLocked()
-    // 		}
-    // 	}
+        let this = self.clone();
+        tokio::task::spawn(async move {
+            this.re_stun("derp-map-update").await;
+        });
+    }
 
-    // 	go c.ReSTUN("derp-map-update")
-    // }
+    /// Called when the control client gets a new network map from the control server.
+    /// It should not use the DerpMap field of NetworkMap; that's
+    /// conditionally sent to set_derp_map instead.
+    pub async fn set_network_map(&self, nm: netmap::NetworkMap) {
+        let mut state = self.state.lock().await;
 
-    // func nodesEqual(x, y []*tailcfg.Node) bool {
-    // 	if len(x) != len(y) {
-    // 		return false
-    // 	}
-    // 	for i := range x {
-    // 		if !x[i].Equal(y[i]) {
-    // 			return false
-    // 		}
-    // 	}
-    // 	return true
-    // }
+        if state.closed {
+            return;
+        }
 
-    // // SetNetworkMap is called when the control client gets a new network
-    // // map from the control server. It must always be non-nil.
-    // //
-    // // It should not use the DERPMap field of NetworkMap; that's
-    // // conditionally sent to SetDERPMap instead.
-    // func (c *Conn) SetNetworkMap(nm *netmap.NetworkMap) {
-    // 	c.mu.Lock()
-    // 	defer c.mu.Unlock()
+        // Update selt.net_map regardless, before the following early return.
+        let prior_netmap = state.net_map.replace(nm);
 
-    // 	if c.closed {
-    // 		return
-    // 	}
+        // TODO:
+        // metricNumPeers.Set(int64(len(nm.Peers)))
 
-    // 	priorNetmap := c.netMap
-    // 	var priorDebug *tailcfg.Debug
-    // 	if priorNetmap != nil {
-    // 		priorDebug = priorNetmap.Debug
-    // 	}
-    // 	debugChanged := !reflect.DeepEqual(priorDebug, nm.Debug)
-    // 	metricNumPeers.Set(int64(len(nm.Peers)))
+        if prior_netmap.is_some()
+            && prior_netmap.as_ref().unwrap().peers == state.net_map.as_ref().unwrap().peers
+        {
+            // The rest of this function is all adjusting state for peers that have
+            // changed. But if the set of peers is equal no need to do anything else.
+            return;
+        }
 
-    // 	// Update c.netMap regardless, before the following early return.
-    // 	c.netMap = nm
+        info!(
+            "got updated network map; {} peers",
+            state.net_map.as_ref().unwrap().peers.len()
+        );
 
-    // 	if priorNetmap != nil && nodesEqual(priorNetmap.Peers, nm.Peers) && !debugChanged {
-    // 		// The rest of this function is all adjusting state for peers that have
-    // 		// changed. But if the set of peers is equal and the debug flags (for
-    // 		// silent disco) haven't changed, no need to do anything else.
-    // 		return
-    // 	}
+        // Try a pass of just upserting nodes and creating missing
+        // endpoints. If the set of nodes is the same, this is an
+        // efficient alloc-free update. If the set of nodes is different,
+        // we'll fall through to the next pass, which allocates but can
+        // handle full set updates.
+        let ConnState {
+            disco_info,
+            net_map,
+            peer_map,
+            ..
+        } = &mut *state;
+        for n in &net_map.as_ref().unwrap().peers {
+            if let Some(ep) = peer_map.endpoint_for_node_key(&n.key).cloned() {
+                let old_disco_key = ep.disco_key();
+                ep.update_from_node(n);
+                peer_map.upsert_endpoint(ep, Some(&old_disco_key)).await; // maybe update discokey mappings in peerMap
+                continue;
+            }
+            let ep = Endpoint::new(self.clone(), n);
+            ep.update_from_node(n);
+            peer_map.upsert_endpoint(ep, None).await;
+        }
 
-    // 	c.logf("[v1] magicsock: got updated network map; %d peers", len(nm.Peers))
-    // 	heartbeatDisabled := debugEnableSilentDisco() || (c.netMap != nil && c.netMap.Debug != nil && c.netMap.Debug.EnableSilentDisco)
+        // If the set of nodes changed since the last SetNetworkMap, the
+        // upsert loop just above made c.peerMap contain the union of the
+        // old and new peers - which will be larger than the set from the
+        // current netmap. If that happens, go through the allocful
+        // deletion path to clean up moribund nodes.
+        if peer_map.node_count() != net_map.as_ref().unwrap().peers.len() {
+            let keep: HashSet<_> = net_map
+                .as_ref()
+                .unwrap()
+                .peers
+                .iter()
+                .map(|n| n.key.clone())
+                .collect();
 
-    // 	// Try a pass of just upserting nodes and creating missing
-    // 	// endpoints. If the set of nodes is the same, this is an
-    // 	// efficient alloc-free update. If the set of nodes is different,
-    // 	// we'll fall through to the next pass, which allocates but can
-    // 	// handle full set updates.
-    // 	for _, n := range nm.Peers {
-    // 		if ep, ok := c.peerMap.endpointForNodeKey(n.Key); ok {
-    // 			if n.DiscoKey.IsZero() {
-    // 				// Discokey transitioned from non-zero to zero? Ignore. Server's confused.
-    // 				c.peerMap.deleteEndpoint(ep)
-    // 				continue
-    // 			}
-    // 			oldDiscoKey := ep.discoKey
-    // 			ep.updateFromNode(n, heartbeatDisabled)
-    // 			c.peerMap.upsertEndpoint(ep, oldDiscoKey) // maybe update discokey mappings in peerMap
-    // 			continue
-    // 		}
-    // 		if n.DiscoKey.IsZero() {
-    // 			// Ancient pre-0.100 node. Ignore, so we can assume elsewhere in magicsock
-    // 			// that all nodes have a DiscoKey.
-    // 			continue
-    // 		}
+            let to_delete: Vec<_> = peer_map
+                .endpoints()
+                .filter_map(|ep| {
+                    if keep.contains(&ep.public_key) {
+                        None
+                    } else {
+                        Some(ep.clone())
+                    }
+                })
+                .collect();
 
-    // 		ep := &endpoint{
-    // 			c:                 c,
-    // 			publicKey:         n.Key,
-    // 			publicKeyHex:      n.Key.UntypedHexString(),
-    // 			sentPing:          map[stun.TxID]sentPing{},
-    // 			endpointState:     map[netip.AddrPort]*endpointState{},
-    // 			heartbeatDisabled: heartbeatDisabled,
-    // 		}
-    // 		if len(n.Addresses) > 0 {
-    // 			ep.nodeAddr = n.Addresses[0].Addr()
-    // 		}
-    // 		ep.discoKey = n.DiscoKey
-    // 		ep.discoShort = n.DiscoKey.ShortString()
-    // 		ep.initFakeUDPAddr()
-    // 		if debugDisco() { // rather than making a new knob
-    // 			c.logf("magicsock: created endpoint key=%s: disco=%s; %v", n.Key.ShortString(), n.DiscoKey.ShortString(), logger.ArgWriter(func(w *bufio.Writer) {
-    // 				const derpPrefix = "127.3.3.40:"
-    // 				if strings.HasPrefix(n.DERP, derpPrefix) {
-    // 					ipp, _ := netip.ParseAddrPort(n.DERP)
-    // 					regionID := int(ipp.Port())
-    // 					code := c.derpRegionCodeLocked(regionID)
-    // 					if code != "" {
-    // 						code = "(" + code + ")"
-    // 					}
-    // 					fmt.Fprintf(w, "derp=%v%s ", regionID, code)
-    // 				}
+            for ep in to_delete {
+                peer_map.delete_endpoint(&ep).await;
+            }
+        }
 
-    // 				for _, a := range n.AllowedIPs {
-    // 					if a.IsSingleIP() {
-    // 						fmt.Fprintf(w, "aip=%v ", a.Addr())
-    // 					} else {
-    // 						fmt.Fprintf(w, "aip=%v ", a)
-    // 					}
-    // 				}
-    // 				for _, ep := range n.Endpoints {
-    // 					fmt.Fprintf(w, "ep=%v ", ep)
-    // 				}
-    // 			}))
-    // 		}
-    // 		ep.updateFromNode(n, heartbeatDisabled)
-    // 		c.peerMap.upsertEndpoint(ep, key.DiscoPublic{})
-    // 	}
-
-    // 	// If the set of nodes changed since the last SetNetworkMap, the
-    // 	// upsert loop just above made c.peerMap contain the union of the
-    // 	// old and new peers - which will be larger than the set from the
-    // 	// current netmap. If that happens, go through the allocful
-    // 	// deletion path to clean up moribund nodes.
-    // 	if c.peerMap.nodeCount() != len(nm.Peers) {
-    // 		keep := make(map[key.node::PublicKey]bool, len(nm.Peers))
-    // 		for _, n := range nm.Peers {
-    // 			keep[n.Key] = true
-    // 		}
-    // 		c.peerMap.forEachEndpoint(func(ep *endpoint) {
-    // 			if !keep[ep.publicKey] {
-    // 				c.peerMap.deleteEndpoint(ep)
-    // 			}
-    // 		})
-    // 	}
-
-    // 	// discokeys might have changed in the above. Discard unused info.
-    // 	for dk := range c.discoInfo {
-    // 		if !c.peerMap.anyEndpointForDiscoKey(dk) {
-    // 			delete(c.discoInfo, dk)
-    // 		}
-    // 	}
-    // }
+        // discokeys might have changed in the above. Discard unused info.
+        disco_info.retain(|dk, _| peer_map.any_endpoint_for_disco_key(dk));
+    }
 
     fn want_derp_locked(&self, state: &mut ConnState) -> bool {
         state.derp_map.is_some()
     }
 
-    // // c.mu must be held.
-    // func (c *Conn) closeAllDerpLocked(why string) {
-    // 	if len(c.activeDerp) == 0 {
-    // 		return // without the useless log statement
-    // 	}
-    // 	for i := range c.activeDerp {
-    // 		c.closeDerpLocked(i, why)
-    // 	}
-    // 	c.logActiveDerpLocked()
-    // }
+    fn close_all_derp_locked(&self, state: &mut ConnState, why: &'static str) {
+        if state.active_derp.is_empty() {
+            return; // without the useless log statement
+        }
+        // Need to collect to avoid double borrow
+        let regions: Vec<_> = state.active_derp.keys().copied().collect();
+        for region in regions {
+            self.close_derp_locked(region, why, &mut state.active_derp);
+        }
+        self.log_active_derp_locked(state);
+    }
 
     /// Called in response to a rebind, closes all DERP connections that don't have a local address in okay_local_ips
     /// and pings all those that do.
@@ -2212,21 +2155,28 @@ impl Conn {
         why: &'static str,
         state: &mut ConnState,
     ) {
-        self.close_derp_locked(region_id, why, state);
+        self.close_derp_locked(region_id, why, &mut state.active_derp);
         if state.private_key.is_some() && state.my_derp == region_id {
             self.start_derp_home_connect_locked(state);
         }
     }
 
     /// It is the responsibility of the caller to call `log_active_derp_locked` after any set of closes.
-    fn close_derp_locked(&self, region_id: usize, why: &'static str, state: &mut ConnState) {
-        if let Some(ad) = state.active_derp.remove(&region_id) {
+    fn close_derp_locked(
+        &self,
+        region_id: usize,
+        why: &'static str,
+        active_derp: &mut HashMap<usize, ActiveDerp>,
+    ) {
+        if let Some(ad) = active_derp.remove(&region_id) {
             debug!(
                 "closing connection to derp-{} ({:?}), age {}s",
                 region_id,
                 why,
                 ad.create_time.elapsed().as_secs()
             );
+
+            todo!();
             // TODO:
             // tokio::task::spawn(ad.c.close());
             // ad.cancel();
@@ -2279,205 +2229,138 @@ impl Conn {
             .map(|id| (id, state.active_derp.get(&id).unwrap()))
     }
 
-    // func (c *Conn) cleanStaleDerp() {
-    // 	c.mu.Lock()
-    // 	defer c.mu.Unlock()
-    // 	if c.closed {
-    // 		return
-    // 	}
-    // 	c.derpCleanupTimerArmed = false
+    async fn clean_stale_derp(&self) {
+        let mut state = self.state.lock().await;
+        if state.closed {
+            return;
+        }
+        state.derp_cleanup_timer_armed = false;
+        let too_old = DERP_INACTIVE_CLEANUP_TIME;
+        let now = Instant::now();
+        let mut dirty = false;
+        let mut some_non_home_open = false;
 
-    // 	tooOld := time.Now().Add(-derpInactiveCleanupTime)
-    // 	dirty := false
-    // 	someNonHomeOpen := false
-    // 	for i, ad := range c.activeDerp {
-    // 		if i == c.myDerp {
-    // 			continue
-    // 		}
-    // 		if ad.lastWrite.Before(tooOld) {
-    // 			c.closeDerpLocked(i, "idle")
-    // 			dirty = true
-    // 		} else {
-    // 			someNonHomeOpen = true
-    // 		}
-    // 	}
-    // 	if dirty {
-    // 		c.logActiveDerpLocked()
-    // 	}
-    // 	if someNonHomeOpen {
-    // 		c.scheduleCleanStaleDerpLocked()
-    // 	}
-    // }
+        let mut to_close = Vec::new();
+        for (i, ad) in &state.active_derp {
+            if *i == state.my_derp {
+                continue;
+            }
+            if ad.last_write.duration_since(now) > DERP_INACTIVE_CLEANUP_TIME {
+                to_close.push(*i);
+                dirty = true;
+            } else {
+                some_non_home_open = true;
+            }
+        }
+        for i in to_close {
+            self.close_derp_locked(i, "idle", &mut state.active_derp);
+        }
+        if dirty {
+            self.log_active_derp_locked(&mut state);
+        }
+        if some_non_home_open {
+            self.schedule_clean_stale_derp_locked(&mut state).await;
+        }
+    }
 
-    // func (c *Conn) scheduleCleanStaleDerpLocked() {
-    // 	if c.derpCleanupTimerArmed {
-    // 		// Already going to fire soon. Let the existing one
-    // 		// fire lest it get infinitely delayed by repeated
-    // 		// calls to scheduleCleanStaleDerpLocked.
-    // 		return
-    // 	}
-    // 	c.derpCleanupTimerArmed = true
-    // 	if c.derpCleanupTimer != nil {
-    // 		c.derpCleanupTimer.Reset(derpCleanStaleInterval)
-    // 	} else {
-    // 		c.derpCleanupTimer = time.AfterFunc(derpCleanStaleInterval, c.cleanStaleDerp)
-    // 	}
-    // }
+    // uses Pin<Box>> to avoid cycles in type inf
+    fn schedule_clean_stale_derp_locked<'a, 'b: 'a>(
+        &'a self,
+        state: &'b mut ConnState,
+    ) -> Pin<Box<dyn Future<Output = ()> + Send + Sync + 'a>> {
+        Box::pin(async {
+            if state.derp_cleanup_timer_armed {
+                // Already going to fire soon. Let the existing one
+                // fire lest it get infinitely delayed by repeated
+                // calls to scheduleCleanStaleDerpLocked.
+                return;
+            }
+            state.derp_cleanup_timer_armed = true;
+            if let Some(ref t) = state.derp_cleanup_timer {
+                t.reset(DERP_CLEAN_STALE_INTERVAL).await;
+            } else {
+                let this = self.clone();
+                state.derp_cleanup_timer =
+                    Some(Timer::after(DERP_CLEAN_STALE_INTERVAL, async move {
+                        this.clean_stale_derp().await;
+                    }));
+            }
+        })
+    }
 
-    // // DERPs reports the number of active DERP connections.
-    // func (c *Conn) DERPs() int {
-    // 	c.mu.Lock()
-    // 	defer c.mu.Unlock()
+    /// Reports the number of active DERP connections.
+    pub async fn derps(&self) -> usize {
+        self.state.lock().await.active_derp.len()
+    }
 
-    // 	return len(c.activeDerp)
-    // }
+    fn derp_region_code_of_addr_locked(&self, state: &mut ConnState, ip_port: &str) -> String {
+        let addr: std::result::Result<SocketAddr, _> = ip_port.parse();
+        match addr {
+            Ok(addr) => {
+                let region_id = usize::from(addr.port());
+                self.derp_region_code_of_id_locked(state, region_id)
+            }
+            Err(_) => String::new(),
+        }
+    }
 
-    // func (c *Conn) derpRegionCodeOfAddrLocked(ipPort string) string {
-    // 	_, portStr, err := net.SplitHostPort(ipPort)
-    // 	if err != nil {
-    // 		return ""
-    // 	}
-    // 	regionID, err := strconv.Atoi(portStr)
-    // 	if err != nil {
-    // 		return ""
-    // 	}
-    // 	return c.derpRegionCodeOfIDLocked(regionID)
-    // }
+    fn derp_region_code_of_id_locked(&self, state: &mut ConnState, region_id: usize) -> String {
+        if let Some(ref dm) = state.derp_map {
+            if let Some(r) = dm.regions.get(&region_id) {
+                return r.region_code.clone();
+            }
+        }
 
-    // func (c *Conn) derpRegionCodeOfIDLocked(regionID int) string {
-    // 	if c.derpMap == nil {
-    // 		return ""
-    // 	}
-    // 	if r, ok := c.derpMap.Regions[regionID]; ok {
-    // 		return r.RegionCode
-    // 	}
-    // 	return ""
-    // }
+        String::new()
+    }
 
-    // func (c *Conn) UpdateStatus(sb *ipnstate.StatusBuilder) {
-    // 	c.mu.Lock()
-    // 	defer c.mu.Unlock()
+    /// Close closes the connection.
+    ///
+    /// Only the first close does anything. Any later closes return nil.
+    pub async fn close(&self) -> Result<()> {
+        let mut state = self.state.lock().await;
+        if state.closed {
+            return Ok(());
+        }
+        self.closing.store(true, Ordering::Relaxed);
+        if state.derp_cleanup_timer_armed {
+            if let Some(t) = state.derp_cleanup_timer.take() {
+                t.stop().await;
+            }
+        }
+        self.stop_periodic_re_stun_timer(&mut state).await;
+        self.port_mapper.close();
 
-    // 	var tailscaleIPs []netip.Addr
-    // 	if c.netMap != nil {
-    // 		tailscaleIPs = make([]netip.Addr, 0, len(c.netMap.Addresses))
-    // 		for _, addr := range c.netMap.Addresses {
-    // 			if !addr.IsSingleIP() {
-    // 				continue
-    // 			}
-    // 			sb.AddTailscaleIP(addr.Addr())
-    // 			tailscaleIPs = append(tailscaleIPs, addr.Addr())
-    // 		}
-    // 	}
+        for ep in state.peer_map.endpoints() {
+            ep.stop_and_reset().await;
+        }
 
-    // 	sb.MutateSelfStatus(func(ss *ipnstate.PeerStatus) {
-    // 		if !c.privateKey.IsZero() {
-    // 			ss.PublicKey = c.privateKey.Public()
-    // 		} else {
-    // 			ss.PublicKey = key.node::PublicKey{}
-    // 		}
-    // 		ss.Addrs = make([]string, 0, len(c.lastEndpoints))
-    // 		for _, ep := range c.lastEndpoints {
-    // 			ss.Addrs = append(ss.Addrs, ep.Addr.String())
-    // 		}
-    // 		ss.OS = version.OS()
-    // 		if c.derpMap != nil {
-    // 			derpRegion, ok := c.derpMap.Regions[c.myDerp]
-    // 			if ok {
-    // 				ss.Relay = derpRegion.RegionCode
-    // 			}
-    // 		}
-    // 		ss.TailscaleIPs = tailscaleIPs
-    // 	})
+        state.closed = true;
+        // c.connCtxCancel()
+        self.close_all_derp_locked(&mut state, "conn-close");
+        // Ignore errors from c.pconnN.Close.
+        // They will frequently have been closed already by a call to connBind.Close.
+        self.pconn6.close().await.ok();
+        self.pconn4.close().await.ok();
 
-    // 	if sb.WantPeers {
-    // 		c.peerMap.forEachEndpoint(func(ep *endpoint) {
-    // 			ps := &ipnstate.PeerStatus{InMagicSock: true}
-    // 			//ps.Addrs = append(ps.Addrs, n.Endpoints...)
-    // 			ep.populatePeerStatus(ps)
-    // 			sb.AddPeer(ep.publicKey, ps)
-    // 		})
-    // 	}
+        // Wait on tasks updating right at the end, once everything is
+        // already closed. We want everything else in the Conn to be
+        // consistently in the closed state before we release mu to wait
+        // on the endpoint updater & derphttp.Connect.
+        while self.tasks_running_locked(&mut state).await {
+            self.state_notifier.notified().await;
+        }
 
-    // 	c.foreachActiveDerpSortedLocked(func(node int, ad activeDerp) {
-    // 		// TODO(bradfitz): add to ipnstate.StatusBuilder
-    // 		//f("<li><b>derp-%v</b>: cr%v,wr%v</li>", node, simpleDur(now.Sub(ad.createTime)), simpleDur(now.Sub(*ad.lastWrite)))
-    // 	})
-    // }
+        Ok(())
+    }
 
-    // // SetStatistics specifies a per-connection statistics aggregator.
-    // // Nil may be specified to disable statistics gathering.
-    // func (c *Conn) SetStatistics(stats *connstats.Statistics) {
-    // 	c.stats.Store(stats)
-    // }
-
-    // // Close closes the connection.
-    // //
-    // // Only the first close does anything. Any later closes return nil.
-    // func (c *Conn) Close() error {
-    // 	c.mu.Lock()
-    // 	defer c.mu.Unlock()
-    // 	if c.closed {
-    // 		return nil
-    // 	}
-    // 	c.closing.Store(true)
-    // 	if c.derpCleanupTimerArmed {
-    // 		c.derpCleanupTimer.Stop()
-    // 	}
-    // 	c.stopPeriodicReSTUNTimerLocked()
-    // 	c.portMapper.Close()
-
-    // 	c.peerMap.forEachEndpoint(func(ep *endpoint) {
-    // 		ep.stopAndReset()
-    // 	})
-
-    // 	c.closed = true
-    // 	c.connCtxCancel()
-    // 	c.closeAllDerpLocked("conn-close")
-    // 	// Ignore errors from c.pconnN.Close.
-    // 	// They will frequently have been closed already by a call to connBind.Close.
-    // 	c.pconn6.Close()
-    // 	c.pconn4.Close()
-
-    // 	// Wait on goroutines updating right at the end, once everything is
-    // 	// already closed. We want everything else in the Conn to be
-    // 	// consistently in the closed state before we release mu to wait
-    // 	// on the endpoint updater & derphttp.Connect.
-    // 	for c.goroutinesRunningLocked() {
-    // 		c.muCond.Wait()
-    // 	}
-    // 	return nil
-    // }
-
-    // func (c *Conn) goroutinesRunningLocked() bool {
-    // 	if c.endpointsUpdateActive {
-    // 		return true
-    // 	}
-    // 	// The goroutine running dc.Connect in derpWriteChanOfAddr may linger
-    // 	// and appear to leak, as observed in https://github.com/tailscale/tailscale/issues/554.
-    // 	// This is despite the underlying context being cancelled by connCtxCancel above.
-    // 	// To avoid this condition, we must wait on derpStarted here
-    // 	// to ensure that this goroutine has exited by the time Close returns.
-    // 	// We only do this if derpWriteChanOfAddr has executed at least once:
-    // 	// on the first run, it sets firstDerp := true and spawns the aforementioned goroutine.
-    // 	// To detect this, we check activeDerp, which is initialized to non-nil on the first run.
-    // 	if c.activeDerp != nil {
-    // 		select {
-    // 		case <-c.derpStarted:
-    // 			break
-    // 		default:
-    // 			return true
-    // 		}
-    // 	}
-    // 	return false
-    // }
-
-    // func maxIdleBeforeSTUNShutdown() time.Duration {
-    // 	if debugReSTUNStopOnIdle() {
-    // 		return 45 * time.Second
-    // 	}
-    // 	return sessionActiveTimeout
-    // }
+    async fn tasks_running_locked(&self, state: &mut ConnState) -> bool {
+        if state.endpoints_update_active {
+            return true;
+        }
+        // TODO: track spawned tasks and join them
+        false
+    }
 
     fn should_do_periodic_re_stun(&self, state: &mut ConnState) -> bool {
         if self.network_down() {
@@ -2705,44 +2588,6 @@ impl Conn {
             ep.note_connectivity_change().await;
         }
     }
-
-    // // packIPPort packs an IPPort into the form wanted by WireGuard.
-    // func packIPPort(ua netip.AddrPort) []byte {
-    // 	ip := ua.Addr().Unmap()
-    // 	a := ip.As16()
-    // 	ipb := a[:]
-    // 	if ip.Is4() {
-    // 		ipb = ipb[12:]
-    // 	}
-    // 	b := make([]byte, 0, len(ipb)+2)
-    // 	b = append(b, ipb...)
-    // 	b = append(b, byte(ua.Port()))
-    // 	b = append(b, byte(ua.Port()>>8))
-    // 	return b
-    // }
-
-    // // ParseEndpoint is called by WireGuard to connect to an endpoint.
-    // func (c *Conn) ParseEndpoint(nodeKeyStr string) (conn.Endpoint, error) {
-    // 	k, err := key.Parsenode::PublicKeyUntyped(mem.S(nodeKeyStr))
-    // 	if err != nil {
-    // 		return nil, fmt.Errorf("magicsock: ParseEndpoint: parse failed on %q: %w", nodeKeyStr, err)
-    // 	}
-
-    // 	c.mu.Lock()
-    // 	defer c.mu.Unlock()
-    // 	if c.closed {
-    // 		return nil, errConnClosed
-    // 	}
-    // 	ep, ok := c.peerMap.endpointForNodeKey(k)
-    // 	if !ok {
-    // 		// We should never be telling WireGuard about a new peer
-    // 		// before magicsock knows about it.
-    // 		c.logf("[unexpected] magicsock: ParseEndpoint: unknown node key=%s", k.ShortString())
-    // 		return nil, fmt.Errorf("magicsock: ParseEndpoint: unknown peer %q", k.ShortString())
-    // 	}
-
-    // 	return ep, nil
-    // }
 }
 
 /// A route entry for a public key, saying that a certain peer should be available at DERP

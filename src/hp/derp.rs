@@ -110,7 +110,7 @@ pub enum ReceivedMessage {
     },
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct DerpMap {
     pub regions: HashMap<usize, DerpRegion>,
 }
@@ -125,7 +125,7 @@ impl DerpMap {
 }
 
 /// A geographic region running DERP relay node(s).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DerpRegion {
     /// A unique integer for a geographic region.
     pub region_id: usize,
@@ -134,7 +134,7 @@ pub struct DerpRegion {
     pub region_code: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DerpNode {
     pub name: String,
     pub region_id: usize,

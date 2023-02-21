@@ -136,7 +136,7 @@ pub struct PingResult {
     pub err: Option<String>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct Node {
     pub id: u64,
     pub stable_id: String,
