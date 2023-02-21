@@ -33,6 +33,8 @@ pub struct Options {
     pub addr: SocketAddr,
     /// The peer id to expect
     pub peer_id: Option<PeerId>,
+    /// Whether to log the SSL keys when `SSLKEYLOGFILE` environment variable is set.
+    pub keylog: bool,
 }
 
 impl Default for Options {
@@ -40,6 +42,7 @@ impl Default for Options {
         Options {
             addr: "127.0.0.1:4433".parse().unwrap(),
             peer_id: None,
+            keylog: false,
         }
     }
 }
@@ -48,10 +51,11 @@ impl Default for Options {
 pub fn make_client_endpoint(
     peer_id: Option<PeerId>,
     alpn_protocols: Vec<Vec<u8>>,
+    keylog: bool,
 ) -> Result<quinn::Endpoint> {
     let keypair = Keypair::generate();
 
-    let tls_client_config = tls::make_client_config(&keypair, peer_id, alpn_protocols)?;
+    let tls_client_config = tls::make_client_config(&keypair, peer_id, alpn_protocols, keylog)?;
     let mut client_config = quinn::ClientConfig::new(Arc::new(tls_client_config));
     let mut endpoint = quinn::Endpoint::client("0.0.0.0:0".parse().unwrap())?;
     let mut transport_config = quinn::TransportConfig::default();
@@ -64,7 +68,7 @@ pub fn make_client_endpoint(
 
 /// Setup a QUIC connection to the provided address.
 async fn setup(opts: Options) -> Result<quinn::Connection> {
-    let endpoint = make_client_endpoint(opts.peer_id, vec![tls::P2P_ALPN.to_vec()])?;
+    let endpoint = make_client_endpoint(opts.peer_id, vec![tls::P2P_ALPN.to_vec()], false)?;
 
     debug!("connecting to {}", opts.addr);
     let connect = endpoint.connect(opts.addr, "localhost")?;

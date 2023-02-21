@@ -9,18 +9,18 @@ use futures::StreamExt;
 use indicatif::{
     HumanBytes, HumanDuration, ProgressBar, ProgressDrawTarget, ProgressState, ProgressStyle,
 };
+use iroh::protocol::AuthToken;
+use iroh::provider::{Database, Ticket};
+use iroh::rpc_protocol::{
+    ListRequest, ProvideRequest, ProviderRequest, ProviderResponse, ProviderService, VersionRequest,
+};
 use quic_rpc::transport::quinn::{QuinnConnection, QuinnServerEndpoint};
 use quic_rpc::{RpcClient, ServiceEndpoint};
-use sendme::provider::Ticket;
-use sendme::rpc_protocol::{
-    ListRequest, ProvideRequest, SendmeRequest, SendmeResponse, SendmeService, VersionRequest,
-};
-use sendme::{protocol::AuthToken, provider::Database};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
 use tracing_subscriber::{prelude::*, EnvFilter};
 
-use sendme::{get, provider, Hash, Keypair, PeerId};
+use iroh::{get, provider, Hash, Keypair, PeerId};
 
 const RPC_PORT: u16 = 0x1337;
 
@@ -30,6 +30,9 @@ const RPC_PORT: u16 = 0x1337;
 struct Cli {
     #[clap(subcommand)]
     command: Commands,
+    /// Log SSL pre-master key to file in SSLKEYLOGFILE environment variable.
+    #[clap(long)]
+    keylog: bool,
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -50,8 +53,8 @@ enum Commands {
         #[clap(long)]
         key: Option<PathBuf>,
     },
-    /// Start sendme as a service
-    #[clap(about = "Start sendme as a service")]
+    /// Start iroh as a service
+    #[clap(about = "Start iroh as a service")]
     Start {
         /// Optional port, defaults to 127.0.01:4433.
         #[clap(long, short)]
@@ -64,7 +67,7 @@ enum Commands {
         key: Option<PathBuf>,
     },
 
-    /// Start sendme as a service
+    /// List hashes
     #[clap(about = "List hashes")]
     List {},
     /// Add some data to the database.
@@ -217,16 +220,17 @@ impl FromStr for Blake3Cid {
 }
 
 async fn make_rpc_client(
-) -> anyhow::Result<RpcClient<SendmeService, QuinnConnection<SendmeResponse, SendmeRequest>>> {
-    let endpoint = sendme::get::make_client_endpoint(None, vec!["rpc".as_bytes().to_vec()])?;
+) -> anyhow::Result<RpcClient<ProviderService, QuinnConnection<ProviderResponse, ProviderRequest>>>
+{
+    let endpoint = iroh::get::make_client_endpoint(None, vec!["rpc".as_bytes().to_vec()], false)?;
     let addr: SocketAddr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, RPC_PORT));
     let server_name = "localhost".to_string();
     let connection = QuinnConnection::new(endpoint, addr, server_name);
-    let client = RpcClient::<SendmeService, _>::new(connection);
+    let client = RpcClient::<ProviderService, _>::new(connection);
     // Do a version request to check if the server is running.
     let _version = tokio::time::timeout(Duration::from_secs(1), client.rpc(VersionRequest))
         .await
-        .context("sendme server is not running")??;
+        .context("iroh server is not running")??;
     Ok(client)
 }
 
@@ -252,6 +256,7 @@ async fn main() -> Result<()> {
         } => {
             let mut opts = get::Options {
                 peer_id: Some(peer),
+                keylog: cli.keylog,
                 ..Default::default()
             };
             if let Some(addr) = addr {
@@ -280,6 +285,7 @@ async fn main() -> Result<()> {
             let opts = get::Options {
                 addr,
                 peer_id: Some(peer),
+                keylog: cli.keylog,
             };
             tokio::select! {
                 biased;
@@ -300,7 +306,7 @@ async fn main() -> Result<()> {
         } => {
             tokio::select! {
                 biased;
-                res = provide_interactive(path, addr, auth_token, key) => {
+                res = provide_interactive(path, addr, auth_token, key, cli.keylog) => {
                     res
                 }
                 _ = tokio::signal::ctrl_c() => {
@@ -357,6 +363,7 @@ async fn provide_interactive(
     addr: Option<SocketAddr>,
     auth_token: Option<String>,
     key: Option<PathBuf>,
+    keylog: bool,
 ) -> Result<()> {
     let out_writer = OutWriter::new();
     let keypair = get_keypair(key).await?;
@@ -398,7 +405,9 @@ async fn provide_interactive(
         println!("- {}: {} bytes", path.display(), size);
     }
     println!();
-    let mut builder = provider::Provider::builder(db).keypair(keypair);
+    let mut builder = provider::Provider::builder(db)
+        .keypair(keypair)
+        .keylog(keylog);
     if let Some(addr) = addr {
         builder = builder.bind_addr(addr);
     }
@@ -424,14 +433,14 @@ async fn provide_interactive(
     Ok(())
 }
 
-fn make_rpc_endpoint(keypair: &Keypair) -> Result<impl ServiceEndpoint<SendmeService>> {
+fn make_rpc_endpoint(keypair: &Keypair) -> Result<impl ServiceEndpoint<ProviderService>> {
     let rpc_addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, RPC_PORT));
     let rpc_quinn_endpoint = quinn::Endpoint::server(
-        sendme::provider::make_server_config(keypair, 1024, 16, vec!["rpc".as_bytes().to_vec()])?,
+        iroh::provider::make_server_config(keypair, 1024, 16, vec!["rpc".as_bytes().to_vec()])?,
         rpc_addr,
     )?;
     let rpc_endpoint =
-        QuinnServerEndpoint::<SendmeRequest, SendmeResponse>::new(rpc_quinn_endpoint)?;
+        QuinnServerEndpoint::<ProviderRequest, ProviderResponse>::new(rpc_quinn_endpoint)?;
     Ok(rpc_endpoint)
 }
 
@@ -456,7 +465,7 @@ async fn provide_service(
     }
     let provider = builder.spawn()?;
 
-    println!("Starting sendme process");
+    println!("Starting iroh process");
     println!("PeerID:      {}", provider.peer_id());
     println!("Auth token:  {}", provider.auth_token());
     println!("Listen addr: {}", provider.listen_addr());
@@ -523,7 +532,7 @@ async fn get_interactive(
             Ok(())
         }
     };
-    let on_collection = |collection: &sendme::blobs::Collection| {
+    let on_collection = |collection: &iroh::blobs::Collection| {
         let pb = &pb;
         let out_writer = &out_writer;
         let name = collection.name().to_string();
@@ -574,7 +583,7 @@ async fn get_interactive(
                 // Create temp file
                 let (temp_file, dup) = tokio::task::spawn_blocking(|| {
                     let temp_file = tempfile::Builder::new()
-                        .prefix("sendme-tmp-")
+                        .prefix("iroh-tmp-")
                         .tempfile_in(dirpath)
                         .context("Failed to create temporary output file")?;
                     let dup = temp_file.as_file().try_clone()?;

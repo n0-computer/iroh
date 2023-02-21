@@ -19,7 +19,7 @@ pub struct ProvideResponse {
     pub hash: Hash,
 }
 
-impl RpcMsg<SendmeService> for ProvideRequest {
+impl RpcMsg<ProviderService> for ProvideRequest {
     type Response = RpcResult<ProvideResponse>;
 }
 
@@ -33,11 +33,11 @@ pub struct ListResponse {
     pub size: u64,
 }
 
-impl Msg<SendmeService> for ListRequest {
+impl Msg<ProviderService> for ListRequest {
     type Pattern = ServerStreaming;
 }
 
-impl ServerStreamingMsg<SendmeService> for ListRequest {
+impl ServerStreamingMsg<ProviderService> for ListRequest {
     type Response = ListResponse;
 }
 
@@ -47,7 +47,7 @@ pub struct WatchRequest;
 #[derive(Serialize, Deserialize, Debug)]
 pub struct VersionRequest;
 
-impl RpcMsg<SendmeService> for VersionRequest {
+impl RpcMsg<ProviderService> for VersionRequest {
     type Response = VersionResponse;
 }
 
@@ -56,11 +56,11 @@ pub struct WatchResponse {
     pub version: String,
 }
 
-impl Msg<SendmeService> for WatchRequest {
+impl Msg<ProviderService> for WatchRequest {
     type Pattern = ServerStreaming;
 }
 
-impl ServerStreamingMsg<SendmeService> for WatchRequest {
+impl ServerStreamingMsg<ProviderService> for WatchRequest {
     type Response = WatchResponse;
 }
 
@@ -69,13 +69,13 @@ pub struct VersionResponse {
     pub version: String,
 }
 
-/// The RPC service for sendme.
+/// The RPC service for the iroh provider process.
 #[derive(Debug, Clone)]
-pub struct SendmeService;
+pub struct ProviderService;
 
 /// Request enum
 #[derive(Debug, Serialize, Deserialize, From, TryInto)]
-pub enum SendmeRequest {
+pub enum ProviderRequest {
     Watch(WatchRequest),
     Version(VersionRequest),
     List(ListRequest),
@@ -84,14 +84,14 @@ pub enum SendmeRequest {
 
 /// Response enum
 #[derive(Debug, Serialize, Deserialize, From, TryInto)]
-pub enum SendmeResponse {
+pub enum ProviderResponse {
     Watch(WatchResponse),
     Version(VersionResponse),
     List(ListResponse),
     Provide(RpcResult<ProvideResponse>),
 }
 
-impl Service for SendmeService {
-    type Req = SendmeRequest;
-    type Res = SendmeResponse;
+impl Service for ProviderService {
+    type Req = ProviderRequest;
+    type Res = ProviderResponse;
 }

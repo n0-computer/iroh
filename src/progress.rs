@@ -1,6 +1,6 @@
 //! Generic utilities to track progress of data transfers.
 //!
-//! This is not especially specific to sendme but can be helpful together with it.  The
+//! This is not especially specific to iroh but can be helpful together with it.  The
 //! [`ProgressEmitter`] has a [`ProgressEmitter::wrap_async_read`] method which can make it
 //! easy to track process of transfers.
 //!
@@ -80,7 +80,7 @@ impl ProgressEmitter {
 ///
 /// This exists so it can be Arc'd into [`ProgressEmitter`] and we can easily have multiple
 /// `Send + Sync` copies of it.  This is used by the
-/// [`ProgressEmitter::ProgressAsyncReader`] to update the progress without intertwining
+/// [`ProgressAsyncReader`] to update the progress without intertwining
 /// lifetimes.
 #[derive(Debug)]
 struct InnerProgressEmitter {

@@ -1,0 +1,142 @@
+name: netsim-CI
+
+on:
+  push:
+    branches:
+      - main
+  issue_comment:
+    types: [created, edited, deleted]
+
+env:
+  RUST_BACKTRACE: 1
+  RUSTFLAGS: -Dwarnings
+  MSRV: "1.63"
+
+jobs:
+  netsim:
+    name: Run network simulations/benchmarks
+    if: >-
+      (github.event_name == 'issue_comment' &&
+        github.event.issue.pull_request &&
+          github.event.comment.body == '/netsim') || github.event_name != 'issue_comment'
+    runs-on: [self-hosted, linux, X64]
+    permissions:
+      issues: write
+      pull-requests: write
+    steps:
+    - name: Checkout
+      uses: actions/checkout@master
+      with:
+        submodules: recursive
+    
+    - name: Install rust stable
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+        override: true
+
+    - name: Build sendme
+      run: |
+        cargo build --release
+
+    - name: Fetch and build chuck
+      run: |
+        git clone https://github.com/n0-computer/chuck.git
+        cd chuck
+        cargo build --release
+    
+    - name: Install netsim deps
+      run: |
+        cd chuck/netsim
+        sudo apt update
+        ./setup.sh
+
+    - name: Copy binaries to right location
+      run: |
+        cp target/release/sendme chuck/netsim/bins/sendme
+        cp chuck/target/release/chuck chuck/netsim/bins/chuck
+
+    - name: Run tests
+      run: |
+        cd chuck/netsim
+        sudo kill -9 $(pgrep ovs)
+        sudo mn --clean
+        sudo python3 main.py sims/standard
+
+    - name: Generate report
+      id: generate_report
+      run: |
+        cd chuck/netsim
+        python3 reports_csv.py > report.txt
+        export NETSIM_REPORT=$(cat report.txt)
+        echo "NETSIM_REPORT<<EOFMARKER" >> ${GITHUB_OUTPUT}
+        echo "${NETSIM_REPORT}" >> ${GITHUB_OUTPUT}
+        echo "EOFMARKER" >> ${GITHUB_OUTPUT}
+
+    - name: Setup Environment (PR)  
+      if: ${{ github.event_name == 'pull_request' }}  
+      shell: bash  
+      run: |  
+        echo "LAST_COMMIT_SHA=$(git rev-parse --short ${{ github.event.pull_request.head.sha }})" >> ${GITHUB_ENV}  
+    - name: Setup Environment (Push)  
+      if: ${{ github.event_name == 'push' }}  
+      shell: bash  
+      run: |  
+        echo "LAST_COMMIT_SHA=$(git rev-parse --short ${GITHUB_SHA})" >> ${GITHUB_ENV}
+
+    - name: Respond Issue
+      uses: peter-evans/create-or-update-comment@v2
+      if: github.event_name == 'issue_comment'
+      with:
+        issue-number: ${{ github.event.issue.number }}
+        body: |
+          body: |
+          `${{ github.head_ref }}.${{ env.LAST_COMMIT_SHA }}`
+          <details>
+          <summary>Perf report</summary>
+          
+          ```json
+
+            ${{ steps.generate_report.outputs.NETSIM_REPORT }}
+
+          ```
+          </details>
+
+    - name: Respond PR
+      uses: peter-evans/create-or-update-comment@v2
+      if: github.event.pull_request
+      with:
+        issue-number: ${{ github.event.pull_request.number }}
+        body: |
+          `${{ github.head_ref }}.${{ env.LAST_COMMIT_SHA }}`
+          <details>
+          <summary>Perf report</summary>
+          
+          ```json
+
+            ${{ steps.generate_report.outputs.NETSIM_REPORT }}
+
+          ```
+          </details>
+
+    - name: Dump report
+      run: |
+        export AWS_ACCESS_KEY_ID=${{secrets.S3_ACCESS_KEY_ID}}
+        export AWS_SECRET_ACCESS_KEY=${{secrets.S3_ACCESS_KEY}}
+        export AWS_DEFAULT_REGION=us-west-2
+        
+        curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+        unzip -q awscliv2.zip
+        sudo ./aws/install --update
+
+        cd chuck/netsim
+        python3 reports_csv.py --prom --commit ${{ env.LAST_COMMIT_SHA }} > report_prom.txt
+
+        tar cvzf report.tar.gz report_prom.txt report.txt logs/ report/
+        aws s3 cp ./report.tar.gz s3://${{secrets.S3_REPORT_BUCKET}}/${{ env.LAST_COMMIT_SHA }}.tar.gz --no-progress
+
+        instance=$(echo "${{ github.head_ref }}" | tr -c '[:alnum:]' '_')
+        d=$(cat report_prom.txt)
+        prom_data=$(printf "%s\n " "$d")
+        curl -X POST -H  "Content-Type: text/plain" --data "$prom_data" ${{secrets.PROM_ENDPOINT}}/metrics/job/netsim/instance/${instance}
+

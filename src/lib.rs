@@ -116,6 +116,7 @@ mod tests {
             let opts = get::Options {
                 addr,
                 peer_id: Some(peer_id),
+                keylog: true,
             };
             let content = &content;
             let name = &name;
@@ -212,7 +213,7 @@ mod tests {
             let mut events = Vec::new();
             while let Ok(event) = provider_events.recv().await {
                 match event {
-                    Event::TransferCompleted { .. } => {
+                    Event::TransferCompleted { .. } | Event::TransferAborted { .. } => {
                         events.push(event);
                         break;
                     }
@@ -225,6 +226,7 @@ mod tests {
         let opts = get::Options {
             addr: provider.listen_addr(),
             peer_id: Some(provider.peer_id()),
+            keylog: true,
         };
 
         let i = AtomicUsize::new(0);
@@ -266,9 +268,16 @@ mod tests {
         provider.shutdown();
         provider.await?;
 
-        assert_eq!(events.len(), 3);
+        assert_events(events);
 
         Ok(())
+    }
+
+    fn assert_events(events: Vec<Event>) {
+        assert_eq!(events.len(), 3);
+        assert!(matches!(events[0], Event::ClientConnected { .. }));
+        assert!(matches!(events[1], Event::RequestReceived { .. }));
+        assert!(matches!(events[2], Event::TransferCompleted { .. }));
     }
 
     fn setup_logging() {
@@ -326,6 +335,7 @@ mod tests {
             get::Options {
                 addr: provider_addr,
                 peer_id: None,
+                keylog: true,
             },
             || async move { Ok(()) },
             |_collection| async move { Ok(()) },
@@ -374,6 +384,7 @@ mod tests {
                 get::Options {
                     addr: provider_addr,
                     peer_id: None,
+                    keylog: true,
                 },
                 || async move { Ok(()) },
                 |_collection| async move { Ok(()) },

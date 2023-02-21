@@ -28,7 +28,7 @@ use quic_rpc::server::{RpcChannel, RpcServerError};
 use quic_rpc::transport::misc::DummyServerEndpoint;
 use quic_rpc::{RpcServer, ServiceEndpoint};
 use serde::{Deserialize, Serialize};
-use tokio::io::{AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::sync::broadcast;
 use tokio::task::{JoinError, JoinHandle};
 use tokio_util::io::SyncIoBridge;
@@ -41,7 +41,7 @@ use crate::protocol::{
     read_lp, write_lp, AuthToken, Closed, Handshake, Request, Res, Response, VERSION,
 };
 use crate::rpc_protocol::{
-    ListRequest, ListResponse, ProvideRequest, ProvideResponse, SendmeRequest, SendmeService,
+    ListRequest, ListResponse, ProvideRequest, ProvideResponse, ProviderRequest, ProviderService,
     VersionRequest, VersionResponse, WatchRequest, WatchResponse,
 };
 use crate::tls::{self, Keypair, PeerId};
@@ -94,12 +94,13 @@ impl Database {
 /// The returned [`Provider`] is awaitable to know when it finishes.  It can be terminated
 /// using [`Provider::shutdown`].
 #[derive(Debug)]
-pub struct Builder<E: ServiceEndpoint<SendmeService> = DummyServerEndpoint> {
+pub struct Builder<E: ServiceEndpoint<ProviderService> = DummyServerEndpoint> {
     bind_addr: SocketAddr,
     keypair: Keypair,
     auth_token: AuthToken,
     endpoint: E,
     db: Database,
+    keylog: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -117,18 +118,20 @@ impl Builder {
             auth_token: AuthToken::generate(),
             endpoint: Default::default(),
             db,
+            keylog: false,
         }
     }
 }
 
-impl<E: ServiceEndpoint<SendmeService>> Builder<E> {
+impl<E: ServiceEndpoint<ProviderService>> Builder<E> {
     ///
-    pub fn rpc_endpoint<E2: ServiceEndpoint<SendmeService>>(self, endpoint: E2) -> Builder<E2> {
+    pub fn rpc_endpoint<E2: ServiceEndpoint<ProviderService>>(self, endpoint: E2) -> Builder<E2> {
         Builder {
             bind_addr: self.bind_addr,
             keypair: self.keypair,
             auth_token: self.auth_token,
             db: self.db,
+            keylog: self.keylog,
             endpoint,
         }
     }
@@ -153,14 +156,27 @@ impl<E: ServiceEndpoint<SendmeService>> Builder<E> {
         self
     }
 
+    /// Whether to log the SSL pre-master key.
+    ///
+    /// If `true` and the `SSLKEYLOGFILE` environment variable is the path to a file this
+    /// file will be used to log the SSL pre-master key.  This is useful to inspect captured
+    /// traffic.
+    pub fn keylog(mut self, keylog: bool) -> Self {
+        self.keylog = keylog;
+        self
+    }
+
     /// Spawns the [`Provider`] in a tokio task.
     ///
     /// This will create the underlying network server and spawn a tokio task accepting
     /// connections.  The returned [`Provider`] can be used to control the task as well as
     /// get information about it.
     pub fn spawn(self) -> Result<Provider> {
-        let tls_server_config =
-            tls::make_server_config(&self.keypair, vec![crate::tls::P2P_ALPN.to_vec()])?;
+        let tls_server_config = tls::make_server_config(
+            &self.keypair,
+            vec![crate::tls::P2P_ALPN.to_vec()],
+            self.keylog,
+        )?;
         let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(tls_server_config));
         let mut transport_config = quinn::TransportConfig::default();
         transport_config
@@ -209,7 +225,7 @@ impl<E: ServiceEndpoint<SendmeService>> Builder<E> {
         auth_token: AuthToken,
         events: broadcast::Sender<Event>,
         cancel_token: CancellationToken,
-        rpc: quic_rpc::RpcServer<SendmeService, E>,
+        rpc: quic_rpc::RpcServer<ProviderService, E>,
     ) {
         debug!("\nlistening at: {:#?}", server.local_addr().unwrap());
 
@@ -241,7 +257,7 @@ impl<E: ServiceEndpoint<SendmeService>> Builder<E> {
     }
 }
 
-/// A server which implements the sendme provider.
+/// A server which implements the iroh provider.
 ///
 /// Clients can connect to this server and requests hashes from it.
 ///
@@ -289,8 +305,9 @@ pub enum Event {
     TransferAborted {
         /// The quic connection id.
         connection_id: u64,
-        /// The request id.
-        request_id: u64,
+        /// The request id. When `None`, the transfer was aborted before or during reading and decoding
+        /// the transfer request.
+        request_id: Option<u64>,
     },
 }
 
@@ -408,8 +425,8 @@ impl Handler {
     }
 }
 
-fn handle_rpc_request<C: ServiceEndpoint<SendmeService>>(
-    request: Result<(SendmeRequest, RpcChannel<SendmeService, C>), RpcServerError<C>>,
+fn handle_rpc_request<C: ServiceEndpoint<ProviderService>>(
+    request: Result<(ProviderRequest, RpcChannel<ProviderService, C>), RpcServerError<C>>,
     db: &Database,
 ) {
     let (msg, chan) = match request {
@@ -422,7 +439,7 @@ fn handle_rpc_request<C: ServiceEndpoint<SendmeService>>(
     let db = db.clone();
     tokio::spawn(async move {
         let handler = Handler(db.clone());
-        use SendmeRequest::*;
+        use ProviderRequest::*;
         match msg {
             List(msg) => chan.server_streaming(msg, handler, Handler::list).await,
             Provide(msg) => chan.rpc_map_err(msg, handler, Handler::provide).await,
@@ -470,6 +487,134 @@ async fn handle_connection(
     .await
 }
 
+/// Read and decode the handshake.
+///
+/// Will fail if there is an error while reading, there is a token
+/// mismatch, or no valid handshake was received.
+///
+/// When successful, the reader is still useable after this function and the buffer will be drained of any handshake
+/// data.
+async fn read_handshake<R: AsyncRead + Unpin>(
+    mut reader: R,
+    buffer: &mut BytesMut,
+    token: AuthToken,
+) -> Result<()> {
+    if let Some((handshake, size)) = read_lp::<_, Handshake>(&mut reader, buffer).await? {
+        ensure!(
+            handshake.version == VERSION,
+            "expected version {} but got {}",
+            VERSION,
+            handshake.version
+        );
+        ensure!(handshake.token == token, "AuthToken mismatch");
+        let _ = buffer.split_to(size);
+    } else {
+        bail!("no valid handshake received");
+    }
+    Ok(())
+}
+
+/// Read the request from the getter.
+///
+/// Will fail if there is an error while reading, if the reader
+/// contains more data than the Request, or if no valid request is sent.
+///
+/// When successful, the buffer is empty after this function call.
+async fn read_request(mut reader: quinn::RecvStream, buffer: &mut BytesMut) -> Result<Request> {
+    let request = read_lp::<_, Request>(&mut reader, buffer).await?;
+    ensure!(
+        reader.read_chunk(8, false).await?.is_none(),
+        "Extra data past request"
+    );
+    if let Some((request, _size)) = request {
+        Ok(request)
+    } else {
+        bail!("No request received");
+    }
+}
+
+/// Transfers the collection & blob data.
+///
+/// First, it transfers the collection data & its associated outboard encoding data. Then it sequentially transfers each individual blob data & its associated outboard
+/// encoding data.
+///
+/// Will fail if there is an error writing to the getter or reading from
+/// the database.
+///
+/// If a blob from the collection cannot be found in the database, the transfer will gracefully
+/// close the writer, and return with `Ok(SentStatus::NotFound)`.
+///
+/// If the transfer does _not_ end in error, the buffer will be empty and the writer is gracefully closed.
+async fn transfer_collection(
+    // Database from which to fetch blobs.
+    db: &Database,
+    // Quinn stream.
+    mut writer: quinn::SendStream,
+    // Buffer used when writing to writer.
+    buffer: &mut BytesMut,
+    // The id of the transfer request.
+    request_id: u64,
+    // The bao outboard encoded data.
+    outboard: &Bytes,
+    // The actual blob data.
+    data: &Bytes,
+) -> Result<SentStatus> {
+    // We only respond to requests for collections, not individual blobs
+    let mut extractor = SliceExtractor::new_outboard(
+        std::io::Cursor::new(&data[..]),
+        std::io::Cursor::new(&outboard[..]),
+        0,
+        data.len() as u64,
+    );
+    let encoded_size: usize = abao::encode::encoded_size(data.len() as u64)
+        .try_into()
+        .unwrap();
+    let mut encoded = Vec::with_capacity(encoded_size);
+    extractor.read_to_end(&mut encoded)?;
+
+    let c: Collection = postcard::from_bytes(data)?;
+
+    // TODO: we should check if the blobs referenced in this container
+    // actually exist in this provider before returning `FoundCollection`
+    write_response(
+        &mut writer,
+        buffer,
+        request_id,
+        Res::FoundCollection {
+            total_blobs_size: c.total_blobs_size,
+        },
+    )
+    .await?;
+
+    let mut data = BytesMut::from(&encoded[..]);
+    writer.write_buf(&mut data).await?;
+    for (i, blob) in c.blobs.iter().enumerate() {
+        debug!("writing blob {}/{}", i, c.blobs.len());
+        let (status, writer1) =
+            send_blob(db.clone(), blob.hash, writer, buffer, request_id).await?;
+        writer = writer1;
+        if SentStatus::NotFound == status {
+            write_response(&mut writer, buffer, request_id, Res::NotFound).await?;
+            writer.finish().await?;
+            return Ok(status);
+        }
+    }
+
+    writer.finish().await?;
+    Ok(SentStatus::Sent)
+}
+
+fn notify_transfer_aborted(
+    events: broadcast::Sender<Event>,
+    connection_id: u64,
+    request_id: Option<u64>,
+) {
+    let _ = events.send(Event::TransferAborted {
+        connection_id,
+        request_id,
+    });
+}
+
 async fn handle_stream(
     db: Database,
     token: AuthToken,
@@ -482,99 +627,61 @@ async fn handle_stream(
 
     // 1. Read Handshake
     debug!("reading handshake");
-    if let Some((handshake, size)) = read_lp::<_, Handshake>(&mut reader, &mut in_buffer).await? {
-        ensure!(
-            handshake.version == VERSION,
-            "expected version {} but got {}",
-            VERSION,
-            handshake.version
-        );
-        ensure!(handshake.token == token, "AuthToken mismatch");
-        let _ = in_buffer.split_to(size);
-    } else {
-        bail!("no valid handshake received");
+    if let Err(e) = read_handshake(&mut reader, &mut in_buffer, token).await {
+        notify_transfer_aborted(events, connection_id, None);
+        return Err(e);
     }
 
     // 2. Decode the request.
     debug!("reading request");
-    let request = read_lp::<_, Request>(&mut reader, &mut in_buffer).await?;
-    ensure!(
-        reader.read_chunk(8, false).await?.is_none(),
-        "Extra data past request"
-    );
-    if let Some((request, _size)) = request {
-        let hash = request.name;
-        debug!("got request({})", request.id);
-        let _ = events.send(Event::RequestReceived {
-            connection_id,
-            request_id: request.id,
-            hash,
-        });
+    let request = match read_request(reader, &mut in_buffer).await {
+        Ok(r) => r,
+        Err(e) => {
+            notify_transfer_aborted(events, connection_id, None);
+            return Err(e);
+        }
+    };
 
-        match db.get(&hash) {
-            // We only respond to requests for collections, not individual blobs
-            Some(BlobOrCollection::Collection((outboard, data))) => {
-                debug!("found collection {}", hash);
+    let hash = request.name;
+    debug!("got request({})", request.id);
+    let _ = events.send(Event::RequestReceived {
+        connection_id,
+        request_id: request.id,
+        hash,
+    });
 
-                let mut extractor = SliceExtractor::new_outboard(
-                    std::io::Cursor::new(&data[..]),
-                    std::io::Cursor::new(&outboard[..]),
-                    0,
-                    data.len() as u64,
-                );
-                let encoded_size: usize = abao::encode::encoded_size(data.len() as u64)
-                    .try_into()
-                    .unwrap();
-                let mut encoded = Vec::with_capacity(encoded_size);
-                extractor.read_to_end(&mut encoded)?;
+    // 4. Attempt to find hash
+    let (outboard, data) = match db.get(&hash) {
+        // We only respond to requests for collections, not individual blobs
+        Some(BlobOrCollection::Collection(d)) => d,
+        _ => {
+            debug!("not found {}", hash);
+            notify_transfer_aborted(events, connection_id, Some(request.id));
+            write_response(&mut writer, &mut out_buffer, request.id, Res::NotFound).await?;
+            writer.finish().await?;
 
-                let c: Collection = postcard::from_bytes(&data)?;
+            return Ok(());
+        }
+    };
 
-                // TODO: we should check if the blobs referenced in this container
-                // actually exist in this provider before returning `FoundCollection`
-                write_response(
-                    &mut writer,
-                    &mut out_buffer,
-                    request.id,
-                    Res::FoundCollection {
-                        total_blobs_size: c.total_blobs_size,
-                    },
-                )
-                .await?;
-
-                let mut data = BytesMut::from(&encoded[..]);
-                writer.write_buf(&mut data).await?;
-                for (i, blob) in c.blobs.iter().enumerate() {
-                    debug!("writing blob {}/{}", i, c.blobs.len());
-                    let (status, writer1) =
-                        send_blob(db.clone(), blob.hash, writer, &mut out_buffer, request.id)
-                            .await?;
-                    writer = writer1;
-                    if SentStatus::NotFound == status {
-                        break;
-                    }
-                }
-
-                writer.finish().await?;
-                let _ = events.send(Event::TransferCompleted {
-                    connection_id,
-                    request_id: request.id,
-                });
-                debug!("finished response");
-            }
-            _ => {
-                debug!("not found {}", hash);
-                write_response(&mut writer, &mut out_buffer, request.id, Res::NotFound).await?;
-                writer.finish().await?;
-                // TODO: If the connection drops mid-way we also need to emit this!
-                let _ = events.send(Event::TransferAborted {
-                    connection_id,
-                    request_id: request.id,
-                });
-            }
+    // 5. Transfer data!
+    match transfer_collection(&db, writer, &mut out_buffer, request.id, &outboard, &data).await {
+        Ok(SentStatus::Sent) => {
+            let _ = events.send(Event::TransferCompleted {
+                connection_id,
+                request_id: request.id,
+            });
+        }
+        Ok(SentStatus::NotFound) => {
+            notify_transfer_aborted(events, connection_id, Some(request.id));
+        }
+        Err(e) => {
+            notify_transfer_aborted(events, connection_id, Some(request.id));
+            return Err(e);
         }
     }
 
+    debug!("finished response");
     Ok(())
 }
 
@@ -964,7 +1071,7 @@ pub fn make_server_config(
     max_connections: u32,
     alpn_protocols: Vec<Vec<u8>>,
 ) -> anyhow::Result<quinn::ServerConfig> {
-    let tls_server_config = tls::make_server_config(keypair, alpn_protocols)?;
+    let tls_server_config = tls::make_server_config(keypair, alpn_protocols, false)?;
     let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(tls_server_config));
     let mut transport_config = quinn::TransportConfig::default();
     transport_config
