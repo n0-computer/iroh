@@ -18,7 +18,7 @@ use std::task::Poll;
 use std::{collections::HashMap, sync::Arc};
 
 use abao::encode::SliceExtractor;
-use anyhow::{bail, ensure, Context, Result};
+use anyhow::{ensure, Context, Result};
 use bytes::{Bytes, BytesMut};
 use futures::future;
 use serde::{Deserialize, Serialize};
@@ -353,28 +353,27 @@ async fn handle_connection(
 
 /// Read and decode the handshake.
 ///
-/// Will fail if there is an error while reading, there is a token
-/// mismatch, or no valid handshake was received.
+/// Will fail if there is an error while reading, there is a token mismatch, or no valid
+/// handshake was received.
 ///
-/// When successful, the reader is still useable after this function and the buffer will be drained of any handshake
-/// data.
+/// When successful, the reader is still useable after this function and the buffer will be
+/// drained of any handshake data.
 async fn read_handshake<R: AsyncRead + Unpin>(
     mut reader: R,
     buffer: &mut BytesMut,
     token: AuthToken,
 ) -> Result<()> {
-    if let Some((handshake, size)) = read_lp::<_, Handshake>(&mut reader, buffer).await? {
-        ensure!(
-            handshake.version == VERSION,
-            "expected version {} but got {}",
-            VERSION,
-            handshake.version
-        );
-        ensure!(handshake.token == token, "AuthToken mismatch");
-        let _ = buffer.split_to(size);
-    } else {
-        bail!("no valid handshake received");
-    }
+    let payload = read_lp(&mut reader, buffer)
+        .await?
+        .context("no valid handshake received")?;
+    let handshake: Handshake = postcard::from_bytes(&payload)?;
+    ensure!(
+        handshake.version == VERSION,
+        "expected version {} but got {}",
+        VERSION,
+        handshake.version
+    );
+    ensure!(handshake.token == token, "AuthToken mismatch");
     Ok(())
 }
 
@@ -385,16 +384,15 @@ async fn read_handshake<R: AsyncRead + Unpin>(
 ///
 /// When successful, the buffer is empty after this function call.
 async fn read_request(mut reader: quinn::RecvStream, buffer: &mut BytesMut) -> Result<Request> {
-    let request = read_lp::<_, Request>(&mut reader, buffer).await?;
+    let payload = read_lp(&mut reader, buffer)
+        .await?
+        .context("No request received")?;
+    let request: Request = postcard::from_bytes(&payload)?;
     ensure!(
         reader.read_chunk(8, false).await?.is_none(),
         "Extra data past request"
     );
-    if let Some((request, _size)) = request {
-        Ok(request)
-    } else {
-        bail!("No request received");
-    }
+    Ok(request)
 }
 
 /// Transfers the collection & blob data.
