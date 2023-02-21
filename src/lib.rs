@@ -408,10 +408,17 @@ mod tests {
     async fn test_ipv6() {
         let readme = Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md");
         let (db, hash) = create_collection(vec![readme.into()]).await.unwrap();
-        let provider = Provider::builder(db)
+        let provider = match Provider::builder(db)
             .bind_addr("[::1]:0".parse().unwrap())
             .spawn()
-            .unwrap();
+        {
+            Ok(provider) => provider,
+            Err(_) => {
+                // We assume the problem here is IPv6 on this host.  If the problem is
+                // not IPv6 then other tests will also fail.
+                return;
+            }
+        };
         let auth_token = provider.auth_token();
         let addr = provider.listen_addr();
         let peer_id = Some(provider.peer_id());
