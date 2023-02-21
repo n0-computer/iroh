@@ -28,8 +28,8 @@ use super::key;
 
 // TODO: custom magicn
 /// The 6 byte header of all discovery messages.
-const MAGIC: &str = "TS💬"; // 6 bytes: 0x54 53 f0 9f 92 ac
-const MAGIC_LEN: usize = MAGIC.as_bytes().len();
+pub const MAGIC: &str = "TS💬"; // 6 bytes: 0x54 53 f0 9f 92 ac
+pub const MAGIC_LEN: usize = MAGIC.as_bytes().len();
 
 /// The length of the nonces used by nacl secretboxes.
 const NONCE_LEN: usize = 24;
@@ -72,7 +72,7 @@ impl TryFrom<u8> for MessageType {
 
 /// Reports whether p looks like it's a packet containing an encrypted disco message.
 pub fn looks_like_disco_wrapper(p: &[u8]) -> bool {
-    if p.len() < MAGIC_LEN + KEY_LEN * NONCE_LEN {
+    if p.len() < MAGIC_LEN + KEY_LEN + NONCE_LEN {
         return false;
     }
 
@@ -80,12 +80,22 @@ pub fn looks_like_disco_wrapper(p: &[u8]) -> bool {
 }
 
 /// If `p` looks like a disco message it returns the slice of `p` that represents the disco public key source.
-pub fn source(p: &[u8]) -> Option<&[u8]> {
+pub fn source(p: &[u8]) -> Option<[u8; KEY_LEN]> {
     if !looks_like_disco_wrapper(p) {
         return None;
     }
 
-    Some(&p[MAGIC_LEN..MAGIC_LEN + KEY_LEN])
+    Some(p[MAGIC_LEN..MAGIC_LEN + KEY_LEN].try_into().unwrap())
+}
+
+pub fn source_and_box(p: &[u8]) -> Option<([u8; KEY_LEN], &[u8])> {
+    if !looks_like_disco_wrapper(p) {
+        return None;
+    }
+
+    let source = p[MAGIC_LEN..MAGIC_LEN + KEY_LEN].try_into().unwrap();
+    let sealed_box = &p[MAGIC_LEN + KEY_LEN..];
+    Some((source, sealed_box))
 }
 
 /// A discovery message.

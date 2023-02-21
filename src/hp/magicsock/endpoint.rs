@@ -16,9 +16,12 @@ use tokio::{
 };
 use tracing::info;
 
-use crate::hp::{cfg, key, stun};
+use crate::hp::{cfg, disco, key, stun};
 
-use super::{Conn, PeerInfo, PongReply, SentPing, Timer};
+use super::{
+    conn::{ConnState, DiscoInfo},
+    Conn, PeerInfo, PongReply, SentPing, Timer,
+};
 
 /// A wireguard/conn.Endpoint that picks the best available path to communicate with a peer,
 /// based on network conditions and what the peer supports.
@@ -109,19 +112,23 @@ impl Endpoint {
     // 	de.fakeWGAddr = netip.AddrPortFrom(netip.AddrFrom16(addr).Unmap(), 12345)
     // }
 
-    // // noteRecvActivity records receive activity on de, and invokes
-    // // Conn.noteRecvActivity no more than once every 10s.
-    // func (de *endpoint) noteRecvActivity() {
-    // 	if de.c.noteRecvActivity == nil {
-    // 		return
-    // 	}
-    // 	now := mono.Now()
-    // 	elapsed := now.Sub(de.lastRecv.LoadAtomic())
-    // 	if elapsed > 10*time.Second {
-    // 		de.lastRecv.StoreAtomic(now)
-    // 		de.c.noteRecvActivity(de.publicKey)
-    // 	}
-    // }
+    pub fn disco_key(&self) -> key::disco::PublicKey {
+        self.state.blocking_lock().disco_key.clone()
+    }
+
+    /// Records receive activity on this endpoint.
+    pub fn note_recv_activity(&self) {
+        todo!()
+        // 	if de.c.noteRecvActivity == nil {
+        // 		return
+        // 	}
+        // 	now := mono.Now()
+        // 	elapsed := now.Sub(de.lastRecv.LoadAtomic())
+        // 	if elapsed > 10*time.Second {
+        // 		de.lastRecv.StoreAtomic(now)
+        // 		de.c.noteRecvActivity(de.publicKey)
+        // 	}
+    }
 
     // // String exists purely so wireguard-go internals can log.Printf("%v")
     // // its internal conn.Endpoints and we don't end up with data races
@@ -530,75 +537,83 @@ impl Endpoint {
         state.trust_best_addr_until = None;
     }
 
-    // // handlePongConnLocked handles a Pong message (a reply to an earlier ping).
-    // // It should be called with the Conn.mu held.
-    // //
-    // // It reports whether m.TxID corresponds to a ping that this endpoint sent.
-    // func (de *endpoint) handlePongConnLocked(m *disco.Pong, di *discoInfo, src netip.AddrPort) (knownTxID bool) {
-    // 	de.mu.Lock()
-    // 	defer de.mu.Unlock()
+    /// Handles a Pong message (a reply to an earlier ping).
+    /// It should be called with the Conn.mu held.
+    ///
+    /// It reports whether m.TxID corresponds to a ping that this endpoint sent.
+    pub(super) fn handle_pong_conn_locked(
+        &self,
+        state: &mut ConnState,
+        m: &disco::Pong,
+        di: &DiscoInfo,
+        src: SocketAddr,
+    ) -> bool {
+        todo!()
+        // -> (knownTxID bool) {
+        // 	de.mu.Lock()
+        // 	defer de.mu.Unlock()
 
-    // 	isDerp := src.Addr() == derpMagicIPAddr
+        // 	isDerp := src.Addr() == derpMagicIPAddr
 
-    // 	sp, ok := de.sentPing[m.TxID]
-    // 	if !ok {
-    // 		// This is not a pong for a ping we sent.
-    // 		return false
-    // 	}
-    // 	knownTxID = true // for naked returns below
-    // 	de.removeSentPingLocked(m.TxID, sp)
-    // 	di.setNodeKey(de.publicKey)
+        // 	sp, ok := de.sentPing[m.TxID]
+        // 	if !ok {
+        // 		// This is not a pong for a ping we sent.
+        // 		return false
+        // 	}
+        // 	knownTxID = true // for naked returns below
+        // 	de.removeSentPingLocked(m.TxID, sp)
+        // 	di.setNodeKey(de.publicKey)
 
-    // 	now := mono.Now()
-    // 	latency := now.Sub(sp.at)
+        // 	now := mono.Now()
+        // 	latency := now.Sub(sp.at)
 
-    // 	if !isDerp {
-    // 		st, ok := de.endpointState[sp.to]
-    // 		if !ok {
-    // 			// This is no longer an endpoint we care about.
-    // 			return
-    // 		}
+        // 	if !isDerp {
+        // 		st, ok := de.endpointState[sp.to]
+        // 		if !ok {
+        // 			// This is no longer an endpoint we care about.
+        // 			return
+        // 		}
 
-    // 		de.c.peerMap.setNodeKeyForIPPort(src, de.publicKey)
+        // 		de.c.peerMap.setNodeKeyForIPPort(src, de.publicKey)
 
-    // 		st.addPongReplyLocked(pongReply{
-    // 			latency: latency,
-    // 			pongAt:  now,
-    // 			from:    src,
-    // 			pongSrc: m.Src,
-    // 		})
-    // 	}
+        // 		st.addPongReplyLocked(pongReply{
+        // 			latency: latency,
+        // 			pongAt:  now,
+        // 			from:    src,
+        // 			pongSrc: m.Src,
+        // 		})
+        // 	}
 
-    // 	if sp.purpose != pingHeartbeat {
-    // 		de.c.dlogf("[v1] magicsock: disco: %v<-%v (%v, %v)  got pong tx=%x latency=%v pong.src=%v%v", de.c.discoShort, de.discoShort, de.publicKey.ShortString(), src, m.TxID[:6], latency.Round(time.Millisecond), m.Src, logger.ArgWriter(func(bw *bufio.Writer) {
-    // 			if sp.to != src {
-    // 				fmt.Fprintf(bw, " ping.to=%v", sp.to)
-    // 			}
-    // 		}))
-    // 	}
+        // 	if sp.purpose != pingHeartbeat {
+        // 		de.c.dlogf("[v1] magicsock: disco: %v<-%v (%v, %v)  got pong tx=%x latency=%v pong.src=%v%v", de.c.discoShort, de.discoShort, de.publicKey.ShortString(), src, m.TxID[:6], latency.Round(time.Millisecond), m.Src, logger.ArgWriter(func(bw *bufio.Writer) {
+        // 			if sp.to != src {
+        // 				fmt.Fprintf(bw, " ping.to=%v", sp.to)
+        // 			}
+        // 		}))
+        // 	}
 
-    // 	for _, pp := range de.pendingCLIPings {
-    // 		de.c.populateCLIPingResponseLocked(pp.res, latency, sp.to)
-    // 		go pp.cb(pp.res)
-    // 	}
-    // 	de.pendingCLIPings = nil
+        // 	for _, pp := range de.pendingCLIPings {
+        // 		de.c.populateCLIPingResponseLocked(pp.res, latency, sp.to)
+        // 		go pp.cb(pp.res)
+        // 	}
+        // 	de.pendingCLIPings = nil
 
-    // 	// Promote this pong response to our current best address if it's lower latency.
-    // 	// TODO(bradfitz): decide how latency vs. preference order affects decision
-    // 	if !isDerp {
-    // 		thisPong := addrLatency{sp.to, latency}
-    // 		if betterAddr(thisPong, de.bestAddr) {
-    // 			de.c.logf("magicsock: disco: node %v %v now using %v", de.publicKey.ShortString(), de.discoShort, sp.to)
-    // 			de.bestAddr = thisPong
-    // 		}
-    // 		if de.bestAddr.AddrPort == thisPong.AddrPort {
-    // 			de.bestAddr.latency = latency
-    // 			de.bestAddrAt = now
-    // 			de.trustBestAddrUntil = now.Add(trustUDPAddrDuration)
-    // 		}
-    // 	}
-    // 	return
-    // }
+        // 	// Promote this pong response to our current best address if it's lower latency.
+        // 	// TODO(bradfitz): decide how latency vs. preference order affects decision
+        // 	if !isDerp {
+        // 		thisPong := addrLatency{sp.to, latency}
+        // 		if betterAddr(thisPong, de.bestAddr) {
+        // 			de.c.logf("magicsock: disco: node %v %v now using %v", de.publicKey.ShortString(), de.discoShort, sp.to)
+        // 			de.bestAddr = thisPong
+        // 		}
+        // 		if de.bestAddr.AddrPort == thisPong.AddrPort {
+        // 			de.bestAddr.latency = latency
+        // 			de.bestAddrAt = now
+        // 			de.trustBestAddrUntil = now.Add(trustUDPAddrDuration)
+        // 		}
+        // 	}
+        // 	return
+    }
 
     // // betterAddr reports whether a is a better addr to use than b.
     // func betterAddr(a, b addrLatency) bool {
@@ -625,67 +640,68 @@ impl Endpoint {
     // 	return a.latency < b.latency
     // }
 
-    // // handleCallMeMaybe handles a CallMeMaybe discovery message via
-    // // DERP. The contract for use of this message is that the peer has
-    // // already sent to us via UDP, so their stateful firewall should be
-    // // open. Now we can Ping back and make it through.
-    // func (de *endpoint) handleCallMeMaybe(m *disco.CallMeMaybe) {
-    // 	if runtime.GOOS == "js" {
-    // 		// Nothing to do on js/wasm if we can't send UDP packets anyway.
-    // 		return
-    // 	}
-    // 	de.mu.Lock()
-    // 	defer de.mu.Unlock()
+    /// Handles a CallMeMaybe discovery message via
+    /// DERP. The contract for use of this message is that the peer has
+    /// already sent to us via UDP, so their stateful firewall should be
+    /// open. Now we can Ping back and make it through.
+    pub fn handle_call_me_maybe(&self, m: disco::CallMeMaybe) {
+        todo!();
+        // 	if runtime.GOOS == "js" {
+        // 		// Nothing to do on js/wasm if we can't send UDP packets anyway.
+        // 		return
+        // 	}
+        // 	de.mu.Lock()
+        // 	defer de.mu.Unlock()
 
-    // 	now := time.Now()
-    // 	for ep := range de.isCallMeMaybeEP {
-    // 		de.isCallMeMaybeEP[ep] = false // mark for deletion
-    // 	}
-    // 	var newEPs []netip.AddrPort
-    // 	for _, ep := range m.MyNumber {
-    // 		if ep.Addr().Is6() && ep.Addr().IsLinkLocalUnicast() {
-    // 			// We send these out, but ignore them for now.
-    // 			// TODO: teach the ping code to ping on all interfaces
-    // 			// for these.
-    // 			continue
-    // 		}
-    // 		mak.Set(&de.isCallMeMaybeEP, ep, true)
-    // 		if es, ok := de.endpointState[ep]; ok {
-    // 			es.callMeMaybeTime = now
-    // 		} else {
-    // 			de.endpointState[ep] = &endpointState{callMeMaybeTime: now}
-    // 			newEPs = append(newEPs, ep)
-    // 		}
-    // 	}
-    // 	if len(newEPs) > 0 {
-    // 		de.c.dlogf("[v1] magicsock: disco: call-me-maybe from %v %v added new endpoints: %v",
-    // 			de.publicKey.ShortString(), de.discoShort,
-    // 			logger.ArgWriter(func(w *bufio.Writer) {
-    // 				for i, ep := range newEPs {
-    // 					if i > 0 {
-    // 						w.WriteString(", ")
-    // 					}
-    // 					w.WriteString(ep.String())
-    // 				}
-    // 			}))
-    // 	}
+        // 	now := time.Now()
+        // 	for ep := range de.isCallMeMaybeEP {
+        // 		de.isCallMeMaybeEP[ep] = false // mark for deletion
+        // 	}
+        // 	var newEPs []netip.AddrPort
+        // 	for _, ep := range m.MyNumber {
+        // 		if ep.Addr().Is6() && ep.Addr().IsLinkLocalUnicast() {
+        // 			// We send these out, but ignore them for now.
+        // 			// TODO: teach the ping code to ping on all interfaces
+        // 			// for these.
+        // 			continue
+        // 		}
+        // 		mak.Set(&de.isCallMeMaybeEP, ep, true)
+        // 		if es, ok := de.endpointState[ep]; ok {
+        // 			es.callMeMaybeTime = now
+        // 		} else {
+        // 			de.endpointState[ep] = &endpointState{callMeMaybeTime: now}
+        // 			newEPs = append(newEPs, ep)
+        // 		}
+        // 	}
+        // 	if len(newEPs) > 0 {
+        // 		de.c.dlogf("[v1] magicsock: disco: call-me-maybe from %v %v added new endpoints: %v",
+        // 			de.publicKey.ShortString(), de.discoShort,
+        // 			logger.ArgWriter(func(w *bufio.Writer) {
+        // 				for i, ep := range newEPs {
+        // 					if i > 0 {
+        // 						w.WriteString(", ")
+        // 					}
+        // 					w.WriteString(ep.String())
+        // 				}
+        // 			}))
+        // 	}
 
-    // 	// Delete any prior CallMeMaybe endpoints that weren't included
-    // 	// in this message.
-    // 	for ep, want := range de.isCallMeMaybeEP {
-    // 		if !want {
-    // 			delete(de.isCallMeMaybeEP, ep)
-    // 			de.deleteEndpointLocked(ep)
-    // 		}
-    // 	}
+        // 	// Delete any prior CallMeMaybe endpoints that weren't included
+        // 	// in this message.
+        // 	for ep, want := range de.isCallMeMaybeEP {
+        // 		if !want {
+        // 			delete(de.isCallMeMaybeEP, ep)
+        // 			de.deleteEndpointLocked(ep)
+        // 		}
+        // 	}
 
-    // 	// Zero out all the lastPing times to force sendPingsLocked to send new ones,
-    // 	// even if it's been less than 5 seconds ago.
-    // 	for _, st := range de.endpointState {
-    // 		st.lastPing = 0
-    // 	}
-    // 	de.sendPingsLocked(mono.Now(), false)
-    // }
+        // 	// Zero out all the lastPing times to force sendPingsLocked to send new ones,
+        // 	// even if it's been less than 5 seconds ago.
+        // 	for _, st := range de.endpointState {
+        // 		st.lastPing = 0
+        // 	}
+        // 	de.sendPingsLocked(mono.Now(), false)
+    }
 
     // func (de *endpoint) populatePeerStatus(ps *ipnstate.PeerStatus) {
     // 	de.mu.Lock()
@@ -817,19 +833,15 @@ impl PeerMap {
 
     /// Invokes f on every endpoint in m that has the provided DiscoKey until
     /// f returns false or there are no endpoints left to iterate.
-    fn for_each_endpoint_with_disco_key<F>(&self, dk: &key::disco::PublicKey, f: F)
-    where
-        F: Fn(&Endpoint) -> bool,
-    {
-        if let Some(nodes) = self.nodes_of_disco.get(dk) {
-            for nk in nodes {
-                if let Some(pi) = self.by_node_key.get(nk) {
-                    if !f(&pi.ep) {
-                        return;
-                    }
-                }
-            }
-        }
+    pub fn endpoints_with_disco_key(
+        &self,
+        dk: &key::disco::PublicKey,
+    ) -> impl Iterator<Item = &Endpoint> {
+        self.nodes_of_disco
+            .get(dk)
+            .into_iter()
+            .flat_map(|n| n)
+            .flat_map(|nk| self.by_node_key.get(nk).map(|pi| &pi.ep))
     }
 
     /// Stores endpoint in the peerInfo for ep.publicKey, and updates indexes. m must already have a
