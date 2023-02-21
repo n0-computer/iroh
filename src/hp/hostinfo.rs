@@ -12,7 +12,7 @@ const SOURCE_TIMESTAMP: &str = env!("SOURCE_TIMESTAMP");
 const GIT_COMMIT: &str = env!("GIT_COMMIT");
 
 /// Contains a summary of the host we are running on.
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct Hostinfo {
     /// Version of this code.
     pub version: String,

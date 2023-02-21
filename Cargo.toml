@@ -52,6 +52,7 @@ serde-error = "0.1.2"
 socket2 = "0.4.7"
 ssh-key = { version = "0.6.0-pre.0", features = ["ed25519", "std", "rand_core"] }
 stun-rs = "0.1.4"
+subtle = "2.4.1"
 syscalls = { version = "0.6.7", features = ["full"] } # todo not all
 tempfile = "3"
 thiserror = "1"

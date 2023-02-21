@@ -41,4 +41,12 @@ impl Client {
     pub fn have_mapping(&self) -> bool {
         todo!()
     }
+
+    pub fn note_network_down(&self) {
+        todo!()
+    }
+
+    pub fn close(&self) {
+        todo!()
+    }
 }

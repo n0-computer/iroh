@@ -1,6 +1,6 @@
 use std::{
     collections::{HashMap, HashSet},
-    net::{IpAddr, SocketAddr},
+    net::{IpAddr, Ipv6Addr, SocketAddr},
     ops::Deref,
     sync::{
         atomic::{AtomicU64, Ordering},
@@ -59,7 +59,7 @@ pub struct InnerEndpoint {
     /// The UDP address we tell wireguard-go we're using
     pub fake_wg_addr: SocketAddr,
     /// The node's first tailscale address; used for logging & wireguard rate-limiting (Issue 6686)
-    pub node_addr: IpAddr,
+    pub node_addr: Option<IpAddr>,
 
     // Lock ordering: Conn.state, then Endpoint.state
     pub state: Mutex<InnerMutEndpoint>,
@@ -101,16 +101,33 @@ pub struct PendingCliPing {
 }
 
 impl Endpoint {
-    // // initFakeUDPAddr populates fakeWGAddr with a globally unique fake UDPAddr.
-    // // The current implementation just uses the pointer value of de jammed into an IPv6
-    // // address, but it could also be, say, a counter.
-    // func (de *endpoint) initFakeUDPAddr() {
-    // 	var addr [16]byte
-    // 	addr[0] = 0xfd
-    // 	addr[1] = 0x00
-    // 	binary.BigEndian.PutUint64(addr[2:], uint64(reflect.ValueOf(de).Pointer()))
-    // 	de.fakeWGAddr = netip.AddrPortFrom(netip.AddrFrom16(addr).Unmap(), 12345)
-    // }
+    pub fn new(conn: Conn, n: &cfg::Node) -> Self {
+        let fake_wg_addr = init_fake_udp_addr();
+        Endpoint(Arc::new(InnerEndpoint {
+            c: conn,
+            public_key: n.key.clone(),
+            node_addr: n.addresses.first().copied(),
+            fake_wg_addr,
+            last_recv: Default::default(),
+            num_stop_and_reset_atomic: Default::default(),
+            send_func: Default::default(),
+            state: Mutex::new(InnerMutEndpoint {
+                disco_key: n.disco_key.clone(),
+                heart_beat_timer: None,
+                last_send: None,
+                last_full_ping: None,
+                derp_addr: None,
+                best_addr: None,
+                best_addr_at: None,
+                trust_best_addr_until: None,
+                sent_ping: HashMap::new(),
+                endpoint_state: HashMap::new(),
+                is_call_me_maybe_ep: HashSet::new(),
+                pending_cli_pings: Vec::new(),
+                expired: false,
+            }),
+        }))
+    }
 
     pub fn disco_key(&self) -> key::disco::PublicKey {
         self.state.blocking_lock().disco_key.clone()
@@ -432,59 +449,59 @@ impl Endpoint {
     // 	}
     // }
 
-    // func (de *endpoint) updateFromNode(n *tailcfg.Node, heartbeatDisabled bool) {
-    // 	if n == nil {
-    // 		panic("nil node when updating disco ep")
-    // 	}
-    // 	de.mu.Lock()
-    // 	defer de.mu.Unlock()
+    pub fn update_from_node(&self, n: &cfg::Node) {
+        // 	if n == nil {
+        // 		panic("nil node when updating disco ep")
+        // 	}
+        // 	de.mu.Lock()
+        // 	defer de.mu.Unlock()
 
-    // 	de.heartbeatDisabled = heartbeatDisabled
-    // 	de.expired = n.Expired
+        // 	de.heartbeatDisabled = heartbeatDisabled
+        // 	de.expired = n.Expired
 
-    // 	if de.discoKey != n.DiscoKey {
-    // 		de.c.logf("[v1] magicsock: disco: node %s changed from discokey %s to %s", de.publicKey.ShortString(), de.discoKey, n.DiscoKey)
-    // 		de.discoKey = n.DiscoKey
-    // 		de.discoShort = de.discoKey.ShortString()
-    // 		de.resetLocked()
-    // 	}
-    // 	if n.DERP == "" {
-    // 		de.derpAddr = netip.AddrPort{}
-    // 	} else {
-    // 		de.derpAddr, _ = netip.ParseAddrPort(n.DERP)
-    // 	}
+        // 	if de.discoKey != n.DiscoKey {
+        // 		de.c.logf("[v1] magicsock: disco: node %s changed from discokey %s to %s", de.publicKey.ShortString(), de.discoKey, n.DiscoKey)
+        // 		de.discoKey = n.DiscoKey
+        // 		de.discoShort = de.discoKey.ShortString()
+        // 		de.resetLocked()
+        // 	}
+        // 	if n.DERP == "" {
+        // 		de.derpAddr = netip.AddrPort{}
+        // 	} else {
+        // 		de.derpAddr, _ = netip.ParseAddrPort(n.DERP)
+        // 	}
 
-    // 	for _, st := range de.endpointState {
-    // 		st.index = indexSentinelDeleted // assume deleted until updated in next loop
-    // 	}
-    // 	for i, epStr := range n.Endpoints {
-    // 		if i > math.MaxInt16 {
-    // 			// Seems unlikely.
-    // 			continue
-    // 		}
-    // 		ipp, err := netip.ParseAddrPort(epStr)
-    // 		if err != nil {
-    // 			de.c.logf("magicsock: bogus netmap endpoint %q", epStr)
-    // 			continue
-    // 		}
-    // 		if st, ok := de.endpointState[ipp]; ok {
-    // 			st.index = int16(i)
-    // 		} else {
-    // 			de.endpointState[ipp] = &endpointState{index: int16(i)}
-    // 		}
-    // 	}
+        // 	for _, st := range de.endpointState {
+        // 		st.index = indexSentinelDeleted // assume deleted until updated in next loop
+        // 	}
+        // 	for i, epStr := range n.Endpoints {
+        // 		if i > math.MaxInt16 {
+        // 			// Seems unlikely.
+        // 			continue
+        // 		}
+        // 		ipp, err := netip.ParseAddrPort(epStr)
+        // 		if err != nil {
+        // 			de.c.logf("magicsock: bogus netmap endpoint %q", epStr)
+        // 			continue
+        // 		}
+        // 		if st, ok := de.endpointState[ipp]; ok {
+        // 			st.index = int16(i)
+        // 		} else {
+        // 			de.endpointState[ipp] = &endpointState{index: int16(i)}
+        // 		}
+        // 	}
 
-    // 	// Now delete anything unless it's still in the network map or
-    // 	// was a recently discovered endpoint.
-    // 	for ep, st := range de.endpointState {
-    // 		if st.shouldDeleteLocked() {
-    // 			de.deleteEndpointLocked(ep)
-    // 		}
-    // 	}
+        // 	// Now delete anything unless it's still in the network map or
+        // 	// was a recently discovered endpoint.
+        // 	for ep, st := range de.endpointState {
+        // 		if st.shouldDeleteLocked() {
+        // 			de.deleteEndpointLocked(ep)
+        // 		}
+        // 	}
 
-    // 	// Node changed. Invalidate its sending fast path, if any.
-    // 	de.sendFunc.Store(nil)
-    // }
+        // 	// Node changed. Invalidate its sending fast path, if any.
+        // 	de.sendFunc.Store(nil)
+    }
 
     // // addCandidateEndpoint adds ep as an endpoint to which we should send
     // // future pings. If there is an existing endpointState for ep, and forRxPingTxID
@@ -726,7 +743,7 @@ impl Endpoint {
     /// It's called when a discovery endpoint is no longer present in the
     /// NetworkMap, or when magicsock is transitioning from running to
     /// stopped state (via `set_private_key(None)`).
-    async fn stop_and_reset(&self) {
+    pub async fn stop_and_reset(&self) {
         self.num_stop_and_reset_atomic
             .fetch_add(1, Ordering::Relaxed);
         let mut state = self.state.lock().await;
@@ -846,19 +863,26 @@ impl PeerMap {
 
     /// Stores endpoint in the peerInfo for ep.publicKey, and updates indexes. m must already have a
     /// tailcfg.Node for ep.publicKey.
-    async fn upsert_endpoint(&mut self, ep: &Endpoint, old_disco_key: &key::disco::PublicKey) {
+    pub async fn upsert_endpoint(
+        &mut self,
+        ep: Endpoint,
+        old_disco_key: Option<&key::disco::PublicKey>,
+    ) {
+        let disco_key = ep.0.state.lock().await.disco_key.clone();
+
+        if let Some(old_disco_key) = old_disco_key {
+            if old_disco_key != &disco_key {
+                if let Some(v) = self.nodes_of_disco.get_mut(old_disco_key) {
+                    v.remove(&ep.public_key);
+                }
+            }
+            let set = self.nodes_of_disco.entry(disco_key).or_default();
+            set.insert(ep.public_key.clone());
+        }
         if !self.by_node_key.contains_key(&ep.public_key) {
             self.by_node_key
-                .insert(ep.public_key.clone(), PeerInfo::new(ep.clone()));
+                .insert(ep.public_key.clone(), PeerInfo::new(ep));
         }
-        let disco_key = ep.0.state.lock().await.disco_key.clone();
-        if old_disco_key != &disco_key {
-            if let Some(v) = self.nodes_of_disco.get_mut(old_disco_key) {
-                v.remove(&ep.public_key);
-            }
-        }
-        let set = self.nodes_of_disco.entry(disco_key).or_default();
-        set.insert(ep.public_key.clone());
     }
 
     /// Makes future peer lookups by ipp return the same endpoint as a lookup by nk.
@@ -878,7 +902,7 @@ impl PeerMap {
     }
 
     /// Deletes the peerInfo associated with ep, and updates indexes.
-    async fn delete_endpoint(&mut self, ep: &Endpoint) {
+    pub async fn delete_endpoint(&mut self, ep: &Endpoint) {
         ep.stop_and_reset().await;
         self.nodes_of_disco.remove(&ep.state.lock().await.disco_key);
         if let Some(pi) = self.by_node_key.remove(&ep.public_key) {
@@ -953,4 +977,16 @@ impl EndpointState {
     // 		return time.Since(st.lastGotPing) > sessionActiveTimeout
     // 	}
     // }
+}
+
+const ADDR_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+/// Generates a globally unique fake UDPAddr.
+fn init_fake_udp_addr() -> SocketAddr {
+    let mut addr = [0u8; 16];
+    addr[0] = 0xfd;
+    addr[1] = 0x00;
+    addr[2..10].copy_from_slice(&ADDR_COUNTER.fetch_add(1, Ordering::Relaxed).to_le_bytes());
+
+    SocketAddr::new(IpAddr::V6(Ipv6Addr::from(addr)), 12345)
 }

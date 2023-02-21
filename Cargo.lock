@@ -1405,6 +1405,7 @@ dependencies = [
  "socket2",
  "ssh-key",
  "stun-rs",
+ "subtle",
  "syscalls",
  "tempfile",
  "testdir",
