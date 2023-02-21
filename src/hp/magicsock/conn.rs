@@ -155,10 +155,8 @@ pub struct Inner {
         Option<Box<dyn Fn(&[u8], SocketAddr) -> BoxFuture<'static, ()> + Send + Sync + 'static>>,
     >, // syncs.AtomicValue[func(p []byte, fromAddr netip.AddrPort)]
 
-    // TODO:
-    // Used by receiveDERP to read DERP messages.
-    // It must have buffer size > 0; see issue 3736.
-    // derpRecvCh chan derpReadResult
+    /// Used for receiving DERP messages.
+    derp_recv_ch: flume::Receiver<DerpReadResult>,
 
     // TODO: check if this is needed
     /// The wireguard-go conn.Bind for Conn.
@@ -208,7 +206,7 @@ pub struct Inner {
     closing: AtomicBool,
 }
 
-struct ConnState {
+pub(super) struct ConnState {
     /// Close was called
     closed: bool,
 
@@ -368,6 +366,9 @@ impl Conn {
             // c.portMapper.SetGatewayLookupFunc(opts.LinkMonitor.GatewayAndSelfIP)
         }
 
+        // TODO: store derp_send_ch
+        let (derp_send_ch, derp_recv_ch) = flume::bounded(64);
+
         let mut c = Conn(Arc::new(Inner {
             on_endpoints,
             on_derp_active,
@@ -392,6 +393,7 @@ impl Conn {
             close_disco4: None,
             close_disco6: None,
             closing: AtomicBool::new(false),
+            derp_recv_ch,
         }));
 
         c.rebind(CurrentPortFate::Keep).await?;
@@ -1276,7 +1278,6 @@ impl Conn {
 
                             let res = DerpReadResult {
                                 region_id,
-                                n: data.len(),
                                 src: source,
                                 buf: data,
                             };
@@ -1398,299 +1399,271 @@ impl Conn {
         true
     }
 
-    // func (c *connBind) receiveDERP(buffs [][]byte, sizes []int, eps []conn.Endpoint) (int, error) {
-    // 	health.ReceiveDERP.Enter()
-    // 	defer health.ReceiveDERP.Exit()
+    fn process_derp_read_result(
+        &self,
+        dm: DerpReadResult,
+        b: &mut io::IoSliceMut<'_>,
+        meta: &mut quinn_udp::RecvMeta,
+    ) -> usize {
+        if dm.buf.is_empty() {
+            return 0;
+        }
+        let buf = &dm.buf;
+        let n = buf.len();
+        let region_id = dm.region_id;
 
-    // 	for dm := range c.derpRecvCh {
-    // 		if c.Closed() {
-    // 			break
-    // 		}
-    // 		n, ep := c.processDERPReadResult(dm, buffs[0])
-    // 		if n == 0 {
-    // 			// No data read occurred. Wait for another packet.
-    // 			continue
-    // 		}
-    // 		metricRecvDataDERP.Add(1)
-    // 		sizes[0] = n
-    // 		eps[0] = ep
-    // 		return 1, nil
-    // 	}
-    // 	return 0, net.ErrClosed
-    // }
+        let ipp = SocketAddr::new(
+            DERP_MAGIC_IP,
+            u16::try_from(region_id).expect("invalid region id"),
+        );
 
-    // func (c *Conn) processDERPReadResult(dm derpReadResult, b []byte) (n int, ep *endpoint) {
-    // 	if dm.copyBuf == nil {
-    // 		return 0, nil
-    // 	}
-    // 	var regionID int
-    // 	n, regionID = dm.n, dm.regionID
-    // 	ncopy := dm.copyBuf(b)
-    // 	if ncopy != n {
-    // 		err := fmt.Errorf("received DERP packet of length %d that's too big for WireGuard buf size %d", n, ncopy)
-    // 		c.logf("magicsock: %v", err)
-    // 		return 0, nil
-    // 	}
+        if self.handle_disco_message(&b[..n], ipp, Some(&dm.src)) {
+            // Message was internal, do not bubble up.
+            return 0;
+        }
 
-    // 	ipp := netip.AddrPortFrom(derpMagicIPAddr, uint16(regionID))
-    // 	if c.handleDiscoMessage(b[:n], ipp, dm.src) {
-    // 		return 0, nil
-    // 	}
+        let ep = {
+            let state = self.state.blocking_lock();
+            let ep = state.peer_map.endpoint_for_node_key(&dm.src);
+            ep.cloned()
+        };
+        if ep.is_none() {
+            // We don't know anything about this node key, nothing to record or process.
+            return 0;
+        }
 
-    // 	var ok bool
-    // 	c.mu.Lock()
-    // 	ep, ok = c.peerMap.endpointForNodeKey(dm.src)
-    // 	c.mu.Unlock()
-    // 	if !ok {
-    // 		// We don't know anything about this node key, nothing to
-    // 		// record or process.
-    // 		return 0, nil
-    // 	}
+        let ep = ep.unwrap();
+        ep.note_recv_activity();
+        meta.dst_ip = Some(ep.fake_wg_addr.ip());
 
-    // 	ep.noteRecvActivity()
-    // 	if stats := c.stats.Load(); stats != nil {
-    // 		stats.UpdateRxPhysical(ep.nodeAddr, ipp, dm.n)
-    // 	}
-    // 	return n, ep
-    // }
+        // if stats := c.stats.Load(); stats != nil {
+        // 	stats.UpdateRxPhysical(ep.nodeAddr, ipp, dm.n)
+        // }
+        n
+    }
 
-    // // discoLogLevel controls the verbosity of discovery log messages.
-    // type discoLogLevel int
+    /// Sends discovery message m to dst_disco at dst.
+    ///
+    /// If dst is a DERP IP:port, then dst_key must be Some.
+    ///
+    /// The dst_key should only be `Some` the dst_disco key unambiguously maps to exactly one peer.
+    fn send_disco_message(
+        &self,
+        dst: SocketAddr,
+        dst_key: Option<key::node::PublicKey>,
+        dst_disco: Option<key::disco::PublicKey>,
+        msg: disco::Message,
+    ) -> Result<bool> {
+        todo!()
 
-    // const (
-    // 	// discoLog means that a message should be logged.
-    // 	discoLog discoLogLevel = iota
+        // isDERP := dst.Addr() == derpMagicIPAddr                                                                                                                                      //
+        // if _, isPong := m.(*disco.Pong); isPong && !isDERP && dst.Addr().Is4() {                                                                                                     //
+        // 	time.Sleep(debugIPv4DiscoPingPenalty())                                                                                                                                 //
+        // }                                                                                                                                                                            //
+        //                                                                                                                                                                              //
+        // c.mu.Lock()                                                                                                                                                                  //
+        // if c.closed {                                                                                                                                                                //
+        // 	c.mu.Unlock()                                                                                                                                                           //
+        // 	return false, errConnClosed                                                                                                                                             //
+        // }                                                                                                                                                                            //
+        // var nonce [disco.NonceLen]byte                                                                                                                                               //
+        // if _, err := crand.Read(nonce[:]); err != nil {                                                                                                                              //
+        // 	panic(err) // worth dying for                                                                                                                                           //
+        // }                                                                                                                                                                            //
+        // pkt := make([]byte, 0, 512) // TODO: size it correctly? pool? if it matters.                                                                                                 //
+        // pkt = append(pkt, disco.Magic...)                                                                                                                                            //
+        // pkt = c.discoPublic.AppendTo(pkt)                                                                                                                                            //
+        // di := c.discoInfoLocked(dstDisco)                                                                                                                                            //
+        // c.mu.Unlock()                                                                                                                                                                //
+        //                                                                                                                                                                              //
+        // if isDERP {                                                                                                                                                                  //
+        // 	metricSendDiscoDERP.Add(1)                                                                                                                                              //
+        // } else {                                                                                                                                                                     //
+        // 	metricSendDiscoUDP.Add(1)                                                                                                                                               //
+        // }                                                                                                                                                                            //
+        //                                                                                                                                                                              //
+        // box := di.sharedKey.Seal(m.AppendMarshal(nil))                                                                                                                               //
+        // pkt = append(pkt, box...)                                                                                                                                                    //
+        // sent, err = c.sendAddr(dst, dstKey, pkt)                                                                                                                                     //
+        // if sent {                                                                                                                                                                    //
+        // 	if logLevel == discoLog || (logLevel == discoVerboseLog && debugDisco()) {                                                                                              //
+        // 		node := "?"                                                                                                                                                     //
+        // 		if !dstKey.IsZero() {                                                                                                                                           //
+        // 			node = dstKey.ShortString()                                                                                                                             //
+        // 		}                                                                                                                                                               //
+        // 		c.dlogf("[v1] magicsock: disco: %v->%v (%v, %v) sent %v", c.discoShort, dstDisco.ShortString(), node, derpStr(dst.String()), disco.MessageSummary(m))           //
+        // 	}                                                                                                                                                                       //
+        // 	if isDERP {                                                                                                                                                             //
+        // 		metricSentDiscoDERP.Add(1)                                                                                                                                      //
+        // 	} else {                                                                                                                                                                //
+        // 		metricSentDiscoUDP.Add(1)                                                                                                                                       //
+        // 	}                                                                                                                                                                       //
+        // 	switch m.(type) {                                                                                                                                                       //
+        // 	case *disco.Ping:                                                                                                                                                       //
+        // 		metricSentDiscoPing.Add(1)                                                                                                                                      //
+        // 	case *disco.Pong:                                                                                                                                                       //
+        // 		metricSentDiscoPong.Add(1)                                                                                                                                      //
+        // 	case *disco.CallMeMaybe:                                                                                                                                                //
+        // 		metricSentDiscoCallMeMaybe.Add(1)                                                                                                                               //
+        // 	}                                                                                                                                                                       //
+        // } else if err == nil {                                                                                                                                                       //
+        // 	// Can't send. (e.g. no IPv6 locally)                                                                                                                                   //
+        // } else {                                                                                                                                                                     //
+        // 	if !c.networkDown() {                                                                                                                                                   //
+        // 		c.logf("magicsock: disco: failed to send %T to %v: %v", m, dst, err)                                                                                            //
+        // 	}                                                                                                                                                                       //
+        // }                                                                                                                                                                            //
+        // return sent, err                                                                                                                                                             //
+    }
 
-    // 	// discoVerboseLog means that a message should only be logged
-    // 	// in TS_DEBUG_DISCO mode.
-    // 	discoVerboseLog
-    // )
-
-    // // TS_DISCO_PONG_IPV4_DELAY, if set, is a time.Duration string that is how much
-    // // fake latency to add before replying to disco pings. This can be used to bias
-    // // peers towards using IPv6 when both IPv4 and IPv6 are available at similar
-    // // speeds.
-    // var debugIPv4DiscoPingPenalty = envknob.RegisterDuration("TS_DISCO_PONG_IPV4_DELAY")
-
-    // // sendDiscoMessage sends discovery message m to dstDisco at dst.
-    // //
-    // // If dst is a DERP IP:port, then dstKey must be non-zero.
-    // //
-    // // The dstKey should only be non-zero if the dstDisco key
-    // // unambiguously maps to exactly one peer.
-    // func (c *Conn) sendDiscoMessage(dst netip.AddrPort, dstKey key.node::PublicKey, dstDisco key.DiscoPublic, m disco.Message, logLevel discoLogLevel) (sent bool, err error) {
-    // 	isDERP := dst.Addr() == derpMagicIPAddr
-    // 	if _, isPong := m.(*disco.Pong); isPong && !isDERP && dst.Addr().Is4() {
-    // 		time.Sleep(debugIPv4DiscoPingPenalty())
-    // 	}
-
-    // 	c.mu.Lock()
-    // 	if c.closed {
-    // 		c.mu.Unlock()
-    // 		return false, errConnClosed
-    // 	}
-    // 	var nonce [disco.NonceLen]byte
-    // 	if _, err := crand.Read(nonce[:]); err != nil {
-    // 		panic(err) // worth dying for
-    // 	}
-    // 	pkt := make([]byte, 0, 512) // TODO: size it correctly? pool? if it matters.
-    // 	pkt = append(pkt, disco.Magic...)
-    // 	pkt = c.discoPublic.AppendTo(pkt)
-    // 	di := c.discoInfoLocked(dstDisco)
-    // 	c.mu.Unlock()
-
-    // 	if isDERP {
-    // 		metricSendDiscoDERP.Add(1)
-    // 	} else {
-    // 		metricSendDiscoUDP.Add(1)
-    // 	}
-
-    // 	box := di.sharedKey.Seal(m.AppendMarshal(nil))
-    // 	pkt = append(pkt, box...)
-    // 	sent, err = c.sendAddr(dst, dstKey, pkt)
-    // 	if sent {
-    // 		if logLevel == discoLog || (logLevel == discoVerboseLog && debugDisco()) {
-    // 			node := "?"
-    // 			if !dstKey.IsZero() {
-    // 				node = dstKey.ShortString()
-    // 			}
-    // 			c.dlogf("[v1] magicsock: disco: %v->%v (%v, %v) sent %v", c.discoShort, dstDisco.ShortString(), node, derpStr(dst.String()), disco.MessageSummary(m))
-    // 		}
-    // 		if isDERP {
-    // 			metricSentDiscoDERP.Add(1)
-    // 		} else {
-    // 			metricSentDiscoUDP.Add(1)
-    // 		}
-    // 		switch m.(type) {
-    // 		case *disco.Ping:
-    // 			metricSentDiscoPing.Add(1)
-    // 		case *disco.Pong:
-    // 			metricSentDiscoPong.Add(1)
-    // 		case *disco.CallMeMaybe:
-    // 			metricSentDiscoCallMeMaybe.Add(1)
-    // 		}
-    // 	} else if err == nil {
-    // 		// Can't send. (e.g. no IPv6 locally)
-    // 	} else {
-    // 		if !c.networkDown() {
-    // 			c.logf("magicsock: disco: failed to send %T to %v: %v", m, dst, err)
-    // 		}
-    // 	}
-    // 	return sent, err
-    // }
-
-    // // handleDiscoMessage handles a discovery message and reports whether
-    // // msg was a Tailscale inter-node discovery message.
-    // //
-    // // A discovery message has the form:
-    // //
-    // //   - magic             [6]byte
-    // //   - senderDiscoPubKey [32]byte
-    // //   - nonce             [24]byte
-    // //   - naclbox of payload (see tailscale.com/disco package for inner payload format)
-    // //
-    // // For messages received over DERP, the src.Addr() will be derpMagicIP (with
-    // // src.Port() being the region ID) and the derpNodeSrc will be the node key
-    // // it was received from at the DERP layer. derpNodeSrc is zero when received
-    // // over UDP.
+    /// Handles a discovery message and reports whether `msg`f was a Tailscale inter-node discovery message.
+    ///
+    /// A discovery message has the form:
+    ///
+    ///   - magic             [6]byte
+    ///   - senderDiscoPubKey [32]byte
+    ///   - nonce             [24]byte
+    ///   - naclbox of payload (see disco package for inner payload format)
+    ///
+    /// For messages received over DERP, the src.ip() will be DERP_MAGIC_IP (with src.port() being the region ID) and the
+    /// derp_node_src will be the node key it was received from at the DERP layer. derp_node_src is None when received over UDP.
     fn handle_disco_message(
         &self,
         msg: &[u8],
         src: SocketAddr,
-        derp_node_src: Option<key::node::PublicKey>,
+        derp_node_src: Option<&key::node::PublicKey>,
     ) -> bool {
-        todo!()
-        //        ->        (isDiscoMsg bool) {
-        // 	const headerLen = len(disco.Magic) + key.DiscoPublicRawLen
-        // 	if len(msg) < headerLen || string(msg[:len(disco.Magic)]) != disco.Magic {
-        // 		return false
-        // 	}
+        let source = disco::source_and_box(msg);
+        if source.is_none() {
+            return false;
+        }
 
-        // 	// If the first four parts are the prefix of disco.Magic
-        // 	// (0x5453f09f) then it's definitely not a valid WireGuard
-        // 	// packet (which starts with little-endian uint32 1, 2, 3, 4).
-        // 	// Use naked returns for all following paths.
-        // 	isDiscoMsg = true
+        let (source, sealed_box) = source.unwrap();
 
-        // 	sender := key.DiscoPublicFromRaw32(mem.B(msg[len(disco.Magic):headerLen]))
+        let mut state = self.state.blocking_lock();
+        if state.closed || state.private_key.is_none() {
+            return true;
+        }
 
-        // 	c.mu.Lock()
-        // 	defer c.mu.Unlock()
+        let sender = key::disco::PublicKey::from(source);
 
-        // 	if c.closed {
-        // 		return
-        // 	}
-        // 	if debugDisco() {
-        // 		c.logf("magicsock: disco: got disco-looking frame from %v", sender.ShortString())
-        // 	}
-        // 	if c.privateKey.IsZero() {
-        // 		// Ignore disco messages when we're stopped.
-        // 		// Still return true, to not pass it down to wireguard.
-        // 		return
-        // 	}
-        // 	if c.discoPrivate.IsZero() {
-        // 		if debugDisco() {
-        // 			c.logf("magicsock: disco: ignoring disco-looking frame, no local key")
-        // 		}
-        // 		return
-        // 	}
+        if !state.peer_map.any_endpoint_for_disco_key(&sender) {
+            // TODO:
+            // metricRecvDiscoBadPeer.Add(1)
+            debug!(
+                "disco: ignoring disco-looking frame, don't know endpoint for {:?}",
+                sender
+            );
+            return true;
+        }
 
-        // 	if !c.peerMap.anyEndpointForDiscoKey(sender) {
-        // 		metricRecvDiscoBadPeer.Add(1)
-        // 		if debugDisco() {
-        // 			c.logf("magicsock: disco: ignoring disco-looking frame, don't know endpoint for %v", sender.ShortString())
-        // 		}
-        // 		return
-        // 	}
+        // We're now reasonably sure we're expecting communication from
+        // this peer, do the heavy crypto lifting to see what they want.
 
-        // 	// We're now reasonably sure we're expecting communication from
-        // 	// this peer, do the heavy crypto lifting to see what they want.
-        // 	//
-        // 	// From here on, peerNode and de are non-nil.
+        let di = self.disco_info_locked(&mut state, &sender);
+        let payload = di.shared_key.open(&sealed_box);
+        if payload.is_err() {
+            // This might be have been intended for a previous
+            // disco key.  When we restart we get a new disco key
+            // and old packets might've still been in flight (or
+            // scheduled). This is particularly the case for LANs
+            // or non-NATed endpoints.
+            // Don't log in normal case. Pass on to wireguard, in case
+            // it's actually a wireguard packet (super unlikely, but).
+            debug!("disco: failed to open box from {:?} (wrong rcpt?)", sender);
+            // TODO:
+            // metricRecvDiscoBadKey.Add(1)
+            return true;
+        }
+        let payload = payload.unwrap();
+        let dm = disco::Message::from_bytes(&payload);
+        debug!("disco: disco.parse = {:?}", dm);
 
-        // 	di := c.discoInfoLocked(sender)
+        if dm.is_err() {
+            // Couldn't parse it, but it was inside a correctly
+            // signed box, so just ignore it, assuming it's from a
+            // newer version of Tailscale that we don't
+            // understand. Not even worth logging about, lest it
+            // be too spammy for old clients.
 
-        // 	sealedBox := msg[headerLen:]
-        // 	payload, ok := di.sharedKey.Open(sealedBox)
-        // 	if !ok {
-        // 		// This might be have been intended for a previous
-        // 		// disco key.  When we restart we get a new disco key
-        // 		// and old packets might've still been in flight (or
-        // 		// scheduled). This is particularly the case for LANs
-        // 		// or non-NATed endpoints.
-        // 		// Don't log in normal case. Pass on to wireguard, in case
-        // 		// it's actually a wireguard packet (super unlikely,
-        // 		// but).
-        // 		if debugDisco() {
-        // 			c.logf("magicsock: disco: failed to open naclbox from %v (wrong rcpt?)", sender)
-        // 		}
-        // 		metricRecvDiscoBadKey.Add(1)
-        // 		return
-        // 	}
+            // TODO:
+            // metricRecvDiscoBadParse.Add(1)
+            return true;
+        }
 
-        // 	dm, err := disco.Parse(payload)
-        // 	if debugDisco() {
-        // 		c.logf("magicsock: disco: disco.Parse = %T, %v", dm, err)
-        // 	}
-        // 	if err != nil {
-        // 		// Couldn't parse it, but it was inside a correctly
-        // 		// signed box, so just ignore it, assuming it's from a
-        // 		// newer version of Tailscale that we don't
-        // 		// understand. Not even worth logging about, lest it
-        // 		// be too spammy for old clients.
-        // 		metricRecvDiscoBadParse.Add(1)
-        // 		return
-        // 	}
+        let dm = dm.unwrap();
+        let is_derp = src.ip() == DERP_MAGIC_IP;
+        // if isDERP {
+        //     metricRecvDiscoDERP.Add(1);
+        // } else {
+        //     metricRecvDiscoUDP.Add(1)
+        // };
 
-        // 	isDERP := src.Addr() == derpMagicIPAddr
-        // 	if isDERP {
-        // 		metricRecvDiscoDERP.Add(1)
-        // 	} else {
-        // 		metricRecvDiscoUDP.Add(1)
-        // 	}
+        match dm {
+            disco::Message::Ping(ping) => {
+                // metricRecvDiscoPing.Add(1)
+                self.handle_ping_locked(&mut state, ping, &sender, src, derp_node_src);
+                true
+            }
+            disco::Message::Pong(pong) => {
+                // metricRecvDiscoPong.Add(1)
 
-        // 	switch dm := dm.(type) {
-        // 	case *disco.Ping:
-        // 		metricRecvDiscoPing.Add(1)
-        // 		c.handlePingLocked(dm, src, di, derpNodeSrc)
-        // 	case *disco.Pong:
-        // 		metricRecvDiscoPong.Add(1)
-        // 		// There might be multiple nodes for the sender's DiscoKey.
-        // 		// Ask each to handle it, stopping once one reports that
-        // 		// the Pong's TxID was theirs.
-        // 		c.peerMap.forEachEndpointWithDiscoKey(sender, func(ep *endpoint) (keepGoing bool) {
-        // 			if ep.handlePongConnLocked(dm, di, src) {
-        // 				return false
-        // 			}
-        // 			return true
-        // 		})
-        // 	case *disco.CallMeMaybe:
-        // 		metricRecvDiscoCallMeMaybe.Add(1)
-        // 		if !isDERP || derpNodeSrc.IsZero() {
-        // 			// CallMeMaybe messages should only come via DERP.
-        // 			c.logf("[unexpected] CallMeMaybe packets should only come via DERP")
-        // 			return
-        // 		}
-        // 		nodeKey := derpNodeSrc
-        // 		ep, ok := c.peerMap.endpointForNodeKey(nodeKey)
-        // 		if !ok {
-        // 			metricRecvDiscoCallMeMaybeBadNode.Add(1)
-        // 			c.logf("magicsock: disco: ignoring CallMeMaybe from %v; %v is unknown", sender.ShortString(), derpNodeSrc.ShortString())
-        // 			return
-        // 		}
-        // 		if ep.discoKey != di.discoKey {
-        // 			metricRecvDiscoCallMeMaybeBadDisco.Add(1)
-        // 			c.logf("[unexpected] CallMeMaybe from peer via DERP whose netmap discokey != disco source")
-        // 			return
-        // 		}
-        // 		di.setNodeKey(nodeKey)
-        // 		c.dlogf("[v1] magicsock: disco: %v<-%v (%v, %v)  got call-me-maybe, %d endpoints",
-        // 			c.discoShort, ep.discoShort,
-        // 			ep.publicKey.ShortString(), derpStr(src.String()),
-        // 			len(dm.MyNumber))
-        // 		go ep.handleCallMeMaybe(dm)
-        // 	}
-        // 	return
+                // There might be multiple nodes for the sender's DiscoKey.
+                // Ask each to handle it, stopping once one reports that
+                // the Pong's TxID was theirs.
+                for ep in state.peer_map.endpoints_with_disco_key(&sender) {
+                    todo!();
+                    // if ep.handle_pong_conn_locked(&mut state, &pong, &di, src) {
+                    //     break;
+                    // }
+                }
+                true
+            }
+            disco::Message::CallMeMaybe(cm) => {
+                // metricRecvDiscoCallMeMaybe.Add(1)
+
+                if !is_derp || derp_node_src.is_none() {
+                    // CallMeMaybe messages should only come via DERP.
+                    debug!("[unexpected] CallMeMaybe packets should only come via DERP");
+                    return true;
+                }
+                let node_key = derp_node_src.unwrap();
+                let di_disco_key = di.disco_key.clone();
+                drop(di);
+                let ep = state.peer_map.endpoint_for_node_key(&node_key);
+                if ep.is_none() {
+                    // metricRecvDiscoCallMeMaybeBadNode.Add(1)
+                    debug!(
+                        "disco: ignoring CallMeMaybe from {:?}; {:?} is unknown",
+                        sender, derp_node_src
+                    );
+                    return true;
+                }
+                let ep = ep.unwrap().clone();
+                let ep_disco_key = ep.disco_key();
+                if ep_disco_key != di_disco_key {
+                    // metricRecvDiscoCallMeMaybeBadDisco.Add(1)
+                    debug!("[unexpected] CallMeMaybe from peer via DERP whose netmap discokey != disco source");
+                    return true;
+                }
+                let di = self.disco_info_locked(&mut state, &sender);
+                di.set_node_key(node_key.clone());
+                info!(
+                    "disco: {:?}<-{:?} ({:?}, {:?})  got call-me-maybe, {} endpoints",
+                    state.disco_public,
+                    ep_disco_key,
+                    ep.public_key,
+                    src,
+                    cm.my_number.len()
+                );
+
+                tokio::task::spawn(async move {
+                    ep.handle_call_me_maybe(cm);
+                });
+
+                true
+            }
+        }
     }
 
     /// Attempts to look up an unambiguous mapping from a DiscoKey `dk` (which sent ping dm) to a NodeKey.
@@ -1730,140 +1703,157 @@ impl Conn {
         None
     }
 
-    // // di is the discoInfo of the source of the ping.
-    // // derpNodeSrc is non-zero if the ping arrived via DERP.
-    // func (c *Conn) handlePingLocked(dm *disco.Ping, src netip.AddrPort, di *discoInfo, derpNodeSrc key.node::PublicKey) {
-    // 	likelyHeartBeat := src == di.lastPingFrom && time.Since(di.lastPingTime) < 5*time.Second
-    // 	di.lastPingFrom = src
-    // 	di.lastPingTime = time.Now()
-    // 	isDerp := src.Addr() == derpMagicIPAddr
+    /// di is the DiscoInfo of the source of the ping.
+    /// derp_node_src is non-zero if the ping arrived via DERP.
+    fn handle_ping_locked(
+        &self,
+        state: &mut ConnState,
+        dm: disco::Ping,
+        sender: &key::disco::PublicKey,
+        src: SocketAddr,
+        derp_node_src: Option<&key::node::PublicKey>,
+    ) {
+        let di = self.disco_info_locked(state, &sender);
+        todo!();
+        // 	likelyHeartBeat := src == di.lastPingFrom && time.Since(di.lastPingTime) < 5*time.Second
+        // 	di.lastPingFrom = src
+        // 	di.lastPingTime = time.Now()
+        // 	isDerp := src.Addr() == derpMagicIPAddr
 
-    // 	// If we can figure out with certainty which node key this disco
-    // 	// message is for, eagerly update our IP<>node and disco<>node
-    // 	// mappings to make p2p path discovery faster in simple
-    // 	// cases. Without this, disco would still work, but would be
-    // 	// reliant on DERP call-me-maybe to establish the disco<>node
-    // 	// mapping, and on subsequent disco handlePongLocked to establish
-    // 	// the IP<>disco mapping.
-    // 	if nk, ok := c.unambiguousNodeKeyOfPingLocked(dm, di.discoKey, derpNodeSrc); ok {
-    // 		di.setNodeKey(nk)
-    // 		if !isDerp {
-    // 			c.peerMap.setNodeKeyForIPPort(src, nk)
-    // 		}
-    // 	}
+        // 	// If we can figure out with certainty which node key this disco
+        // 	// message is for, eagerly update our IP<>node and disco<>node
+        // 	// mappings to make p2p path discovery faster in simple
+        // 	// cases. Without this, disco would still work, but would be
+        // 	// reliant on DERP call-me-maybe to establish the disco<>node
+        // 	// mapping, and on subsequent disco handlePongLocked to establish
+        // 	// the IP<>disco mapping.
+        // 	if nk, ok := c.unambiguousNodeKeyOfPingLocked(dm, di.discoKey, derpNodeSrc); ok {
+        // 		di.setNodeKey(nk)
+        // 		if !isDerp {
+        // 			c.peerMap.setNodeKeyForIPPort(src, nk)
+        // 		}
+        // 	}
 
-    // 	// If we got a ping over DERP, then derpNodeSrc is non-zero and we reply
-    // 	// over DERP (in which case ipDst is also a DERP address).
-    // 	// But if the ping was over UDP (ipDst is not a DERP address), then dstKey
-    // 	// will be zero here, but that's fine: sendDiscoMessage only requires
-    // 	// a dstKey if the dst ip:port is DERP.
-    // 	dstKey := derpNodeSrc
+        // 	// If we got a ping over DERP, then derpNodeSrc is non-zero and we reply
+        // 	// over DERP (in which case ipDst is also a DERP address).
+        // 	// But if the ping was over UDP (ipDst is not a DERP address), then dstKey
+        // 	// will be zero here, but that's fine: sendDiscoMessage only requires
+        // 	// a dstKey if the dst ip:port is DERP.
+        // 	dstKey := derpNodeSrc
 
-    // 	// Remember this route if not present.
-    // 	var numNodes int
-    // 	var dup bool
-    // 	if isDerp {
-    // 		if ep, ok := c.peerMap.endpointForNodeKey(derpNodeSrc); ok {
-    // 			if ep.addCandidateEndpoint(src, dm.TxID) {
-    // 				return
-    // 			}
-    // 			numNodes = 1
-    // 		}
-    // 	} else {
-    // 		c.peerMap.forEachEndpointWithDiscoKey(di.discoKey, func(ep *endpoint) (keepGoing bool) {
-    // 			if ep.addCandidateEndpoint(src, dm.TxID) {
-    // 				dup = true
-    // 				return false
-    // 			}
-    // 			numNodes++
-    // 			if numNodes == 1 && dstKey.IsZero() {
-    // 				dstKey = ep.publicKey
-    // 			}
-    // 			return true
-    // 		})
-    // 		if dup {
-    // 			return
-    // 		}
-    // 		if numNodes > 1 {
-    // 			// Zero it out if it's ambiguous, so sendDiscoMessage logging
-    // 			// isn't confusing.
-    // 			dstKey = key.node::PublicKey{}
-    // 		}
-    // 	}
+        // 	// Remember this route if not present.
+        // 	var numNodes int
+        // 	var dup bool
+        // 	if isDerp {
+        // 		if ep, ok := c.peerMap.endpointForNodeKey(derpNodeSrc); ok {
+        // 			if ep.addCandidateEndpoint(src, dm.TxID) {
+        // 				return
+        // 			}
+        // 			numNodes = 1
+        // 		}
+        // 	} else {
+        // 		c.peerMap.forEachEndpointWithDiscoKey(di.discoKey, func(ep *endpoint) (keepGoing bool) {
+        // 			if ep.addCandidateEndpoint(src, dm.TxID) {
+        // 				dup = true
+        // 				return false
+        // 			}
+        // 			numNodes++
+        // 			if numNodes == 1 && dstKey.IsZero() {
+        // 				dstKey = ep.publicKey
+        // 			}
+        // 			return true
+        // 		})
+        // 		if dup {
+        // 			return
+        // 		}
+        // 		if numNodes > 1 {
+        // 			// Zero it out if it's ambiguous, so sendDiscoMessage logging
+        // 			// isn't confusing.
+        // 			dstKey = key.node::PublicKey{}
+        // 		}
+        // 	}
 
-    // 	if numNodes == 0 {
-    // 		c.logf("[unexpected] got disco ping from %v/%v for node not in peers", src, derpNodeSrc)
-    // 		return
-    // 	}
+        // 	if numNodes == 0 {
+        // 		c.logf("[unexpected] got disco ping from %v/%v for node not in peers", src, derpNodeSrc)
+        // 		return
+        // 	}
 
-    // 	if !likelyHeartBeat || debugDisco() {
-    // 		pingNodeSrcStr := dstKey.ShortString()
-    // 		if numNodes > 1 {
-    // 			pingNodeSrcStr = "[one-of-multi]"
-    // 		}
-    // 		c.dlogf("[v1] magicsock: disco: %v<-%v (%v, %v)  got ping tx=%x", c.discoShort, di.discoShort, pingNodeSrcStr, src, dm.TxID[:6])
-    // 	}
+        // 	if !likelyHeartBeat || debugDisco() {
+        // 		pingNodeSrcStr := dstKey.ShortString()
+        // 		if numNodes > 1 {
+        // 			pingNodeSrcStr = "[one-of-multi]"
+        // 		}
+        // 		c.dlogf("[v1] magicsock: disco: %v<-%v (%v, %v)  got ping tx=%x", c.discoShort, di.discoShort, pingNodeSrcStr, src, dm.TxID[:6])
+        // 	}
 
-    // 	ipDst := src
-    // 	discoDest := di.discoKey
-    // 	go c.sendDiscoMessage(ipDst, dstKey, discoDest, &disco.Pong{
-    // 		TxID: dm.TxID,
-    // 		Src:  src,
-    // 	}, discoVerboseLog)
-    // }
+        // 	ipDst := src
+        // 	discoDest := di.discoKey
+        // 	go c.sendDiscoMessage(ipDst, dstKey, discoDest, &disco.Pong{
+        // 		TxID: dm.TxID,
+        // 		Src:  src,
+        // 	}, discoVerboseLog)
+    }
 
-    // // enqueueCallMeMaybe schedules a send of disco.CallMeMaybe to de via derpAddr
-    // // once we know that our STUN endpoint is fresh.
-    // //
-    // // derpAddr is de.derpAddr at the time of send. It's assumed the peer won't be
-    // // flipping primary DERPs in the 0-30ms it takes to confirm our STUN endpoint.
-    // // If they do, traffic will just go over DERP for a bit longer until the next
-    // // discovery round.
-    // func (c *Conn) enqueueCallMeMaybe(derpAddr netip.AddrPort, de *endpoint) {
-    // 	c.mu.Lock()
-    // 	defer c.mu.Unlock()
+    /// Schedules a send of disco.CallMeMaybe to de via derpAddr
+    /// once we know that our STUN endpoint is fresh.
+    ///
+    /// derpAddr is de.derpAddr at the time of send. It's assumed the peer won't be
+    /// flipping primary DERPs in the 0-30ms it takes to confirm our STUN endpoint.
+    /// If they do, traffic will just go over DERP for a bit longer until the next discovery round.
+    fn enqueue_call_me_maybe(&self, derp_addr: SocketAddr, de: &Endpoint) {
+        todo!()
+        // 	c.mu.Lock()
+        // 	defer c.mu.Unlock()
 
-    // 	if !c.lastEndpointsTime.After(time.Now().Add(-endpointsFreshEnoughDuration)) {
-    // 		c.dlogf("[v1] magicsock: want call-me-maybe but endpoints stale; restunning")
+        // 	if !c.lastEndpointsTime.After(time.Now().Add(-endpointsFreshEnoughDuration)) {
+        // 		c.dlogf("[v1] magicsock: want call-me-maybe but endpoints stale; restunning")
 
-    // 		mak.Set(&c.onEndpointRefreshed, de, func() {
-    // 			c.dlogf("[v1] magicsock: STUN done; sending call-me-maybe to %v %v", de.discoShort, de.publicKey.ShortString())
-    // 			c.enqueueCallMeMaybe(derpAddr, de)
-    // 		})
-    // 		// TODO(bradfitz): make a new 'reSTUNQuickly' method
-    // 		// that passes down a do-a-lite-netcheck flag down to
-    // 		// netcheck that does 1 (or 2 max) STUN queries
-    // 		// (UDP-only, not HTTPs) to find our port mapping to
-    // 		// our home DERP and maybe one other. For now we do a
-    // 		// "full" ReSTUN which may or may not be a full one
-    // 		// (depending on age) and may do HTTPS timing queries
-    // 		// (if UDP is blocked). Good enough for now.
-    // 		go c.ReSTUN("refresh-for-peering")
-    // 		return
-    // 	}
+        // 		mak.Set(&c.onEndpointRefreshed, de, func() {
+        // 			c.dlogf("[v1] magicsock: STUN done; sending call-me-maybe to %v %v", de.discoShort, de.publicKey.ShortString())
+        // 			c.enqueueCallMeMaybe(derpAddr, de)
+        // 		})
+        // 		// TODO(bradfitz): make a new 'reSTUNQuickly' method
+        // 		// that passes down a do-a-lite-netcheck flag down to
+        // 		// netcheck that does 1 (or 2 max) STUN queries
+        // 		// (UDP-only, not HTTPs) to find our port mapping to
+        // 		// our home DERP and maybe one other. For now we do a
+        // 		// "full" ReSTUN which may or may not be a full one
+        // 		// (depending on age) and may do HTTPS timing queries
+        // 		// (if UDP is blocked). Good enough for now.
+        // 		go c.ReSTUN("refresh-for-peering")
+        // 		return
+        // 	}
 
-    // 	eps := make([]netip.AddrPort, 0, len(c.lastEndpoints))
-    // 	for _, ep := range c.lastEndpoints {
-    // 		eps = append(eps, ep.Addr)
-    // 	}
-    // 	go de.c.sendDiscoMessage(derpAddr, de.publicKey, de.discoKey, &disco.CallMeMaybe{MyNumber: eps}, discoLog)
-    // }
+        // 	eps := make([]netip.AddrPort, 0, len(c.lastEndpoints))
+        // 	for _, ep := range c.lastEndpoints {
+        // 		eps = append(eps, ep.Addr)
+        // 	}
+        // 	go de.c.sendDiscoMessage(derpAddr, de.publicKey, de.discoKey, &disco.CallMeMaybe{MyNumber: eps}, discoLog)
+    }
 
-    // // discoInfoLocked returns the previous or new discoInfo for k.
-    // //
-    // // c.mu must be held.
-    // func (c *Conn) discoInfoLocked(k key.DiscoPublic) *discoInfo {
-    // 	di, ok := c.discoInfo[k]
-    // 	if !ok {
-    // 		di = &discoInfo{
-    // 			discoKey:   k,
-    // 			discoShort: k.ShortString(),
-    // 			sharedKey:  c.discoPrivate.Shared(k),
-    // 		}
-    // 		c.discoInfo[k] = di
-    // 	}
-    // 	return di
-    // }
+    /// Returns the previous or new DiscoInfo for `k`.
+    fn disco_info_locked<'a>(
+        &self,
+        state: &'a mut ConnState,
+        k: &key::disco::PublicKey,
+    ) -> &'a mut DiscoInfo {
+        if !state.disco_info.contains_key(k) {
+            let shared_key = state.disco_private.shared(k);
+            state.disco_info.insert(
+                k.clone(),
+                DiscoInfo {
+                    disco_key: k.clone(),
+                    shared_key,
+                    last_ping_from: None,
+                    last_ping_time: None,
+                    last_node_key: None,
+                    last_node_key_time: None,
+                },
+            );
+        }
+
+        state.disco_info.get_mut(k).unwrap()
+    }
 
     // func (c *Conn) SetNetworkUp(up bool) {
     // 	c.mu.Lock()
@@ -2770,7 +2760,7 @@ struct DerpRoute {
 /// node. In the case of shared nodes and users switching accounts, two
 /// nodes in the NetMap may legitimately have the same DiscoKey.  As
 /// such, no fields in here should be considered node-specific.
-struct DiscoInfo {
+pub(super) struct DiscoInfo {
     /// The same as the Conn.discoInfo map key, just so you can pass around a `DiscoInfo` alone.
     /// Not modified once initialized.
     disco_key: key::disco::PublicKey,
@@ -2782,26 +2772,27 @@ struct DiscoInfo {
 
     // Mutable fields follow, owned by Conn.mu:
     /// Tthe src of a ping for `DiscoKey`.
-    last_ping_from: SocketAddr,
+    last_ping_from: Option<SocketAddr>,
 
     /// The last time of a ping for discoKey.
-    last_ping_time: Instant,
+    last_ping_time: Option<Instant>,
 
     /// The last NodeKey seen using `DiscoKey`.
     /// It's only updated if the NodeKey is unambiguous.
-    last_node_key: key::node::PublicKey,
+    last_node_key: Option<key::node::PublicKey>,
 
     /// The time a NodeKey was last seen using this `DiscoKey`. It's only updated if the
     /// NodeKey is unambiguous.
-    last_node_key_time: Instant,
+    last_node_key_time: Option<Instant>,
 }
 
-// // setNodeKey sets the most recent mapping from di.discoKey to the
-// // NodeKey nk.
-// func (di *discoInfo) setNodeKey(nk key.node::PublicKey) {
-// 	di.lastNodeKey = nk
-// 	di.lastNodeKeyTime = time.Now()
-// }
+impl DiscoInfo {
+    /// Sets the most recent mapping from di.discoKey to the NodeKey nk.
+    fn set_node_key(&mut self, nk: key::node::PublicKey) {
+        self.last_node_key.replace(nk);
+        self.last_node_key_time.replace(Instant::now());
+    }
+}
 
 // TODO:
 // // ippEndpointCache is a mutex-free single-element cache, mapping from
@@ -2908,6 +2899,8 @@ impl AsyncUdpSocket for Conn {
         debug_assert_eq!(bufs.len(), meta.len());
 
         let mut num_msgs_total = 0;
+
+        // IPv4
         match self.pconn4.poll_recv(cx, bufs, meta) {
             Poll::Pending => {}
             Poll::Ready(Err(err)) => {
@@ -2933,6 +2926,7 @@ impl AsyncUdpSocket for Conn {
                 num_msgs_total += num_msgs;
             }
         }
+        // IPv6
         if num_msgs_total < bufs.len() {
             match self.pconn6.poll_recv(
                 cx,
@@ -2964,6 +2958,27 @@ impl AsyncUdpSocket for Conn {
                 }
             }
         }
+        // Derp
+        let mut i = num_msgs_total;
+        if num_msgs_total < bufs.len() {
+            while i < bufs.len() {
+                if let Ok(dm) = self.derp_recv_ch.try_recv() {
+                    if self.state.blocking_lock().closed {
+                        break;
+                    }
+
+                    let n = self.process_derp_read_result(dm, &mut bufs[i], &mut meta[i]);
+                    if n == 0 {
+                        // No read, continue
+                        continue;
+                    }
+
+                    i += 1;
+                } else {
+                    break;
+                }
+            }
+        }
 
         // If we have any msgs to report, they are in the first `num_msgs_total` slots
         if num_msgs_total > 0 {
@@ -2980,16 +2995,9 @@ impl AsyncUdpSocket for Conn {
     }
 }
 
-/// The type sent by runDerpClient to ReceiveIPv4when a DERP packet is available.
-///
-/// Notably, it doesn't include the derp.ReceivedPacket because we
-/// don't want to give the receiver access to the aliased []byte.  To
-/// get at the packet contents they need to call copyBuf to copy it
-/// out, which also releases the buffer.
+/// The type sent by run_derp_client to receive_ipv4 when a DERP packet is available.
 struct DerpReadResult {
     region_id: usize,
-    /// length of data received
-    n: usize,
     src: key::node::PublicKey,
     /// packet data
     buf: Vec<u8>,

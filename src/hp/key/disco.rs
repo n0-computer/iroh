@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, ensure, Result};
 
 pub const PUBLIC_RAW_LEN: usize = 32;
 pub const SECRET_RAW_LEN: usize = 32;
@@ -63,12 +63,7 @@ impl SecretKey {
     }
 }
 
-/// Seal of a given plaintext.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Seal {
-    nonce: [u8; 24],
-    ciphertext: Vec<u8>,
-}
+const NONCE_LEN: usize = 24;
 
 /// Shared Secret for a very Node.
 #[derive(Clone)]
@@ -76,7 +71,7 @@ pub struct SharedSecret(crypto_box::ChaChaBox);
 
 impl SharedSecret {
     /// Seals the provided cleartext.
-    pub fn seal(&self, cleartext: &[u8]) -> Seal {
+    pub fn seal(&self, cleartext: &[u8]) -> Vec<u8> {
         use crypto_box::aead::{Aead, AeadCore, OsRng};
 
         let nonce = crypto_box::ChaChaBox::generate_nonce(&mut OsRng);
@@ -84,18 +79,22 @@ impl SharedSecret {
             .0
             .encrypt(&nonce, cleartext)
             .expect("encryption failed");
-        Seal {
-            nonce: nonce.into(),
-            ciphertext,
-        }
+
+        let mut res = nonce.to_vec();
+        res.extend(ciphertext);
+        res
     }
 
     /// Opens the ciphertext, which must have been created using `Self::seal`, and returns the cleartext.
-    pub fn open(&self, seal: &Seal) -> Result<Vec<u8>> {
+    pub fn open(&self, seal: &[u8]) -> Result<Vec<u8>> {
         use crypto_box::aead::Aead;
+        ensure!(seal.len() > NONCE_LEN, "too short");
+
+        let (nonce, ciphertext) = seal.split_at(NONCE_LEN);
+        let nonce: [u8; NONCE_LEN] = nonce.try_into().unwrap();
         let plaintext = self
             .0
-            .decrypt(&seal.nonce.into(), &seal.ciphertext[..])
+            .decrypt(&nonce.into(), ciphertext)
             .map_err(|e| anyhow!("decryption failed: {:?}", e))?;
 
         Ok(plaintext)
