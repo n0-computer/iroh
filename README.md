@@ -1,7 +1,7 @@
 <h1 align="center">iroh</h1>
 <div align="center">
  <strong>
-   Send data over the internet.
+   IPFS reimagined.
  </strong>
 </div>
 
