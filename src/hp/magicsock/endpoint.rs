@@ -1,5 +1,7 @@
 use std::{
     collections::{HashMap, HashSet},
+    fmt::Display,
+    hash::Hash,
     net::{IpAddr, Ipv6Addr, SocketAddr},
     ops::Deref,
     sync::{
@@ -27,6 +29,31 @@ use super::{
 /// based on network conditions and what the peer supports.
 #[derive(Clone)]
 pub struct Endpoint(Arc<InnerEndpoint>);
+
+impl Display for Endpoint {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "MagicsockEndpoint({}, {})",
+            crate::util::encode(&self.public_key),
+            crate::util::encode(self.disco_key())
+        )
+    }
+}
+
+impl Hash for Endpoint {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.to_string().hash(state);
+    }
+}
+
+impl PartialEq for Endpoint {
+    fn eq(&self, other: &Self) -> bool {
+        self.public_key == other.public_key && self.disco_key() == other.disco_key()
+    }
+}
+
+impl Eq for Endpoint {}
 
 impl Deref for Endpoint {
     type Target = InnerEndpoint;
@@ -503,49 +530,53 @@ impl Endpoint {
         // 	de.sendFunc.Store(nil)
     }
 
-    // // addCandidateEndpoint adds ep as an endpoint to which we should send
-    // // future pings. If there is an existing endpointState for ep, and forRxPingTxID
-    // // matches the last received ping TxID, this function reports true, otherwise
-    // // false.
-    // //
-    // // This is called once we've already verified that we got a valid
-    // // discovery message from de via ep.
-    // func (de *endpoint) addCandidateEndpoint(ep netip.AddrPort, forRxPingTxID stun.TxID) (duplicatePing bool) {
-    // 	de.mu.Lock()
-    // 	defer de.mu.Unlock()
+    /// Adds ep as an endpoint to which we should send future pings. If there is an
+    /// existing endpointState for ep, and for_rx_ping_tx_id matches the last received
+    /// ping TransactionId, this function reports `true`, otherwise `false`.
+    ///
+    /// This is called once we've already verified that we got a valid discovery message from `self` via ep.
+    pub async fn add_candidate_endpoint(
+        &self,
+        ep: SocketAddr,
+        for_rx_ping_tx_id: stun::TransactionId,
+    ) -> bool {
+        // (duplicatePing bool) {
+        todo!();
+        // 	de.mu.Lock()
+        // 	defer de.mu.Unlock()
 
-    // 	if st, ok := de.endpointState[ep]; ok {
-    // 		duplicatePing = forRxPingTxID == st.lastGotPingTxID
-    // 		if !duplicatePing {
-    // 			st.lastGotPingTxID = forRxPingTxID
-    // 		}
-    // 		if st.lastGotPing.IsZero() {
-    // 			// Already-known endpoint from the network map.
-    // 			return duplicatePing
-    // 		}
-    // 		st.lastGotPing = time.Now()
-    // 		return duplicatePing
-    // 	}
+        // 	if st, ok := de.endpointState[ep]; ok {
+        // 		duplicatePing = forRxPingTxID == st.lastGotPingTxID
+        // 		if !duplicatePing {
+        // 			st.lastGotPingTxID = forRxPingTxID
+        // 		}
+        // 		if st.lastGotPing.IsZero() {
+        // 			// Already-known endpoint from the network map.
+        // 			return duplicatePing
+        // 		}
+        // 		st.lastGotPing = time.Now()
+        // 		return duplicatePing
+        // 	}
 
-    // 	// Newly discovered endpoint. Exciting!
-    // 	de.c.dlogf("[v1] magicsock: disco: adding %v as candidate endpoint for %v (%s)", ep, de.discoShort, de.publicKey.ShortString())
-    // 	de.endpointState[ep] = &endpointState{
-    // 		lastGotPing:     time.Now(),
-    // 		lastGotPingTxID: forRxPingTxID,
-    // 	}
+        // 	// Newly discovered endpoint. Exciting!
+        // 	de.c.dlogf("[v1] magicsock: disco: adding %v as candidate endpoint for %v (%s)", ep, de.discoShort, de.publicKey.ShortString())
+        // 	de.endpointState[ep] = &endpointState{
+        // 		lastGotPing:     time.Now(),
+        // 		lastGotPingTxID: forRxPingTxID,
+        // 	}
 
-    // 	// If for some reason this gets very large, do some cleanup.
-    // 	if size := len(de.endpointState); size > 100 {
-    // 		for ep, st := range de.endpointState {
-    // 			if st.shouldDeleteLocked() {
-    // 				de.deleteEndpointLocked(ep)
-    // 			}
-    // 		}
-    // 		size2 := len(de.endpointState)
-    // 		de.c.dlogf("[v1] magicsock: disco: addCandidateEndpoint pruned %v candidate set from %v to %v entries", size, size2)
-    // 	}
-    // 	return false
-    // }
+        // 	// If for some reason this gets very large, do some cleanup.
+        // 	if size := len(de.endpointState); size > 100 {
+        // 		for ep, st := range de.endpointState {
+        // 			if st.shouldDeleteLocked() {
+        // 				de.deleteEndpointLocked(ep)
+        // 			}
+        // 		}
+        // 		size2 := len(de.endpointState)
+        // 		de.c.dlogf("[v1] magicsock: disco: addCandidateEndpoint pruned %v candidate set from %v to %v entries", size, size2)
+        // 	}
+        // 	return false
+    }
 
     /// Called when connectivity changes enough
     /// that we should question our earlier assumptions about which paths work.

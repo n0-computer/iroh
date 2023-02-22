@@ -25,7 +25,7 @@ use rand::RngCore;
 
 use crate::hp::stun::to_canonical;
 
-use super::key;
+use super::{key, stun};
 
 // TODO: custom magicn
 /// The 6 byte header of all discovery messages.
@@ -123,7 +123,7 @@ pub enum Message {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Ping {
     /// Random client-generated per-ping transaction ID.
-    pub tx_id: [u8; 12],
+    pub tx_id: stun::TransactionId,
 
     /// Allegedly the ping sender's wireguard public key.
     /// It shouldn't be trusted by itself, but can be combined with
@@ -136,7 +136,7 @@ pub struct Ping {
 /// It includes the sender's source IP + port, so it's effectively a STUN response.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Pong {
-    pub tx_id: [u8; 12],
+    pub tx_id: stun::TransactionId,
     /// 18 bytes (16+2) on the wire; v4-mapped ipv6 for IPv4.
     pub src: SocketAddr,
 }
@@ -165,6 +165,7 @@ impl Ping {
             .try_into()
             .unwrap();
         let node_key = key::node::PublicKey::from(raw_key);
+        let tx_id = stun::TransactionId::from(tx_id);
 
         Ok(Ping { tx_id, node_key })
     }
@@ -212,7 +213,7 @@ impl Pong {
         ensure!(ver == V0, "invalid version");
         ensure!(p.len() >= PONG_LEN, "message too short");
         let tx_id: [u8; TX_LEN] = p[..TX_LEN].try_into().unwrap();
-
+        let tx_id = stun::TransactionId::from(tx_id);
         let src = socket_addr_from_bytes(&p[TX_LEN..TX_LEN + EP_LENGTH]);
 
         Ok(Pong { tx_id, src })
@@ -336,7 +337,7 @@ mod tests {
 	    Test {
 		name: "ping_with_nodekey_src",
 		m: Message::Ping(Ping {
-		    tx_id:    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+		    tx_id:    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].into(),
 		    node_key: key::node::PublicKey::from([0, 1, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 30, 31]),
 		}),
 		want: "01 00 01 02 03 04 05 06 07 08 09 0a 0b 0c 00 01 02 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 1e 1f",
@@ -344,7 +345,7 @@ mod tests {
 	    Test {
 		name: "pong",
 		m: Message::Pong(Pong{
-		    tx_id: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+		    tx_id: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].into(),
 		    src:  "2.3.4.5:1234".parse().unwrap(),
 		}),
 		want: "02 00 01 02 03 04 05 06 07 08 09 0a 0b 0c 00 00 00 00 00 00 00 00 00 00 ff ff 02 03 04 05 d2 04",
@@ -352,7 +353,7 @@ mod tests {
 	    Test {
 		name: "pongv6",
 		m: Message::Pong(Pong {
-		    tx_id: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+		    tx_id: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].into(),
 		    src:  "[fed0::12]:6666".parse().unwrap(),
 		}),
 		want: "02 00 01 02 03 04 05 06 07 08 09 0a 0b 0c fe d0 00 00 00 00 00 00 00 00 00 00 00 00 00 12 0a 1a",
