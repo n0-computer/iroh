@@ -20,10 +20,7 @@ use tracing::info;
 
 use crate::hp::{cfg, disco, key, stun};
 
-use super::{
-    conn::{ConnState, DiscoInfo},
-    Conn, PeerInfo, PongReply, SentPing, Timer,
-};
+use super::{conn::DiscoInfo, Conn, PeerInfo, PongReply, SentPing, Timer};
 
 /// A wireguard/conn.Endpoint that picks the best available path to communicate with a peer,
 /// based on network conditions and what the peer supports.
@@ -535,7 +532,7 @@ impl Endpoint {
     /// ping TransactionId, this function reports `true`, otherwise `false`.
     ///
     /// This is called once we've already verified that we got a valid discovery message from `self` via ep.
-    pub async fn add_candidate_endpoint(
+    pub fn add_candidate_endpoint(
         &self,
         ep: SocketAddr,
         for_rx_ping_tx_id: stun::TransactionId,
@@ -591,7 +588,7 @@ impl Endpoint {
     /// It reports whether m.TxID corresponds to a ping that this endpoint sent.
     pub(super) fn handle_pong_conn_locked(
         &self,
-        state: &mut ConnState,
+        /*state: &mut ConnState,*/
         m: &disco::Pong,
         di: &DiscoInfo,
         src: SocketAddr,

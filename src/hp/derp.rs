@@ -36,7 +36,7 @@ pub mod http {
             todo!()
         }
 
-        pub fn note_preferred(&self, is_preferred: bool) {
+        pub async fn note_preferred(&self, is_preferred: bool) {
             todo!()
         }
 
@@ -72,6 +72,10 @@ pub mod http {
             dst_key: Option<key::node::PublicKey>,
             b: Vec<u8>,
         ) -> Result<(), ClientError> {
+            todo!()
+        }
+
+        pub async fn close(self) {
             todo!()
         }
     }
