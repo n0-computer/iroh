@@ -1,112 +1,36 @@
 #![cfg(any(target_os = "windows", target_os = "macos"))]
 use std::env;
-// use std::fs::File;
-// use std::io::Read;
+use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, ChildStderr, Command, Stdio};
 
 use anyhow::{Context, Result};
 use tempfile::tempdir;
 
 #[test]
-fn cli_transfer_one_file() -> Result<()> {
+fn cli_provide_one_file() -> Result<()> {
     let dir = tempdir()?;
     let out = dir.path().join("out");
 
-    let res = CliTestRunner::new()
-        .path(PathBuf::from("transfer").join("foo.bin"))
-        .out(&out)
-        .run()?;
-
-    // run test w/ `UPDATE_EXPECT=1` to update snapshot files
-    // let expect = expect_test::expect_file!("./snapshots/cli__transfer_one_file__provide.snap");
-    // expect.assert_eq(&res.provider_stderr);
-
-    let expect = expect_test::expect_file!("./snapshots/cli__transfer_one_file__get.snap");
-    expect.assert_eq(&res.getter_stderr);
-    compare_files(res.input_path.unwrap(), out)?;
-    Ok(())
+    test_provide_get_loop(
+        &PathBuf::from("transfer").join("foo.bin"),
+        Some(&out),
+        false,
+    )
 }
 
 #[test]
-fn cli_transfer_folder() -> Result<()> {
+fn cli_provide_folder() -> Result<()> {
     let dir = tempdir()?;
     let out = dir.path().join("out");
 
-    let res = CliTestRunner::new()
-        .path(PathBuf::from("transfer"))
-        .out(&out)
-        .run()?;
-
-    // run test w/ `UPDATE_EXPECT=1` to update snapshot files
-    let expect = expect_test::expect_file!("./snapshots/cli__transfer_folder__provide.snap");
-    expect.assert_eq(&res.provider_stderr);
-
-    let expect = expect_test::expect_file!("./snapshots/cli__transfer_folder__get.snap");
-    expect.assert_eq(&res.getter_stderr);
-    compare_files(res.input_path.unwrap(), out)
+    test_provide_get_loop(&PathBuf::from("transfer"), Some(&out), false)
 }
 
 #[test]
-#[ignore]
-fn cli_transfer_from_stdin() -> Result<()> {
-    // let src = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-    //     .join("tests")
-    //     .join("fixtures");
-    // let path = src.join("transfer").join("foo.bin");
-    // let f = File::open(path)?;
-    // let stdin = Stdio::from(f);
-
-    // let iroh = env!("CARGO_BIN_EXE_iroh");
-    // let provide = Command::new(iroh);
-    //     .stderr(Stdio::piped())
-    //     .stdout(Stdio::piped())
-    //     .stdin(stdin)
-    //     .arg("provide");
-
-    // // Because of the way we handle providing data from stdin, the hash of the file will change every time.
-    // // Since there is no way to neatly extract the collection hash and then pass it to the getter
-    // // process, let's just test the provider side in this case
-
-    // let mut stderr = {
-    //     let mut provide_process = ProvideProcess {
-    //         child: cmd.spawn()?,
-    //     };
-
-    //     std::thread::sleep(std::time::Duration::from_secs(1));
-
-    //     provide_process.child.stderr.take().unwrap()
-    // };
-
-    // let mut got = String::new();
-    // stderr.read_to_string(&mut got)?;
-
-    // // Redact the collection & ticket hashes, since they change on each run.
-    // let got = redact_collection_and_ticket(&mut got)?;
-
-    // // run test w/ `UPDATE_EXPECT=1` to update snapshot files
-    // let expect = expect_test::expect_file!("./snapshots/cli__transfer_from_stdin__provide.snap");
-    // expect.assert_eq(&got);
-    Ok(())
-}
-
-#[test]
-fn cli_transfer_to_stdout() -> Result<()> {
-    let res = CliTestRunner::new()
-        .path(PathBuf::from("transfer").join("foo.bin"))
-        .run()?;
-
-    // run test w/ `UPDATE_EXPECT=1` to update snapshot files
-    let expect = expect_test::expect_file!("./snapshots/cli__transfer_to_stdout__provide.snap");
-    expect.assert_eq(&res.provider_stderr);
-
-    let expect = expect_test::expect_file!("./snapshots/cli__transfer_to_stdout__get.snap");
-    expect.assert_eq(&res.getter_stderr);
-
-    let expect_content = std::fs::read(res.input_path.unwrap())?;
-    assert_eq!(expect_content, res.getter_stdout);
-    Ok(())
+fn cli_provide_from_stdin_to_stdout() -> Result<()> {
+    test_provide_get_loop(&PathBuf::from("transfer").join("foo.bin"), None, true)
 }
 
 struct ProvideProcess {
@@ -119,24 +43,6 @@ impl Drop for ProvideProcess {
         self.child.try_wait().ok();
     }
 }
-
-fn redact_provide_path(path: &Path, s: String) -> String {
-    let path = path.to_string_lossy();
-    s.replace(&*path, "[PATH]")
-}
-
-fn redact_get_time(s: &mut str) -> Result<String> {
-    let re = regex::Regex::new(r"Done in \d\s\w*")?;
-    let s = re.replace(s, "Done in [TIME]");
-    Ok(s.to_string())
-}
-
-// fn redact_collection_and_ticket(s: &mut str) -> Result<String> {
-//     let re = regex::Regex::new(r"Collection: \S*")?;
-//     let s = re.replace(s, "Collection: [HASH]").to_string();
-//     let re = regex::Regex::new(r"All-in-one ticket: \S*")?;
-//     Ok(re.replace(&s, "All-in-one ticket: [TICKET]").to_string())
-// }
 
 fn compare_files(expect_path: impl AsRef<Path>, got_dir_path: impl AsRef<Path>) -> Result<()> {
     let expect_path = expect_path.as_ref();
@@ -157,114 +63,162 @@ fn compare_files(expect_path: impl AsRef<Path>, got_dir_path: impl AsRef<Path>) 
     Ok(())
 }
 
-struct CliTestRunner {
-    path: PathBuf,
-    out: Option<PathBuf>,
-}
+// Test the provide and get loop for success, stderr output, and file contents.
+//
+// Can optionally save the output to the `out` path parameter.
+//
+// Can optionally pipe content to stdin.
+//
+// Runs the provider as a child process that stays alive until the getter has completed.
+fn test_provide_get_loop(path: &Path, out: Option<&Path>, use_stdin: bool) -> Result<()> {
+    let src = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures");
 
-#[derive(Debug)]
-struct CliTestResults {
-    // expected terminal output from the provider
-    provider_stderr: String,
-    // expected terminal output from the getter
-    getter_stderr: String,
-    // only used when we don't specify an `--out` folder, the content of the transfered file gets
-    // pushed to the getter's stdout
-    getter_stdout: Vec<u8>,
-    // the content path given to the provider
-    input_path: Option<PathBuf>,
-}
+    let path = src.join(path);
 
-impl CliTestResults {
-    fn empty() -> Self {
-        Self {
-            provider_stderr: "".to_string(),
-            getter_stdout: vec![],
-            getter_stderr: "".to_string(),
-            input_path: None,
-        }
-    }
-}
+    let iroh = env!("CARGO_BIN_EXE_iroh");
 
-impl CliTestRunner {
-    fn new() -> Self {
-        Self {
-            path: "transfer".parse().unwrap(),
-            out: None,
-        }
-    }
-
-    fn path(mut self, path: impl AsRef<Path>) -> Self {
-        self.path = path.as_ref().to_path_buf();
-        self
-    }
-
-    fn out(mut self, out: impl AsRef<Path>) -> Self {
-        self.out = Some(out.as_ref().to_path_buf());
-        self
-    }
-
-    fn run(self) -> Result<CliTestResults> {
-        let src = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests")
-            .join("fixtures");
-
-        let path = src.join(&self.path);
-
-        let iroh = env!("CARGO_BIN_EXE_iroh");
-        let provider = Command::new(iroh)
+    // spawn a provider & optionally provide from stdin
+    let provider = if use_stdin {
+        let f = File::open(&path)?;
+        let stdin = Stdio::from(f);
+        Command::new(iroh)
+            .stderr(Stdio::piped())
+            .stdout(Stdio::null())
+            .stdin(stdin)
+            .arg("provide")
+            .arg("--addr")
+            .arg("127.0.0.1:0")
+            .spawn()?
+    } else {
+        Command::new(iroh)
             .stderr(Stdio::piped())
             .stdout(Stdio::null())
             .stdin(Stdio::null())
             .arg("provide")
             .arg(&path)
-            .spawn()?;
+            .arg("--addr")
+            .arg("127.0.0.1:0")
+            .spawn()?
+    };
 
-        let mut provider = ProvideProcess { child: provider };
+    // wrap in `ProvideProcess` to ensure the spawned process is killed on drop
+    let mut provider = ProvideProcess { child: provider };
+    let stderr = provider.child.stderr.take().unwrap();
+    let stderr = BufReader::new(stderr);
 
-        let stderr = provider.child.stderr.take().unwrap();
-        let stderr = BufReader::new(stderr);
+    // test provide output & get all in one ticket from stderr
+    let all_in_one = match_provide_stderr(stderr, use_stdin)?;
 
-        let mut res = CliTestResults::empty();
+    // create a `get-ticket` cmd & optionally provide out path
+    let mut cmd = Command::new(iroh);
+    cmd.arg("get-ticket").arg(all_in_one);
+    let cmd = if let Some(out) = out {
+        cmd.arg("--out").arg(out)
+    } else {
+        &mut cmd
+    };
 
-        let mut all_in_one = String::new();
-        let all_in_one_re = regex::Regex::new(r"All-in-one ticket: ([_a-zA-Z\d-]*)")?;
+    // test get stderr output
+    let get_output = cmd.output()?;
+    assert!(get_output.status.success());
+    match_get_stderr(get_output.stderr)?;
 
-        for line in stderr.lines() {
-            let line = line.unwrap();
-            res.provider_stderr.push_str(&line);
-            if all_in_one_re.is_match(&line) {
-                let caps = all_in_one_re
-                    .captures(&line)
-                    .context("expected match on 'All-in-one' ticket")?;
-                all_in_one = caps
-                    .get(1)
-                    .context("expected 2 matches on 'All-in-one' ticket")?
-                    .as_str()
-                    .to_string();
-                break;
-            }
+    // test output
+    match out {
+        None => {
+            let expect_content = std::fs::read(path)?;
+            assert_eq!(expect_content, get_output.stdout);
+            Ok(())
         }
-
-        let mut cmd = Command::new(iroh);
-        cmd.arg("get-ticket").arg(all_in_one);
-        let cmd = if let Some(out) = self.out {
-            cmd.arg("--out").arg(out)
-        } else {
-            &mut cmd
-        };
-
-        let get_output = cmd.output()?;
-
-        res.getter_stderr = String::from_utf8_lossy(&get_output.stderr).to_string();
-        res.getter_stdout = get_output.stdout;
-
-        // redactions
-        res.provider_stderr = redact_provide_path(&path, res.provider_stderr);
-        res.getter_stderr = redact_get_time(&mut res.getter_stderr)?;
-
-        res.input_path = Some(path);
-        println!("{res:#?}");
-        Ok(res)
+        Some(out) => compare_files(path, out),
     }
+}
+
+// looks for regex matches on stderr output for the getter.
+//
+// errors on the first regex mis-match or if the stderr output has fewer lines than expected
+fn match_get_stderr(stderr: Vec<u8>) -> Result<()> {
+    let stderr = std::str::from_utf8(&stderr[..])?;
+    let mut lines = stderr.lines();
+    let res = vec![
+        r"Fetching: [\da-z]{59}",
+        r"\[1/3\] Connecting ...",
+        r"\[2/3\] Requesting ...",
+        r"\[3/3\] Downloading collection...",
+        r"\d* file\(s\) with total transfer size [\d.]* ?[KMGT]?i?B",
+        r"Done in \d* seconds?",
+    ];
+
+    for re in res {
+        matches(
+            lines
+                .next()
+                .context("Unexpected end of 'get' output")?
+                .trim(),
+            re,
+        )?;
+    }
+    Ok(())
+}
+
+/// looks for regex matches on stderr output for the provider.
+///
+/// returns the "all in one ticket" that can be used to 'get' from another process.
+///
+/// errors on the first regex mismatch or if the stderr output has fewer lines than expected
+fn match_provide_stderr(stderr: BufReader<ChildStderr>, use_stdin: bool) -> Result<String> {
+    let mut lines = stderr.lines();
+
+    let mut res = vec![
+        r"Reading \S*",
+        r"Collection: [\da-z]{59}",
+        r"",
+        r"PeerID: [_\w\d-]*",
+        r"Auth token: [\w\d]*",
+    ];
+
+    // when piping from stdin, we don't open and read any files
+    if use_stdin {
+        res = res[1..].to_vec();
+    }
+
+    for re in res {
+        matches(next_line(&mut lines)?.trim(), re)?;
+    }
+
+    // get all-in-one ticket
+    let re = r"All-in-one ticket: ([_a-zA-Z\d-]*)";
+    let rx = regex::Regex::new(re)?;
+    let line = next_line(&mut lines)?;
+    if !rx.is_match(&line) {
+        anyhow::bail!(match_err_msg(&line, re))
+    }
+    let caps = rx
+        .captures(&line)
+        .context("expected match on 'All-in-one' ticket")?;
+    Ok(caps
+        .get(1)
+        .context("expected 2 matches on 'All-in-one' ticket")?
+        .as_str()
+        .to_string())
+}
+
+fn matches(line: &str, re: &str) -> Result<bool> {
+    let rx = regex::Regex::new(re)?;
+    if rx.is_match(line) {
+        Ok(true)
+    } else {
+        anyhow::bail!(match_err_msg(line, re))
+    }
+}
+
+fn next_line(l: &mut std::io::Lines<BufReader<ChildStderr>>) -> Result<String> {
+    let line = l.next().context("Unexpected end of stderr reader")??;
+    Ok(line)
+}
+
+fn match_err_msg(line: &str, re: &str) -> String {
+    format!("no match found\nexpected match for '{re}'\ngot '{line}'")
 }
