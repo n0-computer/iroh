@@ -21,6 +21,7 @@ use std::{
 };
 
 use anyhow::{anyhow, ensure, Result};
+use rand::RngCore;
 
 use crate::hp::stun::to_canonical;
 
@@ -68,6 +69,19 @@ impl TryFrom<u8> for MessageType {
             _ => Err(value),
         }
     }
+}
+
+pub fn encode_message(sender: &key::disco::PublicKey, seal: Vec<u8>) -> Vec<u8> {
+    let mut nonce = vec![0u8; NONCE_LEN];
+    rand::rngs::OsRng.fill_bytes(&mut nonce);
+
+    let mut out = Vec::with_capacity(MAGIC_LEN + NONCE_LEN + KEY_LEN);
+    out.extend_from_slice(MAGIC.as_bytes());
+    out.extend_from_slice(sender.as_bytes());
+    out.extend_from_slice(&nonce);
+    out.extend(seal);
+
+    out
 }
 
 /// Reports whether p looks like it's a packet containing an encrypted disco message.
