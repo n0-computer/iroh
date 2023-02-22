@@ -136,7 +136,6 @@ pub struct Inner {
     // TODO
     // connCtx:       context.Context, // closed on Conn.Close
     // connCtxCancel: func(),          // closes connCtx
-    // donec:         <-chan struct{}, // connCtx.Done()'s to avoid context.cancelCtx.Done()'s mutex per call
 
     // The underlying UDP sockets used to send/rcv packets for wireguard and other magicsock protocols.
     pconn4: RebindingUdpConn,
@@ -403,7 +402,6 @@ impl Conn {
 
         // TODO:
         // c.connCtx, c.connCtxCancel = context.WithCancel(context.Background())
-        // c.donec = c.connCtx.Done()
 
         match c.listen_raw_disco("ip4") {
             Ok(d4) => {
@@ -1004,35 +1002,39 @@ impl Conn {
     async fn send_addr(
         &self,
         addr: SocketAddr,
-        pub_key: Option<&key::node::PublicKey>,
+        pub_key: &key::node::PublicKey,
         b: &[u8],
     ) -> Result<bool> {
         if addr.ip() != DERP_MAGIC_IP {
             return self.send_udp(addr, b).await;
         }
 
-        match self.derp_write_chan_of_addr(addr, pub_key) {
+        match self.derp_write_chan_of_addr(addr, Some(pub_key)) {
             None => {
                 // TODO:
                 // metricSendDERPErrorChan.Add(1)
                 return Ok(false);
             }
             Some(ch) => {
-                let pkt = b.to_vec();
+                if self.closing.load(Ordering::Relaxed) {
+                    bail!("connection closed");
+                }
 
-                // tokio::select! {
-                // case <-c.donec:
-                //   metricSendDERPErrorClosed.Add(1)
-                //   return false, errConnClosed
-                // case ch <- derpWriteRequest{addr, pubKey, pkt}:
-                //   metricSendDERPQueued.Add(1)
-                //   return true, nil
-                // default:
-                //   metricSendDERPErrorQueue.Add(1)
-                //   // Too many writes queued. Drop packet.
-                //   return false, errDropDerpPacket
-                // }
-                todo!()
+                match ch.try_send(DerpWriteRequest {
+                    addr,
+                    pub_key: pub_key.clone(),
+                    b: b.to_vec(),
+                }) {
+                    Ok(_) => {
+                        //   metricSendDERPQueued.Add(1)
+                        return Ok(true);
+                    }
+                    Err(_) => {
+                        //   metricSendDERPErrorQueue.Add(1)
+                        // Too many writes queued. Drop packet.
+                        bail!("packet dropped");
+                    }
+                }
             }
         }
     }
@@ -1054,7 +1056,7 @@ impl Conn {
         &self,
         addr: SocketAddr,
         peer: Option<&key::node::PublicKey>,
-    ) -> Option<()> {
+    ) -> Option<flume::Sender<DerpWriteRequest>> {
         todo!()
         // chan<- derpWriteRequest {
         // if addr.Addr() != derpMagicIPAddr {
