@@ -52,12 +52,13 @@ pub fn make_client_endpoint(
     peer_id: Option<PeerId>,
     alpn_protocols: Vec<Vec<u8>>,
     keylog: bool,
+    ipv6: bool,
 ) -> Result<quinn::Endpoint> {
     let keypair = Keypair::generate();
 
     let tls_client_config = tls::make_client_config(&keypair, peer_id, alpn_protocols, keylog)?;
     let mut client_config = quinn::ClientConfig::new(Arc::new(tls_client_config));
-    let bind_addr = match opts.addr.is_ipv6() {
+    let bind_addr = match ipv6 {
         true => "[::]:0".parse().unwrap(),
         false => "0.0.0.0:0".parse().unwrap(),
     };
@@ -72,7 +73,12 @@ pub fn make_client_endpoint(
 
 /// Setup a QUIC connection to the provided address.
 async fn setup(opts: Options) -> Result<quinn::Connection> {
-    let endpoint = make_client_endpoint(opts.peer_id, vec![tls::P2P_ALPN.to_vec()], false)?;
+    let endpoint = make_client_endpoint(
+        opts.peer_id,
+        vec![tls::P2P_ALPN.to_vec()],
+        false,
+        opts.addr.is_ipv6(),
+    )?;
 
     debug!("connecting to {}", opts.addr);
     let connect = endpoint.connect(opts.addr, "localhost")?;

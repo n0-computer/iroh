@@ -223,7 +223,7 @@ impl FromStr for Blake3Cid {
 async fn make_rpc_client(
 ) -> anyhow::Result<RpcClient<ProviderService, QuinnConnection<ProviderResponse, ProviderRequest>>>
 {
-    let endpoint = iroh::get::make_client_endpoint(None, vec![RPC_ALPN.to_vec()], false)?;
+    let endpoint = iroh::get::make_client_endpoint(None, vec![RPC_ALPN.to_vec()], false, false)?;
     let addr: SocketAddr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, RPC_PORT));
     let server_name = "localhost".to_string();
     let connection = QuinnConnection::new(endpoint, addr, server_name);
