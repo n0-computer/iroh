@@ -4,7 +4,7 @@ use std::io;
 use std::str::FromStr;
 
 use abao::decode::AsyncSliceDecoder;
-use anyhow::{ensure, Result};
+use anyhow::{ensure, Context, Result};
 use bytes::{Bytes, BytesMut};
 use postcard::experimental::max_size::MaxSize;
 use quinn::VarInt;
@@ -78,32 +78,30 @@ pub(crate) async fn write_lp<W: AsyncWrite + Unpin>(writer: &mut W, data: &[u8])
     Ok(())
 }
 
-/// Read and deserialize into the given type from the provided source, based on the length prefix.
-pub(crate) async fn read_lp<'a, R: AsyncRead + Unpin, T: Deserialize<'a>>(
-    mut reader: R,
-    buffer: &'a mut BytesMut,
-) -> Result<Option<(T, usize)>> {
-    // read length prefix
+/// Reads a length prefixed message.
+///
+/// # Returns
+///
+/// The message as raw bytes.  If the end of the stream is reached and there is no partial
+/// message, returns `None`.
+pub(crate) async fn read_lp(
+    mut reader: impl AsyncRead + Unpin,
+    buffer: &mut BytesMut,
+) -> Result<Option<Bytes>> {
     let size = match read_prefix(&mut reader).await {
         Ok(size) => size,
         Err(err) if err.kind() == io::ErrorKind::UnexpectedEof => return Ok(None),
         Err(err) => return Err(err.into()),
     };
     let mut reader = reader.take(size);
-
-    let size = usize::try_from(size)?;
-    let mut read = 0;
-    while read != size {
+    let size = usize::try_from(size).context("frame larger than usize")?;
+    loop {
         let r = reader.read_buf(buffer).await?;
-        read += r;
         if r == 0 {
             break;
         }
     }
-    let response: T = postcard::from_bytes(&buffer[..size])?;
-    debug!("read message of size {}", size);
-
-    Ok(Some((response, size)))
+    Ok(Some(buffer.split_to(size).freeze()))
 }
 
 /// Return a buffer for the data, based on a given size, from the given source.

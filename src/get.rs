@@ -57,7 +57,11 @@ pub fn make_client_endpoint(
 
     let tls_client_config = tls::make_client_config(&keypair, peer_id, alpn_protocols, keylog)?;
     let mut client_config = quinn::ClientConfig::new(Arc::new(tls_client_config));
-    let mut endpoint = quinn::Endpoint::client("0.0.0.0:0".parse().unwrap())?;
+    let bind_addr = match opts.addr.is_ipv6() {
+        true => "[::]:0".parse().unwrap(),
+        false => "0.0.0.0:0".parse().unwrap(),
+    };
+    let mut endpoint = quinn::Endpoint::client(bind_addr)?;
     let mut transport_config = quinn::TransportConfig::default();
     transport_config.keep_alive_interval(Some(Duration::from_secs(1)));
     client_config.transport_config(Arc::new(transport_config));
