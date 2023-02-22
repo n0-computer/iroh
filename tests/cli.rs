@@ -10,67 +10,37 @@ use tempfile::tempdir;
 
 #[test]
 fn cli_provide_one_file() -> Result<()> {
-    let dir = tempdir()?;
-    let out = dir.path().join("out");
-
-    test_provide_get_loop(
-        &PathBuf::from("transfer").join("foo.bin"),
-        Some(&out),
-        false,
-    )
+    // provide a path to a file, do not pipe from stdin, do not pipe to stdout
+    test_provide_get_loop(&PathBuf::from("transfer").join("foo.bin"), false, false)
 }
 
 #[test]
 fn cli_provide_folder() -> Result<()> {
-    let dir = tempdir()?;
-    let out = dir.path().join("out");
-
-    test_provide_get_loop(&PathBuf::from("transfer"), Some(&out), false)
+    // provide a path to a folder, do not pipe from stdin, do not pipe to stdout
+    test_provide_get_loop(&PathBuf::from("transfer"), false, false)
 }
 
 #[test]
 fn cli_provide_from_stdin_to_stdout() -> Result<()> {
-    test_provide_get_loop(&PathBuf::from("transfer").join("foo.bin"), None, true)
-}
-
-struct ProvideProcess {
-    child: Child,
-}
-
-impl Drop for ProvideProcess {
-    fn drop(&mut self) {
-        self.child.kill().ok();
-        self.child.try_wait().ok();
-    }
-}
-
-fn compare_files(expect_path: impl AsRef<Path>, got_dir_path: impl AsRef<Path>) -> Result<()> {
-    let expect_path = expect_path.as_ref();
-    let got_dir_path = got_dir_path.as_ref();
-    if expect_path.is_dir() {
-        let paths = std::fs::read_dir(expect_path)?;
-        for entry in paths {
-            let entry = entry?;
-            compare_files(entry.path(), got_dir_path)?;
-        }
-    } else {
-        let file_name = expect_path.file_name().unwrap();
-        let expect = std::fs::read(expect_path)?;
-        let got = std::fs::read(got_dir_path.join(file_name))?;
-        assert_eq!(expect, got);
-    }
-
-    Ok(())
+    // provide a file, pipe content to the provider's stdin, pipe content to the getter's stdout
+    test_provide_get_loop(&PathBuf::from("transfer").join("foo.bin"), true, true)
 }
 
 // Test the provide and get loop for success, stderr output, and file contents.
 //
-// Can optionally save the output to the `out` path parameter.
+// Can optionally pipe the given `path` content to the provider from stdin & can optionally save the output to an `out` path.
 //
-// Can optionally pipe content to stdin.
-//
-// Runs the provider as a child process that stays alive until the getter has completed.
-fn test_provide_get_loop(path: &Path, out: Option<&Path>, use_stdin: bool) -> Result<()> {
+// Runs the provider as a child process that stays alive until the getter has completed. Then
+// checks the output of the "provide" and "get" processes against expected regex output. Finally,
+// test the content fetched from the "get" process is the same as the "provided" content.
+fn test_provide_get_loop(path: &Path, use_stdin: bool, use_stdout: bool) -> Result<()> {
+    let out = if use_stdout {
+        None
+    } else {
+        let dir = tempdir()?;
+        Some(dir.path().join("out"))
+    };
+
     let src = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests")
         .join("fixtures");
@@ -114,7 +84,7 @@ fn test_provide_get_loop(path: &Path, out: Option<&Path>, use_stdin: bool) -> Re
     // create a `get-ticket` cmd & optionally provide out path
     let mut cmd = Command::new(iroh);
     cmd.arg("get-ticket").arg(all_in_one);
-    let cmd = if let Some(out) = out {
+    let cmd = if let Some(ref out) = out {
         cmd.arg("--out").arg(out)
     } else {
         &mut cmd
@@ -136,9 +106,41 @@ fn test_provide_get_loop(path: &Path, out: Option<&Path>, use_stdin: bool) -> Re
     }
 }
 
-// looks for regex matches on stderr output for the getter.
+// Wrapping the [`Child`] process here allows us to impl the `Drop` trait ensuring the provide
+// process is killed when it goes out of scope.
+struct ProvideProcess {
+    child: Child,
+}
+
+impl Drop for ProvideProcess {
+    fn drop(&mut self) {
+        self.child.kill().ok();
+        self.child.try_wait().ok();
+    }
+}
+
+fn compare_files(expect_path: impl AsRef<Path>, got_dir_path: impl AsRef<Path>) -> Result<()> {
+    let expect_path = expect_path.as_ref();
+    let got_dir_path = got_dir_path.as_ref();
+    if expect_path.is_dir() {
+        let paths = std::fs::read_dir(expect_path)?;
+        for entry in paths {
+            let entry = entry?;
+            compare_files(entry.path(), got_dir_path)?;
+        }
+    } else {
+        let file_name = expect_path.file_name().unwrap();
+        let expect = std::fs::read(expect_path)?;
+        let got = std::fs::read(got_dir_path.join(file_name))?;
+        assert_eq!(expect, got);
+    }
+
+    Ok(())
+}
+
+// Looks for regex matches on stderr output for the getter.
 //
-// errors on the first regex mis-match or if the stderr output has fewer lines than expected
+// Errors on the first regex mis-match or if the stderr output has fewer lines than expected
 fn match_get_stderr(stderr: Vec<u8>) -> Result<()> {
     let stderr = std::str::from_utf8(&stderr[..])?;
     let mut lines = stderr.lines();
@@ -163,11 +165,10 @@ fn match_get_stderr(stderr: Vec<u8>) -> Result<()> {
     Ok(())
 }
 
-/// looks for regex matches on stderr output for the provider.
+/// Looks for regex matches on stderr output for the provider, returning the "all in one ticket"
+/// that can be used to 'get' from another process.
 ///
-/// returns the "all in one ticket" that can be used to 'get' from another process.
-///
-/// errors on the first regex mismatch or if the stderr output has fewer lines than expected
+/// Errors on the first regex mismatch or if the stderr output has fewer lines than expected
 fn match_provide_stderr(stderr: BufReader<ChildStderr>, use_stdin: bool) -> Result<String> {
     let mut lines = stderr.lines();
 
