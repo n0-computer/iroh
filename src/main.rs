@@ -99,7 +99,7 @@ impl OutWriter {
 impl OutWriter {
     pub async fn println(&self, content: impl AsRef<[u8]>) {
         let stderr = &mut *self.stderr.lock().await;
-        let mut buf: Vec<u8> = content.as_ref().iter().copied().collect();
+        let mut buf: Vec<u8> = content.as_ref().to_vec();
         buf.extend(b"\n");
         stderr.write_all(&buf).await.unwrap();
     }
