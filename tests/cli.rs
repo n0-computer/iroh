@@ -1,4 +1,4 @@
-#![cfg(any(target_os = "windows", target_os = "macos"))]
+#![cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
 use std::env;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
