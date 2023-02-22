@@ -157,7 +157,7 @@ where
     // 2. Send Request
     {
         debug!("sending request");
-        let req = Request { id: 1, name: hash };
+        let req = Request { name: hash };
 
         let used = postcard::to_slice(&req, &mut out_buffer)?;
         write_lp(&mut writer, used).await?;
