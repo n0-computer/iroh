@@ -69,7 +69,7 @@ pub mod http {
 
         pub async fn send(
             &self,
-            dst_key: key::node::PublicKey,
+            dst_key: Option<key::node::PublicKey>,
             b: Vec<u8>,
         ) -> Result<(), ClientError> {
             todo!()
