@@ -98,7 +98,7 @@ pub struct Builder<E: ServiceEndpoint<ProviderService> = DummyServerEndpoint> {
     bind_addr: SocketAddr,
     keypair: Keypair,
     auth_token: AuthToken,
-    endpoint: E,
+    rpc_endpoint: E,
     db: Database,
     keylog: bool,
 }
@@ -116,7 +116,7 @@ impl Builder {
             bind_addr: "127.0.0.1:4433".parse().unwrap(),
             keypair: Keypair::generate(),
             auth_token: AuthToken::generate(),
-            endpoint: Default::default(),
+            rpc_endpoint: Default::default(),
             db,
             keylog: false,
         }
@@ -125,14 +125,14 @@ impl Builder {
 
 impl<E: ServiceEndpoint<ProviderService>> Builder<E> {
     ///
-    pub fn rpc_endpoint<E2: ServiceEndpoint<ProviderService>>(self, endpoint: E2) -> Builder<E2> {
+    pub fn rpc_endpoint<E2: ServiceEndpoint<ProviderService>>(self, value: E2) -> Builder<E2> {
         Builder {
             bind_addr: self.bind_addr,
             keypair: self.keypair,
             auth_token: self.auth_token,
             db: self.db,
             keylog: self.keylog,
-            endpoint,
+            rpc_endpoint: value,
         }
     }
 
@@ -193,7 +193,8 @@ impl<E: ServiceEndpoint<ProviderService>> Builder<E> {
         let (events_sender, _events_receiver) = broadcast::channel(8);
         let events = events_sender.clone();
         let cancel_token = CancellationToken::new();
-        let rpc = RpcServer::new(self.endpoint);
+        tracing::debug!("rpc listening on: {:?}", self.rpc_endpoint.local_addr());
+        let rpc = RpcServer::new(self.rpc_endpoint);
         let task = {
             let cancel_token = cancel_token.clone();
             tokio::spawn(async move {

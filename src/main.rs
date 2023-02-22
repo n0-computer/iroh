@@ -435,7 +435,7 @@ async fn provide_interactive(
 }
 
 fn make_rpc_endpoint(keypair: &Keypair) -> Result<impl ServiceEndpoint<ProviderService>> {
-    let rpc_addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, RPC_PORT));
+    let rpc_addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, RPC_PORT));
     let rpc_quinn_endpoint = quinn::Endpoint::server(
         iroh::provider::make_server_config(keypair, 1024, 4, vec![RPC_ALPN.to_vec()])?,
         rpc_addr,

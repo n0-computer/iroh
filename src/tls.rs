@@ -164,7 +164,6 @@ pub fn make_client_config(
         .with_single_cert(vec![certificate], private_key)
         .expect("Client cert key DER is valid; qed");
     crypto.alpn_protocols = alpn_protocols;
-    crypto.alpn_protocols = vec![P2P_ALPN.to_vec()];
     if keylog {
         crypto.key_log = Arc::new(rustls::KeyLogFile::new());
     }
