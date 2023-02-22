@@ -20,7 +20,7 @@ use quinn::AsyncUdpSocket;
 use rand::{seq::SliceRandom, Rng, SeedableRng};
 use subtle::ConstantTimeEq;
 use tokio::{
-    sync::{self, mpsc, Mutex, RwLock},
+    sync::{self, Mutex, RwLock},
     time::{self, Instant},
 };
 use tracing::{debug, info, warn};
@@ -36,8 +36,7 @@ use crate::hp::{
 use super::{
     endpoint::PeerMap,
     rebinding_conn::{RebindingUdpConn, UdpSocket},
-    ActiveDerp, Endpoint, Timer, DERP_CLEAN_STALE_INTERVAL, DERP_INACTIVE_CLEANUP_TIME,
-    SOCKET_BUFFER_SIZE,
+    Endpoint, Timer, DERP_CLEAN_STALE_INTERVAL, DERP_INACTIVE_CLEANUP_TIME, SOCKET_BUFFER_SIZE,
 };
 
 /// How many packets writes can be queued up the DERP client to write on the wire before we start
@@ -861,7 +860,8 @@ impl Conn {
             this.derp_write_chan_of_addr(
                 SocketAddr::new(DERP_MAGIC_IP, u16::try_from(node).expect("node too large")),
                 None,
-            );
+            )
+            .await;
         });
     }
 
@@ -1009,7 +1009,7 @@ impl Conn {
             return self.send_udp(addr, b).await;
         }
 
-        match self.derp_write_chan_of_addr(addr, Some(pub_key)) {
+        match self.derp_write_chan_of_addr(addr, Some(pub_key)).await {
             None => {
                 // TODO:
                 // metricSendDERPErrorChan.Add(1)
@@ -1052,148 +1052,189 @@ impl Conn {
     /// For real UDP addresses, it returns `None`.
     ///
     /// If peer is `Some`, it can be used to find an active reverse path, without using addr.
-    fn derp_write_chan_of_addr(
+    async fn derp_write_chan_of_addr(
         &self,
         addr: SocketAddr,
         peer: Option<&key::node::PublicKey>,
     ) -> Option<flume::Sender<DerpWriteRequest>> {
-        todo!()
-        // chan<- derpWriteRequest {
-        // if addr.Addr() != derpMagicIPAddr {
-        // 	return nil
+        if addr.ip() != DERP_MAGIC_IP {
+            return None;
+        }
+        if self.network_down() {
+            return None;
+        }
+        let region_id = usize::from(addr.port());
+
+        let mut state = self.state.lock().await;
+        if !self.want_derp_locked(&mut state) || state.closed {
+            return None;
+        }
+        if state.derp_map.is_none()
+            || !state
+                .derp_map
+                .as_ref()
+                .unwrap()
+                .regions
+                .contains_key(&region_id)
+        {
+            return None;
+        }
+        if state.private_key.is_none() {
+            debug!("DERP lookup of {} with no private key; ignoring", addr);
+            return None;
+        }
+
+        // See if we have a connection open to that DERP node ID
+        // first. If so, might as well use it. (It's a little
+        // arbitrary whether we use this one vs. the reverse route
+        // below when we have both.)
+        let ad = state.active_derp.get_mut(&region_id);
+        if let Some(ad) = ad {
+            ad.last_write = Instant::now();
+            return Some(ad.write_ch.clone());
+        }
+
+        // If we don't have an open connection to the peer's home DERP
+        // node, see if we have an open connection to a DERP node
+        // where we'd heard from that peer already. For instance,
+        // perhaps peer's home is Frankfurt, but they dialed our home DERP
+        // node in SF to reach us, so we can reply to them using our
+        // SF connection rather than dialing Frankfurt.
+        if let Some(peer) = peer {
+            let ConnState {
+                derp_route,
+                active_derp,
+                ..
+            } = &mut *state;
+            if let Some(r) = derp_route.get(peer) {
+                if let Some(ad) = active_derp.get_mut(&r.derp_id) {
+                    if ad.c == r.dc {
+                        ad.last_write = Instant::now();
+                        return Some(ad.write_ch.clone());
+                    }
+                }
+            }
+        }
+
+        let why = if let Some(peer) = peer {
+            format!("{:?}", peer)
+        } else {
+            "home-keep-alive".to_string()
+        };
+        info!("adding connection to derp-{} for {}", region_id, why);
+
+        // Note that derp::http.new_region_client does not dial the server
+        // (it doesn't block) so it is safe to do under the state lock.
+        let this = self.clone();
+        let dc = derp::http::Client::new_region(
+            state.private_key.clone().expect("checked for key earlier"),
+            move || {
+                // Warning: it is not legal to acquire
+                // magicsock.Conn.mu from this callback.
+                // It's run from derp::http::Client.connect (via Send, etc)
+                // and the lock ordering rules are that magicsock.Conn.mu
+                // must be acquired before derp::http.Client.mu
+
+                if this.is_closing() {
+                    // We're closing anyway; return to stop dialing.
+                    return None;
+                }
+
+                todo!();
+                // Need to load the derp map without aquiring the lock
+
+                // let derp_map = c.derpMapAtomic.Load();
+                // if derp_map == nil {
+                //     return None
+                // }
+                // derp_map.regions.get(region_id)
+            },
+        );
+
+        dc.set_can_ack_pings(true);
+        dc.note_preferred(state.my_derp == region_id);
+        let this = self.clone();
+        dc.set_address_family_selector(move || {
+            // TODO: use atomic read?
+            if let Some(r) = &*this.last_net_check_report.blocking_read() {
+                // TODO: avoid locking on the report
+                return r.blocking_read().ipv6;
+            }
+            false
+        });
+
+        // TODO: DNS Cache
+        // dc.DNSCache = dnscache.Get();
+
+        let (write_ch, write_ch_receiver) = flume::bounded(BUFFERED_DERP_WRITES_BEFORE_DROP);
+        let (cancel_sender, cancel_receiver) = sync::watch::channel(false);
+        let ad = ActiveDerp {
+            c: dc.clone(),
+            write_ch: write_ch.clone(),
+            cancel: cancel_sender,
+            last_write: Instant::now(),
+            create_time: Instant::now(),
+        };
+        state.active_derp.insert(region_id, ad);
+
+        // TODO:
+        // metricNumDERPConns.Set(int64(len(c.activeDerp)))
+        self.log_active_derp_locked(&mut state);
+
+        self.schedule_clean_stale_derp_locked(&mut state).await;
+
+        // TODO:
+
+        // Build a start_gate for the derp reader+writer
+        // tasks, so they don't start running until any
+        // previous generation is closed.
+        // let start_gate = if let Some(prev) = state.prev_derp.get(&region_id) {
+        //     prev.done_chan()
+        // } else {
+        //     sync::Notify::new()
+        // };
+        // // And register a WaitGroup(Chan) for this generation.
+        // wg := syncs.NewWaitGroupChan();
+        // wg.Add(2);
+        // c.prevDerp[regionID] = wg;
+
+        // if firstDerp {
+        //     startGate = c.derpStarted;
+        //     go func() {
+        // 	dc.Connect(ctx)
+        // 	  close(c.derpStarted)
+        // 	    c.muCond.Broadcast()
+        //     }()
         // }
-        // regionID := int(addr.Port())
 
-        // if c.networkDown() {
-        // 	return nil
-        // }
+        let this = self.clone();
+        let cancel = cancel_receiver.clone();
+        let dc1 = dc.clone();
+        tokio::task::spawn(async move {
+            this.run_derp_reader(addr, dc1, cancel).await;
+        });
 
-        // c.mu.Lock()
-        // defer c.mu.Unlock()
-        // if !c.wantDerpLocked() || c.closed {
-        // 	return nil
-        // }
-        // if c.derpMap == nil || c.derpMap.Regions[regionID] == nil {
-        // 	return nil
-        // }
-        // if c.privateKey.IsZero() {
-        // 	c.logf("magicsock: DERP lookup of %v with no private key; ignoring", addr)
-        // 	return nil
-        // }
+        let this = self.clone();
+        let cancel = cancel_receiver.clone();
+        tokio::task::spawn(async move {
+            this.run_derp_writer(dc, write_ch_receiver, cancel).await;
+        });
 
-        // 	// See if we have a connection open to that DERP node ID
-        // 	// first. If so, might as well use it. (It's a little
-        // 	// arbitrary whether we use this one vs. the reverse route
-        // 	// below when we have both.)
-        // 	ad, ok := c.activeDerp[regionID]
-        // 	if ok {
-        // 		*ad.lastWrite = time.Now()
-        // 		c.setPeerLastDerpLocked(peer, regionID, regionID)
-        // 		return ad.writeCh
-        // 	}
+        if let Some(ref f) = self.on_derp_active {
+            // TODO: spawn
+            f();
+        }
 
-        // 	// If we don't have an open connection to the peer's home DERP
-        // 	// node, see if we have an open connection to a DERP node
-        // 	// where we'd heard from that peer already. For instance,
-        // 	// perhaps peer's home is Frankfurt, but they dialed our home DERP
-        // 	// node in SF to reach us, so we can reply to them using our
-        // 	// SF connection rather than dialing Frankfurt. (Issue 150)
-        // 	if !peer.IsZero() && useDerpRoute() {
-        // 		if r, ok := c.derpRoute[peer]; ok {
-        // 			if ad, ok := c.activeDerp[r.derpID]; ok && ad.c == r.dc {
-        // 				c.setPeerLastDerpLocked(peer, r.derpID, regionID)
-        // 				*ad.lastWrite = time.Now()
-        // 				return ad.writeCh
-        // 			}
-        // 		}
-        // 	}
-
-        // 	why := "home-keep-alive"
-        // 	if !peer.IsZero() {
-        // 		why = peer.ShortString()
-        // 	}
-        // 	c.logf("magicsock: adding connection to derp-%v for %v", regionID, why)
-
-        // 	firstDerp := false
-        // 	if c.activeDerp == nil {
-        // 		firstDerp = true
-        // 		c.activeDerp = make(map[int]activeDerp)
-        // 		c.prevDerp = make(map[int]*syncs.WaitGroupChan)
-        // 	}
-
-        // 	// Note that derphttp.NewRegionClient does not dial the server
-        // 	// (it doesn't block) so it is safe to do under the c.mu lock.
-        // 	dc := derphttp.NewRegionClient(c.privateKey, c.logf, func() *tailcfg.DERPRegion {
-        // 		// Warning: it is not legal to acquire
-        // 		// magicsock.Conn.mu from this callback.
-        // 		// It's run from derphttp.Client.connect (via Send, etc)
-        // 		// and the lock ordering rules are that magicsock.Conn.mu
-        // 		// must be acquired before derphttp.Client.mu.
-        // 		// See https://github.com/tailscale/tailscale/issues/3726
-        // 		if c.connCtx.Err() != nil {
-        // 			// We're closing anyway; return nil to stop dialing.
-        // 			return nil
-        // 		}
-        // 		derpMap := c.derpMapAtomic.Load()
-        // 		if derpMap == nil {
-        // 			return nil
-        // 		}
-        // 		return derpMap.Regions[regionID]
-        // 	})
-
-        // 	dc.SetCanAckPings(true)
-        // 	dc.NotePreferred(c.myDerp == regionID)
-        // 	dc.SetAddressFamilySelector(derpAddrFamSelector{c})
-        // 	dc.DNSCache = dnscache.Get()
-
-        // 	ctx, cancel := context.WithCancel(c.connCtx)
-        // 	ch := make(chan derpWriteRequest, bufferedDerpWritesBeforeDrop)
-
-        // 	ad.c = dc
-        // 	ad.writeCh = ch
-        // 	ad.cancel = cancel
-        // 	ad.lastWrite = new(time.Time)
-        // 	*ad.lastWrite = time.Now()
-        // 	ad.createTime = time.Now()
-        // 	c.activeDerp[regionID] = ad
-        // 	metricNumDERPConns.Set(int64(len(c.activeDerp)))
-        // 	c.logActiveDerpLocked()
-        // 	c.setPeerLastDerpLocked(peer, regionID, regionID)
-        // 	c.scheduleCleanStaleDerpLocked()
-
-        // 	// Build a startGate for the derp reader+writer
-        // 	// goroutines, so they don't start running until any
-        // 	// previous generation is closed.
-        // 	startGate := syncs.ClosedChan()
-        // 	if prev := c.prevDerp[regionID]; prev != nil {
-        // 		startGate = prev.DoneChan()
-        // 	}
-        // 	// And register a WaitGroup(Chan) for this generation.
-        // 	wg := syncs.NewWaitGroupChan()
-        // 	wg.Add(2)
-        // 	c.prevDerp[regionID] = wg
-
-        // 	if firstDerp {
-        // 		startGate = c.derpStarted
-        // 		go func() {
-        // 			dc.Connect(ctx)
-        // 			close(c.derpStarted)
-        // 			c.muCond.Broadcast()
-        // 		}()
-        // 	}
-
-        // 	go c.runDerpReader(ctx, addr, dc, wg, startGate)
-        // 	go c.runDerpWriter(ctx, dc, ch, wg, startGate)
-        // 	go c.derpActiveFunc()
-
-        // 	return ad.writeCh
+        Some(write_ch)
     }
 
     /// Runs in a task for the life of a DERP connection, handling received packets.
     async fn run_derp_reader(
         &self,
         derp_fake_addr: SocketAddr,
-        dc: derp::http::Client, /*wg *syncs.WaitGroupChan, startGate <-chan struct{}*/
+        dc: derp::http::Client,
+        cancel: sync::watch::Receiver<bool>,
+        /*wg *syncs.WaitGroupChan, startGate <-chan struct{}*/
     ) {
         // TODO:
         // defer wg.Decr()
@@ -1235,6 +1276,11 @@ impl Conn {
                         info!("derp.recv(derp-{}): network down, closing", region_id);
                         return;
                     }
+
+                    if *cancel.borrow() {
+                        return;
+                    }
+
                     info!("[{:?}] derp.recv(derp-{}): {:?}", dc, region_id, err);
 
                     // If our DERP connection broke, it might be because our network
@@ -1248,6 +1294,10 @@ impl Conn {
                             time::sleep(t).await
                         }
                         None => return,
+                    }
+
+                    if *cancel.borrow() {
+                        return;
                     }
                 }
                 Ok((msg, conn_gen)) => {
@@ -1310,6 +1360,10 @@ impl Conn {
                             continue;
                         }
                     }
+
+                    if *cancel.borrow() {
+                        return;
+                    }
                 }
             }
         }
@@ -1320,7 +1374,8 @@ impl Conn {
     async fn run_derp_writer(
         &self,
         dc: derp::http::Client,
-        mut ch: mpsc::Receiver<DerpWriteRequest>, /*wg *syncs.WaitGroupChan, startGate <-chan struct{}*/
+        ch: flume::Receiver<DerpWriteRequest>,
+        mut cancel: sync::watch::Receiver<bool>, /*wg *syncs.WaitGroupChan, startGate <-chan struct{}*/
     ) {
         // TODO:
         // defer wg.Decr()
@@ -1339,8 +1394,13 @@ impl Conn {
         }*/
         loop {
             tokio::select! {
-                wr = ch.recv() => match wr {
-                    Some(wr) => match dc.send(wr.pub_key, wr.b).await {
+                _ = cancel.changed() => {
+                    if *cancel.borrow() {
+                        break;
+                    }
+                }
+                wr = ch.recv_async() => match wr {
+                    Ok(wr) => match dc.send(wr.pub_key, wr.b).await {
                         Ok(_) => {
                             // TODO
                             // metricSendDERP.Add(1)
@@ -1351,7 +1411,7 @@ impl Conn {
                             // metricSendDERPError.Add(1)
                         }
                     }
-                    None => {
+                    Err(_) => {
                         return;
                     }
                 }
@@ -2170,7 +2230,7 @@ impl Conn {
         why: &'static str,
         active_derp: &mut HashMap<usize, ActiveDerp>,
     ) {
-        if let Some(ad) = active_derp.remove(&region_id) {
+        if let Some(mut ad) = active_derp.remove(&region_id) {
             debug!(
                 "closing connection to derp-{} ({:?}), age {}s",
                 region_id,
@@ -2181,7 +2241,7 @@ impl Conn {
             todo!();
             // TODO:
             // tokio::task::spawn(ad.c.close());
-            // ad.cancel();
+            ad.cancel.send(true);
 
             // TODO:
             // metricNumDERPConns.Set(int64(len(c.activeDerp)))
@@ -2874,4 +2934,17 @@ impl SocketEndpointCache {
         let mut inner = self.0.lock().unwrap();
         inner.replace((addr, ep.num_stop_and_reset(), ep));
     }
+}
+
+/// Contains fields for an active DERP connection.
+#[derive(Debug)]
+struct ActiveDerp {
+    c: derp::http::Client,
+    cancel: sync::watch::Sender<bool>,
+    write_ch: flume::Sender<DerpWriteRequest>,
+    /// The time of the last request for its write
+    // channel (currently even if there was no write).
+    // It is always non-nil and initialized to a non-zero Time.
+    last_write: Instant,
+    create_time: Instant,
 }

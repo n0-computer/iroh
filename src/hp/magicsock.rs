@@ -10,8 +10,6 @@ use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tokio::time::{self, Instant};
 
-use super::derp;
-
 mod conn;
 mod endpoint;
 mod rebinding_conn;
@@ -55,19 +53,6 @@ impl PeerInfo {
             ip_ports: Default::default(),
         }
     }
-}
-
-/// Contains fields for an active DERP connection.
-#[derive(Debug)]
-struct ActiveDerp {
-    c: derp::http::Client,
-    // cancel  context.CancelFunc
-    // writeCh chan<- derpWriteRequest
-    /// The time of the last request for its write
-    // channel (currently even if there was no write).
-    // It is always non-nil and initialized to a non-zero Time.
-    last_write: Instant,
-    create_time: Instant,
 }
 
 /// How long since the last activity we try to keep an established endpoint peering alive.
@@ -136,24 +121,6 @@ pub enum DiscoPingPurpose {
     /// Mmeans that the user is running "tailscale ping" from the CLI. These types of pings can go over DERP.
     Cli,
 }
-
-// TODO: once derp::http::Client is implemented
-
-// // derpAddrFamSelector is the derphttp.AddressFamilySelector we pass
-// // to derphttp.Client.SetAddressFamilySelector.
-// //
-// // It provides the hint as to whether in an IPv4-vs-IPv6 race that
-// // IPv4 should be held back a bit to give IPv6 a better-than-50/50
-// // chance of winning. We only return true when we believe IPv6 will
-// // work anyway, so we don't artificially delay the connection speed.
-// type derpAddrFamSelector struct{ c *Conn }
-
-// func (s derpAddrFamSelector) PreferIPv6() bool {
-// 	if r := s.c.lastNetCheckReport.Load(); r != nil {
-// 		return r.IPv6
-// 	}
-// 	return false
-// }
 
 // TODO: metrics
 // var (
