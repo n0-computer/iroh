@@ -12,19 +12,22 @@ use std::{
     time::Duration,
 };
 
-use futures::Future;
+use futures::{future::BoxFuture, Future};
 use tokio::{
     sync::{Mutex, RwLock},
     time::Instant,
 };
 use tracing::{info, warn};
 
-use crate::hp::{cfg, disco, key, stun};
+use crate::hp::{
+    cfg::{self, DERP_MAGIC_IP},
+    disco, key, stun,
+};
 
 use super::{
     conn::DiscoInfo, Conn, DiscoPingPurpose, PeerInfo, PongReply, SentPing, Timer,
     DISCO_PING_INTERVAL, GOOD_ENOUGH_LATENCY, HEARTBEAT_INTERVAL, PING_TIMEOUT_DURATION,
-    PONG_HISTORY_COUNT, SESSION_ACTIVE_TIMEOUT, UPGRADE_INTERVAL,
+    PONG_HISTORY_COUNT, SESSION_ACTIVE_TIMEOUT, TRUST_UDP_ADDR_DURATION, UPGRADE_INTERVAL,
 };
 
 /// A wireguard/conn.Endpoint that picks the best available path to communicate with a peer,
@@ -101,7 +104,7 @@ pub struct InnerMutEndpoint {
     /// Time when best_addr expires
     pub trust_best_addr_until: Option<Instant>,
     pub endpoint_state: HashMap<SocketAddr, EndpointState>,
-    pub is_call_me_maybe_ep: HashSet<SocketAddr>,
+    pub is_call_me_maybe_ep: HashMap<SocketAddr, bool>,
 
     /// Any outstanding "tailscale ping" commands running
     pub pending_cli_pings: Vec<PendingCliPing>,
@@ -114,7 +117,7 @@ pub struct InnerMutEndpoint {
 
 pub struct PendingCliPing {
     pub res: cfg::PingResult,
-    pub cb: Box<dyn Fn(cfg::PingResult) + Send + Sync + 'static>,
+    pub cb: Box<dyn Fn(cfg::PingResult) -> BoxFuture<'static, ()> + Send + Sync + 'static>,
 }
 
 impl Endpoint {
@@ -138,7 +141,7 @@ impl Endpoint {
                 trust_best_addr_until: None,
                 sent_ping: HashMap::new(),
                 endpoint_state: HashMap::new(),
-                is_call_me_maybe_ep: HashSet::new(),
+                is_call_me_maybe_ep: HashMap::new(),
                 pending_cli_pings: Vec::new(),
                 expired: false,
             }),
@@ -261,7 +264,7 @@ impl Endpoint {
     /// `res` is value to call cb with, already partially filled.
     pub async fn cli_ping<F>(&self, mut res: cfg::PingResult, cb: F)
     where
-        F: Fn(cfg::PingResult) + Send + Sync + 'static,
+        F: Fn(cfg::PingResult) -> BoxFuture<'static, ()> + Send + Sync + 'static,
     {
         let mut state = self.state.lock().await;
         if state.expired {
@@ -537,41 +540,56 @@ impl Endpoint {
         for_rx_ping_tx_id: stun::TransactionId,
     ) -> bool {
         // (duplicatePing bool) {
-        todo!();
-        // 	de.mu.Lock()
-        // 	defer de.mu.Unlock()
+        let state = &mut *self.state.blocking_lock();
 
-        // 	if st, ok := de.endpointState[ep]; ok {
-        // 		duplicatePing = forRxPingTxID == st.lastGotPingTxID
-        // 		if !duplicatePing {
-        // 			st.lastGotPingTxID = forRxPingTxID
-        // 		}
-        // 		if st.lastGotPing.IsZero() {
-        // 			// Already-known endpoint from the network map.
-        // 			return duplicatePing
-        // 		}
-        // 		st.lastGotPing = time.Now()
-        // 		return duplicatePing
-        // 	}
+        if let Some(st) = state.endpoint_state.get_mut(&ep) {
+            let duplicate_ping = for_rx_ping_tx_id == st.last_got_ping_tx_id;
+            if !duplicate_ping {
+                st.last_got_ping_tx_id = for_rx_ping_tx_id;
+            }
+            if st.last_got_ping.is_none() {
+                // Already-known endpoint from the network map.
+                return duplicate_ping;
+            }
+            st.last_got_ping.replace(Instant::now());
+            return duplicate_ping;
+        }
 
-        // 	// Newly discovered endpoint. Exciting!
-        // 	de.c.dlogf("[v1] magicsock: disco: adding %v as candidate endpoint for %v (%s)", ep, de.discoShort, de.publicKey.ShortString())
-        // 	de.endpointState[ep] = &endpointState{
-        // 		lastGotPing:     time.Now(),
-        // 		lastGotPingTxID: forRxPingTxID,
-        // 	}
+        // Newly discovered endpoint. Exciting!
+        info!(
+            "disco: adding {:?} as candidate endpoint for {:?} ({:?})",
+            ep, state.disco_key, self.public_key
+        );
+        state.endpoint_state.insert(
+            ep,
+            EndpointState {
+                last_got_ping: Some(Instant::now()),
+                last_got_ping_tx_id: for_rx_ping_tx_id,
+                ..Default::default()
+            },
+        );
 
-        // 	// If for some reason this gets very large, do some cleanup.
-        // 	if size := len(de.endpointState); size > 100 {
-        // 		for ep, st := range de.endpointState {
-        // 			if st.shouldDeleteLocked() {
-        // 				de.deleteEndpointLocked(ep)
-        // 			}
-        // 		}
-        // 		size2 := len(de.endpointState)
-        // 		de.c.dlogf("[v1] magicsock: disco: addCandidateEndpoint pruned %v candidate set from %v to %v entries", size, size2)
-        // 	}
-        // 	return false
+        // If for some reason this gets very large, do some cleanup.
+        let size = state.endpoint_state.len();
+        if size > 100 {
+            state.endpoint_state.retain(|ep, st| {
+                if st.should_delete() {
+                    // Inlined delete_endpoint
+                    if state.best_addr.as_ref().map(|a| &a.addr) == Some(ep) {
+                        state.best_addr = None;
+                    }
+                    return false;
+                }
+                true
+            });
+            let size2 = state.endpoint_state.len();
+            info!(
+                "disco: addCandidateEndpoint pruned candidate set from {} to {} entries",
+                size, size2
+            )
+        }
+
+        false
     }
 
     /// Called when connectivity changes enough
@@ -587,185 +605,165 @@ impl Endpoint {
     /// It reports whether m.TxID corresponds to a ping that this endpoint sent.
     pub(super) fn handle_pong_conn_locked(
         &self,
-        /*state: &mut ConnState,*/
+        peer_map: &mut PeerMap,
+        conn_disco_public: &key::disco::PublicKey,
         m: &disco::Pong,
-        di: &DiscoInfo,
+        di: &mut DiscoInfo,
         src: SocketAddr,
     ) -> bool {
-        todo!()
         // -> (knownTxID bool) {
-        // 	de.mu.Lock()
-        // 	defer de.mu.Unlock()
+        let mut state = self.state.blocking_lock();
+        let is_derp = src.ip() == DERP_MAGIC_IP;
 
-        // 	isDerp := src.Addr() == derpMagicIPAddr
+        match state.sent_ping.remove(&m.tx_id) {
+            None => {
+                // This is not a pong for a ping we sent.
+                return false;
+            }
+            Some(sp) => {
+                let known_tx_id = true;
+                tokio::task::spawn(async move {
+                    sp.timer.stop().await;
+                });
+                di.set_node_key(self.public_key.clone());
 
-        // 	sp, ok := de.sentPing[m.TxID]
-        // 	if !ok {
-        // 		// This is not a pong for a ping we sent.
-        // 		return false
-        // 	}
-        // 	knownTxID = true // for naked returns below
-        // 	de.removeSentPingLocked(m.TxID, sp)
-        // 	di.setNodeKey(de.publicKey)
+                let now = Instant::now();
+                let latency = sp.at.duration_since(now);
 
-        // 	now := mono.Now()
-        // 	latency := now.Sub(sp.at)
+                if !is_derp {
+                    match state.endpoint_state.get_mut(&sp.to) {
+                        None => {
+                            // This is no longer an endpoint we care about.
+                            return known_tx_id;
+                        }
+                        Some(st) => {
+                            peer_map.set_node_key_for_ip_port(&src, &self.public_key);
+                            st.add_pong_reply(PongReply {
+                                latency,
+                                pong_at: now,
+                                from: src,
+                                pong_src: m.src,
+                            });
+                        }
+                    }
+                }
 
-        // 	if !isDerp {
-        // 		st, ok := de.endpointState[sp.to]
-        // 		if !ok {
-        // 			// This is no longer an endpoint we care about.
-        // 			return
-        // 		}
+                if sp.purpose != DiscoPingPurpose::Heartbeat {
+                    info!("disco: {:?}<-{:?} ({:?}, {:?})  got pong tx=%x latency={:?} pong.src={:?}{}{}",
+                          conn_disco_public,
+                          state.disco_key,
+                          self.public_key,
+                          src,
+                          m.tx_id,
+                          latency.as_millis(),
+                          m.src,
+        		  if sp.to != src {
+        		      format!(" ping.to={}", sp.to)
+        		  } else {
+                              String::new()
+                          }
+                    );
+                }
 
-        // 		de.c.peerMap.setNodeKeyForIPPort(src, de.publicKey)
+                for PendingCliPing { mut res, cb } in state.pending_cli_pings.drain(..) {
+                    self.c
+                        .populate_cli_ping_response_locked(&mut res, latency, sp.to);
+                    tokio::task::spawn(async move {
+                        cb(res).await;
+                    });
+                }
 
-        // 		st.addPongReplyLocked(pongReply{
-        // 			latency: latency,
-        // 			pongAt:  now,
-        // 			from:    src,
-        // 			pongSrc: m.Src,
-        // 		})
-        // 	}
+                // Promote this pong response to our current best address if it's lower latency.
+                // TODO(bradfitz): decide how latency vs. preference order affects decision
+                if !is_derp {
+                    let this_pong = AddrLatency {
+                        addr: sp.to,
+                        latency,
+                    };
+                    let is_better = state.best_addr.is_none()
+                        || this_pong.is_better_than(state.best_addr.as_ref().unwrap());
 
-        // 	if sp.purpose != pingHeartbeat {
-        // 		de.c.dlogf("[v1] magicsock: disco: %v<-%v (%v, %v)  got pong tx=%x latency=%v pong.src=%v%v", de.c.discoShort, de.discoShort, de.publicKey.ShortString(), src, m.TxID[:6], latency.Round(time.Millisecond), m.Src, logger.ArgWriter(func(bw *bufio.Writer) {
-        // 			if sp.to != src {
-        // 				fmt.Fprintf(bw, " ping.to=%v", sp.to)
-        // 			}
-        // 		}))
-        // 	}
-
-        // 	for _, pp := range de.pendingCLIPings {
-        // 		de.c.populateCLIPingResponseLocked(pp.res, latency, sp.to)
-        // 		go pp.cb(pp.res)
-        // 	}
-        // 	de.pendingCLIPings = nil
-
-        // 	// Promote this pong response to our current best address if it's lower latency.
-        // 	// TODO(bradfitz): decide how latency vs. preference order affects decision
-        // 	if !isDerp {
-        // 		thisPong := addrLatency{sp.to, latency}
-        // 		if betterAddr(thisPong, de.bestAddr) {
-        // 			de.c.logf("magicsock: disco: node %v %v now using %v", de.publicKey.ShortString(), de.discoShort, sp.to)
-        // 			de.bestAddr = thisPong
-        // 		}
-        // 		if de.bestAddr.AddrPort == thisPong.AddrPort {
-        // 			de.bestAddr.latency = latency
-        // 			de.bestAddrAt = now
-        // 			de.trustBestAddrUntil = now.Add(trustUDPAddrDuration)
-        // 		}
-        // 	}
-        // 	return
+                    if is_better {
+                        info!(
+                            "disco: node {:?} {:?} now using {:?}",
+                            self.public_key, state.disco_key, sp.to
+                        );
+                        state.best_addr.replace(this_pong.clone());
+                    }
+                    let best_addr = state.best_addr.as_mut().expect("just set");
+                    if best_addr.addr == this_pong.addr {
+                        best_addr.latency = latency;
+                        state.best_addr_at.replace(now);
+                        state
+                            .trust_best_addr_until
+                            .replace(now + TRUST_UDP_ADDR_DURATION);
+                    }
+                }
+                known_tx_id
+            }
+        }
     }
 
-    // // betterAddr reports whether a is a better addr to use than b.
-    // func betterAddr(a, b addrLatency) bool {
-    // 	if a.AddrPort == b.AddrPort {
-    // 		return false
-    // 	}
-    // 	if !b.IsValid() {
-    // 		return true
-    // 	}
-    // 	if !a.IsValid() {
-    // 		return false
-    // 	}
-    // 	if a.Addr().Is6() && b.Addr().Is4() {
-    // 		// Prefer IPv6 for being a bit more robust, as long as
-    // 		// the latencies are roughly equivalent.
-    // 		if a.latency/10*9 < b.latency {
-    // 			return true
-    // 		}
-    // 	} else if a.Addr().Is4() && b.Addr().Is6() {
-    // 		if betterAddr(b, a) {
-    // 			return false
-    // 		}
-    // 	}
-    // 	return a.latency < b.latency
-    // }
-
-    /// Handles a CallMeMaybe discovery message via
-    /// DERP. The contract for use of this message is that the peer has
-    /// already sent to us via UDP, so their stateful firewall should be
+    /// Handles a CallMeMaybe discovery message via DERP. The contract for use of
+    /// this message is that the peer has already sent to us via UDP, so their stateful firewall should be
     /// open. Now we can Ping back and make it through.
-    pub fn handle_call_me_maybe(&self, m: disco::CallMeMaybe) {
-        todo!();
-        // 	if runtime.GOOS == "js" {
-        // 		// Nothing to do on js/wasm if we can't send UDP packets anyway.
-        // 		return
-        // 	}
-        // 	de.mu.Lock()
-        // 	defer de.mu.Unlock()
+    pub async fn handle_call_me_maybe(&self, m: disco::CallMeMaybe) {
+        let mut state = &mut *self.state.lock().await;
 
-        // 	now := time.Now()
-        // 	for ep := range de.isCallMeMaybeEP {
-        // 		de.isCallMeMaybeEP[ep] = false // mark for deletion
-        // 	}
-        // 	var newEPs []netip.AddrPort
-        // 	for _, ep := range m.MyNumber {
-        // 		if ep.Addr().Is6() && ep.Addr().IsLinkLocalUnicast() {
-        // 			// We send these out, but ignore them for now.
-        // 			// TODO: teach the ping code to ping on all interfaces
-        // 			// for these.
-        // 			continue
-        // 		}
-        // 		mak.Set(&de.isCallMeMaybeEP, ep, true)
-        // 		if es, ok := de.endpointState[ep]; ok {
-        // 			es.callMeMaybeTime = now
-        // 		} else {
-        // 			de.endpointState[ep] = &endpointState{callMeMaybeTime: now}
-        // 			newEPs = append(newEPs, ep)
-        // 		}
-        // 	}
-        // 	if len(newEPs) > 0 {
-        // 		de.c.dlogf("[v1] magicsock: disco: call-me-maybe from %v %v added new endpoints: %v",
-        // 			de.publicKey.ShortString(), de.discoShort,
-        // 			logger.ArgWriter(func(w *bufio.Writer) {
-        // 				for i, ep := range newEPs {
-        // 					if i > 0 {
-        // 						w.WriteString(", ")
-        // 					}
-        // 					w.WriteString(ep.String())
-        // 				}
-        // 			}))
-        // 	}
+        let now = Instant::now();
+        for el in state.is_call_me_maybe_ep.values_mut() {
+            *el = false;
+        }
 
-        // 	// Delete any prior CallMeMaybe endpoints that weren't included
-        // 	// in this message.
-        // 	for ep, want := range de.isCallMeMaybeEP {
-        // 		if !want {
-        // 			delete(de.isCallMeMaybeEP, ep)
-        // 			de.deleteEndpointLocked(ep)
-        // 		}
-        // 	}
+        let mut new_eps = Vec::new();
 
-        // 	// Zero out all the lastPing times to force sendPingsLocked to send new ones,
-        // 	// even if it's been less than 5 seconds ago.
-        // 	for _, st := range de.endpointState {
-        // 		st.lastPing = 0
-        // 	}
-        // 	de.sendPingsLocked(mono.Now(), false)
+        for ep in &m.my_number {
+            if let IpAddr::V6(ip) = ep.ip() {
+                if is_unicast_link_local(ip) {
+                    // We send these out, but ignore them for now.
+                    // TODO: teach the ping code to ping on all interfaces for these.
+                    continue;
+                }
+            }
+            state.is_call_me_maybe_ep.insert(*ep, true);
+            if let Some(es) = state.endpoint_state.get_mut(ep) {
+                es.call_me_maybe_time.replace(now);
+            } else {
+                state.endpoint_state.insert(
+                    *ep,
+                    EndpointState {
+                        call_me_maybe_time: Some(now),
+                        ..Default::default()
+                    },
+                );
+                new_eps.push(*ep);
+            }
+        }
+        if !new_eps.is_empty() {
+            info!(
+                "disco: call-me-maybe from {:?} {:?} added new endpoints: {:?}",
+                self.public_key, state.disco_key, new_eps,
+            );
+        }
+
+        // Delete any prior CallMeMaybe endpoints that weren't included in this message.
+        state.is_call_me_maybe_ep.retain(|ep, want| {
+            if !*want {
+                if state.best_addr.as_ref().map(|a| &a.addr) == Some(ep) {
+                    state.best_addr = None;
+                }
+                return false;
+            }
+            true
+        });
+
+        // Zero out all the last_ping times to force send_pings_locked to send new ones,
+        // even if it's been less than 5 seconds ago.
+        for st in state.endpoint_state.values_mut() {
+            st.last_ping = None;
+        }
+        self.send_pings_locked(state, Instant::now(), false);
     }
-
-    // TODO: needed?
-    // func (de *endpoint) populatePeerStatus(ps *ipnstate.PeerStatus) {
-    // 	de.mu.Lock()
-    // 	defer de.mu.Unlock()
-
-    // 	ps.Relay = de.c.derpRegionCodeOfIDLocked(int(de.derpAddr.Port()))
-
-    // 	if de.lastSend.IsZero() {
-    // 		return
-    // 	}
-
-    // 	now := mono.Now()
-    // 	ps.LastWrite = de.lastSend.WallTime()
-    // 	ps.Active = now.Sub(de.lastSend) < sessionActiveTimeout
-
-    // 	if udpAddr, derpAddr := de.addrForSendLocked(now); udpAddr.IsValid() && !derpAddr.IsValid() {
-    // 		ps.CurAddr = udpAddr.String()
-    // 	}
-    // }
 
     /// Stops timers associated with de and resets its state back to zero.
     /// It's called when a discovery endpoint is no longer present in the
@@ -1009,4 +1007,30 @@ fn init_fake_udp_addr() -> SocketAddr {
     addr[2..10].copy_from_slice(&ADDR_COUNTER.fetch_add(1, Ordering::Relaxed).to_le_bytes());
 
     SocketAddr::new(IpAddr::V6(Ipv6Addr::from(addr)), 12345)
+}
+
+impl AddrLatency {
+    /// Reports whether `self` is a better addr to use than `other`.
+    fn is_better_than(&self, other: &Self) -> bool {
+        if self.addr == other.addr {
+            return false;
+        }
+        if self.addr.is_ipv6() && other.addr.is_ipv4() {
+            // Prefer IPv6 for being a bit more robust, as long as
+            // the latencies are roughly equivalent.
+            if self.latency / 10 * 9 < other.latency {
+                return true;
+            }
+        } else if self.addr.is_ipv4() && other.addr.is_ipv6() {
+            if other.is_better_than(self) {
+                return false;
+            }
+        }
+        self.latency < other.latency
+    }
+}
+
+// Copied from std lib, not stable yet
+pub const fn is_unicast_link_local(addr: Ipv6Addr) -> bool {
+    (addr.segments()[0] & 0xffc0) == 0xfe80
 }
