@@ -315,20 +315,14 @@ async fn provide_interactive(
 
     let (db, hash) = provider::create_collection(sources).await?;
 
-    out_writer
-        .println(format!("Collection: {}\n", Blake3Cid::new(hash)))
-        .await;
+    println!("Collection: {}\n", Blake3Cid::new(hash));
     let mut total_size = 0;
     for (_, path, size) in db.blobs() {
         total_size += size;
-        out_writer
-            .println(format!("- {}: {}", path.display(), HumanBytes(size)))
-            .await;
+        println!("- {}: {}", path.display(), HumanBytes(size));
     }
-    out_writer
-        .println(format!("Total: {}", HumanBytes(total_size)))
-        .await;
-    out_writer.println("").await;
+    println!("Total: {}", HumanBytes(total_size));
+    println!();
     let mut builder = provider::Provider::builder(db)
         .keypair(keypair)
         .keylog(keylog);
@@ -341,15 +335,9 @@ async fn provide_interactive(
     }
     let provider = builder.spawn()?;
 
-    out_writer
-        .println(format!("PeerID: {}", provider.peer_id()))
-        .await;
-    out_writer
-        .println(format!("Auth token: {}", provider.auth_token()))
-        .await;
-    out_writer
-        .println(format!("All-in-one ticket: {}", provider.ticket(hash)))
-        .await;
+    println!("PeerID: {}", provider.peer_id());
+    println!("Auth token: {}", provider.auth_token());
+    println!("All-in-one ticket: {}", provider.ticket(hash));
     provider.await?;
 
     // Drop tempath to signal it can be destroyed
