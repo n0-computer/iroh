@@ -15,7 +15,7 @@ use crate::protocol::{
 };
 use crate::tls::{self, Keypair, PeerId};
 use abao::decode::AsyncSliceDecoder;
-use anyhow::{anyhow, bail, ensure, Result};
+use anyhow::{anyhow, bail, Result};
 use bytes::BytesMut;
 use futures::Future;
 use postcard::experimental::max_size::MaxSize;
@@ -23,8 +23,6 @@ use tokio::io::{AsyncRead, AsyncReadExt, ReadBuf};
 use tracing::{debug, error};
 
 pub use crate::util::Hash;
-
-const MAX_DATA_SIZE: u64 = 1024 * 1024 * 1024;
 
 /// Options for the client
 #[derive(Clone, Debug)]
@@ -175,7 +173,7 @@ where
     // 2. Send Request
     {
         debug!("sending request");
-        let req = Request { id: 1, name: hash };
+        let req = Request { name: hash };
 
         let used = postcard::to_slice(&req, &mut out_buffer)?;
         write_lp(&mut writer, used).await?;
@@ -197,13 +195,6 @@ where
                 match response.data {
                     // server is sending over a collection of blobs
                     Res::FoundCollection { total_blobs_size } => {
-                        ensure!(
-                            total_blobs_size <= MAX_DATA_SIZE,
-                            "size too large: {} > {}",
-                            total_blobs_size,
-                            MAX_DATA_SIZE
-                        );
-
                         data_len = total_blobs_size;
 
                         // read entire collection data into buffer
@@ -220,10 +211,6 @@ where
                                 handle_blob_response(blob.hash, reader, &mut in_buffer).await?;
 
                             let size = blob_reader.read_size().await?;
-                            anyhow::ensure!(
-                                size <= MAX_DATA_SIZE,
-                                "size too large: {size} > {MAX_DATA_SIZE}"
-                            );
                             anyhow::ensure!(
                                 size <= remaining_size,
                                 "downloaded more than {total_blobs_size}"

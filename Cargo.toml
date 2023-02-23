@@ -1,10 +1,11 @@
 [package]
 name = "iroh"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 readme = "README.md"
+description = "IPFS reimagined"
 license = "MIT/Apache-2.0"
-authors = ["dignifiedquire <me@dignifiedquire.com>"]
+authors = ["dignifiedquire <me@dignifiedquire.com>", "n0 team"]
 repository = "https://github.com/n0-computer/iroh"
 
 # Sadly this also needs to be updated in .github/workflows/ci.yml

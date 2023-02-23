@@ -84,7 +84,7 @@ enum Commands {
         peer: PeerId,
         /// The authentication token to present to the server.
         #[clap(long)]
-        token: String,
+        auth_token: String,
         /// Optional address of the provider, defaults to 127.0.0.1:4433.
         #[clap(long, short)]
         addr: Option<SocketAddr>,
@@ -251,7 +251,7 @@ async fn main() -> Result<()> {
         Commands::Get {
             hash,
             peer,
-            token,
+            auth_token,
             addr,
             out,
         } => {
@@ -263,8 +263,8 @@ async fn main() -> Result<()> {
             if let Some(addr) = addr {
                 opts.addr = addr;
             }
-            let token =
-                AuthToken::from_str(&token).context("Wrong format for authentication token")?;
+            let token = AuthToken::from_str(&auth_token)
+                .context("Wrong format for authentication token")?;
             tokio::select! {
                 biased;
                 res = get_interactive(*hash.as_hash(), opts, token, out) => {
