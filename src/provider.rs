@@ -172,8 +172,9 @@ impl Builder {
         events: broadcast::Sender<Event>,
         cancel_token: CancellationToken,
     ) {
-        debug!("\nlistening at: {:#?}", server.local_addr().unwrap());
-
+        if let Ok(addr) = server.local_addr() {
+            debug!("listening at: {addr}");
+        }
         loop {
             tokio::select! {
                 biased;

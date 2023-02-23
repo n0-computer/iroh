@@ -333,6 +333,9 @@ async fn provide_interactive(
     let provider = builder.spawn()?;
 
     out_writer
+        .println(format!("Listening address: {}", provider.listen_addr()))
+        .await;
+    out_writer
         .println(format!("PeerID: {}", provider.peer_id()))
         .await;
     out_writer
