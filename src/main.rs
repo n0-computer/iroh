@@ -97,10 +97,10 @@ impl OutWriter {
 }
 
 impl OutWriter {
-    pub async fn println(&self, content: impl AsRef<[u8]>) {
+    pub async fn println(&self, mut content: String) {
         let stderr = &mut *self.stderr.lock().await;
-        stderr.write_all(content.as_ref()).await.unwrap();
-        stderr.write_all(b"\n").await.unwrap();
+        content.push('\n');
+        stderr.write_all(content.as_bytes()).await.unwrap();
     }
 }
 
