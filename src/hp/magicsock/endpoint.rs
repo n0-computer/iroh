@@ -708,7 +708,7 @@ impl Endpoint {
     /// this message is that the peer has already sent to us via UDP, so their stateful firewall should be
     /// open. Now we can Ping back and make it through.
     pub async fn handle_call_me_maybe(&self, m: disco::CallMeMaybe) {
-        let mut state = &mut *self.state.lock().await;
+        let state = &mut *self.state.lock().await;
 
         let now = Instant::now();
         for el in state.is_call_me_maybe_ep.values_mut() {
@@ -805,7 +805,7 @@ impl InnerMutEndpoint {
             es.last_ping = None;
         }
 
-        for (txid, sp) in self.sent_ping.drain() {
+        for (_txid, sp) in self.sent_ping.drain() {
             // Inlined remove_sent_ping due to borrowing issues
 
             // Stop the timer for the case where sendPing failed to write to UDP.
