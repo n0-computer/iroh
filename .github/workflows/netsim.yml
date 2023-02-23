@@ -35,7 +35,7 @@ jobs:
         toolchain: stable
         override: true
 
-    - name: Build sendme
+    - name: Build iroh
       run: |
         cargo build --release
 
@@ -53,7 +53,7 @@ jobs:
 
     - name: Copy binaries to right location
       run: |
-        cp target/release/sendme chuck/netsim/bins/sendme
+        cp target/release/iroh chuck/netsim/bins/iroh
         cp chuck/target/release/chuck chuck/netsim/bins/chuck
 
     - name: Run tests
