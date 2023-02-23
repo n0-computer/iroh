@@ -96,8 +96,20 @@ pub struct NetInfo {
 }
 
 impl NetInfo {
+    /// reports whether `self` and `other` are basically equal, ignoring changes in DERP ServerLatency & RegionLatency.
     pub fn basically_equal(&self, other: &Self) -> bool {
-        todo!()
+        self.mapping_varies_by_dest_ip == other.mapping_varies_by_dest_ip
+            && self.hair_pinning == other.hair_pinning
+            && self.working_ipv6 == other.working_ipv6
+            && self.os_has_ipv6 == other.os_has_ipv6
+            && self.working_udp == other.working_udp
+            && self.working_icm_pv4 == other.working_icm_pv4
+            && self.have_port_map == other.have_port_map
+            && self.upnp == other.upnp
+            && self.pmp == other.pmp
+            && self.pcp == other.pcp
+            && self.preferred_derp == other.preferred_derp
+            && self.link_type == other.link_type
     }
 }
 

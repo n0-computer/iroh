@@ -360,7 +360,7 @@ impl Conn {
             link_monitor,
         } = opts;
 
-        if let Some(ref link_monitor) = link_monitor {
+        if let Some(ref _link_monitor) = link_monitor {
             // TODO:
             // self.port_mapper.set_gateway_lookup_func(opts.LinkMonitor.GatewayAndSelfIP);
         }
@@ -434,7 +434,7 @@ impl Conn {
         *self.on_stun_receive.write().await = None;
     }
 
-    fn listen_raw_disco(&self, family: &str) -> Result<()> {
+    fn listen_raw_disco(&self, _family: &str) -> Result<()> {
         // TODO: figure out support & if it is needed for different OSes
         bail!("not supported on this OS");
     }
@@ -541,7 +541,7 @@ impl Conn {
         }
 
         state.last_endpoints_time = Some(Instant::now());
-        for (de, f) in state.on_endpoint_refreshed.drain() {
+        for (_de, f) in state.on_endpoint_refreshed.drain() {
             tokio::task::spawn(async move {
                 f();
             });
@@ -1867,8 +1867,12 @@ impl Conn {
 
         let this = self.clone();
         tokio::task::spawn(async move {
-            this.send_disco_message(ip_dst, dst_key.as_ref(), &disco_dest, pong)
-                .await;
+            if let Err(err) = this
+                .send_disco_message(ip_dst, dst_key.as_ref(), &disco_dest, pong)
+                .await
+            {
+                warn!("failed to send disco message to {}: {:?}", ip_dst, err);
+            }
         });
     }
 
@@ -1926,13 +1930,17 @@ impl Conn {
 
             let eps: Vec<_> = state.last_endpoints.iter().map(|ep| ep.addr).collect();
             tokio::task::spawn(async move {
-                de.c.send_disco_message(
-                    derp_addr,
-                    Some(&de.public_key),
-                    &de.disco_key(),
-                    disco::Message::CallMeMaybe(disco::CallMeMaybe { my_number: eps }),
-                )
-                .await;
+                if let Err(err) =
+                    de.c.send_disco_message(
+                        derp_addr,
+                        Some(&de.public_key),
+                        &de.disco_key(),
+                        disco::Message::CallMeMaybe(disco::CallMeMaybe { my_number: eps }),
+                    )
+                    .await
+                {
+                    warn!("failed to send disco message to {}: {:?}", derp_addr, err);
+                }
             });
         })
     }
@@ -2316,7 +2324,6 @@ impl Conn {
             return;
         }
         state.derp_cleanup_timer_armed = false;
-        let too_old = DERP_INACTIVE_CLEANUP_TIME;
         let now = Instant::now();
         let mut dirty = false;
         let mut some_non_home_open = false;
@@ -2374,26 +2381,18 @@ impl Conn {
         self.state.lock().await.active_derp.len()
     }
 
-    async fn derp_region_code_of_addr_locked(
-        &self,
-        state: &mut ConnState,
-        ip_port: &str,
-    ) -> String {
+    async fn derp_region_code_of_addr_locked(&self, ip_port: &str) -> String {
         let addr: std::result::Result<SocketAddr, _> = ip_port.parse();
         match addr {
             Ok(addr) => {
                 let region_id = usize::from(addr.port());
-                self.derp_region_code_of_id_locked(state, region_id).await
+                self.derp_region_code_of_id_locked(region_id).await
             }
             Err(_) => String::new(),
         }
     }
 
-    async fn derp_region_code_of_id_locked(
-        &self,
-        state: &mut ConnState,
-        region_id: usize,
-    ) -> String {
+    async fn derp_region_code_of_id_locked(&self, region_id: usize) -> String {
         if let Some(ref dm) = &*self.derp_map.read().await {
             if let Some(r) = dm.regions.get(&region_id) {
                 return r.region_code.clone();

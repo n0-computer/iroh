@@ -193,7 +193,7 @@ impl Inner {
     /// nettype.PacketConn to a udpConnWithBatchOps when appropriate. This upgrade
     /// is intentionally pushed closest to where read/write ops occur in order to
     /// avoid disrupting surrounding code that assumes nettype.PacketConn is a *net.UDPConn.
-    pub fn set_conn(&mut self, p: UdpSocket, network: Network) {
+    pub fn set_conn(&mut self, p: UdpSocket, _network: Network) {
         // upc := upgradePacketConn(p, network)
         let port = p.local_addr().expect("missing addr").port();
         self.pconn = Some(p);
@@ -202,7 +202,7 @@ impl Inner {
 
     pub fn close(&mut self) -> Result<(), Error> {
         match self.pconn.take() {
-            Some(pconn) => {
+            Some(_pconn) => {
                 self.port = 0;
                 // pconn.close() is not available, so we just drop for now
                 // TODO: make sure the recv loops get shutdown
