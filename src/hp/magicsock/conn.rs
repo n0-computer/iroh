@@ -246,10 +246,10 @@ pub(super) struct ConnState {
     /// (but not during) construction.
     disco_private: key::disco::SecretKey,
     /// Public key of disco_private.
-    disco_public: key::disco::PublicKey,
+    pub(super) disco_public: key::disco::PublicKey,
 
     /// Tracks the networkmap Node entity for each peer discovery key.
-    peer_map: PeerMap,
+    pub(super) peer_map: PeerMap,
 
     // The state for an active DiscoKey.
     disco_info: HashMap<key::disco::PublicKey, DiscoInfo>,
@@ -727,7 +727,7 @@ impl Conn {
     /// Handles a "ping" CLI query.
     pub async fn ping<F>(&self, peer: cfg::Node, mut res: cfg::PingResult, cb: F)
     where
-        F: Fn(cfg::PingResult) + Send + Sync + 'static,
+        F: Fn(cfg::PingResult) -> BoxFuture<'static, ()> + Send + Sync + 'static,
     {
         let state = self.state.lock().await;
 
@@ -751,7 +751,7 @@ impl Conn {
         let ep = state.peer_map.endpoint_for_node_key(&peer.key);
         match ep {
             Some(ep) => {
-                ep.cli_ping(res, cb);
+                ep.cli_ping(res, cb).await;
             }
             None => {
                 res.err = Some("unknown peer".to_string());
@@ -760,10 +760,9 @@ impl Conn {
         }
     }
 
-    async fn populate_cli_ping_response_locked(
+    pub(super) fn populate_cli_ping_response_locked(
         &self,
-        state: &mut ConnState,
-        mut res: cfg::PingResult,
+        res: &mut cfg::PingResult,
         latency: Duration,
         ep: SocketAddr,
     ) {
@@ -774,11 +773,11 @@ impl Conn {
         }
         let region_id = usize::from(ep.port());
         res.derp_region_id = Some(region_id);
-        res.derp_region_code = self.derp_region_code_locked(state, region_id).await;
+        res.derp_region_code = self.derp_region_code_locked(region_id);
     }
 
-    async fn derp_region_code_locked(&self, state: &mut ConnState, region_id: usize) -> String {
-        match &*self.derp_map.read().await {
+    fn derp_region_code_locked(&self, region_id: usize) -> String {
+        match &*self.derp_map.blocking_read() {
             Some(ref dm) => match dm.regions.get(&region_id) {
                 Some(dr) => dr.region_code.clone(),
                 None => "".to_string(),
@@ -1598,6 +1597,7 @@ impl Conn {
             disco_info,
             disco_private,
             peer_map,
+            disco_public,
             ..
         } = &mut *state;
         let di = disco_info_locked(disco_info, &*disco_private, &sender);
@@ -1651,8 +1651,12 @@ impl Conn {
                 // There might be multiple nodes for the sender's DiscoKey.
                 // Ask each to handle it, stopping once one reports that
                 // the Pong's TxID was theirs.
-                for ep in peer_map.endpoints_with_disco_key(&sender) {
-                    if ep.handle_pong_conn_locked(/*&mut state,*/ &pong, &di, src) {
+                let eps: Vec<_> = peer_map
+                    .endpoints_with_disco_key(&sender)
+                    .cloned()
+                    .collect();
+                for ep in eps {
+                    if ep.handle_pong_conn_locked(peer_map, &disco_public, &pong, di, src) {
                         break;
                     }
                 }
@@ -1705,7 +1709,7 @@ impl Conn {
                 );
 
                 tokio::task::spawn(async move {
-                    ep.handle_call_me_maybe(cm);
+                    ep.handle_call_me_maybe(cm).await;
                 });
 
                 true
@@ -2122,12 +2126,12 @@ impl Conn {
         for n in &net_map.as_ref().unwrap().peers {
             if let Some(ep) = peer_map.endpoint_for_node_key(&n.key).cloned() {
                 let old_disco_key = ep.disco_key();
-                ep.update_from_node(n);
+                ep.update_from_node(n).await;
                 peer_map.upsert_endpoint(ep, Some(&old_disco_key)).await; // maybe update discokey mappings in peerMap
                 continue;
             }
             let ep = Endpoint::new(self.clone(), n);
-            ep.update_from_node(n);
+            ep.update_from_node(n).await;
             peer_map.upsert_endpoint(ep, None).await;
         }
 
@@ -2718,7 +2722,7 @@ pub(super) struct DiscoInfo {
 
 impl DiscoInfo {
     /// Sets the most recent mapping from di.discoKey to the NodeKey nk.
-    fn set_node_key(&mut self, nk: key::node::PublicKey) {
+    pub fn set_node_key(&mut self, nk: key::node::PublicKey) {
         self.last_node_key.replace(nk);
         self.last_node_key_time.replace(Instant::now());
     }
