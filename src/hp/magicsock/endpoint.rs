@@ -12,7 +12,6 @@ use std::{
     time::Duration,
 };
 
-use anyhow::Result;
 use futures::Future;
 use tokio::{
     sync::{Mutex, RwLock},
@@ -115,7 +114,7 @@ pub struct InnerMutEndpoint {
 
 pub struct PendingCliPing {
     pub res: cfg::PingResult,
-    pub cb: Box<dyn Fn(&cfg::PingResult) + Send + Sync + 'static>,
+    pub cb: Box<dyn Fn(cfg::PingResult) + Send + Sync + 'static>,
 }
 
 impl Endpoint {
@@ -260,104 +259,44 @@ impl Endpoint {
 
     /// Starts a ping for the "ping" command.
     /// `res` is value to call cb with, already partially filled.
-    pub fn cli_ping<F>(&self, res: cfg::PingResult, cb: F)
+    pub async fn cli_ping<F>(&self, mut res: cfg::PingResult, cb: F)
     where
-        F: Fn(cfg::PingResult),
+        F: Fn(cfg::PingResult) + Send + Sync + 'static,
     {
-        todo!()
-        // 	de.mu.Lock()
-        // 	defer de.mu.Unlock()
+        let mut state = self.state.lock().await;
+        if state.expired {
+            res.err = Some("endpoint expired".to_string());
+            cb(res);
+            return;
+        }
 
-        // 	if de.expired {
-        // 		res.Err = errExpired.Error()
-        // 		cb(res)
-        // 		return
-        // 	}
+        state.pending_cli_pings.push(PendingCliPing {
+            res,
+            cb: Box::new(cb),
+        });
 
-        // 	de.pendingCLIPings = append(de.pendingCLIPings, pendingCLIPing{res, cb})
-
-        // 	now := mono.Now()
-        // 	udpAddr, derpAddr := de.addrForSendLocked(now)
-        // 	if derpAddr.IsValid() {
-        // 		de.startPingLocked(derpAddr, now, pingCLI)
-        // 	}
-        // 	if udpAddr.IsValid() && now.Before(de.trustBestAddrUntil) {
-        // 		// Already have an active session, so just ping the address we're using.
-        // 		// Otherwise "tailscale ping" results to a node on the local network
-        // 		// can look like they're bouncing between, say 10.0.0.0/9 and the peer's
-        // 		// IPv6 address, both 1ms away, and it's random who replies first.
-        // 		de.startPingLocked(udpAddr, now, pingCLI)
-        // 	} else {
-        // 		for ep := range de.endpointState {
-        // 			de.startPingLocked(ep, now, pingCLI)
-        // 		}
-        // 	}
-        // 	de.noteActiveLocked()
-    }
-
-    // var (
-    // 	errExpired     = errors.New("peer's node key has expired")
-    // 	errNoUDPOrDERP = errors.New("no UDP or DERP addr")
-    // )
-
-    pub async fn send(&self, buffs: &[&[u8]]) -> Result<()> {
-        todo!()
-        // 	if fn := de.sendFunc.Load(); fn != nil {
-        // 		return fn(buffs)
-        // 	}
-
-        // 	de.mu.Lock()
-        // 	if de.expired {
-        // 		de.mu.Unlock()
-        // 		return errExpired
-        // 	}
-
-        // 	// if heartbeat disabled, kick off pathfinder
-        // 	if de.heartbeatDisabled {
-        // 		if !de.pathFinderRunning {
-        // 			de.startPathFinder()
-        // 		}
-        // 	}
-
-        // 	now := mono.Now()
-        // 	udpAddr, derpAddr := de.addrForSendLocked(now)
-        // 	if !udpAddr.IsValid() || now.After(de.trustBestAddrUntil) {
-        // 		de.sendPingsLocked(now, true)
-        // 	}
-        // 	de.noteActiveLocked()
-        // 	de.mu.Unlock()
-
-        // 	if !udpAddr.IsValid() && !derpAddr.IsValid() {
-        // 		return errNoUDPOrDERP
-        // 	}
-        // 	var err error
-        // 	if udpAddr.IsValid() {
-        // 		_, err = de.c.sendUDPBatch(udpAddr, buffs)
-        // 		// TODO(raggi): needs updating for accuracy, as in error conditions we may have partial sends.
-        // 		if stats := de.c.stats.Load(); err == nil && stats != nil {
-        // 			var txBytes int
-        // 			for _, b := range buffs {
-        // 				txBytes += len(b)
-        // 			}
-        // 			stats.UpdateTxPhysical(de.nodeAddr, udpAddr, txBytes)
-        // 		}
-        // 	}
-        // 	if derpAddr.IsValid() {
-        // 		allOk := true
-        // 		for _, buff := range buffs {
-        // 			ok, _ := de.c.sendAddr(derpAddr, de.publicKey, buff)
-        // 			if stats := de.c.stats.Load(); stats != nil {
-        // 				stats.UpdateTxPhysical(de.nodeAddr, derpAddr, len(buff))
-        // 			}
-        // 			if !ok {
-        // 				allOk = false
-        // 			}
-        // 		}
-        // 		if allOk {
-        // 			return nil
-        // 		}
-        // 	}
-        // 	return err
+        let now = Instant::now();
+        let (udp_addr, derp_addr) = self.addr_for_send_locked(&state, &now);
+        if let Some(derp_addr) = derp_addr {
+            self.start_ping_locked(&mut state, derp_addr, now, DiscoPingPurpose::Cli);
+        }
+        if let Some(udp_addr) = udp_addr {
+            if state.trust_best_addr_until.is_some()
+                && now < *state.trust_best_addr_until.as_ref().unwrap()
+            {
+                // Already have an active session, so just ping the address we're using.
+                // Otherwise "tailscale ping" results to a node on the local network
+                // can look like they're bouncing between, say 10.0.0.0/9 and the peer's
+                // IPv6 address, both 1ms away, and it's random who replies first.
+                self.start_ping_locked(&mut state, udp_addr, now, DiscoPingPurpose::Cli);
+            } else {
+                let eps: Vec<_> = state.endpoint_state.keys().cloned().collect();
+                for ep in eps {
+                    self.start_ping_locked(&mut state, ep, now, DiscoPingPurpose::Cli);
+                }
+            }
+        }
+        self.note_active_locked(&mut state);
     }
 
     async fn ping_timeout(&self, txid: stun::TransactionId) {
@@ -521,59 +460,70 @@ impl Endpoint {
         }
     }
 
-    pub fn update_from_node(&self, n: &cfg::Node) {
-        todo!()
-        // 	if n == nil {
-        // 		panic("nil node when updating disco ep")
-        // 	}
-        // 	de.mu.Lock()
-        // 	defer de.mu.Unlock()
+    pub async fn update_from_node(&self, n: &cfg::Node) {
+        let mut state = &mut *self.state.lock().await;
+        state.expired = n.expired;
 
-        // 	de.heartbeatDisabled = heartbeatDisabled
-        // 	de.expired = n.Expired
+        if state.disco_key != n.disco_key {
+            info!(
+                "disco: node {:?} changed from discokey {:?} to {:?}",
+                self.public_key, state.disco_key, n.disco_key
+            );
+            state.disco_key = n.disco_key.clone();
+            self.reset_locked(&mut state).await;
+        }
+        state.derp_addr = n.derp;
 
-        // 	if de.discoKey != n.DiscoKey {
-        // 		de.c.logf("[v1] magicsock: disco: node %s changed from discokey %s to %s", de.publicKey.ShortString(), de.discoKey, n.DiscoKey)
-        // 		de.discoKey = n.DiscoKey
-        // 		de.discoShort = de.discoKey.ShortString()
-        // 		de.resetLocked()
-        // 	}
-        // 	if n.DERP == "" {
-        // 		de.derpAddr = netip.AddrPort{}
-        // 	} else {
-        // 		de.derpAddr, _ = netip.ParseAddrPort(n.DERP)
-        // 	}
+        for (_, st) in &mut state.endpoint_state {
+            st.index = Index::Deleted; // assume deleted until updated in next loop
+        }
+        for (i, ep) in n.endpoints.iter().enumerate() {
+            if i > u16::MAX as usize {
+                // Seems unlikely.
+                continue;
+            }
+            let index = Index::Some(i);
+            if let Some(st) = state.endpoint_state.get_mut(ep) {
+                st.index = index
+            } else {
+                state.endpoint_state.insert(
+                    *ep,
+                    EndpointState {
+                        index,
+                        ..Default::default()
+                    },
+                );
+            }
+        }
+        // Now delete anything unless it's still in the network map or was a recently discovered endpoint.
 
-        // 	for _, st := range de.endpointState {
-        // 		st.index = indexSentinelDeleted // assume deleted until updated in next loop
-        // 	}
-        // 	for i, epStr := range n.Endpoints {
-        // 		if i > math.MaxInt16 {
-        // 			// Seems unlikely.
-        // 			continue
-        // 		}
-        // 		ipp, err := netip.ParseAddrPort(epStr)
-        // 		if err != nil {
-        // 			de.c.logf("magicsock: bogus netmap endpoint %q", epStr)
-        // 			continue
-        // 		}
-        // 		if st, ok := de.endpointState[ipp]; ok {
-        // 			st.index = int16(i)
-        // 		} else {
-        // 			de.endpointState[ipp] = &endpointState{index: int16(i)}
-        // 		}
-        // 	}
+        state.endpoint_state.retain(|ep, st| {
+            if st.should_delete() {
+                // Inlined delete_endpoint
+                if state.best_addr.as_ref().map(|a| &a.addr) == Some(ep) {
+                    state.best_addr = None;
+                }
+                return false;
+            }
+            true
+        });
+    }
 
-        // 	// Now delete anything unless it's still in the network map or
-        // 	// was a recently discovered endpoint.
-        // 	for ep, st := range de.endpointState {
-        // 		if st.shouldDeleteLocked() {
-        // 			de.deleteEndpointLocked(ep)
-        // 		}
-        // 	}
-
-        // 	// Node changed. Invalidate its sending fast path, if any.
-        // 	de.sendFunc.Store(nil)
+    // Clears all the endpoint's p2p state, reverting it to a
+    // DERP-only endpoint. It does not stop the endpoint's heartbeat
+    // timer, if one is running.
+    async fn reset_locked(&self, state: &mut InnerMutEndpoint) {
+        state.last_send = None;
+        state.last_full_ping = None;
+        state.best_addr = None;
+        state.best_addr_at = None;
+        state.trust_best_addr_until = None;
+        for (_, es) in &mut state.endpoint_state {
+            es.last_ping = None;
+        }
+        for (_, sp) in state.sent_ping.drain() {
+            sp.timer.stop().await;
+        }
     }
 
     /// Adds ep as an endpoint to which we should send future pings. If there is an
@@ -977,7 +927,7 @@ impl PeerMap {
 
 /// Some state and history for a specific endpoint of a endpoint.
 /// (The subject is the endpoint.endpointState map key)
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
 pub struct EndpointState {
     /// The last (outgoing) ping time.
     last_ping: Option<Instant>,
@@ -1010,6 +960,12 @@ pub struct EndpointState {
 enum Index {
     Deleted,
     Some(usize),
+}
+
+impl Default for Index {
+    fn default() -> Self {
+        Index::Deleted
+    }
 }
 
 impl EndpointState {

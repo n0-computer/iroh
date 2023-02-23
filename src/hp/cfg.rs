@@ -152,7 +152,7 @@ pub struct Node {
     // IP+port (public via STUN, and local LANs)
     pub endpoints: Vec<SocketAddr>,
     /// DERP-in-IP:port ("127.3.3.40:N") endpoint
-    pub derp_derp: SocketAddr,
+    pub derp: Option<SocketAddr>,
     pub hostinfo: Hostinfo,
     pub created: Instant,
 
@@ -167,4 +167,6 @@ pub struct Node {
 
     /// Open and keep open a connection to this peer
     pub keep_alive: bool,
+
+    pub expired: bool,
 }
