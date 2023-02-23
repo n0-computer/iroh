@@ -97,10 +97,10 @@ impl OutWriter {
 }
 
 impl OutWriter {
-    pub async fn println(&self, content: impl AsRef<[u8]>) {
+    pub async fn println(&self, mut content: String) {
         let stderr = &mut *self.stderr.lock().await;
-        stderr.write_all(content.as_ref()).await.unwrap();
-        stderr.write_all(b"\n").await.unwrap();
+        content.push('\n');
+        stderr.write_all(content.as_bytes()).await.unwrap();
     }
 }
 
@@ -316,9 +316,12 @@ async fn provide_interactive(
     let (db, hash) = provider::create_collection(sources).await?;
 
     println!("Collection: {}\n", Blake3Cid::new(hash));
+    let mut total_size = 0;
     for (_, path, size) in db.blobs() {
-        println!("- {}: {} bytes", path.display(), size);
+        total_size += size;
+        println!("- {}: {}", path.display(), HumanBytes(size));
     }
+    println!("Total: {}", HumanBytes(total_size));
     println!();
     let mut builder = provider::Provider::builder(db)
         .keypair(keypair)
@@ -333,15 +336,9 @@ async fn provide_interactive(
     let provider = builder.spawn()?;
 
     println!("Listening address: {}", provider.listen_addr());
-    out_writer
-        .println(format!("PeerID: {}", provider.peer_id()))
-        .await;
-    out_writer
-        .println(format!("Auth token: {}", provider.auth_token()))
-        .await;
-    out_writer
-        .println(format!("All-in-one ticket: {}", provider.ticket(hash)))
-        .await;
+    println!("PeerID: {}", provider.peer_id());
+    println!("Auth token: {}", provider.auth_token());
+    println!("All-in-one ticket: {}", provider.ticket(hash));
     provider.await?;
 
     // Drop tempath to signal it can be destroyed
@@ -489,7 +486,12 @@ async fn get_interactive(
 
     pb.finish_and_clear();
     out_writer
-        .println(format!("Done in {}", HumanDuration(stats.elapsed)))
+        .println(format!(
+            "Transferred {} in {}, {}/s",
+            HumanBytes(stats.data_len),
+            HumanDuration(stats.elapsed),
+            HumanBytes((stats.data_len as f64 / stats.elapsed.as_secs_f64()) as u64),
+        ))
         .await;
 
     Ok(())
