@@ -190,26 +190,16 @@ fn compare_files(expect_path: impl AsRef<Path>, got_dir_path: impl AsRef<Path>) 
 ///
 /// Errors on the first regex mis-match or if the stderr output has fewer lines than expected
 fn match_get_stderr(stderr: Vec<u8>) -> Result<()> {
-    let stderr = std::str::from_utf8(&stderr[..])?;
-    let mut lines = stderr.lines();
-    let res = vec![
-        r"Fetching: [\da-z]{59}",
-        r"\[1/3\] Connecting ...",
-        r"\[2/3\] Requesting ...",
-        r"\[3/3\] Downloading collection...",
-        r"\d* file\(s\) with total transfer size [\d.]* ?[KMGT]?i?B",
-        r"Done in \d* seconds?",
+    let stderr = std::io::BufReader::new(&stderr[..]);
+    assert_matches_line![
+        stderr,
+        r"Fetching: [\da-z]{59}"; 1,
+        r"\[1/3\] Connecting ..."; 1,
+        r"\[2/3\] Requesting ..."; 1,
+        r"\[3/3\] Downloading collection..."; 1,
+        r"\d* file\(s\) with total transfer size [\d.]* ?[KMGT]?i?B"; 1,
+        r"Done in \d* seconds?"; 1
     ];
-
-    for re in res {
-        matches(
-            lines
-                .next()
-                .context("Unexpected end of 'get' output")?
-                .trim(),
-            re,
-        )?;
-    }
     Ok(())
 }
 
@@ -222,25 +212,24 @@ fn match_provide_stderr(
     num_blobs: usize,
     input: Input,
 ) -> Result<String> {
-    let mut lines = stderr.lines();
+    // if we are using `stdin` we don't "read" any files, so the provider does not output any lines
+    // about "Reading"
+    let reading_line_num = if input == Input::Stdin { 0 } else { 1 };
 
-    let mut res = vec![r"Reading \S*", r"Collection: [\da-z]{59}", r""];
-    res.append(&mut vec![r"- \S*: \d* bytes"; num_blobs]);
-    res.append(&mut vec![r"", r"PeerID: [_\w\d-]*", r"Auth token: [\w\d]*"]);
+    let mut remaining_lines = assert_matches_line![
+        stderr,
+        r"Reading \S*"; reading_line_num,
+        r"Collection: [\da-z]{59}"; 1,
+        r""; 1,
+        r"- \S*: \d* bytes"; num_blobs,
+        r""; 1,
+        r"PeerID: [_\w\d-]*"; 1,
+        r"Auth token: [\w\d]*"; 1
+    ];
 
-    // when piping from stdin, we don't open and read any files
-    if input == Input::Stdin {
-        res = res[1..].to_vec();
-    }
-
-    for re in res {
-        matches(next_line(&mut lines)?.trim(), re)?;
-    }
-
-    // get all-in-one ticket
     let re = r"All-in-one ticket: ([_a-zA-Z\d-]*)";
     let rx = regex::Regex::new(re)?;
-    let line = next_line(&mut lines)?;
+    let line = next_line(&mut remaining_lines)?;
     if !rx.is_match(&line) {
         anyhow::bail!(match_err_msg(&line, re))
     }
@@ -263,11 +252,44 @@ fn matches(line: &str, re: &str) -> Result<()> {
     }
 }
 
-fn next_line(l: &mut std::io::Lines<BufReader<ChildStderr>>) -> Result<String> {
-    let line = l.next().context("Unexpected end of stderr reader")??;
-    Ok(line)
+fn next_line<T: std::io::Read>(l: &mut std::io::Lines<BufReader<T>>) -> Result<String> {
+    Ok(l.next().context("Unexpected end of stderr reader")??)
 }
 
 fn match_err_msg(line: &str, re: &str) -> String {
     format!("no match found\nexpected match for '{re}'\ngot '{line}'")
+}
+
+#[macro_export]
+/// Ensures each line of the first expression matches the regex of each following expression. Each
+/// regex expression is followed by the number of consecutive lines it should match.
+///
+/// Returns any left over [`Lines`] that haven't been examined.
+///
+/// # Examples
+/// ```
+/// let expr = b"hello world!\nNice to meet you!\n02/23/2023\n02/23/2023\n02/23/2023";
+/// let buf_reader = std::io::BufReader::new(&expr[..]);
+/// assert_matches_line![
+///     buf_reader,
+///     r"hello world!"; 1,
+///     r"\S*$"; 1,
+///     r"\d{2}/\d{2}/\d{4}"; 3
+/// ];
+/// ```
+macro_rules! assert_matches_line {
+     ( $x:expr, $( $z:expr;$a:expr ),* ) => {
+         {
+            let mut lines = $x.lines();
+            $(
+            for _ in 0..$a {
+                matches(
+                    next_line(&mut lines)?.trim(),
+                    $z,
+                )?;
+            }
+            )*
+            lines
+         }
+    };
 }
