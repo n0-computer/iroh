@@ -315,11 +315,20 @@ async fn provide_interactive(
 
     let (db, hash) = provider::create_collection(sources).await?;
 
-    println!("Collection: {}\n", Blake3Cid::new(hash));
+    out_writer
+        .println(format!("Collection: {}\n", Blake3Cid::new(hash)))
+        .await;
+    let mut total_size = 0;
     for (_, path, size) in db.blobs() {
-        println!("- {}: {} bytes", path.display(), size);
+        total_size += size;
+        out_writer
+            .println(format!("- {}: {}", path.display(), HumanBytes(size)))
+            .await;
     }
-    println!();
+    out_writer
+        .println(format!("Total: {}", HumanBytes(total_size)))
+        .await;
+    out_writer.println("").await;
     let mut builder = provider::Provider::builder(db)
         .keypair(keypair)
         .keylog(keylog);
@@ -488,7 +497,12 @@ async fn get_interactive(
 
     pb.finish_and_clear();
     out_writer
-        .println(format!("Done in {}", HumanDuration(stats.elapsed)))
+        .println(format!(
+            "Transferred {} in {}, {}/s",
+            HumanBytes(stats.data_len),
+            HumanDuration(stats.elapsed),
+            HumanBytes((stats.data_len as f64 / stats.elapsed.as_secs_f64()) as u64),
+        ))
         .await;
 
     Ok(())
