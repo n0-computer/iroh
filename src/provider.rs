@@ -14,7 +14,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::str::FromStr;
-use std::sync::Mutex;
+use std::sync::RwLock;
 use std::task::Poll;
 use std::time::Duration;
 use std::{collections::HashMap, sync::Arc};
@@ -53,15 +53,15 @@ const HEALTH_POLL_WAIT: Duration = Duration::from_secs(1);
 
 /// Database containing content-addressed data (blobs or collections).
 #[derive(Debug, Clone, Default)]
-pub struct Database(Arc<Mutex<HashMap<Hash, BlobOrCollection>>>);
+pub struct Database(Arc<RwLock<HashMap<Hash, BlobOrCollection>>>);
 
 impl Database {
     fn get(&self, key: &Hash) -> Option<BlobOrCollection> {
-        self.0.lock().unwrap().get(key).cloned()
+        self.0.read().unwrap().get(key).cloned()
     }
 
     fn union_with(&self, db: HashMap<Hash, BlobOrCollection>) {
-        let mut inner = self.0.lock().unwrap();
+        let mut inner = self.0.write().unwrap();
         for (k, v) in db {
             inner.entry(k).or_insert(v);
         }
@@ -71,7 +71,7 @@ impl Database {
     pub fn blobs(&self) -> impl Iterator<Item = (Hash, PathBuf, u64)> + 'static {
         let items = self
             .0
-            .lock()
+            .read()
             .unwrap()
             .iter()
             .filter_map(|(k, v)| match v {
@@ -829,7 +829,7 @@ fn compute_outboard(
 /// Returns a the hash of the collection created by the given list of DataSources
 pub async fn create_collection(data_sources: Vec<DataSource>) -> Result<(Database, Hash)> {
     let (db, hash) = create_collection_inner(data_sources).await?;
-    Ok((Database(Arc::new(Mutex::new(db))), hash))
+    Ok((Database(Arc::new(RwLock::new(db))), hash))
 }
 
 /// The actual implementation of create_collection, except for the wrapping into arc and mutex to make
