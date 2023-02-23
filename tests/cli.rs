@@ -6,35 +6,77 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStderr, Command, Stdio};
 
 use anyhow::{Context, Result};
+use rand::RngCore;
 use tempfile::tempdir;
+
+const ADDR: &str = "127.0.0.1:0";
+
+fn make_rand_file(size: usize, path: &Path) -> Result<()> {
+    let mut content = vec![0u8; size];
+    rand::thread_rng().fill_bytes(&mut content);
+    std::fs::write(path, content)?;
+    Ok(())
+}
 
 #[test]
 fn cli_provide_one_file() -> Result<()> {
+    let dir = tempdir()?;
+    let path = dir.path().join("foo");
+    make_rand_file(1000, &path)?;
     // provide a path to a file, do not pipe from stdin, do not pipe to stdout
-    test_provide_get_loop(&PathBuf::from("transfer").join("foo.bin"), false, false)
+    test_provide_get_loop(&path, Input::Path, Output::Path)
 }
 
 #[test]
 fn cli_provide_folder() -> Result<()> {
+    let dir = tempdir()?;
+    let foo_path = dir.path().join("foo");
+    let bar_path = dir.path().join("bar");
+    make_rand_file(1000, &foo_path)?;
+    make_rand_file(10000, &bar_path)?;
     // provide a path to a folder, do not pipe from stdin, do not pipe to stdout
-    test_provide_get_loop(&PathBuf::from("transfer"), false, false)
+    test_provide_get_loop(dir.path(), Input::Path, Output::Path)
 }
 
 #[test]
 fn cli_provide_from_stdin_to_stdout() -> Result<()> {
+    let dir = tempdir()?;
+    let path = dir.path().join("foo");
+    make_rand_file(1000, &path)?;
     // provide a file, pipe content to the provider's stdin, pipe content to the getter's stdout
-    test_provide_get_loop(&PathBuf::from("transfer").join("foo.bin"), true, true)
+    test_provide_get_loop(&path, Input::Stdin, Output::Stdout)
 }
 
-// Test the provide and get loop for success, stderr output, and file contents.
-//
-// Can optionally pipe the given `path` content to the provider from stdin & can optionally save the output to an `out` path.
-//
-// Runs the provider as a child process that stays alive until the getter has completed. Then
-// checks the output of the "provide" and "get" processes against expected regex output. Finally,
-// test the content fetched from the "get" process is the same as the "provided" content.
-fn test_provide_get_loop(path: &Path, use_stdin: bool, use_stdout: bool) -> Result<()> {
-    let out = if use_stdout {
+/// Parameter for `test_provide_get_loop`, that determines how we handle the fetched data from the
+/// `iroh get` command
+#[derive(Debug, PartialEq)]
+enum Output {
+    /// Indicates we should save the content as a file in the given directory, by passing the path
+    /// to the `--out` argument in `iroh get`
+    Path,
+    /// Indicates we should pipe the content to `stdout` of the `iroh get` process
+    Stdout,
+}
+
+/// Parameter for `test_provide_get_loop`, that determines how we send the data to the `provide`
+/// command.
+#[derive(Debug, PartialEq)]
+enum Input {
+    /// Indicates we should pass the content as an argument to the `iroh provide` command
+    Path,
+    /// Idincates we should pipe the content via `stdin` to the `iroh provide` command
+    Stdin,
+}
+
+/// Test the provide and get loop for success, stderr output, and file contents.
+///
+/// Can optionally pipe the given `path` content to the provider from stdin & can optionally save the output to an `out` path.
+///
+/// Runs the provider as a child process that stays alive until the getter has completed. Then
+/// checks the output of the "provide" and "get" processes against expected regex output. Finally,
+/// test the content fetched from the "get" process is the same as the "provided" content.
+fn test_provide_get_loop(path: &Path, input: Input, output: Output) -> Result<()> {
+    let out = if output == Output::Stdout {
         None
     } else {
         let dir = tempdir()?;
@@ -46,11 +88,17 @@ fn test_provide_get_loop(path: &Path, use_stdin: bool, use_stdout: bool) -> Resu
         .join("fixtures");
 
     let path = src.join(path);
+    let num_blobs = if path.is_dir() {
+        let entries = std::fs::read_dir(&path)?;
+        entries.count()
+    } else {
+        1
+    };
 
     let iroh = env!("CARGO_BIN_EXE_iroh");
 
     // spawn a provider & optionally provide from stdin
-    let provider = if use_stdin {
+    let provider = if input == Input::Stdin {
         let f = File::open(&path)?;
         let stdin = Stdio::from(f);
         Command::new(iroh)
@@ -59,7 +107,7 @@ fn test_provide_get_loop(path: &Path, use_stdin: bool, use_stdout: bool) -> Resu
             .stdin(stdin)
             .arg("provide")
             .arg("--addr")
-            .arg("127.0.0.1:0")
+            .arg(ADDR)
             .spawn()?
     } else {
         Command::new(iroh)
@@ -69,7 +117,7 @@ fn test_provide_get_loop(path: &Path, use_stdin: bool, use_stdout: bool) -> Resu
             .arg("provide")
             .arg(&path)
             .arg("--addr")
-            .arg("127.0.0.1:0")
+            .arg(ADDR)
             .spawn()?
     };
 
@@ -79,7 +127,7 @@ fn test_provide_get_loop(path: &Path, use_stdin: bool, use_stdout: bool) -> Resu
     let stderr = BufReader::new(stderr);
 
     // test provide output & get all in one ticket from stderr
-    let all_in_one = match_provide_stderr(stderr, use_stdin)?;
+    let all_in_one = match_provide_stderr(stderr, num_blobs, input)?;
 
     // create a `get-ticket` cmd & optionally provide out path
     let mut cmd = Command::new(iroh);
@@ -138,9 +186,9 @@ fn compare_files(expect_path: impl AsRef<Path>, got_dir_path: impl AsRef<Path>) 
     Ok(())
 }
 
-// Looks for regex matches on stderr output for the getter.
-//
-// Errors on the first regex mis-match or if the stderr output has fewer lines than expected
+/// Looks for regex matches on stderr output for the getter.
+///
+/// Errors on the first regex mis-match or if the stderr output has fewer lines than expected
 fn match_get_stderr(stderr: Vec<u8>) -> Result<()> {
     let stderr = std::str::from_utf8(&stderr[..])?;
     let mut lines = stderr.lines();
@@ -169,19 +217,19 @@ fn match_get_stderr(stderr: Vec<u8>) -> Result<()> {
 /// that can be used to 'get' from another process.
 ///
 /// Errors on the first regex mismatch or if the stderr output has fewer lines than expected
-fn match_provide_stderr(stderr: BufReader<ChildStderr>, use_stdin: bool) -> Result<String> {
+fn match_provide_stderr(
+    stderr: BufReader<ChildStderr>,
+    num_blobs: usize,
+    input: Input,
+) -> Result<String> {
     let mut lines = stderr.lines();
 
-    let mut res = vec![
-        r"Reading \S*",
-        r"Collection: [\da-z]{59}",
-        r"",
-        r"PeerID: [_\w\d-]*",
-        r"Auth token: [\w\d]*",
-    ];
+    let mut res = vec![r"Reading \S*", r"Collection: [\da-z]{59}", r""];
+    res.append(&mut vec![r"- \S*: \d* bytes"; num_blobs]);
+    res.append(&mut vec![r"", r"PeerID: [_\w\d-]*", r"Auth token: [\w\d]*"]);
 
     // when piping from stdin, we don't open and read any files
-    if use_stdin {
+    if input == Input::Stdin {
         res = res[1..].to_vec();
     }
 
@@ -206,10 +254,10 @@ fn match_provide_stderr(stderr: BufReader<ChildStderr>, use_stdin: bool) -> Resu
         .to_string())
 }
 
-fn matches(line: &str, re: &str) -> Result<bool> {
+fn matches(line: &str, re: &str) -> Result<()> {
     let rx = regex::Regex::new(re)?;
     if rx.is_match(line) {
-        Ok(true)
+        Ok(())
     } else {
         anyhow::bail!(match_err_msg(line, re))
     }
