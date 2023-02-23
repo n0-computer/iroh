@@ -725,13 +725,11 @@ impl Conn {
     }
 
     /// Handles a "ping" CLI query.
-    pub async fn ping<F>(&self, peer: cfg::Node, res: cfg::PingResult, cb: F)
+    pub async fn ping<F>(&self, peer: cfg::Node, mut res: cfg::PingResult, cb: F)
     where
-        F: Fn(cfg::PingResult),
+        F: Fn(cfg::PingResult) + Send + Sync + 'static,
     {
         let state = self.state.lock().await;
-
-        let mut res = cfg::PingResult::default();
 
         if state.private_key.is_none() {
             res.err = Some("local node stopped".to_string());
@@ -974,20 +972,6 @@ impl Conn {
 
     fn network_down(&self) -> bool {
         !self.network_up.load(Ordering::Relaxed)
-    }
-
-    pub async fn send(&self, buffs: &[&[u8]], ep: &Endpoint) -> Result<()> {
-        let n = buffs.len();
-
-        // TODO:
-        // metricSendData.Add(n)
-        if self.network_down() {
-            // TODO:
-            // metricSendDataNetworkDown.Add(n)
-            bail!("network down");
-        }
-
-        ep.send(buffs).await
     }
 
     /// Sends packet b to addr, which is either a real UDP address
