@@ -124,7 +124,8 @@ pub struct Inner {
     on_endpoints: Option<Box<dyn Fn(&[cfg::Endpoint]) + Send + Sync + 'static>>,
     on_derp_active: Option<Box<dyn Fn() + Send + Sync + 'static>>,
     idle_for: Option<Box<dyn Fn() -> Duration + Send + Sync + 'static>>,
-    on_note_recv_activity: Option<Box<dyn Fn(&key::node::PublicKey) + Send + Sync + 'static>>,
+    pub(super) on_note_recv_activity:
+        Option<Box<dyn Fn(&key::node::PublicKey) + Send + Sync + 'static>>,
     link_monitor: Option<monitor::Monitor>,
     /// A callback that provides a `cfg::NetInfo` when discovered network conditions change.
     on_net_info: Option<Box<dyn Fn(cfg::NetInfo) + Send + Sync + 'static>>,
@@ -180,8 +181,9 @@ pub struct Inner {
 
     /// Whether privateKey is non-zero.
     have_private_key: AtomicBool,
-    // TODO:
-    // public_key_atomic: syncs.AtomicValue[key.NodePublic] // or NodeKey zero value if !havePrivateKey
+
+    /// Read only duplicate of state.public key, to avoid reading it without locks
+    pub(super) public_key_atomic: RwLock<Option<key::node::PublicKey>>,
     last_net_check_report: RwLock<Option<netcheck::Report>>,
 
     /// Preferred port from opts.Port; 0 means auto.
@@ -360,7 +362,7 @@ impl Conn {
 
         if let Some(ref link_monitor) = link_monitor {
             // TODO:
-            // c.portMapper.SetGatewayLookupFunc(opts.LinkMonitor.GatewayAndSelfIP)
+            // self.port_mapper.set_gateway_lookup_func(opts.LinkMonitor.GatewayAndSelfIP);
         }
 
         let derp_recv_ch = flume::bounded(64);
@@ -377,6 +379,7 @@ impl Conn {
             port_mapper,
             net_checker,
             have_private_key: AtomicBool::new(false),
+            public_key_atomic: Default::default(),
             last_net_check_report: Default::default(),
             no_v4_send: AtomicBool::new(false),
             pconn4: RebindingUdpConn::default(),
@@ -432,7 +435,7 @@ impl Conn {
     }
 
     fn listen_raw_disco(&self, family: &str) -> Result<()> {
-        // TODO: figure out support & if it needed for different OSes
+        // TODO: figure out support & if it is needed for different OSes
         bail!("not supported on this OS");
     }
 
@@ -833,7 +836,6 @@ impl Conn {
             }
         }
         for (i, ad) in &state.active_derp {
-            // TODO: spawn
             let b = *i == state.my_derp;
             let c = ad.c.clone();
             tokio::task::spawn(async move { c.note_preferred(b).await });
@@ -1376,11 +1378,6 @@ impl Conn {
         // 	return
         // }
 
-        // TODO: in the loop
-        /*_ = done => {
-            // <-ctx.Done():
-            return;
-        }*/
         loop {
             tokio::select! {
                 _ = cancel.changed() => {
@@ -1391,12 +1388,12 @@ impl Conn {
                 wr = ch.recv_async() => match wr {
                     Ok(wr) => match dc.send(wr.pub_key, wr.b).await {
                         Ok(_) => {
-                            // TODO
+                            // TODO:
                             // metricSendDERP.Add(1)
                         }
                         Err(err) => {
                             info!("derp.send({:?}): {:?}", wr.addr, err);
-                            // TODO
+                            // TODO:
                             // metricSendDERPError.Add(1)
                         }
                     }
@@ -1501,7 +1498,7 @@ impl Conn {
     /// If dst is a DERP IP:port, then dst_key must be Some.
     ///
     /// The dst_key should only be `Some` the dst_disco key unambiguously maps to exactly one peer.
-    async fn send_disco_message(
+    pub(super) async fn send_disco_message(
         &self,
         dst: SocketAddr,
         dst_key: Option<&key::node::PublicKey>,
@@ -1893,7 +1890,7 @@ impl Conn {
     /// derpAddr is de.derpAddr at the time of send. It's assumed the peer won't be
     /// flipping primary DERPs in the 0-30ms it takes to confirm our STUN endpoint.
     /// If they do, traffic will just go over DERP for a bit longer until the next discovery round.
-    fn enqueue_call_me_maybe(
+    pub(super) fn enqueue_call_me_maybe(
         &self,
         derp_addr: SocketAddr,
         de: Endpoint,
@@ -2002,6 +1999,11 @@ impl Conn {
         {
             return Ok(());
         }
+        self.0
+            .public_key_atomic
+            .write()
+            .await
+            .replace(new_key.verifying_key().into());
         let old_key = state.private_key.replace(new_key);
         self.have_private_key.store(true, Ordering::Relaxed);
 
@@ -2626,7 +2628,7 @@ impl Conn {
         // This keeps the receive funcs alive for a future in which
         // we get a link change and we can try binding again.
 
-        // TODO:
+        // TODO: is this needed?
         // ruc.set_conn(newBlockForeverConn(), "");
 
         bail!("failed to bind any ports (tried {:?})", ports);
@@ -2737,15 +2739,6 @@ impl DiscoInfo {
         self.last_node_key_time.replace(Instant::now());
     }
 }
-
-// TODO:
-// // ippEndpointCache is a mutex-free single-element cache, mapping from
-// // a single netip.AddrPort to a single endpoint.
-// type ippEndpointCache struct {
-// 	ipp netip.AddrPort
-// 	gen int64
-// 	de  *endpoint
-// }
 
 /// Reports whether x and y represent the same set of endpoints. The order doesn't matter.
 fn endpoint_sets_equal(xs: &[cfg::Endpoint], ys: &[cfg::Endpoint]) -> bool {

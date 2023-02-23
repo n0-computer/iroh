@@ -4,6 +4,7 @@ use std::{
     hash::Hash,
     net::{IpAddr, Ipv6Addr, SocketAddr},
     ops::Deref,
+    pin::Pin,
     sync::{
         atomic::{AtomicU64, Ordering},
         Arc,
@@ -12,15 +13,20 @@ use std::{
 };
 
 use anyhow::Result;
+use futures::Future;
 use tokio::{
     sync::{Mutex, RwLock},
     time::Instant,
 };
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::hp::{cfg, disco, key, stun};
 
-use super::{conn::DiscoInfo, Conn, PeerInfo, PongReply, SentPing, Timer};
+use super::{
+    conn::DiscoInfo, Conn, DiscoPingPurpose, PeerInfo, PongReply, SentPing, Timer,
+    DISCO_PING_INTERVAL, GOOD_ENOUGH_LATENCY, HEARTBEAT_INTERVAL, PING_TIMEOUT_DURATION,
+    PONG_HISTORY_COUNT, SESSION_ACTIVE_TIMEOUT, UPGRADE_INTERVAL,
+};
 
 /// A wireguard/conn.Endpoint that picks the best available path to communicate with a peer,
 /// based on network conditions and what the peer supports.
@@ -63,19 +69,6 @@ pub struct InnerEndpoint {
     // Atomically accessed; declared first for alignment reasons
     pub last_recv: RwLock<Option<Instant>>,
     pub num_stop_and_reset_atomic: AtomicU64,
-    /// A function that writes encrypted Wireguard payloads from
-    /// WireGuard to a peer. It might write via UDP, DERP, both, or neither.
-    ///
-    /// What these funcs should NOT do is too much work. Minimize use of mutexes, map
-    /// lookups, etc. The idea is that selecting the path to use is done infrequently
-    /// and mostly async from sending packets. When conditions change (including the
-    /// passing of time and loss of confidence in certain routes), then a new send
-    /// func gets set on an sendpoint.
-    ///
-    /// A nil value means the current fast path has expired and needs to be recalculated.
-    pub send_func:
-        RwLock<Option<Box<dyn Fn(&[&[u8]]) -> std::io::Result<()> + Send + Sync + 'static>>>, // syncs.AtomicValue[endpointSendFunc] // nil or unset means unused
-
     // These fields are initialized once and never modified.
     pub c: Conn,
     /// Peer public key (for WireGuard + DERP)
@@ -108,7 +101,6 @@ pub struct InnerMutEndpoint {
     pub best_addr_at: Option<Instant>,
     /// Time when best_addr expires
     pub trust_best_addr_until: Option<Instant>,
-    pub sent_ping: HashMap<stun::TransactionId, SentPing>,
     pub endpoint_state: HashMap<SocketAddr, EndpointState>,
     pub is_call_me_maybe_ep: HashSet<SocketAddr>,
 
@@ -117,6 +109,8 @@ pub struct InnerMutEndpoint {
 
     /// Whether the node has expired.
     pub expired: bool,
+
+    pub sent_ping: HashMap<stun::TransactionId, SentPing>,
 }
 
 pub struct PendingCliPing {
@@ -134,7 +128,6 @@ impl Endpoint {
             fake_wg_addr,
             last_recv: Default::default(),
             num_stop_and_reset_atomic: Default::default(),
-            send_func: Default::default(),
             state: Mutex::new(InnerMutEndpoint {
                 disco_key: n.disco_key.clone(),
                 heart_beat_timer: None,
@@ -159,114 +152,111 @@ impl Endpoint {
 
     /// Records receive activity on this endpoint.
     pub fn note_recv_activity(&self) {
-        todo!()
-        // 	if de.c.noteRecvActivity == nil {
-        // 		return
-        // 	}
-        // 	now := mono.Now()
-        // 	elapsed := now.Sub(de.lastRecv.LoadAtomic())
-        // 	if elapsed > 10*time.Second {
-        // 		de.lastRecv.StoreAtomic(now)
-        // 		de.c.noteRecvActivity(de.publicKey)
-        // 	}
+        if let Some(ref on_recv) = self.c.on_note_recv_activity {
+            let now = Instant::now();
+            if let Some(last_recv) = &*self.last_recv.blocking_read() {
+                if last_recv.elapsed() > Duration::from_secs(10) {
+                    drop(last_recv);
+                    self.last_recv.blocking_write().replace(now);
+                    on_recv(&self.public_key);
+                }
+            }
+        }
     }
 
-    // // String exists purely so wireguard-go internals can log.Printf("%v")
-    // // its internal conn.Endpoints and we don't end up with data races
-    // // from fmt (via log) reading mutex fields and such.
-    // func (de *endpoint) String() string {
-    // 	return fmt.Sprintf("magicsock.endpoint{%v, %v}", de.publicKey.ShortString(), de.discoShort)
-    // }
+    /// Returns the address(es) that should be used for sending the next packet.
+    /// Zero, one, or both of UDP address and DERP addr may be non-zero.
+    fn addr_for_send_locked(
+        &self,
+        state: &InnerMutEndpoint,
+        now: &Instant,
+    ) -> (Option<SocketAddr>, Option<SocketAddr>) {
+        let udp_addr = state.best_addr.as_ref().map(|a| a.addr);
+        let derp_addr = if udp_addr.is_none()
+            || state.trust_best_addr_until.is_some()
+                && state.trust_best_addr_until.as_ref().unwrap() > now
+        {
+            // We had a best_addr but it expired so send both to it and DERP.
+            state.derp_addr
+        } else {
+            None
+        };
 
-    // func (de *endpoint) ClearSrc()           {}
-    // func (de *endpoint) SrcToString() string { panic("unused") } // unused by wireguard-go
-    // func (de *endpoint) SrcIP() netip.Addr   { panic("unused") } // unused by wireguard-go
-    // func (de *endpoint) DstToString() string { return de.publicKeyHex }
-    // func (de *endpoint) DstIP() netip.Addr   { return de.nodeAddr } // see tailscale/tailscale#6686
-    // func (de *endpoint) DstToBytes() []byte  { return packIPPort(de.fakeWGAddr) }
+        (udp_addr, derp_addr)
+    }
 
-    // // addrForSendLocked returns the address(es) that should be used for
-    // // sending the next packet. Zero, one, or both of UDP address and DERP
-    // // addr may be non-zero.
-    // //
-    // // de.mu must be held.
-    // func (de *endpoint) addrForSendLocked(now mono.Time) (udpAddr, derpAddr netip.AddrPort) {
-    // 	udpAddr = de.bestAddr.AddrPort
-    // 	if !udpAddr.IsValid() || now.After(de.trustBestAddrUntil) {
-    // 		// We had a bestAddr but it expired so send both to it
-    // 		// and DERP.
-    // 		derpAddr = de.derpAddr
-    // 	}
-    // 	return
-    // }
+    /// Called every heartbeat_interval to keep the best UDP path alive, or kick off discovery of other paths.
+    fn heartbeat(&self) -> Pin<Box<dyn Future<Output = ()> + Send + Sync + '_>> {
+        Box::pin(async move {
+            let mut state = self.state.lock().await;
+            state.heart_beat_timer = None;
 
-    // // heartbeat is called every heartbeatInterval to keep the best UDP path alive,
-    // // or kick off discovery of other paths.
-    // func (de *endpoint) heartbeat() {
-    // 	de.mu.Lock()
-    // 	defer de.mu.Unlock()
+            if state.last_send.is_none() {
+                // Shouldn't happen.
+                return;
+            }
+            let last_send = state.last_send.as_ref().unwrap();
 
-    // 	de.heartBeatTimer = nil
+            if last_send.elapsed() > SESSION_ACTIVE_TIMEOUT {
+                // Session's idle. Stop heartbeating.
+                info!(
+                    "disco: ending heartbeats for idle session to {:?} ({:?})",
+                    self.public_key, state.disco_key
+                );
+                return;
+            }
 
-    // 	if de.heartbeatDisabled {
-    // 		// If control override to disable heartBeatTimer set, return early.
-    // 		return
-    // 	}
+            let now = Instant::now();
+            let (udp_addr, _) = self.addr_for_send_locked(&state, &now);
+            if let Some(udp_addr) = udp_addr {
+                // We have a preferred path. Ping that every 2 seconds.
+                self.start_ping_locked(&mut state, udp_addr, now, DiscoPingPurpose::Heartbeat);
+            }
 
-    // 	if de.lastSend.IsZero() {
-    // 		// Shouldn't happen.
-    // 		return
-    // 	}
+            if self.want_full_ping_locked(&state, &now) {
+                self.send_pings_locked(&mut state, now, true);
+            }
 
-    // 	if mono.Since(de.lastSend) > sessionActiveTimeout {
-    // 		// Session's idle. Stop heartbeating.
-    // 		de.c.dlogf("[v1] magicsock: disco: ending heartbeats for idle session to %v (%v)", de.publicKey.ShortString(), de.discoShort)
-    // 		return
-    // 	}
+            let this = self.clone();
+            state
+                .heart_beat_timer
+                .replace(Timer::after(HEARTBEAT_INTERVAL, async move {
+                    this.heartbeat().await;
+                }));
+        })
+    }
 
-    // 	now := mono.Now()
-    // 	udpAddr, _ := de.addrForSendLocked(now)
-    // 	if udpAddr.IsValid() {
-    // 		// We have a preferred path. Ping that every 2 seconds.
-    // 		de.startPingLocked(udpAddr, now, pingHeartbeat)
-    // 	}
+    /// Reports whether we should ping to all our peers looking for a better path.
+    fn want_full_ping_locked(&self, state: &InnerMutEndpoint, now: &Instant) -> bool {
+        if state.best_addr.is_none() || state.last_full_ping.is_none() {
+            return true;
+        }
+        if state.trust_best_addr_until.is_some()
+            && state.trust_best_addr_until.as_ref().unwrap() > now
+        {
+            return true;
+        }
+        if state.best_addr.as_ref().unwrap().latency <= GOOD_ENOUGH_LATENCY {
+            return false;
+        }
 
-    // 	if de.wantFullPingLocked(now) {
-    // 		de.sendPingsLocked(now, true)
-    // 	}
+        if state.last_full_ping.as_ref().unwrap().duration_since(*now) >= UPGRADE_INTERVAL {
+            return true;
+        }
+        false
+    }
 
-    // 	de.heartBeatTimer = time.AfterFunc(heartbeatInterval, de.heartbeat)
-    // }
-
-    // // wantFullPingLocked reports whether we should ping to all our peers looking for
-    // // a better path.
-    // //
-    // // de.mu must be held.
-    // func (de *endpoint) wantFullPingLocked(now mono.Time) bool {
-    // 	if runtime.GOOS == "js" {
-    // 		return false
-    // 	}
-    // 	if !de.bestAddr.IsValid() || de.lastFullPing.IsZero() {
-    // 		return true
-    // 	}
-    // 	if now.After(de.trustBestAddrUntil) {
-    // 		return true
-    // 	}
-    // 	if de.bestAddr.latency <= goodEnoughLatency {
-    // 		return false
-    // 	}
-    // 	if now.Sub(de.lastFullPing) >= upgradeInterval {
-    // 		return true
-    // 	}
-    // 	return false
-    // }
-
-    // func (de *endpoint) noteActiveLocked() {
-    // 	de.lastSend = mono.Now()
-    // 	if de.heartBeatTimer == nil && !de.heartbeatDisabled {
-    // 		de.heartBeatTimer = time.AfterFunc(heartbeatInterval, de.heartbeat)
-    // 	}
-    // }
+    fn note_active_locked(&self, state: &mut InnerMutEndpoint) {
+        state.last_send.replace(Instant::now());
+        if state.heart_beat_timer.is_none() {
+            let this = self.clone();
+            state
+                .heart_beat_timer
+                .replace(Timer::after(HEARTBEAT_INTERVAL, async move {
+                    this.heartbeat().await;
+                }));
+        }
+    }
 
     /// Starts a ping for the "ping" command.
     /// `res` is value to call cb with, already partially filled.
@@ -274,6 +264,7 @@ impl Endpoint {
     where
         F: Fn(cfg::PingResult),
     {
+        todo!()
         // 	de.mu.Lock()
         // 	defer de.mu.Unlock()
 
@@ -369,111 +360,169 @@ impl Endpoint {
         // 	return err
     }
 
-    // func (de *endpoint) pingTimeout(txid stun.TxID) {
-    // 	de.mu.Lock()
-    // 	defer de.mu.Unlock()
-    // 	sp, ok := de.sentPing[txid]
-    // 	if !ok {
-    // 		return
-    // 	}
-    // 	if debugDisco() || !de.bestAddr.IsValid() || mono.Now().After(de.trustBestAddrUntil) {
-    // 		de.c.dlogf("[v1] magicsock: disco: timeout waiting for pong %x from %v (%v, %v)", txid[:6], sp.to, de.publicKey.ShortString(), de.discoShort)
-    // 	}
-    // 	de.removeSentPingLocked(txid, sp)
-    // }
+    async fn ping_timeout(&self, txid: stun::TransactionId) {
+        let mut state = self.state.lock().await;
 
-    // // forgetPing is called by a timer when a ping either fails to send or
-    // // has taken too long to get a pong reply.
-    // func (de *endpoint) forgetPing(txid stun.TxID) {
-    // 	de.mu.Lock()
-    // 	defer de.mu.Unlock()
-    // 	if sp, ok := de.sentPing[txid]; ok {
-    // 		de.removeSentPingLocked(txid, sp)
-    // 	}
-    // }
+        if let Some(sp) = state.sent_ping.remove(&txid) {
+            if state.best_addr.is_none()
+                || (state.trust_best_addr_until.is_some()
+                    && Instant::now() > *state.trust_best_addr_until.as_ref().unwrap())
+            {
+                info!(
+                    "[v1] disco: timeout waiting for pong {:?} from {:?} ({:?}, {:?})",
+                    txid, sp.to, self.public_key, state.disco_key
+                );
+            }
 
-    // // sendDiscoPing sends a ping with the provided txid to ep using de's discoKey.
-    // //
-    // // The caller (startPingLocked) should've already recorded the ping in
-    // // sentPing and set up the timer.
-    // //
-    // // The caller should use de.discoKey as the discoKey argument.
-    // // It is passed in so that sendDiscoPing doesn't need to lock de.mu.
-    // func (de *endpoint) sendDiscoPing(ep netip.AddrPort, discoKey key.DiscoPublic, txid stun.TxID, logLevel discoLogLevel) {
-    // 	sent, _ := de.c.sendDiscoMessage(ep, de.publicKey, discoKey, &disco.Ping{
-    // 		TxID:    [12]byte(txid),
-    // 		NodeKey: de.c.publicKeyAtomic.Load(),
-    // 	}, logLevel)
-    // 	if !sent {
-    // 		de.forgetPing(txid)
-    // 	}
-    // }
+            sp.timer.stop().await;
+        }
+    }
 
-    // func (de *endpoint) startPingLocked(ep netip.AddrPort, now mono.Time, purpose discoPingPurpose) {
-    // 	if runtime.GOOS == "js" {
-    // 		return
-    // 	}
-    // 	if purpose != pingCLI {
-    // 		st, ok := de.endpointState[ep]
-    // 		if !ok {
-    // 			// Shouldn't happen. But don't ping an endpoint that's
-    // 			// not active for us.
-    // 			de.c.logf("magicsock: disco: [unexpected] attempt to ping no longer live endpoint %v", ep)
-    // 			return
-    // 		}
-    // 		st.lastPing = now
-    // 	}
+    /// Called by a timer when a ping either fails to send or has taken too long to get a pong reply.
+    async fn forget_ping(&self, tx_id: stun::TransactionId) {
+        let mut state = self.state.lock().await;
 
-    // 	txid := stun.NewTxID()
-    // 	de.sentPing[txid] = sentPing{
-    // 		to:      ep,
-    // 		at:      now,
-    // 		timer:   time.AfterFunc(pingTimeoutDuration, func() { de.pingTimeout(txid) }),
-    // 		purpose: purpose,
-    // 	}
-    // 	logLevel := discoLog
-    // 	if purpose == pingHeartbeat {
-    // 		logLevel = discoVerboseLog
-    // 	}
-    // 	go de.sendDiscoPing(ep, de.discoKey, txid, logLevel)
-    // }
+        if let Some(sp) = state.sent_ping.remove(&tx_id) {
+            sp.timer.stop().await;
+        }
+    }
 
-    // func (de *endpoint) sendPingsLocked(now mono.Time, sendCallMeMaybe bool) {
-    // 	de.lastFullPing = now
-    // 	var sentAny bool
-    // 	for ep, st := range de.endpointState {
-    // 		if st.shouldDeleteLocked() {
-    // 			de.deleteEndpointLocked(ep)
-    // 			continue
-    // 		}
-    // 		if runtime.GOOS == "js" {
-    // 			continue
-    // 		}
-    // 		if !st.lastPing.IsZero() && now.Sub(st.lastPing) < discoPingInterval {
-    // 			continue
-    // 		}
+    /// Sends a ping with the provided txid to ep using self's disco_key.
+    ///
+    /// The caller (start_ping_locked) should've already recorded the ping in
+    /// sent_ping and set up the timer.
+    ///
+    /// The caller should use de.disco_key as the disco_key argument.
+    /// It is passed in so that send_disco_ping doesn't need to lock de.mu.
+    async fn send_disco_ping(
+        &self,
+        ep: SocketAddr,
+        disco_key: &key::disco::PublicKey,
+        tx_id: stun::TransactionId,
+    ) {
+        let sent = if let Some(node_key) = self.c.public_key_atomic.read().await.clone() {
+            self.c
+                .send_disco_message(
+                    ep,
+                    Some(&self.public_key),
+                    disco_key,
+                    disco::Message::Ping(disco::Ping { tx_id, node_key }),
+                )
+                .await
+                .unwrap_or_default()
+        } else {
+            false
+        };
+        if !sent {
+            self.forget_ping(tx_id).await;
+        }
+    }
 
-    // 		firstPing := !sentAny
-    // 		sentAny = true
+    fn start_ping_locked(
+        &self,
+        state: &mut InnerMutEndpoint,
+        ep: SocketAddr,
+        now: Instant,
+        purpose: DiscoPingPurpose,
+    ) {
+        if purpose != DiscoPingPurpose::Cli {
+            if let Some(st) = state.endpoint_state.get_mut(&ep) {
+                st.last_ping.replace(now);
+            } else {
+                // Shouldn't happen. But don't ping an endpoint that's  not active for us.
+                warn!(
+                    "disco: [unexpected] attempt to ping no longer live endpoint {:?}",
+                    ep
+                );
+                return;
+            }
+        }
 
-    // 		if firstPing && sendCallMeMaybe {
-    // 			de.c.dlogf("[v1] magicsock: disco: send, starting discovery for %v (%v)", de.publicKey.ShortString(), de.discoShort)
-    // 		}
+        let txid = stun::TransactionId::default();
+        let this = self.clone();
+        state.sent_ping.insert(
+            txid,
+            SentPing {
+                to: ep,
+                at: now,
+                timer: Timer::after(PING_TIMEOUT_DURATION, async move {
+                    this.ping_timeout(txid).await;
+                }),
+                purpose,
+            },
+        );
 
-    // 		de.startPingLocked(ep, now, pingDiscovery)
-    // 	}
-    // 	derpAddr := de.derpAddr
-    // 	if sentAny && sendCallMeMaybe && derpAddr.IsValid() {
-    // 		// Have our magicsock.Conn figure out its STUN endpoint (if
-    // 		// it doesn't know already) and then send a CallMeMaybe
-    // 		// message to our peer via DERP informing them that we've
-    // 		// sent so our firewall ports are probably open and now
-    // 		// would be a good time for them to connect.
-    // 		go de.c.enqueueCallMeMaybe(derpAddr, de)
-    // 	}
-    // }
+        let this = self.clone();
+        tokio::task::spawn(async move {
+            let disco_key = this.disco_key();
+            this.send_disco_ping(ep, &disco_key, txid).await;
+        });
+    }
+
+    fn send_pings_locked(
+        &self,
+        state: &mut InnerMutEndpoint,
+        now: Instant,
+        send_call_me_maybe: bool,
+    ) {
+        state.last_full_ping.replace(now);
+
+        // first cleanout out all old endpoints
+        state.endpoint_state.retain(|ep, st| {
+            if st.should_delete() {
+                // Inlined delete_endpoint
+                if state.best_addr.as_ref().map(|a| &a.addr) == Some(ep) {
+                    state.best_addr = None;
+                }
+                return false;
+            }
+            true
+        });
+
+        let mut pings = Vec::new();
+        for (ep, st) in &state.endpoint_state {
+            if st.last_ping.is_some()
+                && st.last_ping.as_ref().unwrap().duration_since(now) < DISCO_PING_INTERVAL
+            {
+                continue;
+            }
+            pings.push(ep.clone());
+        }
+
+        let sent_any = !pings.is_empty();
+        let mut first_ping = true;
+        for ep in pings {
+            if first_ping && send_call_me_maybe {
+                info!(
+                    "disco: send, starting discovery for {:?} ({:?})",
+                    self.public_key, state.disco_key,
+                );
+            }
+            if first_ping {
+                first_ping = false;
+            }
+
+            self.start_ping_locked(state, ep, now, DiscoPingPurpose::Discovery);
+        }
+
+        let derp_addr = state.derp_addr.clone();
+        if sent_any && send_call_me_maybe {
+            if let Some(derp_addr) = derp_addr {
+                // Have our magicsock.Conn figure out its STUN endpoint (if
+                // it doesn't know already) and then send a CallMeMaybe
+                // message to our peer via DERP informing them that we've
+                // sent so our firewall ports are probably open and now
+                // would be a good time for them to connect.
+                let this = self.clone();
+                tokio::task::spawn(async move {
+                    this.c.enqueue_call_me_maybe(derp_addr, this.clone()).await;
+                });
+            }
+        }
+    }
 
     pub fn update_from_node(&self, n: &cfg::Node) {
+        todo!()
         // 	if n == nil {
         // 		panic("nil node when updating disco ep")
         // 	}
@@ -748,6 +797,7 @@ impl Endpoint {
         // 	de.sendPingsLocked(mono.Now(), false)
     }
 
+    // TODO: needed?
     // func (de *endpoint) populatePeerStatus(ps *ipnstate.PeerStatus) {
     // 	de.mu.Lock()
     // 	defer de.mu.Unlock()
@@ -790,13 +840,6 @@ impl Endpoint {
     pub fn num_stop_and_reset(&self) -> u64 {
         self.num_stop_and_reset_atomic.load(Ordering::Relaxed)
     }
-
-    // func (de *endpoint) deleteEndpointLocked(ep netip.AddrPort) {
-    // 	delete(de.endpointState, ep)
-    // 	if de.bestAddr.AddrPort == ep {
-    // 		de.bestAddr = addrLatency{}
-    // 	}
-    // }
 }
 
 impl InnerMutEndpoint {
@@ -821,15 +864,6 @@ impl InnerMutEndpoint {
             // In the case of a timer already having fired, this is a no-op:
             sp.timer.stop().await;
         }
-    }
-
-    async fn remove_sent_ping(&mut self, txid: &stun::TransactionId, sp: SentPing) {
-        // Stop the timer for the case where sendPing failed to write to UDP.
-        // In the case of a timer already having fired, this is a no-op:
-        // TODO: figure out
-
-        sp.timer.stop().await;
-        self.sent_ping.remove(txid);
     }
 }
 
@@ -969,42 +1003,44 @@ pub struct EndpointState {
     recent_pong: usize,
 
     /// Index in nodecfg.Node.Endpoints; meaningless if last_got_ping non-zero.
-    index: usize,
+    index: Index,
 }
 
-// // indexSentinelDeleted is the temporary value that endpointState.index takes while
-// // a endpoint's endpoints are being updated from a new network map.
-// const indexSentinelDeleted = -1
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
+enum Index {
+    Deleted,
+    Some(usize),
+}
 
 impl EndpointState {
-    // // endpoint.mu must be held.
-    // func (st *endpointState) addPongReplyLocked(r pongReply) {
-    // 	if n := len(st.recentPongs); n < pongHistoryCount {
-    // 		st.recentPong = uint16(n)
-    // 		st.recentPongs = append(st.recentPongs, r)
-    // 		return
-    // 	}
-    // 	i := st.recentPong + 1
-    // 	if i == pongHistoryCount {
-    // 		i = 0
-    // 	}
-    // 	st.recentPongs[i] = r
-    // 	st.recentPong = i
-    // }
+    fn add_pong_reply(&mut self, r: PongReply) {
+        let n = self.recent_pongs.len();
+        if n < PONG_HISTORY_COUNT {
+            self.recent_pong = n;
+            self.recent_pongs.push(r);
+        } else {
+            let mut i = self.recent_pong + 1;
+            if i == PONG_HISTORY_COUNT {
+                i = 0;
+            }
+            self.recent_pongs[i] = r;
+            self.recent_pong = i;
+        }
+    }
 
-    // // shouldDeleteLocked reports whether we should delete this endpoint.
-    // func (st *endpointState) shouldDeleteLocked() bool {
-    // 	switch {
-    // 	case !st.callMeMaybeTime.IsZero():
-    // 		return false
-    // 	case st.lastGotPing.IsZero():
-    // 		// This was an endpoint from the network map. Is it still in the network map?
-    // 		return st.index == indexSentinelDeleted
-    // 	default:
-    // 		// This was an endpoint discovered at runtime.
-    // 		return time.Since(st.lastGotPing) > sessionActiveTimeout
-    // 	}
-    // }
+    /// Reports whether we should delete this endpoint.
+    fn should_delete(&self) -> bool {
+        if self.call_me_maybe_time.is_some() {
+            return false;
+        }
+        if self.last_got_ping.is_none() {
+            // This was an endpoint from the network map. Is it still in the network map?
+            return self.index == Index::Deleted;
+        }
+
+        // This was an endpoint discovered at runtime.
+        self.last_got_ping.as_ref().unwrap().elapsed() > SESSION_ACTIVE_TIMEOUT
+    }
 }
 
 const ADDR_COUNTER: AtomicU64 = AtomicU64::new(0);
