@@ -66,14 +66,26 @@ enum Commands {
         /// If this path is provided and it exists, the private key is read from this file and used, if it does not exist the private key will be persisted to this location.
         #[clap(long)]
         key: Option<PathBuf>,
+        /// Optional rpc port, defaults to 4919
+        #[clap(long)]
+        rpc_port: Option<u16>,
     },
 
     /// List hashes
     #[clap(about = "List hashes")]
-    List {},
+    List {
+        /// Optional rpc port, defaults to 4919
+        rpc_port: Option<u16>,
+    },
     /// Add some data to the database.
     #[clap(about = "Add data from the given path")]
-    Add { path: PathBuf },
+    Add {
+        /// The path to the file or folder to add.
+        path: PathBuf,
+        /// Optional rpc port, defaults to 4919
+        #[clap(long)]
+        rpc_port: Option<u16>,
+    },
     /// Fetch some data by hash.
     #[clap(about = "Fetch the data from the hash")]
     Get {
@@ -221,10 +233,12 @@ impl FromStr for Blake3Cid {
 }
 
 async fn make_rpc_client(
+    rpc_port: Option<u16>,
 ) -> anyhow::Result<RpcClient<ProviderService, QuinnConnection<ProviderResponse, ProviderRequest>>>
 {
+    let rpc_port = rpc_port.unwrap_or(RPC_PORT);
     let endpoint = iroh::get::make_client_endpoint(None, vec![RPC_ALPN.to_vec()], false, false)?;
-    let addr: SocketAddr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, RPC_PORT));
+    let addr: SocketAddr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, rpc_port));
     let server_name = "localhost".to_string();
     let connection = QuinnConnection::new(endpoint, addr, server_name);
     let client = RpcClient::<ProviderService, _>::new(connection);
@@ -320,10 +334,11 @@ async fn main() -> Result<()> {
             addr,
             auth_token,
             key,
+            rpc_port,
         } => {
             tokio::select! {
                 biased;
-                res = provide_service(addr, auth_token, key) => {
+                res = provide_service(addr, auth_token, key, rpc_port) => {
                     res
                 }
                 _ = tokio::signal::ctrl_c() => {
@@ -332,8 +347,8 @@ async fn main() -> Result<()> {
                 }
             }
         }
-        Commands::List {} => {
-            let client = make_rpc_client().await?;
+        Commands::List { rpc_port } => {
+            let client = make_rpc_client(rpc_port).await?;
             let mut response = client.server_streaming(ListRequest).await?;
             while let Some(item) = response.next().await {
                 let item = item?;
@@ -346,8 +361,8 @@ async fn main() -> Result<()> {
             }
             Ok(())
         }
-        Commands::Add { path } => {
-            let client = make_rpc_client().await?;
+        Commands::Add { path, rpc_port } => {
+            let client = make_rpc_client(rpc_port).await?;
             let response = client.rpc(ProvideRequest { path: path.clone() }).await??;
             println!(
                 "path {} added. Hash {}",
@@ -434,8 +449,12 @@ async fn provide_interactive(
     Ok(())
 }
 
-fn make_rpc_endpoint(keypair: &Keypair) -> Result<impl ServiceEndpoint<ProviderService>> {
-    let rpc_addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, RPC_PORT));
+fn make_rpc_endpoint(
+    keypair: &Keypair,
+    rpc_port: Option<u16>,
+) -> Result<impl ServiceEndpoint<ProviderService>> {
+    let rpc_port = rpc_port.unwrap_or(RPC_PORT);
+    let rpc_addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, rpc_port));
     let rpc_quinn_endpoint = quinn::Endpoint::server(
         iroh::provider::make_server_config(keypair, 1024, 4, vec![RPC_ALPN.to_vec()])?,
         rpc_addr,
@@ -449,10 +468,11 @@ async fn provide_service(
     addr: Option<SocketAddr>,
     auth_token: Option<String>,
     key: Option<PathBuf>,
+    rpc_port: Option<u16>,
 ) -> Result<()> {
     let keypair = get_keypair(key).await?;
 
-    let rpc_endpoint = make_rpc_endpoint(&keypair)?;
+    let rpc_endpoint = make_rpc_endpoint(&keypair, rpc_port)?;
     let db = Database::default();
     let mut builder = provider::Provider::builder(db)
         .rpc_endpoint(rpc_endpoint)
@@ -466,10 +486,10 @@ async fn provide_service(
     }
     let provider = builder.spawn()?;
 
-    println!("Starting iroh process");
-    println!("PeerID:      {}", provider.peer_id());
-    println!("Auth token:  {}", provider.auth_token());
-    println!("Listen addr: {}", provider.listen_addr());
+    eprintln!("Starting iroh process");
+    eprintln!("PeerID:      {}", provider.peer_id());
+    eprintln!("Auth token:  {}", provider.auth_token());
+    eprintln!("Listen addr: {}", provider.listen_addr());
     provider.await?;
     Ok(())
 }
