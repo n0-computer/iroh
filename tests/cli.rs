@@ -1,19 +1,19 @@
 #![cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
 use std::env;
 use std::fs::File;
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStderr, Command, Stdio};
+use std::process::{Child, Command, Stdio};
 
 use anyhow::{Context, Result};
-use rand::RngCore;
+use rand::{RngCore, SeedableRng};
 use tempfile::tempdir;
 
 const ADDR: &str = "127.0.0.1:0";
 
 fn make_rand_file(size: usize, path: &Path) -> Result<()> {
     let mut content = vec![0u8; size];
-    rand::thread_rng().fill_bytes(&mut content);
+    rand::rngs::StdRng::seed_from_u64(1).fill_bytes(&mut content);
     std::fs::write(path, content)?;
     Ok(())
 }
@@ -102,8 +102,8 @@ fn test_provide_get_loop(path: &Path, input: Input, output: Output) -> Result<()
         let f = File::open(&path)?;
         let stdin = Stdio::from(f);
         Command::new(iroh)
-            .stderr(Stdio::piped())
-            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .stdout(Stdio::piped())
             .stdin(stdin)
             .arg("provide")
             .arg("--addr")
@@ -111,8 +111,8 @@ fn test_provide_get_loop(path: &Path, input: Input, output: Output) -> Result<()
             .spawn()?
     } else {
         Command::new(iroh)
-            .stderr(Stdio::piped())
-            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .stdout(Stdio::piped())
             .stdin(Stdio::null())
             .arg("provide")
             .arg(&path)
@@ -123,11 +123,11 @@ fn test_provide_get_loop(path: &Path, input: Input, output: Output) -> Result<()
 
     // wrap in `ProvideProcess` to ensure the spawned process is killed on drop
     let mut provider = ProvideProcess { child: provider };
-    let stderr = provider.child.stderr.take().unwrap();
-    let stderr = BufReader::new(stderr);
+    let stdout = provider.child.stdout.take().unwrap();
+    let stdout = BufReader::new(stdout);
 
     // test provide output & get all in one ticket from stderr
-    let all_in_one = match_provide_stderr(stderr, num_blobs, input)?;
+    let all_in_one = match_provide_output(stdout, num_blobs, input)?;
 
     // create a `get-ticket` cmd & optionally provide out path
     let mut cmd = Command::new(iroh);
@@ -154,8 +154,8 @@ fn test_provide_get_loop(path: &Path, input: Input, output: Output) -> Result<()
     }
 }
 
-// Wrapping the [`Child`] process here allows us to impl the `Drop` trait ensuring the provide
-// process is killed when it goes out of scope.
+/// Wrapping the [`Child`] process here allows us to impl the `Drop` trait ensuring the provide
+/// process is killed when it goes out of scope.
 struct ProvideProcess {
     child: Child,
 }
@@ -197,32 +197,37 @@ fn match_get_stderr(stderr: Vec<u8>) -> Result<()> {
         r"\[1/3\] Connecting ..."; 1,
         r"\[2/3\] Requesting ..."; 1,
         r"\[3/3\] Downloading collection..."; 1,
-        r"\d* file\(s\) with total transfer size [\d.]* ?[KMGT]?i?B"; 1,
-        r"Done in \d* seconds?"; 1
+        r"\d* file\(s\) with total transfer size [\d.]* ?[BKMGT]?i?B"; 1,
+        r"Transferred \d*.?\d*? ?[BKMGT]i?B? in \d* seconds?, \d*.?\d*? [BKMGT]iB/s"; 1
     ];
     Ok(())
 }
 
-/// Looks for regex matches on stderr output for the provider, returning the "all in one ticket"
+/// Looks for regex matches on each line of output for the provider, returning the "all in one ticket"
 /// that can be used to 'get' from another process.
 ///
 /// Errors on the first regex mismatch or if the stderr output has fewer lines than expected
-fn match_provide_stderr(
-    stderr: BufReader<ChildStderr>,
+fn match_provide_output<T: Read>(
+    reader: BufReader<T>,
     num_blobs: usize,
     input: Input,
 ) -> Result<String> {
     // if we are using `stdin` we don't "read" any files, so the provider does not output any lines
     // about "Reading"
-    let reading_line_num = if input == Input::Stdin { 0 } else { 1 };
+    let reading_line_num = match input {
+        Input::Stdin => 0,
+        Input::Path => 1,
+    };
 
     let mut remaining_lines = assert_matches_line![
-        stderr,
+        reader,
         r"Reading \S*"; reading_line_num,
         r"Collection: [\da-z]{59}"; 1,
         r""; 1,
-        r"- \S*: \d* bytes"; num_blobs,
+        r"- \S*: \d*.?\d*? ?[BKMGT]i?B?"; num_blobs,
         r""; 1,
+        r""; 1,
+        r"Listening address: [\d.:]*"; 1,
         r"PeerID: [_\w\d-]*"; 1,
         r"Auth token: [\w\d]*"; 1
     ];
