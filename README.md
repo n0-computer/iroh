@@ -56,7 +56,7 @@ Disable default features when using `iroh` as a library:
 `iroh = { version: "...", default-features = false }`
 
 This removes dependencies that are only relevant when using `iroh` as
-a library.
+a cli.
 
 # License
 
