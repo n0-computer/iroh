@@ -98,19 +98,20 @@ fn test_provide_get_loop(path: &Path, input: Input, output: Output) -> Result<()
     let iroh = env!("CARGO_BIN_EXE_iroh");
 
     // spawn a provider & optionally provide from stdin
-    let provider = if input == Input::Stdin {
-        let f = File::open(&path)?;
-        let stdin = Stdio::from(f);
-        Command::new(iroh)
-            .stderr(Stdio::null())
-            .stdout(Stdio::piped())
-            .stdin(stdin)
-            .arg("provide")
-            .arg("--addr")
-            .arg(ADDR)
-            .spawn()?
-    } else {
-        Command::new(iroh)
+    let provider = match input {
+        Input::Stdin => {
+            let f = File::open(&path)?;
+            let stdin = Stdio::from(f);
+            Command::new(iroh)
+                .stderr(Stdio::null())
+                .stdout(Stdio::piped())
+                .stdin(stdin)
+                .arg("provide")
+                .arg("--addr")
+                .arg(ADDR)
+                .spawn()?
+        }
+        Input::Path => Command::new(iroh)
             .stderr(Stdio::null())
             .stdout(Stdio::piped())
             .stdin(Stdio::null())
@@ -118,7 +119,7 @@ fn test_provide_get_loop(path: &Path, input: Input, output: Output) -> Result<()
             .arg(&path)
             .arg("--addr")
             .arg(ADDR)
-            .spawn()?
+            .spawn()?,
     };
 
     // wrap in `ProvideProcess` to ensure the spawned process is killed on drop
