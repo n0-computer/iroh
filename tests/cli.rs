@@ -219,7 +219,7 @@ fn match_provide_output<T: Read>(
         Input::Path => 1,
     };
 
-    let mut remaining_lines = assert_matches_line![
+    let mut caps = assert_matches_line![
         reader,
         r"Reading \S*"; reading_line_num,
         r"Collection: [\da-z]{59}"; 1,
@@ -229,47 +229,19 @@ fn match_provide_output<T: Read>(
         r""; 1,
         r"Listening address: [\d.:]*"; 1,
         r"PeerID: [_\w\d-]*"; 1,
-        r"Auth token: [\w\d]*"; 1
+        r"Auth token: [\w\d]*"; 1,
+        r"All-in-one ticket: ([_a-zA-Z\d-]*)"; 1
     ];
 
-    let re = r"All-in-one ticket: ([_a-zA-Z\d-]*)";
-    let rx = regex::Regex::new(re)?;
-    let line = next_line(&mut remaining_lines)?;
-    if !rx.is_match(&line) {
-        anyhow::bail!(match_err_msg(&line, re))
-    }
-    let caps = rx
-        .captures(&line)
-        .context("expected match on 'All-in-one' ticket")?;
-    Ok(caps
-        .get(1)
-        .context("expected 2 matches on 'All-in-one' ticket")?
-        .as_str()
-        .to_string())
-}
-
-fn matches(line: &str, re: &str) -> Result<()> {
-    let rx = regex::Regex::new(re)?;
-    if rx.is_match(line) {
-        Ok(())
-    } else {
-        anyhow::bail!(match_err_msg(line, re))
-    }
-}
-
-fn next_line<T: std::io::Read>(l: &mut std::io::Lines<BufReader<T>>) -> Result<String> {
-    Ok(l.next().context("Unexpected end of stderr reader")??)
-}
-
-fn match_err_msg(line: &str, re: &str) -> String {
-    format!("no match found\nexpected match for '{re}'\ngot '{line}'")
+    // return the capture of the all in one ticket, should be the last capture
+    caps.pop().context("Expected at least one capture.")
 }
 
 #[macro_export]
 /// Ensures each line of the first expression matches the regex of each following expression. Each
 /// regex expression is followed by the number of consecutive lines it should match.
 ///
-/// Returns any left over [`Lines`] that haven't been examined.
+/// Returns a vec of `String`s of any captures made against the regex on each line.
 ///
 /// # Examples
 /// ```
@@ -286,15 +258,23 @@ macro_rules! assert_matches_line {
      ( $x:expr, $( $z:expr;$a:expr ),* ) => {
          {
             let mut lines = $x.lines();
+            let mut caps = Vec::new();
             $(
+            let rx = regex::Regex::new($z)?;
             for _ in 0..$a {
-                matches(
-                    next_line(&mut lines)?.trim(),
-                    $z,
-                )?;
+                let line = lines.next().context("Unexpected end of stderr reader")??;
+                if let Some(cap) = rx.captures(line.trim()) {
+                    for i in 0..cap.len() {
+                        if let Some(capture_group) = cap.get(i) {
+                            caps.push(capture_group.as_str().to_string());
+                        }
+                    }
+                } else {
+                    anyhow::bail!(format!("no match found\nexpected match for '{}'\ngot '{line}'", $z));
+                };
             }
             )*
-            lines
+            caps
          }
     };
 }
