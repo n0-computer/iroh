@@ -280,15 +280,12 @@ async fn provide_interactive(
     key: Option<PathBuf>,
     keylog: bool,
 ) -> Result<()> {
-    let out_writer = OutWriter::new();
     let keypair = get_keypair(key).await?;
 
     let mut tmp_path = None;
 
     let sources = if let Some(path) = path {
-        out_writer
-            .println(format!("Reading {}", path.display()))
-            .await;
+        println!("Reading {}", path.display());
         if path.is_dir() {
             let mut paths = Vec::new();
             let mut iter = tokio::fs::read_dir(&path).await?;
@@ -297,6 +294,7 @@ async fn provide_interactive(
                     paths.push(el.path().into());
                 }
             }
+            paths.sort();
             paths
         } else if path.is_file() {
             vec![path.into()]
