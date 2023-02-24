@@ -335,6 +335,7 @@ async fn provide_interactive(
     }
     let provider = builder.spawn()?;
 
+    println!("Listening address: {}", provider.listen_addr());
     println!("PeerID: {}", provider.peer_id());
     println!("Auth token: {}", provider.auth_token());
     println!("All-in-one ticket: {}", provider.ticket(hash));
