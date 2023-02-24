@@ -67,7 +67,7 @@ jobs:
       id: generate_report
       run: |
         cd chuck/netsim
-        python3 reports_csv.py > report.txt
+        python3 reports_csv.py --table > report.txt
         export NETSIM_REPORT=$(cat report.txt)
         echo "NETSIM_REPORT<<EOFMARKER" >> ${GITHUB_OUTPUT}
         echo "${NETSIM_REPORT}" >> ${GITHUB_OUTPUT}
@@ -92,15 +92,8 @@ jobs:
         body: |
           body: |
           `${{ github.head_ref }}.${{ env.LAST_COMMIT_SHA }}`
-          <details>
-          <summary>Perf report</summary>
-          
-          ```json
-
-            ${{ steps.generate_report.outputs.NETSIM_REPORT }}
-
-          ```
-          </details>
+          Perf report
+          ${{ steps.generate_report.outputs.NETSIM_REPORT }}
 
     - name: Respond PR
       uses: peter-evans/create-or-update-comment@v2
@@ -109,15 +102,8 @@ jobs:
         issue-number: ${{ github.event.pull_request.number }}
         body: |
           `${{ github.head_ref }}.${{ env.LAST_COMMIT_SHA }}`
-          <details>
-          <summary>Perf report</summary>
-          
-          ```json
-
-            ${{ steps.generate_report.outputs.NETSIM_REPORT }}
-
-          ```
-          </details>
+          Perf report
+          ${{ steps.generate_report.outputs.NETSIM_REPORT }}
 
     - name: Dump report
       run: |
