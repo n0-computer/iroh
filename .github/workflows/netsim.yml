@@ -126,3 +126,11 @@ jobs:
         prom_data=$(printf "%s\n " "$d")
         curl -X POST -H  "Content-Type: text/plain" --data "$prom_data" ${{secrets.PROM_ENDPOINT}}/metrics/job/netsim/instance/${instance}
 
+    - name: Post metrics
+      if: github.ref_name=='main'
+      run: |
+        cd chuck/netsim
+        python3 reports_csv.py --metro --commit ${{ env.LAST_COMMIT_SHA }} > report_metro.txt
+        d=$(cat report_metro.txt)
+        metro_data=$(printf "%s\n " "$d")
+        curl -X POST -H  "Content-Type: application/json" -H "Authorization: Bearer ${{secrets.METRO_TOKEN}}" --data "$metro_data" ${{secrets.METRO_ENDPOINT}}
