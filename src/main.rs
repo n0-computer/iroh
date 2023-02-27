@@ -81,7 +81,7 @@ enum Commands {
 // Looking at https://unix.stackexchange.com/questions/331611/do-progress-reports-logging-information-belong-on-stderr-or-stdout
 // it is a little complicated.
 // The current setup is to write all progress information to STDERR and all data to STDOUT.
-macro_rules! out_println {
+macro_rules! progress {
     // Match a format string followed by any number of arguments
     ($fmt:expr $(, $args:expr)*) => {{
         // Use the `format!` macro to format the string with the arguments
@@ -359,9 +359,9 @@ async fn get_interactive(
     token: AuthToken,
     out: Option<PathBuf>,
 ) -> Result<()> {
-    out_println!("Fetching: {}", Blake3Cid::new(hash));
+    progress!("Fetching: {}", Blake3Cid::new(hash));
 
-    out_println!("{} Connecting ...", style("[1/3]").bold().dim());
+    progress!("{} Connecting ...", style("[1/3]").bold().dim());
 
     let pb = ProgressBar::hidden();
     pb.enable_steady_tick(std::time::Duration::from_millis(50));
@@ -378,7 +378,7 @@ async fn get_interactive(
     );
 
     let on_connected = || async move {
-        out_println!("{} Requesting ...", style("[2/3]").bold().dim());
+        progress!("{} Requesting ...", style("[2/3]").bold().dim());
         Ok(())
     };
     let on_collection = |collection: &iroh::blobs::Collection| {
@@ -387,8 +387,8 @@ async fn get_interactive(
         let total_entries = collection.total_entries();
         let size = collection.total_blobs_size();
         async move {
-            out_println!("{} Downloading {name}...", style("[3/3]").bold().dim());
-            out_println!(
+            progress!("{} Downloading {name}...", style("[3/3]").bold().dim());
+            progress!(
                 "  {total_entries} file(s) with total transfer size {}",
                 HumanBytes(size)
             );
@@ -453,7 +453,7 @@ async fn get_interactive(
     let stats = get::run(hash, token, opts, on_connected, on_collection, on_blob).await?;
 
     pb.finish_and_clear();
-    out_println!(
+    progress!(
         "Transferred {} in {}, {}/s",
         HumanBytes(stats.data_len),
         HumanDuration(stats.elapsed),
