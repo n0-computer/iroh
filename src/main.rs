@@ -9,7 +9,6 @@ use indicatif::{
 use iroh::protocol::AuthToken;
 use iroh::provider::Ticket;
 use tokio::io::AsyncWriteExt;
-use tokio::sync::Mutex;
 use tracing_subscriber::{prelude::*, EnvFilter};
 
 use iroh::{get, provider, Hash, Keypair, PeerId};
@@ -82,26 +81,15 @@ enum Commands {
 // Looking at https://unix.stackexchange.com/questions/331611/do-progress-reports-logging-information-belong-on-stderr-or-stdout
 // it is a little complicated.
 // The current setup is to write all progress information to STDERR and all data to STDOUT.
-
-struct OutWriter {
-    stderr: Mutex<tokio::io::Stderr>,
-}
-
-impl OutWriter {
-    pub fn new() -> Self {
-        let stderr = tokio::io::stderr();
-        Self {
-            stderr: Mutex::new(stderr),
-        }
-    }
-}
-
-impl OutWriter {
-    pub async fn println(&self, mut content: String) {
-        let stderr = &mut *self.stderr.lock().await;
-        content.push('\n');
-        stderr.write_all(content.as_bytes()).await.unwrap();
-    }
+macro_rules! progress {
+    // Match a format string followed by any number of arguments
+    ($fmt:expr $(, $args:expr)*) => {{
+        // Use the `format!` macro to format the string with the arguments
+        let mut message = format!($fmt $(, $args)*);
+        // Print the formatted string to the console with a newline
+        message.push('\n');
+        tokio::io::stderr().write_all(message.as_ref()).await.unwrap();
+    }};
 }
 
 #[repr(transparent)]
@@ -371,14 +359,9 @@ async fn get_interactive(
     token: AuthToken,
     out: Option<PathBuf>,
 ) -> Result<()> {
-    let out_writer = OutWriter::new();
-    out_writer
-        .println(format!("Fetching: {}", Blake3Cid::new(hash)))
-        .await;
+    progress!("Fetching: {}", Blake3Cid::new(hash));
 
-    out_writer
-        .println(format!("{} Connecting ...", style("[1/3]").bold().dim()))
-        .await;
+    progress!("{} Connecting ...", style("[1/3]").bold().dim());
 
     let pb = ProgressBar::hidden();
     pb.enable_steady_tick(std::time::Duration::from_millis(50));
@@ -394,34 +377,21 @@ async fn get_interactive(
             .progress_chars("#>-"),
     );
 
-    let on_connected = || {
-        let out_writer = &out_writer;
-        async move {
-            out_writer
-                .println(format!("{} Requesting ...", style("[2/3]").bold().dim()))
-                .await;
-            Ok(())
-        }
+    let on_connected = || async move {
+        progress!("{} Requesting ...", style("[2/3]").bold().dim());
+        Ok(())
     };
     let on_collection = |collection: &iroh::blobs::Collection| {
         let pb = &pb;
-        let out_writer = &out_writer;
         let name = collection.name().to_string();
         let total_entries = collection.total_entries();
         let size = collection.total_blobs_size();
         async move {
-            out_writer
-                .println(format!(
-                    "{} Downloading {name}...",
-                    style("[3/3]").bold().dim()
-                ))
-                .await;
-            out_writer
-                .println(format!(
-                    "  {total_entries} file(s) with total transfer size {}",
-                    HumanBytes(size)
-                ))
-                .await;
+            progress!("{} Downloading {name}...", style("[3/3]").bold().dim());
+            progress!(
+                "  {total_entries} file(s) with total transfer size {}",
+                HumanBytes(size)
+            );
             pb.set_length(size);
             pb.reset();
             pb.set_draw_target(ProgressDrawTarget::stderr());
@@ -483,14 +453,12 @@ async fn get_interactive(
     let stats = get::run(hash, token, opts, on_connected, on_collection, on_blob).await?;
 
     pb.finish_and_clear();
-    out_writer
-        .println(format!(
-            "Transferred {} in {}, {}/s",
-            HumanBytes(stats.data_len),
-            HumanDuration(stats.elapsed),
-            HumanBytes((stats.data_len as f64 / stats.elapsed.as_secs_f64()) as u64),
-        ))
-        .await;
+    progress!(
+        "Transferred {} in {}, {}/s",
+        HumanBytes(stats.data_len),
+        HumanDuration(stats.elapsed),
+        HumanBytes((stats.data_len as f64 / stats.elapsed.as_secs_f64()) as u64)
+    );
 
     Ok(())
 }
