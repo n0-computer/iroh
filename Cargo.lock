@@ -4,9 +4,9 @@ version = 3
 
 [[package]]
 name = "abao"
-version = "0.1.2"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fa67f56b146a784d8feb9f5e4dc5e309fdbf7e3f6631a9c6d709348536abc628"
+checksum = "2daa0989489b05a455a9707adbbbc17443edf7bbc902ce499cd3b84148d68a40"
 dependencies = [
  "arrayref",
  "arrayvec",
