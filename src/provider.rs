@@ -172,8 +172,9 @@ impl Builder {
         events: broadcast::Sender<Event>,
         cancel_token: CancellationToken,
     ) {
-        debug!("\nlistening at: {:#?}", server.local_addr().unwrap());
-
+        if let Ok(addr) = server.local_addr() {
+            debug!("listening at: {addr}");
+        }
         loop {
             tokio::select! {
                 biased;
@@ -601,7 +602,7 @@ pub(crate) struct Data {
 }
 
 /// A data source
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum DataSource {
     /// A blob of data originating from the filesystem. The name of the blob is derived from
     /// the filename.

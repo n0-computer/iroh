@@ -85,10 +85,10 @@ macro_rules! out_println {
     // Match a format string followed by any number of arguments
     ($fmt:expr $(, $args:expr)*) => {{
         // Use the `format!` macro to format the string with the arguments
-        let message = format!($fmt $(, $args)*);
+        let mut message = format!($fmt $(, $args)*);
         // Print the formatted string to the console with a newline
+        message.push('\n');
         tokio::io::stderr().write_all(message.as_ref()).await.unwrap();
-        tokio::io::stderr().write_all(b"\n").await.unwrap();
     }};
 }
 
@@ -273,7 +273,7 @@ async fn provide_interactive(
     let mut tmp_path = None;
 
     let sources = if let Some(path) = path {
-        out_println!("Reading {}", path.display());
+        println!("Reading {}", path.display());
         if path.is_dir() {
             let mut paths = Vec::new();
             let mut iter = tokio::fs::read_dir(&path).await?;
@@ -282,6 +282,7 @@ async fn provide_interactive(
                     paths.push(el.path().into());
                 }
             }
+            paths.sort();
             paths
         } else if path.is_file() {
             vec![path.into()]
@@ -301,9 +302,12 @@ async fn provide_interactive(
     let (db, hash) = provider::create_collection(sources).await?;
 
     println!("Collection: {}\n", Blake3Cid::new(hash));
+    let mut total_size = 0;
     for (_, path, size) in db.blobs() {
-        println!("- {}: {} bytes", path.display(), size);
+        total_size += size;
+        println!("- {}: {}", path.display(), HumanBytes(size));
     }
+    println!("Total: {}", HumanBytes(total_size));
     println!();
     let mut builder = provider::Provider::builder(db)
         .keypair(keypair)
@@ -317,9 +321,10 @@ async fn provide_interactive(
     }
     let provider = builder.spawn()?;
 
-    out_println!("PeerID: {}", provider.peer_id());
-    out_println!("Auth token: {}", provider.auth_token());
-    out_println!("All-in-one ticket: {}", provider.ticket(hash));
+    println!("Listening address: {}", provider.listen_addr());
+    println!("PeerID: {}", provider.peer_id());
+    println!("Auth token: {}", provider.auth_token());
+    println!("All-in-one ticket: {}", provider.ticket(hash));
     provider.await?;
 
     // Drop tempath to signal it can be destroyed
@@ -448,7 +453,12 @@ async fn get_interactive(
     let stats = get::run(hash, token, opts, on_connected, on_collection, on_blob).await?;
 
     pb.finish_and_clear();
-    out_println!("Done in {}", HumanDuration(stats.elapsed));
+    out_println!(
+        "Transferred {} in {}, {}/s",
+        HumanBytes(stats.data_len),
+        HumanDuration(stats.elapsed),
+        HumanBytes((stats.data_len as f64 / stats.elapsed.as_secs_f64()) as u64)
+    );
 
     Ok(())
 }
