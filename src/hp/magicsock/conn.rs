@@ -2,7 +2,7 @@ use std::{
     collections::{HashMap, HashSet},
     fmt::Debug,
     io,
-    net::{IpAddr, SocketAddr},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     ops::Deref,
     pin::Pin,
     sync::{
@@ -58,6 +58,15 @@ pub(super) enum Network {
     Ip6,
 }
 
+impl Network {
+    fn default_addr(&self) -> IpAddr {
+        match self {
+            Self::Ip4 => Ipv4Addr::UNSPECIFIED.into(),
+            Self::Ip6 => Ipv6Addr::UNSPECIFIED.into(),
+        }
+    }
+}
+
 impl From<Network> for socket2::Domain {
     fn from(value: Network) -> Self {
         match value {
@@ -68,18 +77,19 @@ impl From<Network> for socket2::Domain {
 }
 
 /// Contains options for `Conn::listen`.
+#[derive(Default)]
 pub struct Options {
     /// The port to listen on.
-    // Zero means to pick one automatically.
+    /// Zero means to pick one automatically.
     pub port: u16,
 
     /// Optionally provides a func to be called when endpoints change.
     pub on_endpoints: Option<Box<dyn Fn(&[cfg::Endpoint]) + Send + Sync + 'static>>,
 
-    // Optionally provides a func to be called when a connection is made to a DERP server.
+    /// Optionally provides a func to be called when a connection is made to a DERP server.
     pub on_derp_active: Option<Box<dyn Fn() + Send + Sync + 'static>>,
 
-    // Optionally provides a func to return how long it's been since a TUN packet was sent or received.
+    /// Optionally provides a func to return how long it's been since a TUN packet was sent or received.
     pub idle_for: Option<Box<dyn Fn() -> Duration + Send + Sync + 'static>>,
 
     /// A callback that provides a `cfg::NetInfo` when discovered network conditions change.
@@ -864,7 +874,7 @@ impl Conn {
     /// Returns the machine's endpoint addresses. It does a STUN lookup (via netcheck)
     /// to determine its public address.
     async fn determine_endpoints(&self) -> Result<Vec<cfg::Endpoint>> {
-        let (mut portmap_ext, mut have_portmap) = self
+        let mut portmap_ext = self
             .port_mapper
             .get_cached_mapping_or_start_creating_one()
             .await;
@@ -888,13 +898,13 @@ impl Conn {
         }
 
         // If we didn't have a portmap earlier, maybe it's done by now.
-        if !have_portmap {
-            (portmap_ext, have_portmap) = self
+        if portmap_ext.is_none() {
+            portmap_ext = self
                 .port_mapper
                 .get_cached_mapping_or_start_creating_one()
                 .await;
         }
-        if have_portmap {
+        if let Some(portmap_ext) = portmap_ext {
             add_addr!(already, eps, portmap_ext, cfg::EndpointType::Portmapped);
             self.set_net_info_have_port_map().await;
         }
@@ -2518,7 +2528,7 @@ impl Conn {
 
     /// Opens a packet listener.
     async fn listen_packet(&self, network: Network, port: u16) -> Result<UdpSocket> {
-        let addr: SocketAddr = format!(":{}", port).parse().expect("invalid bind address");
+        let addr = SocketAddr::new(network.default_addr(), port);
         let socket = socket2::Socket::new(
             network.into(),
             socket2::Type::DGRAM,
@@ -2598,7 +2608,7 @@ impl Conn {
                         network, port
                     );
                     ruc.set_conn(pconn, network);
-                    break;
+                    return Ok(());
                 }
                 Err(err) => {
                     info!(
@@ -2988,4 +2998,75 @@ fn disco_info_locked<'a>(
     }
 
     disco_info.get_mut(k).unwrap()
+}
+
+#[cfg(test)]
+mod tests {
+    use tokio::net;
+
+    use super::*;
+
+    async fn pick_port() -> u16 {
+        let conn = net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        conn.local_addr().unwrap().port()
+    }
+
+    /// Returns a new Conn.
+    async fn new_test_conn() -> Conn {
+        let port = pick_port().await;
+        Conn::new(Options {
+            port,
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_rebind_stress() {
+        let c = new_test_conn().await;
+
+        let (cancel, mut cancel_r) = sync::oneshot::channel();
+
+        let conn = c.clone();
+        let t = tokio::task::spawn(async move {
+            let mut buff = vec![0u8; 1500];
+            let mut buffs = [io::IoSliceMut::new(&mut buff)];
+            let mut meta = [quinn_udp::RecvMeta::default()];
+            loop {
+                tokio::select! {
+                    _ = &mut cancel_r => {
+                        return Ok(());
+                    }
+                    res = futures::future::poll_fn(|cx| conn.poll_recv(cx, &mut buffs, &mut meta)) => {
+                        if let Err(err) = res {
+                            return Err(err);
+                        }
+                    }
+                }
+            }
+        });
+
+        let conn = c.clone();
+        let t1 = tokio::task::spawn(async move {
+            for _i in 0..2000 {
+                conn.rebind_all().await;
+            }
+        });
+
+        let conn = c.clone();
+        let t2 = tokio::task::spawn(async move {
+            for _i in 0..2000 {
+                conn.rebind_all().await;
+            }
+        });
+
+        t1.await.unwrap();
+        t2.await.unwrap();
+
+        cancel.send(()).unwrap();
+
+        c.close().await.unwrap();
+        t.await.unwrap().unwrap();
+    }
 }
