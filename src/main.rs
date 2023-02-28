@@ -54,15 +54,15 @@ enum Commands {
         #[clap(long)]
         key: Option<PathBuf>,
         /// Optional rpc port, defaults to 4919
-        #[clap(long)]
-        rpc_port: Option<u16>,
+        #[clap(long, default_value_t = RPC_PORT)]
+        rpc_port: u16,
     },
     /// List hashes
     #[clap(about = "List hashes")]
     List {
         /// Optional rpc port, defaults to 4919
-        #[clap(long)]
-        rpc_port: Option<u16>,
+        #[clap(long, default_value_t = RPC_PORT)]
+        rpc_port: u16,
     },
     /// Add some data to the database.
     #[clap(about = "Add data from the given path")]
@@ -70,8 +70,8 @@ enum Commands {
         /// The path to the file or folder to add.
         path: PathBuf,
         /// Optional rpc port, defaults to 4919
-        #[clap(long)]
-        rpc_port: Option<u16>,
+        #[clap(long, default_value_t = RPC_PORT)]
+        rpc_port: u16,
     },
     /// Fetch some data by hash.
     #[clap(about = "Fetch the data from the hash")]
@@ -209,12 +209,11 @@ impl FromStr for Blake3Cid {
 }
 
 async fn make_rpc_client(
-    rpc_port: Option<u16>,
+    rpc_port: u16,
 ) -> anyhow::Result<RpcClient<ProviderService, QuinnConnection<ProviderResponse, ProviderRequest>>>
 {
-    let rpc_port = rpc_port.unwrap_or(RPC_PORT);
     let endpoint = iroh::get::make_client_endpoint(None, vec![RPC_ALPN.to_vec()], false, false)?;
-    let addr: SocketAddr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, rpc_port));
+    let addr = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), rpc_port);
     let server_name = "localhost".to_string();
     let connection = QuinnConnection::new(endpoint, addr, server_name);
     let client = RpcClient::<ProviderService, _>::new(connection);
@@ -228,11 +227,20 @@ async fn make_rpc_client(
 const PROGRESS_STYLE: &str =
     "{msg}\n{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {bytes}/{total_bytes} ({eta})";
 
+async fn close<C>(client: RpcClient<ProviderService, C>) -> anyhow::Result<()> {
+    drop(client);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    Ok(())
+}
+
 fn main() -> Result<()> {
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
     rt.block_on(main_impl())?;
+    // give the runtime some time to finish, but do not wait indefinitely.
+    // there are cases where the a runtime thread is blocked doing io.
+    // e.g. reading from stdin.
     rt.shutdown_timeout(Duration::from_millis(500));
     Ok(())
 }
@@ -346,6 +354,9 @@ async fn main_impl() -> Result<()> {
             println!("Shutting down provider...");
             provider.shutdown();
             provider.await?;
+            // the future holds a reference to the temp file, so we need to
+            // keep it for as long as the provider is running. The drop(fut)
+            // makes this explicit.
             fut.abort();
             drop(fut);
             Ok(())
@@ -362,7 +373,7 @@ async fn main_impl() -> Result<()> {
                     item.size
                 );
             }
-            Ok(())
+            close(client).await
         }
         Commands::Add { path, rpc_port } => {
             let client = make_rpc_client(rpc_port).await?;
@@ -372,7 +383,7 @@ async fn main_impl() -> Result<()> {
                 path.display(),
                 Blake3Cid(response.hash)
             );
-            Ok(())
+            close(client).await
         }
     }
 }
@@ -382,7 +393,7 @@ async fn provide(
     auth_token: Option<String>,
     key: Option<PathBuf>,
     keylog: bool,
-    rpc_port: Option<u16>,
+    rpc_port: u16,
 ) -> Result<Provider> {
     let keypair = get_keypair(key).await?;
     // create the rpc endpoint as well as a handle that can be used to control the service locally.
@@ -410,9 +421,8 @@ async fn provide(
 
 fn make_rpc_endpoint(
     keypair: &Keypair,
-    rpc_port: Option<u16>,
+    rpc_port: u16,
 ) -> Result<impl ServiceEndpoint<ProviderService>> {
-    let rpc_port = rpc_port.unwrap_or(RPC_PORT);
     let rpc_addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, rpc_port));
     let rpc_quinn_endpoint = quinn::Endpoint::server(
         iroh::provider::make_server_config(keypair, 1024, 32, vec![RPC_ALPN.to_vec()])?,

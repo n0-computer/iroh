@@ -5,7 +5,7 @@
 //! to store the received data.
 use std::fmt::Debug;
 use std::io;
-use std::net::SocketAddr;
+use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -57,8 +57,8 @@ pub fn make_client_endpoint(
     let tls_client_config = tls::make_client_config(&keypair, peer_id, alpn_protocols, keylog)?;
     let mut client_config = quinn::ClientConfig::new(Arc::new(tls_client_config));
     let bind_addr = match ipv6 {
-        true => "[::]:0".parse().unwrap(),
-        false => "0.0.0.0:0".parse().unwrap(),
+        true => SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, 0, 0, 0).into(),
+        false => SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0).into(),
     };
     let mut endpoint = quinn::Endpoint::client(bind_addr)?;
     let mut transport_config = quinn::TransportConfig::default();
