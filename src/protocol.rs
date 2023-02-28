@@ -93,6 +93,7 @@ pub(crate) async fn read_lp(
     };
     let mut reader = reader.take(size);
     let size = usize::try_from(size).context("frame larger than usize")?;
+    buffer.reserve(size);
     loop {
         let r = reader.read_buf(buffer).await?;
         if r == 0 {
