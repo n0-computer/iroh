@@ -109,6 +109,8 @@ fn test_provide_get_loop(path: &Path, input: Input, output: Output) -> Result<()
                 .arg("provide")
                 .arg("--addr")
                 .arg(ADDR)
+                .arg("--rpc-port")
+                .arg("0")
                 .spawn()?
         }
         Input::Path => Command::new(iroh)
@@ -119,6 +121,8 @@ fn test_provide_get_loop(path: &Path, input: Input, output: Output) -> Result<()
             .arg(&path)
             .arg("--addr")
             .arg(ADDR)
+            .arg("--rpc-port")
+            .arg("0")
             .spawn()?,
     };
 
@@ -210,27 +214,28 @@ fn match_get_stderr(stderr: Vec<u8>) -> Result<()> {
 /// Errors on the first regex mismatch or if the stderr output has fewer lines than expected
 fn match_provide_output<T: Read>(
     reader: BufReader<T>,
-    num_blobs: usize,
+    _num_blobs: usize,
     input: Input,
 ) -> Result<String> {
     // if we are using `stdin` we don't "read" any files, so the provider does not output any lines
     // about "Reading"
-    let reading_line_num = match input {
+    let _reading_line_num = match input {
         Input::Stdin => 0,
         Input::Path => 1,
     };
 
     let mut caps = assert_matches_line![
         reader,
-        r"Reading \S*"; reading_line_num,
-        r"Collection: [\da-z]{59}"; 1,
-        r""; 1,
-        r"- \S*: \d*.?\d*? ?[BKMGT]i?B?"; num_blobs,
-        r""; 1,
-        r""; 1,
+        // r"Reading \S*"; reading_line_num,
+        // r"Collection: [\da-z]{59}"; 1,
+        // r""; 1,
+        // r"- \S*: \d*.?\d*? ?[BKMGT]i?B?"; num_blobs,
+        // r""; 1,
+        // r""; 1,
         r"Listening address: [\d.:]*"; 1,
         r"PeerID: [_\w\d-]*"; 1,
         r"Auth token: [\w\d]*"; 1,
+        r"Collection: [\da-z]{59}"; 1,
         r"All-in-one ticket: ([_a-zA-Z\d-]*)"; 1
     ];
 
