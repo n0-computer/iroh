@@ -452,7 +452,6 @@ async fn transfer_collection(
         let (status, writer1) = send_blob(db.clone(), blob.hash, writer, buffer).await?;
         writer = writer1;
         if SentStatus::NotFound == status {
-            write_response(&mut writer, buffer, Res::NotFound).await?;
             writer.finish().await?;
             return Ok(status);
         }
