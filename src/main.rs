@@ -8,7 +8,6 @@ use indicatif::{
 };
 use iroh::protocol::AuthToken;
 use iroh::provider::Ticket;
-use tokio::io::AsyncWriteExt;
 use tracing_subscriber::{prelude::*, EnvFilter};
 
 use iroh::{get, provider, Hash, Keypair, PeerId};
@@ -84,11 +83,7 @@ enum Commands {
 macro_rules! progress {
     // Match a format string followed by any number of arguments
     ($fmt:expr $(, $args:expr)*) => {{
-        // Use the `format!` macro to format the string with the arguments
-        let mut message = format!($fmt $(, $args)*);
-        // Print the formatted string to the console with a newline
-        message.push('\n');
-        tokio::io::stderr().write_all(message.as_ref()).await.unwrap();
+        eprintln!($fmt $(, $args)*);
     }};
 }
 
