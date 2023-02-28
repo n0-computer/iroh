@@ -35,7 +35,7 @@ jobs:
         toolchain: stable
         override: true
 
-    - name: Build sendme
+    - name: Build iroh
       run: |
         cargo build --release
 
@@ -53,7 +53,7 @@ jobs:
 
     - name: Copy binaries to right location
       run: |
-        cp target/release/sendme chuck/netsim/bins/sendme
+        cp target/release/iroh chuck/netsim/bins/iroh
         cp chuck/target/release/chuck chuck/netsim/bins/chuck
 
     - name: Run tests
@@ -67,7 +67,7 @@ jobs:
       id: generate_report
       run: |
         cd chuck/netsim
-        python3 reports_csv.py > report.txt
+        python3 reports_csv.py --table > report.txt
         export NETSIM_REPORT=$(cat report.txt)
         echo "NETSIM_REPORT<<EOFMARKER" >> ${GITHUB_OUTPUT}
         echo "${NETSIM_REPORT}" >> ${GITHUB_OUTPUT}
@@ -92,15 +92,8 @@ jobs:
         body: |
           body: |
           `${{ github.head_ref }}.${{ env.LAST_COMMIT_SHA }}`
-          <details>
-          <summary>Perf report</summary>
-          
-          ```json
-
-            ${{ steps.generate_report.outputs.NETSIM_REPORT }}
-
-          ```
-          </details>
+          Perf report
+          ${{ steps.generate_report.outputs.NETSIM_REPORT }}
 
     - name: Respond PR
       uses: peter-evans/create-or-update-comment@v2
@@ -109,15 +102,8 @@ jobs:
         issue-number: ${{ github.event.pull_request.number }}
         body: |
           `${{ github.head_ref }}.${{ env.LAST_COMMIT_SHA }}`
-          <details>
-          <summary>Perf report</summary>
-          
-          ```json
-
-            ${{ steps.generate_report.outputs.NETSIM_REPORT }}
-
-          ```
-          </details>
+          Perf report
+          ${{ steps.generate_report.outputs.NETSIM_REPORT }}
 
     - name: Dump report
       run: |
@@ -140,3 +126,11 @@ jobs:
         prom_data=$(printf "%s\n " "$d")
         curl -X POST -H  "Content-Type: text/plain" --data "$prom_data" ${{secrets.PROM_ENDPOINT}}/metrics/job/netsim/instance/${instance}
 
+    - name: Post metrics
+      if: github.ref_name=='main'
+      run: |
+        cd chuck/netsim
+        python3 reports_csv.py --metro --commit ${{ env.LAST_COMMIT_SHA }} > report_metro.txt
+        d=$(cat report_metro.txt)
+        metro_data=$(printf "%s\n " "$d")
+        curl -X POST -H  "Content-Type: application/json" -H "Authorization: Bearer ${{secrets.METRO_TOKEN}}" --data "$metro_data" ${{secrets.METRO_ENDPOINT}}
