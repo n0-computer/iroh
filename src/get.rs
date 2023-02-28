@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 
 use crate::blobs::Collection;
 use crate::protocol::{
-    read_bao_encoded, read_lp_data, write_lp, AuthToken, Handshake, Request, Res, Response,
+    read_bao_encoded, read_lp, write_lp, AuthToken, Handshake, Request, Res, Response,
 };
 use crate::tls::{self, Keypair, PeerId};
 use abao::decode::AsyncSliceDecoder;
@@ -173,7 +173,7 @@ where
         // track total amount of blob data transferred
         let mut data_len = 0;
         // read next message
-        match read_lp_data(&mut reader, &mut in_buffer).await? {
+        match read_lp(&mut reader, &mut in_buffer).await? {
             Some(response_buffer) => {
                 let response: Response = postcard::from_bytes(&response_buffer)?;
                 match response.data {
@@ -252,7 +252,7 @@ async fn handle_blob_response(
     mut reader: quinn::RecvStream,
     buffer: &mut BytesMut,
 ) -> Result<DataStream> {
-    match read_lp_data(&mut reader, buffer).await? {
+    match read_lp(&mut reader, buffer).await? {
         Some(response_buffer) => {
             let response: Response = postcard::from_bytes(&response_buffer)?;
             match response.data {
