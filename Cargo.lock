@@ -1437,9 +1437,9 @@ dependencies = [
 
 [[package]]
 name = "quic-rpc"
-version = "0.5.0"
+version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2bae143d08821d2b792940e3fdaeacf8ded87db7af9ac771577e3e902df0062a"
+checksum = "dfe09babbe8f0f50bee240f32d6cd50703320522cb2a6cc20bc996f69b08c0ac"
 dependencies = [
  "bincode",
  "flume",

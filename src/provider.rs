@@ -24,9 +24,10 @@ use anyhow::{ensure, Context, Result};
 use bytes::{Bytes, BytesMut};
 use futures::future;
 use futures::Stream;
-use quic_rpc::server::{RpcChannel, RpcServerError};
+use quic_rpc::server::RpcChannel;
+use quic_rpc::transport::flume::FlumeConnection;
 use quic_rpc::transport::misc::DummyServerEndpoint;
-use quic_rpc::{RpcServer, ServiceEndpoint};
+use quic_rpc::{RpcClient, RpcServer, ServiceConnection, ServiceEndpoint};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::sync::broadcast;
@@ -41,8 +42,8 @@ use crate::protocol::{
     read_lp, write_lp, AuthToken, Closed, Handshake, Request, Res, Response, VERSION,
 };
 use crate::rpc_protocol::{
-    ListRequest, ListResponse, ProvideRequest, ProvideResponse, ProviderRequest, ProviderService,
-    VersionRequest, VersionResponse, WatchRequest, WatchResponse,
+    ListRequest, ListResponse, ProvideRequest, ProvideResponse, ProviderRequest, ProviderResponse,
+    ProviderService, VersionRequest, VersionResponse, WatchRequest, WatchResponse,
 };
 use crate::tls::{self, Keypair, PeerId};
 use crate::util::{self, Hash};
@@ -194,7 +195,7 @@ impl<E: ServiceEndpoint<ProviderService>> Builder<E> {
         let events = events_sender.clone();
         let cancel_token = CancellationToken::new();
         tracing::debug!("rpc listening on: {:?}", self.rpc_endpoint.local_addr());
-        let rpc = RpcServer::new(self.rpc_endpoint);
+        let (internal_rpc, controller) = quic_rpc::transport::flume::connection(1);
         let task = {
             let cancel_token = cancel_token.clone();
             tokio::spawn(async move {
@@ -204,7 +205,8 @@ impl<E: ServiceEndpoint<ProviderService>> Builder<E> {
                     self.auth_token,
                     events_sender,
                     cancel_token,
-                    rpc,
+                    self.rpc_endpoint,
+                    internal_rpc,
                 )
                 .await
             })
@@ -216,6 +218,7 @@ impl<E: ServiceEndpoint<ProviderService>> Builder<E> {
             auth_token: self.auth_token,
             task,
             events,
+            controller,
             cancel_token,
         })
     }
@@ -226,8 +229,11 @@ impl<E: ServiceEndpoint<ProviderService>> Builder<E> {
         auth_token: AuthToken,
         events: broadcast::Sender<Event>,
         cancel_token: CancellationToken,
-        rpc: quic_rpc::RpcServer<ProviderService, E>,
+        rpc: E,
+        internal_rpc: impl ServiceEndpoint<ProviderService>,
     ) {
+        let rpc = RpcServer::new(rpc);
+        let internal_rpc = RpcServer::new(internal_rpc);
         if let Ok(addr) = server.local_addr() {
             debug!("listening at: {addr}");
         }
@@ -238,7 +244,26 @@ impl<E: ServiceEndpoint<ProviderService>> Builder<E> {
                 // handle rpc requests. This will do nothing if rpc is not configured, since
                 // accept is just a pending future.
                 request = rpc.accept() => {
-                    handle_rpc_request(request, &db);
+                    match request {
+                        Ok((msg, chan)) => {
+                            handle_rpc_request(msg, chan, &db);
+                        }
+                        Err(e) => {
+                            tracing::info!("rpc request error: {:?}", e);
+                        }
+                    }
+                },
+                // handle internal rpc requests.
+                request = internal_rpc.accept() => {
+                    match request {
+                        Ok((msg, chan)) => {
+                            handle_rpc_request(msg, chan, &db);
+                        }
+                        Err(_) => {
+                            tracing::info!("last controller dropped, shutting down");
+                            break;
+                        }
+                    }
                 },
                 // handle incoming p2p connections
                 Some(connecting) = server.accept() => {
@@ -277,6 +302,7 @@ pub struct Provider {
     task: JoinHandle<()>,
     events: broadcast::Sender<Event>,
     cancel_token: CancellationToken,
+    controller: FlumeConnection<ProviderResponse, ProviderRequest>,
 }
 
 /// Events emitted by the [`Provider`] informing about the current status.
@@ -339,6 +365,13 @@ impl Provider {
     /// progress.
     pub fn subscribe(&self) -> broadcast::Receiver<Event> {
         self.events.subscribe()
+    }
+
+    /// Returns a handle that can be used to do RPC calls to the provider internally.
+    pub fn controller(
+        &self,
+    ) -> RpcClient<ProviderService, impl ServiceConnection<ProviderService>> {
+        RpcClient::new(self.controller.clone())
     }
 
     /// Return a single token containing everything needed to get a hash.
@@ -427,16 +460,10 @@ impl Handler {
 }
 
 fn handle_rpc_request<C: ServiceEndpoint<ProviderService>>(
-    request: Result<(ProviderRequest, RpcChannel<ProviderService, C>), RpcServerError<C>>,
+    msg: ProviderRequest,
+    chan: RpcChannel<ProviderService, C>,
     db: &Database,
 ) {
-    let (msg, chan) = match request {
-        Ok((msg, chan)) => (msg, chan),
-        Err(err) => {
-            warn!("Error accepting RPC request: {:#}", err);
-            return;
-        }
-    };
     let db = db.clone();
     tokio::spawn(async move {
         let handler = Handler(db.clone());

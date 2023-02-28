@@ -2,7 +2,7 @@ use std::net::{Ipv4Addr, SocketAddrV4};
 use std::time::Duration;
 use std::{fmt, net::SocketAddr, path::PathBuf, str::FromStr};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use console::style;
 use futures::StreamExt;
@@ -10,9 +10,10 @@ use indicatif::{
     HumanBytes, HumanDuration, ProgressBar, ProgressDrawTarget, ProgressState, ProgressStyle,
 };
 use iroh::protocol::AuthToken;
-use iroh::provider::{Database, Ticket};
+use iroh::provider::{Database, Provider, Ticket};
 use iroh::rpc_protocol::{
-    ListRequest, ProvideRequest, ProviderRequest, ProviderResponse, ProviderService, VersionRequest,
+    ListRequest, ProvideRequest, ProvideResponse, ProviderRequest, ProviderResponse,
+    ProviderService, VersionRequest,
 };
 use quic_rpc::transport::quinn::{QuinnConnection, QuinnServerEndpoint};
 use quic_rpc::{RpcClient, ServiceEndpoint};
@@ -52,28 +53,15 @@ enum Commands {
         /// If this path is provided and it exists, the private key is read from this file and used, if it does not exist the private key will be persisted to this location.
         #[clap(long)]
         key: Option<PathBuf>,
-    },
-    /// Start iroh as a service
-    #[clap(about = "Start iroh as a service")]
-    Start {
-        /// Optional port, defaults to 127.0.01:4433.
-        #[clap(long, short)]
-        addr: Option<SocketAddr>,
-        /// Auth token, defaults to random generated.
-        #[clap(long)]
-        auth_token: Option<String>,
-        /// If this path is provided and it exists, the private key is read from this file and used, if it does not exist the private key will be persisted to this location.
-        #[clap(long)]
-        key: Option<PathBuf>,
         /// Optional rpc port, defaults to 4919
         #[clap(long)]
         rpc_port: Option<u16>,
     },
-
     /// List hashes
     #[clap(about = "List hashes")]
     List {
         /// Optional rpc port, defaults to 4919
+        #[clap(long)]
         rpc_port: Option<u16>,
     },
     /// Add some data to the database.
@@ -240,8 +228,16 @@ async fn make_rpc_client(
 const PROGRESS_STYLE: &str =
     "{msg}\n{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {bytes}/{total_bytes} ({eta})";
 
-#[tokio::main(flavor = "multi_thread")]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    rt.block_on(main_impl())?;
+    rt.shutdown_timeout(Duration::from_millis(500));
+    Ok(())
+}
+
+async fn main_impl() -> Result<()> {
     tracing_subscriber::registry()
         .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
         .with(EnvFilter::from_default_env())
@@ -306,34 +302,53 @@ async fn main() -> Result<()> {
             addr,
             auth_token,
             key,
-        } => {
-            tokio::select! {
-                biased;
-                res = provide_interactive(path, addr, auth_token, key, cli.keylog) => {
-                    res
-                }
-                _ = tokio::signal::ctrl_c() => {
-                    println!("\nShutting down provider...");
-                    Ok(())
-                }
-            }
-        }
-        Commands::Start {
-            addr,
-            auth_token,
-            key,
             rpc_port,
         } => {
-            tokio::select! {
-                biased;
-                res = provide_service(addr, auth_token, key, rpc_port) => {
-                    res
-                }
-                _ = tokio::signal::ctrl_c() => {
-                    println!("\nShutting down provider...");
-                    Ok(())
-                }
-            }
+            let provider = provide(addr, auth_token, key, cli.keylog, rpc_port).await?;
+            let controller = provider.controller();
+            let mut ticket = provider.ticket(Hash::from([0u8; 32]));
+
+            // task that will add data to the provider, either from a file or from stdin
+            let fut = tokio::spawn(async move {
+                let (path, tmp_path) = if let Some(path) = path {
+                    (path, None)
+                } else {
+                    // Store STDIN content into a temporary file
+                    let (file, path) = tempfile::NamedTempFile::new()?.into_parts();
+                    let mut file = tokio::fs::File::from_std(file);
+                    let path_buf = path.to_path_buf();
+                    // Copy from stdin to the file, until EOF
+                    tokio::io::copy(&mut tokio::io::stdin(), &mut file).await?;
+                    // return the TempPath to keep it alive
+                    (path_buf, Some(path))
+                };
+                // tell the provider to add the data
+                let ProvideResponse { hash } = controller.rpc(ProvideRequest { path }).await??;
+                ticket.hash = hash;
+                println!("Collection: {}", Blake3Cid::new(hash));
+                println!("All-in-one ticket: {}", ticket);
+                // println!("{}", response.hash);
+                // let (db, hash) = provider::create_collection(sources).await?;
+                // println!("Collection: {}\n", Blake3Cid::new(hash));
+                // let mut total_size = 0;
+                // for (_, path, size) in db.blobs() {
+                //     total_size += size;
+                //     println!("- {}: {}", path.display(), HumanBytes(size));
+                // }
+                // println!("Total: {}", HumanBytes(total_size));
+                // println!();
+                // return all the things that need to live even after this task
+                // println!("All-in-one ticket: {}", provider.ticket(hash));
+                anyhow::Ok(tmp_path)
+            });
+
+            tokio::signal::ctrl_c().await?;
+            println!("Shutting down provider...");
+            provider.shutdown();
+            provider.await?;
+            fut.abort();
+            drop(fut);
+            Ok(())
         }
         Commands::List { rpc_port } => {
             let client = make_rpc_client(rpc_port).await?;
@@ -362,55 +377,20 @@ async fn main() -> Result<()> {
     }
 }
 
-async fn provide_interactive(
-    path: Option<PathBuf>,
+async fn provide(
     addr: Option<SocketAddr>,
     auth_token: Option<String>,
     key: Option<PathBuf>,
     keylog: bool,
-) -> Result<()> {
+    rpc_port: Option<u16>,
+) -> Result<Provider> {
     let keypair = get_keypair(key).await?;
+    // create the rpc endpoint as well as a handle that can be used to control the service locally.
+    let rpc_endpoint = make_rpc_endpoint(&keypair, rpc_port)?;
 
-    let mut tmp_path = None;
-
-    let sources = if let Some(path) = path {
-        println!("Reading {}", path.display());
-        if path.is_dir() {
-            let mut paths = Vec::new();
-            let mut iter = tokio::fs::read_dir(&path).await?;
-            while let Some(el) = iter.next_entry().await? {
-                if el.path().is_file() {
-                    paths.push(el.path().into());
-                }
-            }
-            paths.sort();
-            paths
-        } else if path.is_file() {
-            vec![path.into()]
-        } else {
-            bail!("path must be either a Directory or a File");
-        }
-    } else {
-        // Store STDIN content into a temporary file
-        let (file, path) = tempfile::NamedTempFile::new()?.into_parts();
-        let mut file = tokio::fs::File::from_std(file);
-        let path_buf = path.to_path_buf();
-        tmp_path = Some(path);
-        tokio::io::copy(&mut tokio::io::stdin(), &mut file).await?;
-        vec![path_buf.into()]
-    };
-
-    let (db, hash) = provider::create_collection(sources).await?;
-
-    println!("Collection: {}\n", Blake3Cid::new(hash));
-    let mut total_size = 0;
-    for (_, path, size) in db.blobs() {
-        total_size += size;
-        println!("- {}: {}", path.display(), HumanBytes(size));
-    }
-    println!("Total: {}", HumanBytes(total_size));
-    println!();
+    let db = Database::default();
     let mut builder = provider::Provider::builder(db)
+        .rpc_endpoint(rpc_endpoint)
         .keypair(keypair)
         .keylog(keylog);
     if let Some(addr) = addr {
@@ -425,12 +405,7 @@ async fn provide_interactive(
     println!("Listening address: {}", provider.listen_addr());
     println!("PeerID: {}", provider.peer_id());
     println!("Auth token: {}", provider.auth_token());
-    println!("All-in-one ticket: {}", provider.ticket(hash));
-    provider.await?;
-
-    // Drop tempath to signal it can be destroyed
-    drop(tmp_path);
-    Ok(())
+    Ok(provider)
 }
 
 fn make_rpc_endpoint(
@@ -440,42 +415,12 @@ fn make_rpc_endpoint(
     let rpc_port = rpc_port.unwrap_or(RPC_PORT);
     let rpc_addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, rpc_port));
     let rpc_quinn_endpoint = quinn::Endpoint::server(
-        iroh::provider::make_server_config(keypair, 1024, 4, vec![RPC_ALPN.to_vec()])?,
+        iroh::provider::make_server_config(keypair, 1024, 32, vec![RPC_ALPN.to_vec()])?,
         rpc_addr,
     )?;
     let rpc_endpoint =
         QuinnServerEndpoint::<ProviderRequest, ProviderResponse>::new(rpc_quinn_endpoint)?;
     Ok(rpc_endpoint)
-}
-
-async fn provide_service(
-    addr: Option<SocketAddr>,
-    auth_token: Option<String>,
-    key: Option<PathBuf>,
-    rpc_port: Option<u16>,
-) -> Result<()> {
-    let keypair = get_keypair(key).await?;
-
-    let rpc_endpoint = make_rpc_endpoint(&keypair, rpc_port)?;
-    let db = Database::default();
-    let mut builder = provider::Provider::builder(db)
-        .rpc_endpoint(rpc_endpoint)
-        .keypair(keypair);
-    if let Some(addr) = addr {
-        builder = builder.bind_addr(addr);
-    }
-    if let Some(ref encoded) = auth_token {
-        let auth_token = AuthToken::from_str(encoded)?;
-        builder = builder.auth_token(auth_token);
-    }
-    let provider = builder.spawn()?;
-
-    eprintln!("Starting iroh process");
-    eprintln!("PeerID:      {}", provider.peer_id());
-    eprintln!("Auth token:  {}", provider.auth_token());
-    eprintln!("Listen addr: {}", provider.listen_addr());
-    provider.await?;
-    Ok(())
 }
 
 async fn get_keypair(key: Option<PathBuf>) -> Result<Keypair> {
