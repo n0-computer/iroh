@@ -18,8 +18,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, macOS-latest]
-        rust: [nightly, stable]
+        os: [macOS-latest, ubuntu-latest]
+        rust: [stable, nightly]
 
     steps:
     - name: Checkout
@@ -51,7 +51,7 @@ jobs:
     strategy:
       matrix:
         os: [windows-latest]
-        rust: [nightly, stable]
+        rust: [stable, nightly]
         target:
           - x86_64-pc-windows-gnu
           -  x86_64-pc-windows-msvc
