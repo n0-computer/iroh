@@ -1398,6 +1398,7 @@ dependencies = [
  "quinn-udp",
  "rand",
  "rcgen",
+ "regex",
  "reqwest",
  "ring",
  "rustls",
