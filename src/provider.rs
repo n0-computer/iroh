@@ -897,7 +897,7 @@ async fn create_collection_inner(
         .map(|(path, name, hash, outboard)| {
             let name = name
                 .as_ref()
-                .map(|s| s.clone())
+                .cloned()
                 .unwrap_or_else(|| path.display().to_string());
             ProvideResponseEntry {
                 name,
