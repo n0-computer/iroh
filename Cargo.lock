@@ -1372,6 +1372,7 @@ dependencies = [
  "base64 0.21.0",
  "blake3",
  "build-data",
+ "byteorder",
  "bytes",
  "clap",
  "console",

@@ -11,5 +11,5 @@ mod cfg;
 mod clock;
 mod disco;
 mod hostinfo;
-mod key;
+pub mod key;
 mod netmap;
