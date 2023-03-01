@@ -10,6 +10,7 @@ pub mod http {
     use std::net::SocketAddr;
 
     use anyhow::Result;
+    use futures::future::BoxFuture;
 
     use crate::hp::key;
 
@@ -17,6 +18,8 @@ pub mod http {
 
     #[derive(Debug, thiserror::Error, PartialEq, Eq)]
     pub enum ClientError {
+        #[error("todo")]
+        Todo,
         #[error("closed")]
         Closed,
     }
@@ -27,17 +30,18 @@ pub mod http {
     impl Client {
         pub fn new_region<F>(key: key::node::SecretKey, f: F) -> Self
         where
-            F: Fn() -> Option<DerpRegion>,
+            F: Fn() -> BoxFuture<'static, Option<DerpRegion>>,
         {
-            todo!()
+            // TODO:
+            Client {}
         }
 
         pub fn set_can_ack_pings(&self, val: bool) {
-            todo!()
+            // TODO:
         }
 
         pub async fn note_preferred(&self, is_preferred: bool) {
-            todo!()
+            // TODO:
         }
 
         // S returns if we should prefer ipv6
@@ -48,23 +52,24 @@ pub mod http {
         // work anyway, so we don't artificially delay the connection speed.
         pub fn set_address_family_selector<S>(&self, selector: S)
         where
-            S: Fn() -> bool,
+            S: Fn() -> BoxFuture<'static, bool>,
         {
-            todo!();
+            // TODO.
         }
 
         pub fn local_addr(&self) -> Option<SocketAddr> {
-            todo!()
+            // TODO:
+            None
         }
-        pub async fn ping(&self) -> Result<()> {
-            todo!()
+        pub async fn ping(&self) -> Result<(), ClientError> {
+            Err(ClientError::Todo)
         }
 
         pub async fn send_pong(&self, data: [u8; 8]) -> Result<(), ClientError> {
-            todo!()
+            Err(ClientError::Todo)
         }
         pub async fn recv_detail(&self) -> Result<(ReceivedMessage, usize), ClientError> {
-            todo!()
+            Err(ClientError::Todo)
         }
 
         pub async fn send(
@@ -72,11 +77,11 @@ pub mod http {
             dst_key: Option<key::node::PublicKey>,
             b: Vec<u8>,
         ) -> Result<(), ClientError> {
-            todo!()
+            Err(ClientError::Todo)
         }
 
         pub async fn close(self) {
-            todo!()
+            // TODO
         }
     }
 }
@@ -182,6 +187,7 @@ pub struct DerpNode {
     // If `None`, A record(s) from DNS lookups of HostName are used.
     // If `Disabled`, IPv4 is not used;
     pub ipv6: UseIpv6,
+    pub derp_port: u16,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -196,4 +202,13 @@ pub enum UseIpv6 {
     None,
     Disabled,
     Some(Ipv6Addr),
+}
+
+pub struct Server {}
+
+impl Server {
+    pub fn new(key: key::node::SecretKey) -> Self {
+        // TODO:
+        Server {}
+    }
 }
