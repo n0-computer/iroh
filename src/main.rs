@@ -374,10 +374,10 @@ async fn main_impl() -> Result<()> {
             while let Some(item) = response.next().await {
                 let item = item?;
                 println!(
-                    "{} {} ({} bytes)",
+                    "{} {} ({})",
                     item.path.display(),
-                    item.hash,
-                    item.size
+                    Blake3Cid(item.hash),
+                    HumanBytes(item.size),
                 );
             }
             close(client).await
