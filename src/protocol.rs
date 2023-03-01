@@ -10,7 +10,6 @@ use postcard::experimental::max_size::MaxSize;
 use quinn::VarInt;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-use tracing::debug;
 
 use crate::util::{self, Hash};
 
@@ -86,7 +85,7 @@ pub(crate) async fn read_lp(
     mut reader: impl AsyncRead + Unpin,
     buffer: &mut BytesMut,
 ) -> Result<Option<Bytes>> {
-    let size = match read_prefix(&mut reader).await {
+    let size = match reader.read_u64_le().await {
         Ok(size) => size,
         Err(err) if err.kind() == io::ErrorKind::UnexpectedEof => return Ok(None),
         Err(err) => return Err(err.into()),
@@ -102,28 +101,6 @@ pub(crate) async fn read_lp(
     Ok(Some(buffer.split_to(size).freeze()))
 }
 
-/// Return a buffer for the data, based on a given size, from the given source.
-/// The new buffer is split off from the buffer that is passed into the function.
-pub(crate) async fn read_size_data<R: AsyncRead + Unpin>(
-    size: u64,
-    reader: R,
-    buffer: &mut BytesMut,
-) -> Result<Bytes> {
-    debug!("reading {}", size);
-    let mut reader = reader.take(size);
-    let size = usize::try_from(size)?;
-    let mut read = 0;
-    while read != size {
-        let r = reader.read_buf(buffer).await?;
-        read += r;
-        if r == 0 {
-            break;
-        }
-    }
-    debug!("finished reading");
-    Ok(buffer.split_to(size).freeze())
-}
-
 /// Read and decode the given bao encoded data from the provided source.
 ///
 /// After the data is read successfully, the reader will be at the end of the data.
@@ -137,25 +114,6 @@ pub(crate) async fn read_bao_encoded<R: AsyncRead + Unpin>(
     let mut decoded = Vec::with_capacity(4096);
     decoder.read_to_end(&mut decoded).await?;
     Ok(decoded)
-}
-
-/// Return a buffer of the data, based on the length prefix, from the given source.
-/// The new buffer is split off from the buffer that is passed in the function.
-pub(crate) async fn read_lp_data<R: AsyncRead + Unpin>(
-    mut reader: R,
-    buffer: &mut BytesMut,
-) -> Result<Option<Bytes>> {
-    // read length prefix
-    let size = read_prefix(&mut reader).await?;
-
-    let response = read_size_data(size, reader, buffer).await?;
-    Ok(Some(response))
-}
-
-async fn read_prefix<R: AsyncRead + Unpin>(mut reader: R) -> Result<u64, io::Error> {
-    // read length prefix
-    let size = reader.read_u64_le().await?;
-    Ok(size)
 }
 
 /// A token used to authenticate a handshake.
