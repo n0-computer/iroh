@@ -227,6 +227,11 @@ async fn make_rpc_client(
 const PROGRESS_STYLE: &str =
     "{msg}\n{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {bytes}/{total_bytes} ({eta})";
 
+/// drop a RpcClient and wait for a short time.
+///
+/// The waiting is not strictly necessary, but if the program terminates immediately
+/// after closing the client, the close message is not being sent to the server,
+/// and the server will hold on to the connection until it times out.
 async fn close<C>(client: RpcClient<ProviderService, C>) -> anyhow::Result<()> {
     drop(client);
     tokio::time::sleep(Duration::from_millis(100)).await;
