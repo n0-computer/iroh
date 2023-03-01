@@ -237,17 +237,6 @@ fn print_add_response(hash: Hash, entries: Vec<ProvideResponseEntry>) {
 const PROGRESS_STYLE: &str =
     "{msg}\n{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {bytes}/{total_bytes} ({eta})";
 
-/// drop a RpcClient and wait for a short time.
-///
-/// The waiting is not strictly necessary, but if the program terminates immediately
-/// after closing the client, the close message is not being sent to the server,
-/// and the server will hold on to the connection until it times out.
-async fn close<C>(client: RpcClient<ProviderService, C>) -> anyhow::Result<()> {
-    drop(client);
-    tokio::time::sleep(Duration::from_millis(100)).await;
-    Ok(())
-}
-
 fn main() -> Result<()> {
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -380,7 +369,7 @@ async fn main_impl() -> Result<()> {
                     HumanBytes(item.size),
                 );
             }
-            close(client).await
+            Ok(())
         }
         Commands::Add { path, rpc_port } => {
             let client = make_rpc_client(rpc_port).await?;
@@ -388,7 +377,7 @@ async fn main_impl() -> Result<()> {
             let ProvideResponse { hash, entries } =
                 client.rpc(ProvideRequest { path: path.clone() }).await??;
             print_add_response(hash, entries);
-            close(client).await
+            Ok(())
         }
     }
 }
