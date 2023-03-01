@@ -277,7 +277,7 @@ pub(super) struct ConnState {
     // derp_started chan struct{}      // closed on first connection to DERP; for tests & cleaner Close
     /// DERP regionID -> connection to a node in that region
     active_derp: HashMap<usize, ActiveDerp>,
-    prev_derp: HashMap<usize, ()>, //    map[int]*syncs.WaitGroupChan
+    prev_derp: HashMap<usize, wg::AsyncWaitGroup>,
 
     /// Contains optional alternate routes to use as an optimization instead of
     /// contacting a peer via their home DERP connection.  If they sent us a message
@@ -1174,20 +1174,15 @@ impl Conn {
 
         self.schedule_clean_stale_derp_locked(&mut state).await;
 
-        // TODO:
-        todo!();
-        // Build a start_gate for the derp reader+writer
-        // tasks, so they don't start running until any
-        // previous generation is closed.
-        // let start_gate = if let Some(prev) = state.prev_derp.get(&region_id) {
-        //     prev.done_chan()
-        // } else {
-        //     sync::Notify::new()
-        // };
-        // // And register a WaitGroup(Chan) for this generation.
-        // wg := syncs.NewWaitGroupChan();
-        // wg.Add(2);
-        // c.prevDerp[regionID] = wg;
+        // Build a start_gate for the derp reader+writer tasks, so they don't start running
+        // until any previous generation is closed.
+        // And register a WaitGroup(Chan) for this generation.
+        let wg = wg::AsyncWaitGroup::new();
+        wg.add(2);
+        let start_gate = state
+            .prev_derp
+            .insert(region_id, wg.clone())
+            .unwrap_or_else(|| wg::AsyncWaitGroup::new());
 
         // if firstDerp {
         //     startGate = c.derpStarted;
@@ -1198,17 +1193,23 @@ impl Conn {
         //     }()
         // }
 
-        let this = self.clone();
-        let cancel = cancel_receiver.clone();
-        let dc1 = dc.clone();
-        tokio::task::spawn(async move {
-            this.run_derp_reader(addr, dc1, cancel).await;
-        });
+        {
+            let this = self.clone();
+            let cancel = cancel_receiver.clone();
+            let dc = dc.clone();
+            let sg = start_gate.clone();
+            let wg = wg.clone();
+            tokio::task::spawn(async move {
+                this.run_derp_reader(addr, dc, cancel, wg, sg).await;
+            });
+        }
 
         let this = self.clone();
-        let cancel = cancel_receiver.clone();
+        let cancel = cancel_receiver;
+        let sg = start_gate;
         tokio::task::spawn(async move {
-            this.run_derp_writer(dc, write_ch_receiver, cancel).await;
+            this.run_derp_writer(dc, write_ch_receiver, cancel, wg, sg)
+                .await;
         });
 
         if let Some(ref f) = self.on_derp_active {
@@ -1224,19 +1225,17 @@ impl Conn {
         &self,
         derp_fake_addr: SocketAddr,
         dc: derp::http::Client,
-        cancel: sync::watch::Receiver<bool>,
-        /*wg *syncs.WaitGroupChan, startGate <-chan struct{}*/
+        mut cancel: sync::watch::Receiver<bool>,
+        wg: wg::AsyncWaitGroup,
+        start_gate: wg::AsyncWaitGroup,
     ) {
-        // TODO:
-        // defer wg.Decr()
-        // defer dc.Close()
-
-        // TODO:
-        // select {
-        // case <-startGate:
-        // case <-ctx.Done():
-        // 	return
-        // }
+        let _guard = WgGuard(wg);
+        tokio::select! {
+            _ = start_gate.wait() => {}
+            _ = cancel.changed() => {
+                return;
+            }
+        }
 
         let region_id = usize::from(derp_fake_addr.port());
 
@@ -1365,17 +1364,17 @@ impl Conn {
         &self,
         dc: derp::http::Client,
         ch: flume::Receiver<DerpWriteRequest>,
-        mut cancel: sync::watch::Receiver<bool>, /*wg *syncs.WaitGroupChan, startGate <-chan struct{}*/
+        mut cancel: sync::watch::Receiver<bool>,
+        wg: wg::AsyncWaitGroup,
+        start_gate: wg::AsyncWaitGroup,
     ) {
-        // TODO:
-        // defer wg.Decr()
-
-        // TODO:
-        // select {
-        // case <-startGate:
-        // case <-ctx.Done():
-        // 	return
-        // }
+        let _guard = WgGuard(wg);
+        tokio::select! {
+            _ = start_gate.wait() => {}
+            _ = cancel.changed() => {
+                return;
+            }
+        }
 
         loop {
             tokio::select! {
@@ -3008,6 +3007,14 @@ fn disco_info_locked<'a>(
     }
 
     disco_info.get_mut(k).unwrap()
+}
+
+/// Simple DropGuard for decrementing a Waitgroup.
+struct WgGuard(wg::AsyncWaitGroup);
+impl Drop for WgGuard {
+    fn drop(&mut self) {
+        self.0.done();
+    }
 }
 
 #[cfg(test)]
