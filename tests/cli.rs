@@ -142,19 +142,20 @@ fn test_provide_get_loop(path: &Path, input: Input, output: Output) -> Result<()
     // test get stderr output
     let get_output = cmd.output()?;
     assert!(get_output.status.success());
-    match_get_stderr(get_output.stderr)?;
 
     // test output
     match out {
         None => {
+            assert!(!get_output.stdout.is_empty());
             let expect_content = std::fs::read(path)?;
             assert_eq!(expect_content, get_output.stdout);
-            Ok(())
         }
-        Some(out) => compare_files(path, out),
-    }
-}
+        Some(out) => compare_files(path, out)?,
+    };
 
+    assert!(!get_output.stderr.is_empty());
+    match_get_stderr(get_output.stderr)
+}
 /// Wrapping the [`Child`] process here allows us to impl the `Drop` trait ensuring the provide
 /// process is killed when it goes out of scope.
 struct ProvideProcess {
@@ -191,6 +192,7 @@ fn compare_files(expect_path: impl AsRef<Path>, got_dir_path: impl AsRef<Path>) 
 ///
 /// Errors on the first regex mis-match or if the stderr output has fewer lines than expected
 fn match_get_stderr(stderr: Vec<u8>) -> Result<()> {
+    println!("{}", String::from_utf8_lossy(&stderr[..]));
     let stderr = std::io::BufReader::new(&stderr[..]);
     assert_matches_line![
         stderr,
