@@ -132,11 +132,9 @@ async fn read_frame_type_header(
 }
 
 async fn read_frame_header(mut reader: impl AsyncRead + Unpin) -> Result<(FrameType, u32)> {
-    let mut frame_type = [0u8; 1];
-    reader.read(&mut frame_type).await?;
-    let mut frame_len = [0u8; 4];
-    reader.read(&mut frame_len).await?;
-    Ok((u8::from_be_bytes(frame_type), u32::from_be_bytes(frame_len)))
+    let frame_type = reader.read_u8().await?;
+    let frame_len = reader.read_u32().await?;
+    Ok((frame_type, frame_len))
 }
 
 /// AsyncReads a frame header and then reads its payload into `bytes` of
@@ -168,8 +166,8 @@ async fn write_frame_header(
     frame_type: FrameType,
     frame_len: u32,
 ) -> Result<()> {
-    writer.write(&[frame_type]).await?;
-    writer.write(&frame_len.to_be_bytes()).await?;
+    writer.write_u8(frame_type).await?;
+    writer.write_u32(frame_len).await?;
     Ok(())
 }
 
