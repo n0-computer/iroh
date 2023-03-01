@@ -2850,7 +2850,7 @@ impl AsyncUdpSocket for Conn {
                 return Poll::Ready(Err(err));
             }
             Poll::Ready(Ok(mut num_msgs)) => {
-                debug_assert!(num_msgs < bufs.len());
+                debug_assert!(num_msgs <= bufs.len(), "{} > {}", num_msgs, bufs.len());
                 let mut i = 0;
                 while i < num_msgs {
                     if !self.receive_ip(&mut bufs[i], &mut meta[i], &self.socket_endpoint4) {
@@ -3023,7 +3023,10 @@ mod tests {
     use tracing_subscriber::{prelude::*, EnvFilter};
 
     use super::*;
-    use crate::hp::derp::{DerpNode, DerpRegion, UseIpv4, UseIpv6};
+    use crate::{
+        hp::derp::{DerpNode, DerpRegion, UseIpv4, UseIpv6},
+        tls,
+    };
 
     async fn pick_port() -> u16 {
         let conn = net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
@@ -3147,6 +3150,7 @@ mod tests {
         ep_ch: flume::Receiver<Vec<cfg::Endpoint>>,
         key: key::node::SecretKey,
         conn: Conn,
+        quic_ep: quinn::Endpoint,
     }
 
     impl MagicStack {
@@ -3167,10 +3171,24 @@ mod tests {
             conn.set_derp_map(Some(derp_map)).await;
             conn.set_private_key(key.clone()).await?;
 
+            let tls_server_config = tls::make_server_config(&key.clone().into(), false)?;
+            let server_config = quinn::ServerConfig::with_crypto(Arc::new(tls_server_config));
+            let mut quic_ep = quinn::Endpoint::new_with_abstract_socket(
+                quinn::EndpointConfig::default(),
+                Some(server_config),
+                conn.clone(),
+                quinn::TokioRuntime,
+            )?;
+
+            let tls_client_config = tls::make_client_config(&key.clone().into(), None, false)?;
+            let client_config = quinn::ClientConfig::new(Arc::new(tls_client_config));
+            quic_ep.set_default_client_config(client_config);
+
             Ok(Self {
                 ep_ch: ep_r,
                 key,
                 conn,
+                quic_ep,
             })
         }
 
@@ -3286,8 +3304,8 @@ mod tests {
         })
     }
 
-    #[tokio::test]
-    async fn test_two_device_ping() -> Result<()> {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_two_devices_roundtrip() -> Result<()> {
         tracing_subscriber::registry()
             .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
             .with(EnvFilter::from_default_env())
@@ -3311,14 +3329,9 @@ mod tests {
         let m2t = m2.clone();
         time::timeout(Duration::from_secs(10), async move {
             loop {
-                let mut ready = 0;
-                if m1t.tracked_endpoints().await.contains(&m2t.public()) {
-                    ready += 1;
-                }
-                if m2t.tracked_endpoints().await.contains(&m1t.public()) {
-                    ready += 1;
-                }
-                if ready == 2 {
+                let ab = m1t.tracked_endpoints().await.contains(&m2t.public());
+                let ba = m2t.tracked_endpoints().await.contains(&m1t.public());
+                if ab && ba {
                     break;
                 }
             }
@@ -3365,122 +3378,76 @@ mod tests {
         // Retries take 5s each. Add 1s for some processing time.
         const PING_TIMEOUT: Duration = Duration::from_secs(5 * ALLOWED_RETRIES as u64 + 1);
 
-        // // sendWithTimeout sends msg using send, checking that it is received unchanged from in.
-        // // It resends once per second until the send succeeds, or pingTimeout time has elapsed.
-        // sendWithTimeout := func(msg []byte, in chan []byte, send func()) error {
-        // 	start := time.Now()
-        // 	for time.Since(start) < pingTimeout {
-        // 		send()
-        // 		select {
-        // 		case recv := <-in:
-        // 			if !bytes.Equal(msg, recv) {
-        // 				return errors.New("ping did not transit correctly")
-        // 			}
-        // 			return nil
-        // 		case <-time.After(time.Second):
-        // 			// try again
-        // 		}
-        // 	}
-        // 	return errors.New("ping timed out")
-        // }
+        // Sends msg using send, checking that it is received unchanged from recv.
+        // It resends once per second until the send succeeds, or pingTimeout time has elapsed.
+        async fn send_with_timeout(
+            msg: &[u8],
+            recv: flume::Receiver<Vec<u8>>,
+            send: impl Fn(),
+        ) -> Result<()> {
+            time::timeout(PING_TIMEOUT, async move {
+                loop {
+                    send();
+                    tokio::select! {
+                        r = recv.recv_async() => {
+                            match r {
+                                Ok(val) => {
+                                    if val != msg {
+                                        bail!("value did not roundtrip: {:?} != {:?} ", msg, val);
+                                    }
+                                    return Ok(());
+                                }
+                                Err(err) => {
+                                    return Err(err.into());
+                                }
+                            }
+                        }
+                        _ = time::sleep(Duration::from_secs(1)) => {
+                            // try again
+                        }
+                    }
+                }
+            })
+            .await??;
+            Ok(())
+        }
 
-        // ping1 := func(t *testing.T) {
-        // 	msg2to1 := tuntest.Ping(netip.MustParseAddr("1.0.0.1"), netip.MustParseAddr("1.0.0.2"))
-        // 	send := func() {
-        // 		m2.tun.Outbound <- msg2to1
-        // 		t.Log("ping1 sent")
-        // 	}
-        // 	in := m1.tun.Inbound
-        // 	if err := sendWithTimeout(msg2to1, in, send); err != nil {
-        // 		t.Error(err)
-        // 	}
-        // }
-        // ping2 := func(t *testing.T) {
-        // 	msg1to2 := tuntest.Ping(netip.MustParseAddr("1.0.0.2"), netip.MustParseAddr("1.0.0.1"))
-        // 	send := func() {
-        // 		m1.tun.Outbound <- msg1to2
-        // 		t.Log("ping2 sent")
-        // 	}
-        // 	in := m2.tun.Inbound
-        // 	if err := sendWithTimeout(msg1to2, in, send); err != nil {
-        // 		t.Error(err)
-        // 	}
-        // }
+        // msg from  m2 -> m1
+        {
+            info!("m2 -> m1");
+            let m1_addr = m1.quic_ep.local_addr()?;
+            let (m1_send, m1_recv) = flume::bounded(8);
+            let m1_task = tokio::task::spawn(async move {
+                let conn = m1.quic_ep.accept().await.unwrap().await?;
+                let (_send_bi, mut recv_bi) = conn.accept_bi().await?;
 
-        // m1.stats = connstats.NewStatistics(0, 0, nil)
-        // defer m1.stats.Shutdown(context.Background())
-        // m1.conn.SetStatistics(m1.stats)
-        // m2.stats = connstats.NewStatistics(0, 0, nil)
-        // defer m2.stats.Shutdown(context.Background())
-        // m2.conn.SetStatistics(m2.stats)
+                while let Some(val) = recv_bi.read_chunk(1024, true).await? {
+                    m1_send.send_async(val).await?;
+                }
 
-        // checkStats := func(t *testing.T, m *magicStack, wantConns []netlogtype.Connection) {
-        // 	_, stats := m.stats.TestExtract()
-        // 	for _, conn := range wantConns {
-        // 		if _, ok := stats[conn]; ok {
-        // 			return
-        // 		}
-        // 	}
-        // 	t.Helper()
-        // 	t.Errorf("missing any connection to %s from %s", wantConns, maps.Keys(stats))
-        // }
+                Ok::<_, anyhow::Error>(())
+            });
 
-        // addrPort := netip.MustParseAddrPort
-        // m1Conns := []netlogtype.Connection{
-        // 	{Src: addrPort("1.0.0.2:0"), Dst: m2.conn.pconn4.LocalAddr().AddrPort()},
-        // 	{Src: addrPort("1.0.0.2:0"), Dst: addrPort("127.3.3.40:1")},
-        // }
-        // m2Conns := []netlogtype.Connection{
-        // 	{Src: addrPort("1.0.0.1:0"), Dst: m1.conn.pconn4.LocalAddr().AddrPort()},
-        // 	{Src: addrPort("1.0.0.1:0"), Dst: addrPort("127.3.3.40:1")},
-        // }
+            let conn = m2.quic_ep.connect(m1_addr, "localhost")?.await?;
 
-        // outerT := t
-        // t.Run("ping 1.0.0.1", func(t *testing.T) {
-        // 	setT(t)
-        // 	defer setT(outerT)
-        // 	ping1(t)
-        // 	checkStats(t, m1, m1Conns)
-        // 	checkStats(t, m2, m2Conns)
-        // })
+            let (mut send_bi, recv_bi) = conn.open_bi().await?;
+            send_bi.write_all(b"hello").await?;
+            send_bi.finish().await?;
+            drop(send_bi);
+            drop(recv_bi);
 
-        // t.Run("ping 1.0.0.2", func(t *testing.T) {
-        // 	setT(t)
-        // 	defer setT(outerT)
-        // 	ping2(t)
-        // 	checkStats(t, m1, m1Conns)
-        // 	checkStats(t, m2, m2Conns)
-        // })
+            // make sure the right values arrived
+            let val = m1_recv.recv_async().await?;
+            assert_eq!(val.bytes.as_ref(), b"hello");
 
-        // t.Run("ping 1.0.0.2 via SendPacket", func(t *testing.T) {
-        // 	setT(t)
-        // 	defer setT(outerT)
-        // 	msg1to2 := tuntest.Ping(netip.MustParseAddr("1.0.0.2"), netip.MustParseAddr("1.0.0.1"))
-        // 	send := func() {
-        // 		if err := m1.tsTun.InjectOutbound(msg1to2); err != nil {
-        // 			t.Fatal(err)
-        // 		}
-        // 		t.Log("SendPacket sent")
-        // 	}
-        // 	in := m2.tun.Inbound
-        // 	if err := sendWithTimeout(msg1to2, in, send); err != nil {
-        // 		t.Error(err)
-        // 	}
-        // 	checkStats(t, m1, m1Conns)
-        // 	checkStats(t, m2, m2Conns)
-        // })
+            m1_task.await??;
+        }
 
-        // t.Run("no-op dev1 reconfig", func(t *testing.T) {
-        // 	setT(t)
-        // 	defer setT(outerT)
-        // 	if err := m1.Reconfig(m1cfg); err != nil {
-        // 		t.Fatal(err)
-        // 	}
-        // 	ping1(t)
-        // 	ping2(t)
-        // 	checkStats(t, m1, m1Conns)
-        // 	checkStats(t, m2, m2Conns)
-        // })
+        // TODO: m1 -> m2
+
+        // TODO: send_datagram m2 -> m1
+
+        // TODO: send_datagram m1 -> m2
 
         cleanup();
         cleanup_mesh();

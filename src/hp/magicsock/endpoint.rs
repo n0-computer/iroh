@@ -149,7 +149,9 @@ impl Endpoint {
     }
 
     pub fn disco_key(&self) -> key::disco::PublicKey {
-        self.state.blocking_lock().disco_key.clone()
+        tokio::task::block_in_place(|| self.state.blocking_lock())
+            .disco_key
+            .clone()
     }
 
     /// Records receive activity on this endpoint.

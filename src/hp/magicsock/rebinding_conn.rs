@@ -182,7 +182,7 @@ impl RebindingUdpConn {
     }
 
     pub fn local_addr_blocking(&self) -> io::Result<SocketAddr> {
-        let addr = self.inner.blocking_read().local_addr()?;
+        let addr = tokio::task::block_in_place(|| self.inner.blocking_read()).local_addr()?;
         Ok(addr)
     }
 }
