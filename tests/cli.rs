@@ -214,7 +214,7 @@ fn match_get_stderr(stderr: Vec<u8>) -> Result<()> {
 /// Errors on the first regex mismatch or if the stderr output has fewer lines than expected
 fn match_provide_output<T: Read>(
     reader: BufReader<T>,
-    _num_blobs: usize,
+    num_blobs: usize,
     input: Input,
 ) -> Result<String> {
     // if we are using `stdin` we don't "read" any files, so the provider does not output any lines
@@ -226,15 +226,14 @@ fn match_provide_output<T: Read>(
 
     let mut caps = assert_matches_line![
         reader,
-        // r"Reading \S*"; reading_line_num,
-        // r"Collection: [\da-z]{59}"; 1,
-        // r""; 1,
-        // r"- \S*: \d*.?\d*? ?[BKMGT]i?B?"; num_blobs,
-        // r""; 1,
-        // r""; 1,
         r"Listening address: [\d.:]*"; 1,
         r"PeerID: [_\w\d-]*"; 1,
         r"Auth token: [\w\d]*"; 1,
+        r""; 1,
+        r"Adding .*"; 1,
+        r"- \S*: \d*.?\d*? ?[BKMGT]i?B?"; num_blobs,
+        r"Total: [_\w\d-]*"; 1,
+        r""; 1,
         r"Collection: [\da-z]{59}"; 1,
         r"All-in-one ticket: ([_a-zA-Z\d-]*)"; 1
     ];

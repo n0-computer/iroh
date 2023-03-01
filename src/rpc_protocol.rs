@@ -17,6 +17,14 @@ pub struct ProvideRequest {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ProvideResponse {
     pub hash: Hash,
+    pub entries: Vec<ProvideResponseEntry>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ProvideResponseEntry {
+    pub name: String,
+    pub hash: Hash,
+    pub size: u64,
 }
 
 impl RpcMsg<ProviderService> for ProvideRequest {

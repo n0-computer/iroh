@@ -42,8 +42,9 @@ use crate::protocol::{
     read_lp, write_lp, AuthToken, Closed, Handshake, Request, Res, Response, VERSION,
 };
 use crate::rpc_protocol::{
-    ListRequest, ListResponse, ProvideRequest, ProvideResponse, ProviderRequest, ProviderResponse,
-    ProviderService, VersionRequest, VersionResponse, WatchRequest, WatchResponse,
+    ListRequest, ListResponse, ProvideRequest, ProvideResponse, ProvideResponseEntry,
+    ProviderRequest, ProviderResponse, ProviderService, VersionRequest, VersionResponse,
+    WatchRequest, WatchResponse,
 };
 use crate::tls::{self, Keypair, PeerId};
 use crate::util::{self, Hash};
@@ -421,7 +422,7 @@ impl Handler {
     }
     async fn provide(self, msg: ProvideRequest) -> anyhow::Result<ProvideResponse> {
         let path = msg.path;
-        let data_sources = if path.is_dir() {
+        let data_sources: Vec<DataSource> = if path.is_dir() {
             let mut paths = Vec::new();
             let mut iter = tokio::fs::read_dir(&path).await?;
             while let Some(el) = iter.next_entry().await? {
@@ -437,9 +438,10 @@ impl Handler {
         };
         // create the collection
         // todo: provide feedback for progress
-        let (db, hash) = create_collection_inner(data_sources).await?;
+        let (db, entries, hash) = create_collection_inner(data_sources).await?;
         self.0.union_with(db);
-        Ok(ProvideResponse { hash })
+
+        Ok(ProvideResponse { hash, entries })
     }
     async fn version(self, _: VersionRequest) -> VersionResponse {
         VersionResponse {
@@ -767,7 +769,7 @@ pub(crate) struct Data {
 }
 
 /// A data source
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
 pub enum DataSource {
     /// A blob of data originating from the filesystem. The name of the blob is derived from
     /// the filename.
@@ -856,7 +858,7 @@ fn compute_outboard(
 /// Creates a database of blobs (stored in outboard storage) and Collections, stored in memory.
 /// Returns a the hash of the collection created by the given list of DataSources
 pub async fn create_collection(data_sources: Vec<DataSource>) -> Result<(Database, Hash)> {
-    let (db, hash) = create_collection_inner(data_sources).await?;
+    let (db, _, hash) = create_collection_inner(data_sources).await?;
     Ok((Database(Arc::new(RwLock::new(db))), hash))
 }
 
@@ -864,7 +866,11 @@ pub async fn create_collection(data_sources: Vec<DataSource>) -> Result<(Databas
 /// a public Database.
 async fn create_collection_inner(
     data_sources: Vec<DataSource>,
-) -> Result<(HashMap<Hash, BlobOrCollection>, Hash)> {
+) -> Result<(
+    HashMap<Hash, BlobOrCollection>,
+    Vec<ProvideResponseEntry>,
+    Hash,
+)> {
     // +1 is for the collection itself
     let mut db = HashMap::with_capacity(data_sources.len() + 1);
     let mut blobs = Vec::with_capacity(data_sources.len());
@@ -884,8 +890,24 @@ async fn create_collection_inner(
         .await
         .into_iter()
         .collect::<Result<Result<Vec<_>, _>, _>>()??;
-    // insert outboards into the database and build collection
 
+    // compute information about the collection
+    let entries = outboards
+        .iter()
+        .map(|(path, name, hash, outboard)| {
+            let name = name
+                .as_ref()
+                .map(|s| s.clone())
+                .unwrap_or_else(|| path.display().to_string());
+            ProvideResponseEntry {
+                name,
+                hash: *hash,
+                size: u64::from_le_bytes(outboard[..8].try_into().unwrap()),
+            }
+        })
+        .collect();
+
+    // insert outboards into the database and build collection
     for (path, name, hash, outboard) in outboards {
         debug_assert!(outboard.len() >= 8, "outboard must at least contain size");
         let size = u64::from_le_bytes(outboard[..8].try_into().unwrap());
@@ -929,7 +951,7 @@ async fn create_collection_inner(
         BlobOrCollection::Collection((Bytes::from(outboard), Bytes::from(data.to_vec()))),
     );
 
-    Ok((db, hash))
+    Ok((db, entries, hash))
 }
 
 async fn write_response<W: AsyncWrite + Unpin>(
