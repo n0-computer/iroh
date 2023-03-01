@@ -1,3 +1,4 @@
+//! based on tailscale/derp/derp_client.go
 use std::time::Duration;
 
 use crate::hp::key;

@@ -1,32 +1,29 @@
-// Copyright (c) Tailscale Inc & AUTHORS
-// SPDX-License-Identifier: BSD-3-Clause
-
-// Package derp implements the Designated Encrypted Relay for Packets (DERP)
-// protocol.
+//! Package derp implements the Designated Encrypted Relay for Packets (DERP)
+//! protocol.
 //
-// DERP routes packets to clients using curve25519 keys as addresses.
+//! DERP routes packets to clients using curve25519 keys as addresses.
 //
-// DERP is used by Tailscale nodes to proxy encrypted WireGuard
-// packets through the Tailscale cloud servers when a direct path
-// cannot be found or opened. DERP is a last resort. Both side
-// between very aggressive NATs, firewalls, no IPv6, etc? Well, DERP.
+//! DERP is used by Tailscale nodes to proxy encrypted WireGuard
+//! packets through the Tailscale cloud servers when a direct path
+//! cannot be found or opened. DERP is a last resort. Both side
+//! between very aggressive NATs, firewalls, no IPv6, etc? Well, DERP.
+//! Based on tailscale/derp/derp.go
 
-use std::io::{Read, Write};
 use std::time::Duration;
 
 use anyhow::{bail, Result};
-use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use bytes::BytesMut;
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
-// MaxPacketSize is the maximum size of a packet sent over DERP.
-// (This only includes the data bytes visible to magicsock, not
-// including its on-wire framing overhead)
+/// The maximum size of a packet sent over DERP.
+/// (This only includes the data bytes visible to magicsock, not
+/// including its on-wire framing overhead)
 const MAX_PACKET_SIZE: usize = 64 * 1024;
 
 const MAX_FRAME_SIZE: usize = 10 * 1024 * 1024;
 
-// magic is the DERP magic number, sent in the FRAME_SERVER_KEY frame
-// upon initial connection
+/// The DERP magic number, sent in the FRAME_SERVER_KEY frame
+/// upon initial connection
 const MAGIC: &str = "DERP🔑";
 
 const NONCE_LEN: u8 = 24;
@@ -35,15 +32,15 @@ const KEY_LEN: u8 = 32;
 const MAX_INFO_LEN: usize = 1024 * 1024;
 const KEEP_ALIVE: Duration = Duration::from_secs(60);
 
-// ProtocolVersion is bumped whenever there's a wire-incompatiable change.
-//  - version 1 (zero on wire): consistent box headers, in use by employee dev nodes a bit
-//  - version 2: received packets have src addrs in FRAME_RECV_PACKET at beginning
+/// ProtocolVersion is bumped whenever there's a wire-incompatiable change.
+///  - version 1 (zero on wire): consistent box headers, in use by employee dev nodes a bit
+///  - version 2: received packets have src addrs in FRAME_RECV_PACKET at beginning
 const PROTOCOL_VERSION: u8 = 2;
 
-// FrameType is the one byte frame type at the beginning of the frame
-// header. The second field is a big-endian u32 describing the
-// length of the remaining frame (not including the initial 5 bytes)
-// TODO: this should probably be an enum
+/// The one byte frame type at the beginning of the frame
+/// header. The second field is a big-endian u32 describing the
+/// length of the remaining frame (not including the initial 5 bytes)
+/// TODO: this should probably be an enum
 type FrameType = u8;
 
 ///
@@ -62,114 +59,132 @@ type FrameType = u8;
 ///  * server then sends FRAME_RECV_PACKET to recipient
 ///
 
-const FRAME_SERVER_KEY: FrameType = 0x01; // 8B magic + 32B public key + (0+ bytes future use)
-const FRAME_CLIENT_INFO: FrameType = 0x02; // 32b pub key + 24B nonce + naclbox(json)
-const FRAME_SERVER_INFO: FrameType = 0x03; // 24B nonce + naclbox(json)
-const FRAME_SEND_PACKET: FrameType = 0x04; // 32B dest pub key + packet bytes
-const FRAME_FORWARD_PACKET: FrameType = 0x0a; // 32B src pub key + 32B dst pub key + packet bytes
-const FRAME_RECV_PACKET: FrameType = 0x05; // v0/1 packet bytes, v2: 32B src pub key + packet
-                                           // bytes
-const FRAME_KEEP_ALIVE: FrameType = 0x06; // no payload, no-op (to be replaced with ping/pong)
-const FRAME_NOTE_PREFERRED: FrameType = 0x07; // 1 byte paylouad: 0x01 or 0x00 for whether this is
-                                              // client's home node
+const FRAME_SERVER_KEY: FrameType = 0x01;
+/// 8B magic + 32B public key + (0+ bytes future use)
+const FRAME_CLIENT_INFO: FrameType = 0x02;
+/// 32b pub key + 24B nonce + naclbox(json)
+const FRAME_SERVER_INFO: FrameType = 0x03;
+/// 24B nonce + naclbox(json)
+const FRAME_SEND_PACKET: FrameType = 0x04;
+/// 32B dest pub key + packet bytes
+const FRAME_FORWARD_PACKET: FrameType = 0x0a;
+/// 32B src pub key + 32B dst pub key + packet bytes
+const FRAME_RECV_PACKET: FrameType = 0x05;
+/// v0/1 packet bytes, v2: 32B src pub key + packet
+/// bytes
+const FRAME_KEEP_ALIVE: FrameType = 0x06;
+/// no payload, no-op (to be replaced with ping/pong)
+const FRAME_NOTE_PREFERRED: FrameType = 0x07;
+/// 1 byte paylouad: 0x01 or 0x00 for whether this is
+/// client's home node
 
-/// FRAME_PEER_GONE is sent from server to client to signal that
-/// a previous sender is no longer connected. That is, if A sent
-/// to B, and then if A disconnects, the server sends
-/// FRAME_PEER_GONE to B so B can forget that a reverse path
-/// exists on that connection to get back to A
+/// Sent from server to client to signal that a previous sender
+/// is no longer connected. That is, if A sent to B, and then if
+/// A disconnects, the server sends `FRAME_PEER_GONE` to B so B can
+/// forget that a reverse path exists on that connection to get back
+/// to A
 const FRAME_PEER_GONE: FrameType = 0x08; // 32B pub key of peer that's gone
 
-/// FRAME_PEER_PRESENT is like FRAME_PEER_GONE, but for other
-/// members of the DERP region when they're meshed up together
+/// Like [`FRAME_PEER_GONE`], but for other members of the DERP region
+/// when they're meshed up together
 const FRAME_PEER_PRESENT: FrameType = 0x09; // 32B pub key of peer that's connected
 
-/// FRAME_WATCH_CONNS is how one DERP node in a regional mesh
-/// subscribes to the others in the region.
+/// How one DERP node in a regional mesh subscribes to the others in the region.
 /// There's no payload. If the sender doesn't have permission, the connection
 /// is closed. Otherwise, the client is initially flooded with
-/// FRAME_PEER_PRESENT for all connected nodes, and then a stream of
-/// FRAME_PEER_PRESENT & FRAME_PEER_GONE has peers connect and disconnect.
+/// [`FRAME_PEER_PRESENT`] for all connected nodes, and then a stream of
+/// [`FRAME_PEER_PRESENT`] & [`FRAME_PEER_GONE`] has peers connect and disconnect.
 const FRAME_WATCH_CONNS: FrameType = 0x10;
 
-/// FRAME_CLOSE_PEER is a priviledged frame type (requires the
-/// mesh key for now) that closes the provided peer's
-/// connection. (To be used for cluster load balancing
+/// A priviledged frame type (requires the mesh key for now) that closes
+/// the provided peer's connection. (To be used for cluster load balancing
 /// purposes, when clients end up on a non-ideal node)
-const FRAME_CLOSE_PEER: FrameType = 0x11; // 32B pub key of peer close.
+const FRAME_CLOSE_PEER: FrameType = 0x11;
+/// 32B pub key of peer close.
 
-const FRAME_PING: FrameType = 0x12; // 8 byte ping payload, to be echoed back in FRAME_PONG
-const FRAME_PONG: FrameType = 0x13; // 8 byte payload, the contents of ping being replied to
+const FRAME_PING: FrameType = 0x12;
+/// 8 byte ping payload, to be echoed back in FRAME_PONG
+const FRAME_PONG: FrameType = 0x13;
+/// 8 byte payload, the contents of ping being replied to
 
-/// FRAME_HEALTH is sent from server to client to tell the client
-/// if their connection is unhealthy somehow. Currently the only unhealthy state
-/// is whether the connection is detected as a duplicate.
+/// Sent from server to client to tell the client if their connection is
+/// unhealthy somehow. Currently the only unhealthy state is whether the
+/// connection is detected as a duplicate.
 /// The entire frame body is the text of the error message. An empty message
 /// clears the error state.
 const FRAME_HEALTH: FrameType = 0x14;
 
-/// FRAME_RESTARTING is sent from server to client for the
-/// server to declare that it's restarting. Payload is two big
-/// endian u32 durations in milliseconds: when to reconnect,
-/// and how long to try total. See SERVER_RESTARTING_MESSAGE docs for
+/// Sent from server to client for the server to declare that it's restarting.
+/// Payload is two big endian u32 durations in milliseconds: when to reconnect,
+/// and how long to try total. See [`SERVER_RESTARTING_MESSAGE`] for
 /// more details on how the client should interpret them.
 const FRAME_RESTARTING: FrameType = 0x15;
 
-fn read_frame_type_header<R: Read>(reader: R, want_type: FrameType) -> Result<u32> {
-    let (got_type, frame_len) = read_frame_header(reader)?;
+async fn read_frame_type_header(
+    reader: impl AsyncRead + Unpin,
+    want_type: FrameType,
+) -> Result<u32> {
+    let (got_type, frame_len) = read_frame_header(reader).await?;
     if want_type != got_type {
         bail!("bad frame type {got_type:#04x}, want {want_type:#04x}");
     }
     Ok(frame_len)
 }
 
-fn read_frame_header<R: Read>(mut reader: R) -> std::io::Result<(FrameType, u32)> {
-    let frame_type = reader.read_u8()?;
-    let frame_len = reader.read_u32::<BigEndian>()?;
-    Ok((frame_type, frame_len))
+async fn read_frame_header(mut reader: impl AsyncRead + Unpin) -> Result<(FrameType, u32)> {
+    let mut frame_type = [0u8; 1];
+    reader.read(&mut frame_type).await?;
+    let mut frame_len = [0u8; 4];
+    reader.read(&mut frame_len).await?;
+    Ok((u8::from_be_bytes(frame_type), u32::from_be_bytes(frame_len)))
 }
 
-// read_frame reads a frame header and then reads its payload into `bytes` of
-// `frame_len`.
-//
-// If the frame header length is greater than `max_size`, `read_frame` returns
-// an error after reading the frame header.
-//
-// If the frame is less than `max_size` but greater than the `bytes.len()`,
-// `bytes.len()` bytes are read, and there is no error. The `frame_type` and `frame_len`
-// are returned as a tuple `(FrameType, u32)`. If the number of bytes read are less than
-// `frame_len`, we DO NOT ERROR.
-fn read_frame<R: Read>(
-    mut reader: R,
+/// AsyncReads a frame header and then reads its payload into `bytes` of
+/// `frame_len`.
+///
+/// If the frame header length is greater than `max_size`, `read_frame` returns
+/// an error after reading the frame header.
+///
+/// If the frame is less than `max_size` but greater than the `bytes.len()`,
+/// `bytes.len()` bytes are read, and there is no error. The `frame_type` and `frame_len`
+/// are returned as a tuple `(FrameType, u32)`. If the number of bytes read are less than
+/// `frame_len`, we DO NOT ERROR.
+async fn read_frame(
+    mut reader: impl AsyncRead + Unpin,
     max_size: u32,
     mut bytes: BytesMut,
 ) -> Result<(FrameType, u32)> {
-    let (frame_type, frame_len) = read_frame_header(&mut reader)?;
+    let (frame_type, frame_len) = read_frame_header(&mut reader).await?;
     if frame_len > max_size {
         bail!("frame header size {frame_len} exceeds reader limit of {max_size}");
     }
 
-    reader.read_exact(&mut bytes)?;
+    reader.read_exact(&mut bytes).await?;
     Ok((frame_type, frame_len))
 }
 
-fn write_frame_header<W: Write>(
-    mut writer: W,
+async fn write_frame_header(
+    mut writer: impl AsyncWrite + Unpin,
     frame_type: FrameType,
     frame_len: u32,
-) -> std::io::Result<()> {
-    writer.write_u8(frame_type)?;
-    writer.write_u32::<BigEndian>(frame_len)
+) -> Result<()> {
+    writer.write(&[frame_type]).await?;
+    writer.write(&frame_len.to_be_bytes()).await?;
+    Ok(())
 }
 
-/// `write_frame` writes a complete frame & flushes it.
-fn write_frame<W: Write>(mut writer: W, frame_type: FrameType, bytes: BytesMut) -> Result<()> {
+/// AsyncWrites a complete frame & flushes it.
+async fn write_frame(
+    mut writer: impl AsyncWrite + Unpin,
+    frame_type: FrameType,
+    bytes: BytesMut,
+) -> Result<()> {
     if bytes.len() > MAX_FRAME_SIZE {
         bail!("unreasonably large frame write");
     }
     let frame_len = u32::try_from(bytes.len())?;
-    write_frame_header(&mut writer, frame_type, frame_len)?;
-    writer.write_all(&bytes)?;
-    writer.flush()?;
+    write_frame_header(&mut writer, frame_type, frame_len).await?;
+    writer.write_all(&bytes).await?;
+    writer.flush().await?;
     Ok(())
 }

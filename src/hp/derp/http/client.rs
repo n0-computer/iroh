@@ -1,3 +1,4 @@
+//! Based on tailscale/derp/derphttp/derphttp_client.go
 use std::net::SocketAddr;
 
 use anyhow::Result;

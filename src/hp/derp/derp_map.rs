@@ -1,4 +1,4 @@
-// from tailscale/tailcfg/derpmap.go
+//! based on tailscale/tailcfg/derpmap.go
 
 use std::{
     collections::HashMap,
@@ -37,13 +37,13 @@ pub struct DerpNode {
     pub stun_only: bool,
     pub stun_port: u16,
     pub stun_test_ip: Option<IpAddr>,
-    // Optionally forces an IPv4 address to use, instead of using DNS.
-    // If `None`, A record(s) from DNS lookups of HostName are used.
-    // If `Disabled`, IPv4 is not used;
+    /// Optionally forces an IPv4 address to use, instead of using DNS.
+    /// If `None`, A record(s) from DNS lookups of HostName are used.
+    /// If `Disabled`, IPv4 is not used;
     pub ipv4: UseIpv4,
-    // Optionally forces an IPv6 address to use, instead of using DNS.
-    // If `None`, A record(s) from DNS lookups of HostName are used.
-    // If `Disabled`, IPv4 is not used;
+    /// Optionally forces an IPv6 address to use, instead of using DNS.
+    /// If `None`, A record(s) from DNS lookups of HostName are used.
+    /// If `Disabled`, IPv4 is not used;
     pub ipv6: UseIpv6,
 }
 
